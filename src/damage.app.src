@@ -1,0 +1,15 @@
+{
+  application,
+  damage,
+  [
+    {description, "An OTP application"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {damage_app, []}},
+    {applications, [kernel, stdlib, lager]},
+    {env, []},
+    {modules, []},
+    {licenses, ["Apache 2.0"]},
+    {links, []}
+  ]
+}.
