@@ -15,6 +15,8 @@ start(_StartType, _StartArgs) ->
   lager:start(),
   application:ensure_all_started(hackney),
   application:start(cedb),
+  application:start(p1_utils),
+  application:start(fast_yaml),
   damage_sup:start_link().
 
 
@@ -39,29 +41,34 @@ execute_scenario(Config, BackGround, Scenario) ->
   lager:info("executing scenario: ~p: ~p: ~p, ~p", [LineNo, ScenarioName, Tags, Steps]),
   lists:foldl(
     fun execute_step/2,
-    maps:new(),
+    get_global_template_context(Config, dict:new()),
     [{Config, S} || S <- lists:append(BackGroundSteps, Steps)]
   ).
 
 
 execute_step({Config, Step}, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
-  lager:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body]),
   {Body0, Args} = get_stepargs(Body),
-  Body1 = damage_utils:tokenize(Body0),
-  lager:info("executing step: ~p: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1, Args]),
-  try apply(steps_web, step, [Config, Context, StepKeyWord, LineNo, Body1, Args]) of
-    error -> maps:put(result, {error, Step}, Context);
+  Body1 = damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
+  Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
+  lager:info("executing step: ~p: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1, Args1]),
+  try apply(steps_web, step, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) of
+    error -> dict:store(result, {error, Step}, Context);
     true -> Context;
-    false -> 
-      throw("Step condition failed.");
-    Result -> maps:merge(Context, Result)
+    false -> throw("Step condition failed.");
+    Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
   catch
     %error : undef -> step_run(Config, Input, Step, Features);
     %error : function_clause -> step_run(Config, Input, Step, Features);
-    X:Y : Trace ->
-      lager:error("ERROR: step run found ~p:~p~n~s~n", [X, Y, lager:pr_stacktrace(Trace)]),
-      throw("Unknown error type in BDD step_run.")
+    throw : {fail, Reason} : Stacktrace ->
+      lager:error(
+        "~s~nStacktrace:~s",
+        [Reason, lager:pr_stacktrace(Stacktrace, {fail, list_to_binary(Reason)})]
+      ),
+      case lists:keyfind(stop, 1, Config) of
+        {stop, true} -> throw(Reason);
+        _ -> lager:debug("Continuing after errors.")
+      end
   end.
 
 
@@ -72,3 +79,21 @@ get_stepargs(Body) when is_list(Body) ->
 
     _ -> {damage_utils:binarystr_join(Body, <<" ">>), <<"">>}
   end.
+
+
+get_global_template_context(Config, Context) ->
+  {context_yaml, ContextYamlFile} = lists:keyfind(context_yaml, 1, Config),
+  {deployment, Deployment} = lists:keyfind(deployment, 1, Config),
+  {ok, [ContextYaml | _]} = fast_yaml:decode_from_file(ContextYamlFile, [{plain_as_atom, true}]),
+  {deployments, Deployments} = lists:keyfind(deployments, 1, ContextYaml),
+  {Deployment, DeploymentConfig} = lists:keyfind(Deployment, 1, Deployments),
+  {ok, Timestamp} = datestring:format("YmdHM", erlang:localtime()),
+  dict:store(
+    headers,
+    [],
+    dict:store(
+      timestamp,
+      Timestamp,
+      dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, dict:from_list(DeploymentConfig), Context)
+    )
+  ).
