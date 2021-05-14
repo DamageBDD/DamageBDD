@@ -28,6 +28,7 @@ Feature: Install
       }
       """
     Then the response status must be "200"
+    Given I store cookies
     Given I set "Content-Type" header to "application/json"
     When I make a POST request to "/v3/apps"
     """

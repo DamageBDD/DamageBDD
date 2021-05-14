@@ -107,11 +107,17 @@ step(_Config, Context, then_keyword, _N, ["the response status should be one of"
 
 step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
   {_, _StatusCode, _Headers, Body} = dict:fetch(response, Context),
-  lager:info("Response: ~s", [Body]),
+  lager:debug("Response: ~s", [Body]),
   true;
 
 step(_Config, Context, then_keyword, _N, ["I set the variable ", Variable, " to value ", Value], _) ->
   dict:store(Variable, Value, Context);
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
-  dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).
+  dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context);
+
+step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
+  {_, _StatusCode, Headers, _Body} = dict:fetch(response, Context),
+    Cookies = lists:foldl(fun ({<<"Set-Cookie">>, Header}, Acc) -> [Acc|Header] end, [], Headers), 
+  lager:debug("Response:  ~p ~s", [Headers, Cookies]).
+  %dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).
