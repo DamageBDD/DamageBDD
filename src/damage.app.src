@@ -2,7 +2,7 @@
   application,
   damage,
   [
-    {description, "An OTP application"},
+    {description, "An OTP application to run bdd tests."},
     {vsn, "0.1.0"},
     {registered, []},
     {mod, {damage_app, []}},

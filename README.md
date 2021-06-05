@@ -1,9 +1,17 @@
 damage BDD
 ==========
 
-An OTP application to run bdd load tests
+An Erlang OTP application to run bdd load tests at scale.
+
+Configure
+---------
+
+Edit `configs/damage.config` runner config.
+Edit `behave.yaml` for context data.
+
 
 Build
 -----
 
-    $ rebar3 compile
+    $ rebar3 shell
+    > damage:execute('test')

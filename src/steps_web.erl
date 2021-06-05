@@ -26,7 +26,7 @@ step(Config, Context, when_keyword, _N, ["I make a POST request to", Path], Data
     Context
   );
 
-step(Config, Context, when_keyword, _N, ["I make a CSRF form POST request to", Path], Data) ->
+step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path], Data) ->
   {url, BaseUrl} = lists:keyfind(url, 1, Config),
   Url = list_to_binary(BaseUrl ++ Path),
   Headers0 =
@@ -80,10 +80,19 @@ step(_Config, Context, then_keyword, _N, ["the json at path", Path, "must be", J
       Json0 = list_to_binary(Json),
       lager:debug("step_then the json at path ~p must be ~p~n~p~n", [Path, Json0, Body]),
       lager:debug("~p~n", [ejsonpath:q(Path, jsx:decode(Body, [return_maps]))]),
-      {[Json0 | _], _} = ejsonpath:q(Path, jsx:decode(Body, [return_maps])),
-      true;
+      case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
+        {[Json0 | _], _} -> true;
 
-    UnExpected -> throw(io_lib:format("Unexpected response ~p", [UnExpected]))
+        UnExpected ->
+          throw(
+            {
+              fail,
+              io_lib:format("the json at path ~p is not ~p, it is ~p.", [Path, Json, UnExpected])
+            }
+          )
+      end;
+
+    UnExpected -> throw({fail, io_lib:format("Unexpected response ~p", [UnExpected])})
   end;
 
 step(_Config, Context, then_keyword, _N, ["the response status should be one of", Responses], _) ->
@@ -118,6 +127,8 @@ step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) -
 
 step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
   {_, _StatusCode, Headers, _Body} = dict:fetch(response, Context),
-    Cookies = lists:foldl(fun ({<<"Set-Cookie">>, Header}, Acc) -> [Acc|Header] end, [], Headers), 
+  Cookies = lists:foldl(fun ({<<"Set-Cookie">>, Header}, Acc) -> [Acc | Header] end, [], Headers),
   lager:debug("Response:  ~p ~s", [Headers, Cookies]).
-  %dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).
+
+
+%dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).

@@ -1,6 +1,7 @@
 %%%-------------------------------------------------------------------
 %% @doc damage top level supervisor.
 %% @end
+%% https://erlang.org/doc/man/supervisor.html
 %%%-------------------------------------------------------------------
 
 -module(damage_sup).
@@ -25,8 +26,24 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
-  SupFlags = #{strategy => one_for_all, intensity => 0, period => 1},
-  ChildSpecs = [],
+  SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
+  ChildSpecs =
+    [
+      % optional
+      #{
+        % mandatory
+        id => default,
+        % mandatory
+        start => {damage_app, execute, []},
+        % optional
+        restart => temporary,
+        % optional
+        shutdown => 60,
+        % optional
+        type => worker,
+        modules => [damage_app]
+      }
+    ],
   {ok, {SupFlags, ChildSpecs}}.
 
 %% internal functions
