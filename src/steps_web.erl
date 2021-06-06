@@ -1,3 +1,8 @@
+%% @author Steven Joseph
+%% @copyright 2021 Steven Joseph
+%% @version 1.0.0
+%% @doc HTTP Steps
+
 -module(steps_web).
 
 -export([step/6]).
