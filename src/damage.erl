@@ -1,6 +1,29 @@
 -module(damage).
 
+-behaviour(gen_server).
+-behaviour(poolboy_worker).
+
+-export([start_link/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([execute_file/1, execute/1, execute/0]).
+
+start_link(_Args) -> 
+    gen_server:start_link(?MODULE, [], []).
+
+init([]) -> {ok, undefined}.
+
+handle_call(die, _From, State) -> {stop, {error, died}, dead, State};
+handle_call(_Event, _From, State) -> 
+  logger:debug("handle_call"),
+{reply, ok, State}.
+
+handle_cast(_Event, State) -> {noreply, State}.
+
+handle_info(_Info, State) -> {noreply, State}.
+
+terminate(_Reason, _State) -> ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 execute() ->
   {ok, Config} = file:consult(filename:join("config", "damage.config")),
@@ -8,10 +31,12 @@ execute() ->
   lists:map(fun execute_file/1, filelib:wildcard(filename:join([FeatureDir, "**", "*.feature"]))).
 
 
-execute(FeatureName) -> 
+execute(FeatureName) ->
   {ok, Config} = file:consult(filename:join("config", "damage.config")),
   {feature_dir, FeatureDir} = lists:keyfind(feature_dir, 1, Config),
-    execute_file(filename:join([FeatureDir, FeatureName ++ ".feature"])).
+  logger:debug("Executing feature ~p in featuredir ~p.", [FeatureName ++ ".feature", FeatureDir]),
+  execute_file(filename:join([FeatureDir, FeatureName ++ ".feature"])).
+
 
 execute_file(Filename) ->
   {_LineNo, Tags, Feature, Description, BackGround, Scenarios} = egherkin:parse_file(Filename),
@@ -20,7 +45,7 @@ execute_file(Filename) ->
 
 
 execute_feature(Config, FeatureName, Tags, Feature, Description, BackGround, Scenarios) ->
-  lager:info("~p: ~p: ~p: ~p, ~p", [FeatureName, Tags, Feature, Description, BackGround]),
+  logger:info("~p: ~p: ~p: ~p, ~p", [FeatureName, Tags, Feature, Description, BackGround]),
   [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios].
 
 
@@ -29,7 +54,7 @@ execute_scenario(Config, [], Scenario) -> execute_scenario(Config, {none, []}, S
 
 execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   {LineNo, ScenarioName, Tags, Steps} = Scenario,
-  lager:info("executing scenario: ~p: line: ~p: tags ~p", [ScenarioName, LineNo, Tags]),
+  logger:info("executing scenario: ~p: line: ~p: tags ~p", [ScenarioName, LineNo, Tags]),
   lists:foldl(
     fun execute_step/2,
     get_global_template_context(Config, dict:new()),
@@ -42,10 +67,16 @@ execute_step({Config, Step}, Context) ->
   {Body0, Args} = get_stepargs(Body),
   Body1 = damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
   Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
-  lager:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
-  lager:debug("step body: ~p: ~p", [Body1, Args1]),
-  try apply(steps_web, step, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) of
-    error -> dict:store(result, {error, Step}, Context);
+  logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
+  logger:debug("step body: ~p: ~p", [Body1, Args1]),
+  StepExecutor =
+    pa:bind(fun execute_step_module/2, [Config, Context, StepKeyWord, LineNo, Body1, Args1]),
+  lists:map(StepExecutor, filelib:wildcard(filename:join(["src", "step_*.erl"]))).
+
+
+execute_step_module(StepModule, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) ->
+  try apply(StepModule, step, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) of
+    error -> dict:store(result, {error, LineNo}, Context);
     true -> Context;
     false -> throw("Step condition failed.");
     Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
@@ -53,13 +84,13 @@ execute_step({Config, Step}, Context) ->
     %error : undef -> step_run(Config, Input, Step, Features);
     %error : function_clause -> step_run(Config, Input, Step, Features);
     throw : {fail, Reason} : Stacktrace ->
-      lager:error(
+      logger:error(
         "~s~nStacktrace:~s",
-        [Reason, lager:pr_stacktrace(Stacktrace, {fail, list_to_binary(Reason)})]
+        [Reason, logger:pr_stacktrace(Stacktrace, {fail, list_to_binary(Reason)})]
       ),
       case lists:keyfind(stop, 1, Config) of
         {stop, true} -> throw(Reason);
-        _ -> lager:debug("Continuing after errors.")
+        _ -> logger:debug("Continuing after errors.")
       end
   end.
 

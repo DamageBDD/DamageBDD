@@ -26,24 +26,35 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
-  SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
-  ChildSpecs =
-    [
-      % optional
-      #{
-        % mandatory
-        id => default,
-        % mandatory
-        start => {damage_app, execute, []},
-        % optional
-        restart => temporary,
-        % optional
-        shutdown => 60,
-        % optional
-        type => worker,
-        modules => [damage_app]
-      }
-    ],
-  {ok, {SupFlags, ChildSpecs}}.
+  {ok, Pools} = application:get_env(damage, pools),
+  PoolSpecs =
+    lists:map(
+      fun
+        ({Name, SizeArgs, WorkerArgs}) ->
+              PoolArgs = [{name, {local, Name}}, {worker_module, damage}] ++ SizeArgs,
+          poolboy:child_spec(Name, PoolArgs, WorkerArgs)
+      end,
+      Pools
+    ),
+  {ok, {{one_for_one, 10, 10}, PoolSpecs}}.
 
+%%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
+%%ChildSpecs =
+%%  [
+%%    % optional
+%%    #{
+%%      % mandatory
+%%      id => default,
+%%      % mandatory
+%%      start => {damage_app, execute, []},
+%%      % optional
+%%      restart => temporary,
+%%      % optional
+%%      shutdown => 60,
+%%      % optional
+%%      type => worker,
+%%      modules => [damage_app]
+%%    }
+%%  ],
+%%{ok, {SupFlags, ChildSpecs}}.
 %% internal functions

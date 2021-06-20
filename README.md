@@ -2,6 +2,7 @@ damage BDD
 ==========
 
 An Erlang OTP application to run bdd load tests at scale.
+Inspired by [https://github.com/behave/behave](behave).
 
 Configure
 ---------

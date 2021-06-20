@@ -44,7 +44,7 @@ step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path],
       dict:fetch(headers, Context)
     ),
   {ok, StatusCode, Headers, Body} = hackney:request(get, Url, Headers0, <<>>, [{pool, default}]),
-  lager:debug("Status: ~p, Headers: ~p, Body: ~p", [StatusCode, Headers, Body]),
+  logger:debug("Status: ~p, Headers: ~p, Body: ~p", [StatusCode, Headers, Body]),
   {_, CSRFToken} = lists:keyfind(<<"X-CSRFToken">>, 1, Headers),
   {_, SessionId} = lists:keyfind(<<"X-SessionID">>, 1, Headers),
   dict:store(
@@ -83,8 +83,8 @@ step(_Config, Context, then_keyword, _N, ["the json at path", Path, "must be", J
   case dict:fetch(response, Context) of
     {_, _StatusCode, _Headers, Body} ->
       Json0 = list_to_binary(Json),
-      lager:debug("step_then the json at path ~p must be ~p~n~p~n", [Path, Json0, Body]),
-      lager:debug("~p~n", [ejsonpath:q(Path, jsx:decode(Body, [return_maps]))]),
+      logger:debug("step_then the json at path ~p must be ~p~n~p~n", [Path, Json0, Body]),
+      logger:debug("~p~n", [ejsonpath:q(Path, jsx:decode(Body, [return_maps]))]),
       case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
         {[Json0 | _], _} -> true;
 
@@ -121,11 +121,8 @@ step(_Config, Context, then_keyword, _N, ["the response status should be one of"
 
 step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
   {_, _StatusCode, _Headers, Body} = dict:fetch(response, Context),
-  lager:debug("Response: ~s", [Body]),
+  logger:debug("Response: ~s", [Body]),
   true;
-
-step(_Config, Context, then_keyword, _N, ["I set the variable ", Variable, " to value ", Value], _) ->
-  dict:store(Variable, Value, Context);
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
   dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context);
@@ -133,7 +130,8 @@ step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) -
 step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
   {_, _StatusCode, Headers, _Body} = dict:fetch(response, Context),
   Cookies = lists:foldl(fun ({<<"Set-Cookie">>, Header}, Acc) -> [Acc | Header] end, [], Headers),
-  lager:debug("Response:  ~p ~s", [Headers, Cookies]).
+  logger:debug("Response:  ~p ~s", [Headers, Cookies]).
 
 
+%step(_Config, Context, given_keyword, _N, ["I start a websocket connection to ", WebSocketUrl], _) ->
 %dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).
