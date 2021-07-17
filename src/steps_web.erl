@@ -34,6 +34,7 @@ step(Config, Context, when_keyword, _N, ["I make a POST request to", Path], Data
 step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path], Data) ->
   {url, BaseUrl} = lists:keyfind(url, 1, Config),
   Url = list_to_binary(BaseUrl ++ Path),
+  logger:debug("Target URL: ~p", [Url]),
   Headers0 =
     lists:append(
       [
@@ -121,7 +122,7 @@ step(_Config, Context, then_keyword, _N, ["the response status should be one of"
 
 step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
   {_, _StatusCode, _Headers, Body} = dict:fetch(response, Context),
-  logger:debug("Response: ~s", [Body]),
+  logger:info("Response: ~s", [Body]),
   true;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
@@ -130,8 +131,11 @@ step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) -
 step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
   {_, _StatusCode, Headers, _Body} = dict:fetch(response, Context),
   Cookies = lists:foldl(fun ({<<"Set-Cookie">>, Header}, Acc) -> [Acc | Header] end, [], Headers),
-  logger:debug("Response:  ~p ~s", [Headers, Cookies]).
+  logger:debug("Response:  ~p ~s", [Headers, Cookies]);
+
+step(_Config, _Context, given_keyword, _N, ["I start a websocket connection to ", WebSocketUrl], _) ->
+  {ok, ConnPid} = gun:open(WebSocketUrl, 80),
+  {ok, _Protocol} = gun:await_up(ConnPid).
 
 
-%step(_Config, Context, given_keyword, _N, ["I start a websocket connection to ", WebSocketUrl], _) ->
 %dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).

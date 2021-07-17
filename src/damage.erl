@@ -7,15 +7,17 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([execute_file/1, execute/1, execute/0]).
 
-start_link(_Args) -> 
-    gen_server:start_link(?MODULE, [], []).
+start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
 init([]) -> {ok, undefined}.
 
 handle_call(die, _From, State) -> {stop, {error, died}, dead, State};
-handle_call(_Event, _From, State) -> 
-  logger:debug("handle_call"),
-{reply, ok, State}.
+
+handle_call({execute, FeatureName}, _From, State) ->
+  logger:debug("handle_call execute/1 : ~p", [FeatureName]),
+  execute(FeatureName),
+  {reply, ok, State}.
+
 
 handle_cast(_Event, State) -> {noreply, State}.
 
@@ -62,26 +64,20 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   ).
 
 
-execute_step({Config, Step}, Context) ->
-  {LineNo, StepKeyWord, Body} = Step,
-  {Body0, Args} = get_stepargs(Body),
-  Body1 = damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
-  Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
-  logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
-  logger:debug("step body: ~p: ~p", [Body1, Args1]),
-  StepExecutor =
-    pa:bind(fun execute_step_module/2, [Config, Context, StepKeyWord, LineNo, Body1, Args1]),
-  lists:map(StepExecutor, filelib:wildcard(filename:join(["src", "step_*.erl"]))).
 
+execute_step_module([Config, Context, StepKeyWord, LineNo, Body1, Args1], StepModuleSrc) ->
+    [StepModule, _]=string:tokens(filename:basename(StepModuleSrc), "."),
 
-execute_step_module(StepModule, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) ->
-  try apply(StepModule, step, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) of
-    error -> dict:store(result, {error, LineNo}, Context);
-    true -> Context;
-    false -> throw("Step condition failed.");
-    Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
+  try 
+    case apply(list_to_atom(StepModule), step, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) of
+        error -> dict:store(result, {error, LineNo}, Context);
+        true -> Context;
+        false -> throw("Step condition failed.");
+        Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
+    end
   catch
-    %error : undef -> step_run(Config, Input, Step, Features);
+    error : Reason : _Stacktrace ->
+      logger:error("no step definition ~p", [Reason]);
     %error : function_clause -> step_run(Config, Input, Step, Features);
     throw : {fail, Reason} : Stacktrace ->
       logger:error(
@@ -93,6 +89,18 @@ execute_step_module(StepModule, [Config, Context, StepKeyWord, LineNo, Body1, Ar
         _ -> logger:debug("Continuing after errors.")
       end
   end.
+
+execute_step({Config, Step}, Context) ->
+  {LineNo, StepKeyWord, Body} = Step,
+  {Body0, Args} = get_stepargs(Body),
+  logger:info("rendering step: ~p", [Context]),
+  Body1 = damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
+  Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
+  logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
+  logger:debug("step body: ~p: ~p", [Body1, Args1]),
+  StepExecutor =
+    pa:bind(fun execute_step_module/2, [Config, Context, StepKeyWord, LineNo, Body1, Args1]),
+  lists:map(StepExecutor, filelib:wildcard(filename:join(["src", "steps_*.erl"]))).
 
 
 get_stepargs(Body) when is_list(Body) ->
