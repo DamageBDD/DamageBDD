@@ -7,17 +7,22 @@
 
 -export([step/6]).
 
+response_to_list({Status, StatusCode, Headers, Body}) ->
+  [{status, Status}, {status_code, StatusCode}, {headers, Headers}, {body, Body}].
+
 step(Config, Context, when_keyword, _N, ["I make a GET request to", Url], _) ->
   %io:format("DEBUG step_when I make a GET request to ~p ~n~p ~n", [Url,_Given]),
   {url, ServerUrl} = lists:keyfind(url, 1, Config),
   dict:store(
     response,
-    hackney:request(
-      get,
-      ServerUrl ++ list_to_binary(Url),
-      dict:fetch(headers, Context),
-      <<>>,
-      [{pool, default}, {with_body, true}]
+    response_to_list(
+      hackney:request(
+        get,
+        ServerUrl ++ list_to_binary(Url),
+        dict:fetch(headers, Context),
+        <<>>,
+        [{pool, default}, {with_body, true}]
+      )
     ),
     Context
   );
@@ -27,7 +32,9 @@ step(Config, Context, when_keyword, _N, ["I make a POST request to", Path], Data
   Url = list_to_binary(BaseUrl ++ Path),
   dict:store(
     response,
-    hackney:request(post, Url, dict:fetch(headers, Context), Data, [{with_body, true}]),
+    response_to_list(
+      hackney:request(post, Url, dict:fetch(headers, Context), Data, [{with_body, true}])
+    ),
     Context
   );
 
@@ -50,21 +57,23 @@ step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path],
   {_, SessionId} = lists:keyfind(<<"X-SessionID">>, 1, Headers),
   dict:store(
     response,
-    hackney:request(
-      post,
-      Url,
-      lists:append(Headers0, [{<<"X-CSRFToken">>, CSRFToken}, {<<"X-SessionID">>, SessionId}]),
-      {form, jsx:decode(Data)},
-      [
-        {
-          cookie,
-          [
-            {<<"csrf_token">>, CSRFToken, [{path, <<"/">>}]},
-            {<<"csrftoken">>, CSRFToken, [{path, <<"/">>}]}
-          ]
-        },
-        {with_body, true}
-      ]
+    response_to_list(
+      hackney:request(
+        post,
+        Url,
+        lists:append(Headers0, [{<<"X-CSRFToken">>, CSRFToken}, {<<"X-SessionID">>, SessionId}]),
+        {form, jsx:decode(Data)},
+        [
+          {
+            cookie,
+            [
+              {<<"csrf_token">>, CSRFToken, [{path, <<"/">>}]},
+              {<<"csrftoken">>, CSRFToken, [{path, <<"/">>}]}
+            ]
+          },
+          {with_body, true}
+        ]
+      )
     ),
     Context
   );
@@ -72,9 +81,9 @@ step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path],
 step(_Config, Context, then_keyword, _N, ["the response status must be", Status], _) ->
   Status0 = list_to_integer(Status),
   case dict:fetch(response, Context) of
-    {_, Status0, _, _} -> true;
+    [_, {status_code, Status0}, _, _] -> true;
 
-    {_, Status1, _, _} ->
+    [_, {status_code, Status1}, _, _] ->
       throw({fail, io_lib:format("Response status is not ~p, got ~p", [Status0, Status1])});
 
     Any -> throw({fail, io_lib:format("Response status is not ~p, got ~p", [Status0, Any])})
@@ -82,7 +91,7 @@ step(_Config, Context, then_keyword, _N, ["the response status must be", Status]
 
 step(_Config, Context, then_keyword, _N, ["the json at path", Path, "must be", Json], _) ->
   case dict:fetch(response, Context) of
-    {_, _StatusCode, _Headers, Body} ->
+    [_, _StatusCode, _Headers, Body] ->
       Json0 = list_to_binary(Json),
       logger:debug("step_then the json at path ~p must be ~p~n~p~n", [Path, Json0, Body]),
       logger:debug("~p~n", [ejsonpath:q(Path, jsx:decode(Body, [return_maps]))]),

@@ -1,5 +1,7 @@
 -module(damage).
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
 
@@ -9,7 +11,11 @@
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
-init([]) -> {ok, undefined}.
+init([]) ->
+  logger:info("Server ~p starting.~n", [self()]),
+  process_flag(trap_exit, true),
+  {ok, undefined}.
+
 
 handle_call(die, _From, State) -> {stop, {error, died}, dead, State};
 
@@ -23,7 +29,10 @@ handle_cast(_Event, State) -> {noreply, State}.
 
 handle_info(_Info, State) -> {noreply, State}.
 
-terminate(_Reason, _State) -> ok.
+terminate(Reason, _State) ->
+  logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+  ok.
+
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
@@ -64,36 +73,32 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   ).
 
 
-
 execute_step_module([Config, Context, StepKeyWord, LineNo, Body1, Args1], StepModuleSrc) ->
-    [StepModule, _]=string:tokens(filename:basename(StepModuleSrc), "."),
-
-  try 
+  [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
+  try
     case apply(list_to_atom(StepModule), step, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) of
-        error -> dict:store(result, {error, LineNo}, Context);
-        true -> Context;
-        false -> throw("Step condition failed.");
-        Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
+      error -> dict:store(result, {error, LineNo}, Context);
+      true -> Context;
+      false -> throw("Step condition failed.");
+      Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
     end
   catch
-    error : Reason : _Stacktrace ->
-      logger:error("no step definition ~p", [Reason]);
+    error : Reason:_Stacktrace -> logger:error("no step definition ~p", [Reason]);
     %error : function_clause -> step_run(Config, Input, Step, Features);
     throw : {fail, Reason} : Stacktrace ->
-      logger:error(
-        "~s~nStacktrace:~s",
-        [Reason, logger:pr_stacktrace(Stacktrace, {fail, list_to_binary(Reason)})]
-      ),
+      ?LOG_ERROR(#{reason => Reason, stacktrace => Stacktrace}),
       case lists:keyfind(stop, 1, Config) of
-        {stop, true} -> throw(Reason);
+        {stop, true} -> exit(normal);
         _ -> logger:debug("Continuing after errors.")
       end
   end.
 
+
+execute_step({Config, Step}, [Context]) -> execute_step({Config, Step}, Context);
+
 execute_step({Config, Step}, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
   {Body0, Args} = get_stepargs(Body),
-  logger:info("rendering step: ~p", [Context]),
   Body1 = damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
   Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
   logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
