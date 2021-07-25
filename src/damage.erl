@@ -38,25 +38,57 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 execute() ->
   {ok, Config} = file:consult(filename:join("config", "damage.config")),
-  {feature_dir, FeatureDir} = lists:keyfind(feature_dir, 1, Config),
-  lists:map(fun execute_file/1, filelib:wildcard(filename:join([FeatureDir, "**", "*.feature"]))).
+  {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
+  {feature_include, FeatureInclude} = lists:keyfind(feature_include, 1, Config),
+  lists:map(
+    fun
+      (FeatureDir) ->
+        lists:map(fun execute_file/1, filelib:wildcard(filename:join(FeatureDir, FeatureInclude)))
+    end,
+    FeatureDirs
+  ).
 
 
 execute(FeatureName) ->
   {ok, Config} = file:consult(filename:join("config", "damage.config")),
-  {feature_dir, FeatureDir} = lists:keyfind(feature_dir, 1, Config),
-  logger:debug("Executing feature ~p in featuredir ~p.", [FeatureName ++ ".feature", FeatureDir]),
-  execute_file(filename:join([FeatureDir, FeatureName ++ ".feature"])).
+  {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
+  {feature_suffix, FeatureSuffix} = lists:keyfind(feature_suffix, 1, Config),
+  %{feature_include, FeatureInclude} = lists:keyfind(feature_include, 1, Config),
+  lists:map(
+    fun
+      (FeatureDir) ->
+        logger:debug(
+          "Looking for feature name ~p in featuredir ~p.",
+          [lists:flatten(FeatureName, FeatureSuffix), FeatureDir]
+        ),
+        lists:map(
+          fun execute_file/1,
+            lists:map(
+                fun
+                (FeatureFileName) ->
+                        filename:join(FeatureDir, FeatureFileName)
+                end,
+                filelib:wildcard(lists:flatten(FeatureName, FeatureSuffix), FeatureDir)
+            )
+        )
+    end,
+    FeatureDirs
+  ).
 
 
 execute_file(Filename) ->
-  {_LineNo, Tags, Feature, Description, BackGround, Scenarios} = egherkin:parse_file(Filename),
-  {ok, ConfigBase} = file:consult(filename:join("config", "damage.config")),
-  execute_feature(ConfigBase, Feature, Tags, Feature, Description, BackGround, Scenarios).
+  try egherkin:parse_file(Filename) of
+    {_LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
+      {ok, ConfigBase} = file:consult(filename:join("config", "damage.config")),
+      logger:debug("Executing feature file ~p.", [Filename ++ ".feature"]),
+      execute_feature(ConfigBase, Feature, Tags, Feature, Description, BackGround, Scenarios)
+  catch
+    {error, enont} -> logger:debug("Feature file ~p not found.", [Filename ++ ".feature"])
+  end.
 
 
 execute_feature(Config, FeatureName, Tags, Feature, Description, BackGround, Scenarios) ->
-  logger:info("~p: ~p: ~p: ~p, ~p", [FeatureName, Tags, Feature, Description, BackGround]),
+  logger:debug("~p: ~p: ~p: ~p, ~p", [FeatureName, Tags, Feature, Description, BackGround]),
   [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios].
 
 
