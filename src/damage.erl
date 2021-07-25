@@ -63,13 +63,10 @@ execute(FeatureName) ->
         ),
         lists:map(
           fun execute_file/1,
-            lists:map(
-                fun
-                (FeatureFileName) ->
-                        filename:join(FeatureDir, FeatureFileName)
-                end,
-                filelib:wildcard(lists:flatten(FeatureName, FeatureSuffix), FeatureDir)
-            )
+          lists:map(
+            fun (FeatureFileName) -> filename:join(FeatureDir, FeatureFileName) end,
+            filelib:wildcard(lists:flatten(FeatureName, FeatureSuffix), FeatureDir)
+          )
         )
     end,
     FeatureDirs
@@ -78,12 +75,18 @@ execute(FeatureName) ->
 
 execute_file(Filename) ->
   try egherkin:parse_file(Filename) of
+    {failed, LineNo, Message} ->
+      logger:info(
+        "FAIL ~p +~p ~n     ~p.",
+        [Filename, LineNo, Message]
+      );
     {_LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
       {ok, ConfigBase} = file:consult(filename:join("config", "damage.config")),
       logger:debug("Executing feature file ~p.", [Filename ++ ".feature"]),
       execute_feature(ConfigBase, Feature, Tags, Feature, Description, BackGround, Scenarios)
   catch
-    {error, enont} -> logger:debug("Feature file ~p not found.", [Filename ++ ".feature"])
+
+    {error, enont} -> logger:debug("Feature file ~p not found.", [Filename])
   end.
 
 
