@@ -75,17 +75,13 @@ execute(FeatureName) ->
 
 execute_file(Filename) ->
   try egherkin:parse_file(Filename) of
-    {failed, LineNo, Message} ->
-      logger:info(
-        "FAIL ~p +~p ~n     ~p.",
-        [Filename, LineNo, Message]
-      );
+    {failed, LineNo, Message} -> logger:info("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
+
     {_LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
       {ok, ConfigBase} = file:consult(filename:join("config", "damage.config")),
       logger:debug("Executing feature file ~p.", [Filename ++ ".feature"]),
       execute_feature(ConfigBase, Feature, Tags, Feature, Description, BackGround, Scenarios)
   catch
-
     {error, enont} -> logger:debug("Feature file ~p not found.", [Filename])
   end.
 
@@ -108,6 +104,18 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   ).
 
 
+should_exit(Config) ->
+  case lists:keyfind(stop, 1, Config) of
+    {stop, true} -> exit(normal);
+    _ -> logger:debug("Continuing after errors.")
+  end.
+
+
+handle_step_fail(Config, Reason, Stacktrace) ->
+  ?LOG_ERROR(#{reason => Reason, stacktrace => Stacktrace}),
+  should_exit(Config).
+
+
 execute_step_module([Config, Context, StepKeyWord, LineNo, Body1, Args1], StepModuleSrc) ->
   [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
   try
@@ -118,14 +126,12 @@ execute_step_module([Config, Context, StepKeyWord, LineNo, Body1, Args1], StepMo
       Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
     end
   catch
-    error : Reason:_Stacktrace -> logger:error("no step definition ~p", [Reason]);
-    %error : function_clause -> step_run(Config, Input, Step, Features);
-    throw : {fail, Reason} : Stacktrace ->
-      ?LOG_ERROR(#{reason => Reason, stacktrace => Stacktrace}),
-      case lists:keyfind(stop, 1, Config) of
-        {stop, true} -> exit(normal);
-        _ -> logger:debug("Continuing after errors.")
-      end
+    error : function_clause:_Stacktrace ->
+      logger:info("Step not implemented: ~p", [Body1]),
+      should_exit(Config);
+
+    error : Reason:Stacktrace -> handle_step_fail(Config, Reason, Stacktrace);
+    throw : {fail, Reason} : Stacktrace -> handle_step_fail(Config, Reason, Stacktrace)
   end.
 
 
@@ -134,6 +140,7 @@ execute_step({Config, Step}, [Context]) -> execute_step({Config, Step}, Context)
 execute_step({Config, Step}, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
   {Body0, Args} = get_stepargs(Body),
+  %logger:debug("rendering step body: ~p: ~p", [Body0, Context]),
   Body1 = damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
   Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
   logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),

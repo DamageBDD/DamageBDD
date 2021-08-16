@@ -37,7 +37,13 @@ Run
 
 Implementation Roadmap
 ----------------------
-
+- capture metrics eg:
+    - response timing
+    - calls, percentile, fails
+- auditing of the results, authenticity, validity
+    - tracking history
+    - sharing result
+    - explaining results
 - documentation, unittests
 - dynamic concurrency tuning 
 - junit report output
