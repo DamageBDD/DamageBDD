@@ -120,7 +120,7 @@ step(_Config, Context, then_keyword, _N, ["the response status must be", Status]
 
 step(_Config, Context, then_keyword, _N, ["the json at path", Path, "must be", Json], _) ->
   case dict:fetch(response, Context) of
-    [_, _StatusCode, _Headers, Body] ->
+    [{status_code, 200}, _Headers, {body, Body}] ->
       Json0 = list_to_binary(Json),
       logger:debug("step_then the json at path ~p must be ~p~n~p~n", [Path, Json0, Body]),
       logger:debug("~p~n", [ejsonpath:q(Path, jsx:decode(Body, [return_maps]))]),
