@@ -74,13 +74,14 @@ step_post_request(Config) ->
 
 
 step_store_json_in(_TestConfig) ->
+    TestId= <<"testid">>,
   Context =
     dict:store(
       response,
       [
         {status_code, 200},
         dict:new(),
-        {body, jsx:encode(#{id => <<"testid">>})}
+        {body, jsx:encode(#{id => TestId})}
       ],
       dict:new()
     ),
@@ -93,5 +94,4 @@ step_store_json_in(_TestConfig) ->
       ["I store the JSON at path", "$.id", "in", "installid"],
       []
     ),
-  Id0 = dict:fetch(installid, Context0),
-  Id0.
+  TestId = dict:fetch(installid, Context0).
