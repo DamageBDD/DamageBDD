@@ -6,7 +6,16 @@
 -behaviour(poolboy_worker).
 
 -export([start_link/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+-export(
+  [
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+  ]
+).
 -export([execute_file/1, execute/1, execute/0]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
@@ -43,7 +52,10 @@ execute() ->
   lists:map(
     fun
       (FeatureDir) ->
-        lists:map(fun execute_file/1, filelib:wildcard(filename:join(FeatureDir, FeatureInclude)))
+        lists:map(
+          fun execute_file/1,
+          filelib:wildcard(filename:join(FeatureDir, FeatureInclude))
+        )
     end,
     FeatureDirs
   ).
@@ -64,39 +76,90 @@ execute(FeatureName) ->
         lists:map(
           fun execute_file/1,
           lists:map(
-            fun (FeatureFileName) -> filename:join(FeatureDir, FeatureFileName) end,
-            filelib:wildcard(lists:flatten(FeatureName, FeatureSuffix), FeatureDir)
+            fun
+              (FeatureFileName) -> filename:join(FeatureDir, FeatureFileName)
+            end,
+            filelib:wildcard(
+              lists:flatten(FeatureName, FeatureSuffix),
+              FeatureDir
+            )
           )
         )
     end,
     FeatureDirs
-  ).
+  ),
+  ok.
 
 
 execute_file(Filename) ->
   try egherkin:parse_file(Filename) of
-    {failed, LineNo, Message} -> logger:info("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
+    {failed, LineNo, Message} ->
+      logger:info("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
 
     {_LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
-      {ok, ConfigBase} = file:consult(filename:join("config", "damage.config")),
       logger:debug("Executing feature file ~p.", [Filename ++ ".feature"]),
-      execute_feature(ConfigBase, Feature, Tags, Feature, Description, BackGround, Scenarios)
+      execute_feature(
+        none,
+        Feature,
+        Tags,
+        Feature,
+        Description,
+        BackGround,
+        Scenarios
+      )
   catch
     {error, enont} -> logger:debug("Feature file ~p not found.", [Filename])
   end.
 
 
-execute_feature(Config, FeatureName, Tags, Feature, Description, BackGround, Scenarios) ->
-  logger:debug("~p: ~p: ~p: ~p, ~p", [FeatureName, Tags, Feature, Description, BackGround]),
+execute_feature(
+  none,
+  _FeatureName,
+  Tags,
+  Feature,
+  Description,
+  BackGround,
+  Scenarios
+) ->
+  {ok, ConfigBase} = file:consult(filename:join("config", "damage.config")),
+  execute_feature(
+    ConfigBase,
+    Feature,
+    Tags,
+    Feature,
+    Description,
+    BackGround,
+    Scenarios
+  );
+
+execute_feature(
+  Config,
+  FeatureName,
+  Tags,
+  Feature,
+  Description,
+  BackGround,
+  Scenarios
+) ->
+  logger:debug(
+    "~p: ~p: ~p: ~p, ~p",
+    [FeatureName, Tags, Feature, Description, BackGround]
+  ),
   [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios].
 
 
-execute_scenario(Config, undefined, Scenario) -> execute_scenario(Config, {none, []}, Scenario);
-execute_scenario(Config, [], Scenario) -> execute_scenario(Config, {none, []}, Scenario);
+execute_scenario(Config, undefined, Scenario) ->
+  execute_scenario(Config, {none, []}, Scenario);
+
+execute_scenario(Config, [], Scenario) ->
+  execute_scenario(Config, {none, []}, Scenario);
 
 execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   {LineNo, ScenarioName, Tags, Steps} = Scenario,
-  logger:info("executing scenario: ~p: line: ~p: tags ~p", [ScenarioName, LineNo, Tags]),
+  logger:info(
+    "executing scenario: ~p: line: ~p: tags ~p",
+    [ScenarioName, LineNo, Tags]
+  ),
   lists:foldl(
     fun execute_step/2,
     get_global_template_context(Config, dict:new()),
@@ -116,44 +179,67 @@ handle_step_fail(Config, Reason, Stacktrace) ->
   should_exit(Config).
 
 
-execute_step_module([Config, Context, StepKeyWord, LineNo, Body1, Args1], StepModuleSrc) ->
+execute_step_module(
+  [Config, Context, StepKeyWord, LineNo, Body1, Args1],
+  StepModuleSrc
+) ->
   [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
   try
-    case apply(list_to_atom(StepModule), step, [Config, Context, StepKeyWord, LineNo, Body1, Args1]) of
+    case
+    apply(
+      list_to_atom(StepModule),
+      step,
+      [Config, Context, StepKeyWord, LineNo, Body1, Args1]
+    ) of
       error -> dict:store(result, {error, LineNo}, Context);
       true -> Context;
       false -> throw("Step condition failed.");
       Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
     end
   catch
-    error : function_clause:_Stacktrace ->
-      logger:info("Step not implemented: ~p", [Body1]),
-      should_exit(Config);
+    error : function_clause:Stacktrace ->
+      erlang:display(Stacktrace),
+      logger:error("Step not implemented: ~p", [Body1]),
+      Context;
 
+    %%should_exit(Config);
     error : Reason:Stacktrace -> handle_step_fail(Config, Reason, Stacktrace);
-    throw : {fail, Reason} : Stacktrace -> handle_step_fail(Config, Reason, Stacktrace)
+
+    throw : {fail, Reason} : Stacktrace ->
+      handle_step_fail(Config, Reason, Stacktrace)
   end.
 
 
-execute_step({Config, Step}, [Context]) -> execute_step({Config, Step}, Context);
+execute_step({Config, Step}, [Context]) ->
+  execute_step({Config, Step}, Context);
 
 execute_step({Config, Step}, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
   {Body0, Args} = get_stepargs(Body),
   %logger:debug("rendering step body: ~p: ~p", [Body0, Context]),
-  Body1 = damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
+  Body1 =
+    damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
   Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
   logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
   logger:debug("step body: ~p: ~p", [Body1, Args1]),
   StepExecutor =
-    pa:bind(fun execute_step_module/2, [Config, Context, StepKeyWord, LineNo, Body1, Args1]),
-  lists:map(StepExecutor, filelib:wildcard(filename:join(["src", "steps_*.erl"]))).
+    pa:bind(
+      fun execute_step_module/2,
+      [Config, Context, StepKeyWord, LineNo, Body1, Args1]
+    ),
+  lists:map(
+    StepExecutor,
+    filelib:wildcard(filename:join(["src", "steps_*.erl"]))
+  ).
 
 
 get_stepargs(Body) when is_list(Body) ->
   case lists:keytake(docstring, 1, Body) of
     {value, {docstring, Doc}, Body0} ->
-      {damage_utils:binarystr_join(Body0, <<" ">>), damage_utils:binarystr_join(Doc)};
+      {
+        damage_utils:binarystr_join(Body0, <<" ">>),
+        damage_utils:binarystr_join(Doc)
+      };
 
     _ -> {damage_utils:binarystr_join(Body, <<" ">>), <<"">>}
   end.
@@ -162,7 +248,8 @@ get_stepargs(Body) when is_list(Body) ->
 get_global_template_context(Config, Context) ->
   {context_yaml, ContextYamlFile} = lists:keyfind(context_yaml, 1, Config),
   {deployment, Deployment} = lists:keyfind(deployment, 1, Config),
-  {ok, [ContextYaml | _]} = fast_yaml:decode_from_file(ContextYamlFile, [{plain_as_atom, true}]),
+  {ok, [ContextYaml | _]} =
+    fast_yaml:decode_from_file(ContextYamlFile, [{plain_as_atom, true}]),
   {deployments, Deployments} = lists:keyfind(deployments, 1, ContextYaml),
   {Deployment, DeploymentConfig} = lists:keyfind(Deployment, 1, Deployments),
   {ok, Timestamp} = datestring:format("YmdHM", erlang:localtime()),
@@ -172,6 +259,10 @@ get_global_template_context(Config, Context) ->
     dict:store(
       timestamp,
       Timestamp,
-      dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, dict:from_list(DeploymentConfig), Context)
+      dict:merge(
+        fun (_Key, Val1, _Val2) -> Val1 end,
+        dict:from_list(DeploymentConfig),
+        Context
+      )
     )
   ).

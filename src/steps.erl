@@ -7,7 +7,14 @@
 
 -export([step/6]).
 
-step(_Config, Context, _, _N, ["I set the variable ", Variable, " to value ", Value], _) ->
+step(
+  _Config,
+  Context,
+  _,
+  _N,
+  ["I set the variable ", Variable, " to value ", Value],
+  _
+) ->
   dict:store(Variable, Value, Context);
 
 step(_Config, Context, _, _N, ["I store an uuid in ", Variable], _) ->
@@ -21,4 +28,8 @@ step(
   ["I store current time string in ", Variable, " with format ", Format],
   _
 ) ->
-  dict:store(Variable, datestring:format(Format, calendar:universal_time()), Context).
+  dict:store(
+    Variable,
+    datestring:format(Format, calendar:universal_time()),
+    Context
+  ).

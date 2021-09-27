@@ -16,12 +16,20 @@ gun_post(Config, Context, Path, Headers, Data) ->
   {ok, ConnPid} = gun:open(Host, Port),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
   case gun:await(ConnPid, StreamRef) of
-    {response, fin, _Status, _Headers} -> no_data;
+    {response, fin, Status, Headers0} ->
+      logger:debug("POST Response: ~s~n", [Status]),
+      dict:store(
+        response,
+        response_to_list({Status, Headers0, <<"">>}),
+        Context
+      );
 
-    {response, nofin, Status, Headers} ->
+    {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
       logger:debug("POST Response: ~s~n", [Body]),
-      dict:store(response, response_to_list({Status, Headers, Body}), Context)
+      dict:store(response, response_to_list({Status, Headers0, Body}), Context);
+
+    Default -> logger:debug("POST Response: ~p~n", [Default])
   end.
 
 
@@ -50,19 +58,38 @@ step(Config, Context, when_keyword, _N, ["I make a GET request to", Path], _) ->
     [{<<"accept">>, "application/json"}, {<<"user-agent">>, "revolver/1.0"}]
   );
 
-step(Config, Context, when_keyword, _N, ["I make a POST request to", Path], Data) ->
+step(
+  Config,
+  Context,
+  when_keyword,
+  _N,
+  ["I make a POST request to", Path],
+  Data
+) ->
   gun_post(
     Config,
     Context,
     Path,
-    [{<<"accept">>, "application/json"}, {<<"user-agent">>, "revolver/1.0"}],
+    [
+      {<<"accept">>, "application/json"},
+      {<<"user-agent">>, "revolver/1.0"},
+      {<<"Content-type">>, "application/json"}
+    ],
     Data
   );
 
-step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path], Data) ->
+step(
+  Config,
+  Context,
+  when_keyword,
+  _N,
+  ["I make a CSRF POST request to", Path],
+  Data
+) ->
   Headers0 =
     lists:append(
       [
+        {<<"accept">>, "application/json"},
         {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
         {<<"Referer">>, Path},
         {<<"X-Requested-with">>, <<"XMLHttpRequest">>}
@@ -71,9 +98,9 @@ step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path],
     ),
   Context0 = gun_get(Config, Context, Path, Headers0),
   case dict:fetch(response, Context0) of
-    [StatusCode, Headers, Body] ->
-      {_, CSRFToken} = lists:keyfind(<<"X-CSRFToken">>, 1, Headers),
-      {_, SessionId} = lists:keyfind(<<"X-SessionID">>, 1, Headers),
+    [StatusCode, {headers, Headers}, Body] ->
+      {_, CSRFToken} = lists:keyfind(<<"x-csrftoken">>, 1, Headers),
+      {_, SessionId} = lists:keyfind(<<"x-sessionid">>, 1, Headers),
       logger:debug(
         "POSTResponse: ~p:~p:~p:~p:~p",
         [StatusCode, Headers, Body, CSRFToken, SessionId]
@@ -82,7 +109,10 @@ step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path],
         Config,
         Context,
         Path,
-        lists:append(Headers0, [{<<"X-CSRFToken">>, CSRFToken}, {<<"X-SessionID">>, SessionId}]),
+        lists:append(
+          Headers0,
+          [{<<"X-CSRFToken">>, CSRFToken}, {<<"X-SessionID">>, SessionId}]
+        ),
         Data
       )
     %dict:store(
@@ -107,23 +137,46 @@ step(Config, Context, when_keyword, _N, ["I make a CSRF POST request to", Path],
     %)
   end;
 
-step(_Config, Context, then_keyword, _N, ["the response status must be", Status], _) ->
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["the response status must be", Status],
+  _
+) ->
   Status0 = list_to_integer(Status),
   case dict:fetch(response, Context) of
     [{status_code, Status0}, _, _] -> Context;
 
     [{status_code, Status1}, _, _] ->
-      throw({fail, io_lib:format("Response status is not ~p, got ~p", [Status0, Status1])});
+      throw(
+        {
+          fail,
+          io_lib:format("Response status is not ~p, got ~p", [Status0, Status1])
+        }
+      );
 
-    Any -> throw({fail, io_lib:format("Response status is not ~p, got ~p", [Status0, Any])})
+    Any ->
+      throw(
+        {
+          fail,
+          io_lib:format("Response status is not ~p, got ~p", [Status0, Any])
+        }
+      )
   end;
 
-step(_Config, Context, then_keyword, _N, ["the json at path", Path, "must be", Json], _) ->
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["the json at path", Path, "must be", Json],
+  _
+) ->
   case dict:fetch(response, Context) of
     [{status_code, 200}, _Headers, {body, Body}] ->
       Json0 = list_to_binary(Json),
-      logger:debug("step_then the json at path ~p must be ~p~n~p~n", [Path, Json0, Body]),
-      logger:debug("~p~n", [ejsonpath:q(Path, jsx:decode(Body, [return_maps]))]),
       case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
         {[Json0 | _], _} -> Context;
 
@@ -131,15 +184,26 @@ step(_Config, Context, then_keyword, _N, ["the json at path", Path, "must be", J
           throw(
             {
               fail,
-              io_lib:format("the json at path ~p is not ~p, it is ~p.", [Path, Json, UnExpected])
+              io_lib:format(
+                "the json at path ~p is not ~p, it is ~p.",
+                [Path, Json, UnExpected]
+              )
             }
           )
       end;
 
-    UnExpected -> throw({fail, io_lib:format("Unexpected response ~p", [UnExpected])})
+    UnExpected ->
+      throw({fail, io_lib:format("Unexpected response ~p", [UnExpected])})
   end;
 
-step(_Config, Context, then_keyword, _N, ["the response status must be one of", Responses], _) ->
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["the response status must be one of", Responses],
+  _
+) ->
   logger:debug("the response status must be one of ~p.", [Responses]),
   case dict:fetch(response, Context) of
     [_, {status_code, StatusCode}, _Headers, _Body] ->
@@ -153,7 +217,13 @@ step(_Config, Context, then_keyword, _N, ["the response status must be one of", 
         _ ->
           logger:debug("the response status must be one of ~p.", [StatusCode]),
           throw(
-            {fail, io_lib:format("Response status ~p is not one of ~p", [StatusCode, Responses])}
+            {
+              fail,
+              io_lib:format(
+                "Response status ~p is not one of ~p",
+                [StatusCode, Responses]
+              )
+            }
           )
       end;
 
@@ -177,14 +247,54 @@ step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
   logger:debug("Response Headers:  ~p", [Headers]),
   Cookies =
     lists:foldl(
-      fun ({<<"Set-Cookie">>, Header}, Acc) -> [Acc | Header]; (_Other, Acc) -> Acc end,
+      fun
+        ({<<"Set-Cookie">>, Header}, Acc) -> [Acc | Header];
+        (_Other, Acc) -> Acc
+      end,
       [],
       Headers
     ),
   logger:debug("Response:  ~p ~s", [Headers, Cookies]),
   dict:store(cookies, Cookies, Context);
 
-step(_Config, _Context, given_keyword, _N, ["I start a websocket connection to ", WebSocketUrl], _) ->
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["I store the JSON at path", Path, "in", Variable],
+  _
+) ->
+  case dict:fetch(response, Context) of
+    [{status_code, 200}, _Headers, {body, Body}] ->
+      Variable0 = list_to_atom(Variable),
+      case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
+        {[Json0 | _], _} -> dict:store(Variable0, Json0, Context);
+
+        UnExpected ->
+          throw(
+            {
+              fail,
+              io_lib:format(
+                "the json at path ~p is not ~p, it is ~p.",
+                [Path, Variable, UnExpected]
+              )
+            }
+          )
+      end;
+
+    UnExpected ->
+      throw({fail, io_lib:format("Unexpected response ~p", [UnExpected])})
+  end;
+
+step(
+  _Config,
+  _Context,
+  given_keyword,
+  _N,
+  ["I start a websocket connection to ", WebSocketUrl],
+  _
+) ->
   {ok, ConnPid} = gun:open(WebSocketUrl, 80),
   {ok, _Protocol} = gun:await_up(ConnPid).
 

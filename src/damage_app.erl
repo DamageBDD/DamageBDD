@@ -31,5 +31,8 @@ execute(_FeatureName, 0) -> logger:info("ending.", []);
 
 execute(FeatureName, Count) ->
   logger:info("starting transaction ~p.", [Count]),
-  poolboy:transaction(bdd, fun (Worker) -> gen_server:call(Worker, {execute, FeatureName}) end),
+  poolboy:transaction(
+    bdd,
+    fun (Worker) -> gen_server:call(Worker, {execute, FeatureName}) end
+  ),
   execute(FeatureName, Count - 1).

@@ -13,7 +13,7 @@ Configure
     %%-*-erlang-*- 
     {url, "http://localhost:8000"}.
     {extension, "feature"}.
-    {context_yaml, "config/behave.yaml"}.
+    {context_yaml, "config/damage.yaml"}.
     {deployment, local}.
     {stop, true}.
     {feature_dir, "features"}.
@@ -34,21 +34,6 @@ Run
 
     $ rebar3 shell
     > damage:execute('test')
-
-Implementation Roadmap
-----------------------
-- capture metrics eg:
-    - response timing
-    - calls, percentile, fails
-- auditing of the results, authenticity, validity
-    - tracking history
-    - sharing result
-    - explaining results
-- documentation, unittests
-- dynamic concurrency tuning 
-- junit report output
-- generate readable bdd output
-- generate failure report
 
 
 HTTP Steps
