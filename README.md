@@ -19,7 +19,7 @@ Configure
     {feature_dir, "features"}.
    ```
 
-2. Edit `behave.yaml` for context data.
+2. Edit `damage.yaml` for context data.
    ```
    deployments:
      local:
@@ -41,7 +41,7 @@ HTTP Steps
 
 Make a simple http GET request and verify results.
 ```
-When I make a GET request to "/v3/debug"
+When I make a GET request to "/some/path"
 Then the response status must be "200"
 Then the json at path "$.status" must be "ok"
 ```
@@ -49,7 +49,7 @@ Then the json at path "$.status" must be "ok"
 Make a simple http POST request with post data in body.
 
 ```
-I make a POST request to {path}
+I make a POST request to "/some/path"
 {
    "data1": "value1", 
    "data2": "value2"
