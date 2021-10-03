@@ -66,7 +66,8 @@ hello_to_html(Req, State) ->
 hello_to_json(Req0, State) ->
   Body = <<"{\"rest\": \"Hello World!\"}">>,
   Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
-  Req = cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
+  Req =
+    cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
   {Body, Req, State}.
 
 

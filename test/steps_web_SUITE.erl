@@ -26,7 +26,7 @@ init_dispatch(_) ->
   cowboy_router:compile([{"localhost", [{"/", hello_h, []}]}]).
 
 step_get_request(_TestConfig) ->
-  Context = dict:new(),
+  Context = maps:new(),
   Context0 =
     steps_web:step(
       ?CONFIG,
@@ -36,11 +36,11 @@ step_get_request(_TestConfig) ->
       ["I make a GET request to", "/"],
       []
     ),
-  [{status_code, 200}, _, _] = dict:fetch(response, Context0).
+  [{status_code, 200}, _, _] = maps:get(response, Context0).
 
 
 step_post_csrf_request(_TestConfig) ->
-  Context = dict:store(headers, [], dict:new()),
+  Context = maps:put(headers, [], maps:new()),
   Context0 =
     steps_web:step(
       ?CONFIG,
@@ -50,7 +50,7 @@ step_post_csrf_request(_TestConfig) ->
       ["I make a CSRF POST request to", "/"],
       []
     ),
-  [{status_code, 303}, _, _] = dict:fetch(response, Context0).
+  [{status_code, 303}, _, _] = maps:get(response, Context0).
 
 
 step_post_request(Config) ->
@@ -60,7 +60,7 @@ step_post_request(Config) ->
       [{port, 8088}],
       #{env => #{dispatch => init_dispatch(Config)}, chunked => false}
     ),
-  Context = dict:new(),
+  Context = maps:new(),
   Context0 =
     steps_web:step(
       ?CONFIG,
@@ -70,20 +70,16 @@ step_post_request(Config) ->
       ["I make a POST request to", "/"],
       []
     ),
-  [{status_code, 303}, _, _] = dict:fetch(response, Context0).
+  [{status_code, 303}, _, _] = maps:get(response, Context0).
 
 
 step_store_json_in(_TestConfig) ->
-    TestId= <<"testid">>,
+  TestId = <<"testid">>,
   Context =
-    dict:store(
+    maps:put(
       response,
-      [
-        {status_code, 200},
-        dict:new(),
-        {body, jsx:encode(#{id => TestId})}
-      ],
-      dict:new()
+      [{status_code, 200}, maps:new(), {body, jsx:encode(#{id => TestId})}],
+      maps:new()
     ),
   Context0 =
     steps_web:step(
@@ -94,4 +90,4 @@ step_store_json_in(_TestConfig) ->
       ["I store the JSON at path", "$.id", "in", "installid"],
       []
     ),
-  TestId = dict:fetch(installid, Context0).
+  TestId = maps:get(installid, Context0).

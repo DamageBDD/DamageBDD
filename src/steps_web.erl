@@ -18,16 +18,12 @@ gun_post(Config, Context, Path, Headers, Data) ->
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
       logger:debug("POST Response: ~s~n", [Status]),
-      dict:store(
-        response,
-        response_to_list({Status, Headers0, <<"">>}),
-        Context
-      );
+      maps:put(response, response_to_list({Status, Headers0, <<"">>}), Context);
 
     {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
       logger:debug("POST Response: ~s~n", [Body]),
-      dict:store(response, response_to_list({Status, Headers0, Body}), Context);
+      maps:put(response, response_to_list({Status, Headers0, Body}), Context);
 
     Default -> logger:debug("POST Response: ~p~n", [Default])
   end.
@@ -40,12 +36,12 @@ gun_get(Config, Context, Path, Headers) ->
   StreamRef = gun:get(ConnPid, Path, Headers),
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
-      dict:store(response, response_to_list({Status, Headers0, ""}), Context);
+      maps:put(response, response_to_list({Status, Headers0, ""}), Context);
 
     {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
       logger:debug("GET Response: ~s~n", [Body]),
-      dict:store(response, response_to_list({Status, Headers0, Body}), Context)
+      maps:put(response, response_to_list({Status, Headers0, Body}), Context)
   end.
 
 
@@ -94,10 +90,10 @@ step(
         {<<"Referer">>, Path},
         {<<"X-Requested-with">>, <<"XMLHttpRequest">>}
       ],
-      dict:fetch(headers, Context)
+      maps:get(headers, Context)
     ),
   Context0 = gun_get(Config, Context, Path, Headers0),
-  case dict:fetch(response, Context0) of
+  case maps:get(response, Context0) of
     [StatusCode, {headers, Headers}, Body] ->
       {_, CSRFToken} = lists:keyfind(<<"x-csrftoken">>, 1, Headers),
       {_, SessionId} = lists:keyfind(<<"x-sessionid">>, 1, Headers),
@@ -142,11 +138,11 @@ step(
   Context,
   then_keyword,
   _N,
-  ["the response status must be", Status],
+  ["the response status should be", Status],
   _
 ) ->
   Status0 = list_to_integer(Status),
-  case dict:fetch(response, Context) of
+  case maps:get(response, Context) of
     [{status_code, Status0}, _, _] -> Context;
 
     [{status_code, Status1}, _, _] ->
@@ -174,7 +170,7 @@ step(
   ["the json at path", Path, "must be", Json],
   _
 ) ->
-  case dict:fetch(response, Context) of
+  case maps:get(response, Context) of
     [{status_code, 200}, _Headers, {body, Body}] ->
       Json0 = list_to_binary(Json),
       case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
@@ -205,7 +201,7 @@ step(
   _
 ) ->
   logger:debug("the response status must be one of ~p.", [Responses]),
-  case dict:fetch(response, Context) of
+  case maps:get(response, Context) of
     [_, {status_code, StatusCode}, _Headers, _Body] ->
       case
       lists:member(
@@ -233,17 +229,17 @@ step(
   end;
 
 step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
-  [_, _StatusCode, _Headers, {body, Body}] = dict:fetch(response, Context),
+  [_, _StatusCode, _Headers, {body, Body}] = maps:get(response, Context),
   logger:info("Response: ~s", [Body]),
   Context;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
-  dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context),
+  maps:put(headers, {list_to_binary(Header), list_to_binary(Value)}, Context),
   logger:debug("Header Set: ~p", [Context]),
   Context;
 
 step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
-  [_, _StatusCode, {headers, Headers}, _Body] = dict:fetch(response, Context),
+  [_, _StatusCode, {headers, Headers}, _Body] = maps:put(response, Context),
   logger:debug("Response Headers:  ~p", [Headers]),
   Cookies =
     lists:foldl(
@@ -255,7 +251,7 @@ step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
       Headers
     ),
   logger:debug("Response:  ~p ~s", [Headers, Cookies]),
-  dict:store(cookies, Cookies, Context);
+  maps:put(cookies, Cookies, Context);
 
 step(
   _Config,
@@ -265,11 +261,11 @@ step(
   ["I store the JSON at path", Path, "in", Variable],
   _
 ) ->
-  case dict:fetch(response, Context) of
+  case maps:get(response, Context) of
     [{status_code, 200}, _Headers, {body, Body}] ->
       Variable0 = list_to_atom(Variable),
       case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
-        {[Json0 | _], _} -> dict:store(Variable0, Json0, Context);
+        {[Json0 | _], _} -> maps:put(Variable0, Json0, Context);
 
         UnExpected ->
           throw(

@@ -162,7 +162,7 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   ),
   lists:foldl(
     fun execute_step/2,
-    get_global_template_context(Config, dict:new()),
+    get_global_template_context(Config, maps:new()),
     [{Config, S} || S <- lists:append(BackGroundSteps, Steps)]
   ).
 
@@ -180,28 +180,42 @@ handle_step_fail(Config, Reason, Stacktrace) ->
 
 
 execute_step_module(
-  [Config, Context, StepKeyWord, LineNo, Body1, Args1],
+  _Config,
+  #{step_notfound := false} = Context,
+  _StepKeyWord,
+  _LineNo,
+  _Body1,
+  _Args1,
+  _StepModuleSrc
+) ->
+  Context;
+
+execute_step_module(
+  Config,
+  #{step_notfound := true} = Context,
+  StepKeyWord,
+  LineNo,
+  Body1,
+  Args1,
   StepModuleSrc
 ) ->
   [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
+  logger:debug("Trying step module ~p for ~p", [StepModule, Body1]),
   try
-    case
+    Context0 = case
     apply(
       list_to_atom(StepModule),
       step,
       [Config, Context, StepKeyWord, LineNo, Body1, Args1]
     ) of
-      error -> dict:store(result, {error, LineNo}, Context);
+      error -> maps:put(result, {error, LineNo}, Context);
       true -> Context;
       false -> throw("Step condition failed.");
-      Result -> dict:merge(fun (_Key, Val1, _Val2) -> Val1 end, Result, Context)
-    end
+      Result -> maps:merge(Result, Context)
+    end,
+    maps:put(step_notfound, false, Context0)
   catch
-    error : function_clause:Stacktrace ->
-      erlang:display(Stacktrace),
-      logger:error("Step not implemented: ~p", [Body1]),
-      Context;
-
+    error : function_clause:_ -> maps:put(step_notfound, true, Context);
     %%should_exit(Config);
     error : Reason:Stacktrace -> handle_step_fail(Config, Reason, Stacktrace);
 
@@ -218,19 +232,45 @@ execute_step({Config, Step}, Context) ->
   {Body0, Args} = get_stepargs(Body),
   %logger:debug("rendering step body: ~p: ~p", [Body0, Context]),
   Body1 =
-    damage_utils:tokenize(mustache:render(binary_to_list(Body0), Context)),
-  Args1 = list_to_binary(mustache:render(binary_to_list(Args), Context)),
+    damage_utils:tokenize(
+      mustache:render(
+        binary_to_list(Body0),
+        dict:from_list(maps:to_list(Context))
+      )
+    ),
+  Args1 =
+    list_to_binary(
+      mustache:render(
+        binary_to_list(Args),
+        dict:from_list(maps:to_list(Context))
+      )
+    ),
   logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
   logger:debug("step body: ~p: ~p", [Body1, Args1]),
-  StepExecutor =
-    pa:bind(
-      fun execute_step_module/2,
-      [Config, Context, StepKeyWord, LineNo, Body1, Args1]
+  Context0 =
+    lists:foldl(
+      fun
+        (StepModule, ContextIn) ->
+          execute_step_module(
+            Config,
+            ContextIn,
+            StepKeyWord,
+            LineNo,
+            Body1,
+            Args1,
+            StepModule
+          )
+      end,
+      maps:put(step_notfound, true, Context),
+      filelib:wildcard(filename:join(["src", "steps_*.erl"]))
     ),
-  lists:map(
-    StepExecutor,
-    filelib:wildcard(filename:join(["src", "steps_*.erl"]))
-  ).
+  case maps:get(step_notfound, Context0) of
+    true ->
+      logger:error("Step not implemented: ~p ~p", [StepKeyWord,Body1]),
+      handle_step_fail(Config, step_notfound, [Body1]);
+
+    _ -> maps:merge(Context0, Context)
+  end.
 
 
 get_stepargs(Body) when is_list(Body) ->
@@ -253,16 +293,12 @@ get_global_template_context(Config, Context) ->
   {deployments, Deployments} = lists:keyfind(deployments, 1, ContextYaml),
   {Deployment, DeploymentConfig} = lists:keyfind(Deployment, 1, Deployments),
   {ok, Timestamp} = datestring:format("YmdHM", erlang:localtime()),
-  dict:store(
+  maps:put(
     headers,
     [],
-    dict:store(
+    maps:put(
       timestamp,
       Timestamp,
-      dict:merge(
-        fun (_Key, Val1, _Val2) -> Val1 end,
-        dict:from_list(DeploymentConfig),
-        Context
-      )
+      maps:merge(maps:from_list(DeploymentConfig), Context)
     )
   ).
