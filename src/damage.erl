@@ -202,17 +202,18 @@ execute_step_module(
   [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
   logger:debug("Trying step module ~p for ~p", [StepModule, Body1]),
   try
-    Context0 = case
-    apply(
-      list_to_atom(StepModule),
-      step,
-      [Config, Context, StepKeyWord, LineNo, Body1, Args1]
-    ) of
-      error -> maps:put(result, {error, LineNo}, Context);
-      true -> Context;
-      false -> throw("Step condition failed.");
-      Result -> maps:merge(Result, Context)
-    end,
+    Context0 =
+      case
+      apply(
+        list_to_atom(StepModule),
+        step,
+        [Config, Context, StepKeyWord, LineNo, Body1, Args1]
+      ) of
+        error -> maps:put(result, {error, LineNo}, Context);
+        true -> Context;
+        false -> throw("Step condition failed.");
+        Result -> maps:merge(Result, Context)
+      end,
     maps:put(step_notfound, false, Context0)
   catch
     error : function_clause:_ -> maps:put(step_notfound, true, Context);
@@ -266,7 +267,7 @@ execute_step({Config, Step}, Context) ->
     ),
   case maps:get(step_notfound, Context0) of
     true ->
-      logger:error("Step not implemented: ~p ~p", [StepKeyWord,Body1]),
+      logger:error("Step not implemented: ~p ~p", [StepKeyWord, Body1]),
       handle_step_fail(Config, step_notfound, [Body1]);
 
     _ -> maps:merge(Context0, Context)

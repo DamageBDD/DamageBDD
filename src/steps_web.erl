@@ -17,15 +17,15 @@ gun_post(Config, Context, Path, Headers, Data) ->
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
-      logger:debug("POST Response: ~s~n", [Status]),
+      logger:debug("POST Response: ~p", [Status]),
       maps:put(response, response_to_list({Status, Headers0, <<"">>}), Context);
 
     {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      logger:debug("POST Response: ~s~n", [Body]),
+      logger:debug("POST Response: ~p", [Body]),
       maps:put(response, response_to_list({Status, Headers0, Body}), Context);
 
-    Default -> logger:debug("POST Response: ~p~n", [Default])
+    Default -> logger:debug("POST Response: ~p", [Default])
   end.
 
 
