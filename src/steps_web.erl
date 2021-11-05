@@ -229,8 +229,7 @@ step(
   end;
 
 step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
-  [_, _StatusCode, _Headers, {body, Body}] = maps:get(response, Context),
-  logger:info("Response: ~s", [Body]),
+  logger:info("Response: ~p", [maps:get(response, Context)]),
   Context;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
@@ -250,7 +249,7 @@ step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
       [],
       Headers
     ),
-  logger:debug("Response:  ~p ~s", [Headers, Cookies]),
+  logger:debug("Response:  ~p", [Headers, Cookies]),
   maps:put(cookies, Cookies, Context);
 
 step(
@@ -284,15 +283,61 @@ step(
   end;
 
 step(
-  _Config,
-  _Context,
+  Config,
+  Context,
   given_keyword,
   _N,
-  ["I start a websocket connection to ", WebSocketUrl],
+  ["I open a websocket connection to", Path],
   _
 ) ->
-  {ok, ConnPid} = gun:open(WebSocketUrl, 80),
-  {ok, _Protocol} = gun:await_up(ConnPid).
+  {host, Host} = lists:keyfind(host, 1, Config),
+  {port, Port} = lists:keyfind(port, 1, Config),
+  {ok, ConnPid} = gun:open(Host, Port),
+    StreamRef = gun:ws_upgrade(ConnPid, Path, []),
+    maps:put(websocket_connpid, ConnPid, maps:put(websocket_streamref, StreamRef, Context));
+step(
+  _Config,
+  Context,
+  when_keyword,
+  _N,
+  ["I send data on the websocket"],
+  Data
+) ->
+    StreamRef = maps:get(websocket_streamref, Context),
+    ConnPid = maps:get(websocket_connpid, Context),
+   Res = gun:ws_send(ConnPid, StreamRef, [
+    {text, jsx:encode(Data)},
+    close
+]); 
+step(
+  _Config,
+  _Context,
+  when_keyword,
+  _N,
+  ["I should receive data on the websocket"],
+  _
+) ->
+	receive
+		{gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
+			{ok, ConnPid, StreamRef};
+		{gun_response, _ConnPid, _, _, Status, Headers} ->
+			exit({ws_upgrade_failed, Status, Headers});
+		{gun_error, _ConnPid, _StreamRef, Reason} ->
+			exit({ws_upgrade_failed, Reason})
+	after 1000 ->
+		error(timeout)
+	end;
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["the received data contains key ", Key, "with value", Value],
+  _
+) ->
+    Value = maps:get(Key, Context).
+
+
 
 
 %dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).
