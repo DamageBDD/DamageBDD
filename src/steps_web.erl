@@ -305,7 +305,7 @@ step(
 ) ->
     StreamRef = maps:get(websocket_streamref, Context),
     ConnPid = maps:get(websocket_connpid, Context),
-   Res = gun:ws_send(ConnPid, StreamRef, [
+   _Res = gun:ws_send(ConnPid, StreamRef, [
     {text, jsx:encode(Data)},
     close
 ]); 
