@@ -33,7 +33,7 @@ Run
 -----
 
     $ rebar3 shell
-    > damage:execute('test')
+    > damage:execute("test")
 
 
 HTTP Steps
