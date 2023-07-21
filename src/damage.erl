@@ -87,8 +87,7 @@ execute(FeatureName) ->
         )
     end,
     FeatureDirs
-  ),
-  ok.
+  ).
 
 
 execute_file(Filename) ->

@@ -41,9 +41,11 @@ HTTP Steps
 
 Make a simple http GET request and verify results.
 ```
-When I make a GET request to "/some/path"
-Then the response status must be "200"
-Then the json at path "$.status" must be "ok"
+Feature: Asyncmind server
+  Scenario: root
+    When I make a GET request to "/"
+    Then the response status must be "200"
+    Then the json at path "$.status" must be "ok"
 ```
 
 Make a simple http POST request with post data in body.
