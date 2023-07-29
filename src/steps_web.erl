@@ -292,23 +292,27 @@ step(
 ) ->
   {host, Host} = lists:keyfind(host, 1, Config),
   {port, Port} = lists:keyfind(port, 1, Config),
-  {ok, ConnPid} = gun:open(Host, Port),
-    StreamRef = gun:ws_upgrade(ConnPid, Path, []),
-    maps:put(websocket_connpid, ConnPid, maps:put(websocket_streamref, StreamRef, Context));
-step(
-  _Config,
-  Context,
-  when_keyword,
-  _N,
-  ["I send data on the websocket"],
-  Data
-) ->
-    StreamRef = maps:get(websocket_streamref, Context),
-    ConnPid = maps:get(websocket_connpid, Context),
-   _Res = gun:ws_send(ConnPid, StreamRef, [
-    {text, jsx:encode(Data)},
-    close
-]); 
+  {ok, Pid} = gun:open(Host, Port),
+  {ok, http} = gun:await_up(Pid),
+  MRef = monitor(process, Pid),
+  StreamRef = gun:ws_upgrade(Pid, Path, []),
+  maps:put(
+    websocket_mref,
+    MRef,
+    maps:put(
+      websocket_connpid,
+      Pid,
+      maps:put(websocket_streamref, StreamRef, Context)
+    )
+  );
+
+step(_Config, Context, when_keyword, _N, ["I send data on the websocket"], Data) ->
+  StreamRef = maps:get(websocket_streamref, Context),
+  Pid = maps:get(websocket_connpid, Context),
+  MRef = maps:get(websocket_mref, Context),
+  loop(Pid, MRef, StreamRef),
+  _Res = gun:ws_send(Pid, StreamRef, [{text, jsx:encode(Data)}, close]);
+
 step(
   _Config,
   _Context,
@@ -317,16 +321,19 @@ step(
   ["I should receive data on the websocket"],
   _
 ) ->
-	receive
-		{gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
-			{ok, ConnPid, StreamRef};
-		{gun_response, _ConnPid, _, _, Status, Headers} ->
-			exit({ws_upgrade_failed, Status, Headers});
-		{gun_error, _ConnPid, _StreamRef, Reason} ->
-			exit({ws_upgrade_failed, Reason})
-	after 1000 ->
-		error(timeout)
-	end;
+  receive
+    {gun_upgrade, Pid, StreamRef, [<<"websocket">>], _} ->
+      {ok, Pid, StreamRef};
+
+    {gun_response, _Pid, _, _, Status, Headers} ->
+      exit({ws_upgrade_failed, Status, Headers});
+
+    {gun_error, _Pid, _StreamRef, Reason} ->
+      exit({ws_upgrade_failed, Reason})
+  after
+    1000 -> error(timeout)
+  end;
+
 step(
   _Config,
   Context,
@@ -335,9 +342,36 @@ step(
   ["the received data contains key ", Key, "with value", Value],
   _
 ) ->
-    Value = maps:get(Key, Context).
+  Value = maps:get(Key, Context).
 
 
+loop(Pid, MRef, StreamRef) ->
+  receive
+    {gun_ws, Pid, StreamRef, close} ->
+      gun:ws_send(Pid, StreamRef, close),
+      loop(Pid, MRef, StreamRef);
+
+    {gun_ws, Pid, StreamRef, {close, Code, _}} ->
+      gun:ws_send(Pid, StreamRef, {close, Code, <<>>}),
+      loop(Pid, MRef, StreamRef);
+
+    {gun_ws, Pid, StreamRef, Frame} ->
+      gun:ws_send(Pid, StreamRef, Frame),
+      loop(Pid, MRef, StreamRef);
+
+    {gun_down, Pid, ws, _, _} -> close(Pid, MRef);
+    {'DOWN', MRef, process, Pid, normal} -> close(Pid, MRef);
+
+    Msg ->
+      ct:pal("Unexpected message ~p", [Msg]),
+      close(Pid, MRef)
+  end.
+
+
+close(Pid, MRef) ->
+  demonitor(MRef),
+  gun:close(Pid),
+  gun:flush(Pid).
 
 
 %dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).
