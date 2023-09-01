@@ -6,6 +6,12 @@
 
 -module(damage_sup).
 
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
 -behaviour(supervisor).
 
 -export([start_link/0]).

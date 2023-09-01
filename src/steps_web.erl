@@ -1,9 +1,10 @@
-%% @author Steven Joseph
-%% @copyright 2021 Steven Joseph
-%% @version 1.0.0
-%% @doc HTTP Steps
-
 -module(steps_web).
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
 
 -export([step/6]).
 
@@ -138,7 +139,7 @@ step(
   Context,
   then_keyword,
   _N,
-  ["the response status should be", Status],
+  ["the response status must be", Status],
   _
 ) ->
   Status0 = list_to_integer(Status),
@@ -146,20 +147,13 @@ step(
     [{status_code, Status0}, _, _] -> Context;
 
     [{status_code, Status1}, _, _] ->
-      throw(
-        {
-          fail,
-          io_lib:format("Response status is not ~p, got ~p", [Status0, Status1])
-        }
-      );
+      {
+        fail,
+        io_lib:format("Response status is not ~p, got ~p", [Status0, Status1])
+      };
 
     Any ->
-      throw(
-        {
-          fail,
-          io_lib:format("Response status is not ~p, got ~p", [Status0, Any])
-        }
-      )
+      {fail, io_lib:format("Response status is not ~p, got ~p", [Status0, Any])}
   end;
 
 step(
@@ -177,19 +171,16 @@ step(
         {[Json0 | _], _} -> Context;
 
         UnExpected ->
-          throw(
-            {
-              fail,
-              io_lib:format(
-                "the json at path ~p is not ~p, it is ~p.",
-                [Path, Json, UnExpected]
-              )
-            }
-          )
+          {
+            fail,
+            io_lib:format(
+              "the json at path ~p is not ~p, it is ~p.",
+              [Path, Json, UnExpected]
+            )
+          }
       end;
 
-    UnExpected ->
-      throw({fail, io_lib:format("Unexpected response ~p", [UnExpected])})
+    UnExpected -> {fail, io_lib:format("Unexpected response ~p", [UnExpected])}
   end;
 
 step(
@@ -212,20 +203,18 @@ step(
 
         _ ->
           logger:debug("the response status must be one of ~p.", [StatusCode]),
-          throw(
-            {
-              fail,
-              io_lib:format(
-                "Response status ~p is not one of ~p",
-                [StatusCode, Responses]
-              )
-            }
-          )
+          {
+            fail,
+            io_lib:format(
+              "Response status ~p is not one of ~p",
+              [StatusCode, Responses]
+            )
+          }
       end;
 
     UnExpected ->
       logger:error("unexpected response in context ~p.", [UnExpected]),
-      throw({fail, io_lib:format("Unexpected response ~p", [UnExpected])})
+      {fail, io_lib:format("Unexpected response ~p", [UnExpected])}
   end;
 
 step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
@@ -267,19 +256,16 @@ step(
         {[Json0 | _], _} -> maps:put(Variable0, Json0, Context);
 
         UnExpected ->
-          throw(
-            {
-              fail,
-              io_lib:format(
-                "the json at path ~p is not ~p, it is ~p.",
-                [Path, Variable, UnExpected]
-              )
-            }
-          )
+          {
+            fail,
+            io_lib:format(
+              "the json at path ~p is not ~p, it is ~p.",
+              [Path, Variable, UnExpected]
+            )
+          }
       end;
 
-    UnExpected ->
-      throw({fail, io_lib:format("Unexpected response ~p", [UnExpected])})
+    UnExpected -> {fail, io_lib:format("Unexpected response ~p", [UnExpected])}
   end;
 
 step(
@@ -293,22 +279,20 @@ step(
   {host, Host} = lists:keyfind(host, 1, Config),
   {port, Port} = lists:keyfind(port, 1, Config),
   {ok, ConnPid} = gun:open(Host, Port),
-    StreamRef = gun:ws_upgrade(ConnPid, Path, []),
-    maps:put(websocket_connpid, ConnPid, maps:put(websocket_streamref, StreamRef, Context));
-step(
-  _Config,
-  Context,
-  when_keyword,
-  _N,
-  ["I send data on the websocket"],
-  Data
-) ->
-    StreamRef = maps:get(websocket_streamref, Context),
-    ConnPid = maps:get(websocket_connpid, Context),
-   _Res = gun:ws_send(ConnPid, StreamRef, [
-    {text, jsx:encode(Data)},
-    close
-]); 
+  StreamRef = gun:ws_upgrade(ConnPid, Path, []),
+  maps:put(
+    websocket_connpid,
+    ConnPid,
+    maps:put(websocket_streamref, StreamRef, Context)
+  );
+
+step(_Config, Context, when_keyword, _N, ["I send data on the websocket"], Data) ->
+  StreamRef = maps:get(websocket_streamref, Context),
+  ConnPid = maps:get(websocket_connpid, Context),
+  Res = gun:ws_send(ConnPid, StreamRef, [{text, jsx:encode(Data)}, close]),
+  logger:info("Received data back on websocket: ~p ", [Res]),
+  Res;
+
 step(
   _Config,
   _Context,
@@ -317,16 +301,19 @@ step(
   ["I should receive data on the websocket"],
   _
 ) ->
-	receive
-		{gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
-			{ok, ConnPid, StreamRef};
-		{gun_response, _ConnPid, _, _, Status, Headers} ->
-			exit({ws_upgrade_failed, Status, Headers});
-		{gun_error, _ConnPid, _StreamRef, Reason} ->
-			exit({ws_upgrade_failed, Reason})
-	after 1000 ->
-		error(timeout)
-	end;
+  receive
+    {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
+      {ok, ConnPid, StreamRef};
+
+    {gun_response, _ConnPid, _, _, Status, Headers} ->
+      exit({ws_upgrade_failed, Status, Headers});
+
+    {gun_error, _ConnPid, _StreamRef, Reason} ->
+      exit({ws_upgrade_failed, Reason})
+  after
+    1000 -> error(timeout)
+  end;
+
 step(
   _Config,
   Context,
@@ -335,9 +322,7 @@ step(
   ["the received data contains key ", Key, "with value", Value],
   _
 ) ->
-    Value = maps:get(Key, Context).
-
-
+  Value = maps:get(Key, Context).
 
 
 %dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).

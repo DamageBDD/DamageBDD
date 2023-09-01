@@ -1,9 +1,10 @@
-%% @author Steven Joseph
-%% @copyright 2021 Steven Joseph
-%% @version 1.0.0
-%% @doc Default Steps
-
 -module(steps_utils).
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
 
 -export([step/6]).
 

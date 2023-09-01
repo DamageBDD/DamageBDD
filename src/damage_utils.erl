@@ -1,5 +1,11 @@
 -module(damage_utils).
 
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
 -export([tokenize/1, binarystr_join/1, binarystr_join/2, config/2]).
 
 tokenize(Step) when is_binary(Step) -> tokenize(binary_to_list(Step));

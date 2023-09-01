@@ -5,6 +5,12 @@
 
 -module(damage_app).
 
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
 -export([execute/2]).
 
 -behaviour(application).
@@ -18,6 +24,29 @@ start(_StartType, _StartArgs) ->
   application:ensure_all_started(cedb),
   application:ensure_all_started(p1_utils),
   application:ensure_all_started(fast_yaml),
+  Dispatch =
+    cowboy_router:compile(
+      [
+        {
+          '_',
+          [
+            {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
+            {"/api/", damage_http, []}
+          ]
+        }
+      ]
+    ),
+  {ok, WsPort} = application:get_env(damage, port),
+  {ok, _} =
+    cowboy:start_clear(
+      http,
+      [{port, WsPort}],
+      #{
+        env => #{dispatch => Dispatch},
+        metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
+        stream_handlers => [cowboy_stream_h]
+      }
+    ),
   damage_sup:start_link().
 
 

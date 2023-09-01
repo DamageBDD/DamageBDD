@@ -1,0 +1,6 @@
+deployments:
+  local:
+    variable1: value1
+  remote:
+    variable1: value1
+  

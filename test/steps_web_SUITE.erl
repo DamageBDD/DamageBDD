@@ -4,6 +4,7 @@
 
 %-export([all/0, suite/0, step_get_request/1]).
 -define(CONFIG, [{host, localhost}, {port, 8088}]).
+
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
 
@@ -31,11 +32,9 @@ init_per_group(Name, Config) ->
 end_per_group(Name, _) -> cowboy:stop_listener(Name).
 
 init_dispatch(_) ->
-  cowboy_router:compile([{"localhost",
- [
-{"/", hello_h, []},
-{"/ws_echo", ws_echo, []}
-]}]).
+  cowboy_router:compile(
+    [{"localhost", [{"/", hello_h, []}, {"/ws_echo", ws_echo, []}]}]
+  ).
 
 step_get_request(_TestConfig) ->
   Context = maps:new(),
@@ -98,6 +97,7 @@ step_store_json_in(_TestConfig) ->
     ),
   TestId = maps:get(installid, Context0).
 
+
 step_websocket_test(_Config) ->
   Context = maps:new(),
   Context0 =
@@ -115,7 +115,7 @@ step_websocket_test(_Config) ->
       Context0,
       when_keyword,
       0,
-        ["I send data on the websocket"],
+      ["I send data on the websocket"],
       [{test, true}]
     ),
   Context2 =
@@ -124,7 +124,7 @@ step_websocket_test(_Config) ->
       Context1,
       when_keyword,
       0,
-  ["I should receive data on the websocket"],
+      ["I should receive data on the websocket"],
       [{test, true}]
     ),
   [{status_code, 303}, _, _] = maps:get(response, Context2).

@@ -1,6 +1,13 @@
 -module(damage).
 
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
 -include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
@@ -16,7 +23,7 @@
     code_change/3
   ]
 ).
--export([execute_file/1, execute/1, execute/0]).
+-export([execute_file/1, execute/1, execute/2]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -45,8 +52,7 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-execute() ->
-  {ok, Config} = file:consult(filename:join("config", "damage.config")),
+execute(Config) ->
   {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
   {feature_include, FeatureInclude} = lists:keyfind(feature_include, 1, Config),
   lists:map(
@@ -61,15 +67,14 @@ execute() ->
   ).
 
 
-execute(FeatureName) ->
-  {ok, Config} = file:consult(filename:join("config", "damage.config")),
+execute(Config, FeatureName) ->
   {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
   {feature_suffix, FeatureSuffix} = lists:keyfind(feature_suffix, 1, Config),
   %{feature_include, FeatureInclude} = lists:keyfind(feature_include, 1, Config),
   lists:map(
     fun
       (FeatureDir) ->
-        logger:debug(
+        ?debugFmt(
           "Looking for feature name ~p in featuredir ~p.",
           [lists:flatten(FeatureName, FeatureSuffix), FeatureDir]
         ),
@@ -173,18 +178,22 @@ should_exit(Config) ->
   end.
 
 
-handle_step_fail(Config, Reason, Stacktrace) ->
-  ?LOG_ERROR(#{reason => Reason, stacktrace => Stacktrace}),
+handle_step_fail(Config, Step, _StepModuleSrc, Reason, Stacktrace) ->
+  ?LOG_ERROR(#{reason => Reason, stacktrace => Stacktrace, step => Step}),
   should_exit(Config).
 
+
+handle_step_success(
+  _Config,
+  {StepKeyWord, LineNo, Body, Args} = _Step,
+  _StepModuleSrc
+) ->
+  ?LOG_INFO(#{step => StepKeyWord, line => LineNo, body => Body, args => Args}).
 
 execute_step_module(
   _Config,
   #{step_notfound := false} = Context,
-  _StepKeyWord,
-  _LineNo,
-  _Body1,
-  _Args1,
+  {_StepKeyWord, _LineNo, _Body1, _Args1} = _Step,
   _StepModuleSrc
 ) ->
   Context;
@@ -192,10 +201,7 @@ execute_step_module(
 execute_step_module(
   Config,
   #{step_notfound := true} = Context,
-  StepKeyWord,
-  LineNo,
-  Body1,
-  Args1,
+  {StepKeyWord, LineNo, Body1, Args1} = Step,
   StepModuleSrc
 ) ->
   [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
@@ -208,20 +214,35 @@ execute_step_module(
         step,
         [Config, Context, StepKeyWord, LineNo, Body1, Args1]
       ) of
-        error -> maps:put(result, {error, LineNo}, Context);
-        true -> Context;
-        false -> throw("Step condition failed.");
-        Result -> maps:merge(Result, Context)
+        {fail, Result} ->
+          maps:merge(Result, Context),
+          handle_step_fail(Config, Step, StepModuleSrc, Result, []);
+
+        {success, Result} ->
+          maps:merge(Result, Context),
+          handle_step_success(Config, Step, StepModuleSrc)
       end,
     maps:put(step_notfound, false, Context0)
   catch
-    error : function_clause:_ -> maps:put(step_notfound, true, Context);
+    error : function_clause:_ ->
+      maps:put(step_notfound, StepModuleSrc, Context);
+
     %%should_exit(Config);
-    error : Reason:Stacktrace -> handle_step_fail(Config, Reason, Stacktrace);
+    error : Reason:Stacktrace ->
+      handle_step_fail(Config, Step, StepModuleSrc, Reason, Stacktrace);
 
     throw : {fail, Reason} : Stacktrace ->
-      handle_step_fail(Config, Reason, Stacktrace)
-  end.
+      handle_step_fail(Config, Step, StepModuleSrc, Reason, Stacktrace)
+  end,
+  formatter:step(
+    Config,
+    Context,
+    StepKeyWord,
+    LineNo,
+    Body1,
+    Args1,
+    StepModuleSrc
+  ).
 
 
 execute_step({Config, Step}, [Context]) ->
@@ -254,10 +275,7 @@ execute_step({Config, Step}, Context) ->
           execute_step_module(
             Config,
             ContextIn,
-            StepKeyWord,
-            LineNo,
-            Body1,
-            Args1,
+            {StepKeyWord, LineNo, Body1, Args1},
             StepModule
           )
       end,
@@ -265,11 +283,11 @@ execute_step({Config, Step}, Context) ->
       filelib:wildcard(filename:join(["src", "steps_*.erl"]))
     ),
   case maps:get(step_notfound, Context0) of
-    true ->
-      logger:error("Step not implemented: ~p ~p", [StepKeyWord, Body1]),
-      handle_step_fail(Config, step_notfound, [Body1]);
+    false -> maps:merge(Context0, Context);
 
-    _ -> maps:merge(Context0, Context)
+    StepModule ->
+      logger:error("Step not implemented: ~p ~p", [StepKeyWord, Body1]),
+      handle_step_fail(Config, Step, StepModule, step_notfound, [Body1])
   end.
 
 
