@@ -268,4 +268,3 @@ step(
     UnExpected -> {fail, io_lib:format("Unexpected response ~p", [UnExpected])}
   end.
 
-%dict:append(headers, {list_to_binary(Header), list_to_binary(Value)}, Context).
