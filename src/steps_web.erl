@@ -227,7 +227,7 @@ step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) -
   Context;
 
 step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
-  [_, _StatusCode, {headers, Headers}, _Body] = maps:put(response, Context),
+  [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
   logger:debug("Response Headers:  ~p", [Headers]),
   Cookies =
     lists:foldl(
