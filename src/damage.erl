@@ -8,6 +8,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("reporting/formatter.hrl").
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
@@ -98,10 +99,10 @@ execute(Config, FeatureName) ->
 execute_file(Filename) ->
   try egherkin:parse_file(Filename) of
     {failed, LineNo, Message} ->
-      logger:info("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
+      logger:error("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
 
     {_LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
-      logger:debug("Executing feature file ~p.", [Filename ++ ".feature"]),
+      ?debugFmt("Executing feature file ~p.", [Filename ++ ".feature"]),
       execute_feature(
         none,
         Feature,
@@ -112,7 +113,7 @@ execute_file(Filename) ->
         Scenarios
       )
   catch
-    {error, enont} -> logger:debug("Feature file ~p not found.", [Filename])
+    {error, enont} -> logger:error("Feature file ~p not found.", [Filename])
   end.
 
 
@@ -145,7 +146,7 @@ execute_feature(
   BackGround,
   Scenarios
 ) ->
-  logger:debug(
+  ?debugFmt(
     "~p: ~p: ~p: ~p, ~p",
     [FeatureName, Tags, Feature, Description, BackGround]
   ),
@@ -160,7 +161,7 @@ execute_scenario(Config, [], Scenario) ->
 
 execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   {LineNo, ScenarioName, Tags, Steps} = Scenario,
-  logger:info(
+  ?debugFmt(
     "executing scenario: ~p: line: ~p: tags ~p",
     [ScenarioName, LineNo, Tags]
   ),
@@ -178,80 +179,67 @@ should_exit(Config) ->
   end.
 
 
-handle_step_fail(Config, Step, _StepModuleSrc, Reason, Stacktrace) ->
-  ?LOG_ERROR(#{reason => Reason, stacktrace => Stacktrace, step => Step}),
-  should_exit(Config).
-
-
-handle_step_success(
-  _Config,
-  {StepKeyWord, LineNo, Body, Args} = _Step,
-  _StepModuleSrc
-) ->
-  ?LOG_INFO(#{step => StepKeyWord, line => LineNo, body => Body, args => Args}).
-
-execute_step_module(
-  _Config,
-  #{step_notfound := false} = Context,
-  {_StepKeyWord, _LineNo, _Body1, _Args1} = _Step,
-  _StepModuleSrc
-) ->
-  Context;
-
+% step execution: should execution output be passed in state and then
+% handled OR should the handling happen withing the execution function
 execute_step_module(
   Config,
-  #{step_notfound := true} = Context,
-  {StepKeyWord, LineNo, Body1, Args1} = Step,
+  Context,
+  {StepKeyWord, LineNo, Body, Args} = Step,
   StepModuleSrc
 ) ->
   [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
-  logger:debug("Trying step module ~p for ~p", [StepModule, Body1]),
+  ?debugFmt(
+    "Trying step module ~p for ~p, Context: ~p",
+    [StepModule, Body, Context]
+  ),
   try
     Context0 =
-      case
-      apply(
-        list_to_atom(StepModule),
-        step,
-        [Config, Context, StepKeyWord, LineNo, Body1, Args1]
-      ) of
-        {fail, Result} ->
-          maps:merge(Result, Context),
-          handle_step_fail(Config, Step, StepModuleSrc, Result, []);
-
-        {success, Result} ->
-          maps:merge(Result, Context),
-          handle_step_success(Config, Step, StepModuleSrc)
-      end,
-    maps:put(step_notfound, false, Context0)
+      maps:put(
+        step_found,
+        true,
+        apply(
+          list_to_atom(StepModule),
+          step,
+          [Config, Context, StepKeyWord, LineNo, Body, Args]
+        )
+      ),
+    %formatter:step(Config, Context, Step, StepModuleSrc),
+    Context0
   catch
     error : function_clause:_ ->
-      maps:put(step_notfound, StepModuleSrc, Context);
+      ?LOG_ERROR(
+        #{
+          step_module => StepModuleSrc,
+          message => "StepNotFound",
+          step => StepKeyWord,
+          line => LineNo,
+          body => Body,
+          args => Args
+        }
+      ),
+      Context;
 
-    %%should_exit(Config);
     error : Reason:Stacktrace ->
-      handle_step_fail(Config, Step, StepModuleSrc, Reason, Stacktrace);
-
-    throw : {fail, Reason} : Stacktrace ->
-      handle_step_fail(Config, Step, StepModuleSrc, Reason, Stacktrace)
-  end,
-  formatter:step(
-    Config,
-    Context,
-    StepKeyWord,
-    LineNo,
-    Body1,
-    Args1,
-    StepModuleSrc
-  ).
+      ?LOG_ERROR(
+        #{
+          reason => Reason,
+          stacktrace => Stacktrace,
+          step => Step,
+          step_module => StepModuleSrc
+        }
+      ),
+      should_exit(Config),
+      Context
+  end.
 
 
 execute_step({Config, Step}, [Context]) ->
   execute_step({Config, Step}, Context);
 
 execute_step({Config, Step}, Context) ->
+  ?debugFmt("step : ~p", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
   {Body0, Args} = get_stepargs(Body),
-  %logger:debug("rendering step body: ~p: ~p", [Body0, Context]),
   Body1 =
     damage_utils:tokenize(
       mustache:render(
@@ -266,29 +254,24 @@ execute_step({Config, Step}, Context) ->
         dict:from_list(maps:to_list(Context))
       )
     ),
-  logger:info("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
-  logger:debug("step body: ~p: ~p", [Body1, Args1]),
-  Context0 =
-    lists:foldl(
-      fun
-        (StepModule, ContextIn) ->
-          execute_step_module(
-            Config,
-            ContextIn,
-            {StepKeyWord, LineNo, Body1, Args1},
-            StepModule
-          )
-      end,
-      maps:put(step_notfound, true, Context),
-      filelib:wildcard(filename:join(["src", "steps_*.erl"]))
-    ),
-  case maps:get(step_notfound, Context0) of
-    false -> maps:merge(Context0, Context);
+  ?debugFmt("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
+  ?debugFmt("step body: ~p: ~p, context: ~p", [Body1, Args1, Context]),
+  lists:foldl(
+    fun
+      (_StepModule, #{step_found := true} = ContextIn) -> ContextIn;
 
-    StepModule ->
-      logger:error("Step not implemented: ~p ~p", [StepKeyWord, Body1]),
-      handle_step_fail(Config, Step, StepModule, step_notfound, [Body1])
-  end.
+      (StepModule, ContextIn) ->
+        ?debugFmt("contextin body: ~p", [ContextIn]),
+        execute_step_module(
+          Config,
+          ContextIn,
+          {StepKeyWord, LineNo, Body1, Args1},
+          StepModule
+        )
+    end,
+    maps:put(step_found, false, Context),
+    filelib:wildcard(filename:join(["src", "steps_*.erl"]))
+  ).
 
 
 get_stepargs(Body) when is_list(Body) ->
@@ -312,11 +295,15 @@ get_global_template_context(Config, Context) ->
   {Deployment, DeploymentConfig} = lists:keyfind(Deployment, 1, Deployments),
   {ok, Timestamp} = datestring:format("YmdHM", erlang:localtime()),
   maps:put(
-    headers,
-    [],
+    formatter_state,
+    #state{},
     maps:put(
-      timestamp,
-      Timestamp,
-      maps:merge(maps:from_list(DeploymentConfig), Context)
+      headers,
+      [],
+      maps:put(
+        timestamp,
+        Timestamp,
+        maps:merge(maps:from_list(DeploymentConfig), Context)
+      )
     )
   ).

@@ -1,5 +1,7 @@
 -module(formatter).
 
+-include_lib("reporting/formatter.hrl").
+
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -16,8 +18,6 @@
     add_formatter/2
   ]
 ).
-
--record(state, {formatters = [], test_state = []}).
 
 start_test(Name, Description) ->
   State = #state{},

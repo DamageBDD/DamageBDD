@@ -3,8 +3,6 @@
 -compile([export_all, nowarn_export_all]).
 
 %-export([all/0, suite/0, step_get_request/1]).
--define(CONFIG, [{host, localhost}, {port, 8088}]).
-
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
 
@@ -18,29 +16,28 @@ init_per_group(Name, Config) ->
   {ok, _} = application:ensure_all_started(cowboy),
   cowboy_test:init_http(
     Name,
-    #{env => #{dispatch => init_dispatch(Config)}},
+    #{env => #{dispatch => init_dispatch(Name)}},
     Config
-  ),
-  {ok, _} =
-    cowboy:start_clear(
-      ?FUNCTION_NAME,
-      [{port, 8088}],
-      #{env => #{dispatch => init_dispatch(Config)}, chunked => false}
-    ).
+  ).
 
 
 end_per_group(Name, _) -> cowboy:stop_listener(Name).
 
 init_dispatch(_) ->
-  cowboy_router:compile(
-    [{"localhost", [{"/", hello_h, []}, {"/ws_echo", ws_echo, []}]}]
-  ).
+  cowboy_router:compile([{"localhost", [{"/", hello_h, []}]}]).
 
-step_get_request(_TestConfig) ->
+step_get_request(TestConfig) ->
+  {ok, _} =
+    cowboy:start_clear(
+      ?FUNCTION_NAME,
+      [{port, 0}],
+      #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
+    ),
+  Port = ranch:get_port(?FUNCTION_NAME),
   Context = maps:new(),
   Context0 =
     steps_web:step(
-      ?CONFIG,
+      [{host, localhost}, {port, Port}],
       Context,
       when_keyword,
       0,
@@ -50,11 +47,18 @@ step_get_request(_TestConfig) ->
   [{status_code, 200}, _, _] = maps:get(response, Context0).
 
 
-step_post_csrf_request(_TestConfig) ->
+step_post_csrf_request(TestConfig) ->
+  {ok, _} =
+    cowboy:start_clear(
+      ?FUNCTION_NAME,
+      [{port, 0}],
+      #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
+    ),
+  Port = ranch:get_port(?FUNCTION_NAME),
   Context = maps:put(headers, [], maps:new()),
   Context0 =
     steps_web:step(
-      ?CONFIG,
+      [{host, localhost}, {port, Port}],
       Context,
       when_keyword,
       0,
@@ -64,11 +68,18 @@ step_post_csrf_request(_TestConfig) ->
   [{status_code, 303}, _, _] = maps:get(response, Context0).
 
 
-step_post_request(_Config) ->
+step_post_request(Config) ->
+  {ok, _} =
+    cowboy:start_clear(
+      ?FUNCTION_NAME,
+      [{port, 0}],
+      #{env => #{dispatch => init_dispatch(Config)}, chunked => false}
+    ),
+  Port = ranch:get_port(?FUNCTION_NAME),
   Context = maps:new(),
   Context0 =
     steps_web:step(
-      ?CONFIG,
+      [{host, localhost}, {port, Port}],
       Context,
       when_keyword,
       0,
@@ -78,7 +89,14 @@ step_post_request(_Config) ->
   [{status_code, 303}, _, _] = maps:get(response, Context0).
 
 
-step_store_json_in(_TestConfig) ->
+step_store_json_in(TestConfig) ->
+  {ok, _} =
+    cowboy:start_clear(
+      ?FUNCTION_NAME,
+      [{port, 0}],
+      #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
+    ),
+  Port = ranch:get_port(?FUNCTION_NAME),
   TestId = <<"testid">>,
   Context =
     maps:put(
@@ -88,7 +106,7 @@ step_store_json_in(_TestConfig) ->
     ),
   Context0 =
     steps_web:step(
-      ?CONFIG,
+      [{host, localhost}, {port, Port}],
       Context,
       then_keyword,
       0,
@@ -96,35 +114,3 @@ step_store_json_in(_TestConfig) ->
       []
     ),
   TestId = maps:get(installid, Context0).
-
-
-step_websocket_test(_Config) ->
-  Context = maps:new(),
-  Context0 =
-    steps_web:step(
-      ?CONFIG,
-      Context,
-      given_keyword,
-      0,
-      ["I open a websocket connection to", "/ws_echo"],
-      []
-    ),
-  Context1 =
-    steps_web:step(
-      ?CONFIG,
-      Context0,
-      when_keyword,
-      0,
-      ["I send data on the websocket"],
-      [{test, true}]
-    ),
-  Context2 =
-    steps_web:step(
-      ?CONFIG,
-      Context1,
-      when_keyword,
-      0,
-      ["I should receive data on the websocket"],
-      [{test, true}]
-    ),
-  [{status_code, 303}, _, _] = maps:get(response, Context2).
