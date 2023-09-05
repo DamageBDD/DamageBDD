@@ -7,6 +7,7 @@
 -license("Apache-2.0").
 
 -export([step/6]).
+
 step(
   Config,
   Context,
@@ -51,12 +52,8 @@ step(
   _
 ) ->
   receive
-    {gun_ws, _ConnPid, _StreamRef, Frame} ->
-      maps:put(
-        response,
-        Frame,
-        Context
-      );
+    {gun_ws, _ConnPid, _StreamRef, Frame} -> maps:put(response, Frame, Context);
+
     {gun_response, _ConnPid, _, _, Status, Headers} ->
       exit({ws_upgrade_failed, Status, Headers});
 
@@ -75,5 +72,3 @@ step(
   _
 ) ->
   Value = maps:get(Key, Context).
-
-

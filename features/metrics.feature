@@ -7,3 +7,5 @@ Feature: For testing an echo server running on localhost
     {"status" : "ok"}
     """
     Then the json at path "$.status" must be "ok"
+    When I make a GET request to "/metrics/"
+    Then the response status must be "200"

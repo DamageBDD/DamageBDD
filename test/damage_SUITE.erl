@@ -3,7 +3,7 @@
 -compile([export_all, nowarn_export_all]).
 
 %-export([all/0, suite/0, step_get_request/1]).
--define(CONFIG, [{host, localhost}, {port, 8088}]).
+-define(CONFIG,).
 
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
@@ -16,17 +16,15 @@ init_per_group(Name, Config) ->
   {ok, _} = application:ensure_all_started(ranch),
   {ok, _} = application:ensure_all_started(gun),
   {ok, _} = application:ensure_all_started(cowboy),
+  {ok, _} = application:ensure_all_started(prometheus),
+  application:ensure_all_started(metrics),
+  application:ensure_all_started(exometer),
+  metrics:init(),
   cowboy_test:init_http(
     Name,
-    #{env => #{dispatch => init_dispatch(Config)}},
+    #{env => #{dispatch => init_dispatch(Name)}},
     Config
-  ),
-  {ok, _} =
-    cowboy:start_clear(
-      ?FUNCTION_NAME,
-      [{port, 8088}],
-      #{env => #{dispatch => init_dispatch(Config)}, chunked => false}
-    ).
+  ).
 
 
 end_per_group(Name, _) -> cowboy:stop_listener(Name).
@@ -36,6 +34,41 @@ init_dispatch(_) ->
     [{"localhost", [{"/", hello_h, []}, {"/ws_echo", ws_echo, []}]}]
   ).
 
-execute_test(_TestConfig) ->
-  {ok, Config} = file:consult(filename:join("config", "damage.config")),
-  ok = damage:execute(Config, "localhost").
+execute_test(TestConfig) ->
+  {ok, _} =
+    cowboy:start_clear(
+      ?FUNCTION_NAME,
+      [{port, 0}],
+      #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
+    ),
+  Port = ranch:get_port(?FUNCTION_NAME),
+  ok =
+    damage:execute(
+      [
+        {host, localhost},
+        {port, Port},
+        {feature_dirs, ["../../../../features/"]},
+        {account, "test"}
+      ],
+      "localhost"
+    ).
+
+
+metrics_test(TestConfig) ->
+  {ok, _} =
+    cowboy:start_clear(
+      ?FUNCTION_NAME,
+      [{port, 0}],
+      #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
+    ),
+  Port = ranch:get_port(?FUNCTION_NAME),
+  ok =
+    damage:execute(
+      [
+        {host, localhost},
+        {port, Port},
+        {feature_dirs, ["../../../../features/"]},
+        {account, "test"}
+      ],
+      "metrics"
+    ).

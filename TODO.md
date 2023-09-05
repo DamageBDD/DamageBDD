@@ -4,8 +4,8 @@ Requirements
 2. generate allure reporting
 3. benchmarking configuraion management
 4. capture metrics eg:
+    - number of tests run, skipped and fails
     - response timing
-    - calls, percentile, fails
 5. auditing of the results, authenticity, validity
     - tracking history
     - sharing result

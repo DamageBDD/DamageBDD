@@ -24,7 +24,7 @@
     code_change/3
   ]
 ).
--export([execute_file/1, execute/1, execute/2]).
+-export([execute_file/2, execute/1, execute/2]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -60,7 +60,7 @@ execute(Config) ->
     fun
       (FeatureDir) ->
         lists:map(
-          fun execute_file/1,
+          fun (Filename) -> execute_file(Config, Filename) end,
           filelib:wildcard(filename:join(FeatureDir, FeatureInclude))
         )
     end,
@@ -70,17 +70,24 @@ execute(Config) ->
 
 execute(Config, FeatureName) ->
   {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
-  {feature_suffix, FeatureSuffix} = lists:keyfind(feature_suffix, 1, Config),
-  %{feature_include, FeatureInclude} = lists:keyfind(feature_include, 1, Config),
+  {feature_suffix, FeatureSuffix} =
+    case lists:keyfind(feature_suffix, 1, Config) of
+      false -> {feature_suffix, ".feature"};
+      Val -> Val
+    end,
+  ?debugFmt(
+    "Looking for features in ~p, ~p.~p",
+    [
+      FeatureDirs,
+      filelib:wildcard(lists:flatten(FeatureName, FeatureSuffix), "./features/"),
+      file:get_cwd()
+    ]
+  ),
   lists:map(
     fun
       (FeatureDir) ->
-        ?debugFmt(
-          "Looking for feature name ~p in featuredir ~p.",
-          [lists:flatten(FeatureName, FeatureSuffix), FeatureDir]
-        ),
         lists:map(
-          fun execute_file/1,
+          fun (Filename) -> execute_file(Config, Filename) end,
           lists:map(
             fun
               (FeatureFileName) -> filename:join(FeatureDir, FeatureFileName)
@@ -96,7 +103,8 @@ execute(Config, FeatureName) ->
   ).
 
 
-execute_file(Filename) ->
+execute_file(Config, Filename) ->
+  ?debugFmt("Looking for feature name ~p.", [Filename]),
   try egherkin:parse_file(Filename) of
     {failed, LineNo, Message} ->
       logger:error("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
@@ -104,7 +112,7 @@ execute_file(Filename) ->
     {_LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
       ?debugFmt("Executing feature file ~p.", [Filename ++ ".feature"]),
       execute_feature(
-        none,
+        Config,
         Feature,
         Tags,
         Feature,
@@ -116,26 +124,6 @@ execute_file(Filename) ->
     {error, enont} -> logger:error("Feature file ~p not found.", [Filename])
   end.
 
-
-execute_feature(
-  none,
-  _FeatureName,
-  Tags,
-  Feature,
-  Description,
-  BackGround,
-  Scenarios
-) ->
-  {ok, ConfigBase} = file:consult(filename:join("config", "damage.config")),
-  execute_feature(
-    ConfigBase,
-    Feature,
-    Tags,
-    Feature,
-    Description,
-    BackGround,
-    Scenarios
-  );
 
 execute_feature(
   Config,
@@ -185,9 +173,8 @@ execute_step_module(
   Config,
   Context,
   {StepKeyWord, LineNo, Body, Args} = Step,
-  StepModuleSrc
+  StepModule
 ) ->
-  [StepModule, _] = string:tokens(filename:basename(StepModuleSrc), "."),
   ?debugFmt(
     "Trying step module ~p for ~p, Context: ~p",
     [StepModule, Body, Context]
@@ -203,13 +190,13 @@ execute_step_module(
           [Config, Context, StepKeyWord, LineNo, Body, Args]
         )
       ),
-    %formatter:step(Config, Context, Step, StepModuleSrc),
+    metrics:update(success, Config),
     Context0
   catch
     error : function_clause:_ ->
       ?LOG_ERROR(
         #{
-          step_module => StepModuleSrc,
+          step_module => StepModule,
           message => "StepNotFound",
           step => StepKeyWord,
           line => LineNo,
@@ -219,13 +206,16 @@ execute_step_module(
       ),
       Context;
 
+    error : undef:_ -> Context;
+
     error : Reason:Stacktrace ->
+      metrics:update(fail, Config),
       ?LOG_ERROR(
         #{
           reason => Reason,
           stacktrace => Stacktrace,
           step => Step,
-          step_module => StepModuleSrc
+          step_module => StepModule
         }
       ),
       should_exit(Config),
@@ -236,63 +226,62 @@ execute_step_module(
 execute_step({Config, Step}, [Context]) ->
   execute_step({Config, Step}, Context);
 
+execute_step({_Config, Step}, #{fail := _} = Context) ->
+  logger:info("step skipped: ~p ~p", [Step]),
+  Context;
+
 execute_step({Config, Step}, Context) ->
   ?debugFmt("step : ~p", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
-  {Body0, Args} = get_stepargs(Body),
-  Body1 =
-    damage_utils:tokenize(
-      mustache:render(
-        binary_to_list(Body0),
-        dict:from_list(maps:to_list(Context))
-      )
+  {Body1, Args1} = damage_utils:render_body_args(Body, Context),
+  ?debugFmt(
+    "step keyword: ~p body: ~p: Args ~p, context: ~p",
+    [StepKeyWord, Body1, Args1, Context]
+  ),
+  Context0 =
+    lists:foldl(
+      fun
+        (_StepModule, #{step_found := true} = ContextIn) -> ContextIn;
+
+        (StepModule, ContextIn) ->
+          ?debugFmt("contextin body: ~p", [ContextIn]),
+          case maps:get(step_found, ContextIn) of
+            false ->
+              execute_step_module(
+                Config,
+                ContextIn,
+                {StepKeyWord, LineNo, Body1, Args1},
+                StepModule
+              );
+
+            true -> ContextIn
+          end
+      end,
+      maps:put(step_found, false, Context),
+      damage_utils:loaded_steps()
     ),
-  Args1 =
-    list_to_binary(
-      mustache:render(
-        binary_to_list(Args),
-        dict:from_list(maps:to_list(Context))
-      )
-    ),
-  ?debugFmt("executing step: ~p: ~p: ~p", [LineNo, StepKeyWord, Body1]),
-  ?debugFmt("step body: ~p: ~p, context: ~p", [Body1, Args1, Context]),
-  lists:foldl(
-    fun
-      (_StepModule, #{step_found := true} = ContextIn) -> ContextIn;
+  case maps:get(step_found, Context0) of
+    false ->
+      logger:error("step not found: ~p ~p", [Body1, Args1]),
+      metrics:update(notfound, Config);
 
-      (StepModule, ContextIn) ->
-        ?debugFmt("contextin body: ~p", [ContextIn]),
-        execute_step_module(
-          Config,
-          ContextIn,
-          {StepKeyWord, LineNo, Body1, Args1},
-          StepModule
-        )
-    end,
-    maps:put(step_found, false, Context),
-    filelib:wildcard(filename:join(["src", "steps_*.erl"]))
-  ).
-
-
-get_stepargs(Body) when is_list(Body) ->
-  case lists:keytake(docstring, 1, Body) of
-    {value, {docstring, Doc}, Body0} ->
-      {
-        damage_utils:binarystr_join(Body0, <<" ">>),
-        damage_utils:binarystr_join(Doc)
-      };
-
-    _ -> {damage_utils:binarystr_join(Body, <<" ">>), <<"">>}
-  end.
+    true -> true
+  end,
+  Context0.
 
 
 get_global_template_context(Config, Context) ->
-  {context_yaml, ContextYamlFile} = lists:keyfind(context_yaml, 1, Config),
-  {deployment, Deployment} = lists:keyfind(deployment, 1, Config),
-  {ok, [ContextYaml | _]} =
-    fast_yaml:decode_from_file(ContextYamlFile, [{plain_as_atom, true}]),
-  {deployments, Deployments} = lists:keyfind(deployments, 1, ContextYaml),
-  {Deployment, DeploymentConfig} = lists:keyfind(Deployment, 1, Deployments),
+  {_, DeploymentConfig} =
+    case lists:keyfind(context_yaml, 1, Config) of
+      false -> {local, []};
+
+      {context_yaml, ContextYamlFile} ->
+        {deployment, Deployment} = lists:keyfind(deployment, 1, Config),
+        {ok, [ContextYaml | _]} =
+          fast_yaml:decode_from_file(ContextYamlFile, [{plain_as_atom, true}]),
+        {deployments, Deployments} = lists:keyfind(deployments, 1, ContextYaml),
+        lists:keyfind(Deployment, 1, Deployments)
+    end,
   {ok, Timestamp} = datestring:format("YmdHM", erlang:localtime()),
   maps:put(
     formatter_state,

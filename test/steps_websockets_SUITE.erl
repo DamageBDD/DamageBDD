@@ -59,4 +59,4 @@ step_websocket(Config) ->
       ["I should receive data on the websocket"],
       [{test, true}]
     ),
-  {text,<<"{\"test\":true}">>} = maps:get(response, Context2).
+  {text, <<"{\"test\":true}">>} = maps:get(response, Context2).

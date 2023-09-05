@@ -112,26 +112,6 @@ step(
         ),
         Data
       )
-    %dict:store(
-    %    response,
-    %    response_to_list(
-    %    hackney:request(
-    %        post,
-    %        Url,
-    %        [
-    %        {
-    %            cookie,
-    %            [
-    %            {<<"csrf_token">>, CSRFToken, [{path, <<"/">>}]},
-    %            {<<"csrftoken">>, CSRFToken, [{path, <<"/">>}]}
-    %            ]
-    %        },
-    %        {with_body, true}
-    %        ]
-    %    )
-    %    ),
-    %    Context
-    %)
   end;
 
 step(
@@ -147,13 +127,18 @@ step(
     [{status_code, Status0}, _, _] -> Context;
 
     [{status_code, Status1}, _, _] ->
-      {
+      maps:put(
         fail,
-        io_lib:format("Response status is not ~p, got ~p", [Status0, Status1])
-      };
+        io_lib:format("Response status is not ~p, got ~p", [Status0, Status1]),
+        Context
+      );
 
     Any ->
-      {fail, io_lib:format("Response status is not ~p, got ~p", [Status0, Any])}
+      maps:put(
+        fail,
+        io_lib:format("Response status is not ~p, got ~p", [Status0, Any]),
+        Context
+      )
   end;
 
 step(
@@ -171,16 +156,17 @@ step(
         {[Json0 | _], _} -> Context;
 
         UnExpected ->
-          {
+          maps:put(
             fail,
             io_lib:format(
               "the json at path ~p is not ~p, it is ~p.",
               [Path, Json, UnExpected]
             )
-          }
+          )
       end;
 
-    UnExpected -> {fail, io_lib:format("Unexpected response ~p", [UnExpected])}
+    UnExpected ->
+      maps:put(fail, io_lib:format("Unexpected response ~p", [UnExpected]))
   end;
 
 step(
@@ -203,18 +189,23 @@ step(
 
         _ ->
           logger:debug("the response status must be one of ~p.", [StatusCode]),
-          {
+          maps:put(
             fail,
             io_lib:format(
               "Response status ~p is not one of ~p",
               [StatusCode, Responses]
-            )
-          }
+            ),
+            Context
+          )
       end;
 
     UnExpected ->
       logger:error("unexpected response in context ~p.", [UnExpected]),
-      {fail, io_lib:format("Unexpected response ~p", [UnExpected])}
+      maps:put(
+        fail,
+        io_lib:format("Unexpected response ~p", [UnExpected]),
+        Context
+      )
   end;
 
 step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
@@ -256,15 +247,20 @@ step(
         {[Json0 | _], _} -> maps:put(Variable0, Json0, Context);
 
         UnExpected ->
-          {
+          maps:put(
             fail,
             io_lib:format(
               "the json at path ~p is not ~p, it is ~p.",
               [Path, Variable, UnExpected]
-            )
-          }
+            ),
+            Context
+          )
       end;
 
-    UnExpected -> {fail, io_lib:format("Unexpected response ~p", [UnExpected])}
+    UnExpected ->
+      maps:put(
+        fail,
+        io_lib:format("Unexpected response ~p", [UnExpected]),
+        Context
+      )
   end.
-

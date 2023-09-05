@@ -19,11 +19,13 @@
 
 start(_StartType, _StartArgs) ->
   application:start(?MODULE),
-  application:ensure_all_started(hackney),
-  application:ensure_all_started(gun),
-  application:ensure_all_started(cedb),
-  application:ensure_all_started(p1_utils),
-  application:ensure_all_started(fast_yaml),
+  {ok, _} = application:ensure_all_started(gun),
+  {ok, _} = application:ensure_all_started(cedb),
+  {ok, _} = application:ensure_all_started(p1_utils),
+  {ok, _} = application:ensure_all_started(fast_yaml),
+  {ok, _} = application:ensure_all_started(prometheus),
+  {ok, _} = application:ensure_all_started(prometheus_cowboy),
+  metrics:init(),
   Dispatch =
     cowboy_router:compile(
       [
@@ -31,7 +33,8 @@ start(_StartType, _StartArgs) ->
           '_',
           [
             {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
-            {"/api/", damage_http, []}
+            {"/api/", damage_http, []},
+            {"/metrics/[:registry]", prometheus_cowboy2_handler, []}
           ]
         }
       ]
@@ -44,7 +47,7 @@ start(_StartType, _StartArgs) ->
       #{
         env => #{dispatch => Dispatch},
         metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
-        stream_handlers => [cowboy_stream_h]
+        stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
       }
     ),
   damage_sup:start_link().
