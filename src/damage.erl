@@ -190,16 +190,6 @@ execute_step_module(
     Context0
   catch
     error : function_clause:_ ->
-      ?LOG_ERROR(
-        #{
-          step_module => StepModule,
-          message => "StepNotFound",
-          step => StepKeyWord,
-          line => LineNo,
-          body => Body,
-          args => Args
-        }
-      ),
       Context;
 
     error : undef:_ -> Context;
@@ -227,20 +217,14 @@ execute_step({_Config, Step}, #{fail := _} = Context) ->
   Context;
 
 execute_step({Config, Step}, Context) ->
-  ?debugFmt("step : ~p", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
-  ?debugFmt(
-    "step keyword: ~p body: ~p: Args ~p, context: ~p",
-    [StepKeyWord, Body1, Args1, Context]
-  ),
   Context0 =
     lists:foldl(
       fun
         (_StepModule, #{step_found := true} = ContextIn) -> ContextIn;
 
         (StepModule, ContextIn) ->
-          ?debugFmt("contextin body: ~p", [ContextIn]),
           case maps:get(step_found, ContextIn) of
             false ->
               case
@@ -255,7 +239,12 @@ execute_step({Config, Step}, Context) ->
                 #{fail := _} = Context1 ->
                   maps:put(failing_step, Step, Context1);
 
-                Context1 -> Context1
+                Context1 -> 
+  ?debugFmt(
+    "step keyword: ~p body: ~p: Args ~p, context: ~p",
+    [StepKeyWord, Body1, Args1, Context]
+  ),
+Context1
               end;
 
             true -> ContextIn
