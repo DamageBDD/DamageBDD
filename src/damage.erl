@@ -175,10 +175,6 @@ execute_step_module(
   {StepKeyWord, LineNo, Body, Args} = Step,
   StepModule
 ) ->
-  ?debugFmt(
-    "Trying step module ~p for ~p, Context: ~p",
-    [StepModule, Body, Context]
-  ),
   try
     Context0 =
       maps:put(
@@ -219,7 +215,7 @@ execute_step_module(
         }
       ),
       should_exit(Config),
-      Context
+      maps:put(failing_step, Step, maps:put(fail, Reason, Context))
   end.
 
 
@@ -247,12 +243,20 @@ execute_step({Config, Step}, Context) ->
           ?debugFmt("contextin body: ~p", [ContextIn]),
           case maps:get(step_found, ContextIn) of
             false ->
+              case
               execute_step_module(
                 Config,
                 ContextIn,
                 {StepKeyWord, LineNo, Body1, Args1},
                 StepModule
-              );
+              ) of
+                #{failing_step := _} = Context1 -> Context1;
+
+                #{fail := _} = Context1 ->
+                  maps:put(failing_step, Step, Context1);
+
+                Context1 -> Context1
+              end;
 
             true -> ContextIn
           end

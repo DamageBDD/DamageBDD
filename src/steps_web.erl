@@ -129,14 +129,17 @@ step(
     [{status_code, Status1}, _, _] ->
       maps:put(
         fail,
-        io_lib:format("Response status is not ~p, got ~p", [Status0, Status1]),
+        damage_utils:strf(
+          "Response status is not ~p, got ~p",
+          [Status0, Status1]
+        ),
         Context
       );
 
     Any ->
       maps:put(
         fail,
-        io_lib:format("Response status is not ~p, got ~p", [Status0, Any]),
+        damage_utils:strf("Response status is not ~p, got ~p", [Status0, Any]),
         Context
       )
   end;
@@ -158,7 +161,7 @@ step(
         UnExpected ->
           maps:put(
             fail,
-            io_lib:format(
+            damage_utils:strf(
               "the json at path ~p is not ~p, it is ~p.",
               [Path, Json, UnExpected]
             )
@@ -166,7 +169,7 @@ step(
       end;
 
     UnExpected ->
-      maps:put(fail, io_lib:format("Unexpected response ~p", [UnExpected]))
+      maps:put(fail, damage_utils:strf("Unexpected response ~p", [UnExpected]))
   end;
 
 step(
@@ -191,7 +194,7 @@ step(
           logger:debug("the response status must be one of ~p.", [StatusCode]),
           maps:put(
             fail,
-            io_lib:format(
+            damage_utils:strf(
               "Response status ~p is not one of ~p",
               [StatusCode, Responses]
             ),
@@ -203,7 +206,7 @@ step(
       logger:error("unexpected response in context ~p.", [UnExpected]),
       maps:put(
         fail,
-        io_lib:format("Unexpected response ~p", [UnExpected]),
+        damage_utils:strf("Unexpected response ~p", [UnExpected]),
         Context
       )
   end;
@@ -249,7 +252,7 @@ step(
         UnExpected ->
           maps:put(
             fail,
-            io_lib:format(
+            damage_utils:strf(
               "the json at path ~p is not ~p, it is ~p.",
               [Path, Variable, UnExpected]
             ),
@@ -260,7 +263,7 @@ step(
     UnExpected ->
       maps:put(
         fail,
-        io_lib:format("Unexpected response ~p", [UnExpected]),
+        damage_utils:strf("Unexpected response ~p", [UnExpected]),
         Context
       )
   end.

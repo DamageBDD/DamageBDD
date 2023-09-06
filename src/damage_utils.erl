@@ -15,7 +15,8 @@
     binarystr_join/1,
     binarystr_join/2,
     config/2,
-    loaded_steps/0
+    loaded_steps/0,
+    strf/2
   ]
 ).
 
@@ -86,13 +87,14 @@ loaded_steps() ->
   lists:filtermap(
     fun
       ({Module, _, _}) ->
-        case string:split(Module, "_") of
-          ["steps", R] ->
-            ?debugFmt("~p", [R]),
-            {true, Module};
-
+        case string:split(Module, "_", all) of
+          ["steps", _, "SUITE"] -> false;
+          ["steps", _] -> {true, Module};
           _ -> false
         end
     end,
     code:all_available()
   ).
+
+
+strf(String, Args) -> lists:flatten(io_lib:format(String, Args)).

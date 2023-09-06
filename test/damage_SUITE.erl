@@ -31,7 +31,16 @@ end_per_group(Name, _) -> cowboy:stop_listener(Name).
 
 init_dispatch(_) ->
   cowboy_router:compile(
-    [{"localhost", [{"/", hello_h, []}, {"/ws_echo", ws_echo, []}]}]
+    [
+      {
+        "localhost",
+        [
+          {"/", hello_h, []},
+          {"/echo/:key", echo_h, []},
+          {"/api/:key", damage_http, []}
+        ]
+      }
+    ]
   ).
 
 execute_test(TestConfig) ->
@@ -42,19 +51,21 @@ execute_test(TestConfig) ->
       #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
     ),
   Port = ranch:get_port(?FUNCTION_NAME),
-  ok =
-    damage:execute(
-      [
-        {host, localhost},
-        {port, Port},
-        {feature_dirs, ["../../../../features/"]},
-        {account, "test"}
-      ],
-      "localhost"
+  [#{response := [{status_code, 200} | _]} | _] =
+    lists:flatten(
+      damage:execute(
+        [
+          {host, localhost},
+          {port, Port},
+          {feature_dirs, ["../../../../features/"]},
+          {account, "test"}
+        ],
+        "localhost"
+      )
     ).
 
 
-metrics_test(TestConfig) ->
+execute_http_api_test(TestConfig) ->
   {ok, _} =
     cowboy:start_clear(
       ?FUNCTION_NAME,
@@ -70,5 +81,5 @@ metrics_test(TestConfig) ->
         {feature_dirs, ["../../../../features/"]},
         {account, "test"}
       ],
-      "metrics"
+      "api"
     ).

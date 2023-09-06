@@ -59,9 +59,21 @@ handle(undefined, Req) ->
   cowboy_req:reply(400, #{}, <<"Missing POST data.">>, Req);
 
 handle(Data, Req) ->
-  cowboy_req:reply(
-    200,
-    #{<<"content-type">> => <<"text/plain; charset=utf-8">>},
-    Data,
-    Req
-  ).
+  case jsx:decode(Data, [return_maps]) of
+    #{filename := FileName} = FeatureData ->
+      file:write_file(FileName, FeatureData),
+      cowboy_req:reply(
+        200,
+        #{<<"content-type">> => <<"text/plain; charset=utf-8">>},
+        Data,
+        Req
+      );
+
+    _ ->
+      cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"text/plain; charset=utf-8">>},
+        Data,
+        Req
+      )
+  end.
