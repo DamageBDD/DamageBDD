@@ -154,9 +154,9 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
     [ScenarioName, LineNo, Tags]
   ),
   lists:foldl(
-    fun execute_step/2,
+    fun (S, C) -> execute_step({Config, S}, C) end,
     get_global_template_context(Config, maps:new()),
-    [{Config, S} || S <- lists:append(BackGroundSteps, Steps)]
+    lists:append(BackGroundSteps, Steps)
   ).
 
 
@@ -189,9 +189,7 @@ execute_step_module(
     metrics:update(success, Config),
     Context0
   catch
-    error : function_clause:_ ->
-      Context;
-
+    error : function_clause:_ -> Context;
     error : undef:_ -> Context;
 
     error : Reason:Stacktrace ->
@@ -239,12 +237,12 @@ execute_step({Config, Step}, Context) ->
                 #{fail := _} = Context1 ->
                   maps:put(failing_step, Step, Context1);
 
-                Context1 -> 
-  ?debugFmt(
-    "step keyword: ~p body: ~p: Args ~p, context: ~p",
-    [StepKeyWord, Body1, Args1, Context]
-  ),
-Context1
+                Context1 ->
+                  ?debugFmt(
+                    "step keyword: ~p body: ~p: Args ~p, context: ~p",
+                    [StepKeyWord, Body1, Args1, Context]
+                  ),
+                  Context1
               end;
 
             true -> ContextIn

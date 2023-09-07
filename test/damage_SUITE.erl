@@ -17,13 +17,15 @@ init_per_group(Name, Config) ->
   {ok, _} = application:ensure_all_started(gun),
   {ok, _} = application:ensure_all_started(cowboy),
   {ok, _} = application:ensure_all_started(prometheus),
-  application:ensure_all_started(metrics),
-  application:ensure_all_started(exometer),
   metrics:init(),
-  cowboy_test:init_http(
+  damage_test:init_http(
     Name,
     #{env => #{dispatch => init_dispatch(Name)}},
-    Config
+    [
+      {host, localhost},
+      {feature_dirs, ["../../../../features/"]},
+      {account, "test"} | Config
+    ]
   ).
 
 
@@ -44,42 +46,11 @@ init_dispatch(_) ->
   ).
 
 execute_test(TestConfig) ->
-  {ok, _} =
-    cowboy:start_clear(
-      ?FUNCTION_NAME,
-      [{port, 0}],
-      #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
-    ),
-  Port = ranch:get_port(?FUNCTION_NAME),
   [#{response := [{status_code, 200} | _]} | _] =
-    lists:flatten(
-      damage:execute(
-        [
-          {host, localhost},
-          {port, Port},
-          {feature_dirs, ["../../../../features/"]},
-          {account, "test"}
-        ],
-        "localhost"
-      )
-    ).
-
+    lists:flatten(damage:execute(TestConfig, "localhost")).
 
 execute_http_api_test(TestConfig) ->
-  {ok, _} =
-    cowboy:start_clear(
-      ?FUNCTION_NAME,
-      [{port, 0}],
-      #{env => #{dispatch => init_dispatch(TestConfig)}, chunked => false}
-    ),
-  Port = ranch:get_port(?FUNCTION_NAME),
-  ok =
-    damage:execute(
-      [
-        {host, localhost},
-        {port, Port},
-        {feature_dirs, ["../../../../features/"]},
-        {account, "test"}
-      ],
-      "api"
-    ).
+  erlang:trace_pattern({damage_http, '_', '_'}, true, [local]),
+  [#{response := [{status_code, 200} | _]} | _] =
+    damage:execute(TestConfig, "api"),
+  erlang:trace(all, false, [call]).
