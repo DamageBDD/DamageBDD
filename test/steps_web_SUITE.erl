@@ -10,20 +10,18 @@ all() -> [{group, web}].
 
 groups() -> [{web, [parallel], ct_helper:all(?MODULE)}].
 
+init_per_suite(Config) -> damage_test:init_per_suite(Config).
+
 init_per_group(Name, Config) ->
-  {ok, _} = application:ensure_all_started(ranch),
-  {ok, _} = application:ensure_all_started(gun),
-  {ok, _} = application:ensure_all_started(cowboy),
   damage_test:init_http(
     Name,
     #{env => #{dispatch => init_dispatch(Name)}},
     [
       {host, localhost},
-      {feature_dirs, ["../../../../features/"]},
+      {feature_dirs, ["../../../../features/", "../features/"]},
       {account, "test"} | Config
     ]
   ).
-
 
 end_per_group(Name, _) -> cowboy:stop_listener(Name).
 

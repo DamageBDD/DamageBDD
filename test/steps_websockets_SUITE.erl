@@ -10,39 +10,26 @@ all() -> [{group, ws}].
 
 groups() -> [{ws, [parallel], ct_helper:all(?MODULE)}].
 
+init_per_suite(Config) -> damage_test:init_per_suite(Config).
+
 init_per_group(Name, Config) ->
-  {ok, _} = application:ensure_all_started(ranch),
-  {ok, _} = application:ensure_all_started(gun),
-  {ok, _} = application:ensure_all_started(cowboy),
-  {ok, _} = application:ensure_all_started(prometheus),
-  metrics:init(),
   damage_test:init_http(
     Name,
     #{
-        enable_connect_protocol => true,
-        env => #{dispatch => init_dispatch(Name)}
-      },
+      enable_connect_protocol => true,
+      env => #{dispatch => init_dispatch(Name)}
+    },
     [
       {host, localhost},
-      {feature_dirs, ["../../../../features/"]},
+      {feature_dirs, ["../../../../features/", "../features/"]},
       {account, "test"} | Config
     ]
   ).
 
 init_dispatch(_) ->
-  cowboy_router:compile(
-    [
-      {
-        "localhost",
-        [
-          {"/", ws_echo, []}
-        ]
-      }
-    ]
-  ).
+  cowboy_router:compile([{"localhost", [{"/", ws_echo, []}]}]).
 
 end_per_group(Name, _) -> cowboy:stop_listener(Name).
-
 
 step_websocket(Config) ->
   Context = maps:new(),

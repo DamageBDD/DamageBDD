@@ -6,6 +6,8 @@
 
 -license("Apache-2.0").
 
+-include_lib("eunit/include/eunit.hrl").
+
 -export([step/6]).
 
 response_to_list({StatusCode, Headers, Body}) ->
@@ -15,6 +17,7 @@ gun_post(Config, Context, Path, Headers, Data) ->
   {host, Host} = lists:keyfind(host, 1, Config),
   {port, Port} = lists:keyfind(port, 1, Config),
   {ok, ConnPid} = gun:open(Host, Port),
+  ?debugFmt("Data : ~p", [Data]),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
@@ -70,7 +73,7 @@ step(
     [
       {<<"accept">>, "application/json"},
       {<<"user-agent">>, "revolver/1.0"},
-      {<<"Content-type">>, "application/json"}
+      {<<"content-type">>, "application/json"}
     ],
     Data
   );
@@ -153,7 +156,7 @@ step(
   _
 ) ->
   case maps:get(response, Context) of
-    [{status_code, 200}, _Headers, {body, Body}] ->
+    [{status_code, _}, _Headers, {body, Body}] ->
       Json0 = list_to_binary(Json),
       case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
         {[Json0 | _], _} -> Context;
@@ -169,7 +172,11 @@ step(
       end;
 
     UnExpected ->
-      maps:put(fail, damage_utils:strf("Unexpected response ~p", [UnExpected]))
+      maps:put(
+        fail,
+        damage_utils:strf("Unexpected response ~p", [UnExpected]),
+        Context
+      )
   end;
 
 step(

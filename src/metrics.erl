@@ -13,20 +13,18 @@
 
 -export([init/0, update/2]).
 
-init() ->
-  prometheus_gauge:new(
-    [{name, success}, {help, "number of success"}, {labels, ["account"]}]
-  ),
-  prometheus_gauge:new(
-    [{name, error}, {help, "number of errors"}, {labels, ["account"]}]
-  ),
-  prometheus_gauge:new(
-    [{name, fail}, {help, "number of fails"}, {labels, ["account"]}]
-  ),
-  prometheus_gauge:new(
-    [{name, notfound}, {help, "number of notfounds"}, {labels, ["account"]}]
-  ).
-
+init() -> [try prometheus_gauge:declare(M) of _ -> ok catch
+      _ ->
+        logger:error("Error initializing metrics"),
+        ok end ||
+    M
+    <-
+    [
+      [{name, success}, {help, "number of success"}, {labels, ["account"]}],
+      [{name, error}, {help, "number of errors"}, {labels, ["account"]}],
+      [{name, fail}, {help, "number of fails"}, {labels, ["account"]}],
+      [{name, notfound}, {help, "number of notfounds"}, {labels, ["account"]}]
+    ]].
 
 update(Event, Config) ->
   prometheus_gauge:inc(Event, [{account, "all"}]),

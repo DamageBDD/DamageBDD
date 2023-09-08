@@ -12,24 +12,22 @@ all() -> [{group, web}].
 
 groups() -> [{web, [parallel], ct_helper:all(?MODULE)}].
 
+init_per_suite(Config) -> damage_test:init_per_suite(Config).
+
 init_per_group(Name, Config) ->
-  {ok, _} = application:ensure_all_started(ranch),
-  {ok, _} = application:ensure_all_started(gun),
-  {ok, _} = application:ensure_all_started(cowboy),
-  {ok, _} = application:ensure_all_started(prometheus),
-  metrics:init(),
   damage_test:init_http(
     Name,
     #{env => #{dispatch => init_dispatch(Name)}},
     [
       {host, localhost},
-      {feature_dirs, ["../../../../features/"]},
+      {feature_dirs, ["../../../../features/", "../features/"]},
       {account, "test"} | Config
     ]
   ).
 
-
 end_per_group(Name, _) -> cowboy:stop_listener(Name).
+
+end_per_suite(Config) -> damage_test:end_per_suite(Config).
 
 init_dispatch(_) ->
   cowboy_router:compile(
@@ -37,9 +35,9 @@ init_dispatch(_) ->
       {
         "localhost",
         [
-          {"/", hello_h, []},
           {"/echo/:key", echo_h, []},
-          {"/api/:key", damage_http, []}
+          {"/", hello_h, []},
+          {"/api/execute_feature/", damage_http, []}
         ]
       }
     ]
@@ -50,7 +48,7 @@ execute_test(TestConfig) ->
     lists:flatten(damage:execute(TestConfig, "localhost")).
 
 execute_http_api_test(TestConfig) ->
-  erlang:trace_pattern({damage_http, '_', '_'}, true, [local]),
-  [#{response := [{status_code, 200} | _]} | _] =
-    damage:execute(TestConfig, "api"),
+  recon_trace:calls({damage_http, '_', '_'}, 20, [{scope, local}]),
+  [#{response := [{status_code, 201} | _]} | _] =
+    lists:flatten(damage:execute(TestConfig, "api")),
   erlang:trace(all, false, [call]).

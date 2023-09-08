@@ -1,12 +1,8 @@
 -module(damage_http).
 
-%%% @doc
-%%% asyncmind top-level HTTP request handler.
-%%% @end
-
 -vsn("0.1.0").
 
--behavior(cowboy_handler).
+-include_lib("eunit/include/eunit.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
@@ -15,65 +11,70 @@
 -license("Apache-2.0").
 
 -export([init/2]).
+-export([content_types_accepted/2]).
+-export([content_types_provided/2]).
+-export([hello_to_html/2]).
+-export([hello_to_json/2]).
+-export([hello_to_text/2]).
+-export([from_json/2, allowed_methods/2, from_html/2]).
 
--spec init(Req, State) ->
-  Result
-  when Req :: cowboy_req:req(),
-       State :: any(),
-       Result :: {ok, Reply, NewState} | {module(), Reply, NewState, Options},
-       Reply :: cowboy_req:req(),
-       NewState :: any(),
-       Options :: any().
-init(Req0, State) ->
-  Method = cowboy_req:method(Req0),
-  Req = maybe_handle(Method, Req0),
-  {ok, Req, State}.
+init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+
+content_types_provided(Req, State) ->
+  {
+    [
+      {<<"text/html">>, hello_to_html},
+      {<<"application/json">>, hello_to_json},
+      {<<"text/plain">>, hello_to_text}
+    ],
+    Req,
+    State
+  }.
+
+content_types_accepted(Req, State) ->
+  {
+    [
+      {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_form},
+      {{<<"application">>, <<"json">>, '*'}, from_json}
+    ],
+    Req,
+    State
+  }.
+
+allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+
+from_json(Req, State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  ?debugFmt("Got data ~p.", [Data]),
+  Resp0 =
+    case jsx:decode(Data, [{labels, atom}, return_maps]) of
+      #{feature := FeatureData, account := Account} = _FeatureJson ->
+        file:write_file(Account, FeatureData),
+        <<"{\"status\":\"ok\"}">>;
+
+      Err -> damage_utils:strf("{\"status\":\"~p\"}", [Err])
+    end,
+  Resp = cowboy_req:set_resp_body(Resp0, Req),
+  cowboy_req:reply(201, Resp),
+  {stop, Resp, State}.
 
 
-maybe_handle(<<"GET">>, Req) ->
-  cowboy_req:reply(400, #{}, <<"Missing body.">>, Req);
+from_html(Req, Data) -> {<<"{\"status\":\"not ok\"}">>, Req, Data}.
 
-maybe_handle(<<"POST">>, Req) ->
-  HasBody = cowboy_req:has_body(Req),
-  maybe_handle_post(HasBody, Req);
-
-maybe_handle(_, Req) ->
-  %% Method not allowed.
-  cowboy_req:reply(405, Req).
+hello_to_html(Req, State) ->
+  Body =
+    <<
+      "<html>\n<head>\n\t<meta charset=\"utf-8\">\n\t<title>REST Hello World!</title>\n</head>\n<body>\n\t<p>REST Hello World as HTML!</p>\n</body>\n</html>"
+    >>,
+  {Body, Req, State}.
 
 
-maybe_handle_post(true, Req0) ->
-  {ok, PostVals, Req} = cowboy_req:read_urlencoded_body(Req0),
-  FeatureFile = proplists:get_value(<<"feature_file">>, PostVals),
-  handle(FeatureFile, Req);
-
-maybe_handle_post(false, Req) ->
-  cowboy_req:reply(400, #{}, <<"Missing POST body.">>, Req);
-
-maybe_handle_post(_, Req) ->
-  %% Method not allowed.
-  cowboy_req:reply(405, Req).
+hello_to_json(Req0, State) ->
+  Body = <<"{\"rest\": \"Hello World!\"}">>,
+  Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
+  Req =
+    cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
+  {Body, Req, State}.
 
 
-handle(undefined, Req) ->
-  cowboy_req:reply(400, #{}, <<"Missing POST data.">>, Req);
-
-handle(Data, Req) ->
-  case jsx:decode(Data, [return_maps]) of
-    #{filename := FileName} = FeatureData ->
-      file:write_file(FileName, FeatureData),
-      cowboy_req:reply(
-        200,
-        #{<<"content-type">> => <<"text/plain; charset=utf-8">>},
-        Data,
-        Req
-      );
-
-    _ ->
-      cowboy_req:reply(
-        400,
-        #{<<"content-type">> => <<"text/plain; charset=utf-8">>},
-        Data,
-        Req
-      )
-  end.
+hello_to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.

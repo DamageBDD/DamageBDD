@@ -187,6 +187,10 @@ execute_step_module(
         )
       ),
     metrics:update(success, Config),
+    ?debugFmt(
+      "step keyword: ~p body: ~p: Args ~p, context: ~p ~p",
+      [StepKeyWord, Body, Args, Context0, StepModule]
+    ),
     Context0
   catch
     error : function_clause:_ -> Context;
@@ -220,32 +224,25 @@ execute_step({Config, Step}, Context) ->
   Context0 =
     lists:foldl(
       fun
-        (_StepModule, #{step_found := true} = ContextIn) -> ContextIn;
+        (_StepModule, #{step_found := true} = ContextIn) ->
+          ?debugFmt("step found trye ~p", [ContextIn]),
+          ContextIn;
 
-        (StepModule, ContextIn) ->
-          case maps:get(step_found, ContextIn) of
-            false ->
-              case
-              execute_step_module(
-                Config,
-                ContextIn,
-                {StepKeyWord, LineNo, Body1, Args1},
-                StepModule
-              ) of
-                #{failing_step := _} = Context1 -> Context1;
+        (StepModule, #{step_found := false} = ContextIn) ->
+          ?debugFmt("step found false ~p", [ContextIn]),
+          case
+          execute_step_module(
+            Config,
+            ContextIn,
+            {StepKeyWord, LineNo, Body1, Args1},
+            StepModule
+          ) of
+            #{failing_step := _} = Context1 -> Context1;
+            #{fail := _} = Context1 -> maps:put(failing_step, Step, Context1);
 
-                #{fail := _} = Context1 ->
-                  maps:put(failing_step, Step, Context1);
-
-                Context1 ->
-                  ?debugFmt(
-                    "step keyword: ~p body: ~p: Args ~p, context: ~p",
-                    [StepKeyWord, Body1, Args1, Context]
-                  ),
-                  Context1
-              end;
-
-            true -> ContextIn
+            Context1 ->
+              ?debugFmt("step exit success ~p", [Context1]),
+              Context1
           end
       end,
       maps:put(step_found, false, Context),
