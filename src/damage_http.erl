@@ -45,17 +45,46 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {ok, DataDir} = application:get_env(damage, data_dir),
   ?debugFmt("Got data ~p.", [Data]),
-  Resp0 =
+  Config =
+    [
+      {host, localhost},
+      {feature_dirs, ["../../../../features/", "../features/"]}
+    ],
+  {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
       #{feature := FeatureData, account := Account} = _FeatureJson ->
-        file:write_file(Account, FeatureData),
-        <<"{\"status\":\"ok\"}">>;
+        AccountDir = filename:join(DataDir, Account),
+        FeatureDir = filename:join(AccountDir, "features"),
+        case filelib:ensure_path(FeatureDir) of
+          ok ->
+            BddFileName =
+              filename:join(
+                FeatureDir,
+                "RenameMeToGeneratedFeatureNamefromData.feature"
+              ),
+            ?debugFmt("Got bddfilename ~p.", [BddFileName]),
+            case file:write_file(BddFileName, FeatureData) of
+              ok ->
+                Result =
+                  damage:execute_file(
+                    [{account, Account} | Config],
+                    BddFileName
+                  ),
+                {201, jsx:encode(#{status => <<"ok">>, result => [Result]})};
 
-      Err -> damage_utils:strf("{\"status\":\"~p\"}", [Err])
+              Err ->
+                {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+            end;
+
+          Err -> {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+        end;
+
+      Err -> {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
     end,
   Resp = cowboy_req:set_resp_body(Resp0, Req),
-  cowboy_req:reply(201, Resp),
+  cowboy_req:reply(Status, Resp),
   {stop, Resp, State}.
 
 

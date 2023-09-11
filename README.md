@@ -1,4 +1,4 @@
-damage BDD
+Damage BDD
 ==========
 
 An Erlang OTP application to run bdd load tests at scale.
