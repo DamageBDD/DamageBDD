@@ -10,9 +10,9 @@
 
 -license("Apache-2.0").
 
--export([start_link/0, format_step/4]).
+-export([start_link/0, format/3]).
 -export([init/1, handle_call/3, handle_cast/2]).
--export([invoke_formatters/4]).
+-export([invoke_formatters/3]).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -30,7 +30,7 @@ handle_cast({invoke_formatters, Args}, State) ->
   {noreply, State}.
 
 
-invoke_formatters(Config, Step, Context, Status) ->
+invoke_formatters(Config, Keyword, Data) ->
   {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
   lists:foreach(
     fun
@@ -39,8 +39,8 @@ invoke_formatters(Config, Step, Context, Status) ->
           list_to_atom(
             lists:flatten(io_lib:format("~p_formatter", [Formatter]))
           ),
-          format_step,
-          [FormatterConfig, Step, Context, Status]
+          format,
+          [FormatterConfig, Keyword, Data]
         )
     end,
     Formatters
@@ -48,9 +48,6 @@ invoke_formatters(Config, Step, Context, Status) ->
   ok.
 
 
-format_step(Config, Step, Context, Status) ->
+format(Config, Keyword, Data) ->
   CallbackModule = whereis(?MODULE),
-  gen_server:call(
-    CallbackModule,
-    [invoke_formatters, Config, Step, Context, Status]
-  ).
+  gen_server:call(CallbackModule, [invoke_formatters, Config, Keyword, Data]).

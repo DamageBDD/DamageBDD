@@ -109,13 +109,13 @@ execute_file(Config, Filename) ->
     {failed, LineNo, Message} ->
       logger:error("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
 
-    {_LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
+    {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
       ?debugFmt("Executing feature file ~p.", [Filename ++ ".feature"]),
       execute_feature(
         Config,
         Feature,
+        LineNo,
         Tags,
-        Feature,
         Description,
         BackGround,
         Scenarios
@@ -128,16 +128,17 @@ execute_file(Config, Filename) ->
 execute_feature(
   Config,
   FeatureName,
+  LineNo,
   Tags,
-  Feature,
   Description,
   BackGround,
   Scenarios
 ) ->
   ?debugFmt(
-    "~p: ~p: ~p: ~p, ~p",
-    [FeatureName, Tags, Feature, Description, BackGround]
+    "Feature ~p lineNo: ~p tags: ~p desc: ~p",
+    [FeatureName, LineNo, Tags, Description]
   ),
+  formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
   [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios].
 
 
@@ -153,6 +154,7 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
     "executing scenario: ~p: line: ~p: tags ~p",
     [ScenarioName, LineNo, Tags]
   ),
+  formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
   lists:foldl(
     fun (S, C) -> execute_step(Config, S, C) end,
     get_global_template_context(Config, maps:new()),
@@ -206,7 +208,7 @@ execute_step_module(
           step_module => StepModule
         }
       ),
-      formatter:format_step(Config, Step, Context, fail),
+      formatter:format(Config, step, {LineNo, StepKeyWord, Body, Context, fail}),
       should_exit(Config),
       maps:put(failing_step, Step, maps:put(fail, Reason, Context))
   end.
@@ -216,7 +218,8 @@ execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 
 execute_step(Config, Step, #{fail := _} = Context) ->
   logger:info("step skipped: ~p ~p", [Step]),
-  formatter:format_step(Config, Step, Context, skip),
+  {LineNo, StepKeyWord, Body} = Step,
+  formatter:format(Config, step, {LineNo, StepKeyWord, Body, Context, skip}),
   Context;
 
 execute_step(Config, Step, Context) ->
@@ -243,7 +246,11 @@ execute_step(Config, Step, Context) ->
 
             Context1 ->
               ?debugFmt("step exit success ~p", [Context1]),
-              formatter:format_step(Config, Step, Context, success),
+              formatter:format(
+                Config,
+                step,
+                {LineNo, StepKeyWord, Body, Context, success}
+              ),
               Context1
           end
       end,
@@ -253,7 +260,11 @@ execute_step(Config, Step, Context) ->
   case maps:get(step_found, Context0) of
     false ->
       logger:error("step not found: ~p ~p", [Body1, Args1]),
-      formatter:format_step(Config, Step, Context, notfound),
+      formatter:format(
+        Config,
+        step,
+        {LineNo, StepKeyWord, Body, Context, notfound}
+      ),
       metrics:update(notfound, Config);
 
     true -> true

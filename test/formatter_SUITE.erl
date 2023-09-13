@@ -49,29 +49,28 @@ delete_file_if_exists(FilePath) ->
 
 
 text_formatter_test(Config0) ->
+  Output = "report.txt",
   Config =
     [
       {
         formatters,
-        [{text, #{output => "report.txt"}}, {html, #{output => "report.html"}}]
+        [{text, #{output => Output}}, {html, #{output => "report.html"}}]
       }
       | Config0
     ],
-  {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
-  {text, #{output := Output} = _TextFormatterConfig} =
-    lists:keyfind(text, 1, Formatters),
   delete_file_if_exists(Output),
   ok =
     formatter:invoke_formatters(
       Config,
+      step,
       {
         then_keyword,
         13,
         ["the json at path", "$.status", "must be", "ok"],
-        <<>>
-      },
-      #{},
-      fail
+        <<>>,
+        #{},
+        fail
+      }
     ),
   ok =
     test_file_contains_expected_data(
@@ -81,29 +80,28 @@ text_formatter_test(Config0) ->
 
 
 html_formatter_test(Config0) ->
+  Output = "report.html",
   Config =
     [
       {
         formatters,
-        [{html, #{output => "report.html"}}, {html, #{output => "report.html"}}]
+        [{text, #{output => Output}}, {html, #{output => "report.html"}}]
       }
       | Config0
     ],
-  {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
-  {html, #{output := Output} = _TextFormatterConfig} =
-    lists:keyfind(html, 1, Formatters),
   delete_file_if_exists(Output),
   ok =
     formatter:invoke_formatters(
       Config,
+      step,
       {
         then_keyword,
         13,
         ["the json at path", "$.status", "must be", "ok"],
-        <<>>
-      },
-      #{},
-      fail
+        <<>>,
+        #{},
+        fail
+      }
     ),
   ok =
     test_file_contains_expected_data(
