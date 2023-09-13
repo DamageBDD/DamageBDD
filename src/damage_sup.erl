@@ -38,7 +38,7 @@ init([]) ->
       fun
         ({Name, SizeArgs, WorkerArgs}) ->
           PoolArgs =
-            [{name, {local, Name}}, {worker_module, damage}] ++ SizeArgs,
+            [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
           poolboy:child_spec(Name, PoolArgs, WorkerArgs)
       end,
       Pools

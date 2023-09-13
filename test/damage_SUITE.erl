@@ -10,9 +10,12 @@
 
 all() -> [{group, web}].
 
-groups() -> [{web, [parallel], ct_helper:all(?MODULE)}].
+groups() -> [{web, [parallel], [execute_test, execute_http_api_test]}].
 
-init_per_suite(Config) -> damage_test:init_per_suite(Config).
+init_per_suite(Config) ->
+  damage_sup:start_link(),
+  damage_test:init_per_suite(Config).
+
 
 init_per_group(Name, Config) ->
   damage_test:init_http(

@@ -1,8 +1,6 @@
 -module(formatter).
 
--behaviour(gen_server).
 
--include_lib("reporting/formatter.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
@@ -10,16 +8,30 @@
 
 -license("Apache-2.0").
 
--export([start_link/0, format/3]).
--export([init/1, handle_call/3, handle_cast/2]).
+-include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
+-include_lib("reporting/formatter.hrl").
+
+-behaviour(gen_server).
+-behaviour(poolboy_worker).
+
+-export([start_link/1, format/3]).
+-export(
+  [
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+  ]
+).
 -export([invoke_formatters/3]).
 
-start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-  CallbackModule =
-    application:get_env(my_app, formatter_callback_module, default_formatter),
-  {ok, CallbackModule}.
+  {ok, undefined}.
 
 
 handle_call(invoke_formatters, Args, State) ->
@@ -29,6 +41,7 @@ handle_cast({invoke_formatters, Args}, State) ->
   gen_server:cast(?MODULE, {invoke_formatters, Args}),
   {noreply, State}.
 
+handle_info(_Info, State) -> {noreply, State}.
 
 invoke_formatters(Config, Keyword, Data) ->
   {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
@@ -47,7 +60,11 @@ invoke_formatters(Config, Keyword, Data) ->
   ),
   ok.
 
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 format(Config, Keyword, Data) ->
-  CallbackModule = whereis(?MODULE),
-  gen_server:call(CallbackModule, [invoke_formatters, Config, Keyword, Data]).
+  gen_server:call(?MODULE, [invoke_formatters, Config, Keyword, Data]).
+
+terminate(Reason, _State) ->
+  logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+  ok.

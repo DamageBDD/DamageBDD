@@ -50,14 +50,7 @@ delete_file_if_exists(FilePath) ->
 
 text_formatter_test(Config0) ->
   Output = "report.txt",
-  Config =
-    [
-      {
-        formatters,
-        [{text, #{output => Output}}, {html, #{output => "report.html"}}]
-      }
-      | Config0
-    ],
+  Config = [{formatters, [{text, #{output => Output}}]} | Config0],
   delete_file_if_exists(Output),
   ok =
     formatter:invoke_formatters(
@@ -81,14 +74,7 @@ text_formatter_test(Config0) ->
 
 html_formatter_test(Config0) ->
   Output = "report.html",
-  Config =
-    [
-      {
-        formatters,
-        [{text, #{output => Output}}, {html, #{output => "report.html"}}]
-      }
-      | Config0
-    ],
+  Config = [{formatters, [{html, #{output => "report.html"}}]} | Config0],
   delete_file_if_exists(Output),
   ok =
     formatter:invoke_formatters(
@@ -106,7 +92,7 @@ html_formatter_test(Config0) ->
   ok =
     test_file_contains_expected_data(
       Output,
-      "<tr><td>Then</td> <td>the json at path $.status must be ok</td>"
+      "<tr><td>Then</td><td>the json at path $.status must be ok</td><td><<>></td><td>13</td><td>fail</td></tr>"
     ).
 
 
