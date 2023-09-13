@@ -1,5 +1,7 @@
 -module(formatter).
 
+-behaviour(gen_server).
+
 -include_lib("reporting/formatter.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
@@ -8,63 +10,47 @@
 
 -license("Apache-2.0").
 
--export(
-  [
-    start_test/2,
-    end_test/3,
-    step/3,
-    attach/3,
-    generate_report/1,
-    add_formatter/2
-  ]
-).
+-export([start_link/0, format_step/4]).
+-export([init/1, handle_call/3, handle_cast/2]).
+-export([invoke_formatters/4]).
 
-start_test(Name, Description) ->
-  State = #state{},
-  {
-    State,
-    fun
-      (Formatter) -> allure_formatter:start_test(Formatter, Name, Description)
-    end
-  }.
+start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+init([]) ->
+  CallbackModule =
+    application:get_env(my_app, formatter_callback_module, default_formatter),
+  {ok, CallbackModule}.
 
 
-end_test({State, TestFn}, Name, Status) ->
-  NewTestState =
-    lists:map(
-      fun (Fn) -> Fn(end_test, Name, Status) end,
-      State#state.test_state
-    ),
-  NewState = State#state{test_state = NewTestState},
-  {NewState, TestFn}.
+handle_call(invoke_formatters, Args, State) ->
+  {reply, gen_server:call(?MODULE, {invoke_formatters, Args}), State}.
+
+handle_cast({invoke_formatters, Args}, State) ->
+  gen_server:cast(?MODULE, {invoke_formatters, Args}),
+  {noreply, State}.
 
 
-step({State, TestFn}, Name, Status) ->
-  NewTestState =
-    lists:map(fun (Fn) -> Fn(step, Name, Status) end, State#state.test_state),
-  NewState = State#state{test_state = NewTestState},
-  {NewState, TestFn}.
-
-
-attach({State, TestFn}, AttachmentType, File) ->
-  NewTestState =
-    lists:map(
-      fun (Fn) -> Fn(attach, AttachmentType, File) end,
-      State#state.test_state
-    ),
-  NewState = State#state{test_state = NewTestState},
-  {NewState, TestFn}.
-
-
-generate_report({State, _TestFn}) ->
-  Formatters = State#state.formatters,
+invoke_formatters(Config, Step, Context, Status) ->
+  {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
   lists:foreach(
-    fun (Formatter) -> allure_log_formatter:generate_report(Formatter) end,
+    fun
+      ({Formatter, FormatterConfig}) ->
+        apply(
+          list_to_atom(
+            lists:flatten(io_lib:format("~p_formatter", [Formatter]))
+          ),
+          format_step,
+          [FormatterConfig, Step, Context, Status]
+        )
+    end,
     Formatters
+  ),
+  ok.
+
+
+format_step(Config, Step, Context, Status) ->
+  CallbackModule = whereis(?MODULE),
+  gen_server:call(
+    CallbackModule,
+    [invoke_formatters, Config, Step, Context, Status]
   ).
-
-
-add_formatter({State, TestFn}, Formatter) ->
-  NewFormatters = [Formatter | State#state.formatters],
-  NewState = State#state{formatters = NewFormatters},
-  {NewState, TestFn}.

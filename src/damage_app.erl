@@ -25,6 +25,11 @@ start(_StartType, _StartArgs) ->
   {ok, _} = application:ensure_all_started(fast_yaml),
   {ok, _} = application:ensure_all_started(prometheus),
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
+  code:add_patha("vanillae/ebin"),
+  {ok, _} = application:ensure_all_started(vanillae),
+  ok = vanillae:network_id("ae_uat"),
+  {ok, AeNodes} = application:get_env(ae_nodes),
+  ok = vanillae:ae_nodes(AeNodes),
   metrics:init(),
   Dispatch =
     cowboy_router:compile(

@@ -154,7 +154,7 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
     [ScenarioName, LineNo, Tags]
   ),
   lists:foldl(
-    fun (S, C) -> execute_step({Config, S}, C) end,
+    fun (S, C) -> execute_step(Config, S, C) end,
     get_global_template_context(Config, maps:new()),
     lists:append(BackGroundSteps, Steps)
   ).
@@ -206,19 +206,20 @@ execute_step_module(
           step_module => StepModule
         }
       ),
+      formatter:format_step(Config, Step, Context, fail),
       should_exit(Config),
       maps:put(failing_step, Step, maps:put(fail, Reason, Context))
   end.
 
 
-execute_step({Config, Step}, [Context]) ->
-  execute_step({Config, Step}, Context);
+execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 
-execute_step({_Config, Step}, #{fail := _} = Context) ->
+execute_step(Config, Step, #{fail := _} = Context) ->
   logger:info("step skipped: ~p ~p", [Step]),
+  formatter:format_step(Config, Step, Context, skip),
   Context;
 
-execute_step({Config, Step}, Context) ->
+execute_step(Config, Step, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
   Context0 =
@@ -242,6 +243,7 @@ execute_step({Config, Step}, Context) ->
 
             Context1 ->
               ?debugFmt("step exit success ~p", [Context1]),
+              formatter:format_step(Config, Step, Context, success),
               Context1
           end
       end,
@@ -251,6 +253,7 @@ execute_step({Config, Step}, Context) ->
   case maps:get(step_found, Context0) of
     false ->
       logger:error("step not found: ~p ~p", [Body1, Args1]),
+      formatter:format_step(Config, Step, Context, notfound),
       metrics:update(notfound, Config);
 
     true -> true

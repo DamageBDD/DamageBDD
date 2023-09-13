@@ -11,10 +11,6 @@
   2},
  {<<"cowboy">>,{pkg,<<"cowboy">>,<<"2.10.0">>},0},
  {<<"cowlib">>,{pkg,<<"cowlib">>,<<"2.12.1">>},1},
- {<<"date_util">>,
-  {git,"https://github.com/jagguli/date_util.git",
-       {ref,"8119942c6befb2117bc2ccfc51a8e28f30850054"}},
-  0},
  {<<"datestring">>,
   {git,"https://github.com/strange/datestring.git",
        {ref,"7504bdfe7a4b996692d4c80252a60c609fe6fd61"}},
@@ -79,6 +75,7 @@
   1},
  {<<"quantile_estimator">>,{pkg,<<"quantile_estimator">>,<<"0.2.1">>},3},
  {<<"ranch">>,{pkg,<<"ranch">>,<<"1.8.0">>},1},
+ {<<"recon">>,{pkg,<<"recon">>,<<"2.5.4">>},0},
  {<<"setup">>,{pkg,<<"setup">>,<<"2.1.0">>},1},
  {<<"sf">>,
   {git,"https://github.com/hachreak/sf.git",
@@ -106,6 +103,7 @@
  {<<"prometheus_httpd">>, <<"F616ED9B85B536B195D94104063025A91F904A4CFC20255363F49A197D96C896">>},
  {<<"quantile_estimator">>, <<"EF50A361F11B5F26B5F16D0696E46A9E4661756492C981F7B2229EF42FF1CD15">>},
  {<<"ranch">>, <<"8C7A100A139FD57F17327B6413E4167AC559FBC04CA7448E9BE9057311597A1D">>},
+ {<<"recon">>, <<"05DD52A119EE4059FA9DAA1AB7CE81BC7A8161A2F12E9D42E9D551FFD2BA901C">>},
  {<<"setup">>, <<"05F69185A5EB71474C9BC6BA892565651EC7507791F85632B7B914DBFE130510">>}]},
 {pkg_hash_ext,[
  {<<"accept">>, <<"11B18C220BCC2EAB63B5470C038EF10EB6783BCB1FCDB11AA4137DEFA5AC1BB8">>},
@@ -124,5 +122,6 @@
  {<<"prometheus_httpd">>, <<"0BBE831452CFDF9588538EB2F570B26F30C348ADAE5E95A7D87F35A5910BCF92">>},
  {<<"quantile_estimator">>, <<"282A8A323CA2A845C9E6F787D166348F776C1D4A41EDE63046D72D422E3DA946">>},
  {<<"ranch">>, <<"49FBCFD3682FAB1F5D109351B61257676DA1A2FDBE295904176D5E521A2DDFE5">>},
+ {<<"recon">>, <<"E9AB01AC7FC8572E41EB59385EFEB3FB0FF5BF02103816535BACAEDF327D0263">>},
  {<<"setup">>, <<"EFD072578F0CF85BEA96CAAFFC7ADB0992398272522660A136E10567377071C5">>}]}
 ].

@@ -6,7 +6,7 @@
     {vsn, "0.1.0"},
     {registered, []},
     {mod, {damage_app, []}},
-    {applications, [kernel, stdlib]},
+    {applications, [kernel, stdlib, damage]},
     {env, [{pools, [{bdd, [{size, 10}, {max_overflow, 20}], []}]}]},
     {modules, []},
     {licenses, ["Apache 2.0"]},
