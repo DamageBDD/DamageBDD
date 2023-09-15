@@ -74,7 +74,7 @@ text_formatter_test(Config0) ->
 
 html_formatter_test(Config0) ->
   Output = "report.html",
-  Config = [{formatters, [{html, #{output => "report.html"}}]} | Config0],
+  Config = [{formatters, [{html, #{output => Output}}]} | Config0],
   delete_file_if_exists(Output),
   ok =
     formatter:invoke_formatters(

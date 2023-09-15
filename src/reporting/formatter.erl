@@ -1,7 +1,5 @@
 -module(formatter).
 
-
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -30,9 +28,7 @@
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
-init([]) ->
-  {ok, undefined}.
-
+init([]) -> {ok, undefined}.
 
 handle_call(invoke_formatters, Args, State) ->
   {reply, gen_server:call(?MODULE, {invoke_formatters, Args}), State}.
@@ -41,9 +37,11 @@ handle_cast({invoke_formatters, Args}, State) ->
   gen_server:cast(?MODULE, {invoke_formatters, Args}),
   {noreply, State}.
 
+
 handle_info(_Info, State) -> {noreply, State}.
 
 invoke_formatters(Config, Keyword, Data) ->
+  ?debugFmt("invoke formatter: ~p", [Data]),
   {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
   lists:foreach(
     fun
@@ -60,10 +58,11 @@ invoke_formatters(Config, Keyword, Data) ->
   ),
   ok.
 
+
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 format(Config, Keyword, Data) ->
-  gen_server:call(?MODULE, [invoke_formatters, Config, Keyword, Data]).
+  gen_server:cast(?MODULE, [invoke_formatters, Config, Keyword, Data]).
 
 terminate(Reason, _State) ->
   logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),

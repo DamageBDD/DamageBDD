@@ -55,10 +55,12 @@ start(_StartType, _StartArgs) ->
         stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
       }
     ),
-  damage_sup:start_link().
+  damage_sup:start_link(),
+  logger:info("Started Damage.").
 
 
 stop(_State) ->
+  ok = cowboy:stop_listener(http),
   application:stop(gun),
   ok.
 

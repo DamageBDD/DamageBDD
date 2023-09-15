@@ -13,7 +13,7 @@ all() -> [{group, web}].
 groups() -> [{web, [parallel], [execute_test, execute_http_api_test]}].
 
 init_per_suite(Config) ->
-  damage_sup:start_link(),
+  {ok, _} = formatter:start_link([]),
   damage_test:init_per_suite(Config).
 
 
@@ -24,7 +24,12 @@ init_per_group(Name, Config) ->
     [
       {host, localhost},
       {feature_dirs, ["../../../../features/", "../features/"]},
-      {account, "test"} | Config
+      {account, "test"},
+      {
+        formatters,
+        [{text, #{output => "report.txt"}}, {html, #{output => "report.html"}}]
+      }
+      | Config
     ]
   ).
 

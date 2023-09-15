@@ -90,11 +90,15 @@ from_json(Req, State) ->
 
 from_html(Req, Data) -> {<<"{\"status\":\"not ok\"}">>, Req, Data}.
 
+load_template(FilePath) ->
+  PrivDir = application:priv_dir(damage),
+  FilePath = filename:join([PrivDir, "dealdamage.html"]),
+  {ok, {_, TemplateString}} = file:consult(FilePath),
+  mustache:render(TemplateString, #{}).
+
+
 hello_to_html(Req, State) ->
-  Body =
-    <<
-      "<html>\n<head>\n\t<meta charset=\"utf-8\">\n\t<title>REST Hello World!</title>\n</head>\n<body>\n\t<p>REST Hello World as HTML!</p>\n</body>\n</html>"
-    >>,
+  Body = load_template("template.mustache"),
   {Body, Req, State}.
 
 
