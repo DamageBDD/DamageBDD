@@ -1,0 +1,20 @@
+{name,"DamageBDD"}.
+{type,app}.
+{modules,[]}.
+{prefix,"damage"}.
+{author,"Steven Joseph"}.
+{desc,"Behaviour Driven Development at scale."}.
+{package_id,{"otpr","damage",{0,1,0}}}.
+{deps,[{"otpr","cowboy",{2,10,1}},
+       {"otpr","ranch",{2,1,0}},
+       {"otpr","ejsonpath",{0,2,1}},
+       {"otpr","cowlib",{2,12,1}}]}.
+{key_name,none}.
+{a_email,"steven@stevenjoseph.in"}.
+{c_email,"steven@stevenjoseph.in"}.
+{copyright,"Steven Joseph"}.
+{file_exts,[]}.
+{license,"Apache-2.0"}.
+{repo_url,"repo.damagebdd.com"}.
+{tags,[]}.
+{ws_url,"damagebdd.com"}.
