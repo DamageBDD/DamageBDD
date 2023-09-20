@@ -24,7 +24,7 @@
     code_change/3
   ]
 ).
--export([generate_code/2]).
+-export([run_python_server/2, generate_code/2]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -155,3 +155,33 @@ generate_code(Config, FeatureFilename) ->
     {error, enont} ->
       logger:error("Feature file ~p not found.", [FeatureFilename])
   end.
+
+
+run_python_server(Config, Code) ->
+  {data_dir, DataDir} = lists:keyfind(data_dir, 1, Config),
+  {account, Account} = lists:keyfind(account, 1, Config),
+  ServerPy = "server.py",
+  AccountDir = filename:join(DataDir, Account),
+  case filelib:ensure_path(AccountDir) of
+    ok ->
+      CodeFile = filename:join(AccountDir, ServerPy),
+      LogFile = filename:join(AccountDir, "server_log.log"),
+      ?debugFmt("Codefile ~p.  DataDir ~p", [CodeFile, DataDir]),
+      case file:write_file(CodeFile, Code) of
+        ok ->
+          exec:run(
+            "/usr/sbin/python " ++ CodeFile,
+            [{stderr, stdout}, {stdout, LogFile, [append, {mode, 384}]}, sync]
+          );
+
+        Err ->
+          ?debugFmt("Got unexpected error ~p.", [Err]),
+          logger:error("Error writing code to file ~p. ~p", [CodeFile, Err])
+      end;
+
+    Err ->
+      ?debugFmt("Got unexpected error ~p.", [Err]),
+      logger:debug("Got  unexpected: ~p", [Err]),
+      notok
+  end,
+  ok.

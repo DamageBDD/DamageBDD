@@ -16,6 +16,7 @@ groups() -> [{ai, [parallel], [generate_code_test]}].
 
 init_per_suite(Config) ->
   application:ensure_all_started(gun),
+  {ok, _} = application:ensure_all_started(erlexec),
   PrivDir = code:priv_dir(damage),
   MessagesYaml = filename:join([PrivDir, "gpt_messages.yaml"]),
   FunctionsYaml = filename:join([PrivDir, "gpt_functions.yaml"]),
@@ -23,6 +24,7 @@ init_per_suite(Config) ->
     {host, localhost},
     {feature_dirs, ["../../../../features/", "../features/"]},
     {account, "test"},
+    {data_dir, "/var/lib/damagebdd/"},
     {
       formatters,
       [{text, #{output => "report.txt"}}, {html, #{output => "report.html"}}]
@@ -41,6 +43,7 @@ end_per_suite(Config) -> Config.
 
 generate_code_test(TestConfig) ->
   % erlang code to get application root directory
-  FeatureFile = "../../../../features/api.feature",
+  FeatureFile = "../../../../features/localhost.feature",
   ?debugFmt("Running feature file ~p ~p", [file:get_cwd(), FeatureFile]),
-  {_Code, _Explanation} = damage_ai:generate_code(TestConfig, FeatureFile).
+  {Code, _Explanation} = damage_ai:generate_code(TestConfig, FeatureFile),
+  ok = damage_ai:run_python_server(TestConfig, Code).

@@ -25,6 +25,7 @@ start(_StartType, _StartArgs) ->
   {ok, _} = application:ensure_all_started(fast_yaml),
   {ok, _} = application:ensure_all_started(prometheus),
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
+  {ok, _} = application:ensure_all_started(erlexec),
   code:add_patha("vanillae/ebin"),
   {ok, _} = application:ensure_all_started(vanillae),
   ok = vanillae:network_id("ae_uat"),
