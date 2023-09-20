@@ -67,6 +67,7 @@ generate_code(Config, FeatureFilename) ->
         lists:keyfind(openai_functions_yaml, 1, Config),
       {ok, [Functions]} =
         fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
+      {openai_model, Model} = lists:keyfind(openai_model, 1, Config),
       ?debugFmt(
         "Loaded messages from file ~p. Data: ~p",
         [MessagesYaml, Messages]
@@ -79,7 +80,7 @@ generate_code(Config, FeatureFilename) ->
       PostData =
         jsx:encode(
           #{
-            model => <<"codellama/CodeLlama-34b-Instruct-hf">>,
+            model => list_to_binary(Model),
             messages => Messages ++ [[{role, <<"user">>}, {content, Prompt0}]],
             functions => Functions,
             temperature => 0.7
@@ -109,10 +110,38 @@ generate_code(Config, FeatureFilename) ->
           ?debugFmt("Got response ~p: ~p.", [Status, Body]),
           logger:debug("POST Response: ~p", [Body]),
           case jsx:decode(Body, [{labels, atom}, return_maps]) of
+            #{choices := [#{message := Message} | _], usage := _Usage} =
+              _Response ->
+              #{
+                function_call
+                :=
+                #{name := <<"generate_python_code">>, arguments := Arguments}
+              } = Message,
+              logger:debug("Function Response: ~p", [Arguments]),
+              case jsx:decode(Arguments, [{labels, atom}, return_maps]) of
+                #{code := Code, explanation := Explanation} ->
+                  ?debugFmt(
+                    "Got function response ~p: ~p.",
+                    [Code, Explanation]
+                  ),
+                  {Code, Explanation};
+
+                InvalidArguments ->
+                  ?debugFmt(
+                    "Got unexpected arguments for function call ~p.",
+                    [InvalidArguments]
+                  ),
+                  logger:debug(
+                    "POST Response Arguments: ~p",
+                    [InvalidArguments]
+                  ),
+                  notok
+              end;
+
             #{choices := Choices, usage := _Usage} = _Response -> Choices;
 
             NoChoice ->
-              ?debugFmt("Got unexpected response ~p.", [NoChoice]),
+              ?debugFmt("Got function response ~p.", [NoChoice]),
               logger:debug("POST Response: ~p", [NoChoice]),
               notok
           end;
