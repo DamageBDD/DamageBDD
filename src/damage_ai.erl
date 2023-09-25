@@ -24,7 +24,7 @@
     code_change/3
   ]
 ).
--export([run_python_server/2, generate_code/2]).
+-export([run_python_server/3, generate_code/2]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -157,7 +157,7 @@ generate_code(Config, FeatureFilename) ->
   end.
 
 
-run_python_server(Config, Code) ->
+run_python_server(Config, Context, Code) ->
   {data_dir, DataDir} = lists:keyfind(data_dir, 1, Config),
   {account, Account} = lists:keyfind(account, 1, Config),
   ServerPy = "server.py",
@@ -169,10 +169,17 @@ run_python_server(Config, Code) ->
       ?debugFmt("Codefile ~p.  DataDir ~p", [CodeFile, DataDir]),
       case file:write_file(CodeFile, Code) of
         ok ->
-          exec:run(
-            "/usr/sbin/python " ++ CodeFile,
-            [{stderr, stdout}, {stdout, LogFile, [append, {mode, 384}]}, sync]
-          );
+          logger:info("Starting server process ~p.", [CodeFile]),
+          {ok, Pid, OsPid} =
+            exec:run(
+              "/usr/sbin/python " ++ CodeFile,
+              [
+                {stderr, stdout},
+                {stdout, LogFile, [append, {mode, 384}]},
+                monitor
+              ]
+            ),
+          maps:put(server_os_pid, OsPid, maps:put(server_pid, Pid, Context));
 
         Err ->
           ?debugFmt("Got unexpected error ~p.", [Err]),
