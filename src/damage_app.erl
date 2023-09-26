@@ -18,20 +18,18 @@
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-  application:start(?MODULE),
-  {ok, _} = application:ensure_all_started(gun),
-  {ok, _} = application:ensure_all_started(cedb),
-  {ok, _} = application:ensure_all_started(p1_utils),
+  logger:info("Startint Damage."),
+  %{ok, _} = application:ensure_all_started(cedb),
   {ok, _} = application:ensure_all_started(fast_yaml),
   {ok, _} = application:ensure_all_started(prometheus),
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
   {ok, _} = application:ensure_all_started(erlexec),
-  code:add_patha("vanillae/ebin"),
-  {ok, _} = application:ensure_all_started(vanillae),
-  ok = vanillae:network_id("ae_uat"),
-  {ok, AeNodes} = application:get_env(ae_nodes),
-  ok = vanillae:ae_nodes(AeNodes),
-  metrics:init(),
+  %logger:info("Starting vanilla."),
+  %code:add_patha("vanillae/ebin"),
+  %{ok, _} = application:ensure_all_started(vanillae),
+  %ok = vanillae:network_id("ae_uat"),
+  %{ok, AeNodes} = application:get_env(ae_nodes),
+  %ok = vanillae:ae_nodes(AeNodes),
   Dispatch =
     cowboy_router:compile(
       [
@@ -56,8 +54,12 @@ start(_StartType, _StartArgs) ->
         stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
       }
     ),
-  damage_sup:start_link(),
-  logger:info("Started Damage.").
+  logger:info("Started cowboy."),
+  {ok, _} = application:ensure_all_started(gun),
+  logger:info("Started Gun."),
+  metrics:init(),
+  logger:info("Started Damage."),
+  damage_sup:start_link().
 
 
 stop(_State) ->

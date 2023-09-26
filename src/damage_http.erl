@@ -23,9 +23,9 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 content_types_provided(Req, State) ->
   {
     [
-      {<<"text/html">>, hello_to_html},
-      {<<"application/json">>, hello_to_json},
-      {<<"text/plain">>, hello_to_text}
+      {{<<"text">>, <<"html">>, '*'}, hello_to_html},
+      {{<<"application">>, <<"json">>, []}, hello_to_json},
+      {{<<"text">>, <<"plain">>, '*'}, hello_to_text}
     ],
     Req,
     State
@@ -46,15 +46,15 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {ok, DataDir} = application:get_env(damage, data_dir),
-  ?debugFmt("Got data ~p.", [Data]),
-  Config =
-    [
-      {host, localhost},
-      {feature_dirs, ["../../../../features/", "../features/"]}
-    ],
+  Config = [{feature_dirs, ["../../../../features/", "../features/"]}],
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{feature := FeatureData, account := Account} = _FeatureJson ->
+      #{
+        feature := FeatureData,
+        account := Account,
+        host := Hostname,
+        port := Port
+      } = _FeatureJson ->
         AccountDir = filename:join(DataDir, Account),
         FeatureDir = filename:join(AccountDir, "features"),
         case filelib:ensure_path(FeatureDir) of
@@ -64,24 +64,50 @@ from_json(Req, State) ->
                 FeatureDir,
                 "RenameMeToGeneratedFeatureNamefromData.feature"
               ),
-            ?debugFmt("Got bddfilename ~p.", [BddFileName]),
             case file:write_file(BddFileName, FeatureData) of
               ok ->
-                Result =
-                  damage:execute_file(
-                    [{account, Account} | Config],
-                    BddFileName
-                  ),
-                {201, jsx:encode(#{status => <<"ok">>, result => [Result]})};
+                case
+                damage:execute_file(
+                  [
+                    {account, binary_to_list(Account)},
+                    {host, binary_to_list(Hostname)},
+                    {port, Port} | Config
+                  ],
+                  BddFileName
+                ) of
+                  [
+                    #{
+                      fail := _FailReason,
+                      failing_step := {_KeyWord, Line, Step, _Args}
+                    }
+                    | _
+                  ] ->
+                    Response =
+                      #{
+                        status => <<"notok">>,
+                        failing_step
+                        =>
+                        list_to_binary(damage_utils:lists_concat(Step, " ")),
+                        line => Line
+                      },
+                    {400, jsx:encode(Response)};
+
+                  [#{success := Ok}] -> {201, jsx:encode(Ok)}
+                end;
 
               Err ->
+                logger:error("Write file failed ~p.", [Err]),
                 {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
             end;
 
-          Err -> {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+          Err ->
+            logger:error("Data dir creation faild ~p.", [Err]),
+            {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
         end;
 
-      Err -> {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+      Err ->
+        logger:error("json decoding failed ~p.", [Data]),
+        {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
     end,
   Resp = cowboy_req:set_resp_body(Resp0, Req),
   cowboy_req:reply(Status, Resp),
@@ -103,11 +129,11 @@ hello_to_html(Req, State) ->
 
 
 hello_to_json(Req0, State) ->
-  Body = <<"{\"rest\": \"Hello World!\"}">>,
-  Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
-  Req =
-    cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
-  {Body, Req, State}.
+  Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,
+  %Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
+  %Req =
+  %  cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
+  {Body, Req0, State}.
 
 
 hello_to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.

@@ -75,14 +75,6 @@ execute(Config, FeatureName) ->
       false -> {feature_suffix, ".feature"};
       Val -> Val
     end,
-  ?debugFmt(
-    "Looking for features in ~p, ~p.~p",
-    [
-      FeatureDirs,
-      filelib:wildcard(lists:flatten(FeatureName, FeatureSuffix), "./features/"),
-      file:get_cwd()
-    ]
-  ),
   lists:map(
     fun
       (FeatureDir) ->
@@ -104,13 +96,11 @@ execute(Config, FeatureName) ->
 
 
 execute_file(Config, Filename) ->
-  ?debugFmt("Looking for feature name ~p.", [Filename]),
   try egherkin:parse_file(Filename) of
     {failed, LineNo, Message} ->
       logger:error("FAIL ~p +~p ~n     ~p.", [Filename, LineNo, Message]);
 
     {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
-      ?debugFmt("Executing feature file ~p.", [Filename ++ ".feature"]),
       execute_feature(
         Config,
         Feature,
@@ -134,10 +124,6 @@ execute_feature(
   BackGround,
   Scenarios
 ) ->
-  ?debugFmt(
-    "Feature ~p lineNo: ~p tags: ~p desc: ~p",
-    [FeatureName, LineNo, Tags, Description]
-  ),
   formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
   [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios].
 
@@ -150,10 +136,6 @@ execute_scenario(Config, [], Scenario) ->
 
 execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   {LineNo, ScenarioName, Tags, Steps} = Scenario,
-  ?debugFmt(
-    "executing scenario: ~p: line: ~p: tags ~p",
-    [ScenarioName, LineNo, Tags]
-  ),
   formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
   lists:foldl(
     fun (S, C) -> execute_step(Config, S, C) end,
@@ -165,7 +147,7 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
 should_exit(Config) ->
   case lists:keyfind(stop, 1, Config) of
     {stop, true} -> exit(normal);
-    _ -> logger:debug("Continuing after errors.")
+    _ -> logger:info("Continuing after errors.")
   end.
 
 
@@ -189,10 +171,6 @@ execute_step_module(
         )
       ),
     metrics:update(success, Config),
-    ?debugFmt(
-      "step keyword: ~p body: ~p: Args ~p, context: ~p ~p",
-      [StepKeyWord, Body, Args, Context0, StepModule]
-    ),
     Context0
   catch
     error : function_clause:_ -> Context;
@@ -228,12 +206,9 @@ execute_step(Config, Step, Context) ->
   Context0 =
     lists:foldl(
       fun
-        (_StepModule, #{step_found := true} = ContextIn) ->
-          ?debugFmt("step found trye ~p", [ContextIn]),
-          ContextIn;
+        (_StepModule, #{step_found := true} = ContextIn) -> ContextIn;
 
         (StepModule, #{step_found := false} = ContextIn) ->
-          ?debugFmt("step found false ~p", [ContextIn]),
           case
           execute_step_module(
             Config,
@@ -245,11 +220,10 @@ execute_step(Config, Step, Context) ->
             #{fail := _} = Context1 -> maps:put(failing_step, Step, Context1);
 
             Context1 ->
-              ?debugFmt("step exit success ~p", [Context1]),
               formatter:format(
                 Config,
                 step,
-                {LineNo, StepKeyWord, Body, Context, success}
+                {LineNo, StepKeyWord, Body, Context1, success}
               ),
               Context1
           end

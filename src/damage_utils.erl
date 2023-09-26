@@ -16,6 +16,7 @@
     binarystr_join/2,
     config/2,
     loaded_steps/0,
+    lists_concat/2,
     strf/2
   ]
 ).
@@ -98,3 +99,5 @@ loaded_steps() ->
 
 
 strf(String, Args) -> lists:flatten(io_lib:format(String, Args)).
+
+lists_concat(L, N) -> lists:flatten(string:join([[X] || X <- L], N)).

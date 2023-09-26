@@ -13,11 +13,6 @@ init_http(Ref, ProtoOpts, Config) ->
   [{ref, Ref}, {type, tcp}, {protocol, http}, {port, Port}, {opts, []} | Config].
 
 
-execute_test() ->
-  {ok, Config} = file:consult(filename:join("config", "damage.config")),
-  ok = damage:execute(Config, "localhost").
-
-
 init_per_suite(Config) ->
   application:ensure_all_started(ranch),
   application:ensure_all_started(gun),
