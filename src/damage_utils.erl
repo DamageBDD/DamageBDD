@@ -17,7 +17,8 @@
     config/2,
     loaded_steps/0,
     lists_concat/2,
-    strf/2
+    strf/2,
+    get_context_value/3
   ]
 ).
 
@@ -101,3 +102,10 @@ loaded_steps() ->
 strf(String, Args) -> lists:flatten(io_lib:format(String, Args)).
 
 lists_concat(L, N) -> lists:flatten(string:join([[X] || X <- L], N)).
+
+-spec get_context_value(atom(), map(), list()) -> any().
+get_context_value(Key, Context, Config) ->
+  case lists:keyfind(key, 1, Config) of
+    {_, Default} -> maps:get(Key, Context, Default);
+    false -> maps:get(Key, Context)
+  end.

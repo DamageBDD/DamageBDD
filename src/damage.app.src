@@ -8,7 +8,7 @@
     {mod, {damage_app, []}},
     {applications, [kernel, stdlib, cowboy]},
     {env, []},
-    {modules, []},
+    {modules, [formatter]},
     {licenses, ["Apache 2.0"]},
     {links, []}
   ]

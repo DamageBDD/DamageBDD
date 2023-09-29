@@ -7,8 +7,8 @@ Feature: Test DamageBDD API
     {
         "feature": "Feature: For testing an request to google\n  Scenario: root\n    When I make a GET request to \"/\"\n    Then the response status must be \"200\"\n",
         "account": "guest",
-        "host": "localhost",
-        "port": 9090
+        "host": "damagebdd.com",
+        "port": 443
     }
      
     """

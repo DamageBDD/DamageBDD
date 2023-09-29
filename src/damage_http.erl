@@ -43,67 +43,81 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
+execute_bdd(
+  #{feature := FeatureData, account := Account, host := Hostname, port := Port} =
+    _FeaturePayload
+) ->
+  {ok, DataDir} = application:get_env(damage, data_dir),
+  Output = "/var/lib/damagebdd/guest/report.txt",
+  Config =
+    [
+      {formatters, [{text, #{output => Output}}]},
+      {feature_dirs, ["../../../../features/", "../features/"]}
+    ],
+  AccountDir = filename:join(DataDir, Account),
+  FeatureDir = filename:join(AccountDir, "features"),
+  case filelib:ensure_path(FeatureDir) of
+    ok ->
+      BddFileName =
+        filename:join(
+          FeatureDir,
+          "RenameMeToGeneratedFeatureNamefromData.feature"
+        ),
+      case file:write_file(BddFileName, FeatureData) of
+        ok ->
+          case
+          damage:execute_file(
+            [
+              {account, binary_to_list(Account)},
+              {host, binary_to_list(Hostname)},
+              {port, Port} | Config
+            ],
+            BddFileName
+          ) of
+            [
+              #{
+                fail := _FailReason,
+                failing_step := {_KeyWord, Line, Step, _Args}
+              }
+              | _
+            ] ->
+              Response =
+                #{
+                  status => <<"notok">>,
+                  failing_step
+                  =>
+                  list_to_binary(damage_utils:lists_concat(Step, " ")),
+                  line => Line
+                },
+              {400, jsx:encode(Response)};
+
+            Ok ->
+              logger:debug("No failure ~p.", [Ok]),
+              {200, jsx:encode(#{status => <<"ok">>, message => <<"">>})}
+          end;
+
+        Err ->
+          logger:error("Write file failed ~p.", [Err]),
+          {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+      end;
+
+    Err ->
+      logger:error("Data dir creation faild ~p.", [Err]),
+      {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+  end.
+
+
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  {ok, DataDir} = application:get_env(damage, data_dir),
-  Config = [{feature_dirs, ["../../../../features/", "../features/"]}],
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
       #{
-        feature := FeatureData,
-        account := Account,
-        host := Hostname,
-        port := Port
-      } = _FeatureJson ->
-        AccountDir = filename:join(DataDir, Account),
-        FeatureDir = filename:join(AccountDir, "features"),
-        case filelib:ensure_path(FeatureDir) of
-          ok ->
-            BddFileName =
-              filename:join(
-                FeatureDir,
-                "RenameMeToGeneratedFeatureNamefromData.feature"
-              ),
-            case file:write_file(BddFileName, FeatureData) of
-              ok ->
-                case
-                damage:execute_file(
-                  [
-                    {account, binary_to_list(Account)},
-                    {host, binary_to_list(Hostname)},
-                    {port, Port} | Config
-                  ],
-                  BddFileName
-                ) of
-                  [
-                    #{
-                      fail := _FailReason,
-                      failing_step := {_KeyWord, Line, Step, _Args}
-                    }
-                    | _
-                  ] ->
-                    Response =
-                      #{
-                        status => <<"notok">>,
-                        failing_step
-                        =>
-                        list_to_binary(damage_utils:lists_concat(Step, " ")),
-                        line => Line
-                      },
-                    {400, jsx:encode(Response)};
-
-                  [#{success := Ok}] -> {201, jsx:encode(Ok)}
-                end;
-
-              Err ->
-                logger:error("Write file failed ~p.", [Err]),
-                {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
-            end;
-
-          Err ->
-            logger:error("Data dir creation faild ~p.", [Err]),
-            {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
-        end;
+        feature := _FeatureData,
+        account := _Account,
+        host := _Hostname,
+        port := _Port
+      } = FeatureJson ->
+        execute_bdd(FeatureJson);
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),

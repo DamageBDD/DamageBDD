@@ -9,14 +9,25 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -export([step/6]).
+-export([gun_get/4]).
 
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
-gun_post(Config, Context, Path, Headers, Data) ->
-  {host, Host} = lists:keyfind(host, 1, Config),
-  {port, Port} = lists:keyfind(port, 1, Config),
-  {ok, ConnPid} = gun:open(Host, Port),
+gun_post(Config0, Context, Path, Headers, Data) ->
+  Host = damage_utils:get_context_value(host, Context, Config0),
+  Port = damage_utils:get_context_value(port, Context, Config0),
+  Config =
+    case Port of
+      443 -> [{transport, tls} | Config0];
+      _ -> Config0
+    end,
+  Opts =
+    case lists:keyfind(transport, 1, Config) of
+      false -> #{transport => tcp};
+      _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
+    end,
+  {ok, ConnPid} = gun:open(Host, Port, Opts),
   ?debugFmt("Data : ~p", [Data]),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
   case gun:await(ConnPid, StreamRef) of
@@ -33,10 +44,21 @@ gun_post(Config, Context, Path, Headers, Data) ->
   end.
 
 
-gun_get(Config, Context, Path, Headers) ->
-  {host, Host} = lists:keyfind(host, 1, Config),
-  {port, Port} = lists:keyfind(port, 1, Config),
-  {ok, ConnPid} = gun:open(Host, Port),
+gun_get(Config0, Context, Path, Headers) ->
+  Host = damage_utils:get_context_value(host, Context, Config0),
+  Port = damage_utils:get_context_value(port, Context, Config0),
+  Config =
+    case Port of
+      443 -> [{transport, tls} | Config0];
+      _ -> Config0
+    end,
+  Opts =
+    case lists:keyfind(transport, 1, Config) of
+      false -> #{transport => tcp};
+      _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
+    end,
+  logger:debug("GET : ~p ~p ~p~n", [Config, Port, Opts]),
+  {ok, ConnPid} = gun:open(Host, Port, Opts),
   StreamRef = gun:get(ConnPid, Path, Headers),
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
@@ -273,4 +295,41 @@ step(
         damage_utils:strf("Unexpected response ~p", [UnExpected]),
         Context
       )
-  end.
+  end;
+
+step(_Config, Context, given_keyword, _N, ["I am using server", Server], _) ->
+    case uri_string:parse(Server) of
+        #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->
+            maps:put(port, Port, maps:put(host, Host, Context));
+        #{ scheme := "https",  host := Host, path := _Path} ->
+            maps:put(port, 443, maps:put(host, Host, Context));
+        #{ scheme := "http",  host := Host, path := _Path} ->
+            maps:put(port, 80, maps:put(host, Host, Context))
+        end;
+
+step(_Config, Context, given_keyword, _N, ["I set base URL to", URL], _) ->
+  maps:put(base_url, URL, Context);
+
+step(
+  _Config,
+  Context,
+  given_keyword,
+  _N,
+  ["I set ", Header, "header to ", HeaderValue],
+  _
+) ->
+  Headers = maps:get(header, Context, []),
+  maps:put(headers, [{Header, HeaderValue} | Headers]).
+
+
+%step(
+%  _Config,
+%  Context,
+%  given_keyword,
+%  _N,
+%  ["I set BasicAuth username to ", User,"and password to", Password],
+%  _
+%  )->
+%    ok.
+%
+%

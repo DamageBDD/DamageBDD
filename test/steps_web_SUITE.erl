@@ -6,9 +6,22 @@
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
 
-all() -> [{group, web}].
+all() -> [{group, http}, {group, https}].
 
-groups() -> [{web, [parallel], ct_helper:all(?MODULE)}].
+groups() ->
+  [
+    {
+      http,
+      [parallel],
+      [
+        step_get_request,
+        step_post_csrf_request,
+        step_post_request,
+        step_store_json_in
+      ]
+    },
+    {https, [parallel], [step_get_request_tls]}
+  ].
 
 init_per_suite(Config) -> damage_test:init_per_suite(Config).
 
@@ -25,8 +38,24 @@ init_per_group(Name, Config) ->
 
 end_per_group(Name, _) -> cowboy:stop_listener(Name).
 
+end_per_suite(Config) -> damage_test:end_per_suite(Config).
+
 init_dispatch(_) ->
   cowboy_router:compile([{"localhost", [{"/", hello_h, []}]}]).
+
+step_get_request_tls(Config) ->
+  Context = maps:new(),
+  Context0 =
+    steps_web:step(
+      Config,
+      Context,
+      when_keyword,
+      0,
+      ["I make a GET request to", "/"],
+      []
+    ),
+  [{status_code, 200}, _, _] = maps:get(response, Context0).
+
 
 step_get_request(Config) ->
   Context = maps:new(),

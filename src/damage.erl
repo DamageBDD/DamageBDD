@@ -195,7 +195,7 @@ execute_step_module(
 execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 
 execute_step(Config, Step, #{fail := _} = Context) ->
-  logger:info("step skipped: ~p ~p", [Step]),
+  logger:info("step skipped: ~p.", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
   formatter:format(Config, step, {LineNo, StepKeyWord, Body, Context, skip}),
   Context;
@@ -220,6 +220,7 @@ execute_step(Config, Step, Context) ->
             #{fail := _} = Context1 -> maps:put(failing_step, Step, Context1);
 
             Context1 ->
+              logger:debug("step success: ~p ~p", [Body, Context1]),
               formatter:format(
                 Config,
                 step,

@@ -7,6 +7,17 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+init_http(https, ProtoOpts, Config) ->
+  {ok, _} = cowboy:start_tls(https, [{port, 0}], ProtoOpts),
+  Port = ranch:get_port(https),
+  [
+    {ref, https},
+    {type, tcp},
+    {protocol, http},
+    {port, Port},
+    {opts, []} | Config
+  ];
+
 init_http(Ref, ProtoOpts, Config) ->
   {ok, _} = cowboy:start_clear(Ref, [{port, 0}], ProtoOpts),
   Port = ranch:get_port(Ref),

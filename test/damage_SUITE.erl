@@ -37,11 +37,11 @@ end_per_group(Name, _) -> cowboy:stop_listener(Name).
 
 end_per_suite(Config) -> damage_test:end_per_suite(Config).
 
-init_dispatch(_) ->
+init_dispatch(Name) ->
   cowboy_router:compile(
     [
       {
-        "localhost",
+        atom_to_list(Name),
         [
           {"/echo/:key", echo_h, []},
           {"/", hello_h, []},
@@ -56,7 +56,5 @@ execute_test(TestConfig) ->
     lists:flatten(damage:execute(TestConfig, "localhost")).
 
 execute_http_api_test(TestConfig) ->
-  recon_trace:calls({damage_http, '_', '_'}, 20, [{scope, local}]),
   [#{response := [{status_code, 201} | _]} | _] =
-    lists:flatten(damage:execute(TestConfig, "api")),
-  erlang:trace(all, false, [call]).
+    lists:flatten(damage:execute(TestConfig, "api")).
