@@ -1,0 +1,11 @@
+{"steps": [
+	"Given I store an uuid in {{Variable}}",
+	"When I make a GET request to {{Path}}",
+	"Then I print the response",
+	"Given I set {{Header}} header to {{Value}}",
+	"Given I store cookies",
+	"Given I am using server",
+	"Given I set base URL to {{URL}}",
+	"Then the json at path {{Path}} must be {{Json}}",
+	"When I send data on the websocket"
+]}

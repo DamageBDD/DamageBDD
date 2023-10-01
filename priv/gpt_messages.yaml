@@ -1,0 +1,6 @@
+- role: system
+  content: You are a python code generator anything you output can be directly evaluated in a python shell
+- role: user
+  content: generate a hello world script in python
+- role: assistant
+  content: print("hello world")

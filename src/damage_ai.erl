@@ -53,104 +53,113 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 generate_code(Config, FeatureFilename) ->
   ?debugFmt("Generating python code from feature file ~p.", [FeatureFilename]),
-  try egherkin:parse_file(FeatureFilename) of
-    {failed, LineNo, Message} ->
-      logger:error("FAIL ~p +~p ~n     ~p.", [FeatureFilename, LineNo, Message]);
+  try
+    case egherkin:parse_file(FeatureFilename) of
+      {failed, LineNo, Message} ->
+        logger:error(
+          "FAIL ~p +~p ~n     ~p.",
+          [FeatureFilename, LineNo, Message]
+        );
 
-    {_LineNo, _Tags, _Feature, _Description, _BackGround, _Scenarios} ->
-      {ok, FeatureData} = file:read_file(FeatureFilename),
-      {openai_messages_yaml, MessagesYaml} =
-        lists:keyfind(openai_messages_yaml, 1, Config),
-      {ok, [Messages]} =
-        fast_yaml:decode_from_file(MessagesYaml, [{plain_as_atom, true}]),
-      {openai_functions_yaml, FunctionsYaml} =
-        lists:keyfind(openai_functions_yaml, 1, Config),
-      {ok, [Functions]} =
-        fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
-      {openai_model, Model} = lists:keyfind(openai_model, 1, Config),
-      ?debugFmt(
-        "Loaded messages from file ~p. Data: ~p",
-        [MessagesYaml, Messages]
-      ),
-      Prompt =
-        <<
-          "generate python server code from the following bdd, respond in structured json. "
-        >>,
-      Prompt0 = <<Prompt/binary, FeatureData/binary>>,
-      PostData =
-        jsx:encode(
-          #{
-            model => list_to_binary(Model),
-            messages => Messages ++ [[{role, <<"user">>}, {content, Prompt0}]],
-            functions => Functions,
-            temperature => 0.7
-          }
+      {_LineNo, _Tags, _Feature, _Description, _BackGround, _Scenarios} ->
+        {ok, FeatureData} = file:read_file(FeatureFilename),
+        {openai_messages_yaml, MessagesYaml} =
+          lists:keyfind(openai_messages_yaml, 1, Config),
+        {ok, [Messages]} =
+          fast_yaml:decode_from_file(MessagesYaml, [{plain_as_atom, true}]),
+        {openai_functions_yaml, FunctionsYaml} =
+          lists:keyfind(openai_functions_yaml, 1, Config),
+        {ok, [Functions]} =
+          fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
+        {openai_model, Model} = lists:keyfind(openai_model, 1, Config),
+        ?debugFmt(
+          "Loaded messages from file ~p. Data: ~p",
+          [MessagesYaml, Messages]
         ),
-      ?debugFmt(
-        "Generating python code from feature file ~p. Prompt: ~p",
-        [FeatureFilename, PostData]
-      ),
-      {openai_api_host, Host} = lists:keyfind(openai_api_host, 1, Config),
-      {openai_api_path, Path} = lists:keyfind(openai_api_path, 1, Config),
-      Port = 443,
-      Headers =
-        [
-          {
-            <<"Authorization">>,
-            list_to_binary("Bearer " ++ os:getenv("OPENAI_API_KEY"))
-          },
-          {<<"content-type">>, <<"application/json">>}
-        ],
-      {ok, ConnPid} =
-        gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
-      StreamRef = gun:post(ConnPid, Path, Headers, PostData),
-      case gun:await(ConnPid, StreamRef, 60000) of
-        {response, nofin, Status, _Headers0} ->
-          {ok, Body} = gun:await_body(ConnPid, StreamRef),
-          ?debugFmt("Got response ~p: ~p.", [Status, Body]),
-          logger:debug("POST Response: ~p", [Body]),
-          case jsx:decode(Body, [{labels, atom}, return_maps]) of
-            #{choices := [#{message := Message} | _], usage := _Usage} =
-              _Response ->
-              #{
-                function_call
-                :=
-                #{name := <<"generate_python_code">>, arguments := Arguments}
-              } = Message,
-              logger:debug("Function Response: ~p", [Arguments]),
-              case jsx:decode(Arguments, [{labels, atom}, return_maps]) of
-                #{code := Code, explanation := Explanation} ->
-                  ?debugFmt(
-                    "Got function response ~p: ~p.",
-                    [Code, Explanation]
-                  ),
-                  {Code, Explanation};
+        Prompt =
+          <<
+            "generate python server code from the following bdd, respond in structured json. "
+          >>,
+        Prompt0 = <<Prompt/binary, FeatureData/binary>>,
+        PostData =
+          jsx:encode(
+            #{
+              model => list_to_binary(Model),
+              messages
+              =>
+              Messages
+              ++
+              [[{role, <<"user">>}, {content, Prompt0}]],
+              functions => Functions,
+              temperature => 0.7
+            }
+          ),
+        ?debugFmt(
+          "Generating python code from feature file ~p. Prompt: ~p",
+          [FeatureFilename, PostData]
+        ),
+        {openai_api_host, Host} = lists:keyfind(openai_api_host, 1, Config),
+        {openai_api_path, Path} = lists:keyfind(openai_api_path, 1, Config),
+        Port = 443,
+        Headers =
+          [
+            {
+              <<"Authorization">>,
+              list_to_binary("Bearer " ++ os:getenv("OPENAI_API_KEY"))
+            },
+            {<<"content-type">>, <<"application/json">>}
+          ],
+        {ok, ConnPid} =
+          gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+        StreamRef = gun:post(ConnPid, Path, Headers, PostData),
+        case gun:await(ConnPid, StreamRef, 60000) of
+          {response, nofin, Status, _Headers0} ->
+            {ok, Body} = gun:await_body(ConnPid, StreamRef),
+            ?debugFmt("Got response ~p: ~p.", [Status, Body]),
+            logger:debug("POST Response: ~p", [Body]),
+            case jsx:decode(Body, [{labels, atom}, return_maps]) of
+              #{choices := [#{message := Message} | _], usage := _Usage} =
+                _Response ->
+                #{
+                  function_call
+                  :=
+                  #{name := <<"generate_python_code">>, arguments := Arguments}
+                } = Message,
+                logger:debug("Function Response: ~p", [Arguments]),
+                case jsx:decode(Arguments, [{labels, atom}, return_maps]) of
+                  #{code := Code, explanation := Explanation} ->
+                    ?debugFmt(
+                      "Got function response ~p: ~p.",
+                      [Code, Explanation]
+                    ),
+                    {Code, Explanation};
 
-                InvalidArguments ->
-                  ?debugFmt(
-                    "Got unexpected arguments for function call ~p.",
-                    [InvalidArguments]
-                  ),
-                  logger:debug(
-                    "POST Response Arguments: ~p",
-                    [InvalidArguments]
-                  ),
-                  notok
-              end;
+                  InvalidArguments ->
+                    ?debugFmt(
+                      "Got unexpected arguments for function call ~p.",
+                      [InvalidArguments]
+                    ),
+                    logger:debug(
+                      "POST Response Arguments: ~p",
+                      [InvalidArguments]
+                    ),
+                    notok
+                end;
 
-            #{choices := Choices, usage := _Usage} = _Response -> Choices;
+              #{choices := Choices, usage := _Usage} = _Response -> Choices;
 
-            NoChoice ->
-              ?debugFmt("Got function response ~p.", [NoChoice]),
-              logger:debug("POST Response: ~p", [NoChoice]),
-              notok
-          end;
+              NoChoice ->
+                ?debugFmt("Got function response ~p.", [NoChoice]),
+                logger:debug("POST Response: ~p", [NoChoice]),
+                notok
+            end;
 
-        Default ->
-          ?debugFmt("Got unexpected response ~p.", [Default]),
-          logger:debug("POST Response: ~p", [Default]),
-          notok
-      end
+          Default ->
+            ?debugFmt("Got unexpected response ~p.", [Default]),
+            logger:debug("POST Response: ~p", [Default]),
+            notok
+        end
+    end
   catch
     {error, enont} ->
       logger:error("Feature file ~p not found.", [FeatureFilename])

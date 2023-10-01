@@ -1,0 +1,14 @@
+- description: generate python code
+  name: generate_python_code
+  parameters:
+    properties:
+      code:
+        description: The python code.
+        type: string
+      explanation:
+        description: The explanation for the python code.
+        type: string
+    required:
+    - location
+    type: object
+
