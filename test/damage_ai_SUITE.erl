@@ -66,7 +66,7 @@ end_per_suite(Config) -> damage_test:end_per_suite(Config).
 
 generate_code_test(TestConfig) ->
   % erlang code to get application root directory
-  FeatureFile = "../../../../features/login.feature",
+  FeatureFile = "../../../../features/ai_voice_assistant.feature",
   ?debugFmt("Running feature file ~p ~p", [file:get_cwd(), FeatureFile]),
   {Code, _Explanation} = damage_ai:generate_code(TestConfig, FeatureFile),
   ok = damage_ai:run_python_server(TestConfig, #{}, Code),

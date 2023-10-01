@@ -298,14 +298,16 @@ step(
   end;
 
 step(_Config, Context, given_keyword, _N, ["I am using server", Server], _) ->
-    case uri_string:parse(Server) of
-        #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->
-            maps:put(port, Port, maps:put(host, Host, Context));
-        #{ scheme := "https",  host := Host, path := _Path} ->
-            maps:put(port, 443, maps:put(host, Host, Context));
-        #{ scheme := "http",  host := Host, path := _Path} ->
-            maps:put(port, 80, maps:put(host, Host, Context))
-        end;
+  case uri_string:parse(Server) of
+    #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->
+      maps:put(port, Port, maps:put(host, Host, Context));
+
+    #{scheme := "https", host := Host, path := _Path} ->
+      maps:put(port, 443, maps:put(host, Host, Context));
+
+    #{scheme := "http", host := Host, path := _Path} ->
+      maps:put(port, 80, maps:put(host, Host, Context))
+  end;
 
 step(_Config, Context, given_keyword, _N, ["I set base URL to", URL], _) ->
   maps:put(base_url, URL, Context);
