@@ -21,4 +21,3 @@ The server must use local gpu to perform the computation
     Then the response status must be "200"
     Then the json at path "$.id" must be "guest_voice_ai_req_0"
     Then the json at path "$.result" must be "hello world"
-    Then the 
