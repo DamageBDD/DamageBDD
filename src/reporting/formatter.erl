@@ -26,17 +26,17 @@
 ).
 -export([invoke_formatters/3]).
 
-start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
+start_link(_Args) ->
+  logger:info("formater process started ~p~n", [self()]),
+  gen_server:start_link(?MODULE, [], []).
+
 
 init([]) -> {ok, undefined}.
 
-handle_call(invoke_formatters, Args, State) ->
-  {reply, gen_server:call(?MODULE, {invoke_formatters, Args}), State}.
+handle_call({invoke_formatters, Config, Keyword, Data}, _From, State) ->
+  {reply, invoke_formatters(Config, Keyword, Data), State}.
 
-handle_cast({invoke_formatters, Args}, State) ->
-  gen_server:cast(?MODULE, {invoke_formatters, Args}),
-  {noreply, State}.
-
+handle_cast({invoke_formatters, _Args}, State) -> {noreply, State}.
 
 handle_info(_Info, State) -> {noreply, State}.
 
@@ -62,7 +62,13 @@ invoke_formatters(Config, Keyword, Data) ->
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 format(Config, Keyword, Data) ->
-  gen_server:cast(?MODULE, [invoke_formatters, Config, Keyword, Data]).
+  poolboy:transaction(
+    formatter,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {invoke_formatters, Config, Keyword, Data})
+    end
+  ).
 
 terminate(Reason, _State) ->
   logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),

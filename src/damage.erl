@@ -224,7 +224,7 @@ execute_step(Config, Step, Context) ->
               formatter:format(
                 Config,
                 step,
-                {LineNo, StepKeyWord, Body, Context1, success}
+                {StepKeyWord, LineNo, Body1, Args1, Context1, success}
               ),
               Context1
           end

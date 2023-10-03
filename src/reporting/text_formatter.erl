@@ -12,6 +12,7 @@
 
 get_keyword(then_keyword) -> "Then";
 get_keyword(when_keyword) -> "When";
+get_keyword(and_keyword) -> "And";
 get_keyword(given_keyword) -> "Given".
 
 write_file(#{output := Output}, FormatStr, Args) ->
@@ -26,7 +27,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =
     write_file(
       Config,
-      "Feature ~s line:~p tags: [~s], desc: ~p",
+      "Feature ~p line:~p tags: [~p], desc: ~p",
       [
         FeatureName,
         LineNo,
@@ -39,7 +40,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
   ok =
     write_file(
       Config,
-      "\tScenario ~s line:~p tags: [~s], desc: ~p",
+      "\tScenario ~p line:~p tags: [~p]",
       [
         ScenarioName,
         LineNo,
@@ -51,7 +52,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
   ok =
     write_file(
       Config,
-      "\t\t~s ~s, Args: ~p line:~p  ~p",
+      "\t\t~p ~p, Args: ~p line:~p  ~p",
       [
         get_keyword(Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),

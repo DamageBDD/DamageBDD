@@ -33,6 +33,7 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 init([]) ->
   {ok, Pools} = application:get_env(damage, pools),
+  logger:info("Starting workers ~p~n", [Pools]),
   PoolSpecs =
     lists:map(
       fun
@@ -42,6 +43,7 @@ init([]) ->
       end,
       Pools
     ),
+  logger:info("Worker definitions ~p~n", [PoolSpecs]),
   {ok, {{one_for_one, 10, 10}, PoolSpecs}}.
 
 %%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},

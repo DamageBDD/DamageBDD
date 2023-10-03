@@ -12,6 +12,7 @@
 
 get_keyword(then_keyword) -> "Then";
 get_keyword(when_keyword) -> "When";
+get_keyword(and_keyword) -> "And";
 get_keyword(given_keyword) -> "Given".
 
 write_file(#{output := Output}, FormatStr, Args) ->

@@ -48,13 +48,18 @@ execute_bdd(
     _FeaturePayload
 ) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
-  Output = "/var/lib/damagebdd/guest/report.txt",
+  AccountDir = filename:join(DataDir, Account),
   Config =
     [
-      {formatters, [{text, #{output => Output}}]},
+      {
+        formatters,
+        [
+          {text, #{output => filename:join(AccountDir, "report.txt")}},
+          {html, #{output => filename:join(AccountDir, "report.html")}}
+        ]
+      },
       {feature_dirs, ["../../../../features/", "../features/"]}
     ],
-  AccountDir = filename:join(DataDir, Account),
   FeatureDir = filename:join(AccountDir, "features"),
   case filelib:ensure_path(FeatureDir) of
     ok ->
