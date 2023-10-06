@@ -58,3 +58,10 @@ I make a POST request to "/some/path"
 }
 Then the response status must be "202"
 ```
+
+DamageBDD Service
+-----------------
+
+You can use the server at https://run.damagebdd.com to run tests
+
+    curl -vvv --data-binary @features/google.feature -H "Authorization: guest" 'https://run.damage.com/api/execute_feature'

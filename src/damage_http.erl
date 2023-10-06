@@ -34,7 +34,7 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
   {
     [
-      {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_form},
+      {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
       {{<<"application">>, <<"json">>, '*'}, from_json}
     ],
     Req,
@@ -96,6 +96,24 @@ execute_bdd(
                 },
               {400, jsx:encode(Response)};
 
+            {parse_error, LineNo, Message} ->
+              logger:debug("failure ~p.", [Message]),
+              {
+                400,
+                jsx:encode(
+                  #{
+                    status => <<"notok">>,
+                    message => list_to_binary(Message),
+                    line => LineNo,
+                    hint
+                    =>
+                    <<
+                      "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+                    >>
+                  }
+                )
+              };
+
             Ok ->
               logger:debug("No failure ~p.", [Ok]),
               {200, jsx:encode(#{status => <<"ok">>, message => <<"">>})}
@@ -133,7 +151,20 @@ from_json(Req, State) ->
   {stop, Resp, State}.
 
 
-from_html(Req, Data) -> {<<"{\"status\":\"not ok\"}">>, Req, Data}.
+from_html(Req0, State) ->
+  {ok, Body, Req} = cowboy_req:read_body(Req0),
+  logger:debug("Req ~p.", [Req]),
+  Hostname = cowboy_req:header(<<"x-damage-host">>, Req0, <<"localhost">>),
+  Port = cowboy_req:header(<<"x-damage-port">>, Req0, 80),
+  Account = cowboy_req:header(<<"authorization">>, Req0, <<"guest">>),
+  {Status, Resp0} =
+    execute_bdd(
+      #{feature => Body, account => Account, host => Hostname, port => Port}
+    ),
+  logger:debug("Response  ~p.", [Resp0]),
+  Resp = cowboy_req:set_resp_body(Resp0, Req),
+  {stop, cowboy_req:reply(Status, Resp), State}.
+
 
 load_template(FilePath) ->
   PrivDir = application:priv_dir(damage),
