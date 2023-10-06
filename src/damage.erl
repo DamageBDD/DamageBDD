@@ -98,7 +98,10 @@ execute(Config, FeatureName) ->
 execute_file(Config, Filename) ->
   try egherkin:parse_file(Filename) of
     {failed, LineNo, Message} ->
-      logger:error("Parsing Failed ~p +~p ~n     ~p.", [Filename, LineNo, Message]),
+      logger:error(
+        "Parsing Failed ~p +~p ~n     ~p.",
+        [Filename, LineNo, Message]
+      ),
       {parse_error, LineNo, Message};
 
     {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->

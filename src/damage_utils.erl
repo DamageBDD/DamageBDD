@@ -18,7 +18,8 @@
     loaded_steps/0,
     lists_concat/2,
     strf/2,
-    get_context_value/3
+    get_context_value/3,
+    setup_vanillae_deps/0
   ]
 ).
 
@@ -109,3 +110,21 @@ get_context_value(Key, Context, Config) ->
     {_, Default} -> maps:get(Key, Context, Default);
     false -> maps:get(Key, Context)
   end.
+
+
+setup_vanillae_deps() ->
+  true = code:add_path("vanillae/ebin"),
+  Vanillae =
+    "otpr-vanillae-" ++ lists:droplast(os:cmd("zx latest otpr-vanillae")),
+  Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
+  ZX =
+    "otpr-zx-"
+    ++
+    lists:nth(2, string:lexemes(lists:droplast(os:cmd("zx --version")), " ")),
+  Packages = [ZX, Vanillae | Deps],
+  ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
+  Converted =
+    [string:join(string:lexemes(Package, "-"), "/") || Package <- Packages],
+  PackagePaths =
+    [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
+  ok = code:add_paths(PackagePaths).

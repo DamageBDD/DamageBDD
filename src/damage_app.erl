@@ -25,32 +25,12 @@ start(_StartType, _StartArgs) ->
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
   {ok, _} = application:ensure_all_started(erlexec),
   logger:info("Starting vanilla."),
-  true = code:add_path("/home/steven/DamageInc/DamageBDD/vanillae/ebin"),
-  L = [
-      "otpr-aebytecode-3.2.1",
-      "otpr-aesophia-7.1.2",
-      "otpr-aeserialization-0.1.0",
-      "otpr-zj-1.1.0",
-      "otpr-zx-0.13.4",
-      "otpr-eblake2-1.0.0",
-      "otpr-getopt-1.0.2"
-    ],
-    
-
-  ok =
-    code:add_paths(
-      [
-        "/home/steven/zomp/lib/"
-        ++
-        string:join(string:lexemes(P, "-"), "/") ++ "/ebin"
-        || P <- L
-      ]
-    ),
-   damage_utils:setup_vanillae_deps(),
+  damage_utils:setup_vanillae_deps(),
   {ok, _} = application:ensure_all_started(vanillae),
   ok = vanillae:network_id("ae_uat"),
   {ok, AeNodes} = application:get_env(damage, ae_nodes),
   ok = vanillae:ae_nodes(AeNodes),
+  logger:info("Started vanilla."),
   Dispatch =
     cowboy_router:compile(
       [
