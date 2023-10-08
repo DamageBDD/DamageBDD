@@ -4,7 +4,7 @@ Feature: My well behaved ai assistant
     And I set the messages context
     """
     AI voice assistant server that performs voice to text and provides assistance 
-The server must use local gpu to perform the computation
+    The server must use local gpu to perform the computation
     """
 
   Scenario: Upload audio for voice to text
