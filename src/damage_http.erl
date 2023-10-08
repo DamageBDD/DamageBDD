@@ -156,11 +156,23 @@ from_html(Req0, State) ->
   logger:debug("Req ~p.", [Req]),
   Hostname = cowboy_req:header(<<"x-damage-host">>, Req0, <<"localhost">>),
   Port = cowboy_req:header(<<"x-damage-port">>, Req0, 80),
-  Account = cowboy_req:header(<<"authorization">>, Req0, <<"guest">>),
-  {Status, Resp0} =
-    execute_bdd(
-      #{feature => Body, account => Account, host => Hostname, port => Port}
-    ),
+    {{IP, _}, Req2} = cowboy_req:peer(Req0),
+  {Status, Resp0} = case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of 
+    <<"ak_", _Rest>> = Account->
+        execute_bdd(
+            #{feature => Body, account => Account, host => Hostname, port => Port}
+        );
+    Account ->
+        case throttle:check(damage_api_rate, IP) of
+            {limit_exceeded, _, _} ->
+            lager:warning("IP ~p exceeded api limit", [IP]),
+            {error, 429, Req2};
+            _ ->
+                execute_bdd(
+                    #{feature => Body, account => Account, host => Hostname, port => Port}
+                )
+        end
+    end,
   logger:debug("Response  ~p.", [Resp0]),
   Resp = cowboy_req:set_resp_body(Resp0, Req),
   {stop, cowboy_req:reply(Status, Resp), State}.
