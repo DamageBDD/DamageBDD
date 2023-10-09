@@ -19,7 +19,7 @@ write_file(#{output := Output}, FormatStr, Args) ->
   ok =
     file:write_file(
       Output,
-      lists:flatten(io_lib:format(FormatStr, Args)),
+      lists:flatten(io_lib:format(FormatStr ++ "\n", Args)),
       [append]
     ).
 
@@ -27,7 +27,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =
     write_file(
       Config,
-      "Feature ~p line:~p tags: [~p], desc: ~p",
+      "Feature ~s line:~p tags: [~p], desc: ~s",
       [
         FeatureName,
         LineNo,
@@ -40,7 +40,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
   ok =
     write_file(
       Config,
-      "\tScenario ~p line:~p tags: [~p]",
+      "\tScenario ~s line:~p tags: [~p]",
       [
         ScenarioName,
         LineNo,
@@ -52,7 +52,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
   ok =
     write_file(
       Config,
-      "\t\t~p ~p, Args: ~p line:~p  ~p",
+      "\t\t~s ~s, Args: ~p line:~p  ~s",
       [
         get_keyword(Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),

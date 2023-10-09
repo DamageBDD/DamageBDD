@@ -24,13 +24,7 @@ start(_StartType, _StartArgs) ->
   {ok, _} = application:ensure_all_started(prometheus),
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
   {ok, _} = application:ensure_all_started(erlexec),
-  logger:info("Starting vanilla."),
-  damage_utils:setup_vanillae_deps(),
-  {ok, _} = application:ensure_all_started(vanillae),
-  ok = vanillae:network_id("ae_uat"),
-  {ok, AeNodes} = application:get_env(damage, ae_nodes),
-  ok = vanillae:ae_nodes(AeNodes),
-  logger:info("Started vanilla."),
+  {ok, _} = application:ensure_all_started(throttle),
   Dispatch =
     cowboy_router:compile(
       [
@@ -38,12 +32,14 @@ start(_StartType, _StartArgs) ->
           '_',
           [
             {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
+            {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
             {
               "/steps.json",
               cowboy_static,
               {priv_file, damage, "static/steps.json"}
             },
             {"/api/execute_feature/", damage_http, []},
+            {"/api/reports/[:runid]", damage_report, []},
             {"/metrics/[:registry]", prometheus_cowboy2_handler, []}
           ]
         }
@@ -65,6 +61,13 @@ start(_StartType, _StartArgs) ->
   logger:info("Started Gun."),
   metrics:init(),
   logger:info("Started Damage."),
+  logger:info("Starting vanilla."),
+  damage_utils:setup_vanillae_deps(),
+  {ok, _} = application:ensure_all_started(vanillae),
+  ok = vanillae:network_id("ae_uat"),
+  {ok, AeNodes} = application:get_env(damage, ae_nodes),
+  ok = vanillae:ae_nodes(AeNodes),
+  logger:info("Started vanilla."),
   damage_sup:start_link().
 
 

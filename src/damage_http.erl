@@ -13,9 +13,9 @@
 -export([init/2]).
 -export([content_types_accepted/2]).
 -export([content_types_provided/2]).
--export([hello_to_html/2]).
--export([hello_to_json/2]).
--export([hello_to_text/2]).
+-export([to_html/2]).
+-export([to_json/2]).
+-export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2]).
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
@@ -23,9 +23,9 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 content_types_provided(Req, State) ->
   {
     [
-      {{<<"text">>, <<"html">>, '*'}, hello_to_html},
-      {{<<"application">>, <<"json">>, []}, hello_to_json},
-      {{<<"text">>, <<"plain">>, '*'}, hello_to_text}
+      {{<<"text">>, <<"html">>, '*'}, to_html},
+      {{<<"application">>, <<"json">>, []}, to_json},
+      {{<<"text">>, <<"plain">>, '*'}, to_text}
     ],
     Req,
     State
@@ -49,19 +49,21 @@ execute_bdd(
 ) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
   AccountDir = filename:join(DataDir, Account),
+    {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
   Config =
     [
       {
         formatters,
         [
-          {text, #{output => filename:join(AccountDir, "report.txt")}},
-          {html, #{output => filename:join(AccountDir, "report.html")}}
+          {text, #{output => filename:join([AccountDir, RunId, "report.txt"])}},
+          {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
         ]
       },
       {feature_dirs, ["../../../../features/", "../features/"]}
     ],
+  RunDir = filename:join(AccountDir, RunId),
   FeatureDir = filename:join(AccountDir, "features"),
-  case filelib:ensure_path(FeatureDir) of
+  case filelib:ensure_path(RunDir) of
     ok ->
       BddFileName =
         filename:join(
@@ -151,26 +153,41 @@ from_json(Req, State) ->
   {stop, Resp, State}.
 
 
+get_ip(Req0) ->
+  case cowboy_req:peer(Req0) of
+    {{IP, _}, _} -> IP;
+    {IP, _} -> IP
+  end.
+
+
 from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
   logger:debug("Req ~p.", [Req]),
   Hostname = cowboy_req:header(<<"x-damage-host">>, Req0, <<"localhost">>),
   Port = cowboy_req:header(<<"x-damage-port">>, Req0, 80),
-    {{IP, _}, Req2} = cowboy_req:peer(Req0),
-  {Status, Resp0} = case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of 
-    <<"ak_", _Rest>> = Account->
+  {Status, Resp0} =
+    case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
+      <<"ak_", _Rest>> = Account ->
         execute_bdd(
-            #{feature => Body, account => Account, host => Hostname, port => Port}
+          #{feature => Body, account => Account, host => Hostname, port => Port}
         );
-    Account ->
+
+      Account ->
+        IP = get_ip(Req0),
         case throttle:check(damage_api_rate, IP) of
-            {limit_exceeded, _, _} ->
+          {limit_exceeded, _, _} ->
             lager:warning("IP ~p exceeded api limit", [IP]),
-            {error, 429, Req2};
-            _ ->
-                execute_bdd(
-                    #{feature => Body, account => Account, host => Hostname, port => Port}
-                )
+            {error, 429, Req};
+
+          _ ->
+            execute_bdd(
+              #{
+                feature => Body,
+                account => Account,
+                host => Hostname,
+                port => Port
+              }
+            )
         end
     end,
   logger:debug("Response  ~p.", [Resp0]),
@@ -178,19 +195,12 @@ from_html(Req0, State) ->
   {stop, cowboy_req:reply(Status, Resp), State}.
 
 
-load_template(FilePath) ->
-  PrivDir = application:priv_dir(damage),
-  FilePath = filename:join([PrivDir, "dealdamage.html"]),
-  {ok, {_, TemplateString}} = file:consult(FilePath),
-  mustache:render(TemplateString, #{}).
-
-
-hello_to_html(Req, State) ->
-  Body = load_template("template.mustache"),
+to_html(Req, State) ->
+  Body = damage_utils:load_template("api.mustache", #{body => <<"Test">>}),
   {Body, Req, State}.
 
 
-hello_to_json(Req0, State) ->
+to_json(Req0, State) ->
   Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,
   %Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
   %Req =
@@ -198,4 +208,4 @@ hello_to_json(Req0, State) ->
   {Body, Req0, State}.
 
 
-hello_to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.
+to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.

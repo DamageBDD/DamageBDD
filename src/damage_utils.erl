@@ -19,6 +19,7 @@
     lists_concat/2,
     strf/2,
     get_context_value/3,
+    load_template/2,
     setup_vanillae_deps/0
   ]
 ).
@@ -128,3 +129,11 @@ setup_vanillae_deps() ->
   PackagePaths =
     [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
   ok = code:add_paths(PackagePaths).
+
+
+load_template(Template, Context) ->
+  PrivDir = code:priv_dir(damage),
+  FilePath = filename:join([PrivDir, "templates", Template]),
+  logger:info("Loading template from ~p", [FilePath]),
+  {ok, TemplateBin} = file:read_file(FilePath),
+  mustache:render(binary_to_list(TemplateBin), Context).
