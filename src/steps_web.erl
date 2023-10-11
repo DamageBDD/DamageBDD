@@ -66,13 +66,31 @@ gun_get(Config0, Context, Path, Headers) ->
 
     {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      logger:debug("GET Response: ~s~n", [Body]),
       maps:put(response, response_to_list({Status, Headers0, Body}), Context)
   end.
 
 
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["the response must contain text", Contains],
+  _
+) ->
+  [_, _Headers, {body, Body}] = maps:get(response, Context),
+  case string:str(binary_to_list(Body), Contains) of
+    0 ->
+      maps:put(
+        fail,
+        damage_utils:strf("Response ~p does not contain ~p", [Body, Contains]),
+        Context
+      );
+
+    _ -> Context
+  end;
+
 step(Config, Context, when_keyword, _N, ["I make a GET request to", Path], _) ->
-  %io:format("DEBUG step_when I make a GET request to ~p ~n~p ~n", [Url,_Given]),
   gun_get(
     Config,
     Context,

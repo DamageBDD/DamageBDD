@@ -177,8 +177,30 @@ execute_step_module(
     metrics:update(success, Config),
     Context0
   catch
-    error : function_clause:_ -> Context;
-    error : undef:_ -> Context;
+    error : function_clause:Err0 ->
+      case Err0 of
+        [{_, step, _, _Loc} | _] -> Context;
+
+        Err ->
+          logger:error("function fail ~p", [Err]),
+          metrics:update(fail, Config),
+          Reason = <<"Step error">>,
+          ?LOG_ERROR(
+            #{
+              reason => Reason,
+              stacktrace => Err,
+              step => Step,
+              step_module => StepModule
+            }
+          ),
+          formatter:format(
+            Config,
+            step,
+            {StepKeyWord, LineNo, Body, Args, Context, fail}
+          ),
+          should_exit(Config),
+          maps:put(failing_step, Step, maps:put(fail, Reason, Context))
+      end;
 
     error : Reason:Stacktrace ->
       metrics:update(fail, Config),
@@ -214,8 +236,6 @@ execute_step(Config, Step, Context) ->
   Context0 =
     lists:foldl(
       fun
-        (_StepModule, #{step_found := true} = ContextIn) -> ContextIn;
-
         (StepModule, #{step_found := false} = ContextIn) ->
           case
           execute_step_module(
@@ -224,25 +244,46 @@ execute_step(Config, Step, Context) ->
             {StepKeyWord, LineNo, Body1, Args1},
             StepModule
           ) of
-            #{failing_step := _} = Context1 -> Context1;
-            #{fail := _} = Context1 -> maps:put(failing_step, Step, Context1);
+            #{failing_step := _} = Context1 ->
+              %logger:debug("step failing_step: ~p ~p", [Step, StepModule]),
+              formatter:format(
+                Config,
+                step,
+                {StepKeyWord, LineNo, Body1, Args1, Context1, error}
+              ),
+              Context1;
 
-            Context1 ->
-              %logger:debug("step success: ~p ~p", [Body, Context1]),
+            #{fail := _Err} = Context1 ->
+              %logger:debug("step fail: ~p ~p ~p", [Step, StepModule, Err]),
+              formatter:format(
+                Config,
+                step,
+                {StepKeyWord, LineNo, Body1, Args1, Context1, fail}
+              ),
+              maps:put(failing_step, Step, Context1);
+
+            #{step_found := false} = Context1 ->
+              logger:debug("step not found: ~p ~p", [Step, StepModule]),
+              Context1;
+
+            #{step_found := true} = Context1 ->
+              logger:debug("step success: ~p ~p", [Step, StepModule]),
               formatter:format(
                 Config,
                 step,
                 {StepKeyWord, LineNo, Body1, Args1, Context1, success}
               ),
               Context1
-          end
+          end;
+
+        (_StepModule, #{step_found := true} = ContextIn) -> ContextIn
       end,
       maps:put(step_found, false, Context),
       damage_utils:loaded_steps()
     ),
   case maps:get(step_found, Context0) of
     false ->
-      logger:error("step not found: ~p ~p", [Body1, Args1]),
+      logger:error("step not found:~p ~p", [StepKeyWord, Body1]),
       formatter:format(
         Config,
         step,

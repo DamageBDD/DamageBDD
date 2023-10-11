@@ -23,6 +23,17 @@ write_file(#{output := Output}, FormatStr, Args) ->
       [append]
     ).
 
+format(Config, feature, {FeatureName, LineNo, [], Description}) ->
+  ok =
+    write_file(
+      Config,
+      "Feature ~s line:~p desc: ~s",
+      [
+        FeatureName,
+        LineNo,
+        Description
+      ]
+    );
 format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =
     write_file(
@@ -31,33 +42,54 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
       [
         FeatureName,
         LineNo,
-        lists:flatten(string:join([[X] || X <- Tags], ",")),
+        lists:flatten(string:join([X || X <- Tags], ",")),
         Description
       ]
     );
 
+format(Config, scenario, {ScenarioName, LineNo, []}) ->
+  ok =
+    write_file(
+      Config,
+      "  Scenario ~s line:~p",
+      [
+        ScenarioName,
+        LineNo
+      ]
+    );
 format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
   ok =
     write_file(
       Config,
-      "\tScenario ~s line:~p tags: [~p]",
+      "  Scenario ~s line:~p tags: [~p]",
       [
         ScenarioName,
         LineNo,
-        lists:flatten(string:join([[X] || X <- Tags], ","))
+        lists:flatten(string:join([X || X <- Tags], ","))
       ]
     );
 
-format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) ->
-    logger:debug("text format ~p ~p", [Config, Status]),
+format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) ->
   ok =
     write_file(
       Config,
-      "\t\t~s ~p, Args: ~p line:~p  ~s",
+      "    ~s ~s. line:~p  ~s",
       [
         get_keyword(Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),
-        Args,
+        LineNo,
+        Status
+      ]
+    );
+format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) ->
+  ok =
+    write_file(
+      Config,
+      "    ~s ~s. Args: ~s line:~p  ~s",
+      [
+        get_keyword(Keyword),
+        lists:flatten(string:join([[X] || X <- StepStatement], " ")),
+        binary_to_list(Args),
         LineNo,
         Status
       ]

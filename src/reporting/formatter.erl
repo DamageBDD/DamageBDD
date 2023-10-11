@@ -45,7 +45,6 @@ invoke_formatters(Config, Keyword, Data) ->
   lists:foreach(
     fun
       ({Formatter, FormatterConfig}) ->
-    logger:debug("applying formatter function ~p_formatter with config ~p", [Formatter, FormatterConfig]),
         apply(
           list_to_atom(
             lists:flatten(io_lib:format("~p_formatter", [Formatter]))
