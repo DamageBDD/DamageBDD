@@ -53,7 +53,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
   ok =
     write_file(
       Config,
-      "<tr><td>~s</td><td>~s</td><td>~p</td><td>~p</td><td>~p</td></tr>",
+      "<tr><td>~s</td><td>~p</td><td>~p</td><td>~p</td><td>~p</td></tr>",
       [
         get_keyword(Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),

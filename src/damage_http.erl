@@ -45,17 +45,19 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 execute_bdd(
   #{feature := FeatureData, account := Account, host := Hostname, port := Port} =
-    _FeaturePayload
+    _FeaturePayload,
+  UserAgent
 ) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
   AccountDir = filename:join(DataDir, Account),
-    {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
+  {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
+  TextReport = filename:join([AccountDir, RunId, "report.txt"]),
   Config =
     [
       {
         formatters,
         [
-          {text, #{output => filename:join([AccountDir, RunId, "report.txt"])}},
+          {text, #{output => TextReport}},
           {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
         ]
       },
@@ -66,10 +68,7 @@ execute_bdd(
   case filelib:ensure_path(RunDir) of
     ok ->
       BddFileName =
-        filename:join(
-          FeatureDir,
-          "RenameMeToGeneratedFeatureNamefromData.feature"
-        ),
+        filename:join(FeatureDir, string:join([RunId, ".feature"], "")),
       case file:write_file(BddFileName, FeatureData) of
         ok ->
           case
@@ -116,9 +115,25 @@ execute_bdd(
                 )
               };
 
-            Ok ->
-              logger:debug("No failure ~p.", [Ok]),
-              {200, jsx:encode(#{status => <<"ok">>, message => <<"">>})}
+            _Ok ->
+              %logger:debug("No failure ~p.", [Ok]),
+              case UserAgent of
+                <<"curl", _/binary>> ->
+                  {ok, ReportData} = file:read_file(TextReport),
+                  {200, ReportData};
+
+                _Other ->
+                  {
+                    200,
+                    jsx:encode(
+                      #{
+                        status => <<"ok">>,
+                        run_id => list_to_binary(RunId),
+                        message => <<"">>
+                      }
+                    )
+                  }
+              end
           end;
 
         Err ->
@@ -142,7 +157,7 @@ from_json(Req, State) ->
         host := _Hostname,
         port := _Port
       } = FeatureJson ->
-        execute_bdd(FeatureJson);
+        execute_bdd(FeatureJson, cowboy_req:header(<<"user-agent">>, Req, ""));
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),
@@ -165,11 +180,13 @@ from_html(Req0, State) ->
   logger:debug("Req ~p.", [Req]),
   Hostname = cowboy_req:header(<<"x-damage-host">>, Req0, <<"localhost">>),
   Port = cowboy_req:header(<<"x-damage-port">>, Req0, 80),
+  UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
   {Status, Resp0} =
     case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
       <<"ak_", _Rest>> = Account ->
         execute_bdd(
-          #{feature => Body, account => Account, host => Hostname, port => Port}
+          #{feature => Body, account => Account, host => Hostname, port => Port},
+          UserAgent
         );
 
       Account ->
@@ -186,7 +203,8 @@ from_html(Req0, State) ->
                 account => Account,
                 host => Hostname,
                 port => Port
-              }
+              },
+              UserAgent
             )
         end
     end,

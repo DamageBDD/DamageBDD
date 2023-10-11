@@ -36,12 +36,15 @@
   .title {
     font-size: 24px;
     font-weight: bold;
-    margin-bottom: 10px;
+    /*margin-bottom: 10px;*/
   }
   .header {
     font-size: 16px;
     margin-bottom: 20px;
   }
+.code-example {
+  text-align: left;
+}
 .container {
   text-align: center;
   background-color: #fff;
@@ -77,11 +80,29 @@
     margin-left: 10px;
 }
 </style>
+<link rel="stylesheet" href="/static/js/highlight/styles/base16/github.min.css">
+<script src="/static/js/highlight/highlight.min.js"></script>
+<script src="/static/js/highlight/languages/gherkin.min.js"></script>
+<script>hljs.highlightAll();</script>
+
 </head>
 <body>
 <div class="container">
+
+    <highlightjs autodetect :code="code" />
   <div class="title">DamageBDD</div>
   <div class="header">The tool to break your stack</div>
+  <div class="code-example">
+    <p>Write the test case in the textarea below:</p>
+    <p> for example </p>
+  <pre><code class="language-gherkin">
+Feature: Test basic functionality of Google.com using HTTP API
+
+  Scenario: GET request to Google.com
+    Given I am using server "https://www.google.com"
+    When I make a GET request to "/?test"
+    Then the response status must be "200"
+  </code></pre></div>
   <form id="damageForm">
     
     <textarea type="text" class="input-box" id="damageInput" placeholder="Feature: How this feature should behave.
@@ -93,7 +114,7 @@
 <div class="container2">
   <label for="difficulty">Select Difficulty:</label>
   <select id="difficulty" onchange="enableForm()">
-    <option value="sk_baby">I'm too young to die. (1 rps)</option>
+    <option value="sk_baby">Im too young to die. (1 rps)</option>
     <option value="sk_easy">Hey, not too rough. (10 rps)</option>
     <option value="sk_medium">Hurt me plenty. (100 rps)</option>
     <option value="sk_hard">Ultra-Violence. (1000 rps)</option>

@@ -41,11 +41,11 @@ handle_cast({invoke_formatters, _Args}, State) -> {noreply, State}.
 handle_info(_Info, State) -> {noreply, State}.
 
 invoke_formatters(Config, Keyword, Data) ->
-  ?debugFmt("invoke formatter: ~p", [Data]),
   {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
   lists:foreach(
     fun
       ({Formatter, FormatterConfig}) ->
+    logger:debug("applying formatter function ~p_formatter with config ~p", [Formatter, FormatterConfig]),
         apply(
           list_to_atom(
             lists:flatten(io_lib:format("~p_formatter", [Formatter]))

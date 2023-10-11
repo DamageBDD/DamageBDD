@@ -49,10 +49,11 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
     );
 
 format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) ->
+    logger:debug("text format ~p ~p", [Config, Status]),
   ok =
     write_file(
       Config,
-      "\t\t~s ~s, Args: ~p line:~p  ~s",
+      "\t\t~s ~p, Args: ~p line:~p  ~s",
       [
         get_keyword(Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),

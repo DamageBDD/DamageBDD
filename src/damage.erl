@@ -190,7 +190,11 @@ execute_step_module(
           step_module => StepModule
         }
       ),
-      formatter:format(Config, step, {LineNo, StepKeyWord, Body, Context, fail}),
+      formatter:format(
+        Config,
+        step,
+        {StepKeyWord, LineNo, Body, Args, Context, fail}
+      ),
       should_exit(Config),
       maps:put(failing_step, Step, maps:put(fail, Reason, Context))
   end.
@@ -201,7 +205,7 @@ execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 execute_step(Config, Step, #{fail := _} = Context) ->
   logger:info("step skipped: ~p.", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
-  formatter:format(Config, step, {LineNo, StepKeyWord, Body, Context, skip}),
+  formatter:format(Config, step, {StepKeyWord, LineNo, Body, [], Context, skip}),
   Context;
 
 execute_step(Config, Step, Context) ->
@@ -224,7 +228,7 @@ execute_step(Config, Step, Context) ->
             #{fail := _} = Context1 -> maps:put(failing_step, Step, Context1);
 
             Context1 ->
-              logger:debug("step success: ~p ~p", [Body, Context1]),
+              %logger:debug("step success: ~p ~p", [Body, Context1]),
               formatter:format(
                 Config,
                 step,
@@ -242,7 +246,7 @@ execute_step(Config, Step, Context) ->
       formatter:format(
         Config,
         step,
-        {LineNo, StepKeyWord, Body, Context, notfound}
+        {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
       ),
       metrics:update(notfound, Config);
 
