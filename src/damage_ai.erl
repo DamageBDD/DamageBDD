@@ -40,7 +40,10 @@ handle_call({generate_code, Config, FeatureName}, _From, State) ->
   {reply, ok, State}.
 
 
-handle_cast(_Event, State) -> {noreply, State}.
+handle_cast({run_python_server, Config, Context, Code}, State) ->
+  run_python_server(Config, Context, Code),
+  {noreply, State}.
+
 
 handle_info(_Info, State) -> {noreply, State}.
 

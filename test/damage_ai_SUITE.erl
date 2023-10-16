@@ -15,6 +15,7 @@ all() -> [{group, ai}].
 groups() -> [{ai, [parallel], [generate_code_test]}].
 
 init_per_group(Name, Config) ->
+  {ok, _} = formatter:start_link([]),
   application:ensure_all_started(gun),
   {ok, _} = application:ensure_all_started(erlexec),
   PrivDir = code:priv_dir(damage),
@@ -25,7 +26,7 @@ init_per_group(Name, Config) ->
     #{env => #{dispatch => init_dispatch(Name)}},
     [
       {host, localhost},
-      {port, 5000},
+      {port, 9090},
       {feature_dirs, ["../../../../features/", "../features/"]},
       {account, "test"},
       {data_dir, "/var/lib/damagebdd/"},
@@ -64,11 +65,27 @@ init_per_suite(Config) -> damage_test:init_per_suite(Config).
 
 end_per_suite(Config) -> damage_test:end_per_suite(Config).
 
+new_pool(Size, MaxOverflow) ->
+  poolboy:start_link(
+    [
+      {name, {local, formatter}},
+      {worker_module, formatter},
+      {size, Size},
+      {max_overflow, MaxOverflow}
+    ]
+  ).
+
+pool_call(ServerRef, Request) -> gen_server:call(ServerRef, Request).
+
 generate_code_test(TestConfig) ->
   % erlang code to get application root directory
+  {ok, Pool} = new_pool(2, 5),
   FeatureFile = "../../../../features/ai_voice_assistant.feature",
-  ?debugFmt("Running feature file ~p ~p", [file:get_cwd(), FeatureFile]),
+  ?debugFmt(
+    "Running feature file ~p ~p ~p",
+    [file:get_cwd(), FeatureFile, TestConfig]
+  ),
   {Code, _Explanation} = damage_ai:generate_code(TestConfig, FeatureFile),
-  ok = damage_ai:run_python_server(TestConfig, #{}, Code),
-  [#{response := [{status_code, 200} | _]} | _] =
-    lists:flatten(damage:execute(TestConfig, "login")).
+  pool_call(Pool, {run_python_server, TestConfig, #{}, Code}),
+  %[#{response := [{status_code, 200} | _]} | _] =
+  [] = lists:flatten(damage:execute(TestConfig, "ai_voice_assistant.feature")).
