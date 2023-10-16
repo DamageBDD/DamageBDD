@@ -28,12 +28,9 @@ format(Config, feature, {FeatureName, LineNo, [], Description}) ->
     write_file(
       Config,
       "Feature ~s line:~p desc: ~s",
-      [
-        FeatureName,
-        LineNo,
-        Description
-      ]
+      [FeatureName, LineNo, Description]
     );
+
 format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =
     write_file(
@@ -48,25 +45,14 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
     );
 
 format(Config, scenario, {ScenarioName, LineNo, []}) ->
-  ok =
-    write_file(
-      Config,
-      "  Scenario ~s line:~p",
-      [
-        ScenarioName,
-        LineNo
-      ]
-    );
+  ok = write_file(Config, "  Scenario ~s line:~p", [ScenarioName, LineNo]);
+
 format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
   ok =
     write_file(
       Config,
       "  Scenario ~s line:~p tags: [~p]",
-      [
-        ScenarioName,
-        LineNo,
-        lists:flatten(string:join([X || X <- Tags], ","))
-      ]
+      [ScenarioName, LineNo, lists:flatten(string:join([X || X <- Tags], ","))]
     );
 
 format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) ->
@@ -81,6 +67,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) -
         Status
       ]
     );
+
 format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) ->
   ok =
     write_file(

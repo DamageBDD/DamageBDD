@@ -5,15 +5,18 @@ Feature: My well behaved ai assistant
     """
     AI voice assistant server that performs voice to text and provides assistance 
     The server must use local gpu to perform the computation
+    Convert the uploaded file from to text
+    Store the task id data in a local sqlite file
     """
 
   Scenario: Upload audio for voice to text
-    Given I am using server "http://localhost:8080"
+    Given I am using server "http://localhost:9090"
     And I set base URL to "/"
     And I set "Accept" header to "application/json"
     And I set "Content-Type" header to "application/json"
     When I make a GET request to "/"
     Then the response status must be "200"
+    Then the json at path "$.message" must be "Hello, World!"
     When I make a POST request to "/api/upload" with a file attachment "/var/lib/damage/guest/lastmessage.ogg"
     Then the response should be "201"
     Then the json at path "$.id" must be "guest_voice_ai_req_0"
