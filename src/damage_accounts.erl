@@ -83,8 +83,9 @@ bitcoin_getnewaddress(AeAccount) ->
   bitcoin_req(<<"getnewaddress">>, [AeAccount, <<"bech32">>]).
 
 bitcoin_req(Method, Params) ->
-    {ok, } = application:get_env(damage, bitcoin_rpc_host),
-    {ok, ConnPid} = gun:open("localhost", 18332, #{}),
+    {ok, BtcRpcHost} = application:get_env(damage, bitcoin_rpc_host),
+    {ok, BtcRpcPort} = application:get_env(damage, bitcoin_rpc_port),
+    {ok, ConnPid} = gun:open(BtcRpcHost, BtcRpcPort, #{}),
   Data =
     #{
       jsonrpc => <<"1.0">>,
