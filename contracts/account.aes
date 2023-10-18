@@ -1,0 +1,55 @@
+@compiler >= 6
+include "String.aes"
+payable contract Account =
+    record state = {
+        btc_address: string,
+        btc_balance: int,
+        btc_refund_address: string,
+		deso_address: string,
+		deso_balance: int,
+		balance: int,
+        deployer: address
+      }
+    stateful entrypoint init() = {
+        btc_address = "undefined",
+        btc_refund_address = "undefined",
+        btc_balance = 0,
+		deso_address = "undefined",
+		deso_balance = 0,
+		balance = 0,
+        deployer = Call.caller
+      }
+
+    stateful entrypoint set_btc_state(btc_address: string, btc_refund_address: string) : unit =
+      if(state.btc_address != "undefined")
+          abort("Address already set")
+      else
+          put(state{btc_address = btc_address})
+      if(state.btc_refund_address != "undefined")
+          abort("Refund Address already set")
+      else
+          put(state{btc_refund_address = btc_refund_address})
+
+    stateful entrypoint total_balance(): int =
+      Chain.balance(state.deployer)
+
+    stateful entrypoint btc_balance(): int =
+      state.btc_balance
+
+    stateful entrypoint spend(amount: int) =
+      if(state.balance >= amount)
+        put(state{balance = state.balance- amount})
+        put(state{btc_balance = state.btc_balance- amount})
+
+
+    payable stateful entrypoint fund(): unit =
+        if(Call.value > 1)
+            put(state{balance = state.balance + Call.value})
+            //Chain.spend(address, 
+        else
+            abort(String.concat("Value too low", Int.to_str(Call.value)))
+
+    stateful entrypoint get_state(): state =
+      state
+			  
+

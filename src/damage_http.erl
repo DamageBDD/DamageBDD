@@ -44,8 +44,13 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 execute_bdd(
-  #{feature := FeatureData, account := Account, host := Hostname, port := Port} =
-    _FeaturePayload,
+  #{
+    feature := FeatureData,
+    account := Account,
+    host := Hostname,
+    port := Port,
+    concurrency := 1
+  } = _FeaturePayload,
   UserAgent
 ) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
@@ -144,6 +149,35 @@ execute_bdd(
     Err ->
       logger:error("Data dir creation faild ~p.", [Err]),
       {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+  end;
+
+execute_bdd(
+  #{account := Account, concurrency := Concurrency} = FeaturePayload,
+  UserAgent
+) ->
+  AvailConcurrency = damage_accounts:check_spend(Account, Concurrency),
+  case AvailConcurrency of
+    0 ->
+      {
+        400,
+        jsx:encode(
+          #{
+            status => <<"notok">>,
+            message
+            =>
+            <<
+              "Insufficient balance, please top up balance at `/api/accounts/topup`"
+            >>
+          }
+        )
+      };
+
+    _ ->
+      execute_bdd(
+        maps:put(concurrency, AvailConcurrency, FeaturePayload),
+        UserAgent
+      ),
+      damage_accounts:confirm_spend(Account, AvailConcurrency)
   end.
 
 
@@ -181,11 +215,18 @@ from_html(Req0, State) ->
   Hostname = cowboy_req:header(<<"x-damage-host">>, Req0, <<"localhost">>),
   Port = cowboy_req:header(<<"x-damage-port">>, Req0, 80),
   UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
+  Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req0, 1),
   {Status, Resp0} =
     case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
       <<"ak_", _Rest>> = Account ->
         execute_bdd(
-          #{feature => Body, account => Account, host => Hostname, port => Port},
+          #{
+            feature => Body,
+            account => Account,
+            host => Hostname,
+            port => Port,
+            concurrency => Concurrency
+          },
           UserAgent
         );
 

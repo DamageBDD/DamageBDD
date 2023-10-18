@@ -32,14 +32,17 @@ start(_StartType, _StartArgs) ->
           '_',
           [
             {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
+            {"/help", damage_static, {priv_dir, damage, "help"}},
+            {"/features/[...]", cowboy_static, {dir, "features/"}},
             {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
             {
               "/steps.json",
               cowboy_static,
               {priv_file, damage, "static/steps.json"}
             },
-            {"/api/execute_feature/", damage_http, []},
-            {"/api/reports/[:runid]", damage_report, []},
+            {"/execute_feature/", damage_http, []},
+            {"/reports/[:runid]", damage_reports, []},
+            {"/accounts/[:action]", damage_accounts, []},
             {"/metrics/[:registry]", prometheus_cowboy2_handler, []}
           ]
         }
