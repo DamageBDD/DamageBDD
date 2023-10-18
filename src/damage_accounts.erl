@@ -33,7 +33,7 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 validate_refund_addr(forward, BtcAddress) ->
   case bitcoin_validateaddress(BtcAddress) of
-    #{isvalid := true} -> {ok, BtcAddress};
+    {ok, #{isvalid := true, address := BtcAddress}} -> {ok, BtcAddress};
     _Other -> {ok, false}
   end.
 
@@ -41,7 +41,10 @@ validate_refund_addr(forward, BtcAddress) ->
 do_action(<<"create">>, Req) ->
   case
   cowboy_req:match_qs([{refund_address, fun validate_refund_addr/2, []}], Req) of
-    #{refund_address := false} -> <<"Invalid refund_address.">>;
+    #{refund_address := false} = Resp ->
+      ?debugFmt("refund_address data: ~p ", [Resp]),
+      <<"Invalid refund_address.">>;
+
     #{refund_address := RefundAddress} -> create(RefundAddress)
   end;
 
@@ -83,9 +86,9 @@ bitcoin_getnewaddress(AeAccount) ->
   bitcoin_req(<<"getnewaddress">>, [AeAccount, <<"bech32">>]).
 
 bitcoin_req(Method, Params) ->
-    {ok, BtcRpcHost} = application:get_env(damage, bitcoin_rpc_host),
-    {ok, BtcRpcPort} = application:get_env(damage, bitcoin_rpc_port),
-    {ok, ConnPid} = gun:open(BtcRpcHost, BtcRpcPort, #{}),
+  {ok, BtcRpcHost} = application:get_env(damage, bitcoin_rpc_host),
+  {ok, BtcRpcPort} = application:get_env(damage, bitcoin_rpc_port),
+  {ok, ConnPid} = gun:open(BtcRpcHost, BtcRpcPort, #{}),
   Data =
     #{
       jsonrpc => <<"1.0">>,
@@ -199,15 +202,14 @@ aecli(contract, deploy, Contract, Args) ->
 %    ),
 %  ?debugFmt("contract call ~p", [ContractCall]),
 %  sign_tx(ContractCall),
-
-% 
+%
 %generate an erlang gen_server process that monitors a bitcoin address for transactions using the bitcoin core json rpc
 create(RefundAddress) ->
   ?debugFmt("btc refund address ~p ", [RefundAddress]),
   % create ae account and bitcoin account
   #{result := #{contractId := ContractAddress}} =
     aecli(contract, deploy, "contracts/account.aes", []),
-  BtcAddress = bitcoin_getnewaddress(ContractAddress),
+  {ok, BtcAddress} = bitcoin_getnewaddress(ContractAddress),
   ?debugFmt(
     "debug created AE contractid ~p ~p, ",
     [ContractAddress, BtcAddress]
@@ -237,7 +239,7 @@ store_profile(Account) ->
 
 
 check_spend(Account, Concurrency) ->
-  BtcBalance = bitcoin_getreceivedbyaddress(Account),
+  {ok, BtcBalance} = bitcoin_getreceivedbyaddress(Account),
   ?debugFmt("btc_balance ~p", [BtcBalance]),
   {ok, #{balance := Balance, id := Account}} = vanillae:acc(Account),
   case Balance of
@@ -276,7 +278,7 @@ balance(Account) ->
     } = Results
   } = ContractCall,
   ?debugFmt("State ~p ", [Results]),
-  Transactions = bitcoin_listtransactions(Account),
+  {ok, Transactions} = bitcoin_listtransactions(Account),
   ?debugFmt("Transactions ~p ", [Transactions]),
   {ok, RealBtcBalance} = bitcoin_getreceivedbyaddress(BtcAddress),
   Mesg =
@@ -300,7 +302,7 @@ refund(Account) ->
   } = balance(Account),
   {ok, RealBtcBalance} = bitcoin_getreceivedbyaddress(BtcAddress),
   ?debugFmt("real balance ~p ", [RealBtcBalance]),
-  RefundResult =
+  {ok, RefundResult} =
     bitcoin_sendtoaddress(
       BtcRefundAddress,
       RealBtcBalance - binary_to_integer(Balance),
