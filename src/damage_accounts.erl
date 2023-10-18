@@ -88,6 +88,7 @@ bitcoin_getnewaddress(AeAccount) ->
 bitcoin_req(Method, Params) ->
   {ok, BtcRpcHost} = application:get_env(damage, bitcoin_rpc_host),
   {ok, BtcRpcPort} = application:get_env(damage, bitcoin_rpc_port),
+  {ok, BtcWallet} = application:get_env(damage, bitcoin_wallet),
   {ok, ConnPid} = gun:open(BtcRpcHost, BtcRpcPort, #{}),
   Data =
     #{
@@ -98,11 +99,11 @@ bitcoin_req(Method, Params) ->
     },
   UserID = "damagebdd",
   Password = os:getenv("BTC_PASSWORD"),
-  ?debugFmt("POST data: ~p ", [Data]),
+  ?debugFmt("POST data: ~p ~p", [Data, BtcWallet]),
   StreamRef =
     gun:post(
       ConnPid,
-      "/wallet/testwallet",
+      "/wallet/" ++ BtcWallet,
       [
         {<<"content-type">>, <<"text/plain">>},
         {
@@ -158,7 +159,7 @@ aecli(contract, call, ContractAddress, Contract, Func, Args) ->
 
 
 aecli(contract, deploy, Contract, Args) ->
-  AeWallet = "wallets/test0",
+  {ok, AeWallet} = application:get_env(damage, ae_wallet),
   Password = os:getenv("AE_PASSWORD"),
   Cmd =
     mustache:render(
