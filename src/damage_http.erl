@@ -243,7 +243,8 @@ from_html(Req0, State) ->
                 feature => Body,
                 account => Account,
                 host => Hostname,
-                port => Port
+                port => Port,
+                concurrency => 1
               },
               UserAgent
             )

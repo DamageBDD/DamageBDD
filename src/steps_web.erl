@@ -207,7 +207,8 @@ step(
             damage_utils:strf(
               "the json at path ~p is not ~p, it is ~p.",
               [Path, Json, UnExpected]
-            )
+            ),
+            Context
           )
       end;
 
