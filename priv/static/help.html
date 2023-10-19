@@ -1,0 +1,29 @@
+<h1>DamageBDD Help</h1>
+
+<h2>Usage:</h2>
+
+<ol>
+  <li>Create feature file:</li>
+
+  <p>
+Use your  favorite editor to write a feature file.
+  <br>
+Writing a feature is easy, to start with you can download an example file
+  </p>
+  <p>
+  <code>
+    curl -o google.feature {{damage_url}}/features/google.feature
+    </code>
+  </p>
+
+  <li>Run the feature file:</li>
+
+
+  <p>
+Post the feature to DamageBDD like so:
+  </p>
+
+  <code>
+    curl -s --data-binary @google.feature -H "Authorization: guest" '{{damage_url}}/api/execute_feature'
+    </code>
+

@@ -1,0 +1,18 @@
+DamageBDD Help
+--------------
+
+Usage:
+
+1. Create feature file:
+
+Use your favorite editor to write a feature file.
+Writing a feature is easy, to start with you can download an example file
+
+    curl -o jsontest.feature {{damage_url}}/features/jsontest.feature
+
+2. Run the feature file:
+
+Post the feature to DamageBDD like so:
+
+    curl -s --data-binary @jsontest.feature -H "Authorization: guest" '{{damage_url}}/execute_feature'
+
