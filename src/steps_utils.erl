@@ -21,6 +21,10 @@ step(
 step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
   maps:put(Variable, list_to_binary(uuid:to_string(uuid:uuid4())), Context);
 
+step(_Config, Context, _, _N, ["I wait", Seconds, "seconds"], _) ->
+  timer:sleep(Seconds),
+  Context;
+
 step(
   _Config,
   Context,
