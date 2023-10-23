@@ -32,7 +32,7 @@ content_types_provided(Req, State) ->
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 validate_refund_addr(forward, BtcAddress) ->
-  case bitcoin_validateaddress(BtcAddress) of
+  case bitcoin:validateaddress(BtcAddress) of
     {ok, #{isvalid := true, address := BtcAddress}} -> {ok, BtcAddress};
     _Other -> {ok, false}
   end.
@@ -67,75 +67,6 @@ to_json(Req, State) ->
 
 
 to_text(Req, State) -> to_json(Req, State).
-
-bitcoin_validateaddress(BtcAddress) ->
-  bitcoin_req(<<"validateaddress">>, [BtcAddress]).
-
-bitcoin_getreceivedbyaddress(BtcAddress) ->
-  bitcoin_req(<<"getreceivedbyaddress">>, [BtcAddress]).
-
-bitcoin_listtransactions(Account) ->
-  bitcoin_req(<<"listtransactions">>, [Account]).
-
-%bitcoin_addressinfo(BtcAddress) ->
-%  bitcoin_req(<<"getaddressinfo">>, [BtcAddress]).
-bitcoin_sendtoaddress(Address, Amount, AeContract) ->
-  bitcoin_req(<<"sendtoaddress">>, [Address, Amount, AeContract]).
-
-bitcoin_getnewaddress(AeAccount) ->
-  bitcoin_req(<<"getnewaddress">>, [AeAccount, <<"bech32">>]).
-
-bitcoin_req(Method, Params) ->
-  {ok, BtcRpcHost} = application:get_env(damage, bitcoin_rpc_host),
-  {ok, BtcRpcPort} = application:get_env(damage, bitcoin_rpc_port),
-  {ok, BtcWallet} = application:get_env(damage, bitcoin_wallet),
-  {ok, ConnPid} = gun:open(BtcRpcHost, BtcRpcPort, #{}),
-  Data =
-    #{
-      jsonrpc => <<"1.0">>,
-      id => <<"curltest">>,
-      method => Method,
-      params => Params
-    },
-  UserID = "damagebdd",
-  Password = os:getenv("BTC_PASSWORD"),
-  ?debugFmt("POST data: ~p ~p", [Data, BtcWallet]),
-  StreamRef =
-    gun:post(
-      ConnPid,
-      "/wallet/" ++ BtcWallet,
-      [
-        {<<"content-type">>, <<"text/plain">>},
-        {
-          <<"Authorization">>,
-          [
-            <<"Basic ">>,
-            base64:encode(iolist_to_binary([UserID, $:, Password]))
-          ]
-        }
-      ],
-      jsx:encode(Data),
-      #{}
-    ),
-  case gun:await(ConnPid, StreamRef) of
-    {response, fin, Status, Headers0} ->
-      ?debugFmt("POST Response: ~p ~p", [Status, Headers0]),
-      logger:debug("POST Response: ~p ~p", [Status, Headers0]);
-
-    {response, nofin, Status, Headers0} ->
-      {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      ?debugFmt("POST Response: ~p ~p ~p", [Status, Headers0, Body]),
-      case jsx:decode(Body, [{labels, atom}, return_maps]) of
-        #{result := null, error := Error} ->
-          ?debugFmt("bitcoin req error ~p", [Error]),
-          {error, Error};
-
-        #{result := Account} ->
-          ?debugFmt("bitcoin wallet creation ~p", [Account]),
-          {ok, Account}
-      end
-  end.
-
 
 aecli(contract, call, ContractAddress, Contract, Func, Args) ->
   {ok, AeWallet} = application:get_env(damage, ae_wallet),
@@ -210,7 +141,7 @@ create(RefundAddress) ->
   % create ae account and bitcoin account
   #{result := #{contractId := ContractAddress}} =
     aecli(contract, deploy, "contracts/account.aes", []),
-  {ok, BtcAddress} = bitcoin_getnewaddress(ContractAddress),
+  {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
   ?debugFmt(
     "debug created AE contractid ~p ~p, ",
     [ContractAddress, BtcAddress]
@@ -239,8 +170,10 @@ store_profile(Account) ->
   ok.
 
 
+check_spend(<<"guest">>, _Concurrency) -> check_spend(<<"guest">>, 1);
+
 check_spend(Account, Concurrency) ->
-  {ok, BtcBalance} = bitcoin_getreceivedbyaddress(Account),
+  {ok, BtcBalance} = bitcoin:getreceivedbyaddress(Account),
   ?debugFmt("btc_balance ~p", [BtcBalance]),
   {ok, #{balance := Balance, id := Account}} = vanillae:acc(Account),
   case Balance of
@@ -274,18 +207,18 @@ balance(Account) ->
       btc_balance := BtcBalance,
       deso_address := _DesoAddress,
       deso_balance := _DesoBalance,
-      balance := Balance,
+      usage := Usage,
       deployer := _Deployer
     } = Results
   } = ContractCall,
   ?debugFmt("State ~p ", [Results]),
-  {ok, Transactions} = bitcoin_listtransactions(Account),
+  {ok, Transactions} = bitcoin:listtransactions(Account),
   ?debugFmt("Transactions ~p ", [Transactions]),
-  {ok, RealBtcBalance} = bitcoin_getreceivedbyaddress(BtcAddress),
+  {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
   Mesg =
     io:format(
-      "Balance of account ~p is ae ~p btc ~p btc_held ~p.",
-      [Account, Balance, BtcBalance, RealBtcBalance]
+      "Balance of account ~p usage is ~p btc_balance ~p btc_held ~p.",
+      [Account, Usage, BtcBalance, RealBtcBalance]
     ),
   logger:debug(Mesg),
   maps:put(btc_refund_balance, RealBtcBalance, Results).
@@ -301,10 +234,10 @@ refund(Account) ->
     balance := Balance,
     deployer := _Deployer
   } = balance(Account),
-  {ok, RealBtcBalance} = bitcoin_getreceivedbyaddress(BtcAddress),
+  {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
   ?debugFmt("real balance ~p ", [RealBtcBalance]),
   {ok, RefundResult} =
-    bitcoin_sendtoaddress(
+    bitcoin:sendtoaddress(
       BtcRefundAddress,
       RealBtcBalance - binary_to_integer(Balance),
       Account
