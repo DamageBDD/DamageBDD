@@ -96,6 +96,8 @@ execute(Config, FeatureName) ->
 
 
 execute_file(Config, Filename) ->
+  {account, Account} = lists:keyfind(account, 1, Config),
+  {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
   try egherkin:parse_file(Filename) of
     {failed, LineNo, Message} ->
       logger:error(
@@ -113,7 +115,8 @@ execute_file(Config, Filename) ->
         Description,
         BackGround,
         Scenarios
-      )
+      ),
+      damage_accounts:check_spend(Account, Concurrency)
   catch
     {error, enont} -> logger:error("Feature file ~p not found.", [Filename])
   end.

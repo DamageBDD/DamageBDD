@@ -66,7 +66,8 @@ execute_bdd(
           {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
         ]
       },
-      {feature_dirs, ["../../../../features/", "../features/"]}
+      {feature_dirs, ["../../../../features/", "../features/"]},
+      {concurrency, 1}
     ],
   RunDir = filename:join(AccountDir, RunId),
   FeatureDir = filename:join(AccountDir, "features"),

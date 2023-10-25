@@ -17,7 +17,9 @@
     getnewaddress/1,
     getbalance/0,
     createwallet/1,
-    listwallets/1
+    listwallets/0,
+    loadwallet/1,
+    unloadwallet/1
   ]
 ).
 
@@ -38,7 +40,11 @@ bitcoin_req(Method, Params, Path) ->
       params => Params
     },
   UserID = "damagebdd",
-  Password = os:getenv("BTC_PASSWORD"),
+  Password =
+    case os:getenv("BTC_PASSWORD") of
+      false -> exit(btc_password_env_not_set);
+      Other -> Other
+    end,
   ?debugFmt("POST data: ~p", [Data]),
   StreamRef =
     gun:post(
@@ -93,12 +99,20 @@ getnewaddress(Label) -> bitcoin_req(<<"getnewaddress">>, [Label, <<"bech32">>]).
 
 createwallet(WalletName) ->
   %" ( disable_private_keys blank "passphrase" avoid_reuse descriptors load_on_startup )
-  bitcoin_req(<<"createwallet">>, [WalletName], <<"">>).
+  bitcoin_req(<<"createwallet">>, [WalletName]).
 
 
-listwallets(WalletName) ->
+listwallets() ->
   %" ( disable_private_keys blank "passphrase" avoid_reuse descriptors load_on_startup )
-  bitcoin_req(<<"listwallets">>, [WalletName], <<"">>).
+  bitcoin_req(<<"listwallets">>, []).
 
 
 getbalance() -> bitcoin_req(<<"getbalance">>, []).
+
+loadwallet(BtcWalletFilename) ->
+  ?debugFmt("loadwallet ~p", [BtcWalletFilename]),
+  bitcoin_req(<<"loadwallet">>, [BtcWalletFilename]).
+
+
+unloadwallet(BtcWalletFilename) ->
+  bitcoin_req(<<"unloadwallet">>, [BtcWalletFilename]).

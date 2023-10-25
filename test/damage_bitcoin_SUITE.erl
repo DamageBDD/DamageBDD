@@ -10,24 +10,43 @@
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
 
-all() -> [{group, ai}].
+all() -> [{group, crypto}].
 
-groups() -> [{ai, [parallel], [generate_code_test]}].
+groups() -> [{crypto, [parallel], [test_bitcoin_wallet]}].
 
-init_per_group(_Name, Config) -> Config.
+init_per_group(_Name, Config) ->
+  application:ensure_all_started(gun),
+  Config.
 
-end_per_group(Name, _) -> cowboy:stop_listener(Name).
 
-init_per_suite(Config) -> damage_test:init_per_suite(Config).
+end_per_group(_Name, _) -> ok.
 
-end_per_suite(Config) -> damage_test:end_per_suite(Config).
+init_per_suite(Config) -> Config.
+
+end_per_suite(Config) -> Config.
 
 test_bitcoin_wallet(Config) ->
-  ok =
+  {ok, WalletName} = datestring:format("YmdHMS", erlang:localtime()),
+  WalletPath =
+    filename:join(
+      os:getenv("HOME"),
+      ".bitcoin/wallets/damage_test" ++ WalletName ++ "/"
+    ),
+  #{} =
     steps_bitcoin:step(
       Config,
       #{},
       given_keyword,
       0,
-      "I have a bitcoin wallet \"testwallet\""
+      ["I have loaded a bitcoin wallet from path", WalletPath],
+      <<"">>
+    ),
+  #{} =
+    steps_bitcoin:step(
+      Config,
+      #{},
+      given_keyword,
+      0,
+      ["I have loaded a bitcoin wallet from path", WalletPath],
+      <<"">>
     ).

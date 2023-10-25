@@ -15,21 +15,26 @@ step(
   Context,
   given_keyword,
   _N,
-  ["I have a bitcoin wallet", WalletLabel],
+  ["I have loaded a bitcoin wallet from path", WalletPath0],
   _
 ) ->
   BitcoinWallets = maps:get(bitcoin_wallets, Context, #{}),
-  case bitcoin:listwallets(WalletLabel) of
-    {ok, [BtcWallet]} ->
-      ?debugFmt("  BTC Wallet ~p", [BtcWallet]),
+  WalletPath = list_to_binary(WalletPath0),
+  case bitcoin:loadwallet(WalletPath) of
+    {ok, #{name := WalletPath}} ->
+      ?debugFmt("  BTC Wallet ~p", [WalletPath]),
+      Context;
+
+    {error, #{code := -35}} ->
+      ?debugFmt("  BTC Wallet already loaded ~p", [WalletPath]),
       Context;
 
     {error, Error} ->
       ?debugFmt("  BTC Wallet Error ~p", [Error]),
-      {ok, BtcWallet} = bitcoin:createwallet(WalletLabel),
+      {ok, BtcWallet} = bitcoin:createwallet(WalletPath),
       maps:put(
         bitcoin_wallets,
-        maps:put(WalletLabel, BtcWallet, BitcoinWallets),
+        maps:put(WalletPath, BtcWallet, BitcoinWallets),
         Context
       )
   end;

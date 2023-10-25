@@ -170,10 +170,11 @@ store_profile(Account) ->
   ok.
 
 
-check_spend(<<"guest">>, _Concurrency) -> check_spend(<<"guest">>, 1);
+check_spend("guest", _Concurrency) -> ok;
+check_spend(<<"guest">>, _Concurrency) -> ok;
 
 check_spend(Account, Concurrency) ->
-  {ok, BtcBalance} = bitcoin:getreceivedbyaddress(Account),
+  {ok, BtcBalance} = bitcoin:getreceivedbyaddress(list_to_binary(Account)),
   ?debugFmt("btc_balance ~p", [BtcBalance]),
   {ok, #{balance := Balance, id := Account}} = vanillae:acc(Account),
   case Balance of
