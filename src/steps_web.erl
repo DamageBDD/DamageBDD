@@ -14,7 +14,7 @@
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
-gun_post(Config0, Context, Path, Headers, Data) ->
+get_gun_config(Config0, Context) ->
   Host = damage_utils:get_context_value(host, Context, Config0),
   Port = damage_utils:get_context_value(port, Context, Config0),
   Config =
@@ -28,6 +28,11 @@ gun_post(Config0, Context, Path, Headers, Data) ->
       _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
     end,
   {ok, ConnPid} = gun:open(Host, Port, Opts),
+  ConnPid.
+
+
+gun_post(Config0, Context, Path, Headers, Data) ->
+  ConnPid = get_gun_config(Config0, Context),
   ?debugFmt("Data : ~p", [Data]),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
   case gun:await(ConnPid, StreamRef) of
@@ -45,21 +50,21 @@ gun_post(Config0, Context, Path, Headers, Data) ->
 
 
 gun_get(Config0, Context, Path, Headers) ->
-  Host = damage_utils:get_context_value(host, Context, Config0),
-  Port = damage_utils:get_context_value(port, Context, Config0),
-  Config =
-    case Port of
-      443 -> [{transport, tls} | Config0];
-      _ -> Config0
-    end,
-  Opts =
-    case lists:keyfind(transport, 1, Config) of
-      false -> #{transport => tcp};
-      _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
-    end,
-  logger:debug("GET : ~p ~p ~p~n", [Config, Port, Opts]),
-  {ok, ConnPid} = gun:open(Host, Port, Opts),
+  ConnPid = get_gun_config(Config0, Context),
   StreamRef = gun:get(ConnPid, Path, Headers),
+  case gun:await(ConnPid, StreamRef) of
+    {response, fin, Status, Headers0} ->
+      maps:put(response, response_to_list({Status, Headers0, ""}), Context);
+
+    {response, nofin, Status, Headers0} ->
+      {ok, Body} = gun:await_body(ConnPid, StreamRef),
+      maps:put(response, response_to_list({Status, Headers0, Body}), Context)
+  end.
+
+
+gun_options(Config0, Context, Path, Headers) ->
+  ConnPid = get_gun_config(Config0, Context),
+  StreamRef = gun:options(ConnPid, Path, Headers),
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
       maps:put(response, response_to_list({Status, Headers0, ""}), Context);
@@ -116,6 +121,25 @@ step(
       {<<"content-type">>, "application/json"}
     ],
     Data
+  );
+
+step(
+  Config,
+  Context,
+  when_keyword,
+  _N,
+  ["I make a OPTIONS request to", Path],
+  _Data
+) ->
+  gun_options(
+    Config,
+    Context,
+    Path,
+    [
+      {<<"accept">>, "application/json"},
+      {<<"user-agent">>, "revolver/1.0"},
+      {<<"content-type">>, "application/json"}
+    ]
   );
 
 step(
@@ -202,6 +226,28 @@ step(
         {[Json0 | _], _} -> Context;
 
         UnExpected ->
+          maps:put(
+            fail,
+            damage_utils:strf(
+              "the json at path ~p is not ~p, it is ~p.",
+              [Path, Json, UnExpected]
+            ),
+            Context
+          )
+      end;
+
+    Dict when is_map(Dict) ->
+      Json1 =
+        case re:run(Json, "^[0-9]*$") of
+          nomatch -> Json;
+          _ -> list_to_integer(Json)
+        end,
+          ?debugFmt("json1 ~p", [Json1]),
+      case ejsonpath:q(Path, jsx:decode(jsx:encode(Dict))) of
+        {[Json1 | _], _} -> Context;
+
+        UnExpected ->
+          ?debugFmt("unexpected json ~p", [UnExpected]),
           maps:put(
             fail,
             damage_utils:strf(
@@ -325,7 +371,9 @@ step(_Config, Context, given_keyword, _N, ["I am using server", Server], _) ->
       maps:put(port, 443, maps:put(host, Host, Context));
 
     #{scheme := "http", host := Host, path := _Path} ->
-      maps:put(port, 80, maps:put(host, Host, Context))
+      maps:put(port, 80, maps:put(host, Host, Context));
+
+    #{path := Host} -> maps:put(host, Host, Context)
   end;
 
 step(_Config, Context, given_keyword, _N, ["I set base URL to", URL], _) ->

@@ -17,11 +17,13 @@ groups() ->
         step_get_request,
         step_post_csrf_request,
         step_post_request,
-        step_store_json_in
+        step_store_json_in,
+        step_jsonpath
       ]
     },
     {https, [parallel], [step_get_request_tls]}
   ].
+
 
 init_per_suite(Config) -> damage_test:init_per_suite(Config).
 
@@ -117,3 +119,35 @@ step_store_json_in(Config) ->
       []
     ),
   TestId = maps:get(installid, Context0).
+
+
+step_jsonpath(Config) ->
+  Context =
+    maps:put(
+      response,
+      #{
+        num_open => 6,
+        results
+        =>
+        [
+          {22, <<"open">>},
+          {80, <<"open">>},
+          {443, <<"open">>},
+          {8080, <<"open">>},
+          {9999, <<"open">>},
+          {24800, <<"open">>}
+        ]
+      },
+      maps:new()
+    ),
+  Context0 =
+    steps_web:step(
+      Config,
+      Context,
+      then_keyword,
+      0,
+      ["the json at path", "$.num_open", "must be", "6"],
+      []
+    ),
+  ok = maps:get(fail, Context0, ok),
+  6 = maps:get(num_open, maps:get(response, Context0)).
