@@ -18,6 +18,8 @@
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2]).
 
+-define(CHROMEDRIVER, "http://localhost:9515/").
+
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 content_types_provided(Req, State) ->
@@ -67,6 +69,7 @@ execute_bdd(
         ]
       },
       {feature_dirs, ["../../../../features/", "../features/"]},
+      {chromedriver, ?CHROMEDRIVER},
       {concurrency, 1}
     ],
   RunDir = filename:join(AccountDir, RunId),
