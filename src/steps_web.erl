@@ -27,7 +27,7 @@ get_gun_config(Config0, Context) ->
       false -> #{transport => tcp};
       _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
     end,
-  {ok, ConnPid} = gun:open(Host, Port, Opts),
+  {ok, ConnPid} = gun:open(Host, Port, maps:put(connect_timeout, 36000, Opts)),
   ConnPid.
 
 
@@ -35,7 +35,7 @@ gun_post(Config0, Context, Path, Headers, Data) ->
   ConnPid = get_gun_config(Config0, Context),
   ?debugFmt("Data : ~p", [Data]),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
-  case gun:await(ConnPid, StreamRef) of
+  case gun:await(ConnPid, StreamRef, 36000) of
     {response, fin, Status, Headers0} ->
       logger:debug("POST Response: ~p", [Status]),
       maps:put(response, response_to_list({Status, Headers0, <<"">>}), Context);
@@ -45,7 +45,9 @@ gun_post(Config0, Context, Path, Headers, Data) ->
       logger:debug("POST Response: ~p", [Body]),
       maps:put(response, response_to_list({Status, Headers0, Body}), Context);
 
-    Default -> logger:debug("POST Response: ~p", [Default])
+    Default ->
+      logger:debug("POST Response: ~p", [Default]),
+      maps:put(fail, damage_utils:strf("POST failed: ~p", [Default]), Context)
   end.
 
 
@@ -72,6 +74,24 @@ gun_options(Config0, Context, Path, Headers) ->
     {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
       maps:put(response, response_to_list({Status, Headers0, Body}), Context)
+  end.
+
+
+ejsonpath_match(Path, Data, Expected, Context) ->
+  Expected0 =
+    case re:run(Expected, "^[0-9]*$") of
+      nomatch -> Expected;
+      _ -> list_to_integer(Expected)
+    end,
+  ?debugFmt("Expected ejsonpath match ~p", [Expected0]),
+  case catch ejsonpath:q(Path, Data) of
+    {[Expected0 | _], _} -> Context;
+
+    UnExpected ->
+      Mesg = "the object at path ~p is not ~p, body ~p it is ~p.",
+      Args = [Path, Expected0, Data, UnExpected],
+      logger:info(Mesg, Args),
+      maps:put(fail, damage_utils:strf(Mesg, Args), Context)
   end.
 
 
@@ -111,17 +131,20 @@ step(
   ["I make a POST request to", Path],
   Data
 ) ->
-  gun_post(
-    Config,
-    Context,
-    Path,
+  Defaults =
     [
       {<<"accept">>, "application/json"},
       {<<"user-agent">>, "revolver/1.0"},
       {<<"content-type">>, "application/json"}
     ],
-    Data
-  );
+  Headers =
+    proplists:from_map(
+      proplists:to_map(
+        lists:keymerge(1, maps:get(headers, Context, []), Defaults)
+      )
+    ),
+  ?debugFmt("Test headers ~p data ~p", [Headers, Data]),
+  gun_post(Config, Context, Path, Headers, Data);
 
 step(
   Config,
@@ -216,47 +239,44 @@ step(
   Context,
   then_keyword,
   _N,
-  ["the json at path", Path, "must be", Json],
+  ["the yaml at path", Path, "must be", Expected],
   _
 ) ->
   case maps:get(response, Context) of
     [{status_code, _}, _Headers, {body, Body}] ->
-      Json0 = list_to_binary(Json),
-      case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
-        {[Json0 | _], _} -> Context;
-
-        UnExpected ->
-          maps:put(
-            fail,
-            damage_utils:strf(
-              "the json at path ~p is not ~p, it is ~p.",
-              [Path, Json, UnExpected]
-            ),
-            Context
-          )
-      end;
+      {ok, [Data]} = fast_yaml:decode(Body, [maps]),
+      ejsonpath_match(Path, Data, Expected, Context);
 
     Dict when is_map(Dict) ->
-      Json1 =
-        case re:run(Json, "^[0-9]*$") of
-          nomatch -> Json;
-          _ -> list_to_integer(Json)
-        end,
-          ?debugFmt("json1 ~p", [Json1]),
-      case ejsonpath:q(Path, jsx:decode(jsx:encode(Dict))) of
-        {[Json1 | _], _} -> Context;
+      ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);
 
-        UnExpected ->
-          ?debugFmt("unexpected json ~p", [UnExpected]),
-          maps:put(
-            fail,
-            damage_utils:strf(
-              "the json at path ~p is not ~p, it is ~p.",
-              [Path, Json, UnExpected]
-            ),
-            Context
-          )
-      end;
+    UnExpected ->
+      maps:put(
+        fail,
+        damage_utils:strf("Unexpected response ~p", [UnExpected]),
+        Context
+      )
+  end;
+
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["the json at path", Path, "must be", Expected],
+  _
+) ->
+  case maps:get(response, Context) of
+    [{status_code, _}, _Headers, {body, Body}] ->
+      ejsonpath_match(
+        Path,
+        jsx:decode(Body, [return_maps]),
+        list_to_binary(Expected),
+        Context
+      );
+
+    Dict when is_map(Dict) ->
+      ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);
 
     UnExpected ->
       maps:put(
@@ -310,9 +330,11 @@ step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
   Context;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
-  maps:put(headers, {list_to_binary(Header), list_to_binary(Value)}, Context),
-  logger:debug("Header Set: ~p", [Context]),
-  Context;
+  maps:put(
+    headers,
+    [{list_to_binary(string:to_lower(Header)), list_to_binary(Value)}],
+    Context
+  );
 
 step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
   [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
@@ -320,7 +342,7 @@ step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
   Cookies =
     lists:foldl(
       fun
-        ({<<"Set-Cookie">>, Header}, Acc) -> [Acc | Header];
+        ({<<"set-cookie">>, Header}, Acc) -> [Acc | Header];
         (_Other, Acc) -> Acc
       end,
       [],
@@ -377,18 +399,7 @@ step(_Config, Context, given_keyword, _N, ["I am using server", Server], _) ->
   end;
 
 step(_Config, Context, given_keyword, _N, ["I set base URL to", URL], _) ->
-  maps:put(base_url, URL, Context);
-
-step(
-  _Config,
-  Context,
-  given_keyword,
-  _N,
-  ["I set ", Header, "header to ", HeaderValue],
-  _
-) ->
-  Headers = maps:get(header, Context, []),
-  maps:put(headers, [{Header, HeaderValue} | Headers]).
+  maps:put(base_url, URL, Context).
 
 
 %step(

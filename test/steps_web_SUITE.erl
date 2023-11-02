@@ -24,7 +24,6 @@ groups() ->
     {https, [parallel], [step_get_request_tls]}
   ].
 
-
 init_per_suite(Config) -> damage_test:init_per_suite(Config).
 
 init_per_group(Name, Config) ->

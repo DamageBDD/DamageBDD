@@ -34,4 +34,6 @@ init_per_suite(Config) ->
   Config.
 
 
-end_per_suite(Config) -> Config.
+end_per_suite(Config) ->
+  webdrv_session:stop_session(default),
+  Config.
