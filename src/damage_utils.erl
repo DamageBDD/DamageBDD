@@ -135,21 +135,21 @@ setup_vanillae_deps() ->
   ok = code:add_paths(PackagePaths).
 
 
+convert_context(Context) ->
+  lists:map(
+    fun
+      ({Key, Value}) when is_binary(Value) -> {Key, binary_to_list(Value)};
+      (Value) -> Value
+    end,
+    maps:to_list(Context)
+  ).
+
 load_template(Template, Context) ->
   PrivDir = code:priv_dir(damage),
   FilePath = filename:join([PrivDir, "templates", Template]),
   logger:info("Loading template from ~p", [FilePath]),
   {ok, TemplateBin} = file:read_file(FilePath),
-  mustache:render(
-    binary_to_list(TemplateBin),
-    lists:map(
-      fun
-        ({Key, Value}) when is_binary(Value) -> {Key, binary_to_list(Value)};
-        (Value) -> Value
-      end,
-      maps:to_list(Context)
-    )
-  ).
+  mustache:render(binary_to_list(TemplateBin), convert_context(Context)).
 
 
 send_email({ToName, To}, Subject, Body) ->
@@ -179,7 +179,7 @@ send_email({ToName, To}, Subject, Body) ->
   Body0 =
     mustache:render(
       Body1,
-      maps:to_list(
+      convert_context(
         #{
           body => Body,
           subject => Subject,
@@ -191,7 +191,7 @@ send_email({ToName, To}, Subject, Body) ->
       )
     ),
   Email = {From, [To], Body0},
-  CaCerts = certifi:cacerts(),
+  %CaCerts = certifi:cacerts(),
   gen_smtp_client:send(
     Email,
     [
@@ -200,8 +200,9 @@ send_email({ToName, To}, Subject, Body) ->
         [
           {versions, ['tlsv1.2']},
           {verify, verify_none},
-          {depth, 99},
-          {cacerts, CaCerts}
+          %,
+          {depth, 99}
+          %{cacerts, CaCerts}
         ]
       },
       {tls, always},

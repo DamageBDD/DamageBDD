@@ -25,6 +25,7 @@ start(_StartType, _StartArgs) ->
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
   {ok, _} = application:ensure_all_started(erlexec),
   {ok, _} = application:ensure_all_started(throttle),
+  {ok, _} = application:ensure_all_started(gen_smtp),
   Dispatch =
     cowboy_router:compile(
       [

@@ -1,8 +1,11 @@
 [
+  %{error_logger, [
+  %    {report_module, [gen_smtp_client]}
+  %]},
   {
     kernel,
     [
-      {logger_level, info},
+      {logger_level, debug},
       {
         logger,
         [
@@ -69,7 +72,7 @@
         rates,
         [
           {damage_global_scope, 10, per_second},
-          {damage_api_rate, 80, per_minute}
+          {damage_api_rate, 10, per_minute}
         ]
       }
     ]
@@ -79,6 +82,11 @@
     damage,
     [
       {port, 8080},
+      {smtp_host, "smtp.gmail.com"},
+      {smtp_hostname, "damagebdd.com"},
+      {smtp_from, {"DamageBDD System", "system@damagebdd.com"}},
+      {smtp_user, "apikey"},
+      {smtp_port, 587},
       {data_dir, "/var/lib/damagebdd/"},
       {bitcoin_rpc_host, "localhost"},
       {bitcoin_rpc_port, 18332},
@@ -89,9 +97,37 @@
         pools,
         [
           {damage, [{size, 5}, {max_overflow, 10}], []},
-          {damage_ai, [{size, 1}, {max_overflow, 1}], []},
-          {formatter, [{size, 1}, {max_overflow, 1}], []}
+          {damage_ai, [{size, 2}, {max_overflow, 5}], []},
+          {formatter, [{size, 2}, {max_overflow, 5}], []},
+          {
+            damage_riak,
+            [{size, 2}, {max_overflow, 5}],
+            [{"riak0.lan", 8087}, {"riak0.lan", 8087}]
+          }
         ]
+      }
+    ]
+  },
+  {
+    cowboy_swagger,
+    [
+      %% `static_files`: Static content directory. This is where Swagger-UI
+      %% is located. Default: `priv/swagger`.
+      %% Remember that Swagger-UI is embedded into `cowboy-swagger` project,
+      %% within `priv/swagger` folder. BUT you have to reference that path,
+      %% and depending on how youre using `cowboy-swagger` it will be different.
+      %% For example, assuming that you want to run your app which has
+      %% `cowboy-swagger` as dependency from the console, `static_files` will be:
+      {static_files, "./deps/cowboy_swagger/priv/swagger"},
+      %% `global_spec`: Global fields for Swagger specification.
+      %% If these fields are not set, `cowboy_swagger` will set default values.
+      {
+        global_spec,
+        #{
+          swagger => "2.0",
+          info => #{title => "DamageBDD API"},
+          basePath => "/api-docs"
+        }
       }
     ]
   }

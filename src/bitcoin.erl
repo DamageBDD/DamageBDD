@@ -25,7 +25,9 @@
 
 bitcoin_req(Method, Params) ->
   {ok, BtcWallet} = application:get_env(damage, bitcoin_wallet),
-  bitcoin_req(Method, Params, "/wallet/" ++ BtcWallet).
+  WalletPath = "/wallet/" ++ BtcWallet,
+  ?debugFmt("Bitcoin Wallet path: ~p", [WalletPath]),
+  bitcoin_req(Method, Params, WalletPath).
 
 
 bitcoin_req(Method, Params, Path) ->

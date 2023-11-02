@@ -8,10 +8,12 @@
 
 -export([init/2]).
 -export([content_types_provided/2]).
+-export([to_html/2]).
 -export([to_json/2]).
 -export([to_text/2]).
--export([allowed_methods/2]).
 -export([create/1, balance/1, check_spend/2, store_profile/1, refund/1]).
+-export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
+-export([content_types_accepted/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -29,6 +31,17 @@ content_types_provided(Req, State) ->
     State
   }.
 
+content_types_accepted(Req, State) ->
+  {
+    [
+      {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
+      {{<<"application">>, <<"x-yaml">>, '*'}, from_yaml},
+      {{<<"application">>, <<"json">>, '*'}, from_json}
+    ],
+    Req,
+    State
+  }.
+
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 validate_refund_addr(forward, BtcAddress) ->
@@ -38,14 +51,52 @@ validate_refund_addr(forward, BtcAddress) ->
   end.
 
 
-do_action(<<"create">>, Req) ->
-  case
-  cowboy_req:match_qs([{refund_address, fun validate_refund_addr/2, []}], Req) of
-    #{refund_address := false} = Resp ->
-      ?debugFmt("refund_address data: ~p ", [Resp]),
-      <<"Invalid refund_address.">>;
+do_kyc_create(
+  #{full_name := FullName, email := ToEmail, refund_address := RefundAddress} =
+    KycData
+) ->
+  KycDataJson = jsx:encode(KycData),
+  case os:getenv("KYC_SECRET_KEY") of
+    false ->
+      logger:info("KYC_SECRET_KEY environment variable not set."),
+      exit(normal);
 
-    #{refund_address := RefundAddress} -> create(RefundAddress)
+    KycKey ->
+      EncryptedKyc =
+        damage_utils:encrypt(
+          KycDataJson,
+          base64:decode(list_to_binary(KycKey)),
+          crypto:strong_rand_bytes(32)
+        ),
+      Ctxt = maps:merge(create(RefundAddress), KycData),
+      damage_utils:send_email(
+        {FullName, ToEmail},
+        <<"DamageBDD SignUp">>,
+        damage_utils:load_template("signup_email.mustache", Ctxt)
+      ),
+      {ok, _Obj} =
+        damage_riak:put(
+          <<"kyc">>,
+          maps:get(ae_contract_address, Ctxt),
+          EncryptedKyc
+        ),
+      KycData
+  end.
+
+
+do_action(<<"create_from_yaml">>, Req) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  ?debugFmt(" yaml data: ~p ", [Data]),
+  {ok, [Data0]} = fast_yaml:decode(Data, [plain_as_atom, maps]),
+  do_action(<<"create">>, Data0);
+
+do_action(<<"create">>, #{refund_address := RefundAddress} = Data) ->
+  case validate_refund_addr(forward, RefundAddress) of
+    {ok, RefundAddress} -> do_kyc_create(Data);
+
+    Other ->
+      ?debugFmt("refund_address data: ~p ", [Other]),
+      <<"Invalid refund_address.">>
   end;
 
 do_action(<<"balance">>, Req) ->
@@ -67,6 +118,46 @@ to_json(Req, State) ->
 
 
 to_text(Req, State) -> to_json(Req, State).
+
+from_json(Req, State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {Status, Resp0} =
+    case jsx:decode(Data, [{labels, atom}, return_maps]) of
+      #{
+        feature := _FeatureData,
+        account := _Account,
+        host := _Hostname,
+        port := _Port
+      } = FeatureJson ->
+        do_action(FeatureJson, cowboy_req:header(<<"user-agent">>, Req, ""));
+
+      Err ->
+        logger:error("json decoding failed ~p.", [Data]),
+        {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+    end,
+  Resp = cowboy_req:set_resp_body(Resp0, Req),
+  cowboy_req:reply(Status, Resp),
+  {stop, Resp, State}.
+
+
+to_html(Req, State) ->
+  Body = damage_utils:load_template("create.mustache", #{body => <<"Test">>}),
+  {Body, Req, State}.
+
+
+from_html(Req, State) ->
+  Result = do_action(cowboy_req:binding(action, Req), Req),
+  Resp = cowboy_req:set_resp_body(Result, Req),
+  {stop, cowboy_req:reply(200, Resp), State}.
+
+
+from_yaml(Req, State) ->
+  Action = cowboy_req:binding(action, Req),
+  Result = do_action(<<Action/binary, "_from_yaml">>, Req),
+  YamlResult = fast_yaml:encode(Result),
+  Resp = cowboy_req:set_resp_body(YamlResult, Req),
+  {stop, cowboy_req:reply(200, Resp), State}.
+
 
 aecli(contract, call, ContractAddress, Contract, Func, Args) ->
   {ok, AeWallet} = application:get_env(damage, ae_wallet),
