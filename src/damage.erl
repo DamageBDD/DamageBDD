@@ -69,7 +69,11 @@ execute(Config) ->
 
 
 execute(Config, FeatureName) ->
-  {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
+  {feature_dirs, FeatureDirs} =
+    case lists:keyfind(feature_dirs, 1, Config) of
+      false -> {feature_dirs, ["../../../../features/", "../features/"]};
+      Val0 -> Val0
+    end,
   {feature_suffix, FeatureSuffix} =
     case lists:keyfind(feature_suffix, 1, Config) of
       false -> {feature_suffix, ".feature"};
@@ -235,20 +239,16 @@ execute_step(Config, Step, #{fail := _} = Context) ->
 
 execute_step(Config, Step, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
+  logger:info("step pre render: ~p.", [Step]),
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
+  logger:info("step rendered: ~p Arg ~p.", [Body1, Args1]),
   Context0 =
     lists:foldl(
       fun
         (StepModule, #{step_found := false} = ContextIn) ->
-          case
-          execute_step_module(
-            Config,
-            ContextIn,
-            {StepKeyWord, LineNo, Body1, Args1},
-            StepModule
-          ) of
+          Step0 = {StepKeyWord, LineNo, Body1, Args1},
+          case execute_step_module(Config, ContextIn, Step0, StepModule) of
             #{failing_step := _} = Context1 ->
-              %logger:debug("step failing_step: ~p ~p", [Step, StepModule]),
               formatter:format(
                 Config,
                 step,
@@ -257,20 +257,16 @@ execute_step(Config, Step, Context) ->
               Context1;
 
             #{fail := _Err} = Context1 ->
-              %logger:debug("step fail: ~p ~p ~p", [Step, StepModule, Err]),
               formatter:format(
                 Config,
                 step,
                 {StepKeyWord, LineNo, Body1, Args1, Context1, fail}
               ),
-              maps:put(failing_step, Step, Context1);
+              maps:put(failing_step, Step0, Context1);
 
-            #{step_found := false} = Context1 ->
-              logger:debug("step not found: ~p ~p", [Step, StepModule]),
-              Context1;
+            #{step_found := false} = Context1 -> Context1;
 
             #{step_found := true} = Context1 ->
-              logger:debug("step success: ~p ~p", [Step, StepModule]),
               formatter:format(
                 Config,
                 step,
@@ -281,12 +277,12 @@ execute_step(Config, Step, Context) ->
 
         (_StepModule, #{step_found := true} = ContextIn) -> ContextIn
       end,
-      maps:put(step_found, false, Context),
+      maps:remove(fail, maps:put(step_found, false, Context)),
       damage_utils:loaded_steps()
     ),
   case maps:get(step_found, Context0) of
     false ->
-      logger:error("step not found:~p ~p", [StepKeyWord, Body1]),
+      %logger:error("step not found:~p ~p", [StepKeyWord, Body1]),
       formatter:format(
         Config,
         step,

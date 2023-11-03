@@ -23,6 +23,7 @@ start(_StartType, _StartArgs) ->
   {ok, _} = application:ensure_all_started(fast_yaml),
   {ok, _} = application:ensure_all_started(prometheus),
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
+  {ok, _} = application:ensure_all_started(cowboy_telemetry),
   {ok, _} = application:ensure_all_started(erlexec),
   {ok, _} = application:ensure_all_started(throttle),
   {ok, _} = application:ensure_all_started(gen_smtp),
@@ -44,6 +45,7 @@ start(_StartType, _StartArgs) ->
             {"/execute_feature/", damage_http, []},
             {"/reports/[:runid]", damage_reports, []},
             {"/accounts/[:action]", damage_accounts, []},
+            {"/tests/[:action]", damage_tests, []},
             {"/metrics/[:registry]", prometheus_cowboy2_handler, []}
           ]
         }
@@ -57,7 +59,9 @@ start(_StartType, _StartArgs) ->
       #{
         env => #{dispatch => Dispatch},
         metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
-        stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
+        stream_handlers
+        =>
+        [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h]
       }
     ),
   logger:info("Started cowboy."),
