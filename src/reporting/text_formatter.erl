@@ -15,6 +15,11 @@ get_keyword(when_keyword) -> "When";
 get_keyword(and_keyword) -> "And";
 get_keyword(given_keyword) -> "Given".
 
+get_status_text(#{color := true}, fail) -> color:red("fail");
+get_status_text(#{color := true}, success) -> color:green("success");
+get_status_text(#{color := true}, skip) -> color:yellow("skip");
+get_status_text(#{color := false}, Status) -> Status.
+
 write_file(#{output := Output}, FormatStr, Args) ->
   ok =
     file:write_file(
@@ -39,7 +44,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
       [
         FeatureName,
         LineNo,
-        lists:flatten(string:join([X || X <- Tags], ",")),
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], ","),
         Description
       ]
     );
@@ -52,7 +57,11 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
     write_file(
       Config,
       "  Scenario ~s line:~p tags: [~p]",
-      [ScenarioName, LineNo, lists:flatten(string:join([X || X <- Tags], ","))]
+      [
+        ScenarioName,
+        LineNo,
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], ",")
+      ]
     );
 
 format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) ->
@@ -64,7 +73,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) -
         get_keyword(Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),
         LineNo,
-        Status
+        get_status_text(Config, Status)
       ]
     );
 
@@ -72,12 +81,12 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
   ok =
     write_file(
       Config,
-      "    ~s ~s. Args: ~s line:~p  ~s",
+      "    ~s ~s \n~s line:~p  ~s",
       [
         get_keyword(Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),
-        binary_to_list(Args),
+        stdout_formatter:to_string([Args]),
         LineNo,
-        Status
+        get_status_text(Config, Status)
       ]
     ).

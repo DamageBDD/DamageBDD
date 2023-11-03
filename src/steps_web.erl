@@ -241,11 +241,10 @@ step(
   ["the yaml at path", Path, "must be", Expected0],
   _
 ) ->
-    Expected = list_to_binary(Expected0),
+  Expected = list_to_binary(Expected0),
   case maps:get(response, Context) of
     [{status_code, _}, _Headers, {body, Body}] ->
       {ok, [[Data]]} = fast_yaml:decode(Body, [maps]),
-    ?debugFmt("yaml decode match ~p data ~p",[Body, Data]),
       ejsonpath_match(Path, Data, Expected, Context);
 
     Dict when is_map(Dict) ->
@@ -267,15 +266,10 @@ step(
   ["the json at path", Path, "must be", Expected0],
   _
 ) ->
-    Expected = list_to_binary(Expected0),
+  Expected = list_to_binary(Expected0),
   case maps:get(response, Context) of
     [{status_code, _}, _Headers, {body, Body}] ->
-      ejsonpath_match(
-        Path,
-        jsx:decode(Body, [return_maps]),
-        Expected,
-        Context
-      );
+      ejsonpath_match(Path, jsx:decode(Body, [return_maps]), Expected, Context);
 
     Dict when is_map(Dict) ->
       ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);

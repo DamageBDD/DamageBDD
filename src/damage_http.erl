@@ -51,7 +51,8 @@ execute_bdd(
     account := Account,
     host := Hostname,
     port := Port,
-    concurrency := 1
+    concurrency := 1,
+    color_formatter := ColorFormatter
   } = _FeaturePayload,
   UserAgent
 ) ->
@@ -64,7 +65,7 @@ execute_bdd(
       {
         formatters,
         [
-          {text, #{output => TextReport}},
+          {text, #{output => TextReport, color => ColorFormatter}},
           {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
         ]
       },
@@ -220,6 +221,11 @@ from_html(Req0, State) ->
   Port = cowboy_req:header(<<"x-damage-port">>, Req0, 80),
   UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
   Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req0, 1),
+  ColorFormatter =
+    case cowboy_req:match_qs([{color, [], <<"true">>}], Req0) of
+      #{color := <<"true">>} -> true;
+      _Other -> false
+    end,
   {Status, Resp0} =
     case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
       <<"ak_", _Rest>> = Account ->
@@ -229,6 +235,7 @@ from_html(Req0, State) ->
             account => Account,
             host => Hostname,
             port => Port,
+            color_formatter => ColorFormatter,
             concurrency => Concurrency
           },
           UserAgent
@@ -248,6 +255,7 @@ from_html(Req0, State) ->
                 account => Account,
                 host => Hostname,
                 port => Port,
+                color_formatter => ColorFormatter,
                 concurrency => 1
               },
               UserAgent
