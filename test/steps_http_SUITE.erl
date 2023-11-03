@@ -1,4 +1,4 @@
--module(steps_web_SUITE).
+-module(steps_http_SUITE).
 
 -compile([export_all, nowarn_export_all]).
 
@@ -47,7 +47,7 @@ init_dispatch(_) ->
 step_get_request_tls(Config) ->
   Context = maps:new(),
   Context0 =
-    steps_web:step(
+    steps_http:step(
       Config,
       Context,
       when_keyword,
@@ -61,7 +61,7 @@ step_get_request_tls(Config) ->
 step_get_request(Config) ->
   Context = maps:new(),
   Context0 =
-    steps_web:step(
+    steps_http:step(
       Config,
       Context,
       when_keyword,
@@ -75,7 +75,7 @@ step_get_request(Config) ->
 step_post_csrf_request(Config) ->
   Context = maps:put(headers, [], maps:new()),
   Context0 =
-    steps_web:step(
+    steps_http:step(
       Config,
       Context,
       when_keyword,
@@ -89,7 +89,7 @@ step_post_csrf_request(Config) ->
 step_post_request(Config) ->
   Context = maps:new(),
   Context0 =
-    steps_web:step(
+    steps_http:step(
       Config,
       Context,
       when_keyword,
@@ -109,7 +109,7 @@ step_store_json_in(Config) ->
       maps:new()
     ),
   Context0 =
-    steps_web:step(
+    steps_http:step(
       Config,
       Context,
       then_keyword,
@@ -140,7 +140,7 @@ step_jsonpath(Config) ->
       maps:new()
     ),
   Context0 =
-    steps_web:step(
+    steps_http:step(
       Config,
       Context,
       then_keyword,

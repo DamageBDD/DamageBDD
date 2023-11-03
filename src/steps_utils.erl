@@ -8,15 +8,6 @@
 
 -export([step/6]).
 
-step(
-  _Config,
-  Context,
-  _,
-  _N,
-  ["I set the variable ", Variable, " to value ", Value],
-  _
-) ->
-  maps:put(Variable, Value, Context);
 
 step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
   maps:put(Variable, list_to_binary(uuid:to_string(uuid:uuid4())), Context);
@@ -37,4 +28,9 @@ step(
     Variable,
     datestring:format(Format, calendar:universal_time()),
     Context
-  ).
+   ).
+
+
+    
+
+

@@ -30,7 +30,7 @@ init_per_suite(Config) ->
   application:ensure_all_started(cowboy),
   application:ensure_all_started(prometheus),
   metrics:init(),
-  %cedb:break(steps_web, 66),
+  %cedb:break(steps_http, 66),
   Config.
 
 

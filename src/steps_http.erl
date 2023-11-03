@@ -1,4 +1,4 @@
--module(steps_web).
+-module(steps_http).
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
@@ -27,7 +27,14 @@ get_gun_config(Config0, Context) ->
       false -> #{transport => tcp};
       _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
     end,
-  {ok, ConnPid} = gun:open(Host, Port, maps:put(connect_timeout, 36000, Opts)),
+  Opts0 =
+    case maps:get(basic_auth, Context, none) of
+      none -> Opts;
+
+      {User, Pass} ->
+        maps:put(username, User, maps:put(password, Pass, Context))
+    end,
+  {ok, ConnPid} = gun:open(Host, Port, maps:put(connect_timeout, 36000, Opts0)),
   ConnPid.
 
 
@@ -118,7 +125,7 @@ step(Config, Context, when_keyword, _N, ["I make a GET request to", Path], _) ->
   gun_get(
     Config,
     Context,
-    Path,
+    string:concat(maps:get(base_url, Context, ""), Path),
     [{<<"accept">>, "application/json"}, {<<"user-agent">>, "revolver/1.0"}]
   );
 
@@ -143,7 +150,8 @@ step(
       )
     ),
   ?debugFmt("Test headers ~p data ~p", [Headers, Data]),
-  gun_post(Config, Context, Path, Headers, Data);
+  Path0 = string:concat(maps:get(base_url, Context, ""), Path),
+  gun_post(Config, Context, Path0, Headers, Data);
 
 step(
   Config,
@@ -156,7 +164,7 @@ step(
   gun_options(
     Config,
     Context,
-    Path,
+    string:concat(maps:get(base_url, Context, ""), Path),
     [
       {<<"accept">>, "application/json"},
       {<<"user-agent">>, "revolver/1.0"},
@@ -194,7 +202,7 @@ step(
       gun_post(
         Config,
         Context,
-        Path,
+        string:concat(maps:get(base_url, Context, ""), Path),
         lists:append(
           Headers0,
           [{<<"X-CSRFToken">>, CSRFToken}, {<<"X-SessionID">>, SessionId}]
@@ -395,17 +403,29 @@ step(_Config, Context, given_keyword, _N, ["I am using server", Server], _) ->
   end;
 
 step(_Config, Context, given_keyword, _N, ["I set base URL to", URL], _) ->
-  maps:put(base_url, URL, Context).
+  maps:put(base_url, URL, Context);
 
-
-%step(
-%  _Config,
-%  Context,
-%  given_keyword,
-%  _N,
-%  ["I set BasicAuth username to ", User,"and password to", Password],
-%  _
-%  )->
-%    ok.
-%
-%
+step(
+  _Config,
+  Context,
+  given_keyword,
+  _N,
+  ["I set BasicAuth username to ", User, "and password to", Password],
+  _
+) ->
+  maps:put(basic_auth, {User, Password}, Context);
+step(
+  _Config,
+  Context,
+  _,
+  _N,
+  ["I set the variable ", Variable, " to value ", Value],
+  _
+) ->
+  maps:put(Variable, Value, Context);
+step(_Config, Context, _, _N,["the variable",Variable,"should be equal to JSON", Value],_) ->
+    Value = maps:get(Variable, Context, none);
+step(_Config, Context, _, _N, ["the variable",Variable,"should be equal to JSON"], Args) ->
+    Args = maps:get(Variable, Context, none);
+step(_Config, Context,_, _N,["the JSON at path",Jsonpath,"should be"],Args) ->
+    Args = maps:get(Variable, Context, none).
