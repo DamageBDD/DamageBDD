@@ -90,6 +90,12 @@ do_action(<<"create_from_yaml">>, Req) ->
   {ok, [Data0]} = fast_yaml:decode(Data, [plain_as_atom, maps]),
   do_action(<<"create">>, Data0);
 
+do_action(<<"create_from_json">>, Req) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  ?debugFmt(" json data: ~p ", [Data]),
+  {ok, [Data0]} = jsx:decode(Data, [return_maps]),
+  do_action(<<"create">>, Data0);
+
 do_action(<<"create">>, #{refund_address := RefundAddress} = Data) ->
   case validate_refund_addr(forward, RefundAddress) of
     {ok, RefundAddress} -> do_kyc_create(Data);
@@ -119,27 +125,6 @@ to_json(Req, State) ->
 
 to_text(Req, State) -> to_json(Req, State).
 
-from_json(Req, State) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  {Status, Resp0} =
-    case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{
-        feature := _FeatureData,
-        account := _Account,
-        host := _Hostname,
-        port := _Port
-      } = FeatureJson ->
-        do_action(FeatureJson, cowboy_req:header(<<"user-agent">>, Req, ""));
-
-      Err ->
-        logger:error("json decoding failed ~p.", [Data]),
-        {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
-    end,
-  Resp = cowboy_req:set_resp_body(Resp0, Req),
-  cowboy_req:reply(Status, Resp),
-  {stop, Resp, State}.
-
-
 to_html(Req, State) ->
   Body = damage_utils:load_template("create.mustache", #{body => <<"Test">>}),
   {Body, Req, State}.
@@ -151,12 +136,20 @@ from_html(Req, State) ->
   {stop, cowboy_req:reply(200, Resp), State}.
 
 
+from_json(Req, State) ->
+  Action = cowboy_req:binding(action, Req),
+  Result = do_action(<<Action/binary, "_from_json">>, Req),
+  JsonResult = jsx:encode(Result),
+  Resp = cowboy_req:set_resp_body(JsonResult, Req),
+  {stop, cowboy_req:reply(201, Resp), State}.
+
+
 from_yaml(Req, State) ->
   Action = cowboy_req:binding(action, Req),
   Result = do_action(<<Action/binary, "_from_yaml">>, Req),
   YamlResult = fast_yaml:encode(Result),
   Resp = cowboy_req:set_resp_body(YamlResult, Req),
-  {stop, cowboy_req:reply(200, Resp), State}.
+  {stop, cowboy_req:reply(201, Resp), State}.
 
 
 aecli(contract, call, ContractAddress, Contract, Func, Args) ->
