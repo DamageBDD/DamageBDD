@@ -18,3 +18,4 @@ _build
 rebar3.crashdump
 *~
 config/sys.config
+contracts/*.aes.deploy.*
