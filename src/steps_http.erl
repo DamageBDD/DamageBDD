@@ -11,6 +11,10 @@
 -export([step/6]).
 -export([gun_get/4]).
 
+-define(DEFAULT_WAIT_SECONDS, 3).
+-define(DEFAULT_NUM_ATTEMPTS, 3).
+-define(DEFAULT_HTTP_TIMEOUT, 3600).
+
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
@@ -38,49 +42,132 @@ get_gun_config(Config0, Context) ->
   ConnPid.
 
 
-gun_post(Config0, Context, Path, Headers, Data) ->
-  ConnPid = get_gun_config(Config0, Context),
-  ?debugFmt("Data : ~p", [Data]),
-  StreamRef = gun:post(ConnPid, Path, Headers, Data),
-  case gun:await(ConnPid, StreamRef, 36000) of
-    {response, fin, Status, Headers0} ->
-      logger:debug("POST Response: ~p", [Status]),
-      maps:put(response, response_to_list({Status, Headers0, <<"">>}), Context);
+gun_await(ConnPid, StreamRef, Context) ->
+  case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+    {response, fin, Status, Headers} ->
+      maps:put(response, response_to_list({Status, Headers, <<"">>}), Context);
 
-    {response, nofin, Status, Headers0} ->
+    {response, nofin, Status, Headers} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      logger:debug("POST Response: ~p", [Body]),
-      maps:put(response, response_to_list({Status, Headers0, Body}), Context);
+      maps:put(response, response_to_list({Status, Headers, Body}), Context);
 
     Default ->
-      logger:debug("POST Response: ~p", [Default]),
       maps:put(fail, damage_utils:strf("POST failed: ~p", [Default]), Context)
   end.
+
+
+gun_post(Config0, Context, Path, Headers, Data) ->
+  ConnPid = get_gun_config(Config0, Context),
+  StreamRef = gun:post(ConnPid, Path, Headers, Data),
+  gun_await(ConnPid, StreamRef, Context).
+
+
+gun_patch(Config0, Context, Path, Headers, Data) ->
+  ConnPid = get_gun_config(Config0, Context),
+  StreamRef = gun:patch(ConnPid, Path, Headers, Data),
+  gun_await(ConnPid, StreamRef, Context).
+
+
+gun_put(Config0, Context, Path, Headers, Data) ->
+  ConnPid = get_gun_config(Config0, Context),
+  StreamRef = gun:put(ConnPid, Path, Headers, Data),
+  gun_await(ConnPid, StreamRef, Context).
 
 
 gun_get(Config0, Context, Path, Headers) ->
   ConnPid = get_gun_config(Config0, Context),
   StreamRef = gun:get(ConnPid, Path, Headers),
-  case gun:await(ConnPid, StreamRef) of
-    {response, fin, Status, Headers0} ->
-      maps:put(response, response_to_list({Status, Headers0, ""}), Context);
-
-    {response, nofin, Status, Headers0} ->
-      {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      maps:put(response, response_to_list({Status, Headers0, Body}), Context)
-  end.
+  gun_await(ConnPid, StreamRef, Context).
 
 
 gun_options(Config0, Context, Path, Headers) ->
   ConnPid = get_gun_config(Config0, Context),
   StreamRef = gun:options(ConnPid, Path, Headers),
-  case gun:await(ConnPid, StreamRef) of
-    {response, fin, Status, Headers0} ->
-      maps:put(response, response_to_list({Status, Headers0, ""}), Context);
+  gun_await(ConnPid, StreamRef, Context).
 
-    {response, nofin, Status, Headers0} ->
+
+gun_head(Config0, Context, Path, Headers) ->
+  ConnPid = get_gun_config(Config0, Context),
+  StreamRef = gun:head(ConnPid, Path, Headers),
+  gun_await(ConnPid, StreamRef, Context).
+
+
+gun_delete(Config0, Context, Path, Headers) ->
+  ConnPid = get_gun_config(Config0, Context),
+  StreamRef = gun:delete(ConnPid, Path, Headers),
+  gun_await(ConnPid, StreamRef, Context).
+
+
+retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt) ->
+  ConnPid = get_gun_config(Config, Context),
+  StreamRef = gun:get(ConnPid, Path, Headers),
+  case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+    {response, nofin, Status, Headers} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      maps:put(response, response_to_list({Status, Headers0, Body}), Context)
+      {ok, {Status, Headers, Body}};
+
+    Default ->
+      case Attempt < N of
+        true ->
+          % Wait in milliseconds
+          timer:sleep(WaitSecs * 1000),
+          retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt + 1);
+
+        false ->
+          {
+            fail,
+            damage_utils:strf(
+              "Maximum attempts reached. Exiting. ~p",
+              [Default]
+            )
+          }
+      end
+  end.
+
+
+retry_get_ejsonmatch(
+  Config,
+  Context,
+  JsonPath,
+  Expected,
+  Path,
+  Headers,
+  N,
+  WaitSecs,
+  Attempt
+) ->
+  case retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt) of
+    {ok, {_Status, _Headers, Body}} ->
+      Context0 = ejsonpath_match(JsonPath, Body, Expected, Context),
+      case maps:get(fail, Context0, none) of
+        none -> Context0;
+
+        _ ->
+          retry_get_ejsonmatch(
+            Config,
+            Context0,
+            JsonPath,
+            Expected,
+            Path,
+            Headers,
+            N,
+            WaitSecs,
+            Attempt
+          )
+      end;
+
+    _ ->
+      retry_get_ejsonmatch(
+        Config,
+        Context,
+        JsonPath,
+        Expected,
+        Path,
+        Headers,
+        N,
+        WaitSecs,
+        Attempt
+      )
   end.
 
 
@@ -126,7 +213,7 @@ step(Config, Context, when_keyword, _N, ["I make a GET request to", Path], _) ->
     Config,
     Context,
     string:concat(maps:get(base_url, Context, ""), Path),
-    [{<<"accept">>, "application/json"}, {<<"user-agent">>, "revolver/1.0"}]
+    [{<<"accept">>, "application/json"}, {<<"user-agent">>, "damagebdd/1.0"}]
   );
 
 step(
@@ -140,7 +227,7 @@ step(
   Defaults =
     [
       {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "revolver/1.0"},
+      {<<"user-agent">>, "damagebdd/1.0"},
       {<<"content-type">>, "application/json"}
     ],
   Headers =
@@ -149,9 +236,47 @@ step(
         lists:keymerge(1, maps:get(headers, Context, []), Defaults)
       )
     ),
-  ?debugFmt("Test headers ~p data ~p", [Headers, Data]),
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
   gun_post(Config, Context, Path0, Headers, Data);
+
+step(
+  Config,
+  Context,
+  when_keyword,
+  _N,
+  ["I make a PATCH request to", Path],
+  Data
+) ->
+  Defaults =
+    [
+      {<<"accept">>, "application/json"},
+      {<<"user-agent">>, "damagebdd/1.0"},
+      {<<"content-type">>, "application/json"}
+    ],
+  Headers =
+    proplists:from_map(
+      proplists:to_map(
+        lists:keymerge(1, maps:get(headers, Context, []), Defaults)
+      )
+    ),
+  Path0 = string:concat(maps:get(base_url, Context, ""), Path),
+  gun_patch(Config, Context, Path0, Headers, Data);
+
+step(Config, Context, when_keyword, _N, ["I make a PUT request to", Path], Data) ->
+  Defaults =
+    [
+      {<<"accept">>, "application/json"},
+      {<<"user-agent">>, "damagebdd/1.0"},
+      {<<"content-type">>, "application/json"}
+    ],
+  Headers =
+    proplists:from_map(
+      proplists:to_map(
+        lists:keymerge(1, maps:get(headers, Context, []), Defaults)
+      )
+    ),
+  Path0 = string:concat(maps:get(base_url, Context, ""), Path),
+  gun_put(Config, Context, Path0, Headers, Data);
 
 step(
   Config,
@@ -167,10 +292,39 @@ step(
     string:concat(maps:get(base_url, Context, ""), Path),
     [
       {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "revolver/1.0"},
+      {<<"user-agent">>, "damagebdd/1.0"},
       {<<"content-type">>, "application/json"}
     ]
   );
+
+step(
+  Config,
+  Context,
+  when_keyword,
+  _N,
+  ["I make a DELETE request to", Path],
+  _Data
+) ->
+  gun_delete(
+    Config,
+    Context,
+    string:concat(maps:get(base_url, Context, ""), Path),
+    [
+      {<<"accept">>, "application/json"},
+      {<<"user-agent">>, "damagebdd/1.0"},
+      {<<"content-type">>, "application/json"}
+    ]
+  );
+
+step(
+  _Config,
+  Context,
+  when_keyword,
+  _N,
+  ["I make a TRACE request to", _Path],
+  _Data
+) ->
+  maps:put(fail, <<"Step not implemented">>, Context);
 
 step(
   Config,
@@ -295,16 +449,16 @@ step(
   Context,
   then_keyword,
   _N,
-  ["the response status must be one of", Responses],
+  ["the response status must be one of", Statuses],
   _
 ) ->
-  logger:debug("the response status must be one of ~p.", [Responses]),
+  logger:debug("the response status must be one of ~p.", [Statuses]),
   case maps:get(response, Context) of
     [_, {status_code, StatusCode}, _Headers, _Body] ->
       case
       lists:member(
         StatusCode,
-        lists:map(fun erlang:list_to_integer/1, string:split(Responses, ","))
+        lists:map(fun erlang:list_to_integer/1, string:split(Statuses, ","))
       ) of
         true -> Context;
 
@@ -314,7 +468,7 @@ step(
             fail,
             damage_utils:strf(
               "Response status ~p is not one of ~p",
-              [StatusCode, Responses]
+              [StatusCode, Statuses]
             ),
             Context
           )
@@ -326,6 +480,39 @@ step(
         fail,
         damage_utils:strf("Unexpected response ~p", [UnExpected]),
         Context
+      )
+  end;
+
+step(
+  _Config,
+  Context,
+  then_keyword,
+  _N,
+  ["the", Var, "header should be", Value],
+  _
+) ->
+  case maps:get(response, Context) of
+    {_, Headers, _} ->
+      case lists:keyfind(Var, 1, Headers) of
+        {Var, Value} -> Context;
+
+        Unexpected ->
+          maps:put(
+            fail,
+            damage_utils:strf(
+              "the ~p header is not ~p, it is ~p",
+              [Var, Value, Unexpected]
+            )
+          )
+      end;
+
+    Unexpected ->
+      maps:put(
+        fail,
+        damage_utils:strf(
+          "the ~p header is not ~p, request failed ~p",
+          [Var, Value, Unexpected]
+        )
       )
   end;
 
@@ -414,18 +601,117 @@ step(
   _
 ) ->
   maps:put(basic_auth, {User, Password}, Context);
+
+step(
+  _Config,
+  Context,
+  given_keyword,
+  _N,
+  ["I use query OAuth with key=", Key, "and secret=", Secret],
+  _
+) ->
+  maps:put(oauth_query_auth, {Key, Secret}, Context);
+
+step(
+  _Config,
+  Context,
+  given_keyword,
+  _N,
+  ["I use header OAuth with key=", Key, "and secret=", Secret],
+  _
+) ->
+  maps:put(oauth_header_auth, {Key, Secret}, Context);
+
+step(_Config, Context, _, _N, ["I set the variable", Variable, "to", Value], _) ->
+  maps:put(Variable, Value, Context);
+
+step(_Config, Context, _, _N, ["I do not want to verify server certificate"], _) ->
+  maps:put(verify_ssl, false, Context);
+
+step(
+  Config,
+  Context,
+  _,
+  _N,
+  [
+    "I keep sending GET requests to",
+    UrlPathSegment,
+    "until JSON at path",
+    JsonPath,
+    "is"
+  ],
+  Args
+) ->
+  NAttempts = maps:get(n_attempts, Context, ?DEFAULT_NUM_ATTEMPTS),
+  retry_get_ejsonmatch(
+    Config,
+    Context,
+    JsonPath,
+    Args,
+    UrlPathSegment,
+    [],
+    NAttempts,
+    ?DEFAULT_WAIT_SECONDS,
+    0
+  );
+
+step(Config, Context, _, _N, ["I make a HEAD request to", Path], _) ->
+  gun_head(
+    Config,
+    Context,
+    string:concat(maps:get(base_url, Context, ""), Path),
+    [
+      {<<"accept">>, "application/json"},
+      {<<"user-agent">>, "damagebdd/1.0"},
+      {<<"content-type">>, "application/json"}
+    ]
+  );
+
+step(_Config, Context, _, _N, ["the JSON should be"], Args) ->
+  case maps:get(response, Context) of
+    {_Status, _Headers, Args} -> Context;
+
+    Unexpected ->
+      maps:put(
+        fail,
+        damage_utils:strf("The JSON is ~p not ~p", [Unexpected, Args]),
+        Context
+      )
+  end;
+
 step(
   _Config,
   Context,
   _,
   _N,
-  ["I set the variable ", Variable, " to value ", Value],
+  ["the variable", Variable, "should be equal to JSON", Value],
   _
 ) ->
-  maps:put(Variable, Value, Context);
-step(_Config, Context, _, _N,["the variable",Variable,"should be equal to JSON", Value],_) ->
-    Value = maps:get(Variable, Context, none);
-step(_Config, Context, _, _N, ["the variable",Variable,"should be equal to JSON"], Args) ->
-    Args = maps:get(Variable, Context, none);
-step(_Config, Context,_, _N,["the JSON at path",Jsonpath,"should be"],Args) ->
-    Args = maps:get(Variable, Context, none).
+  Value = maps:get(Variable, Context, none);
+
+step(
+  _Config,
+  Context,
+  _,
+  _N,
+  ["the variable", Variable, "should be equal to JSON"],
+  Args
+) ->
+  Args = maps:get(Variable, Context, none);
+
+step(
+  Config,
+  Context,
+  KeyWord,
+  LineNo,
+  ["the JSON at path", JsonPath, "should be"],
+  Args
+) ->
+  step(
+    Config,
+    Context,
+    KeyWord,
+    LineNo,
+    ["the json at path", JsonPath, "must be", Args],
+    <<>>
+  ).
