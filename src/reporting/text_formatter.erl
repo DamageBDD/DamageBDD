@@ -10,14 +10,19 @@
 
 -export([format/3]).
 
-get_keyword(then_keyword) -> "Then";
-get_keyword(when_keyword) -> "When";
-get_keyword(and_keyword) -> "And";
-get_keyword(given_keyword) -> "Given".
+get_keyword(#{color := false}, then_keyword) -> "Then";
+get_keyword(#{color := false}, when_keyword) -> "When";
+get_keyword(#{color := false}, and_keyword) -> "And";
+get_keyword(#{color := false}, given_keyword) -> "Given";
+
+get_keyword(#{color := true}, Keyword) ->
+  color:cyan(get_keyword(#{color => false}, Keyword)).
 
 get_status_text(#{color := true}, fail) -> color:red("fail");
+get_status_text(#{color := true}, error) -> color:red("error");
 get_status_text(#{color := true}, success) -> color:green("success");
 get_status_text(#{color := true}, skip) -> color:yellow("skip");
+get_status_text(#{color := true}, notfound) -> color:cyan("notfound");
 get_status_text(#{color := false}, Status) -> Status.
 
 write_file(#{output := Output}, FormatStr, Args) ->
@@ -68,9 +73,9 @@ format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) -
   ok =
     write_file(
       Config,
-      "    ~s ~s. line:~p  ~s",
+      "    ~s ~s line:~p  ~s",
       [
-        get_keyword(Keyword),
+        get_keyword(Config, Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),
         LineNo,
         get_status_text(Config, Status)
@@ -83,7 +88,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
       Config,
       "    ~s ~s \n~s line:~p  ~s",
       [
-        get_keyword(Keyword),
+        get_keyword(Config, Keyword),
         lists:flatten(string:join([[X] || X <- StepStatement], " ")),
         stdout_formatter:to_string([Args]),
         LineNo,
