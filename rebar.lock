@@ -30,7 +30,7 @@
   0},
  {<<"egherkin">>,
   {git,"https://github.com/jagguli/egherkin.git",
-       {ref,"a4bfcc228d43585b99d93b1e2da337a914b7282c"}},
+       {ref,"c2e55035d4af2e040f08952135a9bea9311149ca"}},
   0},
  {<<"ejsonpath">>,
   {git,"https://github.com/ostrovok-team/ejsonpath.git",
