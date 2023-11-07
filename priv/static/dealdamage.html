@@ -161,7 +161,7 @@ Feature: Test basic functionality of Google.com using HTTP API
             })
         };
 
-        fetch("/api/execute_feature/", request)
+        fetch("/execute_feature/", request)
             .then(response => {
                 if (response.status === 200) {
                     return response.json();
