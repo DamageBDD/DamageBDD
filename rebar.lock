@@ -10,9 +10,9 @@
   1},
  {<<"certifi">>,{pkg,<<"certifi">>,<<"2.12.0">>},0},
  {<<"color">>,
-  {git,"https://github.com/julianduque/erlang-color.git",
+  {git,"https://github.com/jagguli/erlang-color.git",
        {ref,"2e538a3360cfdf47906929a04b9471a1f5320afe"}},
-  2},
+  0},
  {<<"cowboy">>,{pkg,<<"cowboy">>,<<"2.10.0">>},0},
  {<<"cowboy_telemetry">>,{pkg,<<"cowboy_telemetry">>,<<"0.4.0">>},1},
  {<<"cowlib">>,{pkg,<<"cowlib">>,<<"2.12.1">>},1},
@@ -114,6 +114,10 @@
  {<<"uuid">>,
   {git,"https://github.com/avtobiff/erlang-uuid.git",
        {ref,"cb02a2039a9b29dd2eef0446039c9c6e164df9ef"}},
+  0},
+ {<<"webdrv">>,
+  {git,"https://github.com/jagguli/webdrv.git",
+       {ref,"d1e2431fd2db351e10a9dee9c822a0dc38c43cd9"}},
   0}]}.
 [
 {pkg_hash,[
