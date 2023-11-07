@@ -45,15 +45,20 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
+get_concurrency_level(<<"sk_baby">>)->1;
+get_concurrency_level(<<"sk_easy">>)->10;
+get_concurrency_level(<<"sk_medium">>)->100;
+get_concurrency_level(<<"sk_hard">>)->1000;
+get_concurrency_level(<<"sk_nightmare">>)->10000;
+get_concurrency_level(_) -> 1.
+
+
 execute_bdd(
   #{
     feature := FeatureData,
     account := Account,
-    host := Hostname,
-    port := Port,
-    concurrency := 1,
-    color_formatter := ColorFormatter
-  } = _FeaturePayload,
+    concurrency := Concurrency
+  } = FeaturePayload,
   UserAgent
 ) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
@@ -65,13 +70,13 @@ execute_bdd(
       {
         formatters,
         [
-          {text, #{output => TextReport, color => ColorFormatter}},
+          {text, #{output => TextReport, color => maps:get(color_formatter, FeaturePayload, false)}},
           {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
         ]
       },
       {feature_dirs, ["../../../../features/", "../features/"]},
       {chromedriver, ?CHROMEDRIVER},
-      {concurrency, 1}
+      {concurrency, Concurrency}
     ],
   RunDir = filename:join(AccountDir, RunId),
   FeatureDir = filename:join(AccountDir, "features"),
@@ -84,9 +89,7 @@ execute_bdd(
           case
           damage:execute_file(
             [
-              {account, binary_to_list(Account)},
-              {host, binary_to_list(Hostname)},
-              {port, Port} | Config
+              {account, binary_to_list(Account)}|Config
             ],
             BddFileName
           ) of
@@ -154,12 +157,13 @@ execute_bdd(
     Err ->
       logger:error("Data dir creation faild ~p.", [Err]),
       {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
-  end;
+  end.
 
-execute_bdd(
+check_execute_bdd(
   #{account := Account, concurrency := Concurrency} = FeaturePayload,
   UserAgent
 ) ->
+    Concurrency = get_concurrency_level(Concurrency),
   AvailConcurrency = damage_accounts:check_spend(Account, Concurrency),
   case AvailConcurrency of
     0 ->
@@ -192,9 +196,7 @@ from_json(Req, State) ->
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
       #{
         feature := _FeatureData,
-        account := _Account,
-        host := _Hostname,
-        port := _Port
+        account := _Account
       } = FeatureJson ->
         execute_bdd(FeatureJson, cowboy_req:header(<<"user-agent">>, Req, ""));
 
@@ -217,8 +219,6 @@ get_ip(Req0) ->
 from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
   logger:debug("Req ~p.", [Req]),
-  Hostname = cowboy_req:header(<<"x-damage-host">>, Req0, <<"localhost">>),
-  Port = cowboy_req:header(<<"x-damage-port">>, Req0, 80),
   UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
   Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req0, 1),
   ColorFormatter =
@@ -229,12 +229,10 @@ from_html(Req0, State) ->
   {Status, Resp0} =
     case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
       <<"ak_", _Rest>> = Account ->
-        execute_bdd(
+        check_execute_bdd(
           #{
             feature => Body,
             account => Account,
-            host => Hostname,
-            port => Port,
             color_formatter => ColorFormatter,
             concurrency => Concurrency
           },
@@ -253,8 +251,6 @@ from_html(Req0, State) ->
               #{
                 feature => Body,
                 account => Account,
-                host => Hostname,
-                port => Port,
                 color_formatter => ColorFormatter,
                 concurrency => 1
               },
