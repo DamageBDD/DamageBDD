@@ -3,183 +3,50 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DamageBDD</title>
-<style>
-  body {
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    background-color: #f0f0f0;
-  }
-  .container {
-    text-align: center;
-    background-color: #fff;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
-  }
-  .container2 {
-    text-align: center;
-    background-color: #fff;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-  }
-  .title {
-    font-size: 24px;
-    font-weight: bold;
-    /*margin-bottom: 10px;*/
-  }
-  .header {
-    font-size: 16px;
-    margin-bottom: 20px;
-  }
-.code-example {
-  text-align: left;
-}
-.container {
-  text-align: center;
-  background-color: #fff;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
-  max-width: 100%;
-  width: 80%;
-  margin: 0 auto;
-}
-.input-box {
-  width: 100%;
-  height: calc(100vh - 280px);
-  padding: 10px;
-  margin-bottom: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 14px;
-  resize: none;
-  overflow-y: auto;
-}
-.submit-button {
-    background-color: #007bff;
-    color: #fff;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-}
-#difficulty {
-    width: 150px;
-    margin-left: 10px;
-}
-</style>
-<link rel="stylesheet" href="/static/js/highlight/styles/base16/github.min.css">
+<title>DamageBDD Execute Feature</title>
+<link rel="stylesheet" href="/static/css/main.css">
 <script src="/static/js/highlight/highlight.min.js"></script>
 <script src="/static/js/highlight/languages/gherkin.min.js"></script>
-<script>hljs.highlightAll();</script>
 
 </head>
 <body>
 <div class="container">
 
-    <highlightjs autodetect :code="code" />
   <div class="title">DamageBDD</div>
   <div class="header">The tool to break your stack</div>
   <div class="code-example">
     <p>Write the test case in the textarea below:</p>
-    <p> for example </p>
-  <pre><code class="language-gherkin">
-Feature: Test basic functionality of Google.com using HTTP API
+    <p> For example:</p>
+    <pre>
+      <code class="language-gherkin">
+Feature: Test http testing functionality of DamageBDD `tests` endpoint
 
-  Scenario: GET request to Google.com
-    Given I am using server "https://www.google.com"
-    When I make a GET request to "/?test"
+  Scenario: GET request to DamageBDD run.damagebdd.com using HTTP API
+    Given I am using server "https://run.damagebdd.com"
+    When I make a GET request to "/tests/"
     Then the response status must be "200"
-  </code></pre></div>
+      </code>
+    </pre>
+  </div>
   <form id="damageForm">
     
-    <textarea type="text" class="input-box" id="damageInput" placeholder="Feature: How this feature should behave.
-   Background: A hypothetical test case
-       Given that I use \""{{server}\"""></textarea>
-    <button type="submit" class="submit-button">Submit</button>
+    <textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>
+    <br>
+    <div class="container2">
+        <label for="difficulty">Select Difficulty:</label>
+        <select id="difficulty" onchange="enableForm()">
+            <option value="sk_baby">Im too young to die. (1 rps)</option>
+            <option value="sk_easy">Hey, not too rough. (10 rps)</option>
+            <option value="sk_medium">Hurt me plenty. (100 rps)</option>
+            <option value="sk_hard">Ultra-Violence. (1000 rps)</option>
+            <option value="sk_nightmare">Nightmare! (100000 rps)</option>
+        </select>
+        <div id="message" style="margin-left: 15px;"></div>
+    </div>
+    <br>
+    <button type="submit" class="submit-button">Execute Feature</button>
   </form>
+<script src="/static/js/main.js"></script>
 </div>
-<div class="container2">
-  <label for="difficulty">Select Difficulty:</label>
-  <select id="difficulty" onchange="enableForm()">
-    <option value="sk_baby">Im too young to die. (1 rps)</option>
-    <option value="sk_easy">Hey, not too rough. (10 rps)</option>
-    <option value="sk_medium">Hurt me plenty. (100 rps)</option>
-    <option value="sk_hard">Ultra-Violence. (1000 rps)</option>
-    <option value="sk_nightmare">Nightmare! (100000 rps)</option>
-  </select>
-  <div id="message" style="margin-left: 15px;"></div>
-</div>
-<script>
-    function enableForm() {
-        const difficulty = document.getElementById("difficulty").value;
-        const damageForm = document.getElementById("damageForm");
-        const message = document.getElementById("message");
-        
-        if (difficulty === "sk_baby") {
-            damageForm.removeAttribute("disabled");
-            message.innerHTML = "";
-        } else {
-            damageForm.setAttribute("disabled", true);
-            message.innerHTML = "For concurrent testing options, please talk to sales@damagebdd.com";
-        }
-    }
-
-    document.getElementById("damageForm").addEventListener("submit", function(event) {
-        event.preventDefault();
-        submitForm();
-    });
-
-    document.getElementById("damageInput").addEventListener("keydown", function(event) {
-        if (event.ctrlKey && event.key === "Enter") {
-            event.preventDefault();
-            submitForm();
-        }
-    });
-    function submitForm() {
-        const inputText = document.getElementById("damageInput").value;
-        const request = {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                feature: inputText,
-                account: "guest",
-                host: "damagebdd.com",
-                port: 443
-            })
-        };
-
-        fetch("/execute_feature/", request)
-            .then(response => {
-                if (response.status === 200) {
-                    return response.json();
-                } else {
-                    throw new Error('Request failed with status ' + response.status);
-                }
-            })
-            .then(data => {
-                if (data.status === "ok") {
-                    alert("Success! The feature was executed.");
-                } else {
-                    throw new Error('Response status was not "ok"');
-                }
-            })
-            .catch(error => {
-                alert("Error: " + error.message);
-            });
-    }
-</script>
 </body>
 </html>

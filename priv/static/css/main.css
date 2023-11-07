@@ -1,0 +1,66 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: left;
+  justify-content: left;
+  /*height: 100vh;*/
+  background-color: #f0f0f0;
+}
+.container {
+  text-align: left;
+  background-color: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
+}
+.container2 {
+  text-align: center;
+  width: 90vh;
+  background-color: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+.title {
+  font-size: 24px;
+  font-weight: bold;
+  /*margin-bottom: 10px;*/
+}
+.header {
+  font-size: 16px;
+  margin-bottom: 20px;
+}
+.code-example {
+  text-align: left;
+}
+.input-box {
+  width: 90vh;
+  height: 30vh;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+  resize: none;
+  overflow-y: auto;
+  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
+}
+.submit-button {
+    background-color: #007bff;
+    color: #fff;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+#difficulty {
+    width: 150px;
+    margin-left: 10px;
+}
