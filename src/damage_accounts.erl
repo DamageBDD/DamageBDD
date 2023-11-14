@@ -52,8 +52,11 @@ validate_refund_addr(forward, BtcAddress) ->
 
 
 do_kyc_create(
-  #{full_name := FullName, email := ToEmail, refund_address := RefundAddress} =
-    KycData
+  #{
+    <<"full_name">> := FullName,
+    <<"email">> := ToEmail,
+    <<"refund_address">> := RefundAddress
+  } = KycData
 ) ->
   KycDataJson = jsx:encode(KycData),
   case os:getenv("KYC_SECRET_KEY") of
@@ -87,16 +90,16 @@ do_kyc_create(
 do_action(<<"create_from_yaml">>, Req) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   ?debugFmt(" yaml data: ~p ", [Data]),
-  {ok, [Data0]} = fast_yaml:decode(Data, [plain_as_atom, maps]),
+  {ok, [Data0]} = fast_yaml:decode(Data, [maps]),
   do_action(<<"create">>, Data0);
 
 do_action(<<"create_from_json">>, Req) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   ?debugFmt(" json data: ~p ", [Data]),
-  {ok, [Data0]} = jsx:decode(Data, [return_maps]),
+  Data0 = jsx:decode(Data, [return_maps]),
   do_action(<<"create">>, Data0);
 
-do_action(<<"create">>, #{refund_address := RefundAddress} = Data) ->
+do_action(<<"create">>, #{<<"refund_address">> := RefundAddress} = Data) ->
   case validate_refund_addr(forward, RefundAddress) of
     {ok, RefundAddress} -> do_kyc_create(Data);
 
