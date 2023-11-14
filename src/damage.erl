@@ -203,7 +203,7 @@ execute_step_module(
           formatter:format(
             Config,
             step,
-            {StepKeyWord, LineNo, Body, Args, Context, fail}
+            {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
           ),
           should_exit(Config),
           maps:put(failing_step, Step, maps:put(fail, Reason, Context))
@@ -222,7 +222,7 @@ execute_step_module(
       formatter:format(
         Config,
         step,
-        {StepKeyWord, LineNo, Body, Args, Context, fail}
+        {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
       ),
       should_exit(Config),
       maps:put(failing_step, Step, maps:put(fail, Reason, Context))
@@ -256,11 +256,11 @@ execute_step(Config, Step, Context) ->
               ),
               Context1;
 
-            #{fail := _Err} = Context1 ->
+            #{fail := Err} = Context1 ->
               formatter:format(
                 Config,
                 step,
-                {StepKeyWord, LineNo, Body1, Args1, Context1, fail}
+                {StepKeyWord, LineNo, Body1, Args1, Context1, {fail, Err}}
               ),
               maps:put(failing_step, Step0, Context1);
 

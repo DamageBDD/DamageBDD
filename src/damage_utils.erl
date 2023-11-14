@@ -218,8 +218,8 @@ send_email({ToName, To}, Subject, Body) ->
   ).
 
 %% Encrypt a information string
-% https://medium.com/@brucifi/how-to-encrypt-with-aes-256-gcm-with-erlang-2a2aec13598d
 
+% https://medium.com/@brucifi/how-to-encrypt-with-aes-256-gcm-with-erlang-2a2aec13598d
 encrypt(KYCInfo, Key, IV) when is_binary(KYCInfo), is_binary(Key), is_binary(IV) ->
   {CipherText, _Tag} =
     crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, KYCInfo, <<>>, true),

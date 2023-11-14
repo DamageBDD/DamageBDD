@@ -45,32 +45,48 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
-get_concurrency_level(<<"sk_baby">>)->1;
-get_concurrency_level(<<"sk_easy">>)->10;
-get_concurrency_level(<<"sk_medium">>)->100;
-get_concurrency_level(<<"sk_hard">>)->1000;
-get_concurrency_level(<<"sk_nightmare">>)->10000;
+get_concurrency_level(<<"sk_baby">>) -> 1;
+get_concurrency_level(<<"sk_easy">>) -> 10;
+get_concurrency_level(<<"sk_medium">>) -> 100;
+get_concurrency_level(<<"sk_hard">>) -> 1000;
+get_concurrency_level(<<"sk_nightmare">>) -> 10000;
 get_concurrency_level(_) -> 1.
 
-
 execute_bdd(
-  #{
-    feature := FeatureData,
-    account := Account,
-    concurrency := Concurrency
-  } = FeaturePayload,
-  UserAgent
+  #{feature := FeatureData, account := Account, concurrency := Concurrency} =
+    FeaturePayload,
+  UserAgent,
+  Req0
 ) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
   AccountDir = filename:join(DataDir, Account),
   {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
   TextReport = filename:join([AccountDir, RunId, "report.txt"]),
+  Req =
+    cowboy_req:stream_reply(
+      200,
+      #{<<"content-type">> => <<"text/plain">>},
+      Req0
+    ),
   Config =
     [
       {
         formatters,
         [
-          {text, #{output => TextReport, color => maps:get(color_formatter, FeaturePayload, false)}},
+          {
+            text,
+            #{
+              output => Req,
+              color => maps:get(color_formatter, FeaturePayload, false)
+            }
+          },
+          {
+            text,
+            #{
+              output => TextReport,
+              color => maps:get(color_formatter, FeaturePayload, false)
+            }
+          },
           {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
         ]
       },
@@ -88,9 +104,7 @@ execute_bdd(
         ok ->
           case
           damage:execute_file(
-            [
-              {account, binary_to_list(Account)}|Config
-            ],
+            [{account, binary_to_list(Account)} | Config],
             BddFileName
           ) of
             [
@@ -159,11 +173,13 @@ execute_bdd(
       {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
   end.
 
+
 check_execute_bdd(
   #{account := Account, concurrency := Concurrency} = FeaturePayload,
-  UserAgent
+  UserAgent,
+  Req
 ) ->
-    Concurrency = get_concurrency_level(Concurrency),
+  Concurrency = get_concurrency_level(Concurrency),
   AvailConcurrency = damage_accounts:check_spend(Account, Concurrency),
   case AvailConcurrency of
     0 ->
@@ -184,7 +200,8 @@ check_execute_bdd(
     _ ->
       execute_bdd(
         maps:put(concurrency, AvailConcurrency, FeaturePayload),
-        UserAgent
+        UserAgent,
+        Req
       ),
       damage_accounts:confirm_spend(Account, AvailConcurrency)
   end.
@@ -194,11 +211,12 @@ from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{
-        feature := _FeatureData,
-        account := _Account
-      } = FeatureJson ->
-        execute_bdd(FeatureJson, cowboy_req:header(<<"user-agent">>, Req, ""));
+      #{feature := _FeatureData, account := _Account} = FeatureJson ->
+        execute_bdd(
+          FeatureJson,
+          cowboy_req:header(<<"user-agent">>, Req, ""),
+          Req
+        );
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),
@@ -226,7 +244,7 @@ from_html(Req0, State) ->
       #{color := <<"true">>} -> true;
       _Other -> false
     end,
-  {Status, Resp0} =
+  {_Status, _Resp0} =
     case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
       <<"ak_", _Rest>> = Account ->
         check_execute_bdd(
@@ -236,7 +254,8 @@ from_html(Req0, State) ->
             color_formatter => ColorFormatter,
             concurrency => Concurrency
           },
-          UserAgent
+          UserAgent,
+          Req0
         );
 
       Account ->
@@ -254,13 +273,12 @@ from_html(Req0, State) ->
                 color_formatter => ColorFormatter,
                 concurrency => 1
               },
-              UserAgent
+              UserAgent,
+              Req0
             )
         end
     end,
-  logger:debug("Response  ~p.", [Resp0]),
-  Resp = cowboy_req:set_resp_body(Resp0, Req),
-  {stop, cowboy_req:reply(Status, Resp), State}.
+  {stop, Req0, State}.
 
 
 to_html(Req, State) ->

@@ -13,7 +13,7 @@
 
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
--define(DEFAULT_HTTP_TIMEOUT, 3600).
+-define(DEFAULT_HTTP_TIMEOUT, 60000).
 
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
@@ -38,7 +38,12 @@ get_gun_config(Config0, Context) ->
       {User, Pass} ->
         maps:put(username, User, maps:put(password, Pass, Context))
     end,
-  {ok, ConnPid} = gun:open(Host, Port, maps:put(connect_timeout, 36000, Opts0)),
+  {ok, ConnPid} =
+    gun:open(
+      Host,
+      Port,
+      maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts0)
+    ),
   ConnPid.
 
 
