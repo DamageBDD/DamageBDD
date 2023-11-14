@@ -5,13 +5,13 @@ function enableForm() {
     const damageForm = document.getElementById("damageForm");
     const message = document.getElementById("message");
     
-    //if (difficulty === "sk_baby") {
-    //    damageForm.removeAttribute("disabled");
-    //    message.innerHTML = "";
-    //} else {
-    //    damageForm.setAttribute("disabled", true);
-    //    message.innerHTML = "For concurrent testing options, please top up funds in your <a href='/accounts/topup'>account</a>. Current rate is 10 requests per Satoshi.";
-    //}
+    if (difficulty === "sk_baby") {
+        damageForm.removeAttribute("disabled");
+        message.innerHTML = "";
+    } else {
+        damageForm.setAttribute("disabled", true);
+        message.innerHTML = "For concurrent testing options, please top up funds in your <a href='/accounts/topup'>account</a>. Current rate is 10 requests per Satoshi.";
+    }
 }
 
 document.getElementById("damageForm").addEventListener("submit", function(event) {
