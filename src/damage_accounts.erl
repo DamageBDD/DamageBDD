@@ -14,6 +14,9 @@
 -export([create/1, balance/1, check_spend/2, store_profile/1, refund/1]).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
+-export([sign_tx/1]).
+%-export([update_schedules/3]).
+-export([test_contract_call/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -195,32 +198,6 @@ aecli(contract, deploy, Contract, Args) ->
   jsx:decode(binary:list_to_bin(Result), [{labels, atom}]).
 
 
-%sign_tx(Tx) ->
-%    {ok, TxSer} = aeser_api_encoder:safe_decode(transaction, Tx),
-%    UTx = aetx:deserialize_from_binary(TxSer),
-%    STx = aec_test_utils:sign_tx(UTx, [maps:get(privkey, aecore_suite_utils:patron())]),
-%    aeser_api_encoder:encode(transaction, aetx_sign:serialize_to_binary(STx)).
-%create_account(AeAccount) ->
-%  {ok, Nonce} = vanillae:next_nonce(AeAccount),
-%  {ok, ConID} =
-%    vanillae:contract_create(AeAccount, "contracts/account.aes", []),
-%  ?debugFmt("contract create ~p", [ConID]),
-%  {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
-%  ContractCall =
-%    vanillae:contract_call(
-%      AeAccount,
-%      Nonce,
-%      0,
-%      0,
-%      0,
-%      0,
-%      AACI,
-%      ConID,
-%      "btc_address",
-%      []
-%    ),
-%  ?debugFmt("contract call ~p", [ContractCall]),
-%  sign_tx(ContractCall),
 %
 %generate an erlang gen_server process that monitors a bitcoin address for transactions using the bitcoin core json rpc
 create(RefundAddress) ->
@@ -333,7 +310,103 @@ refund(Account) ->
   ?debugFmt("Refund result ~p ", [RefundResult]),
   RefundResult.
 
-
+%update_schedules(Account, JobId, Cron)->
+%  ContractCreated =
+%    aecli(
+%      contract,
+%      call,
+%      binary_to_list(Account),
+%      "contracts/account.aes",
+%      "update_schedules",
+%      [BtcAddress, RefundAddress]
+%    ),
+%    ok.
+%    
 %on_payment(Wallet) ->
 %    take_fee(Wallet)
 %    get_ae(Wallet)
+
+
+% FROM jrx/b_lib.ts:tx_sign
+%        let tx_bytes        : Uint8Array = (await vdk_aeser.unbaseNcheck(tx_str)).bytes;
+%        // thank you ulf
+%        // https://github.com/aeternity/protocol/tree/fd179822fc70241e79cbef7636625cf344a08109/consensus#transaction-signature
+%        // we sign <<NetworkId, SerializedObject>>
+%        // SerializedObject can either be the object or the hash of the object
+%        // let's stick with hash for now
+%        let network_id      : Uint8Array = vdk_binary.encode_utf8('ae_uat');
+%        // let tx_hash_bytes   : Uint8Array = hash(tx_bytes);
+%        let sign_data       : Uint8Array = vdk_binary.bytes_concat(network_id, tx_bytes);
+%        // @ts-ignore yes nacl is stupid
+%        let signature       : Uint8Array = nacl.sign.detached(sign_data, secret_key);
+%        let signed_tx_bytes : Uint8Array = vdk_aeser.signed_tx([signature], tx_bytes);
+%        let signed_tx_str   : string     = await vdk_aeser.baseNcheck('tx', signed_tx_bytes);
+
+%/**
+% * RLP-encode signed tx (signatures and tx are both the BINARY representations)
+% *
+% * See https://github.com/aeternity/protocol/blob/fd179822fc70241e79cbef7636625cf344a08109/serializations.md#signed-transaction
+% */
+%function
+%signed_tx
+%    (signatures : Array<Uint8Array>,
+%     tx         : Uint8Array)
+%    : Uint8Array
+%{
+%    // tag for signed tx
+%    let tag_bytes = vdk_rlp.encode_uint(11);
+%    // not sure what version number should be but guessing 1
+%    let vsn_bytes = vdk_rlp.encode_uint(1);
+%    // result is [tag, vsn, signatures, tx]
+%    return vdk_rlp.encode([tag_bytes, vsn_bytes, signatures, tx]);
+%}
+rlp_encode(BytesList) ->
+    %TODO
+    BytesList.
+
+sign_tx(UTx) ->
+  Password = os:getenv("AE_PASSWORD"),
+    sign_tx(UTx, Password).
+sign_tx(UTx, PrivateKey) ->
+    SignData = <<"ae_uat", UTx/binary>>,
+    Signature = enacl:sign_detached(SignData, PrivateKey),
+    TagBytes = 11,
+    VsnBytes = 1,
+    {ok, rlp_encode([TagBytes, VsnBytes, [Signature], UTx])}.
+
+test_contract_call(AeAccount) ->
+  {ok, Nonce} = vanillae:next_nonce(AeAccount),
+  {ok, ContractData} =
+    vanillae:contract_create(AeAccount, "contracts/account.aes", []),
+  {ok, sTx} = sign_tx(ContractData),
+  ?debugFmt("contract create ~p", [sTx]),
+  {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
+  ContractCall =
+    vanillae:contract_call(
+      AeAccount,
+      Nonce,
+      0, % Amount
+      0, % Gas
+      0, % GasPrice
+      0, % Fee
+      AACI,
+      sTx,
+      "update_schedule",
+      []
+    ),
+  ?debugFmt("contract call ~p", [ContractCall]),
+  Password = os:getenv("AE_PASSWORD"),
+  {ok, sTx} = sign_tx(ContractCall, Password),
+    case vanillae:post_tx(sTx) of
+        {ok, #{"tx_hash" := Hash}} ->
+                ?debugFmt("contract call success ~p", [Hash]),
+                Hash;
+            {ok, WTF} ->
+                logger:error("contract call Unexpected result ~p", [WTF]),
+                {error, unexpected};
+            {error, Reason} ->
+                logger:error("contract call error ~p", [Reason]),
+                {error, Reason}
+
+    end.
+
