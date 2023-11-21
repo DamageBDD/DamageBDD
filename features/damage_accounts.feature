@@ -18,6 +18,7 @@ email: "john.doe@damagebdd.com"
 phone: "0412345678"
     """
     Then the response status must be "201"
+    Then I print the response
     Then the yaml at path "$.email" must be "john.doe@damagebdd.com"
 
   Scenario: User account creation and kyc for billing use of DamageBDD json endpoint

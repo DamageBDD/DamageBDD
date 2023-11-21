@@ -4,7 +4,6 @@ Feature: Http test feature
     And I set "Content-Type" header to "application/x-yaml"
     When I make a POST request to "/tests/"
     """
----
 refund_address: "mohjSavDdQYHRYXcS3uS6ttaHP8amyvX78"
 customer_type: "Individual"
 full_name: "John Doe"

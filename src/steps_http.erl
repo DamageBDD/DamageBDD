@@ -411,7 +411,7 @@ step(
   Expected = list_to_binary(Expected0),
   case maps:get(response, Context) of
     [{status_code, _}, _Headers, {body, Body}] ->
-      {ok, [[Data]]} = fast_yaml:decode(Body, [maps]),
+      {ok, [Data]} = fast_yaml:decode(Body, [maps]),
       ejsonpath_match(Path, Data, Expected, Context);
 
     Dict when is_map(Dict) ->
@@ -521,8 +521,13 @@ step(
       )
   end;
 
-step(_Config, Context, then_keyword, _N, ["I print the response"], _) ->
-  logger:info("Response: ~p", [maps:get(response, Context)]),
+step(Config, Context, then_keyword, N, ["I print the response"], _) ->
+    Response = maps:get(response, Context, <<"">>),
+    formatter:format(
+        Config,
+        print,
+        {then_keyword, N, ["Response:"], list_to_binary(damage_utils:strf("~p", [Response])), Context, success}
+    ),
   Context;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
