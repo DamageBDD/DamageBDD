@@ -61,4 +61,23 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
         LineNo,
         Status
       ]
+    );
+format(Config, print, {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}) ->
+  ok =
+    write_file(
+      Config,
+      "<tr><td>~s</td></tr>",
+      [
+        format_args(Args)
+      ]
     ).
+
+format_args([]) -> <<"\n">>;
+
+format_args(Args) when is_list(Args); is_binary(Args) ->
+  Data =
+    damage_utils:binarystr_join(
+      [<<"<p>", A/binary, "</p>">> || A <- string:split(Args, "\n", all)],
+      <<"<br>">>
+    ),
+  <<"    \"\"\"<br>", Data/binary, "<br>    \"\"\"">>.

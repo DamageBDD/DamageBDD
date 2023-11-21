@@ -122,10 +122,21 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
         format_args(Args)
         %stdout_formatter:to_string(#table{rows=[["Step Body"],[Args]], props=#{border_drawing=>ascii}})
       ]
+    );
+format(Config, print, {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}) ->
+  ok =
+    write_file(
+      Config,
+      "~s\n",
+      [
+        format_args(Args)
+      ]
     ).
 
 
-format_args(Args) ->
+format_args([]) -> <<"\n">>;
+
+format_args(Args) when is_list(Args); is_binary(Args) ->
   Data =
     damage_utils:binarystr_join(
       [<<"        ", A/binary>> || A <- string:split(Args, "\n", all)],
