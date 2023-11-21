@@ -43,6 +43,7 @@ start(_StartType, _StartArgs) ->
               {priv_file, damage, "static/steps.json"}
             },
             {"/execute_feature/", damage_http, []},
+            {"/schedule/[...]", damage_schedule, []},
             {"/reports/[:runid]", damage_reports, []},
             {"/accounts/[:action]", damage_accounts, []},
             {"/tests/[:action]", damage_tests, []},

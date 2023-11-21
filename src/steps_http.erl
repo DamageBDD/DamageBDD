@@ -522,12 +522,19 @@ step(
   end;
 
 step(Config, Context, then_keyword, N, ["I print the response"], _) ->
-    Response = maps:get(response, Context, <<"">>),
-    formatter:format(
-        Config,
-        print,
-        {then_keyword, N, ["Response:"], list_to_binary(damage_utils:strf("~p", [Response])), Context, success}
-    ),
+  Response = maps:get(response, Context, <<"">>),
+  formatter:format(
+    Config,
+    print,
+    {
+      then_keyword,
+      N,
+      ["Response:"],
+      list_to_binary(damage_utils:strf("~p", [Response])),
+      Context,
+      success
+    }
+  ),
   Context;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->

@@ -37,7 +37,7 @@ bitcoin_req(Method, Params, Path) ->
   Data =
     #{
       jsonrpc => <<"1.0">>,
-      id => <<"curltest">>,
+      id => <<"damagebdd">>,
       method => Method,
       params => Params
     },

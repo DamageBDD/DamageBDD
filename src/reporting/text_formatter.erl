@@ -1,7 +1,6 @@
 -module(text_formatter).
 
 -include_lib("reporting/formatter.hrl").
--include_lib("stdout_formatter/include/stdout_formatter.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
@@ -120,18 +119,15 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
         LineNo,
         get_status_text(Config, Status),
         format_args(Args)
-        %stdout_formatter:to_string(#table{rows=[["Step Body"],[Args]], props=#{border_drawing=>ascii}})
       ]
     );
-format(Config, print, {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}) ->
-  ok =
-    write_file(
-      Config,
-      "~s\n",
-      [
-        format_args(Args)
-      ]
-    ).
+
+format(
+  Config,
+  print,
+  {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}
+) ->
+  ok = write_file(Config, "~s\n", [format_args(Args)]).
 
 
 format_args([]) -> <<"\n">>;

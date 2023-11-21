@@ -62,15 +62,13 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
         Status
       ]
     );
-format(Config, print, {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}) ->
-  ok =
-    write_file(
-      Config,
-      "<tr><td>~s</td></tr>",
-      [
-        format_args(Args)
-      ]
-    ).
+
+format(
+  Config,
+  print,
+  {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}
+) ->
+  ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]).
 
 format_args([]) -> <<"\n">>;
 

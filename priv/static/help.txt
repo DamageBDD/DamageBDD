@@ -16,3 +16,7 @@ Post the feature to DamageBDD like so:
 
     curl -s --data-binary @jsontest.feature -H "Authorization: guest" '{{damage_url}}/execute_feature'
 
+
+Available Steps:
+
+    curl {{damage_url}}/steps.json
