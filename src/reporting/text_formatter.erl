@@ -23,10 +23,10 @@ get_keyword(#{color := true}, Keyword) ->
 get_status_text(#{color := true}, fail) -> color:red("fail");
 
 get_status_text(#{color := true}, {fail, Reason}) ->
-  color:red("fail:" ++ Reason);
+  color:red(damage_utils:strf("fail:~p", [Reason]));
 
 get_status_text(#{color := false}, {fail, Reason}) ->
-  color:red("fail:" ++ Reason);
+  damage_utils:strf("fail:~p", [Reason]);
 
 get_status_text(#{color := true}, error) -> color:red("error");
 get_status_text(#{color := true}, success) -> color:green("success");
@@ -36,7 +36,7 @@ get_status_text(#{color := false}, Status) -> Status.
 
 write_file(#{output := Req}, FormatStr, Args) when is_map(Req) ->
   cowboy_req:stream_body(
-    lists:flatten(io_lib:format(FormatStr ++ "\n", Args)),
+    lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
     nofin,
     Req
   ),
@@ -46,7 +46,7 @@ write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) ->
   ok =
     file:write_file(
       Output,
-      lists:flatten(io_lib:format(FormatStr ++ "\n", Args)),
+      lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
       [append]
     ).
 
@@ -127,10 +127,18 @@ format(
   print,
   {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}
 ) ->
-  ok = write_file(Config, "~s\n", [format_args(Args)]).
+  ok = write_file(Config, "~s\n", [format_args(Args)]);
+
+format(
+  Config,
+  summary,
+  #{feature := #{<<"Hash">> := FeatureHash}, run_id := RunId}
+) ->
+  ok = write_file(Config, "Summary: ~s ~p\n", [FeatureHash, RunId]).
 
 
 format_args([]) -> <<"\n">>;
+format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p\n">>, [Reason]);
 
 format_args(Args) when is_list(Args); is_binary(Args) ->
   Data =

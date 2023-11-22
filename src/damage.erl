@@ -100,6 +100,7 @@ execute(Config, FeatureName) ->
 
 
 execute_file(Config, Filename) ->
+  {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {account, Account} = lists:keyfind(account, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
   try egherkin:parse_file(Filename) of
@@ -120,7 +121,9 @@ execute_file(Config, Filename) ->
         BackGround,
         Scenarios
       ),
-      damage_accounts:check_spend(Account, Concurrency)
+      damage_accounts:check_spend(Account, Concurrency),
+      {ok, Hash} = damage_ipfs:add({file, Filename}),
+      formatter:format(Config, summary, #{feature => Hash, run_id => RunId})
   catch
     {error, enont} -> logger:error("Feature file ~p not found.", [Filename])
   end.
@@ -206,7 +209,11 @@ execute_step_module(
             {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
           ),
           should_exit(Config),
-          maps:put(failing_step, Step, maps:put(fail, Reason, Context))
+          maps:put(
+            step_found,
+            true,
+            maps:put(failing_step, Step, maps:put(fail, Reason, Context))
+          )
       end;
 
     error : Reason:Stacktrace ->
@@ -225,7 +232,11 @@ execute_step_module(
         {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
       ),
       should_exit(Config),
-      maps:put(failing_step, Step, maps:put(fail, Reason, Context))
+      maps:put(
+        step_found,
+        true,
+        maps:put(failing_step, Step, maps:put(fail, Reason, Context))
+      )
   end.
 
 
@@ -248,13 +259,7 @@ execute_step(Config, Step, Context) ->
         (StepModule, #{step_found := false} = ContextIn) ->
           Step0 = {StepKeyWord, LineNo, Body1, Args1},
           case execute_step_module(Config, ContextIn, Step0, StepModule) of
-            #{failing_step := _} = Context1 ->
-              formatter:format(
-                Config,
-                step,
-                {StepKeyWord, LineNo, Body1, Args1, Context1, error}
-              ),
-              Context1;
+            #{failing_step := _} = Context1 -> Context1;
 
             #{fail := Err} = Context1 ->
               formatter:format(

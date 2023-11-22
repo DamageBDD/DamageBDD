@@ -68,9 +68,17 @@ format(
   print,
   {_Keyword, _LineNo, _StepStatement, Args, _Context, _Status}
 ) ->
-  ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]).
+  ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]);
+
+format(
+  Config,
+  summary,
+  #{feature := #{<<"Hash">> := FeatureHash}, run_id := RunId}
+) ->
+  ok = write_file(Config, "<h2>Summary</h2>: ~s ~p\n", [FeatureHash, RunId]).
 
 format_args([]) -> <<"\n">>;
+format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p<br>">>, [Reason]);
 
 format_args(Args) when is_list(Args); is_binary(Args) ->
   Data =
