@@ -10,7 +10,7 @@ function enableForm() {
         message.innerHTML = "";
     } else {
         damageForm.setAttribute("disabled", true);
-        message.innerHTML = "For concurrent testing options, please top up funds in your <a href='/accounts/topup'>account</a>. Current rate is 10 requests per Satoshi.";
+        message.innerHTML = "For concurrent testing options, please top up funds in your <a href='https://damagebdd.com/register-individual.html'>account</a>. Current rate is 10 requests per Satoshi.";
     }
 }
 

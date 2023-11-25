@@ -1,52 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DamageBDD Execute Feature</title>
-<link rel="stylesheet" href="/static/css/main.css">
-<script src="/static/js/highlight/highlight.min.js"></script>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DamageBDD Execute Feature</title>
+    <link rel="stylesheet" type="text/css" href='/static/css/main.css'/>
+<script async src='https://www.googletagmanager.com/gtag/js?id=G-5QG625RHB7'></script>
+<link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet'><style type="text/css"> body { font-family: 'Roboto', sans-serif; } </style>
+<script src='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@latest/build/highlight.min.js'></script>
 <script src="/static/js/highlight/languages/gherkin.min.js"></script>
+<link rel="stylesheet" type="text/css" href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@latest/build/styles/default.min.css'>
+<script>hljs.highlightAll();</script>
 
-</head>
-<body>
-<div class="container">
+  </head>
+  <body>
+    <div class="container">
 
-  <div class="title">DamageBDD</div>
-  <div class="header">The tool to break your stack</div>
-  <div class="code-example">
-    <p>Write the test case in the textarea below:</p>
-    <p> For example:</p>
-    <pre>
-      <code class="language-gherkin">
+      <div class="title">DamageBDD</div>
+      <div class="header">The tool to break your stack</div>
+        Recommended way to use DamageBDD is using cURL, write the test in a plain text file and http POST to the /execute_feature endpoint. 
+      <div style="border: 1px solid #333; padding: 10px; margin: 10px 0; background-color: #f9f9f9;">
+        <strong>
+
+          Try now on testnet!
+        </strong>
+        <br>
+        DamageBDD is currently on the testnet.
+        Register for a testnet account to explore all features.
+        
+        <br>
+
+        Use <a href='https://curl.se'>Curl</a> to download and run a sample bdd feature.
+        <br>
+        Please read <a href="tac.html">Terms & Conditions</a> before use.
+        <br>
+        For step documentation and help please refer to the <a href="manual.html">manual.</a>
+        <br>
+        For pricing and services please refer to <a href="pricing.html">pricing</a>
+      </div>
+
+      <pre>
+        <code class="language-bash">
+# download sample bdd
+curl -o jsontest.feature \
+https://run.damagebdd.com/features/jsontest.feature
+cat jsontest.feature
+
+# run bdd
+curl -s -N --data-binary @jsontest.feature \
+-H "Authorization: guest" \
+'https://run.damagebdd.com/execute_feature'
+        </code>
+      </pre>
+      This is a simple html form UI for submitting single tests.
+      <div class="code-example">
+        <p>Write the test case in the textarea below:</p>
+        <p> For example:</p>
+        <pre>
+          <code class="language-gherkin">
 Feature: Test http testing functionality of DamageBDD `tests` endpoint
 
-  Scenario: GET request to DamageBDD run.damagebdd.com using HTTP API
-    Given I am using server "https://run.damagebdd.com"
-    When I make a GET request to "/tests/"
-    Then the response status must be "200"
-      </code>
-    </pre>
-  </div>
-  <form id="damageForm">
-    
-    <textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>
-    <br>
-    <div class="container2">
-        <label for="difficulty">Select Difficulty:</label>
-        <select id="difficulty" onchange="enableForm()">
+Scenario: GET request to DamageBDD run.damagebdd.com using HTTP API
+Given I am using server "https://run.damagebdd.com"
+When I make a GET request to "/tests/"
+Then the response status must be "200"
+          </code>
+        </pre>
+      </div>
+      <form id="damageForm">
+        
+        <textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>
+        <br>
+        <div class="container2">
+          <label for="difficulty">Select Difficulty:</label>
+          <select id="difficulty" onchange="enableForm()">
             <option value="sk_baby">Im too young to die. (1 rps)</option>
             <option value="sk_easy">Hey, not too rough. (10 rps)</option>
             <option value="sk_medium">Hurt me plenty. (100 rps)</option>
             <option value="sk_hard">Ultra-Violence. (1000 rps)</option>
             <option value="sk_nightmare">Nightmare! (100000 rps)</option>
-        </select>
-        <div id="message" style="margin-left: 15px;"></div>
+          </select>
+          <div id="message" style="margin-left: 15px;"></div>
+        </div>
+        <br>
+        <button type="submit" class="submit-button">Execute Feature</button>
+      </form>
+      <script src="/static/js/main.js"></script>
     </div>
-    <br>
-    <button type="submit" class="submit-button">Execute Feature</button>
-  </form>
-<script src="/static/js/main.js"></script>
-</div>
-</body>
+  </body>
 </html>
