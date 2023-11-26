@@ -196,7 +196,7 @@ ejsonpath_match(Path, Data, Expected, Context) ->
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the response must contain text", Contains],
   _
@@ -213,7 +213,7 @@ step(
     _ -> Context
   end;
 
-step(Config, Context, when_keyword, _N, ["I make a GET request to", Path], _) ->
+step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
   gun_get(
     Config,
     Context,
@@ -221,14 +221,7 @@ step(Config, Context, when_keyword, _N, ["I make a GET request to", Path], _) ->
     [{<<"accept">>, "application/json"}, {<<"user-agent">>, "damagebdd/1.0"}]
   );
 
-step(
-  Config,
-  Context,
-  when_keyword,
-  _N,
-  ["I make a POST request to", Path],
-  Data
-) ->
+step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
   Defaults =
     [
       {<<"accept">>, "application/json"},
@@ -244,14 +237,7 @@ step(
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
   gun_post(Config, Context, Path0, Headers, Data);
 
-step(
-  Config,
-  Context,
-  when_keyword,
-  _N,
-  ["I make a PATCH request to", Path],
-  Data
-) ->
+step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
   Defaults =
     [
       {<<"accept">>, "application/json"},
@@ -267,7 +253,7 @@ step(
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
   gun_patch(Config, Context, Path0, Headers, Data);
 
-step(Config, Context, when_keyword, _N, ["I make a PUT request to", Path], Data) ->
+step(Config, Context, <<"When">>, _N, ["I make a PUT request to", Path], Data) ->
   Defaults =
     [
       {<<"accept">>, "application/json"},
@@ -286,7 +272,7 @@ step(Config, Context, when_keyword, _N, ["I make a PUT request to", Path], Data)
 step(
   Config,
   Context,
-  when_keyword,
+  <<"When">>,
   _N,
   ["I make a OPTIONS request to", Path],
   _Data
@@ -305,7 +291,7 @@ step(
 step(
   Config,
   Context,
-  when_keyword,
+  <<"When">>,
   _N,
   ["I make a DELETE request to", Path],
   _Data
@@ -324,7 +310,7 @@ step(
 step(
   _Config,
   Context,
-  when_keyword,
+  <<"When">>,
   _N,
   ["I make a TRACE request to", _Path],
   _Data
@@ -334,7 +320,7 @@ step(
 step(
   Config,
   Context,
-  when_keyword,
+  <<"When">>,
   _N,
   ["I make a CSRF POST request to", Path],
   Data
@@ -373,7 +359,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the response status must be", Status],
   _
@@ -403,7 +389,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the yaml at path", Path, "must be", Expected0],
   _
@@ -428,7 +414,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the json at path", Path, "must be", Expected0],
   _
@@ -436,23 +422,27 @@ step(
   Expected = list_to_binary(Expected0),
   case maps:get(response, Context) of
     [{status_code, _}, _Headers, {body, Body}] ->
-      ejsonpath_match(Path, jsx:decode(Body, [return_maps]), Expected, Context);
+      case catch jsx:decode(Body, [return_maps]) of
+        {'EXIT', Msg} ->
+          logger:error("Unexpected ~p ~p", [Body, Msg]),
+          maps:put(fail, damage_utils:strf("invalid json: ~p", [Body]), Context);
+
+        Json -> ejsonpath_match(Path, Json, Expected, Context)
+      end;
 
     Dict when is_map(Dict) ->
       ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);
 
     UnExpected ->
-      maps:put(
-        fail,
-        damage_utils:strf("Unexpected response ~p", [UnExpected]),
-        Context
-      )
+      Msg = damage_utils:strf("Unexpected response ~p", [UnExpected]),
+      logger:error("Unexpected ~p", [Msg]),
+      maps:put(fail, Msg, Context)
   end;
 
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the response status must be one of", Statuses],
   _
@@ -491,7 +481,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the", Var, "header should be", Value],
   _
@@ -521,13 +511,13 @@ step(
       )
   end;
 
-step(Config, Context, then_keyword, N, ["I print the response"], _) ->
+step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
   Response = maps:get(response, Context, <<"">>),
   formatter:format(
     Config,
     print,
     {
-      then_keyword,
+      <<"Then">>,
       N,
       ["Response:"],
       list_to_binary(damage_utils:strf("~p", [Response])),
@@ -544,7 +534,7 @@ step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) -
     Context
   );
 
-step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
+step(_Config, Context, <<"Given">>, _N, ["I store cookies"], _) ->
   [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
   logger:debug("Response Headers:  ~p", [Headers]),
   Cookies =
@@ -562,7 +552,7 @@ step(_Config, Context, given_keyword, _N, ["I store cookies"], _) ->
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["I store the JSON at path", Path, "in", Variable],
   _
@@ -592,7 +582,7 @@ step(
       )
   end;
 
-step(_Config, Context, given_keyword, _N, ["I am using server", Server], _) ->
+step(_Config, Context, <<"Given">>, _N, ["I am using server", Server], _) ->
   case uri_string:parse(Server) of
     #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->
       maps:put(port, Port, maps:put(host, Host, Context));
@@ -606,13 +596,13 @@ step(_Config, Context, given_keyword, _N, ["I am using server", Server], _) ->
     #{path := Host} -> maps:put(host, Host, Context)
   end;
 
-step(_Config, Context, given_keyword, _N, ["I set base URL to", URL], _) ->
+step(_Config, Context, <<"Given">>, _N, ["I set base URL to", URL], _) ->
   maps:put(base_url, URL, Context);
 
 step(
   _Config,
   Context,
-  given_keyword,
+  <<"Given">>,
   _N,
   ["I set BasicAuth username to ", User, "and password to", Password],
   _
@@ -622,7 +612,7 @@ step(
 step(
   _Config,
   Context,
-  given_keyword,
+  <<"Given">>,
   _N,
   ["I use query OAuth with key=", Key, "and secret=", Secret],
   _
@@ -632,7 +622,7 @@ step(
 step(
   _Config,
   Context,
-  given_keyword,
+  <<"Given">>,
   _N,
   ["I use header OAuth with key=", Key, "and secret=", Secret],
   _

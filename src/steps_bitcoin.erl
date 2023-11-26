@@ -10,10 +10,35 @@
 
 -export([step/6]).
 
+%% @doc This function loads a bitcoin wallet from the provided `WalletPath0' and performs the necessary actions based on the success or failure of the load operation. It updates the `Context' map with the loaded bitcoin wallet information if successful, or creates a new wallet and adds it to the `bitcoin_wallets' map in the `Context' if the load operation fails due to the wallet already being loaded or an error occurs.
+%%
+%% - `WalletPath' : Path of the loaded bitcoin wallet as a term.
+%%
+%% Returns:
+%% - If load operation is successful:
+%%     - `Context' map with updated bitcoin wallet information.
+%% - If wallet is already loaded:
+%%     - `Context' map with no changes.
+%% - If an error occurs during load operation:
+%%     - Tuple `{ok, BtcWallet}' representing the newly created wallet.
+%%     - `maps:put(bitcoin_wallets, maps:put(WalletPath, BtcWallet, BitcoinWallets), Context)' where `BitcoinWallets' is the existing bitcoin wallets map in the `Context'.
+%% @return : Updated `Context' map or a tuple containing `ok' status and a new map.
+%% @end
+%%
+
+-spec step(
+  Config :: list(),
+  Context :: map(),
+  Keyword :: term(),
+  N :: integer(),
+  WalletPath0 :: list(),
+  Data :: binary()
+) ->
+  map().
 step(
   _Config,
   Context,
-  given_keyword,
+  <<"Given">>,
   _N,
   ["I have loaded a bitcoin wallet from path", WalletPath0],
   _
@@ -42,7 +67,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["I create a new receive address", ReceiveAddress, "with label", Label],
   _
@@ -56,7 +81,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["I transfer", Amount, "BTC from", FromWallet, "to", ToWallet],
   _
@@ -72,7 +97,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the balance must be greater than", ExpectedBalance],
   _

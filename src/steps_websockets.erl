@@ -11,7 +11,7 @@
 step(
   Config,
   Context,
-  given_keyword,
+  <<"Given">>,
   _N,
   ["I open a websocket connection to", Path],
   _
@@ -36,7 +36,7 @@ step(
     1000 -> error(timeout)
   end;
 
-step(_Config, Context, when_keyword, _N, ["I send data on the websocket"], Data) ->
+step(_Config, Context, <<"When">>, _N, ["I send data on the websocket"], Data) ->
   StreamRef = maps:get(websocket_streamref, Context),
   ConnPid = maps:get(websocket_connpid, Context),
   Res = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode(Data)}),
@@ -46,7 +46,7 @@ step(_Config, Context, when_keyword, _N, ["I send data on the websocket"], Data)
 step(
   _Config,
   Context,
-  when_keyword,
+  <<"When">>,
   _N,
   ["I should receive data on the websocket"],
   _
@@ -66,7 +66,7 @@ step(
 step(
   _Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["the received data contains key ", Key, "with value", Value],
   _

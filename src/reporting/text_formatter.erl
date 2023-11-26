@@ -14,8 +14,11 @@ get_keyword(#{color := false}, then_keyword) -> "Then";
 get_keyword(#{color := false}, when_keyword) -> "When";
 get_keyword(#{color := false}, and_keyword) -> "And";
 get_keyword(#{color := false}, given_keyword) -> "Given";
-get_keyword(#{color := false}, scenario_keyword) -> "Scenario";
-get_keyword(#{color := false}, feature_keyword) -> "Feature";
+get_keyword(#{color := false}, scenario_keyword) -> "Scenario:";
+get_keyword(#{color := false}, feature_keyword) -> "Feature:";
+
+get_keyword(#{color := false}, KeyWord) when is_binary(KeyWord) ->
+  binary_to_list(KeyWord);
 
 get_keyword(#{color := true}, Keyword) ->
   color:cyan(get_keyword(#{color => false}, Keyword)).
@@ -78,7 +81,7 @@ format(Config, scenario, {ScenarioName, LineNo, []}) ->
     write_file(
       Config,
       "  ~s ~s line:~p",
-      [get_keyword(Config, scenario_keyword), ScenarioName, LineNo]
+      [get_keyword(Config, <<"Scenario:">>), ScenarioName, LineNo]
     );
 
 format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
@@ -87,7 +90,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
       Config,
       "  ~s ~s line:~p tags: [~p]",
       [
-        get_keyword(Config, scenario_keyword),
+        get_keyword(Config, <<"Scenario:">>),
         ScenarioName,
         LineNo,
         damage_utils:binarystr_join([X || {_Line, X} <- Tags], ",")

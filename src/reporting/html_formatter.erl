@@ -13,7 +13,8 @@
 get_keyword(then_keyword) -> "Then";
 get_keyword(when_keyword) -> "When";
 get_keyword(and_keyword) -> "And";
-get_keyword(given_keyword) -> "Given".
+get_keyword(given_keyword) -> "Given";
+get_keyword(KeyWord) when is_binary(KeyWord) -> binary_to_list(KeyWord).
 
 write_file(#{output := Output}, FormatStr, Args) ->
   ok =

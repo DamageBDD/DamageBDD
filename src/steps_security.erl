@@ -11,7 +11,7 @@
 -export([step/6]).
 -export([scan_ports/2]).
 
-step(_Config, Context, when_keyword, _N, ["I request a port scan"], _) ->
+step(_Config, Context, <<"When">>, _N, ["I request a port scan"], _) ->
   Host = maps:get(host, Context),
   Result = scan_ports(Host),
   ?debugFmt("Result ~p", [Result]),

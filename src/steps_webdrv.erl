@@ -44,7 +44,7 @@ ensure_session(Config, Context) ->
   end.
 
 
-step(Config, Context, and_keyword, _N, ["I click on the link", Link], _) ->
+step(Config, Context, <<"And">>, _N, ["I click on the link", Link], _) ->
   Context = ensure_session(Config, Context),
   case webdrv_session:click_element(default, Link) of
     Link -> Context;
@@ -54,10 +54,10 @@ step(Config, Context, and_keyword, _N, ["I click on the link", Link], _) ->
       maps:put(fail, <<"Page url is ", Url0>>, Context)
   end;
 
-step(_Config, Context, and_keyword, _N, ["I open the site", _Site], _) ->
+step(_Config, Context, <<"And">>, _N, ["I open the site", _Site], _) ->
   Context;
 
-step(Config, Context, and_keyword, _N, ["I open the url", Url], _) ->
+step(Config, Context, <<"And">>, _N, ["I open the url", Url], _) ->
   Context = ensure_session(Config, Context),
   case webdrv_session:set_url(default, Url) of
     ok -> Context;
@@ -72,7 +72,7 @@ step(Config, Context, and_keyword, _N, ["I open the url", Url], _) ->
 step(
   Config,
   Context,
-  then_keyword,
+  <<"Then">>,
   _N,
   ["I expect that the url is", Url],
   _Args
@@ -92,14 +92,14 @@ step(
 step(
   Config,
   Context0,
-  then_keyword,
+  <<"Then">>,
   N,
   ["I expect that the url is not", Url],
   Args
 ) ->
-  step(Config, Context0, given_keyword, N, ["the page url is not", Url], Args);
+  step(Config, Context0, <<"Given">>, N, ["the page url is not", Url], Args);
 
-step(Config, Context0, given_keyword, _N, ["the page url is not", Url], _) ->
+step(Config, Context0, <<"Given">>, _N, ["the page url is not", Url], _) ->
   Context = ensure_session(Config, Context0),
   case webdrv_session:get_url(default) of
     Url ->
