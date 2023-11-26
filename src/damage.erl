@@ -99,10 +99,31 @@ execute(Config, FeatureName) ->
   ).
 
 
+init_logging(RunId, RunDir) ->
+  PidToLog = self(),
+  PidFilter =
+    fun
+      (LogEvent, _) when PidToLog =:= self() -> LogEvent;
+      (_LogEvent, _) -> ignore
+    end,
+  logger:add_handler(
+    RunId,
+    logger_std_h,
+    #{
+      filters => [{PidFilter, []}],
+      config => #{file => filename:join(RunDir, "run.log")}
+    }
+  ),
+  logger:debug("Debug should be logged").
+
+
+deinit_logging(ScheduleId) -> logger:remove_handler(ScheduleId).
+
 execute_file(Config, Filename) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {account, Account} = lists:keyfind(account, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
+  ok = damage_accounts:check_spend(Account, Concurrency),
   try egherkin:parse_file(Filename) of
     {failed, LineNo, Message} ->
       logger:error(
@@ -121,7 +142,6 @@ execute_file(Config, Filename) ->
         BackGround,
         Scenarios
       ),
-      damage_accounts:check_spend(Account, Concurrency),
       {ok, Hash} = damage_ipfs:add({file, Filename}),
       formatter:format(Config, summary, #{feature => Hash, run_id => RunId})
   catch
@@ -138,8 +158,12 @@ execute_feature(
   BackGround,
   Scenarios
 ) ->
+  {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+  init_logging(RunId, RunDir),
   formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
-  [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios].
+  [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios],
+  deinit_logging(RunId).
 
 
 execute_scenario(Config, undefined, Scenario) ->

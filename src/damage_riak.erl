@@ -5,7 +5,17 @@
 -behaviour(poolboy_worker).
 
 -export(
-  [start_link/1, get_connection/0, get/2, put/3, put/4, delete/2, list_keys/1]
+  [
+    start_link/1,
+    get_connection/0,
+    get/2,
+    put/3,
+    put/4,
+    delete/2,
+    list_keys/1,
+    get_index/3,
+    get_index_range/4
+  ]
 ).
 -export(
   [
@@ -18,27 +28,27 @@
     test/0
   ]
 ).
--export([find_active_connection/2]).
+-export([find_active_connection/4]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {connections = []}).
 
 % Define the function find_active_connection
-find_active_connection(Connections, Bucket) ->
-  find_active_connection_helper(Connections, Bucket).
+find_active_connection(Connections, Bucket, Fun, Args) ->
+  find_active_connection_helper(Connections, Bucket, Fun, Args).
 
 % Helper function to iterate through the connections
-find_active_connection_helper([Connection | Rest], Bucket) ->
-  case riakc_pb_socket:list_keys(Connection, Bucket) of
+find_active_connection_helper([Connection | Rest], Bucket, Fun, Args) ->
+  case apply(riakc_pb_socket, Fun, [Connection, Bucket] ++ Args) of
     {ok, Results} -> Results;
 
     Err ->
       logger:error("Unexpected riak error ~p trying next", [Err]),
-      find_active_connection_helper(Rest, Bucket)
+      find_active_connection_helper(Rest, Bucket, Fun, Args)
   end;
 
-find_active_connection_helper([], _) ->
+find_active_connection_helper([], _, _, _) ->
   logger:error("Unexpected riak error not trying next", []),
   false.
 
@@ -51,33 +61,57 @@ start_link(Members) -> gen_server:start_link(?MODULE, Members, []).
 
 get_connection() -> gen_server:call(?MODULE, get_connection).
 
-get(Bucket, Key) -> gen_server:call(?MODULE, {get, Bucket, Key}).
+get(Bucket, Key) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun (Worker) -> gen_server:call(Worker, {get, Bucket, Key}) end
+  ).
 
 put(Bucket, Key, Value) -> put(Bucket, Key, Value, []).
 
-put(Bucket, Key, Value, Index) ->
+put({Type, Bucket}, Key, Value, Index) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {put, {Type, Bucket}, Key, Value, Index})
+    end
+  ).
+
+delete(Bucket, Key) -> gen_server:call(?MODULE, {delete, Bucket, Key}).
+
+list_keys({Type, Bucket}) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun (Worker) -> gen_server:call(Worker, {list_keys, {Type, Bucket}}) end
+  ).
+
+get_index({Type, Bucket}, Index, Key) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {get_index_eq, {Type, Bucket}, Index, Key, []})
+    end
+  ).
+
+get_index_range({Type, Bucket}, Index, StartKey, EndKey) ->
   poolboy:transaction(
     ?MODULE,
     fun
       (Worker) ->
         gen_server:call(
           Worker,
-          {put, {<<"Default">>, Bucket}, Key, Value, Index}
+          {get_index_range, {Type, Bucket}, Index, StartKey, EndKey}
         )
     end
   ).
 
-delete(Bucket, Key) -> gen_server:call(?MODULE, {delete, Bucket, Key}).
-
-list_keys(Bucket) ->
-  poolboy:transaction(
-    ?MODULE,
-    fun
-      (Worker) -> gen_server:call(Worker, {list_keys, {<<"Default">>, Bucket}})
-    end
-  ).
-
 %% GenServer callbacks
+
+init([]) ->
+  {ok, Members} = application:get_env(damage, riak),
+  init(Members);
 
 init(Members) ->
   logger:info("initializing riak cluster ~p", [Members]),
@@ -96,8 +130,13 @@ init(Members) ->
                 logger:info("connected to riak node ~p ~p", [Host, Port]),
                 {true, Pid};
 
-              {error, econnrefused} -> false;
-              _ -> false
+              {error, econnrefused} ->
+                logger:info("disconnected riak node ~p ~p", [Host, Port]),
+                false;
+
+              _ ->
+                logger:info("disconnected riak node ~p ~p", [Host, Port]),
+                false
             end
           catch
             {error, {tcp, econnrefused}} -> false;
@@ -123,23 +162,8 @@ handle_call(
   #state{connections = Connections} = State
 ) ->
   % Perform get operation using the Riak connection
-  case lists:any(
-    fun
-      (Pid) ->
-        case riakc_pb_socket:get(Pid, Bucket, Key) of
-          ok -> true;
-          {error, disconnected} -> false;
-
-          Err ->
-            logger:error("Unexpected riak error ~p", [Err]),
-            false
-        end
-    end,
-    Connections
-  ) of
-    {ok, Object} -> {reply, Object, State};
-    _ -> {reply, error, State}
-  end;
+  Object = find_active_connection(Connections, Bucket, get, [Key]),
+  {reply, Object, State};
 
 handle_call(
   {put, Bucket, Key, Value, Index},
@@ -201,7 +225,21 @@ handle_call(
   _From,
   #state{connections = Connections} = State
 ) ->
-  Res = find_active_connection_helper(Connections, Bucket),
+  Res = find_active_connection(Connections, Bucket, list_keys, []),
+  {reply, Res, State};
+
+handle_call(
+  {get_index_eq, Bucket, Index, Key, Opts},
+  _From,
+  #state{connections = Connections} = State
+) ->
+  {index_results_v1, Res, _, _} =
+    find_active_connection(
+      Connections,
+      Bucket,
+      get_index_eq,
+      [Index, Key, Opts]
+    ),
   {reply, Res, State};
 
 handle_call(_Request, _From, State) -> {reply, {error, unknown_request}, State}.
@@ -217,13 +255,18 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 test() ->
   logger:error("riak put data: ", []),
-  {ok, true} = damage_riak:put(<<"TestBucket">>, <<"Key">>, <<"Value">>),
+  Bucket = {<<"Default">>, <<"TestBucket">>},
+  {ok, true} = damage_riak:put(Bucket, <<"Key2">>, <<"Value">>),
   {ok, true} =
     damage_riak:put(
-      <<"TestBucket">>,
-      <<"Key1">>,
+      Bucket,
+      <<"Key3">>,
       <<"Value">>,
       [{{binary_index, "key1index"}, [<<"bbb">>, <<"aaa">>, <<"ccc">>]}]
     ),
-  Keys = damage_riak:list_keys(<<"TestBucket">>),
+  Obj = damage_riak:get(Bucket, <<"Key3">>),
+  logger:info("riak get data: ~p", [Obj]),
+  Keys = damage_riak:list_keys(Bucket),
+  Keys2 = damage_riak:get_index(Bucket, <<"key1index_bin">>, <<"bbb">>),
+  2 = length(Keys2),
   2 = length(Keys).

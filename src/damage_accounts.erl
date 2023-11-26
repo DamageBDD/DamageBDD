@@ -15,8 +15,7 @@
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
 -export([sign_tx/1]).
-
-%-export([update_schedules/3]).
+-export([update_schedules/3]).
 -export([test_contract_call/1]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -55,6 +54,9 @@ validate_refund_addr(forward, BtcAddress) ->
   end.
 
 
+do_kyc_create(#{<<"business_name">> := BusinessName} = KycData) ->
+  do_kyc_create(maps:merge(KycData, #{<<"full_name">> => BusinessName}));
+
 do_kyc_create(
   #{
     <<"full_name">> := FullName,
@@ -87,7 +89,13 @@ do_kyc_create(
           maps:get(ae_contract_address, Ctxt),
           EncryptedKyc
         ),
-      KycData
+      maps:put(
+        <<"message">>,
+        <<
+          "Account created. Please check email for api key to start using DamageBDD."
+        >>,
+        KycData
+      )
   end.
 
 
@@ -199,8 +207,6 @@ aecli(contract, deploy, Contract, Args) ->
   jsx:decode(binary:list_to_bin(Result), [{labels, atom}]).
 
 
-%
-%generate an erlang gen_server process that monitors a bitcoin address for transactions using the bitcoin core json rpc
 create(RefundAddress) ->
   ?debugFmt("btc refund address ~p ", [RefundAddress]),
   % create ae account and bitcoin account
@@ -312,6 +318,32 @@ refund(Account) ->
   RefundResult.
 
 
+update_schedules(Account, JobId, _Cron) ->
+  ContractCall =
+    aecli(
+      contract,
+      call,
+      binary_to_list(Account),
+      "contracts/account.aes",
+      "update_schedules",
+      [JobId]
+    ),
+  ?debugFmt("call AE contract ~p", [ContractCall]),
+  #{
+    decodedResult
+    :=
+    #{
+      btc_address := _BtcAddress,
+      btc_balance := _BtcBalance,
+      deso_address := _DesoAddress,
+      deso_balance := _DesoBalance,
+      usage := _Usage,
+      deployer := _Deployer
+    } = Results
+  } = ContractCall,
+  ?debugFmt("State ~p ", [Results]).
+
+
 %update_schedules(Account, JobId, Cron)->
 %  ContractCreated =
 %    aecli(
@@ -360,19 +392,20 @@ refund(Account) ->
 %    return vdk_rlp.encode([tag_bytes, vsn_bytes, signatures, tx]);
 %}
 sign_tx(UTx) ->
-  Password = list_to_binary(os:getenv("AE_PASSWORD")),
+  Password = list_to_binary(os:getenv("AE_SECRET_KEY")),
   sign_tx(UTx, Password).
 
 
 sign_tx(UTx, PrivateKey) ->
-  SignData = <<"ae_uat", UTx/binary>>,
-  Signature = enacl:sign_detached(SignData, PrivateKey),
-  TagBytes = <<11>>,
-  VsnBytes = <<1>>,
+  SignData = base64:encode(<<"ae_uat", UTx/binary>>),
+  Signature = enacl:sign_detached(SignData, base64:encode(PrivateKey)),
+  TagBytes = <<11 : 64>>,
+  VsnBytes = <<1 : 64>>,
   {ok, vrlp:encode([TagBytes, VsnBytes, [Signature], UTx])}.
 
 
 test_contract_call(AeAccount) ->
+  JobId = <<"sdds">>,
   {ok, Nonce} = vanillae:next_nonce(AeAccount),
   {ok, ContractData} =
     vanillae:contract_create(AeAccount, "contracts/account.aes", []),
@@ -394,7 +427,7 @@ test_contract_call(AeAccount) ->
       AACI,
       sTx,
       "update_schedule",
-      []
+      [JobId]
     ),
   ?debugFmt("contract call ~p", [ContractCall]),
   {ok, sTx} = sign_tx(ContractCall),

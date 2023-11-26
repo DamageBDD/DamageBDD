@@ -11,8 +11,6 @@
 
 -license("Apache-2.0").
 
--export([execute/2]).
-
 -behaviour(application).
 
 -export([start/2, stop/1]).
@@ -86,13 +84,3 @@ stop(_State) ->
   ok.
 
 %% internal functions
-
-execute(_FeatureName, 0) -> logger:info("ending.", []);
-
-execute(FeatureName, Count) ->
-  logger:info("starting transaction ~p.", [Count]),
-  poolboy:transaction(
-    bdd,
-    fun (Worker) -> gen_server:call(Worker, {execute, FeatureName}) end
-  ),
-  execute(FeatureName, Count - 1).

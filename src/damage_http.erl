@@ -61,6 +61,7 @@ execute_bdd(
   {ok, DataDir} = application:get_env(damage, data_dir),
   AccountDir = filename:join(DataDir, Account),
   {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
+  RunDir = filename:join(AccountDir, RunId),
   TextReport = filename:join([AccountDir, RunId, "report.txt"]),
   Req =
     cowboy_req:stream_reply(
@@ -92,19 +93,19 @@ execute_bdd(
       },
       {feature_dirs, ["../../../../features/", "../features/"]},
       {chromedriver, ?CHROMEDRIVER},
-      {concurrency, Concurrency}
+      {concurrency, Concurrency},
+      {run_id, RunId},
+      {run_dir, RunDir}
     ],
-  RunDir = filename:join(AccountDir, RunId),
-  FeatureDir = filename:join(AccountDir, "features"),
   case filelib:ensure_path(RunDir) of
     ok ->
       BddFileName =
-        filename:join(FeatureDir, string:join([RunId, ".feature"], "")),
+        filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
       case file:write_file(BddFileName, FeatureData) of
         ok ->
           case
           damage:execute_file(
-            [{account, binary_to_list(Account)} | Config],
+            [{account, binary_to_list(Account)}, {run_id, RunId} | Config],
             BddFileName
           ) of
             [

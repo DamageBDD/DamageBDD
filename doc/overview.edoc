@@ -1,9 +1,7 @@
 @author Steven Joseph
-@copyright 2021 Steven Joseph 
+@copyright 2023 Steven Joseph 
 @version 1.0.0
-@title DamageBDD - Run load tests using BDD
+@title DamageBDD - Behaviour verification at planet scale.
 @doc
 DamageBDD exploits erlang's superior concurrency model to run BDD tests concurrently, use it to damage your webserver. 
-
-Currently only basic HTTP steps are implemented.
 

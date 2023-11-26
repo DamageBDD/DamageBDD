@@ -13,7 +13,8 @@
     terminate/2,
     code_change/3,
     test/0,
-    add/1
+    add/1,
+    get/2
   ]
 ).
 
@@ -72,6 +73,11 @@ handle_call({add, {file, File}}, _From, #{connection := Connection} = State) ->
   logger:info("added data to ipfs node ~p", [Resp]),
   {reply, Resp, State};
 
+handle_call({get, Hash, FileName}, _From, #{connection := Connection} = State) ->
+  Resp = ipfs:get(Connection, Hash, FileName, ?DEFAULT_IPFS_TIMEOUT),
+  logger:info("get data from ipfs node ~p", [Resp]),
+  {reply, Resp, State};
+
 handle_call(Request, _From, State) ->
   logger:error("unknown_request ~p", [Request]),
   {reply, {error, unknown_request}, State}.
@@ -95,6 +101,24 @@ add({data, Data, FileName}) ->
           {add, {data, Data, FileName}},
           ?DEFAULT_IPFS_TIMEOUT
         )
+    end
+  );
+
+add({file, FileName}) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {add, {file, FileName}}, ?DEFAULT_IPFS_TIMEOUT)
+    end
+  ).
+
+get(Hash, FileName) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {get, Hash, FileName}, ?DEFAULT_IPFS_TIMEOUT)
     end
   ).
 
