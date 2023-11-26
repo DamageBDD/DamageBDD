@@ -29,7 +29,15 @@ ensure_session(Config, Context) ->
         {ok, WebDriverPid} -> maps:put(chromedriver, WebDriverPid, Context);
 
         {error, {already_started, WebDriverPid}} ->
-          maps:put(chromedriver, WebDriverPid, Context)
+          maps:put(chromedriver, WebDriverPid, Context);
+
+        {error, {html_error, {failed_connect, Error}}} ->
+          logger:error("Webdriver error ~p", [Error]),
+          maps:put(
+            fail,
+            <<"Webdriver error, please try again later.">>,
+            Context
+          )
       end;
 
     _WebDriverPid0 -> Context
