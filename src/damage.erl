@@ -25,6 +25,7 @@
   ]
 ).
 -export([execute_file/2, execute/1, execute/2]).
+-export([get_default_config/3]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -269,7 +270,8 @@ execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 execute_step(Config, Step, #{fail := _} = Context) ->
   logger:info("step skipped: ~p.", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
-  formatter:format(Config, step, {StepKeyWord, LineNo, Body, [], Context, skip}),
+  {Body1, Args1} = damage_utils:render_body_args(Body, Context),
+  formatter:format(Config, step, {StepKeyWord, LineNo, Body1, Args1, Context, skip}),
   Context;
 
 execute_step(Config, Step, Context) ->
@@ -350,3 +352,31 @@ get_global_template_context(Config, Context) ->
       )
     )
   ).
+
+
+get_default_config(Account, Concurrency, Formatters) ->
+  {ok, DataDir} = application:get_env(damage, data_dir),
+  {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
+  {ok, ChromeDriver} = application:get_env(damage, chromedriver),
+  AccountDir = filename:join(DataDir, Account),
+  RunDir = filename:join(AccountDir, RunId),
+  TextReport = filename:join([AccountDir, RunId, "report.txt"]),
+  TextReportColor = filename:join([AccountDir, RunId, "report_color.txt"]),
+  HtmlReport = filename:join([AccountDir, RunId, "report.html"]),
+  ok = filelib:ensure_path(RunDir),
+  [
+    {
+      formatters,
+      [
+        {text, #{output => TextReportColor, color => true}},
+        {text, #{output => TextReport, color => false}},
+        {html, #{output => HtmlReport}} | Formatters
+      ]
+    },
+    {feature_dirs, ["../../../../features/", "../features/"]},
+    {chromedriver, ChromeDriver},
+    {concurrency, Concurrency},
+    {run_id, RunId},
+    {run_dir, RunDir},
+    {account, binary_to_list(Account)}
+  ].
