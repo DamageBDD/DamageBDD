@@ -54,8 +54,7 @@ step(Config, Context, <<"And">>, _N, ["I click on the link", Link], _) ->
       maps:put(fail, <<"Page url is ", Url0>>, Context)
   end;
 
-step(_Config, Context, <<"And">>, _N, ["I open the site", _Site], _) ->
-  Context;
+step(_Config, Context, <<"And">>, _N, ["I open the site", _Site], _) -> Context;
 
 step(Config, Context, <<"And">>, _N, ["I open the url", Url], _) ->
   Context = ensure_session(Config, Context),
@@ -69,14 +68,7 @@ step(Config, Context, <<"And">>, _N, ["I open the url", Url], _) ->
       maps:put(fail, Msg, Context)
   end;
 
-step(
-  Config,
-  Context,
-  <<"Then">>,
-  _N,
-  ["I expect that the url is", Url],
-  _Args
-) ->
+step(Config, Context, <<"Then">>, _N, ["I expect that the url is", Url], _Args) ->
   Context = ensure_session(Config, Context),
   case webdrv_session:get_url(default) of
     Url -> Context;

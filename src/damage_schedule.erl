@@ -61,38 +61,15 @@ execute_bdd(ScheduleId, Concurrency) ->
     "scheduled job execution ~p Account ~p, Hash ~p.",
     [ScheduleId, Account, Hash]
   ),
-  {ok, DataDir} = application:get_env(damage, data_dir),
-  {ok, ChromeDriver} = application:get_env(damage, chromedriver),
-  AccountDir = filename:join(DataDir, Account),
-  {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
-  TextReport = filename:join([AccountDir, RunId, "report.txt"]),
-  RunDir = filename:join(AccountDir, RunId),
-  Config =
-    [
-      {
-        formatters,
-        [
-          {text, #{output => TextReport, color => true}},
-          {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
-        ]
-      },
-      {feature_dirs, ["../../../../features/", "../features/"]},
-      {chromedriver, ChromeDriver},
-      {concurrency, Concurrency}
-    ],
-  case filelib:ensure_path(RunDir) of
-    ok ->
-      BddFileName =
-        filename:join(RunDir, string:join(["scheduled.feature"], "")),
-      ok = damage_ipfs:get(ScheduleId, BddFileName),
-      logger:debug(
-        "scheduled job execution config ~p feature ~p scheduleid ~p.",
-        [Config, BddFileName, ScheduleId]
-      ),
-      damage:execute_file(Config, BddFileName);
-
-    Err -> logger:error("Write file failed ~p.", [Err])
-  end.
+  Config = damage:get_default_config(Account, Concurrency, []),
+  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+  BddFileName = filename:join(RunDir, string:join(["scheduled.feature"], "")),
+  ok = damage_ipfs:get(ScheduleId, BddFileName),
+  logger:debug(
+    "scheduled job execution config ~p feature ~p scheduleid ~p.",
+    [Config, BddFileName, ScheduleId]
+  ),
+  damage:execute_file(Config, BddFileName).
 
 
 do_schedule({Concurrency, ScheduleId}, daily, every, Hour, Minute, AMPM) ->

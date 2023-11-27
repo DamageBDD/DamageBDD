@@ -55,156 +55,105 @@ get_concurrency_level(_) -> 1.
 execute_bdd(
   #{feature := FeatureData, account := Account, concurrency := Concurrency} =
     FeaturePayload,
-  UserAgent,
   Req0
 ) ->
-  {ok, DataDir} = application:get_env(damage, data_dir),
-  AccountDir = filename:join(DataDir, Account),
-  {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
-  RunDir = filename:join(AccountDir, RunId),
-  TextReport = filename:join([AccountDir, RunId, "report.txt"]),
   Req =
     cowboy_req:stream_reply(
       200,
       #{<<"content-type">> => <<"text/plain">>},
       Req0
     ),
-  Config =
+  Formatters =
     [
       {
-        formatters,
-        [
-          {
-            text,
-            #{
-              output => Req,
-              color => maps:get(color_formatter, FeaturePayload, false)
-            }
-          },
-          {
-            text,
-            #{
-              output => TextReport,
-              color => maps:get(color_formatter, FeaturePayload, false)
-            }
-          },
-          {html, #{output => filename:join([AccountDir, RunId, "report.html"])}}
-        ]
-      },
-      {feature_dirs, ["../../../../features/", "../features/"]},
-      {chromedriver, ?CHROMEDRIVER},
-      {concurrency, Concurrency},
-      {run_id, RunId},
-      {run_dir, RunDir}
+        text,
+        #{
+          output => Req,
+          color => maps:get(color_formatter, FeaturePayload, false)
+        }
+      }
     ],
-  case filelib:ensure_path(RunDir) of
+  Config = damage:get_default_config(Account, Concurrency, Formatters),
+  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+  BddFileName = filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
+  case file:write_file(BddFileName, FeatureData) of
     ok ->
-      BddFileName =
-        filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
-      case file:write_file(BddFileName, FeatureData) of
-        ok ->
-          case
-          damage:execute_file(
-            [{account, binary_to_list(Account)}, {run_id, RunId} | Config],
-            BddFileName
-          ) of
-            [
+      case damage:execute_file(Config, BddFileName) of
+        [
+          #{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}}
+          | _
+        ] ->
+          Response =
+            #{
+              status => <<"notok">>,
+              failing_step
+              =>
+              list_to_binary(damage_utils:lists_concat(Step, " ")),
+              line => Line
+            },
+          {400, jsx:encode(Response)};
+
+        {parse_error, LineNo, Message} ->
+          logger:debug("failure ~p.", [Message]),
+          {
+            400,
+            jsx:encode(
               #{
-                fail := _FailReason,
-                failing_step := {_KeyWord, Line, Step, _Args}
+                status => <<"notok">>,
+                message => list_to_binary(Message),
+                line => LineNo,
+                hint
+                =>
+                <<
+                  "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+                >>
               }
-              | _
-            ] ->
-              Response =
-                #{
-                  status => <<"notok">>,
-                  failing_step
-                  =>
-                  list_to_binary(damage_utils:lists_concat(Step, " ")),
-                  line => Line
-                },
-              {400, jsx:encode(Response)};
+            )
+          };
 
-            {parse_error, LineNo, Message} ->
-              logger:debug("failure ~p.", [Message]),
-              {
-                400,
-                jsx:encode(
-                  #{
-                    status => <<"notok">>,
-                    message => list_to_binary(Message),
-                    line => LineNo,
-                    hint
-                    =>
-                    <<
-                      "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
-                    >>
-                  }
-                )
-              };
-
-            _Ok ->
-              %logger:debug("No failure ~p.", [Ok]),
-              case UserAgent of
-                <<"curl", _/binary>> ->
-                  {ok, ReportData} = file:read_file(TextReport),
-                  {200, ReportData};
-
-                _Other ->
-                  {
-                    200,
-                    jsx:encode(
-                      #{
-                        status => <<"ok">>,
-                        run_id => list_to_binary(RunId),
-                        message => <<"">>
-                      }
-                    )
-                  }
-              end
-          end;
-
-        Err ->
-          logger:error("Write file failed ~p.", [Err]),
-          {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+        ResultOk ->
+          %logger:debug("No failure ~p.", [Ok]),
+          {200, jsx:encode(ResultOk)}
       end;
 
     Err ->
-      logger:error("Data dir creation faild ~p.", [Err]),
+      logger:error("Write file failed ~p.", [Err]),
       {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
   end.
 
 
-check_execute_bdd(
-  #{account := Account, concurrency := Concurrency} = FeaturePayload,
-  UserAgent,
-  Req
-) ->
-  Concurrency = get_concurrency_level(Concurrency),
-  AvailConcurrency = damage_accounts:check_spend(Account, Concurrency),
-  case AvailConcurrency of
-    0 ->
-      {
-        400,
-        jsx:encode(
-          #{
-            status => <<"notok">>,
-            message
-            =>
-            <<
-              "Insufficient balance, please top up balance at `/api/accounts/topup`"
-            >>
-          }
-        )
-      };
+check_execute_bdd(#{concurrency := Concurrency0} = _FeaturePayload, Req0) ->
+  Concurrency = get_concurrency_level(Concurrency0),
+  case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
+    <<"ak_", _Rest>> = Account ->
+      case damage_accounts:check_spend(Account, Concurrency) of
+        0 ->
+          {
+            400,
+            jsx:encode(
+              #{
+                status => <<"notok">>,
+                message
+                =>
+                <<
+                  "Insufficient balance, please top up balance at `/api/accounts/topup`"
+                >>
+              }
+            )
+          };
 
-    _ ->
-      execute_bdd(
-        maps:put(concurrency, AvailConcurrency, FeaturePayload),
-        UserAgent,
-        Req
-      ),
-      damage_accounts:confirm_spend(Account, AvailConcurrency)
+        Concurrency -> {ok, Account, Concurrency}
+      end;
+
+    Account ->
+      IP = get_ip(Req0),
+      case throttle:check(damage_api_rate, IP) of
+        {limit_exceeded, _, _} ->
+          lager:warning("IP ~p exceeded api limit", [IP]),
+          {error, 429, Req0};
+
+        _ -> {ok, Account, 1}
+      end
   end.
 
 
@@ -213,11 +162,7 @@ from_json(Req, State) ->
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
       #{feature := _FeatureData, account := _Account} = FeatureJson ->
-        execute_bdd(
-          FeatureJson,
-          cowboy_req:header(<<"user-agent">>, Req, ""),
-          Req
-        );
+        execute_bdd(FeatureJson, Req);
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),
@@ -238,48 +183,41 @@ get_ip(Req0) ->
 from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
   logger:debug("Req ~p.", [Req]),
-  UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
+  _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
   Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req0, 1),
   ColorFormatter =
     case cowboy_req:match_qs([{color, [], <<"true">>}], Req0) of
       #{color := <<"true">>} -> true;
       _Other -> false
     end,
-  {_Status, _Resp0} =
-    case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
-      <<"ak_", _Rest>> = Account ->
-        check_execute_bdd(
+  case
+  check_execute_bdd(
+    #{
+      feature => Body,
+      color_formatter => ColorFormatter,
+      concurrency => Concurrency
+    },
+    Req0
+  ) of
+    {ok, Account, AvailConcurrency} ->
+      execute_bdd(
+        maps:put(
+          concurrency,
+          AvailConcurrency,
           #{
             feature => Body,
             account => Account,
             color_formatter => ColorFormatter,
-            concurrency => Concurrency
-          },
-          UserAgent,
-          Req0
-        );
+            concurrency => 1
+          }
+        ),
+        Req
+      ),
+      damage_accounts:confirm_spend(Account, AvailConcurrency),
+      {stop, Req0, State};
 
-      Account ->
-        IP = get_ip(Req0),
-        case throttle:check(damage_api_rate, IP) of
-          {limit_exceeded, _, _} ->
-            lager:warning("IP ~p exceeded api limit", [IP]),
-            {error, 429, Req};
-
-          _ ->
-            execute_bdd(
-              #{
-                feature => Body,
-                account => Account,
-                color_formatter => ColorFormatter,
-                concurrency => 1
-              },
-              UserAgent,
-              Req0
-            )
-        end
-    end,
-  {stop, Req0, State}.
+    Req -> Req
+  end.
 
 
 to_html(Req, State) ->

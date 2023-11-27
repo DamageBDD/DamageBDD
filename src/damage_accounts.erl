@@ -17,6 +17,7 @@
 -export([sign_tx/1]).
 -export([update_schedules/3]).
 -export([test_contract_call/1]).
+-export([confirm_spend/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -28,7 +29,8 @@ content_types_provided(Req, State) ->
   {
     [
       {{<<"application">>, <<"json">>, []}, to_json},
-      {{<<"text">>, <<"plain">>, '*'}, to_text}
+      {{<<"text">>, <<"plain">>, '*'}, to_text},
+      {{<<"text">>, <<"html">>, '*'}, to_html}
     ],
     Req,
     State
@@ -77,25 +79,37 @@ do_kyc_create(
           base64:decode(list_to_binary(KycKey)),
           crypto:strong_rand_bytes(32)
         ),
-      Ctxt = maps:merge(create(RefundAddress), KycData),
-      damage_utils:send_email(
-        {FullName, ToEmail},
-        <<"DamageBDD SignUp">>,
-        damage_utils:load_template("signup_email.mustache", Ctxt)
-      ),
-      {ok, _Obj} =
-        damage_riak:put(
-          <<"kyc">>,
-          maps:get(ae_contract_address, Ctxt),
-          EncryptedKyc
-        ),
-      maps:put(
-        <<"message">>,
-        <<
-          "Account created. Please check email for api key to start using DamageBDD."
-        >>,
-        KycData
-      )
+        case create(RefundAddress) of
+              #{status := <<"ok">>} = Data ->
+                Ctxt = maps:merge(Data, KycData),
+                damage_utils:send_email(
+                    {FullName, ToEmail},
+                    <<"DamageBDD SignUp">>,
+                    damage_utils:load_template("signup_email.mustache", Ctxt)
+                ),
+                {ok, _Obj} =
+                    damage_riak:put(
+                    {<<"Default">>, <<"kyc">>},
+                    maps:get(ae_contract_address, Ctxt),
+                    EncryptedKyc
+                    ),
+                maps:put(
+                    <<"message">>,
+                    <<
+                    "Account created. Please check email for api key to start using DamageBDD."
+                    >>,
+                    KycData
+                );
+              #{status := <<"notok">>} ->
+                maps:put(
+                    <<"message">>,
+                    <<
+                    "Account creation failed. ."
+                    >>,
+                    KycData
+                )
+
+          end
   end.
 
 
@@ -103,22 +117,19 @@ do_action(<<"create_from_yaml">>, Req) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   ?debugFmt(" yaml data: ~p ", [Data]),
   {ok, [Data0]} = fast_yaml:decode(Data, [maps]),
-  do_action(<<"create">>, Data0);
+  do_kyc_create(Data0);
 
 do_action(<<"create_from_json">>, Req) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   ?debugFmt(" json data: ~p ", [Data]),
   Data0 = jsx:decode(Data, [return_maps]),
-  do_action(<<"create">>, Data0);
+  do_kyc_create(Data0);
 
-do_action(<<"create">>, #{<<"refund_address">> := RefundAddress} = Data) ->
-  case validate_refund_addr(forward, RefundAddress) of
-    {ok, RefundAddress} -> do_kyc_create(Data);
-
-    Other ->
-      ?debugFmt("refund_address data: ~p ", [Other]),
-      <<"Invalid refund_address.">>
-  end;
+do_action(<<"create">>, Req) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  ?debugFmt("Form data ~p", [Data]),
+  FormData = maps:from_list(cow_qs:parse_qs(Data)),
+  do_kyc_create(FormData);
 
 do_action(<<"balance">>, Req) ->
   #{account := Account} = cowboy_req:match_qs([account], Req),
@@ -138,16 +149,18 @@ to_json(Req, State) ->
   {Body, Req, State}.
 
 
-to_text(Req, State) -> to_json(Req, State).
+to_text(Req, State) -> to_html(Req, State).
 
 to_html(Req, State) ->
-  Body = damage_utils:load_template("create.mustache", #{body => <<"Test">>}),
+  Body =
+    damage_utils:load_template("create_account.mustache", #{body => <<"Test">>}),
   {Body, Req, State}.
 
 
 from_html(Req, State) ->
   Result = do_action(cowboy_req:binding(action, Req), Req),
-  Resp = cowboy_req:set_resp_body(Result, Req),
+  Body = damage_utils:load_template("create_account.mustache", Result),
+  Resp = cowboy_req:set_resp_body(Body, Req),
   {stop, cowboy_req:reply(200, Resp), State}.
 
 
@@ -208,31 +221,38 @@ aecli(contract, deploy, Contract, Args) ->
 
 
 create(RefundAddress) ->
-  ?debugFmt("btc refund address ~p ", [RefundAddress]),
-  % create ae account and bitcoin account
-  #{result := #{contractId := ContractAddress}} =
-    aecli(contract, deploy, "contracts/account.aes", []),
-  {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
-  ?debugFmt(
-    "debug created AE contractid ~p ~p, ",
-    [ContractAddress, BtcAddress]
-  ),
-  ContractCreated =
-    aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "set_btc_state",
-      [BtcAddress, RefundAddress]
-    ),
-  ?debugFmt("debug created AE contract ~p", [ContractCreated]),
-  #{
-    status => <<"ok">>,
-    btc_address => BtcAddress,
-    ae_contract_address => ContractAddress,
-    btc_refund_address => RefundAddress
-  }.
+  case validate_refund_addr(forward, RefundAddress) of
+    {ok, RefundAddress} ->
+      ?debugFmt("btc refund address ~p ", [RefundAddress]),
+      % create ae account and bitcoin account
+      #{result := #{contractId := ContractAddress}} =
+        aecli(contract, deploy, "contracts/account.aes", []),
+      {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
+      ?debugFmt(
+        "debug created AE contractid ~p ~p, ",
+        [ContractAddress, BtcAddress]
+      ),
+      ContractCreated =
+        aecli(
+          contract,
+          call,
+          binary_to_list(ContractAddress),
+          "contracts/account.aes",
+          "set_btc_state",
+          [BtcAddress, RefundAddress]
+        ),
+      ?debugFmt("debug created AE contract ~p", [ContractCreated]),
+      #{
+        status => <<"ok">>,
+        btc_address => BtcAddress,
+        ae_contract_address => ContractAddress,
+        btc_refund_address => RefundAddress
+      };
+
+    Other ->
+      ?debugFmt("refund_address data: ~p ", [Other]),
+      #{status => <<"notok">>, message => <<"Invalid refund_address.">>}
+  end.
 
 
 store_profile(Account) ->
@@ -245,6 +265,16 @@ check_spend("guest", _Concurrency) -> ok;
 check_spend(<<"guest">>, _Concurrency) -> ok;
 
 check_spend(Account, Concurrency) ->
+  CallResult =
+    aecli(
+      contract,
+      call,
+      Account,
+      "contracts/account.aes",
+      "get_btcaddress",
+      []
+    ),
+  ?debugFmt("Ae call result ~p", [CallResult]),
   {ok, BtcBalance} = bitcoin:getreceivedbyaddress(list_to_binary(Account)),
   ?debugFmt("btc_balance ~p", [BtcBalance]),
   {ok, #{balance := Balance, id := Account}} = vanillae:acc(Account),
@@ -342,7 +372,21 @@ update_schedules(Account, JobId, _Cron) ->
     } = Results
   } = ContractCall,
   ?debugFmt("State ~p ", [Results]).
+confirm_spend(<<"guest">>, _)->
+    ok;
+confirm_spend(Account, Amount)->
+  ContractCall =
+    aecli(
+      contract,
+      call,
+      binary_to_list(Account),
+      "contracts/account.aes",
+      "confirm_spend",
+      [Amount]
+    ),
+  ?debugFmt("call AE contract ~p", [ContractCall]),
 
+    ok.
 
 %update_schedules(Account, JobId, Cron)->
 %  ContractCreated =

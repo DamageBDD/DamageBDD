@@ -29,8 +29,8 @@
 -export([encrypt/3, decrypt/3]).
 
 get_stepargs(Body) when is_list(Body) ->
-  case lists:keytake(docstring, 1, Body) of
-    {value, {docstring, Doc}, Body0} ->
+  case lists:keytake(<<"\"\"\"">>, 1, Body) of
+    {value, {<<"\"\"\"">>, Doc}, Body0} ->
       {
         damage_utils:binarystr_join(Body0, <<" ">>),
         damage_utils:binarystr_join(Doc)
@@ -138,6 +138,10 @@ setup_vanillae_deps() ->
 convert_context(Context) ->
   lists:map(
     fun
+      ({Key, Value}) when is_binary(Key), is_binary(Value) ->
+        {binary_to_atom(Key), binary_to_list(Value)};
+
+      ({Key, Value}) when is_binary(Key) -> {binary_to_atom(Key), Value};
       ({Key, Value}) when is_binary(Value) -> {Key, binary_to_list(Value)};
       (Value) -> Value
     end,
