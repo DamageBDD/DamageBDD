@@ -17,12 +17,20 @@ get_keyword(given_keyword) -> "Given";
 get_keyword(KeyWord) when is_binary(KeyWord) -> binary_to_list(KeyWord).
 
 write_file(#{output := Output}, FormatStr, Args) ->
+  [_, _, PidStr0] = string:replace(pid_to_list(self()), "<", "", all),
+  [PidStr, _, _] = string:replace(PidStr0, ">", "", all),
+  OutputFile =
+    mustache:render(
+      binary_to_list(Output),
+      [{process_id, PidStr}, {node_id, node()}]
+    ),
   ok =
     file:write_file(
-      Output,
+      OutputFile,
       lists:flatten(io_lib:format(FormatStr, Args)),
       [append]
     ).
+
 
 format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =

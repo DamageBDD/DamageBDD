@@ -46,9 +46,16 @@ write_file(#{output := Req}, FormatStr, Args) when is_map(Req) ->
   ok;
 
 write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) ->
+  [_, _, PidStr0] = string:replace(pid_to_list(self()), "<", "", all),
+  [PidStr, _, _] = string:replace(PidStr0, ">", "", all),
+  OutputFile =
+    mustache:render(
+      binary_to_list(Output),
+      [{process_id, PidStr}, {node_id, node()}]
+    ),
   ok =
     file:write_file(
-      Output,
+      OutputFile,
       lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
       [append]
     ).
