@@ -179,11 +179,25 @@ execute_file(Config, Filename) ->
       {parse_error, LineNo, Message};
 
     {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
-      execute_feature_concurrent(
-        [Config, Feature, LineNo, Tags, Description, BackGround, Scenarios],
-        Concurrency,
-        []
-      ),
+      case Concurrency of
+        1 ->
+          execute_feature(
+            Config,
+            Feature,
+            LineNo,
+            Tags,
+            Description,
+            BackGround,
+            Scenarios
+          );
+
+        _ ->
+          execute_feature_concurrent(
+            [Config, Feature, LineNo, Tags, Description, BackGround, Scenarios],
+            Concurrency,
+            []
+          )
+      end,
       {ok, Hash} = damage_ipfs:add({file, Filename}),
       formatter:format(Config, summary, #{feature => Hash, run_id => RunId})
   catch
@@ -198,7 +212,7 @@ execute_feature_concurrent(Args, N, Acc) ->
     Args,
     N - 1,
     [
-      % poolboy:transaction(
+      %apply(?MODULE, execute_feature, Args)
       spawn(?MODULE, execute_feature, Args) | Acc
     ]
   ).

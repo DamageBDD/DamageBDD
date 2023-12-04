@@ -60,12 +60,13 @@ execute_bdd(
   Formatters =
     case Concurrency of
       1 ->
-    Req =
-        cowboy_req:stream_reply(
-        200,
-        #{<<"content-type">> => <<"text/plain">>},
-        Req0
-        ),
+        Req =
+          cowboy_req:stream_reply(
+            200,
+            #{<<"content-type">> => <<"text/plain">>},
+            Req0
+          ),
+        logger:info("execute_bdd req ~p", [Req]),
         [
           {
             text,
@@ -198,26 +199,29 @@ from_html(Req0, State) ->
     Req0
   ) of
     {ok, Account, AvailConcurrency} ->
-      logger:debug("running tests ~p.", [AvailConcurrency]),
-      {200, _} =execute_bdd(
-        #{
-          feature => Body,
-          account => Account,
-          color_formatter => ColorFormatter,
-          concurrency => AvailConcurrency
-        },
-        Req0
-      ),
-      Resp0 =
-        jsx:encode(damage_accounts:confirm_spend(Account, AvailConcurrency)),
-           Res1 = cowboy_req:set_resp_body(Resp0, Req),
-        {true, Res1, State};
-      %{{true,<<"ok">>}, Req0, State};
-      %{{true,  Resp0},cowboy_req:reply(200, Req0), State};
+      {200, _} =
+        execute_bdd(
+          #{
+            feature => Body,
+            account => Account,
+            color_formatter => ColorFormatter,
+            concurrency => AvailConcurrency
+          },
+          Req0
+        ),
+      case AvailConcurrency of
+        1 -> {stop, Req0, State};
 
-    Req -> 
+        _ ->
+          Resp0 =
+            jsx:encode(damage_accounts:confirm_spend(Account, AvailConcurrency)),
+          Res1 = cowboy_req:set_resp_body(Resp0, Req),
+          {true, Res1, State}
+      end;
+
+    Req ->
       logger:debug("failed tests ~p.", [Req]),
-        Req
+      Req
   end.
 
 

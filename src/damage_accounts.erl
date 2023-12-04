@@ -79,37 +79,31 @@ do_kyc_create(
           base64:decode(list_to_binary(KycKey)),
           crypto:strong_rand_bytes(32)
         ),
-        case create(RefundAddress) of
-              #{status := <<"ok">>} = Data ->
-                Ctxt = maps:merge(Data, KycData),
-                damage_utils:send_email(
-                    {FullName, ToEmail},
-                    <<"DamageBDD SignUp">>,
-                    damage_utils:load_template("signup_email.mustache", Ctxt)
-                ),
-                {ok, _Obj} =
-                    damage_riak:put(
-                    {<<"Default">>, <<"kyc">>},
-                    maps:get(ae_contract_address, Ctxt),
-                    EncryptedKyc
-                    ),
-                maps:put(
-                    <<"message">>,
-                    <<
-                    "Account created. Please check email for api key to start using DamageBDD."
-                    >>,
-                    KycData
-                );
-              #{status := <<"notok">>} ->
-                maps:put(
-                    <<"message">>,
-                    <<
-                    "Account creation failed. ."
-                    >>,
-                    KycData
-                )
+      case create(RefundAddress) of
+        #{status := <<"ok">>} = Data ->
+          Ctxt = maps:merge(Data, KycData),
+          damage_utils:send_email(
+            {FullName, ToEmail},
+            <<"DamageBDD SignUp">>,
+            damage_utils:load_template("signup_email.mustache", Ctxt)
+          ),
+          {ok, _Obj} =
+            damage_riak:put(
+              {<<"Default">>, <<"kyc">>},
+              maps:get(ae_contract_address, Ctxt),
+              EncryptedKyc
+            ),
+          maps:put(
+            <<"message">>,
+            <<
+              "Account created. Please check email for api key to start using DamageBDD."
+            >>,
+            KycData
+          );
 
-          end
+        #{status := <<"notok">>} ->
+          maps:put(<<"message">>, <<"Account creation failed. .">>, KycData)
+      end
   end.
 
 
@@ -132,12 +126,12 @@ do_action(<<"create">>, Req) ->
   do_kyc_create(FormData);
 
 do_action(<<"balance">>, Req) ->
-  #{account := Account} = cowboy_req:match_qs([account], Req),
-  balance(Account);
+  #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
+  balance(ContractAddress);
 
 do_action(<<"refund">>, Req) ->
-  #{account := Account} = cowboy_req:match_qs([account], Req),
-  refund(Account).
+  #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
+  refund(ContractAddress).
 
 
 to_json(Req, State) ->
@@ -255,47 +249,34 @@ create(RefundAddress) ->
   end.
 
 
-store_profile(Account) ->
+store_profile(ContractAddress) ->
   % store config schedule etc
-  logger:debug("debug ~p", [Account]),
+  logger:debug("debug ~p", [ContractAddress]),
   ok.
 
 
 check_spend("guest", _Concurrency) -> ok;
 check_spend(<<"guest">>, _Concurrency) -> ok;
 
-check_spend(Account, Concurrency) ->
-  CallResult =
+check_spend(ContractAddress, _Concurrency) ->
+  #{decodedResult := Balance} =
     aecli(
       contract,
       call,
-      Account,
+      binary_to_list(ContractAddress),
       "contracts/account.aes",
-      "get_btcaddress",
+      "total_balance",
       []
     ),
-  ?debugFmt("Ae call result ~p", [CallResult]),
-  {ok, BtcBalance} = bitcoin:getreceivedbyaddress(list_to_binary(Account)),
-  ?debugFmt("btc_balance ~p", [BtcBalance]),
-  {ok, #{balance := Balance, id := Account}} = vanillae:acc(Account),
-  case Balance of
-    B when B < 1 ->
-      ?debugFmt("top up required ~p for concurrency ~p", [B, Concurrency]);
-
-    C when C > 1 ->
-      ?debugFmt("top up not required ~p fir concurrency ~p", [C, Concurrency])
-  end,
-  %check_balance_top_up(Account, Concurrency),
-  %contract_call(spend, Account,  Concurrency),
-  ok.
+  binary_to_integer(Balance).
 
 
-balance(Account) ->
+balance(ContractAddress) ->
   ContractCall =
     aecli(
       contract,
       call,
-      binary_to_list(Account),
+      binary_to_list(ContractAddress),
       "contracts/account.aes",
       "get_state",
       []
@@ -314,19 +295,19 @@ balance(Account) ->
     } = Results
   } = ContractCall,
   ?debugFmt("State ~p ", [Results]),
-  {ok, Transactions} = bitcoin:listtransactions(Account),
+  {ok, Transactions} = bitcoin:listtransactions(ContractAddress),
   ?debugFmt("Transactions ~p ", [Transactions]),
   {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
   Mesg =
     io:format(
       "Balance of account ~p usage is ~p btc_balance ~p btc_held ~p.",
-      [Account, Usage, BtcBalance, RealBtcBalance]
+      [ContractAddress, Usage, BtcBalance, RealBtcBalance]
     ),
   logger:debug(Mesg),
   maps:put(btc_refund_balance, RealBtcBalance, Results).
 
 
-refund(Account) ->
+refund(ContractAddress) ->
   #{
     btc_address := BtcAddress,
     btc_refund_address := BtcRefundAddress,
@@ -335,25 +316,25 @@ refund(Account) ->
     deso_balance := _DesoBalance,
     balance := Balance,
     deployer := _Deployer
-  } = balance(Account),
+  } = balance(ContractAddress),
   {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
   ?debugFmt("real balance ~p ", [RealBtcBalance]),
   {ok, RefundResult} =
     bitcoin:sendtoaddress(
       BtcRefundAddress,
       RealBtcBalance - binary_to_integer(Balance),
-      Account
+      ContractAddress
     ),
   ?debugFmt("Refund result ~p ", [RefundResult]),
   RefundResult.
 
 
-update_schedules(Account, JobId, _Cron) ->
+update_schedules(ContractAddress, JobId, _Cron) ->
   ContractCall =
     aecli(
       contract,
       call,
-      binary_to_list(Account),
+      binary_to_list(ContractAddress),
       "contracts/account.aes",
       "update_schedules",
       [JobId]
@@ -372,28 +353,42 @@ update_schedules(Account, JobId, _Cron) ->
     } = Results
   } = ContractCall,
   ?debugFmt("State ~p ", [Results]).
-confirm_spend(<<"guest">>, _)->
-    ok;
-confirm_spend(Account, Amount)->
+
+
+confirm_spend(<<"guest">>, _) -> ok;
+
+confirm_spend(ContractAddress, Amount) ->
   ContractCall =
     aecli(
       contract,
       call,
-      binary_to_list(Account),
+      binary_to_list(ContractAddress),
       "contracts/account.aes",
       "confirm_spend",
       [Amount]
     ),
-  ?debugFmt("call AE contract ~p", [ContractCall]),
+  #{
+    decodedResult
+    :=
+    #{
+      btc_address := _BtcAddress,
+      btc_balance := _BtcBalance,
+      deso_address := _DesoAddress,
+      deso_balance := _DesoBalance,
+      usage := _Usage,
+      deployer := _Deployer
+    } = Balances
+  } = ContractCall,
+  ?debugFmt("call AE contract ~p", [Balances]),
+  Balances.
 
-    ok.
 
-%update_schedules(Account, JobId, Cron)->
+%update_schedules(ContractAddress, JobId, Cron)->
 %  ContractCreated =
 %    aecli(
 %      contract,
 %      call,
-%      binary_to_list(Account),
+%      binary_to_list(ContractAddress),
 %      "contracts/account.aes",
 %      "update_schedules",
 %      [BtcAddress, RefundAddress]
