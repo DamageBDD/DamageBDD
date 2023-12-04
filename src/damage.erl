@@ -24,7 +24,9 @@
     code_change/3
   ]
 ).
--export([execute_file/2, execute/1, execute/2]).
+-export(
+  [execute_data/2, execute_file/2, execute/1, execute/2, execute_feature/7]
+).
 -export([get_default_config/3]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
@@ -40,10 +42,48 @@ handle_call(die, _From, State) -> {stop, {error, died}, dead, State};
 handle_call({execute, FeatureName}, _From, State) ->
   logger:debug("handle_call execute/1 : ~p", [FeatureName]),
   execute(FeatureName),
+  {reply, ok, State};
+
+handle_call(
+  {
+    execute_feature,
+    {Config, Feature, LineNo, Tags, Description, BackGround, Scenarios}
+  },
+  _From,
+  State
+) ->
+  execute_feature(
+    Config,
+    Feature,
+    LineNo,
+    Tags,
+    Description,
+    BackGround,
+    Scenarios
+  ),
   {reply, ok, State}.
 
 
+handle_cast(
+  {
+    execute_feature,
+    {Config, Feature, LineNo, Tags, Description, BackGround, Scenarios}
+  },
+  State
+) ->
+  execute_feature(
+    Config,
+    Feature,
+    LineNo,
+    Tags,
+    Description,
+    BackGround,
+    Scenarios
+  ),
+  {noreply, State};
+
 handle_cast(_Event, State) -> {noreply, State}.
+
 
 handle_info(_Info, State) -> {noreply, State}.
 
@@ -120,11 +160,16 @@ init_logging(RunId, RunDir) ->
 
 deinit_logging(ScheduleId) -> logger:remove_handler(ScheduleId).
 
+execute_data(Config, FeatureData) ->
+  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+  BddFileName = filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
+  ok = file:write_file(BddFileName, FeatureData),
+  execute_file(Config, BddFileName).
+
+
 execute_file(Config, Filename) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-  {account, Account} = lists:keyfind(account, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
-  ok = damage_accounts:check_spend(Account, Concurrency),
   try egherkin:parse_file(Filename) of
     {failed, LineNo, Message} ->
       logger:error(
@@ -134,20 +179,29 @@ execute_file(Config, Filename) ->
       {parse_error, LineNo, Message};
 
     {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
-      execute_feature(
-        Config,
-        Feature,
-        LineNo,
-        Tags,
-        Description,
-        BackGround,
-        Scenarios
+      execute_feature_concurrent(
+        [Config, Feature, LineNo, Tags, Description, BackGround, Scenarios],
+        Concurrency,
+        []
       ),
       {ok, Hash} = damage_ipfs:add({file, Filename}),
       formatter:format(Config, summary, #{feature => Hash, run_id => RunId})
   catch
     {error, enont} -> logger:error("Feature file ~p not found.", [Filename])
   end.
+
+
+execute_feature_concurrent(_Args, 0, Acc) -> Acc;
+
+execute_feature_concurrent(Args, N, Acc) ->
+  execute_feature_concurrent(
+    Args,
+    N - 1,
+    [
+      % poolboy:transaction(
+      spawn(?MODULE, execute_feature, Args) | Acc
+    ]
+  ).
 
 
 execute_feature(
@@ -181,13 +235,6 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
     get_global_template_context(Config, maps:new()),
     lists:append(BackGroundSteps, Steps)
   ).
-
-
-should_exit(Config) ->
-  case lists:keyfind(stop, 1, Config) of
-    {stop, true} -> exit(normal);
-    _ -> logger:info("Continuing after errors.")
-  end.
 
 
 % step execution: should execution output be passed in state and then
@@ -233,7 +280,6 @@ execute_step_module(
             step,
             {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
           ),
-          should_exit(Config),
           maps:put(
             step_found,
             true,
@@ -256,7 +302,6 @@ execute_step_module(
         step,
         {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
       ),
-      should_exit(Config),
       maps:put(
         step_found,
         true,
@@ -271,14 +316,16 @@ execute_step(Config, Step, #{fail := _} = Context) ->
   logger:info("step skipped: ~p.", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
-  formatter:format(Config, step, {StepKeyWord, LineNo, Body1, Args1, Context, skip}),
+  formatter:format(
+    Config,
+    step,
+    {StepKeyWord, LineNo, Body1, Args1, Context, skip}
+  ),
   Context;
 
 execute_step(Config, Step, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
-  logger:info("step pre render: ~p.", [Step]),
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
-  logger:info("step rendered: ~p Arg ~p.", [Body1, Args1]),
   Context0 =
     lists:foldl(
       fun
@@ -360,10 +407,12 @@ get_default_config(Account, Concurrency, Formatters) ->
   {ok, ChromeDriver} = application:get_env(damage, chromedriver),
   AccountDir = filename:join(DataDir, Account),
   RunDir = filename:join(AccountDir, RunId),
-  TextReport = filename:join([AccountDir, RunId, "report.txt"]),
-  TextReportColor = filename:join([AccountDir, RunId, "report_color.txt"]),
-  HtmlReport = filename:join([AccountDir, RunId, "report.html"]),
+  ReportDir = filename:join([RunDir, "reports"]),
+  TextReport = filename:join([ReportDir, "{{process_id}}.plain.txt"]),
+  TextReportColor = filename:join([ReportDir, "{{process_id}}.color.txt"]),
+  HtmlReport = filename:join([ReportDir, "{{process_id}}.html"]),
   ok = filelib:ensure_path(RunDir),
+  ok = filelib:ensure_path(ReportDir),
   [
     {
       formatters,
