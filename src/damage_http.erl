@@ -50,84 +50,80 @@ get_concurrency_level(<<"sk_easy">>) -> 10;
 get_concurrency_level(<<"sk_medium">>) -> 100;
 get_concurrency_level(<<"sk_hard">>) -> 1000;
 get_concurrency_level(<<"sk_nightmare">>) -> 10000;
-get_concurrency_level(_) -> 1.
+get_concurrency_level(Other) when is_integer(Other) -> Other.
 
 execute_bdd(
   #{feature := FeatureData, account := Account, concurrency := Concurrency} =
     FeaturePayload,
   Req0
 ) ->
-  Req =
-    cowboy_req:stream_reply(
-      200,
-      #{<<"content-type">> => <<"text/plain">>},
-      Req0
-    ),
   Formatters =
-    [
-      {
-        text,
-        #{
-          output => Req,
-          color => maps:get(color_formatter, FeaturePayload, false)
-        }
-      }
-    ],
-  Config = damage:get_default_config(Account, Concurrency, Formatters),
-  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-  BddFileName = filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
-  case file:write_file(BddFileName, FeatureData) of
-    ok ->
-      case damage:execute_file(Config, BddFileName) of
+    case Concurrency of
+      1 ->
+    Req =
+        cowboy_req:stream_reply(
+        200,
+        #{<<"content-type">> => <<"text/plain">>},
+        Req0
+        ),
         [
-          #{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}}
-          | _
-        ] ->
-          Response =
-            #{
-              status => <<"notok">>,
-              failing_step
-              =>
-              list_to_binary(damage_utils:lists_concat(Step, " ")),
-              line => Line
-            },
-          {400, jsx:encode(Response)};
-
-        {parse_error, LineNo, Message} ->
-          logger:debug("failure ~p.", [Message]),
           {
-            400,
-            jsx:encode(
-              #{
-                status => <<"notok">>,
-                message => list_to_binary(Message),
-                line => LineNo,
-                hint
-                =>
-                <<
-                  "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
-                >>
-              }
-            )
-          };
+            text,
+            #{
+              output => Req,
+              color => maps:get(color_formatter, FeaturePayload, false)
+            }
+          }
+        ];
 
-        ResultOk ->
-          %logger:debug("No failure ~p.", [Ok]),
-          {200, jsx:encode(ResultOk)}
-      end;
+      _ ->
+        ?debugFmt("execute_bdd concurrenc ~p", [Concurrency]),
+        []
+    end,
+  Config = damage:get_default_config(Account, Concurrency, Formatters),
+  case damage:execute_data(Config, FeatureData) of
+    [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
+      Response =
+        #{
+          status => <<"notok">>,
+          failing_step => list_to_binary(damage_utils:lists_concat(Step, " ")),
+          line => Line
+        },
+      {400, jsx:encode(Response)};
 
-    Err ->
-      logger:error("Write file failed ~p.", [Err]),
-      {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+    {parse_error, LineNo, Message} ->
+      logger:debug("failure ~p.", [Message]),
+      {
+        400,
+        jsx:encode(
+          #{
+            status => <<"notok">>,
+            message => list_to_binary(Message),
+            line => LineNo,
+            hint
+            =>
+            <<
+              "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+            >>
+          }
+        )
+      };
+
+    ResultOk ->
+      %logger:debug("No failure ~p.", [Ok]),
+      {200, jsx:encode(ResultOk)}
   end.
 
 
 check_execute_bdd(#{concurrency := Concurrency0} = _FeaturePayload, Req0) ->
   Concurrency = get_concurrency_level(Concurrency0),
   case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
-    <<"ak_", _Rest>> = Account ->
+    <<"ct_", _Rest/binary>> = Account ->
       case damage_accounts:check_spend(Account, Concurrency) of
-        0 ->
+        AvailConcurrency when AvailConcurrency > Concurrency ->
+          {ok, Account, Concurrency};
+
+        Other ->
           {
             400,
             jsx:encode(
@@ -136,23 +132,22 @@ check_execute_bdd(#{concurrency := Concurrency0} = _FeaturePayload, Req0) ->
                 message
                 =>
                 <<
-                  "Insufficient balance, please top up balance at `/api/accounts/topup`"
+                  "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+                  Other/binary
                 >>
               }
             )
-          };
-
-        Concurrency -> {ok, Account, Concurrency}
+          }
       end;
 
-    Account ->
+    <<"guest">> ->
       IP = get_ip(Req0),
       case throttle:check(damage_api_rate, IP) of
         {limit_exceeded, _, _} ->
           lager:warning("IP ~p exceeded api limit", [IP]),
           {error, 429, Req0};
 
-        _ -> {ok, Account, 1}
+        _ -> {ok, <<"guest">>, 1}
       end
   end.
 
@@ -184,7 +179,10 @@ from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
   logger:debug("Req ~p.", [Req]),
   _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
-  Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req0, 1),
+  Concurrency =
+    binary_to_integer(
+      cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
+    ),
   ColorFormatter =
     case cowboy_req:match_qs([{color, [], <<"true">>}], Req0) of
       #{color := <<"true">>} -> true;
@@ -200,23 +198,26 @@ from_html(Req0, State) ->
     Req0
   ) of
     {ok, Account, AvailConcurrency} ->
-      execute_bdd(
-        maps:put(
-          concurrency,
-          AvailConcurrency,
-          #{
-            feature => Body,
-            account => Account,
-            color_formatter => ColorFormatter,
-            concurrency => 1
-          }
-        ),
-        Req
+      logger:debug("running tests ~p.", [AvailConcurrency]),
+      {200, _} =execute_bdd(
+        #{
+          feature => Body,
+          account => Account,
+          color_formatter => ColorFormatter,
+          concurrency => AvailConcurrency
+        },
+        Req0
       ),
-      damage_accounts:confirm_spend(Account, AvailConcurrency),
-      {stop, Req0, State};
+      Resp0 =
+        jsx:encode(damage_accounts:confirm_spend(Account, AvailConcurrency)),
+           Res1 = cowboy_req:set_resp_body(Resp0, Req),
+        {true, Res1, State};
+      %{{true,<<"ok">>}, Req0, State};
+      %{{true,  Resp0},cowboy_req:reply(200, Req0), State};
 
-    Req -> Req
+    Req -> 
+      logger:debug("failed tests ~p.", [Req]),
+        Req
   end.
 
 
