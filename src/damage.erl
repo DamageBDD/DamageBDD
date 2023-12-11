@@ -29,6 +29,7 @@
 ).
 -export([get_default_config/3]).
 
+
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
@@ -154,8 +155,7 @@ init_logging(RunId, RunDir) ->
       filters => [{PidFilter, []}],
       config => #{file => filename:join(RunDir, "run.log")}
     }
-  ),
-  logger:debug("Debug should be logged").
+  ).
 
 
 deinit_logging(ScheduleId) -> logger:remove_handler(ScheduleId).
