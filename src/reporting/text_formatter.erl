@@ -139,12 +139,8 @@ format(
 ) ->
   ok = write_file(Config, "~s\n", [format_args(Args)]);
 
-format(
-  Config,
-  summary,
-  #{feature := #{<<"Hash">> := FeatureHash}, run_id := RunId}
-) ->
-  ok = write_file(Config, "Summary: ~s ~p\n", [FeatureHash, RunId]).
+format(Config, summary, #{report_dir := ReportDir, run_id := RunId}) ->
+  ok = write_file(Config, "Summary: ~s ~p\n", [ReportDir, RunId]).
 
 
 format_args([]) -> <<"\n">>;

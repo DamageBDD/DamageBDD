@@ -42,7 +42,7 @@ start(_StartType, _StartArgs) ->
             },
             {"/execute_feature/", damage_http, []},
             {"/schedule/[...]", damage_schedule, []},
-            {"/reports/[:runid]", damage_reports, []},
+            {"/reports/:hash/[:path]", damage_reports, []},
             {"/accounts/[:action]", damage_accounts, []},
             {"/tests/[:action]", damage_tests, []},
             {"/metrics/[:registry]", prometheus_cowboy2_handler, []}

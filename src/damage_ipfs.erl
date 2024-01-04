@@ -14,7 +14,9 @@
     code_change/3,
     test/0,
     add/1,
-    get/2
+    get/2,
+    cat/1,
+    ls/1
   ]
 ).
 
@@ -73,8 +75,26 @@ handle_call({add, {file, File}}, _From, #{connection := Connection} = State) ->
   logger:info("added data to ipfs node ~p", [Resp]),
   {reply, Resp, State};
 
+handle_call(
+  {add, {directory, DirectoryPath}},
+  _From,
+  #{connection := Connection} = State
+) ->
+  Resp =
+    ipfs:add(Connection, {directory, DirectoryPath}, ?DEFAULT_IPFS_TIMEOUT),
+  {reply, Resp, State};
+
 handle_call({get, Hash, FileName}, _From, #{connection := Connection} = State) ->
   Resp = ipfs:get(Connection, Hash, FileName, ?DEFAULT_IPFS_TIMEOUT),
+  logger:info("get data from ipfs node ~p", [Resp]),
+  {reply, Resp, State};
+
+handle_call({cat, Hash}, _From, #{connection := Connection} = State) ->
+  Resp = ipfs:cat(Connection, Hash,  ?DEFAULT_IPFS_TIMEOUT),
+  logger:info("cat data from ipfs node ~p", [Resp]),
+  {reply, Resp, State};
+handle_call({ls, Hash}, _From, #{connection := Connection} = State) ->
+  Resp = ipfs:ls(Connection, Hash, ?DEFAULT_IPFS_TIMEOUT),
   logger:info("get data from ipfs node ~p", [Resp]),
   {reply, Resp, State};
 
@@ -111,6 +131,27 @@ add({file, FileName}) ->
       (Worker) ->
         gen_server:call(Worker, {add, {file, FileName}}, ?DEFAULT_IPFS_TIMEOUT)
     end
+  );
+
+add({directory, DirectoryPath}) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(
+          Worker,
+          {add, {directory, DirectoryPath}},
+          ?DEFAULT_IPFS_TIMEOUT
+        )
+    end
+  ).
+
+ls(Hash) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) -> gen_server:call(Worker, {ls, Hash}, ?DEFAULT_IPFS_TIMEOUT)
+    end
   ).
 
 get(Hash, FileName) ->
@@ -121,7 +162,26 @@ get(Hash, FileName) ->
         gen_server:call(Worker, {get, Hash, FileName}, ?DEFAULT_IPFS_TIMEOUT)
     end
   ).
+cat(Hash) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {cat, Hash}, ?DEFAULT_IPFS_TIMEOUT)
+    end
+  ).
 
 test() ->
-  logger:error("riak put data: ", []),
-  {ok, _Obj} = damage_riak:put(<<"TestBucket">>, <<"Key">>, <<"Value">>).
+  logger:info("ipfs add directory", []),
+  {ok, HashList} = damage_ipfs:add({directory, "features"}),
+  [#{<<"Hash">> := Hash}] =
+    lists:filter(
+      fun
+        (I) ->
+          #{<<"Hash">> := _Hash, <<"Name">> := Dir} = I,
+          string:equal(Dir, "features")
+      end,
+      HashList
+    ),
+  logger:info("ipfs add directory hash ~p", [Hash]),
+  damage_ipfs:ls(Hash).

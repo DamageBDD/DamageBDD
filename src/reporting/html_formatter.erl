@@ -79,11 +79,7 @@ format(
 ) ->
   ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]);
 
-format(
-  Config,
-  summary,
-  #{feature := #{<<"Hash">> := FeatureHash}, run_id := RunId}
-) ->
+format(Config, summary, #{report_dir := FeatureHash, run_id := RunId}) ->
   ok = write_file(Config, "<h2>Summary</h2>: ~s ~p\n", [FeatureHash, RunId]).
 
 format_args([]) -> <<"\n">>;
