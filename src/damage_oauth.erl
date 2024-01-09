@@ -78,15 +78,13 @@ add_user(#{<<"business_name">> := BusinessName} = KycData) ->
 
 add_user(
   #{
-    <<"full_name">> := FullName,
-    <<"email">> := ToEmail,
-    <<"refund_address">> := RefundAddress
+    <<"email">> := ToEmail
   } = KycData
 ) ->
   case damage_riak:get(?USER_BUCKET, ToEmail) of
     notfound ->
       logger:debug("account not found creating ~p", [ToEmail]),
-      case damage_accounts:create_contract(RefundAddress) of
+      case damage_accounts:create_contract(maps:get(refund_address, KycData, <<"notset">>)) of
         #{status := <<"ok">>, ae_contract_address := ContractAddress} = Data ->
           {ok, ApiUrl} = application:get_env(damage, api_url),
           ApiUrl0 = list_to_binary(ApiUrl),
@@ -109,7 +107,7 @@ add_user(
             ToEmail
           ),
           damage_utils:send_email(
-            {FullName, ToEmail},
+            {maps:get(full_name, KycData, <<"">>), ToEmail},
             <<"DamageBDD Account SignUp">>,
             damage_utils:load_template("signup_email.mustache", Ctxt)
           ),

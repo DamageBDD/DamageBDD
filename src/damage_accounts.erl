@@ -203,38 +203,32 @@ from_yaml(Req, State) ->
 
 
 create_contract(RefundAddress) ->
-  case validate_refund_addr(forward, RefundAddress) of
-    {ok, RefundAddress} ->
-      ?debugFmt("btc refund address ~p ", [RefundAddress]),
-      % create ae account and bitcoin account
-      #{result := #{contractId := ContractAddress}} =
-        damage_ae:aecli(contract, deploy, "contracts/account.aes", []),
-      {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
-      ?debugFmt(
-        "debug created AE contractid ~p ~p, ",
-        [ContractAddress, BtcAddress]
-      ),
-      _ContractCreated =
-        damage_ae:aecli(
-          contract,
-          call,
-          binary_to_list(ContractAddress),
-          "contracts/account.aes",
-          "set_btc_state",
-          [BtcAddress, RefundAddress]
-        ),
-      %?debugFmt("debug created AE contract ~p", [ContractCreated]),
-      #{
-        status => <<"ok">>,
-        btc_address => BtcAddress,
-        ae_contract_address => ContractAddress,
-        btc_refund_address => RefundAddress
-      };
+    ?debugFmt("btc refund address ~p ", [RefundAddress]),
+    % create ae account and bitcoin account
+    #{result := #{contractId := ContractAddress}} =
+    damage_ae:aecli(contract, deploy, "contracts/account.aes", []),
+    {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
+    ?debugFmt(
+    "debug created AE contractid ~p ~p, ",
+    [ContractAddress, BtcAddress]
+    ),
+    _ContractCreated =
+    damage_ae:aecli(
+        contract,
+        call,
+        binary_to_list(ContractAddress),
+        "contracts/account.aes",
+        "set_btc_state",
+        [BtcAddress, RefundAddress]
+    ),
+    %?debugFmt("debug created AE contract ~p", [ContractCreated]),
+    #{
+    status => <<"ok">>,
+    btc_address => BtcAddress,
+    ae_contract_address => ContractAddress,
+    btc_refund_address => RefundAddress
+    }.
 
-    Other ->
-      ?debugFmt("refund_address data: ~p ", [Other]),
-      #{status => <<"notok">>, message => <<"Invalid refund_address.">>}
-  end.
 
 
 store_profile(ContractAddress) ->
@@ -305,16 +299,22 @@ refund(ContractAddress) ->
     balance := Balance,
     deployer := _Deployer
   } = balance(ContractAddress),
-  {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
-  ?debugFmt("real balance ~p ", [RealBtcBalance]),
-  {ok, RefundResult} =
-    bitcoin:sendtoaddress(
-      BtcRefundAddress,
-      RealBtcBalance - binary_to_integer(Balance),
-      ContractAddress
-    ),
-  ?debugFmt("Refund result ~p ", [RefundResult]),
-  RefundResult.
+  case validate_refund_addr(forward, BtcRefundAddress) of
+    {ok, BtcRefundAddress} ->
+        {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
+        ?debugFmt("real balance ~p ", [RealBtcBalance]),
+        {ok, RefundResult} =
+            bitcoin:sendtoaddress(
+            BtcRefundAddress,
+            RealBtcBalance - binary_to_integer(Balance),
+            ContractAddress
+            ),
+        ?debugFmt("Refund result ~p ", [RefundResult]),
+        RefundResult;
+    Other ->
+      ?debugFmt("refund_address data: ~p ", [Other]),
+      #{status => <<"notok">>, message => <<"Invalid refund_address.">>}
+  end.
 
 
 update_schedules(ContractAddress, JobId, _Cron) ->
