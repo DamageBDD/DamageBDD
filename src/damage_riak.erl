@@ -9,6 +9,7 @@
     start_link/1,
     get_connection/0,
     get/2,
+    get/3,
     put/3,
     put/4,
     delete/2,
@@ -27,7 +28,8 @@
     handle_info/2,
     terminate/2,
     code_change/3,
-    test/0
+    test/0,
+    test_conflict_resolution/0
   ]
 ).
 -export([find_active_connection/3]).
@@ -44,6 +46,8 @@ find_active_connection(Connections, Fun, Args) ->
 find_active_connection_helper([Connection | Rest], Fun, Args) ->
   case apply(riakc_pb_socket, Fun, [Connection] ++ Args) of
     {ok, Results} -> {ok, Results};
+    {error, notfound} -> {error, notfound};
+    ok -> ok;
 
     Err ->
       logger:error("Unexpected riak error ~p trying next", [Err]),
@@ -63,10 +67,12 @@ start_link(Members) -> gen_server:start_link(?MODULE, Members, []).
 
 get_connection() -> gen_server:call(?MODULE, get_connection).
 
-get(Bucket, Key) ->
+get({Type, Bucket}, Key) ->
+get({Type, Bucket}, Key,[{labels, atom}, return_maps]).
+get({Type, Bucket}, Key, JsonDecodeOpts) ->
   poolboy:transaction(
     ?MODULE,
-    fun (Worker) -> gen_server:call(Worker, {get, Bucket, Key}) end
+    fun (Worker) -> gen_server:call(Worker, {get, {Type, Bucket}, Key, JsonDecodeOpts}) end
   ).
 
 put(Bucket, Key, Value) -> put(Bucket, Key, Value, []).
@@ -212,30 +218,33 @@ handle_call(
   {reply, Res, State};
 
 handle_call(
-  {get, Bucket, Key},
+  {get, Bucket, Key0, JsonDecodeOpts},
   _From,
   #state{connections = Connections} = State
 ) ->
   % Perform get operation using the Riak connection
-  case find_active_connection(Connections, get, [Bucket, Key]) of
+  Key = damage_utils:encrypt(Key0),
+  case catch find_active_connection(Connections, get, [Bucket, Key]) of
     false -> {reply, notfound, State};
-    {error, {notfound, _Type = map}} -> {error, notfound, State};
+    {error, notfound} -> {reply, notfound, State};
+    {error, {notfound, _Type = map}} -> {reply, notfound, State};
     {error, Error} -> {error, Error, State};
     undef -> {error, undef, State};
 
     {ok, RiakObject} ->
-          Value = check_resolve_siblings(RiakObject, Connections),
+      Value = check_resolve_siblings(RiakObject, Connections),
+      logger:debug(
+        "get RiakObject ~p ~p",
+        [RiakObject, damage_utils:decrypt(Value)]
+      ),
       case
       catch
-      jsx:decode(
-        Value,
-        [{labels, atom}, return_maps]
-      ) of
-        {ok, Result} -> {ok, Result};
-
+      jsx:decode(damage_utils:decrypt(Value), JsonDecodeOpts) of
         {badarg, Error} ->
           logger:error("Unexpected riak error ~p", [Value]),
-          {error, Error, State}
+          {error, Error, State};
+
+        Result -> {reply, {ok, Result}, State}
       end
   end;
 
@@ -245,7 +254,9 @@ handle_call(
   #state{connections = Connections} = State
 ) ->
   % Perform put operation using the Riak connection
-  Object0 = riakc_obj:new(Bucket, Key, Value),
+  Key0 = damage_utils:encrypt(Key),
+  Value0 = damage_utils:encrypt(jsx:encode(Value)),
+  Object0 = riakc_obj:new(Bucket, Key0, Value0),
   Object =
     case Index of
       [] -> Object0;
@@ -282,7 +293,7 @@ handle_call(
     lists:any(
       fun
         (Pid) ->
-          case riakc_pb_socket:delete(Pid, Bucket, Key) of
+          case riakc_pb_socket:delete(Pid, Bucket, damage_utils:encrypt(Key)) of
             ok -> true;
 
             Err ->
@@ -327,43 +338,86 @@ terminate(_Reason, _State) -> ok.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 check_resolve_siblings(RiakObject, Connections) ->
-  {riakc_obj, {_BucketType, _Bucket}, _Key, _Context, _, _, _} = RiakObject,
   case riakc_obj:get_contents(RiakObject) of
     [] -> throw(no_value);
-    [{_MD, V}] -> V;
+
+    [{_MD, V}] ->
+      logger:debug(" resolve_siblings ~p", [V]),
+      V;
 
     Siblings ->
       {MD, V} = conflict_resolver(Siblings),
       Obj =
         riakc_obj:update_value(riakc_obj:update_metadata(RiakObject, MD), V),
-      {ok, ok} = find_active_connection(Connections, put, [Obj]),
+      ok = find_active_connection(Connections, put, [Obj]),
       V
   end.
 
 
-resolver_function({_MA, A}, {_MB, B}) ->
-  logger:debug("Generic json resolver ~p:~p", [A, B]),
-  A0 = jsx:decode(A, [{labels, atom}, return_maps]),
-  B0 = jsx:decode(B, [{labels, atom}, return_maps]),
-  maps:get(
-    modified,
-    A0,
-       maps:get(created, A0)
-  )
-  <
-  maps:get(
-      modified,
-      B0,
-       maps:get(created, B0)
-  ).
+resolver_function({_MA, <<>>}, {_MB, _B}) -> false;
+resolver_function({_MA, _A}, {_MB, <<>>}) -> true;
+
+resolver_function({MA, A}, {MB, B}) ->
+  logger:debug("Generic resolver ~p:~p - ~p:~p", [MA, A, MB, B]),
+  A1 =
+    case catch jsx:decode(damage_utils:decrypt(A), [return_maps]) of
+      A0 when is_map(A0) ->
+        maps:get(
+          modified,
+          A0,
+          maps:get(
+            created,
+            A0,
+            datestring:format(
+              "YmdHMS",
+              dict:fetch(<<"X-Riak-Last-Modified">>, MA)
+            )
+          )
+        );
+
+      _ -> -1
+    end,
+  B1 =
+    case catch jsx:decode(damage_utils:decrypt(B), [return_maps]) of
+      B0 when is_map(B0) ->
+        maps:get(
+          modified,
+          B0,
+          maps:get(
+            created,
+            B0,
+            datestring:format(
+              "YmdHMS",
+              dict:fetch(<<"X-Riak-Last-Modified">>, MA)
+            )
+          )
+        );
+
+      _ -> -1
+    end,
+  A1 > B1.
 
 
 conflict_resolver(Siblings) ->
+  logger:debug("conflict_resolver ~p", [Siblings]),
   lists:nth(1, lists:sort(fun resolver_function/2, Siblings)).
+
 
 test() ->
   test_crud(),
   test_hlls().
+
+
+test_conflict_resolution() ->
+  {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+  TimestampBin = list_to_binary(Timestamp),
+  Bucket = {<<"Default">>, <<"TestBucket", TimestampBin/binary>>},
+  Key1 = <<"Key1", TimestampBin/binary>>,
+  logger:info("Bucket ~p key ~p", [Bucket, Key1]),
+  Obj = #{test => <<"true">>},
+  {ok, true} = damage_riak:put(Bucket, Key1, Obj),
+  {ok, Obj} = damage_riak:get(Bucket, Key1),
+  ok.
 
 
 test_crud() ->

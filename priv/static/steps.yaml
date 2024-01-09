@@ -1,0 +1,142 @@
+Http Steps:
+  Given I am using server "{{Server}}":
+    help: Use the server "Server" as target server to test for following steps.
+    example: |
+      Given I am using server "https://damagebdd.com":
+  Given I set "{{Header}}" header to "{{Value}}":
+    help: Use the header value "Value" for request header "Header" for following http steps.
+
+  When I make a GET request to "{{Path}}":
+    help: Make a HTTP GET request to the given path
+    example: |
+      When I make a GET request to "/path"
+  When I make a OPTIONS request to "{{Path}}":
+    help: Make a HTTP OPTIONS request to the given path
+    example: |
+      When I make a OPTIONS request to "/path"
+  When I make a HEAD request to "{{Path}}":
+    help: Make a HTTP HEAD request to the given path
+    example: |
+      When I make a HEAD request to "/path"
+  When I make a TRACE request to "{{Path}}":
+    help: Make a HTTP TRACE request to the given path
+    example: |
+      When I make a TRACE request to "/path"
+
+  When I make a POST request to "{{Path}}":
+    args: Body POST data
+    help: Make a http POST request to the given path
+    example: |
+      When I make a POST request to "/path"
+      """
+      POST data
+      """
+  When I make a CSRF POST request to "{{Path}}":
+    args: Body POST data
+    help: Make a http POST request to the given path, do csrf fetch before post
+    example: |
+      When I make a CSRF POST request to "/path"
+      """
+      POST data
+      """
+
+  When I make a PATCH request to "{{Path}}":
+    args: Body PATCH data
+    help: Make a http PATCH request to the given path
+    example: |
+      When I make a PATCH request to "/path"
+      """
+      PATCH data
+      """
+
+  When I make a PUT request to "{{Path}}":
+    args: Body PUT data
+    help: Make a http PUT request to the given path
+    example: |
+      When I make a PUT request to "/path"
+      """
+      PUT data
+      """
+  When I make a DELETE request to "{{Path}}":
+    help: Make a HTTP DELETE request to the given path
+    example: |
+      When I make a DELETE request to "/path"
+
+  Then the response must contain text "{{Contains}}":
+
+  Then I print the response:
+    help: Print the response from previouse request
+    example: |
+      When I make a PUT request to "/path"
+
+  Given I store cookies:
+    help: Store the cookies in response
+  Given I set base URL to "{{URL}}":
+    help: Set base url
+  Given/When/Then/And I set the variable "{{Variable}}" to "{{Value}}":
+    help: Set a variable named "Variable" to "Value" 
+  Given/When/Then/And I do not want to verify server certificate:
+    help: Set the http client to not perform certificat verification
+  Given/When/Then/And I make a HEAD request to "{{Path}}":
+    help: Make a http HEAD request to "Path" on the server
+  Given/When/Then/And the JSON should be:
+    args: {"examplekey":"Expected Json"}
+    help: The response JSON should be identical to body
+    example: |
+      Then the JSON should be
+      """
+      {"examplekey":"Expected Json"}
+      """
+  Then the response status must be "{{Status}}":
+    help: Ensure the http response status code from previous http request is equal to "Status"
+  Then the yaml at path "{{Path}}" must be "{{Expected}}":
+    help: Ensure yaml at path "Path" is as "Expected"
+  Then the json at path "{{Path}}" must be "{{Expected}}":
+    help: Set base url
+  Then the response status must be one of "{{Statuses}}":
+    help: Set base url
+  Then the "{{Header}}" header should be "{{Value}}":
+    help: Set base url
+  Then I store the JSON at path "{{Path}}" in "{{Variable}}":
+    help: Set base url
+  Then the variable "{{Variable}}" should be equal to JSON "{{Value}}":
+    help: Set base url
+  Then the variable "{{Variable}}" should be equal to JSON:
+    args: {"examplekey":"Expected Json"}
+  Then the JSON at path "{{JsonPath}}" should be:
+    args: {"examplekey":"Expected Json"}
+  Then the json at path "{{JsonPath}}" must be:
+    args: {"examplekey":"Expected Json"}
+  Then I set BasicAuth username to "{{User}}" and password to "{{Password}}":
+    help: Set base url
+  Then I use query OAuth with key="{{Key}}" and secret="{{Secret}}":
+    help: Set base url
+  Then I use header OAuth with key="{{Key}}" and secret="{{Secret}}":
+    help: Set base url
+
+Utility Steps:
+  Given/When/Then/And I store an uuid in "{{Variable}}":
+    help: Generate and store an uuid value in Variable
+  Given/When/Then/And I wait "{{Seconds}}" seconds:
+    help: Generate and store an uuid value in Variable
+  Given/When/Then/And I store current time string in "{{Variable}}" with format "{{Format}}":
+    help: Generate and store an uuid value in Variable
+
+Selenium Webdriver Steps:
+  Given the page url is not "{{Url}}":
+    help: Generate and store an uuid value in Variable
+  Given the page url is not "{{Url}}":
+    help: Generate and store an uuid value in Variable
+  Then I expect that the url is "{{Url}}":
+    help: Generate and store an uuid value in Variable
+  Then I expect that the url is not "{{Url}}":
+    help: Generate and store an uuid value in Variable
+  And I click on the link "{{Link}}":
+    help: Generate and store an uuid value in Variable
+  And I open the site "{{Site}}":
+    help: Generate and store an uuid value in Variable
+  And I open the url "{{Url}}":
+    help: Generate and store an uuid value in Variable
+ 
+
+

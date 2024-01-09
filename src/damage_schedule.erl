@@ -154,10 +154,13 @@ from_text(Req, State) ->
       Args = [{Concurrency, ScheduleId}] ++ CronSpec,
       logger:info("do_schedule: ~p", [Args]),
       CronJob = apply(?MODULE, do_schedule, Args),
+      {ok, Created} = datestring:format("YmdHMS", erlang:localtime()),
       logger:info("Cron Job: ~p", [CronJob]),
       {ok, true} =
         save_schedule(
           #{
+            created => Created,
+            modified => Created,
             account => Account,
             hash => Hash,
             concurrency => Concurrency,

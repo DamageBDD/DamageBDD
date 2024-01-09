@@ -22,11 +22,11 @@
     load_template/2,
     send_email/3,
     setup_vanillae_deps/0,
-    %test_simple_mail/0,
+    test_encrypt_decrypt/0,
     test_send_email/0
   ]
 ).
--export([encrypt/3, decrypt/3]).
+-export([encrypt/2, encrypt/1, decrypt/2, decrypt/1]).
 
 get_stepargs(Body) when is_list(Body) ->
   case lists:keytake(<<"\"\"\"">>, 1, Body) of
@@ -118,7 +118,8 @@ get_context_value(Key, Context, Config) ->
 
 
 setup_vanillae_deps() ->
-  true = code:add_path("vanillae/ebin"),
+  true = code:add_path("_checkouts/vanillae/ebin"),
+  true = code:add_path("_checkouts/vw/ebin"),
   Vanillae =
     "otpr-vanillae-" ++ lists:droplast(os:cmd("zx latest otpr-vanillae")),
   Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
@@ -163,37 +164,41 @@ send_email({ToName, To}, Subject, Body) ->
   {ok, SmtpPort} = application:get_env(damage, smtp_port),
   {ok, {FromName, From}} = application:get_env(damage, smtp_from),
   SmtpPassword = os:getenv("SMTP_PASSWORD"),
-  %{ok, PrivKey} = file:read_file("damage.private"),
-  %DKIMOptions = [
-  %    {s, <<"steven">>},
-  %    {d, <<"damagebdd.com">>},
-  %    {private_key, {pem_plain, PrivKey}}
-  %%{private_key, {pem_encrypted, EncryptedPrivKey, "password"}}
-  %],
-  %SignedMailBody =
-  %mimemail:encode({<<"text">>, <<"plain">>,
-  %              [{<<"Subject">>, Subject},
-  %               {<<"From">>, FromAddress},
-  %               {<<"To">>, ToAddress}],
-  %              #{},
-  %              list_to_binary(Body0)},
-  %              [{dkim, DKIMOptions}]),
-  Body1 =
-    "Subject: testing\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
-  Body0 =
-    mustache:render(
-      Body1,
-      convert_context(
-        #{
-          body => Body,
-          subject => Subject,
-          from => From,
-          from_name => FromName,
-          to => To,
-          to_name => ToName
-        }
-      )
-    ),
+  %Body1 =
+  %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
+  %Body0 =
+  %  mustache:render(
+  %    Body1,
+  %    convert_context(
+  %      #{
+  %        body => Body,
+  %        subject => Subject,
+  %        from => From,
+  %        from_name => FromName,
+  %        to => To,
+  %        to_name => ToName
+  %      }
+  %    )
+  %  ),
+  FromNameBin = list_to_binary(FromName),
+  FromBin = list_to_binary(From),
+  %ToBin = list_to_binary(To),
+  Email0 =
+    {
+      <<"text">>,
+      <<"plain">>,
+      [
+        {<<"From">>, <<FromNameBin/binary, " <", FromBin/binary, ">">>},
+        {<<"To">>, <<ToName/binary, " <", To/binary, ">">>},
+        {<<"Subject">>, Subject}
+      ],
+      #{
+        <<"content-type-params">> => [{<<"charset">>, <<"US-ASCII">>}],
+        <<"disposition">> => <<"inline">>
+      },
+      list_to_binary(Body)
+    },
+  Body0 = mimemail:encode(Email0),
   Email = {From, [To], Body0},
   %CaCerts = certifi:cacerts(),
   gen_smtp_client:send(
@@ -224,35 +229,67 @@ send_email({ToName, To}, Subject, Body) ->
 %% Encrypt a information string
 
 % https://medium.com/@brucifi/how-to-encrypt-with-aes-256-gcm-with-erlang-2a2aec13598d
-encrypt(KYCInfo, Key, IV) when is_binary(KYCInfo), is_binary(Key), is_binary(IV) ->
-  {CipherText, _Tag} =
-    crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, KYCInfo, <<>>, true),
-  CipherText.
+encrypt(PlainText) when is_list(PlainText) ->
+  encrypt(list_to_binary(PlainText));
+
+encrypt(PlainText) when is_binary(PlainText) ->
+  case os:getenv("KYC_SECRET_KEY") of
+    false ->
+      logger:info("KYC_SECRET_KEY environment variable not set."),
+      exit(normal);
+
+    KycKey -> encrypt(PlainText, KycKey)
+  end.
+
+
+encrypt(KYCInfo, Key) when is_binary(KYCInfo), is_list(Key) ->
+  encrypt(KYCInfo, list_to_binary(Key));
+
+encrypt(Data, Key) when is_binary(Data), is_binary(Key) ->
+  <<Key0:32/binary, Nonce:16/binary>> = base64:decode(Key),
+  {CipherText, Tag} =
+    crypto:crypto_one_time_aead(aes_256_gcm, Key0, Nonce, Data, <<>>, true),
+  <<Tag/binary, CipherText/binary>>.
 
 %% Decrypt a information string
 
-decrypt(CipherText, Key, IV)
-when is_binary(CipherText), is_binary(Key), is_binary(IV) ->
-  {plain_text, _Tag} =
-    crypto:crypto_one_time(aes_256_gcm, Key, IV, false, CipherText, 16),
-  plain_text.
+decrypt(Encrypted) when is_binary(Encrypted) ->
+  case os:getenv("KYC_SECRET_KEY") of
+    false ->
+      logger:info("KYC_SECRET_KEY environment variable not set."),
+      exit(normal);
 
-%%1> c(aes_example).
+    KycKey -> decrypt(Encrypted, list_to_binary(KycKey))
+  end.
 
-%{ok,aes_example}
-%2> Key = crypto:strong_rand_bytes(32).
-%<<22,221,47,24,142,97,108,228,190,157,250,115,154,56,
-%  84,8,248,16,132,225,56,39,35,21,254,36,251,96,145,...>>
-%3> IV = crypto:strong_rand_bytes(16).
-%<<187,171,222,217,173,80,211,194,152,115,61,18,85,163,
-%  76,8>>
-%4> KYCInfo = <<"Sensitive KYC Information">>.
-%<<"Sensitive KYC Information">>
-%5> CipherText = aes_example:encrypt(KYCInfo, Key, IV).
-%<<56,61,118,249,53,143,60,164,118,18,9,36,101,45,22,
-%  255,198,58,145,58,79,53,239,105,176,148,96,191,143,...>>
-%6> PlainText = aes_example:decrypt(CipherText, Key, IV).
-%<<"Sensitive KYC Information">>
+
+decrypt(Encrypted, Key) when is_binary(Encrypted), is_binary(Key) ->
+  EncryptedData = Encrypted,
+  <<Key0:32/binary, Nonce:16/binary>> = base64:decode(Key),
+  AAD = <<"">>,
+  <<Tag:16/binary, CipherText/binary>> = EncryptedData,
+  crypto:crypto_one_time_aead(
+    aes_256_gcm,
+    Key0,
+    Nonce,
+    CipherText,
+    AAD,
+    Tag,
+    false
+  ).
+
+
+test_encrypt_decrypt() ->
+  Key = crypto:strong_rand_bytes(32),
+  Nonce = crypto:strong_rand_bytes(16),
+  KycKey0 = <<Key/binary, Nonce/binary>>,
+  KycKey = base64:encode(KycKey0),
+  ?debugFmt("Kyckey ~p", [KycKey]),
+  KYCInfo = <<"Sensitive KYC Information">>,
+  CipherText = encrypt(KYCInfo, KycKey),
+  KYCInfo = decrypt(CipherText, KycKey).
+
+
 test_send_email() ->
   ToEmail = {"Steven Jose", "stevenjose@gmail.com"},
   Body =

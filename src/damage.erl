@@ -25,10 +25,16 @@
   ]
 ).
 -export(
-  [execute_data/2, execute_file/2, execute/1, execute/2, execute_feature/7]
+  [
+    execute_data/2,
+    execute_file/2,
+    execute/1,
+    execute/2,
+    execute_feature/7,
+    publish_data/2
+  ]
 ).
 -export([get_default_config/3]).
-
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -160,6 +166,31 @@ init_logging(RunId, RunDir) ->
 
 deinit_logging(ScheduleId) -> logger:remove_handler(ScheduleId).
 
+publish_data(Config, FeatureData) ->
+  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+  BddFileName =
+    filename:join(RunDir, string:join(["adhoc_http_publish.feature"], "")),
+  ok = file:write_file(BddFileName, FeatureData),
+  publish_file(Config, BddFileName).
+
+
+publish_file(Config, Filename) ->
+  {account, Account} = lists:keyfind(account, 1, Config),
+  {fee, Fee} = lists:keyfind(fee, 1, Config),
+  {ok, [Hash]} = damage_ipfs:put(Filename),
+  ContractCall =
+    damage_ae:aecli(
+      contract,
+      call,
+      binary_to_list(Account),
+      "contracts/account.aes",
+      "publish_feature",
+      [Hash, Fee]
+    ),
+  ?debugFmt("call AE contract ~p", [ContractCall]),
+  ok.
+
+
 execute_data(Config, FeatureData) ->
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   BddFileName = filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
@@ -198,8 +229,30 @@ execute_file(Config, Filename) ->
             []
           )
       end,
-      {ok, Hash} = damage_ipfs:add({file, Filename}),
-      formatter:format(Config, summary, #{feature => Hash, run_id => RunId})
+      {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+      {api_url, DamageApi} = lists:keyfind(api_url, 1, Config),
+      logger:debug("RunDir ~p", [RunDir]),
+      {ok, HashList} = damage_ipfs:add({directory, RunDir}),
+      [#{<<"Hash">> := Hash}] =
+        lists:filter(
+          fun
+            (I) ->
+              #{<<"Hash">> := _Hash, <<"Name">> := Dir} = I,
+              logger:error("Dir ~p", [Dir]),
+              string:equal(<<"/", Dir/binary>>, RunDir)
+          end,
+          HashList
+        ),
+      formatter:format(
+        Config,
+        summary,
+        #{
+          report_dir
+          =>
+          string:join([DamageApi, "reports", binary_to_list(Hash)], "/"),
+          run_id => RunId
+        }
+      )
   catch
     {error, enont} -> logger:error("Feature file ~p not found.", [Filename])
   end.
@@ -419,6 +472,7 @@ get_default_config(Account, Concurrency, Formatters) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
   {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
   {ok, ChromeDriver} = application:get_env(damage, chromedriver),
+  {ok, DamageApi} = application:get_env(damage, api_url),
   AccountDir = filename:join(DataDir, Account),
   RunDir = filename:join(AccountDir, RunId),
   ReportDir = filename:join([RunDir, "reports"]),
@@ -441,5 +495,6 @@ get_default_config(Account, Concurrency, Formatters) ->
     {concurrency, Concurrency},
     {run_id, RunId},
     {run_dir, RunDir},
-    {account, binary_to_list(Account)}
+    {account, binary_to_list(Account)},
+    {api_url, DamageApi}
   ].

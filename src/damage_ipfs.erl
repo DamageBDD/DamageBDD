@@ -90,9 +90,10 @@ handle_call({get, Hash, FileName}, _From, #{connection := Connection} = State) -
   {reply, Resp, State};
 
 handle_call({cat, Hash}, _From, #{connection := Connection} = State) ->
-  Resp = ipfs:cat(Connection, Hash,  ?DEFAULT_IPFS_TIMEOUT),
+  Resp = ipfs:cat(Connection, Hash, ?DEFAULT_IPFS_TIMEOUT),
   logger:info("cat data from ipfs node ~p", [Resp]),
   {reply, Resp, State};
+
 handle_call({ls, Hash}, _From, #{connection := Connection} = State) ->
   Resp = ipfs:ls(Connection, Hash, ?DEFAULT_IPFS_TIMEOUT),
   logger:info("get data from ipfs node ~p", [Resp]),
@@ -162,12 +163,12 @@ get(Hash, FileName) ->
         gen_server:call(Worker, {get, Hash, FileName}, ?DEFAULT_IPFS_TIMEOUT)
     end
   ).
+
 cat(Hash) ->
   poolboy:transaction(
     ?MODULE,
     fun
-      (Worker) ->
-        gen_server:call(Worker, {cat, Hash}, ?DEFAULT_IPFS_TIMEOUT)
+      (Worker) -> gen_server:call(Worker, {cat, Hash}, ?DEFAULT_IPFS_TIMEOUT)
     end
   ).
 

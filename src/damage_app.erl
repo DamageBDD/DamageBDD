@@ -16,7 +16,7 @@
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-  logger:info("Startint Damage."),
+  logger:info("Starting Damage."),
   %{ok, _} = application:ensure_all_started(cedb),
   {ok, _} = application:ensure_all_started(fast_yaml),
   {ok, _} = application:ensure_all_started(prometheus),
@@ -32,20 +32,24 @@ start(_StartType, _StartArgs) ->
           '_',
           [
             {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
+            {"/auth", damage_auth, #{}},
             {"/help", damage_static, {priv_dir, damage, "help"}},
             {"/features/[...]", cowboy_static, {dir, "features/"}},
             {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
+            {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
             {
               "/steps.json",
               cowboy_static,
               {priv_file, damage, "static/steps.json"}
             },
-            {"/execute_feature/", damage_http, []},
-            {"/schedule/[...]", damage_schedule, []},
-            {"/reports/:hash/[:path]", damage_reports, []},
-            {"/accounts/[:action]", damage_accounts, []},
-            {"/tests/[:action]", damage_tests, []},
-            {"/metrics/[:registry]", prometheus_cowboy2_handler, []}
+            {"/execute_feature/", damage_http, #{}},
+            {"/publish_feature/", damage_publish, #{}},
+            {"/schedule/[...]", damage_schedule, #{}},
+            {"/reports/:hash/[:path]", damage_reports, #{}},
+            {"/accounts/[:action]", damage_accounts, #{}},
+            {"/tests/[:action]", damage_tests, #{}},
+            {"/analytics/[:action]", damage_analytics, #{}},
+            {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}}
           ]
         }
       ]
@@ -54,6 +58,7 @@ start(_StartType, _StartArgs) ->
   {ok, _} =
     cowboy:start_clear(
       http,
+      %[{ip, {0, 0, 0, 0}}, {port, WsPort}],
       [{port, WsPort}],
       #{
         env => #{dispatch => Dispatch},

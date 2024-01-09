@@ -16,11 +16,35 @@
 -export([to_html/2]).
 -export([to_json/2]).
 -export([to_text/2]).
--export([from_json/2, allowed_methods/2, from_html/2]).
+-export([from_json/2, allowed_methods/2, from_html/2,is_authorized/2]).
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+get_access_token(Req) ->
+  case cowboy_req:header(<<"authorization">>, Req) of
+    <<"Bearer ", Token/binary>> -> {ok, Token};
+
+    Other ->
+          logger:debug("other ~p", [Other]),
+      case cowboy_req:qs_val(<<"access_token">>, Req) of
+        {Token, _Req} -> {ok, Token};
+        _ -> {error, missing}
+      end
+  end.
+
+
+is_authorized(Req, State) ->
+    logger:debug("is_authorized State ~p", [State]),
+  case get_access_token(Req) of
+    {ok, Token} ->
+      case oauth2:verify_access_token(Token, []) of
+        {ok, _Identity} -> {true, Req, State};
+        {error, access_denied} -> {{false, <<"Bearer">>}, Req, State}
+      end;
+
+    {error, _} -> {{false, <<"Bearer">>}, Req, State}
+  end.
 
 content_types_provided(Req, State) ->
   {
