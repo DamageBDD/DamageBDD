@@ -213,4 +213,3 @@ binary_join([H | T], Sep) ->
   <<H/binary, Sep/binary, (binary_join(T, Sep))/binary>>;
 
 binary_join([], _Sep) -> <<>>.
-

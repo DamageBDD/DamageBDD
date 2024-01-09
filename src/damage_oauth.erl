@@ -226,11 +226,12 @@ resolve_access_token(AccessToken, AppContext) ->
   %% The case trickery is just here to make sure that
   %% we don't propagate errors that cannot be legally
   %% returned from this function according to the spec.
-  case damage_riak:get(?ACCESS_TOKEN_BUCKET, AccessToken, [{return_maps, false}]) of
+  case
+  damage_riak:get(?ACCESS_TOKEN_BUCKET, AccessToken, [{return_maps, false}]) of
     Error = notfound -> {error, Error};
-    {ok, Value}   -> 
-          logger:debug("AccessToken value ~p",[Value]),
-{ok, {AppContext, Value}}
+
+    {ok, Value} ->
+      {ok, {AppContext, Value}}
   end.
 
 
@@ -296,7 +297,7 @@ jwt_issuer() -> <<"https://run.DamageBDD.com">>.
 get(Bucket, Key) ->
   case damage_riak:get(Bucket, Key) of
     [] -> {error, notfound};
-    {ok, Value} ->  Value
+    {ok, Value} -> Value
   end.
 
 

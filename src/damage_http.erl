@@ -16,17 +16,18 @@
 -export([to_html/2]).
 -export([to_json/2]).
 -export([to_text/2]).
--export([from_json/2, allowed_methods/2, from_html/2,is_authorized/2]).
+-export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
+-define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+
 get_access_token(Req) ->
   case cowboy_req:header(<<"authorization">>, Req) of
     <<"Bearer ", Token/binary>> -> {ok, Token};
 
-    Other ->
-          logger:debug("other ~p", [Other]),
+    _ ->
       case cowboy_req:qs_val(<<"access_token">>, Req) of
         {Token, _Req} -> {ok, Token};
         _ -> {error, missing}
@@ -35,16 +36,47 @@ get_access_token(Req) ->
 
 
 is_authorized(Req, State) ->
-    logger:debug("is_authorized State ~p", [State]),
   case get_access_token(Req) of
     {ok, Token} ->
       case oauth2:verify_access_token(Token, []) of
-        {ok, _Identity} -> {true, Req, State};
+        {
+          ok,
+          {
+            [],
+            [
+              {<<"client">>, _Client},
+              {<<"resource_owner">>, ResourceOwner},
+              {<<"expiry_time">>, _Expiry},
+              {<<"scope">>, _Scope}
+            ]
+          }
+        } ->
+          case damage_riak:get(?USER_BUCKET, ResourceOwner) of
+            {ok, #{ae_contract_address := ContractAddress} = User} ->
+              {
+                true,
+                Req,
+                maps:put(
+                  user,
+                  User,
+                  maps:put(contract_address, ContractAddress, State)
+                )
+              };
+
+            Noget ->
+              logger:debug(
+                "is_authoddrized Identity ~p ~p",
+                [ResourceOwner, Noget]
+              ),
+              {{false, <<"Bearer">>}, Req, State}
+          end;
+
         {error, access_denied} -> {{false, <<"Bearer">>}, Req, State}
       end;
 
     {error, _} -> {{false, <<"Bearer">>}, Req, State}
   end.
+
 
 content_types_provided(Req, State) ->
   {
@@ -140,13 +172,22 @@ execute_bdd(
   end.
 
 
-check_execute_bdd(#{concurrency := Concurrency0} = _FeaturePayload, Req0) ->
+check_execute_bdd(
+  #{concurrency := Concurrency0} = _FeaturePayload,
+  #{contract_address := ContractAddress} = _State,
+  Req0
+) ->
   Concurrency = get_concurrency_level(Concurrency0),
-  case cowboy_req:header(<<"authorization">>, Req0, <<"guest">>) of
-    <<"ct_", _Rest/binary>> = Account ->
-      case damage_accounts:check_spend(Account, Concurrency) of
+  IP = get_ip(Req0),
+  case throttle:check(damage_api_rate, IP) of
+    {limit_exceeded, _, _} ->
+      lager:warning("IP ~p exceeded api limit", [IP]),
+      {error, 429, Req0};
+
+    _ ->
+      case damage_accounts:check_spend(ContractAddress, Concurrency) of
         AvailConcurrency when AvailConcurrency > Concurrency ->
-          {ok, Account, Concurrency};
+          {ok, ContractAddress, Concurrency};
 
         Other ->
           {
@@ -163,16 +204,6 @@ check_execute_bdd(#{concurrency := Concurrency0} = _FeaturePayload, Req0) ->
               }
             )
           }
-      end;
-
-    <<"guest">> ->
-      IP = get_ip(Req0),
-      case throttle:check(damage_api_rate, IP) of
-        {limit_exceeded, _, _} ->
-          lager:warning("IP ~p exceeded api limit", [IP]),
-          {error, 429, Req0};
-
-        _ -> {ok, <<"guest">>, 1}
       end
   end.
 
@@ -220,6 +251,7 @@ from_html(Req0, State) ->
       color_formatter => ColorFormatter,
       concurrency => Concurrency
     },
+    State,
     Req0
   ) of
     {ok, Account, AvailConcurrency} ->

@@ -68,11 +68,15 @@ start_link(Members) -> gen_server:start_link(?MODULE, Members, []).
 get_connection() -> gen_server:call(?MODULE, get_connection).
 
 get({Type, Bucket}, Key) ->
-get({Type, Bucket}, Key,[{labels, atom}, return_maps]).
+  get({Type, Bucket}, Key, [{labels, atom}, return_maps]).
+
 get({Type, Bucket}, Key, JsonDecodeOpts) ->
   poolboy:transaction(
     ?MODULE,
-    fun (Worker) -> gen_server:call(Worker, {get, {Type, Bucket}, Key, JsonDecodeOpts}) end
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {get, {Type, Bucket}, Key, JsonDecodeOpts})
+    end
   ).
 
 put(Bucket, Key, Value) -> put(Bucket, Key, Value, []).
@@ -237,9 +241,7 @@ handle_call(
         "get RiakObject ~p ~p",
         [RiakObject, damage_utils:decrypt(Value)]
       ),
-      case
-      catch
-      jsx:decode(damage_utils:decrypt(Value), JsonDecodeOpts) of
+      case catch jsx:decode(damage_utils:decrypt(Value), JsonDecodeOpts) of
         {badarg, Error} ->
           logger:error("Unexpected riak error ~p", [Value]),
           {error, Error, State};
