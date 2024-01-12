@@ -24,6 +24,7 @@
 -export([load_schedules/0]).
 -export([load_schedules/1]).
 -export([delete_schedule/1]).
+-export([test_conflict_resolution/0]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -182,7 +183,7 @@ to_html(Req, State) -> to_json(Req, State).
 to_text(Req, State) -> to_json(Req, State).
 
 to_json(Req, State) ->
-  case cowboy_req:match_qs([account], Req) of
+  case catch cowboy_req:match_qs([account], Req) of
     #{account := <<"">>} ->
       Resp =
         cowboy_req:set_resp_body(jsx:encode(#{status => <<"no_account">>}), Req),
@@ -190,13 +191,31 @@ to_json(Req, State) ->
 
     #{account := Account} ->
       Body = jsx:encode(#{schedules => load_schedules(Account)}),
-      {Body, Req, State}
+      {Body, Req, State};
+
+    {'EXIT', {request_error, {match_qs, Fields}, Error}} ->
+      Resp =
+        cowboy_req:set_resp_body(
+          jsx:encode(
+            #{
+              status => <<"error">>,
+              reason => #{message => Error, fields => Fields}
+            }
+          ),
+          Req
+        ),
+      {stop, cowboy_req:reply(401, Resp), State}
   end.
 
 
 save_schedule(
   #{account := Account, hash := Hash, cronspec := _CronSpec} = Schedule
 ) ->
+  Obj = damage_riak:get(?SCHEDULES_BUCKET, Hash),
+  case catch riakc_obj:get_value(Obj) of
+    siblings -> logger:error("failed to load  schedule ~p", [Obj]);
+    Schedule -> logger:info("loaded  schedule ~p", [Schedule])
+  end,
   {ok, true} =
     damage_riak:put(
       ?SCHEDULES_BUCKET,
@@ -205,15 +224,23 @@ save_schedule(
       [{{binary_index, "contractid"}, [Account]}]
     ).
 
+
 delete_schedule(ScheduleId) ->
   damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId).
 
 load_schedule(ScheduleId) ->
   logger:debug("Schedulid ~p", [ScheduleId]),
-  Obj = damage_riak:get(?SCHEDULES_BUCKET, ScheduleId),
-  logger:debug("Schedule ~p", [Obj]),
-  Schedule = riakc_obj:get_value(Obj),
-  jsx:decode(Schedule).
+  case catch damage_riak:get(?SCHEDULES_BUCKET, ScheduleId) of
+    notfound -> logger:info("schedule notfound ~p", [ScheduleId]);
+
+    Schedule ->
+      case catch jsx:decode(Schedule) of
+        {'EXIT', Error} ->
+          logger:error("failed to load  schedule ~p ~p", [Schedule, Error]);
+
+        Ok -> logger:info("Loaded  schedule ~p", [Ok])
+      end
+  end.
 
 
 load_schedules(AccountId) ->
@@ -234,3 +261,5 @@ load_schedules() ->
     load_schedule(ScheduleId)
     || ScheduleId <- damage_riak:list_keys(?SCHEDULES_BUCKET)
   ].
+
+test_conflict_resolution() -> load_schedules().

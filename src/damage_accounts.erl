@@ -25,6 +25,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 
+-define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
+
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 content_types_provided(Req, State) ->
@@ -59,53 +61,12 @@ validate_refund_addr(forward, BtcAddress) ->
   end.
 
 
-do_action(<<"create_from_yaml">>, Req) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?debugFmt(" yaml data: ~p ", [Data]),
-  {ok, [Data0]} = fast_yaml:decode(Data, [maps]),
-  damage_oauth:add_user(Data0);
-
-do_action(<<"balance">>, Req) ->
-  #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
-  balance(ContractAddress);
-
-do_action(<<"reset_password">>, Req) ->
-  {
-    ok,
-    #{
-      email := Email,
-      password := Password,
-      new_password := NewPassword,
-      new_password_confirm := NewPasswordConfirm
-    } = Data,
-    _Req2
-  } = cowboy_req:read_body(Req),
-  NewPasswordConfirm = NewPassword,
-  ?debugFmt("Form data ~p", [Data]),
-  damage_oauth:reset_password(Email, Password, NewPassword);
-
-do_action(<<"refund">>, Req) ->
-  #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
-  refund(ContractAddress).
-
-
-%to_json(Req, State) ->
-%      #{email := Email} = cowboy_req:match_qs([email], Req),
-%  Body = case cowboy_req:binding(action, Req) of
-%    <<"create">> ->
-%                 jsx:encode(#{action=>
-%
-%    <<"reset_password">> ->
-%        jsx:encode(Result)
-%  %Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
-%  %Req =
-%  %  cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
-%  {Body, Req, State}.
-%
-%
-%to_text(Req, State) -> to_html(Req, State).
 to_html(Req, State) ->
   case cowboy_req:binding(action, Req) of
+    <<"balance">> ->
+      #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
+      balance(ContractAddress);
+
     <<"create">> ->
       Body =
         damage_utils:load_template(
@@ -116,23 +77,29 @@ to_html(Req, State) ->
 
     <<"confirm">> ->
       #{token := Password} = cowboy_req:match_qs([token], Req),
-      {ok, Email} =
-        damage_riak:get({<<"Default">>, <<"ConfirmToken">>}, Password),
-      Body =
-        damage_utils:load_template(
-          "reset_password.mustache",
-          #{email => Email, current_password => Password, body => <<"Test">>}
-        ),
-      {Body, Req, State};
+      case damage_riak:get({<<"Default">>, <<"ConfirmToken">>}, Password) of
+        {ok, Email} ->
+          Body =
+            damage_utils:load_template(
+              "reset_password.mustache",
+              #{
+                email => Email,
+                current_password => Password,
+                body => <<"Test">>
+              }
+            ),
+          {Body, Req, State};
+
+        notfound ->
+          {<<"Invalid confirmation link. Please try again.">>, Req, State}
+      end;
 
     <<"reset_password">> ->
-      #{password := Password} = cowboy_req:match_qs([password], Req),
-      #{email := Email} = cowboy_req:match_qs([email], Req),
       Body =
-        damage_utils:load_template(
-          "reset_password.mustache",
-          #{email => Email, current_password => Password, body => <<"Test">>}
-        ),
+        case damage_oauth:reset_password(cowboy_req:match_qs([token], Req)) of
+          {ok, Body0} -> Body0;
+          {error, Msg} -> Msg
+        end,
       {Body, Req, State}
   end.
 
@@ -148,23 +115,20 @@ from_html(Req, State) ->
       Resp = cowboy_req:set_resp_body(Body, Req),
       {stop, cowboy_req:reply(200, Resp), State};
 
-    <<"confirm">> ->
-      Body = <<"Ok account activation confirmed.">>,
-      Resp = cowboy_req:set_resp_body(Body, Req),
-      {stop, cowboy_req:reply(200, Resp), State};
-
     <<"reset_password">> ->
-      #{
-        <<"email">> := Email,
-        <<"current_password">> := Password,
-        <<"new_password_confirmation">> := NewPasswordConfirm,
-        <<"new_password">> := NewPassword
-      } = FormData,
-      NewPassword = NewPasswordConfirm,
-      damage_oauth:reset_password(Email, Password, NewPassword),
-      Body = <<"Ok password reset confirmed.">>,
-      Resp = cowboy_req:set_resp_body(Body, Req),
-      {stop, cowboy_req:reply(200, Resp), State}
+      case damage_oauth:reset_password(FormData) of
+        {ok, Body} ->
+          Resp = cowboy_req:set_resp_body(Body, Req),
+          {stop, cowboy_req:reply(200, Resp), State};
+
+        {error, Msg} ->
+          Resp = cowboy_req:set_resp_body(Msg, Req),
+          {stop, cowboy_req:reply(401, Resp), State}
+      end;
+
+    <<"refund">> ->
+      #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
+      refund(ContractAddress)
   end.
 
 
@@ -180,6 +144,23 @@ from_json(Req, State) ->
       {stop, cowboy_req:reply(201, Resp), State};
 
     <<"reset_password">> ->
+      Result = damage_oauth:reset_password(Data0),
+      Resp = cowboy_req:set_resp_body(Result, Req),
+      {stop, cowboy_req:reply(201, Resp), State}
+  end.
+
+
+from_yaml(Req, State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {ok, [Data0]} = fast_yaml:decode(Data, [maps]),
+  ?debugFmt(" yaml data: ~p ", [Data]),
+  case cowboy_req:binding(action, Req) of
+    <<"create">> ->
+      Result = damage_oauth:add_user(Data0),
+      Resp = cowboy_req:set_resp_body(jsx:encode(Result), Req),
+      {stop, cowboy_req:reply(201, Resp), State};
+
+    <<"reset_password">> ->
       #{
         email := Email,
         current_password := Password,
@@ -188,47 +169,41 @@ from_json(Req, State) ->
       } = Data0,
       NewPassword = NewPasswordConfirm,
       Result = damage_oauth:reset_password(Email, Password, NewPassword),
-      JsonResult = jsx:encode(Result),
-      Resp = cowboy_req:set_resp_body(JsonResult, Req),
+      Resp =
+        cowboy_req:set_resp_body(
+          list_to_binary(lists:flatten(fast_yaml:encode(Result))),
+          Req
+        ),
       {stop, cowboy_req:reply(201, Resp), State}
   end.
 
 
-from_yaml(Req, State) ->
-  Action = cowboy_req:binding(action, Req),
-  Result = do_action(<<Action/binary, "_from_yaml">>, Req),
-  YamlResult = fast_yaml:encode(Result),
-  Resp = cowboy_req:set_resp_body(YamlResult, Req),
-  {stop, cowboy_req:reply(201, Resp), State}.
-
-
 create_contract(RefundAddress) ->
-    ?debugFmt("btc refund address ~p ", [RefundAddress]),
-    % create ae account and bitcoin account
-    #{result := #{contractId := ContractAddress}} =
+  ?debugFmt("btc refund address ~p ", [RefundAddress]),
+  % create ae account and bitcoin account
+  #{result := #{contractId := ContractAddress}} =
     damage_ae:aecli(contract, deploy, "contracts/account.aes", []),
-    {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
-    ?debugFmt(
+  {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
+  ?debugFmt(
     "debug created AE contractid ~p ~p, ",
     [ContractAddress, BtcAddress]
-    ),
-    _ContractCreated =
+  ),
+  _ContractCreated =
     damage_ae:aecli(
-        contract,
-        call,
-        binary_to_list(ContractAddress),
-        "contracts/account.aes",
-        "set_btc_state",
-        [BtcAddress, RefundAddress]
+      contract,
+      call,
+      binary_to_list(ContractAddress),
+      "contracts/account.aes",
+      "set_btc_state",
+      [BtcAddress, RefundAddress]
     ),
-    %?debugFmt("debug created AE contract ~p", [ContractCreated]),
-    #{
+  %?debugFmt("debug created AE contract ~p", [ContractCreated]),
+  #{
     status => <<"ok">>,
     btc_address => BtcAddress,
     ae_contract_address => ContractAddress,
     btc_refund_address => RefundAddress
-    }.
-
+  }.
 
 
 store_profile(ContractAddress) ->
@@ -301,16 +276,17 @@ refund(ContractAddress) ->
   } = balance(ContractAddress),
   case validate_refund_addr(forward, BtcRefundAddress) of
     {ok, BtcRefundAddress} ->
-        {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
-        ?debugFmt("real balance ~p ", [RealBtcBalance]),
-        {ok, RefundResult} =
-            bitcoin:sendtoaddress(
-            BtcRefundAddress,
-            RealBtcBalance - binary_to_integer(Balance),
-            ContractAddress
-            ),
-        ?debugFmt("Refund result ~p ", [RefundResult]),
-        RefundResult;
+      {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
+      ?debugFmt("real balance ~p ", [RealBtcBalance]),
+      {ok, RefundResult} =
+        bitcoin:sendtoaddress(
+          BtcRefundAddress,
+          RealBtcBalance - binary_to_integer(Balance),
+          ContractAddress
+        ),
+      ?debugFmt("Refund result ~p ", [RefundResult]),
+      RefundResult;
+
     Other ->
       ?debugFmt("refund_address data: ~p ", [Other]),
       #{status => <<"notok">>, message => <<"Invalid refund_address.">>}
