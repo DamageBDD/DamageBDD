@@ -24,7 +24,7 @@
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
-is_authorized(Req, State) -> damage_http:get_access_token(Req, State).
+is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
   {

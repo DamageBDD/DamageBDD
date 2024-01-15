@@ -22,6 +22,8 @@
     load_template/2,
     send_email/3,
     setup_vanillae_deps/0,
+    atom_to_binary_keys/1,
+    binary_to_atom_keys/1,
     test_encrypt_decrypt/0,
     test_send_email/0
   ]
@@ -135,6 +137,28 @@ setup_vanillae_deps() ->
     [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
   ok = code:add_paths(PackagePaths).
 
+
+atom_to_binary_keys(Map) ->
+  maps:from_list(
+    lists:map(
+      fun
+        ({Key, Value}) when is_atom(Key) -> {atom_to_binary(Key), Value};
+        (Value) -> Value
+      end,
+      maps:to_list(Map)
+    )
+  ).
+
+binary_to_atom_keys(Map) ->
+  maps:from_list(
+    lists:map(
+      fun
+        ({Key, Value}) when is_binary(Key) -> {binary_to_atom(Key), Value};
+        (Value) -> Value
+      end,
+      maps:to_list(Map)
+    )
+  ).
 
 convert_context(Context) ->
   lists:map(

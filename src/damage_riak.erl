@@ -241,14 +241,29 @@ handle_call(
         "get RiakObject ~p ~p",
         [RiakObject, damage_utils:decrypt(Value)]
       ),
-      case catch jsx:decode(damage_utils:decrypt(Value), JsonDecodeOpts) of
-        {badarg, Error} ->
+      DecValue = damage_utils:decrypt(Value),
+      case catch jsx:decode(DecValue, JsonDecodeOpts) of
+        {'EXIT', {badarg, _}} ->
           logger:error("Unexpected riak error ~p", [Value]),
-          {error, Error, State};
+          {reply, {decode_error, DecValue}, State};
 
         Result -> {reply, {ok, Result}, State}
       end
   end;
+
+handle_call({put, Bucket, Key, Value, Index}, From, State) when is_map(Value) ->
+  {ok, Modified} = datestring:format("YmdHMS", erlang:localtime()),
+  handle_call(
+    {
+      put,
+      Bucket,
+      Key,
+      jsx:encode(maps:put(<<"modified">>, list_to_binary(Modified), Value)),
+      Index
+    },
+    From,
+    State
+  );
 
 handle_call(
   {put, Bucket, Key, Value, Index},
@@ -257,7 +272,7 @@ handle_call(
 ) ->
   % Perform put operation using the Riak connection
   Key0 = damage_utils:encrypt(Key),
-  Value0 = damage_utils:encrypt(jsx:encode(Value)),
+  Value0 = damage_utils:encrypt(Value),
   Object0 = riakc_obj:new(Bucket, Key0, Value0),
   Object =
     case Index of
@@ -377,7 +392,7 @@ resolver_function({MA, A}, {MB, B}) ->
           )
         );
 
-      _ -> -1
+      _ -> dict:fetch(<<"X-Riak-Last-Modified">>, MA)
     end,
   B1 =
     case catch jsx:decode(damage_utils:decrypt(B), [return_maps]) of
@@ -390,12 +405,12 @@ resolver_function({MA, A}, {MB, B}) ->
             B0,
             datestring:format(
               "YmdHMS",
-              dict:fetch(<<"X-Riak-Last-Modified">>, MA)
+              dict:fetch(<<"X-Riak-Last-Modified">>, MB)
             )
           )
         );
 
-      _ -> -1
+      _ -> dict:fetch(<<"X-Riak-Last-Modified">>, MB)
     end,
   A1 > B1.
 

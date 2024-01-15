@@ -20,12 +20,15 @@
 -export([update_schedules/3]).
 -export([confirm_spend/2]).
 -export([is_allowed_hosts/2]).
+-export([get_account_context/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
+-define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
+-define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -77,8 +80,8 @@ to_html(Req, State) ->
 
     <<"confirm">> ->
       #{token := Password} = cowboy_req:match_qs([token], Req),
-      case damage_riak:get({<<"Default">>, <<"ConfirmToken">>}, Password) of
-        {ok, Email} ->
+      case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
+        {ok, #{email := Email, expiry := _Expiry}} ->
           Body =
             damage_utils:load_template(
               "reset_password.mustache",
@@ -104,82 +107,82 @@ to_html(Req, State) ->
   end.
 
 
-from_html(Req, State) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?debugFmt("Form data ~p", [Data]),
-  FormData = maps:from_list(cow_qs:parse_qs(Data)),
-  case cowboy_req:binding(action, Req) of
+do_post_action(Binding, Data) ->
+  case Binding of
     <<"create">> ->
-      Result = damage_oauth:add_user(FormData),
-      Body = damage_utils:load_template("create_account.mustache", Result),
-      Resp = cowboy_req:set_resp_body(Body, Req),
-      {stop, cowboy_req:reply(200, Resp), State};
-
-    <<"reset_password">> ->
-      case damage_oauth:reset_password(FormData) of
-        {ok, Body} ->
-          Resp = cowboy_req:set_resp_body(Body, Req),
-          {stop, cowboy_req:reply(200, Resp), State};
-
-        {error, Msg} ->
-          Resp = cowboy_req:set_resp_body(Msg, Req),
-          {stop, cowboy_req:reply(401, Resp), State}
+      case damage_oauth:add_user(Data) of
+        {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
+        {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
       end;
 
-    <<"refund">> ->
-      #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
-      refund(ContractAddress)
+    <<"reset_password">> ->
+      case damage_oauth:reset_password(Data) of
+        {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
+        {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+      end
   end.
+
+
+from_html(Req, State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  FormData = maps:from_list(cow_qs:parse_qs(Data)),
+  {Status0, Response0} =
+    do_post_action(cowboy_req:binding(action, Req), FormData),
+  Body =
+    case cowboy_req:binding(action, Req) of
+      <<"create">> ->
+        damage_utils:load_template("create_account.mustache", Response0);
+
+      <<"refund">> ->
+        #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
+        refund(ContractAddress);
+
+      _ -> Response0
+    end,
+  {
+    stop,
+    cowboy_req:reply(Status0, cowboy_req:set_resp_body(jsx:encode(Body), Req)),
+    State
+  }.
 
 
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?debugFmt(" json data: ~p ", [Data]),
-  Data0 = jsx:decode(Data, [return_maps]),
-  case cowboy_req:binding(action, Req) of
-    <<"create">> ->
-      Result = damage_oauth:add_user(Data0),
-      JsonResult = jsx:encode(Result),
-      Resp = cowboy_req:set_resp_body(JsonResult, Req),
-      {stop, cowboy_req:reply(201, Resp), State};
+  {Status0, Response0} =
+    case catch jsx:decode(Data, [return_maps]) of
+      badarg ->
+        {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
 
-    <<"reset_password">> ->
-      Result = damage_oauth:reset_password(Data0),
-      Resp = cowboy_req:set_resp_body(Result, Req),
-      {stop, cowboy_req:reply(201, Resp), State}
-  end.
+      Data0 -> do_post_action(cowboy_req:binding(action, Req), Data0)
+    end,
+  {
+    stop,
+    cowboy_req:reply(
+      Status0,
+      cowboy_req:set_resp_body(jsx:encode(Response0), Req)
+    ),
+    State
+  }.
 
 
 from_yaml(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  {ok, [Data0]} = fast_yaml:decode(Data, [maps]),
-  ?debugFmt(" yaml data: ~p ", [Data]),
-  case cowboy_req:binding(action, Req) of
-    <<"create">> ->
-      Result = damage_oauth:add_user(Data0),
-      Resp = cowboy_req:set_resp_body(jsx:encode(Result), Req),
-      {stop, cowboy_req:reply(201, Resp), State};
-
-    <<"reset_password">> ->
-      #{
-        email := Email,
-        current_password := Password,
-        new_password_confirm := NewPasswordConfirm,
-        new_password := NewPassword
-      } = Data0,
-      NewPassword = NewPasswordConfirm,
-      Result = damage_oauth:reset_password(Email, Password, NewPassword),
-      Resp =
-        cowboy_req:set_resp_body(
-          list_to_binary(lists:flatten(fast_yaml:encode(Result))),
-          Req
-        ),
-      {stop, cowboy_req:reply(201, Resp), State}
-  end.
+  {Status0, Response0} =
+    case fast_yaml:decode(Data, [maps]) of
+      {ok, [Data0]} -> do_post_action(cowboy_req:binding(action, Req), Data0);
+      {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+    end,
+  {
+    stop,
+    cowboy_req:reply(
+      Status0,
+      cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+    ),
+    State
+  }.
 
 
 create_contract(RefundAddress) ->
-  ?debugFmt("btc refund address ~p ", [RefundAddress]),
   % create ae account and bitcoin account
   #{result := #{contractId := ContractAddress}} =
     damage_ae:aecli(contract, deploy, "contracts/account.aes", []),
@@ -383,4 +386,16 @@ check_host_token(Host, Token) ->
   ) of
     [Token] -> {ok, Token};
     [] -> {error, notfound}
+  end.
+
+
+get_account_context(Account) ->
+  case damage_riak:get(?CONTEXT_BUCKET, Account) of
+    {ok, Context} ->
+      logger:debug("got context ~p", [Context]),
+      Context;
+
+    Other ->
+      logger:debug("got context ~p", [Other]),
+      #{}
   end.

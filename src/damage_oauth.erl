@@ -43,7 +43,7 @@
 
 -define(ACCESS_TOKEN_BUCKET, {<<"Default">>, <<"AccessTokens">>}).
 -define(REFRESH_TOKEN_BUCKET, {<<"Default">>, <<"RefreshTokens">>}).
--define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmToken">>}).
+-define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(CLIENT_BUCKET, {<<"Default">>, <<"Clients">>}).
 
@@ -73,12 +73,23 @@ validate_password(Password) ->
   end.
 
 
-reset_password(#{<<"token">> := Token}) ->
+get_token_expiry(Mins) ->
+  {{Year, Month, Day}, {Hour, Minute, Second}} = erlang:localtime(),
+  {ok, Created} =
+    datestring:format(
+      "YmdHMS",
+      {{Year, Month, Day}, {Hour, Minute + Mins, Second}}
+    ),
+  Created.
+
+
+reset_password(#{token := Token}) ->
   case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Token) of
-    {ok, Email} ->
+    {ok, #{email := Email, expiry := _Expiry}} ->
       case damage_riak:get(?USER_BUCKET, Email) of
         {ok, User} ->
           damage_riak:put(?USER_BUCKET, Email, maps:put(password, Token, User)),
+          damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Token),
           {
             ok,
             damage_utils:load_template(
@@ -90,46 +101,9 @@ reset_password(#{<<"token">> := Token}) ->
         _ -> {error, <<"Invalid reset password link. Please try again.">>}
       end;
 
-    notfound -> {error, <<"Invalid reset password link. Please try again.">>}
-  end;
-
-reset_password(#{<<"email">> := Email}) ->
-  TempPassword = list_to_binary(uuid:to_string(uuid:uuid4())),
-  case damage_riak:get(?USER_BUCKET, Email) of
-    notfound -> {error, jsx:encode(#{<<"message">> => <<"Invalid request.">>})};
-
-    {ok, Found} ->
-      {ok, ApiUrl} = application:get_env(damage, api_url),
-      ApiUrl0 = list_to_binary(ApiUrl),
-      Ctxt =
-        maps:put(
-          <<"password_reset_url">>,
-          <<
-            ApiUrl0/binary,
-            "/accounts/reset_password?token=",
-            TempPassword/binary
-          >>,
-          #{}
-        ),
-      damage_riak:put(?CONFIRM_TOKEN_BUCKET, TempPassword, Email),
-      damage_utils:send_email(
-        {maps:get(full_name, Found, <<"">>), Email},
-        <<"DamageBDD Password Reset">>,
-        damage_utils:load_template("reset_password.mustache", Ctxt)
-      ),
-      %damage_riak:update(?USER_BUCKET, Email, Found),
-      {
-        ok,
-        jsx:encode(
-          maps:put(
-            <<"message">>,
-            <<
-              "Account created. Please check email for api key to start using DamageBDD."
-            >>,
-            #{}
-          )
-        )
-      }
+    notfound ->
+      logger:debug("confirm token not found ~p", [Token]),
+      {error, <<"Invalid reset password link. Please try again.">>}
   end;
 
 reset_password(
@@ -142,7 +116,7 @@ reset_password(
 ) ->
   NewPassword = NewPasswordConfirm,
   case damage_riak:get(?USER_BUCKET, Email) of
-    notfound -> {error, jsx:encode(#{<<"message">> => <<"Invalid request.">>})};
+    notfound -> {error, <<"Invalid request.">>};
 
     {ok, #{password := Password} = KycData} ->
       case validate_password(NewPassword) of
@@ -153,12 +127,7 @@ reset_password(
             maps:put(password, NewPassword, KycData)
           ),
           damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
-          {
-            ok,
-            jsx:encode(
-              maps:put(<<"message">>, <<"Password successfuly reset.">>, #{})
-            )
-          };
+          {ok, <<"Password successfuly reset.">>};
 
         _ ->
           {
@@ -168,6 +137,38 @@ reset_password(
             >>
           }
       end
+  end;
+
+reset_password(#{<<"email">> := Email}) ->
+  TempPassword = list_to_binary(uuid:to_string(uuid:uuid4())),
+  case damage_riak:get(?USER_BUCKET, Email) of
+    notfound -> {error, <<"Invalid request.">>};
+
+    {ok, Found} ->
+      {ok, ApiUrl} = application:get_env(damage, api_url),
+      ApiUrl0 = list_to_binary(ApiUrl),
+      Ctxt =
+        maps:put(
+          <<"password_reset_url">>,
+          <<
+            ApiUrl0/binary,
+            "/accounts/reset_password?token=",
+            TempPassword/binary
+          >>,
+          Found
+        ),
+      damage_riak:put(
+        ?CONFIRM_TOKEN_BUCKET,
+        TempPassword,
+        #{email => Email, expiry => get_token_expiry(5)}
+      ),
+      damage_utils:send_email(
+        {maps:get(full_name, Found, <<"">>), Email},
+        <<"DamageBDD Password Reset">>,
+        damage_utils:load_template("reset_password_email.mustache", Ctxt)
+      ),
+      %damage_riak:update(?USER_BUCKET, Email, Found),
+      {ok, <<"Password Reset successfully.">>}
   end.
 
 
@@ -184,7 +185,11 @@ add_userdata(
       <<ApiUrl0/binary, "/accounts/confirm?token=", TempPassword/binary>>,
       Data
     ),
-  damage_riak:put({<<"Default">>, <<"ConfirmToken">>}, TempPassword, ToEmail),
+  damage_riak:put(
+    ?CONFIRM_TOKEN_BUCKET,
+    TempPassword,
+    #{email => ToEmail, expiry => get_token_expiry(5)}
+  ),
   damage_utils:send_email(
     {maps:get(full_name, Data, <<"">>), ToEmail},
     <<"DamageBDD Account SignUp">>,
@@ -199,13 +204,12 @@ add_userdata(
       {{binary_index, "contract"}, [ContractAddress]}
     ]
   ),
-  maps:put(
-    <<"message">>,
+  {
+    ok,
     <<
       "Account created. Please check email for api key to start using DamageBDD."
-    >>,
-    Data
-  ).
+    >>
+  }.
 
 
 add_user(#{<<"business_name">> := BusinessName} = KycData) ->
@@ -225,10 +229,9 @@ add_user(#{<<"email">> := ToEmail} = KycData) ->
               Data,
               maps:put(contract_address, ContractAddress, KycData)
             ),
-          add_userdata(KycData0);
+          add_userdata(damage_utils:binary_to_atom_keys(KycData0));
 
-        #{status := <<"notok">>} ->
-          maps:put(<<"message">>, <<"Account creation failed. .">>, KycData)
+        #{status := <<"notok">>} -> {error, <<"Account creation failed. .">>}
       end;
 
     {ok, #{password := Password} = Found} ->
@@ -237,11 +240,12 @@ add_user(#{<<"email">> := ToEmail} = KycData) ->
 
         _ ->
           logger:info(" Accoun exists data: ~p ", [Found]),
-          maps:put(
-            <<"message">>,
-            <<"Account with that email already exists.">>,
-            KycData
-          )
+          {
+            error,
+            <<
+              "Account with that email already exists. Please check your email for confirmation link."
+            >>
+          }
       end
   end.
 
@@ -316,7 +320,7 @@ associate_refresh_token(RefreshToken, Context, DeviceId, _) ->
   ).
 
 associate_access_token(AccessToken, Context, _) ->
-  damage_riak:put(?ACCESS_TOKEN_BUCKET, AccessToken, Context).
+  damage_riak:put(?ACCESS_TOKEN_BUCKET, AccessToken, maps:from_list(Context)).
 
 resolve_access_code(AccessCode, _AppContext) ->
   resolve_access_token(AccessCode, _AppContext).

@@ -39,18 +39,13 @@ is_authorized(Req, State) ->
   case get_access_token(Req) of
     {ok, Token} ->
       case oauth2:verify_access_token(Token, []) of
-        {
-          ok,
-          {
-            [],
-            [
-              {<<"client">>, _Client},
-              {<<"resource_owner">>, ResourceOwner},
-              {<<"expiry_time">>, _Expiry},
-              {<<"scope">>, _Scope}
-            ]
-          }
-        } ->
+        {ok, {[], Auth}} ->
+          #{
+            <<"client">> := _Client,
+            <<"resource_owner">> := ResourceOwner,
+            <<"expiry_time">> := _Expiry,
+            <<"scope">> := _Scope
+          } = maps:from_list(Auth),
           case damage_riak:get(?USER_BUCKET, ResourceOwner) of
             {ok, #{ae_contract_address := ContractAddress} = User} ->
               {
@@ -71,7 +66,11 @@ is_authorized(Req, State) ->
               {{false, <<"Bearer">>}, Req, State}
           end;
 
-        {error, access_denied} -> {{false, <<"Bearer">>}, Req, State}
+        {error, access_denied} -> {{false, <<"Bearer">>}, Req, State};
+
+        Other ->
+          logger:error("Unexpected auth ~p", [Other]),
+          {{false, <<"Bearer">>}, Req, State}
       end;
 
     {error, _} -> {{false, <<"Bearer">>}, Req, State}
