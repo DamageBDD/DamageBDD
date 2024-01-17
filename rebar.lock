@@ -125,6 +125,7 @@
   {git,"https://github.com/lambdaclass/throttle.git",
        {ref,"4f5fb17c9d4a86ba016e7011648ae5dfe539ac01"}},
   0},
+ {<<"trails">>,{pkg,<<"trails">>,<<"2.3.1">>},0},
  {<<"uuid">>,
   {git,"https://github.com/avtobiff/erlang-uuid.git",
        {ref,"cb02a2039a9b29dd2eef0446039c9c6e164df9ef"}},
@@ -187,5 +188,6 @@
  {<<"recon">>, <<"E9AB01AC7FC8572E41EB59385EFEB3FB0FF5BF02103816535BACAEDF327D0263">>},
  {<<"stdout_formatter">>, <<"51F1DF921B0477275EA712763042155DBC74ACC75D9648DBD54985C45C913B29">>},
  {<<"telemetry">>, <<"DAD9CE9D8EFFC621708F99EAC538EF1CBE05D6A874DD741DE2E689C47FEAFED5">>},
- {<<"telemetry_registry">>, <<"6D0CA77B691CF854ED074B459A93B87F4C7F5512F8F7743C635CA83DA81F939E">>}]}
+ {<<"telemetry_registry">>, <<"6D0CA77B691CF854ED074B459A93B87F4C7F5512F8F7743C635CA83DA81F939E">>},
+ {<<"trails">>, <<"1006E38E09BA095AE77DD9A50BB3E8EBDB8DC31ECBC5BF276C3D848C15D7079B">>}]}
 ].

@@ -5,6 +5,9 @@
 -export([to_html/2]).
 -export([to_json/2]).
 -export([to_text/2]).
+-export([trails/0]).
+
+trails() -> [{"/help", damage_static, {priv_dir, damage, "help"}}].
 
 init(Req, Opts) ->
   logger:info("Got init ~p ~p.", [Req, Opts]),

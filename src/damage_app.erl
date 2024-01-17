@@ -25,35 +25,30 @@ start(_StartType, _StartArgs) ->
   {ok, _} = application:ensure_all_started(erlexec),
   {ok, _} = application:ensure_all_started(throttle),
   {ok, _} = application:ensure_all_started(gen_smtp),
-  Dispatch =
-    cowboy_router:compile(
-      [
-        {
-          '_',
-          [
-            {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
-            {"/auth", damage_auth, #{}},
-            {"/help", damage_static, {priv_dir, damage, "help"}},
-            {"/features/[...]", cowboy_static, {dir, "features/"}},
-            {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
-            {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
-            {
-              "/steps.json",
-              cowboy_static,
-              {priv_file, damage, "static/steps.json"}
-            },
-            {"/execute_feature/", damage_http, #{}},
-            {"/publish_feature/", damage_publish, #{}},
-            {"/schedule/[...]", damage_schedule, #{}},
-            {"/reports/:hash/[:path]", damage_reports, #{}},
-            {"/accounts/[:action]", damage_accounts, #{}},
-            {"/tests/[:action]", damage_tests, #{}},
-            {"/analytics/[:action]", damage_analytics, #{}},
-            {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}}
-          ]
-        }
-      ]
-    ),
+  {ok, _} = application:ensure_all_started(ssh),
+  damage_ssh:start(),
+  Handlers =
+    [
+      damage_auth,
+      damage_static,
+      damage_http,
+      damage_publish,
+      damage_schedule,
+      damage_accounts,
+      damage_tests,
+      damage_analytics
+    ],
+  Trails =
+    [
+      {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
+      {"/features/[...]", cowboy_static, {dir, "features/"}},
+      {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
+      {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
+      {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},
+      {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}}
+      | trails:trails(Handlers)
+    ],
+  Dispatch = trails:single_host_compile(Trails),
   {ok, WsPort} = application:get_env(damage, port),
   {ok, _} =
     cowboy:start_clear(
@@ -80,6 +75,10 @@ start(_StartType, _StartArgs) ->
   {ok, AeNodes} = application:get_env(damage, ae_nodes),
   ok = vanillae:ae_nodes(AeNodes),
   logger:info("Started vanilla."),
+  case init:get_plain_arguments() of
+    [_, "shell"] -> sync:go();
+    _ -> ok
+  end,
   damage_sup:start_link().
 
 

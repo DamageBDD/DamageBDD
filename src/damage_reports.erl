@@ -21,6 +21,9 @@
 -export([test/0]).
 -export([ls/1]).
 -export([content_types_accepted/2]).
+-export([trails/0]).
+
+trails() -> [{"/reports/:hash/[:path]", damage_reports, #{}}].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 

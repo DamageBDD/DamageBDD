@@ -25,10 +25,13 @@
 -export([load_schedules/1]).
 -export([delete_schedule/1]).
 -export([test_conflict_resolution/0]).
+-export([trails/0]).
 
 -include_lib("kernel/include/logger.hrl").
 
 -define(SCHEDULES_BUCKET, {<<"Default">>, <<"Schedules">>}).
+
+trails() -> [{"/schedule/[...]", damage_schedule, #{}}].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 

@@ -19,8 +19,9 @@
 -export([content_types_accepted/2]).
 -export([update_schedules/3]).
 -export([confirm_spend/2]).
--export([is_allowed_hosts/2]).
+-export([is_allowed_domain/1]).
 -export([get_account_context/1]).
+-export([trails/0]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -29,6 +30,8 @@
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
+
+trails() -> [{"/accounts/[:action]", damage_accounts, #{}}].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 

@@ -13,10 +13,13 @@
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
+-export([trails/0]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
+
+trails() -> [{"/tests/[:action]", damage_tests, #{}}].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 

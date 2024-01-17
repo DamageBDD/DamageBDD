@@ -3,10 +3,13 @@
 -export([init/2, rest_init/2, allowed_methods/2]).
 -export([content_types_provided/2, content_types_accepted/2]).
 -export([process_post/2, process_get/2]).
+-export([trails/0]).
 
 %%%===================================================================
 %%% Cowboy callbacks
 %%%===================================================================
+
+trails() -> [{"/auth", damage_auth, #{}}].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 

@@ -17,9 +17,12 @@
 -export([to_json/2]).
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
+-export([trails/0]).
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
+
+trails() -> [{"/execute_feature/", damage_http, #{}}].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
