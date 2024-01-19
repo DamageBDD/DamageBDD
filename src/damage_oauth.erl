@@ -73,15 +73,7 @@ validate_password(Password) ->
   end.
 
 
-get_token_expiry(Mins) ->
-  {{Year, Month, Day}, {Hour, Minute, Second}} = erlang:localtime(),
-  {ok, Created} =
-    datestring:format(
-      "YmdHMS",
-      {{Year, Month, Day}, {Hour, Minute + Mins, Second}}
-    ),
-  Created.
-
+get_token_expiry(Mins) -> date_util:epoch_hires() + (Mins * 60).
 
 reset_password(#{token := Token}) ->
   case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Token) of
@@ -224,12 +216,12 @@ add_user(#{<<"email">> := ToEmail} = KycData) ->
         maps:get(refund_address, KycData, <<"notset">>)
       ) of
         #{status := <<"ok">>, ae_contract_address := ContractAddress} = Data ->
-          KycData0 =
+          Data0 =
             maps:merge(
               Data,
               maps:put(contract_address, ContractAddress, KycData)
             ),
-          add_userdata(damage_utils:binary_to_atom_keys(KycData0));
+          add_userdata(damage_utils:binary_to_atom_keys(Data0));
 
         #{status := <<"notok">>} -> {error, <<"Account creation failed. .">>}
       end;

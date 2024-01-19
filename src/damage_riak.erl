@@ -237,10 +237,10 @@ handle_call(
 
     {ok, RiakObject} ->
       Value = check_resolve_siblings(RiakObject, Connections),
-      logger:debug(
-        "get RiakObject ~p ~p",
-        [RiakObject, damage_utils:decrypt(Value)]
-      ),
+      %logger:debug(
+      %  "get RiakObject ~p ~p",
+      %  [RiakObject, damage_utils:decrypt(Value)]
+      %),
       DecValue = damage_utils:decrypt(Value),
       case catch jsx:decode(DecValue, JsonDecodeOpts) of
         {'EXIT', {badarg, _}} ->
@@ -359,7 +359,7 @@ check_resolve_siblings(RiakObject, Connections) ->
     [] -> throw(no_value);
 
     [{_MD, V}] ->
-      logger:debug(" resolve_siblings ~p", [V]),
+      %logger:debug(" resolve_siblings ~p", [V]),
       V;
 
     Siblings ->
@@ -375,49 +375,36 @@ resolver_function({_MA, <<>>}, {_MB, _B}) -> false;
 resolver_function({_MA, _A}, {_MB, <<>>}) -> true;
 
 resolver_function({MA, A}, {MB, B}) ->
-  logger:debug("Generic resolver ~p:~p - ~p:~p", [MA, A, MB, B]),
+  %logger:debug("Generic resolver ~p:~p - ~p:~p", [MA, A, MB, B]),
+  ARiakModified =
+    date_util:now_to_seconds_hires(dict:fetch(<<"X-Riak-Last-Modified">>, MA)),
+  BRiakModified =
+    date_util:now_to_seconds_hires(dict:fetch(<<"X-Riak-Last-Modified">>, MB)),
   A1 =
     case catch jsx:decode(damage_utils:decrypt(A), [return_maps]) of
       A0 when is_map(A0) ->
-        maps:get(
-          modified,
-          A0,
-          maps:get(
-            created,
-            A0,
-            datestring:format(
-              "YmdHMS",
-              dict:fetch(<<"X-Riak-Last-Modified">>, MA)
-            )
-          )
-        );
+        maps:get(modified, A0, maps:get(created, A0, ARiakModified));
 
-      _ -> dict:fetch(<<"X-Riak-Last-Modified">>, MA)
+      _ -> ARiakModified
     end,
   B1 =
     case catch jsx:decode(damage_utils:decrypt(B), [return_maps]) of
       B0 when is_map(B0) ->
-        maps:get(
-          modified,
-          B0,
-          maps:get(
-            created,
-            B0,
-            datestring:format(
-              "YmdHMS",
-              dict:fetch(<<"X-Riak-Last-Modified">>, MB)
-            )
-          )
-        );
+        maps:get(modified, B0, maps:get(created, B0, BRiakModified));
 
-      _ -> dict:fetch(<<"X-Riak-Last-Modified">>, MB)
+      _ -> BRiakModified
     end,
+  logger:debug(
+    "resolution A1 ~p: ~p B1 ~p:~p",
+    [A1, ARiakModified, B1, BRiakModified]
+  ),
   A1 > B1.
 
 
 conflict_resolver(Siblings) ->
-  logger:debug("conflict_resolver ~p", [Siblings]),
-  lists:nth(1, lists:sort(fun resolver_function/2, Siblings)).
+  SortedList = lists:sort(fun resolver_function/2, Siblings),
+  logger:debug("conflict_resolver ~p", [SortedList]),
+  lists:nth(1, SortedList).
 
 
 test() ->
@@ -433,7 +420,11 @@ test_conflict_resolution() ->
   logger:info("Bucket ~p key ~p", [Bucket, Key1]),
   Obj = #{test => <<"true">>},
   {ok, true} = damage_riak:put(Bucket, Key1, Obj),
-  {ok, Obj} = damage_riak:get(Bucket, Key1),
+  {ok, _Obj} = damage_riak:get(Bucket, Key1),
+  Obj0 = #{test => <<"true1">>},
+  {ok, true} = damage_riak:put(Bucket, Key1, Obj0),
+  {ok, #{modified := _, test := <<"true1">>} = _RetObj0} =
+    damage_riak:get(Bucket, Key1),
   ok.
 
 
