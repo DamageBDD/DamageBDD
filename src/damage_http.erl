@@ -152,37 +152,45 @@ get_concurrency_level(<<"sk_nightmare">>) -> 10000;
 get_concurrency_level(Other) when is_integer(Other) -> Other;
 get_concurrency_level(Other) when is_binary(Other) -> binary_to_integer(Other).
 
-execute_bdd(
-  #{feature := FeatureData, account := Account, concurrency := Concurrency0} =
-    FeaturePayload,
-  Req0
+get_config(
+  #{account := Account, concurrency := Concurrency0} = FeaturePayload,
+  Req0,
+  Stream
 ) ->
   Concurrency = get_concurrency_level(Concurrency0),
   Formatters =
     case Concurrency of
       1 ->
-        Req =
-          cowboy_req:stream_reply(
-            200,
-            #{<<"content-type">> => <<"text/plain">>},
-            Req0
-          ),
-        logger:info("execute_bdd req ~p", [Req]),
-        [
-          {
-            text,
-            #{
-              output => Req,
-              color => maps:get(color_formatter, FeaturePayload, false)
-            }
-          }
-        ];
+        case Stream of
+          nostream -> [];
+
+          _ ->
+            Req =
+              cowboy_req:stream_reply(
+                200,
+                #{<<"content-type">> => <<"text/plain">>},
+                Req0
+              ),
+            logger:info("execute_bdd req ~p", [Req]),
+            [
+              {
+                text,
+                #{
+                  output => Req,
+                  color => maps:get(color_formatter, FeaturePayload, false)
+                }
+              }
+            ]
+        end;
 
       _ ->
         ?debugFmt("execute_bdd concurrenc ~p", [Concurrency]),
         []
     end,
-  Config = damage:get_default_config(Account, Concurrency, Formatters),
+  damage:get_default_config(Account, Concurrency, Formatters).
+
+
+execute_bdd(Config, #{feature := FeatureData}) ->
   case damage:execute_data(Config, FeatureData) of
     [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
       Response =
@@ -250,13 +258,15 @@ from_json(Req, State) ->
       #{feature := FeatureData} = FeatureJson ->
         case check_execute_bdd(FeatureJson, State, Req) of
           {ok, Account, AvailConcurrency} ->
-            execute_bdd(
+            FeaturePayload =
               #{
                 feature => FeatureData,
                 account => Account,
                 concurrency => AvailConcurrency
               },
-              Req
+            execute_bdd(
+              get_config(FeaturePayload, Req, nostream),
+              FeaturePayload
             );
 
           Err ->
@@ -292,16 +302,18 @@ from_html(Req0, State) ->
     Req0
   ) of
     {ok, Account, AvailConcurrency} ->
-      {200, _} =
-        execute_bdd(
+      FeaturePayload =
           #{
             feature => Body,
             account => Account,
             color_formatter => ColorFormatter,
             concurrency => AvailConcurrency
           },
-          Req0
-        ),
+      {200, _} =
+      execute_bdd(
+        get_config(FeaturePayload, Req0, maybe_stream),
+        FeaturePayload
+      ),
       case AvailConcurrency of
         1 -> {stop, Req0, State};
 
