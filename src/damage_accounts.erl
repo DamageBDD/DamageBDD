@@ -30,8 +30,152 @@
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
+-define(TRAILS_TAG, ["Account Management"]).
 
-trails() -> [{"/accounts/[:action]", damage_accounts, #{}}].
+trails() ->
+  [
+    trails:trail(
+      "/accounts/create",
+      damage_accounts,
+      #{action => create},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to create an account on this DamageBDD server.",
+          produces => ["text/html"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Create account using form ",
+          produces => ["text/html"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"email">>,
+              description
+              =>
+              <<"A valid email address for user account recovery.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            },
+            #{
+              name => <<"full_name">>,
+              description => <<"A name to reffer to user in communications.">>,
+              in => <<"body">>,
+              required => false,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    ),
+    trails:trail(
+      "/accounts/balance",
+      damage_accounts,
+      #{action => balance},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "do some action ",
+          produces => ["text/plain"]
+        }
+      }
+    ),
+    trails:trail(
+      "/accounts/confirm",
+      damage_accounts,
+      #{action => confirm},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Confirm account.",
+          produces => ["text/plain"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"token">>,
+              description
+              =>
+              <<"A valid confirmation token sent to account email.">>,
+              in => <<"query">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    ),
+    trails:trail(
+      "/accounts/reset_password",
+      damage_accounts,
+      #{action => reset_password},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Reset password using reset token sent to email.",
+          produces => ["text/plain"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"token">>,
+              description
+              =>
+              <<"A valid reset password token sent to account email.">>,
+              in => <<"query">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Submit reset password form.",
+          produces => ["text/plain"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"current_password">>,
+              description => <<"Current password">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            },
+            #{
+              name => <<"new_password">>,
+              description => <<"New password">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            },
+            #{
+              name => <<"new_password_confirm">>,
+              description => <<"New password confirmation">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    )
+  ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -67,58 +211,47 @@ validate_refund_addr(forward, BtcAddress) ->
   end.
 
 
-to_html(Req, State) ->
-  case cowboy_req:binding(action, Req) of
-    <<"balance">> ->
-      #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
-      balance(ContractAddress);
+to_html(Req, #{action := balance} = _State) ->
+  #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
+  balance(ContractAddress);
 
-    <<"create">> ->
+to_html(Req, #{action := create} = State) ->
+  Body =
+    damage_utils:load_template("create_account.mustache", #{body => <<"Test">>}),
+  {Body, Req, State};
+
+to_html(Req, #{action := confirm} = State) ->
+  #{token := Password} = cowboy_req:match_qs([token], Req),
+  case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
+    {ok, #{email := Email, expiry := _Expiry}} ->
       Body =
         damage_utils:load_template(
-          "create_account.mustache",
-          #{body => <<"Test">>}
+          "reset_password.mustache",
+          #{email => Email, current_password => Password, body => <<"Test">>}
         ),
       {Body, Req, State};
 
-    <<"confirm">> ->
-      #{token := Password} = cowboy_req:match_qs([token], Req),
-      case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
-        {ok, #{email := Email, expiry := _Expiry}} ->
-          Body =
-            damage_utils:load_template(
-              "reset_password.mustache",
-              #{
-                email => Email,
-                current_password => Password,
-                body => <<"Test">>
-              }
-            ),
-          {Body, Req, State};
+    notfound -> {<<"Invalid confirmation link. Please try again.">>, Req, State}
+  end;
 
-        notfound ->
-          {<<"Invalid confirmation link. Please try again.">>, Req, State}
-      end;
-
-    <<"reset_password">> ->
-      Body =
-        case damage_oauth:reset_password(cowboy_req:match_qs([token], Req)) of
-          {ok, Body0} -> Body0;
-          {error, Msg} -> Msg
-        end,
-      {Body, Req, State}
-  end.
+to_html(Req, #{action := reset_password} = State) ->
+  Body =
+    case damage_oauth:reset_password(cowboy_req:match_qs([token], Req)) of
+      {ok, Body0} -> Body0;
+      {error, Msg} -> Msg
+    end,
+  {Body, Req, State}.
 
 
 do_post_action(Binding, Data) ->
   case Binding of
-    <<"create">> ->
+    <<"/accounts/create">> ->
       case damage_oauth:add_user(Data) of
         {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
         {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
       end;
 
-    <<"reset_password">> ->
+    <<"/accounts/reset_password">> ->
       case damage_oauth:reset_password(Data) of
         {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
         {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
@@ -129,14 +262,13 @@ do_post_action(Binding, Data) ->
 from_html(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   FormData = maps:from_list(cow_qs:parse_qs(Data)),
-  {Status0, Response0} =
-    do_post_action(cowboy_req:binding(action, Req), FormData),
+  {Status0, Response0} = do_post_action(cowboy_req:path(Req), FormData),
   Body =
-    case cowboy_req:binding(action, Req) of
-      <<"create">> ->
-        damage_utils:load_template("create_account.mustache", Response0);
+    case cowboy_req:path(Req) of
+      <<"/accounts/create">> ->
+        <<"Account created successfuly and password set.">>;
 
-      <<"refund">> ->
+      <<"/accounts/refund">> ->
         #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
         refund(ContractAddress);
 
@@ -156,7 +288,7 @@ from_json(Req, State) ->
       badarg ->
         {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
 
-      Data0 -> do_post_action(cowboy_req:binding(action, Req), Data0)
+      Data0 -> do_post_action(cowboy_req:path(Req), Data0)
     end,
   {
     stop,
@@ -172,9 +304,10 @@ from_yaml(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
     case fast_yaml:decode(Data, [maps]) of
-      {ok, [Data0]} -> do_post_action(cowboy_req:binding(action, Req), Data0);
+      {ok, [Data0]} -> do_post_action(cowboy_req:path(Req), Data0);
       {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
     end,
+  logger:debug("post action ~p resp ~p", [Data, Response0]),
   {
     stop,
     cowboy_req:reply(
@@ -353,22 +486,40 @@ confirm_spend(ContractAddress, Amount) ->
   Balances.
 
 
-is_allowed_hosts(Host, AllowedHosts) ->
-  case lists:filter(fun (LHost) -> Host = LHost end, AllowedHosts) of
-    [] -> throw({error, <<"Host not allowed", Host/binary>>});
+lookup_host(Host) ->
+  case inet_res:lookup(Host, in, txt) of
+    {ok, Records} ->
+      case
+      lists:filter(
+        fun (Record) -> string:substr(Record, "damage") /= 0 end,
+        Records
+      ) of
+        [] ->
+          io:format("No TXT record found for token: ~p~n", [Records]),
+          false;
 
-    [Host] ->
-      case inet_res:lookup(Host, in, txt) of
-        {ok, Records} ->
-          case
-          lists:filter(
-            fun (Record) -> string:substr(Record, "damage") /= 0 end,
-            Records
-          ) of
-            [] -> io:format("No TXT record found for token: ~p~n", [Records]);
-            [Token | _] -> ok = check_host_token(Host, Token)
-          end
+        [Token | _] -> ok = check_host_token(Host, Token)
       end
+  end.
+
+
+is_allowed_domain(Host) when is_binary(Host) ->
+  is_allowed_domain(binary_to_list(Host));
+
+is_allowed_domain(Host) ->
+  AllowedHosts = ["jsontest.com", "damagebdd.com"],
+  case lists:any(
+    fun
+      (LHost) ->
+        case LHost of
+          Host -> true;
+          _ -> false
+        end
+    end,
+    AllowedHosts
+  ) of
+    false -> lookup_host(Host);
+    true -> true
   end.
 
 

@@ -14,19 +14,12 @@
 -behaviour(application).
 
 -export([start/2, stop/1]).
+-export([start_phase/3]).
+-export([get_trails/0]).
 
-start(_StartType, _StartArgs) ->
-  logger:info("Starting Damage."),
-  %{ok, _} = application:ensure_all_started(cedb),
-  {ok, _} = application:ensure_all_started(fast_yaml),
-  {ok, _} = application:ensure_all_started(prometheus),
-  {ok, _} = application:ensure_all_started(prometheus_cowboy),
-  {ok, _} = application:ensure_all_started(cowboy_telemetry),
-  {ok, _} = application:ensure_all_started(erlexec),
-  {ok, _} = application:ensure_all_started(throttle),
-  {ok, _} = application:ensure_all_started(gen_smtp),
-  {ok, _} = application:ensure_all_started(ssh),
-  damage_ssh:start(),
+start(_StartType, _StartArgs) -> damage_sup:start_link().
+
+get_trails() ->
   Handlers =
     [
       damage_auth,
@@ -36,7 +29,8 @@ start(_StartType, _StartArgs) ->
       damage_schedule,
       damage_accounts,
       damage_tests,
-      damage_analytics
+      damage_analytics,
+      cowboy_swagger_handler
     ],
   Trails =
     [
@@ -48,7 +42,34 @@ start(_StartType, _StartArgs) ->
       {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}}
       | trails:trails(Handlers)
     ],
-  Dispatch = trails:single_host_compile(Trails),
+  trails:store(Trails),
+  trails:single_host_compile(Trails).
+
+
+-spec start_phase(atom(), application:start_type(), []) -> ok.
+start_phase(start_vanillae, _StartType, []) ->
+  logger:info("Starting vanilla."),
+  damage_utils:setup_vanillae_deps(),
+  {ok, _} = application:ensure_all_started(vanillae),
+  ok = vanillae:network_id("ae_uat"),
+  {ok, AeNodes} = application:get_env(damage, ae_nodes),
+  ok = vanillae:ae_nodes(AeNodes),
+  logger:info("Started vanilla."),
+  ok;
+
+start_phase(start_trails_http, _StartType, []) ->
+  logger:info("Starting Damage."),
+  {ok, _} = application:ensure_all_started(fast_yaml),
+  {ok, _} = application:ensure_all_started(prometheus),
+  {ok, _} = application:ensure_all_started(prometheus_cowboy),
+  {ok, _} = application:ensure_all_started(cowboy_telemetry),
+  {ok, _} = application:ensure_all_started(erlexec),
+  {ok, _} = application:ensure_all_started(throttle),
+  {ok, _} = application:ensure_all_started(gen_smtp),
+  {ok, _} = application:ensure_all_started(gun),
+  {ok, _} = application:ensure_all_started(ssh),
+  damage_ssh:start(),
+  Dispatch = get_trails(),
   {ok, WsPort} = application:get_env(damage, port),
   {ok, _} =
     cowboy:start_clear(
@@ -64,22 +85,13 @@ start(_StartType, _StartArgs) ->
       }
     ),
   logger:info("Started cowboy."),
-  {ok, _} = application:ensure_all_started(gun),
-  logger:info("Started Gun."),
   metrics:init(),
   logger:info("Started Damage."),
-  logger:info("Starting vanilla."),
-  damage_utils:setup_vanillae_deps(),
-  {ok, _} = application:ensure_all_started(vanillae),
-  ok = vanillae:network_id("ae_uat"),
-  {ok, AeNodes} = application:get_env(damage, ae_nodes),
-  ok = vanillae:ae_nodes(AeNodes),
-  logger:info("Started vanilla."),
   case init:get_plain_arguments() of
     [_, "shell"] -> sync:go();
     _ -> ok
   end,
-  damage_sup:start_link().
+  ok.
 
 
 stop(_State) ->

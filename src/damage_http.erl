@@ -21,8 +21,43 @@
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
+-define(TRAILS_TAG, ["Executing Tests"]).
 
-trails() -> [{"/execute_feature/", damage_http, #{}}].
+trails() ->
+  [
+    trails:trail(
+      "/execute_feature/",
+      damage_http,
+      #{},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to execute a test on this DamageBDD server.",
+          produces => ["text/html"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Execute a test on post",
+          produces => ["application/json"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"feature">>,
+              description => <<"Test feature data.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    )
+  ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -31,9 +66,15 @@ get_access_token(Req) ->
     <<"Bearer ", Token/binary>> -> {ok, Token};
 
     _ ->
-      case cowboy_req:qs_val(<<"access_token">>, Req) of
-        {Token, _Req} -> {ok, Token};
-        _ -> {error, missing}
+      case catch cowboy_req:match_qs([access_token], Req) of
+        #{access_token := Token} -> {ok, Token};
+
+        _ ->
+          Cookies = cowboy_req:parse_cookies(Req),
+          case lists:keyfind(<<"sessionid">>, 1, Cookies) of
+            {<<"sessionid">>, Token} -> {ok, Token};
+            _ -> {error, missing}
+          end
       end
   end.
 
@@ -108,13 +149,15 @@ get_concurrency_level(<<"sk_easy">>) -> 10;
 get_concurrency_level(<<"sk_medium">>) -> 100;
 get_concurrency_level(<<"sk_hard">>) -> 1000;
 get_concurrency_level(<<"sk_nightmare">>) -> 10000;
-get_concurrency_level(Other) when is_integer(Other) -> Other.
+get_concurrency_level(Other) when is_integer(Other) -> Other;
+get_concurrency_level(Other) when is_binary(Other) -> binary_to_integer(Other).
 
 execute_bdd(
-  #{feature := FeatureData, account := Account, concurrency := Concurrency} =
+  #{feature := FeatureData, account := Account, concurrency := Concurrency0} =
     FeaturePayload,
   Req0
 ) ->
+  Concurrency = get_concurrency_level(Concurrency0),
   Formatters =
     case Concurrency of
       1 ->
@@ -148,29 +191,26 @@ execute_bdd(
           failing_step => list_to_binary(damage_utils:lists_concat(Step, " ")),
           line => Line
         },
-      {400, jsx:encode(Response)};
+      {400, Response};
 
     {parse_error, LineNo, Message} ->
       logger:debug("failure ~p.", [Message]),
       {
         400,
-        jsx:encode(
-          #{
-            status => <<"notok">>,
-            message => list_to_binary(Message),
-            line => LineNo,
-            hint
-            =>
-            <<
-              "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
-            >>
-          }
-        )
+        #{
+          status => <<"notok">>,
+          message => list_to_binary(Message),
+          line => LineNo,
+          hint
+          =>
+          <<
+            "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+          >>
+        }
       };
 
-    ResultOk ->
-      %logger:debug("No failure ~p.", [Ok]),
-      {200, jsx:encode(ResultOk)}
+    #{report_hash := _} = Result ->
+      {200, maps:merge(Result, #{status => <<"ok">>})}
   end.
 
 
@@ -194,17 +234,10 @@ check_execute_bdd(
         Other ->
           {
             400,
-            jsx:encode(
-              #{
-                status => <<"notok">>,
-                message
-                =>
-                <<
-                  "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
-                  Other/binary
-                >>
-              }
-            )
+            <<
+              "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+              Other/binary
+            >>
           }
       end
   end.
@@ -214,33 +247,35 @@ from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{feature := _FeatureData, account := _Account} = FeatureJson ->
-        execute_bdd(FeatureJson, Req);
+      #{feature := FeatureData} = FeatureJson ->
+        case check_execute_bdd(FeatureJson, State, Req) of
+          {ok, Account, AvailConcurrency} ->
+            execute_bdd(
+              #{
+                feature => FeatureData,
+                account => Account,
+                concurrency => AvailConcurrency
+              },
+              Req
+            );
 
-      Err ->
-        logger:error("json decoding failed ~p.", [Data]),
-        {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+          Err ->
+            logger:error("json decoding failed ~p err: ~p.", [Data, Err]),
+            {400, <<"Invalid Request">>}
+        end;
+
+      _ -> {400, <<"Invalid Request">>}
     end,
-  Resp = cowboy_req:set_resp_body(Resp0, Req),
+  Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
   cowboy_req:reply(Status, Resp),
   {stop, Resp, State}.
-
-
-get_ip(Req0) ->
-  case cowboy_req:peer(Req0) of
-    {{IP, _}, _} -> IP;
-    {IP, _} -> IP
-  end.
 
 
 from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
   logger:debug("Req ~p.", [Req]),
   _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
-  Concurrency =
-    binary_to_integer(
-      cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
-    ),
+  Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>),
   ColorFormatter =
     case cowboy_req:match_qs([{color, [], <<"true">>}], Req0) of
       #{color := <<"true">>} -> true;
@@ -297,3 +332,9 @@ to_json(Req0, State) ->
 
 
 to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.
+
+get_ip(Req0) ->
+  case cowboy_req:peer(Req0) of
+    {{IP, _}, _} -> IP;
+    {IP, _} -> IP
+  end.

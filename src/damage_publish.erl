@@ -20,8 +20,43 @@
 -export([trails/0]).
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
+-define(TRAILS_TAG, ["Publish Tests For Open Market Execution"]).
 
-trails() -> [{"/publish_feature/", damage_publish, #{}}].
+trails() ->
+  [
+    trails:trail(
+      "/publish_feature/",
+      damage_publish,
+      #{},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to schedule a test execution.",
+          produces => ["text/html"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Schedule a test on post",
+          produces => ["application/json"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"feature">>,
+              description => <<"Test feature data.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    )
+  ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 

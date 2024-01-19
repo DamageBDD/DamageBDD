@@ -2,7 +2,7 @@
 
 -export([init/2, rest_init/2, allowed_methods/2]).
 -export([content_types_provided/2, content_types_accepted/2]).
--export([process_post/2, process_get/2]).
+-export([process_post_json/2, process_post_urlencoded/2, process_get/2]).
 -export([trails/0]).
 
 %%%===================================================================
@@ -21,8 +21,11 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
   {
     [
-      {{<<"application">>, <<"json">>, []}, process_post},
-      {{<<"application">>, <<"x-www-form-urlencoded">>, []}, process_post}
+      {{<<"application">>, <<"json">>, []}, process_post_json},
+      {
+        {<<"application">>, <<"x-www-form-urlencoded">>, []},
+        process_post_urlencoded
+      }
     ],
     Req,
     State
@@ -30,10 +33,19 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"POST">>, <<"GET">>], Req, State}.
 
-process_post(Req, State) ->
+process_post_json(Req, State) ->
+  {ok, Data, Req0} = cowboy_req:read_body(Req),
+  process_post(jsx:decode(Data, [{return_maps, false}]), Req0, State).
+
+
+process_post_urlencoded(Req, State) ->
   {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
+  process_post(Params, Req0, State).
+
+
+process_post(Params, Req, State) ->
   logger:debug(" form data: ~p ", [Params]),
-  {ok, Reply} =
+  {ok, Reply, _Req0} =
     case
     lists:max(
       [
@@ -42,17 +54,15 @@ process_post(Req, State) ->
       ]
     ) of
       <<"password">> ->
-        {Status, Resp0} = process_password_grant(Req0, Params),
-        Resp = cowboy_req:set_resp_body(Resp0, Req),
-        {ok, cowboy_req:reply(Status, Resp)};
+        {Status, Resp0, Req0} = process_password_grant(Req, Params),
+        Resp = cowboy_req:set_resp_body(Resp0, Req0),
+        {ok, cowboy_req:reply(Status, Resp), Req0};
 
-      <<"client_credentials">> ->
-        process_client_credentials_grant(Req0, Params);
-
-      <<"token">> -> process_implicit_grant_stage2(Req0, Params);
-      _ -> cowboy_req:reply(400, [], <<"Bad Request.">>, Req0)
+      <<"client_credentials">> -> process_client_credentials_grant(Req, Params);
+      <<"token">> -> process_implicit_grant_stage2(Req, Params);
+      _ -> cowboy_req:reply(400, [], <<"Bad Request.">>, Req)
     end,
-  {halt, Reply, State}.
+  {stop, Reply, State}.
 
 
 process_get(Req, State) ->
@@ -76,7 +86,7 @@ process_get(Req, State) ->
         JSON = jsx:encode([{error, <<"unsupported_response_type">>}]),
         cowboy_req:reply(400, [], JSON, Req2)
     end,
-  {halt, Reply, State}.
+  {stop, Reply, State}.
 
 %%%===================================================================
 %%% Grant type handlers
@@ -89,7 +99,7 @@ process_password_grant(Req, Params) ->
   Scope = proplists:get_value(<<"scope">>, Params, <<"">>),
   case oauth2:authorize_password({Username, Password}, Scope, basic) of
     {ok, {<<"user">>, Auth}} -> issue_token({ok, Auth}, Req);
-    _ -> {401, <<"Invalid username or password">>}
+    _ -> {401, <<"Invalid username or password">>, Req}
   end.
 
 
@@ -179,15 +189,33 @@ issue_token({ok, Auth}, Req) ->
 issue_token(Error, Req) -> emit_response(Error, Req).
 
 
-emit_response(AuthResult, _Req) ->
+emit_response(AuthResult, Req) ->
   logger:debug("Authresult ~p", [AuthResult]),
   case AuthResult of
-    {error, Reason} -> {400, jsx:encode([{error, to_binary(Reason)}])};
+    {error, Reason} -> {400, jsx:encode([{error, to_binary(Reason)}]), Req};
 
-    Response ->
+    {
+      response,
+      AccessToken,
+      undefined,
+      _Expiry,
+      _UserName,
+      <<"basic">>,
+      undefined,
+      undefined,
+      <<"bearer">>
+    }
+    = Response ->
       Response0 = oauth2_response:to_proplist(Response),
+      Req0 =
+        cowboy_req:set_resp_cookie(
+          <<"sessionid">>,
+          AccessToken,
+          Req,
+          #{secure => true, max_age => 3600, path => "/"}
+        ),
       logger:debug("Authresult Response~p", [Response0]),
-      {200, jsx:encode(proplists:to_map(Response0))}
+      {200, jsx:encode(proplists:to_map(Response0)), Req0}
   end.
 
 

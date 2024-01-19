@@ -30,8 +30,43 @@
 -include_lib("kernel/include/logger.hrl").
 
 -define(SCHEDULES_BUCKET, {<<"Default">>, <<"Schedules">>}).
+-define(TRAILS_TAG, ["Scheduling Tests"]).
 
-trails() -> [{"/schedule/[...]", damage_schedule, #{}}].
+trails() ->
+  [
+    trails:trail(
+      "/schedule/[...]",
+      damage_schedule,
+      #{},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to schedule a test execution.",
+          produces => ["text/html"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Schedule a test on post",
+          produces => ["application/json"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"feature">>,
+              description => <<"Test feature data.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    )
+  ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -158,7 +193,7 @@ from_text(Req, State) ->
       Args = [{Concurrency, ScheduleId}] ++ CronSpec,
       logger:info("do_schedule: ~p", [Args]),
       CronJob = apply(?MODULE, do_schedule, Args),
-      {ok, Created} = datestring:format("YmdHMS", erlang:localtime()),
+      Created = date_util:now_to_seconds_hires(os:timestamp()),
       logger:info("Cron Job: ~p", [CronJob]),
       {ok, true} =
         save_schedule(

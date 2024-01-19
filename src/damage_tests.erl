@@ -19,7 +19,39 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 
-trails() -> [{"/tests/[:action]", damage_tests, #{}}].
+-define(TRAILS_TAG, ["Test Endpoints"]).
+
+trails() ->
+  Metadata =
+    #{
+      get
+      =>
+      #{
+        tags => ?TRAILS_TAG,
+        description => "Get some test value",
+        produces => ["text/plain"]
+      },
+      put
+      =>
+      #{
+        tags => ?TRAILS_TAG,
+        description => "Do some action on the server",
+        produces => ["text/plain"],
+        parameters
+        =>
+        [
+          #{
+            name => <<"echo">>,
+            description => <<"Echo message">>,
+            in => <<"path">>,
+            required => false,
+            type => <<"string">>
+          }
+        ]
+      }
+    },
+  [trails:trail("/tests/[:action]", damage_tests, [], Metadata)].
+
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 

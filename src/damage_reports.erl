@@ -23,7 +23,63 @@
 -export([content_types_accepted/2]).
 -export([trails/0]).
 
-trails() -> [{"/reports/:hash/[:path]", damage_reports, #{}}].
+-define(TRAILS_TAG, ["Test Reports"]).
+
+trails() ->
+  [
+    trails:trail(
+      "/reports/:hash/[:path]",
+      damage_reports,
+      #{}
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "List test execution report directory .",
+          produces => ["text/html"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Query test reports",
+          produces => ["application/json"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"start">>,
+              description
+              =>
+              <<"Include Test execution reports from `start` date .">>,
+              in => <<"body">>,
+              required => false,
+              type => <<"string">>
+            },
+            #{
+              name => <<"end">>,
+              description
+              =>
+              <<"Include test execution reports to `end` date .">>,
+              in => <<"body">>,
+              required => false,
+              type => <<"string">>
+            },
+            #{
+              name => <<"tags">>,
+              description
+              =>
+              <<"Include Test execution reports with tags matching `tags`.">>,
+              in => <<"body">>,
+              required => false,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    )
+  ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
