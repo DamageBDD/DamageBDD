@@ -191,6 +191,20 @@ publish_file(Config, Filename) ->
   ok.
 
 
+parse_file(Filename, Context) ->
+  case file:read_file(Filename) of
+    {ok, Source0} ->
+      Source =
+        mustache:render(
+          binary_to_list(Source0),
+          dict:from_list(maps:to_list(Context))
+        ),
+      egherkin:parse(list_to_binary(Source));
+
+    Else -> Else
+  end.
+
+
 execute_data(Config, FeatureData) ->
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   BddFileName = filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
@@ -201,7 +215,9 @@ execute_data(Config, FeatureData) ->
 execute_file(Config, Filename) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
-  try egherkin:parse_file(Filename) of
+  {account, Account} = lists:keyfind(account, 1, Config),
+  Context = damage_accounts:get_account_context(Account),
+  case catch parse_file(Filename, Context) of
     {failed, LineNo, Message} ->
       logger:error(
         "Parsing Failed ~p +~p ~n     ~p.",
@@ -252,9 +268,12 @@ execute_file(Config, Filename) ->
           string:join([DamageApi, "reports", binary_to_list(Hash)], "/"),
           run_id => RunId
         }
-      )
-  catch
-    {error, enont} -> logger:error("Feature file ~p not found.", [Filename])
+      ),
+      #{report_hash => Hash};
+
+    {error, enont} = Err ->
+      logger:error("Feature file ~p not found.", [Filename]),
+      Err
   end.
 
 
@@ -452,7 +471,6 @@ get_global_template_context(Config, Context) ->
         {deployments, Deployments} = lists:keyfind(deployments, 1, ContextYaml),
         lists:keyfind(Deployment, 1, Deployments)
     end,
-  {ok, Timestamp} = datestring:format("YmdHM", erlang:localtime()),
   maps:put(
     formatter_state,
     #state{},
@@ -461,7 +479,7 @@ get_global_template_context(Config, Context) ->
       [],
       maps:put(
         timestamp,
-        Timestamp,
+        date_util:now_to_seconds_hires(os:timestamp()),
         maps:merge(maps:from_list(DeploymentConfig), Context)
       )
     )
