@@ -10,7 +10,7 @@
 -export([content_types_provided/2]).
 -export([to_html/2]).
 
-%-export([to_json/2]).
+-export([to_json/2]).
 %-export([to_text/2]).
 -export(
   [create_contract/1, balance/1, check_spend/2, store_profile/1, refund/1]
@@ -182,7 +182,7 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 content_types_provided(Req, State) ->
   {
     [
-      %{{<<"application">>, <<"json">>, []}, to_json},
+      {{<<"application">>, <<"json">>, []}, to_json},
       %{{<<"text">>, <<"plain">>, '*'}, to_text},
       {{<<"text">>, <<"html">>, '*'}, to_html}
     ],
@@ -211,9 +211,14 @@ validate_refund_addr(forward, BtcAddress) ->
   end.
 
 
-to_html(Req, #{action := balance} = _State) ->
-  #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
-  balance(ContractAddress);
+to_json(Req, #{action := balance} = State) ->
+    case damage_http:is_authorized(Req, State) of
+        { true, _Req0, #{contract_address := ContractAddress}=_State0} ->
+            {jsx:encode(balance(ContractAddress)), Req, State};
+        Other ->
+            logger:debug("Unexpected ~p", [Other]),
+            {<<"Unauthorized.">>, Req, State}
+                end.
 
 to_html(Req, #{action := create} = State) ->
   Body =
@@ -399,7 +404,7 @@ balance(ContractAddress) ->
       "Balance of account ~p usage is ~p btc_balance ~p btc_held ~p.",
       [ContractAddress, Usage, BtcBalance, RealBtcBalance]
     ),
-  logger:debug(Mesg),
+  logger:debug(Mesg,[]),
   maps:put(btc_refund_balance, RealBtcBalance, Results).
 
 
