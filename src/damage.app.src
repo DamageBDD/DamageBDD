@@ -6,10 +6,11 @@
     {vsn, "0.1.0"},
     {registered, []},
     {mod, {damage_app, []}},
-    {applications, [kernel, stdlib, cowboy]},
+    {applications, [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger]},
     {env, []},
-    {modules, [formatter]},
+    {modules, []},
     {licenses, ["Apache 2.0"]},
+    {start_phases, [{start_trails_http, []}, {start_vanillae, []}]},
     {links, []}
   ]
 }.
