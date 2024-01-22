@@ -13,6 +13,8 @@
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
 
+-define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
+
 -export([start_link/1]).
 -export(
   [
@@ -206,8 +208,9 @@ parse_file(Filename, Context) ->
 
 
 execute_data(Config, FeatureData) ->
+  {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-  BddFileName = filename:join(RunDir, string:join(["adhoc_http.feature"], "")),
+  BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
   ok = file:write_file(BddFileName, FeatureData),
   execute_file(Config, BddFileName).
 
@@ -216,6 +219,7 @@ execute_file(Config, Filename) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
   {account, Account} = lists:keyfind(account, 1, Config),
+  StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
   Context = damage_accounts:get_account_context(Account),
   case catch parse_file(Filename, Context) of
     {failed, LineNo, Message} ->
@@ -245,17 +249,37 @@ execute_file(Config, Filename) ->
             []
           )
       end,
+      EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
       {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
       {api_url, DamageApi} = lists:keyfind(api_url, 1, Config),
       logger:debug("RunDir ~p", [RunDir]),
       {ok, HashList} = damage_ipfs:add({directory, RunDir}),
-      [#{<<"Hash">> := Hash}] =
+      [#{<<"Hash">> := ReportHash}] =
         lists:filter(
           fun
             (I) ->
               #{<<"Hash">> := _Hash, <<"Name">> := Dir} = I,
-              logger:error("Dir ~p", [Dir]),
               string:equal(<<"/", Dir/binary>>, RunDir)
+          end,
+          HashList
+        ),
+      FeatureFile = list_to_binary(string:join([RunId, ".feature"], "")),
+      [#{<<"Hash">> := FeatureHash}] =
+        lists:filter(
+          fun
+            (I) ->
+              #{<<"Hash">> := _Hash, <<"Name">> := Dir} = I,
+              logger:debug(
+                "Files ~p ~p",
+                [
+                  <<RunDir/binary, "/", FeatureFile/binary>>,
+                  <<"/", Dir/binary>>
+                ]
+              ),
+              string:equal(
+                <<RunDir/binary, "/", FeatureFile/binary>>,
+                <<"/", Dir/binary>>
+              )
           end,
           HashList
         ),
@@ -265,17 +289,44 @@ execute_file(Config, Filename) ->
         #{
           report_dir
           =>
-          string:join([DamageApi, "reports", binary_to_list(Hash)], "/"),
+          string:join([DamageApi, "reports", binary_to_list(ReportHash)], "/"),
           run_id => RunId
         }
       ),
-      #{report_hash => Hash};
+      RunRecord =
+        #{
+          feature_hash => FeatureHash,
+          report_hash => ReportHash,
+          start_time => StartTimestamp,
+          execution_time => EndTimestamp - StartTimestamp,
+          end_time => EndTimestamp,
+          account => Account
+        },
+      store_runrecord(RunRecord),
+      RunRecord;
 
     {error, enont} = Err ->
       logger:error("Feature file ~p not found.", [Filename]),
       Err
   end.
 
+
+store_runrecord(
+  #{
+    feature_hash := _FeatureHash,
+    report_hash := ReportHash,
+    start_time := _StartTimestamp,
+    execution_time := _ExecutionTime,
+    end_time := _EndTimestamp,
+    account := Account
+  } = RunRecord
+) ->
+  damage_riak:put(
+    ?RUNRECORDS_BUCKET,
+    ReportHash,
+    RunRecord,
+    [{<<"account_bin">>, Account}]
+  ).
 
 execute_feature_concurrent(_Args, 0, Acc) -> Acc;
 
