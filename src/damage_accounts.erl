@@ -9,8 +9,8 @@
 -export([init/2]).
 -export([content_types_provided/2]).
 -export([to_html/2]).
-
 -export([to_json/2]).
+
 %-export([to_text/2]).
 -export(
   [create_contract/1, balance/1, check_spend/2, store_profile/1, refund/1]
@@ -20,6 +20,7 @@
 -export([update_schedules/3]).
 -export([confirm_spend/2]).
 -export([is_allowed_domain/1]).
+-export([lookup_domain/1]).
 -export([get_account_context/1]).
 -export([trails/0]).
 
@@ -31,6 +32,7 @@
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
 -define(TRAILS_TAG, ["Account Management"]).
+-define(DOMAIN_TOKEN_BUCKET, {<<"Default">>, <<"DomainTokens">>}).
 
 trails() ->
   [
@@ -174,6 +176,42 @@ trails() ->
           ]
         }
       }
+    ),
+    trails:trail(
+      "/accounts/domains",
+      damage_accounts,
+      #{action => domains},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "List domain tokens.",
+          produces => ["text/plain"],
+          parameters
+          =>
+          [
+          ]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Submit reset password form.",
+          produces => ["text/plain"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"domain">>,
+              description => <<"the domain for which to generate token for.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
     )
   ].
 
@@ -211,14 +249,24 @@ validate_refund_addr(forward, BtcAddress) ->
   end.
 
 
+to_json(Req, #{action := domains, contract_address:=ContractAddress} = State) ->
+    case damage_riak:get(?DOMAIN_TOKEN_BUCKET, ContractAddress) of
+        [] ->
+            {200, []};
+        Found -> 
+            {200, Found}
+    end;
+
 to_json(Req, #{action := balance} = State) ->
-    case damage_http:is_authorized(Req, State) of
-        { true, _Req0, #{contract_address := ContractAddress}=_State0} ->
-            {jsx:encode(balance(ContractAddress)), Req, State};
-        Other ->
-            logger:debug("Unexpected ~p", [Other]),
-            {<<"Unauthorized.">>, Req, State}
-                end.
+  case damage_http:is_authorized(Req, State) of
+    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
+      {jsx:encode(balance(ContractAddress)), Req, State};
+
+    Other ->
+      logger:debug("Unexpected ~p", [Other]),
+      {<<"Unauthorized.">>, Req, State}
+  end.
+
 
 to_html(Req, #{action := create} = State) ->
   Body =
@@ -248,32 +296,34 @@ to_html(Req, #{action := reset_password} = State) ->
   {Body, Req, State}.
 
 
-do_post_action(Binding, Data) ->
-  case Binding of
-    <<"/accounts/create">> ->
-      case damage_oauth:add_user(Data) of
-        {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
-        {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
-      end;
+do_post_action(create, Data) ->
+  case damage_oauth:add_user(Data) of
+    {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
+    {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+  end;
 
-    <<"/accounts/reset_password">> ->
-      case damage_oauth:reset_password(Data) of
-        {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
-        {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
-      end
+do_post_action(reset_password, Data) ->
+  case damage_oauth:reset_password(Data) of
+    {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
+    {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+  end;
+
+do_post_action(domains, #{email := Email} = _Data) ->
+  case damage_riak:get_index(<<"email_bin">>, Email) of
+    [] -> [];
+    List -> List
   end.
 
 
-from_html(Req, State) ->
+from_html(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   FormData = maps:from_list(cow_qs:parse_qs(Data)),
-  {Status0, Response0} = do_post_action(cowboy_req:path(Req), FormData),
+  {Status0, Response0} = do_post_action(Action, FormData),
   Body =
-    case cowboy_req:path(Req) of
-      <<"/accounts/create">> ->
-        <<"Account created successfuly and password set.">>;
+    case Action of
+      create -> <<"Account created successfuly and password set.">>;
 
-      <<"/accounts/refund">> ->
+      refund ->
         #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
         refund(ContractAddress);
 
@@ -286,14 +336,14 @@ from_html(Req, State) ->
   }.
 
 
-from_json(Req, State) ->
+from_json(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
     case catch jsx:decode(Data, [return_maps]) of
       badarg ->
         {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
 
-      Data0 -> do_post_action(cowboy_req:path(Req), Data0)
+      Data0 -> do_post_action(Action, Data0)
     end,
   {
     stop,
@@ -305,11 +355,11 @@ from_json(Req, State) ->
   }.
 
 
-from_yaml(Req, State) ->
+from_yaml(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
     case fast_yaml:decode(Data, [maps]) of
-      {ok, [Data0]} -> do_post_action(cowboy_req:path(Req), Data0);
+      {ok, [Data0]} -> do_post_action(Action, Data0);
       {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
     end,
   logger:debug("post action ~p resp ~p", [Data, Response0]),
@@ -404,7 +454,7 @@ balance(ContractAddress) ->
       "Balance of account ~p usage is ~p btc_balance ~p btc_held ~p.",
       [ContractAddress, Usage, BtcBalance, RealBtcBalance]
     ),
-  logger:debug(Mesg,[]),
+  logger:debug(Mesg, []),
   maps:put(btc_refund_balance, RealBtcBalance, Results).
 
 
@@ -491,20 +541,32 @@ confirm_spend(ContractAddress, Amount) ->
   Balances.
 
 
-lookup_host(Host) ->
-  case inet_res:lookup(Host, in, txt) of
-    {ok, Records} ->
-      case
-      lists:filter(
-        fun (Record) -> string:substr(Record, "damage") /= 0 end,
+lookup_domain(Domain) when is_binary(Domain) ->
+  lookup_domain(binary_to_list(Domain));
+
+lookup_domain(Domain) ->
+  case inet_res:lookup(Domain, in, txt) of
+    Records when is_list(Records) ->
+      case lists:filtermap(
+        fun
+          ([Record]) ->
+            case string:split(Record, "=") of
+              ["damagebdd_token", Token] -> Token;
+              _ -> false
+            end
+        end,
         Records
       ) of
         [] ->
           io:format("No TXT record found for token: ~p~n", [Records]),
           false;
 
-        [Token | _] -> ok = check_host_token(Host, Token)
-      end
+        [Token | _] -> ok = check_host_token(Domain, Token)
+      end;
+
+    Other ->
+      logger:debug("dns record look up failed ~p ~p", [Domain, Other]),
+      false
   end.
 
 
@@ -512,7 +574,7 @@ is_allowed_domain(Host) when is_binary(Host) ->
   is_allowed_domain(binary_to_list(Host));
 
 is_allowed_domain(Host) ->
-  AllowedHosts = ["jsontest.com", "damagebdd.com"],
+  AllowedHosts = ["jsontest.com", "damagebdd.com", "run.damagebdd.com"],
   case lists:any(
     fun
       (LHost) ->
@@ -523,7 +585,7 @@ is_allowed_domain(Host) ->
     end,
     AllowedHosts
   ) of
-    false -> lookup_host(Host);
+    false -> lookup_domain(Host);
     true -> true
   end.
 

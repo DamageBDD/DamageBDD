@@ -303,17 +303,17 @@ from_html(Req0, State) ->
   ) of
     {ok, Account, AvailConcurrency} ->
       FeaturePayload =
-          #{
-            feature => Body,
-            account => Account,
-            color_formatter => ColorFormatter,
-            concurrency => AvailConcurrency
-          },
+        #{
+          feature => Body,
+          account => Account,
+          color_formatter => ColorFormatter,
+          concurrency => AvailConcurrency
+        },
       {200, _} =
-      execute_bdd(
-        get_config(FeaturePayload, Req0, maybe_stream),
-        FeaturePayload
-      ),
+        execute_bdd(
+          get_config(FeaturePayload, Req0, maybe_stream),
+          FeaturePayload
+        ),
       case AvailConcurrency of
         1 -> {stop, Req0, State};
 

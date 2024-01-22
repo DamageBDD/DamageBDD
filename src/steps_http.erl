@@ -21,30 +21,41 @@ response_to_list({StatusCode, Headers, Body}) ->
 get_gun_config(Config0, Context) ->
   Host = damage_utils:get_context_value(host, Context, Config0),
   Port = damage_utils:get_context_value(port, Context, Config0),
-  Config =
-    case Port of
-      443 -> [{transport, tls} | Config0];
-      _ -> Config0
-    end,
-  Opts =
-    case lists:keyfind(transport, 1, Config) of
-      false -> #{transport => tcp};
-      _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
-    end,
-  Opts0 =
-    case maps:get(basic_auth, Context, none) of
-      none -> Opts;
+  case damage_accounts:is_allowed_domain(Host) of
+    ok ->
+      Config =
+        case Port of
+          443 -> [{transport, tls} | Config0];
+          _ -> Config0
+        end,
+      Opts =
+        case lists:keyfind(transport, 1, Config) of
+          false -> #{transport => tcp};
+          _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
+        end,
+      Opts0 =
+        case maps:get(basic_auth, Context, none) of
+          none -> Opts;
 
-      {User, Pass} ->
-        maps:put(username, User, maps:put(password, Pass, Context))
-    end,
-  {ok, ConnPid} =
-    gun:open(
-      Host,
-      Port,
-      maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts0)
-    ),
-  ConnPid.
+          {User, Pass} ->
+            maps:put(username, User, maps:put(password, Pass, Context))
+        end,
+      {ok, ConnPid} =
+        gun:open(
+          Host,
+          Port,
+          maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts0)
+        ),
+      ConnPid;
+
+    _ ->
+      {
+        error,
+        <<
+          "Host is not allowed please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/docs"
+        >>
+      }
+  end.
 
 
 gun_await(ConnPid, StreamRef, Context) ->
