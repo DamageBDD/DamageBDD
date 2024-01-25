@@ -17,6 +17,7 @@
 -export([to_json/2]).
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2]).
+-export([is_authorized/2]).
 -export([trails/0]).
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
@@ -59,6 +60,8 @@ trails() ->
   ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+
+is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
   {

@@ -19,8 +19,6 @@
 -export([content_types_accepted/2]).
 -export([update_schedules/3]).
 -export([confirm_spend/2]).
--export([is_allowed_domain/1]).
--export([lookup_domain/1]).
 -export([get_account_context/1]).
 -export([trails/0]).
 
@@ -32,7 +30,6 @@
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
 -define(TRAILS_TAG, ["Account Management"]).
--define(DOMAIN_TOKEN_BUCKET, {<<"Default">>, <<"DomainTokens">>}).
 
 trails() ->
   [
@@ -176,42 +173,6 @@ trails() ->
           ]
         }
       }
-    ),
-    trails:trail(
-      "/accounts/domains",
-      damage_accounts,
-      #{action => domains},
-      #{
-        get
-        =>
-        #{
-          tags => ?TRAILS_TAG,
-          description => "List domain tokens.",
-          produces => ["text/plain"],
-          parameters
-          =>
-          [
-          ]
-        },
-        put
-        =>
-        #{
-          tags => ?TRAILS_TAG,
-          description => "Submit reset password form.",
-          produces => ["text/plain"],
-          parameters
-          =>
-          [
-            #{
-              name => <<"domain">>,
-              description => <<"the domain for which to generate token for.">>,
-              in => <<"body">>,
-              required => true,
-              type => <<"string">>
-            }
-          ]
-        }
-      }
     )
   ].
 
@@ -248,14 +209,6 @@ validate_refund_addr(forward, BtcAddress) ->
     _Other -> {ok, false}
   end.
 
-
-to_json(Req, #{action := domains, contract_address:=ContractAddress} = State) ->
-    case damage_riak:get(?DOMAIN_TOKEN_BUCKET, ContractAddress) of
-        [] ->
-            {200, []};
-        Found -> 
-            {200, Found}
-    end;
 
 to_json(Req, #{action := balance} = State) ->
   case damage_http:is_authorized(Req, State) of
@@ -306,12 +259,6 @@ do_post_action(reset_password, Data) ->
   case damage_oauth:reset_password(Data) of
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
-  end;
-
-do_post_action(domains, #{email := Email} = _Data) ->
-  case damage_riak:get_index(<<"email_bin">>, Email) of
-    [] -> [];
-    List -> List
   end.
 
 
@@ -539,75 +486,6 @@ confirm_spend(ContractAddress, Amount) ->
   } = ContractCall,
   ?debugFmt("call AE contract ~p", [Balances]),
   Balances.
-
-
-lookup_domain(Domain) when is_binary(Domain) ->
-  lookup_domain(binary_to_list(Domain));
-
-lookup_domain(Domain) ->
-  case inet_res:lookup(Domain, in, txt) of
-    Records when is_list(Records) ->
-      case lists:filtermap(
-        fun
-          ([Record]) ->
-            case string:split(Record, "=") of
-              ["damagebdd_token", Token] -> Token;
-              _ -> false
-            end
-        end,
-        Records
-      ) of
-        [] ->
-          io:format("No TXT record found for token: ~p~n", [Records]),
-          false;
-
-        [Token | _] -> ok = check_host_token(Domain, Token)
-      end;
-
-    Other ->
-      logger:debug("dns record look up failed ~p ~p", [Domain, Other]),
-      false
-  end.
-
-
-is_allowed_domain(Host) when is_binary(Host) ->
-  is_allowed_domain(binary_to_list(Host));
-
-is_allowed_domain(Host) ->
-  AllowedHosts = ["jsontest.com", "damagebdd.com", "run.damagebdd.com"],
-  case lists:any(
-    fun
-      (LHost) ->
-        case LHost of
-          Host -> true;
-          _ -> false
-        end
-    end,
-    AllowedHosts
-  ) of
-    false -> lookup_domain(Host);
-    true -> true
-  end.
-
-
-check_host_token(Host, Token) ->
-  Keys =
-    damage_riak:get_index(
-      {<<"Default">>, <<"HostTokens">>},
-      <<"host_bin">>,
-      Host
-    ),
-  case lists:filter(
-    fun
-      (T) ->
-        T = Token,
-        true
-    end,
-    Keys
-  ) of
-    [Token] -> {ok, Token};
-    [] -> {error, notfound}
-  end.
 
 
 get_account_context(Account) ->

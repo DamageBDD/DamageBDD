@@ -26,6 +26,7 @@
 -export([delete_schedule/1]).
 -export([test_conflict_resolution/0]).
 -export([trails/0]).
+-export([is_authorized/2]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -69,6 +70,8 @@ trails() ->
   ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+
+is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
   {
@@ -229,7 +232,7 @@ to_json(Req, State) ->
 
     #{account := Account} ->
       Body = jsx:encode(#{schedules => load_schedules(Account)}),
-      {Body, Req, State};
+      {stop, Body, State};
 
     {'EXIT', {request_error, {match_qs, Fields}, Error}} ->
       Resp =

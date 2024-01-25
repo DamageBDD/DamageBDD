@@ -180,6 +180,12 @@ process_implicit_grant_stage2(Req, Params) ->
 %%% Internal functions
 %%%===================================================================
 
+issue_token({ok, Auth, Scope}, Req) ->
+  logger:debug("issue_token ~p ~p", [Auth, Req]),
+  {ok, {true, Response}} = oauth2:issue_token(Auth, Scope),
+  logger:debug("issue_token response ~p", [Response]),
+  emit_response(Response, Req);
+
 issue_token({ok, Auth}, Req) ->
   logger:debug("issue_token ~p ~p", [Auth, Req]),
   {ok, {true, Response}} = oauth2:issue_token(Auth, basic),
