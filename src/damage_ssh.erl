@@ -170,7 +170,6 @@ start() ->
         {tcpip_tunnel_out, true},
         {tcpip_tunnel_in, true},
         {exec, disabled},
-        {user_passwords, [{"steven", "test"}]},
         {connectfun, fun connect_func/3}
       ]
     ).
