@@ -33,6 +33,7 @@ bitcoin_req(Method, Params) ->
 bitcoin_req(Method, Params, Path) ->
   {ok, BtcRpcHost} = application:get_env(damage, bitcoin_rpc_host),
   {ok, BtcRpcPort} = application:get_env(damage, bitcoin_rpc_port),
+  {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
   {ok, ConnPid} = gun:open(BtcRpcHost, BtcRpcPort, #{}),
   Data =
     #{
@@ -41,7 +42,6 @@ bitcoin_req(Method, Params, Path) ->
       method => Method,
       params => Params
     },
-  UserID = "damagebdd",
   Password =
     case os:getenv("BTC_PASSWORD") of
       false -> exit(btc_password_env_not_set);
@@ -58,7 +58,7 @@ bitcoin_req(Method, Params, Path) ->
           <<"Authorization">>,
           [
             <<"Basic ">>,
-            base64:encode(iolist_to_binary([UserID, $:, Password]))
+            base64:encode(iolist_to_binary([BtcRpcUser, $:, Password]))
           ]
         }
       ],
