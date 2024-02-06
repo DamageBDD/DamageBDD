@@ -6,7 +6,7 @@
     {vsn, "0.1.0"},
     {registered, []},
     {mod, {damage_app, []}},
-    {applications, [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger]},
+    {applications, [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc]},
     {env, []},
     {modules, []},
     {licenses, ["Apache 2.0"]},

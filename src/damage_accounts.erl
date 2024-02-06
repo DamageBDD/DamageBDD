@@ -13,7 +13,7 @@
 
 %-export([to_text/2]).
 -export(
-  [create_contract/1, balance/1, check_spend/2, store_profile/1, refund/1]
+  [create_contract/0, balance/1, check_spend/2, store_profile/1, refund/1]
 ).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
@@ -26,6 +26,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 
+-define(INVOICE_BUCKET, {<<"Default">>, <<"Invoices">>}).
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
@@ -112,6 +113,38 @@ trails() ->
               type => <<"string">>
             }
           ]
+        }
+      }
+    ),
+    trails:trail(
+      "/accounts/invoices",
+      damage_accounts,
+      #{action => invoices},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "list invoices for account",
+          produces => ["text/plain"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Create a new invoice.",
+          produces => ["text/plain"],
+          parameters
+          =>
+          [
+            #{
+              amount => <<"amount">>,
+              description => <<"ammount to create invoice">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"integer">>
+            }
+           ]
         }
       }
     ),
@@ -240,6 +273,21 @@ to_html(Req, #{action := confirm} = State) ->
     notfound -> {<<"Invalid confirmation link. Please try again.">>, Req, State}
   end;
 
+to_html(Req, #{action := invoices} = State) ->
+  case damage_http:is_authorized(Req, State) of
+    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
+          Invoices0 = case damage_riak:get_index(?INVOICE_BUCKET, by_contract, ContractAddress) of
+            [] ->[];
+            Invoices when is_list(Invoices) ->
+                       logger:debug("got invoices", [Invoices]),
+                       Invoices
+          end,
+      {jsx:encode(Invoices0), Req, State};
+
+    Other ->
+      logger:debug("Unexpected ~p", [Other]),
+      {<<"Unauthorized.">>, Req, State}
+  end;
 to_html(Req, #{action := reset_password} = State) ->
   Body =
     case damage_oauth:reset_password(cowboy_req:match_qs([token], Req)) of
@@ -254,6 +302,9 @@ do_post_action(create, Data) ->
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
   end;
+do_post_action(invoices, #{amount:=Amount, description:=Description}) ->
+                      Invoice = lnd:create_invoice(Amount, Description),
+{201, #{status => <<"ok">>, message => Invoice}};
 
 do_post_action(reset_password, Data) ->
   case damage_oauth:reset_password(Data) of
@@ -320,31 +371,12 @@ from_yaml(Req, #{action := Action} = State) ->
   }.
 
 
-create_contract(RefundAddress) ->
+create_contract() ->
   % create ae account and bitcoin account
   #{result := #{contractId := ContractAddress}} =
     damage_ae:aecli(contract, deploy, "contracts/account.aes", []),
-  {ok, BtcAddress} = bitcoin:getnewaddress(ContractAddress),
-  ?debugFmt(
-    "debug created AE contractid ~p ~p, ",
-    [ContractAddress, BtcAddress]
-  ),
-  _ContractCreated =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "set_btc_state",
-      [BtcAddress, RefundAddress]
-    ),
   %?debugFmt("debug created AE contract ~p", [ContractCreated]),
-  #{
-    status => <<"ok">>,
-    btc_address => BtcAddress,
-    ae_contract_address => ContractAddress,
-    btc_refund_address => RefundAddress
-  }.
+  #{status => <<"ok">>, ae_contract_address => ContractAddress}.
 
 
 store_profile(ContractAddress) ->

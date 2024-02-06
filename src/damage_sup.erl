@@ -34,6 +34,7 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 init([]) ->
   {ok, Pools} = application:get_env(damage, pools),
   logger:info("Starting workers ~p~n", [Pools]),
+  SupFlags = {one_for_one, 10, 10},
   PoolSpecs =
     lists:map(
       fun
@@ -43,8 +44,24 @@ init([]) ->
       end,
       Pools
     ),
-  logger:info("Worker definitions ~p~n", [PoolSpecs]),
-  {ok, {{one_for_one, 10, 10}, PoolSpecs}}.
+  PoolSpecs0 =
+    PoolSpecs ++ [
+      #{
+        % mandatory
+        id => lndconnect,
+        % mandatory
+        start => {lndconnect, start_link, []},
+        % optional
+        restart => temporary,
+        % optional
+        shutdown => 60,
+        % optional
+        type => worker,
+        modules => [lndconnect]
+      }
+    ],
+  logger:info("Worker definitions ~p~n", [PoolSpecs0]),
+  {ok, {SupFlags, PoolSpecs0}}.
 
 %%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
 %%ChildSpecs =

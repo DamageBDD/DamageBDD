@@ -211,10 +211,7 @@ add_user(#{<<"email">> := ToEmail} = KycData) ->
   case damage_riak:get(?USER_BUCKET, ToEmail) of
     notfound ->
       logger:debug("account not found creating ~p", [ToEmail]),
-      case
-      damage_accounts:create_contract(
-        maps:get(refund_address, KycData, <<"notset">>)
-      ) of
+      case damage_accounts:create_contract() of
         #{status := <<"ok">>, ae_contract_address := ContractAddress} = Data ->
           Data0 =
             maps:merge(
