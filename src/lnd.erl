@@ -113,7 +113,7 @@ handle_call(
   Path = "/v1/invoices",
   %% Construct the request body
   ReqData = #{memo => Description, value => Amount, expiry => 3600},
-  ReqJson = jsx:encode(ReqData),
+  ReqJson = json_encode(ReqData),
   %% Send the HTTP POST request
   StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
   {ok, Response} =
