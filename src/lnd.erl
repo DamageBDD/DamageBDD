@@ -22,16 +22,24 @@
 
 %% State record
 
--record(state, {base_url :: string(), headers :: list(), options :: map(), host :: string(), port :: integer()}).
+-record(
+  state,
+  {
+    base_url :: string(),
+    headers :: list(),
+    options :: map(),
+    host :: string(),
+    port :: integer()
+  }
+).
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
 
 %% Start the server
 
-start_link([]) -> gen_server:start_link(?MODULE,  [], []).
+start_link([]) -> gen_server:start_link(?MODULE, [], []).
 
 %% Initialize the server
-
 
 init([]) ->
   {ok, Host} = application:get_env(damage, lnd_host),
@@ -46,47 +54,51 @@ init([]) ->
   %% Start the gun HTTP client
   BaseUrl = "https://" ++ Host ++ ":" ++ integer_to_list(Port),
   Headers = [{<<"Grpc-Metadata-Macaroon">>, Macaroon}],
-Options = #{
-        transport => tls,
-        tls_opts
-        =>
-        [
-          {verify, verify_peer},
-          {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
-        ]
-      },
-  {ok, #state{host=Host, port=Port,base_url = BaseUrl, headers = Headers, options=Options}}.
+  Options =
+    #{
+      transport => tls,
+      tls_opts
+      =>
+      [
+        {verify, verify_peer},
+        {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
+      ]
+    },
+  {
+    ok,
+    #state{
+      host = Host,
+      port = Port,
+      base_url = BaseUrl,
+      headers = Headers,
+      options = Options
+    }
+  }.
+
 %% API function to create Lightning invoice
 
 create_invoice(Amount, Description) ->
   poolboy:transaction(
     ?MODULE,
     fun
-      (Worker) ->
-        gen_server:call(Worker, {create_invoice, Amount, Description})
+      (Worker) -> gen_server:call(Worker, {create_invoice, Amount, Description})
     end
   ).
 
 %% API function to get Lightning invoice
 
-get_invoice(InvoiceId) -> 
+get_invoice(InvoiceId) ->
   poolboy:transaction(
     ?MODULE,
-    fun
-      (Worker) ->
-        gen_server:call(Worker, {get_invoice, InvoiceId})
-    end
+    fun (Worker) -> gen_server:call(Worker, {get_invoice, InvoiceId}) end
   ).
 
 %% API function to list all Lightning invoices
 
-list_invoices() -> 
+list_invoices() ->
   poolboy:transaction(
     ?MODULE,
-    fun
-      (Worker) ->
-        gen_server:call(Worker, list_invoices)
-    end
+    fun (Worker) -> gen_server:call(Worker, list_invoices) end
   ).
 
 %% Handle call requests
@@ -94,32 +106,32 @@ list_invoices() ->
 handle_call(
   {create_invoice, Amount, Description},
   _From,
-  #state{host=Host, port=Port, headers = Headers, options=Options} = State
+  #state{host = Host, port = Port, headers = Headers, options = Options} = State
 ) ->
-  {ok, ConnPid} =
-    gun:open(
-      Host,
-      Port,
-   Options 
-    ),
+  {ok, ConnPid} = gun:open(Host, Port, Options),
   %% Construct the API request URL
   Path = "/v1/invoices",
   %% Construct the request body
-  Body = json_encode([{amount, Amount}, {description, Description}]),
+  ReqData = #{memo => Description, value => Amount, expiry => 3600},
+  ReqJson = jsx:encode(ReqData),
   %% Send the HTTP POST request
-  StreamRef = gun:post(ConnPid, Path, Headers, Body),
-  Response =
+  StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+  {ok, Response} =
     case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-      {response, fin, Status, Headers} -> logger:debug("Got fin ~p", [Status]);
+      {response, fin, Status, _RespHeaders} ->
+        logger:debug("Got fin ~p", [Status]),
+        no_data;
 
-      {response, nofin, Status, Headers} ->
-        {ok, Body} = gun:await_body(ConnPid, StreamRef),
-        logger:debug("Got status ~p body ~p", [Status, Body]);
+      {response, nofin, _Status, _RespHeaders} ->
+        gun:await_body(ConnPid, StreamRef);
 
+      {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
       Default -> logger:debug("Got unknown ~p ", [Default])
     end,
   %% Parse the response JSON
-  {ok, Invoice} = json_decode(Response),
+  Invoice = json_decode(Response),
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
   %% Return the invoice details
   {reply, Invoice, State};
 
@@ -133,31 +145,27 @@ handle_call({get_invoice, InvoiceId}, _From, State) ->
   %% Return the invoice details
   {reply, Invoice, State};
 
-handle_call(list_invoices, _From,
-  #state{host=Host, port=Port, options=Options, headers = Headers} = State
+handle_call(
+  list_invoices,
+  _From,
+  #state{host = Host, port = Port, options = Options, headers = Headers} = State
 ) ->
-  {ok, ConnPid} =
-    gun:open(
-      Host,
-      Port,
-   Options 
-    ),
+  {ok, ConnPid} = gun:open(Host, Port, Options),
   %% Construct the API request URL
   Path = "/v1/invoices",
   %% Send the HTTP GET request
   StreamRef = gun:get(ConnPid, Path, Headers),
   Response =
     case gun:await(ConnPid, StreamRef) of
-    {response, fin, _Status, _Headers0} ->
-        no_data;
-    {response, nofin, _Status, _Headers0} ->
+      {response, fin, _Status, _Headers0} -> no_data;
+
+      {response, nofin, _Status, _Headers0} ->
         {ok, Body} = gun:await_body(ConnPid, StreamRef),
-           Body
-            
-end,
+        Body
+    end,
   %% Parse the response JSON
-      logger:debug("Got invoices ~p ", [Response]),
-   Invoices = json_decode(Response),
+  logger:debug("Got invoices ~p ", [Response]),
+  Invoices = json_decode(Response),
   %% Return the list of invoices
   {reply, Invoices, State}.
 
@@ -167,7 +175,9 @@ handle_cast(_Msg, State) -> {noreply, State}.
 
 %% Handle system messages
 
-handle_info(_Info, State) -> {noreply, State}.
+handle_info(Info, State) ->
+  logger:debug("Got info ~p ", [Info]),
+  {noreply, State}.
 
 %% Terminate the server
 
@@ -185,22 +195,19 @@ json_encode(Term) -> iolist_to_binary(jsx:encode(Term)).
 
 json_decode(Json) -> jsx:decode(Json).
 
-test()->
-    URL = "https://127.0.0.1:8011/v1/invoices",
+test() ->
+  URL = "https://127.0.0.1:8011/v1/invoices",
   Macaroon =
     case os:getenv("MACAROON") of
       false -> exit(invoice_macaroon_env_not_set);
       Other -> Other
     end,
-    Headers = [{"Grpc-Metadata-Macaroon", Macaroon}],
-    Options = [{ssl,[{depth,1},{cacerts, "/var/lib/lnd/tls.cert"}]}],
+  Headers = [{"Grpc-Metadata-Macaroon", Macaroon}],
+  Options = [{ssl, [{depth, 1}, {cacerts, "/var/lib/lnd/tls.cert"}]}],
+  %Request = {URL, Headers, "application/json", [], get, [], Options},
+  case httpc:request(get, {URL, Headers}, Options, []) of
+    {ok, {{_Status, _Headers, _Version}, Body}} ->
+      io:format("Response Body: ~p~n", [Body]);
 
-    %Request = {URL, Headers, "application/json", [], get, [], Options},
-
-    case httpc:request(get,{URL, Headers}, Options, []) of
-        
-        {ok, {{_Status, _Headers, _Version}, Body}} ->
-            io:format("Response Body: ~p~n", [Body]);
-        {error, Reason} ->
-            io:format("Request failed: ~p~n", [Reason])
-    end.
+    {error, Reason} -> io:format("Request failed: ~p~n", [Reason])
+  end.

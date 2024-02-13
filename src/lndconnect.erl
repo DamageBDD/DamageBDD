@@ -35,8 +35,7 @@
 
 %% API Functions
 
-start_link() -> gen_server:start_link(?MODULE,  [], []).
-
+start_link() -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
   logger:info("lndconnect started"),
@@ -68,18 +67,17 @@ init([]) ->
     Host,
     Port,
     #{
-        transport => tls,
-        tls_opts
-        =>
-        [
-          {verify, verify_peer},
-          {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
-        ]
-      }
-    
+      transport => tls,
+      tls_opts
+      =>
+      [
+        {verify, verify_peer},
+        {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
+      ]
+    }
   ) of
     {ok, ConnPid} ->
-    gproc:reg_other({n, l, {?MODULE, lnd}}, ConnPid),
+      gproc:reg_other({n, l, {?MODULE, lnd}}, ConnPid),
       StreamRef =
         gun:ws_upgrade(
           ConnPid,
@@ -92,12 +90,13 @@ init([]) ->
       gun:ws_send(ConnPid, StreamRef, {text, "{}"}),
       {ok, State#state{streamref = StreamRef}};
 
-    {error, Reason} -> 
-          logger:debug("Got error ~p", [Reason]),
-        {{error, Reason}, State};
-    Reason -> 
-          logger:debug("Got error ~p", [Reason]),
-    {{error, Reason}, State}
+    {error, Reason} ->
+      logger:debug("Got error ~p", [Reason]),
+      {{error, Reason}, State};
+
+    Reason ->
+      logger:debug("Got error ~p", [Reason]),
+      {{error, Reason}, State}
   end.
 
 
@@ -160,5 +159,4 @@ terminate(_Reason, _State) -> ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-getinfo() ->
-  gen_server:call(gproc:lookup_local_name({?MODULE, lnd}), getinfo).
+getinfo() -> gen_server:call(gproc:lookup_local_name({?MODULE, lnd}), getinfo).

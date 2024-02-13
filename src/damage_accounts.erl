@@ -144,7 +144,7 @@ trails() ->
               required => true,
               type => <<"integer">>
             }
-           ]
+          ]
         }
       }
     ),
@@ -243,6 +243,32 @@ validate_refund_addr(forward, BtcAddress) ->
   end.
 
 
+get_invoices(ContractAddress) ->
+  case
+  damage_riak:get_index(
+    ?INVOICE_BUCKET,
+    {binary_index, "contract_address"},
+    ContractAddress
+  ) of
+    [] -> [];
+
+    Invoices when is_list(Invoices) ->
+      logger:debug("got invoices ~p", [
+      [damage_riak:get(?INVOICE_BUCKET, damage_utils:decrypt(X)) || X <- Invoices]]),
+          lists:map(fun(X) -> {ok, Resp} = damage_riak:get(?INVOICE_BUCKET,  damage_utils:decrypt(X)), Resp end, Invoices)
+  end.
+
+
+to_json(Req, #{action := invoices} = State) ->
+  case damage_http:is_authorized(Req, State) of
+    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
+      {jsx:encode(get_invoices(ContractAddress)), Req, State};
+
+    Other ->
+      logger:debug("Unexpected ~p", [Other]),
+      {<<"Unauthorized.">>, Req, State}
+  end;
+
 to_json(Req, #{action := balance} = State) ->
   case damage_http:is_authorized(Req, State) of
     {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
@@ -276,18 +302,14 @@ to_html(Req, #{action := confirm} = State) ->
 to_html(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
     {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
-          Invoices0 = case damage_riak:get_index(?INVOICE_BUCKET, by_contract, ContractAddress) of
-            [] ->[];
-            Invoices when is_list(Invoices) ->
-                       logger:debug("got invoices", [Invoices]),
-                       Invoices
-          end,
-      {jsx:encode(Invoices0), Req, State};
+      Invoices = get_invoices(ContractAddress),
+      {jsx:encode(Invoices), Req, State};
 
     Other ->
       logger:debug("Unexpected ~p", [Other]),
       {<<"Unauthorized.">>, Req, State}
   end;
+
 to_html(Req, #{action := reset_password} = State) ->
   Body =
     case damage_oauth:reset_password(cowboy_req:match_qs([token], Req)) of
@@ -297,16 +319,60 @@ to_html(Req, #{action := reset_password} = State) ->
   {Body, Req, State}.
 
 
-do_post_action(create, Data) ->
+do_post_action(create, Data, _Req, _State) ->
   case damage_oauth:add_user(Data) of
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
   end;
-do_post_action(invoices, #{amount:=Amount, description:=Description}) ->
-                      Invoice = lnd:create_invoice(Amount, Description),
-{201, #{status => <<"ok">>, message => Invoice}};
 
-do_post_action(reset_password, Data) ->
+do_post_action(
+  invoices,
+  #{amount := Amount, description := Description},
+  Req,
+  State
+) ->
+  case damage_http:is_authorized(Req, State) of
+    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
+      case
+      damage_riak:get_index(
+        ?INVOICE_BUCKET,
+        {binary_index, "contract_address"},
+        ContractAddress
+      ) of
+        [] ->
+          #{<<"r_hash">> := RHash} =
+            Invoice = lnd:create_invoice(Amount, Description),
+          Len = byte_size(ContractAddress),
+          {ok, true} =
+            damage_riak:put(
+              ?INVOICE_BUCKET,
+              <<ContractAddress:Len/binary, RHash/binary>>,
+              maps:put(contract_address, ContractAddress, Invoice),
+              [{{binary_index, "contract_address"}, [ContractAddress]}]
+            ),
+          logger:debug("saved invoice ~p", [Invoice]),
+          {201, #{status => <<"ok">>, message => Invoice}};
+
+        _Other ->
+          {
+            201,
+            #{
+              status => <<"exists">>,
+              message
+              =>
+              <<
+                "unpaid invoices exists please cancel previous invoice before creatig new invoices"
+              >>
+            }
+          }
+      end;
+
+    Other ->
+      logger:debug("Unexpected ~p", [Other]),
+      {<<"Unauthorized.">>, Req, State}
+  end;
+
+do_post_action(reset_password, Data, _Req, _State) ->
   case damage_oauth:reset_password(Data) of
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
@@ -316,7 +382,7 @@ do_post_action(reset_password, Data) ->
 from_html(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   FormData = maps:from_list(cow_qs:parse_qs(Data)),
-  {Status0, Response0} = do_post_action(Action, FormData),
+  {Status0, Response0} = do_post_action(Action, FormData, Req, State),
   Body =
     case Action of
       create -> <<"Account created successfuly and password set.">>;
@@ -337,11 +403,11 @@ from_html(Req, #{action := Action} = State) ->
 from_json(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
-    case catch jsx:decode(Data, [return_maps]) of
+    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
       badarg ->
         {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
 
-      Data0 -> do_post_action(Action, Data0)
+      Data0 -> do_post_action(Action, Data0, Req, State)
     end,
   {
     stop,
@@ -357,7 +423,7 @@ from_yaml(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
     case fast_yaml:decode(Data, [maps]) of
-      {ok, [Data0]} -> do_post_action(Action, Data0);
+      {ok, [Data0]} -> do_post_action(Action, Data0, Req, State);
       {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
     end,
   logger:debug("post action ~p resp ~p", [Data, Response0]),
