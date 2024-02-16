@@ -26,6 +26,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 
+-define(MAX_DAMAGE_INVOICE, 4000).
 -define(INVOICE_BUCKET, {<<"Default">>, <<"Invoices">>}).
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
@@ -253,9 +254,15 @@ get_invoices(ContractAddress) ->
     [] -> [];
 
     Invoices when is_list(Invoices) ->
-      logger:debug("got invoices ~p", [
-      [damage_riak:get(?INVOICE_BUCKET, damage_utils:decrypt(X)) || X <- Invoices]]),
-          lists:map(fun(X) -> {ok, Resp} = damage_riak:get(?INVOICE_BUCKET,  damage_utils:decrypt(X)), Resp end, Invoices)
+      lists:map(
+        fun
+          (X) ->
+            {ok, Resp} =
+              damage_riak:get(?INVOICE_BUCKET, damage_utils:decrypt(X)),
+            Resp
+        end,
+        Invoices
+      )
   end.
 
 
@@ -319,11 +326,24 @@ to_html(Req, #{action := reset_password} = State) ->
   {Body, Req, State}.
 
 
+-spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
+  {integer(), map()}.
 do_post_action(create, Data, _Req, _State) ->
   case damage_oauth:add_user(Data) of
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
   end;
+
+do_post_action(invoices, #{amount := Amount}, _Req, _State)
+when Amount > ?MAX_DAMAGE_INVOICE ->
+  {
+    400,
+    #{
+      status => <<"max_damage">>,
+      message => <<"invoice amount too large">>,
+      max_damage_invoice => ?MAX_DAMAGE_INVOICE
+    }
+  };
 
 do_post_action(
   invoices,
