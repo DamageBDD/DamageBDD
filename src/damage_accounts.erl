@@ -423,7 +423,7 @@ from_html(Req, #{action := Action} = State) ->
 from_json(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+    case catch jsx:decode(Data, [return_maps ]) of
       badarg ->
         {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
 
