@@ -1,66 +1,52 @@
 @compiler >= 6
+	
 include "String.aes"
+
 payable contract Account =
     record state = {
-        btc_address: string,
-        btc_balance: int,
-        btc_refund_address: string,
-		deso_address: string,
-		deso_balance: int,
-		usage: int,
-		schedules: list(string),
+        last_invoice_ts: int,
+        balance: int,
+        schedules: list(string),
         deployer: address
-      }
-    stateful entrypoint init() = {
-        btc_address = "undefined",
-        btc_refund_address = "undefined",
-        btc_balance = 0,
-		deso_address = "undefined",
-		deso_balance = 0,
-		usage = 0,
-		schedules = [],
-        deployer = Call.caller
-      }
+        }
 
-    stateful entrypoint set_btc_state(btc_address: string, btc_refund_address: string) : unit =
-      if(state.btc_address != "undefined")
-          abort("Address already set")
-      else
-          put(state{btc_address = btc_address})
-      if(state.btc_refund_address != "undefined")
-          abort("Refund Address already set")
-      else
-          put(state{btc_refund_address = btc_refund_address})
+    stateful entrypoint init() = {
+        balance = 400000000, // free credits on start
+        schedules = [],
+        last_invoice_ts = 0,
+        deployer = Call.caller
+        }
 
     stateful entrypoint total_balance(): int =
-      Chain.balance(state.deployer)
+        Chain.balance(state.deployer)
 
-    stateful entrypoint btc_balance(): int =
-      state.btc_balance
     stateful entrypoint check_spend(amount: int): string =
-		if(state.btc_balance =< 0)
-			"balance too low"
-		else
-			"ok"
+        if(state.balance =< 0)
+            "balance too low"
+        else
+            "ok"
 
     stateful entrypoint confirm_spend(amount: int): state =
-      put(state{usage = state.usage+ amount})
-      put(state{btc_balance = state.btc_balance- amount})
-      put(state{deso_balance = state.deso_balance- amount})
-      state
+        if(state.balance =< 1)
+            abort(String.concat("balance too low", Int.to_str(state.balance)))
+        else
+            put(state{balance = state.balance - amount})
+        state
 		
 
     stateful entrypoint update_schedules(jobid: string) =
-	    put(state{schedules = jobid::state.schedules})
+        put(state{schedules = jobid::state.schedules})
 
-    payable stateful entrypoint fund(): unit =
-        if(Call.value > 1)
-            put(state{usage = state.usage + Call.value})
-            //Chain.spend(address, 
+    stateful entrypoint fund(amount: int, timestamp: int): unit =
+        if(timestamp < state.last_invoice_ts)
+            abort(String.concat("Timestamp older than last invoice paid.", Int.to_str(state.last_invoice_ts)))
+        elif(amount > 1)
+            put(state{balance = state.balance + amount,
+                last_invoice_ts = Chain.timestamp})
         else
-            abort(String.concat("Value too low", Int.to_str(Call.value)))
+            abort(String.concat("Value too low", Int.to_str(amount)))
 
     stateful entrypoint get_state(): state =
-      state
+        state
 			  
 

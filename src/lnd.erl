@@ -17,7 +17,7 @@
 
 %% API functions
 
--export([create_invoice/2, get_invoice/1, list_invoices/0]).
+-export([create_invoice/2, get_invoice/1, list_invoices/0, list_invoices/1]).
 -export([test/0]).
 
 %% State record
@@ -95,6 +95,12 @@ get_invoice(InvoiceId) ->
 
 %% API function to list all Lightning invoices
 
+list_invoices(Args) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun (Worker) -> gen_server:call(Worker, {list_invoices, Args}) end
+  ).
+
 list_invoices() ->
   poolboy:transaction(
     ?MODULE,
@@ -135,24 +141,15 @@ handle_call(
   %% Return the invoice details
   {reply, Invoice, State};
 
-handle_call({get_invoice, InvoiceId}, _From, State) ->
-  %% Construct the API request URL
-  Url = lists:concat([State#state.base_url, "/v1/invoice/", InvoiceId]),
-  %% Send the HTTP GET request
-  {ok, Response} = httpc:request(get, {Url, State#state.headers}, [], []),
-  %% Parse the response JSON
-  {ok, Invoice} = json_decode(Response),
-  %% Return the invoice details
-  {reply, Invoice, State};
-
 handle_call(
-  list_invoices,
+  {get_invoice, InvoiceId},
   _From,
   #state{host = Host, port = Port, options = Options, headers = Headers} = State
 ) ->
   {ok, ConnPid} = gun:open(Host, Port, Options),
   %% Construct the API request URL
-  Path = "/v1/invoices",
+  Path = lists:concat(["/v1/invoice/", binary_to_list(InvoiceId)]),
+  logger:debug("path ~p", [Path]),
   %% Send the HTTP GET request
   StreamRef = gun:get(ConnPid, Path, Headers),
   Response =
@@ -165,7 +162,40 @@ handle_call(
     end,
   %% Parse the response JSON
   logger:debug("Got invoices ~p ", [Response]),
-  Invoices = json_decode(Response),
+  Invoice = json_decode(Response),
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
+  %% Return the invoice details
+  {reply, Invoice, State};
+
+handle_call(list_invoices, From, State) ->
+  handle_call({list_invoices, []}, From, State);
+
+handle_call(
+  {list_invoices, Args},
+  _From,
+  #state{host = Host, port = Port, options = Options, headers = Headers} = State
+) ->
+  {ok, ConnPid} = gun:open(Host, Port, Options),
+  QueryString =
+    lists:flatten(["?" ++ Key ++ "=" ++ Value ++ "&" || {Key, Value} <- Args]),
+  %% Construct the API request URL
+  Path = "/v1/invoices" ++ QueryString,
+  %% Send the HTTP GET request
+  StreamRef = gun:get(ConnPid, Path, Headers),
+  Response =
+    case gun:await(ConnPid, StreamRef) of
+      {response, fin, _Status, _Headers0} -> no_data;
+
+      {response, nofin, _Status, _Headers0} ->
+        {ok, Body} = gun:await_body(ConnPid, StreamRef),
+        Body
+    end,
+  %% Parse the response JSON
+  logger:debug("Got invoices ~p ", [Response]),
+  #{<<"invoices">> := Invoices} = json_decode(Response),
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
   %% Return the list of invoices
   {reply, Invoices, State}.
 

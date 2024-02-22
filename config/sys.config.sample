@@ -1,4 +1,5 @@
 [
+  {sasl, [{errlog_type, error}]},
   %{error_logger, [
   %    {report_module, [gen_smtp_client]}
   %]},
@@ -96,6 +97,15 @@
       {ae_nodes, [{"192.168.1.197", 3013}]},
       {ae_wallet, "wallets/damagebdd_test"},
       {
+        riak,
+        [
+          {"riak0.lan", 8087},
+          {"riak1.lan", 8087},
+          {"riak2.lan", 8087}
+        ]
+      },
+      {chromedriver, "http://localhost:9515/"},
+      {
         pools,
         [
           {damage, [{size, 5}, {max_overflow, 10}], []},
@@ -105,11 +115,23 @@
             damage_riak,
             [{size, 2}, {max_overflow, 5}],
             [{"riak0.lan", 8087}, {"riak0.lan", 8087}]
+          },
+          {
+            damage_ipfs,
+            [{size, 20}, {max_overflow, 50}],
+            [
+              {"ipfs0.lan", 5001},
+              {"ipfs1.lan", 5001},
+              {"ipfs2.lan", 5001},
+              {"ipfs3.lan", 5001}
+            ]
           }
         ]
       }
     ]
   },
+  {riakc, [{allow_listing, true}]},
+  {oauth2, [{backend, damage_oauth}, {expiry_time, 604800}]},
   {
     cowboy_swagger,
     [
@@ -120,7 +142,7 @@
       %% and depending on how youre using `cowboy-swagger` it will be different.
       %% For example, assuming that you want to run your app which has
       %% `cowboy-swagger` as dependency from the console, `static_files` will be:
-      {static_files, "./deps/cowboy_swagger/priv/swagger"},
+      {static_files, "./_build/default/lib/cowboy_swagger/priv/swagger"},
       %% `global_spec`: Global fields for Swagger specification.
       %% If these fields are not set, `cowboy_swagger` will set default values.
       {

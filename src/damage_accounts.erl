@@ -21,6 +21,8 @@
 -export([confirm_spend/2]).
 -export([get_account_context/1]).
 -export([trails/0]).
+-export([check_invoices/0]).
+-export([delete_account/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -32,6 +34,7 @@
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
 -define(TRAILS_TAG, ["Account Management"]).
+-define(INVOICES_SINCE, 30).
 
 trails() ->
   [
@@ -347,7 +350,7 @@ when Amount > ?MAX_DAMAGE_INVOICE ->
 
 do_post_action(
   invoices,
-  #{amount := Amount, description := Description},
+  #{amount := Amount, description := _Description},
   Req,
   State
 ) ->
@@ -361,13 +364,18 @@ do_post_action(
       ) of
         [] ->
           #{<<"r_hash">> := RHash} =
-            Invoice = lnd:create_invoice(Amount, Description),
+            Invoice =
+              lnd:create_invoice(Amount, damage_utils:encrypt(ContractAddress)),
           Len = byte_size(ContractAddress),
           {ok, true} =
             damage_riak:put(
               ?INVOICE_BUCKET,
               <<ContractAddress:Len/binary, RHash/binary>>,
-              maps:put(contract_address, ContractAddress, Invoice),
+              maps:put(
+                contract_address,
+                ContractAddress,
+                maps:put(amount, Amount, Invoice)
+              ),
               [{{binary_index, "contract_address"}, [ContractAddress]}]
             ),
           logger:debug("saved invoice ~p", [Invoice]),
@@ -423,7 +431,7 @@ from_html(Req, #{action := Action} = State) ->
 from_json(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
-    case catch jsx:decode(Data, [return_maps ]) of
+    case catch jsx:decode(Data, [return_maps]) of
       badarg ->
         {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
 
@@ -498,29 +506,12 @@ balance(ContractAddress) ->
       []
     ),
   ?debugFmt("call AE contract ~p", [ContractCall]),
-  #{
-    decodedResult
-    :=
-    #{
-      btc_address := BtcAddress,
-      btc_balance := BtcBalance,
-      deso_address := _DesoAddress,
-      deso_balance := _DesoBalance,
-      usage := Usage,
-      deployer := _Deployer
-    } = Results
-  } = ContractCall,
-  ?debugFmt("State ~p ", [Results]),
-  {ok, Transactions} = bitcoin:listtransactions(ContractAddress),
-  ?debugFmt("Transactions ~p ", [Transactions]),
-  {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
+  #{decodedResult := #{balance := Balance, deployer := _Deployer} = _Results} =
+    ContractCall,
   Mesg =
-    io:format(
-      "Balance of account ~p usage is ~p btc_balance ~p btc_held ~p.",
-      [ContractAddress, Usage, BtcBalance, RealBtcBalance]
-    ),
+    io:format("Balance of account ~p  is ~p .", [ContractAddress, Balance]),
   logger:debug(Mesg, []),
-  maps:put(btc_refund_balance, RealBtcBalance, Results).
+  #{balance => binary_to_integer(Balance)}.
 
 
 refund(ContractAddress) ->
@@ -590,18 +581,8 @@ confirm_spend(ContractAddress, Amount) ->
       "confirm_spend",
       [Amount]
     ),
-  #{
-    decodedResult
-    :=
-    #{
-      btc_address := _BtcAddress,
-      btc_balance := _BtcBalance,
-      deso_address := _DesoAddress,
-      deso_balance := _DesoBalance,
-      usage := _Usage,
-      deployer := _Deployer
-    } = Balances
-  } = ContractCall,
+  #{decodedResult := #{balance := _Balance, deployer := _Deployer} = Balances} =
+    ContractCall,
   ?debugFmt("call AE contract ~p", [Balances]),
   Balances.
 
@@ -615,4 +596,76 @@ get_account_context(Account) ->
     Other ->
       logger:debug("got context ~p", [Other]),
       #{}
+  end.
+
+
+add_funds(#{amount := Amount} = _Invoice, ContractAddress) ->
+  ContractCall =
+    damage_ae:aecli(
+      contract,
+      call,
+      binary_to_list(ContractAddress),
+      "contracts/account.aes",
+      "fund",
+      [Amount]
+    ),
+  #{decodedResult := #{balance := _Balance, deployer := _Deployer} = Balances} =
+    ContractCall,
+  ?debugFmt("call AE contract ~p", [Balances]),
+  Balances.
+
+
+check_invoice_foldn(Invoice, Acc) ->
+  case maps:get(<<"state">>, Invoice) of
+    <<"ACCEPTED">> ->
+      logger:debug("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
+      Acc;
+
+    <<"SETTLED">> ->
+      logger:info("Settled Invoice ~p", [Invoice]),
+      AmountPaid = maps:get(<<"amt_paid_sat">>, Invoice),
+      SettledTs = binary_to_integer(maps:get(<<"settled_date">>, Invoice)),
+      case maps:get(<<"memo">>, Invoice) of
+        ContractAddressEncrypted when is_binary(ContractAddressEncrypted) ->
+          logger:info("Acceptd Invoice ~p ~p", [Invoice, AmountPaid]),
+          ContractAddress = damage_utils:decrypt(ContractAddressEncrypted),
+          #{decodedResult := Balance} =
+            damage_ae:aecli(
+              contract,
+              call,
+              binary_to_list(ContractAddress),
+              "contracts/account.aes",
+              "fund",
+              [AmountPaid, SettledTs]
+            ),
+          logger:info("Funded contract ~p ~p", [Balance, AmountPaid]),
+          Acc ++ [Invoice];
+
+        _ -> Acc
+      end;
+
+    <<"CANCELED">> ->
+      logger:debug("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
+      Acc
+  end.
+
+
+check_invoices() ->
+  {Date, _} = calendar:now_to_datetime(os:timestamp()),
+  CreationDate =
+    integer_to_list(
+      date_util:date_to_epoch(date_util:subtract(Date, {days, ?INVOICES_SINCE}))
+    ),
+  Invoices =
+    lists:foldl(
+      fun check_invoice_foldn/2,
+      [],
+      lnd:list_invoices([{"creation_date_start", CreationDate}])
+    ).
+
+
+delete_account(Email) ->
+  case damage_riak:delete(?USER_BUCKET, Email) of
+    ok -> ok;
+    _ -> fail
   end.
