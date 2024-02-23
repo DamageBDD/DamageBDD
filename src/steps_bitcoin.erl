@@ -40,6 +40,23 @@ step(
   Context,
   <<"Given">>,
   _N,
+  ["I have created a bitcoin wallet at path", WalletPath0],
+  _
+) ->
+  BitcoinWallets = maps:get(bitcoin_wallets, Context, #{}),
+  WalletPath = list_to_binary(WalletPath0),
+  {ok, BtcWallet} = bitcoin:createwallet(WalletPath),
+  maps:put(
+    bitcoin_wallets,
+    maps:put(WalletPath, BtcWallet, BitcoinWallets),
+    Context
+  );
+
+step(
+  _Config,
+  Context,
+  <<"Given">>,
+  _N,
   ["I have loaded a bitcoin wallet from path", WalletPath0],
   _
 ) ->
