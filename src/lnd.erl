@@ -17,7 +17,15 @@
 
 %% API functions
 
--export([create_invoice/2, get_invoice/1, list_invoices/0, list_invoices/1]).
+-export(
+  [
+    create_invoice/2,
+    get_invoice/1,
+    list_invoices/0,
+    list_invoices/1,
+    cancel_invoice/1
+  ]
+).
 -export([test/0]).
 
 %% State record
@@ -105,6 +113,12 @@ list_invoices() ->
   poolboy:transaction(
     ?MODULE,
     fun (Worker) -> gen_server:call(Worker, list_invoices) end
+  ).
+
+cancel_invoice(InvoiceId) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun (Worker) -> gen_server:call(Worker, {cancel_invoice, InvoiceId}) end
   ).
 
 %% Handle call requests
@@ -197,7 +211,39 @@ handle_call(
   gun:cancel(ConnPid, StreamRef),
   gun:close(ConnPid),
   %% Return the list of invoices
-  {reply, Invoices, State}.
+  {reply, Invoices, State};
+
+handle_call(
+  {cancel_invoice, PaymentHash},
+  _From,
+  #state{host = Host, port = Port, headers = Headers, options = Options} = State
+) ->
+  {ok, ConnPid} = gun:open(Host, Port, Options),
+  %% Construct the API request URL
+  Path = "/v2/invoices/cancel/",
+  %% Construct the request body
+  ReqData = #{payment_hash => PaymentHash},
+  ReqJson = json_encode(ReqData),
+  %% Send the HTTP POST request
+  StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+  {ok, Response} =
+    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+      {response, fin, Status, _RespHeaders} ->
+        logger:debug("Got fin ~p", [Status]),
+        no_data;
+
+      {response, nofin, _Status, _RespHeaders} ->
+        gun:await_body(ConnPid, StreamRef);
+
+      {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
+      Default -> logger:debug("Got unknown ~p ", [Default])
+    end,
+  %% Parse the response JSON
+  Invoice = json_decode(Response),
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
+  %% Return the invoice details
+  {reply, Invoice, State}.
 
 %% Handle cast requests
 
