@@ -12,17 +12,16 @@
 -export([to_json/2]).
 
 %-export([to_text/2]).
--export(
-  [create_contract/0, balance/1, check_spend/2, store_profile/1, refund/1]
-).
+-export([create_contract/0, spend/2, store_profile/1, refund/1]).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
 -export([update_schedules/3]).
--export([confirm_spend/2]).
+-export([confirm_spend/1]).
 -export([get_account_context/1]).
 -export([trails/0]).
 -export([check_invoices/0]).
 -export([delete_account/1]).
+-export([delete_resource/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -238,7 +237,8 @@ content_types_accepted(Req, State) ->
     State
   }.
 
-allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+allowed_methods(Req, State) ->
+  {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 validate_refund_addr(forward, BtcAddress) ->
   case bitcoin:validateaddress(BtcAddress) of
@@ -337,7 +337,7 @@ do_post_action(create, Data, _Req, _State) ->
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
   end;
 
-do_post_action(invoices, #{amount := Amount}, _Req, _State)
+do_post_action(invoices, #{<<"amount">> := Amount}, _Req, _State)
 when Amount > ?MAX_DAMAGE_INVOICE ->
   {
     400,
@@ -348,19 +348,15 @@ when Amount > ?MAX_DAMAGE_INVOICE ->
     }
   };
 
-do_post_action(
-  invoices,
-  #{amount := Amount, description := _Description},
-  Req,
-  State
-) ->
+do_post_action(invoices, #{<<"amount">> := Amount}, Req, State) ->
   case damage_http:is_authorized(Req, State) of
     {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
       case
       damage_riak:get_index(
         ?INVOICE_BUCKET,
         {binary_index, "contract_address"},
-        ContractAddress
+        ContractAddress,
+        [{return_terms, true}]
       ) of
         [] ->
           #{<<"r_hash">> := RHash} =
@@ -381,23 +377,31 @@ do_post_action(
           logger:debug("saved invoice ~p", [Invoice]),
           {201, #{status => <<"ok">>, message => Invoice}};
 
-        _Other ->
-          {
-            201,
-            #{
-              status => <<"exists">>,
-              message
-              =>
-              <<
-                "unpaid invoices exists please cancel previous invoice before creatig new invoices"
-              >>
-            }
-          }
+        [OtherEnc | _] ->
+          Other = damage_utils:decrypt(OtherEnc),
+          logger:debug("retrieved invoice ~p", [Other]),
+          case damage_riak:get(?INVOICE_BUCKET, Other) of
+            {ok, InvoiceObj} ->
+              {200, #{status => <<"ok">>, message => InvoiceObj}};
+
+            _ ->
+              {
+                201,
+                #{
+                  status => <<"exists">>,
+                  message
+                  =>
+                  <<
+                    "unpaid invoices exists please cancel previous invoice before creatig new invoices"
+                  >>
+                }
+              }
+          end
       end;
 
     Other ->
       logger:debug("Unexpected ~p", [Other]),
-      {<<"Unauthorized.">>, Req, State}
+      {401, #{status => <<"noauth">>, message => <<"Unauthorized.">>}}
   end;
 
 do_post_action(reset_password, Data, _Req, _State) ->
@@ -430,6 +434,7 @@ from_html(Req, #{action := Action} = State) ->
 
 from_json(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  logger:debug("post action ~p ", [Data]),
   {Status0, Response0} =
     case catch jsx:decode(Data, [return_maps]) of
       badarg ->
@@ -465,6 +470,43 @@ from_yaml(Req, #{action := Action} = State) ->
   }.
 
 
+delete_resource(Req, #{action := invoices} = State) ->
+  case damage_http:is_authorized(Req, State) of
+    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
+      case
+      damage_riak:get_index(
+        ?INVOICE_BUCKET,
+        {binary_index, "contract_address"},
+        ContractAddress,
+        [{return_terms, true}]
+      ) of
+        [] -> {true, Req, State};
+
+        [OtherEnc | _] ->
+          Other = damage_utils:decrypt(OtherEnc),
+          case damage_riak:get(?INVOICE_BUCKET, Other) of
+            {
+              ok,
+              #{payment_request := _PaymentRequest, r_hash := RHash} =
+                InvoiceObj
+            } ->
+              logger:debug("retrieved invoice delete ~p", [InvoiceObj]),
+              case lnd:cancel_invoice(RHash) of
+                #{<<"code">> := 5} ->
+                  logger:info("Invoice not found ~p", [RHash]);
+
+                Other -> logger:info("Invoice found ~p", [Other])
+              end,
+              {true, Req, State};
+
+            _ -> {false, Req, State}
+          end
+      end;
+
+    _Other -> {<<"Unauthorized.">>, Req, State}
+  end.
+
+
 create_contract() ->
   % create ae account and bitcoin account
   #{result := #{contractId := ContractAddress}} =
@@ -479,40 +521,13 @@ store_profile(ContractAddress) ->
   ok.
 
 
-check_spend("guest", _Concurrency) -> ok;
-check_spend(<<"guest">>, _Concurrency) -> ok;
+spend(ContractAddress, Amount) ->
+  #{balance => damage_ae:spend(ContractAddress, Amount)}.
 
-check_spend(ContractAddress, _Concurrency) ->
-  #{decodedResult := Balance} =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "total_balance",
-      []
-    ),
-  binary_to_integer(Balance).
+confirm_spend(ContractAddress) ->
+  #{balance => damage_ae:confirm_spend(ContractAddress)}.
 
-
-balance(ContractAddress) ->
-  ContractCall =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "get_state",
-      []
-    ),
-  ?debugFmt("call AE contract ~p", [ContractCall]),
-  #{decodedResult := #{balance := Balance, deployer := _Deployer} = _Results} =
-    ContractCall,
-  Mesg =
-    io:format("Balance of account ~p  is ~p .", [ContractAddress, Balance]),
-  logger:debug(Mesg, []),
-  #{balance => binary_to_integer(Balance)}.
-
+balance(ContractAddress) -> #{balance => damage_ae:balance(ContractAddress)}.
 
 refund(ContractAddress) ->
   #{
@@ -569,24 +584,6 @@ update_schedules(ContractAddress, JobId, _Cron) ->
   ?debugFmt("State ~p ", [Results]).
 
 
-confirm_spend(<<"guest">>, _) -> ok;
-
-confirm_spend(ContractAddress, Amount) ->
-  ContractCall =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "confirm_spend",
-      [Amount]
-    ),
-  #{decodedResult := #{balance := _Balance, deployer := _Deployer} = Balances} =
-    ContractCall,
-  ?debugFmt("call AE contract ~p", [Balances]),
-  Balances.
-
-
 get_account_context(Account) ->
   case damage_riak:get(?CONTEXT_BUCKET, Account) of
     {ok, Context} ->
@@ -597,22 +594,6 @@ get_account_context(Account) ->
       logger:debug("got context ~p", [Other]),
       #{}
   end.
-
-
-add_funds(#{amount := Amount} = _Invoice, ContractAddress) ->
-  ContractCall =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "fund",
-      [Amount]
-    ),
-  #{decodedResult := #{balance := _Balance, deployer := _Deployer} = Balances} =
-    ContractCall,
-  ?debugFmt("call AE contract ~p", [Balances]),
-  Balances.
 
 
 check_invoice_foldn(Invoice, Acc) ->
@@ -656,12 +637,11 @@ check_invoices() ->
     integer_to_list(
       date_util:date_to_epoch(date_util:subtract(Date, {days, ?INVOICES_SINCE}))
     ),
-  Invoices =
-    lists:foldl(
-      fun check_invoice_foldn/2,
-      [],
-      lnd:list_invoices([{"creation_date_start", CreationDate}])
-    ).
+  lists:foldl(
+    fun check_invoice_foldn/2,
+    [],
+    lnd:list_invoices([{"creation_date_start", CreationDate}])
+  ).
 
 
 delete_account(Email) ->

@@ -15,6 +15,7 @@
     delete/2,
     list_keys/1,
     get_index/3,
+    get_index/4,
     get_index_range/4,
     update_hll/3,
     hll_value/2
@@ -103,11 +104,17 @@ list_keys({Type, Bucket}) ->
   ).
 
 get_index({Type, Bucket}, Index, Key) ->
+  get_index({Type, Bucket}, Index, Key, []).
+
+get_index({Type, Bucket}, Index, Key, Opts) ->
   poolboy:transaction(
     ?MODULE,
     fun
       (Worker) ->
-        gen_server:call(Worker, {get_index_eq, {Type, Bucket}, Index, Key, []})
+        gen_server:call(
+          Worker,
+          {get_index_eq, {Type, Bucket}, Index, Key, Opts}
+        )
     end
   ).
 

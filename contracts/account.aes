@@ -17,23 +17,13 @@ payable contract Account =
         deployer = Call.caller
         }
 
-    stateful entrypoint total_balance(): int =
-        Chain.balance(state.deployer)
-
-    stateful entrypoint check_spend(amount: int): string =
-        if(state.balance =< 0)
-            "balance too low"
-        else
-            "ok"
-
-    stateful entrypoint confirm_spend(amount: int): state =
+    stateful entrypoint spend(amount: int): state =
         if(state.balance =< 1)
             abort(String.concat("balance too low", Int.to_str(state.balance)))
         else
             put(state{balance = state.balance - amount})
         state
 		
-
     stateful entrypoint update_schedules(jobid: string) =
         put(state{schedules = jobid::state.schedules})
 

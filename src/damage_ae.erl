@@ -12,10 +12,10 @@
 
 -behaviour(gen_server).
 
--export([start_link/1]).
 -export(
   [
     init/1,
+    start_link/0,
     handle_call/3,
     handle_cast/2,
     handle_info/2,
@@ -26,20 +26,59 @@
 -export([sign_tx/2]).
 -export([aecli/4, aecli/6]).
 -export([test_contract_call/1]).
+-export([balance/1, invalidate_cache/0, spend/2]).
 
-start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
+start_link() -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
   process_flag(trap_exit, true),
-  {ok, undefined}.
+  gproc:reg_other({n, l, {?MODULE, ae}}, self()),
+  {ok, #{}}.
 
+
+handle_call({balance, ContractAddress}, _From, Cache) ->
+  case catch maps:get(ContractAddress, Cache, undefined) of
+    undefined -> {reply, {error, not_found}, Cache};
+    {Balance, _} -> {reply, {ok, Balance}, Cache}
+  end;
 
 handle_call({transaction, Data}, _From, State) ->
   logger:debug("handle_call transaction/1 : ~p", [Data]),
   {reply, ok, State}.
 
 
+handle_cast({confirm_spend, ContractAddress}, Cache) ->
+  logger:debug("upate balance", []),
+  {_, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
+  ContractCall =
+    damage_ae:aecli(
+      contract,
+      call,
+      binary_to_list(ContractAddress),
+      "contracts/account.aes",
+      "confirm_spend",
+      [Spend]
+    ),
+  #{decodedResult := #{balance := Balance, deployer := _Deployer} = _Balances} =
+    ContractCall,
+  NewCache = maps:put(ContractAddress, {Balance, 0}, Cache),
+  {noreply, NewCache};
+
+handle_cast({spend, ContractAddress, Amount}, Cache) ->
+  logger:debug("upate balance", []),
+  {Balance, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
+  NewCache = maps:put(ContractAddress, {Balance, Spend + Amount}, Cache),
+  {noreply, NewCache};
+
+handle_cast({update_balance, ContractAddress, Balance}, Cache) ->
+  logger:debug("upate balance", []),
+  {_, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
+  NewCache = maps:put(ContractAddress, {Balance, Spend}, Cache),
+  {noreply, NewCache};
+
+handle_cast(invalidate_cache, _Cache) -> {noreply, #{}};
 handle_cast(_Event, State) -> {noreply, State}.
+
 
 handle_info(_Info, State) -> {noreply, State}.
 
@@ -226,6 +265,41 @@ test_contract_call(AeAccount) ->
   end.
 
 
-% Tokenization
-% all nodes get same payout once consensus is acheived
-% if there is no consensus then esclation and re-election of participating nodes through some mechanism
+balance(ContractAddress) ->
+  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
+  case gen_server:call(DamageAEPid, {balance, ContractAddress}) of
+    {ok, Balance} -> Balance;
+
+    _ ->
+      ContractCall =
+        damage_ae:aecli(
+          contract,
+          call,
+          binary_to_list(ContractAddress),
+          "contracts/account.aes",
+          "get_state",
+          []
+        ),
+      #{
+        decodedResult := #{balance := Balance, deployer := _Deployer} = _Results
+      } = ContractCall,
+      Mesg =
+        io:format("Balance of account ~p is ~p.", [ContractAddress, Balance]),
+      logger:debug(Mesg, []),
+      gen_server:cast(
+        DamageAEPid,
+        {update_balance, ContractAddress, binary_to_integer(Balance)}
+      ),
+      Balance
+  end.
+
+
+spend(ContractAddress, Amount) ->
+  % temporary storage to commit after feature execution
+  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
+  gen_server:cast(DamageAEPid, {spend, ContractAddress, Amount}).
+
+
+invalidate_cache() ->
+  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
+  gen_server:cast(DamageAEPid, invalidate_cache).
