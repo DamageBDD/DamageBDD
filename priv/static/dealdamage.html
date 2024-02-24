@@ -5,69 +5,187 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DamageBDD Execute Feature</title>
     <link rel="stylesheet" type="text/css" href='/static/css/main.css'/>
+    <link rel="stylesheet" type="text/css" href='/static/css/micromodal.css'/>
     <link rel="stylesheet" type="text/css" href='/static/css/toast.css'/>
+    <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css'/>
     <script async src='https://www.googletagmanager.com/gtag/js?id=G-5QG625RHB7'></script>
     <link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet'><style type="text/css"> body { font-family: 'Roboto', sans-serif; } </style>
     <script src='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@latest/build/highlight.min.js'></script>
+    <script src="/static/js/qrcode.min.js"></script>
+    <script src="/static/js/micromodal.min.js"></script>
+    <script src="/static/js/tabby.polyfills.min.js"></script>
     <script src="/static/js/highlight/languages/gherkin.min.js"></script>
     <link rel="stylesheet" type="text/css" href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@latest/build/styles/default.min.css'>
     <script>hljs.highlightAll();</script>
 
   </head>
   <body>
-    <div class="container">
+    <div id="toolbar">
+      <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
+      <div id="balanceDiv" data-micromodal-trigger="invoice-modal"></div> |
+      <div id="settingsBtn"   data-micromodal-trigger="settings-modal">Settings</div> |
+      <div id="logoutBtn"  data-micromodal-trigger="logout-modal">Logout</div>
+      <!--generate javascript code to make the qrcode modal show when balanceDiv is clicked, and add css to  indicate that balance div is clickable-->
+    </div>
+    <div class="title">DamageBDD</div>
+    <div class="header">The tool to break your stack</div>
+    <div class="modal micromodal-slide" id="invoice-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              Damage Ammo Reload
+            </h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <p>
+              Make a payment using BIP21 compatible wallet, to top up on credits to deal more damage.
+            </p>
+            <div id="qrcode"></div>
+          </main>
+          <footer class="modal__footer">
+            <button class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Close this dialog window">Close</button>
+          </footer>
+        </div>
+      </div>
+    </div>
 
-      <div class="title">DamageBDD</div>
-      <div class="header">The tool to break your stack</div>
-        <button id="loginBtn" type="submit" class="submit-button" display="none">Login</button>
-        <div id="balanceDiv"></div>
-<div class="modal-container">
-  <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
-    <label for="username">Username (Email):</label>
-    <input type="email" id="username" required>
-    <br>
-    <label for="password">Password:</label>
-    <input type="password" id="password" required>
-    <br>
-    <button type="submit">Submit</button>
-  </form>
-</div>
-      <div class="code-example">
+    <div class="modal micromodal-slide" id="login-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              Login
+            </h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
+              <label for="username">Username (Email):</label>
+              <input type="email" id="username" autocomplete="username" required>
+              <br>
+              <label for="password" >Password:</label>
+              <input type="password" id="password" autocomplete="current-password" required>
+            </form>
+          </main>
+          <footer class="modal__footer">
+            <button id="loginSubmitBtn" class="modal__btn modal__btn-primary" aria-label="Login with email and password">Submit</button>
+            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Close</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal micromodal-slide" id="logout-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              Confirm Logout
+            </h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+          </main>
+          <footer class="modal__footer">
+            <button id="logoutSubmitBtn" class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Logout">Logout</button>
+            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal micromodal-slide" id="settings-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              Settings
+            </h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <form action="submit_settings" method="post">
+              <!--generate the html, javascript and css for a settings  form with settings to generate and display tokens to use in token based dns authorization, and a form to add a maximum of 100  context variables with the option of making the variable private hidden or obfuscated from reports and other outputs. -->
+              <fieldset>
+                <legend>DNS Auth Token Settings</legend>
+                <button type="button" onclick="generateToken()">Generate Token</button>
+                <div id="generatedToken"></div>
+              </fieldset>
+
+              <fieldset id="contextVariablesForm">
+                <legend>Context Variables Settings</legend>
+                <label for="variableName">Name:</label>
+                <input type="text" id="variableName" name="variableName" placeholder="Enter variable name">
+                <br>
+                <label for="value">Value:</label>
+                <input type="text" id="value" name="value" placeholder="Enter variable value">
+                <br>
+                <label for="varType">Type:</label>
+                <select id="varType" name="varType">
+                  <option value="integer">Integer</option>
+                  <option value="float">Float</option>
+                  <option value="boolean">Boolean</option>
+                  <option value="string">String</option>
+                </select>
+                <br>
+                <label for="variableVisibility">Visibility:</label>
+                <select id="variableVisibility" name="variableVisibility">
+                  <option value="public">Public</option>
+                  <option value="private">Private</option>
+                  <option value="obfuscated">Obfuscated</option>
+                </select>
+                <br>
+                <button type="button" onclick="addVariable()">Add Variable</button>
+                <div id="contextVariables"></div>
+              </fieldset>
+              <input type="submit" value="Submit">
+            </form>
+          </main>
+          <footer class="modal__footer">
+            <button class="modal__btn modal__btn-primary" data-micromodal-save aria-label="Save Settings">Save</button>
+            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+
+    <ul data-tabs>
+      <li><a data-tabby-default href="#execution-tab">Execute</a></li>
+      <li><a href="#benchmarks-tab">Benchmarks</a></li>
+      <li><a href="#history-tab">History</a></li>
+      <li><a href="#market-tab">Market</a></li>
+    </ul>
+
+    <div id="execution-tab" class="execute-container">
+      <div >
         <p>Write the test case in the textarea below:</p>
-        <p> For example:</p>
-        <pre>
-          <code class="language-gherkin">
-Feature: Get a Bearer token for your account 
-
-Scenario: You want to quickly integrate BDD into your CI/CD
-Given I am using server "https://run.damagebdd.com"
-When I make a POST request to "/auth/"
-"""
-{
-"grant_type": "password",
-"username": "{{damagebdd_username}}",
-"password": "{{damagebdd_password}}",
-"scope": "basic"
-}
-"""
-Then the response status must be "200"
-          </code>
-        </pre>
+        <p>You can find example test cases <a href="https://github.com/jagguli/DamageBDD/tree/master/features">here</a>:
+        </p>
       </div>
       <form id="damageForm">
-        
         <textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>
         <br>
-        <div class="container2">
-          <label for="difficulty">Select Difficulty:</label>
-          <select id="difficulty" onchange="enableForm()">
+        <div >
+          <label for="difficulty">Concurrency:</label>
+          <select id="difficulty" >
             <option value="sk_baby">Im too young to die. (1 rps)</option>
             <option value="sk_easy">Hey, not too rough. (10 rps)</option>
             <option value="sk_medium">Hurt me plenty. (100 rps)</option>
             <option value="sk_hard">Ultra-Violence. (1000 rps)</option>
             <option value="sk_nightmare">Nightmare! (100000 rps)</option>
           </select>
-          <div id="message" style="margin-left: 15px;"></div>
+          <br>
+          <br>
+          <label for="duration">Duration:</label>
+          <select id="duration">
+            <option value="sk_baby">Im too young to die. (1 minute)</option>
+            <option value="sk_easy">Hey, not too rough. (10 minutes)</option>
+            <option value="sk_medium">Hurt me plenty. (1 hour)</option>
+            <option value="sk_hard">Ultra-Violence. (10 hours)</option>
+            <option value="sk_nightmare">Nightmare! (1 day)</option>
+          </select>
         </div>
         <br>
         <button type="submit" class="submit-button">Execute Feature</button>
@@ -75,7 +193,12 @@ Then the response status must be "200"
       <script src="/static/js/toasts.js"></script>
       <script src="/static/js/main.js"></script>
     </div>
-    <div id="history">
+    <div id="history-tab">
+      reports
+    </div>
+    <div id="benchmarks-tab">
+    </div>
+    <div id="market-tab">
     </div>
   </body>
 </html>
