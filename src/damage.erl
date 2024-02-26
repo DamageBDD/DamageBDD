@@ -14,6 +14,7 @@
 -behaviour(poolboy_worker).
 
 -define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
+-define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 
 -export([start_link/1]).
 -export(
@@ -177,15 +178,16 @@ publish_data(Config, FeatureData) ->
 
 
 publish_file(Config, Filename) ->
-  {account, Account} = lists:keyfind(account, 1, Config),
+  {contract_address, ContractAddress} =
+    lists:keyfind(contract_address, 1, Config),
   {fee, Fee} = lists:keyfind(fee, 1, Config),
   {ok, [Hash]} = damage_ipfs:put(Filename),
   ContractCall =
     damage_ae:aecli(
       contract,
       call,
-      binary_to_list(Account),
-      "contracts/account.aes",
+      binary_to_list(ContractAddress),
+      "contracts/publish_feature.aes",
       "publish_feature",
       [Hash, Fee]
     ),
@@ -218,9 +220,11 @@ execute_data(Config, FeatureData) ->
 execute_file(Config, Filename) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
-  {account, Account} = lists:keyfind(account, 1, Config),
+  {contract_address, ContractAddress0} =
+    lists:keyfind(contract_address, 1, Config),
+  ContractAddress = list_to_binary(ContractAddress0),
   StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
-  Context = damage_accounts:get_account_context(Account),
+  Context = damage_accounts:get_account_context(ContractAddress),
   case catch parse_file(Filename, Context) of
     {failed, LineNo, Message} ->
       logger:error(
@@ -300,10 +304,10 @@ execute_file(Config, Filename) ->
           start_time => StartTimestamp,
           execution_time => EndTimestamp - StartTimestamp,
           end_time => EndTimestamp,
-          account => Account
+          contract_address => ContractAddress
         },
       store_runrecord(RunRecord),
-      damage_ae:confirm_spend(Account),
+      damage_ae:confirm_spend(ContractAddress),
       RunRecord;
 
     {error, enont} = Err ->
@@ -319,14 +323,14 @@ store_runrecord(
     start_time := _StartTimestamp,
     execution_time := _ExecutionTime,
     end_time := _EndTimestamp,
-    account := Account
+    contract_address := ContractAddress
   } = RunRecord
 ) ->
   damage_riak:put(
     ?RUNRECORDS_BUCKET,
     ReportHash,
     RunRecord,
-    [{<<"account_bin">>, Account}]
+    [{{binary_index, "contract_address"}, [ContractAddress]}]
   ).
 
 execute_feature_concurrent(_Args, 0, Acc) -> Acc;
@@ -370,7 +374,7 @@ execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
   formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
   lists:foldl(
     fun (S, C) -> execute_step(Config, S, C) end,
-    get_global_template_context(Config, maps:new()),
+    get_account_context(Config, get_global_template_context(Config, maps:new())),
     lists:append(BackGroundSteps, Steps)
   ).
 
@@ -488,8 +492,12 @@ execute_step(Config, Step, Context) ->
                 step,
                 {StepKeyWord, LineNo, Body1, Args1, Context1, success}
               ),
-              {account, Account} = lists:keyfind(account, 1, Config),
-              damage_ae:spend(Account, maps:get(step_spend, Context1, 1)),
+              {contract_address, ContractAddress} =
+                lists:keyfind(contract_address, 1, Config),
+              damage_ae:spend(
+                ContractAddress,
+                maps:get(step_spend, Context1, 1)
+              ),
               maps:remove(step_spend, Context1)
           end;
 
@@ -511,6 +519,15 @@ execute_step(Config, Step, Context) ->
     true -> true
   end,
   Context0.
+
+
+get_account_context(Config, Context) ->
+  {contract_address, ContractAddress} =
+    lists:keyfind(contract_address, 1, Config),
+  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+    {ok, AccountContext} -> maps:merge(Context, AccountContext);
+    _ -> #{}
+  end.
 
 
 get_global_template_context(Config, Context) ->
@@ -540,12 +557,12 @@ get_global_template_context(Config, Context) ->
   ).
 
 
-get_default_config(Account, Concurrency, Formatters) ->
+get_default_config(ContractAddress, Concurrency, Formatters) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
   {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
   {ok, ChromeDriver} = application:get_env(damage, chromedriver),
   {ok, DamageApi} = application:get_env(damage, api_url),
-  AccountDir = filename:join(DataDir, Account),
+  AccountDir = filename:join(DataDir, ContractAddress),
   RunDir = filename:join(AccountDir, RunId),
   ReportDir = filename:join([RunDir, "reports"]),
   TextReport = filename:join([ReportDir, "{{process_id}}.plain.txt"]),
@@ -567,6 +584,6 @@ get_default_config(Account, Concurrency, Formatters) ->
     {concurrency, Concurrency},
     {run_id, RunId},
     {run_dir, RunDir},
-    {account, binary_to_list(Account)},
+    {contract_address, binary_to_list(ContractAddress)},
     {api_url, DamageApi}
   ].

@@ -577,8 +577,8 @@ update_schedules(ContractAddress, JobId, _Cron) ->
   ?debugFmt("State ~p ", [Results]).
 
 
-get_account_context(Account) ->
-  case damage_riak:get(?CONTEXT_BUCKET, Account) of
+get_account_context(ContractAddress) ->
+  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
     {ok, Context} ->
       logger:debug("got context ~p", [Context]),
       Context;

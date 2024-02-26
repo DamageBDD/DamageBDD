@@ -98,12 +98,12 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 execute_bdd(ScheduleId, Concurrency) ->
   %% Add the filter to allow PidToLog to send debug events
-  [Account, Hash] = string:split(ScheduleId, <<"|">>),
+  [ContractAddress, Hash] = string:split(ScheduleId, <<"|">>),
   logger:error(
-    "scheduled job execution ~p Account ~p, Hash ~p.",
-    [ScheduleId, Account, Hash]
+    "scheduled job execution ~p ContractAddress ~p, Hash ~p.",
+    [ScheduleId, ContractAddress, Hash]
   ),
-  Config = damage:get_default_config(Account, Concurrency, []),
+  Config = damage:get_default_config(ContractAddress, Concurrency, []),
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   BddFileName = filename:join(RunDir, string:join(["scheduled.feature"], "")),
   ok = damage_ipfs:get(ScheduleId, BddFileName),
@@ -184,7 +184,7 @@ from_text(Req, State) ->
         cowboy_req:set_resp_body(jsx:encode(#{status => <<"no_account">>}), Req),
       {stop, cowboy_req:reply(401, Resp), State};
 
-    #{account := Account} ->
+    #{contract_address := ContractAddress} ->
       {ok, Body, _} = cowboy_req:read_body(Req),
       ok = validate(Body),
       CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
@@ -192,7 +192,7 @@ from_text(Req, State) ->
       logger:debug("Cron Spec: ~p", [CronSpec]),
       {ok, #{<<"Hash">> := Hash}} =
         damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
-      ScheduleId = <<Account/binary, "|", Hash/binary>>,
+      ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
       Args = [{Concurrency, ScheduleId}] ++ CronSpec,
       logger:info("do_schedule: ~p", [Args]),
       CronJob = apply(?MODULE, do_schedule, Args),
@@ -203,13 +203,13 @@ from_text(Req, State) ->
           #{
             created => Created,
             modified => Created,
-            account => Account,
+            contract_address => ContractAddress,
             hash => Hash,
             concurrency => Concurrency,
             cronspec => CronSpec
           }
         ),
-      %damage_accounts:update_schedules(Account, Hash, CronJob),
+      %damage_accounts:update_schedules(ContractAddress, Hash, CronJob),
       Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
       {stop, cowboy_req:reply(201, Resp), State}
   end.
@@ -230,8 +230,8 @@ to_json(Req, State) ->
         cowboy_req:set_resp_body(jsx:encode(#{status => <<"no_account">>}), Req),
       {stop, cowboy_req:reply(401, Resp), State};
 
-    #{account := Account} ->
-      Body = jsx:encode(#{schedules => load_schedules(Account)}),
+    #{contract_address := ContractAddress} ->
+      Body = jsx:encode(#{schedules => load_schedules(ContractAddress)}),
       {stop, Body, State};
 
     {'EXIT', {request_error, {match_qs, Fields}, Error}} ->
@@ -250,7 +250,8 @@ to_json(Req, State) ->
 
 
 save_schedule(
-  #{account := Account, hash := Hash, cronspec := _CronSpec} = Schedule
+  #{contract_address := ContractAddress, hash := Hash, cronspec := _CronSpec} =
+    Schedule
 ) ->
   Obj = damage_riak:get(?SCHEDULES_BUCKET, Hash),
   case catch riakc_obj:get_value(Obj) of
@@ -262,7 +263,7 @@ save_schedule(
       ?SCHEDULES_BUCKET,
       Hash,
       jsx:encode(Schedule),
-      [{{binary_index, "contractid"}, [Account]}]
+      [{{binary_index, "contract_address"}, [ContractAddress]}]
     ).
 
 
@@ -284,7 +285,7 @@ load_schedule(ScheduleId) ->
   end.
 
 
-load_schedules(AccountId) ->
+load_schedules(ContractAddress) ->
   [
     load_schedule(ScheduleId)
     ||
@@ -292,8 +293,8 @@ load_schedules(AccountId) ->
     <-
     damage_riak:get_index(
       ?SCHEDULES_BUCKET,
-      {binary_index, "contractid"},
-      AccountId
+      {binary_index, "contract_address"},
+      ContractAddress
     )
   ].
 

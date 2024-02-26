@@ -171,9 +171,10 @@ generate_code(Config, FeatureFilename) ->
 
 run_python_server(Config, Context, Code) ->
   {data_dir, DataDir} = lists:keyfind(data_dir, 1, Config),
-  {account, Account} = lists:keyfind(account, 1, Config),
+  {contract_address, ContractAddress} =
+    lists:keyfind(contract_address, 1, Config),
   ServerPy = "server.py",
-  AccountDir = filename:join(DataDir, Account),
+  AccountDir = filename:join(DataDir, ContractAddress),
   case filelib:ensure_path(AccountDir) of
     ok ->
       CodeFile = filename:join(AccountDir, ServerPy),

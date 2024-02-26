@@ -109,7 +109,8 @@ from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{feature := _FeatureData, account := _Account} = FeatureJson ->
+      #{feature := _FeatureData, contract_address := _ContractAddress} =
+        FeatureJson ->
         publish_bdd(FeatureJson, Req);
 
       Err ->
@@ -143,12 +144,12 @@ from_html(Req0, State) ->
     },
     Req0
   ) of
-    {ok, Account, AvailConcurrency} ->
+    {ok, ContractAddress, AvailConcurrency} ->
       {200, _} =
         publish_bdd(
           #{
             feature => Body,
-            account => Account,
+            contract_address => ContractAddress,
             color_formatter => ColorFormatter,
             concurrency => AvailConcurrency
           },
@@ -159,7 +160,9 @@ from_html(Req0, State) ->
 
         _ ->
           Resp0 =
-            jsx:encode(damage_accounts:confirm_spend(Account, AvailConcurrency)),
+            jsx:encode(
+              damage_accounts:confirm_spend(ContractAddress, AvailConcurrency)
+            ),
           Res1 = cowboy_req:set_resp_body(Resp0, Req),
           {true, Res1, State}
       end;
@@ -171,8 +174,11 @@ from_html(Req0, State) ->
 
 
 publish_bdd(
-  #{feature := FeatureData, account := Account, concurrency := Concurrency} =
-    FeaturePayload,
+  #{
+    feature := FeatureData,
+    contract_address := ContractAddress,
+    concurrency := Concurrency
+  } = FeaturePayload,
   Req0
 ) ->
   Formatters =
@@ -199,7 +205,7 @@ publish_bdd(
         ?debugFmt("publish_bdd concurrenc ~p", [Concurrency]),
         []
     end,
-  Config = damage:get_default_config(Account, Concurrency, Formatters),
+  Config = damage:get_default_config(ContractAddress, Concurrency, Formatters),
   case damage:publish_data(Config, FeatureData) of
     [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
       Response =

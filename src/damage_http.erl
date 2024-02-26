@@ -153,7 +153,8 @@ get_concurrency_level(Other) when is_integer(Other) -> Other;
 get_concurrency_level(Other) when is_binary(Other) -> binary_to_integer(Other).
 
 get_config(
-  #{account := Account, concurrency := Concurrency0} = FeaturePayload,
+  #{contract_address := ContractAddress, concurrency := Concurrency0} =
+    FeaturePayload,
   Req0,
   Stream
 ) ->
@@ -187,7 +188,7 @@ get_config(
         ?debugFmt("execute_bdd concurrenc ~p", [Concurrency]),
         []
     end,
-  damage:get_default_config(Account, Concurrency, Formatters).
+  damage:get_default_config(ContractAddress, Concurrency, Formatters).
 
 
 execute_bdd(Config, #{feature := FeatureData}) ->
@@ -241,7 +242,7 @@ check_execute_bdd(
           case
           execute_bdd(
             get_config(
-              maps:put(account, ContractAddress, FeaturePayload),
+              maps:put(contract_address, ContractAddress, FeaturePayload),
               Req0,
               Stream
             ),

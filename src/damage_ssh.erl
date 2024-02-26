@@ -22,7 +22,7 @@
 -export([content_types_accepted/2]).
 -export([trails/0]).
 
--define(TRAILS_TAG, ["Account Management"]).
+-define(TRAILS_TAG, ["SSH Tunnel Management"]).
 -define(SSH_USERDIR, "/var/lib/damagebdd/sshtest_user/.ssh").
 -define(SSH_KEYS_BUCKET, {<<"Default">>, <<"SSHKeys">>}).
 
