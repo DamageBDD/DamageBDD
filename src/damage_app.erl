@@ -40,6 +40,7 @@ get_trails() ->
       {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
       {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
       {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},
+      {"/steps.yaml", cowboy_static, {priv_file, damage, "static/steps.yaml"}},
       {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}}
       | trails:trails(Handlers)
     ],
