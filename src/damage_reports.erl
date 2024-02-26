@@ -24,9 +24,24 @@
 -export([trails/0]).
 
 -define(TRAILS_TAG, ["Test Reports"]).
+-define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
 
 trails() ->
   [
+    trails:trail(
+      "/reports/",
+      damage_reports,
+      #{}
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "List test execution report directory .",
+          produces => ["text/html"]
+        }
+      }
+    ),
     trails:trail(
       "/reports/:hash/[:path]",
       damage_reports,
@@ -120,41 +135,56 @@ to_json(Req, State) ->
   to_text(Req, State).
 
 
-to_text(Req, State) ->
-  Hash = binary_to_list(cowboy_req:binding(hash, Req)),
-  case cowboy_req:binding(path, Req) of
+to_text(Req, #{contract_address := ContractAddress} = State) ->
+  case cowboy_req:binding(hash, Req) of
     undefined ->
-      logger:error("to text ipfs hash ~p ", [Hash]),
-      {
-        list_to_binary(
-          lists:join(
-            <<"\n">>,
-            ls(list_to_binary(string:join([Hash, "reports"], "/")))
-          )
-        ),
-        Req,
-        State
-      };
+      Reports = do_query(#{contract_address => ContractAddress}),
+      logger:debug("list ipfs reports ~p ", [Reports]),
+      {jsx:encode(Reports), Req, State};
 
-    Path ->
-      Path0 = string:join(["reports", binary_to_list(Path)], "/"),
-      logger:error("to text ipfs hash ~p ~p", [Hash, Path0]),
-      {cat(list_to_binary(Hash), Path0), Req, State}
+    Hash0 ->
+      Hash = binary_to_list(Hash0),
+      case cowboy_req:binding(path, Req) of
+        undefined ->
+          logger:error("to text ipfs hash ~p ", [Hash]),
+          {
+            list_to_binary(
+              lists:join(
+                <<"\n">>,
+                ls(list_to_binary(string:join([Hash, "reports"], "/")))
+              )
+            ),
+            Req,
+            State
+          };
+
+        Path ->
+          Path0 = string:join(["reports", binary_to_list(Path)], "/"),
+          logger:error("to text ipfs hash ~p ~p", [Hash, Path0]),
+          {cat(list_to_binary(Hash), Path0), Req, State}
+      end
   end.
 
 
-do_query(#{account := Account}) ->
+get_record(Id) ->
+  {ok, Record} = damage_riak:get(?RUNRECORDS_BUCKET, damage_utils:decrypt(Id)),
+  Record.
+
+
+do_query(#{contract_address := ContractAddress}) ->
   case
   damage_riak:get_index(
-    {<<"Default">>, <<"reports">>},
-    <<"account_bin">>,
-    Account
+    ?RUNRECORDS_BUCKET,
+    {binary_index, "contract_address"},
+    ContractAddress
   ) of
-    [] -> logger:info("no reports for account");
+    [] ->
+      logger:info("no reports for account"),
+      [];
 
     Found ->
       ?debugFmt(" reports exists data: ~p ", [Found]),
-      Found
+      [get_record(X) || X <- Found]
   end.
 
 
