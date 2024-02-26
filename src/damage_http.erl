@@ -223,9 +223,10 @@ execute_bdd(Config, #{feature := FeatureData}) ->
 
 
 check_execute_bdd(
-  #{concurrency := Concurrency0} = _FeaturePayload,
+  #{concurrency := Concurrency0} = FeaturePayload,
   #{contract_address := ContractAddress} = _State,
-  Req0
+  Req0,
+  Stream
 ) ->
   Concurrency = get_concurrency_level(Concurrency0),
   IP = get_ip(Req0),
@@ -235,9 +236,19 @@ check_execute_bdd(
       {error, 429, Req0};
 
     _ ->
-      case damage_accounts:check_spend(ContractAddress, Concurrency) of
-        AvailConcurrency when AvailConcurrency > Concurrency ->
-          {ok, ContractAddress, Concurrency};
+      case damage_ae:balance(ContractAddress) of
+        Balance when Balance >= Concurrency ->
+          case
+          execute_bdd(
+            get_config(
+              maps:put(account, ContractAddress, FeaturePayload),
+              Req0,
+              Stream
+            ),
+            FeaturePayload
+          ) of
+            {Status, Response} -> {Status, Response}
+          end;
 
         Other ->
           {
@@ -255,26 +266,12 @@ from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{feature := FeatureData} = FeatureJson ->
-        case check_execute_bdd(FeatureJson, State, Req) of
-          {ok, Account, AvailConcurrency} ->
-            FeaturePayload =
-              #{
-                feature => FeatureData,
-                account => Account,
-                concurrency => AvailConcurrency
-              },
-            execute_bdd(
-              get_config(FeaturePayload, Req, nostream),
-              FeaturePayload
-            );
+      #{feature := _FeatureData} = FeatureJson ->
+        check_execute_bdd(FeatureJson, State, Req, nostream);
 
-          Err ->
-            logger:error("json decoding failed ~p err: ~p.", [Data, Err]),
-            {400, <<"Invalid Request">>}
-        end;
-
-      _ -> {400, <<"Invalid Request">>}
+      Err ->
+        logger:error("json decoding failed ~p err: ~p.", [Data, Err]),
+        {400, <<"Invalid Request">>}
     end,
   Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
   cowboy_req:reply(Status, Resp),
@@ -285,48 +282,32 @@ from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
   logger:debug("Req ~p.", [Req]),
   _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
-  Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>),
+  Concurrency =
+    binary_to_integer(
+      cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
+    ),
   ColorFormatter =
     case cowboy_req:match_qs([{color, [], <<"true">>}], Req0) of
       #{color := <<"true">>} -> true;
       _Other -> false
     end,
-  case
-  check_execute_bdd(
-    #{
-      feature => Body,
-      color_formatter => ColorFormatter,
-      concurrency => Concurrency
-    },
-    State,
-    Req0
-  ) of
-    {ok, Account, AvailConcurrency} ->
-      FeaturePayload =
-        #{
-          feature => Body,
-          account => Account,
-          color_formatter => ColorFormatter,
-          concurrency => AvailConcurrency
-        },
-      {200, _} =
-        execute_bdd(
-          get_config(FeaturePayload, Req0, maybe_stream),
-          FeaturePayload
-        ),
-      case AvailConcurrency of
-        1 -> {stop, Req0, State};
+  {_Status, Resp0} =
+    check_execute_bdd(
+      #{
+        feature => Body,
+        color_formatter => ColorFormatter,
+        concurrency => Concurrency
+      },
+      State,
+      Req0,
+      maybe_stream
+    ),
+  case Concurrency of
+    1 -> {stop, Req0, State};
 
-        _ ->
-          Resp0 =
-            jsx:encode(damage_accounts:confirm_spend(Account, AvailConcurrency)),
-          Res1 = cowboy_req:set_resp_body(Resp0, Req),
-          {true, Res1, State}
-      end;
-
-    Req ->
-      logger:debug("failed tests ~p.", [Req]),
-      Req
+    _ ->
+      Res1 = cowboy_req:set_resp_body(Resp0, Req),
+      {true, Res1, State}
   end.
 
 

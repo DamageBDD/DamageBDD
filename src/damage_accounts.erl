@@ -12,11 +12,10 @@
 -export([to_json/2]).
 
 %-export([to_text/2]).
--export([create_contract/0, spend/2, store_profile/1, refund/1]).
+-export([create_contract/0, store_profile/1, refund/1]).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
 -export([update_schedules/3]).
--export([confirm_spend/1]).
 -export([get_account_context/1]).
 -export([trails/0]).
 -export([check_invoices/0]).
@@ -520,12 +519,6 @@ store_profile(ContractAddress) ->
   logger:debug("debug ~p", [ContractAddress]),
   ok.
 
-
-spend(ContractAddress, Amount) ->
-  #{balance => damage_ae:spend(ContractAddress, Amount)}.
-
-confirm_spend(ContractAddress) ->
-  #{balance => damage_ae:confirm_spend(ContractAddress)}.
 
 balance(ContractAddress) -> #{balance => damage_ae:balance(ContractAddress)}.
 

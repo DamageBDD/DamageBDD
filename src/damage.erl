@@ -303,6 +303,7 @@ execute_file(Config, Filename) ->
           account => Account
         },
       store_runrecord(RunRecord),
+      damage_ae:confirm_spend(Account),
       RunRecord;
 
     {error, enont} = Err ->
@@ -487,7 +488,9 @@ execute_step(Config, Step, Context) ->
                 step,
                 {StepKeyWord, LineNo, Body1, Args1, Context1, success}
               ),
-              Context1
+              {account, Account} = lists:keyfind(account, 1, Config),
+              damage_ae:spend(Account, maps:get(step_spend, Context1, 1)),
+              maps:remove(step_spend, Context1)
           end;
 
         (_StepModule, #{step_found := true} = ContextIn) -> ContextIn

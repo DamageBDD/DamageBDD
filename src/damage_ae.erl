@@ -26,7 +26,7 @@
 -export([sign_tx/2]).
 -export([aecli/4, aecli/6]).
 -export([test_contract_call/1]).
--export([balance/1, invalidate_cache/0, spend/2]).
+-export([balance/1, invalidate_cache/0, spend/2, confirm_spend/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 
@@ -47,30 +47,42 @@ handle_call({transaction, Data}, _From, State) ->
   {reply, ok, State}.
 
 
-handle_cast({confirm_spend, ContractAddress}, Cache) ->
-  logger:debug("upate balance", []),
+handle_cast({confirm_spend, ContractAddress}, Cache)
+when is_list(ContractAddress) ->
+  handle_cast({confirm_spend, list_to_binary(ContractAddress)}, Cache);
+
+handle_cast({confirm_spend, ContractAddress}, Cache)
+when is_binary(ContractAddress) ->
   {_, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
+  logger:debug("handle_cast confirm_spend ~p ~p", [ContractAddress, Spend]),
   ContractCall =
     damage_ae:aecli(
       contract,
       call,
       binary_to_list(ContractAddress),
       "contracts/account.aes",
-      "confirm_spend",
+      "spend",
       [Spend]
     ),
   #{decodedResult := #{balance := Balance, deployer := _Deployer} = _Balances} =
     ContractCall,
   NewCache = maps:put(ContractAddress, {Balance, 0}, Cache),
+  logger:debug("confirm spend ~p", [NewCache]),
   {noreply, NewCache};
 
-handle_cast({spend, ContractAddress, Amount}, Cache) ->
-  logger:debug("upate balance", []),
+handle_cast({spend, ContractAddress, Amount}, Cache)
+when is_list(ContractAddress) ->
+  handle_cast({spend, list_to_binary(ContractAddress), Amount}, Cache);
+
+handle_cast({spend, ContractAddress, Amount}, Cache)
+when is_binary(ContractAddress) ->
+  logger:debug("handle_cast spend", []),
   {Balance, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
   NewCache = maps:put(ContractAddress, {Balance, Spend + Amount}, Cache),
   {noreply, NewCache};
 
-handle_cast({update_balance, ContractAddress, Balance}, Cache) ->
+handle_cast({update_balance, ContractAddress, Balance}, Cache)
+when is_binary(ContractAddress) ->
   logger:debug("upate balance", []),
   {_, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
   NewCache = maps:put(ContractAddress, {Balance, Spend}, Cache),
@@ -298,6 +310,12 @@ spend(ContractAddress, Amount) ->
   % temporary storage to commit after feature execution
   DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
   gen_server:cast(DamageAEPid, {spend, ContractAddress, Amount}).
+
+
+confirm_spend(ContractAddress) ->
+  % temporary storage to commit after feature execution
+  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
+  gen_server:cast(DamageAEPid, {confirm_spend, ContractAddress}).
 
 
 invalidate_cache() ->
