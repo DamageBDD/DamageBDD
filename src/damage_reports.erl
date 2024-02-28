@@ -184,7 +184,8 @@ do_query(#{contract_address := ContractAddress}) ->
 
     Found ->
       ?debugFmt(" reports exists data: ~p ", [Found]),
-      [get_record(X) || X <- Found]
+          Results =[get_record(X) || X <- Found],
+      #{results => Results, status => <<"ok">>, length=>length(Results)}
   end.
 
 
@@ -214,12 +215,15 @@ from_html(Req, State) ->
   {stop, cowboy_req:reply(200, Resp), State}.
 
 
-from_json(Req, State) ->
-  Action = cowboy_req:binding(action, Req),
-  Result = do_action(<<Action/binary, "_from_json">>, Req),
+from_json(Req, #{contract_address := ContractAddress} = State) ->
+  Result =
+    case cowboy_req:binding(action, Req) of
+      undefined -> do_query(#{contract_address => ContractAddress});
+      Action -> do_action(<<Action/binary, "_from_json">>, Req)
+    end,
   JsonResult = jsx:encode(Result),
   Resp = cowboy_req:set_resp_body(JsonResult, Req),
-  {stop, cowboy_req:reply(201, Resp), State}.
+  {stop, cowboy_req:reply(200, Resp), State}.
 
 
 from_yaml(Req, State) ->
@@ -227,7 +231,7 @@ from_yaml(Req, State) ->
   Result = do_action(<<Action/binary, "_from_yaml">>, Req),
   YamlResult = fast_yaml:encode(Result),
   Resp = cowboy_req:set_resp_body(YamlResult, Req),
-  {stop, cowboy_req:reply(201, Resp), State}.
+  {stop, cowboy_req:reply(200, Resp), State}.
 
 
 ls(Hash) ->
