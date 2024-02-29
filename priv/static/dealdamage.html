@@ -7,6 +7,7 @@
     <link rel="stylesheet" type="text/css" href='/static/css/main.css'/>
     <link rel="stylesheet" type="text/css" href='/static/css/micromodal.css'/>
     <link rel="stylesheet" type="text/css" href='/static/css/toast.css'/>
+    <link rel="stylesheet" type="text/css" href='/static/css/textarea.css'/>
     <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css'/>
     <script async src='https://www.googletagmanager.com/gtag/js?id=G-5QG625RHB7'></script>
     <link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet'><style type="text/css"> body { font-family: 'Roboto', sans-serif; } </style>
@@ -165,7 +166,10 @@
         </p>
       </div>
       <form id="damageForm">
-        <textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>
+        <!--<textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>-->
+         <div class="container" id="container">
+            <textarea id="textarea" class="container__textarea"></textarea>
+        </div>
         <br>
         <div >
           <label for="difficulty">Concurrency:</label>
@@ -190,10 +194,12 @@
         <br>
         <button type="submit" class="submit-button">Execute Feature</button>
       </form>
+        <script src="/static/js/textarea.js"></script>
       <script src="/static/js/toasts.js"></script>
       <script src="/static/js/main.js"></script>
     </div>
     <div id="history-tab">
+      <div id="history"></div>
       reports
     </div>
     <div id="benchmarks-tab">

@@ -79,7 +79,7 @@ document.getElementById("damageForm").addEventListener("submit", function(event)
     submitForm();
 });
 
-document.getElementById("damageInput").addEventListener("keydown", function(event) {
+document.getElementById("textarea").addEventListener("keydown", function(event) {
     if (event.ctrlKey && event.key === "Enter") {
         event.preventDefault();
         submitForm();
@@ -229,7 +229,7 @@ function updateHistoryTable() {
             } else if (response.status === 401) {
                 MicroModal.show('login-modal');
             } else {
-                console.error("Error reports fetching failed: ", data);
+                console.error("Error reports fetching failed: ", response);
             }
         })
         .then(data => {
@@ -245,7 +245,7 @@ function updateHistoryTable() {
                 });
                 table.appendChild(headerRow);
 
-                historyArray.forEach(function(obj) {
+                data.results.forEach(function(obj) {
                     var row = document.createElement("tr");
                     var cells = ["feature_hash", "report_hash", "start_time", "execution_time", "end_time", "account"].map(function(prop) {
                         var td = document.createElement("td");
@@ -263,9 +263,6 @@ function updateHistoryTable() {
                 historyDiv.innerHTML = "";
                 historyDiv.appendChild(table);
             } else {}
-        })
-        .catch(error => {
-            console.error("Error reports fetching failed: ", error.message);
         });
 }
 

@@ -9,16 +9,6 @@ body {
   /*height: 100vh;*/
   background-color: #f0f0f0;
 }
-.container {
-  text-align: left;
-  background-color: #fff;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
-}
-.container label{
-    width: 12em;
-}
 .title {
   font-size: 24px;
   font-weight: bold;
