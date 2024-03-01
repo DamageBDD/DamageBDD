@@ -87,7 +87,8 @@ init([]) ->
             {<<"sec-websocket-protocol">>, ProtocolString}
           ]
         ),
-      gun:ws_send(ConnPid, StreamRef, {text, "{}"}),
+      gun:ws_send(ConnPid, StreamRef, {text, <<"{}">>}),
+      logger:debug("Got success ~p", [ConnPid]),
       {ok, State#state{streamref = StreamRef}};
 
     {error, Reason} ->
