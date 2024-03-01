@@ -184,8 +184,8 @@ do_query(#{contract_address := ContractAddress}) ->
 
     Found ->
       ?debugFmt(" reports exists data: ~p ", [Found]),
-          Results =[get_record(X) || X <- Found],
-      #{results => Results, status => <<"ok">>, length=>length(Results)}
+      Results = [get_record(X) || X <- Found],
+      #{results => Results, status => <<"ok">>, length => length(Results)}
   end.
 
 

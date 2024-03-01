@@ -297,6 +297,7 @@ execute_file(Config, Filename) ->
           run_id => RunId
         }
       ),
+      FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
       RunRecord =
         #{
           feature_hash => FeatureHash,
@@ -304,6 +305,7 @@ execute_file(Config, Filename) ->
           start_time => StartTimestamp,
           execution_time => EndTimestamp - StartTimestamp,
           end_time => EndTimestamp,
+          feature_title => FeatureTitle,
           contract_address => ContractAddress
         },
       store_runrecord(RunRecord),
