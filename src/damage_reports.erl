@@ -29,6 +29,20 @@
 trails() ->
   [
     trails:trail(
+      "/features/:hash/",
+      damage_reports,
+      #{action => features},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Get the test feature data.",
+          produces => ["text/plain"]
+        }
+      }
+    ),
+    trails:trail(
       "/reports/",
       damage_reports,
       #{}
@@ -124,16 +138,34 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
+to_html(
+  Req,
+  #{action := features, contract_address := _ContractAddress} = State
+) ->
+  logger:debug("feature to ", []),
+  to_text(Req, State);
+
 to_html(Req, State) -> to_text(Req, State).
+
 
 %logger:error("to text ipfs hash ~p ", [Req]),
 %Body = damage_utils:load_template("report.mustache", [{body, <<"Test">>}]),
 %logger:info("get ipfs hash ~p ", [Body]),
 %{Body, Req, State}.
-to_json(Req, State) ->
-  logger:error("to text ipfs hash ~p ", [Req]),
-  to_text(Req, State).
+to_json(Req, State) -> to_text(Req, State).
 
+to_text(
+  Req,
+  #{action := features, contract_address := _ContractAddress} = State
+) ->
+  logger:debug("feature to ", []),
+  case cowboy_req:binding(hash, Req) of
+    undefined -> {<<"Path required">>, Req, State};
+
+    Hash0 ->
+      Hash = binary_to_list(Hash0),
+      {cat(list_to_binary(Hash), <<"">>), Req, State}
+  end;
 
 to_text(Req, #{contract_address := ContractAddress} = State) ->
   case cowboy_req:binding(hash, Req) of
@@ -146,21 +178,38 @@ to_text(Req, #{contract_address := ContractAddress} = State) ->
       Hash = binary_to_list(Hash0),
       case cowboy_req:binding(path, Req) of
         undefined ->
-          logger:error("to text ipfs hash ~p ", [Hash]),
-          {
+          HashBin = list_to_binary(Hash),
+          HashLen = length(Hash),
+          List =
             list_to_binary(
               lists:join(
                 <<"\n">>,
-                ls(list_to_binary(string:join([Hash, "reports"], "/")))
+                [
+                  <<
+                    "<a href=\"",
+                    HashBin:HashLen/binary,
+                    "/",
+                    X/binary,
+                    "\">",
+                    HashBin:HashLen/binary,
+                    "/",
+                    X/binary,
+                    "</a><br>"
+                  >>
+                  ||
+                  X
+                  <-
+                  ls(list_to_binary(string:join([Hash, "reports"], "/")))
+                ]
               )
             ),
-            Req,
-            State
-          };
+          Data = <<"<html><body>", List/binary, "</body></html>">>,
+          logger:info("to text ipfs hash ~p ", [Data]),
+          {Data, Req, State};
 
         Path ->
           Path0 = string:join(["reports", binary_to_list(Path)], "/"),
-          logger:error("to text ipfs hash ~p ~p", [Hash, Path0]),
+          logger:info("to text ipfs hash ~p ~p", [Hash, Path0]),
           {cat(list_to_binary(Hash), Path0), Req, State}
       end
   end.
