@@ -106,3 +106,21 @@ select{
     text-align: right;
     float: right;
 }
+
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+  font-size: 11px;
+  }
+  th, td {
+    border: 1px solid black;
+    padding: 8px;
+    text-align: left;
+  }
+  td:nth-child(1) {
+    width: 80px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }

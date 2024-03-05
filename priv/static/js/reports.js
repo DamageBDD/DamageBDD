@@ -1,12 +1,31 @@
-function formatCell(value, type) {
+function formatCell(cell, value, type) {
+
     if (type === 'start_time' || type === 'end_time') {
-        return new Date(value * 1000).toLocaleString();
+        const date = new Date(value * 1000);
+        const today = new Date();
+        if (date.toDateString() === today.toDateString()) {
+            cell.textContent =  date.toLocaleTimeString();
+        } else {
+            cell.textContent = date.toLocaleString();
+        }
     } else if (type === 'execution_time') {
-        return `${value} seconds`;
-    } else {
-        return value;
-    }
+        cell.textContent = `${value} seconds`;
+    } else if (type === 'feature_hash') {
+        const link = document.createElement("a");
+        link.href = `/features/${value}`;
+        link.textContent = value;
+        cell.appendChild(link);
+    } else if (type === 'report_hash') {
+        const link = document.createElement("a");
+        link.href = `/reports/${value}`;
+        link.textContent = value;
+        cell.appendChild(link);
+    }else{
+        cell.textContent = value;
+	}
+    return cell;
 }
+
 
 function updateHistoryTable() {
     const request = {
@@ -49,6 +68,11 @@ function updateHistoryTable() {
                 });
                 table.appendChild(headerRow);
 
+                // Reverse sorting the results by start_time column
+                data.results.sort((a, b) => {
+                    return new Date(b.start_time) - new Date(a.start_time);
+                });
+
                 data.results.forEach(function(obj) {
                     var row = document.createElement("tr");
                     var cells = [
@@ -61,8 +85,7 @@ function updateHistoryTable() {
                         "contract_address"
                     ].map(function(prop) {
                         var td = document.createElement("td");
-                        td.textContent = formatCell(obj[prop], prop);
-                        return td;
+                        return formatCell(td, obj[prop], prop);
                     });
 
                     cells.forEach(function(cell) {
