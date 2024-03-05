@@ -177,14 +177,7 @@ validate(Gherkin) ->
   end.
 
 
-from_text(Req, State) ->
-  case cowboy_req:match_qs([account], Req) of
-    #{account := <<"">>} ->
-      Resp =
-        cowboy_req:set_resp_body(jsx:encode(#{status => <<"no_account">>}), Req),
-      {stop, cowboy_req:reply(401, Resp), State};
-
-    #{contract_address := ContractAddress} ->
+from_text(Req, #{contract_address := ContractAddress} = State) ->
       {ok, Body, _} = cowboy_req:read_body(Req),
       ok = validate(Body),
       CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
@@ -211,8 +204,7 @@ from_text(Req, State) ->
         ),
       %damage_accounts:update_schedules(ContractAddress, Hash, CronJob),
       Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
-      {stop, cowboy_req:reply(201, Resp), State}
-  end.
+      {stop, cowboy_req:reply(201, Resp), State}.
 
 
 from_json(Req, State) -> from_text(Req, State).
@@ -223,30 +215,10 @@ to_html(Req, State) -> to_json(Req, State).
 
 to_text(Req, State) -> to_json(Req, State).
 
-to_json(Req, State) ->
-  case catch cowboy_req:match_qs([account], Req) of
-    #{account := <<"">>} ->
-      Resp =
-        cowboy_req:set_resp_body(jsx:encode(#{status => <<"no_account">>}), Req),
-      {stop, cowboy_req:reply(401, Resp), State};
-
-    #{contract_address := ContractAddress} ->
-      Body = jsx:encode(#{schedules => load_schedules(ContractAddress)}),
-      {stop, Body, State};
-
-    {'EXIT', {request_error, {match_qs, Fields}, Error}} ->
-      Resp =
-        cowboy_req:set_resp_body(
-          jsx:encode(
-            #{
-              status => <<"error">>,
-              reason => #{message => Error, fields => Fields}
-            }
-          ),
-          Req
-        ),
-      {stop, cowboy_req:reply(401, Resp), State}
-  end.
+to_json(Req, #{contract_address := ContractAddress} = State) ->
+      Body = jsx:encode( load_schedules(ContractAddress)),
+    logger:info("Loading scheduled for ~p ~p",[ContractAddress,Body]),
+      {Body, Req, State}.
 
 
 save_schedule(
