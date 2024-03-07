@@ -178,33 +178,33 @@ validate(Gherkin) ->
 
 
 from_text(Req, #{contract_address := ContractAddress} = State) ->
-      {ok, Body, _} = cowboy_req:read_body(Req),
-      ok = validate(Body),
-      CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
-      Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
-      logger:debug("Cron Spec: ~p", [CronSpec]),
-      {ok, #{<<"Hash">> := Hash}} =
-        damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
-      ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
-      Args = [{Concurrency, ScheduleId}] ++ CronSpec,
-      logger:info("do_schedule: ~p", [Args]),
-      CronJob = apply(?MODULE, do_schedule, Args),
-      Created = date_util:now_to_seconds_hires(os:timestamp()),
-      logger:info("Cron Job: ~p", [CronJob]),
-      {ok, true} =
-        save_schedule(
-          #{
-            created => Created,
-            modified => Created,
-            contract_address => ContractAddress,
-            hash => Hash,
-            concurrency => Concurrency,
-            cronspec => CronSpec
-          }
-        ),
-      %damage_accounts:update_schedules(ContractAddress, Hash, CronJob),
-      Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
-      {stop, cowboy_req:reply(201, Resp), State}.
+  {ok, Body, _} = cowboy_req:read_body(Req),
+  ok = validate(Body),
+  CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
+  Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
+  logger:debug("Cron Spec: ~p", [CronSpec]),
+  {ok, #{<<"Hash">> := Hash}} =
+    damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
+  ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
+  Args = [{Concurrency, ScheduleId}] ++ CronSpec,
+  logger:info("do_schedule: ~p", [Args]),
+  CronJob = apply(?MODULE, do_schedule, Args),
+  Created = date_util:now_to_seconds_hires(os:timestamp()),
+  logger:info("Cron Job: ~p", [CronJob]),
+  {ok, true} =
+    save_schedule(
+      #{
+        created => Created,
+        modified => Created,
+        contract_address => ContractAddress,
+        hash => Hash,
+        concurrency => Concurrency,
+        cronspec => CronSpec
+      }
+    ),
+  %damage_accounts:update_schedules(ContractAddress, Hash, CronJob),
+  Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
+  {stop, cowboy_req:reply(201, Resp), State}.
 
 
 from_json(Req, State) -> from_text(Req, State).
@@ -216,9 +216,9 @@ to_html(Req, State) -> to_json(Req, State).
 to_text(Req, State) -> to_json(Req, State).
 
 to_json(Req, #{contract_address := ContractAddress} = State) ->
-      Body = jsx:encode( load_schedules(ContractAddress)),
-    logger:info("Loading scheduled for ~p ~p",[ContractAddress,Body]),
-      {Body, Req, State}.
+  Body = jsx:encode(load_schedules(ContractAddress)),
+  logger:info("Loading scheduled for ~p ~p", [ContractAddress, Body]),
+  {Body, Req, State}.
 
 
 save_schedule(
