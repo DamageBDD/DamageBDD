@@ -111,7 +111,7 @@ from_json(Req, State) ->
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
       #{feature := _FeatureData, contract_address := _ContractAddress} =
         FeatureJson ->
-        publish_bdd(FeatureJson, Req);
+        publish_bdd(FeatureJson, State);
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),
@@ -124,89 +124,62 @@ from_json(Req, State) ->
 
 from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
-  logger:debug("Req ~p.", [Req]),
   _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
   Concurrency =
     binary_to_integer(
       cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
     ),
-  ColorFormatter =
-    case cowboy_req:match_qs([{color, [], <<"true">>}], Req0) of
-      #{color := <<"true">>} -> true;
-      _Other -> false
-    end,
-  case
-  damage_http:check_execute_bdd(
-    #{
-      feature => Body,
-      color_formatter => ColorFormatter,
-      concurrency => Concurrency
-    },
-    Req0
-  ) of
-    {ok, ContractAddress, AvailConcurrency} ->
-      {200, _} =
-        publish_bdd(
-          #{
-            feature => Body,
-            contract_address => ContractAddress,
-            color_formatter => ColorFormatter,
-            concurrency => AvailConcurrency
-          },
-          Req0
-        ),
-      case AvailConcurrency of
-        1 -> {stop, Req0, State};
+  Fee =
+    binary_to_integer(cowboy_req:header(<<"x-damage-fee">>, Req0, <<"4000">>)),
+  {Status, Resp0} =
+    check_publish_bdd(
+      #{feature => Body, concurrency => Concurrency, fee => Fee},
+      State,
+      Req0
+    ),
+  Res1 = cowboy_req:set_resp_body(Resp0, Req),
+  cowboy_req:reply(Status, Res1),
+  {stop, Res1, State}.
 
-        _ ->
-          Resp0 =
-            jsx:encode(
-              damage_accounts:confirm_spend(ContractAddress, AvailConcurrency)
-            ),
-          Res1 = cowboy_req:set_resp_body(Resp0, Req),
-          {true, Res1, State}
-      end;
 
-    Req ->
-      logger:debug("failed tests ~p.", [Req]),
-      Req
+check_publish_bdd(
+  #{concurrency := Concurrency0} = FeaturePayload,
+  #{contract_address := ContractAddress} = State,
+  Req0
+) ->
+  Concurrency = damage_utils:get_concurrency_level(Concurrency0),
+  IP = damage_utils:get_ip(Req0),
+  case throttle:check(damage_api_rate, IP) of
+    {limit_exceeded, _, _} ->
+      lager:warning("IP ~p exceeded api limit", [IP]),
+      {error, 429, Req0};
+
+    _ ->
+      case damage_ae:balance(ContractAddress) of
+        Balance when Balance >= Concurrency ->
+          case publish_bdd(FeaturePayload, State) of
+            {Status, Response} -> {Status, Response}
+          end;
+
+        Other ->
+          {
+            400,
+            <<
+              "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+              Other/binary
+            >>
+          }
+      end
   end.
 
 
 publish_bdd(
-  #{
-    feature := FeatureData,
-    contract_address := ContractAddress,
-    concurrency := Concurrency
-  } = FeaturePayload,
-  Req0
+  #{feature := FeatureData, concurrency := Concurrency, fee := Fee} =
+    _FeaturePayload,
+  #{contract_address := ContractAddress} = _State
 ) ->
-  Formatters =
-    case Concurrency of
-      1 ->
-        Req =
-          cowboy_req:stream_reply(
-            200,
-            #{<<"content-type">> => <<"text/plain">>},
-            Req0
-          ),
-        logger:info("publish_bdd req ~p", [Req]),
-        [
-          {
-            text,
-            #{
-              output => Req,
-              color => maps:get(color_formatter, FeaturePayload, false)
-            }
-          }
-        ];
-
-      _ ->
-        ?debugFmt("publish_bdd concurrenc ~p", [Concurrency]),
-        []
-    end,
-  Config = damage:get_default_config(ContractAddress, Concurrency, Formatters),
-  case damage:publish_data(Config, FeatureData) of
+  Config = damage:get_default_config(ContractAddress, Concurrency, []),
+  case damage:publish_data([{fee, Fee} | Config], FeatureData) of
     [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
       Response =
         #{
@@ -235,6 +208,6 @@ publish_bdd(
       };
 
     ResultOk ->
-      %logger:debug("No failure ~p.", [Ok]),
+      logger:debug("No failure ~p.", [ResultOk]),
       {200, jsx:encode(ResultOk)}
   end.

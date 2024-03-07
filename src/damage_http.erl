@@ -144,21 +144,13 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
-get_concurrency_level(<<"sk_baby">>) -> 1;
-get_concurrency_level(<<"sk_easy">>) -> 10;
-get_concurrency_level(<<"sk_medium">>) -> 100;
-get_concurrency_level(<<"sk_hard">>) -> 1000;
-get_concurrency_level(<<"sk_nightmare">>) -> 10000;
-get_concurrency_level(Other) when is_integer(Other) -> Other;
-get_concurrency_level(Other) when is_binary(Other) -> binary_to_integer(Other).
-
 get_config(
   #{contract_address := ContractAddress, concurrency := Concurrency0} =
     FeaturePayload,
   Req0,
   Stream
 ) ->
-  Concurrency = get_concurrency_level(Concurrency0),
+  Concurrency = damage_utils:get_concurrency_level(Concurrency0),
   Formatters =
     case Concurrency of
       1 ->
@@ -326,9 +318,3 @@ to_json(Req0, State) ->
 
 
 to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.
-
-get_ip(Req0) ->
-  case cowboy_req:peer(Req0) of
-    {{IP, _}, _} -> IP;
-    {IP, _} -> IP
-  end.

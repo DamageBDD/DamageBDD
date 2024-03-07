@@ -13,6 +13,7 @@
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
 
+-define(PUBLISHED_FEATURES_BUCKET, {<<"Default">>, <<"PublishedFeatures">>}).
 -define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 
@@ -181,18 +182,28 @@ publish_file(Config, Filename) ->
   {contract_address, ContractAddress} =
     lists:keyfind(contract_address, 1, Config),
   {fee, Fee} = lists:keyfind(fee, 1, Config),
-  {ok, [Hash]} = damage_ipfs:put(Filename),
-  ContractCall =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/publish_feature.aes",
-      "publish_feature",
-      [Hash, Fee]
-    ),
-  ?debugFmt("call AE contract ~p", [ContractCall]),
-  ok.
+  {ok, [#{<<"Hash">> := Hash, <<"Name">> := Name, <<"Size">> := Size}]} =
+    damage_ipfs:add({file, Filename}),
+  #{address := PubContractAddress} =
+    Result =
+      damage_ae:aecli(
+        contract,
+        deploy,
+        "contracts/publish_feature.aes",
+        [list_to_binary(ContractAddress), Hash, Fee]
+      ),
+  logger:info("call AE contract  : ~p : ~p", [PubContractAddress, Result]),
+  PubFeature =
+    #{
+      feature_hash => Hash,
+      name => Name,
+      size => Size,
+      fee => Fee,
+      publish_contract_address => PubContractAddress
+    },
+  {ok, true} = damage_riak:put(?PUBLISHED_FEATURES_BUCKET, Hash, PubFeature),
+  logger:info("store pub feature  : ~p", [PubFeature]),
+  PubFeature.
 
 
 parse_file(Filename, Context) ->
@@ -212,7 +223,11 @@ parse_file(Filename, Context) ->
 execute_data(Config, FeatureData) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-  BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
+  BddFileName =
+    case lists:keyfind(feature_filename, 1, Config) of
+      {feature_filename, FeatureFile} -> FeatureFile;
+      _ -> filename:join(RunDir, string:join([RunId, ".feature"], ""))
+    end,
   ok = file:write_file(BddFileName, FeatureData),
   execute_file(Config, BddFileName).
 
@@ -300,6 +315,7 @@ execute_file(Config, Filename) ->
       FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
       RunRecord =
         #{
+          run_id => RunId,
           feature_hash => FeatureHash,
           report_hash => ReportHash,
           start_time => StartTimestamp,

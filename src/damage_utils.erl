@@ -24,6 +24,8 @@
     setup_vanillae_deps/0,
     atom_to_binary_keys/1,
     binary_to_atom_keys/1,
+    get_concurrency_level/1,
+    get_ip/1,
     test_encrypt_decrypt/0,
     test_send_email/0
   ]
@@ -301,6 +303,21 @@ decrypt(Encrypted, Key) when is_binary(Encrypted), is_binary(Key) ->
     Tag,
     false
   ).
+
+
+get_concurrency_level(<<"sk_baby">>) -> 1;
+get_concurrency_level(<<"sk_easy">>) -> 10;
+get_concurrency_level(<<"sk_medium">>) -> 100;
+get_concurrency_level(<<"sk_hard">>) -> 1000;
+get_concurrency_level(<<"sk_nightmare">>) -> 10000;
+get_concurrency_level(Other) when is_integer(Other) -> Other;
+get_concurrency_level(Other) when is_binary(Other) -> binary_to_integer(Other).
+
+get_ip(Req0) ->
+  case cowboy_req:peer(Req0) of
+    {{IP, _}, _} -> IP;
+    {IP, _} -> IP
+  end.
 
 
 test_encrypt_decrypt() ->
