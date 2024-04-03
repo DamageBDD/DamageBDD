@@ -126,7 +126,9 @@ is_allowed_domain(Host) when is_binary(Host) ->
   is_allowed_domain(binary_to_list(Host));
 
 is_allowed_domain(Host) ->
-  AllowedHosts = ["jsontest.com", "damagebdd.com", "run.damagebdd.com"],
+  logger:debug("Host check ~p", [Host]),
+  AllowedHosts =
+    ["jsontest.com", "damagebdd.com", "run.damagebdd.com", "localhost"],
   case lists:any(
     fun
       (LHost) ->

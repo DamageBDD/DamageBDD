@@ -21,8 +21,8 @@ response_to_list({StatusCode, Headers, Body}) ->
 get_gun_config(Config0, Context) ->
   Host = damage_utils:get_context_value(host, Context, Config0),
   Port = damage_utils:get_context_value(port, Context, Config0),
-  case damage_accounts:is_allowed_domain(Host) of
-    ok ->
+  case damage_domains:is_allowed_domain(Host) of
+    true ->
       Config =
         case Port of
           443 -> [{transport, tls} | Config0];
@@ -52,7 +52,7 @@ get_gun_config(Config0, Context) ->
       {
         error,
         <<
-          "Host is not allowed please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/docs"
+          "Host is not allowed please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html"
         >>
       }
   end.
