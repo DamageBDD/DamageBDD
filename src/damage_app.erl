@@ -31,6 +31,7 @@ get_trails() ->
       damage_tests,
       damage_analytics,
       damage_reports,
+      damage_ai,
       cowboy_swagger_handler
     ],
   Trails =

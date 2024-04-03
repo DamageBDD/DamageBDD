@@ -10,6 +10,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 
+-export([init/2]).
+
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
 
@@ -25,6 +27,18 @@
   ]
 ).
 -export([run_python_server/3, generate_code/2]).
+-export([content_types_accepted/2]).
+-export([content_types_provided/2]).
+-export([to_html/2]).
+-export([to_json/2]).
+-export([to_text/2]).
+-export([from_json/2, allowed_methods/2, from_html/2]).
+-export([is_authorized/2]).
+-export([trails/0]).
+
+-define(TRAILS_TAG, ["AI functions."]).
+-define(DAMAGE_AI_FEE, 10).
+-define(DEFAULT_TIMEOUT, 5000).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -34,28 +48,88 @@ init([]) ->
   {ok, undefined}.
 
 
-handle_call({generate_code, Config, FeatureName}, _From, State) ->
-  logger:debug("handle_call execute/1 : ~p", [FeatureName]),
-  generate_code(Config, FeatureName),
-  {reply, ok, State}.
+handle_call({generate_bdd, Config, UserPrompt}, _From, State) ->
+  logger:debug("handle_call execute/1 : ~p", [UserPrompt]),
+  {ok, MessagesYaml} = application:get_env(damage, openai_bdd_messages_yaml),
+  {ok, [Messages]} =
+    fast_yaml:decode_from_file(MessagesYaml, [{plain_as_atom, true}]),
+  {ok, FunctionsYaml} = application:get_env(damage, openai_bdd_functions_yaml),
+  {ok, [Functions]} =
+    fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
+  {ok, Model} = application:get_env(damage, openai_bdd_model),
+  ?debugFmt("Loaded messages from file ~p. Data: ~p", [MessagesYaml, Messages]),
+  Prompt = <<"generate bdd for this usecase, respond in structured json. ">>,
+  Prompt0 = <<Prompt/binary, UserPrompt/binary>>,
+  PostData =
+    jsx:encode(
+      #{
+        model => list_to_binary(Model),
+        messages => Messages ++ [[{role, <<"user">>}, {content, Prompt0}]],
+        functions => Functions,
+        temperature => 0.7
+      }
+    ),
+  ?debugFmt(
+    " ~p. Prompt: ~p",
+    [Prompt0, PostData]
+  ),
+  {openai_api_host, Host} = lists:keyfind(openai_api_host, 1, Config),
+  {openai_api_path, Path} = lists:keyfind(openai_api_path, 1, Config),
+  {openai_api_port, Port} = lists:keyfind(openai_api_port, 1, Config),
+  Headers =
+    [
+      {
+        <<"Authorization">>,
+        list_to_binary("Bearer " ++ os:getenv("OPENAI_API_KEY"))
+      },
+      {<<"content-type">>, <<"application/json">>}
+    ],
+  {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+  StreamRef = gun:post(ConnPid, Path, Headers, PostData),
+  Resp =
+    case gun:await(ConnPid, StreamRef, 60000) of
+      {response, nofin, Status, _Headers0} ->
+        {ok, Body} = gun:await_body(ConnPid, StreamRef),
+        ?debugFmt("Got response ~p: ~p.", [Status, Body]),
+        logger:debug("POST Response: ~p", [Body]),
+        case jsx:decode(Body, [{labels, atom}, return_maps]) of
+          #{choices := [#{message := Message} | _], usage := _Usage} = _Response ->
+            #{
+              function_call
+              :=
+              #{name := <<"generate_python_code">>, arguments := Arguments}
+            } = Message,
+            logger:debug("Function Response: ~p", [Arguments]),
+            case jsx:decode(Arguments, [{labels, atom}, return_maps]) of
+              #{code := Code, explanation := Explanation} ->
+                {Code, Explanation};
 
+              InvalidArguments ->
+                ?debugFmt(
+                  "Got unexpected arguments for function call ~p.",
+                  [InvalidArguments]
+                ),
+                logger:debug("POST Response Arguments: ~p", [InvalidArguments]),
+                notok
+            end;
 
-handle_cast({run_python_server, Config, Context, Code}, State) ->
-  run_python_server(Config, Context, Code),
-  {noreply, State}.
+          #{choices := Choices, usage := _Usage} = _Response -> Choices;
 
+          NoChoice ->
+            ?debugFmt("Got function response ~p.", [NoChoice]),
+            logger:debug("POST Response: ~p", [NoChoice]),
+            notok
+        end;
 
-handle_info(_Info, State) -> {noreply, State}.
+      Default ->
+        ?debugFmt("Got unexpected response ~p.", [Default]),
+        logger:debug("POST Response: ~p", [Default]),
+        notok
+    end,
+  {reply, Resp, State};
 
-terminate(Reason, _State) ->
-  logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
-  ok.
-
-
-code_change(_OldVsn, State, _Extra) -> {ok, State}.
-
-generate_code(Config, FeatureFilename) ->
-  ?debugFmt("Generating python code from feature file ~p.", [FeatureFilename]),
+handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
+  logger:debug("handle_call execute/1 : ~p", [FeatureFilename]),
   try
     case egherkin:parse_file(FeatureFilename) of
       {failed, LineNo, Message} ->
@@ -103,6 +177,7 @@ generate_code(Config, FeatureFilename) ->
         ),
         {openai_api_host, Host} = lists:keyfind(openai_api_host, 1, Config),
         {openai_api_path, Path} = lists:keyfind(openai_api_path, 1, Config),
+        {openai_api_port, Port} = lists:keyfind(openai_api_port, 1, Config),
         Port = 443,
         Headers =
           [
@@ -166,10 +241,11 @@ generate_code(Config, FeatureFilename) ->
   catch
     {error, enont} ->
       logger:error("Feature file ~p not found.", [FeatureFilename])
-  end.
+  end,
+  {reply, ok, State}.
 
 
-run_python_server(Config, Context, Code) ->
+handle_cast({run_python_server, Config, Context, Code}, State) ->
   {data_dir, DataDir} = lists:keyfind(data_dir, 1, Config),
   {contract_address, ContractAddress} =
     lists:keyfind(contract_address, 1, Config),
@@ -204,4 +280,193 @@ run_python_server(Config, Context, Code) ->
       logger:debug("Got  unexpected: ~p", [Err]),
       notok
   end,
+  {noreply, State}.
+
+
+handle_info(_Info, State) -> {noreply, State}.
+
+terminate(Reason, _State) ->
+  logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
   ok.
+
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+
+generate_code(Config, FeatureFilename) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(
+          Worker,
+          {generate_code, {Config, FeatureFilename}},
+          ?DEFAULT_TIMEOUT
+        )
+    end
+  ).
+get_config(ContractAddress) ->
+    Config = 
+  damage:get_default_config(ContractAddress, 1, []),
+    [
+{openai_bdd_functions_yaml
+    
+generate_bdd(UserPrompt, ContractAddress, Req) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(
+          Worker,
+          {generate_bdd, Config, UserPrompt},
+          ?DEFAULT_TIMEOUT
+        )
+    end
+  ).
+
+run_python_server(Config, Context, Code) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:cast(
+          Worker,
+          {run_python_server, {Config, Context, Code}},
+          ?DEFAULT_TIMEOUT
+        )
+    end
+  ).
+
+% cowboy behaviour
+trails() ->
+  [
+    trails:trail(
+      "/ai/generate",
+      damage_ai,
+      #{},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to schedule a test execution.",
+          produces => ["text/html"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Schedule a test on post",
+          produces => ["application/json"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"feature">>,
+              description => <<"Test feature data.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    )
+  ].
+
+init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+
+is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
+
+content_types_provided(Req, State) ->
+  {
+    [
+      {{<<"text">>, <<"html">>, '*'}, to_html},
+      {{<<"application">>, <<"json">>, []}, to_json},
+      {{<<"text">>, <<"plain">>, '*'}, to_text}
+    ],
+    Req,
+    State
+  }.
+
+content_types_accepted(Req, State) ->
+  {
+    [
+      {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
+      {{<<"application">>, <<"json">>, '*'}, from_json}
+    ],
+    Req,
+    State
+  }.
+
+allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+
+to_html(Req, State) ->
+  logger:error("to text ipfs hash ~p ", [Req]),
+  to_text(Req, State).
+
+
+%logger:error("to text ipfs hash ~p ", [Req]),
+%Body = damage_utils:load_template("report.mustache", [{body, <<"Test">>}]),
+%logger:info("get ipfs hash ~p ", [Body]),
+%{Body, Req, State}.
+to_json(Req, State) ->
+  logger:error("to text ipfs hash ~p ", [Req]),
+  to_text(Req, State).
+
+
+to_text(Req, State) ->
+  logger:error("to text ipfs hash ~p ", [Req]),
+  {<<"ok">>, Req, State}.
+
+
+from_json(Req, State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {Status, Resp0} =
+    case jsx:decode(Data, [{labels, atom}, return_maps]) of
+      #{user_prompt := UserPrompt} = _FeatureJson ->
+        check_generate_bdd(UserPrompt, State, Req);
+
+      Err ->
+        logger:error("json decoding failed ~p.", [Data]),
+        {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+    end,
+  Resp = cowboy_req:set_resp_body(Resp0, Req),
+  cowboy_req:reply(Status, Resp),
+  {stop, Resp, State}.
+
+
+from_html(Req0, State) ->
+  {ok, Body, Req} = cowboy_req:read_body(Req0),
+  _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
+  Concurrency =
+    binary_to_integer(
+      cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
+    ),
+  Fee =
+    binary_to_integer(cowboy_req:header(<<"x-damage-fee">>, Req0, <<"4000">>)),
+  {Status, Resp0} =
+    check_generate_bdd(
+      #{feature => Body, concurrency => Concurrency, fee => Fee},
+      State,
+      Req0
+    ),
+  Res1 = cowboy_req:set_resp_body(Resp0, Req),
+  cowboy_req:reply(Status, Res1),
+  {stop, Res1, State}.
+
+
+check_generate_bdd(
+  UserPrompt,
+  #{contract_address := ContractAddress} = _State,
+  Req0
+) ->
+      generate_bdd(UserPrompt, ContractAddress, Req0).
+%  case damage_ae:balance(ContractAddress) of
+%    Balance when Balance >= ?DAMAGE_AI_FEE ->
+%      generate_bdd(UserPrompt, ContractAddress, Req0);
+%
+%    Other ->
+%          Msg = <<"Insufficient balance, please top up balance: ", Other/binary>>,
+%        logger:info("Damage AI ~p ", [Msg]),
+%      {400, Msg}
+%  end.
