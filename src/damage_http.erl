@@ -98,7 +98,11 @@ is_authorized(Req, State) ->
                 maps:put(
                   user,
                   User,
-                  maps:put(contract_address, ContractAddress, State)
+                  maps:put(
+                    contract_address,
+                    ContractAddress,
+                    maps:put(username, ResourceOwner, State)
+                  )
                 )
               };
 
@@ -183,8 +187,8 @@ get_config(
   damage:get_default_config(ContractAddress, Concurrency, Formatters).
 
 
-execute_bdd(Config, #{feature := FeatureData}) ->
-  case damage:execute_data(Config, FeatureData) of
+execute_bdd(Config, Context, #{feature := FeatureData}) ->
+  case damage:execute_data(Config, Context, FeatureData) of
     [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
       Response =
         #{
@@ -217,12 +221,12 @@ execute_bdd(Config, #{feature := FeatureData}) ->
 
 check_execute_bdd(
   #{concurrency := Concurrency0} = FeaturePayload,
-  #{contract_address := ContractAddress} = _State,
+  #{contract_address := ContractAddress, username := Username} = _State,
   Req0,
   Stream
 ) ->
-  Concurrency = get_concurrency_level(Concurrency0),
-  IP = get_ip(Req0),
+  Concurrency = damage_utils:get_concurrency_level(Concurrency0),
+  IP = damage_utils:get_ip(Req0),
   case throttle:check(damage_api_rate, IP) of
     {limit_exceeded, _, _} ->
       lager:warning("IP ~p exceeded api limit", [IP]),
@@ -231,17 +235,31 @@ check_execute_bdd(
     _ ->
       case damage_ae:balance(ContractAddress) of
         Balance when Balance >= Concurrency ->
-          case
-          execute_bdd(
+          Config =
             get_config(
-              maps:put(contract_address, ContractAddress, FeaturePayload),
+              maps:put(
+                contract_address,
+                ContractAddress,
+                maps:put(username, Username, FeaturePayload)
+              ),
               Req0,
               Stream
             ),
+          execute_bdd(
+            Config,
+            damage_accounts:get_account_context(
+              maps:put(
+                contract_address,
+                ContractAddress,
+                maps:put(
+                  username,
+                  Username,
+                  damage:get_global_template_context(Config, FeaturePayload)
+                )
+              )
+            ),
             FeaturePayload
-          ) of
-            {Status, Response} -> {Status, Response}
-          end;
+          );
 
         Other ->
           {

@@ -27,7 +27,8 @@
     get_concurrency_level/1,
     get_ip/1,
     test_encrypt_decrypt/0,
-    test_send_email/0
+    test_send_email/0,
+    convert_context/1
   ]
 ).
 -export([encrypt/2, encrypt/1, decrypt/2, decrypt/1]).

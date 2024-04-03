@@ -577,16 +577,29 @@ update_schedules(ContractAddress, JobId, _Cron) ->
   ?debugFmt("State ~p ", [Results]).
 
 
-get_account_context(ContractAddress) ->
-  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-    {ok, Context} ->
-      logger:debug("got context ~p", [Context]),
-      Context;
+get_account_context(DefaultContext) ->
+  ContractAddress = maps:get(contract_address, DefaultContext),
+  Username = maps:get(username, DefaultContext),
+  Context =
+    case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+      {ok, AccountContext} ->
+        logger:debug("got context ~p", [AccountContext]),
+        maps:merge(AccountContext, DefaultContext);
 
-    Other ->
-      logger:debug("got context ~p", [Other]),
-      #{}
-  end.
+      Other ->
+        logger:debug("got context ~p", [Other]),
+        #{}
+    end,
+  Password =
+    case damage_riak:get(?USER_BUCKET, Username) of
+      {ok, #{password := UserPw}} -> UserPw;
+      _ -> <<"">>
+    end,
+  maps:put(
+    damage_password,
+    binary_to_list(Password),
+    maps:put(damage_username, binary_to_list(Username), Context)
+  ).
 
 
 check_invoice_foldn(Invoice, Acc) ->

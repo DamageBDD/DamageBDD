@@ -30,12 +30,13 @@
 ).
 -export(
   [
-    execute_data/2,
-    execute_file/2,
-    execute/1,
+    execute_data/3,
+    execute_file/3,
+    execute/3,
     execute/2,
-    execute_feature/7,
-    publish_data/2
+    execute_feature/8,
+    publish_data/2,
+    get_global_template_context/2
   ]
 ).
 -export([get_default_config/3]).
@@ -52,19 +53,20 @@ handle_call(die, _From, State) -> {stop, {error, died}, dead, State};
 
 handle_call({execute, FeatureName}, _From, State) ->
   logger:debug("handle_call execute/1 : ~p", [FeatureName]),
-  execute(FeatureName),
+  execute([], #{}, FeatureName),
   {reply, ok, State};
 
 handle_call(
   {
     execute_feature,
-    {Config, Feature, LineNo, Tags, Description, BackGround, Scenarios}
+    {Config, Context, Feature, LineNo, Tags, Description, BackGround, Scenarios}
   },
   _From,
   State
 ) ->
   execute_feature(
     Config,
+    Context,
     Feature,
     LineNo,
     Tags,
@@ -78,12 +80,13 @@ handle_call(
 handle_cast(
   {
     execute_feature,
-    {Config, Feature, LineNo, Tags, Description, BackGround, Scenarios}
+    {Config, Context, Feature, LineNo, Tags, Description, BackGround, Scenarios}
   },
   State
 ) ->
   execute_feature(
     Config,
+    Context,
     Feature,
     LineNo,
     Tags,
@@ -105,14 +108,14 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-execute(Config) ->
+execute(Config, Context) ->
   {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
   {feature_include, FeatureInclude} = lists:keyfind(feature_include, 1, Config),
   lists:map(
     fun
       (FeatureDir) ->
         lists:map(
-          fun (Filename) -> execute_file(Config, Filename) end,
+          fun (Filename) -> execute_file(Config, Context, Filename) end,
           filelib:wildcard(filename:join(FeatureDir, FeatureInclude))
         )
     end,
@@ -120,7 +123,7 @@ execute(Config) ->
   ).
 
 
-execute(Config, FeatureName) ->
+execute(Config, Context, FeatureName) ->
   {feature_dirs, FeatureDirs} =
     case lists:keyfind(feature_dirs, 1, Config) of
       false -> {feature_dirs, ["../../../../features/", "../features/"]};
@@ -135,7 +138,7 @@ execute(Config, FeatureName) ->
     fun
       (FeatureDir) ->
         lists:map(
-          fun (Filename) -> execute_file(Config, Filename) end,
+          fun (Filename) -> execute_file(Config, Context, Filename) end,
           lists:map(
             fun
               (FeatureFileName) -> filename:join(FeatureDir, FeatureFileName)
@@ -210,17 +213,20 @@ parse_file(Filename, Context) ->
   case file:read_file(Filename) of
     {ok, Source0} ->
       Source =
-        mustache:render(
-          binary_to_list(Source0),
-          dict:from_list(maps:to_list(Context))
+        list_to_binary(
+          mustache:render(
+            binary_to_list(Source0),
+            damage_utils:convert_context(maps:from_list(maps:to_list(Context)))
+          )
         ),
-      egherkin:parse(list_to_binary(Source));
+      logger:debug("Source: ~p", [Source]),
+      egherkin:parse(Source);
 
     Else -> Else
   end.
 
 
-execute_data(Config, FeatureData) ->
+execute_data(Config, Context, FeatureData) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   BddFileName =
@@ -229,17 +235,16 @@ execute_data(Config, FeatureData) ->
       _ -> filename:join(RunDir, string:join([RunId, ".feature"], ""))
     end,
   ok = file:write_file(BddFileName, FeatureData),
-  execute_file(Config, BddFileName).
+  execute_file(Config, Context, BddFileName).
 
 
-execute_file(Config, Filename) ->
+execute_file(Config, Context, Filename) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
   {contract_address, ContractAddress0} =
     lists:keyfind(contract_address, 1, Config),
   ContractAddress = list_to_binary(ContractAddress0),
   StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
-  Context = damage_accounts:get_account_context(ContractAddress),
   case catch parse_file(Filename, Context) of
     {failed, LineNo, Message} ->
       logger:error(
@@ -253,6 +258,7 @@ execute_file(Config, Filename) ->
         1 ->
           execute_feature(
             Config,
+            Context,
             Feature,
             LineNo,
             Tags,
@@ -366,6 +372,7 @@ execute_feature_concurrent(Args, N, Acc) ->
 
 execute_feature(
   Config,
+  Context,
   FeatureName,
   LineNo,
   Tags,
@@ -377,22 +384,25 @@ execute_feature(
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   init_logging(RunId, RunDir),
   formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
-  [execute_scenario(Config, BackGround, Scenario) || Scenario <- Scenarios],
+  [
+    execute_scenario(Config, Context, BackGround, Scenario)
+    || Scenario <- Scenarios
+  ],
   deinit_logging(RunId).
 
 
-execute_scenario(Config, undefined, Scenario) ->
-  execute_scenario(Config, {none, []}, Scenario);
+execute_scenario(Config, Context, undefined, Scenario) ->
+  execute_scenario(Config, Context, {none, []}, Scenario);
 
-execute_scenario(Config, [], Scenario) ->
-  execute_scenario(Config, {none, []}, Scenario);
+execute_scenario(Config, Context, [], Scenario) ->
+  execute_scenario(Config, Context, {none, []}, Scenario);
 
-execute_scenario(Config, {_, BackGroundSteps}, Scenario) ->
+execute_scenario(Config, Context, {_, BackGroundSteps}, Scenario) ->
   {LineNo, ScenarioName, Tags, Steps} = Scenario,
   formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
   lists:foldl(
     fun (S, C) -> execute_step(Config, S, C) end,
-    get_account_context(Config, get_global_template_context(Config, maps:new())),
+    Context,
     lists:append(BackGroundSteps, Steps)
   ).
 
@@ -537,15 +547,6 @@ execute_step(Config, Step, Context) ->
     true -> true
   end,
   Context0.
-
-
-get_account_context(Config, Context) ->
-  {contract_address, ContractAddress} =
-    lists:keyfind(contract_address, 1, Config),
-  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-    {ok, AccountContext} -> maps:merge(Context, AccountContext);
-    _ -> #{}
-  end.
 
 
 get_global_template_context(Config, Context) ->
