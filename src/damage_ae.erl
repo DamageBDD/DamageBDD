@@ -25,7 +25,7 @@
 ).
 -export([sign_tx/2]).
 -export([aecli/4, aecli/6]).
--export([test_contract_call/1]).
+-export([test_contract_call/1, test_token_contract/0]).
 -export([balance/1, invalidate_cache/0, spend/2, confirm_spend/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
@@ -152,8 +152,9 @@ aecli(contract, call, ContractAddress, Contract, Func, Args) ->
         {contract_function, Func}
       ]
     ),
-  ?debugFmt("Cmd : ~p", [Cmd]),
+  logger:debug("Cmd : ~p", [Cmd]),
   Result = exec:run(Cmd, [stdout, stderr, sync]),
+  logger:debug("Result : ~p", [Result]),
   {ok, [{stdout, [AeAccount0]}]} = Result,
   jsx:decode(AeAccount0, [{labels, atom}]).
 
@@ -171,10 +172,14 @@ aecli(contract, deploy, Contract, Args) ->
         {contract_args, binary_to_list(jsx:encode(Args))}
       ]
     ),
-  ?debugFmt("Cmd : ~p", [Cmd]),
-  Result0 = exec:run(Cmd, [stdout, stderr, sync]),
-  {ok, [{stdout, Result}]} = Result0,
-  jsx:decode(binary:list_to_bin(Result), [{labels, atom}]).
+  logger:debug("Cmd : ~p", [Cmd]),
+  case exec:run(Cmd, [stdout, stderr, sync]) of
+    {error, [{exit_status, _}, {stderr, Stderr}]} ->
+      logger:error("Error executing aecli ~p", [Stderr]);
+
+    {ok, [{stdout, Result}]} ->
+      jsx:decode(binary:list_to_bin(Result), [{labels, atom}])
+  end.
 
 
 sign_tx(UTx) ->
@@ -235,48 +240,6 @@ sign_tx(UTx) ->
 %    // result is [tag, vsn, signatures, tx]
 %    return vdk_rlp.encode([tag_bytes, vsn_bytes, signatures, tx]);
 %}
-test_contract_call(AeAccount) ->
-  JobId = <<"sdds">>,
-  {ok, Nonce} = vanillae:next_nonce(AeAccount),
-  {ok, ContractData} =
-    vanillae:contract_create(AeAccount, "contracts/account.aes", []),
-  {ok, sTx} = sign_tx(ContractData),
-  ?debugFmt("contract create ~p", [sTx]),
-  {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
-  ContractCall =
-    vanillae:contract_call(
-      AeAccount,
-      Nonce,
-      % Amount
-      0,
-      % Gas
-      0,
-      % GasPrice
-      0,
-      % Fee
-      0,
-      AACI,
-      sTx,
-      "update_schedule",
-      [JobId]
-    ),
-  ?debugFmt("contract call ~p", [ContractCall]),
-  {ok, sTx} = sign_tx(ContractCall),
-  case vanillae:post_tx(sTx) of
-    {ok, #{"tx_hash" := Hash}} ->
-      ?debugFmt("contract call success ~p", [Hash]),
-      Hash;
-
-    {ok, WTF} ->
-      logger:error("contract call Unexpected result ~p", [WTF]),
-      {error, unexpected};
-
-    {error, Reason} ->
-      logger:error("contract call error ~p", [Reason]),
-      {error, Reason}
-  end.
-
-
 balance(ContractAddress) ->
   DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
   case gen_server:call(DamageAEPid, {balance, ContractAddress}) of
@@ -321,3 +284,93 @@ confirm_spend(ContractAddress) ->
 invalidate_cache() ->
   DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
   gen_server:cast(DamageAEPid, invalidate_cache).
+
+
+test_contract_call(AeAccount) ->
+  JobId = <<"sdds">>,
+  {ok, Nonce} = vanillae:next_nonce(AeAccount),
+  {ok, ContractData} =
+    vanillae:contract_create(AeAccount, "contracts/account.aes", []),
+  {ok, sTx} = sign_tx(ContractData),
+  ?debugFmt("contract create ~p", [sTx]),
+  {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
+  ContractCall =
+    vanillae:contract_call(
+      AeAccount,
+      Nonce,
+      % Amount
+      0,
+      % Gas
+      0,
+      % GasPrice
+      0,
+      % Fee
+      0,
+      AACI,
+      sTx,
+      "update_schedule",
+      [JobId]
+    ),
+  ?debugFmt("contract call ~p", [ContractCall]),
+  {ok, sTx} = sign_tx(ContractCall),
+  case vanillae:post_tx(sTx) of
+    {ok, #{"tx_hash" := Hash}} ->
+      ?debugFmt("contract call success ~p", [Hash]),
+      Hash;
+
+    {ok, WTF} ->
+      logger:error("contract call Unexpected result ~p", [WTF]),
+      {error, unexpected};
+
+    {error, Reason} ->
+      logger:error("contract call error ~p", [Reason]),
+      {error, Reason}
+  end.
+
+
+test_token_contract() ->
+  #{owner := _Owner0, address := ContractAddress0} =
+    aecli(
+      contract,
+      deploy,
+      "contracts/token.aes",
+      [<<"TestToken">>, 1000, <<"dmg">>, 1000]
+    ),
+  #{owner := _Owner1, address := ContractAddress1} =
+    aecli(
+      contract,
+      deploy,
+      "contracts/token.aes",
+      [<<"TestToken">>, 1000, <<"dmg">>, 1000]
+    ),
+  #{decodedResult := _DecodedResult1, result := Result1} =
+    aecli(
+      contract,
+      call,
+      binary_to_list(ContractAddress0),
+      "contracts/token.aes",
+      "burn",
+      [10]
+    ),
+  logger:debug("called deployed token contract burn ~p", [Result1]),
+  %#{decodedResult := _DecodedResult2, result := _Result2} =
+  CallResult =
+    aecli(
+      contract,
+      call,
+      binary_to_list(ContractAddress0),
+      "contracts/token.aes",
+      "transfer",
+      [ContractAddress1, 10]
+    ),
+  logger:debug("called deployed token contract burn ~p", [CallResult]),
+  CallResult0 =
+    aecli(
+      contract,
+      call,
+      binary_to_list(ContractAddress0),
+      "contracts/token.aes",
+      "balance",
+      [ContractAddress1]
+    ),
+  logger:debug("called deployed token contract burn ~p", [CallResult0]).
