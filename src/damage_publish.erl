@@ -22,6 +22,7 @@
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
 -define(TRAILS_TAG, ["Publish Tests For Open Market Execution"]).
+-define(PUBLISHED_FEATURES_BUCKET, {<<"Default">>, <<"PublishedFeatures">>}).
 
 trails() ->
   [
@@ -100,18 +101,23 @@ to_json(Req, State) ->
   to_text(Req, State).
 
 
-to_text(Req, State) ->
-  logger:error("to text ipfs hash ~p ", [Req]),
-  {<<"ok">>, Req, State}.
+to_text(Req, #{contract_address := ContractAddress} = State) ->
+  Reports = do_query(#{contract_address => ContractAddress}),
+  logger:debug("list published contracts ~p ", [Reports]),
+  {jsx:encode(Reports), Req, State}.
 
 
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{feature := _FeatureData, contract_address := _ContractAddress} =
-        FeatureJson ->
-        publish_bdd(FeatureJson, State);
+      #{feature := FeatureData, concurrency := Concurrency} = FeatureJson ->
+        Fee = binary_to_integer(maps:get(fee, FeatureJson, <<"4000">>)),
+        check_publish_bdd(
+          #{feature => FeatureData, concurrency => Concurrency, fee => Fee},
+          State,
+          Req
+        );
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),
@@ -140,6 +146,30 @@ from_html(Req0, State) ->
   Res1 = cowboy_req:set_resp_body(Resp0, Req),
   cowboy_req:reply(Status, Res1),
   {stop, Res1, State}.
+
+
+get_record(Id) ->
+  {ok, Record} =
+    damage_riak:get(?PUBLISHED_FEATURES_BUCKET, damage_utils:decrypt(Id)),
+  Record.
+
+
+do_query(#{contract_address := ContractAddress}) ->
+  case
+  damage_riak:get_index(
+    ?PUBLISHED_FEATURES_BUCKET,
+    {binary_index, "contract_address"},
+    ContractAddress
+  ) of
+    [] ->
+      logger:info("no reports for account"),
+      [];
+
+    Found ->
+      ?debugFmt(" reports exists data: ~p ", [Found]),
+      Results = [get_record(X) || X <- Found],
+      #{results => Results, status => <<"ok">>, length => length(Results)}
+  end.
 
 
 check_publish_bdd(
