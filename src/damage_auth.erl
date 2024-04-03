@@ -5,11 +5,48 @@
 -export([process_post_json/2, process_post_urlencoded/2, process_get/2]).
 -export([trails/0]).
 
+-define(TRAILS_TAG, ["Authentication"]).
+
 %%%===================================================================
 %%% Cowboy callbacks
 %%%===================================================================
 
-trails() -> [{"/auth", damage_auth, #{}}].
+trails() ->
+  [
+    {"/auth", damage_auth, #{}},
+    trails:trail(
+      "/auth",
+      damage_auth,
+      #{},
+      #{
+        post
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Get auth token.",
+          produces => ["text/html"],
+          parameters
+          =>
+          [
+            #{
+              username => <<"username">>,
+              description => <<"Username for account.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            },
+            #{
+              password => <<"Password">>,
+              description => <<"Account password.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    )
+  ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
