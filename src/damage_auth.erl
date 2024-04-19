@@ -1,8 +1,8 @@
 -module(damage_auth).
 
--export([init/2, rest_init/2, allowed_methods/2]).
+-export([init/2, allowed_methods/2]).
 -export([content_types_provided/2, content_types_accepted/2]).
--export([process_post_json/2, process_post_urlencoded/2, process_get/2]).
+-export([from_json/2, from_html/2, to_html/2]).
 -export([trails/0]).
 
 -define(TRAILS_TAG, ["Authentication"]).
@@ -13,9 +13,8 @@
 
 trails() ->
   [
-    {"/auth", damage_auth, #{}},
     trails:trail(
-      "/auth",
+      "/auth/",
       damage_auth,
       #{},
       #{
@@ -24,7 +23,7 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "Get auth token.",
-          produces => ["text/html"],
+          produces => ["text/html", "application/json"],
           parameters
           =>
           [
@@ -36,7 +35,7 @@ trails() ->
               type => <<"string">>
             },
             #{
-              password => <<"Password">>,
+              password => <<"password">>,
               description => <<"Account password.">>,
               in => <<"body">>,
               required => true,
@@ -50,32 +49,40 @@ trails() ->
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
-rest_init(Req, _Opts) -> {ok, Req, undefined_state}.
 
 content_types_provided(Req, State) ->
-  {[{{<<"text">>, <<"html">>, []}, process_get}], Req, State}.
-
-content_types_accepted(Req, State) ->
   {
     [
-      {{<<"application">>, <<"json">>, []}, process_post_json},
-      {
-        {<<"application">>, <<"x-www-form-urlencoded">>, []},
-        process_post_urlencoded
-      }
+      {{<<"text">>, <<"html">>, '*'}, to_html},
+      {{<<"application">>, <<"json">>, []}, to_html},
+      {{<<"text">>, <<"plain">>, '*'}, to_html}
     ],
     Req,
     State
   }.
 
-allowed_methods(Req, State) -> {[<<"POST">>, <<"GET">>], Req, State}.
 
-process_post_json(Req, State) ->
+content_types_accepted(Req, State) ->
+  {
+    [
+      {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
+      {{<<"application">>, <<"json">>, '*'}, from_json}
+    ],
+    Req,
+    State
+  }.
+
+allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+
+from_json(Req, State) ->
   {ok, Data, Req0} = cowboy_req:read_body(Req),
-  process_post(jsx:decode(Data, [{return_maps, false}]), Req0, State).
+  logger:debug("received json ~p", [Data]),
+    Params = jsx:decode(Data, [{return_maps, false}]),
+  logger:debug("decoded params", [Params]),
+  process_post(Params, Req0, State).
 
 
-process_post_urlencoded(Req, State) ->
+from_html(Req, State) ->
   {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
   process_post(Params, Req0, State).
 
@@ -97,12 +104,12 @@ process_post(Params, Req, State) ->
 
       <<"client_credentials">> -> process_client_credentials_grant(Req, Params);
       <<"token">> -> process_implicit_grant_stage2(Req, Params);
-      _ -> cowboy_req:reply(400, [], <<"Bad Request.">>, Req)
+      _ -> cowboy_req:reply(400, #{}, <<"Bad Request.">>, Req)
     end,
   {stop, Reply, State}.
 
 
-process_get(Req, State) ->
+to_html(Req, State) ->
   {ResponseType, Req2} = cowboy_req:qs_val(<<"response_type">>, Req),
   {ok, Reply} =
     case ResponseType of

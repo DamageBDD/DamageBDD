@@ -268,6 +268,10 @@ get_invoices(ContractAddress) ->
   end.
 
 
+to_json(Req, #{action := confirm} = State) ->
+  % for some browsers who send in applicaion/json contenttype
+  to_html(Req, State);
+
 to_json(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
     {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
