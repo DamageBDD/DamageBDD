@@ -50,7 +50,7 @@ step_get_request_tls(Config) ->
     steps_http:step(
       Config,
       Context,
-      when_keyword,
+      <<"When">>,
       0,
       ["I make a GET request to", "/"],
       []
@@ -64,7 +64,7 @@ step_get_request(Config) ->
     steps_http:step(
       Config,
       Context,
-      when_keyword,
+      <<"When">>,
       0,
       ["I make a GET request to", "/"],
       []
@@ -78,7 +78,7 @@ step_post_csrf_request(Config) ->
     steps_http:step(
       Config,
       Context,
-      when_keyword,
+      <<"When">>,
       0,
       ["I make a CSRF POST request to", "/"],
       []
@@ -92,7 +92,7 @@ step_post_request(Config) ->
     steps_http:step(
       Config,
       Context,
-      when_keyword,
+      <<"When">>,
       0,
       ["I make a POST request to", "/"],
       []
@@ -112,7 +112,7 @@ step_store_json_in(Config) ->
     steps_http:step(
       Config,
       Context,
-      then_keyword,
+      <<"Then">>,
       0,
       ["I store the JSON at path", "$.id", "in", "installid"],
       []
@@ -143,7 +143,7 @@ step_jsonpath(Config) ->
     steps_http:step(
       Config,
       Context,
-      then_keyword,
+      <<"Then">>,
       0,
       ["the json at path", "$.num_open", "must be", "6"],
       []

@@ -14,6 +14,21 @@
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
+-define(
+  DEFAULT_HEADERS,
+  [
+    {<<"accept">>, "application/json"},
+    {<<"user-agent">>, "damagebdd/1.0"},
+    {<<"content-type">>, "application/json"}
+  ]
+).
+
+get_headers(Context, DefaultHeaders) ->
+  proplists:from_map(
+    proplists:to_map(
+      lists:keymerge(1, maps:get(headers, Context, []), DefaultHeaders)
+    )
+  ).
 
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
@@ -75,6 +90,7 @@ gun_await(ConnPid, StreamRef, Context) ->
 gun_post(Config0, Context, Path, Headers, Data) ->
   ConnPid = get_gun_config(Config0, Context),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
+  logger:debug("Post ~p", [Headers]),
   gun_await(ConnPid, StreamRef, Context).
 
 
@@ -229,54 +245,21 @@ step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
     Config,
     Context,
     string:concat(maps:get(base_url, Context, ""), Path),
-    [{<<"accept">>, "application/json"}, {<<"user-agent">>, "damagebdd/1.0"}]
+    get_headers(Context, ?DEFAULT_HEADERS)
   );
 
 step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
-  Defaults =
-    [
-      {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "damagebdd/1.0"},
-      {<<"content-type">>, "application/json"}
-    ],
-  Headers =
-    proplists:from_map(
-      proplists:to_map(
-        lists:keymerge(1, maps:get(headers, Context, []), Defaults)
-      )
-    ),
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
+  Headers = get_headers(Context, ?DEFAULT_HEADERS),
   gun_post(Config, Context, Path0, Headers, Data);
 
 step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
-  Defaults =
-    [
-      {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "damagebdd/1.0"},
-      {<<"content-type">>, "application/json"}
-    ],
-  Headers =
-    proplists:from_map(
-      proplists:to_map(
-        lists:keymerge(1, maps:get(headers, Context, []), Defaults)
-      )
-    ),
+  Headers = get_headers(Context, ?DEFAULT_HEADERS),
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
   gun_patch(Config, Context, Path0, Headers, Data);
 
 step(Config, Context, <<"When">>, _N, ["I make a PUT request to", Path], Data) ->
-  Defaults =
-    [
-      {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "damagebdd/1.0"},
-      {<<"content-type">>, "application/json"}
-    ],
-  Headers =
-    proplists:from_map(
-      proplists:to_map(
-        lists:keymerge(1, maps:get(headers, Context, []), Defaults)
-      )
-    ),
+  Headers = get_headers(Context, ?DEFAULT_HEADERS),
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
   gun_put(Config, Context, Path0, Headers, Data);
 
@@ -678,11 +661,7 @@ step(Config, Context, _, _N, ["I make a HEAD request to", Path], _) ->
     Config,
     Context,
     string:concat(maps:get(base_url, Context, ""), Path),
-    [
-      {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "damagebdd/1.0"},
-      {<<"content-type">>, "application/json"}
-    ]
+    get_headers(Context, ?DEFAULT_HEADERS)
   );
 
 step(_Config, Context, _, _N, ["the JSON should be"], Args) ->

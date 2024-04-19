@@ -41,9 +41,9 @@ select_server(Servers, Length) ->
   SelectedServer = lists:nth(RandomIndex, Servers),
   % Attempt to connect to the selected server
   case ipfs:start_link(SelectedServer) of
-    {ok, Pid} -> 
-        {ok, _VersionInfo} = ipfs:version(Pid),
-        Pid;
+    {ok, Pid} ->
+      {ok, _VersionInfo} = ipfs:version(Pid),
+      Pid;
 
     Err ->
       logger:info(
