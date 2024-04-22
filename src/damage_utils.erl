@@ -20,7 +20,7 @@
     strf/2,
     get_context_value/3,
     load_template/2,
-    send_email/3,
+    send_email/4,
     setup_vanillae_deps/0,
     atom_to_binary_keys/1,
     binary_to_atom_keys/1,
@@ -184,7 +184,7 @@ load_template(Template, Context) ->
   mustache:render(binary_to_list(TemplateBin), convert_context(Context)).
 
 
-send_email({ToName, To}, Subject, Body) ->
+send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
   {ok, SmtpHost} = application:get_env(damage, smtp_host),
   {ok, SmtpUser} = application:get_env(damage, smtp_user),
   {ok, SmtpHostname} = application:get_env(damage, smtp_hostname),
@@ -210,23 +210,62 @@ send_email({ToName, To}, Subject, Body) ->
   FromNameBin = list_to_binary(FromName),
   FromBin = list_to_binary(From),
   %ToBin = list_to_binary(To),
-  Email0 =
+  MultipartEmail =
     {
-      <<"text">>,
-      <<"plain">>,
+      <<"multipart">>,
+      <<"alternative">>,
       [
         {<<"From">>, <<FromNameBin/binary, " <", FromBin/binary, ">">>},
         {<<"To">>, <<ToName/binary, " <", To/binary, ">">>},
-        {<<"Subject">>, Subject}
+        {<<"Subject">>, Subject},
+        {<<"MIME-Version">>, <<"1.0">>},
+        {
+          <<"Content-Type">>,
+          <<"multipart/alternative; boundary=---damagebdd-0001">>
+        }
       ],
       #{
-        <<"content-type-params">> => [{<<"charset">>, <<"US-ASCII">>}],
-        <<"disposition">> => <<"inline">>
+        content_type_params => [{<<"boundary">>, <<"---damagebdd-0001">>}],
+        disposition => <<"inline">>,
+        disposition_params => []
       },
-      list_to_binary(Body)
+      [
+        {
+          <<"text">>,
+          <<"plain">>,
+          [
+            {
+              <<"Content-Type">>,
+              <<"text/plain;charset=US-ASCII;format=flowed">>
+            },
+            {<<"Content-Transfer-Encoding">>, <<"quoted-printable">>}
+          ],
+          #{
+            content_type_params
+            =>
+            [{<<"charset">>, <<"US-ASCII">>}, {<<"format">>, <<"flowed">>}],
+            disposition => <<"inline">>,
+            disposition_params => []
+          },
+          list_to_binary(TextBody)
+        },
+        {
+          <<"text">>,
+          <<"html">>,
+          [
+            {<<"Content-Type">>, <<"text/html;charset=US-ASCII">>},
+            {<<"Content-Transfer-Encoding">>, <<"base64">>}
+          ],
+          #{
+            content_type_params => [{<<"charset">>, <<"US-ASCII">>}],
+            disposition => <<"inline">>,
+            disposition_params => []
+          },
+          list_to_binary(HtmlBody)
+        }
+      ]
     },
-  Body0 = mimemail:encode(Email0),
-  Email = {From, [To], Body0},
+  Email = {From, [To], mimemail:encode(MultipartEmail)},
   %CaCerts = certifi:cacerts(),
   gen_smtp_client:send(
     Email,
@@ -333,14 +372,24 @@ test_encrypt_decrypt() ->
 
 
 test_send_email() ->
-  ToEmail = {"Steven Jose", "stevenjose@gmail.com"},
-  Body =
-    damage_utils:load_template(
-      "signup_email.mustache",
-      #{btc_refund_address => <<"test">>, btc_address => <<"test address">>}
-    ),
-  ?debugFmt("Email body ~p", [Body]),
-  damage_utils:send_email(ToEmail, <<"DamageBDD Email Test">>, Body).
+  ToEmail = {<<"DamageBdd Test">>, <<"test@damagebdd.com">>},
+  Context =
+    #{
+      <<"first_name">> => <<"FirstName">>,
+      <<"last_name">> => <<"Lastname">>,
+      <<"password_reset_url">>
+      =>
+      <<"https://github.com/jagguli/DamageBDD/blob/master/LICENSE">>
+    },
+  TextBody = damage_utils:load_template("signup_email.txt.mustache", Context),
+  HtmlBody = damage_utils:load_template("signup_email.html.mustache", Context),
+  ?debugFmt("Email body ~p~n htmlBody: ~p", [TextBody, HtmlBody]),
+  damage_utils:send_email(
+    ToEmail,
+    <<"DamageBDD Email Test">>,
+    TextBody,
+    HtmlBody
+  ).
 
 
 %test_simple_mail() ->

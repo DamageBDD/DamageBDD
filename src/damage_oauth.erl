@@ -46,6 +46,7 @@
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(CLIENT_BUCKET, {<<"Default">>, <<"Clients">>}).
+-define(CONFIRM_TOKEN_EXPIRY, 1440).
 
 %%%===================================================================
 %%% API
@@ -152,12 +153,13 @@ reset_password(#{<<"email">> := Email}) ->
       damage_riak:put(
         ?CONFIRM_TOKEN_BUCKET,
         TempPassword,
-        #{email => Email, expiry => get_token_expiry(5)}
+        #{email => Email, expiry => get_token_expiry(?CONFIRM_TOKEN_EXPIRY)}
       ),
       damage_utils:send_email(
         {maps:get(full_name, Found, <<"">>), Email},
         <<"DamageBDD Password Reset">>,
-        damage_utils:load_template("reset_password_email.mustache", Ctxt)
+        damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
+        damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
       ),
       %damage_riak:update(?USER_BUCKET, Email, Found),
       {ok, <<"Password Reset successfully.">>}
@@ -180,12 +182,13 @@ add_userdata(
   damage_riak:put(
     ?CONFIRM_TOKEN_BUCKET,
     TempPassword,
-    #{email => ToEmail, expiry => get_token_expiry(5)}
+    #{email => ToEmail, expiry => get_token_expiry(?CONFIRM_TOKEN_EXPIRY)}
   ),
   damage_utils:send_email(
     {maps:get(full_name, Data, <<"">>), ToEmail},
     <<"DamageBDD Account SignUp">>,
-    damage_utils:load_template("signup_email.mustache", Ctxt)
+    damage_utils:load_template("signup_email.txt.mustache", Ctxt),
+    damage_utils:load_template("signup_email.html.mustache", Ctxt)
   ),
   damage_riak:put(
     ?USER_BUCKET,
@@ -199,7 +202,7 @@ add_userdata(
   {
     ok,
     <<
-      "Account created. Please check email for api key to start using DamageBDD."
+      "Account created. Please check email for confirmation link. Don't forget to check spam folder too."
     >>
   }.
 
@@ -227,12 +230,27 @@ add_user(#{<<"email">> := ToEmail} = KycData) ->
       case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
         notfound -> add_userdata(Found);
 
+        {ok, #{email := Email, expiry := Expiry}} ->
+          case date_util:epoch_hires() of
+            Now when Now > Expiry ->
+              ok = damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
+              ok = delete_user(Email),
+              {
+                error,
+                <<
+                  "Confirmation link expired, please signup again to get a new link."
+                >>
+              };
+
+            _ -> add_userdata(Found)
+          end;
+
         _ ->
           logger:info(" Accoun exists data: ~p ", [Found]),
           {
             error,
             <<
-              "Account with that email already exists. Please check your email for confirmation link."
+              "Account with that email already exists. Please check your email for confirmation link. Don't forget to check spam folder too. If you have forgotten the password please reset password using /accounts/reset_password endpoint or from https://damagebdd.com/account"
             >>
           }
       end

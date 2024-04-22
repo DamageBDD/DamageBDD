@@ -49,7 +49,6 @@ trails() ->
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
-
 content_types_provided(Req, State) ->
   {
     [
@@ -60,7 +59,6 @@ content_types_provided(Req, State) ->
     Req,
     State
   }.
-
 
 content_types_accepted(Req, State) ->
   {
@@ -77,7 +75,7 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 from_json(Req, State) ->
   {ok, Data, Req0} = cowboy_req:read_body(Req),
   logger:debug("received json ~p", [Data]),
-    Params = jsx:decode(Data, [{return_maps, false}]),
+  Params = jsx:decode(Data, [{return_maps, false}]),
   logger:debug("decoded params", [Params]),
   process_post(Params, Req0, State).
 
