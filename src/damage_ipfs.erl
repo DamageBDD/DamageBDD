@@ -40,10 +40,20 @@ select_server(Servers, Length) ->
   RandomIndex = rand:uniform(Length),
   SelectedServer = lists:nth(RandomIndex, Servers),
   % Attempt to connect to the selected server
-  case ipfs:start_link(SelectedServer) of
+  case catch ipfs:start_link(SelectedServer) of
     {ok, Pid} ->
-      {ok, _VersionInfo} = ipfs:version(Pid),
-      Pid;
+      case catch ipfs:version(Pid) of
+        {ok, _VersionInfo} -> Pid;
+
+        Err ->
+          logger:info(
+            "Error connecting to ipfs node ~p, index ~p",
+            [Err, RandomIndex]
+          ),
+          % If connection fails, retry with the remaining servers
+          RemainingServers = Servers -- [SelectedServer],
+          select_server(RemainingServers, Length - 1)
+      end;
 
     Err ->
       logger:info(
