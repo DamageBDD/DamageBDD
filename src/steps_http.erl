@@ -90,7 +90,7 @@ gun_await(ConnPid, StreamRef, Context) ->
 gun_post(Config0, Context, Path, Headers, Data) ->
   ConnPid = get_gun_config(Config0, Context),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
-  logger:debug("Post ~p", [Headers]),
+  ?LOG_DEBUG("Post ~p", [Headers]),
   gun_await(ConnPid, StreamRef, Context).
 
 
@@ -215,7 +215,7 @@ ejsonpath_match(Path, Data, Expected, Context) ->
     UnExpected ->
       Mesg = "the object at path ~p is not ~p, body ~p it is ~p.",
       Args = [Path, Expected0, Data, UnExpected],
-      logger:info(Mesg, Args),
+      ?LOG_INFO(Mesg, Args),
       maps:put(fail, damage_utils:strf(Mesg, Args), Context)
   end.
 
@@ -250,7 +250,9 @@ step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
 
 step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
+  ?LOG_DEBUG("POST REQUEST HEADers ~p", [Context]),
   Headers = get_headers(Context, ?DEFAULT_HEADERS),
+  ?LOG_DEBUG("POST HEADERS ~p", [Headers]),
   gun_post(Config, Context, Path0, Headers, Data);
 
 step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
@@ -275,11 +277,7 @@ step(
     Config,
     Context,
     string:concat(maps:get(base_url, Context, ""), Path),
-    [
-      {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "damagebdd/1.0"},
-      {<<"content-type">>, "application/json"}
-    ]
+    get_headers(Context, ?DEFAULT_HEADERS)
   );
 
 step(
@@ -294,11 +292,7 @@ step(
     Config,
     Context,
     string:concat(maps:get(base_url, Context, ""), Path),
-    [
-      {<<"accept">>, "application/json"},
-      {<<"user-agent">>, "damagebdd/1.0"},
-      {<<"content-type">>, "application/json"}
-    ]
+    get_headers(Context, ?DEFAULT_HEADERS)
   );
 
 step(
@@ -334,7 +328,7 @@ step(
     [StatusCode, {headers, Headers}, Body] ->
       {_, CSRFToken} = lists:keyfind(<<"x-csrftoken">>, 1, Headers),
       {_, SessionId} = lists:keyfind(<<"x-sessionid">>, 1, Headers),
-      logger:debug(
+      ?LOG_DEBUG(
         "POSTResponse: ~p:~p:~p:~p:~p",
         [StatusCode, Headers, Body, CSRFToken, SessionId]
       ),
@@ -441,7 +435,7 @@ step(
   ["the response status must be one of", Statuses],
   _
 ) ->
-  logger:debug("the response status must be one of ~p.", [Statuses]),
+  ?LOG_DEBUG("the response status must be one of ~p.", [Statuses]),
   case maps:get(response, Context) of
     [_, {status_code, StatusCode}, _Headers, _Body] ->
       case
@@ -452,7 +446,7 @@ step(
         true -> Context;
 
         _ ->
-          logger:debug("the response status must be one of ~p.", [StatusCode]),
+          ?LOG_DEBUG("the response status must be one of ~p.", [StatusCode]),
           maps:put(
             fail,
             damage_utils:strf(
@@ -522,15 +516,21 @@ step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
   Context;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
-  maps:put(
-    headers,
-    [{list_to_binary(string:to_lower(Header)), list_to_binary(Value)}],
-    Context
-  );
+  ?LOG_DEBUG("HEADER CONTEXT ~p", [Context]),
+  Headers0 = get_headers(Context, ?DEFAULT_HEADERS),
+  ?LOG_DEBUG("HEADER CONTEXT 0 ~p", [Headers0]),
+  Headers =
+    lists:keymerge(
+      2,
+      [{list_to_binary(string:to_lower(Header)), list_to_binary(Value)}],
+      Headers0
+    ),
+  ?LOG_DEBUG("HEADER CONTEXT 1 ~p", [Headers]),
+  maps:put(headers, Headers, Context);
 
 step(_Config, Context, <<"Given">>, _N, ["I store cookies"], _) ->
   [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
-  logger:debug("Response Headers:  ~p", [Headers]),
+  ?LOG_DEBUG("Response Headers:  ~p", [Headers]),
   Cookies =
     lists:foldl(
       fun
@@ -540,7 +540,7 @@ step(_Config, Context, <<"Given">>, _N, ["I store cookies"], _) ->
       [],
       Headers
     ),
-  logger:debug("Response:  ~p", [Headers, Cookies]),
+  ?LOG_DEBUG("Response:  ~p", [Headers, Cookies]),
   maps:put(cookies, Cookies, Context);
 
 step(
@@ -555,7 +555,9 @@ step(
     [{status_code, 200}, _Headers, {body, Body}] ->
       Variable0 = list_to_atom(Variable),
       case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
-        {[Json0 | _], _} -> maps:put(Variable0, Json0, Context);
+        {[Json0 | _], _} ->
+          ?LOG_DEBUG("storing json at path ~p json ~p", [Path, Json0]),
+          maps:put(Variable0, Json0, Context);
 
         UnExpected ->
           maps:put(
@@ -569,6 +571,10 @@ step(
       end;
 
     UnExpected ->
+      ?LOG_DEBUG(
+        "failed to store json at path ~p error ~p",
+        [Path, UnExpected]
+      ),
       maps:put(
         fail,
         damage_utils:strf("Unexpected response ~p", [UnExpected]),

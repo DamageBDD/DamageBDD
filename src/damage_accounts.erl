@@ -21,6 +21,8 @@
 -export([check_invoices/0]).
 -export([delete_account/1]).
 -export([delete_resource/2]).
+-export([clean_secrets/3]).
+-export([test_account_context/0]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -151,6 +153,38 @@ trails() ->
       }
     ),
     trails:trail(
+      "/accounts/context",
+      damage_accounts,
+      #{action => context},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "get context variables for account",
+          produces => ["application/json"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Create a new invoice.",
+          produces => ["application/json"],
+          parameters
+          =>
+          [
+            #{
+              account_context => <<"account_context">>,
+              description => <<"custom context for account">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"map">>
+            }
+          ]
+        }
+      }
+    ),
+    trails:trail(
       "/accounts/reset_password",
       damage_accounts,
       #{action => reset_password},
@@ -268,6 +302,59 @@ get_invoices(ContractAddress) ->
   end.
 
 
+to_json(Req, #{action := context} = State) ->
+  logger:debug("context action ~p", [State]),
+  case damage_http:is_authorized(Req, State) of
+    {
+      true,
+      _Req0,
+      #{contract_address := ContractAddress, username := Username} = _State0
+    } ->
+      Config =
+        damage_http:get_config(
+          maps:put(
+            contract_address,
+            ContractAddress,
+            maps:put(username, Username, #{})
+          ),
+          Req,
+          false
+        ),
+      DefaultContext =
+        damage_accounts:get_account_context(
+          maps:put(
+            contract_address,
+            ContractAddress,
+            maps:put(
+              username,
+              Username,
+              damage:get_global_template_context(Config, #{})
+            )
+          )
+        ),
+      AccountContext0 =
+        case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+          {ok, AccountContext} ->
+            logger:debug("got account context ~p", [AccountContext]),
+            maps:merge(
+              maps:map(
+                fun (_Key, Value) -> maps:get(value, Value) end,
+                AccountContext
+              ),
+              maps:put(account_context, AccountContext, DefaultContext)
+            );
+
+          Other ->
+            logger:debug("got no context ~p", [Other]),
+            maps:put(account_context, #{}, DefaultContext)
+        end,
+      {jsx:encode(AccountContext0), Req, State};
+
+    Other ->
+      logger:debug("unauthorized ~p", [Other]),
+      {<<"Unauthorized.">>, Req, State}
+  end;
+
 to_json(Req, #{action := confirm} = State) ->
   % for some browsers who send in applicaion/json contenttype
   to_html(Req, State);
@@ -332,15 +419,88 @@ to_html(Req, #{action := reset_password} = State) ->
   {Body, Req, State}.
 
 
+get_account_context(
+  #{contract_address := ContractAddress, username := Username} = DefaultContext
+) ->
+  Context =
+    case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+      {ok, AccountContext} ->
+        logger:debug("got account context ~p", [AccountContext]),
+        maps:merge(
+          maps:map(
+            fun
+              (_Key, Value) when is_map(Value) -> maps:get(value, Value);
+              (_Key, Value) -> Value
+            end,
+            AccountContext
+          ),
+          AccountContext
+        );
+
+      Other ->
+        logger:debug("got no account context ~p", [Other]),
+        DefaultContext
+    end,
+  Password =
+    case damage_riak:get(?USER_BUCKET, Username) of
+      {ok, #{password := UserPw}} -> UserPw;
+      _ -> <<"">>
+    end,
+  maps:put(
+    damage_password,
+    binary_to_list(Password),
+    maps:put(damage_username, binary_to_list(Username), Context)
+  ).
+
+
+update_account_context(InboundContext, ContractAddress)
+when is_map(InboundContext) ->
+  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+    {ok, AccountContext} ->
+      logger:debug("update got account context ~p", [AccountContext]),
+      NewContext = maps:merge(AccountContext, InboundContext),
+      {ok, true} =
+        damage_riak:put(?CONTEXT_BUCKET, ContractAddress, NewContext),
+      {204, <<"">>};
+
+    Other ->
+      logger:debug("update got no account context ~p", [Other]),
+      {ok, true} =
+        damage_riak:put(?CONTEXT_BUCKET, ContractAddress, InboundContext),
+      {201, InboundContext}
+  end;
+
+update_account_context(_InboundContext, _ContractAddress) ->
+  {400, #{<<"message">> => <<"invalid context.">>}}.
+
+
 -spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
   {integer(), map()}.
+do_post_action(context, PostData, Req, State) ->
+  case damage_http:is_authorized(Req, State) of
+    {
+      true,
+      _Req0,
+      #{contract_address := ContractAddress, username := _Username} = _State0
+    } ->
+      logger:debug("context update post ~p", [PostData]),
+      update_account_context(
+        damage_utils:binary_to_atom_keys(maps:get(account_context, PostData)),
+        ContractAddress
+      );
+
+    Other ->
+      logger:debug("unauthorized ~p", [Other]),
+      {401, <<"Unauthorized.">>}
+  end;
+
 do_post_action(create, Data, _Req, _State) ->
   case damage_oauth:add_user(Data) of
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
   end;
 
-do_post_action(invoices, #{<<"amount">> := Amount}, _Req, _State)
+do_post_action(invoices, #{amount := Amount}, _Req, _State)
 when Amount > ?MAX_DAMAGE_INVOICE ->
   {
     400,
@@ -351,7 +511,7 @@ when Amount > ?MAX_DAMAGE_INVOICE ->
     }
   };
 
-do_post_action(invoices, #{<<"amount">> := Amount}, Req, State) ->
+do_post_action(invoices, #{amount := Amount}, Req, State) ->
   case damage_http:is_authorized(Req, State) of
     {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
       case
@@ -436,23 +596,34 @@ from_html(Req, #{action := Action} = State) ->
 
 
 from_json(Req, #{action := Action} = State) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {ok, Data, Req0} = cowboy_req:read_body(Req),
   logger:debug("post action ~p ", [Data]),
-  {Status0, Response0} =
-    case catch jsx:decode(Data, [return_maps]) of
-      badarg ->
-        {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
+  case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+    badarg ->
+      Response =
+        cowboy_req:set_resp_body(
+          jsx:encode(
+            #{status => <<"failed">>, message => <<"Json decode error.">>}
+          ),
+          Req0
+        ),
+      cowboy_req:reply(400, Response),
+      logger:debug("post response 400 ~p ", [Response]),
+      {stop, Response, State};
 
-      Data0 -> do_post_action(Action, Data0, Req, State)
-    end,
-  {
-    stop,
-    cowboy_req:reply(
-      Status0,
-      cowboy_req:set_resp_body(jsx:encode(Response0), Req)
-    ),
-    State
-  }.
+    Data0 ->
+      case do_post_action(Action, Data0, Req0, State) of
+        {204, <<"">>} ->
+          Response = cowboy_req:reply(204, Req0),
+          {stop, Response, State};
+
+        {Status0, Response0} ->
+          Response = cowboy_req:set_resp_body(jsx:encode(Response0)),
+          cowboy_req:reply(Status0, Response),
+          logger:debug("post response ~p ~p ", [Status0, Response]),
+          {stop, Response, State}
+      end
+  end.
 
 
 from_yaml(Req, #{action := Action} = State) ->
@@ -581,28 +752,42 @@ update_schedules(ContractAddress, JobId, _Cron) ->
   ?debugFmt("State ~p ", [Results]).
 
 
-get_account_context(DefaultContext) ->
-  ContractAddress = maps:get(contract_address, DefaultContext),
-  Username = maps:get(username, DefaultContext),
-  Context =
-    case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-      {ok, AccountContext} ->
-        logger:debug("got context ~p", [AccountContext]),
-        maps:merge(AccountContext, DefaultContext);
+clean_secrets(Context, Body, Args) ->
+  Password = list_to_binary(maps:get(damage_password, Context)),
+  AccessToken = maps:get(access_token, Context, <<"null">>),
+  Body1 = binary:replace(Body, AccessToken, <<"00REDACTED00">>),
+  Body0 = binary:replace(Body1, Password, <<"00REDACTED00">>),
+  Args0 = binary:replace(Args, Password, <<"00REDACTED00">>),
+  clean_context_secrets(Context, Body0, Args0).
 
-      Other ->
-        logger:debug("got context ~p", [Other]),
-        #{}
+
+clean_context_secrets(AccountContext, Body, Args) ->
+  %logger:debug("clean got context ~p", [AccountContext]),
+  maps:fold(
+    fun
+      (_Key, Value, {Body1, Args1}) when is_map(Value) ->
+        case maps:get(secret, Value) of
+          true ->
+            {
+              binary:replace(
+                Body1,
+                maps:get(value, Value, <<"">>),
+                <<"00REDACTED00">>
+              ),
+              binary:replace(
+                Args1,
+                maps:get(value, Value, <<"">>),
+                <<"00REDACTED00">>
+              )
+            };
+
+          _ -> {Body1, Args1}
+        end;
+
+      (_Key, _Value, {Body1, Args1}) -> {Body1, Args1}
     end,
-  Password =
-    case damage_riak:get(?USER_BUCKET, Username) of
-      {ok, #{password := UserPw}} -> UserPw;
-      _ -> <<"">>
-    end,
-  maps:put(
-    damage_password,
-    binary_to_list(Password),
-    maps:put(damage_username, binary_to_list(Username), Context)
+    {Body, Args},
+    AccountContext
   ).
 
 
@@ -659,3 +844,9 @@ delete_account(Email) ->
     ok -> ok;
     _ -> fail
   end.
+
+
+test_account_context() ->
+  Body = <<"blah ablasd assd a testpasswordaasdsdada">>,
+  Args = <<"blah ablasd assd a testpasswordaasdsdada">>,
+  clean_secrets(#{}, Body, Args).

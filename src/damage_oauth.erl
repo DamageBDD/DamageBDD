@@ -207,10 +207,10 @@ add_userdata(
   }.
 
 
-add_user(#{<<"business_name">> := BusinessName} = KycData) ->
+add_user(#{business_name := BusinessName} = KycData) ->
   add_user(maps:merge(KycData, #{<<"full_name">> => BusinessName}));
 
-add_user(#{<<"email">> := ToEmail} = KycData) ->
+add_user(#{email := ToEmail} = KycData) ->
   case damage_riak:get(?USER_BUCKET, ToEmail) of
     notfound ->
       logger:debug("account not found creating ~p", [ToEmail]),

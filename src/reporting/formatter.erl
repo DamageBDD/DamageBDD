@@ -60,6 +60,17 @@ invoke_formatters(Config, Keyword, Data) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+format(Config, step, {StepKeyWord, LineNo, Body, Args, Context, Status})
+when is_list(Body) ->
+  logger:debug("format ~p", [Body]),
+  {Body0, Args0} =
+    damage_accounts:clean_secrets(
+      Context,
+      list_to_binary(lists:flatten(string:join([[X] || X <- Body], " "))),
+      Args
+    ),
+  format(Config, step, {StepKeyWord, LineNo, Body0, Args0, Context, Status});
+
 format(Config, Keyword, Data) ->
   poolboy:transaction(
     formatter,
@@ -68,6 +79,7 @@ format(Config, Keyword, Data) ->
         gen_server:call(Worker, {invoke_formatters, Config, Keyword, Data})
     end
   ).
+
 
 terminate(Reason, _State) ->
   logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),

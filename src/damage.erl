@@ -44,7 +44,7 @@
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-  logger:info("Server ~p starting.~n", [self()]),
+  ?LOG_INFO("Server ~p starting.~n", [self()]),
   process_flag(trap_exit, true),
   {ok, undefined}.
 
@@ -52,7 +52,7 @@ init([]) ->
 handle_call(die, _From, State) -> {stop, {error, died}, dead, State};
 
 handle_call({execute, FeatureName}, _From, State) ->
-  logger:debug("handle_call execute/1 : ~p", [FeatureName]),
+  ?LOG_DEBUG("handle_call execute/1 : ~p", [FeatureName]),
   execute([], #{}, FeatureName),
   {reply, ok, State};
 
@@ -102,7 +102,7 @@ handle_cast(_Event, State) -> {noreply, State}.
 handle_info(_Info, State) -> {noreply, State}.
 
 terminate(Reason, _State) ->
-  logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+  ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
   ok.
 
 
@@ -195,7 +195,7 @@ publish_file(Config, Filename) ->
         "contracts/publish_feature.aes",
         [list_to_binary(ContractAddress), Hash, Fee]
       ),
-  logger:info("call AE contract  : ~p : ~p", [PubContractAddress, Result]),
+  ?LOG_INFO("call AE contract  : ~p : ~p", [PubContractAddress, Result]),
   PubFeature =
     #{
       feature_hash => Hash,
@@ -205,23 +205,14 @@ publish_file(Config, Filename) ->
       publish_contract_address => PubContractAddress
     },
   {ok, true} = damage_riak:put(?PUBLISHED_FEATURES_BUCKET, Hash, PubFeature),
-  logger:info("store pub feature  : ~p", [PubFeature]),
+  ?LOG_INFO("store pub feature  : ~p", [PubFeature]),
   PubFeature.
 
 
 parse_file(Filename, Context) ->
+  ?LOG_DEBUG("parse context: ~p", [Context]),
   case file:read_file(Filename) of
-    {ok, Source0} ->
-      Source =
-        list_to_binary(
-          mustache:render(
-            binary_to_list(Source0),
-            damage_utils:convert_context(maps:from_list(maps:to_list(Context)))
-          )
-        ),
-      logger:debug("Source: ~p", [Source]),
-      egherkin:parse(Source);
-
+    {ok, Source0} -> egherkin:parse(Source0);
     Else -> Else
   end.
 
@@ -277,7 +268,7 @@ execute_file(Config, Context, Filename) ->
       EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
       {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
       {api_url, DamageApi} = lists:keyfind(api_url, 1, Config),
-      logger:debug("RunDir ~p", [RunDir]),
+      ?LOG_DEBUG("RunDir ~p", [RunDir]),
       {ok, HashList} = damage_ipfs:add({directory, RunDir}),
       [#{<<"Hash">> := ReportHash}] =
         lists:filter(
@@ -294,13 +285,13 @@ execute_file(Config, Context, Filename) ->
           fun
             (I) ->
               #{<<"Hash">> := _Hash, <<"Name">> := Dir} = I,
-              logger:debug(
-                "Files ~p ~p",
-                [
-                  <<RunDir/binary, "/", FeatureFile/binary>>,
-                  <<"/", Dir/binary>>
-                ]
-              ),
+              %?LOG_DEBUG(
+              %  "Files ~p ~p",
+              %  [
+              %    <<RunDir/binary, "/", FeatureFile/binary>>,
+              %    <<"/", Dir/binary>>
+              %  ]
+              %),
               string:equal(
                 <<RunDir/binary, "/", FeatureFile/binary>>,
                 <<"/", Dir/binary>>
@@ -372,7 +363,7 @@ execute_feature_concurrent(Args, N, Acc) ->
 
 execute_feature(
   Config,
-  Context,
+  FeatureContext,
   FeatureName,
   LineNo,
   Tags,
@@ -384,10 +375,14 @@ execute_feature(
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   init_logging(RunId, RunDir),
   formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
-  [
-    execute_scenario(Config, Context, BackGround, Scenario)
-    || Scenario <- Scenarios
-  ],
+  lists:foldl(
+    fun
+      (Scenario, Context) ->
+        execute_scenario(Config, Context, BackGround, Scenario)
+    end,
+    FeatureContext,
+    Scenarios
+  ),
   deinit_logging(RunId).
 
 
@@ -399,6 +394,7 @@ execute_scenario(Config, Context, [], Scenario) ->
 
 execute_scenario(Config, Context, {_, BackGroundSteps}, Scenario) ->
   {LineNo, ScenarioName, Tags, Steps} = Scenario,
+  ?LOG_DEBUG("SCENARIO CONTEXT ~p", [Context]),
   formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
   lists:foldl(
     fun (S, C) -> execute_step(Config, S, C) end,
@@ -483,7 +479,7 @@ execute_step_module(
 execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 
 execute_step(Config, Step, #{fail := _} = Context) ->
-  logger:info("step skipped: ~p.", [Step]),
+  ?LOG_INFO("step skipped: ~p.", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
   formatter:format(
@@ -546,6 +542,7 @@ execute_step(Config, Step, Context) ->
 
     true -> true
   end,
+  %?LOG_DEBUG("STEP CONTEXT ~p ~p", [Body1, Context0]),
   Context0.
 
 

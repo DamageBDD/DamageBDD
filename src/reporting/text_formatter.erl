@@ -111,7 +111,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) -
       "    ~s ~s line:~p  ~s",
       [
         get_keyword(Config, Keyword),
-        lists:flatten(string:join([[X] || X <- StepStatement], " ")),
+        StepStatement,
         LineNo,
         get_status_text(Config, Status)
       ]
@@ -124,7 +124,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
       "    ~s ~s line:~p  ~s\n~s ",
       [
         get_keyword(Config, Keyword),
-        lists:flatten(string:join([[X] || X <- StepStatement], " ")),
+        StepStatement,
         %%     rows = [["Top left", "Top right"], ["Bottom left", "Bottom right"]],
         LineNo,
         get_status_text(Config, Status),
