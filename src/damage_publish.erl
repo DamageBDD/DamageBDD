@@ -19,6 +19,7 @@
 -export([from_json/2, allowed_methods/2, from_html/2]).
 -export([is_authorized/2]).
 -export([trails/0]).
+-include_lib("kernel/include/logger.hrl").
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
 -define(TRAILS_TAG, ["Publish Tests For Open Market Execution"]).
@@ -103,7 +104,7 @@ to_json(Req, State) ->
 
 to_text(Req, #{contract_address := ContractAddress} = State) ->
   Reports = do_query(#{contract_address => ContractAddress}),
-  logger:debug("list published contracts ~p ", [Reports]),
+  ?LOG_DEBUG("list published contracts ~p ", [Reports]),
   {jsx:encode(Reports), Req, State}.
 
 
@@ -220,7 +221,7 @@ publish_bdd(
       {400, jsx:encode(Response)};
 
     {parse_error, LineNo, Message} ->
-      logger:debug("failure ~p.", [Message]),
+      ?LOG_DEBUG("failure ~p.", [Message]),
       {
         400,
         jsx:encode(
@@ -238,6 +239,6 @@ publish_bdd(
       };
 
     ResultOk ->
-      logger:debug("No failure ~p.", [ResultOk]),
+      ?LOG_DEBUG("No failure ~p.", [ResultOk]),
       {200, jsx:encode(ResultOk)}
   end.

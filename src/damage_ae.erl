@@ -43,7 +43,7 @@ handle_call({balance, ContractAddress}, _From, Cache) ->
   end;
 
 handle_call({transaction, Data}, _From, State) ->
-  logger:debug("handle_call transaction/1 : ~p", [Data]),
+  ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
   {reply, ok, State}.
 
 
@@ -54,7 +54,6 @@ when is_list(ContractAddress) ->
 handle_cast({confirm_spend, ContractAddress}, Cache)
 when is_binary(ContractAddress) ->
   {_, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
-  logger:debug("handle_cast confirm_spend ~p ~p", [ContractAddress, Spend]),
   ContractCall =
     damage_ae:aecli(
       contract,
@@ -67,7 +66,7 @@ when is_binary(ContractAddress) ->
   #{decodedResult := #{balance := Balance, deployer := _Deployer} = _Balances} =
     ContractCall,
   NewCache = maps:put(ContractAddress, {Balance, 0}, Cache),
-  logger:debug("confirm spend ~p", [NewCache]),
+  ?LOG_DEBUG("confirm spend ~p", [NewCache]),
   {noreply, NewCache};
 
 handle_cast({spend, ContractAddress, Amount}, Cache)
@@ -76,14 +75,13 @@ when is_list(ContractAddress) ->
 
 handle_cast({spend, ContractAddress, Amount}, Cache)
 when is_binary(ContractAddress) ->
-  logger:debug("handle_cast spend", []),
   {Balance, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
   NewCache = maps:put(ContractAddress, {Balance, Spend + Amount}, Cache),
   {noreply, NewCache};
 
 handle_cast({update_balance, ContractAddress, Balance}, Cache)
 when is_binary(ContractAddress) ->
-  logger:debug("upate balance", []),
+  ?LOG_DEBUG("upate balance", []),
   {_, Spend} = maps:get(ContractAddress, Cache, {0, 0}),
   NewCache = maps:put(ContractAddress, {Balance, Spend}, Cache),
   {noreply, NewCache};
@@ -152,9 +150,9 @@ aecli(contract, call, ContractAddress, Contract, Func, Args) ->
         {contract_function, Func}
       ]
     ),
-  logger:debug("Cmd : ~p", [Cmd]),
+  %?LOG_DEBUG("Cmd : ~p", [Cmd]),
   Result = exec:run(Cmd, [stdout, stderr, sync]),
-  logger:debug("Result : ~p", [Result]),
+  %?LOG_DEBUG("Result : ~p", [Result]),
   {ok, [{stdout, [AeAccount0]}]} = Result,
   jsx:decode(AeAccount0, [{labels, atom}]).
 
@@ -172,7 +170,7 @@ aecli(contract, deploy, Contract, Args) ->
         {contract_args, binary_to_list(jsx:encode(Args))}
       ]
     ),
-  logger:debug("Cmd : ~p", [Cmd]),
+  ?LOG_DEBUG("Cmd : ~p", [Cmd]),
   case exec:run(Cmd, [stdout, stderr, sync]) of
     {error, [{exit_status, _}, {stderr, Stderr}]} ->
       logger:error("Error executing aecli ~p", [Stderr]);
@@ -260,7 +258,7 @@ balance(ContractAddress) ->
       } = ContractCall,
       Mesg =
         io:format("Balance of account ~p is ~p.", [ContractAddress, Balance]),
-      logger:debug(Mesg, []),
+      ?LOG_DEBUG(Mesg, []),
       gen_server:cast(
         DamageAEPid,
         {update_balance, ContractAddress, binary_to_integer(Balance)}
@@ -352,7 +350,7 @@ test_token_contract() ->
       "burn",
       [10]
     ),
-  logger:debug("called deployed token contract burn ~p", [Result1]),
+  ?LOG_DEBUG("called deployed token contract burn ~p", [Result1]),
   %#{decodedResult := _DecodedResult2, result := _Result2} =
   CallResult =
     aecli(
@@ -363,7 +361,7 @@ test_token_contract() ->
       "transfer",
       [ContractAddress1, 10]
     ),
-  logger:debug("called deployed token contract burn ~p", [CallResult]),
+  ?LOG_DEBUG("called deployed token contract burn ~p", [CallResult]),
   CallResult0 =
     aecli(
       contract,
@@ -373,4 +371,9 @@ test_token_contract() ->
       "balance",
       [ContractAddress1]
     ),
-  logger:debug("called deployed token contract burn ~p", [CallResult0]).
+  ?LOG_DEBUG("called deployed token contract burn ~p", [CallResult0]).
+
+%% Ref:
+%%
+%% https://github.com/aeternity/protocol/blob/fd179822fc70241e79cbef7636625cf344a08109/node/api/api_encoding.md
+%% https://github.com/aeternity/protocol/blob/fd179822fc70241e79cbef7636625cf344a08109/serializations.md

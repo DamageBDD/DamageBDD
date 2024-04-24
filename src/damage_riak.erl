@@ -3,6 +3,7 @@
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
+-include_lib("kernel/include/logger.hrl").
 
 -export(
   [
@@ -244,7 +245,7 @@ handle_call(
 
     {ok, RiakObject} ->
       Value = check_resolve_siblings(RiakObject, Connections),
-      %logger:debug(
+      %?LOG_DEBUG(
       %  "get RiakObject ~p ~p",
       %  [RiakObject, damage_utils:decrypt(Value)]
       %),
@@ -366,7 +367,7 @@ check_resolve_siblings(RiakObject, Connections) ->
     [] -> throw(no_value);
 
     [{_MD, V}] ->
-      %logger:debug(" resolve_siblings ~p", [V]),
+      %?LOG_DEBUG(" resolve_siblings ~p", [V]),
       V;
 
     Siblings ->
@@ -382,7 +383,7 @@ resolver_function({_MA, <<>>}, {_MB, _B}) -> false;
 resolver_function({_MA, _A}, {_MB, <<>>}) -> true;
 
 resolver_function({MA, A}, {MB, B}) ->
-  %logger:debug("Generic resolver ~p:~p - ~p:~p", [MA, A, MB, B]),
+  %?LOG_DEBUG("Generic resolver ~p:~p - ~p:~p", [MA, A, MB, B]),
   ARiakModified =
     date_util:now_to_seconds_hires(dict:fetch(<<"X-Riak-Last-Modified">>, MA)),
   BRiakModified =
@@ -401,7 +402,7 @@ resolver_function({MA, A}, {MB, B}) ->
 
       _ -> BRiakModified
     end,
-  logger:debug(
+  ?LOG_DEBUG(
     "resolution A1 ~p: ~p B1 ~p:~p",
     [A1, ARiakModified, B1, BRiakModified]
   ),
@@ -410,7 +411,7 @@ resolver_function({MA, A}, {MB, B}) ->
 
 conflict_resolver(Siblings) ->
   SortedList = lists:sort(fun resolver_function/2, Siblings),
-  logger:debug("conflict_resolver ~p", [SortedList]),
+  ?LOG_DEBUG("conflict_resolver ~p", [SortedList]),
   lists:nth(1, SortedList).
 
 

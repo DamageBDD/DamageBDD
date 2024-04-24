@@ -62,7 +62,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 format(Config, step, {StepKeyWord, LineNo, Body, Args, Context, Status})
 when is_list(Body) ->
-  logger:debug("format ~p", [Body]),
+  ?LOG_DEBUG("format ~p", [Body]),
   {Body0, Args0} =
     damage_accounts:clean_secrets(
       Context,

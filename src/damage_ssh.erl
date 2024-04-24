@@ -27,7 +27,7 @@
 -define(SSH_KEYS_BUCKET, {<<"Default">>, <<"SSHKeys">>}).
 
 connect_func(User, PeerAddr, Method) ->
-  logger:debug("user connecte ~p ~p ~p", [User, PeerAddr, Method]),
+  ?LOG_DEBUG("user connecte ~p ~p ~p", [User, PeerAddr, Method]),
   ok.
 
 
@@ -175,7 +175,7 @@ start() ->
     ).
 
 init([N]) ->
-  logger:debug("starting ssh_server_channel ~p ", [N]),
+  ?LOG_DEBUG("starting ssh_server_channel ~p ", [N]),
   {ok, #state{n = N}}.
 
 %% Function to find a free port in a given range
@@ -200,7 +200,7 @@ find_free_port_helper([]) -> undefined.
 
 
 handle_msg({ssh_channel_up, ChannelId, ConnectionRef}, State) ->
-  logger:debug("starting tunnel ~p ~p", [ConnectionRef, State]),
+  ?LOG_DEBUG("starting tunnel ~p ~p", [ConnectionRef, State]),
   StartPort = 8080,
   EndPort = 9000,
   ListenPort =

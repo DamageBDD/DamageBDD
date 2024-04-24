@@ -7,6 +7,7 @@
 -license("Apache-2.0").
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export(
   [
@@ -26,7 +27,6 @@
 bitcoin_req(Method, Params) ->
   {ok, BtcWallet} = application:get_env(damage, bitcoin_wallet),
   WalletPath = "/wallet/" ++ BtcWallet,
-  ?debugFmt("Bitcoin Wallet path: ~p", [WalletPath]),
   bitcoin_req(Method, Params, WalletPath).
 
 
@@ -67,8 +67,7 @@ bitcoin_req(Method, Params, Path) ->
     ),
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
-      ?debugFmt("POST Response: ~p ~p", [Status, Headers0]),
-      logger:debug("POST Response: ~p ~p", [Status, Headers0]);
+      ?LOG_DEBUG("POST Response: ~p ~p", [Status, Headers0]);
 
     {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),

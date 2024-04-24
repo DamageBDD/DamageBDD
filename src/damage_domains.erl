@@ -19,6 +19,7 @@
 -export([trails/0]).
 -export([is_allowed_domain/1]).
 -export([lookup_domain/1]).
+-include_lib("kernel/include/logger.hrl").
 
 -define(DOMAIN_TOKEN_BUCKET, {<<"Default">>, <<"DomainTokens">>}).
 -define(TRAILS_TAG, ["Test Reports"]).
@@ -117,7 +118,7 @@ lookup_domain(Domain) ->
       end;
 
     Other ->
-      logger:debug("dns record look up failed ~p ~p", [Domain, Other]),
+      ?LOG_DEBUG("dns record look up failed ~p ~p", [Domain, Other]),
       false
   end.
 
@@ -126,7 +127,7 @@ is_allowed_domain(Host) when is_binary(Host) ->
   is_allowed_domain(binary_to_list(Host));
 
 is_allowed_domain(Host) ->
-  logger:debug("Host check ~p", [Host]),
+  ?LOG_DEBUG("Host check ~p", [Host]),
   AllowedHosts =
     ["jsontest.com", "damagebdd.com", "run.damagebdd.com", "localhost"],
   case lists:any(

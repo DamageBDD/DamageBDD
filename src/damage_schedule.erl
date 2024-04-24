@@ -107,7 +107,7 @@ execute_bdd(ScheduleId, Concurrency) ->
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   BddFileName = filename:join(RunDir, string:join(["scheduled.feature"], "")),
   ok = damage_ipfs:get(ScheduleId, BddFileName),
-  logger:debug(
+  ?LOG_DEBUG(
     "scheduled job execution config ~p feature ~p scheduleid ~p.",
     [Config, BddFileName, ScheduleId]
   ),
@@ -182,7 +182,7 @@ from_text(Req, #{contract_address := ContractAddress} = State) ->
   ok = validate(Body),
   CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
   Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
-  logger:debug("Cron Spec: ~p", [CronSpec]),
+  ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
   {ok, #{<<"Hash">> := Hash}} =
     damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
   ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
@@ -243,7 +243,7 @@ delete_schedule(ScheduleId) ->
   damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId).
 
 load_schedule(ScheduleId) ->
-  logger:debug("Schedulid ~p", [ScheduleId]),
+  ?LOG_DEBUG("Schedulid ~p", [ScheduleId]),
   case catch damage_riak:get(?SCHEDULES_BUCKET, ScheduleId) of
     notfound -> logger:info("schedule notfound ~p", [ScheduleId]);
 

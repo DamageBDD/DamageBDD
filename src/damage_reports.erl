@@ -22,6 +22,7 @@
 -export([ls/1]).
 -export([content_types_accepted/2]).
 -export([trails/0]).
+-include_lib("kernel/include/logger.hrl").
 
 -define(TRAILS_TAG, ["Test Reports"]).
 -define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
@@ -142,7 +143,7 @@ to_html(
   Req,
   #{action := features, contract_address := _ContractAddress} = State
 ) ->
-  logger:debug("feature to ", []),
+  ?LOG_DEBUG("feature to ", []),
   to_text(Req, State);
 
 to_html(Req, State) -> to_text(Req, State).
@@ -158,7 +159,7 @@ to_text(
   Req,
   #{action := features, contract_address := _ContractAddress} = State
 ) ->
-  logger:debug("feature to ", []),
+  ?LOG_DEBUG("feature to ", []),
   case cowboy_req:binding(hash, Req) of
     undefined -> {<<"Path required">>, Req, State};
 
@@ -171,7 +172,7 @@ to_text(Req, #{contract_address := ContractAddress} = State) ->
   case cowboy_req:binding(hash, Req) of
     undefined ->
       Reports = do_query(#{contract_address => ContractAddress}),
-      logger:debug("list ipfs reports ~p ", [Reports]),
+      ?LOG_DEBUG("list ipfs reports ~p ", [Reports]),
       {jsx:encode(Reports), Req, State};
 
     Hash0 ->

@@ -2,6 +2,7 @@
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
+-include_lib("kernel/include/logger.hrl").
 
 -export(
   [
@@ -139,14 +140,14 @@ handle_call(
   {ok, Response} =
     case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
       {response, fin, Status, _RespHeaders} ->
-        logger:debug("Got fin ~p", [Status]),
+        ?LOG_DEBUG("Got fin ~p", [Status]),
         no_data;
 
       {response, nofin, _Status, _RespHeaders} ->
         gun:await_body(ConnPid, StreamRef);
 
       {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
-      Default -> logger:debug("Got unknown ~p ", [Default])
+      Default -> ?LOG_DEBUG("Got unknown ~p ", [Default])
     end,
   %% Parse the response JSON
   Invoice = json_decode(Response),
@@ -163,7 +164,7 @@ handle_call(
   {ok, ConnPid} = gun:open(Host, Port, Options),
   %% Construct the API request URL
   Path = lists:concat(["/v1/invoice/", binary_to_list(InvoiceId)]),
-  logger:debug("path ~p", [Path]),
+  ?LOG_DEBUG("path ~p", [Path]),
   %% Send the HTTP GET request
   StreamRef = gun:get(ConnPid, Path, Headers),
   Response =
@@ -175,7 +176,7 @@ handle_call(
         Body
     end,
   %% Parse the response JSON
-  logger:debug("Got invoices ~p ", [Response]),
+  ?LOG_DEBUG("Got invoices ~p ", [Response]),
   Invoice = json_decode(Response),
   gun:cancel(ConnPid, StreamRef),
   gun:close(ConnPid),
@@ -206,7 +207,7 @@ handle_call(
         Body
     end,
   %% Parse the response JSON
-  logger:debug("Got invoices ~p ", [Response]),
+  ?LOG_DEBUG("Got invoices ~p ", [Response]),
   #{<<"invoices">> := Invoices} = json_decode(Response),
   gun:cancel(ConnPid, StreamRef),
   gun:close(ConnPid),
@@ -229,14 +230,14 @@ handle_call(
   {ok, Response} =
     case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
       {response, fin, Status, _RespHeaders} ->
-        logger:debug("Got fin ~p", [Status]),
+        ?LOG_DEBUG("Got fin ~p", [Status]),
         no_data;
 
       {response, nofin, _Status, _RespHeaders} ->
         gun:await_body(ConnPid, StreamRef);
 
       {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
-      Default -> logger:debug("Got unknown ~p ", [Default])
+      Default -> ?LOG_DEBUG("Got unknown ~p ", [Default])
     end,
   %% Parse the response JSON
   Invoice = json_decode(Response),
@@ -252,7 +253,7 @@ handle_cast(_Msg, State) -> {noreply, State}.
 %% Handle system messages
 
 handle_info(Info, State) ->
-  logger:debug("Got info ~p ", [Info]),
+  ?LOG_DEBUG("Got info ~p ", [Info]),
   {noreply, State}.
 
 %% Terminate the server

@@ -412,7 +412,7 @@ step(
     [{status_code, _}, _Headers, {body, Body}] ->
       case catch jsx:decode(Body, [return_maps]) of
         {'EXIT', Msg} ->
-          logger:error("Unexpected ~p ~p", [Body, Msg]),
+          ?LOG_ERROR("Unexpected ~p ~p", [Body, Msg]),
           maps:put(fail, damage_utils:strf("invalid json: ~p", [Body]), Context);
 
         Json -> ejsonpath_match(Path, Json, Expected, Context)
@@ -423,7 +423,7 @@ step(
 
     UnExpected ->
       Msg = damage_utils:strf("Unexpected response ~p", [UnExpected]),
-      logger:error("Unexpected ~p", [Msg]),
+      ?LOG_ERROR("Unexpected ~p", [Msg]),
       maps:put(fail, Msg, Context)
   end;
 
@@ -458,7 +458,7 @@ step(
       end;
 
     UnExpected ->
-      logger:error("unexpected response in context ~p.", [UnExpected]),
+      ?LOG_ERROR("unexpected response in context ~p.", [UnExpected]),
       maps:put(
         fail,
         damage_utils:strf("Unexpected response ~p", [UnExpected]),

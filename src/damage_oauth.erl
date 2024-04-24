@@ -40,6 +40,7 @@
 -export([jwt_issuer/0]).
 -export([jwt_sign/2]).
 -export([jwt_verify/1]).
+-include_lib("kernel/include/logger.hrl").
 
 -define(ACCESS_TOKEN_BUCKET, {<<"Default">>, <<"AccessTokens">>}).
 -define(REFRESH_TOKEN_BUCKET, {<<"Default">>, <<"RefreshTokens">>}).
@@ -95,7 +96,7 @@ reset_password(#{token := Token}) ->
       end;
 
     notfound ->
-      logger:debug("confirm token not found ~p", [Token]),
+      ?LOG_DEBUG("confirm token not found ~p", [Token]),
       {error, <<"Invalid reset password link. Please try again.">>}
   end;
 
@@ -213,7 +214,7 @@ add_user(#{business_name := BusinessName} = KycData) ->
 add_user(#{email := ToEmail} = KycData) ->
   case damage_riak:get(?USER_BUCKET, ToEmail) of
     notfound ->
-      logger:debug("account not found creating ~p", [ToEmail]),
+      ?LOG_DEBUG("account not found creating ~p", [ToEmail]),
       case damage_accounts:create_contract() of
         #{status := <<"ok">>, ae_contract_address := ContractAddress} = Data ->
           Data0 =
@@ -275,7 +276,7 @@ delete_client(Id) -> delete(?CLIENT_BUCKET, Id).
 %%%===================================================================
 
 authenticate_user({Username, Password}, _Ctxt) ->
-  logger:debug("authenticate_user ~p   ~p ", [Username, Password]),
+  ?LOG_DEBUG("authenticate_user ~p   ~p ", [Username, Password]),
   case damage_riak:get(?USER_BUCKET, Username) of
     {ok, #{password := UserPw}} ->
       case Password of
@@ -284,17 +285,17 @@ authenticate_user({Username, Password}, _Ctxt) ->
       end;
 
     Error = {error, notfound} ->
-      logger:debug("authenticate_user error ~p ", [Error]),
+      ?LOG_DEBUG("authenticate_user error ~p ", [Error]),
       Error;
 
     notfound ->
-      logger:debug("authenticate_user error ~p ", [notfound]),
+      ?LOG_DEBUG("authenticate_user error ~p ", [notfound]),
       {error, notfound}
   end.
 
 
 authenticate_client(ClientId, ClientSecret) ->
-  logger:debug("authenticate_client ~p   ~p ", [ClientId, ClientSecret]),
+  ?LOG_DEBUG("authenticate_client ~p   ~p ", [ClientId, ClientSecret]),
   case catch damage_riak:get(?CLIENT_BUCKET, ClientId) of
     {ok, #{client_secret := ClientSecret}} -> {ok, {<<"client">>, ClientId}};
     {ok, #{client_secret := _WrongSecret}} -> {error, badsecret};

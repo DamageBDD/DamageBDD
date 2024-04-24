@@ -16,6 +16,7 @@
   ]
 ).
 -export([getinfo/0]).
+-include_lib("kernel/include/logger.hrl").
 
 -define(DEFAULT_TIMEOUT, 5000).
 
@@ -58,7 +59,7 @@ init([]) ->
       lnd_keyfile = KeyFile,
       macaroon = Macaroon
     },
-  logger:debug("State ~p ", [State]),
+  ?LOG_DEBUG("State ~p ", [State]),
   MacaroonBin = list_to_binary(Macaroon),
   % https://github.com/lightningnetwork/lnd/blob/master/docs/rest/websockets.md
   ProtocolString = <<"Grpc-Metadata-Macaroon+", MacaroonBin/binary>>,
@@ -88,15 +89,15 @@ init([]) ->
           ]
         ),
       gun:ws_send(ConnPid, StreamRef, {text, <<"{}">>}),
-      logger:debug("Got success ~p", [ConnPid]),
+      ?LOG_DEBUG("Got success ~p", [ConnPid]),
       {ok, State#state{streamref = StreamRef}};
 
     {error, Reason} ->
-      logger:debug("Got error ~p", [Reason]),
+      ?LOG_DEBUG("Got error ~p", [Reason]),
       {{error, Reason}, State};
 
     Reason ->
-      logger:debug("Got error ~p", [Reason]),
+      ?LOG_DEBUG("Got error ~p", [Reason]),
       {{error, Reason}, State}
   end.
 
@@ -108,11 +109,11 @@ handle_call(
 ) ->
   case gun:ws_send(ConnPid, StreamRef, {text, "{}"}) of
     {ok, ConnPid} ->
-      logger:debug("gun send ~p ", [ConnPid]),
+      ?LOG_DEBUG("gun send ~p ", [ConnPid]),
       {reply, ok, State};
 
     Other ->
-      logger:debug("gun send error  ~p ", [Other]),
+      ?LOG_DEBUG("gun send error  ~p ", [Other]),
       {reply, Other, State}
   end;
 
@@ -125,13 +126,13 @@ handle_call(Request, From, State) ->
 
 
 handle_cast(Msg, State) ->
-  logger:debug("got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
+  ?LOG_DEBUG("got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
   {noreply, State}.
 
 
 handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State)
 when StreamRef == State#state.streamref ->
-  logger:debug("upgraded ~p ", [StreamRef]),
+  ?LOG_DEBUG("upgraded ~p ", [StreamRef]),
   {noreply, State#state{conn_pid = ConnPid}};
 
 handle_info(

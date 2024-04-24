@@ -303,7 +303,7 @@ get_invoices(ContractAddress) ->
 
 
 to_json(Req, #{action := context} = State) ->
-  logger:debug("context action ~p", [State]),
+  ?LOG_DEBUG("context action ~p", [State]),
   case damage_http:is_authorized(Req, State) of
     {
       true,
@@ -335,7 +335,7 @@ to_json(Req, #{action := context} = State) ->
       AccountContext0 =
         case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
           {ok, AccountContext} ->
-            logger:debug("got account context ~p", [AccountContext]),
+            ?LOG_DEBUG("got account context ~p", [AccountContext]),
             maps:merge(
               maps:map(
                 fun (_Key, Value) -> maps:get(value, Value) end,
@@ -345,13 +345,13 @@ to_json(Req, #{action := context} = State) ->
             );
 
           Other ->
-            logger:debug("got no context ~p", [Other]),
+            ?LOG_DEBUG("got no context ~p", [Other]),
             maps:put(account_context, #{}, DefaultContext)
         end,
       {jsx:encode(AccountContext0), Req, State};
 
     Other ->
-      logger:debug("unauthorized ~p", [Other]),
+      ?LOG_DEBUG("unauthorized ~p", [Other]),
       {<<"Unauthorized.">>, Req, State}
   end;
 
@@ -365,7 +365,7 @@ to_json(Req, #{action := invoices} = State) ->
       {jsx:encode(get_invoices(ContractAddress)), Req, State};
 
     Other ->
-      logger:debug("Unexpected ~p", [Other]),
+      ?LOG_DEBUG("Unexpected ~p", [Other]),
       {<<"Unauthorized.">>, Req, State}
   end;
 
@@ -375,7 +375,7 @@ to_json(Req, #{action := balance} = State) ->
       {jsx:encode(balance(ContractAddress)), Req, State};
 
     Other ->
-      logger:debug("Unexpected ~p", [Other]),
+      ?LOG_DEBUG("Unexpected ~p", [Other]),
       {<<"Unauthorized.">>, Req, State}
   end.
 
@@ -406,7 +406,7 @@ to_html(Req, #{action := invoices} = State) ->
       {jsx:encode(Invoices), Req, State};
 
     Other ->
-      logger:debug("Unexpected ~p", [Other]),
+      ?LOG_DEBUG("Unexpected ~p", [Other]),
       {<<"Unauthorized.">>, Req, State}
   end;
 
@@ -425,7 +425,7 @@ get_account_context(
   Context =
     case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
       {ok, AccountContext} ->
-        logger:debug("got account context ~p", [AccountContext]),
+        ?LOG_DEBUG("got account context ~p", [AccountContext]),
         maps:merge(
           maps:map(
             fun
@@ -438,7 +438,7 @@ get_account_context(
         );
 
       Other ->
-        logger:debug("got no account context ~p", [Other]),
+        ?LOG_DEBUG("got no account context ~p", [Other]),
         DefaultContext
     end,
   Password =
@@ -457,14 +457,14 @@ update_account_context(InboundContext, ContractAddress)
 when is_map(InboundContext) ->
   case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
     {ok, AccountContext} ->
-      logger:debug("update got account context ~p", [AccountContext]),
+      ?LOG_DEBUG("update got account context ~p", [AccountContext]),
       NewContext = maps:merge(AccountContext, InboundContext),
       {ok, true} =
         damage_riak:put(?CONTEXT_BUCKET, ContractAddress, NewContext),
       {204, <<"">>};
 
     Other ->
-      logger:debug("update got no account context ~p", [Other]),
+      ?LOG_DEBUG("update got no account context ~p", [Other]),
       {ok, true} =
         damage_riak:put(?CONTEXT_BUCKET, ContractAddress, InboundContext),
       {201, InboundContext}
@@ -483,14 +483,14 @@ do_post_action(context, PostData, Req, State) ->
       _Req0,
       #{contract_address := ContractAddress, username := _Username} = _State0
     } ->
-      logger:debug("context update post ~p", [PostData]),
+      ?LOG_DEBUG("context update post ~p", [PostData]),
       update_account_context(
         damage_utils:binary_to_atom_keys(maps:get(account_context, PostData)),
         ContractAddress
       );
 
     Other ->
-      logger:debug("unauthorized ~p", [Other]),
+      ?LOG_DEBUG("unauthorized ~p", [Other]),
       {401, <<"Unauthorized.">>}
   end;
 
@@ -537,12 +537,12 @@ do_post_action(invoices, #{amount := Amount}, Req, State) ->
               ),
               [{{binary_index, "contract_address"}, [ContractAddress]}]
             ),
-          logger:debug("saved invoice ~p", [Invoice]),
+          ?LOG_DEBUG("saved invoice ~p", [Invoice]),
           {201, #{status => <<"ok">>, message => Invoice}};
 
         [OtherEnc | _] ->
           Other = damage_utils:decrypt(OtherEnc),
-          logger:debug("retrieved invoice ~p", [Other]),
+          ?LOG_DEBUG("retrieved invoice ~p", [Other]),
           case damage_riak:get(?INVOICE_BUCKET, Other) of
             {ok, InvoiceObj} ->
               {200, #{status => <<"ok">>, message => InvoiceObj}};
@@ -563,7 +563,7 @@ do_post_action(invoices, #{amount := Amount}, Req, State) ->
       end;
 
     Other ->
-      logger:debug("Unexpected ~p", [Other]),
+      ?LOG_DEBUG("Unexpected ~p", [Other]),
       {401, #{status => <<"noauth">>, message => <<"Unauthorized.">>}}
   end;
 
@@ -597,8 +597,8 @@ from_html(Req, #{action := Action} = State) ->
 
 from_json(Req, #{action := Action} = State) ->
   {ok, Data, Req0} = cowboy_req:read_body(Req),
-  logger:debug("post action ~p ", [Data]),
-  case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+    logger:debug("post action ~p ", [Data]),
+    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
     badarg ->
       Response =
         cowboy_req:set_resp_body(
@@ -608,7 +608,7 @@ from_json(Req, #{action := Action} = State) ->
           Req0
         ),
       cowboy_req:reply(400, Response),
-      logger:debug("post response 400 ~p ", [Response]),
+      ?LOG_DEBUG("post response 400 ~p ", [Response]),
       {stop, Response, State};
 
     Data0 ->
@@ -620,7 +620,7 @@ from_json(Req, #{action := Action} = State) ->
         {Status0, Response0} ->
           Response = cowboy_req:set_resp_body(jsx:encode(Response0)),
           cowboy_req:reply(Status0, Response),
-          logger:debug("post response ~p ~p ", [Status0, Response]),
+          ?LOG_DEBUG("post response ~p ~p ", [Status0, Response]),
           {stop, Response, State}
       end
   end.
@@ -633,7 +633,7 @@ from_yaml(Req, #{action := Action} = State) ->
       {ok, [Data0]} -> do_post_action(Action, Data0, Req, State);
       {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
     end,
-  logger:debug("post action ~p resp ~p", [Data, Response0]),
+  ?LOG_DEBUG("post action ~p resp ~p", [Data, Response0]),
   {
     stop,
     cowboy_req:reply(
@@ -664,7 +664,7 @@ delete_resource(Req, #{action := invoices} = State) ->
               #{payment_request := _PaymentRequest, r_hash := RHash} =
                 InvoiceObj
             } ->
-              logger:debug("retrieved invoice delete ~p", [InvoiceObj]),
+              ?LOG_DEBUG("retrieved invoice delete ~p", [InvoiceObj]),
               case lnd:cancel_invoice(RHash) of
                 #{<<"code">> := 5} ->
                   logger:info("Invoice not found ~p", [RHash]);
@@ -691,7 +691,7 @@ create_contract() ->
 
 store_profile(ContractAddress) ->
   % store config schedule etc
-  logger:debug("debug ~p", [ContractAddress]),
+  ?LOG_DEBUG("debug ~p", [ContractAddress]),
   ok.
 
 
@@ -762,7 +762,7 @@ clean_secrets(Context, Body, Args) ->
 
 
 clean_context_secrets(AccountContext, Body, Args) ->
-  %logger:debug("clean got context ~p", [AccountContext]),
+  %?LOG_DEBUG("clean got context ~p", [AccountContext]),
   maps:fold(
     fun
       (_Key, Value, {Body1, Args1}) when is_map(Value) ->
@@ -794,7 +794,7 @@ clean_context_secrets(AccountContext, Body, Args) ->
 check_invoice_foldn(Invoice, Acc) ->
   case maps:get(<<"state">>, Invoice) of
     <<"ACCEPTED">> ->
-      logger:debug("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
+      ?LOG_DEBUG("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
       Acc;
 
     <<"SETTLED">> ->
@@ -821,7 +821,7 @@ check_invoice_foldn(Invoice, Acc) ->
       end;
 
     <<"CANCELED">> ->
-      logger:debug("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
+      ?LOG_DEBUG("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
       Acc
   end.
 

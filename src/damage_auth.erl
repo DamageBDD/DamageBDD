@@ -4,6 +4,7 @@
 -export([content_types_provided/2, content_types_accepted/2]).
 -export([from_json/2, from_html/2, to_html/2]).
 -export([trails/0]).
+-include_lib("kernel/include/logger.hrl").
 
 -define(TRAILS_TAG, ["Authentication"]).
 
@@ -74,9 +75,9 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 from_json(Req, State) ->
   {ok, Data, Req0} = cowboy_req:read_body(Req),
-  logger:debug("received json ~p", [Data]),
+  ?LOG_DEBUG("received json ~p", [Data]),
   Params = jsx:decode(Data, [{return_maps, false}]),
-  logger:debug("decoded params", [Params]),
+  ?LOG_DEBUG("decoded params", [Params]),
   process_post(Params, Req0, State).
 
 
@@ -86,7 +87,7 @@ from_html(Req, State) ->
 
 
 process_post(Params, Req, State) ->
-  logger:debug(" form data: ~p ", [Params]),
+  ?LOG_DEBUG(" form data: ~p ", [Params]),
   {ok, Reply, _Req0} =
     case
     lists:max(
@@ -135,7 +136,7 @@ to_html(Req, State) ->
 %%%===================================================================
 
 process_password_grant(Req, Params) ->
-  logger:debug("Process grant ~p", [Params]),
+  ?LOG_DEBUG("Process grant ~p", [Params]),
   Username = proplists:get_value(<<"username">>, Params),
   Password = proplists:get_value(<<"password">>, Params),
   Scope = proplists:get_value(<<"scope">>, Params, <<"">>),
@@ -223,22 +224,22 @@ process_implicit_grant_stage2(Req, Params) ->
 %%%===================================================================
 
 issue_token({ok, Auth, Scope}, Req) ->
-  logger:debug("issue_token ~p ~p", [Auth, Req]),
+  ?LOG_DEBUG("issue_token ~p ~p", [Auth, Req]),
   {ok, {true, Response}} = oauth2:issue_token(Auth, Scope),
-  logger:debug("issue_token response ~p", [Response]),
+  ?LOG_DEBUG("issue_token response ~p", [Response]),
   emit_response(Response, Req);
 
 issue_token({ok, Auth}, Req) ->
-  logger:debug("issue_token ~p ~p", [Auth, Req]),
+  ?LOG_DEBUG("issue_token ~p ~p", [Auth, Req]),
   {ok, {true, Response}} = oauth2:issue_token(Auth, basic),
-  logger:debug("issue_token response ~p", [Response]),
+  ?LOG_DEBUG("issue_token response ~p", [Response]),
   emit_response(Response, Req);
 
 issue_token(Error, Req) -> emit_response(Error, Req).
 
 
 emit_response(AuthResult, Req) ->
-  logger:debug("Authresult ~p", [AuthResult]),
+  ?LOG_DEBUG("Authresult ~p", [AuthResult]),
   case AuthResult of
     {error, Reason} -> {400, jsx:encode([{error, to_binary(Reason)}]), Req};
 
@@ -262,7 +263,7 @@ emit_response(AuthResult, Req) ->
           Req,
           #{secure => true, max_age => 3600, path => "/"}
         ),
-      logger:debug("Authresult Response~p", [Response0]),
+      ?LOG_DEBUG("Authresult Response~p", [Response0]),
       {200, jsx:encode(proplists:to_map(Response0)), Req0}
   end.
 

@@ -19,6 +19,7 @@
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
 -export([trails/0]).
 -export([get_config/3]).
+-include_lib("kernel/include/logger.hrl").
 
 -define(CHROMEDRIVER, "http://localhost:9515/").
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
@@ -108,7 +109,7 @@ is_authorized(Req, State) ->
               };
 
             Noget ->
-              logger:debug(
+              ?LOG_DEBUG(
                 "is_authoddrized Identity ~p ~p",
                 [ResourceOwner, Noget]
               ),
@@ -200,7 +201,7 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
       {400, Response};
 
     {parse_error, LineNo, Message} ->
-      logger:debug("failure ~p.", [Message]),
+      ?LOG_DEBUG("failure ~p.", [Message]),
       {
         400,
         #{
@@ -292,7 +293,7 @@ from_json(Req, State) ->
 
 from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
-  logger:debug("Req ~p.", [Req]),
+  ?LOG_DEBUG("Req ~p.", [Req]),
   _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
   Concurrency =
     binary_to_integer(
