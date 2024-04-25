@@ -7,9 +7,11 @@
 -license("Apache-2.0").
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export([step/6]).
 -export([gun_get/4]).
+-export([test_get_headers/0]).
 
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
@@ -24,9 +26,10 @@
 ).
 
 get_headers(Context, DefaultHeaders) ->
-  proplists:from_map(
-    proplists:to_map(
-      lists:keymerge(1, maps:get(headers, Context, []), DefaultHeaders)
+  maps:to_list(
+    maps:merge(
+      maps:from_list(DefaultHeaders),
+      maps:from_list(maps:get(headers, Context, []))
     )
   ).
 
@@ -516,16 +519,11 @@ step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
   Context;
 
 step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
-  ?LOG_DEBUG("HEADER CONTEXT ~p", [Context]),
-  Headers0 = get_headers(Context, ?DEFAULT_HEADERS),
-  ?LOG_DEBUG("HEADER CONTEXT 0 ~p", [Headers0]),
+  Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
   Headers =
-    lists:keymerge(
-      2,
-      [{list_to_binary(string:to_lower(Header)), list_to_binary(Value)}],
-      Headers0
+    maps:to_list(
+      maps:put(list_to_binary(string:to_lower(Header)), Value, Headers0)
     ),
-  ?LOG_DEBUG("HEADER CONTEXT 1 ~p", [Headers]),
   maps:put(headers, Headers, Context);
 
 step(_Config, Context, <<"Given">>, _N, ["I store cookies"], _) ->
@@ -571,10 +569,7 @@ step(
       end;
 
     UnExpected ->
-      ?LOG_DEBUG(
-        "failed to store json at path ~p error ~p",
-        [Path, UnExpected]
-      ),
+      ?LOG_DEBUG("failed to store json at path ~p error ~p", [Path, UnExpected]),
       maps:put(
         fail,
         damage_utils:strf("Unexpected response ~p", [UnExpected]),
@@ -718,3 +713,29 @@ step(
     ["the json at path", JsonPath, "must be", Args],
     <<>>
   ).
+
+
+test_get_headers() ->
+  Context =
+    #{
+      port => 8080,
+      host => "localhost",
+      modified => <<"20240424223344">>,
+      headers
+      =>
+      [
+        {<<"accept">>, "application/json"},
+        {<<"content-type">>, "application/json"},
+        {<<"user-agent">>, "damagebdd/1.0"},
+        {<<"content-type">>, "application/x-yaml"}
+      ],
+      step_found => false,
+      example_context_variable
+      =>
+      #{value => <<"non redaacted">>, secret => false},
+      example_context_variable_redacted
+      =>
+      #{value => <<"ths will be redaacted">>, secret => true}
+    },
+  Headers = get_headers(Context, ?DEFAULT_HEADERS),
+  logger:info("Headers ~p", [Headers]).
