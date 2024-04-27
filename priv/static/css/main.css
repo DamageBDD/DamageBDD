@@ -124,3 +124,66 @@ select{
     white-space: nowrap;
     text-overflow: ellipsis;
   }
+
+#kycForm{
+    width: 30em;
+}
+
+#kycForm {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+input[type="password"], input[type="email"] {
+  /* common styles for labels and form fields inside kycForm */
+    margin: 8px;
+  width: 250px;
+  margin-right: 20px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+#kycForm :where(input, textarea) {
+  /* styles specific to form fields inside kycForm */
+  background-color: #f5f5f5;
+  color: #333;
+}
+
+#resetPasswdForm{
+    width: 30em;
+}
+#resetPasswdForm {
+  /*display: flex;
+  flex-wrap: wrap;*/
+}
+
+input[type="password"], input[type="email"] {
+  /* common styles for labels and form fields inside kycForm */
+    margin: 8px;
+  width: 250px;
+  margin-right: 20px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+#resetPasswdBtn{
+    margin: 8px;
+  width: 250px;
+  margin-right: 20px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+#loginResetPasswdBtn {
+  background: none!important;
+  border: none;
+  padding: 0!important;
+  /*optional*/
+  font-family: arial, sans-serif;
+  /*input has OS specific font-family*/
+  color: #069;
+  text-decoration: underline;
+  cursor: pointer;
+}

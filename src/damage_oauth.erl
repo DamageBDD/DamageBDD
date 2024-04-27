@@ -40,6 +40,7 @@
 -export([jwt_issuer/0]).
 -export([jwt_sign/2]).
 -export([jwt_verify/1]).
+
 -include_lib("kernel/include/logger.hrl").
 
 -define(ACCESS_TOKEN_BUCKET, {<<"Default">>, <<"AccessTokens">>}).
@@ -88,7 +89,11 @@ reset_password(#{token := Token}) ->
             ok,
             damage_utils:load_template(
               "reset_password.mustache",
-              #{email => Email, current_password => Token}
+              #{
+                email => Email,
+                current_password => Token,
+                current_password_type => <<"input">>
+              }
             )
           };
 
@@ -133,7 +138,7 @@ reset_password(
       end
   end;
 
-reset_password(#{<<"email">> := Email}) ->
+reset_password(#{email := Email}) ->
   TempPassword = list_to_binary(uuid:to_string(uuid:uuid4())),
   case damage_riak:get(?USER_BUCKET, Email) of
     notfound -> {error, <<"Invalid request.">>};
@@ -276,7 +281,6 @@ delete_client(Id) -> delete(?CLIENT_BUCKET, Id).
 %%%===================================================================
 
 authenticate_user({Username, Password}, _Ctxt) ->
-  ?LOG_DEBUG("authenticate_user ~p   ~p ", [Username, Password]),
   case damage_riak:get(?USER_BUCKET, Username) of
     {ok, #{password := UserPw}} ->
       case Password of

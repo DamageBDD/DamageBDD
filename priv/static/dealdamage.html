@@ -17,7 +17,6 @@
     <script src="/static/js/tabby.polyfills.min.js"></script>
     <script src="/static/js/highlight/languages/gherkin.min.js"></script>
     <link rel="stylesheet" type="text/css" href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@latest/build/styles/default.min.css'>
-    <script>hljs.highlightAll();</script>
 
   </head>
   <body>
@@ -53,26 +52,26 @@
     </div>
 
     <div class="modal micromodal-slide" id="login-modal" aria-hidden="true">
-      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+      <div class="modal__overlay" tabindex="-1" >
         <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
           <header class="modal__header">
             <h2 class="modal__title" id="modal-1-title">
-              Login
+              DamageBDD Login
             </h2>
-            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
           </header>
           <main class="modal__content" id="modal-1-content">
             <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
-              <label for="username">Username (Email):</label>
-              <input type="email" id="username" autocomplete="username" required>
+              <!--<label for="username">Username (Email):</label>-->
+              <input type="email" id="username" autocomplete="username" required placeholder="Email Address">
               <br>
-              <label for="password" >Password:</label>
-              <input type="password" id="password" autocomplete="current-password" required>
+              <!--<label for="password" >Password:</label>-->
+              <input type="password" id="password" autocomplete="current-password" required placeholder="Password">
+              <br>
+            <button id="loginResetPasswdBtn"  aria-label="Forgot Password.">Forgot Password</button>
             </form>
           </main>
           <footer class="modal__footer">
             <button id="loginSubmitBtn" class="modal__btn modal__btn-primary" aria-label="Login with email and password">Submit</button>
-            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Close</button>
           </footer>
         </div>
       </div>
@@ -97,60 +96,6 @@
       </div>
     </div>
 
-    <div class="modal micromodal-slide" id="settings-modal" aria-hidden="true">
-      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
-        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
-          <header class="modal__header">
-            <h2 class="modal__title" id="modal-1-title">
-              Settings
-            </h2>
-            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
-          </header>
-          <main class="modal__content" id="modal-1-content">
-            <form action="submit_settings" method="post">
-              <!--generate the html, javascript and css for a settings  form with settings to generate and display tokens to use in token based dns authorization, and a form to add a maximum of 100  context variables with the option of making the variable private hidden or obfuscated from reports and other outputs. -->
-              <fieldset>
-                <legend>DNS Auth Token Settings</legend>
-                <button type="button" onclick="generateToken()">Generate Token</button>
-                <div id="generatedToken"></div>
-              </fieldset>
-
-              <fieldset id="contextVariablesForm">
-                <legend>Context Variables Settings</legend>
-                <label for="variableName">Name:</label>
-                <input type="text" id="variableName" name="variableName" placeholder="Enter variable name">
-                <br>
-                <label for="value">Value:</label>
-                <input type="text" id="value" name="value" placeholder="Enter variable value">
-                <br>
-                <label for="varType">Type:</label>
-                <select id="varType" name="varType">
-                  <option value="integer">Integer</option>
-                  <option value="float">Float</option>
-                  <option value="boolean">Boolean</option>
-                  <option value="string">String</option>
-                </select>
-                <br>
-                <label for="variableVisibility">Visibility:</label>
-                <select id="variableVisibility" name="variableVisibility">
-                  <option value="public">Public</option>
-                  <option value="private">Private</option>
-                  <option value="obfuscated">Obfuscated</option>
-                </select>
-                <br>
-                <button type="button" onclick="addVariable()">Add Variable</button>
-                <div id="contextVariables"></div>
-              </fieldset>
-              <input type="submit" value="Submit">
-            </form>
-          </main>
-          <footer class="modal__footer">
-            <button class="modal__btn modal__btn-primary" data-micromodal-save aria-label="Save Settings">Save</button>
-            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
-          </footer>
-        </div>
-      </div>
-    </div>
 
     <ul data-tabs>
       <li><a data-tabby-default href="#execution-tab">Execute</a></li>
@@ -205,6 +150,60 @@
     <div id="benchmarks-tab">
     </div>
     <div id="market-tab">
+    </div>
+    <div class="modal micromodal-slide" id="settings-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              Settings
+            </h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <form action="submit_settings" method="post">
+              <!--generate the html, javascript and css for a settings  form with settings to generate and display tokens to use in token based dns authorization, and a form to add a maximum of 100  context variables with the option of making the variable private hidden or obfuscated from reports and other outputs. -->
+              <fieldset>
+                <legend>DNS Auth Token Settings</legend>
+                <button type="button" onclick="generateToken()">Generate Token</button>
+                <div id="generatedToken"></div>
+              </fieldset>
+
+              <fieldset id="contextVariablesForm">
+                <legend>Context Variables Settings</legend>
+                <label for="variableName">Name:</label>
+                <input type="text" id="variableName" name="variableName" placeholder="Enter variable name">
+                <br>
+                <label for="value">Value:</label>
+                <input type="text" id="value" name="value" placeholder="Enter variable value">
+                <br>
+                <label for="varType">Type:</label>
+                <select id="varType" name="varType">
+                  <option value="integer">Integer</option>
+                  <option value="float">Float</option>
+                  <option value="boolean">Boolean</option>
+                  <option value="string">String</option>
+                </select>
+                <br>
+                <label for="variableVisibility">Visibility:</label>
+                <select id="variableVisibility" name="variableVisibility">
+                  <option value="public">Public</option>
+                  <option value="private">Private</option>
+                  <option value="obfuscated">Obfuscated</option>
+                </select>
+                <br>
+                <button type="button" onclick="addVariable()">Add Variable</button>
+                <div id="contextVariables"></div>
+              </fieldset>
+              <input type="submit" value="Submit">
+            </form>
+          </main>
+          <footer class="modal__footer">
+            <button class="modal__btn modal__btn-primary" data-micromodal-save aria-label="Save Settings">Save</button>
+            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
+          </footer>
+        </div>
+      </div>
     </div>
   </body>
 </html>

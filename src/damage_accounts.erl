@@ -22,6 +22,7 @@
 -export([delete_account/1]).
 -export([delete_resource/2]).
 -export([clean_secrets/3]).
+-export([get_user_info/1]).
 -export([test_account_context/0]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -48,14 +49,14 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "Form to create an account on this DamageBDD server.",
-          produces => ["text/html"]
+          produces => ["text/html", "application/json", "application/x-yaml"]
         },
         put
         =>
         #{
           tags => ?TRAILS_TAG,
           description => "Create account using form ",
-          produces => ["text/html"],
+          produces => ["text/html", "application/json", "application/x-yaml"],
           parameters
           =>
           [
@@ -89,7 +90,7 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "do some action ",
-          produces => ["text/plain"]
+          produces => ["text/html", "application/json", "application/x-yaml"]
         }
       }
     ),
@@ -103,7 +104,7 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "Confirm account.",
-          produces => ["text/plain"],
+          produces => ["text/html", "application/json", "application/x-yaml"],
           parameters
           =>
           [
@@ -130,14 +131,14 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "list invoices for account",
-          produces => ["text/plain"]
+          produces => ["text/html", "application/json", "application/x-yaml"]
         },
         put
         =>
         #{
           tags => ?TRAILS_TAG,
           description => "Create a new invoice.",
-          produces => ["text/plain"],
+          produces => ["text/html", "application/json", "application/x-yaml"],
           parameters
           =>
           [
@@ -214,7 +215,7 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "Submit reset password form.",
-          produces => ["text/plain"],
+          produces => ["text/html", "application/json"],
           parameters
           =>
           [
@@ -392,7 +393,12 @@ to_html(Req, #{action := confirm} = State) ->
       Body =
         damage_utils:load_template(
           "reset_password.mustache",
-          #{email => Email, current_password => Password, body => <<"Test">>}
+          #{
+            email => Email,
+            current_password => Password,
+            body => <<"Test">>,
+            current_password_type => <<"hidden">>
+          }
         ),
       {Body, Req, State};
 
@@ -565,14 +571,37 @@ do_post_action(invoices, #{amount := Amount}, Req, State) ->
     Other ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),
       {401, #{status => <<"noauth">>, message => <<"Unauthorized.">>}}
-  end;
-
-do_post_action(reset_password, Data, _Req, _State) ->
-  case damage_oauth:reset_password(Data) of
-    {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
-    {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
   end.
 
+
+from_html(Req, #{action := reset_password} = State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  Data0 = maps:from_list(cow_qs:parse_qs(Data)),
+  {Status0, Response0} =
+    case damage_oauth:reset_password(Data0) of
+      {ok, Message} ->
+        {
+          200,
+          damage_utils:load_template(
+            "reset_password_response.html.mustache",
+            #{status => <<"ok">>, message => Message}
+          )
+        };
+
+      {error, Message} ->
+        {
+          400,
+          damage_utils:load_template(
+            "reset_password_response.html.mustache",
+            #{status => <<"failed">>, message => Message}
+          )
+        }
+    end,
+  {
+    stop,
+    cowboy_req:reply(Status0, cowboy_req:set_resp_body(Response0, Req)),
+    State
+  };
 
 from_html(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
@@ -597,8 +626,8 @@ from_html(Req, #{action := Action} = State) ->
 
 from_json(Req, #{action := Action} = State) ->
   {ok, Data, Req0} = cowboy_req:read_body(Req),
-    logger:debug("post action ~p ", [Data]),
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+  ?LOG_DEBUG("post action ~p ", [Data]),
+  case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
     badarg ->
       Response =
         cowboy_req:set_resp_body(
@@ -618,7 +647,7 @@ from_json(Req, #{action := Action} = State) ->
           {stop, Response, State};
 
         {Status0, Response0} ->
-          Response = cowboy_req:set_resp_body(jsx:encode(Response0)),
+          Response = cowboy_req:set_resp_body(jsx:encode(Response0), Req0),
           cowboy_req:reply(Status0, Response),
           ?LOG_DEBUG("post response ~p ~p ", [Status0, Response]),
           {stop, Response, State}
@@ -626,10 +655,34 @@ from_json(Req, #{action := Action} = State) ->
   end.
 
 
+from_yaml(Req, #{action := reset_password} = State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {Status0, Response0} =
+    case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
+      {ok, [Data0]} ->
+        case damage_oauth:reset_password(Data0) of
+          {ok, Message} -> {200, #{status => <<"ok">>, message => Message}};
+
+          {error, Message} ->
+            {400, #{status => <<"failed">>, message => Message}}
+        end;
+
+      {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+    end,
+  ?LOG_DEBUG("post action ~p resp ~p", [Data, Response0]),
+  {
+    stop,
+    cowboy_req:reply(
+      Status0,
+      cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+    ),
+    State
+  };
+
 from_yaml(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
-    case fast_yaml:decode(Data, [maps]) of
+    case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
       {ok, [Data0]} -> do_post_action(Action, Data0, Req, State);
       {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
     end,
@@ -843,6 +896,13 @@ delete_account(Email) ->
   case damage_riak:delete(?USER_BUCKET, Email) of
     ok -> ok;
     _ -> fail
+  end.
+
+
+get_user_info(Username) ->
+  case damage_riak:get(?USER_BUCKET, Username) of
+    {ok, #{password := UserPw}} -> UserPw;
+    _ -> <<"">>
   end.
 
 

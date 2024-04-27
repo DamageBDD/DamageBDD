@@ -1,47 +1,47 @@
 body {
-            color: rgb(51 65 85);
-            font-family: sans-serif;
-            font-size: 1rem;
-            font-weight: 300;
-            line-height: 1.5;
-            margin: 0;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
-        * {
-            box-sizing: border-box;
-        }
-        .container {
-            position: relative;
-        }
-        .container__textarea {
-            background: transparent;
-            position: relative;
-        }
-        .container__mirror {
-            position: absolute;
-            top: 0;
-            left: 0;
-            height: 100%;
-            width: 100%;
-            overflow: hidden;
-            color: transparent;
-        }
-        .container__suggestions {
-            border: 1px solid rgb(203 213 225);
-            background: #fff;
-            border-radius: 0.5rem;
-            display: none;
-            position: absolute;
-            width: 12rem;
-        }
-        .container__suggestion {
-            align-items: center;
-            cursor: pointer;
-            display: flex;
-            height: 2rem;
-            padding: 0 0.5rem;
-        }
-        .container__suggestion:not(:first-child) {
-            border-top: 1px solid rgb(203 213 225);
-        }
+    color: rgb(51 65 85);
+    font-family: sans-serif;
+    font-size: 1rem;
+    font-weight: 300;
+    line-height: 1.5;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+* {
+    box-sizing: border-box;
+}
+.container {
+    /*position: relative;*/
+}
+.container__textarea {
+    background: transparent;
+    position: relative;
+}
+.container__mirror {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    color: transparent;
+}
+.container__suggestions {
+    border: 1px solid rgb(203 213 225);
+    background: #fff;
+    border-radius: 0.5rem;
+    display: none;
+    position: absolute;
+    width: 12rem;
+}
+.container__suggestion {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    height: 2rem;
+    padding: 0 0.5rem;
+}
+.container__suggestion:not(:first-child) {
+    border-top: 1px solid rgb(203 213 225);
+}

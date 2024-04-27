@@ -6,39 +6,29 @@ Feature: Customer account management for DamageBDD
     When I make a POST request to "/accounts/create"
     """
 ---
-refund_address: "mohjSavDdQYHRYXcS3uS6ttaHP8amyvX78"
 customer_type: "Individual"
 full_name: "John Doe"
-date_of_birth: "1980-01-01"
-address: "123 Main Street, Sydney, NSW"
-identification_verification:
-  document_type: "Passport"
-  document_number: "A1234567"
 email: "john.doe@damagebdd.com"
-phone: "0412345678"
     """
     Then the response status must be "201"
     Then I print the response
-    Then the yaml at path "$.email" must be "john.doe@damagebdd.com"
+    Then the yaml at path "$.status" must be "ok"
 
   Scenario: User account creation and kyc for billing use of DamageBDD json endpoint
     Given I am using server "http://localhost:8080"
+    Given I am using smtp server "smtp.damagebdd.com"
     And I set "Content-Type" header to "application/json"
     When I make a POST request to "/accounts/create"
     """
     {
-        "refund_address": "mohjSavDdQYHRYXcS3uS6ttaHP8amyvX78",
         "customer_type": "Individual",
         "full_name": "John Doe",
-        "date_of_birth": "1980-01-01",
-        "address": "123 Main Street, Sydney, NSW",
-        "identification_verification": {
-            "document_type": "Passport",
-            "document_number": "A1234567"
-        },
         "email": "john.doe@damagebdd.com",
-        "phone": "0412345678"
     }
     """
     Then the response status must be "201"
-    Then the json at path "$.email" must be "john.doe@damagebdd.com"
+    Then the yaml at path "$.status" must be "ok"
+    Then "john.doe@damagebdd.com" must have received a email in "1 minute" with content
+    """
+Hello
+    """

@@ -4,6 +4,7 @@
 -export([content_types_provided/2, content_types_accepted/2]).
 -export([from_json/2, from_html/2, to_html/2]).
 -export([trails/0]).
+
 -include_lib("kernel/include/logger.hrl").
 
 -define(TRAILS_TAG, ["Authentication"]).
@@ -142,7 +143,15 @@ process_password_grant(Req, Params) ->
   Scope = proplists:get_value(<<"scope">>, Params, <<"">>),
   case oauth2:authorize_password({Username, Password}, Scope, basic) of
     {ok, {<<"user">>, Auth}} -> issue_token({ok, Auth}, Req);
-    _ -> {401, <<"Invalid username or password">>, Req}
+
+    _ ->
+      {
+        401,
+        jsx:encode(
+          #{message => <<"Invalid username or password">>, status => <<"fail">>}
+        ),
+        Req
+      }
   end.
 
 
