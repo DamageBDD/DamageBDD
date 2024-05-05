@@ -17,6 +17,8 @@
 -export([start_phase/3]).
 -export([get_trails/0]).
 
+-include_lib("kernel/include/logger.hrl").
+
 start(_StartType, _StartArgs) -> damage_sup:start_link().
 
 get_trails() ->
@@ -90,8 +92,13 @@ start_phase(start_trails_http, _StartType, []) ->
   metrics:init(),
   logger:info("Started Damage."),
   case init:get_plain_arguments() of
-    [_, "shell"] -> sync:go();
-    _ -> ok
+    [_, "shell"] ->
+      ?LOG_INFO("Sourc sync enabled.", []),
+      sync:go();
+
+    _ ->
+      ?LOG_INFO("Sourc sync disabled.", []),
+      ok
   end,
   ok.
 

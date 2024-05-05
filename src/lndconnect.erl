@@ -16,6 +16,7 @@
   ]
 ).
 -export([getinfo/0]).
+
 -include_lib("kernel/include/logger.hrl").
 
 -define(DEFAULT_TIMEOUT, 5000).

@@ -9,13 +9,11 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
+-include_lib("damage.hrl").
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
 
--define(PUBLISHED_FEATURES_BUCKET, {<<"Default">>, <<"PublishedFeatures">>}).
--define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
--define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 
 -export([start_link/1]).
 -export(

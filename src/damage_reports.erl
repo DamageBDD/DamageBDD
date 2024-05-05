@@ -22,10 +22,11 @@
 -export([ls/1]).
 -export([content_types_accepted/2]).
 -export([trails/0]).
+
 -include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Test Reports"]).
--define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
 
 trails() ->
   [

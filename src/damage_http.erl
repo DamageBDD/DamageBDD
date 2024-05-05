@@ -19,10 +19,10 @@
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
 -export([trails/0]).
 -export([get_config/3]).
--include_lib("kernel/include/logger.hrl").
 
--define(CHROMEDRIVER, "http://localhost:9515/").
--define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
+
 -define(TRAILS_TAG, ["Executing Tests"]).
 
 trails() ->

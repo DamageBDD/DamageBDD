@@ -19,6 +19,7 @@ step(
   {host, Host} = lists:keyfind(host, 1, Config),
   {port, Port} = lists:keyfind(port, 1, Config),
   {ok, ConnPid} = gun:open(Host, Port),
+  {ok, _} = gun:await_up(ConnPid),
   StreamRef = gun:ws_upgrade(ConnPid, Path, []),
   receive
     {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->

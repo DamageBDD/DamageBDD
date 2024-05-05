@@ -3,6 +3,7 @@
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
+
 -include_lib("kernel/include/logger.hrl").
 
 -export(

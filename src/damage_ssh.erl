@@ -6,6 +6,8 @@
 
 -license("Apache-2.0").
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(ssh_server_channel).
 
 -record(state, {n, id, cm}).

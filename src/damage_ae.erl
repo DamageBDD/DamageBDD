@@ -257,7 +257,7 @@ balance(ContractAddress) ->
         decodedResult := #{balance := Balance, deployer := _Deployer} = _Results
       } = ContractCall,
       Mesg =
-        io:format("Balance of account ~p is ~p.", [ContractAddress, Balance]),
+        ?LOG_INFO("Balance of account ~p is ~p.", [ContractAddress, Balance]),
       ?LOG_DEBUG(Mesg, []),
       gen_server:cast(
         DamageAEPid,

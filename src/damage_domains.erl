@@ -19,11 +19,11 @@
 -export([trails/0]).
 -export([is_allowed_domain/1]).
 -export([lookup_domain/1]).
--include_lib("kernel/include/logger.hrl").
 
--define(DOMAIN_TOKEN_BUCKET, {<<"Default">>, <<"DomainTokens">>}).
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
+
 -define(TRAILS_TAG, ["Test Reports"]).
--define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 
 trails() ->
   [

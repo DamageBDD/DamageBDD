@@ -28,14 +28,9 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
-
--define(MAX_DAMAGE_INVOICE, 4000).
--define(INVOICE_BUCKET, {<<"Default">>, <<"Invoices">>}).
--define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
--define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
--define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
+-include_lib("damage.hrl").
 -define(TRAILS_TAG, ["Account Management"]).
--define(INVOICES_SINCE, 30).
+
 
 trails() ->
   [
