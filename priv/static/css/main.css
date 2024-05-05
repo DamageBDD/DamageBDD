@@ -187,3 +187,7 @@ input[type="password"], input[type="email"] {
   text-decoration: underline;
   cursor: pointer;
 }
+#damageTextArea{
+        width: 550px;
+        height: 320px;
+}

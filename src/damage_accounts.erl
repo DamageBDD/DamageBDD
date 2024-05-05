@@ -575,11 +575,13 @@ from_html(Req, #{action := reset_password} = State) ->
   {Status0, Response0} =
     case damage_oauth:reset_password(Data0) of
       {ok, Message} ->
+      {ok, ApiUrl} = application:get_env(damage, api_url),
         {
           200,
           damage_utils:load_template(
             "reset_password_response.html.mustache",
-            #{status => <<"ok">>, message => Message}
+            #{status => <<"ok">>, message => Message,
+login_url=>ApiUrl}
           )
         };
 

@@ -59,6 +59,7 @@ let bearer_token = null;
 
 		const loginButton = document.getElementById("loginBtn");
 		const loginSubmitButton = document.getElementById("loginSubmitBtn");
+		const loginResetPasswdButton = document.getElementById("loginResetPasswdBtn");
 		const logoutSubmitButton = document.getElementById("logoutSubmitBtn");
 		const logoutButton = document.getElementById("logoutBtn");
 		const balanceDiv = document.getElementById("balanceDiv");
@@ -73,12 +74,17 @@ let bearer_token = null;
 			showHideLoginButton(loginButton, logoutButton);
 
 		};
+		function handleResetPasswordClick(event){
+			bearer_token = null;
+			event.preventDefault();
+		};
 		//function handleBalanceClick(event) {
 		//    event.preventDefault();
 		//    showBalanceDialog();
 		//};
 		loginSubmitButton.addEventListener("click", submitLoginForm);
 		logoutSubmitButton.addEventListener("click", handleLogoutClick);
+		loginResetPasswdBtn.addEventListener("click", handleResetPasswordClick);
 		//balanceDiv.addEventListener("click", handleBalanceClick);
 		showHideLoginButton(loginButton, logoutButton);
 		MicroModal.init({
@@ -87,13 +93,13 @@ let bearer_token = null;
 		var tabs =Tabby('[data-tabs]');
 		document.getElementById("damageForm").addEventListener("submit", function(event) {
 			event.preventDefault();
-			submitForm();
+			submitDamageForm();
 		});
 
-		document.getElementById("textarea").addEventListener("keydown", function(event) {
+		document.getElementById("damageTextArea").addEventListener("keydown", function(event) {
 			if (event.ctrlKey && event.key === "Enter") {
 				event.preventDefault();
-				submitForm();
+				submitDamageForm();
 			}
 		});
 	});
@@ -154,7 +160,7 @@ let bearer_token = null;
 		return;
 	}
 
-	function submitForm() {
+	function submitDamageForm() {
 		const inputText = document.getElementById("damageInput").value;
 		const concurrencyText = document.getElementById("difficulty").value;
 		const request = {
@@ -233,6 +239,55 @@ let bearer_token = null;
 					bearer_token = data.access_token;
 					toasts.push({
 						title: 'Login Success',
+						content: 'Authentication Successful.',
+						style: 'success'
+					});
+					showHideLoginButton();
+				} else {
+					toasts.push({
+						title: 'Login Failed',
+						content: 'Authentication Un-Successful.',
+						style: 'error'
+					});
+				}
+			})
+			.catch(error => {
+				console.error("Error:", error);
+			});
+		event.preventDefault();
+		return;
+	}
+	function submitForgotPasswordForm(event) {
+		const username = document.getElementById("username").value;
+
+		if (!validateEmail(username)) {
+			Toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			return;
+		}
+
+		const signupData = {
+			grant_type: "password",
+			scope: "basic",
+			username: username,
+			password: password
+		};
+
+		const headers = new Headers();
+		headers.append("Content-Type", "application/json");
+
+		fetch("/accounts/reset_password/", {
+			method: "POST",
+			headers: headers,
+			body: JSON.stringify(signupData)
+		})
+			.then(response => {
+				return response.json();
+			})
+			.then(data => {
+				if (data.access_token) {
+					bearer_token = data.access_token;
+					toasts.push({
+						title: 'Reset Password Success',
 						content: 'Authentication Successful.',
 						style: 'success'
 					});

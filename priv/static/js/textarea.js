@@ -15,7 +15,7 @@ const suggestions = loadData();
 
 document.addEventListener('DOMContentLoaded', () => {
     const containerEle = document.getElementById('container');
-    const textarea = document.getElementById('textarea');
+    const textarea = document.getElementById('damageTextArea');
 
     const mirroredEle = document.createElement('div');
     mirroredEle.textContent = textarea.value;

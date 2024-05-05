@@ -92,7 +92,7 @@ reset_password(#{token := Token}) ->
               #{
                 email => Email,
                 current_password => Token,
-                current_password_type => <<"input">>
+                current_password_type => <<"hidden">>
               }
             )
           };
