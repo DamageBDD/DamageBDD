@@ -67,7 +67,7 @@ get_gun_config(Config0, Context) ->
       ConnPid;
 
     _ ->
-          throw(
+      throw(
         <<
           "Host is not allowed please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html"
         >>
@@ -85,7 +85,11 @@ gun_await(ConnPid, StreamRef, Context) ->
       maps:put(response, response_to_list({Status, Headers, Body}), Context);
 
     Default ->
-      maps:put(fail, damage_utils:strf("Gun request failed: ~p", [Default]), Context)
+      maps:put(
+        fail,
+        damage_utils:strf("Gun request failed: ~p", [Default]),
+        Context
+      )
   end.
 
 
@@ -207,16 +211,22 @@ retry_get_ejsonmatch(
 
 ejsonpath_match(Path, Data, Expected, Context) ->
   Expected0 =
-    case re:run(Expected, "^[0-9]*$") of
-      nomatch -> Expected;
-      _ -> list_to_integer(Expected)
+    case Expected of
+      <<"false">> -> false;
+      <<"true">> -> true;
+
+      Expected1 when is_list(Expected1) ->
+        case re:run(Expected1, "^[0-9]*$") of
+          nomatch -> Expected;
+          _ -> list_to_integer(Expected)
+        end
     end,
   case catch ejsonpath:q(Path, Data) of
     {[Expected0 | _], _} -> Context;
 
-    UnExpected ->
-      Mesg = "the object at path ~p is not ~p, body ~p it is ~p.",
-      Args = [Path, Expected0, Data, UnExpected],
+    {[UnExpected], _} ->
+      Mesg = "the object at path ~p is not ~p, it is ~p.",
+      Args = [Path, Expected0, UnExpected],
       ?LOG_INFO(Mesg, Args),
       maps:put(fail, damage_utils:strf(Mesg, Args), Context)
   end.
