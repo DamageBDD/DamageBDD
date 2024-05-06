@@ -19,7 +19,7 @@
 -define(
   DEFAULT_HEADERS,
   [
-    {<<"accept">>, "application/json"},
+    {<<"accept">>, "application/json,text/html"},
     {<<"user-agent">>, "damagebdd/1.0"},
     {<<"content-type">>, "application/json"}
   ]
@@ -67,12 +67,11 @@ get_gun_config(Config0, Context) ->
       ConnPid;
 
     _ ->
-      {
-        error,
+          throw(
         <<
           "Host is not allowed please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html"
         >>
-      }
+      )
   end.
 
 
@@ -86,7 +85,7 @@ gun_await(ConnPid, StreamRef, Context) ->
       maps:put(response, response_to_list({Status, Headers, Body}), Context);
 
     Default ->
-      maps:put(fail, damage_utils:strf("POST failed: ~p", [Default]), Context)
+      maps:put(fail, damage_utils:strf("Gun request failed: ~p", [Default]), Context)
   end.
 
 

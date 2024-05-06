@@ -423,13 +423,31 @@ execute_step_module(
     metrics:update(success, Config),
     Context0
   catch
+    throw : Reason :Stack ->
+          ?LOG_ERROR(
+            #{
+              reason => Reason,
+              stacktrace => Stack,
+              step => Step,
+              step_module => StepModule
+            }
+          ),
+          metrics:update(fail, Config),
+          formatter:format(
+            Config,
+            step,
+            {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
+          ),
+          maps:put(
+            step_found,
+            true,
+            maps:put(failing_step, Step, maps:put(fail, Reason, Context))
+          );
     error : function_clause:Err0 ->
       case Err0 of
         [{_, step, _, _Loc} | _] -> Context;
 
         Err ->
-          logger:error("function fail ~p", [Err]),
-          metrics:update(fail, Config),
           Reason = <<"Step error">>,
           ?LOG_ERROR(
             #{
@@ -439,6 +457,7 @@ execute_step_module(
               step_module => StepModule
             }
           ),
+          metrics:update(fail, Config),
           formatter:format(
             Config,
             step,

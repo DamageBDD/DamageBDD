@@ -128,21 +128,28 @@ is_allowed_domain(Host) when is_binary(Host) ->
 
 is_allowed_domain(Host) ->
   ?LOG_DEBUG("Host check ~p", [Host]),
-  AllowedHosts =
-    ["jsontest.com", "damagebdd.com", "run.damagebdd.com", "localhost"],
-  case lists:any(
-    fun
-      (LHost) ->
-        case LHost of
-          Host -> true;
-          _ -> false
-        end
-    end,
-    AllowedHosts
-  ) of
-    false -> lookup_domain(Host);
-    true -> true
-  end.
+    case string:split(Host,".",trailing) of
+        [_,"lan"] ->
+            true;
+        [_,"local"] ->
+            true;
+        _ ->
+            AllowedHosts =
+                ["jsontest.com", "damagebdd.com", "run.damagebdd.com", "localhost"],
+            case lists:any(
+                fun
+                (LHost) ->
+                    case LHost of
+                    Host -> true;
+                    _ -> false
+                    end
+                end,
+                AllowedHosts
+            ) of
+                false -> lookup_domain(Host);
+                true -> true
+            end
+end.
 
 
 check_host_token(_Host, Token) ->
