@@ -309,7 +309,7 @@ execute_file(Config, Context, Filename) ->
       FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
       RunRecord =
         #{
-          run_id => RunId,
+          run_id => list_to_binary(RunId),
           feature_hash => FeatureHash,
           report_hash => ReportHash,
           start_time => StartTimestamp,
