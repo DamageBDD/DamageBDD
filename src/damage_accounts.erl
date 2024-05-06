@@ -29,8 +29,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 -include_lib("damage.hrl").
--define(TRAILS_TAG, ["Account Management"]).
 
+-define(TRAILS_TAG, ["Account Management"]).
 
 trails() ->
   [
@@ -575,13 +575,12 @@ from_html(Req, #{action := reset_password} = State) ->
   {Status0, Response0} =
     case damage_oauth:reset_password(Data0) of
       {ok, Message} ->
-      {ok, ApiUrl} = application:get_env(damage, api_url),
+        {ok, ApiUrl} = application:get_env(damage, api_url),
         {
           200,
           damage_utils:load_template(
             "reset_password_response.html.mustache",
-            #{status => <<"ok">>, message => Message,
-login_url=>ApiUrl}
+            #{status => <<"ok">>, message => Message, login_url => ApiUrl}
           )
         };
 

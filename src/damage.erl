@@ -14,7 +14,6 @@
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
 
-
 -export([start_link/1]).
 -export(
   [
@@ -423,26 +422,27 @@ execute_step_module(
     metrics:update(success, Config),
     Context0
   catch
-    throw : Reason :Stack ->
-          ?LOG_ERROR(
-            #{
-              reason => Reason,
-              stacktrace => Stack,
-              step => Step,
-              step_module => StepModule
-            }
-          ),
-          metrics:update(fail, Config),
-          formatter:format(
-            Config,
-            step,
-            {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
-          ),
-          maps:put(
-            step_found,
-            true,
-            maps:put(failing_step, Step, maps:put(fail, Reason, Context))
-          );
+    throw : Reason:Stack ->
+      ?LOG_ERROR(
+        #{
+          reason => Reason,
+          stacktrace => Stack,
+          step => Step,
+          step_module => StepModule
+        }
+      ),
+      metrics:update(fail, Config),
+      formatter:format(
+        Config,
+        step,
+        {StepKeyWord, LineNo, Body, Args, Context, {fail, Reason}}
+      ),
+      maps:put(
+        step_found,
+        true,
+        maps:put(failing_step, Step, maps:put(fail, Reason, Context))
+      );
+
     error : function_clause:Err0 ->
       case Err0 of
         [{_, step, _, _Loc} | _] -> Context;

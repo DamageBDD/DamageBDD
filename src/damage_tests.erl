@@ -50,7 +50,23 @@ trails() ->
         ]
       }
     },
-  [trails:trail("/tests/[:action]", damage_tests, [], Metadata)].
+  [
+    trails:trail(
+      "/status/",
+      damage_tests,
+      #{action => status},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to execute a test on this DamageBDD server.",
+          produces => ["text/html"]
+        }
+      }
+    ),
+    trails:trail("/tests/[:action]", damage_tests, [], Metadata)
+  ].
 
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
@@ -78,6 +94,9 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
+to_json(Req, #{action := status} = State) ->
+  {<<"{\"status\": \"ok\"}">>, Req, State};
+
 to_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   Body = jsx:decode(Data),
@@ -88,6 +107,9 @@ to_json(Req, State) ->
 
 
 to_text(Req, State) -> to_json(Req, State).
+
+to_html(Req, #{action := status} = State) ->
+  {<<"{\"status\": \"ok\"}">>, Req, State};
 
 to_html(Req, State) ->
   Body = damage_utils:load_template("create.mustache", #{body => <<"Test">>}),

@@ -16,4 +16,3 @@
 
 % Domains ---
 -define(DOMAIN_TOKEN_BUCKET, {<<"Default">>, <<"DomainTokens">>}).
-
