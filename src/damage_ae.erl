@@ -153,7 +153,7 @@ aecli(contract, call, ContractAddress, Contract, Func, Args) ->
   %?LOG_DEBUG("Cmd : ~p", [Cmd]),
   Result = exec:run(Cmd, [stdout, stderr, sync]),
   %?LOG_DEBUG("Result : ~p", [Result]),
-  {ok, [{stdout, [AeAccount0]}]} = Result,
+  {ok, [{stdout, [AeAccount0]}|_Rest]} = Result,
   jsx:decode(AeAccount0, [{labels, atom}]).
 
 
