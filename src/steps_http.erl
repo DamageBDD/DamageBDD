@@ -511,6 +511,50 @@ step(
       )
   end;
 
+step(Config, Context, <<"Then">>, N, ["I print the json at path", Path], _) ->
+  [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
+    maps:get(response, Context),
+  case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
+    {[Value | _], _} ->
+      formatter:format(
+        Config,
+        print,
+        {
+          <<"Then">>,
+          N,
+          ["Response Json at: \"", Path,"\""],
+          list_to_binary(damage_utils:strf("~s", [jsx:encode(Value)])),
+          Context,
+          success
+        }
+      ),
+      Context;
+
+    UnExpected ->
+      maps:put(
+        fail,
+        damage_utils:strf("the json at path ~p it is ~p.", [Path, UnExpected]),
+        Context
+      )
+  end;
+
+step(Config, Context, <<"Then">>, N, ["I print the response body"], _) ->
+  [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
+    maps:get(response, Context),
+  formatter:format(
+    Config,
+    print,
+    {
+      <<"Then">>,
+      N,
+      ["Response Body:"],
+      list_to_binary(damage_utils:strf("~s", [Body])),
+      Context,
+      success
+    }
+  ),
+  Context;
+
 step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
   Response = maps:get(response, Context, <<"">>),
   formatter:format(
@@ -520,7 +564,7 @@ step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
       <<"Then">>,
       N,
       ["Response:"],
-      list_to_binary(damage_utils:strf("~p", [Response])),
+          list_to_binary(jsx:encode(Response)),
       Context,
       success
     }

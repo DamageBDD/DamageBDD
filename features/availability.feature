@@ -58,4 +58,6 @@ Feature: Ensure availability of damagebdd system services
     }
     """
     Then the response status must be "200"
+    Then I print the response body
+    Then I print the json at path "$.response"
     Then the json at path "$.done" must be "true"
