@@ -262,7 +262,7 @@ step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
 
 step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
-  ?LOG_DEBUG("POST REQUEST HEADers ~p", [Context]),
+  ?LOG_DEBUG("POST REQUEST HEADERS ~p", [Context]),
   Headers = get_headers(Context, ?DEFAULT_HEADERS),
   ?LOG_DEBUG("POST HEADERS ~p", [Headers]),
   gun_post(Config, Context, Path0, Headers, Data);
@@ -522,7 +522,7 @@ step(Config, Context, <<"Then">>, N, ["I print the json at path", Path], _) ->
         {
           <<"Then">>,
           N,
-          ["Response Json at: \"", Path,"\""],
+          ["Response Json at: \"", Path, "\""],
           list_to_binary(damage_utils:strf("~s", [jsx:encode(Value)])),
           Context,
           success
@@ -564,7 +564,7 @@ step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
       <<"Then">>,
       N,
       ["Response:"],
-          list_to_binary(jsx:encode(Response)),
+      list_to_binary(jsx:encode(Response)),
       Context,
       success
     }

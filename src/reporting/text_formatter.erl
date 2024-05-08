@@ -137,10 +137,10 @@ format(
   print,
   {_Keyword, _LineNo, StepStatement, Args, _Context, _Status}
 ) ->
-  ok = write_file(Config, "\n~s \n\n~s\n", [StepStatement,Args]);
+  ok = write_file(Config, "\n~s \n\n~s\n", [StepStatement, Args]);
 
 format(Config, summary, #{report_dir := ReportDir, run_id := RunId}) ->
-  ok = write_file(Config, "Summary: ~s ~p\n", [ReportDir, RunId]).
+  ok = write_file(Config, "\nSummary: ~s ~p\n", [ReportDir, RunId]).
 
 
 format_args([]) -> <<"\n">>;
