@@ -18,6 +18,7 @@
 -export(
   [from_json/2, allowed_methods/2, from_html/2, from_yaml/2, is_authorized/2]
 ).
+-export([clean_reports/0]).
 -export([test/0]).
 -export([ls/1]).
 -export([content_types_accepted/2]).
@@ -218,8 +219,10 @@ to_text(Req, #{contract_address := ContractAddress} = State) ->
 
 
 get_record(Id) ->
-  {ok, Record} = damage_riak:get(?RUNRECORDS_BUCKET, damage_utils:decrypt(Id)),
-  Record.
+  case damage_riak:get(?RUNRECORDS_BUCKET, damage_utils:decrypt(Id)) of
+    {ok, Record} -> Record;
+    notfound -> none
+  end.
 
 
 do_query(#{contract_address := ContractAddress}) ->
@@ -235,7 +238,11 @@ do_query(#{contract_address := ContractAddress}) ->
 
     Found ->
       ?debugFmt(" reports exists data: ~p ", [Found]),
-      Results = [get_record(X) || X <- Found],
+      Results =
+        lists:filter(
+          fun (none) -> false; (_) -> true end,
+          [get_record(X) || X <- Found]
+        ),
       #{results => Results, status => <<"ok">>, length => length(Results)}
   end.
 
@@ -309,3 +316,28 @@ test() ->
     [#{<<"Objects">> := [#{<<"Hash">> := Hash, <<"Links">> := Links} | Rest]}]
   } = damage_ipfs:test(),
   logger:info("list ipfs directory ~p ~p ~p", [Hash, Links, Rest]).
+
+
+clean_record(#{run_id := RunId} = Record, Key) when is_list(RunId) ->
+  ?LOG_INFO("deleting invalid record~p", [Key]),
+  damage_riak:delete(?RUNRECORDS_BUCKET, damage_utils:decrypt(Key)),
+  Record;
+
+clean_record(Record, Key) ->
+  ?LOG_INFO("record ~p", [Key]),
+  Record.
+
+
+clean_record(RecordId) -> clean_record(get_record(RecordId), RecordId).
+
+clean_reports() ->
+  case damage_riak:list_keys(?RUNRECORDS_BUCKET) of
+    [] ->
+      logger:info("no reports for account"),
+      [];
+
+    Found ->
+      ?debugFmt(" reports exists data: ~p ", [Found]),
+      Results = [clean_record(X) || X <- Found],
+      #{results => Results, status => <<"ok">>, length => length(Results)}
+  end.
