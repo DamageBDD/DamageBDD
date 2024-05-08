@@ -21,8 +21,9 @@
 -export([do_schedule/3]).
 -export([do_schedule/5]).
 -export([do_schedule/6]).
--export([load_schedules/0]).
--export([load_schedules/1]).
+-export([load_all_schedules/0]).
+-export([list_schedules/1]).
+-export([list_all_schedules/0]).
 -export([delete_schedule/1]).
 -export([test_conflict_resolution/0]).
 -export([trails/0]).
@@ -104,14 +105,22 @@ execute_bdd(ScheduleId, Concurrency) ->
     [ScheduleId, ContractAddress, Hash]
   ),
   Config = damage:get_default_config(ContractAddress, Concurrency, []),
+  Context =
+    damage_accounts:get_account_context(
+      maps:put(
+        contract_address,
+        ContractAddress,
+        damage:get_global_template_context(Config, #{schedule_id => ScheduleId})
+      )
+    ),
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   BddFileName = filename:join(RunDir, string:join(["scheduled.feature"], "")),
-  ok = damage_ipfs:get(ScheduleId, BddFileName),
+  ok = damage_ipfs:get(Hash, BddFileName),
   ?LOG_DEBUG(
     "scheduled job execution config ~p feature ~p scheduleid ~p.",
-    [Config, BddFileName, ScheduleId]
+    [Config, BddFileName, Hash]
   ),
-  damage:execute_file(Config, BddFileName).
+  damage:execute_file(Config, Context, BddFileName).
 
 
 do_schedule({Concurrency, ScheduleId}, daily, every, Hour, Minute, AMPM) ->
@@ -183,7 +192,7 @@ from_text(Req, #{contract_address := ContractAddress} = State) ->
   CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
   Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
   ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
-  {ok, #{<<"Hash">> := Hash}} =
+  {ok, [#{<<"Hash">> := Hash}]} =
     damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
   ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
   Args = [{Concurrency, ScheduleId}] ++ CronSpec,
@@ -216,7 +225,7 @@ to_html(Req, State) -> to_json(Req, State).
 to_text(Req, State) -> to_json(Req, State).
 
 to_json(Req, #{contract_address := ContractAddress} = State) ->
-  Body = jsx:encode(load_schedules(ContractAddress)),
+  Body = jsx:encode(list_schedules(ContractAddress)),
   logger:info("Loading scheduled for ~p ~p", [ContractAddress, Body]),
   {Body, Req, State}.
 
@@ -225,16 +234,22 @@ save_schedule(
   #{contract_address := ContractAddress, hash := Hash, cronspec := _CronSpec} =
     Schedule
 ) ->
-  Obj = damage_riak:get(?SCHEDULES_BUCKET, Hash),
-  case catch riakc_obj:get_value(Obj) of
-    siblings -> logger:error("failed to load  schedule ~p", [Obj]);
-    Schedule -> logger:info("loaded  schedule ~p", [Schedule])
-  end,
+  Schedule0 =
+    case damage_riak:get(?SCHEDULES_BUCKET, Hash) of
+      notfound ->
+        logger:error("failed to load  schedule ~p", [Hash]),
+        Schedule;
+
+      {ok, ScheduleObj} ->
+        ?LOG_DEBUG("loaded  schedule ~p", [ScheduleObj]),
+        maps:merge(ScheduleObj, Schedule)
+    end,
+  ?LOG_DEBUG("saving  schedule ~p", [Schedule0]),
   {ok, true} =
     damage_riak:put(
       ?SCHEDULES_BUCKET,
       Hash,
-      jsx:encode(Schedule),
+      Schedule0,
       [{{binary_index, "contract_address"}, [ContractAddress]}]
     ).
 
@@ -242,38 +257,64 @@ save_schedule(
 delete_schedule(ScheduleId) ->
   damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId).
 
-load_schedule(ScheduleId) ->
-  ?LOG_DEBUG("Schedulid ~p", [ScheduleId]),
-  case catch damage_riak:get(?SCHEDULES_BUCKET, ScheduleId) of
-    notfound -> logger:info("schedule notfound ~p", [ScheduleId]);
+get_schedule(ScheduleId) when is_binary(ScheduleId) ->
+  case catch damage_utils:decrypt(ScheduleId) of
+    error ->
+      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
+      none;
 
-    Schedule ->
-      case catch jsx:decode(Schedule) of
-        {'EXIT', Error} ->
-          logger:error("failed to load  schedule ~p ~p", [Schedule, Error]);
+    {'EXIT', _Error} ->
+      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
+      none;
 
-        Ok -> logger:info("Loaded  schedule ~p", [Ok])
+    ScheduleIdDecrypted ->
+      case damage_riak:get(?SCHEDULES_BUCKET, ScheduleIdDecrypted) of
+        {ok, Schedule} ->
+          ?LOG_DEBUG("Loaded Schedulid ~p", [ScheduleIdDecrypted]),
+          Schedule;
+
+        _ -> none
       end
-  end.
+  end;
+
+get_schedule(_) -> none.
 
 
-load_schedules(ContractAddress) ->
-  [
-    load_schedule(ScheduleId)
-    ||
-    ScheduleId
-    <-
-    damage_riak:get_index(
-      ?SCHEDULES_BUCKET,
-      {binary_index, "contract_address"},
-      ContractAddress
-    )
-  ].
+list_schedules(ContractAddress) ->
+  ?LOG_DEBUG("Contract ~p", [ContractAddress]),
+  lists:filter(
+    fun (none) -> false; (_Other) -> true end,
+    [
+      get_schedule(damage_utils:decrypt(ScheduleId))
+      ||
+      ScheduleId
+      <-
+      damage_riak:get_index(
+        ?SCHEDULES_BUCKET,
+        {binary_index, "contract_address"},
+        ContractAddress
+      )
+    ]
+  ).
 
-load_schedules() ->
-  [
-    load_schedule(ScheduleId)
-    || ScheduleId <- damage_riak:list_keys(?SCHEDULES_BUCKET)
-  ].
 
-test_conflict_resolution() -> load_schedules().
+load_schedule(Schedule) ->
+  #{cronspec := Args} = Schedule,
+  logger:info("do_schedule: ~p", [Args]),
+  CronJob = apply(?MODULE, do_schedule, Args),
+  logger:info("load_schedule: ~p", [CronJob]).
+
+
+load_all_schedules() ->
+  [load_schedule(Schedule) || Schedule <- list_all_schedules()].
+
+list_all_schedules() ->
+  lists:filter(
+    fun (none) -> false; (_Other) -> true end,
+    [
+      get_schedule(ScheduleId)
+      || ScheduleId <- damage_riak:list_keys(?SCHEDULES_BUCKET)
+    ]
+  ).
+
+test_conflict_resolution() -> list_all_schedules().
