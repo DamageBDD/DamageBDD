@@ -391,7 +391,6 @@ execute_scenario(Config, Context, [], Scenario) ->
 
 execute_scenario(Config, Context, {_, BackGroundSteps}, Scenario) ->
   {LineNo, ScenarioName, Tags, Steps} = Scenario,
-  ?LOG_DEBUG("SCENARIO CONTEXT ~p", [Context]),
   formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
   lists:foldl(
     fun (S, C) -> execute_step(Config, S, C) end,

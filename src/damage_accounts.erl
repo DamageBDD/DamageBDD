@@ -420,38 +420,25 @@ to_html(Req, #{action := reset_password} = State) ->
   {Body, Req, State}.
 
 
-get_account_context(
-  #{contract_address := ContractAddress, username := Username} = DefaultContext
-) ->
-  Context =
-    case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-      {ok, AccountContext} ->
-        ?LOG_DEBUG("got account context ~p", [AccountContext]),
-        maps:merge(
-          maps:map(
-            fun
-              (_Key, Value) when is_map(Value) -> maps:get(value, Value);
-              (_Key, Value) -> Value
-            end,
-            AccountContext
-          ),
+get_account_context(#{contract_address := ContractAddress} = DefaultContext) ->
+  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+    {ok, AccountContext} ->
+      ?LOG_DEBUG("got account context ~p", [AccountContext]),
+      maps:merge(
+        maps:map(
+          fun
+            (_Key, Value) when is_map(Value) -> maps:get(value, Value);
+            (_Key, Value) -> Value
+          end,
           AccountContext
-        );
+        ),
+        AccountContext
+      );
 
-      Other ->
-        ?LOG_DEBUG("got no account context ~p", [Other]),
-        DefaultContext
-    end,
-  Password =
-    case damage_riak:get(?USER_BUCKET, Username) of
-      {ok, #{password := UserPw}} -> UserPw;
-      _ -> <<"">>
-    end,
-  maps:put(
-    damage_password,
-    binary_to_list(Password),
-    maps:put(damage_username, binary_to_list(Username), Context)
-  ).
+    Other ->
+      ?LOG_DEBUG("got no account context ~p", [Other]),
+      DefaultContext
+  end.
 
 
 update_account_context(InboundContext, ContractAddress)
@@ -802,12 +789,10 @@ update_schedules(ContractAddress, JobId, _Cron) ->
 
 
 clean_secrets(Context, Body, Args) ->
-  Password = list_to_binary(maps:get(damage_password, Context)),
+  %Password = list_to_binary(maps:get(damage_password, Context, "")),
   AccessToken = maps:get(access_token, Context, <<"null">>),
-  Body1 = binary:replace(Body, AccessToken, <<"00REDACTED00">>),
-  Body0 = binary:replace(Body1, Password, <<"00REDACTED00">>),
-  Args0 = binary:replace(Args, Password, <<"00REDACTED00">>),
-  clean_context_secrets(Context, Body0, Args0).
+  Body0 = binary:replace(Body, AccessToken, <<"00REDACTED00">>),
+  clean_context_secrets(Context, Body0, Args).
 
 
 clean_context_secrets(AccountContext, Body, Args) ->
