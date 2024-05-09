@@ -19,6 +19,7 @@
     get_index/3,
     get_index/4,
     get_index_range/4,
+    get_index_range/5,
     update_hll/3,
     hll_value/2
   ]
@@ -121,13 +122,16 @@ get_index({Type, Bucket}, Index, Key, Opts) ->
   ).
 
 get_index_range({Type, Bucket}, Index, StartKey, EndKey) ->
+  get_index_range({Type, Bucket}, Index, StartKey, EndKey, []).
+
+get_index_range({Type, Bucket}, Index, StartKey, EndKey, Opts) ->
   poolboy:transaction(
     ?MODULE,
     fun
       (Worker) ->
         gen_server:call(
           Worker,
-          {get_index_range, {Type, Bucket}, Index, StartKey, EndKey}
+          {get_index_range, {Type, Bucket}, Index, StartKey, EndKey, Opts}
         )
     end
   ).
@@ -337,6 +341,19 @@ handle_call(
   #state{connections = Connections} = State
 ) ->
   {ok, Res} = find_active_connection(Connections, list_keys, [Bucket]),
+  {reply, Res, State};
+
+handle_call(
+  {get_index_range, Bucket, Index, StartKey, EndKey, Opts},
+  _From,
+  #state{connections = Connections} = State
+) ->
+  {ok, {index_results_v1, Res, _, _}} =
+    find_active_connection(
+      Connections,
+      get_index_range,
+      [Bucket, Index, StartKey, EndKey, Opts]
+    ),
   {reply, Res, State};
 
 handle_call(

@@ -28,6 +28,7 @@
 -export([test_conflict_resolution/0]).
 -export([trails/0]).
 -export([is_authorized/2]).
+-export([clean_schedules/0]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -104,7 +105,11 @@ execute_bdd(ScheduleId, Concurrency) ->
     "scheduled job execution ~p ContractAddress ~p, Hash ~p.",
     [ScheduleId, ContractAddress, Hash]
   ),
-  Config = damage:get_default_config(ContractAddress, Concurrency, []),
+  Config =
+    [
+      {schedule_id, ScheduleId}
+      | damage:get_default_config(ContractAddress, Concurrency, [])
+    ],
   Context =
     damage_accounts:get_account_context(
       maps:put(
@@ -114,7 +119,8 @@ execute_bdd(ScheduleId, Concurrency) ->
       )
     ),
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-  BddFileName = filename:join(RunDir, string:join(["scheduled.feature"], "")),
+  {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+  BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
   ok = damage_ipfs:get(Hash, BddFileName),
   ?LOG_DEBUG(
     "scheduled job execution config ~p feature ~p scheduleid ~p.",
@@ -271,7 +277,7 @@ get_schedule(ScheduleId) when is_binary(ScheduleId) ->
       case damage_riak:get(?SCHEDULES_BUCKET, ScheduleIdDecrypted) of
         {ok, Schedule} ->
           ?LOG_DEBUG("Loaded Schedulid ~p", [ScheduleIdDecrypted]),
-          Schedule;
+          maps:put(id, ScheduleIdDecrypted, Schedule);
 
         _ -> none
       end
@@ -318,3 +324,34 @@ list_all_schedules() ->
   ).
 
 test_conflict_resolution() -> list_all_schedules().
+
+clean_schedule(ScheduleId) ->
+  case catch damage_utils:decrypt(ScheduleId) of
+    error ->
+      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
+      ok = damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId),
+      none;
+
+    {'EXIT', _Error} ->
+      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
+      ok = damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId),
+      none;
+
+    ScheduleIdDecrypted ->
+      case damage_riak:get(?SCHEDULES_BUCKET, ScheduleIdDecrypted) of
+        {ok, Schedule} ->
+          ?LOG_DEBUG("Loaded Schedulid ~p", [ScheduleIdDecrypted]),
+          Schedule;
+
+        Unexpected ->
+          ?LOG_DEBUG("ScheduleId Decryption error ~p ", [Unexpected]),
+          none
+      end
+  end.
+
+
+clean_schedules() ->
+  [
+    clean_schedule(Schedule)
+    || Schedule <- damage_riak:list_keys(?SCHEDULES_BUCKET)
+  ].

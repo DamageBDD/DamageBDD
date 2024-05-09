@@ -316,7 +316,11 @@ execute_file(Config, Context, Filename) ->
           execution_time => EndTimestamp - StartTimestamp,
           end_time => EndTimestamp,
           feature_title => FeatureTitle,
-          contract_address => ContractAddress
+          contract_address => ContractAddress,
+          schedule_id => case lists:keyfind(schedule_id, 1, Config) of
+            {schedule_id, ScheduleId} -> ScheduleId;
+            false -> false
+          end
         },
       store_runrecord(RunRecord),
       damage_ae:confirm_spend(ContractAddress),
@@ -335,15 +339,25 @@ store_runrecord(
     start_time := _StartTimestamp,
     execution_time := _ExecutionTime,
     end_time := _EndTimestamp,
-    contract_address := ContractAddress
+    contract_address := ContractAddress,
+    schedule_id := ScheduleId
   } = RunRecord
 ) ->
   damage_riak:put(
     ?RUNRECORDS_BUCKET,
     ReportHash,
     RunRecord,
-    [{{binary_index, "contract_address"}, [ContractAddress]}]
+    case ScheduleId of
+      false -> [{{binary_index, "contract_address"}, [ContractAddress]}];
+
+      ScheduleId ->
+        [
+          {{binary_index, "contract_address"}, [ContractAddress]},
+          {{binary_index, "schedule_id"}, [ScheduleId]}
+        ]
+    end
   ).
+
 
 execute_feature_concurrent(_Args, 0, Acc) -> Acc;
 

@@ -2,7 +2,7 @@
 
 -vsn("0.1.0").
 
--include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
@@ -173,7 +173,16 @@ to_text(
 to_text(Req, #{contract_address := ContractAddress} = State) ->
   case cowboy_req:binding(hash, Req) of
     undefined ->
-      Reports = do_query(#{contract_address => ContractAddress}),
+      Reports =
+        case cowboy_req:match_qs([{schedule_id, [], none}], Req) of
+          #{schedule_id := none} ->
+            do_query(#{contract_address => ContractAddress});
+
+          #{schedule_id := ScheduleId} ->
+            do_query(
+              #{contract_address => ContractAddress, schedule_id => ScheduleId}
+            )
+        end,
       ?LOG_DEBUG("list ipfs reports ~p ", [Reports]),
       {jsx:encode(Reports), Req, State};
 
@@ -225,6 +234,33 @@ get_record(Id) ->
   end.
 
 
+do_query(#{contract_address := ContractAddress, schedule_id := ScheduleId}) ->
+  case
+  damage_riak:get_index(
+    ?RUNRECORDS_BUCKET,
+    {binary_index, "schedule_id"},
+    ScheduleId
+  ) of
+    [] ->
+      logger:info("no reports for account"),
+      [];
+
+    Found ->
+      ?LOG_DEBUG(" reports exists data: ~p ", [Found]),
+      Results =
+        lists:filter(
+          fun
+            (none) -> false;
+
+            (#{contract_address := ContractAddress0})
+            when ContractAddress0 =:= ContractAddress ->
+              true
+          end,
+          [get_record(X) || X <- Found]
+        ),
+      #{results => Results, status => <<"ok">>, length => length(Results)}
+  end;
+
 do_query(#{contract_address := ContractAddress}) ->
   case
   damage_riak:get_index(
@@ -237,7 +273,7 @@ do_query(#{contract_address := ContractAddress}) ->
       [];
 
     Found ->
-      ?debugFmt(" reports exists data: ~p ", [Found]),
+      ?LOG_DEBUG(" reports exists data: ~p ", [Found]),
       Results =
         lists:filter(
           fun (none) -> false; (_) -> true end,
@@ -249,19 +285,19 @@ do_query(#{contract_address := ContractAddress}) ->
 
 do_action(<<"query_from_yaml">>, Req) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?debugFmt(" yaml data: ~p ", [Data]),
+  ?LOG_DEBUG(" yaml data: ~p ", [Data]),
   {ok, [Data0]} = fast_yaml:decode(Data, [maps]),
   do_query(Data0);
 
 do_action(<<"create_from_json">>, Req) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?debugFmt(" json data: ~p ", [Data]),
+  ?LOG_DEBUG(" json data: ~p ", [Data]),
   Data0 = jsx:decode(Data, [return_maps]),
   do_query(Data0);
 
 do_action(<<"create">>, Req) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?debugFmt("Form data ~p", [Data]),
+  ?LOG_DEBUG("Form data ~p", [Data]),
   FormData = maps:from_list(cow_qs:parse_qs(Data)),
   do_query(FormData).
 
@@ -337,7 +373,7 @@ clean_reports() ->
       [];
 
     Found ->
-      ?debugFmt(" reports exists data: ~p ", [Found]),
+      ?LOG_DEBUG(" reports exists data: ~p ", [Found]),
       Results = [clean_record(X) || X <- Found],
       #{results => Results, status => <<"ok">>, length => length(Results)}
   end.
