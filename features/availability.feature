@@ -47,6 +47,11 @@ Feature: Ensure availability of damagebdd system services
     Then the response status must be "200"
     Then the json at path "$.syncing" must be "false"
 
+  Scenario: ensure zx is able to resolve packages
+    Given I change directory to "/home/steven/devel/aeternity/Vanillae/bindings/erlang"
+    When I run the command "zx list deps"
+    Then the exit status must be "0"
+
   Scenario: ensure LLM nodes are available
     Given I am using server "http://threadripper0.lan:11434"
     When I make a POST request to "/api/generate"
