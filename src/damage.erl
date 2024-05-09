@@ -509,7 +509,7 @@ execute_step_module(
 execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 
 execute_step(Config, Step, #{fail := _} = Context) ->
-  ?LOG_INFO("step skipped: ~p.", [Step]),
+  %?LOG_INFO("step skipped: ~p.", [Step]),
   {LineNo, StepKeyWord, Body} = Step,
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
   formatter:format(

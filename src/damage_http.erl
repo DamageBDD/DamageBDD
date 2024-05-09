@@ -2,8 +2,6 @@
 
 -vsn("0.1.0").
 
--include_lib("eunit/include/eunit.hrl").
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -183,7 +181,7 @@ get_config(
         end;
 
       _ ->
-        ?debugFmt("execute_bdd concurrenc ~p", [Concurrency]),
+        ?LOG_DEBUG("execute_bdd concurrenc ~p", [Concurrency]),
         []
     end,
   damage:get_default_config(ContractAddress, Concurrency, Formatters).
@@ -231,7 +229,7 @@ check_execute_bdd(
   IP = damage_utils:get_ip(Req0),
   case throttle:check(damage_api_rate, IP) of
     {limit_exceeded, _, _} ->
-      lager:warning("IP ~p exceeded api limit", [IP]),
+      ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
       {error, 429, Req0};
 
     _ ->

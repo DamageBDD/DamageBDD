@@ -21,6 +21,7 @@
 ).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -define(DEFAULT_IPFS_TIMEOUT, 5000).
 
@@ -94,6 +95,7 @@ handle_call(
 ) ->
   Resp =
     ipfs:add(Connection, {directory, DirectoryPath}, ?DEFAULT_IPFS_TIMEOUT),
+  %?LOG_DEBUG("added data to ipfs node ~p", [Resp]),
   {reply, Resp, State};
 
 handle_call({get, Hash, FileName}, _From, #{connection := Connection} = State) ->

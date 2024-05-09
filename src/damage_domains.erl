@@ -127,7 +127,7 @@ is_allowed_domain(Host) when is_binary(Host) ->
   is_allowed_domain(binary_to_list(Host));
 
 is_allowed_domain(Host) ->
-  ?LOG_DEBUG("Host check ~p", [Host]),
+  %?LOG_DEBUG("Host check ~p", [Host]),
   case string:split(Host, ".", trailing) of
     [_, "lan"] -> true;
     [_, "local"] -> true;

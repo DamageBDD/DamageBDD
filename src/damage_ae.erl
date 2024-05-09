@@ -7,7 +7,6 @@
 -license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 
 -behaviour(gen_server).
@@ -239,6 +238,7 @@ sign_tx(UTx) ->
 %    return vdk_rlp.encode([tag_bytes, vsn_bytes, signatures, tx]);
 %}
 balance(ContractAddress) ->
+  ?LOG_DEBUG("Check balance", []),
   DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
   case gen_server:call(DamageAEPid, {balance, ContractAddress}) of
     {ok, Balance} -> Balance;
@@ -287,10 +287,11 @@ invalidate_cache() ->
 test_contract_call(AeAccount) ->
   JobId = <<"sdds">>,
   {ok, Nonce} = vanillae:next_nonce(AeAccount),
+  ?LOG_DEBUG("nonce ~p", [Nonce]),
   {ok, ContractData} =
     vanillae:contract_create(AeAccount, "contracts/account.aes", []),
-  {ok, sTx} = sign_tx(ContractData),
-  ?debugFmt("contract create ~p", [sTx]),
+  {ok, STx} = sign_tx(ContractData),
+  ?LOG_DEBUG("contract create ~p", [STx]),
   {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
   ContractCall =
     vanillae:contract_call(
@@ -305,15 +306,15 @@ test_contract_call(AeAccount) ->
       % Fee
       0,
       AACI,
-      sTx,
+      STx,
       "update_schedule",
       [JobId]
     ),
-  ?debugFmt("contract call ~p", [ContractCall]),
-  {ok, sTx} = sign_tx(ContractCall),
-  case vanillae:post_tx(sTx) of
+  ?LOG_DEBUG("contract call ~p", [ContractCall]),
+  {ok, STx} = sign_tx(ContractCall),
+  case vanillae:post_tx(STx) of
     {ok, #{"tx_hash" := Hash}} ->
-      ?debugFmt("contract call success ~p", [Hash]),
+      ?LOG_DEBUG("contract call success ~p", [Hash]),
       Hash;
 
     {ok, WTF} ->

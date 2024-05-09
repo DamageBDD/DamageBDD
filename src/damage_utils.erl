@@ -6,7 +6,7 @@
 
 -license("Apache-2.0").
 
--include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export(
   [
@@ -134,10 +134,12 @@ setup_vanillae_deps() ->
     lists:nth(2, string:lexemes(lists:droplast(os:cmd("zx --version")), " ")),
   Packages = [ZX, Vanillae | Deps],
   ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
+  ?LOG_DEBUG("Packages paths ~p", [Packages]),
   Converted =
     [string:join(string:lexemes(Package, "-"), "/") || Package <- Packages],
   PackagePaths =
     [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
+  ?LOG_DEBUG("Code paths ~p", [PackagePaths]),
   ok = code:add_paths(PackagePaths).
 
 
@@ -365,7 +367,6 @@ test_encrypt_decrypt() ->
   Nonce = crypto:strong_rand_bytes(16),
   KycKey0 = <<Key/binary, Nonce/binary>>,
   KycKey = base64:encode(KycKey0),
-  ?debugFmt("Kyckey ~p", [KycKey]),
   KYCInfo = <<"Sensitive KYC Information">>,
   CipherText = encrypt(KYCInfo, KycKey),
   KYCInfo = decrypt(CipherText, KycKey).
@@ -383,7 +384,7 @@ test_send_email() ->
     },
   TextBody = damage_utils:load_template("signup_email.txt.mustache", Context),
   HtmlBody = damage_utils:load_template("signup_email.html.mustache", Context),
-  ?debugFmt("Email body ~p~n htmlBody: ~p", [TextBody, HtmlBody]),
+  ?LOG_DEBUG("Email body ~p~n htmlBody: ~p", [TextBody, HtmlBody]),
   damage_utils:send_email(
     ToEmail,
     <<"DamageBDD Email Test">>,
