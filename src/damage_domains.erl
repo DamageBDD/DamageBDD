@@ -28,8 +28,8 @@
 trails() ->
   [
     trails:trail(
-      "/accounts/domains",
-      damage_accounts,
+      "/domains",
+      damage_domains,
       #{action => domains},
       #{
         get
@@ -37,15 +37,15 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "List domain tokens.",
-          produces => ["text/plain"],
+          produces => ["application/json"],
           parameters => []
         },
         put
         =>
         #{
           tags => ?TRAILS_TAG,
-          description => "Submit reset password form.",
-          produces => ["text/plain"],
+          description => "Create new domain auth.",
+          produces => ["application/json"],
           parameters
           =>
           [

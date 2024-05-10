@@ -13,10 +13,11 @@
 -export([init/2]).
 -export([content_types_accepted/2]).
 -export([content_types_provided/2]).
--export([to_html/2]).
 -export([to_json/2]).
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2]).
+-export([trails/0]).
+-export([is_authorized/2]).
 -export([execute_bdd/2]).
 -export([do_schedule/3]).
 -export([do_schedule/5]).
@@ -26,8 +27,6 @@
 -export([list_all_schedules/0]).
 -export([delete_schedule/1]).
 -export([test_conflict_resolution/0]).
--export([trails/0]).
--export([is_authorized/2]).
 -export([clean_schedules/0]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -78,9 +77,7 @@ is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 content_types_provided(Req, State) ->
   {
     [
-      {{<<"text">>, <<"html">>, '*'}, to_html},
-      {{<<"application">>, <<"json">>, []}, to_json},
-      {{<<"text">>, <<"plain">>, '*'}, to_text}
+      {{<<"application">>, <<"json">>, []}, to_json}
     ],
     Req,
     State
@@ -97,6 +94,73 @@ content_types_accepted(Req, State) ->
   }.
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+
+from_text(Req, #{contract_address := ContractAddress} = State) ->
+  {ok, Body, _} = cowboy_req:read_body(Req),
+  ok = validate(Body),
+  CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
+  Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
+  ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
+  {ok, [#{<<"Hash">> := Hash}]} =
+    damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
+  ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
+  Args = [{Concurrency, ScheduleId}] ++ CronSpec,
+  logger:info("do_schedule: ~p", [Args]),
+  CronJob = apply(?MODULE, do_schedule, Args),
+  Created = date_util:now_to_seconds_hires(os:timestamp()),
+  logger:info("Cron Job: ~p", [CronJob]),
+  {ok, true} =
+    save_schedule(
+      #{
+        created => Created,
+        modified => Created,
+        contract_address => ContractAddress,
+        hash => Hash,
+        concurrency => Concurrency,
+        cronspec => CronSpec
+      }
+    ),
+  %damage_accounts:update_schedules(ContractAddress, Hash, CronJob),
+  Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
+  {stop, cowboy_req:reply(201, Resp), State}.
+
+
+from_json(Req, State) -> from_text(Req, State).
+
+from_html(Req, State) -> from_text(Req, State).
+
+
+to_text(Req, State) -> to_json(Req, State).
+
+to_json(Req, #{contract_address := ContractAddress} = State) ->
+  Body = jsx:encode(list_schedules(ContractAddress)),
+  logger:info("Loading scheduled for ~p ~p", [ContractAddress, Body]),
+  {Body, Req, State}.
+
+
+save_schedule(
+  #{contract_address := ContractAddress, hash := Hash, cronspec := _CronSpec} =
+    Schedule
+) ->
+  Schedule0 =
+    case damage_riak:get(?SCHEDULES_BUCKET, Hash) of
+      notfound ->
+        logger:error("failed to load  schedule ~p", [Hash]),
+        Schedule;
+
+      {ok, ScheduleObj} ->
+        ?LOG_DEBUG("loaded  schedule ~p", [ScheduleObj]),
+        maps:merge(ScheduleObj, Schedule)
+    end,
+  ?LOG_DEBUG("saving  schedule ~p", [Schedule0]),
+  {ok, true} =
+    damage_riak:put(
+      ?SCHEDULES_BUCKET,
+      Hash,
+      Schedule0,
+      [{{binary_index, "contract_address"}, [ContractAddress]}]
+    ).
+
 
 execute_bdd(ScheduleId, Concurrency) ->
   %% Add the filter to allow PidToLog to send debug events
@@ -115,7 +179,7 @@ execute_bdd(ScheduleId, Concurrency) ->
       maps:put(
         contract_address,
         ContractAddress,
-        damage:get_global_template_context(Config, #{schedule_id => ScheduleId})
+        damage_context:get_global_template_context(#{schedule_id => ScheduleId})
       )
     ),
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
@@ -190,74 +254,6 @@ validate(Gherkin) ->
 
     {_LineNo, _Tags, _Feature, _Description, _BackGround, _Scenarios} -> ok
   end.
-
-
-from_text(Req, #{contract_address := ContractAddress} = State) ->
-  {ok, Body, _} = cowboy_req:read_body(Req),
-  ok = validate(Body),
-  CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
-  Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
-  ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
-  {ok, [#{<<"Hash">> := Hash}]} =
-    damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
-  ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
-  Args = [{Concurrency, ScheduleId}] ++ CronSpec,
-  logger:info("do_schedule: ~p", [Args]),
-  CronJob = apply(?MODULE, do_schedule, Args),
-  Created = date_util:now_to_seconds_hires(os:timestamp()),
-  logger:info("Cron Job: ~p", [CronJob]),
-  {ok, true} =
-    save_schedule(
-      #{
-        created => Created,
-        modified => Created,
-        contract_address => ContractAddress,
-        hash => Hash,
-        concurrency => Concurrency,
-        cronspec => CronSpec
-      }
-    ),
-  %damage_accounts:update_schedules(ContractAddress, Hash, CronJob),
-  Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
-  {stop, cowboy_req:reply(201, Resp), State}.
-
-
-from_json(Req, State) -> from_text(Req, State).
-
-from_html(Req, State) -> from_text(Req, State).
-
-to_html(Req, State) -> to_json(Req, State).
-
-to_text(Req, State) -> to_json(Req, State).
-
-to_json(Req, #{contract_address := ContractAddress} = State) ->
-  Body = jsx:encode(list_schedules(ContractAddress)),
-  logger:info("Loading scheduled for ~p ~p", [ContractAddress, Body]),
-  {Body, Req, State}.
-
-
-save_schedule(
-  #{contract_address := ContractAddress, hash := Hash, cronspec := _CronSpec} =
-    Schedule
-) ->
-  Schedule0 =
-    case damage_riak:get(?SCHEDULES_BUCKET, Hash) of
-      notfound ->
-        logger:error("failed to load  schedule ~p", [Hash]),
-        Schedule;
-
-      {ok, ScheduleObj} ->
-        ?LOG_DEBUG("loaded  schedule ~p", [ScheduleObj]),
-        maps:merge(ScheduleObj, Schedule)
-    end,
-  ?LOG_DEBUG("saving  schedule ~p", [Schedule0]),
-  {ok, true} =
-    damage_riak:put(
-      ?SCHEDULES_BUCKET,
-      Hash,
-      Schedule0,
-      [{{binary_index, "contract_address"}, [ContractAddress]}]
-    ).
 
 
 delete_schedule(ScheduleId) ->
@@ -355,3 +351,28 @@ clean_schedules() ->
     clean_schedule(Schedule)
     || Schedule <- damage_riak:list_keys(?SCHEDULES_BUCKET)
   ].
+
+update_schedules(ContractAddress, JobId, _Cron) ->
+  ContractCall =
+    damage_ae:aecli(
+      contract,
+      call,
+      binary_to_list(ContractAddress),
+      "contracts/account.aes",
+      "update_schedules",
+      [JobId]
+    ),
+  ?LOG_DEBUG("call AE contract ~p", [ContractCall]),
+  #{
+    decodedResult
+    :=
+    #{
+      btc_address := _BtcAddress,
+      btc_balance := _BtcBalance,
+      deso_address := _DesoAddress,
+      deso_balance := _DesoBalance,
+      usage := _Usage,
+      deployer := _Deployer
+    } = Results
+  } = ContractCall,
+  ?LOG_DEBUG("State ~p ", [Results]).
