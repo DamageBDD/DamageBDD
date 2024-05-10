@@ -560,14 +560,7 @@ step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
   formatter:format(
     Config,
     print,
-    {
-      <<"Then">>,
-      N,
-      ["Response:"],
-      list_to_binary(jsx:encode(Response)),
-      Context,
-      success
-    }
+    {<<"Then">>, N, ["Response:"], jsx:encode(Response), Context, success}
   ),
   Context;
 
