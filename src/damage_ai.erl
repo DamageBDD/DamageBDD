@@ -9,6 +9,7 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
+-include_lib("damage.hrl").
 
 -export([init/2]).
 
@@ -35,10 +36,9 @@
 -export([from_json/2, allowed_methods/2, from_html/2]).
 -export([is_authorized/2]).
 -export([trails/0]).
+-export([test_generate_bdd/0]).
 
 -define(TRAILS_TAG, ["AI functions."]).
--define(DAMAGE_AI_FEE, 10).
--define(DEFAULT_TIMEOUT, 5000).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -48,34 +48,45 @@ init([]) ->
   {ok, undefined}.
 
 
-handle_call({generate_bdd, Config, UserPrompt}, _From, State) ->
-  logger:debug("handle_call execute/1 : ~p", [UserPrompt]),
+read_stream(ConnPid, StreamRef) ->
+  case gun:await(ConnPid, StreamRef, 600000) of
+    {response, nofin, Status, _Headers0} ->
+      {ok, Body} = gun:await_body(ConnPid, StreamRef),
+      ?debugFmt("Got response ~p: ~p.", [Status, Body]),
+      ?LOG_DEBUG("POST Response: ~p", [Body]),
+      case jsx:decode(Body, [{labels, atom}, return_maps]) of
+        #{response := Response} = _Response ->
+          ?LOG_DEBUG("Response: ~p", [Response]),
+          read_stream(ConnPid, StreamRef);
+
+        NoChoice ->
+          ?debugFmt("Got function response ~p.", [NoChoice]),
+          ?LOG_DEBUG("POST Response: ~p", [NoChoice]),
+          notok
+      end;
+
+    Default ->
+      ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
+      Default
+  end.
+
+
+handle_call({generate_bdd, UserPrompt, _ContractAddress, _Req}, _From, State) ->
+  ?LOG_DEBUG("handle_call execute/1 : ~p", [UserPrompt]),
   {ok, MessagesYaml} = application:get_env(damage, openai_bdd_messages_yaml),
-  {ok, [Messages]} =
+  ?LOG_DEBUG("Loading messages from file ~p.", [MessagesYaml]),
+  {ok, [_Messages]} =
     fast_yaml:decode_from_file(MessagesYaml, [{plain_as_atom, true}]),
   {ok, FunctionsYaml} = application:get_env(damage, openai_bdd_functions_yaml),
-  {ok, [Functions]} =
+  {ok, [_Functions]} =
     fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
   {ok, Model} = application:get_env(damage, openai_bdd_model),
-  ?debugFmt("Loaded messages from file ~p. Data: ~p", [MessagesYaml, Messages]),
-  Prompt = <<"generate bdd for this usecase, respond in structured json. ">>,
-  Prompt0 = <<Prompt/binary, UserPrompt/binary>>,
-  PostData =
-    jsx:encode(
-      #{
-        model => list_to_binary(Model),
-        messages => Messages ++ [[{role, <<"user">>}, {content, Prompt0}]],
-        functions => Functions,
-        temperature => 0.7
-      }
-    ),
-  ?debugFmt(
-    " ~p. Prompt: ~p",
-    [Prompt0, PostData]
-  ),
-  {openai_api_host, Host} = lists:keyfind(openai_api_host, 1, Config),
-  {openai_api_path, Path} = lists:keyfind(openai_api_path, 1, Config),
-  {openai_api_port, Port} = lists:keyfind(openai_api_port, 1, Config),
+  Prompt0 = <<"generate bdd for this usecase, respond in structured json. ">>,
+  %Prompt0 = <<Prompt/binary, UserPrompt/binary>>,
+  PostData = jsx:encode(#{model => list_to_binary(Model), prompt => Prompt0}),
+  {ok, Host} = application:get_env(damage, openai_bdd_api_host),
+  {ok, Path} = application:get_env(damage, openai_bdd_api_path),
+  {ok, Port} = application:get_env(damage, openai_bdd_api_port),
   Headers =
     [
       {
@@ -86,50 +97,11 @@ handle_call({generate_bdd, Config, UserPrompt}, _From, State) ->
     ],
   {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
   StreamRef = gun:post(ConnPid, Path, Headers, PostData),
-  Resp =
-    case gun:await(ConnPid, StreamRef, 60000) of
-      {response, nofin, Status, _Headers0} ->
-        {ok, Body} = gun:await_body(ConnPid, StreamRef),
-        ?debugFmt("Got response ~p: ~p.", [Status, Body]),
-        logger:debug("POST Response: ~p", [Body]),
-        case jsx:decode(Body, [{labels, atom}, return_maps]) of
-          #{choices := [#{message := Message} | _], usage := _Usage} = _Response ->
-            #{
-              function_call
-              :=
-              #{name := <<"generate_python_code">>, arguments := Arguments}
-            } = Message,
-            logger:debug("Function Response: ~p", [Arguments]),
-            case jsx:decode(Arguments, [{labels, atom}, return_maps]) of
-              #{code := Code, explanation := Explanation} ->
-                {Code, Explanation};
-
-              InvalidArguments ->
-                ?debugFmt(
-                  "Got unexpected arguments for function call ~p.",
-                  [InvalidArguments]
-                ),
-                logger:debug("POST Response Arguments: ~p", [InvalidArguments]),
-                notok
-            end;
-
-          #{choices := Choices, usage := _Usage} = _Response -> Choices;
-
-          NoChoice ->
-            ?debugFmt("Got function response ~p.", [NoChoice]),
-            logger:debug("POST Response: ~p", [NoChoice]),
-            notok
-        end;
-
-      Default ->
-        ?debugFmt("Got unexpected response ~p.", [Default]),
-        logger:debug("POST Response: ~p", [Default]),
-        notok
-    end,
+  Resp = read_stream(ConnPid, StreamRef),
   {reply, Resp, State};
 
 handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
-  logger:debug("handle_call execute/1 : ~p", [FeatureFilename]),
+  ?LOG_DEBUG("handle_call execute/1 : ~p", [FeatureFilename]),
   try
     case egherkin:parse_file(FeatureFilename) of
       {failed, LineNo, Message} ->
@@ -194,7 +166,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
           {response, nofin, Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
             ?debugFmt("Got response ~p: ~p.", [Status, Body]),
-            logger:debug("POST Response: ~p", [Body]),
+            ?LOG_DEBUG("POST Response: ~p", [Body]),
             case jsx:decode(Body, [{labels, atom}, return_maps]) of
               #{choices := [#{message := Message} | _], usage := _Usage} =
                 _Response ->
@@ -203,7 +175,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
                   :=
                   #{name := <<"generate_python_code">>, arguments := Arguments}
                 } = Message,
-                logger:debug("Function Response: ~p", [Arguments]),
+                ?LOG_DEBUG("Function Response: ~p", [Arguments]),
                 case jsx:decode(Arguments, [{labels, atom}, return_maps]) of
                   #{code := Code, explanation := Explanation} ->
                     ?debugFmt(
@@ -217,7 +189,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
                       "Got unexpected arguments for function call ~p.",
                       [InvalidArguments]
                     ),
-                    logger:debug(
+                    ?LOG_DEBUG(
                       "POST Response Arguments: ~p",
                       [InvalidArguments]
                     ),
@@ -228,13 +200,13 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
 
               NoChoice ->
                 ?debugFmt("Got function response ~p.", [NoChoice]),
-                logger:debug("POST Response: ~p", [NoChoice]),
+                ?LOG_DEBUG("POST Response: ~p", [NoChoice]),
                 notok
             end;
 
           Default ->
             ?debugFmt("Got unexpected response ~p.", [Default]),
-            logger:debug("POST Response: ~p", [Default]),
+            ?LOG_DEBUG("POST Response: ~p", [Default]),
             notok
         end
     end
@@ -277,7 +249,7 @@ handle_cast({run_python_server, Config, Context, Code}, State) ->
 
     Err ->
       ?debugFmt("Got unexpected error ~p.", [Err]),
-      logger:debug("Got  unexpected: ~p", [Err]),
+      ?LOG_DEBUG("Got  unexpected: ~p", [Err]),
       notok
   end,
   {noreply, State}.
@@ -304,12 +276,7 @@ generate_code(Config, FeatureFilename) ->
         )
     end
   ).
-get_config(ContractAddress) ->
-    Config = 
-  damage:get_default_config(ContractAddress, 1, []),
-    [
-{openai_bdd_functions_yaml
-    
+
 generate_bdd(UserPrompt, ContractAddress, Req) ->
   poolboy:transaction(
     ?MODULE,
@@ -317,7 +284,7 @@ generate_bdd(UserPrompt, ContractAddress, Req) ->
       (Worker) ->
         gen_server:call(
           Worker,
-          {generate_bdd, Config, UserPrompt},
+          {generate_bdd, UserPrompt, ContractAddress, Req},
           ?DEFAULT_TIMEOUT
         )
     end
@@ -460,7 +427,8 @@ check_generate_bdd(
   #{contract_address := ContractAddress} = _State,
   Req0
 ) ->
-      generate_bdd(UserPrompt, ContractAddress, Req0).
+  generate_bdd(UserPrompt, ContractAddress, Req0).
+
 %  case damage_ae:balance(ContractAddress) of
 %    Balance when Balance >= ?DAMAGE_AI_FEE ->
 %      generate_bdd(UserPrompt, ContractAddress, Req0);
@@ -470,3 +438,11 @@ check_generate_bdd(
 %        logger:info("Damage AI ~p ", [Msg]),
 %      {400, Msg}
 %  end.
+test_generate_bdd() ->
+  generate_bdd(
+    <<
+      "generate a bdd for a simple login page hosted  on http://localhost:8000"
+    >>,
+    <<"test">>,
+    #{}
+  ).
