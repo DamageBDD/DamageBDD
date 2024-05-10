@@ -175,7 +175,7 @@ execute_bdd(ScheduleId, Concurrency) ->
       | damage:get_default_config(ContractAddress, Concurrency, [])
     ],
   Context =
-    damage_accounts:get_account_context(
+    damage_context:get_account_context(
       maps:put(
         contract_address,
         ContractAddress,
@@ -352,27 +352,27 @@ clean_schedules() ->
     || Schedule <- damage_riak:list_keys(?SCHEDULES_BUCKET)
   ].
 
-update_schedules(ContractAddress, JobId, _Cron) ->
-  ContractCall =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "update_schedules",
-      [JobId]
-    ),
-  ?LOG_DEBUG("call AE contract ~p", [ContractCall]),
-  #{
-    decodedResult
-    :=
-    #{
-      btc_address := _BtcAddress,
-      btc_balance := _BtcBalance,
-      deso_address := _DesoAddress,
-      deso_balance := _DesoBalance,
-      usage := _Usage,
-      deployer := _Deployer
-    } = Results
-  } = ContractCall,
-  ?LOG_DEBUG("State ~p ", [Results]).
+%update_schedules(ContractAddress, JobId, _Cron) ->
+%  ContractCall =
+%    damage_ae:aecli(
+%      contract,
+%      call,
+%      binary_to_list(ContractAddress),
+%      "contracts/account.aes",
+%      "update_schedules",
+%      [JobId]
+%    ),
+%  ?LOG_DEBUG("call AE contract ~p", [ContractCall]),
+%  #{
+%    decodedResult
+%    :=
+%    #{
+%      btc_address := _BtcAddress,
+%      btc_balance := _BtcBalance,
+%      deso_address := _DesoAddress,
+%      deso_balance := _DesoBalance,
+%      usage := _Usage,
+%      deployer := _Deployer
+%    } = Results
+%  } = ContractCall,
+%  ?LOG_DEBUG("State ~p ", [Results]).

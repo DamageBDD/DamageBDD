@@ -212,7 +212,7 @@ clean_secrets(#{client_context := ClientContext} = Context, Body, Args) ->
 
 
 clean_context_secrets(AccountContext, Body, Args) ->
-  ?LOG_DEBUG("clean got context ~p ~p ~p", [AccountContext, Body, Args]),
+  %?LOG_DEBUG("clean got context ~p ~p ~p", [AccountContext, Body, Args]),
   maps:fold(
     fun
       (_Key, Value, {Body1, Args1}) when is_map(Value) ->
