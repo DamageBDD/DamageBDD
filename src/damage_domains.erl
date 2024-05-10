@@ -74,13 +74,14 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
-to_json(_Req, #{action := domains, contract_address := ContractAddress} = State) ->
-  {Status, Result} =
+to_json(Req, #{action := domains, contract_address := ContractAddress} = State) ->
+  ?LOG_DEBUG("domains action ~p", [State]),
+  Domains =
     case damage_riak:get(?DOMAIN_TOKEN_BUCKET, ContractAddress) of
-      [] -> {200, []};
-      Found -> {200, Found}
+      notfound -> [];
+      {ok, Found} -> Found
     end,
-  {stop, cowboy_req:reply(Status, jsx:encode(Result)), State}.
+  {jsx:encode(Domains), Req, State}.
 
 
 from_json(Req, #{action := domain, user := User} = State) ->
