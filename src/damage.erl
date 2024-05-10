@@ -32,8 +32,7 @@
     execute/3,
     execute/2,
     execute_feature/8,
-    publish_data/2,
-    get_global_template_context/2
+    publish_data/2
   ]
 ).
 -export([get_default_config/3]).
@@ -574,33 +573,6 @@ execute_step(Config, Step, Context) ->
   end,
   %?LOG_DEBUG("STEP CONTEXT ~p ~p", [Body1, Context0]),
   Context0.
-
-
-get_global_template_context(Config, Context) ->
-  {_, DeploymentConfig} =
-    case lists:keyfind(context_yaml, 1, Config) of
-      false -> {local, []};
-
-      {context_yaml, ContextYamlFile} ->
-        {deployment, Deployment} = lists:keyfind(deployment, 1, Config),
-        {ok, [ContextYaml | _]} =
-          fast_yaml:decode_from_file(ContextYamlFile, [{plain_as_atom, true}]),
-        {deployments, Deployments} = lists:keyfind(deployments, 1, ContextYaml),
-        lists:keyfind(Deployment, 1, Deployments)
-    end,
-  maps:put(
-    formatter_state,
-    #state{},
-    maps:put(
-      headers,
-      [],
-      maps:put(
-        timestamp,
-        date_util:now_to_seconds_hires(os:timestamp()),
-        maps:merge(maps:from_list(DeploymentConfig), Context)
-      )
-    )
-  ).
 
 
 get_default_config(ContractAddress, Concurrency, Formatters) ->

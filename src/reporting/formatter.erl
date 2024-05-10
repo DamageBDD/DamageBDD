@@ -63,7 +63,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 format(Config, step, {StepKeyWord, LineNo, Body, Args, Context, Status})
 when is_list(Body) ->
   {Body0, Args0} =
-    damage_accounts:clean_secrets(
+    damage_context:clean_secrets(
       Context,
       list_to_binary(lists:flatten(string:join([[X] || X <- Body], " "))),
       Args

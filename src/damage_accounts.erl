@@ -15,18 +15,13 @@
 -export([create_contract/0, store_profile/1, refund/1]).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
--export([update_schedules/3]).
--export([get_account_context/1]).
 -export([trails/0]).
 -export([check_invoices/0]).
 -export([delete_account/1]).
 -export([delete_resource/2]).
--export([clean_secrets/3]).
 -export([get_user_info/1]).
--export([test_account_context/0]).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("eunit/include/eunit.hrl").
 -include_lib("reporting/formatter.hrl").
 -include_lib("damage.hrl").
 
@@ -149,38 +144,6 @@ trails() ->
       }
     ),
     trails:trail(
-      "/accounts/context",
-      damage_accounts,
-      #{action => context},
-      #{
-        get
-        =>
-        #{
-          tags => ?TRAILS_TAG,
-          description => "get context variables for account",
-          produces => ["application/json"]
-        },
-        put
-        =>
-        #{
-          tags => ?TRAILS_TAG,
-          description => "Create a new invoice.",
-          produces => ["application/json"],
-          parameters
-          =>
-          [
-            #{
-              account_context => <<"account_context">>,
-              description => <<"custom context for account">>,
-              in => <<"body">>,
-              required => true,
-              type => <<"map">>
-            }
-          ]
-        }
-      }
-    ),
-    trails:trail(
       "/accounts/reset_password",
       damage_accounts,
       #{action => reset_password},
@@ -269,13 +232,6 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-validate_refund_addr(forward, BtcAddress) ->
-  case bitcoin:validateaddress(BtcAddress) of
-    {ok, #{isvalid := true, address := BtcAddress}} -> {ok, BtcAddress};
-    _Other -> {ok, false}
-  end.
-
-
 get_invoices(ContractAddress) ->
   case
   damage_riak:get_index(
@@ -297,59 +253,6 @@ get_invoices(ContractAddress) ->
       )
   end.
 
-
-to_json(Req, #{action := context} = State) ->
-  ?LOG_DEBUG("context action ~p", [State]),
-  case damage_http:is_authorized(Req, State) of
-    {
-      true,
-      _Req0,
-      #{contract_address := ContractAddress, username := Username} = _State0
-    } ->
-      Config =
-        damage_http:get_config(
-          maps:put(
-            contract_address,
-            ContractAddress,
-            maps:put(username, Username, #{})
-          ),
-          Req,
-          false
-        ),
-      DefaultContext =
-        damage_accounts:get_account_context(
-          maps:put(
-            contract_address,
-            ContractAddress,
-            maps:put(
-              username,
-              Username,
-              damage:get_global_template_context(Config, #{})
-            )
-          )
-        ),
-      AccountContext0 =
-        case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-          {ok, AccountContext} ->
-            ?LOG_DEBUG("got account context ~p", [AccountContext]),
-            maps:merge(
-              maps:map(
-                fun (_Key, Value) -> maps:get(value, Value) end,
-                AccountContext
-              ),
-              maps:put(account_context, AccountContext, DefaultContext)
-            );
-
-          Other ->
-            ?LOG_DEBUG("got no context ~p", [Other]),
-            maps:put(account_context, #{}, DefaultContext)
-        end,
-      {jsx:encode(AccountContext0), Req, State};
-
-    Other ->
-      ?LOG_DEBUG("unauthorized ~p", [Other]),
-      {<<"Unauthorized.">>, Req, State}
-  end;
 
 to_json(Req, #{action := confirm} = State) ->
   % for some browsers who send in applicaion/json contenttype
@@ -420,68 +323,8 @@ to_html(Req, #{action := reset_password} = State) ->
   {Body, Req, State}.
 
 
-get_account_context(#{contract_address := ContractAddress} = DefaultContext) ->
-  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-    {ok, AccountContext} ->
-      ?LOG_DEBUG("got account context ~p", [AccountContext]),
-      maps:merge(
-        maps:map(
-          fun
-            (_Key, Value) when is_map(Value) -> maps:get(value, Value);
-            (_Key, Value) -> Value
-          end,
-          AccountContext
-        ),
-        AccountContext
-      );
-
-    Other ->
-      ?LOG_DEBUG("got no account context ~p", [Other]),
-      DefaultContext
-  end.
-
-
-update_account_context(InboundContext, ContractAddress)
-when is_map(InboundContext) ->
-  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-    {ok, AccountContext} ->
-      ?LOG_DEBUG("update got account context ~p", [AccountContext]),
-      NewContext = maps:merge(AccountContext, InboundContext),
-      {ok, true} =
-        damage_riak:put(?CONTEXT_BUCKET, ContractAddress, NewContext),
-      {204, <<"">>};
-
-    Other ->
-      ?LOG_DEBUG("update got no account context ~p", [Other]),
-      {ok, true} =
-        damage_riak:put(?CONTEXT_BUCKET, ContractAddress, InboundContext),
-      {201, InboundContext}
-  end;
-
-update_account_context(_InboundContext, _ContractAddress) ->
-  {400, #{<<"message">> => <<"invalid context.">>}}.
-
-
 -spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
   {integer(), map()}.
-do_post_action(context, PostData, Req, State) ->
-  case damage_http:is_authorized(Req, State) of
-    {
-      true,
-      _Req0,
-      #{contract_address := ContractAddress, username := _Username} = _State0
-    } ->
-      ?LOG_DEBUG("context update post ~p", [PostData]),
-      update_account_context(
-        damage_utils:binary_to_atom_keys(maps:get(account_context, PostData)),
-        ContractAddress
-      );
-
-    Other ->
-      ?LOG_DEBUG("unauthorized ~p", [Other]),
-      {401, <<"Unauthorized.">>}
-  end;
-
 do_post_action(create, Data, _Req, _State) ->
   case damage_oauth:add_user(Data) of
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
@@ -583,26 +426,6 @@ from_html(Req, #{action := reset_password} = State) ->
   {
     stop,
     cowboy_req:reply(Status0, cowboy_req:set_resp_body(Response0, Req)),
-    State
-  };
-
-from_html(Req, #{action := Action} = State) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  FormData = maps:from_list(cow_qs:parse_qs(Data)),
-  {Status0, Response0} = do_post_action(Action, FormData, Req, State),
-  Body =
-    case Action of
-      create -> <<"Account created successfuly and password set.">>;
-
-      refund ->
-        #{account := ContractAddress} = cowboy_req:match_qs([account], Req),
-        refund(ContractAddress);
-
-      _ -> Response0
-    end,
-  {
-    stop,
-    cowboy_req:reply(Status0, cowboy_req:set_resp_body(jsx:encode(Body), Req)),
     State
   }.
 
@@ -721,7 +544,7 @@ create_contract() ->
   % create ae account and bitcoin account
   #{result := #{contractId := ContractAddress}} =
     damage_ae:aecli(contract, deploy, "contracts/account.aes", []),
-  %?debugFmt("debug created AE contract ~p", [ContractCreated]),
+  %?LOG_DEBUG("debug created AE contract ~p", [ContractCreated]),
   #{status => <<"ok">>, ae_contract_address => ContractAddress}.
 
 
@@ -743,86 +566,23 @@ refund(ContractAddress) ->
     balance := Balance,
     deployer := _Deployer
   } = balance(ContractAddress),
-  case validate_refund_addr(forward, BtcRefundAddress) of
+  case bitcoin:validate_refund_addr(forward, BtcRefundAddress) of
     {ok, BtcRefundAddress} ->
       {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
-      ?debugFmt("real balance ~p ", [RealBtcBalance]),
+      ?LOG_DEBUG("real balance ~p ", [RealBtcBalance]),
       {ok, RefundResult} =
         bitcoin:sendtoaddress(
           BtcRefundAddress,
           RealBtcBalance - binary_to_integer(Balance),
           ContractAddress
         ),
-      ?debugFmt("Refund result ~p ", [RefundResult]),
+      ?LOG_DEBUG("Refund result ~p ", [RefundResult]),
       RefundResult;
 
     Other ->
-      ?debugFmt("refund_address data: ~p ", [Other]),
+      ?LOG_DEBUG("refund_address data: ~p ", [Other]),
       #{status => <<"notok">>, message => <<"Invalid refund_address.">>}
   end.
-
-
-update_schedules(ContractAddress, JobId, _Cron) ->
-  ContractCall =
-    damage_ae:aecli(
-      contract,
-      call,
-      binary_to_list(ContractAddress),
-      "contracts/account.aes",
-      "update_schedules",
-      [JobId]
-    ),
-  ?debugFmt("call AE contract ~p", [ContractCall]),
-  #{
-    decodedResult
-    :=
-    #{
-      btc_address := _BtcAddress,
-      btc_balance := _BtcBalance,
-      deso_address := _DesoAddress,
-      deso_balance := _DesoBalance,
-      usage := _Usage,
-      deployer := _Deployer
-    } = Results
-  } = ContractCall,
-  ?debugFmt("State ~p ", [Results]).
-
-
-clean_secrets(Context, Body, Args) ->
-  %Password = list_to_binary(maps:get(damage_password, Context, "")),
-  AccessToken = maps:get(access_token, Context, <<"null">>),
-  Body0 = binary:replace(Body, AccessToken, <<"00REDACTED00">>),
-  clean_context_secrets(Context, Body0, Args).
-
-
-clean_context_secrets(AccountContext, Body, Args) ->
-  %?LOG_DEBUG("clean got context ~p", [AccountContext]),
-  maps:fold(
-    fun
-      (_Key, Value, {Body1, Args1}) when is_map(Value) ->
-        case maps:get(secret, Value) of
-          true ->
-            {
-              binary:replace(
-                Body1,
-                maps:get(value, Value, <<"">>),
-                <<"00REDACTED00">>
-              ),
-              binary:replace(
-                Args1,
-                maps:get(value, Value, <<"">>),
-                <<"00REDACTED00">>
-              )
-            };
-
-          _ -> {Body1, Args1}
-        end;
-
-      (_Key, _Value, {Body1, Args1}) -> {Body1, Args1}
-    end,
-    {Body, Args},
-    AccountContext
-  ).
 
 
 check_invoice_foldn(Invoice, Acc) ->
@@ -885,9 +645,3 @@ get_user_info(Username) ->
     {ok, #{password := UserPw}} -> UserPw;
     _ -> <<"">>
   end.
-
-
-test_account_context() ->
-  Body = <<"blah ablasd assd a testpasswordaasdsdada">>,
-  Args = <<"blah ablasd assd a testpasswordaasdsdada">>,
-  clean_secrets(#{}, Body, Args).

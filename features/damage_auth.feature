@@ -18,23 +18,16 @@ Feature: Auth features
     Given I am using server "http://localhost:8080"
     And I set "Content-Type" header to "application/json"
     And I set "Authorization" header to "Bearer {{{access_token}}}"
-    When I make a POST request to "/accounts/context/"
+    When I make a POST request to "/context/"
     """
     {
-        "account_context": {
-            "example_context_variable": {
-                "value":"non redaacted",
-                "secret": false
-            },
-            "example_context_variable_redacted": {
-                "value":"ths will be redaacted",
-                "secret": true
-            }
-        }
+        "name":"example_context_variable",
+        "value":"non redaacted",
+        "secret": false
     }
     """
     Then I print the response
-    Then the response status must be "204"
+    Then the response status must be "202"
 #
 #  Scenario: Test redacted values in reporting
 #    Given I am using server "http://localhost:8080"

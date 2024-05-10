@@ -25,6 +25,8 @@ get_trails() ->
   Handlers =
     [
       damage_auth,
+      damage_context,
+      damage_domains,
       damage_static,
       damage_http,
       damage_publish,

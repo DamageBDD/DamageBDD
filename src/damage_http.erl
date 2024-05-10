@@ -247,14 +247,14 @@ check_execute_bdd(
             ),
           execute_bdd(
             Config,
-            damage_accounts:get_account_context(
+            damage_context:get_account_context(
               maps:put(
                 contract_address,
                 ContractAddress,
                 maps:put(
                   username,
                   Username,
-                  damage:get_global_template_context(Config, FeaturePayload)
+                  damage_context:get_global_template_context(FeaturePayload)
                 )
               )
             ),
