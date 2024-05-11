@@ -280,7 +280,7 @@ list_schedules(ContractAddress) ->
   lists:filter(
     fun (none) -> false; (_Other) -> true end,
     [
-      get_schedule(damage_utils:decrypt(ScheduleId))
+      get_schedule(ScheduleId)
       ||
       ScheduleId
       <-

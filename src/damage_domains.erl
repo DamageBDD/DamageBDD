@@ -17,20 +17,20 @@
 -export([test/0]).
 -export([content_types_accepted/2]).
 -export([trails/0]).
--export([is_allowed_domain/1]).
--export([lookup_domain/1]).
+-export([is_allowed_domain/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Test Reports"]).
+-define(DOMAIN_TOKEN_EXPIRY, 144000).
 
 trails() ->
   [
     trails:trail(
       "/domains",
       damage_domains,
-      #{action => domains},
+      #{},
       #{
         get
         =>
@@ -74,31 +74,59 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
-to_json(Req, #{action := domains, contract_address := ContractAddress} = State) ->
-  ?LOG_DEBUG("domains action ~p", [State]),
-  Domains =
-    case damage_riak:get(?DOMAIN_TOKEN_BUCKET, ContractAddress) of
-      notfound -> [];
-      {ok, Found} -> Found
-    end,
+to_json(Req, #{contract_address := ContractAddress} = State) ->
+  ?LOG_DEBUG("domains ~p", [ContractAddress]),
+  Domains = list_domains(ContractAddress),
   {jsx:encode(Domains), Req, State}.
 
 
-from_json(Req, #{action := domain, user := User} = State) ->
-  {Status, Result} =
-    case damage_auth:issue_token({ok, User, domain}) of
-      [] -> {400, []};
-      Found -> {200, Found}
+from_json(Req, #{contract_address := ContractAddress} = State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {Status, Resp0} =
+    case jsx:decode(Data, [{labels, atom}, return_maps]) of
+      #{domain := Domain} ->
+        DomainToken = list_to_binary(uuid:to_string(uuid:uuid4())),
+        DomainTokenKey =
+          damage_utils:binarystr_join([ContractAddress, <<"|">>, Domain]),
+        ?LOG_DEBUG("Domain token ~p", [DomainTokenKey]),
+        case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainTokenKey) of
+          notfound ->
+            DomainObj =
+              #{
+                domain_token => DomainToken,
+                expiry => get_token_expiry(),
+                domain => Domain
+              },
+            {ok, true} =
+              damage_riak:put(
+                ?DOMAIN_TOKEN_BUCKET,
+                DomainTokenKey,
+                DomainObj,
+                [{{binary_index, "contract_address"}, [ContractAddress]}]
+              ),
+            {202, DomainObj};
+
+          {ok, Found} -> {200, Found}
+        end;
+
+      Err ->
+        logger:error("json decoding failed ~p err: ~p.", [Data, Err]),
+        {400, <<"Invalid Request">>}
     end,
-  JsonResult = jsx:encode(Result),
-  Resp = cowboy_req:set_resp_body(JsonResult, Req),
-  {stop, cowboy_req:reply(Status, Resp), State}.
+  Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
+  cowboy_req:reply(Status, Resp),
+  {stop, Resp, State}.
 
 
-lookup_domain(Domain) when is_binary(Domain) ->
-  lookup_domain(binary_to_list(Domain));
+get_token_expiry() ->
+  %{ok, Expiry} = datestring:format(<<"YmdHMS">>, ),
+  date_util:epoch() + (?DOMAIN_TOKEN_EXPIRY * 60).
 
-lookup_domain(Domain) ->
+
+lookup_domain(Domain, ContractAddress) when is_binary(Domain) ->
+  lookup_domain(binary_to_list(Domain), ContractAddress);
+
+lookup_domain(Domain, ContractAddress) ->
   case inet_res:lookup(Domain, in, txt) of
     Records when is_list(Records) ->
       case lists:filtermap(
@@ -115,7 +143,7 @@ lookup_domain(Domain) ->
           io:format("No TXT record found for token: ~p~n", [Records]),
           false;
 
-        [Token | _] -> ok = check_host_token(Domain, Token)
+        [Token | _] -> ok = check_host_token(Domain, ContractAddress, Token)
       end;
 
     Other ->
@@ -124,10 +152,10 @@ lookup_domain(Domain) ->
   end.
 
 
-is_allowed_domain(Host) when is_binary(Host) ->
-  is_allowed_domain(binary_to_list(Host));
+is_allowed_domain(Host, ContractAddress) when is_binary(Host) ->
+  is_allowed_domain(binary_to_list(Host), ContractAddress);
 
-is_allowed_domain(Host) ->
+is_allowed_domain(Host, ContractAddress) ->
   %?LOG_DEBUG("Host check ~p", [Host]),
   case string:split(Host, ".", trailing) of
     [_, "lan"] -> true;
@@ -152,28 +180,58 @@ is_allowed_domain(Host) ->
         end,
         AllowedHosts
       ) of
-        false -> lookup_domain(Host);
+        false -> lookup_domain(Host, ContractAddress);
         true -> true
       end
   end.
 
 
-check_host_token(_Host, Token) ->
-  case oauth2:verify_access_token(Token, []) of
-    {ok, {[], Auth}} ->
-      #{
-        <<"client">> := _Client,
-        <<"resource_owner">> := ResourceOwner,
-        <<"expiry_time">> := _Expiry,
-        <<"scope">> := domain
-      } = maps:from_list(Auth),
-      case damage_riak:get(?USER_BUCKET, ResourceOwner) of
-        {ok, _User} -> ok;
-        _ -> false
-      end;
-
+check_host_token(Host, ContractAddress, Token) ->
+  case get_domain(damage_utils:binarystr_join([ContractAddress, "|", Host])) of
+    #{domain := Host, domain_token := Token} = _Domain -> true;
     _ -> false
   end.
+
+
+get_domain(DomainId) when is_binary(DomainId) ->
+  case catch damage_utils:decrypt(DomainId) of
+    error ->
+      ?LOG_DEBUG("DomainId Decryption error ~p ", [DomainId]),
+      none;
+
+    {'EXIT', _Error} ->
+      ?LOG_DEBUG("DomainId Decryption error ~p ", [DomainId]),
+      none;
+
+    DomainIdDecrypted ->
+      case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainIdDecrypted) of
+        {ok, Domain} ->
+          ?LOG_DEBUG("Loaded Schedulid ~p", [DomainIdDecrypted]),
+          maps:put(id, DomainIdDecrypted, Domain);
+
+        _ -> none
+      end
+  end;
+
+get_domain(_) -> none.
+
+
+list_domains(ContractAddress) ->
+  ?LOG_DEBUG("Contract ~p", [ContractAddress]),
+  lists:filter(
+    fun (none) -> false; (_Other) -> true end,
+    [
+      get_domain(DomainId)
+      ||
+      DomainId
+      <-
+      damage_riak:get_index(
+        ?DOMAIN_TOKEN_BUCKET,
+        {binary_index, "contract_address"},
+        ContractAddress
+      )
+    ]
+  ).
 
 
 test() -> ok.

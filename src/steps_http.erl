@@ -36,10 +36,10 @@ get_headers(Context, DefaultHeaders) ->
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
-get_gun_config(Config0, Context) ->
+get_gun_config(Config0, #{contract_address := ContractAddress} = Context) ->
   Host = damage_utils:get_context_value(host, Context, Config0),
   Port = damage_utils:get_context_value(port, Context, Config0),
-  case damage_domains:is_allowed_domain(Host) of
+  case damage_domains:is_allowed_domain(Host, ContractAddress) of
     true ->
       Config =
         case Port of

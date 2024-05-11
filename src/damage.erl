@@ -205,8 +205,7 @@ publish_file(Config, Filename) ->
   PubFeature.
 
 
-parse_file(Filename, Context) ->
-  ?LOG_DEBUG("parse context: ~p", [Context]),
+parse_file(Filename) ->
   case file:read_file(Filename) of
     {ok, Source0} -> egherkin:parse(Source0);
     Else -> Else
@@ -232,7 +231,7 @@ execute_file(Config, Context, Filename) ->
     lists:keyfind(contract_address, 1, Config),
   ContractAddress = list_to_binary(ContractAddress0),
   StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
-  case catch parse_file(Filename, Context) of
+  case catch parse_file(Filename) of
     {failed, LineNo, Message} ->
       logger:error(
         "Parsing Failed ~p +~p ~n     ~p.",
