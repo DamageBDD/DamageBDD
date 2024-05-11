@@ -75,13 +75,7 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
-  {
-    [
-      {{<<"application">>, <<"json">>, []}, to_json}
-    ],
-    Req,
-    State
-  }.
+  {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
 
 content_types_accepted(Req, State) ->
   {
@@ -128,7 +122,6 @@ from_text(Req, #{contract_address := ContractAddress} = State) ->
 from_json(Req, State) -> from_text(Req, State).
 
 from_html(Req, State) -> from_text(Req, State).
-
 
 to_text(Req, State) -> to_json(Req, State).
 

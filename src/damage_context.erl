@@ -114,21 +114,14 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
   end.
 
 
-to_json(Req, #{action := context} = State) ->
+to_json(Req, #{action := context, contract_address := ContractAddress} = State) ->
   ?LOG_DEBUG("context action ~p", [State]),
-  case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
-      ClientContext0 =
-        case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-          {ok, #{client_context := ClientContext}} -> ClientContext;
-          notfound -> #{}
-        end,
-      {jsx:encode(ClientContext0), Req, State};
-
-    Other ->
-      ?LOG_DEBUG("unauthorized ~p", [Other]),
-      {<<"Unauthorized.">>, Req, State}
-  end.
+  ClientContext0 =
+    case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+      {ok, #{client_context := ClientContext}} -> ClientContext;
+      notfound -> #{}
+    end,
+  {jsx:encode(ClientContext0), Req, State}.
 
 
 get_global_template_context(Context) ->
@@ -150,14 +143,15 @@ get_account_context(#{contract_address := ContractAddress} = DefaultContext) ->
   case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
     {ok, #{client_context := ClientContext} = AccountContext} ->
       ?LOG_DEBUG("got client context ~p", [AccountContext]),
-      MergedContext = maps:map(
-        fun
-          (_Key, Value) when is_map(Value) -> maps:get(value, Value);
-          (_Key, Value) -> Value
-        end,
-        ClientContext
-      ),
-    maps:put(client_context, ClientContext, MergedContext);
+      MergedContext =
+        maps:map(
+          fun
+            (_Key, Value) when is_map(Value) -> maps:get(value, Value);
+            (_Key, Value) -> Value
+          end,
+          ClientContext
+        ),
+      maps:put(client_context, ClientContext, MergedContext);
 
     Other ->
       ?LOG_DEBUG("got no client context ~p", [Other]),
@@ -199,7 +193,7 @@ when is_map(InboundContext) ->
   end;
 
 update_account_context(InvalidContext, _ContractAddress) ->
-    ?LOG_DEBUG("Invalid context received ~p", [InvalidContext]),
+  ?LOG_DEBUG("Invalid context received ~p", [InvalidContext]),
   {400, #{<<"message">> => <<"invalid context.">>}}.
 
 
@@ -208,7 +202,7 @@ clean_secrets(#{client_context := ClientContext} = Context, Body, Args) ->
   AccessToken = maps:get(access_token, Context, <<"null">>),
   Args0 = binary:replace(Args, AccessToken, <<"00REDACTED00">>),
   Body0 = binary:replace(Body, AccessToken, <<"00REDACTED00">>),
-        clean_context_secrets(ClientContext, Body0, Args0).
+  clean_context_secrets(ClientContext, Body0, Args0).
 
 
 clean_context_secrets(AccountContext, Body, Args) ->
