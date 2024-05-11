@@ -25,9 +25,9 @@
 -export([load_all_schedules/0]).
 -export([list_schedules/1]).
 -export([list_all_schedules/0]).
--export([delete_schedule/1]).
 -export([test_conflict_resolution/0]).
 -export([clean_schedules/0]).
+-export([delete_resource/2]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -65,6 +65,14 @@ trails() ->
               type => <<"string">>
             }
           ]
+        },
+        delete
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Schedule a test on post",
+          produces => ["application/json"],
+          parameters => []
         }
       }
     )
@@ -87,13 +95,37 @@ content_types_accepted(Req, State) ->
     State
   }.
 
-allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+allowed_methods(Req, State) ->
+  {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
+
+delete_schedule(ScheduleId) ->
+  damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId).
+
+delete_resource(Req, #{contract_address := ContractAddress} = State) ->
+  Deleted =
+    lists:foldl(
+      fun
+        (Id, Acc) ->
+          DeleteId =
+            damage_utils:binarystr_join([ContractAddress, <<"|">>, Id]),
+          ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
+          ok = damage_riak:delete(?SCHEDULES_BUCKET, DeleteId),
+          Acc + 1
+      end,
+      0,
+      maps:get(path_info, Req)
+    ),
+  ?LOG_INFO("deleted ~p schedules", [Deleted]),
+  {true, Req, State}.
+
 
 from_text(Req, #{contract_address := ContractAddress} = State) ->
+  ?LOG_DEBUG("From text ~p", [Req]),
   {ok, Body, _} = cowboy_req:read_body(Req),
   ok = validate(Body),
   CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
   Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
+  FeatureTitle = lists:nth(1, binary:split(Body, <<"\n">>, [global])),
   ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
   {ok, [#{<<"Hash">> := Hash}]} =
     damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
@@ -111,6 +143,7 @@ from_text(Req, #{contract_address := ContractAddress} = State) ->
         contract_address => ContractAddress,
         hash => Hash,
         concurrency => Concurrency,
+        feature_title => FeatureTitle,
         cronspec => CronSpec
       }
     ),
@@ -248,9 +281,6 @@ validate(Gherkin) ->
     {_LineNo, _Tags, _Feature, _Description, _BackGround, _Scenarios} -> ok
   end.
 
-
-delete_schedule(ScheduleId) ->
-  damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId).
 
 get_schedule(ScheduleId) when is_binary(ScheduleId) ->
   case catch damage_utils:decrypt(ScheduleId) of
