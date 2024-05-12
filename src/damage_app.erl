@@ -27,6 +27,7 @@ get_trails() ->
       damage_auth,
       damage_context,
       damage_domains,
+      damage_webhooks,
       damage_static,
       damage_http,
       damage_publish,
@@ -102,6 +103,7 @@ start_phase(start_trails_http, _StartType, []) ->
       ?LOG_INFO("Sourc sync disabled.", []),
       ok
   end,
+  damage_schedule:load_all_schedules(),
   ok.
 
 
