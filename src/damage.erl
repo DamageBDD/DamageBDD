@@ -352,7 +352,8 @@ store_runrecord(
       ScheduleId ->
         [
           {{binary_index, "contract_address"}, [ContractAddress]},
-          {{binary_index, "schedule_id"}, [ScheduleId]}
+          {{binary_index, "schedule_id"}, [ScheduleId]},
+          {{integer_index, "created"}, [date_util:epoch()]}
         ]
     end
   ).

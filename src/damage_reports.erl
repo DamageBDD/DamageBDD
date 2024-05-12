@@ -12,11 +12,9 @@
 
 -export([init/2]).
 -export([content_types_provided/2]).
--export([to_html/2]).
 -export([to_json/2]).
--export([to_text/2]).
 -export(
-  [from_json/2, allowed_methods/2, from_html/2, from_yaml/2, is_authorized/2]
+  [from_json/2, allowed_methods/2, is_authorized/2]
 ).
 -export([clean_reports/0]).
 -export([test/0]).
@@ -120,9 +118,7 @@ is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 content_types_provided(Req, State) ->
   {
     [
-      {{<<"text">>, <<"html">>, '*'}, to_html},
-      {{<<"application">>, <<"json">>, []}, to_json},
-      {{<<"text">>, <<"plain">>, '*'}, to_text}
+      {{<<"application">>, <<"json">>, []}, to_json}
     ],
     Req,
     State
@@ -131,8 +127,6 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
   {
     [
-      {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
-      {{<<"application">>, <<"x-yaml">>, '*'}, from_yaml},
       {{<<"application">>, <<"json">>, '*'}, from_json}
     ],
     Req,
@@ -141,23 +135,7 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
-to_html(
-  Req,
-  #{action := features, contract_address := _ContractAddress} = State
-) ->
-  ?LOG_DEBUG("feature to ", []),
-  to_text(Req, State);
-
-to_html(Req, State) -> to_text(Req, State).
-
-
-%logger:error("to text ipfs hash ~p ", [Req]),
-%Body = damage_utils:load_template("report.mustache", [{body, <<"Test">>}]),
-%logger:info("get ipfs hash ~p ", [Body]),
-%{Body, Req, State}.
-to_json(Req, State) -> to_text(Req, State).
-
-to_text(
+to_json(
   Req,
   #{action := features, contract_address := _ContractAddress} = State
 ) ->
@@ -170,7 +148,7 @@ to_text(
       {cat(list_to_binary(Hash), <<"">>), Req, State}
   end;
 
-to_text(Req, #{contract_address := ContractAddress} = State) ->
+to_json(Req, #{contract_address := ContractAddress} = State) ->
   case cowboy_req:binding(hash, Req) of
     undefined ->
       Reports =
@@ -232,18 +210,15 @@ get_record(Id) ->
     {ok, Record} -> Record;
     notfound -> none
   end.
-
-
-do_query(#{contract_address := ContractAddress, schedule_id := ScheduleId}) ->
+do_query_base(Fun, Index, Args, ContractAddress) ->
   case
-  damage_riak:get_index(
+  apply(damage_riak,Fun,[
     ?RUNRECORDS_BUCKET,
-    {binary_index, "schedule_id"},
-    ScheduleId
+    Index] ++ Args
   ) of
     [] ->
       logger:info("no reports for account"),
-      [];
+      #{results => [], status => <<"ok">>, length => 0};
 
     Found ->
       ?LOG_DEBUG(" reports exists data: ~p ", [Found]),
@@ -259,73 +234,42 @@ do_query(#{contract_address := ContractAddress, schedule_id := ScheduleId}) ->
           [get_record(X) || X <- Found]
         ),
       #{results => Results, status => <<"ok">>, length => length(Results)}
-  end;
+  end.
+    
+do_query(#{contract_address := ContractAddress, since := Since}) ->
+    StartDateTime = date_util:epoch() - 3600,
+    EndDateTime = date_util:epoch(),
+    ?LOG_DEBUG("Since 1 hour",[]),
+    do_query_base(get_index_range, {integer_index, "created"},[StartDateTime, EndDateTime],ContractAddress);
+
+do_query(#{contract_address := ContractAddress, schedule_id := ScheduleId}) ->
+    do_query_base(get_index,
+    {binary_index, "schedule_id"},
+[ScheduleId],ContractAddress);
 
 do_query(#{contract_address := ContractAddress}) ->
-  case
-  damage_riak:get_index(
-    ?RUNRECORDS_BUCKET,
+    do_query_base(get_index,
     {binary_index, "contract_address"},
-    ContractAddress
-  ) of
-    [] ->
-      logger:info("no reports for account"),
-      [];
-
-    Found ->
-      ?LOG_DEBUG(" reports exists data: ~p ", [Found]),
-      Results =
-        lists:filter(
-          fun (none) -> false; (_) -> true end,
-          [get_record(X) || X <- Found]
-        ),
-      #{results => Results, status => <<"ok">>, length => length(Results)}
-  end.
+[ContractAddress],ContractAddress).
 
 
-do_action(<<"query_from_yaml">>, Req) ->
+
+from_json(Req, #{contract_address := ContractAddress}=State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?LOG_DEBUG(" yaml data: ~p ", [Data]),
-  {ok, [Data0]} = fast_yaml:decode(Data, [maps]),
-  do_query(Data0);
-
-do_action(<<"create_from_json">>, Req) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?LOG_DEBUG(" json data: ~p ", [Data]),
-  Data0 = jsx:decode(Data, [return_maps]),
-  do_query(Data0);
-
-do_action(<<"create">>, Req) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  ?LOG_DEBUG("Form data ~p", [Data]),
-  FormData = maps:from_list(cow_qs:parse_qs(Data)),
-  do_query(FormData).
-
-
-from_html(Req, State) ->
-  Result = do_action(cowboy_req:binding(action, Req), Req),
-  Body = damage_utils:load_template("create_account.mustache", Result),
-  Resp = cowboy_req:set_resp_body(Body, Req),
-  {stop, cowboy_req:reply(200, Resp), State}.
-
-
-from_json(Req, #{contract_address := ContractAddress} = State) ->
-  Result =
-    case cowboy_req:binding(action, Req) of
-      undefined -> do_query(#{contract_address => ContractAddress});
-      Action -> do_action(<<Action/binary, "_from_json">>, Req)
+  {Status, Resp0} =
+    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+      {'EXIT', {badarg, Trace}} ->
+        logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+        {400, <<"Json decoding failed.">>};
+      PostData ->
+            QueryData = maps:merge(PostData,#{contract_address => ContractAddress}),
+            ?LOG_DEBUG("Query data ~p", [QueryData]),
+        {200, do_query(QueryData)}
     end,
-  JsonResult = jsx:encode(Result),
-  Resp = cowboy_req:set_resp_body(JsonResult, Req),
-  {stop, cowboy_req:reply(200, Resp), State}.
+  Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
+  cowboy_req:reply(Status, Resp),
+  {stop, Resp, State}.
 
-
-from_yaml(Req, State) ->
-  Action = cowboy_req:binding(action, Req),
-  Result = do_action(<<Action/binary, "_from_yaml">>, Req),
-  YamlResult = fast_yaml:encode(Result),
-  Resp = cowboy_req:set_resp_body(YamlResult, Req),
-  {stop, cowboy_req:reply(200, Resp), State}.
 
 
 ls(Hash) ->
