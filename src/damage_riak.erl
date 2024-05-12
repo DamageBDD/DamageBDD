@@ -21,7 +21,9 @@
     get_index_range/4,
     get_index_range/5,
     update_hll/3,
-    hll_value/2
+    hll_value/2,
+    update_counter/3,
+    counter_value/2
   ]
 ).
 -export(
@@ -51,6 +53,7 @@ find_active_connection_helper([Connection | Rest], Fun, Args) ->
   case apply(riakc_pb_socket, Fun, [Connection] ++ Args) of
     {ok, Results} -> {ok, Results};
     {error, notfound} -> {error, notfound};
+    {error, {notfound, _Type}} -> {error, notfound};
     ok -> ok;
 
     Err ->
@@ -150,6 +153,20 @@ hll_value(Bucket, Key) ->
     fun (Worker) -> gen_server:call(Worker, {hll_value, Bucket, Key}) end
   ).
 
+update_counter(Bucket, Key, OpVal) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) -> gen_server:call(Worker, {update_counter, Bucket, Key, OpVal})
+    end
+  ).
+
+counter_value(Bucket, Key) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun (Worker) -> gen_server:call(Worker, {counter_value, Bucket, Key}) end
+  ).
+
 %% GenServer callbacks
 
 init([]) ->
@@ -204,8 +221,10 @@ handle_call(
   _From,
   #state{connections = Connections} = State
 ) ->
-  {ok, Res} = find_active_connection(Connections, fetch_type, [Bucket, Key]),
-  {reply, riakc_hll:value(Res), State};
+  case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+    {error, notfound} -> {reply, 0, State};
+    {ok, Res} -> {reply, riakc_hll:value(Res), State}
+  end;
 
 handle_call(
   {update_hll, Bucket, Key, Elements},
@@ -213,25 +232,84 @@ handle_call(
   #state{connections = Connections} = State
 ) ->
   Res =
-    lists:any(
-      fun
-        (Pid) ->
-          case riakc_pb_socket:get_bucket(Pid, Bucket) of
-            {ok, _} ->
-              Hll0 = riakc_hll:new(),
-              HllOp0 = riakc_hll:to_op(riakc_hll:add_elements(Elements, Hll0)),
-              ok = riakc_pb_socket:update_type(Pid, Bucket, Key, HllOp0),
-              true;
+    case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+      {ok, Hll0} ->
+        HllOp0 = riakc_hll:to_op(riakc_hll:add_elements(Elements, Hll0)),
+        ok =
+          find_active_connection(
+            Connections,
+            update_type,
+            [Bucket, Key, HllOp0]
+          ),
+        true;
 
-            {error, disconnected} -> false;
+      {error, {notfound, hll}} ->
+        Hll0 = riakc_hll:new(),
+        HllOp0 = riakc_hll:to_op(riakc_hll:add_elements(Elements, Hll0)),
+        ok =
+          find_active_connection(
+            Connections,
+            update_type,
+            [Bucket, Key, HllOp0]
+          ),
+        true;
 
-            Err ->
-              logger:error("Unexpected riak error ~p", [Err]),
-              false
-          end
-      end,
-      Connections
-    ),
+      {error, disconnected} -> false;
+
+      Err ->
+        logger:error("Unexpected riak error ~p", [Err]),
+        false
+    end,
+  {reply, Res, State};
+
+handle_call(
+  {counter_value, Bucket, Key},
+  _From,
+  #state{connections = Connections} = State
+) ->
+  case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+    {error, notfound} -> {reply, 0, State};
+    {ok, Res} -> {reply, riakc_counter:value(Res), State}
+  end;
+
+handle_call(
+  {update_counter, Bucket, Key, {Op, Value}},
+  _From,
+  #state{connections = Connections} = State
+) ->
+  Res =
+    case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+      {ok, Counter} ->
+        CounterOp0 =
+          riakc_counter:to_op(apply(riakc_counter, Op, [Value, Counter])),
+        ?LOG_DEBUG("Counter op ok ~p ~p", [CounterOp0, Key]),
+        ok =
+          find_active_connection(
+            Connections,
+            update_type,
+            [Bucket, Key, CounterOp0]
+          ),
+        true;
+
+      {error, {notfound, counters}} ->
+        Counter = riakc_counter:new(),
+        CounterOp0 =
+          riakc_counter:to_op(apply(riakc_counter, Op, [Value, Counter])),
+        ?LOG_DEBUG("Counter op new ~p ~p", [CounterOp0, Key]),
+        ok =
+          find_active_connection(
+            Connections,
+            update_type,
+            [Bucket, Key, CounterOp0]
+          ),
+        true;
+
+      {error, disconnected} -> false;
+
+      Err ->
+        logger:error("Unexpected riak error ~p", [Err]),
+        false
+    end,
   {reply, Res, State};
 
 handle_call(
@@ -435,7 +513,8 @@ conflict_resolver(Siblings) ->
 
 test() ->
   test_crud(),
-  test_hlls().
+  test_hlls(),
+  test_counters().
 
 
 test_conflict_resolution() ->
@@ -501,3 +580,16 @@ test_hlls() ->
   true = damage_riak:update_hll(Bucket, Key, [<<"value2">>]),
   Value = damage_riak:hll_value(Bucket, Key),
   ?assertEqual(2, Value).
+
+
+test_counters() ->
+  {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+  TimestampBin = list_to_binary(Timestamp),
+  Bucket = {<<"counters">>, <<"TestBucket", TimestampBin/binary>>},
+  Key = <<"Key1", TimestampBin/binary>>,
+  true = damage_riak:update_counter(Bucket, Key, {increment, 1}),
+  1 = damage_riak:counter_value(Bucket, Key),
+  true = damage_riak:update_counter(Bucket, Key, {increment, 3}),
+  4 = damage_riak:counter_value(Bucket, Key),
+  true = damage_riak:update_counter(Bucket, Key, {decrement, 1}),
+  3 = damage_riak:counter_value(Bucket, Key).

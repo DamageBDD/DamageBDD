@@ -18,20 +18,22 @@
 -export([from_json/2, allowed_methods/2, from_html/2]).
 -export([trails/0]).
 -export([is_authorized/2]).
--export([execute_bdd/2]).
--export([do_schedule/3]).
--export([do_schedule/5]).
--export([do_schedule/6]).
+-export([execute_bdd/1]).
+-export([run_schedule_job/3]).
+-export([run_schedule_job/5]).
+-export([run_schedule_job/6]).
 -export([load_all_schedules/0]).
 -export([list_schedules/1]).
 -export([list_all_schedules/0]).
 -export([test_conflict_resolution/0]).
 -export([clean_schedules/0]).
 -export([delete_resource/2]).
+-export([get_schedule/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
 -define(SCHEDULES_BUCKET, {<<"Default">>, <<"Schedules">>}).
+-define(SCHEDULE_EXECUTION_COUNTER, {<<"counters">>, <<"ScheduleExecution">>}).
 -define(TRAILS_TAG, ["Scheduling Tests"]).
 
 trails() ->
@@ -98,16 +100,11 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-delete_schedule(ScheduleId) ->
-  damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId).
-
-delete_resource(Req, #{contract_address := ContractAddress} = State) ->
+delete_resource(Req, State) ->
   Deleted =
     lists:foldl(
       fun
-        (Id, Acc) ->
-          DeleteId =
-            damage_utils:binarystr_join([ContractAddress, <<"|">>, Id]),
+        (DeleteId, Acc) ->
           ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
           ok = damage_riak:delete(?SCHEDULES_BUCKET, DeleteId),
           Acc + 1
@@ -129,10 +126,10 @@ from_text(Req, #{contract_address := ContractAddress} = State) ->
   ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
   {ok, [#{<<"Hash">> := Hash}]} =
     damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
-  ScheduleId = <<ContractAddress/binary, "|", Hash/binary>>,
-  Args = [{Concurrency, ScheduleId}] ++ CronSpec,
-  logger:info("do_schedule: ~p", [Args]),
-  CronJob = apply(?MODULE, do_schedule, Args),
+  ScheduleId = damage_utils:idhash_keys([ContractAddress, Hash]),
+  Args = [ScheduleId] ++ CronSpec,
+  logger:info("run_schedule_job: ~p", [Args]),
+  CronJob = apply(?MODULE, run_schedule_job, Args),
   Created = date_util:now_to_seconds_hires(os:timestamp()),
   logger:info("Cron Job: ~p", [CronJob]),
   {ok, true} =
@@ -168,10 +165,11 @@ save_schedule(
   #{contract_address := ContractAddress, hash := Hash, cronspec := _CronSpec} =
     Schedule
 ) ->
+  ScheduleId = damage_utils:idhash_keys([ContractAddress, Hash]),
   Schedule0 =
-    case damage_riak:get(?SCHEDULES_BUCKET, Hash) of
+    case damage_riak:get(?SCHEDULES_BUCKET, ScheduleId) of
       notfound ->
-        logger:error("failed to load  schedule ~p", [Hash]),
+        logger:error("failed to load  schedule ~p", [ScheduleId]),
         Schedule;
 
       {ok, ScheduleObj} ->
@@ -182,82 +180,98 @@ save_schedule(
   {ok, true} =
     damage_riak:put(
       ?SCHEDULES_BUCKET,
-      Hash,
+      ScheduleId,
       Schedule0,
       [{{binary_index, "contract_address"}, [ContractAddress]}]
     ).
 
 
-execute_bdd(ScheduleId, Concurrency) ->
+execute_bdd(ScheduleId) ->
   %% Add the filter to allow PidToLog to send debug events
-  [ContractAddress, Hash] = string:split(ScheduleId, <<"|">>),
-  logger:error(
-    "scheduled job execution ~p ContractAddress ~p, Hash ~p.",
-    [ScheduleId, ContractAddress, Hash]
-  ),
-  Config =
-    [
-      {schedule_id, ScheduleId}
-      | damage:get_default_config(ContractAddress, Concurrency, [])
-    ],
-  Context =
-    damage_context:get_account_context(
-      maps:put(
-        contract_address,
-        ContractAddress,
-        damage_context:get_global_template_context(#{schedule_id => ScheduleId})
-      )
-    ),
-  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-  {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-  BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
-  ok = damage_ipfs:get(Hash, BddFileName),
-  ?LOG_DEBUG(
-    "scheduled job execution config ~p feature ~p scheduleid ~p.",
-    [Config, BddFileName, Hash]
-  ),
-  damage:execute_file(Config, Context, BddFileName).
+  case get_schedule(ScheduleId) of
+    none -> ?LOG_ERROR("scheduledid  not found ~p.", [ScheduleId]);
+
+    #{
+      contract_address := ContractAddress,
+      hash := Hash,
+      concurrency := Concurrency,
+      id := ScheduleId0
+    } = Schedule ->
+      logger:info(
+        "scheduled job execution ~p ContractAddress ~p, Hash ~p.",
+        [Schedule, ContractAddress, Hash]
+      ),
+      Config =
+        [
+          {schedule_id, ScheduleId}
+          | damage:get_default_config(ContractAddress, Concurrency, [])
+        ],
+      Context =
+        damage_context:get_account_context(
+          maps:put(
+            contract_address,
+            ContractAddress,
+            damage_context:get_global_template_context(
+              #{schedule_id => ScheduleId}
+            )
+          )
+        ),
+      {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+      {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+      BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
+      ok = damage_ipfs:get(Hash, BddFileName),
+      ?LOG_DEBUG(
+        "scheduled job execution config ~p feature ~p scheduleid ~p.",
+        [Config, BddFileName, Hash]
+      ),
+      Result = damage:execute_file(Config, Context, BddFileName),
+      true =
+        damage_riak:update_counter(
+          ?SCHEDULE_EXECUTION_COUNTER,
+          ScheduleId,
+          {increment, 1}
+        ),
+      {ok, true} =
+        damage_riak:put(
+          ?SCHEDULES_BUCKET,
+          ScheduleId0,
+          maps:put(last_excution_timestamp, list_to_binary(RunId), Schedule),
+          [{{binary_index, "contract_address"}, [ContractAddress]}]
+        ),
+      Result
+  end.
 
 
-do_schedule({Concurrency, ScheduleId}, daily, every, Hour, Minute, AMPM) ->
+run_schedule_job(ScheduleId, daily, every, Hour, Minute, AMPM) ->
   Job =
-    {
-      {once, {Hour, Minute, AMPM}},
-      {damage_schedule, execute_bdd, [ScheduleId, Concurrency]}
-    },
+    {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [ScheduleId]}},
   erlcron:cron(ScheduleId, Job).
 
 
-do_schedule({Concurrency, ScheduleId}, daily, every, Second, sec) ->
+run_schedule_job(ScheduleId, daily, every, Second, sec) ->
   Job =
     {
       {daily, {every, {Second, sec}}},
-      {damage_schedule, execute_bdd, [ScheduleId, Concurrency]}
+      {damage_schedule, execute_bdd, [ScheduleId]}
     },
   erlcron:cron(ScheduleId, Job);
 
-do_schedule({Concurrency, ScheduleId}, once, Hour, Minute, Second)
-when is_integer(Second) ->
+run_schedule_job(ScheduleId, once, Hour, Minute, Second) when is_integer(Second) ->
   Job =
     {
       {once, {Hour, Minute, Second}},
-      {damage_schedule, execute_bdd, [ScheduleId, Concurrency]}
+      {damage_schedule, execute_bdd, [ScheduleId]}
     },
   erlcron:cron(ScheduleId, Job);
 
-do_schedule({Concurrency, ScheduleId}, once, Hour, Minute, AMPM)
-when is_atom(AMPM) ->
+run_schedule_job(ScheduleId, once, Hour, Minute, AMPM) when is_atom(AMPM) ->
   Job =
-    {
-      {once, {Hour, Minute, AMPM}},
-      {damage_schedule, execute_bdd, [ScheduleId, Concurrency]}
-    },
+    {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [ScheduleId]}},
   erlcron:cron(ScheduleId, Job).
 
 
-do_schedule({Concurrency, ScheduleId}, once, Seconds) when is_integer(Seconds) ->
-  Job =
-    {{once, Seconds}, {damage_schedule, execute_bdd, [ScheduleId, Concurrency]}},
+run_schedule_job(ScheduleId, once, Seconds) when is_integer(Seconds) ->
+  Job = {{once, Seconds}, {damage_schedule, execute_bdd, [ScheduleId]}},
   erlcron:cron(ScheduleId, Job).
 
 
@@ -282,27 +296,39 @@ validate(Gherkin) ->
   end.
 
 
+get_schedule_unencrypted(ScheduleId) ->
+  case damage_riak:get(?SCHEDULES_BUCKET, ScheduleId) of
+    {ok, Schedule} ->
+      ?LOG_DEBUG("Loaded Schedulid ~p", [ScheduleId]),
+      maps:put(id, ScheduleId, Schedule);
+
+    _ -> none
+  end.
+
+
 get_schedule(ScheduleId) when is_binary(ScheduleId) ->
   case catch damage_utils:decrypt(ScheduleId) of
     error ->
       ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
-      none;
+      get_schedule_unencrypted(ScheduleId);
 
     {'EXIT', _Error} ->
       ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
-      none;
+      get_schedule_unencrypted(ScheduleId);
 
-    ScheduleIdDecrypted ->
-      case damage_riak:get(?SCHEDULES_BUCKET, ScheduleIdDecrypted) of
-        {ok, Schedule} ->
-          ?LOG_DEBUG("Loaded Schedulid ~p", [ScheduleIdDecrypted]),
-          maps:put(id, ScheduleIdDecrypted, Schedule);
-
-        _ -> none
-      end
+    ScheduleIdDecrypted -> get_schedule_unencrypted(ScheduleIdDecrypted)
   end;
 
 get_schedule(_) -> none.
+
+
+list_get_schedule(ScheduleId) ->
+  #{id := ScheduleId0} = Schedule = get_schedule(ScheduleId),
+  maps:put(
+    execution_counter,
+    damage_riak:counter_value(?SCHEDULE_EXECUTION_COUNTER, ScheduleId0),
+    Schedule
+  ).
 
 
 list_schedules(ContractAddress) ->
@@ -310,7 +336,7 @@ list_schedules(ContractAddress) ->
   lists:filter(
     fun (none) -> false; (_Other) -> true end,
     [
-      get_schedule(ScheduleId)
+      list_get_schedule(ScheduleId)
       ||
       ScheduleId
       <-
@@ -325,8 +351,8 @@ list_schedules(ContractAddress) ->
 
 load_schedule(Schedule) ->
   #{cronspec := Args} = Schedule,
-  logger:info("do_schedule: ~p", [Args]),
-  CronJob = apply(?MODULE, do_schedule, Args),
+  logger:info("run_schedule_job: ~p", [Args]),
+  CronJob = apply(?MODULE, run_schedule_job, Args),
   logger:info("load_schedule: ~p", [CronJob]).
 
 

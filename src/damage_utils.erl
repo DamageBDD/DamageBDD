@@ -28,7 +28,8 @@
     get_ip/1,
     test_encrypt_decrypt/0,
     test_send_email/0,
-    convert_context/1
+    convert_context/1,
+    idhash_keys/1
   ]
 ).
 -export([encrypt/2, encrypt/1, decrypt/2, decrypt/1]).
@@ -361,6 +362,28 @@ get_ip(Req0) ->
     {IP, _} -> IP
   end.
 
+
+idhash(BinString) when is_binary(BinString) ->
+  idhash(binary_to_list(BinString));
+
+idhash(String) when is_list(String) -> crypto:hash(sha256, String).
+
+idhash_keys(List) ->
+  base64:encode(
+    idhash(
+      string:join(
+        lists:map(
+          fun
+            (BinStr) when is_binary(BinStr) -> binary_to_list(BinStr);
+            (String) -> String
+          end,
+          List
+        ),
+        ""
+      )
+    ),
+    #{padding => false, mode => urlsafe}
+  ).
 
 test_encrypt_decrypt() ->
   Key = crypto:strong_rand_bytes(32),

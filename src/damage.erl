@@ -206,6 +206,7 @@ publish_file(Config, Filename) ->
 
 
 parse_file(Filename) ->
+  %?LOG_DEBUG("parse context: ~p", [Context]),
   case file:read_file(Filename) of
     {ok, Source0} -> egherkin:parse(Source0);
     Else -> Else
