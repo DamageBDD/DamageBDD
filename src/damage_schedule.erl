@@ -350,9 +350,10 @@ list_schedules(ContractAddress) ->
 
 
 load_schedule(Schedule) ->
-  #{cronspec := Args} = Schedule,
-  logger:info("run_schedule_job: ~p", [Args]),
-  CronJob = apply(?MODULE, run_schedule_job, Args),
+  #{cronspec := Args, id:=Id} = Schedule,
+    Args0 = lists:map(fun(A) when is_binary(A) -> binary_to_atom(A);(A)->A end, Args),
+  logger:info("run_schedule_job: ~p", [Args0]),
+  CronJob = apply(?MODULE, run_schedule_job, [Id] ++ Args0),
   logger:info("load_schedule: ~p", [CronJob]).
 
 
