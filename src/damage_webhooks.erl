@@ -75,18 +75,17 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  {Status, Resp0} =
+  {ok, true} =
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
       {'EXIT', {badarg, Trace}} ->
         logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
         {400, <<"Json decoding failed.">>};
+
       #{name := _WebhookName, url := _WebhookUrl} = Webhook ->
         create_webhook(Webhook, Req, State)
-
     end,
-  Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
-  cowboy_req:reply(Status, Resp),
-  {stop, Resp, State}.
+  Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
+  {stop, cowboy_req:reply(201, Resp), State}.
 
 
 to_json(Req, #{contract_address := ContractAddress} = State) ->
@@ -95,26 +94,56 @@ to_json(Req, #{contract_address := ContractAddress} = State) ->
   {Body, Req, State}.
 
 
-create_webhook(WebhookData, _Req, _State) -> {201, jsx:encode(WebhookData)}.
+create_webhook(
+  #{name := WebhookName, url := WebhookUrl} = WebhookData,
+  _Req,
+  #{contract_address := ContractAddress} = _State
+) ->
+  WebhookId =
+    damage_utils:idhash_keys([ContractAddress, WebhookName, WebhookUrl]),
+  Body = jsx:encode(list_webhooks(ContractAddress)),
+  logger:info("Loading webhooks for ~p ~p", [ContractAddress, Body]),
+  Webhook0 =
+    case damage_riak:get(?WEBHOOKS_BUCKET, WebhookId) of
+      notfound ->
+        logger:error("failed to load  webhook ~p", [WebhookId]),
+        WebhookData;
+
+      {ok, WebhookObj} ->
+        ?LOG_DEBUG("loaded  webhook ~p", [WebhookObj]),
+        maps:merge(WebhookObj, WebhookData)
+    end,
+  ?LOG_DEBUG("saving  webhook ~p", [Webhook0]),
+  {ok, true} =
+    damage_riak:put(
+      ?WEBHOOKS_BUCKET,
+      WebhookId,
+      Webhook0,
+      [{{binary_index, "contract_address"}, [ContractAddress]}]
+    ).
+
+
+get_webhook_unencrypted(WebhookId) ->
+  case damage_riak:get(?WEBHOOKS_BUCKET, WebhookId) of
+    {ok, Webhook} ->
+      ?LOG_DEBUG("Loaded Schedulid ~p", [WebhookId]),
+      maps:put(id, WebhookId, Webhook);
+
+    _ -> none
+  end.
+
 
 get_webhook(WebhookId) when is_binary(WebhookId) ->
   case catch damage_utils:decrypt(WebhookId) of
     error ->
       ?LOG_DEBUG("WebhookId Decryption error ~p ", [WebhookId]),
-      none;
+      get_webhook_unencrypted(WebhookId);
 
     {'EXIT', _Error} ->
       ?LOG_DEBUG("WebhookId Decryption error ~p ", [WebhookId]),
-      none;
+      get_webhook_unencrypted(WebhookId);
 
-    WebhookIdDecrypted ->
-      case damage_riak:get(?WEBHOOKS_BUCKET, WebhookIdDecrypted) of
-        {ok, Webhook} ->
-          ?LOG_DEBUG("Loaded Schedulid ~p", [WebhookIdDecrypted]),
-          maps:put(id, WebhookIdDecrypted, Webhook);
-
-        _ -> none
-      end
+    WebhookIdDecrypted -> get_webhook_unencrypted(WebhookIdDecrypted)
   end;
 
 get_webhook(_) -> none.

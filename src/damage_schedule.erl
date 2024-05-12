@@ -14,7 +14,6 @@
 -export([content_types_accepted/2]).
 -export([content_types_provided/2]).
 -export([to_json/2]).
--export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2]).
 -export([trails/0]).
 -export([is_authorized/2]).
@@ -153,7 +152,6 @@ from_json(Req, State) -> from_text(Req, State).
 
 from_html(Req, State) -> from_text(Req, State).
 
-to_text(Req, State) -> to_json(Req, State).
 
 to_json(Req, #{contract_address := ContractAddress} = State) ->
   Body = jsx:encode(list_schedules(ContractAddress)),
