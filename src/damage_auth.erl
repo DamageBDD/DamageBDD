@@ -74,12 +74,20 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
+
 from_json(Req, State) ->
-  {ok, Data, Req0} = cowboy_req:read_body(Req),
-  ?LOG_DEBUG("received json ~p", [Data]),
-  Params = jsx:decode(Data, [{return_maps, false}]),
-  ?LOG_DEBUG("decoded params", [Params]),
-  process_post(Params, Req0, State).
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {Status, Resp0} =
+    case catch jsx:decode(Data, [ {return_maps, false}]) of
+      {'EXIT', {badarg, Trace}} ->
+        logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+        {400, <<"Json decoding failed.">>};
+      PostData when is_list(PostData) ->
+        process_post(PostData, Req, State)
+    end,
+  Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
+  cowboy_req:reply(Status, Resp),
+  {stop, Resp, State}.
 
 
 from_html(Req, State) ->

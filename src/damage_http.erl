@@ -276,13 +276,12 @@ check_execute_bdd(
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
-    case jsx:decode(Data, [{labels, atom}, return_maps]) of
+    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+      {'EXIT', {badarg, Trace}} ->
+        logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+        {400, <<"Json decoding failed.">>};
       #{feature := _FeatureData} = FeatureJson ->
-        check_execute_bdd(FeatureJson, State, Req, nostream);
-
-      Err ->
-        logger:error("json decoding failed ~p err: ~p.", [Data, Err]),
-        {400, <<"Invalid Request">>}
+        check_execute_bdd(FeatureJson, State, Req, nostream)
     end,
   Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
   cowboy_req:reply(Status, Resp),

@@ -83,7 +83,11 @@ to_json(Req, #{contract_address := ContractAddress} = State) ->
 from_json(Req, #{contract_address := ContractAddress} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
-    case jsx:decode(Data, [{labels, atom}, return_maps]) of
+    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+      {'EXIT', {badarg, Trace}} ->
+        logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+        {400, <<"Json decoding failed.">>};
+
       #{domain := Domain} ->
         DomainToken = list_to_binary(uuid:to_string(uuid:uuid4())),
         DomainTokenKey =
@@ -107,11 +111,8 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
             {202, DomainObj};
 
           {ok, Found} -> {200, Found}
-        end;
+        end
 
-      Err ->
-        logger:error("json decoding failed ~p err: ~p.", [Data, Err]),
-        {400, <<"Invalid Request">>}
     end,
   Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
   cowboy_req:reply(Status, Resp),
