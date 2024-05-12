@@ -280,6 +280,7 @@ from_json(Req, State) ->
       {'EXIT', {badarg, Trace}} ->
         logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
         {400, <<"Json decoding failed.">>};
+
       #{feature := _FeatureData} = FeatureJson ->
         check_execute_bdd(FeatureJson, State, Req, nostream)
     end,

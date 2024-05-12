@@ -112,7 +112,6 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
 
           {ok, Found} -> {200, Found}
         end
-
     end,
   Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
   cowboy_req:reply(Status, Resp),

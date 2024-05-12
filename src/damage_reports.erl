@@ -13,9 +13,7 @@
 -export([init/2]).
 -export([content_types_provided/2]).
 -export([to_json/2]).
--export(
-  [from_json/2, allowed_methods/2, is_authorized/2]
-).
+-export([from_json/2, allowed_methods/2, is_authorized/2]).
 -export([clean_reports/0]).
 -export([test/0]).
 -export([ls/1]).
@@ -116,22 +114,10 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
-  {
-    [
-      {{<<"application">>, <<"json">>, []}, to_json}
-    ],
-    Req,
-    State
-  }.
+  {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
 
 content_types_accepted(Req, State) ->
-  {
-    [
-      {{<<"application">>, <<"json">>, '*'}, from_json}
-    ],
-    Req,
-    State
-  }.
+  {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
@@ -210,12 +196,10 @@ get_record(Id) ->
     {ok, Record} -> Record;
     notfound -> none
   end.
+
+
 do_query_base(Fun, Index, Args, ContractAddress) ->
-  case
-  apply(damage_riak,Fun,[
-    ?RUNRECORDS_BUCKET,
-    Index] ++ Args
-  ) of
+  case apply(damage_riak, Fun, [?RUNRECORDS_BUCKET, Index] ++ Args) of
     [] ->
       logger:info("no reports for account"),
       #{results => [], status => <<"ok">>, length => 0};
@@ -235,41 +219,53 @@ do_query_base(Fun, Index, Args, ContractAddress) ->
         ),
       #{results => Results, status => <<"ok">>, length => length(Results)}
   end.
-    
+
+
 do_query(#{contract_address := ContractAddress, since := Since}) ->
-    StartDateTime = date_util:epoch() - 3600,
-    EndDateTime = date_util:epoch(),
-    ?LOG_DEBUG("Since 1 hour",[]),
-    do_query_base(get_index_range, {integer_index, "created"},[StartDateTime, EndDateTime],ContractAddress);
+  StartDateTime = date_util:epoch() - 3600,
+  EndDateTime = date_util:epoch(),
+  ?LOG_DEBUG("Since 1 hour", []),
+  do_query_base(
+    get_index_range,
+    {integer_index, "created"},
+    [StartDateTime, EndDateTime],
+    ContractAddress
+  );
 
 do_query(#{contract_address := ContractAddress, schedule_id := ScheduleId}) ->
-    do_query_base(get_index,
+  do_query_base(
+    get_index,
     {binary_index, "schedule_id"},
-[ScheduleId],ContractAddress);
+    [ScheduleId],
+    ContractAddress
+  );
 
 do_query(#{contract_address := ContractAddress}) ->
-    do_query_base(get_index,
+  do_query_base(
+    get_index,
     {binary_index, "contract_address"},
-[ContractAddress],ContractAddress).
+    [ContractAddress],
+    ContractAddress
+  ).
 
 
-
-from_json(Req, #{contract_address := ContractAddress}=State) ->
+from_json(Req, #{contract_address := ContractAddress} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
       {'EXIT', {badarg, Trace}} ->
         logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
         {400, <<"Json decoding failed.">>};
+
       PostData ->
-            QueryData = maps:merge(PostData,#{contract_address => ContractAddress}),
-            ?LOG_DEBUG("Query data ~p", [QueryData]),
+        QueryData =
+          maps:merge(PostData, #{contract_address => ContractAddress}),
+        ?LOG_DEBUG("Query data ~p", [QueryData]),
         {200, do_query(QueryData)}
     end,
   Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
   cowboy_req:reply(Status, Resp),
   {stop, Resp, State}.
-
 
 
 ls(Hash) ->

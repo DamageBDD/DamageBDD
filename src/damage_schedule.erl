@@ -152,7 +152,6 @@ from_json(Req, State) -> from_text(Req, State).
 
 from_html(Req, State) -> from_text(Req, State).
 
-
 to_json(Req, #{contract_address := ContractAddress} = State) ->
   Body = jsx:encode(list_schedules(ContractAddress)),
   logger:info("Loading scheduled for ~p ~p", [ContractAddress, Body]),
@@ -348,8 +347,12 @@ list_schedules(ContractAddress) ->
 
 
 load_schedule(Schedule) ->
-  #{cronspec := Args, id:=Id} = Schedule,
-    Args0 = lists:map(fun(A) when is_binary(A) -> binary_to_atom(A);(A)->A end, Args),
+  #{cronspec := Args, id := Id} = Schedule,
+  Args0 =
+    lists:map(
+      fun (A) when is_binary(A) -> binary_to_atom(A); (A) -> A end,
+      Args
+    ),
   logger:info("run_schedule_job: ~p", [Args0]),
   CronJob = apply(?MODULE, run_schedule_job, [Id] ++ Args0),
   logger:info("load_schedule: ~p", [CronJob]).
