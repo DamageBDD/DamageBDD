@@ -18,7 +18,19 @@
 -export([allowed_methods/2]).
 -export([trails/0]).
 -export([is_authorized/2]).
--export([load_all_webhooks/1]).
+-export([load_all_webhooks/2]).
+-export([list_all_webhooks/0]).
+-export([trigger_webhooks/1]).
+
+-define(DEFAULT_HTTP_TIMEOUT, 60000).
+-define(
+  DEFAULT_HEADERS,
+  [
+    {<<"accept">>, "application/json,text/html"},
+    {<<"user-agent">>, "damagebdd/1.0"},
+    {<<"content-type">>, "application/json"}
+  ]
+).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -95,15 +107,12 @@ to_json(Req, #{contract_address := ContractAddress} = State) ->
 
 
 create_webhook(
-  #{name := WebhookName, url := WebhookUrl} = WebhookData,
+  #{name := WebhookName, url := _WebhookUrl} = WebhookData,
   _Req,
   #{contract_address := ContractAddress} = _State
 ) ->
-  WebhookId =
-    damage_utils:idhash_keys([ContractAddress, WebhookName, WebhookUrl]),
-  Body = jsx:encode(list_webhooks(ContractAddress)),
-  logger:info("Loading webhooks for ~p ~p", [ContractAddress, Body]),
-  Webhook0 =
+  WebhookId = damage_utils:idhash_keys([ContractAddress, WebhookName]),
+  Webhook1 =
     case damage_riak:get(?WEBHOOKS_BUCKET, WebhookId) of
       notfound ->
         logger:error("failed to load  webhook ~p", [WebhookId]),
@@ -113,6 +122,7 @@ create_webhook(
         ?LOG_DEBUG("loaded  webhook ~p", [WebhookObj]),
         maps:merge(WebhookObj, WebhookData)
     end,
+  Webhook0 = maps:put(id, WebhookId, Webhook1),
   ?LOG_DEBUG("saving  webhook ~p", [Webhook0]),
   {ok, true} =
     damage_riak:put(
@@ -126,8 +136,8 @@ create_webhook(
 get_webhook_unencrypted(WebhookId) ->
   case damage_riak:get(?WEBHOOKS_BUCKET, WebhookId) of
     {ok, Webhook} ->
-      ?LOG_DEBUG("Loaded Schedulid ~p", [WebhookId]),
-      maps:put(id, WebhookId, Webhook);
+      ?LOG_DEBUG("Loaded WebhookId ~p", [WebhookId]),
+      Webhook;
 
     _ -> none
   end.
@@ -154,7 +164,7 @@ list_webhooks(ContractAddress) ->
   lists:filter(
     fun (none) -> false; (_Other) -> true end,
     [
-      get_webhook(damage_utils:decrypt(WebhookId))
+      get_webhook(WebhookId)
       ||
       WebhookId
       <-
@@ -167,12 +177,15 @@ list_webhooks(ContractAddress) ->
   ).
 
 
-load_webhook(Webhook) -> logger:info("load_webhook: ~p", [Webhook]).
-
-load_all_webhooks(Context) ->
+load_all_webhooks(ContractAddress, Context) ->
   maps:put(
     webhooks,
-    [load_webhook(Webhook) || Webhook <- list_all_webhooks()],
+    maps:from_list(
+      [
+        {maps:get(name, Webhook), Webhook}
+        || Webhook <- list_webhooks(ContractAddress)
+      ]
+    ),
     Context
   ).
 
@@ -184,3 +197,49 @@ list_all_webhooks() ->
       || WebhookId <- damage_riak:list_keys(?WEBHOOKS_BUCKET)
     ]
   ).
+
+gun_await(ConnPid, StreamRef) ->
+  case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+    {response, fin, _Status, _Headers} -> closed;
+
+    {response, nofin, _Status, _Headers} ->
+      {ok, Body} = gun:await_body(ConnPid, StreamRef),
+      Body
+  end.
+
+
+trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = _Context) ->
+  %?LOG_DEBUG("post_webhook for with context to urls ~p", [Context, Url]),
+  {Host0, Port0, Path0} =
+    case uri_string:parse(binary_to_list(Url)) of
+      #{port := Port, scheme := _Scheme, path := Path, host := Host} ->
+        {Host, Port, Path};
+
+      #{scheme := "https", host := Host, path := Path} -> {Host, 443, Path};
+      #{scheme := "http", host := Host, path := Path} -> {Host, 80, Path}
+    end,
+  {ok, ConnPid} =
+    gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
+  Template = binary_to_list(maps:get(template, Webhook, <<"discord">>)),
+  Body =
+    damage_utils:load_template(
+      "webhooks/" ++ Template ++ ".mustache",
+      #{content => FailMessage}
+    ),
+  StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
+  Resp = gun_await(ConnPid, StreamRef),
+  ?LOG_DEBUG("Got response from webhook url ~p ~p.", [Url, Resp]);
+
+trigger_webhook(#{url := _Url} = _Webhook, _Context) -> ok.
+
+
+trigger_webhooks(FinalContext) ->
+  case maps:get(notify_urls, FinalContext, none) of
+    none -> ok;
+
+    #{"fail" := EventHooks} = _NotifyHooks ->
+      [
+        trigger_webhook(Webhook, FinalContext)
+        || Webhook <- sets:to_list(EventHooks)
+      ]
+  end.

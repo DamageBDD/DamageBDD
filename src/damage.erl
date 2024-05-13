@@ -386,14 +386,16 @@ execute_feature(
   {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
   init_logging(RunId, RunDir),
   formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
-  lists:foldl(
-    fun
-      (Scenario, Context) ->
-        execute_scenario(Config, Context, BackGround, Scenario)
-    end,
-    FeatureContext,
-    Scenarios
-  ),
+  FinalContext =
+    lists:foldl(
+      fun
+        (Scenario, Context) ->
+          execute_scenario(Config, Context, BackGround, Scenario)
+      end,
+      FeatureContext,
+      Scenarios
+    ),
+  damage_webhooks:trigger_webhooks(FinalContext),
   deinit_logging(RunId).
 
 

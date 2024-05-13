@@ -140,23 +140,25 @@ get_global_template_context(Context) ->
   ).
 
 get_account_context(#{contract_address := ContractAddress} = DefaultContext) ->
-  case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
-    {ok, #{client_context := ClientContext} = _AccountContext} ->
-      %?LOG_DEBUG("got client context ~p", [AccountContext]),
-      MergedContext =
-        maps:map(
-          fun
-            (_Key, Value) when is_map(Value) -> maps:get(value, Value);
-            (_Key, Value) -> Value
-          end,
-          maps:merge(ClientContext, DefaultContext)
-        ),
-      maps:put(client_context, ClientContext, MergedContext);
+  Context0 =
+    case damage_riak:get(?CONTEXT_BUCKET, ContractAddress) of
+      {ok, #{client_context := ClientContext} = _AccountContext} ->
+        %?LOG_DEBUG("got client context ~p", [AccountContext]),
+        MergedContext =
+          maps:map(
+            fun
+              (_Key, Value) when is_map(Value) -> maps:get(value, Value);
+              (_Key, Value) -> Value
+            end,
+            maps:merge(ClientContext, DefaultContext)
+          ),
+        maps:put(client_context, ClientContext, MergedContext);
 
-    Other ->
-      ?LOG_DEBUG("got no client context ~p", [Other]),
-      DefaultContext
-  end.
+      Other ->
+        ?LOG_DEBUG("got no client context ~p", [Other]),
+        DefaultContext
+    end,
+  damage_webhooks:load_all_webhooks(ContractAddress, Context0).
 
 
 update_account_context(

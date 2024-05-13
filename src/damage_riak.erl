@@ -53,7 +53,7 @@ find_active_connection_helper([Connection | Rest], Fun, Args) ->
   case apply(riakc_pb_socket, Fun, [Connection] ++ Args) of
     {ok, Results} -> {ok, Results};
     {error, notfound} -> {error, notfound};
-    {error, {notfound, _Type}} -> {error, notfound};
+    {error, {notfound, Type}} -> {error, {notfound, Type}};
     ok -> ok;
 
     Err ->

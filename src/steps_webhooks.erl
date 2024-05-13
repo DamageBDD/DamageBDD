@@ -16,29 +16,45 @@ step(
   Context,
   <<"Given">>,
   _N,
-  ["I notify", Event, "to", Webhook, "webhook"],
+  ["I notify", Event, "to", WebhookName0, "webhook"],
   _
 ) ->
+  WebhookName = list_to_binary(WebhookName0),
   ?LOG_DEBUG("notify webhook ~p", [Event]),
   case maps:get(webhooks, Context, none) of
     none ->
       maps:put(
         fail,
-        damage_utils:strf("Webhook not configured: ~s", [Webhook]),
+        damage_utils:strf("Webhook not configured: ~s", [WebhookName]),
         Context
       );
 
     Webhooks ->
-      case maps:get(Webhook, Webhooks, none) of
+      ?LOG_DEBUG("notify webhook ~p", [Webhooks]),
+      case maps:get(WebhookName, Webhooks, none) of
         none ->
           maps:put(
-            fail,
-            damage_utils:strf("Webhook not configured: ~s", [Webhook]),
-            Context
+            Event,
+            damage_utils:strf("Webhook not configured: ~p", [WebhookName]),
+            Webhooks
           );
 
-        Url ->
-          NotifyUrls = maps:get(notify_urls, Context, []),
-          maps:put(notify_urls, NotifyUrls ++ Url, Context)
+        #{url := _Url} = Webhook ->
+          case maps:get(notify_urls, Context, none) of
+            none ->
+              maps:put(
+                notify_urls,
+                maps:put(Event, sets:from_list([Webhook]), #{}),
+                Context
+              );
+
+            NotifyUrls ->
+              EventUrls = maps:get(Event, NotifyUrls, sets:new()),
+              maps:put(
+                notify_urls,
+                maps:put(Event, sets:add_element(Webhook, EventUrls), #{}),
+                Context
+              )
+          end
       end
   end.
