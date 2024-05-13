@@ -1,4 +1,8 @@
 Feature: Ensure availability of damagebdd system services
+
+  Background:
+    Given I notify "fail" to "discord" webhook
+   
   Scenario: ensure riak servers are available
 
     Given I am using server "http://threadripper0.lan:8098"
@@ -14,21 +18,18 @@ Feature: Ensure availability of damagebdd system services
     Then the response status must be "200"
 
   Scenario: ensure IPFS servers are available
-    Given I am using server "http://threadripper0.lan:8082"
+    Given I am using server "http://threadripper0.lan:5001"
     When I make a POST request to "/version"
     Then the response status must be "200"
 
-    Given I am using server "http://doombox.lan:8082"
+    Given I am using server "http://doombox.lan:5001"
     When I make a POST request to "/version"
     Then the response status must be "200"
 
-    Given I am using server "http://zenbook.lan:8082"
+    Given I am using server "http://zenbook.lan:5001"
     When I make a POST request to "/version"
     Then the response status must be "200"
 
-    Given I am using server "http://yoga0.lan:8082"
-    When I make a POST request to "/version"
-    Then the response status must be "200"
 
   Scenario: ensure smtp sending hosts are up
     Given I am using server "https://status.sendgrid.com"

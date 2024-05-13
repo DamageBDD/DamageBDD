@@ -12,12 +12,14 @@
 
 step(_Config, Context, <<"When">>, _N, ["I run the command", Command], _) ->
   {ok, Allowed} = application:get_env(damage, cmd_allowed),
-  CommandPath = os:find_executable(Command),
-  case lists:search(fun (Command1) -> Command1 =:= CommandPath end, Allowed) of
+  case lists:search(fun (Command1) -> Command1 =:= Command end, Allowed) of
     false ->
       maps:put(
         fail,
-        damage_utils:strf("Command is not in allowed commands", []),
+        damage_utils:strf(
+          "Command ~p is not in allowed commands ~p",
+          [Command, Allowed]
+        ),
         Context
       );
 
