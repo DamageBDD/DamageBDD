@@ -106,6 +106,7 @@ delete_resource(Req, State) ->
         (DeleteId, Acc) ->
           ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
           ok = damage_riak:delete(?SCHEDULES_BUCKET, DeleteId),
+          erlcron:cancel(DeleteId),
           Acc + 1
       end,
       0,
