@@ -44,6 +44,8 @@
 
 -record(state, {connections = []}).
 
+-define(RIAK_CALL_TIMEOUT, 3600).
+
 % Define the function find_active_connection
 find_active_connection(Connections, Fun, Args) ->
   find_active_connection_helper(Connections, Fun, Args).
@@ -82,7 +84,11 @@ get({Type, Bucket}, Key, JsonDecodeOpts) ->
     ?MODULE,
     fun
       (Worker) ->
-        gen_server:call(Worker, {get, {Type, Bucket}, Key, JsonDecodeOpts})
+        gen_server:call(
+          Worker,
+          {get, {Type, Bucket}, Key, JsonDecodeOpts},
+          ?RIAK_CALL_TIMEOUT
+        )
     end
   ).
 
@@ -93,20 +99,30 @@ put({Type, Bucket}, Key, Value, Index) ->
     ?MODULE,
     fun
       (Worker) ->
-        gen_server:call(Worker, {put, {Type, Bucket}, Key, Value, Index})
+        gen_server:call(
+          Worker,
+          {put, {Type, Bucket}, Key, Value, Index},
+          ?RIAK_CALL_TIMEOUT
+        )
     end
   ).
 
 delete(Bucket, Key) ->
   poolboy:transaction(
     ?MODULE,
-    fun (Worker) -> gen_server:call(Worker, {delete, Bucket, Key}) end
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {delete, Bucket, Key}, ?RIAK_CALL_TIMEOUT)
+    end
   ).
 
 list_keys({Type, Bucket}) ->
   poolboy:transaction(
     ?MODULE,
-    fun (Worker) -> gen_server:call(Worker, {list_keys, {Type, Bucket}}) end
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {list_keys, {Type, Bucket}}, ?RIAK_CALL_TIMEOUT)
+    end
   ).
 
 get_index({Type, Bucket}, Index, Key) ->
@@ -119,7 +135,8 @@ get_index({Type, Bucket}, Index, Key, Opts) ->
       (Worker) ->
         gen_server:call(
           Worker,
-          {get_index_eq, {Type, Bucket}, Index, Key, Opts}
+          {get_index_eq, {Type, Bucket}, Index, Key, Opts},
+          ?RIAK_CALL_TIMEOUT
         )
     end
   ).
@@ -134,7 +151,8 @@ get_index_range({Type, Bucket}, Index, StartKey, EndKey, Opts) ->
       (Worker) ->
         gen_server:call(
           Worker,
-          {get_index_range, {Type, Bucket}, Index, StartKey, EndKey, Opts}
+          {get_index_range, {Type, Bucket}, Index, StartKey, EndKey, Opts},
+          ?RIAK_CALL_TIMEOUT
         )
     end
   ).
@@ -143,28 +161,48 @@ update_hll(Bucket, Key, Elements) ->
   poolboy:transaction(
     ?MODULE,
     fun
-      (Worker) -> gen_server:call(Worker, {update_hll, Bucket, Key, Elements})
+      (Worker) ->
+        gen_server:call(
+          Worker,
+          {update_hll, Bucket, Key, Elements},
+          ?RIAK_CALL_TIMEOUT
+        )
     end
   ).
 
 hll_value(Bucket, Key) ->
   poolboy:transaction(
     ?MODULE,
-    fun (Worker) -> gen_server:call(Worker, {hll_value, Bucket, Key}) end
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {hll_value, Bucket, Key}, ?RIAK_CALL_TIMEOUT)
+    end
   ).
 
 update_counter(Bucket, Key, OpVal) ->
   poolboy:transaction(
     ?MODULE,
     fun
-      (Worker) -> gen_server:call(Worker, {update_counter, Bucket, Key, OpVal})
+      (Worker) ->
+        gen_server:call(
+          Worker,
+          {update_counter, Bucket, Key, OpVal},
+          ?RIAK_CALL_TIMEOUT
+        )
     end
   ).
 
 counter_value(Bucket, Key) ->
   poolboy:transaction(
     ?MODULE,
-    fun (Worker) -> gen_server:call(Worker, {counter_value, Bucket, Key}) end
+    fun
+      (Worker) ->
+        gen_server:call(
+          Worker,
+          {counter_value, Bucket, Key},
+          ?RIAK_CALL_TIMEOUT
+        )
+    end
   ).
 
 %% GenServer callbacks
