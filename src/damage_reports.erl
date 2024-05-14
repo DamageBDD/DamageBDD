@@ -147,7 +147,6 @@ to_json(Req, #{contract_address := ContractAddress} = State) ->
               #{contract_address => ContractAddress, schedule_id => ScheduleId}
             )
         end,
-      ?LOG_DEBUG("list ipfs reports ~p ", [Reports]),
       {jsx:encode(Reports), Req, State};
 
     Hash0 ->
@@ -205,7 +204,6 @@ do_query_base(Fun, Index, Args, ContractAddress) ->
       #{results => [], status => <<"ok">>, length => 0};
 
     Found ->
-      ?LOG_DEBUG(" reports exists data: ~p ", [Found]),
       Results =
         lists:filter(
           fun
@@ -221,16 +219,44 @@ do_query_base(Fun, Index, Args, ContractAddress) ->
   end.
 
 
-do_query(#{contract_address := ContractAddress, since := Since}) ->
-  StartDateTime = date_util:epoch() - 3600,
-  EndDateTime = date_util:epoch(),
-  ?LOG_DEBUG("Since 1 hour", []),
-  do_query_base(
-    get_index_range,
-    {integer_index, "created"},
-    [StartDateTime, EndDateTime],
-    ContractAddress
-  );
+since_seconds(hours, Value) -> Value * 3600;
+since_seconds(hour, Value) -> Value * 3600;
+since_seconds(secs, Value) -> Value;
+since_seconds(seconds, Value) -> Value;
+since_seconds(day, Value) -> Value * 3600 * 24;
+since_seconds(days, Value) -> Value * 3600 * 24;
+since_seconds(week, Value) -> Value * 3600 * 24 * 7;
+since_seconds(weeks, Value) -> Value * 3600 * 24 * 7.
+
+do_query(#{contract_address := ContractAddress, since := Since0}) ->
+  Since = binary_to_list(Since0),
+  case
+  re:run(
+    Since,
+    "([0-9]+)(hours|hour|secs|seconds|day|days|week|weeks)",
+    [{capture, [1, 2]}]
+  ) of
+    {match, [{0, End}, {UnitStart, UnitEnd}]} ->
+      StartDateTime =
+        date_util:epoch()
+        -
+        since_seconds(
+          list_to_atom(string:substr(Since, UnitStart + 1, UnitEnd)),
+          list_to_integer(string:substr(Since, 1, End))
+        ),
+      EndDateTime = date_util:epoch(),
+      ?LOG_DEBUG("Since ~p", [StartDateTime]),
+      do_query_base(
+        get_index_range,
+        {integer_index, "created"},
+        [StartDateTime, EndDateTime],
+        ContractAddress
+      );
+
+    Other ->
+      ?LOG_DEBUG("Invalid query ~p", [Other]),
+      <<"Invalid query.">>
+  end;
 
 do_query(#{contract_address := ContractAddress, schedule_id := ScheduleId}) ->
   do_query_base(
