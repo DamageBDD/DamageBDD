@@ -65,7 +65,7 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "List test execution report directory .",
-          produces => ["text/html"]
+          produces => ["text/html", "application/json"]
         },
         put
         =>
@@ -121,6 +121,34 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
+%%to_html(Req, #{contract_address := ContractAddress} = State) ->
+%%        HashBin = list_to_binary(Hash),
+%%        HashLen = length(Hash),
+%%          List =
+%%            list_to_binary(
+%%              lists:join(
+%%                <<"\n">>,
+%%                [
+%%                  <<
+%%                    "<a href=\"",
+%%                    HashBin:HashLen/binary,
+%%                    "/",
+%%                    X/binary,
+%%                    "\">",
+%%                    HashBin:HashLen/binary,
+%%                    "/",
+%%                    X/binary,
+%%                    "</a><br>"
+%%                  >>
+%%                  ||
+%%                  X
+%%                  <-
+%%
+%%                ]
+%%              )
+%%            ),
+%%          Data = <<"<html><body>", List/binary, "</body></html>">>,
+
 to_json(
   Req,
   #{action := features, contract_address := _ContractAddress} = State
@@ -153,32 +181,8 @@ to_json(Req, #{contract_address := ContractAddress} = State) ->
       Hash = binary_to_list(Hash0),
       case cowboy_req:binding(path, Req) of
         undefined ->
-          HashBin = list_to_binary(Hash),
-          HashLen = length(Hash),
-          List =
-            list_to_binary(
-              lists:join(
-                <<"\n">>,
-                [
-                  <<
-                    "<a href=\"",
-                    HashBin:HashLen/binary,
-                    "/",
-                    X/binary,
-                    "\">",
-                    HashBin:HashLen/binary,
-                    "/",
-                    X/binary,
-                    "</a><br>"
-                  >>
-                  ||
-                  X
-                  <-
-                  ls(list_to_binary(string:join([Hash, "reports"], "/")))
-                ]
-              )
-            ),
-          Data = <<"<html><body>", List/binary, "</body></html>">>,
+          Data =
+            jsx:encode(ls(list_to_binary(string:join([Hash, "reports"], "/")))),
           logger:info("to text ipfs hash ~p ", [Data]),
           {Data, Req, State};
 
@@ -200,7 +204,7 @@ get_record(Id) ->
 do_query_base(Fun, Index, Args, ContractAddress) ->
   case apply(damage_riak, Fun, [?RUNRECORDS_BUCKET, Index] ++ Args) of
     [] ->
-      logger:info("no reports for account"),
+      logger:info("no reports for account ~p ~p", [Index, Args]),
       #{results => [], status => <<"ok">>, length => 0};
 
     Found ->
@@ -227,6 +231,60 @@ since_seconds(day, Value) -> Value * 3600 * 24;
 since_seconds(days, Value) -> Value * 3600 * 24;
 since_seconds(week, Value) -> Value * 3600 * 24 * 7;
 since_seconds(weeks, Value) -> Value * 3600 * 24 * 7.
+
+range_query(StartDateTime0, EndDateTime0, Prefix, ContractAddress) ->
+  StartDateTime = list_to_integer(Prefix ++ integer_to_list(StartDateTime0)),
+  EndDateTime = list_to_integer(Prefix ++ integer_to_list(EndDateTime0)),
+  ?LOG_DEBUG("Since ~p to ~p", [StartDateTime, EndDateTime]),
+  do_query_base(
+    get_index_range,
+    {integer_index, "result_status"},
+    [StartDateTime, EndDateTime],
+    ContractAddress
+  ).
+
+
+do_query(
+  #{contract_address := ContractAddress, since := Since0, status := Status}
+) ->
+  Since = binary_to_list(Since0),
+  case
+  re:run(
+    Since,
+    "([0-9]+)(hours|hour|secs|seconds|day|days|week|weeks)",
+    [{capture, [1, 2]}]
+  ) of
+    {match, [{0, End}, {UnitStart, UnitEnd}]} ->
+      StartDateTime0 =
+        date_util:epoch()
+        -
+        since_seconds(
+          list_to_atom(string:substr(Since, UnitStart + 1, UnitEnd)),
+          list_to_integer(string:substr(Since, 1, End))
+        ),
+      EndDateTime0 = date_util:epoch(),
+      case Status of
+        <<"fail">> ->
+          range_query(
+            StartDateTime0,
+            EndDateTime0,
+            ?RESULT_STATUS_PREFIX_FAIL,
+            ContractAddress
+          );
+
+        <<"success">> ->
+          range_query(
+            StartDateTime0,
+            EndDateTime0,
+            ?RESULT_STATUS_PREFIX_SUCCESS,
+            ContractAddress
+          )
+      end;
+
+    Other ->
+      ?LOG_DEBUG("Invalid query ~p", [Other]),
+      <<"Invalid query.">>
+  end;
 
 do_query(#{contract_address := ContractAddress, since := Since0}) ->
   Since = binary_to_list(Since0),
@@ -319,6 +377,11 @@ test() ->
   } = damage_ipfs:test(),
   logger:info("list ipfs directory ~p ~p ~p", [Hash, Links, Rest]).
 
+
+clean_record(#{result := Result} = Record, Key) when is_list(Result) ->
+  ?LOG_INFO("deleting invalid record~p", [Key]),
+  damage_riak:delete(?RUNRECORDS_BUCKET, damage_utils:decrypt(Key)),
+  Record;
 
 clean_record(#{run_id := RunId} = Record, Key) when is_list(RunId) ->
   ?LOG_INFO("deleting invalid record~p", [Key]),

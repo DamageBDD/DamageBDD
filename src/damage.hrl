@@ -16,3 +16,7 @@
 
 % Domains ---
 -define(DOMAIN_TOKEN_BUCKET, {<<"Default">>, <<"DomainTokens">>}).
+
+% Reporting ---
+-define(RESULT_STATUS_PREFIX_SUCCESS, "9").
+-define(RESULT_STATUS_PREFIX_FAIL, "7").

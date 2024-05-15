@@ -241,26 +241,35 @@ execute_file(Config, Context, Filename) ->
       {parse_error, LineNo, Message};
 
     {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
-      case Concurrency of
-        1 ->
-          execute_feature(
-            Config,
-            Context,
-            Feature,
-            LineNo,
-            Tags,
-            Description,
-            BackGround,
-            Scenarios
-          );
+      FinalContext =
+        case Concurrency of
+          1 ->
+            execute_feature(
+              Config,
+              Context,
+              Feature,
+              LineNo,
+              Tags,
+              Description,
+              BackGround,
+              Scenarios
+            );
 
-        _ ->
-          execute_feature_concurrent(
-            [Config, Feature, LineNo, Tags, Description, BackGround, Scenarios],
-            Concurrency,
-            []
-          )
-      end,
+          _ ->
+            execute_feature_concurrent(
+              [
+                Config,
+                Feature,
+                LineNo,
+                Tags,
+                Description,
+                BackGround,
+                Scenarios
+              ],
+              Concurrency,
+              []
+            )
+        end,
       EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
       {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
       {api_url, DamageApi} = lists:keyfind(api_url, 1, Config),
@@ -306,6 +315,29 @@ execute_file(Config, Context, Filename) ->
         }
       ),
       FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
+      ResultStatus =
+        case maps:get(fail, FinalContext, 0) of
+          0 ->
+            list_to_integer(
+              ?RESULT_STATUS_PREFIX_SUCCESS
+              ++
+              integer_to_list(round(date_util:now_to_seconds(os:timestamp())))
+            );
+
+          _Something ->
+            list_to_integer(
+              ?RESULT_STATUS_PREFIX_FAIL
+              ++
+              integer_to_list(round(date_util:now_to_seconds(os:timestamp())))
+            )
+        end,
+      ?LOG_DEBUG("Result status index ~p", [ResultStatus]),
+      Result =
+        case maps:get(fail, FinalContext, none) of
+          none -> "success";
+          Result0 when is_list(Result0) -> list_to_binary(Result0);
+          Result1 -> Result1
+        end,
       RunRecord =
         #{
           run_id => list_to_binary(RunId),
@@ -319,7 +351,9 @@ execute_file(Config, Context, Filename) ->
           schedule_id => case lists:keyfind(schedule_id, 1, Config) of
             {schedule_id, ScheduleId} -> ScheduleId;
             false -> false
-          end
+          end,
+          result => Result,
+          result_status => ResultStatus
         },
       store_runrecord(RunRecord),
       damage_ae:confirm_spend(ContractAddress),
@@ -339,22 +373,23 @@ store_runrecord(
     execution_time := _ExecutionTime,
     end_time := _EndTimestamp,
     contract_address := ContractAddress,
-    schedule_id := ScheduleId
+    schedule_id := ScheduleId,
+    result_status := ResultStatus
   } = RunRecord
 ) ->
+  Index =
+    [
+      {{binary_index, "contract_address"}, [ContractAddress]},
+      {{integer_index, "created"}, [date_util:epoch()]},
+      {{integer_index, "result_status"}, [ResultStatus]}
+    ],
   damage_riak:put(
     ?RUNRECORDS_BUCKET,
     ReportHash,
     RunRecord,
     case ScheduleId of
-      false -> [{{binary_index, "contract_address"}, [ContractAddress]}];
-
-      ScheduleId ->
-        [
-          {{binary_index, "contract_address"}, [ContractAddress]},
-          {{binary_index, "schedule_id"}, [ScheduleId]},
-          {{integer_index, "created"}, [date_util:epoch()]}
-        ]
+      false -> Index;
+      ScheduleId -> Index ++ [{{binary_index, "schedule_id"}, [ScheduleId]}]
     end
   ).
 
@@ -396,7 +431,8 @@ execute_feature(
       Scenarios
     ),
   damage_webhooks:trigger_webhooks(FinalContext),
-  deinit_logging(RunId).
+  deinit_logging(RunId),
+  FinalContext.
 
 
 execute_scenario(Config, Context, undefined, Scenario) ->
