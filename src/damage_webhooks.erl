@@ -2,8 +2,6 @@
 
 -vsn("0.1.0").
 
--include_lib("eunit/include/eunit.hrl").
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -226,6 +224,7 @@ trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = _Context) ->
       "webhooks/" ++ Template ++ ".mustache",
       #{content => FailMessage}
     ),
+  %?LOG_DEBUG("webhook post ~p.", [Body]),
   StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
   Resp = gun_await(ConnPid, StreamRef),
   ?LOG_DEBUG("Got response from webhook url ~p ~p.", [Url, Resp]);

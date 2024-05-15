@@ -6,7 +6,7 @@
 
 -license("Apache-2.0").
 
--include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export([step/6]).
 
@@ -38,10 +38,24 @@ step(_Config, Context, <<"Then">>, _N, ["the exit status must be", Status], _) -
     {ok, _Res} when StatusInt =:= 0 -> Context;
     {error, [{exit_status, Status}]} -> Context;
 
-    Other ->
+    {error, [{exit_status, Status0}, {stderr, Stderr}]} when Status0 /= Status ->
       maps:put(
         fail,
-        damage_utils:strf("Exit status is not ~p, got ~p", [StatusInt, Other]),
+        damage_utils:strf(
+          "Exit status is not ~p, got ~s",
+          [StatusInt, jsx:encode(#{error=>damage_utils:binarystr_join(Stderr)})]
+        ),
+        Context
+      );
+
+    Other ->
+      ?LOG_DEBUG("steps_cmd result ~p", [Other]),
+      maps:put(
+        fail,
+        damage_utils:strf(
+          "Exit status is not ~p, got ~p",
+          [StatusInt, jsx:encode(Other)]
+        ),
         Context
       )
   end;
