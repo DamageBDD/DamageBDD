@@ -329,7 +329,7 @@ handle_call(
           ),
         true;
 
-      {error, {notfound, counters}} ->
+      {error, {notfound, counter}} ->
         Counter = riakc_counter:new(),
         CounterOp0 =
           riakc_counter:to_op(apply(riakc_counter, Op, [Value, Counter])),
