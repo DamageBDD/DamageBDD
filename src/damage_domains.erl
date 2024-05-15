@@ -159,15 +159,24 @@ lookup_domain(Domain, ContractAddress) ->
       case lists:filtermap(
         fun
           ([Record]) ->
-            case string:split(Record, "=") of
-              ["damage_token", Token] ->
-                ?LOG_DEBUG("dns record list ~p", [Token]),
-                {true, Token};
+            {
+              true,
+              lists:filtermap(
+                fun
+                  (DamageRecord) ->
+                    case string:split(DamageRecord, "=") of
+                      ["damage_token", Token] ->
+                        ?LOG_DEBUG("dns record list ~p", [Token]),
+                        {true, Token};
 
-              Other ->
-                ?LOG_DEBUG("dns record list ~p", [Other]),
-                false
-            end;
+                      Other ->
+                        ?LOG_DEBUG("dns record list ~p", [Other]),
+                        false
+                    end
+                end,
+                string:split(Record, ";")
+              )
+            };
 
           (Record) ->
             ?LOG_DEBUG("dns record nolist ~p", [Record]),
@@ -182,7 +191,16 @@ lookup_domain(Domain, ContractAddress) ->
           io:format("No TXT record found for token: ~p~n", [Records]),
           false;
 
-        [Token | _] -> check_host_token(Domain, ContractAddress, Token)
+        [Tokens] ->
+          ?LOG_DEBUG("check list tokens ~p", [Tokens]),
+          lists:any(
+            fun
+              (Token) ->
+                ?LOG_DEBUG("check list tokens ~p", [Token]),
+                check_host_token(Domain, ContractAddress, Token)
+            end,
+            Tokens
+          )
       end;
 
     Other ->
