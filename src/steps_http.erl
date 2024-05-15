@@ -262,7 +262,6 @@ step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
 
 step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
   Path0 = string:concat(maps:get(base_url, Context, ""), Path),
-  ?LOG_DEBUG("POST REQUEST HEADERS ~p", [Context]),
   Headers = get_headers(Context, ?DEFAULT_HEADERS),
   ?LOG_DEBUG("POST HEADERS ~p", [Headers]),
   gun_post(Config, Context, Path0, Headers, Data);
