@@ -29,7 +29,8 @@
     test_encrypt_decrypt/0,
     test_send_email/0,
     convert_context/1,
-    idhash_keys/1
+    idhash_keys/1,
+    safe_json/1
   ]
 ).
 -export([encrypt/2, encrypt/1, decrypt/2, decrypt/1]).
@@ -384,6 +385,16 @@ idhash_keys(List) ->
     ),
     #{padding => false, mode => urlsafe}
   ).
+
+safe_json(BinaryStr) ->
+  %% First, we decode the binary string into a list of integers
+  String = binary_to_list(BinaryStr),
+    lists:foldl(
+      fun (Str, Acc) -> lists:concat(string:replace(Acc, Str, "", all)) end,
+      String,
+      [":", "\\/", "\\\\", "\\\"", "\\\""]
+  ).
+
 
 test_encrypt_decrypt() ->
   Key = crypto:strong_rand_bytes(32),

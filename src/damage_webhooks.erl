@@ -222,7 +222,7 @@ trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = _Context) ->
   Body =
     damage_utils:load_template(
       "webhooks/" ++ Template ++ ".mustache",
-      #{content => FailMessage}
+      #{content => damage_utils:safe_json(FailMessage)}
     ),
   %?LOG_DEBUG("webhook post ~p.", [Body]),
   StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),

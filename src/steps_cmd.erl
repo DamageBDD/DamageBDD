@@ -39,9 +39,7 @@ step(_Config, Context, <<"Then">>, _N, ["the exit status must be", Status], _) -
     {error, [{exit_status, Status}]} -> Context;
 
     {error, [{exit_status, Status0}, {stderr, Stderr}]} when Status0 /= Status ->
-      ?LOG_DEBUG("steps_cmd result raw ~p", [Stderr]),
-          Message = damage_utils:safe_json(damage_utils:binarystr_join(Stderr, <<"">>)),
-      ?LOG_DEBUG("steps_cmd result ~p", [Message]),
+      ?LOG_DEBUG("steps_cmd result error ~p", [Stderr]),
       maps:put(
         fail,
         damage_utils:strf(
