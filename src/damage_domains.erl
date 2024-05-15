@@ -17,7 +17,9 @@
 -export([test/0]).
 -export([content_types_accepted/2]).
 -export([trails/0]).
+-export([delete_resource/2]).
 -export([is_allowed_domain/2]).
+-export([lookup_domain/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -57,6 +59,14 @@ trails() ->
               type => <<"string">>
             }
           ]
+        },
+        delete
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Delete domain token",
+          produces => ["application/json"],
+          parameters => []
         }
       }
     )
@@ -72,7 +82,8 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
   {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
-allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+allowed_methods(Req, State) ->
+  {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 to_json(Req, #{contract_address := ContractAddress} = State) ->
   ?LOG_DEBUG("domains ~p", [ContractAddress]),
@@ -90,8 +101,7 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
 
       #{domain := Domain} ->
         DomainToken = list_to_binary(uuid:to_string(uuid:uuid4())),
-        DomainTokenKey =
-          damage_utils:binarystr_join([ContractAddress, <<"|">>, Domain]),
+        DomainTokenKey = damage_utils:idhash_keys([ContractAddress, Domain]),
         ?LOG_DEBUG("Domain token ~p", [DomainTokenKey]),
         case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainTokenKey) of
           notfound ->
@@ -118,6 +128,22 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
   {stop, Resp, State}.
 
 
+delete_resource(Req, State) ->
+  Deleted =
+    lists:foldl(
+      fun
+        (DeleteId, Acc) ->
+          ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
+          ok = damage_riak:delete(?DOMAIN_TOKEN_BUCKET, DeleteId),
+          Acc + 1
+      end,
+      0,
+      maps:get(path_info, Req)
+    ),
+  ?LOG_INFO("deleted ~p domain", [Deleted]),
+  {true, Req, State}.
+
+
 get_token_expiry() ->
   %{ok, Expiry} = datestring:format(<<"YmdHMS">>, ),
   date_util:epoch() + (?DOMAIN_TOKEN_EXPIRY * 60).
@@ -129,11 +155,24 @@ lookup_domain(Domain, ContractAddress) when is_binary(Domain) ->
 lookup_domain(Domain, ContractAddress) ->
   case inet_res:lookup(Domain, in, txt) of
     Records when is_list(Records) ->
+      ?LOG_DEBUG("DNS Records ~p", [Records]),
       case lists:filtermap(
         fun
           ([Record]) ->
             case string:split(Record, "=") of
-              ["damagebdd_token", Token] -> Token;
+              ["damage_token", Token] ->
+                ?LOG_DEBUG("dns record list ~p", [Token]),
+                {true, Token};
+
+              Other ->
+                ?LOG_DEBUG("dns record list ~p", [Other]),
+                false
+            end;
+
+          (Record) ->
+            ?LOG_DEBUG("dns record nolist ~p", [Record]),
+            case string:split(Record, "=") of
+              ["damagebdd_token", Token] -> {true, Token};
               _ -> false
             end
         end,
@@ -143,7 +182,7 @@ lookup_domain(Domain, ContractAddress) ->
           io:format("No TXT record found for token: ~p~n", [Records]),
           false;
 
-        [Token | _] -> ok = check_host_token(Domain, ContractAddress, Token)
+        [Token | _] -> check_host_token(Domain, ContractAddress, Token)
       end;
 
     Other ->
@@ -186,10 +225,30 @@ is_allowed_domain(Host, ContractAddress) ->
   end.
 
 
-check_host_token(Host, ContractAddress, Token) ->
-  case get_domain(damage_utils:binarystr_join([ContractAddress, "|", Host])) of
-    #{domain := Host, domain_token := Token} = _Domain -> true;
-    _ -> false
+check_host_token(Host0, ContractAddress, Token0) ->
+  Host = list_to_binary(Host0),
+  Token = list_to_binary(Token0),
+  DomainId = damage_utils:idhash_keys([ContractAddress, Host]),
+  ?LOG_DEBUG("CHECK domainid ~p ", [DomainId]),
+  ?LOG_DEBUG("CHECK host ~p ~p", [Host, Token]),
+  case get_domain(DomainId) of
+    #{domain := Host, domain_token := Token} = _Domain ->
+      ?LOG_DEBUG("CHECK OK ~p ~p", [Host, Token]),
+      true;
+
+    Other ->
+      ?LOG_DEBUG("CHECK FAIL ~p ", [Other]),
+      false
+  end.
+
+
+get_domain_unencrypted(DomainId) ->
+  case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainId) of
+    {ok, Domain} ->
+      ?LOG_DEBUG("Loaded DomainId ~p", [DomainId]),
+      maps:put(id, DomainId, Domain);
+
+    _ -> none
   end.
 
 
@@ -197,20 +256,13 @@ get_domain(DomainId) when is_binary(DomainId) ->
   case catch damage_utils:decrypt(DomainId) of
     error ->
       ?LOG_DEBUG("DomainId Decryption error ~p ", [DomainId]),
-      none;
+      get_domain_unencrypted(DomainId);
 
     {'EXIT', _Error} ->
       ?LOG_DEBUG("DomainId Decryption error ~p ", [DomainId]),
-      none;
+      get_domain_unencrypted(DomainId);
 
-    DomainIdDecrypted ->
-      case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainIdDecrypted) of
-        {ok, Domain} ->
-          ?LOG_DEBUG("Loaded Schedulid ~p", [DomainIdDecrypted]),
-          maps:put(id, DomainIdDecrypted, Domain);
-
-        _ -> none
-      end
+    DomainIdDecrypted -> get_domain_unencrypted(DomainIdDecrypted)
   end;
 
 get_domain(_) -> none.
