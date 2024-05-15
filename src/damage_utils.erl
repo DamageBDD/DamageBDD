@@ -386,13 +386,15 @@ idhash_keys(List) ->
     #{padding => false, mode => urlsafe}
   ).
 
-safe_json(BinaryStr) ->
+safe_json(BinaryStr) when is_binary(BinaryStr) ->
+  safe_json(binary_to_list(BinaryStr));
+
+safe_json(String) ->
   %% First, we decode the binary string into a list of integers
-  String = binary_to_list(BinaryStr),
-    lists:foldl(
-      fun (Str, Acc) -> lists:concat(string:replace(Acc, Str, "", all)) end,
-      String,
-      [":", "\\/", "\\\\", "\\\"", "\\\""]
+  lists:foldl(
+    fun (Str, Acc) -> lists:concat(string:replace(Acc, Str, "", all)) end,
+    String,
+    [":", "\\/", "\\\\", "\\\"", "\\\""]
   ).
 
 
