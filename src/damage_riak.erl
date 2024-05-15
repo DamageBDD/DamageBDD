@@ -307,6 +307,7 @@ handle_call(
 ) ->
   case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
     {error, notfound} -> {reply, 0, State};
+    {error, {notfound, counter}} -> {reply, 0, State};
     {ok, Res} -> {reply, riakc_counter:value(Res), State}
   end;
 
