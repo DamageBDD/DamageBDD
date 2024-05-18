@@ -4,31 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DamageBDD Execute Feature</title>
-    <link rel="stylesheet" type="text/css" href='/static/css/main.css'/>
     <link rel="stylesheet" type="text/css" href='/static/css/micromodal.css'/>
     <link rel="stylesheet" type="text/css" href='/static/css/toast.css'/>
-    <link rel="stylesheet" type="text/css" href='/static/css/textarea.css'/>
     <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css'/>
     <script async src='https://www.googletagmanager.com/gtag/js?id=G-5QG625RHB7'></script>
     <link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet'><style type="text/css"> body { font-family: 'Roboto', sans-serif; } </style>
     <script src='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@latest/build/highlight.min.js'></script>
+    <script src="/static/js/three.min.js"></script>
+    <script src="/static/js/vanta.globe.min.js"></script>
     <script src="/static/js/qrcode.min.js"></script>
     <script src="/static/js/micromodal.min.js"></script>
     <script src="/static/js/tabby.polyfills.min.js"></script>
     <script src="/static/js/highlight/languages/gherkin.min.js"></script>
+    <script src="/static/js/code-input/code-input.min.js"></script>
+    <script src="/static/js/code-input/plugins/indent.min.js"></script>
+    <script src="/static/js/code-input/plugins/autodetect.min.js"></script>
+    <script src="/static/js/code-input/plugins/autocomplete.min.js"></script>
+    <script src="/static/js/editor.js"></script>
+
     <link rel="stylesheet" type="text/css" href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@latest/build/styles/default.min.css'>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css" integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css">
+    <link rel="stylesheet" type="text/css" href='/static/css/code-input.min.css'/>
+    <link rel="stylesheet" type="text/css" href='/static/css/autocomplete.min.css'/>
+    <link rel="stylesheet" type="text/css" href='/static/css/main.css'/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
 
   </head>
   <body>
-    <div id="toolbar">
-      <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
-      <div id="balanceDiv" data-micromodal-trigger="invoice-modal"></div> |
-      <div id="settingsBtn"   data-micromodal-trigger="settings-modal">Settings</div> |
-      <div id="logoutBtn"  data-micromodal-trigger="logout-modal">Logout</div>
-      <!--generate javascript code to make the qrcode modal show when balanceDiv is clicked, and add css to  indicate that balance div is clickable-->
-    </div>
-    <div class="title">DamageBDD</div>
-    <div class="header">The tool to break your stack</div>
     <div class="modal micromodal-slide" id="invoice-modal" aria-hidden="true">
       <div class="modal__overlay" tabindex="-1" data-micromodal-close>
         <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
@@ -67,7 +72,7 @@
               <!--<label for="password" >Password:</label>-->
               <input type="password" id="password" autocomplete="current-password" required placeholder="Password">
               <br>
-            <button id="loginResetPasswdBtn"  aria-label="Forgot Password.">Forgot Password</button>
+              <button id="loginResetPasswdBtn"  aria-label="Forgot Password.">Forgot Password</button>
             </form>
           </main>
           <footer class="modal__footer">
@@ -94,62 +99,6 @@
           </footer>
         </div>
       </div>
-    </div>
-
-
-    <ul data-tabs>
-      <li><a data-tabby-default href="#execution-tab">Execute</a></li>
-      <li><a href="#benchmarks-tab">Benchmarks</a></li>
-      <li><a href="#history-tab">History</a></li>
-      <li><a href="#market-tab">Market</a></li>
-    </ul>
-
-    <div id="execution-tab" class="execute-container">
-      <div >
-        <p>Write the test case in the textarea below:</p>
-        <p>You can find example test cases <a href="https://github.com/jagguli/DamageBDD/tree/master/features">here</a>:
-        </p>
-      </div>
-      <form id="damageForm">
-        <!--<textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>-->
-         <div class="container" id="container">
-            <textarea id="damageTextArea" class="container__textarea"></textarea>
-        </div>
-        <br>
-        <div >
-          <label for="difficulty">Concurrency:</label>
-          <select id="difficulty" >
-            <option value="sk_baby">Im too young to die. (1 rps)</option>
-            <option value="sk_easy">Hey, not too rough. (10 rps)</option>
-            <option value="sk_medium">Hurt me plenty. (100 rps)</option>
-            <option value="sk_hard">Ultra-Violence. (1000 rps)</option>
-            <option value="sk_nightmare">Nightmare! (100000 rps)</option>
-          </select>
-          <br>
-          <br>
-          <label for="duration">Duration:</label>
-          <select id="duration">
-            <option value="sk_baby">Im too young to die. (1 minute)</option>
-            <option value="sk_easy">Hey, not too rough. (10 minutes)</option>
-            <option value="sk_medium">Hurt me plenty. (1 hour)</option>
-            <option value="sk_hard">Ultra-Violence. (10 hours)</option>
-            <option value="sk_nightmare">Nightmare! (1 day)</option>
-          </select>
-        </div>
-        <br>
-        <button type="submit" class="submit-button">Execute Feature</button>
-      </form>
-        <script src="/static/js/textarea.js"></script>
-      <script src="/static/js/toasts.js"></script>
-      <script src="/static/js/reports.js"></script>
-      <script src="/static/js/main.js"></script>
-    </div>
-    <div id="history-tab">
-      <div id="history"></div>
-    </div>
-    <div id="benchmarks-tab">
-    </div>
-    <div id="market-tab">
     </div>
     <div class="modal micromodal-slide" id="settings-modal" aria-hidden="true">
       <div class="modal__overlay" tabindex="-1" data-micromodal-close>
@@ -203,6 +152,98 @@
             <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
           </footer>
         </div>
+      </div>
+    </div>
+    <div id="background"></div>
+    <div id="content">
+      <div id="toolbar">
+        <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
+        <div id="balanceDiv" data-micromodal-trigger="invoice-modal"></div> |
+        <div id="settingsBtn"   data-micromodal-trigger="settings-modal">Settings</div> |
+        <div id="logoutBtn"  data-micromodal-trigger="logout-modal">Logout</div>
+        <!--generate javascript code to make the qrcode modal show when balanceDiv is clicked, and add css to  indicate that balance div is clickable-->
+      </div>
+      <div class="title">DamageBDD</div>
+      <div class="header">The tool to break your stack</div>
+
+
+      <ul data-tabs>
+        <li><a data-tabby-default href="#execution-tab">Execute</a></li>
+        <li><a href="#history-tab">History</a></li>
+        <li><a href="#benchmarks-tab">Benchmarks</a></li>
+        <li><a href="#market-tab">Market</a></li>
+      </ul>
+
+
+      <div id="execution-tab" class="execute-container">
+        <div >
+          <p>Write the test case in the textarea below:</p>
+          <p>You can find example test cases <a href="https://github.com/jagguli/DamageBDD/tree/master/features">here</a>:
+          </p>
+        </div>
+        <form id="damageForm">
+          <!--<textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>-->
+          <div class="container" id="container">
+            <code-input id="damageTextArea" language="gherkin">
+              Feature: Http test feature
+              Scenario: Test post json
+              Given I am using server "http://localhost:8080"
+              And I set "Content-Type" header to "application/json"
+              When I make a POST request to "/tests/"
+              """
+              {
+              "refund_address": "mohjSavDdQYHRYXcS3uS6ttaHP8amyvX78",
+              "customer_type": "Individual",
+              "full_name": "John Doe",
+              "date_of_birth": "1980-01-01",
+              "address": "123 Main Street, Sydney, NSW",
+              "identification_verification": {
+              "document_type": "Passport",
+              "document_number": "A1234567"
+              },
+              "email": "john.doe@damagebdd.com",
+              "phone": "0412345678"
+              }
+              """
+              Then the response status must be "201"
+              Then the json at path "$.email" must be "john.doe@damagebdd.com"
+
+            </code-input>
+          </div>
+          <br>
+          <div >
+            <label for="difficulty">Concurrency:</label>
+            <select id="difficulty" >
+              <option value="sk_baby">Im too young to die. (1 rps)</option>
+              <option value="sk_easy">Hey, not too rough. (10 rps)</option>
+              <option value="sk_medium">Hurt me plenty. (100 rps)</option>
+              <option value="sk_hard">Ultra-Violence. (1000 rps)</option>
+              <option value="sk_nightmare">Nightmare! (100000 rps)</option>
+            </select>
+            <br>
+            <br>
+            <label for="duration">Duration:</label>
+            <select id="duration">
+              <option value="sk_baby">Im too young to die. (1 minute)</option>
+              <option value="sk_easy">Hey, not too rough. (10 minutes)</option>
+              <option value="sk_medium">Hurt me plenty. (1 hour)</option>
+              <option value="sk_hard">Ultra-Violence. (10 hours)</option>
+              <option value="sk_nightmare">Nightmare! (1 day)</option>
+            </select>
+          </div>
+          <br>
+          <button type="submit" class="submit-button">Execute Feature</button>
+        </form>
+        <script src="/static/js/toasts.js"></script>
+        <script src="/static/js/reports.js"></script>
+        <script src="/static/js/main.js"></script>
+      </div>
+      <div id="history-tab">
+        <div id="history"></div>
+      </div>
+      <div id="benchmarks-tab">
+      </div>
+      <div id="market-tab">
       </div>
     </div>
   </body>

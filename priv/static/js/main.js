@@ -71,6 +71,7 @@ let bearer_token = null;
 		function handleLogoutClick(event) {
 			bearer_token = null;
 			clearSessionIdCookie();
+			MicroModal.close('logout-modal');
 			showHideLoginButton(loginButton, logoutButton);
 
 		};
@@ -105,6 +106,29 @@ let bearer_token = null;
 	});
 
 
+	function removeBackground(){
+		const background = document.getElementById("background");
+		background.innerHTML = "";
+	}
+	function addBackround(){ 
+		let vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0)
+		let vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0)
+
+		VANTA.GLOBE({
+			el: "#background",
+			mouseControls: true,
+			touchControls: true,
+			gyroControls: false,
+			minHeight: vh,
+			minWidth: vw,
+			scale: 1.00,
+			size: 1.50,
+			scaleMobile: 1.00,
+			color: 0x2b04,
+			color2: 0x2d6e45,
+			backgroundColor: 0xffffff
+		});
+	}
 
 	function isAuthenticated() {
 		if (bearer_token == null) {
@@ -116,6 +140,8 @@ let bearer_token = null;
 	}
 
 	function showHideLoginButton(loginButton, logoutButton, settingsButton) {
+		const content = document.getElementById("content");
+		const background = document.getElementById("background");
 		if (loginButton == undefined) {
 			loginButton = document.getElementById("loginBtn");
 		}
@@ -127,6 +153,8 @@ let bearer_token = null;
 		}
 		if (isAuthenticated()) {
 			loginButton.style.display = "none";
+			content.style.display = "block";
+			removeBackground();
 			logoutButton.style.display = "inline-block";
 			settingsButton.style.display = "inline-block";
 			updateBalance();
@@ -138,6 +166,9 @@ let bearer_token = null;
 			logoutButton.style.display = "none";
 			settingsButton.style.display = "none";
 			loginButton.style.display = "inline-block";
+			content.style.display = "none";
+			background.style.display = "block";
+			addBackround();
 			MicroModal.show('login-modal');
 		}
 	}
@@ -148,6 +179,7 @@ let bearer_token = null;
 	function clearSessionIdCookie() {
 		document.cookie = "sessionid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
 	}
+
 	function getSessionIdCookie() {
 		const name = "sessionid=";
 		const cookies = document.cookie.split(';');
@@ -161,7 +193,7 @@ let bearer_token = null;
 	}
 
 	function submitDamageForm() {
-		const inputText = document.getElementById("damageInput").value;
+		const inputText = document.getElementById("damageTextArea").value;
 		const concurrencyText = document.getElementById("difficulty").value;
 		const request = {
 			method: 'POST',
@@ -169,9 +201,6 @@ let bearer_token = null;
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				feature: inputText,
-				account: "guest",
-				host: "damagebdd.com",
-				port: 443,
 				concurrency: concurrencyText
 			})
 		};
@@ -235,7 +264,7 @@ let bearer_token = null;
 				return response.json();
 			})
 			.then(data => {
-				if (data.status=="ok") {
+				if (data.access_token) {
 					bearer_token = data.access_token;
 					toasts.push({
 						title: 'Login Success',
