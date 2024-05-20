@@ -1,3 +1,6 @@
+html, body {
+    margin: 0;
+}
 body {
   font-family: Arial, sans-serif;
   padding: 0;
@@ -187,9 +190,9 @@ input[type="password"], input[type="email"] {
   cursor: pointer;
 }
 code-input{
-    width: 60em;
     height: 30em;
 }
+/*
 
 #container{
     width: 30em;
@@ -199,6 +202,10 @@ pre{
     width: 30em;
     height: 30em;
 }
+*/
 .is-open{
     z-index: 99999;
+}
+#runreport{
+    font-size: xx-small;
 }

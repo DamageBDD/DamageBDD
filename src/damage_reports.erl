@@ -13,6 +13,7 @@
 -export([init/2]).
 -export([content_types_provided/2]).
 -export([to_json/2]).
+-export([to_html/2]).
 -export([from_json/2, allowed_methods/2, is_authorized/2]).
 -export([clean_reports/0]).
 -export([test/0]).
@@ -37,7 +38,7 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "Get the test feature data.",
-          produces => ["text/plain"]
+          produces => ["text/plain", "application/json", "text/html"]
         }
       }
     ),
@@ -111,48 +112,81 @@ trails() ->
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
-is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
+is_authorized(Req, State) ->
+  case cowboy_req:binding(hash, Req) of
+    undefined -> damage_http:is_authorized(Req, State);
+    Hash -> {true, Req, maps:put(hash, Hash, State)}
+  end.
+
 
 content_types_provided(Req, State) ->
-  {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
+  {
+    [
+      {{<<"application">>, <<"json">>, []}, to_json},
+      {{<<"text">>, <<"html">>, []}, to_html},
+      {{<<"text">>, <<"plain">>, []}, to_json}
+    ],
+    Req,
+    State
+  }.
 
 content_types_accepted(Req, State) ->
   {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
-%%to_html(Req, #{contract_address := ContractAddress} = State) ->
-%%        HashBin = list_to_binary(Hash),
-%%        HashLen = length(Hash),
-%%          List =
-%%            list_to_binary(
-%%              lists:join(
-%%                <<"\n">>,
-%%                [
-%%                  <<
-%%                    "<a href=\"",
-%%                    HashBin:HashLen/binary,
-%%                    "/",
-%%                    X/binary,
-%%                    "\">",
-%%                    HashBin:HashLen/binary,
-%%                    "/",
-%%                    X/binary,
-%%                    "</a><br>"
-%%                  >>
-%%                  ||
-%%                  X
-%%                  <-
-%%
-%%                ]
-%%              )
-%%            ),
-%%          Data = <<"<html><body>", List/binary, "</body></html>">>,
+to_html(Req, #{action := features} = State) ->
+  ?LOG_DEBUG("feature to ", []),
+  case cowboy_req:binding(hash, Req) of
+    undefined -> {<<"Hash required">>, Req, State};
 
-to_json(
-  Req,
-  #{action := features, contract_address := _ContractAddress} = State
-) ->
+    Hash0 ->
+      Hash = binary_to_list(Hash0),
+      FeatureData = cat(list_to_binary(Hash), <<"">>),
+      FeatureTitle =
+        lists:nth(1, binary:split(FeatureData, <<"\n">>, [global])),
+      Body =
+        damage_utils:load_template(
+          "feature.mustache",
+          #{body => FeatureData, feature_title => FeatureTitle}
+        ),
+      {Body, Req, State}
+  end;
+
+to_html(Req, #{hash := Hash} = State) ->
+  case cowboy_req:binding(path, Req) of
+    undefined ->
+      {ok, DamageApi} = application:get_env(damage, api_url),
+      Dir =
+        ls(list_to_binary(string:join([binary_to_list(Hash), "reports"], "/"))),
+      List =
+        list_to_binary(
+          string:join(
+            [
+              mustache:render(
+                "<a href=\"{{api_url}}/reports/{{hash}}/{{file}}\">{{hash}}/{{file}}</a>",
+                [
+                  {api_url, DamageApi},
+                  {hash, binary_to_list(Hash)},
+                  {file, binary_to_list(X)}
+                ]
+              )
+              || X <- Dir
+            ],
+            "<br>"
+          )
+        ),
+      Data = <<"<html><body>", List/binary, "</body></html>">>,
+      {Data, Req, State};
+
+    Path ->
+      Path0 = string:join(["reports", binary_to_list(Path)], "/"),
+      ?LOG_DEBUG(" cat hash ~p", [Hash]),
+      {cat(Hash, Path0), Req, State}
+  end.
+
+
+to_json(Req, #{action := features} = State) ->
   ?LOG_DEBUG("feature to ", []),
   case cowboy_req:binding(hash, Req) of
     undefined -> {<<"Path required">>, Req, State};
@@ -163,34 +197,31 @@ to_json(
   end;
 
 to_json(Req, #{contract_address := ContractAddress} = State) ->
-  case cowboy_req:binding(hash, Req) of
+  Reports =
+    case cowboy_req:match_qs([{schedule_id, [], none}], Req) of
+      #{schedule_id := none} ->
+        do_query(#{contract_address => ContractAddress});
+
+      #{schedule_id := ScheduleId} ->
+        do_query(
+          #{contract_address => ContractAddress, schedule_id => ScheduleId}
+        )
+    end,
+  {jsx:encode(Reports), Req, State};
+
+to_json(Req, #{hash := Hash0} = State) ->
+  {jsx:encode(get_reports(Req, Hash0)), Req, State}.
+
+
+get_reports(Req, Hash) ->
+  case cowboy_req:binding(path, Req) of
     undefined ->
-      Reports =
-        case cowboy_req:match_qs([{schedule_id, [], none}], Req) of
-          #{schedule_id := none} ->
-            do_query(#{contract_address => ContractAddress});
+      ls(list_to_binary(string:join([binary_to_list(Hash), "reports"], "/")));
 
-          #{schedule_id := ScheduleId} ->
-            do_query(
-              #{contract_address => ContractAddress, schedule_id => ScheduleId}
-            )
-        end,
-      {jsx:encode(Reports), Req, State};
-
-    Hash0 ->
-      Hash = binary_to_list(Hash0),
-      case cowboy_req:binding(path, Req) of
-        undefined ->
-          Data =
-            jsx:encode(ls(list_to_binary(string:join([Hash, "reports"], "/")))),
-          logger:info("to text ipfs hash ~p ", [Data]),
-          {Data, Req, State};
-
-        Path ->
-          Path0 = string:join(["reports", binary_to_list(Path)], "/"),
-          logger:info("to text ipfs hash ~p ~p", [Hash, Path0]),
-          {cat(list_to_binary(Hash), Path0), Req, State}
-      end
+    Path ->
+      Path0 = string:join(["reports", binary_to_list(Path)], "/"),
+      ?LOG_DEBUG(" cat hash ~p", [Hash]),
+      cat(Hash, Path0)
   end.
 
 
@@ -202,7 +233,9 @@ get_record(Id) ->
 
 
 do_query_base(Fun, Index, Args, ContractAddress) ->
-  case apply(damage_riak, Fun, [?RUNRECORDS_BUCKET, Index] ++ Args) of
+  Args0 = [?RUNRECORDS_BUCKET, Index] ++ Args ++ [[{max_results, 30}]],
+  ?LOG_DEBUG("riak query index ~p", [Args0]),
+  case apply(damage_riak, Fun, Args0) of
     [] ->
       logger:info("no reports for account ~p ~p", [Index, Args]),
       #{results => [], status => <<"ok">>, length => 0};

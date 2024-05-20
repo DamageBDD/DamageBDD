@@ -20,7 +20,7 @@ let bearer_token = null;
 		position: 'top-center' // top-left | top-center | top-right | bottom-left | bottom-center | bottom-right
 	});
 
-	document.addEventListener("DOMContentLoaded", function() {
+	document.addEventListener("DOMContentLoaded", async function() {
 		var kycForm = document.getElementById('kycForm');
 		if (kycForm){
 			kycForm.addEventListener('submit', function(event) {
@@ -92,15 +92,15 @@ let bearer_token = null;
 			onShow: modal => console.info(`${modal.id} is shown`), // [1]
 		});
 		var tabs =Tabby('[data-tabs]');
-		document.getElementById("damageForm").addEventListener("submit", function(event) {
+		document.getElementById("damageForm").addEventListener("submit", async function(event) {
 			event.preventDefault();
-			submitDamageForm();
+			await submitDamageForm();
 		});
 
-		document.getElementById("damageTextArea").addEventListener("keydown", function(event) {
+		document.getElementById("damageTextArea").addEventListener("keydown", async function(event) {
 			if (event.ctrlKey && event.key === "Enter") {
 				event.preventDefault();
-				submitDamageForm();
+				await submitDamageForm();
 			}
 		});
 	});
@@ -161,7 +161,7 @@ let bearer_token = null;
 			generateInvoice();
 			try{
 				MicroModal.close('login-modal');
-			}catch(e){console.log(e)}
+			}catch(e){}
 		} else {
 			logoutButton.style.display = "none";
 			settingsButton.style.display = "none";
@@ -191,8 +191,68 @@ let bearer_token = null;
 		}
 		return;
 	}
+	function upperCaseStream() {
+		return new TransformStream({
+			transform(chunk, controller) {
+				controller.enqueue(chunk.toUpperCase());
+			},
+		});
+	}
 
-	function submitDamageForm() {
+	function appendToDOMStream(el) {
+		return new WritableStream({
+			write(chunk) {
+			el.append(chunk);
+			},
+		});
+	}
+
+	function addReport(){
+		const runDateTime = Date.now();
+		const label = `Run-${runDateTime}`;
+		const tabId =`tab-${runDateTime}`;
+		const options = {
+			year: "2-digit",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			timeZoneName: "short",
+		};
+		const reportDateTime = new Intl.DateTimeFormat("en-US", options).format;
+
+		const ulEl = document.getElementById('runreports-ul');
+		ulEl.role='tablist';
+		const liEl = document.createElement('li');
+		const aEl = document.createElement('a');
+		aEl.href=`#run-${runDateTime}`;
+	    aEl.innerHTML = label;
+		liEl.role = "presentation";
+		liEl.appendChild(aEl);
+		ulEl.appendChild(liEl);
+
+
+		const runreportsTabPanels = document.getElementById('runreports');
+		const div = document.createElement('div');
+		div.id = `run-${runDateTime}`;
+		div.setAttribute('aria-selected', true);
+		const pre = document.createElement('pre');
+		pre.className = 'snippet';
+		const code = document.createElement('code');
+		code.className = 'language-gherkin report';
+		pre.appendChild(code);
+		code.innerHTML='Waiting for execution results ...';
+		div.appendChild(pre);
+		runreportsTabPanels.appendChild(div);
+		var tabs = Tabby('[data-tabs-reports]');
+		tabs.setup();
+		tabs.toggle(div.id);
+
+
+		return code;
+
+	}
+	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value;
 		const concurrencyText = document.getElementById("difficulty").value;
 		const request = {
@@ -201,38 +261,29 @@ let bearer_token = null;
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				feature: inputText,
-				concurrency: concurrencyText
+				concurrency: concurrencyText,
+				stream: true
 			})
 		};
+		const reportElement = addReport();
+		const response = await fetch("/execute_feature/", request);
 
-		fetch("/execute_feature/", request)
-			.then(response => {
-				if (response.status === 200) {
-					return response.json();
-				} else if (response.status === 401) {
-					MicroModal.show("login-modal");
-				}
-			})
-			.then(data => {
-				if (data && data.status === "ok") {
-					toasts.push({
-						title: 'Success',
-						content: 'Feature execution successful.',
-						style: 'success'
-					});
-				} else {
-					toasts.push({
-						title: 'Request Failed',
-						content: 'Feature execution failed.',
-						style: 'error'
-					});
-				}
-			})
-			.catch(error => {
-				alert("Error: " + error.message);
-			});
-		event.preventDefault();
-		return;
+		if (response.status === 200 /*&& response.headers.get('content-type') ===
+									  'application/octet-stream'*/) {
+			reportElement.innerHTML ="";
+
+			await response.body
+				.pipeThrough(new TextDecoderStream())
+			//.pipeThrough(upperCaseStream())
+				.pipeTo(appendToDOMStream(reportElement));
+
+		} else if (response.status === 401) {
+			MicroModal.show("login-modal");
+		}
+		if (reportElement.hasAttribute('data-highlighted')) { // check if the attribute exists
+			reportElement.removeAttribute('data-highlighted'); // remove the specified attribute
+		}
+		hljs.highlightAll();
 	}
 
 

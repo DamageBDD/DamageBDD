@@ -16,7 +16,6 @@
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
 -export([trails/0]).
--export([get_config/3]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -151,14 +150,13 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 get_config(
   #{contract_address := ContractAddress, concurrency := Concurrency0} =
     FeaturePayload,
-  Req0,
-  Stream
+  Req0
 ) ->
   Concurrency = damage_utils:get_concurrency_level(Concurrency0),
   Formatters =
     case Concurrency of
       1 ->
-        case Stream of
+        case maps:get(stream, FeaturePayload, maybe_stream) of
           nostream -> [];
 
           _ ->
@@ -222,8 +220,7 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
 check_execute_bdd(
   #{concurrency := Concurrency0} = FeaturePayload,
   #{contract_address := ContractAddress, username := Username} = _State,
-  Req0,
-  Stream
+  Req0
 ) ->
   Concurrency = damage_utils:get_concurrency_level(Concurrency0),
   IP = damage_utils:get_ip(Req0),
@@ -242,8 +239,7 @@ check_execute_bdd(
                 ContractAddress,
                 maps:put(username, Username, FeaturePayload)
               ),
-              Req0,
-              Stream
+             Req0
             ),
           execute_bdd(
             Config,
@@ -282,7 +278,7 @@ from_json(Req, State) ->
         {400, <<"Json decoding failed.">>};
 
       #{feature := _FeatureData} = FeatureJson ->
-        check_execute_bdd(FeatureJson, State, Req, nostream)
+        check_execute_bdd(FeatureJson, State, Req)
     end,
   Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
   cowboy_req:reply(Status, Resp),
@@ -307,11 +303,11 @@ from_html(Req0, State) ->
       #{
         feature => Body,
         color_formatter => ColorFormatter,
-        concurrency => Concurrency
+        concurrency => Concurrency,
+        stream => maybe_stream
       },
       State,
-      Req0,
-      maybe_stream
+      Req0
     ),
   case Concurrency of
     1 -> {stop, Req0, State};
