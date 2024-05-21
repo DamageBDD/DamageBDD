@@ -64,20 +64,12 @@ init([]) ->
   MacaroonBin = list_to_binary(Macaroon),
   % https://github.com/lightningnetwork/lnd/blob/master/docs/rest/websockets.md
   ProtocolString = <<"Grpc-Metadata-Macaroon+", MacaroonBin/binary>>,
-  case
-  gun:open(
-    Host,
-    Port,
-    #{
-      transport => tls,
-      tls_opts
-      =>
-      [
-        {verify, verify_peer},
-        {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
-      ]
-    }
-  ) of
+  TlsOpts =
+    case Host of
+      "localhost" -> [{verify, none}, {cacertfile, CertFile}];
+      _ -> [{verify, verify_peer}, {cacertfile, CertFile}]
+    end,
+  case gun:open(Host, Port, #{transport => tls, tls_opts => TlsOpts}) of
     {ok, ConnPid} ->
       gproc:reg_other({n, l, {?MODULE, lnd}}, ConnPid),
       StreamRef =
