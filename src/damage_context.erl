@@ -125,19 +125,17 @@ to_json(Req, #{action := context, contract_address := ContractAddress} = State) 
 
 
 get_global_template_context(Context) ->
-  maps:put(
-    formatter_state,
-    #state{},
-    maps:put(
-      headers,
-      [],
-      maps:put(
-        timestamp,
-        date_util:now_to_seconds_hires(os:timestamp()),
-        Context
-      )
-    )
+  {ok, DamageApi} = application:get_env(damage, api_url),
+  maps:merge(
+    #{
+      api_url => DamageApi,
+      formatter_state => #state{},
+      headers => [],
+      timestamp => date_util:now_to_seconds_hires(os:timestamp())
+    },
+    Context
   ).
+
 
 get_account_context(#{contract_address := ContractAddress} = DefaultContext) ->
   Context0 =
