@@ -56,7 +56,7 @@ get_trails() ->
 -spec start_phase(atom(), application:start_type(), []) -> ok.
 start_phase(start_vanillae, _StartType, []) ->
   logger:info("Starting vanilla."),
-  damage_utils:setup_vanillae_deps(),
+  damage_ae:setup_vanillae_deps(),
   {ok, _} = application:ensure_all_started(vanillae),
   ok = vanillae:network_id("ae_uat"),
   {ok, AeNodes} = application:get_env(damage, ae_nodes),

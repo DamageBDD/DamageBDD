@@ -19,7 +19,8 @@
     handle_cast/2,
     handle_info/2,
     terminate/2,
-    code_change/3
+    code_change/3,
+    setup_vanillae_deps/0
   ]
 ).
 -export([sign_tx/2]).
@@ -284,12 +285,37 @@ invalidate_cache() ->
   gen_server:cast(DamageAEPid, invalidate_cache).
 
 
-test_contract_call(AeAccount) ->
+setup_vanillae_deps() ->
+  true = code:add_path("_checkouts/vanillae/ebin"),
+  true = code:add_path("_checkouts/vw/ebin"),
+  Vanillae =
+    "otpr-vanillae-" ++ lists:droplast(os:cmd("zx latest otpr-vanillae")),
+  Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
+  ZX =
+    "otpr-zx-"
+    ++
+    lists:nth(2, string:lexemes(lists:droplast(os:cmd("zx --version")), " ")),
+  Packages = [ZX, Vanillae | Deps],
+  ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
+  ?LOG_DEBUG("Packages paths ~p", [Packages]),
+  Converted =
+    [string:join(string:lexemes(Package, "-"), "/") || Package <- Packages],
+  PackagePaths =
+    [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
+  ?LOG_DEBUG("Code paths ~p", [PackagePaths]),
+  ok = code:add_paths(PackagePaths).
+
+
+test_contract_call(AeAccount) when is_binary(AeAccount) ->
+  test_contract_call(binary_to_list(AeAccount));
+
+test_contract_call(AeAccount) when is_list(AeAccount) ->
   JobId = <<"sdds">>,
   {ok, Nonce} = vanillae:next_nonce(AeAccount),
   ?LOG_DEBUG("nonce ~p", [Nonce]),
   {ok, ContractData} =
     vanillae:contract_create(AeAccount, "contracts/account.aes", []),
+  ?LOG_DEBUG("contract data ~p", [ContractData]),
   {ok, STx} = sign_tx(ContractData),
   ?LOG_DEBUG("contract create ~p", [STx]),
   {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),

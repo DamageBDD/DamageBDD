@@ -71,7 +71,7 @@ trails() ->
         =>
         #{
           tags => ?TRAILS_TAG,
-          description => "Schedule a test on post",
+          description => "Delete a scheduled job",
           produces => ["application/json"],
           parameters => []
         }

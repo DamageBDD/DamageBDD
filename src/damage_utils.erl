@@ -21,7 +21,6 @@
     get_context_value/3,
     load_template/2,
     send_email/4,
-    setup_vanillae_deps/0,
     atom_to_binary_keys/1,
     binary_to_atom_keys/1,
     get_concurrency_level/1,
@@ -122,27 +121,6 @@ get_context_value(Key, Context, Config) ->
     {_, Default} -> maps:get(Key, Context, Default);
     false -> maps:get(Key, Context)
   end.
-
-
-setup_vanillae_deps() ->
-  true = code:add_path("_checkouts/vanillae/ebin"),
-  true = code:add_path("_checkouts/vw/ebin"),
-  Vanillae =
-    "otpr-vanillae-" ++ lists:droplast(os:cmd("zx latest otpr-vanillae")),
-  Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
-  ZX =
-    "otpr-zx-"
-    ++
-    lists:nth(2, string:lexemes(lists:droplast(os:cmd("zx --version")), " ")),
-  Packages = [ZX, Vanillae | Deps],
-  ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
-  ?LOG_DEBUG("Packages paths ~p", [Packages]),
-  Converted =
-    [string:join(string:lexemes(Package, "-"), "/") || Package <- Packages],
-  PackagePaths =
-    [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
-  ?LOG_DEBUG("Code paths ~p", [PackagePaths]),
-  ok = code:add_paths(PackagePaths).
 
 
 atom_to_binary_keys(Map) ->
