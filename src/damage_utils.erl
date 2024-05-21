@@ -394,7 +394,7 @@ safe_json(String) ->
   lists:foldl(
     fun (Str, Acc) -> lists:concat(string:replace(Acc, Str, "", all)) end,
     String,
-    [":", "\\/", "\\\\", "\\\"", "\\\""]
+    ["\"", ":", "\\/", "\\\\", "\\\"", "\\\""]
   ).
 
 

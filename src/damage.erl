@@ -241,7 +241,7 @@ execute_file(Config, Context, Filename) ->
       {parse_error, LineNo, Message};
 
     {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
-      FinalContext =
+      FinalContext0 =
         case Concurrency of
           1 ->
             execute_feature(
@@ -315,6 +315,15 @@ execute_file(Config, Context, Filename) ->
         }
       ),
       FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
+      FinalContext =
+        maps:merge(
+          #{
+            feature_hash => FeatureHash,
+            report_hash => ReportHash,
+            feature_title => FeatureTitle
+          },
+          FinalContext0
+        ),
       ResultStatus =
         case maps:get(fail, FinalContext, 0) of
           0 ->
@@ -356,6 +365,7 @@ execute_file(Config, Context, Filename) ->
           result_status => ResultStatus
         },
       store_runrecord(RunRecord),
+      damage_webhooks:trigger_webhooks(FinalContext),
       damage_ae:confirm_spend(ContractAddress),
       RunRecord;
 
@@ -430,7 +440,6 @@ execute_feature(
       FeatureContext,
       Scenarios
     ),
-  damage_webhooks:trigger_webhooks(FinalContext),
   deinit_logging(RunId),
   FinalContext.
 

@@ -218,8 +218,8 @@ ejsonpath_match(Path, Data, Expected, Context) ->
       Expected1 ->
         case re:run(Expected1, "^[0-9]*$") of
           nomatch -> Expected;
-            Int when is_list(Int) -> list_to_integer(Int);
-            Int when is_binary(Int) -> binary_to_integer(Int)
+          Int when is_list(Int) -> list_to_integer(Int);
+          Int when is_binary(Int) -> binary_to_integer(Int)
         end
     end,
   case catch ejsonpath:q(Path, Data) of

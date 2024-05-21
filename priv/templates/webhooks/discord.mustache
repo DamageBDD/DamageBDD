@@ -1,27 +1,32 @@
 {
   "username": "DamageBDD",
   "avatar_url": "https://i.imgur.com/4M34hi2.png",
-  "content": "{{content}}",
+  "content": "{{{fail_message}}}",
   "embeds": [
     {
       "author": {
         "name": "DamageBDD",
-        "url": "https://run.damagebdd.com/reports/{{report_id}}",
+        "url": "https://damagebdd.com",
         "icon_url": "https://i.imgur.com/R66g1Pe.jpg"
       },
-      "title": "Title",
+      "title": "{{feature_title}}",
       "url": "https://google.com/",
-      "description": "Text message. You can use Markdown here. *Italic* **bold** __underline__ ~~strikeout~~ [hyperlink](https://google.com) `code`",
+      "Description": "Text message. You can use Markdown here. *Italic* **bold** __underline__ ~~strikeout~~ [hyperlink](https://google.com) `code`",
       "color": 15258703,
       "fields": [
         {
-          "name": "Text",
-          "value": "More text",
+          "name": "Reports",
+          "value": "{{api_url}}/reports/{{report_hash}}",
           "inline": true
         },
         {
-          "name": "Even more text",
-          "value": "Yup",
+          "name": "Feature",
+          "value": "{{api_url}}/features/{{feature_hash}}",
+          "inline": true
+        },
+        {
+          "name": "Feature",
+          "value": "{{api_url}}/features/{{feature_hash}}",
           "inline": true
         },
         {

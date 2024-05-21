@@ -239,7 +239,7 @@ check_execute_bdd(
                 ContractAddress,
                 maps:put(username, Username, FeaturePayload)
               ),
-             Req0
+              Req0
             ),
           execute_bdd(
             Config,

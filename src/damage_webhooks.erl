@@ -206,8 +206,7 @@ gun_await(ConnPid, StreamRef) ->
   end.
 
 
-trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = _Context) ->
-  %?LOG_DEBUG("post_webhook for with context to urls ~p", [Context, Url]),
+trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = Context) ->
   {Host0, Port0, Path0} =
     case uri_string:parse(binary_to_list(Url)) of
       #{port := Port, scheme := _Scheme, path := Path, host := Host} ->
@@ -219,12 +218,14 @@ trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = _Context) ->
   {ok, ConnPid} =
     gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
   Template = binary_to_list(maps:get(template, Webhook, <<"discord">>)),
+  TemplateContext =
+    maps:put(fail_message, damage_utils:safe_json(FailMessage), Context),
   Body =
     damage_utils:load_template(
       "webhooks/" ++ Template ++ ".mustache",
-      #{content => damage_utils:safe_json(FailMessage)}
+      TemplateContext
     ),
-  %?LOG_DEBUG("webhook post ~p.", [Body]),
+  %?LOG_DEBUG("webhook post ~p ~p.", [Body, TemplateContext]),
   StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
   Resp = gun_await(ConnPid, StreamRef),
   ?LOG_DEBUG("Got response from webhook url ~p ~p.", [Url, Resp]);
