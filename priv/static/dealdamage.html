@@ -112,67 +112,12 @@
         </div>
       </div>
     </div>
-    <div class="modal micromodal-slide" id="settings-modal" aria-hidden="true">
-      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
-        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
-          <header class="modal__header">
-            <h2 class="modal__title" id="modal-1-title">
-              Settings
-            </h2>
-            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
-          </header>
-          <main class="modal__content" id="modal-1-content">
-            <form action="submit_settings" method="post">
-              <!--generate the html, javascript and css for a settings  form with settings to generate and display tokens to use in token based dns authorization, and a form to add a maximum of 100  context variables with the option of making the variable private hidden or obfuscated from reports and other outputs. -->
-              <fieldset>
-                <legend>DNS Auth Token Settings</legend>
-                <button type="button" onclick="generateToken()">Generate Token</button>
-                <div id="generatedToken"></div>
-              </fieldset>
-
-              <fieldset id="contextVariablesForm">
-                <legend>Context Variables Settings</legend>
-                <label for="variableName">Name:</label>
-                <input type="text" id="variableName" name="variableName" placeholder="Enter variable name">
-                <br>
-                <label for="value">Value:</label>
-                <input type="text" id="value" name="value" placeholder="Enter variable value">
-                <br>
-                <label for="varType">Type:</label>
-                <select id="varType" name="varType">
-                  <option value="integer">Integer</option>
-                  <option value="float">Float</option>
-                  <option value="boolean">Boolean</option>
-                  <option value="string">String</option>
-                </select>
-                <br>
-                <label for="variableVisibility">Visibility:</label>
-                <select id="variableVisibility" name="variableVisibility">
-                  <option value="public">Public</option>
-                  <option value="private">Private</option>
-                  <option value="obfuscated">Obfuscated</option>
-                </select>
-                <br>
-                <button type="button" onclick="addVariable()">Add Variable</button>
-                <div id="contextVariables"></div>
-              </fieldset>
-              <input type="submit" value="Submit">
-            </form>
-          </main>
-          <footer class="modal__footer">
-            <button class="modal__btn modal__btn-primary" data-micromodal-save aria-label="Save Settings">Save</button>
-            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
-          </footer>
-        </div>
-      </div>
-    </div>
     <div id="background"></div>
     <div id="content">
       <div id="toolbar">
         <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
         <div id="balanceDiv" data-micromodal-trigger="invoice-modal"></div> |
-        <div id="settingsBtn" data-micromodal-trigger="settings-modal">Settings</div> |
-        <div id="logoutBtn" data-micromodal-trigger="logout-modal">Logout</div>
+        <div id="logoutBtn" data-micromodal-trigger="logout-modal">Logout </div>
         <!--generate javascript code to make the qrcode modal show when balanceDiv is clicked, and add css to  indicate that balance div is clickable-->
       </div>
       <div class="title">DamageBDD</div>
@@ -182,8 +127,8 @@
       <ul data-tabs>
         <li><a data-tabby-default href="#execution-tab">Execute</a></li>
         <li><a href="#history-tab">History</a></li>
-        <li><a href="#benchmarks-tab">Benchmarks</a></li>
-        <li><a href="#market-tab">Market</a></li>
+        <li><a href="#analytics-tab">Analytics</a></li>
+        <li><a href="#settings-tab">Settings</a></li>
       </ul>
 
 
@@ -192,7 +137,7 @@
           <div class="pure-u-1 pure-u-md-1-2">
             <p>
               <div>
-                <h3>Create Feature</h3>
+                <h3>Create/Edit Feature</h3>
                 <p>Write the test case in the textarea below:</p>
                 <p>You can find more example test cases <a href="https://github.com/jagguli/DamageBDD/tree/master/features">here</a>:
                 </p>
@@ -261,17 +206,56 @@ Feature: Http test feature
                   <ul id="runreports-ul" data-tabs-reports>
                   </ul>
                 </div>
+              </div>
             </p>
-            </div>
           </div>
         </div>
-        <div id="history-tab">
-          <div id="history"></div>
-        </div>
-        <div id="benchmarks-tab">
-        </div>
-        <div id="market-tab">
-        </div>
+      </div>
+
+      <div id="history-tab">
+        <div id="history"></div>
+      </div>
+      <div id="analytics-tab">
+      </div>
+      <div id="settings-tab">
+            <h2  id="modal-1-title">
+              Settings
+            </h2>
+            <form action="submit_settings" method="post">
+              <fieldset>
+                <legend>DNS Auth Token Settings</legend>
+                <button type="button" onclick="generateToken()">Generate Token</button>
+                <div id="generatedToken"></div>
+              </fieldset>
+
+              <fieldset id="contextVariablesForm">
+                <legend>Context Variables Settings</legend>
+                <label for="variableName">Name:</label>
+                <input type="text" id="variableName" name="variableName" placeholder="Enter variable name">
+                <br>
+                <label for="value">Value:</label>
+                <input type="text" id="value" name="value" placeholder="Enter variable value">
+                <br>
+                <label for="varType">Type:</label>
+                <select id="varType" name="varType">
+                  <option value="integer">Integer</option>
+                  <option value="float">Float</option>
+                  <option value="boolean">Boolean</option>
+                  <option value="string">String</option>
+                </select>
+                <br>
+                <label for="variableVisibility">Visibility:</label>
+                <select id="variableVisibility" name="variableVisibility">
+                  <option value="public">Public</option>
+                  <option value="private">Private</option>
+                  <option value="obfuscated">Obfuscated</option>
+                </select>
+                <br>
+                <button type="button" onclick="addVariable()">Add Variable</button>
+                <div id="contextVariables"></div>
+              </fieldset>
+              <input type="submit" value="Submit">
+            </form>
       </div>
       <script src="/static/js/toasts.js"></script>
       <script src="/static/js/reports.js"></script>

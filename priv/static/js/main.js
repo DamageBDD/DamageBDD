@@ -57,6 +57,12 @@ let bearer_token = null;
 		}
 		hljs.highlightAll();
 
+		const loginModal = document.getElementById("login-modal");
+		loginModal.addEventListener("keydown", function(event){
+			if (event.keyCode === 13) {
+				submitLoginForm(event);
+		}
+		});
 		const loginButton = document.getElementById("loginBtn");
 		const loginSubmitButton = document.getElementById("loginSubmitBtn");
 		const loginResetPasswdButton = document.getElementById("loginResetPasswdBtn");
@@ -92,6 +98,13 @@ let bearer_token = null;
 			onShow: modal => console.info(`${modal.id} is shown`), // [1]
 		});
 		var tabs =Tabby('[data-tabs]');
+		document.addEventListener('tabby', function (event) {
+			var tab = event.target;
+			var content = event.detail.content;
+			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
+				updateHistoryTable();
+			}
+		}, false);
 		document.getElementById("damageForm").addEventListener("submit", async function(event) {
 			event.preventDefault();
 			await submitDamageForm();
@@ -139,7 +152,7 @@ let bearer_token = null;
 		}
 	}
 
-	function showHideLoginButton(loginButton, logoutButton, settingsButton) {
+	function showHideLoginButton(loginButton, logoutButton) {
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
 		if (loginButton == undefined) {
@@ -148,15 +161,11 @@ let bearer_token = null;
 		if (logoutButton == undefined) {
 			logoutButton = document.getElementById("logoutBtn");
 		}
-		if (settingsButton == undefined) {
-			settingsButton = document.getElementById("settingsBtn");
-		}
 		if (isAuthenticated()) {
 			loginButton.style.display = "none";
 			content.style.display = "block";
 			removeBackground();
 			logoutButton.style.display = "inline-block";
-			settingsButton.style.display = "inline-block";
 			updateBalance();
 			generateInvoice();
 			try{
@@ -164,7 +173,6 @@ let bearer_token = null;
 			}catch(e){}
 		} else {
 			logoutButton.style.display = "none";
-			settingsButton.style.display = "none";
 			loginButton.style.display = "inline-block";
 			content.style.display = "none";
 			background.style.display = "block";
@@ -403,7 +411,7 @@ let bearer_token = null;
 			if (xhr.status === 200) {
 				var balanceData = JSON.parse(xhr.responseText);
 				var balanceDiv = document.getElementById('balanceDiv');
-				balanceDiv.innerText = 'Balance: ' + balanceData.balance + '🧪';
+				balanceDiv.innerText = 'Damage Tokens: ' + balanceData.balance + ' 🧪';
 			}
 		};
 		
