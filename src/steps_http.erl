@@ -36,42 +36,41 @@ get_headers(Context, DefaultHeaders) ->
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
-get_gun_config(Config0, #{contract_address := ContractAddress} = Context) ->
+get_gun_connection(Config0, #{contract_address := ContractAddress} = Context) ->
   Host = damage_utils:get_context_value(host, Context, Config0),
   Port = damage_utils:get_context_value(port, Context, Config0),
-  case damage_domains:is_allowed_domain(Host, ContractAddress) of
-    true ->
-      Config =
-        case Port of
-          443 -> [{transport, tls} | Config0];
-          _ -> Config0
-        end,
-      Opts =
-        case lists:keyfind(transport, 1, Config) of
-          false -> #{transport => tcp};
-          _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
-        end,
-      Opts0 =
-        case maps:get(basic_auth, Context, none) of
-          none -> Opts;
+  Config =
+    case Port of
+      443 -> [{transport, tls} | Config0];
+      _ -> Config0
+    end,
+  Opts =
+    case lists:keyfind(transport, 1, Config) of
+      false -> #{transport => tcp};
+      _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
+    end,
+  Opts0 =
+    case maps:get(basic_auth, Context, none) of
+      none -> Opts;
 
-          {User, Pass} ->
-            maps:put(username, User, maps:put(password, Pass, Context))
-        end,
-      {ok, ConnPid} =
-        gun:open(
-          Host,
-          Port,
-          maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts0)
-        ),
-      ConnPid;
+      {User, Pass} ->
+        maps:put(username, User, maps:put(password, Pass, Context))
+    end,
+  Opts1 = maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts0),
+  case lists:keyfind(concurrency, 1, Config0) of
+    {concurrency, 1} -> gun:open(Host, Port, Opts1);
 
-    _ ->
-      throw(
-        <<
-          "Host is not allowed please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html"
-        >>
-      )
+    {concurrency, _Concurrency} ->
+      case damage_domains:is_allowed_domain(Host, ContractAddress) of
+        true -> gun:open(Host, Port, Opts1);
+
+        _ ->
+          throw(
+            <<
+              "Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html"
+            >>
+          )
+      end
   end.
 
 
@@ -94,50 +93,50 @@ gun_await(ConnPid, StreamRef, Context) ->
 
 
 gun_post(Config0, Context, Path, Headers, Data) ->
-  ConnPid = get_gun_config(Config0, Context),
+  {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
   ?LOG_DEBUG("Post ~p", [Headers]),
   gun_await(ConnPid, StreamRef, Context).
 
 
 gun_patch(Config0, Context, Path, Headers, Data) ->
-  ConnPid = get_gun_config(Config0, Context),
+  {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:patch(ConnPid, Path, Headers, Data),
   gun_await(ConnPid, StreamRef, Context).
 
 
 gun_put(Config0, Context, Path, Headers, Data) ->
-  ConnPid = get_gun_config(Config0, Context),
+  {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:put(ConnPid, Path, Headers, Data),
   gun_await(ConnPid, StreamRef, Context).
 
 
 gun_get(Config0, Context, Path, Headers) ->
-  ConnPid = get_gun_config(Config0, Context),
+  {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:get(ConnPid, Path, Headers),
   gun_await(ConnPid, StreamRef, Context).
 
 
 gun_options(Config0, Context, Path, Headers) ->
-  ConnPid = get_gun_config(Config0, Context),
+  {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:options(ConnPid, Path, Headers),
   gun_await(ConnPid, StreamRef, Context).
 
 
 gun_head(Config0, Context, Path, Headers) ->
-  ConnPid = get_gun_config(Config0, Context),
+  {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:head(ConnPid, Path, Headers),
   gun_await(ConnPid, StreamRef, Context).
 
 
 gun_delete(Config0, Context, Path, Headers) ->
-  ConnPid = get_gun_config(Config0, Context),
+  {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:delete(ConnPid, Path, Headers),
   gun_await(ConnPid, StreamRef, Context).
 
 
 retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt) ->
-  ConnPid = get_gun_config(Config, Context),
+  {ok, ConnPid} = get_gun_connection(Config, Context),
   StreamRef = gun:get(ConnPid, Path, Headers),
   case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
     {response, nofin, Status, Headers} ->
