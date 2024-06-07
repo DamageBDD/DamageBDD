@@ -59,7 +59,10 @@ find_active_connection_helper([Connection | Rest], Fun, Args) ->
     ok -> ok;
 
     Err ->
-      logger:error("Unexpected riak error ~p trying next", [Err]),
+      logger:error(
+        "Unexpected riak error ~p on connectoion ~p trying next",
+        [Err, Connection]
+      ),
       find_active_connection_helper(Rest, Fun, Args)
   end;
 
