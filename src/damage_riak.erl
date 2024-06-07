@@ -44,7 +44,7 @@
 
 -record(state, {connections = []}).
 
--define(RIAK_CALL_TIMEOUT, 3600).
+-define(RIAK_CALL_TIMEOUT, 36000).
 
 % Define the function find_active_connection
 find_active_connection(Connections, Fun, Args) ->
