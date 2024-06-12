@@ -16,8 +16,8 @@
 -export([allowed_methods/2]).
 -export([trails/0]).
 -export([is_authorized/2]).
--export([load_all_webhooks/2]).
--export([list_all_webhooks/0]).
+-export([load_all_webhooks/1]).
+-export([list_webhooks/1]).
 -export([trigger_webhooks/1]).
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
@@ -85,7 +85,7 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  {ok, true} =
+  #{result := #{returnType := <<"ok">>}} =
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
       {'EXIT', {badarg, Trace}} ->
         logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
@@ -98,103 +98,59 @@ from_json(Req, State) ->
   {stop, cowboy_req:reply(201, Resp), State}.
 
 
-to_json(Req, #{contract_address := ContractAddress} = State) ->
-  Body = jsx:encode(list_webhooks(ContractAddress)),
-  logger:info("Loading webhooks for ~p ~p", [ContractAddress, Body]),
+to_json(Req, #{username := Username} = State) ->
+  Body = jsx:encode(list_webhooks(Username)),
+  logger:info("Loading webhooks for ~p ~p", [Username, Body]),
   {Body, Req, State}.
 
 
 create_webhook(
-  #{name := WebhookName, url := _WebhookUrl} = WebhookData,
+  #{name := WebhookName, url := WebhookUrl} = _WebhookData,
   _Req,
-  #{contract_address := ContractAddress} = _State
+  #{username := Username} = _State
 ) ->
-  WebhookId = damage_utils:idhash_keys([ContractAddress, WebhookName]),
-  Webhook1 =
-    case damage_riak:get(?WEBHOOKS_BUCKET, WebhookId) of
-      notfound ->
-        logger:error("failed to load  webhook ~p", [WebhookId]),
-        WebhookData;
-
-      {ok, WebhookObj} ->
-        ?LOG_DEBUG("loaded  webhook ~p", [WebhookObj]),
-        maps:merge(WebhookObj, WebhookData)
-    end,
-  Webhook0 = maps:put(id, WebhookId, Webhook1),
-  ?LOG_DEBUG("saving  webhook ~p", [Webhook0]),
-  {ok, true} =
-    damage_riak:put(
-      ?WEBHOOKS_BUCKET,
-      WebhookId,
-      Webhook0,
-      [{{binary_index, "contract_address"}, [ContractAddress]}]
-    ).
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
+  WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
+  Results =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/account.aes",
+      "add_webhook",
+      [WebhookNameEncrypted, WebhookUrlEncrypted]
+    ),
+  ?LOG_DEBUG("wWebhooks ~p", [Results]),
+  Results.
 
 
-get_webhook_unencrypted(WebhookId) ->
-  case damage_riak:get(?WEBHOOKS_BUCKET, WebhookId) of
-    {ok, Webhook} ->
-      ?LOG_DEBUG("Loaded WebhookId ~p", [WebhookId]),
-      Webhook;
-
-    _ -> none
-  end.
-
-
-get_webhook(WebhookId) when is_binary(WebhookId) ->
-  case catch damage_utils:decrypt(WebhookId) of
-    error ->
-      ?LOG_DEBUG("WebhookId Decryption error ~p ", [WebhookId]),
-      get_webhook_unencrypted(WebhookId);
-
-    {'EXIT', _Error} ->
-      ?LOG_DEBUG("WebhookId Decryption error ~p ", [WebhookId]),
-      get_webhook_unencrypted(WebhookId);
-
-    WebhookIdDecrypted -> get_webhook_unencrypted(WebhookIdDecrypted)
-  end;
-
-get_webhook(_) -> none.
-
-
-list_webhooks(ContractAddress) ->
-  ?LOG_DEBUG("Contract ~p", [ContractAddress]),
-  lists:filter(
-    fun (none) -> false; (_Other) -> true end,
-    [
-      get_webhook(WebhookId)
-      ||
-      WebhookId
-      <-
-      damage_riak:get_index(
-        ?WEBHOOKS_BUCKET,
-        {binary_index, "contract_address"},
-        ContractAddress
-      )
-    ]
-  ).
-
-
-load_all_webhooks(ContractAddress, Context) ->
-  maps:put(
-    webhooks,
+list_webhooks(Username) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  ?LOG_DEBUG("Contract ~p", [Username]),
+  #{decodedResult := Results} =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/account.aes",
+      "get_webhooks",
+      []
+    ),
+  Decrypted =
     maps:from_list(
       [
-        {maps:get(name, Webhook), Webhook}
-        || Webhook <- list_webhooks(ContractAddress)
+        {
+          damage_utils:decrypt(base64:decode(Key)),
+          damage_utils:decrypt(base64:decode(Hook))
+        }
+        || [Key, Hook] <- Results
       ]
     ),
-    Context
-  ).
+  ?LOG_DEBUG("wWebhooks ~p", [Decrypted]),
+  Decrypted.
 
-list_all_webhooks() ->
-  lists:filter(
-    fun (none) -> false; (_Other) -> true end,
-    [
-      get_webhook(WebhookId)
-      || WebhookId <- damage_riak:list_keys(?WEBHOOKS_BUCKET)
-    ]
-  ).
+
+load_all_webhooks(#{username := Username} = Context) ->
+  maps:put(webhooks, list_webhooks(Username), Context).
 
 gun_await(ConnPid, StreamRef) ->
   case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
