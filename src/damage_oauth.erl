@@ -42,11 +42,10 @@
 -export([jwt_verify/1]).
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
 
 -define(ACCESS_TOKEN_BUCKET, {<<"Default">>, <<"AccessTokens">>}).
 -define(REFRESH_TOKEN_BUCKET, {<<"Default">>, <<"RefreshTokens">>}).
--define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
--define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(CLIENT_BUCKET, {<<"Default">>, <<"Clients">>}).
 -define(CONFIRM_TOKEN_EXPIRY, 1440).
 
@@ -84,7 +83,6 @@ reset_password(#{token := Token}) ->
       case damage_riak:get(?USER_BUCKET, Email) of
         {ok, User} ->
           damage_riak:put(?USER_BUCKET, Email, maps:put(password, Token, User)),
-          damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Token),
           {
             ok,
             damage_utils:load_template(
@@ -120,13 +118,47 @@ reset_password(
     {ok, #{password := Password} = KycData} ->
       case validate_password(NewPassword) of
         true ->
-          damage_riak:put(
-            ?USER_BUCKET,
-            Email,
-            maps:put(password, NewPassword, KycData)
-          ),
-          damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
-          {ok, <<"Password successfuly reset.">>};
+          Now = os:timestamp(),
+          case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
+            {ok, #{email := Email, expiry := Expiry}} when Expiry - Now > 3600 ->
+              {notok, <<"Confirm Token Expired.">>};
+
+            {ok, #{email := Email}} ->
+              case damage_ae:maybe_create_wallet(#{email => Email}) of
+                {_, #{public_key := AeAccount}} ->
+                  ok =
+                    damage_riak:put(
+                      ?USER_BUCKET,
+                      Email,
+                      maps:merge(
+                        KycData,
+                        #{password => NewPassword, ae_account => AeAccount}
+                      ),
+                      [
+                        {
+                          {binary_index, "enc_email"},
+                          [damage_utils:encrypt(Email)]
+                        }
+                      ]
+                    ),
+                  ok =
+                    damage_riak:put(
+                      ?AEACCOUNT_BUCKET,
+                      AeAccount,
+                      #{email => Email}
+                    ),
+                  damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
+                  {ok, <<"Password successfuly reset.">>}
+              end;
+
+            notfound ->
+              ok = damage_riak:put(?USER_BUCKET, Email, KycData),
+              {ok, <<"Password successfuly reset.">>};
+
+            Err ->
+              ?LOG_ERROR("invalid confirm token ~p", [Err]),
+              {notok, <<"Invalid confirm token.">>}
+          end;
 
         _ ->
           {
@@ -172,9 +204,7 @@ reset_password(#{email := Email}) ->
   end.
 
 
-add_userdata(
-  #{email := ToEmail, ae_contract_address := ContractAddress} = Data0
-) ->
+add_userdata(#{email := ToEmail} = Data0) ->
   {ok, ApiUrl} = application:get_env(damage, api_url),
   ApiUrl0 = list_to_binary(ApiUrl),
   TempPassword = list_to_binary(uuid:to_string(uuid:uuid4())),
@@ -200,10 +230,7 @@ add_userdata(
     ?USER_BUCKET,
     ToEmail,
     Data,
-    [
-      {{binary_index, "enc_email"}, [damage_utils:encrypt(ToEmail)]},
-      {{binary_index, "contract"}, [ContractAddress]}
-    ]
+    [{{binary_index, "enc_email"}, [damage_utils:encrypt(ToEmail)]}]
   ),
   {
     ok,
@@ -220,17 +247,7 @@ add_user(#{email := ToEmail} = KycData) ->
   case damage_riak:get(?USER_BUCKET, ToEmail) of
     notfound ->
       ?LOG_DEBUG("account not found creating ~p", [ToEmail]),
-      case damage_accounts:create_contract() of
-        #{status := <<"ok">>, ae_contract_address := ContractAddress} = Data ->
-          Data0 =
-            maps:merge(
-              Data,
-              maps:put(contract_address, ContractAddress, KycData)
-            ),
-          add_userdata(damage_utils:binary_to_atom_keys(Data0));
-
-        #{status := <<"notok">>} -> {error, <<"Account creation failed. .">>}
-      end;
+      add_userdata(damage_utils:binary_to_atom_keys(KycData));
 
     {ok, #{password := Password} = Found} ->
       case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of

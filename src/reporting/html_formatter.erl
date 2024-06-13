@@ -63,7 +63,13 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
     write_file(
       Config,
       "<tr><td>~s</td><td>~p</td><td>~p</td><td>~p</td><td>~p</td></tr>",
-      [get_keyword(Keyword), StepStatement, Args, LineNo, Status]
+      [
+        get_keyword(Keyword),
+        binary_to_list(StepStatement),
+        Args,
+        LineNo,
+        Status
+      ]
     );
 
 format(

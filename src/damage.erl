@@ -178,19 +178,12 @@ publish_data(Config, FeatureData) ->
 
 
 publish_file(Config, Filename) ->
-  {contract_address, ContractAddress} =
-    lists:keyfind(contract_address, 1, Config),
   {fee, Fee} = lists:keyfind(fee, 1, Config),
   {ok, [#{<<"Hash">> := Hash, <<"Name">> := Name, <<"Size">> := Size}]} =
     damage_ipfs:add({file, Filename}),
   #{address := PubContractAddress} =
     Result =
-      damage_ae:aecli(
-        contract,
-        deploy,
-        "contracts/publish_feature.aes",
-        [list_to_binary(ContractAddress), Hash, Fee]
-      ),
+      damage_ae:contract_call("contracts/publish_feature.aes", [Hash, Fee]),
   ?LOG_INFO("call AE contract  : ~p : ~p", [PubContractAddress, Result]),
   PubFeature =
     #{
@@ -228,9 +221,6 @@ execute_data(Config, Context, FeatureData) ->
 execute_file(Config, Context, Filename) ->
   {run_id, RunId} = lists:keyfind(run_id, 1, Config),
   {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
-  {contract_address, ContractAddress0} =
-    lists:keyfind(contract_address, 1, Config),
-  ContractAddress = list_to_binary(ContractAddress0),
   StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
   case catch parse_file(Filename) of
     {failed, LineNo, Message} ->
@@ -317,12 +307,12 @@ execute_file(Config, Context, Filename) ->
       FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
       FinalContext =
         maps:merge(
+          FinalContext0,
           #{
             feature_hash => FeatureHash,
             report_hash => ReportHash,
             feature_title => FeatureTitle
-          },
-          FinalContext0
+          }
         ),
       ResultStatus =
         case maps:get(fail, FinalContext, 0) of
@@ -356,17 +346,17 @@ execute_file(Config, Context, Filename) ->
           execution_time => EndTimestamp - StartTimestamp,
           end_time => EndTimestamp,
           feature_title => FeatureTitle,
-          contract_address => ContractAddress,
           schedule_id => case lists:keyfind(schedule_id, 1, Config) of
             {schedule_id, ScheduleId} -> ScheduleId;
             false -> false
           end,
           result => Result,
+          ae_account => maps:get(ae_account, Context),
           result_status => ResultStatus
         },
       store_runrecord(RunRecord),
       damage_webhooks:trigger_webhooks(FinalContext),
-      damage_ae:confirm_spend(ContractAddress),
+      damage_ae:confirm_spend(FinalContext),
       RunRecord;
 
     {error, enont} = Err ->
@@ -382,14 +372,14 @@ store_runrecord(
     start_time := _StartTimestamp,
     execution_time := _ExecutionTime,
     end_time := _EndTimestamp,
-    contract_address := ContractAddress,
+    ae_account := AeAccount,
     schedule_id := ScheduleId,
     result_status := ResultStatus
   } = RunRecord
 ) ->
   Index =
     [
-      {{binary_index, "contract_address"}, [ContractAddress]},
+      {{binary_index, "ae_account"}, [AeAccount]},
       {{integer_index, "created"}, [date_util:epoch()]},
       {{integer_index, "result_status"}, [ResultStatus]}
     ],
@@ -464,7 +454,7 @@ execute_scenario(Config, Context, {_, BackGroundSteps}, Scenario) ->
 % handled OR should the handling happen withing the execution function
 execute_step_module(
   Config,
-  Context,
+  #{ae_account := AeAccount} = Context,
   {StepKeyWord, LineNo, Body, Args} = Step,
   StepModule
 ) ->
@@ -479,7 +469,7 @@ execute_step_module(
           [Config, Context, StepKeyWord, LineNo, Body, Args]
         )
       ),
-    metrics:update(success, Config),
+    metrics:update(success, AeAccount),
     Context0
   catch
     throw : Reason:Stack ->
@@ -491,7 +481,7 @@ execute_step_module(
           step_module => StepModule
         }
       ),
-      metrics:update(fail, Config),
+      metrics:update(fail, AeAccount),
       formatter:format(
         Config,
         step,
@@ -517,7 +507,7 @@ execute_step_module(
               step_module => StepModule
             }
           ),
-          metrics:update(fail, Config),
+          metrics:update(fail, AeAccount),
           formatter:format(
             Config,
             step,
@@ -531,7 +521,7 @@ execute_step_module(
       end;
 
     error : Reason:Stacktrace ->
-      metrics:update(fail, Config),
+      metrics:update(fail, AeAccount),
       ?LOG_ERROR(
         #{
           reason => Reason,
@@ -593,10 +583,8 @@ execute_step(Config, Step, Context) ->
                 step,
                 {StepKeyWord, LineNo, Body1, Args1, Context1, success}
               ),
-              {contract_address, ContractAddress} =
-                lists:keyfind(contract_address, 1, Config),
               damage_ae:spend(
-                ContractAddress,
+                maps:get(ae_account, Context),
                 maps:get(step_spend, Context1, 1)
               ),
               maps:remove(step_spend, Context1)
@@ -615,7 +603,7 @@ execute_step(Config, Step, Context) ->
         step,
         {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
       ),
-      metrics:update(notfound, Config);
+      metrics:update(notfound, maps:get(ae_account, Context));
 
     true -> true
   end,
@@ -623,12 +611,12 @@ execute_step(Config, Step, Context) ->
   Context0.
 
 
-get_default_config(ContractAddress, Concurrency, Formatters) ->
+get_default_config(AeAccount, Concurrency, Formatters) ->
   {ok, DataDir} = application:get_env(damage, data_dir),
   {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
   {ok, ChromeDriver} = application:get_env(damage, chromedriver),
   {ok, DamageApi} = application:get_env(damage, api_url),
-  AccountDir = filename:join(DataDir, ContractAddress),
+  AccountDir = filename:join(DataDir, AeAccount),
   RunDir = filename:join(AccountDir, RunId),
   ReportDir = filename:join([RunDir, "reports"]),
   TextReport = filename:join([ReportDir, "{{process_id}}.plain.txt"]),
@@ -650,6 +638,5 @@ get_default_config(ContractAddress, Concurrency, Formatters) ->
     {concurrency, Concurrency},
     {run_id, RunId},
     {run_dir, RunDir},
-    {contract_address, binary_to_list(ContractAddress)},
     {api_url, DamageApi}
   ].

@@ -90,18 +90,17 @@ is_authorized(Req, State) ->
             <<"scope">> := _Scope
           } = maps:from_list(Auth),
           case damage_riak:get(?USER_BUCKET, ResourceOwner) of
-            {ok, #{ae_contract_address := ContractAddress} = User} ->
+            {ok, User} ->
               {
                 true,
                 Req,
-                maps:put(
-                  user,
-                  User,
-                  maps:put(
-                    contract_address,
-                    ContractAddress,
-                    maps:put(username, ResourceOwner, State)
-                  )
+                maps:merge(
+                  State,
+                  #{
+                    ae_account => maps:get(ae_account, User),
+                    user => User,
+                    username => ResourceOwner
+                  }
                 )
               };
 
@@ -148,15 +147,14 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 get_config(
-  #{contract_address := ContractAddress, concurrency := Concurrency0} =
-    FeaturePayload,
+  #{ae_account := AeAccount, concurrency := Concurrency0} = Context,
   Req0
 ) ->
   Concurrency = damage_utils:get_concurrency_level(Concurrency0),
   Formatters =
     case Concurrency of
       1 ->
-        case maps:get(stream, FeaturePayload, maybe_stream) of
+        case maps:get(stream, Context, maybe_stream) of
           nostream -> [];
 
           _ ->
@@ -172,7 +170,7 @@ get_config(
                 text,
                 #{
                   output => Req,
-                  color => maps:get(color_formatter, FeaturePayload, false)
+                  color => maps:get(color_formatter, Context, false)
                 }
               }
             ]
@@ -182,7 +180,7 @@ get_config(
         ?LOG_DEBUG("execute_bdd concurrenc ~p", [Concurrency]),
         []
     end,
-  damage:get_default_config(ContractAddress, Concurrency, Formatters).
+  damage:get_default_config(AeAccount, Concurrency, Formatters).
 
 
 execute_bdd(Config, Context, #{feature := FeatureData}) ->
@@ -218,10 +216,11 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
 
 
 check_execute_bdd(
-  #{concurrency := Concurrency0} = FeaturePayload,
-  #{contract_address := ContractAddress, username := Username} = _State,
+  #{concurrency := Concurrency0} = Context0,
+  #{ae_account := AeAccount} = State,
   Req0
 ) ->
+  Context = maps:merge(Context0, State),
   Concurrency = damage_utils:get_concurrency_level(Concurrency0),
   IP = damage_utils:get_ip(Req0),
   case throttle:check(damage_api_rate, IP) of
@@ -230,31 +229,15 @@ check_execute_bdd(
       {error, 429, Req0};
 
     _ ->
-      case damage_ae:balance(ContractAddress) of
+      case damage_ae:balance(AeAccount) of
         Balance when Balance >= Concurrency ->
-          Config =
-            get_config(
-              maps:put(
-                contract_address,
-                ContractAddress,
-                maps:put(username, Username, FeaturePayload)
-              ),
-              Req0
-            ),
+          Config = get_config(Context, Req0),
           execute_bdd(
             Config,
             damage_context:get_account_context(
-              maps:put(
-                contract_address,
-                ContractAddress,
-                maps:put(
-                  username,
-                  Username,
-                  damage_context:get_global_template_context(FeaturePayload)
-                )
-              )
+              damage_context:get_global_template_context(Context)
             ),
-            FeaturePayload
+            Context
           );
 
         Other ->

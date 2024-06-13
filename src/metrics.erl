@@ -11,7 +11,12 @@
 
 -license("Apache-2.0").
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([init/0, update/2]).
+-export([fetch_metrics/1]).
+
+-define(DEFAULT_HTTP_TIMEOUT, 60000).
 
 init() -> [try prometheus_gauge:declare(M) of _ -> ok catch
       _ ->
@@ -23,26 +28,60 @@ init() -> [try prometheus_gauge:declare(M) of _ -> ok catch
       [
         {name, success},
         {help, "number of success"},
-        {labels, ["contract_address"]}
+        {labels, ["ae_account"]}
       ],
       [
         {name, error},
         {help, "number of errors"},
-        {labels, ["contract_address"]}
+        {labels, ["ae_account"]}
       ],
-      [{name, fail}, {help, "number of fails"}, {labels, ["contract_address"]}],
+      [{name, fail}, {help, "number of fails"}, {labels, ["ae_account"]}],
       [
         {name, notfound},
         {help, "number of notfounds"},
-        {labels, ["contract_address"]}
+        {labels, ["ae_account"]}
       ]
     ]].
 
-update(Event, Config) ->
-  prometheus_gauge:inc(Event, [{contract_address, "all"}]),
-  {contract_address, ContractAddress} =
-    lists:keyfind(contract_address, 1, Config),
-  prometheus_gauge:inc(Event, [{contract_address, ContractAddress}]).
+update(Event, AeAccount) ->
+  %?LOG_DEBUG("update prometheus_data  for event ~p ", [Event]),
+  prometheus_gauge:inc(Event, ["all"]),
+  prometheus_gauge:inc(Event, [AeAccount]).
+
+
+%curl -g 'http://localhost:9090/api/v1/series?' --data-urlencode 'match[]={ae_account=~".+"}'|jq
+fetch_metrics(AeAccount) when is_binary(AeAccount) ->
+  fetch_metrics(binary_to_list(AeAccount));
+
+fetch_metrics(AeAccount) ->
+  Host = "localhost",
+  Port = 9090,
+  Headers = #{"Content-Type" => "application/x-www-form-urlencoded"},
+  Query =
+    "/api/v1/query?query=sum(success{ae_account=\""
+    ++
+    AeAccount
+    ++
+    "\"})",
+  {ok, ConnPid} = gun:open(Host, Port, #{}),
+  %% Construct the request body
+  %% Send the HTTP POST request
+  StreamRef = gun:get(ConnPid, Query, Headers),
+  Response0 =
+    case gun:await(ConnPid, StreamRef) of
+      {response, fin, _Status, _Headers0} -> no_data;
+
+      {response, nofin, _Status, _Headers0} ->
+        {ok, Body} = gun:await_body(ConnPid, StreamRef),
+        Body
+    end,
+  %% Parse the response JSON
+  ?LOG_DEBUG("Got prometheus_data ~p for query ~p ", [Response0, Query]),
+  %% Parse the response JSON
+  Response = jsx:decode(Response0),
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
+  Response.
 
 %%setup_prometheus_metrics()->
 %%

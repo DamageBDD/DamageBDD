@@ -3,6 +3,7 @@
 -vsn("0.1.0").
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("damage.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
@@ -18,16 +19,13 @@
 -export([trails/0]).
 -export([is_authorized/2]).
 -export([execute_bdd/1]).
--export([run_schedule_job/3]).
--export([run_schedule_job/5]).
--export([run_schedule_job/6]).
--export([load_all_schedules/0]).
+-export([schedule_job/1]).
 -export([list_schedules/1]).
 -export([list_all_schedules/0]).
--export([test_conflict_resolution/0]).
--export([clean_schedules/0]).
+-export([load_all_schedules/0]).
+-export([test_schedule/0]).
 -export([delete_resource/2]).
--export([get_schedule/1]).
+-export([cancel_all_schedules/0]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -38,7 +36,7 @@
 trails() ->
   [
     trails:trail(
-      "/schedule/[...]",
+      "/schedules/[...]",
       damage_schedule,
       #{},
       #{
@@ -99,13 +97,13 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-delete_resource(Req, State) ->
+delete_resource(Req, #{username := Username} = State) ->
   Deleted =
     lists:foldl(
       fun
         (DeleteId, Acc) ->
           ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-          ok = damage_riak:delete(?SCHEDULES_BUCKET, DeleteId),
+          ok = delete_schedule(Username, DeleteId),
           erlcron:cancel(DeleteId),
           Acc + 1
       end,
@@ -116,35 +114,30 @@ delete_resource(Req, State) ->
   {true, Req, State}.
 
 
-from_text(Req, #{contract_address := ContractAddress} = State) ->
+from_text(Req, #{ae_account := AeAccount, username := Username} = State) ->
   ?LOG_DEBUG("From text ~p", [Req]),
   {ok, Body, _} = cowboy_req:read_body(Req),
   ok = validate(Body),
   CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req), []),
   Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req, 1),
-  FeatureTitle = lists:nth(1, binary:split(Body, <<"\n">>, [global])),
   ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
   {ok, [#{<<"Hash">> := Hash}]} =
     damage_ipfs:add({data, Body, <<"Scheduledjob">>}),
-  ScheduleId = damage_utils:idhash_keys([ContractAddress, Hash]),
-  Args = [ScheduleId] ++ CronSpec,
-  logger:info("run_schedule_job: ~p", [Args]),
-  CronJob = apply(?MODULE, run_schedule_job, Args),
-  Created = date_util:now_to_seconds_hires(os:timestamp()),
+  Name = list_to_binary(uuid:to_string(uuid:uuid4())),
+  Schedule =
+    #{
+      id => Name,
+      ae_account => AeAccount,
+      hash => Hash,
+      concurrency => Concurrency,
+      username => Username,
+      cron => CronSpec
+    },
+  logger:info("schedule_job: ~p", [Schedule]),
+  CronJob = apply(?MODULE, schedule_job, [Schedule]),
   logger:info("Cron Job: ~p", [CronJob]),
-  {ok, true} =
-    save_schedule(
-      #{
-        created => Created,
-        modified => Created,
-        contract_address => ContractAddress,
-        hash => Hash,
-        concurrency => Concurrency,
-        feature_title => FeatureTitle,
-        cronspec => CronSpec
-      }
-    ),
-  %damage_accounts:update_schedules(ContractAddress, Hash, CronJob),
+  ok = add_schedule(Username, Name, Hash, CronSpec),
+  %damage_accounts:update_schedules(AeAccount, Hash, CronJob),
   Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
   {stop, cowboy_req:reply(201, Resp), State}.
 
@@ -153,133 +146,100 @@ from_json(Req, State) -> from_text(Req, State).
 
 from_html(Req, State) -> from_text(Req, State).
 
-to_json(Req, #{contract_address := ContractAddress} = State) ->
-  Body = jsx:encode(list_schedules(ContractAddress)),
-  logger:info("Loading scheduled for ~p ~p", [ContractAddress, Body]),
+to_json(Req, #{username := Username} = State) ->
+  Schedules = list_schedules(Username),
+  Body =
+    jsx:encode(
+      #{status => <<"ok">>, results => Schedules, length => length(Schedules)}
+    ),
+  logger:info("Loading scheduled for ~p ~p", [Username, Body]),
   {Body, Req, State}.
 
 
-save_schedule(
-  #{contract_address := ContractAddress, hash := Hash, cronspec := _CronSpec} =
+execute_bdd(
+  %% Add the filter to allow PidToLog to send debug events
+  #{ae_account := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
     Schedule
 ) ->
-  ScheduleId = damage_utils:idhash_keys([ContractAddress, Hash]),
-  Schedule0 =
-    case damage_riak:get(?SCHEDULES_BUCKET, ScheduleId) of
-      notfound ->
-        logger:error("failed to load  schedule ~p", [ScheduleId]),
-        Schedule;
-
-      {ok, ScheduleObj} ->
-        ?LOG_DEBUG("loaded  schedule ~p", [ScheduleObj]),
-        maps:merge(ScheduleObj, Schedule)
-    end,
-  ?LOG_DEBUG("saving  schedule ~p", [Schedule0]),
-  {ok, true} =
-    damage_riak:put(
-      ?SCHEDULES_BUCKET,
-      ScheduleId,
-      Schedule0,
-      [{{binary_index, "contract_address"}, [ContractAddress]}]
-    ).
-
-
-execute_bdd(ScheduleId) ->
-  %% Add the filter to allow PidToLog to send debug events
-  case get_schedule(ScheduleId) of
-    none -> ?LOG_ERROR("scheduledid  not found ~p.", [ScheduleId]);
-
-    #{
-      contract_address := ContractAddress,
-      hash := Hash,
-      concurrency := Concurrency,
-      id := ScheduleId0
-    } = Schedule ->
-      logger:info(
-        "scheduled job execution ~p ContractAddress ~p, Hash ~p.",
-        [Schedule, ContractAddress, Hash]
-      ),
-      Config =
-        [
-          {schedule_id, ScheduleId}
-          | damage:get_default_config(ContractAddress, Concurrency, [])
-        ],
-      Context =
-        damage_context:get_account_context(
-          maps:put(
-            contract_address,
-            ContractAddress,
-            damage_context:get_global_template_context(
-              #{schedule_id => ScheduleId}
-            )
-          )
-        ),
-      {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-      {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-      BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
-      ok = damage_ipfs:get(Hash, BddFileName),
-      ?LOG_DEBUG(
-        "scheduled job execution config ~p feature ~p scheduleid ~p.",
-        [Config, BddFileName, Hash]
-      ),
-      Result = damage:execute_file(Config, Context, BddFileName),
-      true =
-        damage_riak:update_counter(
-          ?SCHEDULE_EXECUTION_COUNTER,
-          ScheduleId,
-          {increment, 1}
-        ),
-      {ok, true} =
-        damage_riak:put(
-          ?SCHEDULES_BUCKET,
-          ScheduleId0,
-          maps:put(last_excution_timestamp, list_to_binary(RunId), Schedule),
-          [{{binary_index, "contract_address"}, [ContractAddress]}]
-        ),
-      Result
-  end.
+  logger:info(
+    "scheduled job execution ~p AeAccount ~p, Hash ~p.",
+    [Schedule, AeAccount, Hash]
+  ),
+  Config = damage:get_default_config(AeAccount, Concurrency, []),
+  Context =
+    damage_context:get_account_context(
+      damage_context:get_global_template_context(Schedule)
+    ),
+  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+  {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+  BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
+  ok = damage_ipfs:get(Hash, BddFileName),
+  ?LOG_DEBUG(
+    "scheduled job execution config ~p feature ~p scheduleid ~p.",
+    [Config, BddFileName, Hash]
+  ),
+  Result = damage:execute_file(Config, Context, BddFileName),
+  true =
+    damage_riak:update_counter(
+      ?SCHEDULE_EXECUTION_COUNTER,
+      Hash,
+      {increment, 1}
+    ),
+  Result.
 
 
-run_schedule_job(ScheduleId, daily, every, Hour, Minute, AMPM) ->
+schedule_job(
+  #{id := ScheduleId, cron := [daily, every, Hour, Minute, AMPM]} = Schedule
+) ->
   Job =
-    {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [ScheduleId]}},
-  erlcron:cron(ScheduleId, Job).
+    {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [Schedule]}},
+  erlcron:cron(ScheduleId, Job);
 
+schedule_job(
+  #{id := _ScheduleId, cron := [daily, every, Second, seconds]} = Schedule
+) ->
+  schedule_job(maps:put(cron, [daily, every, Second, sec], Schedule));
 
-run_schedule_job(ScheduleId, daily, every, Second, sec) ->
+schedule_job(
+  #{id := ScheduleId, cron := [daily, every, Second, sec]} = Schedule
+) ->
   Job =
     {
       {daily, {every, {Second, sec}}},
-      {damage_schedule, execute_bdd, [ScheduleId]}
+      {damage_schedule, execute_bdd, [Schedule]}
     },
   erlcron:cron(ScheduleId, Job);
 
-run_schedule_job(ScheduleId, once, Hour, Minute, Second) when is_integer(Second) ->
+schedule_job(
+  #{id := ScheduleId, cron := [once, Hour, Minute, Second]} = Schedule
+)
+when is_integer(Second) ->
   Job =
-    {
-      {once, {Hour, Minute, Second}},
-      {damage_schedule, execute_bdd, [ScheduleId]}
-    },
+    {{once, {Hour, Minute, Second}}, {damage_schedule, execute_bdd, [Schedule]}},
   erlcron:cron(ScheduleId, Job);
 
-run_schedule_job(ScheduleId, once, Hour, Minute, AMPM) when is_atom(AMPM) ->
+schedule_job(#{id := ScheduleId, cron := [once, Hour, Minute, AMPM]} = Schedule)
+when is_atom(AMPM) ->
   Job =
-    {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [ScheduleId]}},
-  erlcron:cron(ScheduleId, Job).
+    {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [Schedule]}},
+  erlcron:cron(ScheduleId, Job);
 
-
-run_schedule_job(ScheduleId, once, Seconds) when is_integer(Seconds) ->
-  Job = {{once, Seconds}, {damage_schedule, execute_bdd, [ScheduleId]}},
+schedule_job(#{id := ScheduleId, cron := [once, Seconds]} = Schedule)
+when is_integer(Seconds) ->
+  Job = {{once, Seconds}, {damage_schedule, execute_bdd, [Schedule]}},
   erlcron:cron(ScheduleId, Job).
 
 
 binary_spec_to_term_spec([], Acc) -> Acc;
 
+binary_spec_to_term_spec([Spec | Rest], Acc) when is_integer(Spec) ->
+  binary_spec_to_term_spec(Rest, Acc ++ [Spec]);
+
 binary_spec_to_term_spec([Spec | Rest], Acc) ->
   Term =
     case catch binary_to_integer(Spec) of
       {'EXIT', _} -> binary_to_atom(Spec);
-      Int -> Int
+      Other -> Other
     end,
   binary_spec_to_term_spec(Rest, Acc ++ [Term]).
 
@@ -294,137 +254,184 @@ validate(Gherkin) ->
   end.
 
 
-get_schedule_unencrypted(ScheduleId) ->
-  case damage_riak:get(?SCHEDULES_BUCKET, ScheduleId) of
-    {ok, Schedule} ->
-      ?LOG_DEBUG("Loaded Schedulid ~p", [ScheduleId]),
-      maps:put(id, ScheduleId, Schedule);
-
-    _ -> none
-  end.
-
-
-get_schedule(ScheduleId) when is_binary(ScheduleId) ->
-  case catch damage_utils:decrypt(ScheduleId) of
-    error ->
-      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
-      get_schedule_unencrypted(ScheduleId);
-
-    {'EXIT', _Error} ->
-      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
-      get_schedule_unencrypted(ScheduleId);
-
-    ScheduleIdDecrypted -> get_schedule_unencrypted(ScheduleIdDecrypted)
-  end;
-
-get_schedule(_) -> none.
-
-
-list_get_schedule(ScheduleId) ->
-  #{id := ScheduleId0} = Schedule = get_schedule(ScheduleId),
-  maps:put(
-    execution_counter,
-    damage_riak:counter_value(?SCHEDULE_EXECUTION_COUNTER, ScheduleId0),
-    Schedule
-  ).
-
-
-list_schedules(ContractAddress) ->
-  ?LOG_DEBUG("Contract ~p", [ContractAddress]),
-  lists:filter(
-    fun (none) -> false; (_Other) -> true end,
-    [
-      list_get_schedule(ScheduleId)
-      ||
-      ScheduleId
-      <-
-      damage_riak:get_index(
-        ?SCHEDULES_BUCKET,
-        {binary_index, "contract_address"},
-        ContractAddress
-      )
-    ]
-  ).
-
-
-load_schedule(Schedule) ->
-  #{cronspec := Args, id := Id} = Schedule,
-  Args0 =
-    lists:map(
-      fun (A) when is_binary(A) -> binary_to_atom(A); (A) -> A end,
-      Args
+list_schedules(Username) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  ?LOG_DEBUG("Contract ~p", [Username]),
+  #{decodedResult := Results} =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/account.aes",
+      "get_schedules",
+      []
     ),
-  logger:info("run_schedule_job: ~p", [Args0]),
-  CronJob = apply(?MODULE, run_schedule_job, [Id] ++ Args0),
-  logger:info("load_schedule: ~p", [CronJob]).
+  Decrypted =
+    maps:from_list(
+      [
+        {
+          damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
+          damage_utils:decrypt(base64:decode(CronEncrypted))
+        }
+        || [FeatureHashEncrypted, CronEncrypted] <- Results
+      ]
+    ),
+  ?LOG_DEBUG("wWebhooks ~p", [Decrypted]),
+  Decrypted.
+
+
 
 
 load_all_schedules() ->
-  [load_schedule(Schedule) || Schedule <- list_all_schedules()].
+  [[schedule_job(Schedule)|| Schedule <- AccountSchedule] || AccountSchedule <- list_all_schedules()].
 
 list_all_schedules() ->
-  lists:filter(
-    fun (none) -> false; (_Other) -> true end,
-    [
-      get_schedule(ScheduleId)
-      || ScheduleId <- damage_riak:list_keys(?SCHEDULES_BUCKET)
-    ]
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  {ok, AdminWallet} = application:get_env(damage, ae_wallet),
+  AdminPassword = os:getenv("AE_PASSWORD"),
+  #{decodedResult := Results} =
+    damage_ae:contract_call(
+      AdminWallet,
+      AdminPassword,
+      AccountContract,
+      "contracts/account.aes",
+      "get_all_schedules",
+      []
+    ),
+  Decrypted = decrypt_schedules(Results),
+  ?LOG_DEBUG("schedules ~p", [Decrypted]),
+  Decrypted.
+
+
+delete_schedule(Username, ScheduleId) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  FeatureHashEncrypted = base64:encode(damage_utils:encrypt(ScheduleId)),
+  #{
+    decodedResult := [],
+    result
+    :=
+    #{
+      log := [],
+      gasPrice := GasPrice,
+      callerId := AeAccount,
+      gasUsed := GasUsed,
+      returnType := <<"ok">>
+    }
+  } =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/account.aes",
+      "delete_schedule",
+      [FeatureHashEncrypted]
+    ),
+  ?LOG_DEBUG(
+    "call AE contract ~p gasprice ~p gasused ~p",
+    [AeAccount, GasPrice, GasUsed]
   ).
 
-test_conflict_resolution() -> list_all_schedules().
 
-clean_schedule(ScheduleId) ->
-  case catch damage_utils:decrypt(ScheduleId) of
-    error ->
-      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
-      ok = damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId),
-      none;
+add_schedule(Username, Name, FeatureHash, Cron) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  NameEncrypted = base64:encode(damage_utils:encrypt(Name)),
+  FeatureHashEncrypted = base64:encode(damage_utils:encrypt(FeatureHash)),
+  CronEncrypted = base64:encode(damage_utils:encrypt(jsx:encode(Cron))),
+  #{
+    decodedResult := [],
+    result
+    :=
+    #{
+      log := [],
+      gasPrice := GasPrice,
+      callerId := AeAccount,
+      gasUsed := GasUsed,
+      returnType := <<"ok">>
+    }
+  } =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/account.aes",
+      "add_schedule",
+      [NameEncrypted, FeatureHashEncrypted, CronEncrypted]
+    ),
+  ?LOG_DEBUG(
+    "call AE contract ~p gasprice ~p gasused ~p",
+    [AeAccount, GasPrice, GasUsed]
+  ).
 
-    {'EXIT', _Error} ->
-      ?LOG_DEBUG("ScheduleId Decryption error ~p ", [ScheduleId]),
-      ok = damage_riak:delete(?SCHEDULES_BUCKET, ScheduleId),
-      none;
 
-    ScheduleIdDecrypted ->
-      case damage_riak:get(?SCHEDULES_BUCKET, ScheduleIdDecrypted) of
-        {ok, Schedule} ->
-          ?LOG_DEBUG("Loaded Schedulid ~p", [ScheduleIdDecrypted]),
-          Schedule;
+cancel_all_schedules() -> [erlcron:cancel(X) || X <- erlcron:get_all_jobs()].
 
-        Unexpected ->
-          ?LOG_DEBUG("ScheduleId Decryption error ~p ", [Unexpected]),
-          none
-      end
-  end.
+load_account_schedules(Account, Username, Schedules) ->
+  ?LOG_DEBUG("Accounts ~p", [Account]),
+  lists:map(
+    fun
+      ([ScheduleId, EncryptedSchedule]) ->
+        Schedule0 =
+          maps:from_list(
+            lists:map(
+              fun
+                ([<<"cron">>, Value]) ->
+                  {
+                    cron,
+                    binary_spec_to_term_spec(
+                      jsx:decode(damage_utils:decrypt(base64:decode(Value))),
+                      []
+                    )
+                  };
+
+                ([Key, Value]) ->
+                  {
+                    binary_to_atom(Key),
+                    damage_utils:decrypt(base64:decode(Value))
+                  }
+              end,
+              EncryptedSchedule
+            )
+          ),
+        Schedule =
+          maps:merge(
+            #{
+              id => ScheduleId,
+              ae_account => Account,
+              concurrency => 1,
+              username => Username
+            },
+            Schedule0
+          ),
+        ?LOG_DEBUG("schedule_job: ~p", [Schedule]),
+        CronJob = apply(?MODULE, schedule_job, [Schedule]),
+        ?LOG_DEBUG("Cron Job: ~p", [CronJob]),
+        Schedule
+    end,
+    Schedules
+  ).
 
 
-clean_schedules() ->
-  [
-    clean_schedule(Schedule)
-    || Schedule <- damage_riak:list_keys(?SCHEDULES_BUCKET)
-  ].
+decrypt_schedules(EncryptedSchedules) ->
+  lists:map(
+    fun
+      ([Account, Schedules]) ->
+            ?LOG_DEBUG("Account ~p", [Account]),
+        case damage_riak:get(?AEACCOUNT_BUCKET, Account) of
+          {ok, #{email := Username} = _User} ->
+            load_account_schedules(Account, Username, Schedules);
 
-%update_schedules(ContractAddress, JobId, _Cron) ->
-%  ContractCall =
-%    damage_ae:aecli(
-%      contract,
-%      call,
-%      binary_to_list(ContractAddress),
-%      "contracts/account.aes",
-%      "update_schedules",
-%      [JobId]
-%    ),
-%  ?LOG_DEBUG("call AE contract ~p", [ContractCall]),
-%  #{
-%    decodedResult
-%    :=
-%    #{
-%      btc_address := _BtcAddress,
-%      btc_balance := _BtcBalance,
-%      deso_address := _DesoAddress,
-%      deso_balance := _DesoBalance,
-%      usage := _Usage,
-%      deployer := _Deployer
-%    } = Results
-%  } = ContractCall,
-%  ?LOG_DEBUG("State ~p ", [Results]).
+          _ -> #{}
+        end
+    end,
+    EncryptedSchedules
+  ).
+
+
+test_schedule() ->
+  Name = <<"test schedule">>,
+  ok =
+    add_schedule(
+      <<"steven@stevenjoseph.in">>,
+      Name,
+      <<"QmVHFpuoHCiTHYcLYgkhdXqQ94EoBT6VdWtocVgurXVnRU">>,
+      [<<"daily">>, <<"every">>, <<"60">>, <<"seconds">>]
+    ),
+  Schedules = list_all_schedules(),
+  ?LOG_INFO("Schedule tests ok ~p", [Schedules]).

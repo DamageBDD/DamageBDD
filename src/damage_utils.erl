@@ -153,6 +153,7 @@ convert_context(Context) ->
 
       ({Key, Value}) when is_binary(Key) -> {binary_to_atom(Key), Value};
       ({Key, Value}) when is_binary(Value) -> {Key, binary_to_list(Value)};
+      ({Key, Value}) when is_binary(Key), is_list(Value) -> {binary_to_atom(Key),Value};
       (Value) -> Value
     end,
     maps:to_list(Context)

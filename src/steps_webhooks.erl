@@ -36,7 +36,7 @@ step(
           maps:put(
             Event,
             damage_utils:strf("Webhook not configured: ~p", [WebhookName]),
-            Webhooks
+            Context
           );
 
         #{url := _Url} = Webhook ->

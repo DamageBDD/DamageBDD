@@ -196,16 +196,13 @@ to_json(Req, #{action := features} = State) ->
       {cat(list_to_binary(Hash), <<"">>), Req, State}
   end;
 
-to_json(Req, #{contract_address := ContractAddress} = State) ->
+to_json(Req, #{ae_account := AeAccount} = State) ->
   Reports =
     case cowboy_req:match_qs([{schedule_id, [], none}], Req) of
-      #{schedule_id := none} ->
-        do_query(#{contract_address => ContractAddress});
+      #{schedule_id := none} -> do_query(#{ae_account => AeAccount});
 
       #{schedule_id := ScheduleId} ->
-        do_query(
-          #{contract_address => ContractAddress, schedule_id => ScheduleId}
-        )
+        do_query(#{ae_account => AeAccount, schedule_id => ScheduleId})
     end,
   {jsx:encode(Reports), Req, State};
 
@@ -232,7 +229,7 @@ get_record(Id) ->
   end.
 
 
-do_query_base(Fun, Index, Args, ContractAddress) ->
+do_query_base(Fun, Index, Args, AeAccount) ->
   Args0 = [?RUNRECORDS_BUCKET, Index] ++ Args ++ [[{max_results, 30}]],
   ?LOG_DEBUG("riak query index ~p", [Args0]),
   case apply(damage_riak, Fun, Args0) of
@@ -245,10 +242,7 @@ do_query_base(Fun, Index, Args, ContractAddress) ->
         lists:filter(
           fun
             (none) -> false;
-
-            (#{contract_address := ContractAddress0})
-            when ContractAddress0 =:= ContractAddress ->
-              true
+            (#{ae_account := AeAccount0}) when AeAccount0 =:= AeAccount -> true
           end,
           [get_record(X) || X <- Found]
         ),
@@ -265,7 +259,7 @@ since_seconds(days, Value) -> Value * 3600 * 24;
 since_seconds(week, Value) -> Value * 3600 * 24 * 7;
 since_seconds(weeks, Value) -> Value * 3600 * 24 * 7.
 
-range_query(StartDateTime0, EndDateTime0, Prefix, ContractAddress) ->
+range_query(StartDateTime0, EndDateTime0, Prefix, AeAccount) ->
   StartDateTime = list_to_integer(Prefix ++ integer_to_list(StartDateTime0)),
   EndDateTime = list_to_integer(Prefix ++ integer_to_list(EndDateTime0)),
   ?LOG_DEBUG("Since ~p to ~p", [StartDateTime, EndDateTime]),
@@ -273,13 +267,11 @@ range_query(StartDateTime0, EndDateTime0, Prefix, ContractAddress) ->
     get_index_range,
     {integer_index, "result_status"},
     [StartDateTime, EndDateTime],
-    ContractAddress
+    AeAccount
   ).
 
 
-do_query(
-  #{contract_address := ContractAddress, since := Since0, status := Status}
-) ->
+do_query(#{ae_account := AeAccount, since := Since0, status := Status}) ->
   Since = binary_to_list(Since0),
   case
   re:run(
@@ -302,7 +294,7 @@ do_query(
             StartDateTime0,
             EndDateTime0,
             ?RESULT_STATUS_PREFIX_FAIL,
-            ContractAddress
+            AeAccount
           );
 
         <<"success">> ->
@@ -310,7 +302,7 @@ do_query(
             StartDateTime0,
             EndDateTime0,
             ?RESULT_STATUS_PREFIX_SUCCESS,
-            ContractAddress
+            AeAccount
           )
       end;
 
@@ -319,7 +311,7 @@ do_query(
       <<"Invalid query.">>
   end;
 
-do_query(#{contract_address := ContractAddress, since := Since0}) ->
+do_query(#{ae_account := AeAccount, since := Since0}) ->
   Since = binary_to_list(Since0),
   case
   re:run(
@@ -341,7 +333,7 @@ do_query(#{contract_address := ContractAddress, since := Since0}) ->
         get_index_range,
         {integer_index, "created"},
         [StartDateTime, EndDateTime],
-        ContractAddress
+        AeAccount
       );
 
     Other ->
@@ -349,24 +341,19 @@ do_query(#{contract_address := ContractAddress, since := Since0}) ->
       <<"Invalid query.">>
   end;
 
-do_query(#{contract_address := ContractAddress, schedule_id := ScheduleId}) ->
+do_query(#{ae_account := AeAccount, schedule_id := ScheduleId}) ->
   do_query_base(
     get_index,
     {binary_index, "schedule_id"},
     [ScheduleId],
-    ContractAddress
+    AeAccount
   );
 
-do_query(#{contract_address := ContractAddress}) ->
-  do_query_base(
-    get_index,
-    {binary_index, "contract_address"},
-    [ContractAddress],
-    ContractAddress
-  ).
+do_query(#{ae_account := AeAccount}) ->
+  do_query_base(get_index, {binary_index, "ae_account"}, [AeAccount], AeAccount).
 
 
-from_json(Req, #{contract_address := ContractAddress} = State) ->
+from_json(Req, #{ae_account := AeAccount} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
@@ -375,8 +362,7 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
         {400, <<"Json decoding failed.">>};
 
       PostData ->
-        QueryData =
-          maps:merge(PostData, #{contract_address => ContractAddress}),
+        QueryData = maps:merge(PostData, #{ae_account => AeAccount}),
         ?LOG_DEBUG("Query data ~p", [QueryData]),
         {200, do_query(QueryData)}
     end,

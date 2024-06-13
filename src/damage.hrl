@@ -7,6 +7,7 @@
 -define(MAX_DAMAGE_INVOICE, 4000).
 -define(INVOICE_BUCKET, {<<"Default">>, <<"Invoices">>}).
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
+-define(AEACCOUNT_BUCKET, {<<"Default">>, <<"AeAccounts">>}).
 -define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
 -define(INVOICES_SINCE, 30).
 

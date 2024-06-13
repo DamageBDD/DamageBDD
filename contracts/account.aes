@@ -1,42 +1,56 @@
 @compiler >= 6
 	
 include "String.aes"
+include "token.aes"
 
-payable contract Account =
+payable main contract Account =
     record state = {
-        last_invoice_ts: int,
-        balance: int,
-        schedules: list(string),
-        deployer: address
+        owner: address,
+        schedules: map(address, map(string, map(string, string))),
+        contexts: map(address, map(string, string)),
+        webhooks: map(address, map(string, string))
         }
 
     stateful entrypoint init() = {
-        balance = 400000000, // free credits on start
-        schedules = [],
-        last_invoice_ts = 0,
-        deployer = Call.caller
+        owner = Call.caller,
+        schedules = {},
+        contexts ={},
+        webhooks = {}
         }
 
-    stateful entrypoint spend(amount: int): state =
-        if(state.balance =< 1)
-            abort(String.concat("balance too low", Int.to_str(state.balance)))
-        else
-            put(state{balance = state.balance - amount})
-        state
+    stateful entrypoint spend(token: DamageToken, node_address: address, amount: int, feature_hash: string, report_hash: string) =
+        token.transfer(node_address, amount)
 		
-    stateful entrypoint update_schedules(jobid: string) =
-        put(state{schedules = jobid::state.schedules})
+    stateful entrypoint add_schedule(id: string, feature_hash: string, cronspec: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
+        let newmap = oldmap{[id] = {["cron"] = cronspec, ["feature_hash"] = feature_hash}}
+        put(state{schedules[Call.caller] = newmap})
 
-    stateful entrypoint fund(amount: int, timestamp: int): unit =
-        if(timestamp < state.last_invoice_ts)
-            abort(String.concat("Timestamp older than last invoice paid.", Int.to_str(state.last_invoice_ts)))
-        elif(amount > 1)
-            put(state{balance = state.balance + amount,
-                last_invoice_ts = Chain.timestamp})
-        else
-            abort(String.concat("Value too low", Int.to_str(amount)))
+    stateful entrypoint delete_schedule(id: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
+        let newmap = Map.delete(id, oldmap)
+        put(state{schedules[Call.caller] = newmap})
 
-    stateful entrypoint get_state(): state =
-        state
-			  
+    stateful entrypoint get_schedules(): map(string, map(string, string)) =
+        Map.lookup_default(Call.caller, state.schedules, {})
 
+    stateful entrypoint get_all_schedules(): map(address, map(string, map(string, string))) =
+        require_owner()
+        state.schedules
+
+    stateful entrypoint add_context(name: string, value: string, visibility: string) =
+        put(state{contexts[Call.caller][name] = value})
+
+    stateful entrypoint get_context(): map(string, string) =
+        Map.lookup_default(Call.caller, state.contexts, {})
+
+    stateful entrypoint add_webhook(name: string, webhook: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.webhooks, {})
+        let newmap = oldmap{[name] = webhook}
+        put(state{webhooks[Call.caller] = newmap})
+
+    stateful entrypoint get_webhooks(): map(string,string) =
+        Map.lookup_default(Call.caller, state.webhooks, {})
+
+    function require_owner() =
+        require(Call.caller == state.owner, "ONLY_OWNER_CALL_ALLOWED")

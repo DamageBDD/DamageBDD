@@ -12,7 +12,6 @@
 -export([to_json/2]).
 
 %-export([to_text/2]).
--export([create_contract/0, store_profile/1, refund/1]).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
 -export([trails/0]).
@@ -232,6 +231,8 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
+
+
 get_invoices(ContractAddress) ->
   case
   damage_riak:get_index(
@@ -270,8 +271,8 @@ to_json(Req, #{action := invoices} = State) ->
 
 to_json(Req, #{action := balance} = State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
-      {jsx:encode(balance(ContractAddress)), Req, State};
+    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
+      {jsx:encode(balance(AeAccount)), Req, State};
 
     Other ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),
@@ -305,8 +306,8 @@ to_html(Req, #{action := confirm} = State) ->
 
 to_html(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
-      Invoices = get_invoices(ContractAddress),
+    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
+      Invoices = get_invoices(AeAccount),
       {jsx:encode(Invoices), Req, State};
 
     Other ->
@@ -344,29 +345,25 @@ when Amount > ?MAX_DAMAGE_INVOICE ->
 
 do_post_action(invoices, #{amount := Amount}, Req, State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
+    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
       case
       damage_riak:get_index(
         ?INVOICE_BUCKET,
-        {binary_index, "contract_address"},
-        ContractAddress,
+        {binary_index, "ae_account"},
+        AeAccount,
         [{return_terms, true}]
       ) of
         [] ->
           #{<<"r_hash">> := RHash} =
             Invoice =
-              lnd:create_invoice(Amount, damage_utils:encrypt(ContractAddress)),
-          Len = byte_size(ContractAddress),
+              lnd:create_invoice(Amount, damage_utils:encrypt(AeAccount)),
+          Len = byte_size(AeAccount),
           {ok, true} =
             damage_riak:put(
               ?INVOICE_BUCKET,
-              <<ContractAddress:Len/binary, RHash/binary>>,
-              maps:put(
-                contract_address,
-                ContractAddress,
-                maps:put(amount, Amount, Invoice)
-              ),
-              [{{binary_index, "contract_address"}, [ContractAddress]}]
+              <<AeAccount:Len/binary, RHash/binary>>,
+              maps:put(ae_account, AeAccount, maps:put(amount, Amount, Invoice)),
+              [{{binary_index, "ae_account"}, [AeAccount]}]
             ),
           ?LOG_DEBUG("saved invoice ~p", [Invoice]),
           {201, #{status => <<"ok">>, message => Invoice}};
@@ -446,6 +443,18 @@ from_json(Req, #{action := Action} = State) ->
       ?LOG_DEBUG("post response 400 ~p ", [Response]),
       {stop, Response, State};
 
+    {'EXIT', {badarg, _}} ->
+      Response =
+        cowboy_req:set_resp_body(
+          jsx:encode(
+            #{status => <<"failed">>, message => <<"Json decode error.">>}
+          ),
+          Req0
+        ),
+      cowboy_req:reply(400, Response),
+      ?LOG_DEBUG("post response 400 ~p ", [Response]),
+      {stop, Response, State};
+
     Data0 ->
       case do_post_action(Action, Data0, Req0, State) of
         {204, <<"">>} ->
@@ -505,12 +514,12 @@ from_yaml(Req, #{action := Action} = State) ->
 
 delete_resource(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
+    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
       case
       damage_riak:get_index(
         ?INVOICE_BUCKET,
         {binary_index, "contract_address"},
-        ContractAddress,
+        AeAccount,
         [{return_terms, true}]
       ) of
         [] -> {true, Req, State};
@@ -540,49 +549,9 @@ delete_resource(Req, #{action := invoices} = State) ->
   end.
 
 
-create_contract() ->
-  % create ae account and bitcoin account
-  #{result := #{contractId := ContractAddress}} =
-    damage_ae:aecli(contract, deploy, "contracts/account.aes", []),
-  %?LOG_DEBUG("debug created AE contract ~p", [ContractCreated]),
-  #{status => <<"ok">>, ae_contract_address => ContractAddress}.
-
-
-store_profile(ContractAddress) ->
-  % store config schedule etc
-  ?LOG_DEBUG("debug ~p", [ContractAddress]),
-  ok.
-
-
-balance(ContractAddress) -> #{balance => damage_ae:balance(ContractAddress)}.
-
-refund(ContractAddress) ->
-  #{
-    btc_address := BtcAddress,
-    btc_refund_address := BtcRefundAddress,
-    btc_balance := _BtcBalance,
-    deso_address := _DesoAddress,
-    deso_balance := _DesoBalance,
-    balance := Balance,
-    deployer := _Deployer
-  } = balance(ContractAddress),
-  case bitcoin:validate_refund_addr(forward, BtcRefundAddress) of
-    {ok, BtcRefundAddress} ->
-      {ok, RealBtcBalance} = bitcoin:getreceivedbyaddress(BtcAddress),
-      ?LOG_DEBUG("real balance ~p ", [RealBtcBalance]),
-      {ok, RefundResult} =
-        bitcoin:sendtoaddress(
-          BtcRefundAddress,
-          RealBtcBalance - binary_to_integer(Balance),
-          ContractAddress
-        ),
-      ?LOG_DEBUG("Refund result ~p ", [RefundResult]),
-      RefundResult;
-
-    Other ->
-      ?LOG_DEBUG("refund_address data: ~p ", [Other]),
-      #{status => <<"notok">>, message => <<"Invalid refund_address.">>}
-  end.
+balance(AeAccount) ->
+  {ok, Balance} = damage_ae:balance(AeAccount),
+  #{amount => Balance}.
 
 
 check_invoice_foldn(Invoice, Acc) ->
@@ -594,21 +563,12 @@ check_invoice_foldn(Invoice, Acc) ->
     <<"SETTLED">> ->
       logger:info("Settled Invoice ~p", [Invoice]),
       AmountPaid = maps:get(<<"amt_paid_sat">>, Invoice),
-      SettledTs = binary_to_integer(maps:get(<<"settled_date">>, Invoice)),
       case maps:get(<<"memo">>, Invoice) of
-        ContractAddressEncrypted when is_binary(ContractAddressEncrypted) ->
+        AeAccountEncrypted when is_binary(AeAccountEncrypted) ->
           logger:info("Acceptd Invoice ~p ~p", [Invoice, AmountPaid]),
-          ContractAddress = damage_utils:decrypt(ContractAddressEncrypted),
-          #{decodedResult := Balance} =
-            damage_ae:aecli(
-              contract,
-              call,
-              binary_to_list(ContractAddress),
-              "contracts/account.aes",
-              "fund",
-              [AmountPaid, SettledTs]
-            ),
-          logger:info("Funded contract ~p ~p", [Balance, AmountPaid]),
+          AeAccount = damage_utils:decrypt(AeAccountEncrypted),
+          {funded, Result} = damage_ae:maybe_fund_wallet(AeAccount, AmountPaid),
+          logger:info("Funded contract ~p ~p", [Result, AmountPaid]),
           Acc ++ [Invoice];
 
         _ -> Acc
