@@ -7,6 +7,7 @@
 -license("Apache-2.0").
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export([step/6]).
 -export([scan_ports/2]).
@@ -21,7 +22,12 @@ step(_Config, Context, <<"When">>, _N, ["I request a port scan"], _) ->
     response,
     maps:put(num_open, length(Open), #{results => Result}),
     Context
-  ).
+  );
+
+step(_Config, Context, <<"Then">>, _N, ["the ports should be open"], _Data) ->
+  Result = maps:get(results, Context),
+  ?LOG_INFO("Ports Open ~p", [Result]),
+  Context.
 
 
 scan_ports(Host) ->
