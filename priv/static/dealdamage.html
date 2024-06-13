@@ -79,12 +79,13 @@
           <main class="modal__content" id="modal-1-content">
             <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
               <!--<label for="username">Username (Email):</label>-->
-              <input type="email" id="username" autocomplete="username" required placeholder="Email Address">
+              <input type="email" id="login-username" autocomplete="username" required placeholder="Email Address">
               <br>
               <!--<label for="password" >Password:</label>-->
               <input type="password" id="password" autocomplete="current-password" required placeholder="Password">
               <br>
-              <button id="loginResetPasswdBtn" aria-label="Forgot Password.">Forgot Password</button>
+              <button class="buttonlink" id="signupDialogBtn" aria-label="Signup Form.">SignUp</button>
+              <button class="buttonlink" id="loginResetPasswdBtn" aria-label="Forgot Password.">Forgot Password</button>
             </form>
           </main>
           <footer class="modal__footer">
@@ -94,6 +95,29 @@
       </div>
     </div>
 
+    <div class="modal micromodal-slide" id="signup-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1">
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              DamageBDD Signup
+            </h2>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <form id="signupForm" onsubmit="submitSignupForm(event)">
+              <!--<label for="username">Username (Email):</label>-->
+              <input type="email" id="signup-username" autocomplete="username" required placeholder="Email Address">
+              <br>
+              <button class="buttonlink" id="loginDialogBtn" aria-label="Login Form.">Login</button>
+              <button class="buttonlink" id="signupResetPasswdBtn" aria-label="Forgot Password.">Forgot Password</button>
+            </form>
+          </main>
+          <footer class="modal__footer">
+            <button id="signupSubmitBtn" class="modal__btn modal__btn-primary" aria-label="Signup with email and password">Submit</button>
+          </footer>
+        </div>
+      </div>
+    </div>
     <div class="modal micromodal-slide" id="logout-modal" aria-hidden="true">
       <div class="modal__overlay" tabindex="-1" data-micromodal-close>
         <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
@@ -107,6 +131,33 @@
           </main>
           <footer class="modal__footer">
             <button id="logoutSubmitBtn" class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Logout">Logout</button>
+            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+    <div class="modal micromodal-slide" id="schedule-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              Add Schedule
+            </h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <form id="scheduleForm" onsubmit="submitScheduleForm(event)">
+              <!--<label for="username">Username (Email):</label>-->
+              <input type="input" id="featurehash"  required placeholder="Feature">
+              <br>
+              <!--<label for="password" >Password:</label>-->
+              <input type="password" id="password" autocomplete="current-password" required placeholder="Password">
+              <br>
+              <button id="addScheduleBtn" aria-label="Add Schedule">Add Schedule.</button>
+            </form>
+          </main>
+          <footer class="modal__footer">
+            <button id="scheduleSubmitBtn" class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Schedule">Schedule</button>
             <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
           </footer>
         </div>
@@ -128,6 +179,7 @@
         <li><a data-tabby-default href="#execution-tab">Execute</a></li>
         <li><a href="#history-tab">History</a></li>
         <li><a href="#analytics-tab">Analytics</a></li>
+        <li><a href="#schedules-tab">Schedules</a></li>
         <li><a href="#settings-tab">Settings</a></li>
       </ul>
 
@@ -217,6 +269,10 @@ Feature: Http test feature
       </div>
       <div id="analytics-tab">
       </div>
+      <div id="schedules-tab">
+        <button type="button" onclick="MicroModal.show('schedule-modal')">Add Schedule</button>
+        <div id="schedules"></div>
+      </div>
       <div id="settings-tab">
             <h2  id="modal-1-title">
               Settings
@@ -256,9 +312,30 @@ Feature: Http test feature
               </fieldset>
               <input type="submit" value="Submit">
             </form>
+            <form action="submit_webhook" method="post">
+              <fieldset id="contextVariablesForm">
+                <legend>Webhooks</legend>
+                <label for="variableName">Name:</label>
+                <input type="text" id="variableName" name="variableName" placeholder="Enter variable name">
+                <br>
+                <label for="value">Webhook Url:</label>
+                <input type="text" id="value" name="value" placeholder="Enter variable value">
+                <br>
+                <label for="method">Method:</label>
+                <select id="method" name="method">
+                  <option value="POST">POST</option>
+                  <option value="GET">GET</option>
+                </select>
+                <br>
+                <button type="button" onclick="addWebhook()">Add Webhook</button>
+                <div id="contextVariables"></div>
+              </fieldset>
+              <input type="submit" value="Submit">
+            </form>
       </div>
       <script src="/static/js/toasts.js"></script>
       <script src="/static/js/reports.js"></script>
+      <script src="/static/js/schedules.js"></script>
       <script src="/static/js/main.js"></script>
   </body>
 

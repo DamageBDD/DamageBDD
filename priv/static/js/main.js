@@ -57,43 +57,51 @@ let bearer_token = null;
 		}
 		hljs.highlightAll();
 
-		const loginModal = document.getElementById("login-modal");
-		loginModal.addEventListener("keydown", function(event){
+		document.getElementById("login-modal").addEventListener("keydown", function(event){
 			if (event.keyCode === 13) {
 				submitLoginForm(event);
 		}
 		});
-		const loginButton = document.getElementById("loginBtn");
-		const loginSubmitButton = document.getElementById("loginSubmitBtn");
-		const loginResetPasswdButton = document.getElementById("loginResetPasswdBtn");
-		const logoutSubmitButton = document.getElementById("logoutSubmitBtn");
-		const logoutButton = document.getElementById("logoutBtn");
-		const balanceDiv = document.getElementById("balanceDiv");
-
-		function handleLoginClick(event) {
+		document.getElementById("signup-modal").addEventListener("keydown", function(event){
+			if (event.keyCode === 13) {
+				submitLoginForm(event);
+		}
+		});
+		document.getElementById("loginBtn").addEventListener("click",(event) => {
 			event.preventDefault();
 			MicroModal.show("login-modal");
-		};
-		function handleLogoutClick(event) {
+		});
+		document.getElementById("loginSubmitBtn").addEventListener("click", submitLoginForm);
+		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
+			bearer_token = null;
+			event.preventDefault();
+		});
+		document.getElementById("signupSubmitBtn").addEventListener("click", submitSignUpForm);
+		document.getElementById("signupDialogBtn").addEventListener("click", (event) => {
+			event.preventDefault();
+			MicroModal.close("login-modal");
+			MicroModal.show("signup-modal");
+		});
+		document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
+			event.preventDefault();
+			MicroModal.close("signup-modal");
+			MicroModal.show("login-modal");
+		});
+		document.getElementById("logoutSubmitBtn").addEventListener("click", (event) => {
 			bearer_token = null;
 			clearSessionIdCookie();
 			MicroModal.close('logout-modal');
-			showHideLoginButton(loginButton, logoutButton);
+			showHideLoginButton();
 
-		};
-		function handleResetPasswordClick(event){
-			bearer_token = null;
+		});
+		const logoutButton = document.getElementById("logoutBtn");
+		const balanceDiv = document.getElementById("balanceDiv");
+		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
+			console.log("add schedule");
 			event.preventDefault();
-		};
-		//function handleBalanceClick(event) {
-		//    event.preventDefault();
-		//    showBalanceDialog();
-		//};
-		loginSubmitButton.addEventListener("click", submitLoginForm);
-		logoutSubmitButton.addEventListener("click", handleLogoutClick);
-		loginResetPasswdBtn.addEventListener("click", handleResetPasswordClick);
-		//balanceDiv.addEventListener("click", handleBalanceClick);
-		showHideLoginButton(loginButton, logoutButton);
+		});
+
+		showHideLoginButton();
 		MicroModal.init({
 			onShow: modal => console.info(`${modal.id} is shown`), // [1]
 		});
@@ -103,6 +111,8 @@ let bearer_token = null;
 			var content = event.detail.content;
 			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
 				updateHistoryTable();
+			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
+				updateSchedulesTable();
 			}
 		}, false);
 		document.getElementById("damageForm").addEventListener("submit", async function(event) {
@@ -116,6 +126,7 @@ let bearer_token = null;
 				await submitDamageForm();
 			}
 		});
+				updateHistoryTable();
 	});
 
 
@@ -152,22 +163,18 @@ let bearer_token = null;
 		}
 	}
 
-	function showHideLoginButton(loginButton, logoutButton) {
+	function showHideLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
-		if (loginButton == undefined) {
 			loginButton = document.getElementById("loginBtn");
-		}
-		if (logoutButton == undefined) {
 			logoutButton = document.getElementById("logoutBtn");
-		}
 		if (isAuthenticated()) {
 			loginButton.style.display = "none";
 			content.style.display = "block";
 			removeBackground();
 			logoutButton.style.display = "inline-block";
 			updateBalance();
-			generateInvoice();
+			//generateInvoice();
 			try{
 				MicroModal.close('login-modal');
 			}catch(e){}
@@ -295,8 +302,50 @@ let bearer_token = null;
 	}
 
 
+	function submitSignUpForm(event) {
+		const username = document.getElementById("signup-username").value;
+		if (!validateEmail(username)) {
+			Toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			return;
+		}
+
+		const signupData = {
+			email: username
+		};
+
+		const headers = new Headers();
+		headers.append("Content-Type", "application/json");
+		fetch("/accounts/create/", {
+			method: "POST",
+			headers: headers,
+			body: JSON.stringify(signupData)
+		})
+			.then(response => {
+				return response.json();
+			})
+			.then(data => {
+				if (data.status == "ok") {
+					toasts.push({
+						title: 'Success - Confirmation Required',
+						content: data.message,
+						style: 'success'
+					});
+				} else {
+					toasts.push({
+						title: 'Login Failed',
+						content: 'Authentication Un-Successful.',
+						style: 'error'
+					});
+				}
+			})
+			.catch(error => {
+				console.error("Error:", error);
+			});
+		event.preventDefault();
+		return;
+	}
 	function submitLoginForm(event) {
-		const username = document.getElementById("username").value;
+		const username = document.getElementById("login-username").value;
 		const password = document.getElementById("password").value;
 
 		if (!validateEmail(username)) {

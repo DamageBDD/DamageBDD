@@ -73,10 +73,6 @@ select{
   width: 80%;
 }
 
-#history {
-  float: left;
-  width: 80%;
-}
 
 #toolbar div {
   cursor: pointer;
@@ -110,22 +106,6 @@ select{
 }
 
 
-  table {
-    border-collapse: collapse;
-    width: 100%;
-  font-size: 11px;
-  }
-  th, td {
-    border: 1px solid black;
-    padding: 8px;
-    text-align: left;
-  }
-  td:nth-child(1) {
-    width: 80px;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
 
 #kycForm{
     width: 30em;
@@ -178,7 +158,7 @@ input[type="password"], input[type="email"] {
   border: 1px solid #ccc;
   border-radius: 4px;
 }
-#loginResetPasswdBtn {
+.buttonlink {
   background: none!important;
   border: none;
   padding: 0!important;
@@ -208,4 +188,19 @@ pre{
 }
 #runreport{
     font-size: xx-small;
+}
+table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: xx-small;
+}
+td.hash{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+}
+
+a{
+    text-decoration: none;
 }

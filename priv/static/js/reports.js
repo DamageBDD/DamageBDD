@@ -1,4 +1,4 @@
-	function formatCell(cell, value, type) {
+	function formatCell(obj, cell, value, type) {
 
 		if (type === 'start_time' || type === 'end_time') {
 			const date = new Date(value * 1000);
@@ -10,16 +10,33 @@
 			}
 		} else if (type === 'execution_time') {
 			cell.textContent = `${value} seconds`;
+		} else if (type === 'feature_title') {
+			const link = document.createElement("a");
+			link.href = `/reports/${obj.report_hash}`;
+			link.textContent = value;
+			link.target = '_blank';
+			cell.appendChild(link);
 		} else if (type === 'feature_hash') {
 			const link = document.createElement("a");
 			link.href = `/features/${value}`;
 			link.textContent = value;
+			link.target = '_blank';
 			cell.appendChild(link);
+			cell.className = "hash";
 		} else if (type === 'report_hash') {
 			const link = document.createElement("a");
 			link.href = `/reports/${value}`;
 			link.textContent = value;
+			link.target = '_blank';
 			cell.appendChild(link);
+			cell.className = "hash";
+		} else if (type === 'contract_address') {
+			const link = document.createElement("a");
+			link.href = `https://www.aeknow.org/index.php/contract/detail/${value}`;
+			link.textContent = value;
+			link.target = '_blank';
+			cell.appendChild(link);
+			cell.className = "hash";
 		}else{
 			cell.textContent = value;
 		}
@@ -51,14 +68,15 @@
 				if (data && data.status === "ok") {
 					var historyDiv = document.getElementById("history");
 					var table = document.createElement("table");
+					table.className = "pure-table pure-table-horizontal pure-table-striped";
 					var headerRow = document.createElement("tr");
 					var headers = [
 						"Feature Title",
 						"Start Time",
 						"End Time",
 						"Execution Time",
-						"Feature Hash",
-						"Report Hash",
+						"Feature",
+						"Report",
 						"Contract Address"
 					];
 					headers.forEach(function(header) {
@@ -73,8 +91,11 @@
 						return new Date(b.start_time) - new Date(a.start_time);
 					});
 
-					data.results.forEach(function(obj) {
+					data.results.forEach(function(obj, i) {
 						var row = document.createElement("tr");
+						if (i % 2){
+							row.className = "pure-table-odd";
+						}
 						var cells = [
 							"feature_title",
 							"start_time",
@@ -85,7 +106,7 @@
 							"contract_address"
 						].map(function(prop) {
 							var td = document.createElement("td");
-							return formatCell(td, obj[prop], prop);
+							return formatCell(obj, td, obj[prop], prop);
 						});
 
 						cells.forEach(function(cell) {
