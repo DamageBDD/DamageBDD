@@ -37,6 +37,7 @@
 -export([is_authorized/2]).
 -export([trails/0]).
 -export([test_generate_bdd/0]).
+-export([test_create_bddmodel/0]).
 
 -define(TRAILS_TAG, ["AI functions."]).
 
@@ -46,6 +47,33 @@ init([]) ->
   logger:info("Damage AI ~p starting.~n", [self()]),
   process_flag(trap_exit, true),
   {ok, undefined}.
+
+
+create_model(Name) ->
+  {ok, Host} = application:get_env(damage, openai_bdd_api_host),
+  {ok, Port} = application:get_env(damage, openai_bdd_api_port),
+  Messages = [],
+  Prompt0 = <<"TEst">>,
+  PostData =
+    jsx:encode(
+      #{
+        name => Name,
+        messages => Messages ++ [[{role, <<"user">>}, {content, Prompt0}]],
+        temperature => 0.7
+      }
+    ),
+  Headers =
+    [
+      {
+        <<"Authorization">>,
+        list_to_binary("Bearer " ++ os:getenv("OPENAI_API_KEY"))
+      },
+      {<<"content-type">>, <<"application/json">>}
+    ],
+  {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+  StreamRef = gun:post(ConnPid, <<"/api/create">>, Headers, PostData),
+  Resp = read_stream(ConnPid, StreamRef),
+  Resp.
 
 
 read_stream(ConnPid, StreamRef) ->
@@ -438,6 +466,8 @@ check_generate_bdd(
 %        logger:info("Damage AI ~p ", [Msg]),
 %      {400, Msg}
 %  end.
+test_create_bddmodel() -> create_model(<<"bdd">>).
+
 test_generate_bdd() ->
   generate_bdd(
     <<
