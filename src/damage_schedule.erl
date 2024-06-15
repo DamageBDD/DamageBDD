@@ -279,10 +279,11 @@ list_schedules(Username) ->
   Decrypted.
 
 
-
-
 load_all_schedules() ->
-  [[schedule_job(Schedule)|| Schedule <- AccountSchedule] || AccountSchedule <- list_all_schedules()].
+  [
+    [schedule_job(Schedule) || Schedule <- AccountSchedule]
+    || AccountSchedule <- list_all_schedules()
+  ].
 
 list_all_schedules() ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
@@ -412,7 +413,7 @@ decrypt_schedules(EncryptedSchedules) ->
   lists:map(
     fun
       ([Account, Schedules]) ->
-            ?LOG_DEBUG("Account ~p", [Account]),
+        ?LOG_DEBUG("Account ~p", [Account]),
         case damage_riak:get(?AEACCOUNT_BUCKET, Account) of
           {ok, #{email := Username} = _User} ->
             load_account_schedules(Account, Username, Schedules);

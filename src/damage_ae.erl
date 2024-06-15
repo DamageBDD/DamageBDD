@@ -21,17 +21,21 @@
     terminate/2,
     code_change/3,
     setup_vanillae_deps/0,
+    get_wallet_path/1,
     maybe_create_wallet/1,
     maybe_fund_wallet/2,
     maybe_fund_wallet/1,
     get_account_context/1,
+    get_webhooks/1,
+    add_webhook/3,
+    add_context/4,
     deploy_account_contract/0
   ]
 ).
 -export([sign_tx/2]).
 -export([contract_call/5, contract_call/6, contract_deploy/3]).
 -export([test_contract_call/1, test_sign_vw/0, test_create_wallet/0]).
--export([balance/1, invalidate_cache/0, spend/2, confirm_spend/1]).
+-export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
 
 -define(AE_USER_WALLET_MINIMUM_BALANCE, 1000100000000000).
 -define(AE_TIMEOUT, 36000).
@@ -58,8 +62,9 @@ find_active_node([{Host, Port, PathPrefix} | Rest]) ->
 
 
 get_ae_node_url() ->
-    {ok, NodeUrl} = application:get_env(damage, ae_cli_node_url),
-    NodeUrl.
+  {ok, NodeUrl} = application:get_env(damage, ae_cli_node_url),
+  NodeUrl.
+
 
 get_ae_node() ->
   {ok, AENodes} = application:get_env(damage, ae_nodes),
@@ -100,7 +105,7 @@ handle_call({balance, AeAccount}, _From, Cache) ->
     {Balance, _} -> {reply, {ok, Balance}, Cache}
   end;
 
-handle_call({context, EmailOrUsername}, _From, Cache) ->
+handle_call({get_context, EmailOrUsername}, _From, Cache) ->
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
   case catch maps:get(context, AccountCache, undefined) of
     undefined ->
@@ -124,14 +129,113 @@ handle_call({context, EmailOrUsername}, _From, Cache) ->
           ]
         ),
       ?LOG_DEBUG("context caching ~p", [ClientContext]),
-      {reply, {ok, ClientContext}, maps:put(
-        EmailOrUsername,
-        maps:put(context, ClientContext, AccountCache),
-        Cache
-      )};
+      {
+        reply,
+        ClientContext,
+        maps:put(
+          EmailOrUsername,
+          maps:put(context, ClientContext, AccountCache),
+          Cache
+        )
+      };
 
-    Context when is_map(Context) -> {reply, {ok, Context}, Cache}
+    Context when is_map(Context) -> {reply, Context, Cache}
   end;
+
+handle_call({set_context, EmailOrUsername, AccountContext}, _From, Cache) ->
+  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+  NewAccountContext =
+    maps:merge(maps:get(context, AccountCache, #{}), AccountContext),
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  #{decodedResult := []} =
+    damage_ae:contract_call(
+      EmailOrUsername,
+      AccountContract,
+      "contracts/account.aes",
+      "set_context",
+      [NewAccountContext]
+    ),
+  ?LOG_DEBUG("set_context caching ~p", [NewAccountContext]),
+  {
+    reply,
+    NewAccountContext,
+    maps:put(
+      EmailOrUsername,
+      maps:put(context, NewAccountContext, AccountCache),
+      Cache
+    )
+  };
+
+handle_call({get_webhooks, EmailOrUsername}, _From, Cache) ->
+  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+  case catch maps:get(webhooks, AccountCache, undefined) of
+    undefined ->
+      {ok, AccountContract} = application:get_env(damage, account_contract),
+      #{decodedResult := Results} =
+        damage_ae:contract_call(
+          EmailOrUsername,
+          AccountContract,
+          "contracts/account.aes",
+          "get_webhooks",
+          []
+        ),
+      WebHooks =
+        maps:from_list(
+          [
+            {
+              damage_utils:decrypt(base64:decode(Key)),
+              damage_utils:decrypt(base64:decode(Hook))
+            }
+            || [Key, Hook] <- Results
+          ]
+        ),
+      ?LOG_DEBUG("Cache get Webhooks ~p", [WebHooks]),
+      {
+        reply,
+        WebHooks,
+        maps:put(
+          EmailOrUsername,
+          maps:put(webhooks, WebHooks, AccountCache),
+          Cache
+        )
+      };
+
+    Context when is_map(Context) -> {reply, Context, Cache}
+  end;
+
+handle_call({add_context, Username, Key, Value, Visibility}, _From, Cache) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  KeyEncrypted = base64:encode(damage_utils:encrypt(Key)),
+  ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
+  #{decodedResult := Results} =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/account.aes",
+      "add_context",
+      [KeyEncrypted, ValueEncrypted, Visibility]
+    ),
+  ?LOG_DEBUG("AddContext ~p", [Results]),
+  {reply, Results, Cache};
+
+handle_call(
+  {add_webhook, EmailOrUsername, WebhookName, WebhookUrl},
+  _From,
+  Cache
+) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
+  WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
+  Results =
+    damage_ae:contract_call(
+      EmailOrUsername,
+      AccountContract,
+      "contracts/account.aes",
+      "add_webhook",
+      [WebhookNameEncrypted, WebhookUrlEncrypted]
+    ),
+  ?LOG_DEBUG("wWebhooks ~p", [Results]),
+  {reply, Results, Cache};
 
 handle_call({transaction, Data}, _From, State) ->
   ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
@@ -154,25 +258,34 @@ handle_cast(
 )
 when is_binary(EmailOrUsername) ->
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
-  {_, Amount} = maps:get(balance, AccountCache, {0, 0}),
-  ContractCall =
-    damage_ae:contract_call(
-      EmailOrUsername,
-      AccountContract,
-      "contracts/account.aes",
-      "spend",
-      [DamageTokenContract, NodePublicKey, Amount, FeatureHash, ReportHash]
-    ),
-  #{decodedResult := #{balance := Balance, deployer := _Deployer} = _Balances} =
-    ContractCall,
-  NewCache =
-    maps:put(
-      EmailOrUsername,
-      maps:put(balance, {Balance, 0}, AccountCache),
-      Cache
-    ),
-  ?LOG_DEBUG("confirm spend ~p", [NewCache]),
-  {noreply, NewCache};
+  case maps:get(balance, AccountCache, {0, 0}) of
+    {_, Amount} when Amount > 0 ->
+      ContractCall =
+        damage_ae:contract_call(
+          EmailOrUsername,
+          AccountContract,
+          "contracts/account.aes",
+          "spend",
+          [DamageTokenContract, NodePublicKey, Amount, FeatureHash, ReportHash]
+        ),
+      #{
+        decodedResult
+        :=
+        #{balance := Balance, deployer := _Deployer} = _Balances
+      } = ContractCall,
+      NewCache =
+        maps:put(
+          EmailOrUsername,
+          maps:put(balance, {Balance, 0}, AccountCache),
+          Cache
+        ),
+      ?LOG_DEBUG("confirm spend ~p", [NewCache]),
+      {noreply, NewCache};
+
+    {_, Amount} ->
+      ?LOG_DEBUG("Amount 0: ~p", [Amount]),
+      {noreply, Cache}
+  end;
 
 handle_cast({spend, AeAccount, Amount}, Cache) when is_list(AeAccount) ->
   handle_cast({spend, list_to_binary(AeAccount), Amount}, Cache);
@@ -183,7 +296,7 @@ handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
   NewCache = maps:put(balance, {Balance, Spend + Amount}, AccountCache),
   {noreply, maps:put(AeAccount, NewCache, Cache)};
 
-handle_cast(invalidate_cache, _Cache) -> {noreply, #{}};
+handle_cast({invalidate_cache, _EmailOrUsername}, _Cache) -> {noreply, #{}};
 handle_cast(_Event, State) -> {noreply, State}.
 
 
@@ -233,8 +346,9 @@ sign_tx(Tx, PrivKeys, SignHash, AdditionalPrefix, _Cfg) when is_list(PrivKeys) -
 
 
 exec_aecli(Cmd) ->
-    AeNodeUrl = get_ae_node_url(),
-  case exec:run(Cmd, [stdout, stderr, sync, {env, [{"AECLI_NODE_URL", AeNodeUrl}]}]) of
+  AeNodeUrl = get_ae_node_url(),
+  case
+  exec:run(Cmd, [stdout, stderr, sync, {env, [{"AECLI_NODE_URL", AeNodeUrl}]}]) of
     %?LOG_DEBUG("Result : ~p", [Result]),
     {ok, [{stdout, StdOutList}]} ->
       jsx:decode(damage_utils:binarystr_join(StdOutList), [{labels, atom}]);
@@ -242,13 +356,15 @@ exec_aecli(Cmd) ->
     {ok, [{stdout, StdOutList}, {stderr, Err}]} ->
       ?LOG_ERROR("Stderr ~p ~p", [StdOutList, Err]),
       jsx:decode(damage_utils:binarystr_join(StdOutList), [{labels, atom}]);
-    {error, [{exit_status , _ExitStatus}, {stdout, StdOutList}, {stderr, Err}]} ->
+
+    {error, [{exit_status, _ExitStatus}, {stdout, StdOutList}, {stderr, Err}]} ->
       case jsx:decode(damage_utils:binarystr_join(StdOutList), [{labels, atom}]) of
-          #{validation:= [#{ key := <<"InsufficientBalance">>}]} = Result ->
-              ?LOG_INFO("Insufficient balance for account  ~p ", [Result]);
-          Result ->
-              ?LOG_ERROR("Stderr ~p ~p ", [Err, Result]),
-              #{status => <<"fail">>}
+        #{validation := [#{key := <<"InsufficientBalance">>}]} = Result ->
+          ?LOG_INFO("Insufficient balance for account  ~p ", [Result]);
+
+        Result ->
+          ?LOG_ERROR("Stderr ~p ~p ", [Err, Result]),
+          #{status => <<"fail">>}
       end
   end.
 
@@ -307,33 +423,86 @@ contract_deploy(WalletPath, WalletPassword, Contract, Args) ->
   exec_aecli(Cmd).
 
 
-balance(Address) ->
+get_wallet_proc(Username) ->
+  case gproc:lookup_local_name({?MODULE, Username}) of
+    undefined ->
+      {ok, AePid} =
+        supervisor:start_child(
+          damage_sup,
+          #{
+            % mandatory
+            id => Username,
+            % mandatory
+            start => {damage_ae, start_link, []},
+            % optional
+            restart => permanent,
+            % optional
+            shutdown => 60,
+            % optional
+            type => worker,
+            modules => [damage_ae]
+          }
+        ),
+      gproc:reg_other({n, l, {?MODULE, Username}}, AePid),
+      AePid;
+
+    Pid -> Pid
+  end.
+
+
+balance(Username) ->
   ?LOG_DEBUG("Check balance", []),
-  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
-  gen_server:call(DamageAEPid, {balance, Address}, ?AE_TIMEOUT).
+  DamageAEPid = get_wallet_proc(Username),
+  gen_server:call(DamageAEPid, {balance, Username}, ?AE_TIMEOUT).
 
 
-spend(AeAccount, Amount) ->
+spend(Username, Amount) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
-  gen_server:cast(DamageAEPid, {spend, AeAccount, Amount}).
+  DamageAEPid = get_wallet_proc(Username),
+  gen_server:cast(DamageAEPid, {spend, Username, Amount}).
 
 
-confirm_spend(Context) ->
+confirm_spend(#{username := Username} = Context) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
+  DamageAEPid = get_wallet_proc(Username),
   gen_server:cast(DamageAEPid, {confirm_spend, Context}).
 
 
 get_account_context(EmailOrUsername) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
-  gen_server:call(DamageAEPid, {context, EmailOrUsername}, ?AE_TIMEOUT).
+  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  gen_server:call(DamageAEPid, {get_context, EmailOrUsername}, ?AE_TIMEOUT).
 
 
-invalidate_cache() ->
-  DamageAEPid = gproc:lookup_local_name({?MODULE, ae}),
-  gen_server:cast(DamageAEPid, invalidate_cache).
+add_context(EmailOrUsername, Key, Value, Visibility) ->
+  % temporary storage to commit after feature execution
+  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  gen_server:call(
+    DamageAEPid,
+    {add_context, EmailOrUsername, Key, Value, Visibility},
+    ?AE_TIMEOUT
+  ).
+
+
+get_webhooks(EmailOrUsername) ->
+  % temporary storage to commit after feature execution
+  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  gen_server:call(DamageAEPid, {get_webhooks, EmailOrUsername}, ?AE_TIMEOUT).
+
+
+add_webhook(EmailOrUsername, WebhookName, WebhookUrl) ->
+  % temporary storage to commit after feature execution
+  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  gen_server:call(
+    DamageAEPid,
+    {add_webhook, EmailOrUsername, WebhookName, WebhookUrl},
+    ?AE_TIMEOUT
+  ).
+
+
+invalidate_cache(Username) ->
+  DamageAEPid = get_wallet_proc(Username),
+  gen_server:cast(DamageAEPid, {invalidate_cache, Username}).
 
 
 setup_vanillae_deps() ->

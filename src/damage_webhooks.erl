@@ -17,7 +17,6 @@
 -export([trails/0]).
 -export([is_authorized/2]).
 -export([load_all_webhooks/1]).
--export([list_webhooks/1]).
 -export([trigger_webhooks/1]).
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
@@ -99,7 +98,7 @@ from_json(Req, State) ->
 
 
 to_json(Req, #{username := Username} = State) ->
-  Body = jsx:encode(list_webhooks(Username)),
+  Body = jsx:encode(damage_ae:get_webhooks(Username)),
   logger:info("Loading webhooks for ~p ~p", [Username, Body]),
   {Body, Req, State}.
 
@@ -109,48 +108,10 @@ create_webhook(
   _Req,
   #{username := Username} = _State
 ) ->
-  {ok, AccountContract} = application:get_env(damage, account_contract),
-  WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
-  WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
-  Results =
-    damage_ae:contract_call(
-      Username,
-      AccountContract,
-      "contracts/account.aes",
-      "add_webhook",
-      [WebhookNameEncrypted, WebhookUrlEncrypted]
-    ),
-  ?LOG_DEBUG("wWebhooks ~p", [Results]),
-  Results.
-
-
-list_webhooks(Username) ->
-  {ok, AccountContract} = application:get_env(damage, account_contract),
-  ?LOG_DEBUG("Contract ~p", [Username]),
-  #{decodedResult := Results} =
-    damage_ae:contract_call(
-      Username,
-      AccountContract,
-      "contracts/account.aes",
-      "get_webhooks",
-      []
-    ),
-  Decrypted =
-    maps:from_list(
-      [
-        {
-          damage_utils:decrypt(base64:decode(Key)),
-          damage_utils:decrypt(base64:decode(Hook))
-        }
-        || [Key, Hook] <- Results
-      ]
-    ),
-  ?LOG_DEBUG("wWebhooks ~p", [Decrypted]),
-  Decrypted.
-
+  damage_ae:add_webhook(Username, WebhookName, WebhookUrl).
 
 load_all_webhooks(#{username := Username} = Context) ->
-  maps:put(webhooks, list_webhooks(Username), Context).
+  maps:put(webhooks, damage_ae:get_webhooks(Username), Context).
 
 gun_await(ConnPid, StreamRef) ->
   case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of

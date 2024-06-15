@@ -98,8 +98,12 @@ from_json(Req, #{username := Username} = State) ->
       {stop, Response, State};
 
     #{key := Key, value := Value, masked := Masked} ->
-      add_context(Username, Key, Value, Masked),
-      Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
+      Result = damage_ae:add_context(Username, Key, Value, Masked),
+      Resp =
+        cowboy_req:set_resp_body(
+          jsx:encode(#{status => <<"ok">>, result => Result}),
+          Req
+        ),
       ?LOG_DEBUG("post response ~p ~p ", [Resp]),
       {stop, cowboy_req:reply(201, Resp), State}
   end.
@@ -121,9 +125,9 @@ get_global_template_context(Context) ->
       api_url => DamageApi,
       formatter_state => #state{},
       headers => [],
-      token_contract => DamageTokenContract,
-      account_contract => DamageAccountContract,
-      node_public_key => NodePublicKey,
+      token_contract => list_to_binary(DamageTokenContract),
+      account_contract => list_to_binary(DamageAccountContract),
+      node_public_key => list_to_binary(NodePublicKey),
       timestamp => date_util:now_to_seconds_hires(os:timestamp())
     },
     Context
@@ -131,7 +135,7 @@ get_global_template_context(Context) ->
 
 
 get_account_context(#{username := Username} = DefaultContext) ->
-  {ok, ClientContextRaw} = damage_ae:get_account_context(Username),
+  ClientContextRaw = damage_ae:get_account_context(Username),
   ClientContext =
     maps:map(
       fun
@@ -147,22 +151,6 @@ get_account_context(#{username := Username} = DefaultContext) ->
       maps:merge(DefaultContext, ClientContext)
     )
   ).
-
-
-add_context(Username, Key, Value, Visibility) ->
-  {ok, AccountContract} = application:get_env(damage, account_contract),
-  KeyEncrypted = base64:encode(damage_utils:encrypt(Key)),
-  ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
-  #{decodedResult := Results} =
-    damage_ae:contract_call(
-      Username,
-      AccountContract,
-      "contracts/account.aes",
-      "add_context",
-      [KeyEncrypted, ValueEncrypted, Visibility]
-    ),
-  ?LOG_DEBUG("AddContext ~p", [Results]),
-  Results.
 
 
 clean_secrets(#{client_context := ClientContext} = Context, Body, Args) ->
