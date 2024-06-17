@@ -75,6 +75,16 @@ start_phase(start_trails_http, _StartType, []) ->
   {ok, _} = application:ensure_all_started(gen_smtp),
   {ok, _} = application:ensure_all_started(gun),
   {ok, _} = application:ensure_all_started(ssh),
+  {ok, _} =
+    gen_smtp_server:start(
+      damage_smtp_server,
+      [
+        {
+          sessionoptions,
+          [{allow_bare_newlines, fix}, {callbackoptions, [{parse, true}]}]
+        }
+      ]
+    ),
   damage_ssh:start(),
   Dispatch = get_trails(),
   {ok, WsPort} = application:get_env(damage, port),
