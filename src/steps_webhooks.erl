@@ -30,7 +30,7 @@ step(
       );
 
     Webhooks ->
-      ?LOG_DEBUG("notify webhook ~p", [Webhooks]),
+      ?LOG_DEBUG("notify webhook ~p ~p", [WebhookName, Webhooks]),
       case maps:get(WebhookName, Webhooks, none) of
         none ->
           maps:put(
@@ -39,12 +39,12 @@ step(
             Context
           );
 
-        #{url := _Url} = Webhook ->
+        Url ->
           case maps:get(notify_urls, Context, none) of
             none ->
               maps:put(
                 notify_urls,
-                maps:put(Event, sets:from_list([Webhook]), #{}),
+                maps:put(Event, sets:from_list([Url]), #{}),
                 Context
               );
 
@@ -52,7 +52,7 @@ step(
               EventUrls = maps:get(Event, NotifyUrls, sets:new()),
               maps:put(
                 notify_urls,
-                maps:put(Event, sets:add_element(Webhook, EventUrls), #{}),
+                maps:put(Event, sets:add_element(Url, EventUrls), #{}),
                 Context
               )
           end

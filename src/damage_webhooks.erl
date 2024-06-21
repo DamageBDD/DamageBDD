@@ -14,6 +14,7 @@
 -export([to_json/2]).
 -export([from_json/2]).
 -export([allowed_methods/2]).
+-export([delete_resource/2]).
 -export([trails/0]).
 -export([is_authorized/2]).
 -export([load_all_webhooks/1]).
@@ -65,6 +66,14 @@ trails() ->
               type => <<"string">>
             }
           ]
+        },
+        delete
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Delete webhook",
+          produces => ["application/json"],
+          parameters => []
         }
       }
     )
@@ -80,7 +89,8 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
   {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
-allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+allowed_methods(Req, State) ->
+  {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
@@ -103,6 +113,22 @@ to_json(Req, #{username := Username} = State) ->
   {Body, Req, State}.
 
 
+delete_resource(Req, #{username := Username} = State) ->
+  Deleted =
+    lists:foldl(
+      fun
+        (DeleteId, Acc) ->
+          ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
+          ok = damage_ae:delete_webhook(Username, DeleteId),
+          Acc + 1
+      end,
+      0,
+      maps:get(path_info, Req)
+    ),
+  ?LOG_INFO("deleted ~p webhook", [Deleted]),
+  {true, Req, State}.
+
+
 create_webhook(
   #{name := WebhookName, url := WebhookUrl} = _WebhookData,
   _Req,
@@ -123,7 +149,7 @@ gun_await(ConnPid, StreamRef) ->
   end.
 
 
-trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = Context) ->
+trigger_webhook(Url, #{fail := FailMessage} = Context) ->
   {Host0, Port0, Path0} =
     case uri_string:parse(binary_to_list(Url)) of
       #{port := Port, scheme := _Scheme, path := Path, host := Host} ->
@@ -134,14 +160,18 @@ trigger_webhook(#{url := Url} = Webhook, #{fail := FailMessage} = Context) ->
     end,
   {ok, ConnPid} =
     gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
-  Template = binary_to_list(maps:get(template, Webhook, <<"discord">>)),
   TemplateContext =
     maps:put(fail_message, damage_utils:safe_json(FailMessage), Context),
   Body =
-    damage_utils:load_template(
-      "webhooks/" ++ Template ++ ".mustache",
-      TemplateContext
-    ),
+    case re:run(Url, "https://discord.com.*") of
+      nomatch -> damage_utils:safe_json(TemplateContext);
+
+      {match, _} ->
+        damage_utils:load_template(
+          "webhooks/discord.mustache",
+          TemplateContext
+        )
+    end,
   %?LOG_DEBUG("webhook post ~p ~p.", [Body, TemplateContext]),
   StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
   Resp = gun_await(ConnPid, StreamRef),

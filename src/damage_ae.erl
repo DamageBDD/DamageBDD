@@ -28,6 +28,7 @@
     get_account_context/1,
     get_webhooks/1,
     add_webhook/3,
+    delete_webhook/2,
     add_context/4,
     deploy_account_contract/0
   ]
@@ -36,6 +37,7 @@
 -export([contract_call/5, contract_call/6, contract_deploy/3]).
 -export([test_contract_call/1, test_sign_vw/0, test_create_wallet/0]).
 -export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
+-export([get_schedules/1]).
 
 -define(AE_USER_WALLET_MINIMUM_BALANCE, 1000100000000000).
 -define(AE_TIMEOUT, 36000).
@@ -44,7 +46,6 @@ start_link() -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
   process_flag(trap_exit, true),
-  gproc:reg_other({n, l, {?MODULE, ae}}, self()),
   {ok, #{}}.
 
 
@@ -104,6 +105,30 @@ handle_call({balance, AeAccount}, _From, Cache) ->
 
     {Balance, _} -> {reply, {ok, Balance}, Cache}
   end;
+handle_call({get_schedules, EmailOrUsername}, _From, Cache) ->
+  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+  case catch maps:get(schedules, AccountCache, undefined) of
+    undefined ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  #{decodedResult := Results} =
+    damage_ae:contract_call(
+      EmailOrUsername,
+      AccountContract,
+      "contracts/account.aes",
+      "get_schedules",
+      []
+    ),
+  Decrypted =
+    maps:from_list(
+      [
+        {
+          damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
+          damage_utils:decrypt(base64:decode(CronEncrypted))
+        }
+        || [FeatureHashEncrypted, CronEncrypted] <- Results
+      ]
+    ),
+     {reply, Schedules, Cache};
 
 handle_call({get_context, EmailOrUsername}, _From, Cache) ->
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
@@ -166,6 +191,59 @@ handle_call({set_context, EmailOrUsername, AccountContext}, _From, Cache) ->
     )
   };
 
+handle_call(
+  {add_context, EmailOrUsername, Key, Value, Visibility},
+  _From,
+  Cache
+) ->
+  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+  ContextCache = maps:get(context, AccountCache, #{}),
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  KeyEncrypted = base64:encode(damage_utils:encrypt(Key)),
+  ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
+  #{decodedResult := Results} =
+    damage_ae:contract_call(
+      EmailOrUsername,
+      AccountContract,
+      "contracts/account.aes",
+      "add_context",
+      [KeyEncrypted, ValueEncrypted, Visibility]
+    ),
+  ?LOG_DEBUG("AddContext ~p", [Results]),
+  {
+    reply,
+    Results,
+    maps:put(
+      EmailOrUsername,
+      maps:put(context, maps:put(Key, Value, ContextCache), AccountCache),
+      Cache
+    )
+  };
+
+handle_call({delete_context, EmailOrUsername, Key}, _From, Cache) ->
+  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+  ContextCache = maps:get(context, AccountCache, #{}),
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  ContextKeyEnc = base64:encode(damage_utils:encrypt(Key)),
+  Results =
+    damage_ae:contract_call(
+      EmailOrUsername,
+      AccountContract,
+      "contracts/account.aes",
+      "delete_context",
+      [ContextKeyEnc]
+    ),
+  ?LOG_DEBUG("wWebhooks ~p", [Results]),
+  {
+    reply,
+    Results,
+    maps:put(
+      EmailOrUsername,
+      maps:put(context, maps:delete(Key, ContextCache), AccountCache),
+      Cache
+    )
+  };
+
 handle_call({get_webhooks, EmailOrUsername}, _From, Cache) ->
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
   case catch maps:get(webhooks, AccountCache, undefined) of
@@ -203,26 +281,13 @@ handle_call({get_webhooks, EmailOrUsername}, _From, Cache) ->
     Context when is_map(Context) -> {reply, Context, Cache}
   end;
 
-handle_call({add_context, Username, Key, Value, Visibility}, _From, Cache) ->
-  {ok, AccountContract} = application:get_env(damage, account_contract),
-  KeyEncrypted = base64:encode(damage_utils:encrypt(Key)),
-  ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
-  #{decodedResult := Results} =
-    damage_ae:contract_call(
-      Username,
-      AccountContract,
-      "contracts/account.aes",
-      "add_context",
-      [KeyEncrypted, ValueEncrypted, Visibility]
-    ),
-  ?LOG_DEBUG("AddContext ~p", [Results]),
-  {reply, Results, Cache};
-
 handle_call(
   {add_webhook, EmailOrUsername, WebhookName, WebhookUrl},
   _From,
   Cache
 ) ->
+  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+  WebHookCache = maps:get(webhooks, AccountCache, #{}),
   {ok, AccountContract} = application:get_env(damage, account_contract),
   WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
   WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
@@ -233,6 +298,32 @@ handle_call(
       "contracts/account.aes",
       "add_webhook",
       [WebhookNameEncrypted, WebhookUrlEncrypted]
+    ),
+  ?LOG_DEBUG("wWebhooks ~p", [Results]),
+  {
+    reply,
+    Results,
+    maps:put(
+      EmailOrUsername,
+      maps:put(
+        webhooks,
+        maps:put(WebhookName, WebhookUrl, WebHookCache),
+        AccountCache
+      ),
+      Cache
+    )
+  };
+
+handle_call({delete_webhook, EmailOrUsername, WebhookName}, _From, Cache) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
+  Results =
+    damage_ae:contract_call(
+      EmailOrUsername,
+      AccountContract,
+      "contracts/account.aes",
+      "delete_webhook",
+      [WebhookNameEncrypted]
     ),
   ?LOG_DEBUG("wWebhooks ~p", [Results]),
   {reply, Results, Cache};
@@ -496,6 +587,24 @@ add_webhook(EmailOrUsername, WebhookName, WebhookUrl) ->
   gen_server:call(
     DamageAEPid,
     {add_webhook, EmailOrUsername, WebhookName, WebhookUrl},
+    ?AE_TIMEOUT
+  ).
+
+
+delete_webhook(EmailOrUsername, WebhookName) ->
+  % temporary storage to commit after feature execution
+  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  gen_server:call(
+    DamageAEPid,
+    {delete_webhook, EmailOrUsername, WebhookName},
+    ?AE_TIMEOUT
+  ).
+
+get_schedules(Username) ->
+  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  gen_server:call(
+    DamageAEPid,
+    {get_schedules, EmailOrUsername},
     ?AE_TIMEOUT
   ).
 

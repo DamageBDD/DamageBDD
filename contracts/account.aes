@@ -49,6 +49,11 @@ payable main contract Account =
         let newmap = oldmap{[name] = webhook}
         put(state{webhooks[Call.caller] = newmap})
 
+    stateful entrypoint delete_webhook(name: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.webhooks, {})
+        let newmap = Map.delete(name, oldmap)
+        put(state{webhooks[Call.caller] = newmap})
+
     stateful entrypoint get_webhooks(): map(string,string) =
         Map.lookup_default(Call.caller, state.webhooks, {})
 

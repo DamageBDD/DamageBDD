@@ -16,6 +16,7 @@
 -export([clean_secrets/3]).
 -export([test_account_context/0]).
 -export([is_authorized/2]).
+-export([delete_resource/2]).
 -export([get_global_template_context/1]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -77,7 +78,8 @@ content_types_accepted(Req, State) ->
     State
   }.
 
-allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+allowed_methods(Req, State) ->
+  {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 from_html(Req, State) -> from_json(Req, State).
 
@@ -113,6 +115,22 @@ to_json(Req, #{action := context, username := Username} = State) ->
   ?LOG_DEBUG("context action ~p", [State]),
   {ok, ClientContextRaw} = damage_ae:get_account_context(Username),
   {jsx:encode(ClientContextRaw), Req, State}.
+
+
+delete_resource(Req, #{username := Username} = State) ->
+  Deleted =
+    lists:foldl(
+      fun
+        (DeleteId, Acc) ->
+          ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
+          ok = damage_ae:delete_context(Username, DeleteId),
+          Acc + 1
+      end,
+      0,
+      maps:get(path_info, Req)
+    ),
+  ?LOG_INFO("deleted ~p context", [Deleted]),
+  {true, Req, State}.
 
 
 get_global_template_context(Context) ->
