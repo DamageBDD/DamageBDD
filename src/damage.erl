@@ -499,7 +499,7 @@ execute_step_module(
 
         Err ->
           Reason = <<"Step error">>,
-          ?LOG_ERROR(
+          ?LOG_DEBUG(
             #{
               reason => Reason,
               stacktrace => Err,

@@ -105,30 +105,34 @@ handle_call({balance, AeAccount}, _From, Cache) ->
 
     {Balance, _} -> {reply, {ok, Balance}, Cache}
   end;
+
 handle_call({get_schedules, EmailOrUsername}, _From, Cache) ->
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
   case catch maps:get(schedules, AccountCache, undefined) of
     undefined ->
-  {ok, AccountContract} = application:get_env(damage, account_contract),
-  #{decodedResult := Results} =
-    damage_ae:contract_call(
-      EmailOrUsername,
-      AccountContract,
-      "contracts/account.aes",
-      "get_schedules",
-      []
-    ),
-  Decrypted =
-    maps:from_list(
-      [
-        {
-          damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
-          damage_utils:decrypt(base64:decode(CronEncrypted))
-        }
-        || [FeatureHashEncrypted, CronEncrypted] <- Results
-      ]
-    ),
-     {reply, Schedules, Cache};
+      {ok, AccountContract} = application:get_env(damage, account_contract),
+      #{decodedResult := Results} =
+        damage_ae:contract_call(
+          EmailOrUsername,
+          AccountContract,
+          "contracts/account.aes",
+          "get_schedules",
+          []
+        ),
+      Schedules =
+        maps:from_list(
+          [
+            {
+              damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
+              damage_utils:decrypt(base64:decode(CronEncrypted))
+            }
+            || [FeatureHashEncrypted, CronEncrypted] <- Results
+          ]
+        ),
+      {reply, Schedules, Cache};
+
+    Schedules when is_map(Schedules) -> {reply, Schedules, Cache}
+  end;
 
 handle_call({get_context, EmailOrUsername}, _From, Cache) ->
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
@@ -325,7 +329,7 @@ handle_call({delete_webhook, EmailOrUsername, WebhookName}, _From, Cache) ->
       "delete_webhook",
       [WebhookNameEncrypted]
     ),
-  ?LOG_DEBUG("wWebhooks ~p", [Results]),
+  ?LOG_DEBUG("Webhooks ~p", [Results]),
   {reply, Results, Cache};
 
 handle_call({transaction, Data}, _From, State) ->
@@ -600,13 +604,10 @@ delete_webhook(EmailOrUsername, WebhookName) ->
     ?AE_TIMEOUT
   ).
 
-get_schedules(Username) ->
+
+get_schedules(EmailOrUsername) ->
   DamageAEPid = get_wallet_proc(EmailOrUsername),
-  gen_server:call(
-    DamageAEPid,
-    {get_schedules, EmailOrUsername},
-    ?AE_TIMEOUT
-  ).
+  gen_server:call(DamageAEPid, {get_schedules, EmailOrUsername}, ?AE_TIMEOUT).
 
 
 invalidate_cache(Username) ->

@@ -20,7 +20,6 @@ step(
   _
 ) ->
   WebhookName = list_to_binary(WebhookName0),
-  ?LOG_DEBUG("notify webhook ~p", [Event]),
   case maps:get(webhooks, Context, none) of
     none ->
       maps:put(
@@ -30,7 +29,6 @@ step(
       );
 
     Webhooks ->
-      ?LOG_DEBUG("notify webhook ~p ~p", [WebhookName, Webhooks]),
       case maps:get(WebhookName, Webhooks, none) of
         none ->
           maps:put(

@@ -390,20 +390,15 @@ load_account_schedules(Account, Username, Schedules) ->
               EncryptedSchedule
             )
           ),
-        Schedule =
-          maps:merge(
-            #{
-              id => ScheduleId,
-              ae_account => Account,
-              concurrency => 1,
-              username => Username
-            },
-            Schedule0
-          ),
-        ?LOG_DEBUG("schedule_job: ~p", [Schedule]),
-        CronJob = apply(?MODULE, schedule_job, [Schedule]),
-        ?LOG_DEBUG("Cron Job: ~p", [CronJob]),
-        Schedule
+        maps:merge(
+          #{
+            id => ScheduleId,
+            ae_account => Account,
+            concurrency => 1,
+            username => Username
+          },
+          Schedule0
+        )
     end,
     Schedules
   ).

@@ -231,8 +231,6 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-
-
 get_invoices(ContractAddress) ->
   case
   damage_riak:get_index(

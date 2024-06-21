@@ -167,10 +167,7 @@ trigger_webhook(Url, #{fail := FailMessage} = Context) ->
       nomatch -> damage_utils:safe_json(TemplateContext);
 
       {match, _} ->
-        damage_utils:load_template(
-          "webhooks/discord.mustache",
-          TemplateContext
-        )
+        damage_utils:load_template("webhooks/discord.mustache", TemplateContext)
     end,
   %?LOG_DEBUG("webhook post ~p ~p.", [Body, TemplateContext]),
   StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
