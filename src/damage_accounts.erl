@@ -231,12 +231,12 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-get_invoices(ContractAddress) ->
+get_invoices(AeAccount) ->
   case
   damage_riak:get_index(
     ?INVOICE_BUCKET,
-    {binary_index, "contract_address"},
-    ContractAddress
+    {binary_index, "ae_account"},
+    AeAccount
   ) of
     [] -> [];
 
@@ -259,8 +259,8 @@ to_json(Req, #{action := confirm} = State) ->
 
 to_json(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{contract_address := ContractAddress} = _State0} ->
-      {jsx:encode(get_invoices(ContractAddress)), Req, State};
+    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
+      {jsx:encode(get_invoices(AeAccount)), Req, State};
 
     Other ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),

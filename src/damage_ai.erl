@@ -99,7 +99,7 @@ read_stream(ConnPid, StreamRef) ->
   end.
 
 
-handle_call({generate_bdd, UserPrompt, _ContractAddress, _Req}, _From, State) ->
+handle_call({generate_bdd, UserPrompt, _AeAccount, _Req}, _From, State) ->
   ?LOG_DEBUG("handle_call execute/1 : ~p", [UserPrompt]),
   {ok, MessagesYaml} = application:get_env(damage, openai_bdd_messages_yaml),
   ?LOG_DEBUG("Loading messages from file ~p.", [MessagesYaml]),
@@ -149,7 +149,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
         {ok, [Functions]} =
           fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
         {openai_model, Model} = lists:keyfind(openai_model, 1, Config),
-        ?debugFmt(
+        ?LOG_DEBUG(
           "Loaded messages from file ~p. Data: ~p",
           [MessagesYaml, Messages]
         ),
@@ -171,7 +171,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
               temperature => 0.7
             }
           ),
-        ?debugFmt(
+        ?LOG_INFO(
           "Generating python code from feature file ~p. Prompt: ~p",
           [FeatureFilename, PostData]
         ),
@@ -193,8 +193,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
         case gun:await(ConnPid, StreamRef, 60000) of
           {response, nofin, Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            ?debugFmt("Got response ~p: ~p.", [Status, Body]),
-            ?LOG_DEBUG("POST Response: ~p", [Body]),
+            ?LOG_DEBUG("POST Status ~p Response: ~p", [Status, Body]),
             case jsx:decode(Body, [{labels, atom}, return_maps]) of
               #{choices := [#{message := Message} | _], usage := _Usage} =
                 _Response ->
@@ -213,10 +212,6 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
                     {Code, Explanation};
 
                   InvalidArguments ->
-                    ?debugFmt(
-                      "Got unexpected arguments for function call ~p.",
-                      [InvalidArguments]
-                    ),
                     ?LOG_DEBUG(
                       "POST Response Arguments: ~p",
                       [InvalidArguments]
@@ -227,13 +222,11 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
               #{choices := Choices, usage := _Usage} = _Response -> Choices;
 
               NoChoice ->
-                ?debugFmt("Got function response ~p.", [NoChoice]),
                 ?LOG_DEBUG("POST Response: ~p", [NoChoice]),
                 notok
             end;
 
           Default ->
-            ?debugFmt("Got unexpected response ~p.", [Default]),
             ?LOG_DEBUG("POST Response: ~p", [Default]),
             notok
         end
@@ -247,15 +240,15 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
 
 handle_cast({run_python_server, Config, Context, Code}, State) ->
   {data_dir, DataDir} = lists:keyfind(data_dir, 1, Config),
-  {contract_address, ContractAddress} =
+  {contract_address, AeAccount} =
     lists:keyfind(contract_address, 1, Config),
   ServerPy = "server.py",
-  AccountDir = filename:join(DataDir, ContractAddress),
+  AccountDir = filename:join(DataDir, AeAccount),
   case filelib:ensure_path(AccountDir) of
     ok ->
       CodeFile = filename:join(AccountDir, ServerPy),
       LogFile = filename:join(AccountDir, "server_log.log"),
-      ?debugFmt("Codefile ~p.  DataDir ~p", [CodeFile, DataDir]),
+      ?LOG_DEBUG("Codefile ~p.  DataDir ~p", [CodeFile, DataDir]),
       case file:write_file(CodeFile, Code) of
         ok ->
           logger:info("Starting server process ~p.", [CodeFile]),
@@ -305,14 +298,14 @@ generate_code(Config, FeatureFilename) ->
     end
   ).
 
-generate_bdd(UserPrompt, ContractAddress, Req) ->
+generate_bdd(UserPrompt, AeAccount, Req) ->
   poolboy:transaction(
     ?MODULE,
     fun
       (Worker) ->
         gen_server:call(
           Worker,
-          {generate_bdd, UserPrompt, ContractAddress, Req},
+          {generate_bdd, UserPrompt, AeAccount, Req},
           ?DEFAULT_TIMEOUT
         )
     end
@@ -452,10 +445,10 @@ from_html(Req0, State) ->
 
 check_generate_bdd(
   UserPrompt,
-  #{contract_address := ContractAddress} = _State,
+  #{ae_account := AeAccount} = _State,
   Req0
 ) ->
-  generate_bdd(UserPrompt, ContractAddress, Req0).
+  generate_bdd(UserPrompt, AeAccount, Req0).
 
 %  case damage_ae:balance(ContractAddress) of
 %    Balance when Balance >= ?DAMAGE_AI_FEE ->

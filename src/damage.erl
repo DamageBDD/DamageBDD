@@ -31,8 +31,7 @@
     execute_file/3,
     execute/3,
     execute/2,
-    execute_feature/8,
-    publish_data/2
+    execute_feature/8
   ]
 ).
 -export([get_default_config/3]).
@@ -169,33 +168,6 @@ init_logging(RunId, RunDir) ->
 
 deinit_logging(ScheduleId) -> logger:remove_handler(ScheduleId).
 
-publish_data(Config, FeatureData) ->
-  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-  BddFileName =
-    filename:join(RunDir, string:join(["adhoc_http_publish.feature"], "")),
-  ok = file:write_file(BddFileName, FeatureData),
-  publish_file(Config, BddFileName).
-
-
-publish_file(Config, Filename) ->
-  {fee, Fee} = lists:keyfind(fee, 1, Config),
-  {ok, [#{<<"Hash">> := Hash, <<"Name">> := Name, <<"Size">> := Size}]} =
-    damage_ipfs:add({file, Filename}),
-  #{address := PubContractAddress} =
-    Result =
-      damage_ae:contract_call("contracts/publish_feature.aes", [Hash, Fee]),
-  ?LOG_INFO("call AE contract  : ~p : ~p", [PubContractAddress, Result]),
-  PubFeature =
-    #{
-      feature_hash => Hash,
-      name => Name,
-      size => Size,
-      fee => Fee,
-      publish_contract_address => PubContractAddress
-    },
-  {ok, true} = damage_riak:put(?PUBLISHED_FEATURES_BUCKET, Hash, PubFeature),
-  ?LOG_INFO("store pub feature  : ~p", [PubFeature]),
-  PubFeature.
 
 
 parse_file(Filename) ->

@@ -85,13 +85,13 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-to_json(Req, #{contract_address := ContractAddress} = State) ->
-  ?LOG_DEBUG("domains ~p", [ContractAddress]),
-  Domains = list_domains(ContractAddress),
+to_json(Req, #{ae_account := AeAccount} = State) ->
+  ?LOG_DEBUG("domains ~p", [AeAccount]),
+  Domains = list_domains(AeAccount),
   {jsx:encode(Domains), Req, State}.
 
 
-from_json(Req, #{contract_address := ContractAddress} = State) ->
+from_json(Req, #{ae_account := AeAccount} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
@@ -101,7 +101,7 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
 
       #{domain := Domain} ->
         DomainToken = list_to_binary(uuid:to_string(uuid:uuid4())),
-        DomainTokenKey = damage_utils:idhash_keys([ContractAddress, Domain]),
+        DomainTokenKey = damage_utils:idhash_keys([AeAccount, Domain]),
         ?LOG_DEBUG("Domain token ~p", [DomainTokenKey]),
         case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainTokenKey) of
           notfound ->
@@ -116,7 +116,7 @@ from_json(Req, #{contract_address := ContractAddress} = State) ->
                 ?DOMAIN_TOKEN_BUCKET,
                 DomainTokenKey,
                 DomainObj,
-                [{{binary_index, "contract_address"}, [ContractAddress]}]
+                [{{binary_index, "ae_account"}, [AeAccount]}]
               ),
             {202, DomainObj};
 
@@ -149,10 +149,10 @@ get_token_expiry() ->
   date_util:epoch() + (?DOMAIN_TOKEN_EXPIRY * 60).
 
 
-lookup_domain(Domain, ContractAddress) when is_binary(Domain) ->
-  lookup_domain(binary_to_list(Domain), ContractAddress);
+lookup_domain(Domain, AeAccount) when is_binary(Domain) ->
+  lookup_domain(binary_to_list(Domain), AeAccount);
 
-lookup_domain(Domain, ContractAddress) ->
+lookup_domain(Domain, AeAccount) ->
   case inet_res:lookup(Domain, in, txt) of
     Records when is_list(Records) ->
       ?LOG_DEBUG("DNS Records ~p", [Records]),
@@ -197,7 +197,7 @@ lookup_domain(Domain, ContractAddress) ->
             fun
               (Token) ->
                 ?LOG_DEBUG("check list tokens ~p", [Token]),
-                check_host_token(Domain, ContractAddress, Token)
+                check_host_token(Domain, AeAccount, Token)
             end,
             Tokens
           )
@@ -209,10 +209,10 @@ lookup_domain(Domain, ContractAddress) ->
   end.
 
 
-is_allowed_domain(Host, ContractAddress) when is_binary(Host) ->
-  is_allowed_domain(binary_to_list(Host), ContractAddress);
+is_allowed_domain(Host, AeAccount) when is_binary(Host) ->
+  is_allowed_domain(binary_to_list(Host), AeAccount);
 
-is_allowed_domain(Host, ContractAddress) ->
+is_allowed_domain(Host, AeAccount) ->
   %?LOG_DEBUG("Host check ~p", [Host]),
   case string:split(Host, ".", trailing) of
     [_, "lan"] -> true;
@@ -237,16 +237,16 @@ is_allowed_domain(Host, ContractAddress) ->
         end,
         AllowedHosts
       ) of
-        false -> lookup_domain(Host, ContractAddress);
+        false -> lookup_domain(Host, AeAccount);
         true -> true
       end
   end.
 
 
-check_host_token(Host0, ContractAddress, Token0) ->
+check_host_token(Host0, AeAccount, Token0) ->
   Host = list_to_binary(Host0),
   Token = list_to_binary(Token0),
-  DomainId = damage_utils:idhash_keys([ContractAddress, Host]),
+  DomainId = damage_utils:idhash_keys([AeAccount, Host]),
   ?LOG_DEBUG("CHECK domainid ~p ", [DomainId]),
   ?LOG_DEBUG("CHECK host ~p ~p", [Host, Token]),
   case get_domain(DomainId) of
@@ -286,8 +286,8 @@ get_domain(DomainId) when is_binary(DomainId) ->
 get_domain(_) -> none.
 
 
-list_domains(ContractAddress) ->
-  ?LOG_DEBUG("Contract ~p", [ContractAddress]),
+list_domains(AeAccount) ->
+  ?LOG_DEBUG("Contract ~p", [AeAccount]),
   lists:filter(
     fun (none) -> false; (_Other) -> true end,
     [
@@ -297,8 +297,8 @@ list_domains(ContractAddress) ->
       <-
       damage_riak:get_index(
         ?DOMAIN_TOKEN_BUCKET,
-        {binary_index, "contract_address"},
-        ContractAddress
+        {binary_index, "ae_account"},
+        AeAccount
       )
     ]
   ).
