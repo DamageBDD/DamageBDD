@@ -161,31 +161,46 @@ execute_bdd(
   #{ae_account := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
     Schedule
 ) ->
-  logger:info(
-    "scheduled job execution ~p AeAccount ~p, Hash ~p.",
-    [Schedule, AeAccount, Hash]
-  ),
-  Config = damage:get_default_config(AeAccount, Concurrency, []),
-  Context =
-    damage_context:get_account_context(
-      damage_context:get_global_template_context(Schedule)
-    ),
-  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-  {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-  BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
-  ok = damage_ipfs:get(Hash, BddFileName),
-  ?LOG_DEBUG(
-    "scheduled job execution config ~p feature ~p scheduleid ~p.",
-    [Config, BddFileName, Hash]
-  ),
-  Result = damage:execute_file(Config, Context, BddFileName),
-  true =
-    damage_riak:update_counter(
-      ?SCHEDULE_EXECUTION_COUNTER,
-      Hash,
-      {increment, 1}
-    ),
-  Result.
+  case damage_ae:balance(AeAccount) of
+    Balance when Balance >= Concurrency ->
+      ?LOG_INFO(
+        "scheduled job execution ~p AeAccount ~p, Hash ~p Concurrency ~p.",
+        [Schedule, AeAccount, Hash, Concurrency]
+      ),
+      Config = damage:get_default_config(AeAccount, Concurrency, []),
+      Context =
+        damage_context:get_account_context(
+          damage_context:get_global_template_context(Schedule)
+        ),
+      {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+      {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+      BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
+      ok = damage_ipfs:get(Hash, BddFileName),
+      ?LOG_DEBUG(
+        "scheduled job execution config ~p feature ~p scheduleid ~p.",
+        [Config, BddFileName, Hash]
+      ),
+      Result = damage:execute_file(Config, Context, BddFileName),
+      true =
+        damage_riak:update_counter(
+          ?SCHEDULE_EXECUTION_COUNTER,
+          Hash,
+          {increment, 1}
+        ),
+      Result;
+
+    Other ->
+      Msg =
+        lists:flatten(
+          io_lib:format(
+            <<"Insufficient balance acc: ~p balance:~p">>,
+            [binary_to_list(AeAccount), Other]
+          )
+        ),
+      damage_accounts:notify_user(AeAccount, Msg),
+      ?LOG_DEBUG(Msg),
+      []
+  end.
 
 
 schedule_job(

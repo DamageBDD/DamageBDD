@@ -52,7 +52,7 @@ init([]) ->
         % mandatory
         start => {lndconnect, start_link, []},
         % optional
-        restart => temporary,
+        restart => permanent,
         % optional
         shutdown => 60,
         % optional

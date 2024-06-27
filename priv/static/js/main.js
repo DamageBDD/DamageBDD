@@ -94,6 +94,10 @@ let bearer_token = null;
 			showHideLoginButton();
 
 		});
+		document.getElementById("generate-invoice-btn").addEventListener("click", (event) => {
+			event.preventDefault();
+			generateInvoice();
+		});
 		const logoutButton = document.getElementById("logoutBtn");
 		const balanceDiv = document.getElementById("balanceDiv");
 		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
@@ -126,7 +130,6 @@ let bearer_token = null;
 				await submitDamageForm();
 			}
 		});
-				updateHistoryTable();
 	});
 
 
@@ -174,7 +177,6 @@ let bearer_token = null;
 			removeBackground();
 			logoutButton.style.display = "inline-block";
 			updateBalance();
-			//generateInvoice();
 			try{
 				MicroModal.close('login-modal');
 			}catch(e){}
@@ -460,7 +462,7 @@ let bearer_token = null;
 			if (xhr.status === 200) {
 				var balanceData = JSON.parse(xhr.responseText);
 				var balanceDiv = document.getElementById('balanceDiv');
-				balanceDiv.innerText = 'Damage Tokens: ' + balanceData.balance + ' 🧪';
+				balanceDiv.innerText = 'Damage Tokens: ' + balanceData.amount + ' 🧪';
 			}
 		};
 		
@@ -472,18 +474,19 @@ let bearer_token = null;
 	}
 
 	function generateInvoice() {
+				var amount = document.getElementById('invoice-amount').value;
 		const request = {
 			method: 'POST',
 			credentials: 'include',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				amount: 4000
+				amount: parseInt(amount)
 			})
 		};
 
 		fetch("/accounts/invoices/", request)
 			.then(response => {
-				if (response.status <= 200) {
+				if (response.status === 201) {
 					return response.json();
 				} else if (response.status === 401) {
 					MicroModal.show("login-modal");
@@ -491,13 +494,27 @@ let bearer_token = null;
 			})
 			.then(data => {
 				if (data && data.status === "ok") {
-					var qrcode = new QRCode(document.getElementById("qrcode"), "lightning:" + data.message.payment_request);
+					document.getElementById("qrcode").innerText = "";
+					var qrcode = new QRCode(
+						document.getElementById("qrcode"),
+						"lightning:" + data.invoice.payment_request
+					);
 				} else {
 					console.error("Error Invoice fetching failed: ", data);
+					toasts.push({
+						title: 'Request Failed',
+						content: data.message,
+						style: 'error'
+					});
 				}
 			})
 			.catch(error => {
 				console.error("Error Invoice fetching failed: ", error.message);
+				toasts.push({
+					title: 'Request Failed',
+					content: error.message,
+					style: 'error'
+				});
 			});
 	}
 

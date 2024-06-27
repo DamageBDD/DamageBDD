@@ -114,6 +114,7 @@ start_phase(start_trails_http, _StartType, []) ->
       ok
   end,
   damage_schedule:load_all_schedules(),
+  damage_ae:start_batch_spend_timer(),
   ok.
 
 

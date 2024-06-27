@@ -147,6 +147,8 @@ reset_password(
                       AeAccount,
                       #{email => Email}
                     ),
+                  {funded, Result} = damage_ae:maybe_fund_wallet(AeAccount),
+                  ?LOG_INFO("Account confirmed and funded ~p", Result),
                   damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
                   {ok, <<"Password successfuly reset.">>}
               end;

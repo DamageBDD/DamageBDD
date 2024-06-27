@@ -26,13 +26,7 @@
   ]
 ).
 -export(
-  [
-    execute_data/3,
-    execute_file/3,
-    execute/3,
-    execute/2,
-    execute_feature/8
-  ]
+  [execute_data/3, execute_file/3, execute/3, execute/2, execute_feature/8]
 ).
 -export([get_default_config/3]).
 
@@ -167,8 +161,6 @@ init_logging(RunId, RunDir) ->
 
 
 deinit_logging(ScheduleId) -> logger:remove_handler(ScheduleId).
-
-
 
 parse_file(Filename) ->
   %?LOG_DEBUG("parse context: ~p", [Context]),
@@ -515,6 +507,13 @@ execute_step_module(
   end.
 
 
+step_spend(Context) ->
+  Spend = maps:get(step_spend, Context, 1),
+  ?LOG_DEBUG("Step spend ~p", [Spend]),
+  damage_ae:spend(maps:get(username, Context), Spend),
+  maps:remove(step_spend, Context).
+
+
 execute_step(Config, Step, [Context]) -> execute_step(Config, Step, Context);
 
 execute_step(Config, Step, #{fail := _} = Context) ->
@@ -531,7 +530,7 @@ execute_step(Config, Step, #{fail := _} = Context) ->
 execute_step(Config, Step, Context) ->
   {LineNo, StepKeyWord, Body} = Step,
   {Body1, Args1} = damage_utils:render_body_args(Body, Context),
-  Context0 =
+  Context2 =
     lists:foldl(
       fun
         (StepModule, #{step_found := false} = ContextIn) ->
@@ -555,11 +554,7 @@ execute_step(Config, Step, Context) ->
                 step,
                 {StepKeyWord, LineNo, Body1, Args1, Context1, success}
               ),
-              damage_ae:spend(
-                maps:get(ae_account, Context),
-                maps:get(step_spend, Context1, 1)
-              ),
-              maps:remove(step_spend, Context1)
+              Context1
           end;
 
         (_StepModule, #{step_found := true} = ContextIn) -> ContextIn
@@ -567,6 +562,7 @@ execute_step(Config, Step, Context) ->
       maps:remove(fail, maps:put(step_found, false, Context)),
       damage_utils:loaded_steps()
     ),
+  Context0 = step_spend(Context2),
   case maps:get(step_found, Context0) of
     false ->
       %logger:error("step not found:~p ~p", [StepKeyWord, Body1]),

@@ -240,8 +240,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
 
 handle_cast({run_python_server, Config, Context, Code}, State) ->
   {data_dir, DataDir} = lists:keyfind(data_dir, 1, Config),
-  {contract_address, AeAccount} =
-    lists:keyfind(contract_address, 1, Config),
+  {contract_address, AeAccount} = lists:keyfind(contract_address, 1, Config),
   ServerPy = "server.py",
   AccountDir = filename:join(DataDir, AeAccount),
   case filelib:ensure_path(AccountDir) of
@@ -443,11 +442,7 @@ from_html(Req0, State) ->
   {stop, Res1, State}.
 
 
-check_generate_bdd(
-  UserPrompt,
-  #{ae_account := AeAccount} = _State,
-  Req0
-) ->
+check_generate_bdd(UserPrompt, #{ae_account := AeAccount} = _State, Req0) ->
   generate_bdd(UserPrompt, AeAccount, Req0).
 
 %  case damage_ae:balance(ContractAddress) of

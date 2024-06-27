@@ -16,10 +16,10 @@
   ]
 ).
 -export([getinfo/0]).
+-export([subscribe_invoice/2]).
 
 -include_lib("kernel/include/logger.hrl").
-
--define(DEFAULT_TIMEOUT, 5000).
+-include_lib("damage.hrl").
 
 -record(
   state,
@@ -31,7 +31,8 @@
     lnd_wspath = undefined,
     lnd_certfile = undefined,
     lnd_keyfile = undefined,
-    macaroon = undefined
+    macaroon = undefined,
+    heartbeat_timer = undefined
   }
 ).
 
@@ -40,7 +41,7 @@
 start_link() -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-  logger:info("lndconnect started"),
+  ?LOG_INFO("lndconnect started"),
   {ok, Host} = application:get_env(damage, lnd_host),
   {ok, Port} = application:get_env(damage, lnd_port),
   {ok, Path} = application:get_env(damage, lnd_wspath),
@@ -64,58 +65,67 @@ init([]) ->
   MacaroonBin = list_to_binary(Macaroon),
   % https://github.com/lightningnetwork/lnd/blob/master/docs/rest/websockets.md
   ProtocolString = <<"Grpc-Metadata-Macaroon+", MacaroonBin/binary>>,
-  TlsOpts =
+  Options =
     case Host of
-      "localhost" -> [{verify, none}, {cacertfile, CertFile}];
-      _ -> [{verify, verify_peer}, {cacertfile, CertFile}]
+      "localhost" -> #{};
+      %#{transport => tls, tls_opts => [{verify, none}, {cacertfile, CertFile}]};
+      _ ->
+        #{
+          transport => tls,
+          tls_opts => [{verify, verify_peer}, {cacertfile, CertFile}]
+        }
     end,
-  case gun:open(Host, Port, #{transport => tls, tls_opts => TlsOpts}) of
-    {ok, ConnPid} ->
-      gproc:reg_other({n, l, {?MODULE, lnd}}, ConnPid),
-      StreamRef =
-        gun:ws_upgrade(
-          ConnPid,
-          Path,
-          [
-            {<<"Grpc-Metadata-Macaroon">>, MacaroonBin},
-            {<<"sec-websocket-protocol">>, ProtocolString}
-          ]
-        ),
-      gun:ws_send(ConnPid, StreamRef, {text, <<"{}">>}),
-      ?LOG_DEBUG("Got success ~p", [ConnPid]),
-      {ok, State#state{streamref = StreamRef}};
+  {ok, ConnPid} = gun:open(Host, Port, Options),
+  gproc:reg_other({n, l, {?MODULE, lnd}}, self()),
+  StreamRef =
+    gun:ws_upgrade(
+      ConnPid,
+      Path,
+      [
+        {<<"Grpc-Metadata-Macaroon">>, MacaroonBin},
+        {<<"sec-websocket-protocol">>, ProtocolString}
+      ]
+    ),
+  %gun:ws_send(ConnPid, StreamRef, {text, "{}"}),
+  ?LOG_DEBUG("lnd websocket upgrade successfull ~p", [ConnPid]),
+  HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+  {
+    ok,
+    #state{
+      conn_pid = ConnPid,
+      streamref = StreamRef,
+      heartbeat_timer = HeartbeatTimer
+    }
+  }.
 
-    {error, Reason} ->
-      ?LOG_DEBUG("Got error ~p", [Reason]),
-      {{error, Reason}, State};
 
-    Reason ->
-      ?LOG_DEBUG("Got error ~p", [Reason]),
-      {{error, Reason}, State}
-  end.
-
+handle_call(
+  {subscribe_invoice, AddIndex, SettleIndex},
+  _From,
+  #state{conn_pid = ConnPid, streamref = StreamRef} = State
+) ->
+  ok =
+    gun:ws_send(
+      ConnPid,
+      StreamRef,
+      {text, jsx:encode(#{add_index => AddIndex, settle_index => SettleIndex})}
+    ),
+  {reply, ok, State};
 
 handle_call(
   getinfo,
   _From,
   #state{conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
-  case gun:ws_send(ConnPid, StreamRef, {text, "{}"}) of
-    {ok, ConnPid} ->
-      ?LOG_DEBUG("gun send ~p ", [ConnPid]),
-      {reply, ok, State};
-
-    Other ->
-      ?LOG_DEBUG("gun send error  ~p ", [Other]),
-      {reply, Other, State}
-  end;
+  ok = gun:ws_send(ConnPid, StreamRef, {text, "{}"}),
+  {reply, ok, State};
 
 handle_call(Request, From, State) ->
-  logger:error(
+  ?LOG_ERROR(
     "got unknown on gun websocket Call ~p, From ~p, State ~p",
     [Request, From, State]
   ),
-  {reply, ok, State}.
+  {reply, err, State}.
 
 
 handle_cast(Msg, State) ->
@@ -132,26 +142,80 @@ handle_info(
   {gun_response, ConnPid, _, _, Status, Headers},
   State = #state{conn_pid = ConnPid}
 ) ->
-  logger:error(
+  ?LOG_DEBUG(
     "got message on gun websocket ConnPid ~p, \nStatus ~p Headers ~p",
     [ConnPid, Status, Headers]
   ),
   {noreply, State};
 
 handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
-  logger:error(
+  ?LOG_ERROR(
     "got error on gun websocket ConnPid ~p, StreamRef ~p, \nReason ~p",
     [ConnPid, StreamRef, Reason]
   ),
   {noreply, State};
 
+handle_info(heartbeat, State) ->
+  %% Send a ping message to check the connection
+  ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {ping, <<>>}),
+  %% Reset the heartbeat timer
+  HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+  {noreply, State#state{heartbeat_timer = HeartbeatTimer}};
+
+handle_info({gun_down, ConnPid, _Reason}, State)
+when ConnPid =:= State#state.conn_pid ->
+  io:format("Connection closed~n"),
+  erlang:cancel_timer(State#state.heartbeat_timer),
+  {stop, normal, State};
+
+handle_info({gun_ws, _, _, {text, Message0}} = Info, State) ->
+  ?LOG_DEBUG("got known on gun websocket Info ~p, State ~p", [Info, State]),
+  Message = jsx:decode(Message0, [return_maps, {labels, atom}]),
+  ?LOG_DEBUG("got message ~p", [Message]),
+  ok = handle_event(Message),
+  {noreply, State};
+
 handle_info(Info, State) ->
-  logger:error("got unknown on gun websocket Info ~p, State ~p", [Info, State]),
+  ?LOG_DEBUG("got unknown on gun websocket Info ~p, State ~p", [Info, State]),
   {noreply, State}.
 
 
-terminate(_Reason, _State) -> ok.
+handle_event(#{result := #{state := <<"OPEN">>}} = Event) ->
+  ?LOG_DEBUG("Invoice created or updated ~p", [Event]);
+
+handle_event(
+  #{result := #{state := <<"SETTLED">>, memo := Memo, amt_paid := AmountPaid0}} =
+    Event
+) ->
+  [_, Username] = string:split(Memo, " ", trailing),
+  ?LOG_DEBUG("Invoice paid for ~p ~p", [Username, Event]),
+  AmountPaid = binary_to_integer(AmountPaid0),
+  case damage_riak:get(?USER_BUCKET, Username) of
+    notfound ->
+      ?LOG_ERROR("Got invoice paid for unknown username ~p", [Username]);
+
+    {ok, #{ae_account := AeAccount} = _Data} ->
+      damage_ae:transfer_damage_tokens(
+        AeAccount,
+        round(AmountPaid / ?DAMAGE_PRICE)
+      )
+  end,
+  ok.
+
+
+terminate(Reason, State) ->
+  gun:shutdown(State#state.conn_pid),
+  erlang:cancel_timer(State#state.heartbeat_timer),
+  ?LOG_ERROR("Terminatiing lndconnect ~p", [Reason]),
+  ok.
+
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 getinfo() -> gen_server:call(gproc:lookup_local_name({?MODULE, lnd}), getinfo).
+
+subscribe_invoice(AddIndex, SettleIndex) ->
+  gen_server:call(
+    gproc:lookup_local_name({?MODULE, lnd}),
+    {subscribe_invoice, AddIndex, SettleIndex}
+  ).

@@ -9,6 +9,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/logger.hrl").
 
+-define(BITCOIN_RPC_TIMEOUT, 60000).
+
 -export(
   [
     validateaddress/1,
@@ -67,7 +69,7 @@ bitcoin_req(Method, Params, Path) ->
     ),
   case gun:await(ConnPid, StreamRef) of
     {response, fin, Status, Headers0} ->
-      ?LOG_DEBUG("POST Response: ~p ~p", [Status, Headers0]);
+      ?LOG_ERROR("POST Response: ~p ~p", [Status, Headers0]);
 
     {response, nofin, Status, Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),

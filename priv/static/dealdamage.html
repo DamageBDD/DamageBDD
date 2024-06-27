@@ -59,7 +59,13 @@
             </p>
             Make a payment using BIP21 compatible wallet, to top up on credits to deal more damage.
             </p>
-            <div id="qrcode"></div>
+            <div id="qrcode">
+              <form id="invoice-form">
+                <label for="totalAmt">Invoice Amount in Sats</label>
+                <input type="number" step="1000" id="invoice-amount">
+                <button id="generate-invoice-btn">Generate Invoice</button>
+              </form>
+            </div>
           </main>
           <footer class="modal__footer">
             <button class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Close this dialog window">Close</button>
@@ -265,7 +271,7 @@ Feature: Http test feature
       </div>
 
       <div id="history-tab">
-        <div id="history"></div>
+        <div id="history">Fetching reports ... </div>
       </div>
       <div id="analytics-tab">
       </div>

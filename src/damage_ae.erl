@@ -25,12 +25,15 @@
     maybe_create_wallet/1,
     maybe_fund_wallet/2,
     maybe_fund_wallet/1,
+    transfer_damage_tokens/2,
     get_account_context/1,
     get_webhooks/1,
     add_webhook/3,
     delete_webhook/2,
     add_context/4,
-    deploy_account_contract/0
+    deploy_account_contract/0,
+    confirm_spend_all/0,
+    start_batch_spend_timer/0
   ]
 ).
 -export([sign_tx/2]).
@@ -46,7 +49,9 @@ start_link() -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
   process_flag(trap_exit, true),
-  {ok, #{}}.
+  ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
+  {ok, #{
+      heartbeat_timer => ConfirmSpendTimer}}.
 
 
 find_active_node([{Host, Port, PathPrefix} | Rest]) ->
@@ -78,32 +83,22 @@ get_ae_mdw_node() ->
 
 
 handle_call({balance, AeAccount}, _From, Cache) ->
-  AccountCache = maps:get(AeAccount, Cache, #{}),
   {ok, DamageToken} = application:get_env(damage, token_contract),
-  case catch maps:get(balance, AccountCache, undefined) of
-    undefined ->
-      case get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-          Path =
-            PathPrefix
-            ++
-            "v3/aex9/"
-            ++
-            DamageToken
-            ++
-            "/balances/"
-            ++
-            AeAccount,
-          StreamRef = gun:get(ConnPid, Path),
-          #{amount := Balance} = read_stream(ConnPid, StreamRef),
-          {reply, {ok, Balance}, Cache};
+  case get_ae_mdw_node() of
+    {ok, ConnPid, PathPrefix} ->
+      Path =
+        PathPrefix ++ "v3/aex9/" ++ DamageToken ++ "/balances/" ++ AeAccount,
+      StreamRef = gun:get(ConnPid, Path),
+      Balance =
+        case read_stream(ConnPid, StreamRef) of
+          #{amount := null} -> 0;
+          #{amount := Balance0} -> Balance0
+        end,
+      {reply, Balance, Cache};
 
-        Err ->
-          ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
-          {reply, {error, not_found}, Cache}
-      end;
-
-    {Balance, _} -> {reply, {ok, Balance}, Cache}
+    Err ->
+      ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+      {reply, {error, not_found}, Cache}
   end;
 
 handle_call({get_schedules, EmailOrUsername}, _From, Cache) ->
@@ -129,7 +124,15 @@ handle_call({get_schedules, EmailOrUsername}, _From, Cache) ->
             || [FeatureHashEncrypted, CronEncrypted] <- Results
           ]
         ),
-      {reply, Schedules, Cache};
+      {
+        reply,
+        Schedules,
+        maps:put(
+          EmailOrUsername,
+          maps:put(schedules, Schedules, AccountCache),
+          Cache
+        )
+      };
 
     Schedules when is_map(Schedules) -> {reply, Schedules, Cache}
   end;
@@ -332,6 +335,10 @@ handle_call({delete_webhook, EmailOrUsername, WebhookName}, _From, Cache) ->
   ?LOG_DEBUG("Webhooks ~p", [Results]),
   {reply, Results, Cache};
 
+handle_call({confirm_spend_all}, _From, Cache) ->
+  ?LOG_DEBUG("handle_call confirm_spend_all/0 : ~p", [Cache]),
+  {reply, ok, Cache};
+
 handle_call({transaction, Data}, _From, State) ->
   ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
   {reply, ok, State}.
@@ -353,29 +360,34 @@ handle_cast(
 )
 when is_binary(EmailOrUsername) ->
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
-  case maps:get(balance, AccountCache, {0, 0}) of
+  case maps:get(spent_balance, AccountCache, {0, 0}) of
     {_, Amount} when Amount > 0 ->
-      ContractCall =
-        damage_ae:contract_call(
-          EmailOrUsername,
-          AccountContract,
-          "contracts/account.aes",
-          "spend",
-          [DamageTokenContract, NodePublicKey, Amount, FeatureHash, ReportHash]
-        ),
-      #{
-        decodedResult
-        :=
-        #{balance := Balance, deployer := _Deployer} = _Balances
-      } = ContractCall,
-      NewCache =
-        maps:put(
-          EmailOrUsername,
-          maps:put(balance, {Balance, 0}, AccountCache),
-          Cache
-        ),
-      ?LOG_DEBUG("confirm spend ~p", [NewCache]),
-      {noreply, NewCache};
+      case
+      damage_ae:contract_call(
+        EmailOrUsername,
+        AccountContract,
+        "contracts/account.aes",
+        "spend",
+        [DamageTokenContract, NodePublicKey, Amount, FeatureHash, ReportHash]
+      ) of
+        #{
+          decodedResult
+          :=
+          #{balance := Balance, deployer := _Deployer} = _Balances
+        } ->
+          NewCache =
+            maps:put(
+              EmailOrUsername,
+              maps:put(spent_balance, {Balance, 0}, AccountCache),
+              Cache
+            ),
+          ?LOG_DEBUG("confirm spend ~p", [NewCache]),
+          {noreply, NewCache};
+
+        #{status := <<"fail">>} ->
+          ?LOG_DEBUG("confirm spend failed ~p", [Cache]),
+          {noreply, Cache}
+      end;
 
     {_, Amount} ->
       ?LOG_DEBUG("Amount 0: ~p", [Amount]),
@@ -387,8 +399,8 @@ handle_cast({spend, AeAccount, Amount}, Cache) when is_list(AeAccount) ->
 
 handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
   AccountCache = maps:get(AeAccount, Cache, #{}),
-  {Balance, Spend} = maps:get(balance, AccountCache, {0, 0}),
-  NewCache = maps:put(balance, {Balance, Spend + Amount}, AccountCache),
+  {Balance, Spend} = maps:get(spent_balance, AccountCache, {0, 0}),
+  NewCache = maps:put(spent_balance, {Balance, Spend + Amount}, AccountCache),
   {noreply, maps:put(AeAccount, NewCache, Cache)};
 
 handle_cast({invalidate_cache, _EmailOrUsername}, _Cache) -> {noreply, #{}};
@@ -460,7 +472,11 @@ exec_aecli(Cmd) ->
         Result ->
           ?LOG_ERROR("Stderr ~p ~p ", [Err, Result]),
           #{status => <<"fail">>}
-      end
+      end;
+
+    {error, [{exit_status, _ExitStatus}, {stderr, Err}]} ->
+      ?LOG_ERROR("Stderr ~p  ", [Err]),
+      #{status => <<"fail">>}
   end.
 
 
@@ -521,34 +537,38 @@ contract_deploy(WalletPath, WalletPassword, Contract, Args) ->
 get_wallet_proc(Username) ->
   case gproc:lookup_local_name({?MODULE, Username}) of
     undefined ->
-      {ok, AePid} =
-        supervisor:start_child(
-          damage_sup,
-          #{
-            % mandatory
-            id => Username,
-            % mandatory
-            start => {damage_ae, start_link, []},
-            % optional
-            restart => permanent,
-            % optional
-            shutdown => 60,
-            % optional
-            type => worker,
-            modules => [damage_ae]
-          }
-        ),
-      gproc:reg_other({n, l, {?MODULE, Username}}, AePid),
-      AePid;
+      case supervisor:start_child(
+        damage_sup,
+        #{
+          % mandatory
+          id => Username,
+          % mandatory
+          start => {damage_ae, start_link, []},
+          % optional
+          restart => permanent,
+          % optional
+          shutdown => 60,
+          % optional
+          type => worker,
+          modules => [damage_ae]
+        }
+      ) of
+        {ok, AePid} ->
+          gproc:reg_other({n, l, {?MODULE, Username}}, AePid),
+          AePid;
+
+        {error, {already_started, AePid}} ->
+          gproc:reg_other({n, l, {?MODULE, Username}}, AePid),
+          AePid
+      end;
 
     Pid -> Pid
   end.
 
 
-balance(Username) ->
-  ?LOG_DEBUG("Check balance", []),
-  DamageAEPid = get_wallet_proc(Username),
-  gen_server:call(DamageAEPid, {balance, Username}, ?AE_TIMEOUT).
+balance(AeAccount) ->
+  DamageAEPid = get_wallet_proc(AeAccount),
+  gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
 
 
 spend(Username, Amount) ->
@@ -556,6 +576,17 @@ spend(Username, Amount) ->
   DamageAEPid = get_wallet_proc(Username),
   gen_server:cast(DamageAEPid, {spend, Username, Amount}).
 
+
+confirm_spend_all() ->
+  DamageAEPid = get_wallet_proc(ae),
+  gen_server:cast(DamageAEPid, {confirm_spend_all}).
+
+
+start_batch_spend_timer() ->
+  erlcron:cron(
+    <<"batch_spend_timer">>,
+    {{daily, {every, {3600, sec}}}, {damage_ae, confirm_spend_all, []}}
+  ).
 
 confirm_spend(#{username := Username} = Context) ->
   % temporary storage to commit after feature execution
@@ -698,6 +729,23 @@ get_ae_balance(AeAccount) ->
   read_stream(ConnPid, StreamRef).
 
 
+transfer_damage_tokens(AeAccount, Amount) ->
+  {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
+  AdminPassword = os:getenv("AE_PASSWORD"),
+  {ok, TokenContract} = application:get_env(damage, token_contract),
+  ContractCall =
+    damage_ae:contract_call(
+      AdminWalletPath,
+      AdminPassword,
+      TokenContract,
+      "contracts/token.aes",
+      "transfer",
+      [AeAccount, Amount]
+    ),
+  ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
+  ContractCall.
+
+
 maybe_fund_wallet(EmailOrUsername) ->
   maybe_fund_wallet(EmailOrUsername, ?AE_USER_WALLET_MINIMUM_BALANCE).
 
@@ -744,7 +792,8 @@ deploy_account_contract() ->
   #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
     contract_deploy(AdminWallet, AdminPassword, "contracts/account.aes", []),
   application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
-  ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]).
+  ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+  ContractAddress.
 
 
 test_create_wallet() ->

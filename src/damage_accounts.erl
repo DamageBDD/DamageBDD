@@ -19,6 +19,7 @@
 -export([delete_account/1]).
 -export([delete_resource/2]).
 -export([get_user_info/1]).
+-export([notify_user/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("reporting/formatter.hrl").
@@ -231,27 +232,13 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-get_invoices(AeAccount) ->
-  case
-  damage_riak:get_index(
-    ?INVOICE_BUCKET,
-    {binary_index, "ae_account"},
-    AeAccount
-  ) of
-    [] -> [];
-
-    Invoices when is_list(Invoices) ->
-      lists:map(
-        fun
-          (X) ->
-            {ok, Resp} =
-              damage_riak:get(?INVOICE_BUCKET, damage_utils:decrypt(X)),
-            Resp
-        end,
-        Invoices
-      )
-  end.
-
+get_invoices(Username) ->
+  filter_valid_invoices(
+    lnd:list_invoices(
+      [{"creation_date_start", integer_to_list(unix_timestamp_hours_ago(24))}]
+    ),
+    Username
+  ).
 
 to_json(Req, #{action := confirm} = State) ->
   % for some browsers who send in applicaion/json contenttype
@@ -259,8 +246,8 @@ to_json(Req, #{action := confirm} = State) ->
 
 to_json(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
-      {jsx:encode(get_invoices(AeAccount)), Req, State};
+    {true, _Req0, #{username := Username} = _State0} ->
+      {jsx:encode(get_invoices(Username)), Req, State};
 
     Other ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),
@@ -333,7 +320,7 @@ do_post_action(create, Data, _Req, _State) ->
 do_post_action(invoices, #{amount := Amount}, _Req, _State)
 when Amount > ?MAX_DAMAGE_INVOICE ->
   {
-    400,
+    4000,
     #{
       status => <<"max_damage">>,
       message => <<"invoice amount too large">>,
@@ -343,55 +330,62 @@ when Amount > ?MAX_DAMAGE_INVOICE ->
 
 do_post_action(invoices, #{amount := Amount}, Req, State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
-      case
-      damage_riak:get_index(
-        ?INVOICE_BUCKET,
-        {binary_index, "ae_account"},
-        AeAccount,
-        [{return_terms, true}]
-      ) of
-        [] ->
-          #{<<"r_hash">> := RHash} =
-            Invoice =
-              lnd:create_invoice(Amount, damage_utils:encrypt(AeAccount)),
-          Len = byte_size(AeAccount),
-          {ok, true} =
-            damage_riak:put(
-              ?INVOICE_BUCKET,
-              <<AeAccount:Len/binary, RHash/binary>>,
-              maps:put(ae_account, AeAccount, maps:put(amount, Amount, Invoice)),
-              [{{binary_index, "ae_account"}, [AeAccount]}]
-            ),
-          ?LOG_DEBUG("saved invoice ~p", [Invoice]),
-          {201, #{status => <<"ok">>, message => Invoice}};
-
-        [OtherEnc | _] ->
-          Other = damage_utils:decrypt(OtherEnc),
-          ?LOG_DEBUG("retrieved invoice ~p", [Other]),
-          case damage_riak:get(?INVOICE_BUCKET, Other) of
-            {ok, InvoiceObj} ->
-              {200, #{status => <<"ok">>, message => InvoiceObj}};
-
-            _ ->
-              {
-                201,
-                #{
-                  status => <<"exists">>,
-                  message
-                  =>
-                  <<
-                    "unpaid invoices exists please cancel previous invoice before creatig new invoices"
-                  >>
-                }
-              }
-          end
-      end;
+    {true, _Req0, #{username := Username} = _State0} ->
+      {201, #{status => <<"ok">>, invoice => create_invoice(Amount, Username)}};
 
     Other ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),
       {401, #{status => <<"noauth">>, message => <<"Unauthorized.">>}}
   end.
+
+
+create_invoice(Amount, Username) ->
+  Memo =
+    list_to_binary(
+      lists:flatten(
+        io_lib:format("Invoice for ~p damage tokens for ~s", [Amount, Username])
+      )
+    ),
+  ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),
+  #{r_hash := _RHash} = Invoice = lnd:create_invoice(Amount, Memo),
+  ?LOG_DEBUG("saved invoice ~p", [Invoice]),
+  Invoice.
+
+
+filter_valid_invoices(Invoices, Username) ->
+  lists:filter(
+    fun
+      (Invoice) ->
+        case Invoice of
+          #{<<"state">> := <<"OPEN">>, <<"memo">> := Memo} ->
+            MemoRe = lists:flatten(io_lib:format(".*~s$", [Username])),
+            case re:run(Memo, MemoRe) of
+              {match, _Matched} -> true;
+
+              NotMatched ->
+                ?LOG_DEBUG("Re Not matched invoice ~p", [NotMatched]),
+                false
+            end;
+
+          NotMatched ->
+            ?LOG_DEBUG("Not matched invoice ~p", [NotMatched]),
+            false
+        end
+    end,
+    Invoices
+  ).
+
+
+unix_timestamp_hours_ago(HoursAgo) when is_integer(HoursAgo), HoursAgo >= 0 ->
+  % Get the current time in seconds since Unix epoch
+  {MegaSecs, Secs, _MicroSecs} = os:timestamp(),
+  CurrentTimestamp = MegaSecs * 1000000 + Secs,
+  % Calculate the number of seconds to subtract
+  SecondsToSubtract = HoursAgo * 3600,
+  % Subtract seconds from the current timestamp
+  TimestampHoursAgo = CurrentTimestamp - SecondsToSubtract,
+  % Return the result
+  TimestampHoursAgo.
 
 
 from_html(Req, #{action := reset_password} = State) ->
@@ -512,61 +506,52 @@ from_yaml(Req, #{action := Action} = State) ->
 
 delete_resource(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
-      case
-      damage_riak:get_index(
-        ?INVOICE_BUCKET,
-        {binary_index, "contract_address"},
-        AeAccount,
-        [{return_terms, true}]
-      ) of
-        [] -> {true, Req, State};
-
-        [OtherEnc | _] ->
-          Other = damage_utils:decrypt(OtherEnc),
-          case damage_riak:get(?INVOICE_BUCKET, Other) of
-            {
-              ok,
-              #{payment_request := _PaymentRequest, r_hash := RHash} =
-                InvoiceObj
-            } ->
-              ?LOG_DEBUG("retrieved invoice delete ~p", [InvoiceObj]),
+    {true, _Req0, #{username := _Username} = _State0} ->
+      Deleted =
+        lists:foldl(
+          fun
+            (RHash, Acc) ->
+              ?LOG_DEBUG(
+                "cancelling invoice ~p ~p",
+                [maps:get(path_info, Req), RHash]
+              ),
               case lnd:cancel_invoice(RHash) of
                 #{<<"code">> := 5} ->
                   logger:info("Invoice not found ~p", [RHash]);
 
-                Other -> logger:info("Invoice found ~p", [Other])
-              end,
-              {true, Req, State};
-
-            _ -> {false, Req, State}
-          end
-      end;
+                Other ->
+                  logger:info("Invoice found ~p", [Other]),
+                  Acc + 1
+              end
+          end,
+          0,
+          maps:get(path_info, Req)
+        ),
+      ?LOG_INFO("deleted ~p schedules", [Deleted]),
+      {true, Req, State};
 
     _Other -> {<<"Unauthorized.">>, Req, State}
   end.
 
 
-balance(AeAccount) ->
-  {ok, Balance} = damage_ae:balance(AeAccount),
-  #{amount => Balance}.
-
+balance(AeAccount) -> #{amount => damage_ae:balance(AeAccount)}.
 
 check_invoice_foldn(Invoice, Acc) ->
   case maps:get(<<"state">>, Invoice) of
     <<"ACCEPTED">> ->
-      ?LOG_DEBUG("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
+      ?LOG_INFO("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
       Acc;
 
     <<"SETTLED">> ->
-      logger:info("Settled Invoice ~p", [Invoice]),
+      ?LOG_INFO("Settled Invoice ~p", [Invoice]),
       AmountPaid = maps:get(<<"amt_paid_sat">>, Invoice),
       case maps:get(<<"memo">>, Invoice) of
         AeAccountEncrypted when is_binary(AeAccountEncrypted) ->
-          logger:info("Acceptd Invoice ~p ~p", [Invoice, AmountPaid]),
+          ?LOG_INFO("Acceptd Invoice ~p ~p", [Invoice, AmountPaid]),
           AeAccount = damage_utils:decrypt(AeAccountEncrypted),
-          {funded, Result} = damage_ae:maybe_fund_wallet(AeAccount, AmountPaid),
-          logger:info("Funded contract ~p ~p", [Result, AmountPaid]),
+          Result =
+            damage_ae:transfer_damage_tokens(AeAccount, AmountPaid * ?DMG_RATE),
+          ?LOG_INFO("Funded contract ~p ~p", [Result, AmountPaid]),
           Acc ++ [Invoice];
 
         _ -> Acc
@@ -603,3 +588,7 @@ get_user_info(Username) ->
     {ok, #{password := UserPw}} -> UserPw;
     _ -> <<"">>
   end.
+
+
+notify_user(Username, Message) ->
+  ?LOG_DEBUG("NotifyUser ~p, Message: ~p", [Username, Message]).

@@ -51,7 +51,7 @@ start_link([]) -> gen_server:start_link(?MODULE, [], []).
 
 %% Initialize the server
 
-init([]) ->
+open_connection() ->
   {ok, Host} = application:get_env(damage, lnd_host),
   {ok, Port} = application:get_env(damage, lnd_port),
   %{ok, CertFile} = application:get_env(damage, lnd_certfile),
@@ -62,28 +62,28 @@ init([]) ->
       Other -> Other
     end,
   %% Start the gun HTTP client
-  BaseUrl = "https://" ++ Host ++ ":" ++ integer_to_list(Port),
+  BaseUrl = "http://" ++ Host ++ ":" ++ integer_to_list(Port),
   Headers = [{<<"Grpc-Metadata-Macaroon">>, Macaroon}],
   Options =
     #{
-      transport => tls,
-      tls_opts
-      =>
-      [
-        {verify, verify_peer},
-        {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
-      ]
+      %transport => tls,
+      %tls_opts
+      %=>
+      %[
+      %  {verify, true},
+      %  {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
+      %]
     },
-  {
-    ok,
-    #state{
-      host = Host,
-      port = Port,
-      base_url = BaseUrl,
-      headers = Headers,
-      options = Options
-    }
+  #state{
+    host = Host,
+    port = Port,
+    base_url = BaseUrl,
+    headers = Headers,
+    options = Options
   }.
+
+
+init([]) -> {ok, open_connection()}.
 
 %% API function to create Lightning invoice
 
@@ -150,8 +150,9 @@ handle_call(
       {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
       Default -> ?LOG_DEBUG("Got unknown ~p ", [Default])
     end,
+  ?LOG_DEBUG("Got create_invoice response ~p", [Response]),
+  Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
   %% Parse the response JSON
-  Invoice = json_decode(Response),
   gun:cancel(ConnPid, StreamRef),
   gun:close(ConnPid),
   %% Return the invoice details
@@ -177,7 +178,7 @@ handle_call(
         Body
     end,
   %% Parse the response JSON
-  ?LOG_DEBUG("Got invoices ~p ", [Response]),
+  %?LOG_DEBUG("Got invoices ~p ", [Response]),
   Invoice = json_decode(Response),
   gun:cancel(ConnPid, StreamRef),
   gun:close(ConnPid),
@@ -197,6 +198,7 @@ handle_call(
     lists:flatten(["?" ++ Key ++ "=" ++ Value ++ "&" || {Key, Value} <- Args]),
   %% Construct the API request URL
   Path = "/v1/invoices" ++ QueryString,
+  ?LOG_DEBUG("Getting invoices ~p ", [Path]),
   %% Send the HTTP GET request
   StreamRef = gun:get(ConnPid, Path, Headers),
   Response =
@@ -208,8 +210,9 @@ handle_call(
         Body
     end,
   %% Parse the response JSON
-  ?LOG_DEBUG("Got invoices ~p ", [Response]),
+  %?LOG_DEBUG("Got invoices ~p ", [Response]),
   #{<<"invoices">> := Invoices} = json_decode(Response),
+  %?LOG_DEBUG("Got invoices ~p ", [Invoices]),
   gun:cancel(ConnPid, StreamRef),
   gun:close(ConnPid),
   %% Return the list of invoices
@@ -274,14 +277,19 @@ json_encode(Term) -> iolist_to_binary(jsx:encode(Term)).
 json_decode(Json) -> jsx:decode(Json).
 
 test() ->
-  URL = "https://127.0.0.1:8011/v1/invoices",
+  URL = "http://127.0.0.1:8011/v1/invoices",
   Macaroon =
     case os:getenv("MACAROON") of
       false -> exit(invoice_macaroon_env_not_set);
       Other -> Other
     end,
   Headers = [{"Grpc-Metadata-Macaroon", Macaroon}],
-  Options = [{ssl, [{depth, 1}, {cacerts, "/var/lib/lnd/tls.cert"}]}],
+  Options =
+    [
+      %{ssl, [{depth, 1},
+      %       {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
+      %]}
+    ],
   %Request = {URL, Headers, "application/json", [], get, [], Options},
   case httpc:request(get, {URL, Headers}, Options, []) of
     {ok, {{_Status, _Headers, _Version}, Body}} ->
