@@ -20,10 +20,11 @@
 -export([is_authorized/2]).
 -export([execute_bdd/1]).
 -export([schedule_job/1]).
--export([list_schedules/1]).
+-export([list_schedules/2]).
 -export([list_all_schedules/0]).
 -export([load_all_schedules/0]).
 -export([test_schedule/0]).
+-export([test_list_schedule/0]).
 -export([delete_resource/2]).
 -export([cancel_all_schedules/0]).
 
@@ -146,8 +147,8 @@ from_json(Req, State) -> from_text(Req, State).
 
 from_html(Req, State) -> from_text(Req, State).
 
-to_json(Req, #{username := Username} = State) ->
-  Schedules = list_schedules(Username),
+to_json(Req, #{username := Username, ae_account := AeAccount} = State) ->
+  Schedules = list_schedules(Username, AeAccount),
   Body =
     jsx:encode(
       #{status => <<"ok">>, results => Schedules, length => length(Schedules)}
@@ -155,10 +156,15 @@ to_json(Req, #{username := Username} = State) ->
   logger:info("Loading scheduled for ~p ~p", [Username, Body]),
   {Body, Req, State}.
 
+execute_bdd(
+  #{feature_hash := Hash} =
+    Schedule
+) ->
+execute_bdd(maps:put(hash, Hash,Schedule));
 
 execute_bdd(
   %% Add the filter to allow PidToLog to send debug events
-  #{ae_account := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
+  #{ae_account := AeAccount, hash := Hash, concurrency := Concurrency} =
     Schedule
 ) ->
   case damage_ae:balance(AeAccount) of
@@ -198,7 +204,7 @@ execute_bdd(
           )
         ),
       damage_accounts:notify_user(AeAccount, Msg),
-      ?LOG_DEBUG(Msg),
+      ?LOG_INFO(Msg),
       []
   end.
 
@@ -269,7 +275,7 @@ validate(Gherkin) ->
   end.
 
 
-list_schedules(Username) ->
+list_schedules(Username, AeAccount) ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
   ?LOG_DEBUG("Contract ~p", [Username]),
   #{decodedResult := Results} =
@@ -280,18 +286,7 @@ list_schedules(Username) ->
       "get_schedules",
       []
     ),
-  Decrypted =
-    maps:from_list(
-      [
-        {
-          damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
-          damage_utils:decrypt(base64:decode(CronEncrypted))
-        }
-        || [FeatureHashEncrypted, CronEncrypted] <- Results
-      ]
-    ),
-  ?LOG_DEBUG("wWebhooks ~p", [Decrypted]),
-  Decrypted.
+    load_account_schedules(AeAccount, Username, Results).
 
 
 load_all_schedules() ->
@@ -396,9 +391,14 @@ load_account_schedules(Account, Username, Schedules) ->
                     )
                   };
 
-                ([Key, Value]) ->
+                ([Key, Value]) when is_binary(Key) ->
                   {
                     binary_to_atom(Key),
+                    damage_utils:decrypt(base64:decode(Value))
+                  };
+                ([Key, Value]) when is_list(Key) ->
+                  {
+                    list_to_atom(Key),
                     damage_utils:decrypt(base64:decode(Value))
                   }
               end,
@@ -446,3 +446,8 @@ test_schedule() ->
     ),
   Schedules = list_all_schedules(),
   ?LOG_INFO("Schedule tests ok ~p", [Schedules]).
+test_list_schedule() ->
+     Results = [["RDQSRp27KiwaIQk/+klzE6YnKkpHlqp83F59tge9gEdm6hXh0Jx30QM7YGSEE+TGkeKsHg==",[["cron","KKuPJcbNhrP8srtYZhabn80yL0oazuo63Uor9gbizVFy5Qj0wolznxAF"], ["feature_hash","wfycG1gdgf4ifKiCIQWFBcd9Kk0D8f5ZsjIIsjne0zYPm0Lg2IpTlkQ3FmzwbcaIl4Ksf+fxRY3TX96zTgc="]]]],
+  Decrypted = load_account_schedules("Acc", "User", Results),
+  ?LOG_DEBUG("schedules ~p", [Decrypted]),
+  Decrypted.
