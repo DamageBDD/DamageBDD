@@ -45,7 +45,7 @@ trails() ->
     trails:trail(
       "/reports/",
       damage_reports,
-      #{}
+      #{},
       #{
         get
         =>
@@ -59,7 +59,7 @@ trails() ->
     trails:trail(
       "/reports/:hash/[:path]",
       damage_reports,
-      #{}
+      #{},
       #{
         get
         =>
