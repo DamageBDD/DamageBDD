@@ -96,24 +96,22 @@ from_html(Req, State) ->
 
 process_post(Params, Req, State) ->
   ?LOG_DEBUG(" form data: ~p ", [Params]),
-  {ok, Reply, _Req0} =
-    case
-    lists:max(
-      [
-        proplists:get_value(K, Params)
-        || K <- [<<"grant_type">>, <<"response_type">>]
-      ]
-    ) of
-      <<"password">> ->
-        {Status, Resp0, Req0} = process_password_grant(Req, Params),
-        Resp = cowboy_req:set_resp_body(Resp0, Req0),
-        {ok, cowboy_req:reply(Status, Resp), Req0};
+  case
+  lists:max(
+    [
+      proplists:get_value(K, Params)
+      || K <- [<<"grant_type">>, <<"response_type">>]
+    ]
+  ) of
+    <<"password">> ->
+      {Status, Resp0, Req0} = process_password_grant(Req, Params),
+      Resp = cowboy_req:set_resp_body(Resp0, Req0),
+      {stop, cowboy_req:reply(Status, Resp), State};
 
-      <<"client_credentials">> -> process_client_credentials_grant(Req, Params);
-      <<"token">> -> process_implicit_grant_stage2(Req, Params);
-      _ -> cowboy_req:reply(400, #{}, <<"Bad Request.">>, Req)
-    end,
-  {stop, Reply, State}.
+    <<"client_credentials">> -> process_client_credentials_grant(Req, Params);
+    <<"token">> -> process_implicit_grant_stage2(Req, Params);
+    _ -> {stop, cowboy_req:reply(400, #{}, <<"Bad Request.">>, Req), State}
+  end.
 
 
 to_html(Req, State) ->
