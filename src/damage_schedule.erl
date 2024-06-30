@@ -3,6 +3,7 @@
 -vsn("0.1.0").
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
@@ -28,7 +29,6 @@
 -export([delete_resource/2]).
 -export([cancel_all_schedules/0]).
 
--include_lib("kernel/include/logger.hrl").
 
 -define(SCHEDULES_BUCKET, {<<"Default">>, <<"Schedules">>}).
 -define(SCHEDULE_EXECUTION_COUNTER, {<<"counters">>, <<"ScheduleExecution">>}).
@@ -129,7 +129,7 @@ from_text(Req, #{ae_account := AeAccount, username := Username} = State) ->
     #{
       id => Name,
       ae_account => AeAccount,
-      hash => Hash,
+      feature_hash => Hash,
       concurrency => Concurrency,
       username => Username,
       cron => CronSpec
@@ -156,23 +156,16 @@ to_json(Req, #{username := Username, ae_account := AeAccount} = State) ->
   logger:info("Loading scheduled for ~p ~p", [Username, Body]),
   {Body, Req, State}.
 
-execute_bdd(
-  #{feature_hash := Hash} =
-    Schedule
-) ->
-execute_bdd(maps:put(hash, Hash,Schedule));
+
 
 execute_bdd(
   %% Add the filter to allow PidToLog to send debug events
-  #{ae_account := AeAccount, hash := Hash, concurrency := Concurrency} =
+  #{ae_account := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
     Schedule
 ) ->
+    MinBalance = Concurrency * math:pow(10, ?DAMAGE_DECIMALS),
   case damage_ae:balance(AeAccount) of
-    Balance when Balance >= Concurrency ->
-      ?LOG_INFO(
-        "scheduled job execution ~p AeAccount ~p, Hash ~p Concurrency ~p.",
-        [Schedule, AeAccount, Hash, Concurrency]
-      ),
+    Balance when Balance >= MinBalance ->
       Config = damage:get_default_config(AeAccount, Concurrency, []),
       Context =
         damage_context:get_account_context(
@@ -182,10 +175,10 @@ execute_bdd(
       {run_id, RunId} = lists:keyfind(run_id, 1, Config),
       BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
       ok = damage_ipfs:get(Hash, BddFileName),
-      ?LOG_DEBUG(
-        "scheduled job execution config ~p feature ~p scheduleid ~p.",
-        [Config, BddFileName, Hash]
-      ),
+          ?LOG_DEBUG(
+             "scheduled job execution ~p AeAccount ~p, Hash ~p Concurrency ~p Balance ~p.",
+             [Schedule, AeAccount, Hash, Concurrency, Balance]
+  ),
       Result = damage:execute_file(Config, Context, BddFileName),
       true =
         damage_riak:update_counter(
@@ -209,12 +202,17 @@ execute_bdd(
   end.
 
 
+erlcron_cron(ScheduleId, Job) ->
+  ?LOG_INFO("Scheduling job ~p ~p", [ScheduleId, Job]),
+  erlcron:cron(ScheduleId, Job).
+
+
 schedule_job(
   #{id := ScheduleId, cron := [daily, every, Hour, Minute, AMPM]} = Schedule
 ) ->
   Job =
     {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [Schedule]}},
-  erlcron:cron(ScheduleId, Job);
+  erlcron_cron(ScheduleId, Job);
 
 schedule_job(
   #{id := _ScheduleId, cron := [daily, every, Second, seconds]} = Schedule
@@ -229,7 +227,7 @@ schedule_job(
       {daily, {every, {Second, sec}}},
       {damage_schedule, execute_bdd, [Schedule]}
     },
-  erlcron:cron(ScheduleId, Job);
+  erlcron_cron(ScheduleId, Job);
 
 schedule_job(
   #{id := ScheduleId, cron := [once, Hour, Minute, Second]} = Schedule
@@ -237,18 +235,18 @@ schedule_job(
 when is_integer(Second) ->
   Job =
     {{once, {Hour, Minute, Second}}, {damage_schedule, execute_bdd, [Schedule]}},
-  erlcron:cron(ScheduleId, Job);
+  erlcron_cron(ScheduleId, Job);
 
 schedule_job(#{id := ScheduleId, cron := [once, Hour, Minute, AMPM]} = Schedule)
 when is_atom(AMPM) ->
   Job =
     {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [Schedule]}},
-  erlcron:cron(ScheduleId, Job);
+  erlcron_cron(ScheduleId, Job);
 
 schedule_job(#{id := ScheduleId, cron := [once, Seconds]} = Schedule)
 when is_integer(Seconds) ->
   Job = {{once, Seconds}, {damage_schedule, execute_bdd, [Schedule]}},
-  erlcron:cron(ScheduleId, Job).
+  erlcron_cron(ScheduleId, Job).
 
 
 binary_spec_to_term_spec([], Acc) -> Acc;
@@ -268,7 +266,7 @@ binary_spec_to_term_spec([Spec | Rest], Acc) ->
 validate(Gherkin) ->
   case catch egherkin:parse(Gherkin) of
     {failed, LineNo, Message} ->
-      logger:error("Parsing Failed LineNo +~p ~n     ~p.", [LineNo, Message]),
+      ?LOG_ERROR("Parsing Failed LineNo +~p ~n     ~p.", [LineNo, Message]),
       {parse_error, LineNo, Message};
 
     {_LineNo, _Tags, _Feature, _Description, _BackGround, _Scenarios} -> ok
@@ -286,14 +284,16 @@ list_schedules(Username, AeAccount) ->
       "get_schedules",
       []
     ),
-    load_account_schedules(AeAccount, Username, Results).
+  load_account_schedules(AeAccount, Username, Results).
 
 
 load_all_schedules() ->
+  ?LOG_INFO("Loading all schedules ..."),
   [
     [schedule_job(Schedule) || Schedule <- AccountSchedule]
     || AccountSchedule <- list_all_schedules()
   ].
+
 
 list_all_schedules() ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
@@ -396,6 +396,7 @@ load_account_schedules(Account, Username, Schedules) ->
                     binary_to_atom(Key),
                     damage_utils:decrypt(base64:decode(Value))
                   };
+
                 ([Key, Value]) when is_list(Key) ->
                   {
                     list_to_atom(Key),
@@ -446,8 +447,22 @@ test_schedule() ->
     ),
   Schedules = list_all_schedules(),
   ?LOG_INFO("Schedule tests ok ~p", [Schedules]).
+
+
 test_list_schedule() ->
-     Results = [["RDQSRp27KiwaIQk/+klzE6YnKkpHlqp83F59tge9gEdm6hXh0Jx30QM7YGSEE+TGkeKsHg==",[["cron","KKuPJcbNhrP8srtYZhabn80yL0oazuo63Uor9gbizVFy5Qj0wolznxAF"], ["feature_hash","wfycG1gdgf4ifKiCIQWFBcd9Kk0D8f5ZsjIIsjne0zYPm0Lg2IpTlkQ3FmzwbcaIl4Ksf+fxRY3TX96zTgc="]]]],
+  Results =
+    [
+      [
+        "RDQSRp27KiwaIQk/+klzE6YnKkpHlqp83F59tge9gEdm6hXh0Jx30QM7YGSEE+TGkeKsHg==",
+        [
+          ["cron", "KKuPJcbNhrP8srtYZhabn80yL0oazuo63Uor9gbizVFy5Qj0wolznxAF"],
+          [
+            "feature_hash",
+            "wfycG1gdgf4ifKiCIQWFBcd9Kk0D8f5ZsjIIsjne0zYPm0Lg2IpTlkQ3FmzwbcaIl4Ksf+fxRY3TX96zTgc="
+          ]
+        ]
+      ]
+    ],
   Decrypted = load_account_schedules("Acc", "User", Results),
   ?LOG_DEBUG("schedules ~p", [Decrypted]),
   Decrypted.
