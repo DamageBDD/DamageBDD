@@ -184,7 +184,7 @@ handle_event(#{result := #{state := <<"OPEN">>}} = Event) ->
   ?LOG_DEBUG("Invoice created or updated ~p", [Event]);
 
 handle_event(
-  #{result := #{state := <<"SETTLED">>, memo := Memo, amt_paid := AmountPaid0}} =
+  #{result := #{state := <<"SETTLED">>, memo := Memo, amt_paid_sat := AmountPaid0}} =
     Event
 ) ->
   [_, Username] = string:split(Memo, " ", trailing),
@@ -194,10 +194,10 @@ handle_event(
     notfound ->
       ?LOG_ERROR("Got invoice paid for unknown username ~p", [Username]);
 
-    {ok, #{ae_account := AeAccount} = _Data} ->
+    {ok, #{ae_account := AeAccount, username := Username} = _Data} ->
       damage_ae:transfer_damage_tokens(
-        AeAccount,
-        round(AmountPaid / ?DAMAGE_PRICE)
+        AeAccount, Username,
+        (AmountPaid/ ?DAMAGE_PRICE ) * math:pow(10, ?DAMAGE_DECIMALS)
       )
   end,
   ok.

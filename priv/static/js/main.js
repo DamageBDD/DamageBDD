@@ -462,7 +462,7 @@ let bearer_token = null;
 			if (xhr.status === 200) {
 				var balanceData = JSON.parse(xhr.responseText);
 				var balanceDiv = document.getElementById('balanceDiv');
-				balanceDiv.innerText = 'Damage Tokens: ' + balanceData.amount + ' 🧪';
+				balanceDiv.innerText = 'Damage Tokens: ' + Math.round(balanceData.amount/100000000) + ' 🧪';
 			}
 		};
 		

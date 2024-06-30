@@ -508,8 +508,8 @@ execute_step_module(
 
 
 step_spend(Context) ->
-  Spend = maps:get(step_spend, Context, 1),
-  ?LOG_DEBUG("Step spend ~p", [Spend]),
+  Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
+  %?LOG_DEBUG("Step spend ~p", [Spend]),
   damage_ae:spend(maps:get(username, Context), Spend),
   maps:remove(step_spend, Context).
 

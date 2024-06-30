@@ -550,7 +550,10 @@ check_invoice_foldn(Invoice, Acc) ->
           ?LOG_INFO("Acceptd Invoice ~p ~p", [Invoice, AmountPaid]),
           AeAccount = damage_utils:decrypt(AeAccountEncrypted),
           Result =
-            damage_ae:transfer_damage_tokens(AeAccount, AmountPaid * ?DMG_RATE),
+            damage_ae:transfer_damage_tokens(
+              AeAccount,
+              AmountPaid * ?DAMAGE_PRICE
+            ),
           ?LOG_INFO("Funded contract ~p ~p", [Result, AmountPaid]),
           Acc ++ [Invoice];
 
