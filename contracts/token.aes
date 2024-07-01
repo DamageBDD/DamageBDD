@@ -243,4 +243,4 @@ contract DamageToken =
 
   // DamageBDD functions
   stateful entrypoint spend(node_address: address, amount: int, feature_hash: string, report_hash: string) =
-    transfer(node_address, amount)
+    internal_transfer(Call.origin, node_address, amount)
