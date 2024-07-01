@@ -1,6 +1,6 @@
 Feature: Auth features 
   Scenario: Login and get auth token 
-    Given I am using server "http://localhost:8080"
+    Given I am using server "https://run.staging.damagebdd.com"
     And I set "Content-Type" header to "application/json"
     When I make a POST request to "/auth/"
     """
