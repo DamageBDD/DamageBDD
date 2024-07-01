@@ -416,7 +416,7 @@ handle_call(
         MD1 = riakc_obj:set_secondary_index(MD0, Index0),
         riakc_obj:update_metadata(Object0, MD1)
     end,
-  Res =
+  true =
     lists:any(
       fun
         (Pid) ->
@@ -431,7 +431,7 @@ handle_call(
       end,
       Connections
     ),
-  {reply, {ok, Res}, State};
+  {reply, ok, State};
 
 handle_call(
   {delete, Bucket, Key},
