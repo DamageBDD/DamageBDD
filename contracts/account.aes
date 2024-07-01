@@ -9,7 +9,8 @@ payable main contract Account =
         schedules: map(address, map(string, map(string, string))),
         contexts: map(address, map(string, string)),
         webhooks: map(address, map(string, string)),
-        invoices: map(address, map(string, string))
+        invoices: map(address, map(string, int)),
+        published: map(address, map(string, int))
         }
 
     stateful entrypoint init() = {
@@ -17,12 +18,10 @@ payable main contract Account =
         schedules = {},
         contexts ={},
         webhooks = {},
-        invoices = {}
+        invoices = {},
+        published = {}
         }
 
-    stateful entrypoint spend(token: DamageToken, node_address: address, amount: int, feature_hash: string, report_hash: string) =
-        token.transfer(Call.origin, node_address, amount)
-		
     stateful entrypoint add_schedule(id: string, feature_hash: string, cronspec: string) =
         let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
         let newmap = oldmap{[id] = {["cron"] = cronspec, ["feature_hash"] = feature_hash}}
@@ -62,9 +61,14 @@ payable main contract Account =
     function require_owner() =
         require(Call.caller == state.owner, "ONLY_OWNER_CALL_ALLOWED")
 
-    stateful entrypoint pay_invoice(token: DamageToken, rhash: string, amount: int) =
-        token.transfer(node_address, amount)
+    stateful entrypoint add_invoice(token: DamageToken, rhash: string, amount: int, to_node_address: address) =
+        token.transfer(to_node_address, amount)
         let oldmap = Map.lookup_default(Call.caller, state.invoices, {})
         let newmap = oldmap{[rhash] = amount}
         put(state{invoices[Call.caller] = newmap})
+
+    stateful entrypoint publish_feature(feature_hash: string, bid: int) =
+        let oldmap = Map.lookup_default(Call.caller, state.published, {})
+        let newmap = oldmap{[feature_hash] = bid}
+        put(state{published[Call.caller] = newmap})
     

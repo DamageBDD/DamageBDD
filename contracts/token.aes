@@ -174,7 +174,7 @@ contract DamageToken =
 
   /// Transfer the balance of `value` from `Call.caller` to `to_account` account
   stateful entrypoint transfer(to_account: address, value: int) =
-    internal_transfer(Call.caller, to_account, value)
+    internal_transfer(Call.origin, to_account, value)
 
   // Destroys `value` tokens from `Call.caller`, reducing the total supply.
   // `Burn` event with `Call.caller` address and `value`.
@@ -240,3 +240,7 @@ contract DamageToken =
     require_non_negative_value(new_allowance)
     put(state{ allowances[allowance_accounts] = new_allowance })
     Chain.event(Allowance(allowance_accounts.from_account, allowance_accounts.for_account, new_allowance))
+
+  // DamageBDD functions
+  stateful entrypoint spend(node_address: address, amount: int, feature_hash: string, report_hash: string) =
+    transfer(node_address, amount)
