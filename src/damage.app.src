@@ -1,3 +1,5 @@
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+
 {
   application,
   damage,
@@ -10,7 +12,13 @@
     {env, []},
     {modules, []},
     {licenses, ["Apache 2.0"]},
-    {start_phases, [{start_trails_http, []}, {start_vanillae, []}]},
+    {
+      start_phases,
+      [
+        {start_trails_http, []}
+        %, {start_vanillae, []}
+      ]
+    },
     {links, []}
   ]
 }.

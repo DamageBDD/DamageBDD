@@ -53,17 +53,16 @@ get_trails() ->
   trails:single_host_compile(Trails).
 
 
--spec start_phase(atom(), application:start_type(), []) -> ok.
-start_phase(start_vanillae, _StartType, []) ->
-  logger:info("Starting vanilla."),
-  damage_ae:setup_vanillae_deps(),
-  {ok, _} = application:ensure_all_started(vanillae),
-  ok = vanillae:network_id("ae_uat"),
-  {ok, AeNodes} = application:get_env(damage, ae_nodes),
-  ok = vanillae:ae_nodes(AeNodes),
-  logger:info("Started vanilla."),
-  ok;
-
+%-spec start_phase(atom(), application:start_type(), []) -> ok.
+%start_phase(start_vanillae, _StartType, []) ->
+%  logger:info("Starting vanilla."),
+%  damage_ae:setup_vanillae_deps(),
+%  {ok, _} = application:ensure_all_started(vanillae),
+%  ok = vanillae:network_id("ae_uat"),
+%  {ok, AeNodes} = application:get_env(damage, ae_nodes),
+%  ok = vanillae:ae_nodes(AeNodes),
+%  logger:info("Started vanilla."),
+%  ok;
 start_phase(start_trails_http, _StartType, []) ->
   logger:info("Starting Damage."),
   {ok, _} = application:ensure_all_started(fast_yaml),
@@ -101,9 +100,11 @@ start_phase(start_trails_http, _StartType, []) ->
         [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h]
       }
     ),
-  logger:info("Started cowboy."),
+  ?LOG_INFO("Started cowboy."),
   metrics:init(),
-  logger:info("Started Damage."),
+  damage_schedule:load_all_schedules(),
+  damage_ae:start_batch_spend_timer(),
+  ?LOG_INFO("Started Damage."),
   case init:get_plain_arguments() of
     [_, "shell"] ->
       ?LOG_INFO("Sourc sync enabled.", []),
@@ -113,8 +114,7 @@ start_phase(start_trails_http, _StartType, []) ->
       ?LOG_INFO("Sourc sync disabled.", []),
       ok
   end,
-  damage_schedule:load_all_schedules(),
-  damage_ae:start_batch_spend_timer(),
+  ?LOG_INFO("Sync Ready."),
   ok.
 
 
