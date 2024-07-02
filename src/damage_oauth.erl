@@ -169,7 +169,9 @@ reset_password(
               "Failed to reset password. Password does not meet complexity requirements of minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character"
             >>
           }
-      end
+      end;
+
+    {ok, #{email := Email} = _KycData} -> {error, <<"Authentication failed.">>}
   end;
 
 reset_password(#{email := Email}) ->
@@ -337,7 +339,8 @@ associate_access_code(AccessCode, Context, _AppContext) ->
   associate_access_token(AccessCode, Context, _AppContext).
 
 associate_refresh_token(RefreshToken, Context, _) ->
-  damage_riak:put(?REFRESH_TOKEN_BUCKET, RefreshToken, Context).
+  ok = damage_riak:put(?REFRESH_TOKEN_BUCKET, RefreshToken, Context),
+  {ok, maps:from_list(Context)}.
 
 %% @doc Stores a new refresh token token(), associating it with
 %%      grantctx() and a device_id.
@@ -351,7 +354,10 @@ associate_refresh_token(RefreshToken, Context, DeviceId, _) ->
   ).
 
 associate_access_token(AccessToken, Context, _) ->
-  damage_riak:put(?ACCESS_TOKEN_BUCKET, AccessToken, maps:from_list(Context)).
+  Context0 = maps:from_list(Context),
+  ok = damage_riak:put(?ACCESS_TOKEN_BUCKET, AccessToken, Context0),
+  {ok, Context0}.
+
 
 resolve_access_code(AccessCode, _AppContext) ->
   resolve_access_token(AccessCode, _AppContext).
