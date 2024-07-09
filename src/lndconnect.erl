@@ -201,7 +201,7 @@ handle_event(
       damage_ae:transfer_damage_tokens(
         AeAccount,
         Username,
-        (AmountPaid / ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS)
+        round((AmountPaid / ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS))
       ),
       ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount, Username])
   end,
