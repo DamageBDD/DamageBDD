@@ -29,7 +29,6 @@
 -export([delete_resource/2]).
 -export([cancel_all_schedules/0]).
 
-
 -define(SCHEDULES_BUCKET, {<<"Default">>, <<"Schedules">>}).
 -define(SCHEDULE_EXECUTION_COUNTER, {<<"counters">>, <<"ScheduleExecution">>}).
 -define(TRAILS_TAG, ["Scheduling Tests"]).
@@ -157,13 +156,12 @@ to_json(Req, #{username := Username, ae_account := AeAccount} = State) ->
   {Body, Req, State}.
 
 
-
 execute_bdd(
   %% Add the filter to allow PidToLog to send debug events
   #{ae_account := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
     Schedule
 ) ->
-    MinBalance = Concurrency * math:pow(10, ?DAMAGE_DECIMALS),
+  MinBalance = Concurrency * math:pow(10, ?DAMAGE_DECIMALS),
   case damage_ae:balance(AeAccount) of
     Balance when Balance >= MinBalance ->
       Config = damage:get_default_config(AeAccount, Concurrency, []),
@@ -175,10 +173,10 @@ execute_bdd(
       {run_id, RunId} = lists:keyfind(run_id, 1, Config),
       BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
       ok = damage_ipfs:get(Hash, BddFileName),
-          ?LOG_DEBUG(
-             "scheduled job execution ~p AeAccount ~p, Hash ~p Concurrency ~p Balance ~p.",
-             [Schedule, AeAccount, Hash, Concurrency, Balance]
-  ),
+      ?LOG_DEBUG(
+        "scheduled job execution ~p AeAccount ~p, Hash ~p Concurrency ~p Balance ~p.",
+        [Schedule, AeAccount, Hash, Concurrency, Balance]
+      ),
       Result = damage:execute_file(Config, Context, BddFileName),
       true =
         damage_riak:update_counter(
@@ -299,18 +297,22 @@ list_all_schedules() ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
   {ok, AdminWallet} = application:get_env(damage, ae_wallet),
   AdminPassword = os:getenv("AE_PASSWORD"),
-  #{decodedResult := Results} =
-    damage_ae:contract_call(
+    case damage_ae:contract_call(
       AdminWallet,
       AdminPassword,
       AccountContract,
       "contracts/account.aes",
       "get_all_schedules",
       []
-    ),
-  Decrypted = decrypt_schedules(Results),
-  ?LOG_DEBUG("schedules ~p", [Decrypted]),
-  Decrypted.
+    ) of
+        #{decodedResult := Results} ->
+            Decrypted = decrypt_schedules(Results),
+            ?LOG_DEBUG("schedules ~p", [Decrypted]),
+            Decrypted;
+        #{status := <<"fail">>} ->
+            ?LOG_ERROR("schedules loading failed ~p", [AccountContract]),
+            []
+    end.
 
 
 delete_schedule(Username, ScheduleId) ->
