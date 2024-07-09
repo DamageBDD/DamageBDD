@@ -25,7 +25,7 @@
     maybe_create_wallet/1,
     maybe_fund_wallet/2,
     maybe_fund_wallet/1,
-    transfer_damage_tokens/3,
+    transfer_damage_tokens/2,
     get_account_context/1,
     get_webhooks/1,
     add_webhook/3,
@@ -737,7 +737,7 @@ get_ae_balance(AeAccount) ->
   read_stream(ConnPid, StreamRef).
 
 
-transfer_damage_tokens(AeAccount, Username, Amount) ->
+transfer_damage_tokens(AeAccount, Amount) ->
   {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
   AdminPassword = os:getenv("AE_PASSWORD"),
   {ok, TokenContract} = application:get_env(damage, token_contract),
@@ -751,9 +751,26 @@ transfer_damage_tokens(AeAccount, Username, Amount) ->
       [AeAccount, Amount]
     ),
   ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
-    invalidate_cache(Username),
   ContractCall.
 
+fund_wallet(AeAccount, EmailOrUsername, Amount)->
+      {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
+      AdminPassword = os:getenv("AE_PASSWORD"),
+      Cmd =
+        mustache:render(
+          "aecli spend --password=\"{{password}}\" --json '{{admin_wallet_path}}' {{user_account}} {{amount}}",
+          damage_utils:convert_context(
+            #{
+              amount => Amount,
+              user_account => AeAccount,
+              password => AdminPassword,
+              admin_wallet_path => AdminWalletPath
+            }
+          )
+        ),
+      Result = exec_aecli(Cmd),
+      ?LOG_INFO("Funded wallet with pub key ~p ~p", [EmailOrUsername, Result]),
+      {funded, Result}.
 
 maybe_fund_wallet(EmailOrUsername) ->
   maybe_fund_wallet(EmailOrUsername, ?AE_USER_WALLET_MINIMUM_BALANCE).
@@ -765,24 +782,9 @@ maybe_fund_wallet(EmailOrUsername, Amount) ->
     jsx:decode(Wallet, [{labels, atom}, return_maps]),
   case get_ae_balance(UserAccount) of
     #{balance := Balance} when Balance < ?AE_USER_WALLET_MINIMUM_BALANCE ->
-      {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
-      AdminPassword = os:getenv("AE_PASSWORD"),
-      Cmd =
-        mustache:render(
-          "aecli spend --password={{password}} --json '{{admin_wallet_path}}' {{user_account}} {{amount}}",
-          damage_utils:convert_context(
-            #{
-              amount => Amount,
-              user_account => UserAccount,
-              password => AdminPassword,
-              admin_wallet_path => AdminWalletPath
-            }
-          )
-        ),
-      Result = exec_aecli(Cmd),
-      ?LOG_INFO("Funded wallet with pub key ~p ~p", [EmailOrUsername, Result]),
-      {funded, Result};
-
+          fund_wallet(UserAccount,EmailOrUsername, Amount);
+   #{reason := <<"Account not found">>} ->
+          fund_wallet(UserAccount,EmailOrUsername, Amount);
     Result ->
       ?LOG_INFO("Wallet above minimum balance ~p ~p", [EmailOrUsername, Result]),
       {notfunded, #{public_key => UserAccount}}

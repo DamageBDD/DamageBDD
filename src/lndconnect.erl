@@ -200,7 +200,6 @@ handle_event(
     {ok, #{ae_account := AeAccount, email := Username} = _Data} ->
       damage_ae:transfer_damage_tokens(
         AeAccount,
-        Username,
         round((AmountPaid / ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS))
       ),
       ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount, Username])
