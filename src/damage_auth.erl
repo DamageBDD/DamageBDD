@@ -239,13 +239,13 @@ process_implicit_grant_stage2(Req, Params) ->
 
 issue_token({ok, Auth, Scope}, Req) ->
   ?LOG_DEBUG("issue_token ~p ~p", [Auth, Req]),
-  {ok, {true, Response}} = oauth2:issue_token(Auth, Scope),
+  {ok, Response} = oauth2:issue_token(Auth, Scope),
   ?LOG_DEBUG("issue_token response ~p", [Response]),
   emit_response(Response, Req);
 
 issue_token({ok, Auth}, Req) ->
   ?LOG_DEBUG("issue_token ~p ~p", [Auth, Req]),
-  {ok, {true, Response}} = oauth2:issue_token(Auth, basic),
+  {ok, Response} = oauth2:issue_token(Auth, basic),
   ?LOG_DEBUG("issue_token response ~p", [Response]),
   emit_response(Response, Req);
 
@@ -257,7 +257,7 @@ emit_response(AuthResult, Req) ->
   case AuthResult of
     {error, Reason} -> {400, jsx:encode([{error, to_binary(Reason)}]), Req};
 
-    {
+    {_User, {
       response,
       AccessToken,
       undefined,
@@ -267,8 +267,8 @@ emit_response(AuthResult, Req) ->
       undefined,
       undefined,
       <<"bearer">>
-    }
-    = Response ->
+    } = Response }
+    ->
       Response0 = oauth2_response:to_proplist(Response),
       Req0 =
         cowboy_req:set_resp_cookie(
