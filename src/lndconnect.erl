@@ -184,21 +184,26 @@ handle_event(#{result := #{state := <<"OPEN">>}} = Event) ->
   ?LOG_DEBUG("Invoice created or updated ~p", [Event]);
 
 handle_event(
-  #{result := #{state := <<"SETTLED">>, memo := Memo, amt_paid_sat := AmountPaid0}} =
-    Event
+  #{
+    result
+    :=
+    #{state := <<"SETTLED">>, memo := Memo, amt_paid_sat := AmountPaid0}
+  } = Event
 ) ->
   [_, Username] = string:split(Memo, " ", trailing),
-  ?LOG_DEBUG("Invoice paid for ~p ~p", [Username, Event]),
+  ?LOG_INFO("Invoice paid for ~p ~p", [Username, Event]),
   AmountPaid = binary_to_integer(AmountPaid0),
   case damage_riak:get(?USER_BUCKET, Username) of
     notfound ->
       ?LOG_ERROR("Got invoice paid for unknown username ~p", [Username]);
 
-    {ok, #{ae_account := AeAccount, username := Username} = _Data} ->
+    {ok, #{ae_account := AeAccount, email := Username} = _Data} ->
       damage_ae:transfer_damage_tokens(
-        AeAccount, Username,
-        (AmountPaid/ ?DAMAGE_PRICE ) * math:pow(10, ?DAMAGE_DECIMALS)
-      )
+        AeAccount,
+        Username,
+        (AmountPaid / ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS)
+      ),
+      ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount, Username])
   end,
   ok.
 
@@ -206,7 +211,7 @@ handle_event(
 terminate(Reason, State) ->
   gun:shutdown(State#state.conn_pid),
   erlang:cancel_timer(State#state.heartbeat_timer),
-  ?LOG_ERROR("Terminatiing lndconnect ~p", [Reason]),
+  ?LOG_ERROR("Terminating lndconnect ~p", [Reason]),
   ok.
 
 
