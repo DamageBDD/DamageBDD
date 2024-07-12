@@ -92,6 +92,8 @@ get_access_token(Req) ->
   end.
 
 
+is_authorized(Req, #{action := version} = State) -> {true, Req, State};
+
 is_authorized(Req, State) ->
   case get_access_token(Req) of
     {ok, Token} ->
@@ -314,6 +316,8 @@ from_html(Req0, State) ->
       {true, Res1, State}
   end.
 
+
+to_html(Req, #{action := version} = State) -> to_json(Req, State);
 
 to_html(Req, State) ->
   Body = damage_utils:load_template("api.mustache", #{body => <<"Test">>}),
