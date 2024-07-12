@@ -25,6 +25,20 @@
 trails() ->
   [
     trails:trail(
+      "/version/",
+      damage_http,
+      #{action => version},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to execute a test on this DamageBDD server.",
+          produces => ["text/html"]
+        }
+      }
+    ),
+    trails:trail(
       "/execute_feature/",
       damage_http,
       #{},
@@ -305,6 +319,10 @@ to_html(Req, State) ->
   Body = damage_utils:load_template("api.mustache", #{body => <<"Test">>}),
   {Body, Req, State}.
 
+
+to_json(Req, #{action := version} = State) ->
+  {ok, CommitHash} = file:read_file("commit_hash.txt"),
+  {jsx:encode(#{commit_hash => CommitHash}), Req, State};
 
 to_json(Req0, State) ->
   Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,
