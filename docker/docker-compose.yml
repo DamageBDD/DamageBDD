@@ -19,3 +19,4 @@ services:
       #- ${HOME}/aeternity.yaml:/home/aeternity/aeternity.yaml
     environment:
       - AETERNITY_CONFIG=/home/aeternity/aeternity.yaml
+      - DISABLE_IPV6=true
