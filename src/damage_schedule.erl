@@ -246,7 +246,6 @@ when is_integer(Seconds) ->
   Job = {{once, Seconds}, {damage_schedule, execute_bdd, [Schedule]}},
   erlcron_cron(ScheduleId, Job).
 
-
 binary_spec_to_term_spec([], Acc) -> Acc;
 
 binary_spec_to_term_spec([Spec | Rest], Acc) when is_integer(Spec) ->
@@ -423,15 +422,15 @@ load_account_schedules(Account, Username, Schedules) ->
 
 
 decrypt_schedules(EncryptedSchedules) ->
-  lists:map(
+  lists:filtermap(
     fun
       ([Account, Schedules]) ->
         ?LOG_DEBUG("Account ~p", [Account]),
         case damage_riak:get(?AEACCOUNT_BUCKET, Account) of
           {ok, #{email := Username} = _User} ->
-            load_account_schedules(Account, Username, Schedules);
+            {true, load_account_schedules(Account, Username, Schedules)};
 
-          _ -> #{}
+          _ -> false
         end
     end,
     EncryptedSchedules
