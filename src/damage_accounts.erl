@@ -85,6 +85,20 @@ trails() ->
       }
     ),
     trails:trail(
+      "/rate",
+      damage_accounts,
+      #{action => rate},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "do some action ",
+          produces => ["text/html", "application/json", "application/x-yaml"]
+        }
+      }
+    ),
+    trails:trail(
       "/accounts/confirm",
       damage_accounts,
       #{action => confirm},
@@ -253,6 +267,9 @@ to_json(Req, #{action := invoices} = State) ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),
       {<<"Unauthorized.">>, Req, State}
   end;
+
+to_json(Req, #{action := rate} = State) ->
+  {jsx:encode(#{price => ?DAMAGE_PRICE}), Req, State};
 
 to_json(Req, #{action := balance} = State) ->
   case damage_http:is_authorized(Req, State) of
