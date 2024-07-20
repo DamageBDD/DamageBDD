@@ -357,10 +357,14 @@ do_post_action(invoices, #{amount := Amount}, Req, State) ->
 
 
 create_invoice(Amount, Username) ->
+  DmgAmount = damage:sats_to_damage(Amount),
   Memo =
     list_to_binary(
       lists:flatten(
-        io_lib:format("Invoice for ~p damage tokens for ~s", [Amount, Username])
+        io_lib:format(
+          "Invoice for ~p damage tokens for ~s",
+          [DmgAmount, Username]
+        )
       )
     ),
   ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),

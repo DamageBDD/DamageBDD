@@ -29,6 +29,7 @@
   [execute_data/3, execute_file/3, execute/3, execute/2, execute_feature/8]
 ).
 -export([get_default_config/3]).
+-export([sats_to_damage/1]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -608,3 +609,5 @@ get_default_config(AeAccount, Concurrency, Formatters) ->
     {run_dir, RunDir},
     {api_url, DamageApi}
   ].
+sats_to_damage(Sats) ->
+    round((Amount * ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS)).
