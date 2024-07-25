@@ -15,7 +15,7 @@
 
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
--define(DEFAULT_HTTP_TIMEOUT, 60000).
+-define(DEFAULT_HTTP_TIMEOUT, 30000).
 -define(
   DEFAULT_HEADERS,
   [
@@ -36,7 +36,7 @@ get_headers(Context, DefaultHeaders) ->
 response_to_list({StatusCode, Headers, Body}) ->
   [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
-get_gun_connection(Config0, #{contract_address := ContractAddress} = Context) ->
+get_gun_connection(Config0, #{ae_account := AeAccount} = Context) ->
   Host = damage_utils:get_context_value(host, Context, Config0),
   Port = damage_utils:get_context_value(port, Context, Config0),
   Config =
@@ -61,7 +61,7 @@ get_gun_connection(Config0, #{contract_address := ContractAddress} = Context) ->
     {concurrency, 1} -> gun:open(Host, Port, Opts1);
 
     {concurrency, _Concurrency} ->
-      case damage_domains:is_allowed_domain(Host, ContractAddress) of
+      case damage_domains:is_allowed_domain(Host, AeAccount) of
         true -> gun:open(Host, Port, Opts1);
 
         _ ->
