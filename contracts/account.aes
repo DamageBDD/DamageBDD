@@ -6,6 +6,10 @@ include "token.aes"
 payable main contract Account =
     record state = {
         owner: address,
+        meta: map(address, string),
+        auth_tokens: map(string, string),
+
+        domain_tokens: map(address, map(string, string)),
         schedules: map(address, map(string, map(string, string))),
         contexts: map(address, map(string, string)),
         webhooks: map(address, map(string, string)),
@@ -15,12 +19,31 @@ payable main contract Account =
 
     stateful entrypoint init() = {
         owner = Call.caller,
+        meta = {},
+        auth_tokens = {},
+
+        domain_tokens = {},
         schedules = {},
-        contexts ={},
+        contexts = {},
         webhooks = {},
         invoices = {},
         published = {}
         }
+
+    stateful entrypoint get_meta():  string =
+        Map.lookup_default(Call.caller, state.meta, "notfound")
+
+    stateful entrypoint set_meta(meta: string) =
+        put(state{meta[Call.caller] = meta})
+
+    stateful entrypoint delete_account() =
+        put(state{meta = Map.delete(Call.caller, state.meta)})
+        put(state{schedules = Map.delete(Call.caller, state.schedules)})
+        put(state{domain_tokens = Map.delete(Call.caller, state.domain_tokens)})
+        put(state{contexts = Map.delete(Call.caller, state.contexts)})
+        put(state{webhooks = Map.delete(Call.caller, state.webhooks)})
+        put(state{invoices = Map.delete(Call.caller, state.invoices)})
+        put(state{published = Map.delete(Call.caller, state.published)})
 
     stateful entrypoint add_schedule(id: string, feature_hash: string, cronspec: string) =
         let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
@@ -72,3 +95,21 @@ payable main contract Account =
         let newmap = oldmap{[feature_hash] = bid}
         put(state{published[Call.caller] = newmap})
     
+
+    stateful entrypoint add_auth_token(key: string, value: string) =
+        put(state{auth_tokens[key] = value})
+
+    stateful entrypoint get_auth_token(key: string):  string =
+        Map.lookup_default(key, state.auth_tokens, "notfound")
+
+    stateful entrypoint revoke_auth_token(key: string, value: string) =
+        put(state{auth_tokens = Map.delete(key, state.auth_tokens)})
+
+    stateful entrypoint add_domain_token(key: string, value: string) =
+        put(state{domain_tokens[key] = value})
+
+    stateful entrypoint get_domain_token(key: string):  string =
+        Map.lookup_default(key, state.domain_tokens, "notfound")
+
+    stateful entrypoint revoke_domain_token(key: string, value: string) =
+        put(state{domain_tokens = Map.delete(key, state.domain_tokens)})
