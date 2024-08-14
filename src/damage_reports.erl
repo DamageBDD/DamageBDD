@@ -229,6 +229,9 @@ get_record(Id) ->
   end.
 
 
+do_query_base(Fun, Index, Args, AeAccount) when is_list(AeAccount) ->
+  do_query_base(Fun, Index, Args, list_to_binary(AeAccount));
+
 do_query_base(Fun, Index, Args, AeAccount) ->
   Args0 = [?RUNRECORDS_BUCKET, Index] ++ Args ++ [[{max_results, 30}]],
   ?LOG_DEBUG("riak query index ~p", [Args0]),
@@ -242,7 +245,8 @@ do_query_base(Fun, Index, Args, AeAccount) ->
         lists:filter(
           fun
             (none) -> false;
-            (#{ae_account := AeAccount0}) when AeAccount0 =:= AeAccount -> true
+            (#{ae_account := AeAccount0}) when AeAccount0 =:= AeAccount -> true;
+            (_) -> true
           end,
           [get_record(X) || X <- Found]
         ),

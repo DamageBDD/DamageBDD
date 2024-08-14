@@ -38,40 +38,12 @@
     test_conflict_resolution/0
   ]
 ).
--export([find_active_connection/3]).
 
 -include_lib("eunit/include/eunit.hrl").
 
--record(state, {connections = []}).
+-record(state, {connection}).
 
 -define(RIAK_CALL_TIMEOUT, 36000).
-
-% Define the function find_active_connection
-find_active_connection(Connections, Fun, Args) ->
-  find_active_connection_helper(Connections, Fun, Args).
-
-% Helper function to iterate through the connections
-find_active_connection_helper([Connection | Rest], Fun, Args) ->
-  case apply(riakc_pb_socket, Fun, [Connection] ++ Args) of
-    {ok, Results} -> {ok, Results};
-    {error, notfound} -> {error, notfound};
-    {error, {notfound, Type}} -> {error, {notfound, Type}};
-    ok -> ok;
-
-    Err ->
-      logger:error(
-        "Unexpected riak error ~p on connectoion ~p trying next",
-        [Err, Connection]
-      ),
-      find_active_connection_helper(Rest, Fun, Args)
-  end;
-
-find_active_connection_helper([], _, _) ->
-  logger:error("Unexpected riak error not trying next", []),
-  false.
-
-
-% Return none if no active connections are found
 
 %% Public API functions
 
@@ -145,7 +117,7 @@ get_index({Type, Bucket}, Index, Key, Opts) ->
   ).
 
 get_index_range({Type, Bucket}, Index, StartKey, EndKey) ->
-  get_index_range({Type, Bucket}, Index, StartKey, EndKey, []).
+  get_index_range({Type, Bucket}, Index, StartKey, EndKey, [{max_results, 100}]).
 
 get_index_range({Type, Bucket}, Index, StartKey, EndKey, Opts) ->
   poolboy:transaction(
@@ -211,58 +183,33 @@ counter_value(Bucket, Key) ->
 %% GenServer callbacks
 
 init([]) ->
-  {ok, Members} = application:get_env(damage, riak),
-  init(Members);
+  {ok, {Host, Port}} = application:get_env(damage, riak),
+  logger:info("initializing riak cluster ~p:~p", [Host, Port]),
+  case
+  riakc_pb_socket:start_link(
+    Host,
+    Port,
+    [{keepalive, true}, {auto_reconnect, true}]
+  ) of
+    {ok, Pid} ->
+      logger:info("connected to riak node ~p ~p", [Host, Port]),
+      {ok, #state{connection = Pid}};
 
-init(Members) ->
-  logger:info("initializing riak cluster ~p", [Members]),
-  Connections =
-    lists:filtermap(
-      fun
-        ({Host, Port}) ->
-          try
-            case
-            riakc_pb_socket:start_link(
-              Host,
-              Port,
-              [{keepalive, true}, {auto_reconnect, true}]
-            ) of
-              {ok, Pid} ->
-                logger:info("connected to riak node ~p ~p", [Host, Port]),
-                {true, Pid};
-
-              {error, econnrefused} ->
-                logger:info("disconnected riak node ~p ~p", [Host, Port]),
-                false;
-
-              _ ->
-                logger:info("disconnected riak node ~p ~p", [Host, Port]),
-                false
-            end
-          catch
-            {error, {tcp, econnrefused}} -> false;
-            _ -> false
-          end
-      end,
-      Members
-    ),
-  {ok, #state{connections = Connections}}.
+    Error ->
+      logger:info("Riak connection error ~p ~p ~p", [Host, Port, Error]),
+      {error, Error}
+  end.
 
 
-handle_call(get_connection, _From, #state{connections = Connections} = State) ->
-  case Connections of
-    [] -> {reply, {error, no_connection_available}, State};
-
-    [Connection | Rest] ->
-      {reply, {ok, Connection}, State#state{connections = Rest}}
-  end;
+handle_call(get_connection, _From, #state{connection = Connection} = State) ->
+  {reply, Connection, State};
 
 handle_call(
   {hll_value, Bucket, Key},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
-  case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+  case riakc_pb_socket:fetch_type(Connection, Bucket, Key) of
     {error, notfound} -> {reply, 0, State};
     {ok, Res} -> {reply, riakc_hll:value(Res), State}
   end;
@@ -270,28 +217,25 @@ handle_call(
 handle_call(
   {update_hll, Bucket, Key, Elements},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
   Res =
-    case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+    case riakc_pb_socket:fetch_type(Connection, Bucket, Key) of
       {ok, Hll0} ->
         HllOp0 = riakc_hll:to_op(riakc_hll:add_elements(Elements, Hll0)),
-        ok =
-          find_active_connection(
-            Connections,
-            update_type,
-            [Bucket, Key, HllOp0]
-          ),
+        ok = riakc_pb_socket:update_type(Connection, Bucket, Key, HllOp0),
         true;
 
       {error, {notfound, hll}} ->
         Hll0 = riakc_hll:new(),
         HllOp0 = riakc_hll:to_op(riakc_hll:add_elements(Elements, Hll0)),
         ok =
-          find_active_connection(
-            Connections,
+          riakc_pb_socket:update_type(
+            Connection,
             update_type,
-            [Bucket, Key, HllOp0]
+            Bucket,
+            Key,
+            HllOp0
           ),
         true;
 
@@ -306,9 +250,9 @@ handle_call(
 handle_call(
   {counter_value, Bucket, Key},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
-  case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+  case riakc_pb_socket:fetch_type(Connection, Bucket, Key) of
     {error, notfound} -> {reply, 0, State};
     {error, {notfound, counter}} -> {reply, 0, State};
     {ok, Res} -> {reply, riakc_counter:value(Res), State}
@@ -317,19 +261,21 @@ handle_call(
 handle_call(
   {update_counter, Bucket, Key, {Op, Value}},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
   Res =
-    case find_active_connection(Connections, fetch_type, [Bucket, Key]) of
+    case riakc_pb_socket:fetch_type(Connection, Bucket, Key) of
       {ok, Counter} ->
         CounterOp0 =
           riakc_counter:to_op(apply(riakc_counter, Op, [Value, Counter])),
         ?LOG_DEBUG("Counter op ok ~p ~p", [CounterOp0, Key]),
         ok =
-          find_active_connection(
-            Connections,
+          riakc_pb_socket:update_type(
+            Connection,
             update_type,
-            [Bucket, Key, CounterOp0]
+            Bucket,
+            Key,
+            CounterOp0
           ),
         true;
 
@@ -339,10 +285,12 @@ handle_call(
           riakc_counter:to_op(apply(riakc_counter, Op, [Value, Counter])),
         ?LOG_DEBUG("Counter op new ~p ~p", [CounterOp0, Key]),
         ok =
-          find_active_connection(
-            Connections,
+          riakc_pb_socket:update_type(
+            Connection,
             update_type,
-            [Bucket, Key, CounterOp0]
+            Bucket,
+            Key,
+            CounterOp0
           ),
         true;
 
@@ -357,11 +305,11 @@ handle_call(
 handle_call(
   {get, Bucket, Key0, JsonDecodeOpts},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
   % Perform get operation using the Riak connection
   Key = damage_utils:encrypt(Key0),
-  case catch find_active_connection(Connections, get, [Bucket, Key]) of
+  case catch riakc_pb_socket:get(Connection, Bucket, Key) of
     false -> {reply, notfound, State};
     {error, notfound} -> {reply, notfound, State};
     {error, {notfound, _Type = map}} -> {reply, notfound, State};
@@ -369,7 +317,7 @@ handle_call(
     undef -> {error, undef, State};
 
     {ok, RiakObject} ->
-      Value = check_resolve_siblings(RiakObject, Connections),
+      Value = check_resolve_siblings(RiakObject, Connection),
       %?LOG_DEBUG(
       %  "get RiakObject ~p ~p",
       %  [RiakObject, damage_utils:decrypt(Value)]
@@ -401,7 +349,7 @@ handle_call({put, Bucket, Key, Value, Index}, From, State) when is_map(Value) ->
 handle_call(
   {put, Bucket, Key, Value, Index},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
   % Perform put operation using the Riak connection
   Key0 = damage_utils:encrypt(Key),
@@ -416,77 +364,53 @@ handle_call(
         MD1 = riakc_obj:set_secondary_index(MD0, Index0),
         riakc_obj:update_metadata(Object0, MD1)
     end,
-  true =
-    lists:any(
-      fun
-        (Pid) ->
-          case catch riakc_pb_socket:put(Pid, Object) of
-            ok -> true;
-            {error, disconnected} -> false;
+  case catch riakc_pb_socket:put(Connection, Object) of
+    ok -> {reply, ok, State};
 
-            Err ->
-              logger:error("Unexpected riak error ~p", [Err]),
-              false
-          end
-      end,
-      Connections
-    ),
-  {reply, ok, State};
+    {error, disconnected} ->
+      logger:error("Unexpected riak error ~p", [disconnected]),
+      {reply, false, State};
+
+    Err ->
+      logger:error("Unexpected riak error ~p", [Err]),
+      {reply, false, State}
+  end;
 
 handle_call(
   {delete, Bucket, Key},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
-  % Perform delete operation using the Riak connection
-  true =
-    lists:any(
-      fun
-        (Pid) ->
-          case riakc_pb_socket:delete(Pid, Bucket, damage_utils:encrypt(Key)) of
-            ok -> true;
-
-            Err ->
-              logger:error("Unexpected riak error ~p", [Err]),
-              false
-          end
-      end,
-      Connections
-    ),
+  ok = riakc_pb_socket:delete(Connection, Bucket, damage_utils:encrypt(Key)),
   {reply, ok, State};
 
-handle_call(
-  {list_keys, Bucket},
-  _From,
-  #state{connections = Connections} = State
-) ->
-  {ok, Res} = find_active_connection(Connections, list_keys, [Bucket]),
+handle_call({list_keys, Bucket}, _From, #state{connection = Connection} = State) ->
+  {ok, Res} = riakc_pb_socket:list_keys(Connection, Bucket),
   {reply, Res, State};
 
 handle_call(
   {get_index_range, Bucket, Index, StartKey, EndKey, Opts},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
   {ok, {index_results_v1, Res, _, _}} =
-    find_active_connection(
-      Connections,
-      get_index_range,
-      [Bucket, Index, StartKey, EndKey, Opts]
+    riakc_pb_socket:get_index_range(
+      Connection,
+      Bucket,
+      Index,
+      StartKey,
+      EndKey,
+      Opts
     ),
   {reply, Res, State};
 
 handle_call(
   {get_index_eq, Bucket, Index, Key, Opts},
   _From,
-  #state{connections = Connections} = State
+  #state{connection = Connection} = State
 ) ->
   {ok, {index_results_v1, Res, _, _}} =
-    find_active_connection(
-      Connections,
-      get_index_eq,
-      [Bucket, Index, Key, Opts]
-    ),
+    riakc_pb_socket:get_index_eq(Connection, Bucket, Index, Key, Opts),
   {reply, Res, State};
 
 handle_call(_Request, _From, State) -> {reply, {error, unknown_request}, State}.
@@ -500,7 +424,7 @@ terminate(_Reason, _State) -> ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-check_resolve_siblings(RiakObject, Connections) ->
+check_resolve_siblings(RiakObject, Connection) ->
   case riakc_obj:get_contents(RiakObject) of
     [] -> throw(no_value);
 
@@ -512,7 +436,7 @@ check_resolve_siblings(RiakObject, Connections) ->
       {MD, V} = conflict_resolver(Siblings),
       Obj =
         riakc_obj:update_value(riakc_obj:update_metadata(RiakObject, MD), V),
-      ok = find_active_connection(Connections, put, [Obj]),
+      ok = riakc_pb_socket:put(Connection, Obj),
       V
   end.
 

@@ -257,18 +257,20 @@ emit_response(AuthResult, Req) ->
   case AuthResult of
     {error, Reason} -> {400, jsx:encode([{error, to_binary(Reason)}]), Req};
 
-    {_User, {
-      response,
-      AccessToken,
-      undefined,
-      _Expiry,
-      _UserName,
-      <<"basic">>,
-      undefined,
-      undefined,
-      <<"bearer">>
-    } = Response }
-    ->
+    {
+      _User,
+      {
+        response,
+        AccessToken,
+        undefined,
+        _Expiry,
+        _UserName,
+        <<"basic">>,
+        undefined,
+        undefined,
+        <<"bearer">>
+      } = Response
+    } ->
       Response0 = oauth2_response:to_proplist(Response),
       Req0 =
         cowboy_req:set_resp_cookie(

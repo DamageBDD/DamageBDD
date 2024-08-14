@@ -2,13 +2,14 @@
 
 -vsn("0.1.0").
 
--include_lib("eunit/include/eunit.hrl").
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
 
 -license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -export([init/2]).
 -export([content_types_accepted/2]).
@@ -16,7 +17,7 @@
 -export([to_html/2]).
 -export([to_json/2]).
 -export([to_text/2]).
--export([from_json/2, allowed_methods/2, from_html/2]).
+-export([from_json/2, from_yaml/2, allowed_methods/2, from_html/2]).
 -export([is_authorized/2]).
 -export([trails/0]).
 
@@ -44,7 +45,7 @@ trails() ->
         #{
           tags => ?TRAILS_TAG,
           description => "Schedule a test on post",
-          produces => ["application/json"],
+          produces => ["application/json", "application/x-yaml"],
           parameters
           =>
           [
@@ -80,6 +81,7 @@ content_types_accepted(Req, State) ->
   {
     [
       {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
+      {{<<"application">>, <<"x-yaml">>, '*'}, from_yaml},
       {{<<"application">>, <<"json">>, '*'}, from_json}
     ],
     Req,
@@ -102,23 +104,38 @@ to_json(Req, State) ->
   to_text(Req, State).
 
 
-to_text(Req, #{contract_address := ContractAddress} = State) ->
-  Reports = do_query(#{contract_address => ContractAddress}),
+to_text(Req, #{ae_account := AeAccount} = State) ->
+  Reports = do_query(#{ae_account => AeAccount}),
   ?LOG_DEBUG("list published contracts ~p ", [Reports]),
   {jsx:encode(Reports), Req, State}.
+
+
+from_yaml(Req, #{action := reset_password} = State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  {Status0, Response0} =
+    case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
+      {ok, [#{feature := _FeatureData, concurrency := _Concurrency} = Data0]} ->
+        check_publish_bdd(Data0, State);
+
+      {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+    end,
+  ?LOG_DEBUG("post action ~p resp ~p", [Data, Response0]),
+  {
+    stop,
+    cowboy_req:reply(
+      Status0,
+      cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+    ),
+    State
+  }.
 
 
 from_json(Req, State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
-      #{feature := FeatureData, concurrency := Concurrency} = FeatureJson ->
-        Fee = binary_to_integer(maps:get(fee, FeatureJson, <<"4000">>)),
-        check_publish_bdd(
-          #{feature => FeatureData, concurrency => Concurrency, fee => Fee},
-          State,
-          Req
-        );
+      #{feature := _FeatureData, concurrency := _Concurrency} = FeatureJson ->
+        check_publish_bdd(FeatureJson, State);
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),
@@ -131,7 +148,6 @@ from_json(Req, State) ->
 
 from_html(Req0, State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
-  _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
   Concurrency =
     binary_to_integer(
       cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
@@ -141,52 +157,49 @@ from_html(Req0, State) ->
   {Status, Resp0} =
     check_publish_bdd(
       #{feature => Body, concurrency => Concurrency, fee => Fee},
-      State,
-      Req0
+      State
     ),
   Res1 = cowboy_req:set_resp_body(Resp0, Req),
   cowboy_req:reply(Status, Res1),
   {stop, Res1, State}.
 
 
-get_record(Id) ->
-  {ok, Record} =
-    damage_riak:get(?PUBLISHED_FEATURES_BUCKET, damage_utils:decrypt(Id)),
-  Record.
-
-
-do_query(#{contract_address := ContractAddress}) ->
-  case
-  damage_riak:get_index(
-    ?PUBLISHED_FEATURES_BUCKET,
-    {binary_index, "contract_address"},
-    ContractAddress
-  ) of
+do_query(#{ae_account := AeAccount}) ->
+  case damage_ae:get_published(AeAccount) of
     [] ->
       logger:info("no reports for account"),
       [];
 
-    Found ->
-      ?debugFmt(" reports exists data: ~p ", [Found]),
-      Results = [get_record(X) || X <- Found],
+    Results ->
       #{results => Results, status => <<"ok">>, length => length(Results)}
   end.
 
 
+check_publish_bdd(#{concurrency := Concurrency} = FeaturePayload, State)
+when is_binary(Concurrency) ->
+  check_publish_bdd(
+    maps:put(concurrency, binary_to_integer(Concurrency), FeaturePayload),
+    State
+  );
+
+check_publish_bdd(#{fee := Fee} = FeaturePayload, State) when is_binary(Fee) ->
+  check_publish_bdd(
+    maps:put(fee, binary_to_integer(Fee), FeaturePayload),
+    State
+  );
+
 check_publish_bdd(
   #{concurrency := Concurrency0} = FeaturePayload,
-  #{contract_address := ContractAddress} = State,
-  Req0
+  #{ae_account := AeAccount, ip := IP} = State
 ) ->
   Concurrency = damage_utils:get_concurrency_level(Concurrency0),
-  IP = damage_utils:get_ip(Req0),
   case throttle:check(damage_api_rate, IP) of
     {limit_exceeded, _, _} ->
       lager:warning("IP ~p exceeded api limit", [IP]),
-      {error, 429, Req0};
+      {error, 429, "Rate limited"};
 
     _ ->
-      case damage_ae:balance(ContractAddress) of
+      case damage_ae:balance(AeAccount) of
         Balance when Balance >= Concurrency ->
           case publish_bdd(FeaturePayload, State) of
             {Status, Response} -> {Status, Response}
@@ -204,13 +217,50 @@ check_publish_bdd(
   end.
 
 
+publish_data(RunDir, Username, AeAccount, FeatureData, Fee, Concurrency) ->
+  BddFileName =
+    filename:join(RunDir, string:join(["adhoc_http_publish.feature"], "")),
+  ok = file:write_file(BddFileName, FeatureData),
+  publish_file(Username, AeAccount, BddFileName, Fee, Concurrency).
+
+
+publish_file(Username, AeAccount, Filename, Fee, Concurrency) ->
+  {ok, [#{<<"Hash">> := Hash, <<"Name">> := _Name, <<"Size">> := _Size}]} =
+    damage_ipfs:add({file, Filename}),
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  #{
+    decodedResult := [],
+    result
+    :=
+    #{
+      log := [],
+      gasPrice := GasPrice,
+      callerId := AeAccount,
+      gasUsed := GasUsed,
+      returnType := <<"ok">>
+    }
+  } =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/account.aes",
+      "publish",
+      [Hash, Fee, Concurrency]
+    ),
+  ?LOG_DEBUG(
+    "call AE contract ~p gasprice ~p gasused ~p",
+    [AeAccount, GasPrice, GasUsed]
+  ).
+
+
 publish_bdd(
   #{feature := FeatureData, concurrency := Concurrency, fee := Fee} =
     _FeaturePayload,
-  #{contract_address := ContractAddress} = _State
+  #{ae_account := AeAccount, username := Username} = _State
 ) ->
-  Config = damage:get_default_config(ContractAddress, Concurrency, []),
-  case damage:publish_data([{fee, Fee} | Config], FeatureData) of
+  Config = damage:get_default_config(AeAccount, Concurrency),
+  {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+  case publish_data(RunDir, Username, AeAccount, FeatureData, Fee, Concurrency) of
     [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
       Response =
         #{

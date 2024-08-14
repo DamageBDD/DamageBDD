@@ -94,7 +94,13 @@ get_access_token(Req) ->
 
 is_authorized(Req, #{action := version} = State) -> {true, Req, State};
 
-is_authorized(Req, State) ->
+is_authorized(Req, State0) ->
+  State =
+    maps:put(
+      ip,
+      damage_utils:get_ip(Req),
+      maps:put(useragent, cowboy_req:header(<<"user-agent">>, Req, ""), State0)
+    ),
   case get_access_token(Req) of
     {ok, Token} ->
       case oauth2:verify_access_token(Token, []) of
@@ -105,8 +111,12 @@ is_authorized(Req, State) ->
             <<"expiry_time">> := _Expiry,
             <<"scope">> := _Scope
           } = maps:from_list(Auth),
-          case damage_riak:get(?USER_BUCKET, ResourceOwner) of
-            {ok, User} ->
+          case damage_ae:get_meta(ResourceOwner) of
+            notfound ->
+              ?LOG_DEBUG("is_authoddrized Identity ~p", [ResourceOwner]),
+              {{false, <<"Bearer">>}, Req, State};
+
+            User ->
               {
                 true,
                 Req,
@@ -118,14 +128,7 @@ is_authorized(Req, State) ->
                     username => ResourceOwner
                   }
                 )
-              };
-
-            Noget ->
-              ?LOG_DEBUG(
-                "is_authoddrized Identity ~p ~p",
-                [ResourceOwner, Noget]
-              ),
-              {{false, <<"Bearer">>}, Req, State}
+              }
           end;
 
         {error, access_denied} -> {{false, <<"Bearer">>}, Req, State};

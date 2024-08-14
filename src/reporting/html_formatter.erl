@@ -36,7 +36,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =
     write_file(
       Config,
-      "<tr><td>Feature</td> <td>~s</td> <td>tags: [~p]</td> <td>~p</td> <td>~p</td></tr>",
+      "<tr>\n<td>\nFeature\n</td>\n <td>~s</td> <td>tags: ~p</td> <td>~p</td> <td>~p</td></tr>",
       [
         FeatureName,
         lists:flatten(string:join([[X] || X <- Tags], ",")),

@@ -55,9 +55,13 @@
           <main class="modal__content" id="modal-1-content">
             <p>
               Buy Damage Tokens to power more tests at higher concurrency and for longer durations.
-            <p>
             </p>
-            Make a payment using BIP21 compatible wallet, to top up on credits to deal more damage.
+            <p>
+            To top up on damage tokens to deal more damage.
+            Make a payment by scanning the QR code below, using a lightning BIP21 compatible wallet.
+            </p>
+            <p>
+              Please review the <a href="/token_tos">Token Sale Terms and Conditions</a> before purchasing tokens.
             </p>
             <div id="qrcode">
               <form id="invoice-form">
@@ -65,6 +69,10 @@
                 <input type="number" step="1000" id="invoice-amount">
                 <button id="generate-invoice-btn">Generate Invoice</button>
               </form>
+            </div>
+            <p>Or pay this lightning invoice directly using a lightning wallet.
+            </p>
+            <div id="lightning-invoice">
             </div>
           </main>
           <footer class="modal__footer">

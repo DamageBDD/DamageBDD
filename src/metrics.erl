@@ -25,23 +25,25 @@ init() -> [try prometheus_gauge:declare(M) of _ -> ok catch
     M
     <-
     [
-      [
-        {name, success},
-        {help, "number of success"},
-        {labels, ["ae_account"]}
-      ],
-      [
-        {name, error},
-        {help, "number of errors"},
-        {labels, ["ae_account"]}
-      ],
+      [{name, success}, {help, "number of success"}, {labels, ["ae_account"]}],
+      [{name, error}, {help, "number of errors"}, {labels, ["ae_account"]}],
       [{name, fail}, {help, "number of fails"}, {labels, ["ae_account"]}],
       [
         {name, notfound},
         {help, "number of notfounds"},
         {labels, ["ae_account"]}
+      ],
+      [
+        {name, schedule_execution},
+        {help, "number of schedule executions"},
+        {labels, ["ae_account", "hash"]}
       ]
     ]].
+
+update(schedule_execution, {AeAccount, Hash}) ->
+  prometheus_gauge:inc(schedule_execution, ["all"]),
+  prometheus_gauge:inc(schedule_execution, [AeAccount]),
+  prometheus_gauge:inc(schedule_execution, [AeAccount, Hash]);
 
 update(Event, AeAccount) ->
   %?LOG_DEBUG("update prometheus_data  for event ~p ", [Event]),
@@ -58,11 +60,7 @@ fetch_metrics(AeAccount) ->
   Port = 9090,
   Headers = #{"Content-Type" => "application/x-www-form-urlencoded"},
   Query =
-    "/api/v1/query?query=sum(success{ae_account=\""
-    ++
-    AeAccount
-    ++
-    "\"})",
+    "/api/v1/query?query=sum(success{ae_account=\"" ++ AeAccount ++ "\"})",
   {ok, ConnPid} = gun:open(Host, Port, #{}),
   %% Construct the request body
   %% Send the HTTP POST request

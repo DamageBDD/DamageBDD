@@ -239,7 +239,7 @@ handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, Data}}, #state{n = N} = State) 
   end;
 
 handle_ssh_msg({ssh_cm, _ConnectionManager, {data, _ChannelId, 1, Data}}, State) ->
-  error_logger:format(standard_error, " ~p~n", [binary_to_list(Data)]),
+  ?LOG_DEBUG(" ~p~n", [binary_to_list(Data)]),
   {ok, State};
 
 handle_ssh_msg({ssh_cm, _ConnectionManager, {eof, _ChannelId}}, State) ->

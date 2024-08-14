@@ -53,16 +53,17 @@ get_trails() ->
   trails:single_host_compile(Trails).
 
 
-%-spec start_phase(atom(), application:start_type(), []) -> ok.
-%start_phase(start_vanillae, _StartType, []) ->
-%  logger:info("Starting vanilla."),
-%  damage_ae:setup_vanillae_deps(),
-%  {ok, _} = application:ensure_all_started(vanillae),
-%  ok = vanillae:network_id("ae_uat"),
-%  {ok, AeNodes} = application:get_env(damage, ae_nodes),
-%  ok = vanillae:ae_nodes(AeNodes),
-%  logger:info("Started vanilla."),
-%  ok;
+-spec start_phase(atom(), application:start_type(), []) -> ok.
+start_phase(start_vanillae, _StartType, []) ->
+  logger:info("Starting vanilla."),
+  damage_ae:setup_vanillae_deps(),
+  {ok, _} = application:ensure_all_started(vanillae),
+  ok = vanillae:network_id("ae_uat"),
+  {ok, AeNodes} = application:get_env(damage, ae_nodes),
+  ok = vanillae:ae_nodes(AeNodes),
+  logger:info("Started vanilla."),
+  ok;
+
 start_phase(start_trails_http, _StartType, []) ->
   logger:info("Starting Damage."),
   {ok, _} = application:ensure_all_started(fast_yaml),
@@ -104,7 +105,10 @@ start_phase(start_trails_http, _StartType, []) ->
   metrics:init(),
   damage_schedule:load_all_schedules(),
   damage_ae:start_batch_spend_timer(),
-  ?LOG_INFO("Started Damage."),
+  ?LOG_INFO("Started Damage.");
+
+start_phase(start_sync, _StartType, []) ->
+  logger:info("Starting sync."),
   case init:get_plain_arguments() of
     [_, "shell"] ->
       ?LOG_INFO("Sourc sync enabled.", []),

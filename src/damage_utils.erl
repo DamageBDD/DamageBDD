@@ -385,6 +385,7 @@ test_encrypt_decrypt() ->
   Nonce = crypto:strong_rand_bytes(16),
   KycKey0 = <<Key/binary, Nonce/binary>>,
   KycKey = base64:encode(KycKey0),
+  ?LOG_INFO("Key ~p", [KycKey]),
   KYCInfo = <<"Sensitive KYC Information">>,
   CipherText = encrypt(KYCInfo, KycKey),
   KYCInfo = decrypt(CipherText, KycKey).

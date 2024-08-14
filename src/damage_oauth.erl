@@ -46,8 +46,7 @@
 
 -define(ACCESS_TOKEN_BUCKET, {<<"Default">>, <<"AccessTokens">>}).
 -define(REFRESH_TOKEN_BUCKET, {<<"Default">>, <<"RefreshTokens">>}).
--define(CLIENT_BUCKET, {<<"Default">>, <<"Clients">>}).
--define(CONFIRM_TOKEN_EXPIRY, 1440).
+-define(CONFIRM_TOKEN_EXPIRY, date_util:epoch_hires() + (24 * 60)).
 
 %%%===================================================================
 %%% API
@@ -75,14 +74,11 @@ validate_password(Password) ->
   end.
 
 
-get_token_expiry(Mins) -> date_util:epoch_hires() + (Mins * 60).
-
 reset_password(#{token := Token}) ->
   case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Token) of
     {ok, #{email := Email, expiry := _Expiry}} ->
-      case damage_riak:get(?USER_BUCKET, Email) of
-        {ok, User} ->
-          damage_riak:put(?USER_BUCKET, Email, maps:put(password, Token, User)),
+      case damage_ae:set_meta(#{email => Email, password => Token}) of
+        ok ->
           {
             ok,
             damage_utils:load_template(
@@ -112,50 +108,23 @@ reset_password(
   }
 ) ->
   NewPassword = NewPasswordConfirm,
-  case damage_riak:get(?USER_BUCKET, Email) of
-    notfound -> {error, <<"Invalid request.">>};
+  case validate_password(NewPassword) of
+    true ->
+      case damage_ae:get_meta(Email) of
+        "notfound" -> {error, <<"Invalid request.">>};
 
-    {ok, #{password := Password} = KycData} ->
-      case validate_password(NewPassword) of
-        true ->
+        #{password := Password} ->
           Now = os:timestamp(),
           case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
             {ok, #{email := Email, expiry := Expiry}} when Expiry - Now > 3600 ->
               {notok, <<"Confirm Token Expired.">>};
 
             {ok, #{email := Email}} ->
-              case damage_ae:maybe_create_wallet(#{email => Email}) of
-                {_, #{public_key := AeAccount}} ->
-                  ok =
-                    damage_riak:put(
-                      ?USER_BUCKET,
-                      Email,
-                      maps:merge(
-                        KycData,
-                        #{password => NewPassword, ae_account => AeAccount}
-                      ),
-                      [
-                        {
-                          {binary_index, "enc_email"},
-                          [damage_utils:encrypt(Email)]
-                        }
-                      ]
-                    ),
-                  ok =
-                    damage_riak:put(
-                      ?AEACCOUNT_BUCKET,
-                      AeAccount,
-                      #{email => Email}
-                    ),
-                  {funded, Result} = damage_ae:maybe_fund_wallet(AeAccount),
-                  ?LOG_INFO("Account confirmed and funded ~p", Result),
-                  damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
-                  {ok, <<"Password successfuly reset.">>}
-              end;
-
-            notfound ->
-              ok = damage_riak:put(?USER_BUCKET, Email, KycData),
-              {ok, <<"Password successfuly reset.">>};
+              ok =
+                damage_ae:maybe_create_wallet(
+                  #{email => Email, password => NewPassword}
+                ),
+              damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password);
 
             Err ->
               ?LOG_ERROR("invalid confirm token ~p", [Err]),
@@ -171,15 +140,15 @@ reset_password(
           }
       end;
 
-    {ok, #{email := Email} = _KycData} -> {error, <<"Authentication failed.">>}
+    {ok, #{email := Email} = _Meta} -> {error, <<"Authentication failed.">>}
   end;
 
 reset_password(#{email := Email}) ->
   TempPassword = list_to_binary(uuid:to_string(uuid:uuid4())),
-  case damage_riak:get(?USER_BUCKET, Email) of
+  case damage_ae:get_meta(Email) of
     notfound -> {error, <<"Invalid request.">>};
 
-    {ok, Found} ->
+    #{email := Email} = Found ->
       {ok, ApiUrl} = application:get_env(damage, api_url),
       ApiUrl0 = list_to_binary(ApiUrl),
       Ctxt =
@@ -195,7 +164,7 @@ reset_password(#{email := Email}) ->
       damage_riak:put(
         ?CONFIRM_TOKEN_BUCKET,
         TempPassword,
-        #{email => Email, expiry => get_token_expiry(?CONFIRM_TOKEN_EXPIRY)}
+        #{email => Email, expiry => ?CONFIRM_TOKEN_EXPIRY}
       ),
       damage_utils:send_email(
         {maps:get(full_name, Found, <<"">>), Email},
@@ -203,7 +172,6 @@ reset_password(#{email := Email}) ->
         damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
         damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
       ),
-      %damage_riak:update(?USER_BUCKET, Email, Found),
       {ok, <<"Password Reset successfully.">>}
   end.
 
@@ -222,19 +190,13 @@ add_userdata(#{email := ToEmail} = Data0) ->
   damage_riak:put(
     ?CONFIRM_TOKEN_BUCKET,
     TempPassword,
-    #{email => ToEmail, expiry => get_token_expiry(?CONFIRM_TOKEN_EXPIRY)}
+    #{email => ToEmail, expiry => ?CONFIRM_TOKEN_EXPIRY}
   ),
   damage_utils:send_email(
     {maps:get(full_name, Data, <<"">>), ToEmail},
     <<"DamageBDD Account SignUp">>,
     damage_utils:load_template("signup_email.txt.mustache", Ctxt),
     damage_utils:load_template("signup_email.html.mustache", Ctxt)
-  ),
-  damage_riak:put(
-    ?USER_BUCKET,
-    ToEmail,
-    Data,
-    [{{binary_index, "enc_email"}, [damage_utils:encrypt(ToEmail)]}]
   ),
   {
     ok,
@@ -244,16 +206,19 @@ add_userdata(#{email := ToEmail} = Data0) ->
   }.
 
 
-add_user(#{business_name := BusinessName} = KycData) ->
-  add_user(maps:merge(KycData, #{<<"full_name">> => BusinessName}));
+add_user(#{business_name := BusinessName} = Meta) ->
+  add_user(maps:merge(Meta, #{<<"full_name">> => BusinessName}));
 
-add_user(#{email := ToEmail} = KycData) ->
-  case damage_riak:get(?USER_BUCKET, ToEmail) of
+add_user(#{email := Email} = Meta) when is_atom(Email) ->
+  add_user(maps:put(email, atom_to_binary(Email), Meta));
+
+add_user(#{email := Email} = Meta) when is_binary(Email) ->
+  case damage_ae:get_meta(Email) of
     notfound ->
-      ?LOG_DEBUG("account not found creating ~p", [ToEmail]),
-      add_userdata(damage_utils:binary_to_atom_keys(KycData));
+      ?LOG_DEBUG("account not found creating ~p", [Email]),
+      add_userdata(damage_utils:binary_to_atom_keys(Meta));
 
-    {ok, #{password := Password} = Found} ->
+    #{password := Password, email := Email} = Found ->
       case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
         notfound -> add_userdata(Found);
 
@@ -273,7 +238,7 @@ add_user(#{email := ToEmail} = KycData) ->
           end;
 
         _ ->
-          logger:info(" Accoun exists data: ~p ", [Found]),
+          logger:info("Account exists data: ~p ", [Found]),
           {
             error,
             <<
@@ -284,26 +249,21 @@ add_user(#{email := ToEmail} = KycData) ->
   end.
 
 
-delete_user(Username) -> delete(?USER_BUCKET, Username).
+delete_user(Username) -> damage_ae:delete_account(Username).
 
-add_client(Id, Secret, RedirectUri) ->
-  put(
-    ?CLIENT_BUCKET,
-    Id,
-    #{client_id => Id, client_secret => Secret, redirect_uri => RedirectUri}
-  ).
+add_client(_Id, _Secret, _RedirectUri) -> {error, notimplemented}.
 
 add_client(Id, Secret) -> add_client(Id, Secret, undefined).
 
-delete_client(Id) -> delete(?CLIENT_BUCKET, Id).
+delete_client(_Id) -> {error, notimplemented}.
 
 %%%===================================================================
 %%% OAuth2 backend functions
 %%%===================================================================
 
 authenticate_user({Username, Password}, _Ctxt) ->
-  case damage_riak:get(?USER_BUCKET, Username) of
-    {ok, #{password := UserPw}} ->
+  case damage_ae:get_meta(Username) of
+    #{password := UserPw} ->
       case Password of
         UserPw -> {ok, {<<"user">>, Username}};
         _ -> {error, badpass}
@@ -321,18 +281,12 @@ authenticate_user({Username, Password}, _Ctxt) ->
 
 authenticate_client(ClientId, ClientSecret) ->
   ?LOG_DEBUG("authenticate_client ~p   ~p ", [ClientId, ClientSecret]),
-  case catch damage_riak:get(?CLIENT_BUCKET, ClientId) of
-    {ok, #{client_secret := ClientSecret}} -> {ok, {<<"client">>, ClientId}};
-    {ok, #{client_secret := _WrongSecret}} -> {error, badsecret};
-    _ -> {error, notfound}
-  end.
+  {error, notfound}.
 
 
-get_client_identity(ClientId, _) ->
-  case get(?CLIENT_BUCKET, ClientId) of
-    {ok, _} -> {ok, {<<"client">>, ClientId}};
-    _ -> {error, notfound}
-  end.
+get_client_identity(ClientId, Identity) ->
+  ?LOG_DEBUG("get_client_identity ~p   ~p ", [ClientId, Identity]),
+  {error, notfound}.
 
 
 associate_access_code(AccessCode, Context, _AppContext) ->
@@ -354,8 +308,8 @@ associate_refresh_token(RefreshToken, Context, DeviceId, _) ->
   ).
 
 associate_access_token(AccessToken, Context, _) ->
-  Context0 = maps:from_list(Context),
-  ok = damage_riak:put(?ACCESS_TOKEN_BUCKET, AccessToken, Context0),
+  #{email := Email} = Context0 = maps:from_list(Context),
+  ok = damage_ae:set_token(Email, AccessToken, Context0),
   {ok, Context0}.
 
 
@@ -380,26 +334,23 @@ revoke_access_code(AccessCode, _AppContext) ->
   revoke_access_token(AccessCode, _AppContext).
 
 revoke_access_token(AccessToken, _) ->
-  delete(?ACCESS_TOKEN_BUCKET, AccessToken),
+  damage_riak:delete(?ACCESS_TOKEN_BUCKET, AccessToken),
   ok.
 
 
 revoke_refresh_token(_RefreshToken, _) -> ok.
 
 get_redirection_uri(ClientId, _) ->
-  case get(?CLIENT_BUCKET, ClientId) of
-    {ok, #{redirect_uri := RedirectUri}} -> {ok, RedirectUri};
-    Error = {error, notfound} -> Error
-  end.
+  ?LOG_ERROR("Not implemented get_redirection_uri ~p", [ClientId]),
+  {error, notimplemented}.
 
 
 verify_redirection_uri(ClientId, ClientUri, _) ->
-  case get(?CLIENT_BUCKET, ClientId) of
-    {ok, #{redirect_uri := RedirUri}} when ClientUri =:= RedirUri ->
-      {ok, RedirUri};
-
-    _Error -> {error, mismatch}
-  end.
+  ?LOG_ERROR(
+    "Not implemented verify_redirection_uri ~p ClientUri",
+    [ClientId, ClientUri]
+  ),
+  {error, notimplemented}.
 
 
 verify_client_scope(_ClientId, Scope, _) -> {ok, Scope}.
@@ -434,17 +385,3 @@ jwt_issuer() -> <<"https://run.DamageBDD.com">>.
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-get(Bucket, Key) ->
-  case damage_riak:get(Bucket, Key) of
-    [] -> {error, notfound};
-    {ok, Value} -> Value
-  end.
-
-
-put(Bucket, Key, Value) ->
-  damage_riak:put(Bucket, Key, Value),
-  ok.
-
-
-delete(Bucket, Key) -> damage_riak:delete(Bucket, Key).

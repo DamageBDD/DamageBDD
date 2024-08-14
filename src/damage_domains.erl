@@ -14,7 +14,6 @@
 -export([content_types_provided/2]).
 -export([to_json/2]).
 -export([from_json/2, allowed_methods/2, is_authorized/2]).
--export([test/0]).
 -export([content_types_accepted/2]).
 -export([trails/0]).
 -export([delete_resource/2]).
@@ -85,13 +84,12 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-to_json(Req, #{ae_account := AeAccount} = State) ->
-  ?LOG_DEBUG("domains ~p", [AeAccount]),
-  Domains = list_domains(AeAccount),
+to_json(Req, #{email := Email} = State) ->
+  Domains = damage_ae:get_domains(Email),
   {jsx:encode(Domains), Req, State}.
 
 
-from_json(Req, #{ae_account := AeAccount} = State) ->
+from_json(Req, #{ae_account := AeAccount, email := Email} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
@@ -103,7 +101,7 @@ from_json(Req, #{ae_account := AeAccount} = State) ->
         DomainToken = list_to_binary(uuid:to_string(uuid:uuid4())),
         DomainTokenKey = damage_utils:idhash_keys([AeAccount, Domain]),
         ?LOG_DEBUG("Domain token ~p", [DomainTokenKey]),
-        case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainTokenKey) of
+        case damage_ae:get_domain_token(Email, DomainTokenKey) of
           notfound ->
             DomainObj =
               #{
@@ -111,16 +109,10 @@ from_json(Req, #{ae_account := AeAccount} = State) ->
                 expiry => get_token_expiry(),
                 domain => Domain
               },
-            {ok, true} =
-              damage_riak:put(
-                ?DOMAIN_TOKEN_BUCKET,
-                DomainTokenKey,
-                DomainObj,
-                [{{binary_index, "ae_account"}, [AeAccount]}]
-              ),
+            ok = damage_ae:add_domain_token(Email, DomainTokenKey, DomainObj),
             {202, DomainObj};
 
-          {ok, Found} -> {200, Found}
+          #{domain_token := Found} -> {200, Found}
         end
     end,
   Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
@@ -128,13 +120,13 @@ from_json(Req, #{ae_account := AeAccount} = State) ->
   {stop, Resp, State}.
 
 
-delete_resource(Req, State) ->
+delete_resource(Req, #{email := Email} = State) ->
   Deleted =
     lists:foldl(
       fun
         (DeleteId, Acc) ->
           ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-          ok = damage_riak:delete(?DOMAIN_TOKEN_BUCKET, DeleteId),
+          ok = damage_ae:revoke_domain_token(Email, DeleteId),
           Acc + 1
       end,
       0,
@@ -249,7 +241,7 @@ check_host_token(Host0, AeAccount, Token0) ->
   DomainId = damage_utils:idhash_keys([AeAccount, Host]),
   ?LOG_DEBUG("CHECK domainid ~p ", [DomainId]),
   ?LOG_DEBUG("CHECK host ~p ~p", [Host, Token]),
-  case get_domain(DomainId) of
+  case damage_ae:get_domain_token(DomainId) of
     #{domain := Host, domain_token := Token} = _Domain ->
       ?LOG_DEBUG("CHECK OK ~p ~p", [Host, Token]),
       true;
@@ -258,50 +250,3 @@ check_host_token(Host0, AeAccount, Token0) ->
       ?LOG_DEBUG("CHECK FAIL ~p ", [Other]),
       false
   end.
-
-
-get_domain_unencrypted(DomainId) ->
-  case damage_riak:get(?DOMAIN_TOKEN_BUCKET, DomainId) of
-    {ok, Domain} ->
-      ?LOG_DEBUG("Loaded DomainId ~p", [DomainId]),
-      maps:put(id, DomainId, Domain);
-
-    _ -> none
-  end.
-
-
-get_domain(DomainId) when is_binary(DomainId) ->
-  case catch damage_utils:decrypt(DomainId) of
-    error ->
-      ?LOG_DEBUG("DomainId Decryption error ~p ", [DomainId]),
-      get_domain_unencrypted(DomainId);
-
-    {'EXIT', _Error} ->
-      ?LOG_DEBUG("DomainId Decryption error ~p ", [DomainId]),
-      get_domain_unencrypted(DomainId);
-
-    DomainIdDecrypted -> get_domain_unencrypted(DomainIdDecrypted)
-  end;
-
-get_domain(_) -> none.
-
-
-list_domains(AeAccount) ->
-  ?LOG_DEBUG("Contract ~p", [AeAccount]),
-  lists:filter(
-    fun (none) -> false; (_Other) -> true end,
-    [
-      get_domain(DomainId)
-      ||
-      DomainId
-      <-
-      damage_riak:get_index(
-        ?DOMAIN_TOKEN_BUCKET,
-        {binary_index, "ae_account"},
-        AeAccount
-      )
-    ]
-  ).
-
-
-test() -> ok.

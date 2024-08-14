@@ -19,7 +19,7 @@ phone: "0412345678"
     Then the yaml at path "$.email" must be "john.doe@damagebdd.com"
 
   Scenario: Test post json
-    Given I am using server "http://localhost:8080"
+    Given I am using server "https://run.staging.damagebdd.com"
     And I set "Content-Type" header to "application/json"
     When I make a POST request to "/tests/"
     """
@@ -39,3 +39,19 @@ phone: "0412345678"
     """
     Then the response status must be "201"
     Then the json at path "$.email" must be "john.doe@damagebdd.com"
+
+  Scenario: Post feature data
+    Given I am using server "https://staging.damagebdd.com"
+    When I make a GET request to "/execute_feature/"
+    Then the response status must be "200"
+    And I set "Content-Type" header to "x-www-form-urlencoded"
+    When I make a POST request to "/execute_feature/"
+    """
+    Feature: For testing an request to google
+       Scenario: root
+       When I make a GET request to "/"
+       Then the response status must be "200"
+    
+    """
+    Then the response status must be "200"
+    Then the json at path "$.status" must be "ok"

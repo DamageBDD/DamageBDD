@@ -18,7 +18,6 @@
 -export([check_invoices/0]).
 -export([delete_account/1]).
 -export([delete_resource/2]).
--export([get_user_info/1]).
 -export([notify_user/2]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -246,12 +245,12 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-get_invoices(Username) ->
+get_invoices(AeAccount) ->
   filter_valid_invoices(
     lnd:list_invoices(
       [{"creation_date_start", integer_to_list(unix_timestamp_hours_ago(24))}]
     ),
-    Username
+    AeAccount
   ).
 
 to_json(Req, #{action := confirm} = State) ->
@@ -260,8 +259,8 @@ to_json(Req, #{action := confirm} = State) ->
 
 to_json(Req, #{action := invoices} = State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{username := Username} = _State0} ->
-      {jsx:encode(get_invoices(Username)), Req, State};
+    {true, _Req0, #{ae_account := AeAccount} = _State0} ->
+      {jsx:encode(get_invoices(AeAccount)), Req, State};
 
     Other ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),
@@ -329,6 +328,7 @@ to_html(Req, #{action := reset_password} = State) ->
 -spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
   {integer(), map()}.
 do_post_action(create, Data, _Req, _State) ->
+  ?LOG_DEBUG("account  ~p", [Data]),
   case damage_oauth:add_user(Data) of
     {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
     {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
@@ -347,8 +347,14 @@ when Amount > ?MAX_DAMAGE_INVOICE ->
 
 do_post_action(invoices, #{amount := Amount}, Req, State) ->
   case damage_http:is_authorized(Req, State) of
-    {true, _Req0, #{username := Username} = _State0} ->
-      {201, #{status => <<"ok">>, invoice => create_invoice(Amount, Username)}};
+    {true, _Req0, #{username := Username, ae_account := AeAccount} = _State0} ->
+      {
+        201,
+        #{
+          status => <<"ok">>,
+          invoice => create_invoice(Amount, Username, AeAccount)
+        }
+      };
 
     Other ->
       ?LOG_DEBUG("Unexpected ~p", [Other]),
@@ -356,14 +362,14 @@ do_post_action(invoices, #{amount := Amount}, Req, State) ->
   end.
 
 
-create_invoice(Amount, Username) ->
+create_invoice(Amount, Username, AeAccount) ->
   DmgAmount = damage:sats_to_damage(Amount),
   Memo =
     list_to_binary(
       lists:flatten(
         io_lib:format(
-          "Invoice for ~p damage tokens for ~s",
-          [DmgAmount, Username]
+          "Invoice for ~p damage tokens for user ~s, with AE Account ~s",
+          [DmgAmount, Username, AeAccount]
         )
       )
     ),
@@ -373,13 +379,13 @@ create_invoice(Amount, Username) ->
   Invoice.
 
 
-filter_valid_invoices(Invoices, Username) ->
+filter_valid_invoices(Invoices, AeAccount) ->
   lists:filter(
     fun
       (Invoice) ->
         case Invoice of
           #{<<"state">> := <<"OPEN">>, <<"memo">> := Memo} ->
-            MemoRe = lists:flatten(io_lib:format(".*~s$", [Username])),
+            MemoRe = lists:flatten(io_lib:format(".*~s$", [AeAccount])),
             case re:run(Memo, MemoRe) of
               {match, _Matched} -> true;
 
@@ -601,16 +607,9 @@ check_invoices() ->
 
 
 delete_account(Email) ->
-  case damage_riak:delete(?USER_BUCKET, Email) of
+  case damage_ae:delete_account(Email) of
     ok -> ok;
     _ -> fail
-  end.
-
-
-get_user_info(Username) ->
-  case damage_riak:get(?USER_BUCKET, Username) of
-    {ok, #{password := UserPw}} -> UserPw;
-    _ -> <<"">>
   end.
 
 

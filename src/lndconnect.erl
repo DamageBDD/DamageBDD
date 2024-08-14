@@ -190,20 +190,11 @@ handle_event(
     #{state := <<"SETTLED">>, memo := Memo, amt_paid_sat := AmountPaid0}
   } = Event
 ) ->
-  [_, Username] = string:split(Memo, " ", trailing),
-  ?LOG_INFO("Invoice paid for ~p ~p", [Username, Event]),
+  [_, AeAccount] = string:split(Memo, " ", trailing),
+  ?LOG_INFO("Invoice paid for ~p ~p", [AeAccount, Event]),
   AmountPaid = binary_to_integer(AmountPaid0),
-  case damage_riak:get(?USER_BUCKET, Username) of
-    notfound ->
-      ?LOG_ERROR("Got invoice paid for unknown username ~p", [Username]);
-
-    {ok, #{ae_account := AeAccount, email := Username} = _Data} ->
-      damage_ae:transfer_damage_tokens(
-        AeAccount,
-        damage:sats_to_damage(AmountPaid)
-      ),
-      ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount, Username])
-  end,
+  damage_ae:transfer_damage_tokens(AeAccount, damage:sats_to_damage(AmountPaid)),
+  ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount]),
   ok.
 
 

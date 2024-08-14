@@ -178,12 +178,7 @@ execute_bdd(
         [Schedule, AeAccount, Hash, Concurrency, Balance]
       ),
       Result = damage:execute_file(Config, Context, BddFileName),
-      true =
-        damage_riak:update_counter(
-          ?SCHEDULE_EXECUTION_COUNTER,
-          Hash,
-          {increment, 1}
-        ),
+      metrics:update(schedule_execution, {AeAccount, Hash}),
       Result;
 
     Other ->
@@ -246,6 +241,7 @@ when is_integer(Seconds) ->
   Job = {{once, Seconds}, {damage_schedule, execute_bdd, [Schedule]}},
   erlcron_cron(ScheduleId, Job).
 
+
 binary_spec_to_term_spec([], Acc) -> Acc;
 
 binary_spec_to_term_spec([Spec | Rest], Acc) when is_integer(Spec) ->
@@ -281,7 +277,7 @@ list_schedules(Username, AeAccount) ->
       "get_schedules",
       []
     ),
-  load_account_schedules(AeAccount, Username, Results).
+  load_account_schedules(AeAccount, Results).
 
 
 load_all_schedules() ->
@@ -295,23 +291,25 @@ load_all_schedules() ->
 list_all_schedules() ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
   {ok, AdminWallet} = application:get_env(damage, ae_wallet),
-  AdminPassword = os:getenv("AE_PASSWORD"),
-    case damage_ae:contract_call(
-      AdminWallet,
-      AdminPassword,
-      AccountContract,
-      "contracts/account.aes",
-      "get_all_schedules",
+  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  case
+  damage_ae:contract_call(
+    AdminWallet,
+    AdminPassword,
+    AccountContract,
+    "contracts/account.aes",
+    "get_all_schedules",
+    []
+  ) of
+    #{decodedResult := Results} ->
+      Decrypted = decrypt_schedules(Results),
+      ?LOG_DEBUG("schedules ~p", [Decrypted]),
+      Decrypted;
+
+    #{status := <<"fail">>} ->
+      ?LOG_ERROR("schedules loading failed ~p", [AccountContract]),
       []
-    ) of
-        #{decodedResult := Results} ->
-            Decrypted = decrypt_schedules(Results),
-            ?LOG_DEBUG("schedules ~p", [Decrypted]),
-            Decrypted;
-        #{status := <<"fail">>} ->
-            ?LOG_ERROR("schedules loading failed ~p", [AccountContract]),
-            []
-    end.
+  end.
 
 
 delete_schedule(Username, ScheduleId) ->
@@ -374,7 +372,7 @@ add_schedule(Username, Name, FeatureHash, Cron) ->
 
 cancel_all_schedules() -> [erlcron:cancel(X) || X <- erlcron:get_all_jobs()].
 
-load_account_schedules(Account, Username, Schedules) ->
+load_account_schedules(Account, Schedules) ->
   ?LOG_DEBUG("Accounts ~p", [Account]),
   lists:map(
     fun
@@ -408,12 +406,7 @@ load_account_schedules(Account, Username, Schedules) ->
             )
           ),
         maps:merge(
-          #{
-            id => ScheduleId,
-            ae_account => Account,
-            concurrency => 1,
-            username => Username
-          },
+          #{id => ScheduleId, ae_account => Account, concurrency => 1},
           Schedule0
         )
     end,
@@ -426,12 +419,7 @@ decrypt_schedules(EncryptedSchedules) ->
     fun
       ([Account, Schedules]) ->
         ?LOG_DEBUG("Account ~p", [Account]),
-        case damage_riak:get(?AEACCOUNT_BUCKET, Account) of
-          {ok, #{email := Username} = _User} ->
-            {true, load_account_schedules(Account, Username, Schedules)};
-
-          _ -> false
-        end
+        load_account_schedules(Account, Schedules)
     end,
     EncryptedSchedules
   ).
@@ -464,6 +452,6 @@ test_list_schedule() ->
         ]
       ]
     ],
-  Decrypted = load_account_schedules("Acc", "User", Results),
+  Decrypted = load_account_schedules("Acc", Results),
   ?LOG_DEBUG("schedules ~p", [Decrypted]),
   Decrypted.
