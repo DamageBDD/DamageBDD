@@ -120,9 +120,14 @@ reset_password(
               {notok, <<"Confirm Token Expired.">>};
 
             {ok, #{email := Email}} ->
-              ok =
+              {ok, #{public_key := AeAccount}} =
                 damage_ae:maybe_create_wallet(
                   #{email => Email, password => NewPassword}
+                ),
+              #{decodedResult := []} =
+                damage_ae:transfer_damage_tokens(
+                  AeAccount,
+                  damage_ae:sats_to_damage(4000)
                 ),
               damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password);
 
