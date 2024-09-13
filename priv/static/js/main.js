@@ -104,6 +104,12 @@ let bearer_token = null;
 			console.log("add schedule");
 			event.preventDefault();
 		});
+		document.getElementById("historylink").addEventListener("click",(event) => {
+			console.log("historytab");
+			var tabs =Tabby('[data-tabs]');
+			tabs.toggle('history');
+			event.preventDefault();
+		});
 
 		showHideLoginButton();
 		MicroModal.init({
