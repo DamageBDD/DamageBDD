@@ -829,7 +829,7 @@ get_wallet_password(EmailOrUsername) ->
 
 get_wallet_path(Email) ->
   WalletName = binary_to_list(damage_utils:idhash_keys([Email])),
-  filename:join(["wallets", "damage_user_wallet_" ++ WalletName]).
+  filename:join(["wallets", "damagebdd_user_wallet_" ++ WalletName]).
 
 
 create_wallet(WalletName) when is_binary(WalletName) ->
@@ -903,7 +903,7 @@ fund_wallet(AeAccount, EmailOrUsername, Amount) ->
     ],
   Result = exec_aecli(Cmd),
   ?LOG_INFO("Funded wallet with pub key ~p ~p", [EmailOrUsername, Result]),
-  {funded, Result}.
+  Result.
 
 
 maybe_fund_wallet(EmailOrUsername) ->
@@ -916,10 +916,10 @@ maybe_fund_wallet(EmailOrUsername, Amount) ->
     jsx:decode(Wallet, [{labels, atom}, return_maps]),
   case get_ae_balance(UserAccount) of
     #{balance := Balance} when Balance < ?AE_USER_WALLET_MINIMUM_BALANCE ->
-      fund_wallet(UserAccount, EmailOrUsername, Amount);
+      {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
 
     #{reason := <<"Account not found">>} ->
-      fund_wallet(UserAccount, EmailOrUsername, Amount);
+      {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
 
     Result ->
       ?LOG_INFO("Wallet above minimum balance ~p ~p", [EmailOrUsername, Result]),
@@ -929,8 +929,9 @@ maybe_fund_wallet(EmailOrUsername, Amount) ->
 
 maybe_create_wallet(#{email := Email, password := Password}) ->
   create_wallet(Email),
-  maybe_fund_wallet(Email),
-  set_meta(#{email => Email, password => Password}).
+  AeAccount = maybe_fund_wallet(Email),
+  set_meta(#{email => Email, password => Password}),
+  AeAccount.
 
 
 deploy_account_contract() ->
@@ -944,9 +945,9 @@ deploy_account_contract() ->
 
 
 test_create_wallet() ->
-  #{wallet_address := WalletAddress} =
-    Result = maybe_create_wallet(#{email => "stevenjose@gmail.com"}),
-  ?LOG_INFO("Wallet created ~p ~p.", [WalletAddress, Result]).
+  #{public_key := WalletAddress} =
+    maybe_create_wallet(#{email => "stevenjose@gmail.com"}),
+  ?LOG_INFO("Wallet created ~p ", [WalletAddress]).
 
 
 test_contract_call() ->
