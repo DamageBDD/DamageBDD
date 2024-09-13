@@ -612,4 +612,4 @@ get_default_config(AeAccount, Concurrency, Formatters) ->
 
 
 sats_to_damage(Sats) ->
-  round((Sats * ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS)).
+  round((Sats / ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS)).
