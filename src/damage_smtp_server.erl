@@ -26,7 +26,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--define(LOGGER_META, #{domain => [gen_smtp, example_handler]}).
+-define(LOGGER_META, #{domain => [gen_smtp, damagebdd_handler]}).
 -define(RELAY, true).
 
 -record(state, {options = [] :: list()}).
