@@ -20,7 +20,6 @@
 -export([get_global_template_context/1]).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("reporting/formatter.hrl").
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Context Management"]).
@@ -141,7 +140,7 @@ get_global_template_context(Context) ->
   maps:merge(
     #{
       api_url => DamageApi,
-      formatter_state => #state{},
+      formatter_state => #damage_state{},
       headers => [],
       token_contract => list_to_binary(DamageTokenContract),
       account_contract => list_to_binary(DamageAccountContract),

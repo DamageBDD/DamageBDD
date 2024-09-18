@@ -21,7 +21,6 @@
 -export([notify_user/2]).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("reporting/formatter.hrl").
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Account Management"]).

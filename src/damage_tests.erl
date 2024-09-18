@@ -17,7 +17,6 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("reporting/formatter.hrl").
 
 -define(TRAILS_TAG, ["Test Endpoints"]).
 

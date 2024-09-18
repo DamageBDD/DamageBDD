@@ -8,7 +8,6 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("reporting/formatter.hrl").
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).

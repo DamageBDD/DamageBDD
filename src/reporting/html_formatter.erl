@@ -1,6 +1,5 @@
 -module(html_formatter).
 
--include_lib("reporting/formatter.hrl").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 

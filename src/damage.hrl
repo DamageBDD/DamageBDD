@@ -23,3 +23,5 @@
 -define(RESULT_STATUS_PREFIX_FAIL, "7").
 -define(DAMAGE_PRICE, 100).
 -define(DAMAGE_DECIMALS, 8).
+
+-record(damage_state, {formatters = [], test_state = []}).

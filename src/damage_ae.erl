@@ -7,7 +7,6 @@
 -license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("reporting/formatter.hrl").
 
 -behaviour(gen_server).
 
