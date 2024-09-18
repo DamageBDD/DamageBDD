@@ -71,6 +71,19 @@ init([]) ->
         % optional
         type => worker,
         modules => [damage_ae]
+      },
+      #{
+        % mandatory
+        id => damage_nostr,
+        % mandatory
+        start => {damage_nostr, start_link, []},
+        % optional
+        restart => permanent,
+        % optional
+        shutdown => 60,
+        % optional
+        type => worker,
+        modules => [damage_nostr]
       }
     ],
   logger:info("Worker definitions ~p~n", [PoolSpecs0]),
