@@ -97,10 +97,9 @@ payable main contract Account =
         let oldmap = Map.lookup_default(Call.caller, state.published, {})
         let newmap = oldmap{[feature_hash] = bid}
         put(state{published[Call.caller] = newmap})
-    stateful entrypoint get_published(): [] =
-        let oldmap = Map.lookup_default(Call.caller, state.published, {})
-        let newmap = oldmap{[feature_hash] = bid}
-        put(state{published[Call.caller] = newmap})
+
+    stateful entrypoint get_published(): map(address, map(string, int)) =
+        state.published
 
     stateful entrypoint claim_damage(feature_hash: string, report_hash: string) =
         let oldmap = Map.lookup_default(Call.caller, state.claimed, {})
