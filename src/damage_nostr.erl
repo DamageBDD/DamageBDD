@@ -12,7 +12,8 @@
 
 %% API
 
--export([start_link/0, stop/0, subscribe/0, getinfo/0]).
+-export([start_link/0, stop/0]).
+-export([subscribe/0, getinfo/0, reply/3]).
 
 %% gen_server callbacks
 
@@ -54,6 +55,12 @@ stop() ->
 subscribe() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), subscribe).
 
 getinfo() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), getinfo).
+
+reply(OriginalEventId, OriginalAuthorPubKey, ReplyContent) ->
+  gen_server:call(
+    gproc:lookup_local_name(?NOSTR_PROC),
+    {reply, OriginalEventId, OriginalAuthorPubKey, ReplyContent}
+  ).
 
 %%% gen_server Callbacks
 %% Initialize the server and open a WebSocket connection
@@ -106,6 +113,51 @@ handle_call(getinfo, _From, State) ->
   gun:flush(State#state.conn_pid),
   {reply, ok, State};
 
+handle_call(
+  {reply, OriginalEventId, OriginalAuthorPubKey, ReplyContent},
+  _From,
+  State
+) ->
+  %% Function: send_reply/5
+  %% Sends a reply to a Nostr event via WebSocket.
+  %%
+  %% Params:
+  %% - RelayPid: The process ID of the gun WebSocket connection.
+  %% - PrivateKey: Your private key (binary).
+  %% - OriginalEventId: The ID of the event being replied to.
+  %% - OriginalAuthorPubKey: The public key of the original event's author.
+  %% - ReplyContent: The content of your reply message.
+  PrivateKey = os:getenv("DAMAGE_NOSTR_PRIVATE_KEY"),
+  %% Step 1: Create the event
+  PublicKey = get_public_key(PrivateKey),
+  Event =
+    #{
+      <<"pubkey">> => PublicKey,
+      <<"created_at">> => os:system_time(second),
+      %% Kind 1 for a text event
+      <<"kind">> => 1,
+      <<"tags">> => [
+        %% Tag for event ID being replied to
+        [<<"e">>, OriginalEventId],
+        %% Tag for public key of original author
+        [<<"p">>, OriginalAuthorPubKey]
+      ],
+      <<"content">> => ReplyContent
+    },
+  %% Step 2: Generate event ID (hash) and sign the event
+  EventId = get_event_id(Event),
+  SignedEvent = maps:put(<<"id">>, EventId, Event),
+  Signature = sign_event(SignedEvent, PrivateKey),
+  FinalEvent = maps:put(<<"sig">>, Signature, SignedEvent),
+  %% Step 3: Convert the event to JSON
+  EventJson = jsx:encode([<<"EVENT">>, FinalEvent]),
+  %% Step 4: Send the event via WebSocket (gun)
+  ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
+  ok =
+    gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
+  gun:flush(State#state.conn_pid),
+  {reply, ok, State};
+
 handle_call(subscribe, _From, State) ->
   %% Subscribe to all messages
   SubscriptionMessage =
@@ -142,13 +194,58 @@ handle_info({gun_ws, _ConnPid, _, {text, Message}}, State) ->
     [
       <<"EVENT">>,
       <<"damagebdd">>,
-      #{id := _Id, tags := _Tags, content := Content, pubkey := Npub}
+      #{
+        id := OriginalEventId,
+        tags := _Tags,
+        content := Content,
+        pubkey := Npub
+      }
     ] ->
       case string:str(string:to_lower(binary_to_list(Content)), "damagebdd") of
         0 -> ok;
 
         _Found ->
-          ?LOG_INFO("Nostr Received message from: ~s ~s~n", [Npub, Content])
+          ?LOG_INFO("Nostr Received message from: ~s ~s~n", [Npub, Content]),
+          case throttle:check(damage_nostr_rate, Npub) of
+            {limit_exceeded, _, _} ->
+              ?LOG_WARNING("Npub ~p exceeded api limit", [Npub]);
+
+            _ ->
+              case damage_ae:resolve_npub(Npub) of
+                notfound ->
+                  reply(
+                    OriginalEventId,
+                    Npub,
+                    <<
+                      "Account mapping not found please login and link an npub"
+                    >>
+                  );
+
+                AeAccount ->
+                  case damage_ae:balance(AeAccount) of
+                    Balance when Balance > 0 ->
+                      Context = #{npub => Npub, ae_account => AeAccount},
+                      Config = get_config(Context),
+                      jsx:encode(execute_bdd(
+                        Config,
+                        damage_context:get_account_context(
+                          damage_context:get_global_template_context(Context)
+                        ),
+                        Context
+                      ));
+
+                    Other ->
+                      reply(
+                        OriginalEventId,
+                        Npub,
+                        <<
+                          "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+                          Other/binary
+                        >>
+                      )
+                  end
+              end
+          end
       end;
 
     [<<"EOSE">>, <<"damagebdd">>] -> ok
@@ -202,6 +299,61 @@ terminate(Reason, State) ->
 %% No code changes expected in this example
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
+
+get_config(#{npub := Npub} = _Context) ->
+  AeAccount = damage_ae:resolve_npub(Npub),
+  damage:get_default_config(AeAccount, 1, []).
+
+execute_bdd(Config, Context, #{feature := FeatureData}) ->
+  case damage:execute_data(Config, Context, FeatureData) of
+    [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
+        #{
+          status => <<"notok">>,
+          failing_step => list_to_binary(damage_utils:lists_concat(Step, " ")),
+          line => Line
+        };
+
+    {parse_error, LineNo, Message} ->
+      ?LOG_DEBUG("failure ~p.", [Message]),
+        #{
+          status => <<"notok">>,
+          message => list_to_binary(Message),
+          line => LineNo,
+          hint
+          =>
+          <<
+            "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+          >>
+        };
+
+    #{report_hash := _} = Result ->
+      maps:merge(Result, #{status => <<"ok">>})
+  end.
+%% Utility function to get public key from private key
+
+get_public_key(PrivateKey) ->
+  %% This would use the elliptic curve (secp256k1) to get the public key
+  %% You can use an Erlang NIF library like `libsecp256k1` or custom code
+  %% Placeholder: Replace this with actual key generation code
+  PublicKey = crypto:hash(sha256, PrivateKey),
+  PublicKey.
+
+%% Utility function to generate event ID (hash) from event data
+
+get_event_id(Event) ->
+  %% Event ID is the sha256 hash of the serialized event fields
+  %% You can customize the serialization as needed
+  EventJson = jsx:encode(Event),
+  crypto:hash(sha256, EventJson).
+
+%% Utility function to sign the event with the private key
+
+sign_event(Event, PrivateKey) ->
+  EventJson = jiffy:encode(Event),
+  Signature =
+    crypto:sign(ecdsa, sha256, EventJson, [PrivateKey, {curve, secp256k1}]),
+  Signature.
+
 
 test_simple() ->
   {ok, ConnPid} =
