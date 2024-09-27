@@ -15,7 +15,8 @@ payable main contract Account =
         webhooks: map(address, map(string, string)),
         invoices: map(address, map(string, int)),
         published: map(address, map(string, int)),
-        claimed: map(address, map(string, string))
+        claimed: map(address, map(string, string)),
+        npubs: map(string, address) //mapping nostr npubs to ae_addresses
         }
 
     stateful entrypoint init() = {
@@ -31,6 +32,8 @@ payable main contract Account =
         published = {},
         claimed = {}
         }
+    stateful entrypoint resolve_npub(npub: string):  address =
+        Map.lookup_default(npub, state.npubs, "notfound")
 
     stateful entrypoint get_meta():  string =
         Map.lookup_default(Call.caller, state.meta, "notfound")

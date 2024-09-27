@@ -381,6 +381,20 @@ handle_call({get_meta, EmailOrUsername}, _From, Cache) ->
     Meta when is_map(Meta) ->
       ?LOG_DEBUG("Cache hit get Meta ~p", [Meta]),
       {reply, Meta, Cache}
+  end;
+
+handle_call({resolve_npub, NPub}, _From, Cache) ->
+  case catch maps:get(NPub, Cache, undefined) of
+    undefined ->
+      #{decodedResult := EncryptedMetaJson} =
+        contract_call_admin_account("resolve_npub", [NPub]),
+      AeAccount = damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
+      ?LOG_DEBUG("cache miss npub ~p ~p", [NPub, AeAccount]),
+      {reply, AeAccount, maps:put(NPub, AeAccount, Cache)};
+
+    Meta when is_map(Meta) ->
+      ?LOG_DEBUG("Cache hit get Meta ~p", [Meta]),
+      {reply, Meta, Cache}
   end.
 
 
