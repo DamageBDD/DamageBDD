@@ -316,11 +316,13 @@ execute_file(Config, Context, Filename) ->
           end,
           result => Result,
           ae_account => maps:get(ae_account, Context),
-          result_status => ResultStatus
+          result_status => ResultStatus,
+          token_contract => maps:get(token_contract, FinalContext),
+          node_public_key => maps:get(node_public_key, FinalContext)
         },
       store_runrecord(RunRecord),
       damage_webhooks:trigger_webhooks(FinalContext),
-      damage_ae:confirm_spend(FinalContext),
+      damage_ae:confirm_spend(RunRecord),
       RunRecord;
 
     {error, enont} = Err ->

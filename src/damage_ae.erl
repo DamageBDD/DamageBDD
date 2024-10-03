@@ -10,6 +10,8 @@
 
 -behaviour(gen_server).
 
+-define(DEFAULT_HTTP_TIMEOUT, 60000).
+
 -export(
   [
     init/1,
@@ -37,7 +39,9 @@
     get_domain_token/2,
     add_domain_token/3,
     revoke_domain_token/2,
-    contract_call_admin_account/2
+    contract_call_admin_account/2,
+    get_ae_mdw_node/0,
+    get_ae_mdw_ws_node/0
   ]
 ).
 -export([sign_tx/2]).
@@ -51,6 +55,10 @@
 -export([set_token/3]).
 -export([get_token/2]).
 -export([revoke_token/2]).
+-export([resolve_npub/1]).
+-export([get_last_test_status/3]).
+-export([get_block_height_since/2]).
+-export([test_find_block/0]).
 
 -define(AE_USER_WALLET_MINIMUM_BALANCE, 1000100000000000).
 -define(AE_TIMEOUT, 36000).
@@ -91,6 +99,63 @@ get_ae_mdw_node() ->
   {ok, AENodes} = application:get_env(damage, ae_mdw_nodes),
   find_active_node(AENodes).
 
+
+get_ae_mdw_ws_node() ->
+  {ok, AENodes} = application:get_env(damage, ae_mdw_ws_nodes),
+  find_active_node(AENodes).
+
+
+get_last_test_status(AeAccount, FeatureHash, Hours) ->
+  ?LOG_DEBUG("Check balance ~p", [AeAccount]),
+  DamageAEPid = get_wallet_proc(AeAccount),
+  gen_server:call(
+    DamageAEPid,
+    {get_last_test_status, FeatureHash, Hours},
+    ?AE_TIMEOUT
+  ).
+
+
+get_block_height_since(SinceHours, ConnPid) ->
+  find_block_at_timestamp(
+    date_util:datetime_to_epoch(
+      calendar:now_to_datetime(erlang:timestamp())
+      -
+      hours_to_seconds(SinceHours)
+    ),
+    ConnPid
+  ).
+
+hours_to_seconds(Hours) -> 3600 * Hours.
+
+handle_call(
+  {get_last_test_status, AeAccount, _FeatureHash, Hours},
+  _From,
+  Cache
+) ->
+  case get_ae_mdw_node() of
+    {ok, ConnPid, PathPrefix} ->
+      Path =
+        PathPrefix
+        ++
+        "v3/accounts/"
+        ++
+        AeAccount
+        ++
+        "/activities?direction=backward&type=transactions&height="
+        ++
+        get_block_height_since(Hours, ConnPid),
+      StreamRef = gun:get(ConnPid, Path),
+      Balance =
+        case read_stream(ConnPid, StreamRef) of
+          #{amount := null} -> 0;
+          #{amount := Balance0} -> Balance0
+        end,
+      {reply, Balance, Cache};
+
+    Err ->
+      ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+      {reply, {error, not_found}, Cache}
+  end;
 
 handle_call({reports, AeAccount}, _From, Cache) ->
   {ok, DamageToken} = application:get_env(damage, token_contract),
@@ -386,15 +451,24 @@ handle_call({get_meta, EmailOrUsername}, _From, Cache) ->
 handle_call({resolve_npub, NPub}, _From, Cache) ->
   case catch maps:get(NPub, Cache, undefined) of
     undefined ->
-      #{decodedResult := EncryptedMetaJson} =
-        contract_call_admin_account("resolve_npub", [NPub]),
-      AeAccount = damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
-      ?LOG_DEBUG("cache miss npub ~p ~p", [NPub, AeAccount]),
-      {reply, AeAccount, maps:put(NPub, AeAccount, Cache)};
+      case catch contract_call_admin_account("resolve_npub", [NPub]) of
+        #{decodedResult := EncryptedMetaJson} ->
+          AeAccount = damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
+          ?LOG_DEBUG("cache miss npub ~p ~p", [NPub, AeAccount]),
+          {reply, AeAccount, maps:put(NPub, AeAccount, Cache)};
+
+        Error ->
+          ?LOG_DEBUG("Error  ~p", [Error]),
+          {reply, error, Cache}
+      end;
 
     Meta when is_map(Meta) ->
       ?LOG_DEBUG("Cache hit get Meta ~p", [Meta]),
-      {reply, Meta, Cache}
+      {reply, Meta, Cache};
+
+    Error ->
+      ?LOG_DEBUG("Error  ~p", [Error]),
+      {reply, error, Cache}
   end.
 
 
@@ -403,15 +477,15 @@ handle_cast(
     confirm_spend,
     #{
       username := EmailOrUsername,
-      feature_hash := FeatureHash,
-      report_hash := ReportHash,
+      feature_hash := _FeatureHash,
+      report_hash := _ReportHash,
       token_contract := DamageTokenContract,
       node_public_key := NodePublicKey
-    } = SpendContext
+    } = RunRecord
   },
   Cache
 ) ->
-  ?LOG_DEBUG("confirm spend ~p", [SpendContext]),
+  ?LOG_DEBUG("confirm spend ~p", [RunRecord]),
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
   case maps:get(spent_balance, AccountCache, {0, 0}) of
     {_, Amount} when Amount > 0 ->
@@ -421,7 +495,7 @@ handle_cast(
         DamageTokenContract,
         "contracts/token.aes",
         "spend",
-        [NodePublicKey, Amount, FeatureHash, ReportHash]
+        [NodePublicKey, Amount, RunRecord]
       ) of
         #{
           decodedEvents
@@ -801,6 +875,12 @@ revoke_domain_token(Email, Domain) ->
   gen_server:cast(DamageAEPid, {add_domain_token, Domain}).
 
 
+resolve_npub(Npub) ->
+  % temporary storage to commit after feature execution
+  DamageAEPid = get_wallet_proc(admin),
+  gen_server:call(DamageAEPid, {resolve_npub, Npub}, ?AE_TIMEOUT).
+
+
 setup_vanillae_deps() ->
   true = code:add_path("_checkouts/vanillae/ebin"),
   true = code:add_path("_checkouts/vw/ebin"),
@@ -955,6 +1035,100 @@ deploy_account_contract() ->
   application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
   ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
   ContractAddress.
+
+%% Main function to find the block height at or near the given timestamp.
+%% It initializes an empty cache (map) and passes it along the recursive calls.
+
+find_block_at_timestamp(Timestamp, ConnPid) ->
+  {ok, TopBlockHeight} = get_latest_block_height(ConnPid),
+  ?LOG_INFO("High ~p", [TopBlockHeight]),
+  % Initialize an empty cache
+  Cache = #{},
+  binary_search_block(Timestamp, 100000, TopBlockHeight, ConnPid, Cache).
+
+%% Perform a binary search to find the closest block at or before the given timestamp.
+
+binary_search_block(TargetTimestamp, Low, High, ConnPid, Cache) when Low =< High ->
+  Mid = (Low + High) div 2,
+  ?LOG_INFO("Mid ~p", [Mid]),
+  case get_block_timestamp_with_cache(Mid, ConnPid, Cache) of
+    {ok, {BlockTimestamp, NewCache}} ->
+      case BlockTimestamp of
+        _ when BlockTimestamp =:= TargetTimestamp ->
+          % Exact match
+          {ok, Mid};
+
+        notfound ->
+          binary_search_block(TargetTimestamp, Mid + 1, High, ConnPid, NewCache);
+
+        _ when BlockTimestamp < TargetTimestamp ->
+          binary_search_block(TargetTimestamp, Mid + 1, High, ConnPid, NewCache);
+
+        _ when BlockTimestamp > TargetTimestamp ->
+          binary_search_block(TargetTimestamp, Low, Mid - 1, ConnPid, NewCache)
+      end;
+
+    {error, _Error} ->
+      binary_search_block(TargetTimestamp, Mid + 1, High, ConnPid, Cache)
+  end;
+
+binary_search_block(_, Low, _, _, Cache) ->
+  ?LOG_INFO("Low ~p", [Low]),
+  {ok, maps:get(lastblock, Cache, no_block_found), Cache}.
+
+%% Get the latest block height from the Aeternity API.
+
+get_latest_block_height(ConnPid) ->
+  StreamRef = gun:get(ConnPid, "/v3/status"),
+  #{node_height := NodeHeight} = read_stream(ConnPid, StreamRef),
+  {ok, NodeHeight}.
+
+%% Caching mechanism using a map: check the cache first, if not found, fetch from API and update the cache.
+
+get_block_timestamp_with_cache(Height, ConnPid, Cache) ->
+  case maps:get(Height, Cache, undefined) of
+    Timestamp when Timestamp =/= undefined ->
+      % Return cached timestamp
+      {ok, {Timestamp, Cache}};
+
+    undefined ->
+      % Fetch from API if not cached
+      HeightBin = integer_to_binary(Height),
+      HeightBinLen = size(HeightBin),
+      case get_block_timestamp(Height, ConnPid) of
+        {ok, BlockTimestamp} ->
+          % Update the cache
+          NewCache = maps:put(Height, BlockTimestamp, Cache),
+          {ok, {BlockTimestamp, maps:put(lastblock, Height, NewCache)}};
+
+        {error, #{error := <<"not found:", HeightBin:HeightBinLen/binary>>}} ->
+          NewCache = maps:put(Height, notfound, Cache),
+          {notfound, {Height, NewCache}};
+
+        Error -> {error, {Error, Cache}}
+      end
+  end.
+
+%% Get the block's timestamp at a specific height (without caching).
+
+get_block_timestamp(Height, ConnPid) ->
+  StreamRef = gun:get(ConnPid, "/v3/key-blocks/" ++ integer_to_list(Height)),
+  case read_stream(ConnPid, StreamRef) of
+    #{time := KeyBlockTime} ->
+      ?LOG_INFO("Block timestamp ~p", [KeyBlockTime]),
+      {ok, KeyBlockTime};
+
+    Error -> Error
+  end.
+
+
+test_find_block() ->
+  case get_ae_mdw_node() of
+    {ok, ConnPid, _PathPrefix} ->
+      find_block_at_timestamp(1726119531337, ConnPid);
+
+    Error -> ?LOG_ERROR("Failed to find block timestamp ~p", [Error])
+  end.
 
 
 test_create_wallet() ->
