@@ -29,6 +29,7 @@
     test_simple/0
   ]
 ).
+-export([get_posts_since/2]).
 
 %% Define the record to store state
 
@@ -56,6 +57,12 @@ subscribe() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), subscribe).
 
 getinfo() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), getinfo).
 
+get_posts_since(Npub, Since) ->
+  gen_server:call(
+    gproc:lookup_local_name(?NOSTR_PROC),
+    {get_posts_since, Npub, Since}
+  ).
+
 reply(OriginalEventId, OriginalAuthorPubKey, ReplyContent) ->
   gen_server:call(
     gproc:lookup_local_name(?NOSTR_PROC),
@@ -79,7 +86,7 @@ init([]) ->
   {upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
   ?LOG_INFO("Started damage nostr", []),
   SubscriptionMessage =
-    jsx:encode([<<"REQ">>, <<"damagebdd">>, #{kinds => [1], since => 0}]),
+    jsx:encode([<<"REQ">>, <<"damagebdd">>, #{kinds => [1]}]),
   Frame = {text, SubscriptionMessage},
   gun:ws_send(ConnPid, StreamRef, Frame),
   HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
@@ -161,7 +168,7 @@ handle_call(
 handle_call(subscribe, _From, State) ->
   %% Subscribe to all messages
   SubscriptionMessage =
-    jsx:encode([<<"REQ">>, <<"damagebdd">>, #{kinds => [1], since => 0}]),
+    jsx:encode([<<"REQ">>, <<"damagebdd">>, #{kinds => [1]}]),
   ?LOG_INFO("Nostr Sending message: ~p ~p", [State, SubscriptionMessage]),
   ok =
     gun:ws_send(
@@ -190,66 +197,7 @@ when StreamRef == State#state.streamref ->
   {noreply, State#state{conn_pid = ConnPid}};
 
 handle_info({gun_ws, _ConnPid, _, {text, Message}}, State) ->
-  case jsx:decode(Message, [{labels, atom}]) of
-    [
-      <<"EVENT">>,
-      <<"damagebdd">>,
-      #{
-        id := OriginalEventId,
-        tags := _Tags,
-        content := Content,
-        pubkey := Npub
-      }
-    ] ->
-      case string:str(string:to_lower(binary_to_list(Content)), "damagebdd") of
-        0 -> ok;
-
-        _Found ->
-          ?LOG_INFO("Nostr Received message from: ~s ~s~n", [Npub, Content]),
-          case throttle:check(damage_nostr_rate, Npub) of
-            {limit_exceeded, _, _} ->
-              ?LOG_WARNING("Npub ~p exceeded api limit", [Npub]);
-
-            _ ->
-              case damage_ae:resolve_npub(Npub) of
-                notfound ->
-                  reply(
-                    OriginalEventId,
-                    Npub,
-                    <<
-                      "Account mapping not found please login and link an npub"
-                    >>
-                  );
-
-                AeAccount ->
-                  case damage_ae:balance(AeAccount) of
-                    Balance when Balance > 0 ->
-                      Context = #{npub => Npub, ae_account => AeAccount},
-                      Config = get_config(Context),
-                      jsx:encode(execute_bdd(
-                        Config,
-                        damage_context:get_account_context(
-                          damage_context:get_global_template_context(Context)
-                        ),
-                        Context
-                      ));
-
-                    Other ->
-                      reply(
-                        OriginalEventId,
-                        Npub,
-                        <<
-                          "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
-                          Other/binary
-                        >>
-                      )
-                  end
-              end
-          end
-      end;
-
-    [<<"EOSE">>, <<"damagebdd">>] -> ok
-  end,
+  ok = handle_event(jsx:decode(Message, [{labels, atom}])),
   {noreply, State, hibernate};
 
 handle_info({gun_ws, _ConnPid, _, {close, _}}, State) ->
@@ -300,35 +248,116 @@ terminate(Reason, State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+find_feature(Str) ->
+  case re:match(<<"[^\"]FeatureK.*?">>, Str, [cased]) of
+    {ok, Matched} -> lists:sublist(Str, 0, string:index(Matched, ")") + 1);
+    error -> none
+  end.
+
+
+handle_feature(
+  AeAccount,
+  #{id := _OriginalEventId, tags := _Tags, content := Content, pubkey := Npub} =
+    _Event
+) ->
+  Context = #{npub => Npub, ae_account => AeAccount},
+  Config = get_config(Context),
+  Feature = find_feature(Content),
+  jsx:encode(
+    execute_bdd(
+      Config,
+      damage_context:get_account_context(
+        damage_context:get_global_template_context(
+          maps:put(feature, Feature, Context)
+        )
+      ),
+      Context
+    )
+  ).
+
+
+handle_event_payload(0, _) -> ok;
+
+handle_event_payload(
+  _Found,
+  #{id := OriginalEventId, tags := _Tags, content := Content, pubkey := Npub} =
+    Event
+) ->
+  case damage_ae:resolve_npub(Npub) of
+    error -> ok;
+    notfound -> ok;
+
+    AeAccount ->
+      case damage_ae:balance(AeAccount) of
+        Balance when Balance > 0 ->
+          ?LOG_INFO("Nostr Received feature from: ~s ~s~n", [Npub, Content]),
+          handle_feature(AeAccount, Event);
+
+        Other ->
+          reply(
+            OriginalEventId,
+            Npub,
+            <<
+              "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+              Other/binary
+            >>
+          )
+      end
+  end.
+
+
+handle_event([<<"EOSE">>, <<"damagebdd">>]) -> ok;
+
+handle_event(
+  [
+    <<"EVENT">>,
+    <<"damagebdd">>,
+    #{id := _OriginalEventId, tags := _Tags, content := Content, pubkey := Npub} =
+      Event
+  ]
+) ->
+  case throttle:check(damage_nostr_rate, Npub) of
+    {limit_exceeded, _, _} ->
+      ?LOG_WARNING("Npub ~p exceeded api limit", [Npub]);
+
+    _ ->
+      handle_event_payload(
+        string:str(string:to_lower(binary_to_list(Content)), "damagebdd"),
+        Event
+      )
+  end.
+
+
 get_config(#{npub := Npub} = _Context) ->
   AeAccount = damage_ae:resolve_npub(Npub),
   damage:get_default_config(AeAccount, 1, []).
 
+
 execute_bdd(Config, Context, #{feature := FeatureData}) ->
   case damage:execute_data(Config, Context, FeatureData) of
     [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
-        #{
-          status => <<"notok">>,
-          failing_step => list_to_binary(damage_utils:lists_concat(Step, " ")),
-          line => Line
-        };
+      #{
+        status => <<"notok">>,
+        failing_step => list_to_binary(damage_utils:lists_concat(Step, " ")),
+        line => Line
+      };
 
     {parse_error, LineNo, Message} ->
       ?LOG_DEBUG("failure ~p.", [Message]),
-        #{
-          status => <<"notok">>,
-          message => list_to_binary(Message),
-          line => LineNo,
-          hint
-          =>
-          <<
-            "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
-          >>
-        };
+      #{
+        status => <<"notok">>,
+        message => list_to_binary(Message),
+        line => LineNo,
+        hint
+        =>
+        <<
+          "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+        >>
+      };
 
-    #{report_hash := _} = Result ->
-      maps:merge(Result, #{status => <<"ok">>})
+    #{report_hash := _} = Result -> maps:merge(Result, #{status => <<"ok">>})
   end.
+
 %% Utility function to get public key from private key
 
 get_public_key(PrivateKey) ->
