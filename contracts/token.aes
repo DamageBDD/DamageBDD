@@ -34,7 +34,8 @@ contract DamageToken =
     , balances     : balances     // balances for each account
     , meta_info    : meta_info    // token meta info (name, symbol, decimals)
     , allowances   : allowances   // owner of account approves the transfer of an amount to another account
-    , swapped      : map(address, int) }
+    , swapped      : map(address, int)
+    , features     : map(feature_hash, string)}
 
   // This is the meta-information record type
   record meta_info =
@@ -242,5 +243,5 @@ contract DamageToken =
     Chain.event(Allowance(allowance_accounts.from_account, allowance_accounts.for_account, new_allowance))
 
   // DamageBDD functions
-  stateful entrypoint spend(node_address: address, amount: int, feature_hash: string, report_hash: string) =
+  stateful entrypoint spend(node_address: address, amount: int, run_record: map(string, string)) =
     internal_transfer(Call.origin, node_address, amount)
