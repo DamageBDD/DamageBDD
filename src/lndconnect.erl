@@ -195,6 +195,11 @@ handle_event(
   AmountPaid = binary_to_integer(AmountPaid0),
   damage_ae:transfer_damage_tokens(AeAccount, damage:sats_to_damage(AmountPaid)),
   ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount]),
+  {ok, SaleWebhook} = application:get_env(damage, sale_webhook),
+  damage_webhooks:trigger_webhook(
+    SaleWebhook,
+    #{content => <<"Damage Tokens purchsased by ">>, ae_account => AeAccount}
+  ),
   ok.
 
 
