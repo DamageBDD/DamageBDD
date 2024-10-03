@@ -25,7 +25,8 @@
     get_invoice/1,
     list_invoices/0,
     list_invoices/1,
-    cancel_invoice/1
+    cancel_invoice/1,
+    settle_invoice/1
   ]
 ).
 -export([test/0]).
@@ -123,7 +124,46 @@ cancel_invoice(InvoiceId) ->
     fun (Worker) -> gen_server:call(Worker, {cancel_invoice, InvoiceId}) end
   ).
 
+settle_invoice(PaymentRequest) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun (Worker) -> gen_server:call(Worker, {settle_invoice, PaymentRequest}) end
+  ).
+
 %% Handle call requests
+
+handle_call(
+  {settle_invoice, PreImage},
+  _From,
+  #state{host = Host, port = Port, headers = Headers, options = Options} = State
+) ->
+  {ok, ConnPid} = gun:open(Host, Port, Options),
+  %% Construct the API request URL
+  Path = "/v2/invoices/settle",
+  %% Construct the request body
+  ReqData = #{preimage => PreImage},
+  ReqJson = json_encode(ReqData),
+  %% Send the HTTP POST request
+  StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+  {ok, Response} =
+    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+      {response, fin, Status, _RespHeaders} ->
+        ?LOG_DEBUG("Got fin ~p", [Status]),
+        no_data;
+
+      {response, nofin, _Status, _RespHeaders} ->
+        gun:await_body(ConnPid, StreamRef);
+
+      {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
+      Default -> ?LOG_DEBUG("Got unknown ~p ", [Default])
+    end,
+  ?LOG_DEBUG("Got settle_invoice response ~p", [Response]),
+  Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
+  %% Parse the response JSON
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
+  %% Return the invoice details
+  {reply, Invoice, State};
 
 handle_call(
   {create_invoice, Amount, Description},
