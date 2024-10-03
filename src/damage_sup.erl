@@ -74,6 +74,19 @@ init([]) ->
       },
       #{
         % mandatory
+        id => damage_aemdw,
+        % mandatory
+        start => {damage_ae, start_link, []},
+        % optional
+        restart => permanent,
+        % optional
+        shutdown => 60,
+        % optional
+        type => worker,
+        modules => [damage_aemdw]
+      },
+      #{
+        % mandatory
         id => damage_nostr,
         % mandatory
         start => {damage_nostr, start_link, []},
