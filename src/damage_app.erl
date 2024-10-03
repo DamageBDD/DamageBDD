@@ -37,6 +37,7 @@ get_trails() ->
       damage_analytics,
       damage_reports,
       damage_ai,
+      lnaddress,
       cowboy_swagger_handler
     ],
   Trails =
@@ -66,6 +67,7 @@ start_phase(start_vanillae, _StartType, []) ->
 
 start_phase(start_trails_http, _StartType, []) ->
   logger:info("Starting Damage."),
+  {ok, _} = application:ensure_all_started(gun),
   {ok, _} = application:ensure_all_started(fast_yaml),
   {ok, _} = application:ensure_all_started(prometheus),
   {ok, _} = application:ensure_all_started(prometheus_cowboy),
@@ -73,7 +75,6 @@ start_phase(start_trails_http, _StartType, []) ->
   {ok, _} = application:ensure_all_started(erlexec),
   {ok, _} = application:ensure_all_started(throttle),
   {ok, _} = application:ensure_all_started(gen_smtp),
-  {ok, _} = application:ensure_all_started(gun),
   {ok, _} = application:ensure_all_started(ssh),
   {ok, _} =
     gen_smtp_server:start(
