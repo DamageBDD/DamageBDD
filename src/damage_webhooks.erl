@@ -149,7 +149,10 @@ gun_await(ConnPid, StreamRef) ->
   end.
 
 
-trigger_webhook(Url, #{fail := FailMessage} = Context) ->
+trigger_webhook(Url, #{fail := FailMessage} = _Context) ->
+  trigger_webhook(Url, #{content => FailMessage});
+
+trigger_webhook(Url, #{content := Content} = Context) ->
   {Host0, Port0, Path0} =
     case uri_string:parse(binary_to_list(Url)) of
       #{port := Port, scheme := _Scheme, path := Path, host := Host} ->
@@ -160,8 +163,7 @@ trigger_webhook(Url, #{fail := FailMessage} = Context) ->
     end,
   {ok, ConnPid} =
     gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
-  TemplateContext =
-    maps:put(fail_message, damage_utils:safe_json(FailMessage), Context),
+  TemplateContext = maps:put(content, damage_utils:safe_json(Content), Context),
   Body =
     case re:run(Url, "https://discord.com.*") of
       nomatch -> damage_utils:safe_json(TemplateContext);
