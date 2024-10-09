@@ -30,10 +30,11 @@ payable main contract Account =
         webhooks = {},
         invoices = {},
         published = {},
-        claimed = {}
+        claimed = {},
+        npubs = {}
         }
-    stateful entrypoint resolve_npub(npub: string):  address =
-        Map.lookup_default(npub, state.npubs, "notfound")
+    stateful entrypoint resolve_npub(npub: string):  option(address) =
+        Map.lookup(npub, state.npubs)
 
     stateful entrypoint get_meta():  string =
         Map.lookup_default(Call.caller, state.meta, "notfound")
@@ -132,4 +133,3 @@ payable main contract Account =
         let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
         let newmap = Map.delete(key, oldmap)
         put(state{domain_tokens[Call.caller] = newmap})
-
