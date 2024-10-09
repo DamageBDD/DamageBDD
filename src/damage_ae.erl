@@ -23,7 +23,7 @@
     code_change/3,
     setup_vanillae_deps/0,
     get_wallet_path/1,
-    maybe_create_wallet/1,
+    maybe_create_wallet/2,
     maybe_fund_wallet/2,
     maybe_fund_wallet/1,
     transfer_damage_tokens/2,
@@ -980,6 +980,8 @@ transfer_damage_tokens(AeAccount, Amount) ->
   ContractCall.
 
 
+fund_wallet(AeAccount, EmailOrUsername, Amount) when is_binary(AeAccount) ->
+    fund_wallet(binary_to_list(AeAccount), EmailOrUsername, Amount);
 fund_wallet(AeAccount, EmailOrUsername, Amount) ->
   {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
   AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
@@ -1020,7 +1022,7 @@ maybe_fund_wallet(EmailOrUsername, Amount) ->
   end.
 
 
-maybe_create_wallet(#{email := Email, password := Password}) ->
+maybe_create_wallet(Email, Password) ->
   create_wallet(Email),
   AeAccount = maybe_fund_wallet(Email),
   set_meta(#{email => Email, password => Password}),
@@ -1133,7 +1135,8 @@ test_find_block() ->
 
 test_create_wallet() ->
   #{public_key := WalletAddress} =
-    maybe_create_wallet(#{email => "stevenjose@gmail.com"}),
+    maybe_create_wallet("steven@gmail.com", "testpass"),
+
   ?LOG_INFO("Wallet created ~p ", [WalletAddress]).
 
 

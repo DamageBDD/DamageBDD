@@ -111,41 +111,21 @@ reset_password(
   case validate_password(NewPassword) of
     true ->
       case damage_ae:get_meta(Email) of
-        "notfound" -> {error, <<"Invalid request.">>};
+        notfound -> verify_email(Email, Password, NewPassword);
 
-        #{password := Password} ->
-          Now = os:timestamp(),
-          case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
-            {ok, #{email := Email, expiry := Expiry}} when Expiry - Now > 3600 ->
-              {notok, <<"Confirm Token Expired.">>};
-
-            {ok, #{email := Email}} ->
-              {ok, #{public_key := AeAccount}} =
-                damage_ae:maybe_create_wallet(
-                  #{email => Email, password => NewPassword}
-                ),
-              #{decodedResult := []} =
-                damage_ae:transfer_damage_tokens(
-                  AeAccount,
-                  damage_ae:sats_to_damage(4000)
-                ),
-              damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password);
-
-            Err ->
-              ?LOG_ERROR("invalid confirm token ~p", [Err]),
-              {notok, <<"Invalid confirm token.">>}
-          end;
-
-        _ ->
-          {
-            error,
-            <<
-              "Failed to reset password. Password does not meet complexity requirements of minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character"
-            >>
-          }
+        #{password := Password} = Meta ->
+          damage_ae:set_meta(maps:put(password, NewPassword, Meta))
       end;
 
-    {ok, #{email := Email} = _Meta} -> {error, <<"Authentication failed.">>}
+    {ok, #{email := Email} = _Meta} -> {error, <<"Authentication failed.">>};
+
+    _ ->
+      {
+        error,
+        <<
+          "Failed to reset password. Password does not meet complexity requirements of minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character"
+        >>
+      }
   end;
 
 reset_password(#{email := Email}) ->
@@ -178,6 +158,28 @@ reset_password(#{email := Email}) ->
         damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
       ),
       {ok, <<"Password Reset successfully.">>}
+  end.
+
+
+verify_email(Email, Password, NewPassword) ->
+  Now = os:timestamp(),
+  case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
+    {ok, #{email := Email, expiry := Expiry}} when Expiry - Now > 3600 ->
+      {notok, <<"Confirm Token Expired.">>};
+
+    {ok, #{email := Email}} ->
+      {ok, #{public_key := AeAccount}} =
+        damage_ae:maybe_create_wallet(Email, NewPassword),
+      #{decodedResult := []} =
+        damage_ae:transfer_damage_tokens(
+          AeAccount,
+          damage_ae:sats_to_damage(4000)
+        ),
+      damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password);
+
+    Err ->
+      ?LOG_ERROR("invalid confirm token ~p", [Err]),
+      {notok, <<"Invalid confirm token.">>}
   end.
 
 
