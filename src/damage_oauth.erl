@@ -75,7 +75,8 @@ validate_password(Password) ->
 
 
 reset_password(#{token := Token}) ->
-  case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Token) of
+  TokenEncrypted = base64:encode(damage_utils:encrypt(Token)),
+  case damage_ae:contract_call_admin_account("get_auth_token", [TokenEncrypted]) of
     {ok, #{email := Email, expiry := _Expiry}} ->
       case damage_ae:set_meta(#{email => Email, password => Token}) of
         ok ->
@@ -111,13 +112,26 @@ reset_password(
   case validate_password(NewPassword) of
     true ->
       case damage_ae:get_meta(Email) of
-        notfound -> verify_email(Email, Password, NewPassword);
+        notfound ->
+          case verify_email(Email, Password, NewPassword) of
+            {ok, Message} ->
+              damage_ae:set_meta(
+                maps:put(
+                  password,
+                  NewPassword,
+                  #{password => NewPassword, email => Email}
+                )
+              ),
+              {ok, Message};
+
+            Error -> Error
+          end;
 
         #{password := Password} = Meta ->
-          damage_ae:set_meta(maps:put(password, NewPassword, Meta))
-      end;
+          damage_ae:set_meta(maps:put(password, NewPassword, Meta));
 
-    {ok, #{email := Email} = _Meta} -> {error, <<"Authentication failed.">>};
+        #{email := Email} = _Meta -> {error, <<"Email already confirmed">>}
+      end;
 
     _ ->
       {
@@ -162,28 +176,40 @@ reset_password(#{email := Email}) ->
 
 
 verify_email(Email, Password, NewPassword) ->
-  Now = os:timestamp(),
-  case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
-    {ok, #{email := Email, expiry := Expiry}} when Expiry - Now > 3600 ->
-      {notok, <<"Confirm Token Expired.">>};
+  Now = date_util:now_to_seconds(os:timestamp()),
+  _EmailEncrypted = base64:encode(damage_utils:encrypt(Email)),
+  _TokenEncrypted = base64:encode(damage_utils:encrypt(Password)),
+          ?LOG_DEBUG("get_auth_token verify_email ~p", [Password]),
+  case damage_ae:contract_call_admin_account("get_auth_token", [Password]) of
+    #{decodedResult := EncryptedMetaJson} ->
+          ?LOG_DEBUG("get_auth_token verify_email ~p", [EncryptedMetaJson]),
+      case
+      jsx:decode(
+        damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
+        [return_maps, {labels, atom}]
+      ) of
+        #{email := Email, expiry := Expiry} when Expiry - Now > 3600 ->
+          {error, <<"Confirm Token Expired.">>};
 
-    {ok, #{email := Email}} ->
-      {ok, #{public_key := AeAccount}} =
-        damage_ae:maybe_create_wallet(Email, NewPassword),
-      #{decodedResult := []} =
-        damage_ae:transfer_damage_tokens(
-          AeAccount,
-          damage_ae:sats_to_damage(4000)
-        ),
-      damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password);
+        #{email := Email} ->
+          {_, #{public_key := AeAccount}} =
+            damage_ae:maybe_create_wallet(Email, NewPassword),
+          #{decodedResult := []} =
+            damage_ae:transfer_damage_tokens(
+              AeAccount,
+              damage:sats_to_damage(4000)
+            ),
+          damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
+          {ok, <<"Account Verified">>}
+      end;
 
     Err ->
       ?LOG_ERROR("invalid confirm token ~p", [Err]),
-      {notok, <<"Invalid confirm token.">>}
+      {error, <<"Invalid confirm token.">>}
   end.
 
 
-add_userdata(#{email := ToEmail} = Data0) ->
+add_confirm_token(#{email := ToEmail} = Data0) ->
   {ok, ApiUrl} = application:get_env(damage, api_url),
   ApiUrl0 = list_to_binary(ApiUrl),
   TempPassword = list_to_binary(uuid:to_string(uuid:uuid4())),
@@ -194,11 +220,17 @@ add_userdata(#{email := ToEmail} = Data0) ->
       <<ApiUrl0/binary, "/accounts/confirm?token=", TempPassword/binary>>,
       Data
     ),
-  damage_riak:put(
-    ?CONFIRM_TOKEN_BUCKET,
-    TempPassword,
-    #{email => ToEmail, expiry => ?CONFIRM_TOKEN_EXPIRY}
-  ),
+  Expiry = date_util:now_to_seconds(os:timestamp()) + 3600,
+  TempPasswordEncrypted = base64:encode(damage_utils:encrypt(TempPassword)),
+  TokenEncrypted =
+    base64:encode(
+      damage_utils:encrypt(jsx:encode(#{email => ToEmail, expiry => Expiry}))
+    ),
+  [] =
+    damage_ae:contract_call_admin_account(
+      "add_auth_token",
+      [TempPasswordEncrypted, TokenEncrypted]
+    ),
   damage_utils:send_email(
     {maps:get(full_name, Data, <<"">>), ToEmail},
     <<"DamageBDD Account SignUp">>,
@@ -220,39 +252,22 @@ add_user(#{email := Email} = Meta) when is_atom(Email) ->
   add_user(maps:put(email, atom_to_binary(Email), Meta));
 
 add_user(#{email := Email} = Meta) when is_binary(Email) ->
-  case damage_ae:get_meta(Email) of
+  case catch damage_ae:get_meta(Email) of
     notfound ->
       ?LOG_DEBUG("account not found creating ~p", [Email]),
-      add_userdata(damage_utils:binary_to_atom_keys(Meta));
+      add_confirm_token(damage_utils:binary_to_atom_keys(Meta));
 
-    #{password := Password, email := Email} = Found ->
-      case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
-        notfound -> add_userdata(Found);
+    {badmatch, #{status := <<"fail">>}} ->
+      ?LOG_DEBUG("account found maybe not funded ~p", [Email]),
+      add_confirm_token(damage_utils:binary_to_atom_keys(Meta));
 
-        {ok, #{email := Email, expiry := Expiry}} ->
-          case date_util:epoch_hires() of
-            Now when Now > Expiry ->
-              ok = damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
-              ok = delete_user(Email),
-              {
-                error,
-                <<
-                  "Confirmation link expired, please signup again to get a new link."
-                >>
-              };
-
-            _ -> add_userdata(Found)
-          end;
-
-        _ ->
-          logger:info("Account exists data: ~p ", [Found]),
-          {
-            error,
-            <<
-              "Account with that email already exists. Please check your email for confirmation link. Don't forget to check spam folder too. If you have forgotten the password please reset password using /accounts/reset_password endpoint or from https://damagebdd.com/account"
-            >>
-          }
-      end
+    #{password := _Password, email := _Email} = _Found ->
+      {
+        error,
+        <<
+          "Account with that email already exists. Please check your email for confirmation link. Don't forget to check spam folder too. If you have forgotten the password please reset password using /accounts/reset_password endpoint or from https://damagebdd.com/account"
+        >>
+      }
   end.
 
 
@@ -300,23 +315,20 @@ associate_access_code(AccessCode, Context, _AppContext) ->
   associate_access_token(AccessCode, Context, _AppContext).
 
 associate_refresh_token(RefreshToken, Context, _) ->
-  ok = damage_riak:put(?REFRESH_TOKEN_BUCKET, RefreshToken, Context),
-  {ok, maps:from_list(Context)}.
+  Context0 = maps:from_list(Context),
+  ok = damage_ae:set_auth_token(RefreshToken, Context0),
+  {ok, Context0}.
 
 %% @doc Stores a new refresh token token(), associating it with
 %%      grantctx() and a device_id.
 
 associate_refresh_token(RefreshToken, Context, DeviceId, _) ->
-  damage_riak:put(
-    ?REFRESH_TOKEN_BUCKET,
-    RefreshToken,
-    Context,
-    [{device_id_bin, DeviceId}]
-  ).
+  damage_ae:set_token(RefreshToken, maps:put(device_id, DeviceId, Context)).
 
 associate_access_token(AccessToken, Context, _) ->
-  #{email := Email} = Context0 = maps:from_list(Context),
-  ok = damage_ae:set_token(Email, AccessToken, Context0),
+  #{<<"resource_owner">> := Email} = Context0 = maps:from_list(Context),
+  DamageAEPid = damage_ae:get_wallet_proc(Email),
+  ok = gen_server:call(DamageAEPid, {set_access_token, Email, AccessToken}),
   {ok, Context0}.
 
 
@@ -330,8 +342,8 @@ resolve_access_token(AccessToken, AppContext) ->
   %% The case trickery is just here to make sure that
   %% we don't propagate errors that cannot be legally
   %% returned from this function according to the spec.
-  case
-  damage_riak:get(?ACCESS_TOKEN_BUCKET, AccessToken, [{return_maps, false}]) of
+  DamageAEPid = damage_ae:get_wallet_proc(admin),
+  case gen_server:call(DamageAEPid, {get_access_token, AccessToken}) of
     Error = notfound -> {error, Error};
     {ok, Value} -> {ok, {AppContext, Value}}
   end.

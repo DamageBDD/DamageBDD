@@ -113,7 +113,7 @@ is_authorized(Req, State0) ->
           } = maps:from_list(Auth),
           case damage_ae:get_meta(ResourceOwner) of
             notfound ->
-              ?LOG_DEBUG("is_authoddrized Identity ~p", [ResourceOwner]),
+              ?LOG_DEBUG("is_authorized Identity ~p", [ResourceOwner]),
               {{false, <<"Bearer">>}, Req, State};
 
             User ->

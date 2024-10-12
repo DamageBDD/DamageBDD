@@ -117,7 +117,7 @@ payable main contract Account =
     stateful entrypoint get_auth_token(key: string):  string =
         Map.lookup_default(key, state.auth_tokens, "notfound")
 
-    stateful entrypoint revoke_auth_token(key: string, value: string) =
+    stateful entrypoint revoke_auth_token(key: string) =
         put(state{auth_tokens = Map.delete(key, state.auth_tokens)})
 
     stateful entrypoint add_domain_token(key: string, value: string) =

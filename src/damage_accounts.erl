@@ -286,22 +286,37 @@ to_html(Req, #{action := create} = State) ->
   {Body, Req, State};
 
 to_html(Req, #{action := confirm} = State) ->
-  #{token := Password} = cowboy_req:match_qs([token], Req),
-  case damage_riak:get(?CONFIRM_TOKEN_BUCKET, Password) of
-    {ok, #{email := Email, expiry := _Expiry}} ->
-      Body =
-        damage_utils:load_template(
-          "reset_password.mustache",
-          #{
-            email => Email,
-            current_password => Password,
-            body => <<"Test">>,
-            current_password_type => <<"hidden">>
-          }
-        ),
-      {Body, Req, State};
+  #{token := Token0} = cowboy_req:match_qs([token], Req),
+  Token = base64:encode(damage_utils:encrypt(Token0)),
+  Now = date_util:now_to_seconds(os:timestamp()),
+  case catch damage_ae:contract_call_admin_account("get_auth_token", [Token]) of
+    #{decodedResult := EncryptedMetaJson} ->
+      case
+      jsx:decode(
+        damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
+        [return_maps, {labels, atom}]
+      ) of
+        #{email := _Email, expiry := Expiry} when Expiry - Now > 3600 ->
+          Body = <<"Confirm Token Expired.">>,
+          {Body, Req, State};
 
-    notfound -> {<<"Invalid confirmation link. Please try again.">>, Req, State}
+        #{email := Email} ->
+          ?LOG_DEBUG("get_auth_token ~p", [Email]),
+          Body =
+            damage_utils:load_template(
+              "reset_password.mustache",
+              #{
+                email => Email,
+                current_password => Token,
+                body => <<"Test">>,
+                current_password_type => <<"hidden">>
+              }
+            ),
+          {Body, Req, State}
+      end;
+    _ ->
+      {<<"Invalid confirmation link. Please try again.">>, Req, State}
+
   end;
 
 to_html(Req, #{action := invoices} = State) ->
