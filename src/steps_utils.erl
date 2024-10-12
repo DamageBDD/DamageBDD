@@ -27,4 +27,28 @@ step(
     Variable,
     datestring:format(Format, calendar:universal_time()),
     Context
-  ).
+  );
+
+step(
+  _Config,
+  Context,
+  _,
+  _N,
+  [
+    "test case ",
+    FeatureHash,
+    " status was ",
+    Status,
+    " in the last ",
+    Hours,
+    " hours"
+  ],
+  _
+) ->
+  case damage_ae:get_last_test_status(FeatureHash, Hours) of
+    Status -> Context;
+
+    UnExpected ->
+      Msg = damage_utils:strf("Unexpected status ~p", [UnExpected]),
+      maps:put(fail, Msg, Context)
+  end.
