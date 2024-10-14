@@ -127,7 +127,9 @@ cancel_invoice(InvoiceId) ->
 settle_invoice(PaymentRequest) ->
   poolboy:transaction(
     ?MODULE,
-    fun (Worker) -> gen_server:call(Worker, {settle_invoice, PaymentRequest}) end
+    fun
+      (Worker) -> gen_server:call(Worker, {settle_invoice, PaymentRequest})
+    end
   ).
 
 %% Handle call requests

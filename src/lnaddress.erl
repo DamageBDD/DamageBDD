@@ -23,15 +23,29 @@
 trails() ->
   [
     trails:trail(
-      "/.well-known/lnurlp/:user/",
+      "/.well-known/lnurlp/:user",
       lnaddress,
-      #{},
+      #{action => lnurlp},
       #{
         get
         =>
         #{
           tags => ?TRAILS_TAG,
-          description => "Form to execute a test on this DamageBDD server.",
+          description => "resolve lnurl.",
+          produces => ["text/html"]
+        }
+      }
+    ),
+    trails:trail(
+      "/.well-known/nostr.json?name=:user",
+      lnaddress,
+      #{action => nip05},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "resolve lnurl.",
           produces => ["text/html"]
         }
       }
@@ -41,11 +55,11 @@ trails() ->
       lnaddress,
       #{action => invoice},
       #{
-        post
+        get
         =>
         #{
           tags => ?TRAILS_TAG,
-          description => "Form to execute a test on this DamageBDD server.",
+          description => "pay user.",
           produces => ["text/html"]
         }
       }
@@ -70,25 +84,59 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
-to_json(Req, #{action := invoices} = State) ->
-  Response =
-    #{
-      callback => <<"https://damagebdd.com/pay/asyncmind">>,
-      metadata
-      =>
-      <<
-        "[[\"text/plain\",\"Self-custodial LN address powered by DamageBDD. Invoice will settle when user comes online within 24hrs or you'll be refunded.\"],[\"text/identifier\",\"asyncmind@zeuspay.com\"]]"
-      >>,
-      tag => "payRequest",
-      minSendable => 10000,
-      maxSendable => 612000000000,
-      allowsNostr => true,
-      nostrPubkey
-      =>
-      <<"abd32a8bc530142cc04a23f9c07239dbbc6664f4f7eeceb8092c0e3530f94e9d">>,
-      commentAllowed => 600
-    },
-  {jsx:encode(Response), Req, State}.
+to_json(Req, #{action := lnurlp} = State) ->
+  case cowboy_req:binding(user, Req) of
+    undefined -> {<<"user">>, Req, State};
+
+    User ->
+      {ok, ApiUrl} = application:get_env(damage, api_url),
+      {
+        jsx:encode(
+          #{
+            tag => <<"payRequest">>,
+            callback
+            =>
+            damage_utils:binarystr_join(
+              [list_to_binary(ApiUrl), <<"/pay/">>, User]
+            )
+          }
+        ),
+        Req,
+        State
+      }
+  end;
+
+to_json(Req, #{action := nip05} = State) ->
+  {ok, Data, _Req2} = cowboy_req:read_body(Req),
+  case maps:from_list(cow_qs:parse_qs(Data)) of
+    #{name := Name} ->
+      ?LOG_INFO("Nip05 request ~p", [Name]),
+      PublicKeys = damage_nostr:get_public_keys(Name),
+      {jsx:encode(#{names => PublicKeys}), Req, State};
+
+    Unexpected ->
+      ?LOG_INFO("invalid Nip05 request ~p", [Unexpected]),
+      {jsx:encode(#{names => []}), Req, State}
+  end;
+
+to_json(Req, #{action := invoice} = State) ->
+  case cowboy_req:binding(user, Req) of
+    undefined -> {<<"user required">>, Req, State};
+
+    <<"asyncmind">> ->
+        case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
+              #{amount := AmountBin, comment := Memo} ->
+                Amount = binary_to_integer(AmountBin),
+                  #{r_hash := _RHash, payment_request := PaymentRequest} = Invoice = lnd:create_invoice(Amount div 1000, Memo),
+                  ?LOG_INFO("invoice ~p", [Invoice]),
+                  {jsx:encode(#{pr => PaymentRequest}), Req, State};
+
+              Unexpected ->
+                  ?LOG_INFO("invalid invoice request ~p", [Unexpected]),
+                  {jsx:encode(#{names => []}), Req, State}
+          end
+end.
+
 
 
 from_html(Req, #{action := reset_password} = State) ->
