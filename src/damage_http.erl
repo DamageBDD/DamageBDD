@@ -76,16 +76,17 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 get_access_token(Req) ->
   case cowboy_req:header(<<"authorization">>, Req) of
-    <<"Bearer ", Token/binary>> -> {ok, Token};
+    <<"Nostr ", Token/binary>> -> {nostr, Token};
+    <<"Bearer ", Token/binary>> -> {oauth, Token};
 
     _ ->
       case catch cowboy_req:match_qs([access_token], Req) of
-        #{access_token := Token} -> {ok, Token};
+        #{access_token := Token} -> {oauth, Token};
 
         _ ->
           Cookies = cowboy_req:parse_cookies(Req),
           case lists:keyfind(<<"sessionid">>, 1, Cookies) of
-            {<<"sessionid">>, Token} -> {ok, Token};
+            {<<"sessionid">>, Token} -> {oauth, Token};
             _ -> {error, missing}
           end
       end
@@ -102,7 +103,17 @@ is_authorized(Req, State0) ->
       maps:put(useragent, cowboy_req:header(<<"user-agent">>, Req, ""), State0)
     ),
   case get_access_token(Req) of
-    {ok, Token} ->
+    {nostr, Token} ->
+      #{pubkey := Npub} =
+        NostrEvent =
+          jsx:decode(base64:decode(Token), [{labels, atom}, return_maps]),
+      ?LOG_INFO("Got Nostr auth ~p", [NostrEvent]),
+      case nostrlib:verify(NostrEvent) of
+        true -> damage_ae:contract_call_admin_account("resolve_npub", [Npub]);
+        _ -> {{false, <<"Bearer">>}, Req, State}
+      end;
+
+    {oauth, Token} ->
       case oauth2:verify_access_token(Token, []) of
         {ok, {[], Auth}} ->
           #{
