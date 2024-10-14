@@ -26,10 +26,12 @@
     terminate/2,
     code_change/3,
     test/0,
+    test_nip05/0,
     test_simple/0
   ]
 ).
 -export([get_posts_since/2]).
+-export([get_public_keys/1]).
 
 %% Define the record to store state
 
@@ -384,6 +386,29 @@ sign_event(Event, PrivateKey) ->
   Signature.
 
 
+get_public_keys(<<"asyncmind">>) ->
+  {ok, Npub} = application:get_env(damage, nost_npub),
+  {ok, #{data := PublicKey}} =
+    bech32:decode(
+      Npub,
+      [
+        {
+          converter,
+          fun
+            (Data1) ->
+              {ok, Base8} = bech32:convertbits(Data1, 5, 8),
+              Binary = erlang:list_to_binary(Base8),
+              Hex = binary:encode_hex(Binary),
+              {ok, Hex}
+          end
+        }
+      ]
+    ),
+  [PublicKey];
+
+get_public_keys(_) -> [].
+
+
 test_simple() ->
   {ok, ConnPid} =
     gun:open(
@@ -418,3 +443,36 @@ test() ->
   gun:ws_send(ConnPid, StreamRef, Frame),
   {ws, Frame} = gun:await(ConnPid, StreamRef),
   gun:close(ConnPid).
+
+
+test_nip05() ->
+  Npub = "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc",
+  Expected =
+    <<"16d114303d8203115918ca34a220e925c022c09168175a5ace5e9f3b61640947">>,
+  Converter =
+    fun
+      (Data) ->
+        Binary = erlang:list_to_binary(Data),
+        Hex = binary:encode_hex(Binary),
+        {ok, Hex}
+    end,
+  {ok, #{data := Data}} = bech32:decode(Npub, [{converter, Converter}]),
+  ?LOG_INFO("Converer ~p", [Data]),
+  {ok, #{data := Data0}} = bech32:decode(Npub, [{converter, {base, 8}}]),
+  ?LOG_INFO("Converer ~p", [Data0]),
+  {ok, #{data := Expected}} =
+    bech32:decode(
+      Npub,
+      [
+        {
+          converter,
+          fun
+            (Data1) ->
+              {ok, Base8} = bech32:convertbits(Data1, 5, 8),
+              Binary = erlang:list_to_binary(Base8),
+              Hex = binary:encode_hex(Binary),
+              {ok, Hex}
+          end
+        }
+      ]
+    ).
