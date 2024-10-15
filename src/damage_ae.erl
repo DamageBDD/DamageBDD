@@ -426,25 +426,32 @@ handle_call({set_meta, #{email := Email} = AccountMeta}, _From, Cache) ->
     maps:put(Email, maps:put(meta, NewAccountMeta, AccountCache), Cache)
   };
 
+handle_call({revoke_access_token, TokenKey}, _From, Cache) ->
+  #{decodedResult := []} =
+    contract_call_admin_account("revoke_auth_token", [TokenKey]),
+  TokenCache = maps:get(tokens, Cache, #{}),
+  {reply, ok, maps:put(tokens, maps:remove(TokenKey, TokenCache), Cache)};
+
 handle_call({set_access_token, TokenKey, Token}, _From, Cache) ->
-  Result = contract_call_admin_account("add_auth_token", [TokenKey, Token]),
-  ?LOG_INFO("set_auth_token result ~p", [Result]),
-  {noreply, Cache};
+  #{decodedResult := []} =
+    contract_call_admin_account("add_auth_token", [TokenKey, Token]),
+  TokenCache = maps:get(tokens, Cache, #{}),
+  {reply, ok, maps:put(tokens, maps:put(TokenKey, Token, TokenCache), Cache)};
 
 handle_call({get_access_token, AccessToken}, _From, Cache) ->
   TokenCache = maps:get(tokens, Cache, #{}),
   case catch maps:get(AccessToken, TokenCache, undefined) of
     undefined ->
       case contract_call_admin_account("get_auth_token", [AccessToken]) of
-        <<"notfound">> -> {reply, notfound, Cache};
+        #{decodedResult := <<"notfound">>} -> {reply, notfound, Cache};
 
-        EncryptedMetaJson ->
+        #{decodedResult := EncryptedMetaJson} ->
+          ?LOG_DEBUG("Cache miss get_access_token ~p", [EncryptedMetaJson]),
           Token =
             jsx:decode(
               damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
-              [{labels, atom}]
+              [{labels, binary}]
             ),
-          ?LOG_DEBUG("Cache miss get_access_token ~p", [Token]),
           {
             reply,
             Token,
@@ -465,11 +472,18 @@ handle_call({get_meta, EmailOrUsername}, _From, Cache) ->
         #{status := <<"fail">>} -> {reply, notfound, Cache};
         <<"notfound">> -> {reply, notfound, Cache};
 
-        EncryptedMetaJson ->
+        #{
+          result := #{callerId := AeAccount},
+          decodedResult := EncryptedMetaJson
+        } ->
           Meta =
-            jsx:decode(
-              damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
-              [{labels, atom}]
+            maps:put(
+              ae_account,
+              AeAccount,
+              jsx:decode(
+                damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
+                [{labels, atom}]
+              )
             ),
           ?LOG_DEBUG("no Cache hit get Meta ~p", [Meta]),
           {
@@ -665,14 +679,14 @@ contract_call_admin_account(Func, Args) ->
   AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
   {ok, AdminWallet} = application:get_env(damage, ae_wallet),
   {ok, AccountContract} = application:get_env(damage, account_contract),
-    damage_ae:contract_call(
-      AdminWallet,
-      AdminPassword,
-      AccountContract,
-      "contracts/account.aes",
-      Func,
-      Args
-    ).
+  damage_ae:contract_call(
+    AdminWallet,
+    AdminPassword,
+    AccountContract,
+    "contracts/account.aes",
+    Func,
+    Args
+  ).
 
 
 contract_call(EmailOrUsername, ContractAddress, Contract, Func, Args) ->

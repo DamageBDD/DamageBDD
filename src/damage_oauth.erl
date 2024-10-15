@@ -95,9 +95,7 @@ reset_password(#{token := Token}) ->
         _ -> {error, <<"Invalid reset password link. Please try again.">>}
       end;
 
-    notfound ->
-      ?LOG_DEBUG("confirm token not found ~p", [Token]),
-      {error, <<"Invalid reset password link. Please try again.">>}
+    notfound -> {error, <<"Invalid reset password link. Please try again.">>}
   end;
 
 reset_password(
@@ -179,10 +177,8 @@ verify_email(Email, Password, NewPassword) ->
   Now = date_util:now_to_seconds(os:timestamp()),
   _EmailEncrypted = base64:encode(damage_utils:encrypt(Email)),
   _TokenEncrypted = base64:encode(damage_utils:encrypt(Password)),
-          ?LOG_DEBUG("get_auth_token verify_email ~p", [Password]),
   case damage_ae:contract_call_admin_account("get_auth_token", [Password]) of
     #{decodedResult := EncryptedMetaJson} ->
-          ?LOG_DEBUG("get_auth_token verify_email ~p", [EncryptedMetaJson]),
       case
       jsx:decode(
         damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
@@ -253,12 +249,9 @@ add_user(#{email := Email} = Meta) when is_atom(Email) ->
 
 add_user(#{email := Email} = Meta) when is_binary(Email) ->
   case catch damage_ae:get_meta(Email) of
-    notfound ->
-      ?LOG_DEBUG("account not found creating ~p", [Email]),
-      add_confirm_token(damage_utils:binary_to_atom_keys(Meta));
+    notfound -> add_confirm_token(damage_utils:binary_to_atom_keys(Meta));
 
     {badmatch, #{status := <<"fail">>}} ->
-      ?LOG_DEBUG("account found maybe not funded ~p", [Email]),
       add_confirm_token(damage_utils:binary_to_atom_keys(Meta));
 
     #{password := _Password, email := _Email} = _Found ->
@@ -292,24 +285,18 @@ authenticate_user({Username, Password}, _Ctxt) ->
       end;
 
     Error = {error, notfound} ->
-      ?LOG_DEBUG("authenticate_user error ~p ", [Error]),
+      ?LOG_ERROR("authenticate_user error ~p ", [Error]),
       Error;
 
     notfound ->
-      ?LOG_DEBUG("authenticate_user error ~p ", [notfound]),
+      ?LOG_ERROR("authenticate_user error ~p ", [notfound]),
       {error, notfound}
   end.
 
 
-authenticate_client(ClientId, ClientSecret) ->
-  ?LOG_DEBUG("authenticate_client ~p   ~p ", [ClientId, ClientSecret]),
-  {error, notfound}.
+authenticate_client(ClientId, ClientSecret) -> {error, notfound}.
 
-
-get_client_identity(ClientId, Identity) ->
-  ?LOG_DEBUG("get_client_identity ~p   ~p ", [ClientId, Identity]),
-  {error, notfound}.
-
+get_client_identity(ClientId, Identity) -> {error, notfound}.
 
 associate_access_code(AccessCode, Context, _AppContext) ->
   associate_access_token(AccessCode, Context, _AppContext).
@@ -328,7 +315,14 @@ associate_refresh_token(RefreshToken, Context, DeviceId, _) ->
 associate_access_token(AccessToken, Context, _) ->
   #{<<"resource_owner">> := Email} = Context0 = maps:from_list(Context),
   DamageAEPid = damage_ae:get_wallet_proc(Email),
-  ok = gen_server:call(DamageAEPid, {set_access_token, Email, AccessToken}),
+  ContextEncrypted = base64:encode(damage_utils:encrypt(jsx:encode(Context0))),
+  AccessTokenEncrypted = base64:encode(damage_utils:encrypt(AccessToken)),
+  ok =
+    gen_server:call(
+      DamageAEPid,
+      {set_access_token, AccessTokenEncrypted, ContextEncrypted},
+      60000
+    ),
   {ok, Context0}.
 
 
@@ -343,9 +337,13 @@ resolve_access_token(AccessToken, AppContext) ->
   %% we don't propagate errors that cannot be legally
   %% returned from this function according to the spec.
   DamageAEPid = damage_ae:get_wallet_proc(admin),
-  case gen_server:call(DamageAEPid, {get_access_token, AccessToken}) of
-    Error = notfound -> {error, Error};
-    {ok, Value} -> {ok, {AppContext, Value}}
+  AccessTokenEncrypted = base64:encode(damage_utils:encrypt(AccessToken)),
+  case gen_server:call(DamageAEPid, {get_access_token, AccessTokenEncrypted}) of
+    notfound -> {error, notfound};
+
+    Value ->
+      Value0 = maps:to_list(Value),
+      {ok, {AppContext, Value0}}
   end.
 
 
@@ -353,8 +351,9 @@ revoke_access_code(AccessCode, _AppContext) ->
   revoke_access_token(AccessCode, _AppContext).
 
 revoke_access_token(AccessToken, _) ->
-  damage_riak:delete(?ACCESS_TOKEN_BUCKET, AccessToken),
-  ok.
+  AccessTokenEncrypted = base64:encode(damage_utils:encrypt(AccessToken)),
+  DamageAEPid = damage_ae:get_wallet_proc(admin),
+  ok = gen_server:call(DamageAEPid, {revoke_auth_token, AccessTokenEncrypted}).
 
 
 revoke_refresh_token(_RefreshToken, _) -> ok.

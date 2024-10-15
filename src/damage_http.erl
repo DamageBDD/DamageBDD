@@ -123,9 +123,7 @@ is_authorized(Req, State0) ->
             <<"scope">> := _Scope
           } = maps:from_list(Auth),
           case damage_ae:get_meta(ResourceOwner) of
-            notfound ->
-              ?LOG_DEBUG("is_authorized Identity ~p", [ResourceOwner]),
-              {{false, <<"Bearer">>}, Req, State};
+            notfound -> {{false, <<"Bearer">>}, Req, State};
 
             User ->
               {
@@ -145,7 +143,7 @@ is_authorized(Req, State0) ->
         {error, access_denied} -> {{false, <<"Bearer">>}, Req, State};
 
         Other ->
-          logger:error("Unexpected auth ~p", [Other]),
+          ?LOG_ERROR("Unexpected auth ~p", [Other]),
           {{false, <<"Bearer">>}, Req, State}
       end;
 
