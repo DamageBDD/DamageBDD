@@ -32,6 +32,7 @@
 ).
 -export([get_posts_since/2]).
 -export([get_public_keys/1]).
+-export([decode_npub/1]).
 
 %% Define the record to store state
 
@@ -388,15 +389,21 @@ sign_event(Event, PrivateKey) ->
 
 get_public_keys(<<"asyncmind">>) ->
   {ok, Npub} = application:get_env(damage, nost_npub),
-  {ok, #{data := PublicKey}} =
+  [decode_npub(Npub)];
+
+get_public_keys(_) -> [].
+
+
+decode_npub(Npub) ->
+  {ok, #{data := <<PublicKey:64/binary, "00">>}} =
     bech32:decode(
       Npub,
       [
         {
           converter,
           fun
-            (Data1) ->
-              {ok, Base8} = bech32:convertbits(Data1, 5, 8),
+            (Data) ->
+              {ok, Base8} = bech32:convertbits(Data, 5, 8),
               Binary = erlang:list_to_binary(Base8),
               Hex = binary:encode_hex(Binary),
               {ok, Hex}
@@ -404,9 +411,7 @@ get_public_keys(<<"asyncmind">>) ->
         }
       ]
     ),
-  [PublicKey];
-
-get_public_keys(_) -> [].
+  string:lowercase(binary_to_list(PublicKey)).
 
 
 test_simple() ->
@@ -448,27 +453,17 @@ test() ->
 test_nip05() ->
   Npub = "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc",
   Expected =
-    <<"16d114303d8203115918ca34a220e925c022c09168175a5ace5e9f3b61640947">>,
-  Converter =
-    fun
-      (Data) ->
-        Binary = erlang:list_to_binary(Data),
-        Hex = binary:encode_hex(Binary),
-        {ok, Hex}
-    end,
-  {ok, #{data := Data}} = bech32:decode(Npub, [{converter, Converter}]),
-  ?LOG_INFO("Converer ~p", [Data]),
-  {ok, #{data := Data0}} = bech32:decode(Npub, [{converter, {base, 8}}]),
-  ?LOG_INFO("Converer ~p", [Data0]),
-  {ok, #{data := Expected}} =
+    <<"16D114303D8203115918CA34A220E925C022C09168175A5ACE5E9F3B61640947">>,
+  ExpectedLen = size(Expected),
+  {ok, #{data := <<Expected:ExpectedLen/binary, "00">>}} =
     bech32:decode(
       Npub,
       [
         {
           converter,
           fun
-            (Data1) ->
-              {ok, Base8} = bech32:convertbits(Data1, 5, 8),
+            (Data) ->
+              {ok, Base8} = bech32:convertbits(Data, 5, 8),
               Binary = erlang:list_to_binary(Base8),
               Hex = binary:encode_hex(Binary),
               {ok, Hex}
