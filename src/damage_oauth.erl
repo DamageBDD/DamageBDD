@@ -44,8 +44,6 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
--define(ACCESS_TOKEN_BUCKET, {<<"Default">>, <<"AccessTokens">>}).
--define(REFRESH_TOKEN_BUCKET, {<<"Default">>, <<"RefreshTokens">>}).
 -define(CONFIRM_TOKEN_EXPIRY, date_util:epoch_hires() + (24 * 60)).
 
 %%%===================================================================
@@ -158,8 +156,7 @@ reset_password(#{email := Email}) ->
           >>,
           Found
         ),
-      damage_riak:put(
-        ?CONFIRM_TOKEN_BUCKET,
+      damage_ae:set_token(
         TempPassword,
         #{email => Email, expiry => ?CONFIRM_TOKEN_EXPIRY}
       ),
@@ -195,7 +192,7 @@ verify_email(Email, Password, NewPassword) ->
               AeAccount,
               damage:sats_to_damage(4000)
             ),
-          damage_riak:delete(?CONFIRM_TOKEN_BUCKET, Password),
+          damage_ae:revoke_token(Email,Password),
           {ok, <<"Account Verified">>}
       end;
 
@@ -294,9 +291,9 @@ authenticate_user({Username, Password}, _Ctxt) ->
   end.
 
 
-authenticate_client(ClientId, ClientSecret) -> {error, notfound}.
+authenticate_client(_ClientId, _ClientSecret) -> {error, notfound}.
 
-get_client_identity(ClientId, Identity) -> {error, notfound}.
+get_client_identity(_ClientId, _Identity) -> {error, notfound}.
 
 associate_access_code(AccessCode, Context, _AppContext) ->
   associate_access_token(AccessCode, Context, _AppContext).
