@@ -254,7 +254,7 @@ check_execute_bdd(
   case throttle:check(damage_api_rate, IP) of
     {limit_exceeded, _, _} ->
       ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
-      {error, 429, Req0};
+      {429, <<"throttled">>};
 
     _ ->
       case damage_ae:balance(AeAccount) of
@@ -271,10 +271,12 @@ check_execute_bdd(
         Other ->
           {
             400,
-            <<
-              "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
-              Other/binary
-            >>
+            io_lib:format(
+              <<
+                "Insufficient balance, please top up balance at `/api/accounts/topup` balance: ~p"
+              >>,
+              [Other]
+            )
           }
       end
   end.
@@ -309,7 +311,7 @@ from_html(Req0, State) ->
       #{color := <<"true">>} -> true;
       _Other -> false
     end,
-  {_Status, Resp0} =
+  {Status, Response} =
     check_execute_bdd(
       #{
         feature => Body,
@@ -320,13 +322,14 @@ from_html(Req0, State) ->
       State,
       Req0
     ),
-  case Concurrency of
-    1 -> {stop, Req0, State};
-
-    _ ->
-      Res1 = cowboy_req:set_resp_body(Resp0, Req),
-      {true, Res1, State}
-  end.
+  {
+    stop,
+    case Concurrency of
+      1 -> cowboy_req:reply(Status, Req);
+      _ -> cowboy_req:reply(Status, cowboy_req:set_resp_body(Response, Req))
+    end,
+    State
+  }.
 
 
 to_html(Req, #{action := version} = State) -> to_json(Req, State);

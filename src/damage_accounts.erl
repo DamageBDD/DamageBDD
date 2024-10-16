@@ -314,9 +314,8 @@ to_html(Req, #{action := confirm} = State) ->
             ),
           {Body, Req, State}
       end;
-    _ ->
-      {<<"Invalid confirmation link. Please try again.">>, Req, State}
 
+    _ -> {<<"Invalid confirmation link. Please try again.">>, Req, State}
   end;
 
 to_html(Req, #{action := invoices} = State) ->

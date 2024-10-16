@@ -318,9 +318,9 @@ execute_file(Config, Context, Filename) ->
           ae_account => maps:get(ae_account, Context),
           result_status => ResultStatus,
           token_contract => maps:get(token_contract, FinalContext),
-          node_public_key => maps:get(node_public_key, FinalContext)
+          node_public_key => maps:get(node_public_key, FinalContext),
+          username => maps:get(username, FinalContext)
         },
-      store_runrecord(RunRecord),
       damage_webhooks:trigger_webhooks(FinalContext),
       damage_ae:confirm_spend(RunRecord),
       RunRecord;
@@ -329,35 +329,6 @@ execute_file(Config, Context, Filename) ->
       logger:error("Feature file ~p not found.", [Filename]),
       Err
   end.
-
-
-store_runrecord(
-  #{
-    feature_hash := _FeatureHash,
-    report_hash := ReportHash,
-    start_time := _StartTimestamp,
-    execution_time := _ExecutionTime,
-    end_time := _EndTimestamp,
-    ae_account := AeAccount,
-    schedule_id := ScheduleId,
-    result_status := ResultStatus
-  } = RunRecord
-) ->
-  Index =
-    [
-      {{binary_index, "ae_account"}, [AeAccount]},
-      {{integer_index, "created"}, [date_util:epoch()]},
-      {{integer_index, "result_status"}, [ResultStatus]}
-    ],
-  damage_riak:put(
-    ?RUNRECORDS_BUCKET,
-    ReportHash,
-    RunRecord,
-    case ScheduleId of
-      false -> Index;
-      ScheduleId -> Index ++ [{{binary_index, "schedule_id"}, [ScheduleId]}]
-    end
-  ).
 
 
 execute_feature_concurrent(_Args, 0, Acc) -> Acc;

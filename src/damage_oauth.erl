@@ -192,7 +192,7 @@ verify_email(Email, Password, NewPassword) ->
               AeAccount,
               damage:sats_to_damage(4000)
             ),
-          damage_ae:revoke_token(Email,Password),
+          damage_ae:revoke_token(Email, Password),
           {ok, <<"Account Verified">>}
       end;
 

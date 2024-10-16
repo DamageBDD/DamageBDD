@@ -234,7 +234,7 @@ handle_call({get_context, Email}, _From, Cache) ->
   case catch maps:get(context, AccountCache, undefined) of
     undefined ->
       #{decodedResult := Results} =
-        damage_ae:contract_call_user_account(Email, "get_context", []),
+        contract_call_user_account(Email, "get_context", []),
       ClientContext =
         maps:from_list(
           [
@@ -260,11 +260,7 @@ handle_call({set_context, Email, AccountContext}, _From, Cache) ->
   NewAccountContext =
     maps:merge(maps:get(context, AccountCache, #{}), AccountContext),
   Results =
-    damage_ae:contract_call_user_account(
-      Email,
-      "set_context",
-      [NewAccountContext]
-    ),
+    contract_call_user_account(Email, "set_context", [NewAccountContext]),
   ?LOG_DEBUG("set_context caching ~p, ~p", [NewAccountContext, Results]),
   {
     reply,
@@ -320,7 +316,7 @@ handle_call({get_webhooks, Email}, _From, Cache) ->
   case catch maps:get(webhooks, AccountCache, undefined) of
     undefined ->
       #{decodedResult := Results} =
-        damage_ae:contract_call_user_account(Email, "get_webhooks", []),
+        contract_call_user_account(Email, "get_webhooks", []),
       WebHooks =
         maps:from_list(
           [
@@ -395,7 +391,7 @@ handle_call({transaction, Data}, _From, State) ->
 handle_call({delete_account, Email}, _From, Cache) ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
   #{decodedResult := []} =
-    damage_ae:contract_call(
+    contract_call(
       Email,
       AccountContract,
       "contracts/account.aes",
@@ -412,7 +408,7 @@ handle_call({set_meta, #{email := Email} = AccountMeta}, _From, Cache) ->
   NewAccountMetaEncrypted =
     base64:encode(damage_utils:encrypt(jsx:encode(NewAccountMeta))),
   #{decodedResult := []} =
-    damage_ae:contract_call(
+    contract_call(
       Email,
       AccountContract,
       "contracts/account.aes",
@@ -522,6 +518,9 @@ handle_call({resolve_npub, NPub}, _From, Cache) ->
   end.
 
 
+filter_map(Map, Keys) when is_map(Map), is_list(Keys) ->
+  maps:filter(fun (Key, _) -> lists:member(Key, Keys) end, Map).
+
 handle_cast(
   {
     confirm_spend,
@@ -535,17 +534,31 @@ handle_cast(
   },
   Cache
 ) ->
+  SpendRecord =
+    filter_map(
+      RunRecord,
+      [
+        feature_hash,
+        report_hash,
+        run_id,
+        schedule_id,
+        start_time,
+        end_time,
+        result_status,
+        execution_time
+      ]
+    ),
   ?LOG_DEBUG("confirm spend ~p", [RunRecord]),
   AccountCache = maps:get(EmailOrUsername, Cache, #{}),
   case maps:get(spent_balance, AccountCache, {0, 0}) of
     {_, Amount} when Amount > 0 ->
       case
-      damage_ae:contract_call(
+      contract_call(
         EmailOrUsername,
-        DamageTokenContract,
+        binary_to_list(DamageTokenContract),
         "contracts/token.aes",
         "spend",
-        [NodePublicKey, Amount, RunRecord]
+        [NodePublicKey, Amount, SpendRecord]
       ) of
         #{
           decodedEvents
@@ -666,20 +679,14 @@ exec_aecli(Cmd) ->
 
 contract_call_user_account(Email, Func, Args) ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
-  damage_ae:contract_call(
-    Email,
-    AccountContract,
-    "contracts/account.aes",
-    Func,
-    Args
-  ).
+  contract_call(Email, AccountContract, "contracts/account.aes", Func, Args).
 
 
 contract_call_admin_account(Func, Args) ->
   AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
   {ok, AdminWallet} = application:get_env(damage, ae_wallet),
   {ok, AccountContract} = application:get_env(damage, account_contract),
-  damage_ae:contract_call(
+  contract_call(
     AdminWallet,
     AdminPassword,
     AccountContract,
@@ -893,7 +900,7 @@ invalidate_cache(Username) ->
 
 revoke_token(Email, Token) ->
   DamageAEPid = get_wallet_proc(Email),
-  gen_server:cast(DamageAEPid, {del_token, Token}).
+  gen_server:cast(DamageAEPid, {revoke_access_token, Token}).
 
 
 get_domain_token(Email, Domain) ->
@@ -1004,7 +1011,7 @@ transfer_damage_tokens(AeAccount, Amount) ->
   AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
   {ok, TokenContract} = application:get_env(damage, token_contract),
   ContractCall =
-    damage_ae:contract_call(
+    contract_call(
       AdminWalletPath,
       AdminPassword,
       TokenContract,
