@@ -7,6 +7,7 @@
 -license("Apache-2.0").
 
 -export([step/6]).
+-export([is_admin/1]).
 
 step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
   maps:put(Variable, list_to_binary(uuid:to_string(uuid:uuid4())), Context);
@@ -51,4 +52,22 @@ step(
     UnExpected ->
       Msg = damage_utils:strf("Unexpected status ~p", [UnExpected]),
       maps:put(fail, Msg, Context)
+  end;
+
+step(
+  _Config,
+  #{ae_account := AeAccount} = Context,
+  <<"Given">>,
+  _N,
+  ["I am an Admin"],
+  _
+) ->
+  case is_admin(AeAccount) of
+    true -> Context;
+    Other -> maps:put(fail, Other, Context)
   end.
+
+
+is_admin(AeAccount) ->
+  {ok, AdminAccounts} = application:get_env(damage, admin_accounts),
+  lists:member(AeAccount, AdminAccounts).
