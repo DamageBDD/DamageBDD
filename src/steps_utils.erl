@@ -36,13 +36,13 @@ step(
   _,
   _N,
   [
-    "test case ",
+    "test case",
     FeatureHash,
-    " status was ",
+    "status was",
     Status,
-    " in the last ",
+    "in the last",
     Hours,
-    " hours"
+    "hours"
   ],
   _
 ) ->
