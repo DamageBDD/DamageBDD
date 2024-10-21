@@ -21,22 +21,23 @@ step(
   ["that status of service", Service, "is", Status],
   _
 ) ->
-  {ok, [{stdout, Stdout}]} =
+  {ok, [{stdout, [Stdout]}]} =
     exec:run(
       "systemctl show -p ActiveState " ++ Service ++ "\n",
       [stdout, sync]
     ),
   case binary_to_list(Stdout) of
-    ["ActiveState=", "active"] -> Context;
+    "ActiveState=active\n" -> Context;
 
-    _ ->
+    Other ->
       maps:put(
         fail,
-        damage_utils:strf("Service ~p is not in state ~p", [Service, State]),
+        damage_utils:strf(
+          "Service ~p is in state ~p not in state ~p",
+          [Service, Other, Status]
+        ),
         Context
-      );
-
-    _ -> Context
+      )
   end.
 
 

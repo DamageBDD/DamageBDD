@@ -6,6 +6,9 @@
 
 -license("Apache-2.0").
 
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
+
 -export([step/6]).
 -export([is_admin/1]).
 
@@ -32,7 +35,7 @@ step(
 
 step(
   _Config,
-  Context,
+  #{ae_account := AeAccount} = Context,
   _,
   _N,
   [
@@ -46,7 +49,7 @@ step(
   ],
   _
 ) ->
-  case damage_ae:get_last_test_status(FeatureHash, Hours) of
+  case get_last_test_status(AeAccount, FeatureHash, list_to_integer(Hours)) of
     Status -> Context;
 
     UnExpected ->
@@ -65,9 +68,42 @@ step(
   case is_admin(AeAccount) of
     true -> Context;
     Other -> maps:put(fail, Other, Context)
+  end;
+
+step(
+  _Config,
+  #{ae_account := AeAccount} = Context,
+  <<"Given">>,
+  _N,
+  ["I am a", Service, "Admin"],
+  _
+) ->
+  {ok, {admins, ServiceAdmins}} =
+    application:get_env(damage_systemd, list_to_atom(Service)),
+  case lists:member(AeAccount, ServiceAdmins) of
+    true -> Context;
+    Other -> maps:put(fail, Other, Context)
   end.
 
 
+is_admin(AeAccount) when is_binary(AeAccount) ->
+  is_admin(binary_to_list(AeAccount));
+
 is_admin(AeAccount) ->
-  {ok, AdminAccounts} = application:get_env(damage, admin_accounts),
-  lists:member(AeAccount, AdminAccounts).
+  case application:get_env(damage, node_admins) of
+    {ok, NodeAdmins} -> lists:member(AeAccount, NodeAdmins);
+
+    Other ->
+      ?LOG_ERROR("not node admin ~p <> ~p", [Other, AeAccount]),
+      false
+  end.
+
+
+get_last_test_status(AeAccount, FeatureHash, Hours) ->
+  ?LOG_DEBUG("Check balance ~p", [AeAccount]),
+  DamageAEPid = damage_ae:get_wallet_proc(AeAccount),
+  gen_server:call(
+    DamageAEPid,
+    {get_last_test_status, AeAccount, FeatureHash, Hours},
+    ?AE_TIMEOUT
+  ).

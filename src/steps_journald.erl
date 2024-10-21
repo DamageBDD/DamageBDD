@@ -15,7 +15,7 @@
 -export(
   [
     init/1,
-    start_link/0,
+    start_link/2,
     handle_call/3,
     handle_cast/2,
     handle_info/2,
@@ -23,6 +23,7 @@
     code_change/3
   ]
 ).
+-export([get_journal_proc/2]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -34,27 +35,38 @@ step(
   ["I am monitoring", Service, "journal"],
   _
 ) ->
-  true = steps_utils:is_admin(AeAccount),
-  % initialize journald hooks ...
-  Proc = get_journal_proc(Service, Context),
-  ?LOG_DEBUG("Started journald monitor ~p : ~p", [Service, Proc]),
-  Context.
+  case steps_utils:is_admin(AeAccount) of
+    true ->
+      % initialize journald hooks ...
+      Proc = get_journal_proc(Service, Context),
+      ?LOG_DEBUG("Started journald monitor ~p : ~p", [Service, Proc]),
+      Context;
+
+    false ->
+      Message = damage_utils:strf("Account not an admin. ~p", [AeAccount]),
+      maps:put(fail, Message, Context)
+  end.
 
 
-start_link() -> gen_server:start_link(?MODULE, [], []).
+start_link(Service, Context) ->
+  gen_server:start_link(?MODULE, [Service, Context], []).
 
 init([Service, Context]) ->
   process_flag(trap_exit, true),
   Timer = erlang:send_after(10000, self(), tic),
-  {ok, Result} =
+  {ok, Pid, _} =
     exec:run(
       "journalctl -p 5 -f -o cat -u " ++ Service,
       [{stdout, self()}, monitor]
     ),
-  ?LOG_DEBUG("tail result ~p", [Result]),
-  Context = #{heartbeat_timer => Timer, journald_hooks => #{}},
-  {ok, Context}.
+  ?LOG_DEBUG("tail pid ~p", [Pid]),
+  {ok, maps:merge(Context, #{heartbeat_timer => Timer, journald_hooks => #{}})}.
 
+
+handle_call({add_hook, Id, HookFun} = Event, _From, Context) ->
+  ?LOG_DEBUG("handle_call ~p : ~p", [Event, Context]),
+  maps:put(journald_hooks, {Id, HookFun}, Context),
+  {reply, ok, Context};
 
 handle_call(Event, _From, Context) ->
   ?LOG_DEBUG("handle_call ~p : ~p", [Event, Context]),
@@ -65,6 +77,12 @@ handle_cast(Event, Context) ->
   ?LOG_DEBUG("handle_cast ~p : ~p", [Event, Context]),
   {noreply, Context}.
 
+
+handle_info({stdout, _Pid, Data}, Context) ->
+  Hooks = maps:get(journald_hooks, Context, []),
+  ?LOG_DEBUG("calling journal hooks ~p ", [Hooks]),
+  [HookFun(Data) || {_Id, HookFun} <- Hooks],
+  {noreply, Context};
 
 handle_info(Info, Context) ->
   ?LOG_DEBUG("handle_info ~p : ~p", [Info, Context]),

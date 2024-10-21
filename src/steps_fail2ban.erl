@@ -23,26 +23,79 @@
     code_change/3
   ]
 ).
+-export([hook/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
 hook(Data) ->
-  case re:match("^<HOST>.*\"(GET|POST).*\" (404|444|403|400) .*$", Data) of
-    {ok, Start} -> ok;
-    _ -> ok
+  case gproc:lookup_local_name({?MODULE, "nginx_journald"}) of
+    undefined -> ?LOG_ERROR("nginx journald missing", []);
+    Pid -> ok = gen_server:call(Pid, {check_ban, Data})
   end.
+
+
+unban(Ip) ->
+  Result =
+    exec:run("sudo iptables -D INPUT -s " ++ Ip ++ " -j DROP", [stdout, sync]),
+  ?LOG_INFO("Banned Ip ~p ~p", [Ip, Result]),
+  {true, Result}.
+
+
+ban(Ip, BanTime) ->
+  Result =
+    exec:run(
+      "sudo iptables -A INPUT -s "
+      ++
+      Ip
+      ++
+      " -j DROP -m comment --comment \"DamageBDD Fail2ban Ban\"",
+      [stdout, sync]
+    ),
+  ?LOG_INFO("Banned Ip ~p ~p", [Ip, Result]),
+  _Timer = erlang:send_after(BanTime, self(), [unban, Ip]),
+  {true, Result}.
 
 
 step(
   _Config,
   Context,
-  _,
+  <<"Then">>,
   _N,
-  ["the IP has not been seen in the last", SinceSeconds, "seconds"],
+  ["the IP must be banned for", BanTime, "seconds"],
   _
 ) ->
-  Id = "nginx_journal",
+  Ips = maps:get(fail2ban_selected_ips, Context, []),
+  Results = [ban(Ip, BanTime) || Ip <- Ips],
+  case lists:all(fun ({true, _}) -> true end, Results) of
+    true -> Context;
+
+    _ ->
+      maps:put(fail, damage_utils:strf("Failed to ban ~p", [Results]), Context)
+  end;
+
+step(
+  _Config,
+  #{ae_account := AeAccount} = Context,
+  _,
+  _N,
+  [
+    "the IP has made more than",
+    NumRequests,
+    "requests with status",
+    Status,
+    "in the last",
+    SinceSeconds,
+    "seconds"
+  ],
+  _
+) ->
+  true = steps_utils:is_admin(AeAccount),
   Pid = get_fail2ban_proc("nginx", Context),
+  ok =
+    gen_server:call(
+      Pid,
+      {add_jail, NumRequests, Status, list_to_integer(SinceSeconds)}
+    ),
   Context.
 
 
@@ -55,7 +108,55 @@ init([Service, Context]) ->
   {ok, Context}.
 
 
-handle_call({add_jail}, _From, Context) -> {reply, ok, Context};
+handle_call({unban, Ip}, _From, Context) ->
+  ok = unban(Ip),
+  {reply, ok, Context};
+
+handle_call({check_ban, Data}, _From, Context) ->
+    ?LOG_DEBUG("check_ban ~p", [Data]),
+  Result =
+    case
+    re:match("^<HOST>.*\"(GET|POST).*\" <STATUS>(404|444|403|400) .*$", Data) of
+      {match, [Ip, Status]} ->
+        Cache = maps:get(context, fail2ban_cache, #{}),
+        Now = date_util:seconds_since_epoch(),
+        case maps:get(Ip, Cache, undefined) of
+          #{last_seen := LastSeen, status := Status} ->
+            Jails = maps:get(fail2ban_jails, Context, sets:set([])),
+            lists:map(
+              fun
+                (#{status := Status0, since := Since} = _Jail) ->
+                  SinceLastSeen = Now - LastSeen,
+                      Status0 = Status,
+                  SinceLastSeen > Since
+              end,
+              Jails
+            );
+
+          undefined -> 0
+        end;
+
+      _ -> ok
+    end,
+  {reply, Result, Context};
+
+handle_call({add_jail, NumRequests, Status, SinceSeconds}, _From, Context) ->
+  Id = "fail2ban",
+  Pid = steps_journald:get_journal_proc("nginx", Context),
+  ok = gen_server:call(Pid, {add_hook, Id, fun hook/1}),
+  Jails = maps:get(fail2ban_jails, Context, sets:set([])),
+  {
+    reply,
+    ok,
+    maps:put(
+      fail2ban_jails,
+      sets:add_element(
+        #{num_requests => NumRequests, since => SinceSeconds, status => Status},
+        Jails
+      ),
+      Context
+    )
+  };
 
 handle_call(Event, _From, Context) ->
   ?LOG_DEBUG("handle_call ~p : ~p", [Event, Context]),
