@@ -159,7 +159,7 @@ to_html(Req, #{hash := Hash} = State) ->
       {ok, DamageApi} = application:get_env(damage, api_url),
       Dir =
         ls(list_to_binary(string:join([binary_to_list(Hash), "reports"], "/"))),
-      List =
+      ReportList =
         list_to_binary(
           string:join(
             [
@@ -176,7 +176,11 @@ to_html(Req, #{hash := Hash} = State) ->
             "<br>"
           )
         ),
-      Data = <<"<html><body>", List/binary, "</body></html>">>,
+      Data =
+        damage_utils:load_template(
+          "report.mustache",
+          #{reports_list => ReportList}
+        ),
       {Data, Req, State};
 
     Path ->
