@@ -7,6 +7,7 @@
 -license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
 
 -behaviour(gen_server).
 
@@ -54,13 +55,9 @@
 -export([delete_account/1]).
 -export([revoke_token/2]).
 -export([resolve_npub/1]).
--export([get_last_test_status/3]).
 -export([get_block_height_since/2]).
 -export([test_find_block/0]).
 -export([get_wallet_proc/1]).
-
--define(AE_USER_WALLET_MINIMUM_BALANCE, 1000100000000000).
--define(AE_TIMEOUT, 36000).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 
@@ -102,16 +99,6 @@ get_ae_mdw_node() ->
 get_ae_mdw_ws_node() ->
   {ok, AENodes} = application:get_env(damage, ae_mdw_ws_nodes),
   find_active_node(AENodes).
-
-
-get_last_test_status(AeAccount, FeatureHash, Hours) ->
-  ?LOG_DEBUG("Check balance ~p", [AeAccount]),
-  DamageAEPid = get_wallet_proc(AeAccount),
-  gen_server:call(
-    DamageAEPid,
-    {get_last_test_status, FeatureHash, Hours},
-    ?AE_TIMEOUT
-  ).
 
 
 get_block_height_since(SinceHours, ConnPid) ->
@@ -195,6 +182,11 @@ handle_call({balance, AeAccount}, _From, Cache) ->
       Balance =
         case read_stream(ConnPid, StreamRef) of
           #{amount := null} -> 0;
+
+          #{error := Error} ->
+            ?LOG_ERROR("Error getting balance ~p", [Error]),
+            0;
+
           #{amount := Balance0} -> Balance0
         end,
       {reply, Balance, Cache};
@@ -818,7 +810,6 @@ start_batch_spend_timer() ->
 
 
 confirm_spend(#{username := Username} = Context) ->
-  % temporary storage to commit after feature execution
   DamageAEPid = get_wallet_proc(Username),
   gen_server:cast(DamageAEPid, {confirm_spend, Context}).
 
@@ -949,7 +940,7 @@ read_stream(ConnPid, StreamRef) ->
   case gun:await(ConnPid, StreamRef, 600000) of
     {response, nofin, Status, _Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      ?LOG_DEBUG(" Status ~p Response: ~p", [Status, Body]),
+      ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
       jsx:decode(Body, [{labels, atom}, return_maps]);
 
     Default ->
@@ -1053,17 +1044,37 @@ maybe_fund_wallet(EmailOrUsername, Amount) ->
   {ok, Wallet} = file:read_file(UserWalletPath),
   #{public_key := UserAccount} =
     jsx:decode(Wallet, [{labels, atom}, return_maps]),
-  case get_ae_balance(UserAccount) of
-    #{balance := Balance} when Balance < ?AE_USER_WALLET_MINIMUM_BALANCE ->
-      {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
+  AeResult =
+    case get_ae_balance(UserAccount) of
+      #{balance := AeBalance} when AeBalance < ?AE_USER_WALLET_MINIMUM_BALANCE ->
+        {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
 
-    #{reason := <<"Account not found">>} ->
-      {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
+      #{reason := <<"Account not found">>} ->
+        {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
 
-    Result ->
-      ?LOG_INFO("Wallet above minimum balance ~p ~p", [EmailOrUsername, Result]),
-      {notfunded, #{public_key => UserAccount}}
-  end.
+      Result ->
+        ?LOG_INFO(
+          "Wallet above minimum balance ~p ~p",
+          [EmailOrUsername, Result]
+        ),
+        {notfunded, #{public_key => UserAccount}}
+    end,
+  DamageTokenResult =
+    case balance(UserAccount) of
+      Balance when Balance < ?DAMAGE_USER_WALLET_MINIMUM_BALANCE ->
+        {funded, transfer_damage_tokens(UserAccount, Amount)};
+
+      #{reason := <<"Account not found">>} ->
+        {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
+
+      Result0 ->
+        ?LOG_INFO(
+          "Wallet above minimum balance ~p ~p",
+          [EmailOrUsername, Result0]
+        ),
+        {notfunded, #{public_key => UserAccount}}
+    end,
+  {AeResult, DamageTokenResult}.
 
 
 maybe_create_wallet(Email, Password) ->

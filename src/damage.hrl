@@ -25,3 +25,7 @@
 -define(DAMAGE_DECIMALS, 8).
 
 -record(damage_state, {formatters = [], test_state = []}).
+
+-define(AE_TIMEOUT, 36000).
+-define(DAMAGE_USER_WALLET_MINIMUM_BALANCE, 4000).
+-define(AE_USER_WALLET_MINIMUM_BALANCE, 1000000100000000000).
