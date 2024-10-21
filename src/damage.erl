@@ -192,6 +192,7 @@ execute_file(Config, Context, Filename) ->
         "Parsing Failed ~p +~p ~n     ~p.",
         [Filename, LineNo, Message]
       ),
+      formatter:format(Config, error, {LineNo, Message}),
       {parse_error, LineNo, Message};
 
     {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
@@ -327,6 +328,10 @@ execute_file(Config, Context, Filename) ->
 
     {error, enont} = Err ->
       logger:error("Feature file ~p not found.", [Filename]),
+      Err;
+
+    Err ->
+      logger:error("Feature parsing error file ~p .", [Filename]),
       Err
   end.
 
@@ -544,12 +549,11 @@ execute_step(Config, Step, Context) ->
         step,
         {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
       ),
-      metrics:update(notfound, maps:get(ae_account, Context));
+      metrics:update(notfound, maps:get(ae_account, Context)),
+      maps:put(failing_step, Step, Context);
 
-    true -> true
-  end,
-  %?LOG_DEBUG("STEP CONTEXT ~p ~p", [Body1, Context0]),
-  Context0.
+    true -> Context0
+  end.
 
 
 get_default_config(AeAccount, Concurrency, Formatters) ->
