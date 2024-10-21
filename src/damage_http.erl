@@ -223,23 +223,42 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
       {400, Response};
 
     {parse_error, LineNo, Message} ->
-      ?LOG_DEBUG("failure ~p.", [Message]),
+      ?LOG_DEBUG("execute_bdd failure parse_error ~p.", [Message]),
       {
         400,
-        #{
-          status => <<"notok">>,
-          message => list_to_binary(Message),
-          line => LineNo,
-          hint
-          =>
-          <<
-            "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
-          >>
-        }
+        jsx:encode(
+          #{
+            status => <<"notok">>,
+            message => list_to_binary(Message),
+            line => LineNo,
+            hint
+            =>
+            <<
+              "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+            >>
+          }
+        )
       };
 
     #{report_hash := _} = Result ->
-      {200, maps:merge(Result, #{status => <<"ok">>})}
+      {200, maps:merge(Result, #{status => <<"ok">>})};
+
+    Error ->
+      ?LOG_DEBUG("execute_bdd failure ~p.", [Error]),
+      {
+        400,
+        jsx:encode(
+          #{
+            status => <<"notok">>,
+            message => Error,
+            hint
+            =>
+            <<
+              "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
+            >>
+          }
+        )
+      }
   end.
 
 
@@ -260,6 +279,10 @@ check_execute_bdd(
       case damage_ae:balance(AeAccount) of
         Balance when Balance >= Concurrency ->
           Config = get_config(Context, Req0),
+          ?LOG_DEBUG(
+            "check_execute_bdd balance ~p context ~p",
+            [Balance, Context]
+          ),
           execute_bdd(
             Config,
             damage_context:get_account_context(
@@ -311,25 +334,43 @@ from_html(Req0, State) ->
       #{color := <<"true">>} -> true;
       _Other -> false
     end,
-  {Status, Response} =
-    check_execute_bdd(
-      #{
-        feature => Body,
-        color_formatter => ColorFormatter,
-        concurrency => Concurrency,
-        stream => maybe_stream
-      },
-      State,
-      Req0
-    ),
-  {
-    stop,
-    case Concurrency of
-      1 -> cowboy_req:reply(Status, Req);
-      _ -> cowboy_req:reply(Status, cowboy_req:set_resp_body(Response, Req))
-    end,
-    State
-  }.
+  case
+  check_execute_bdd(
+    #{
+      feature => Body,
+      color_formatter => ColorFormatter,
+      concurrency => Concurrency,
+      stream => maybe_stream
+    },
+    State,
+    Req
+  ) of
+    {200, Response} ->
+      ?LOG_DEBUG("200 execute_feature from_html ~p", [Response]),
+      {
+        stop,
+        case Concurrency of
+          1 -> cowboy_req:reply(200, Req);
+          _ -> cowboy_req:reply(200, cowboy_req:set_resp_body(Response, Req))
+        end,
+        State
+      };
+
+    {Status, Response} ->
+      ?LOG_DEBUG("~p execute_feature from_html ~p", [Status, Response]),
+      {
+        stop,
+        cowboy_req:reply(Status, cowboy_req:set_resp_body(Response, Req)),
+        State
+      };
+
+    Error ->
+      {
+        stop,
+        cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Error), Req)),
+        State
+      }
+  end.
 
 
 to_html(Req, #{action := version} = State) -> to_json(Req, State);
