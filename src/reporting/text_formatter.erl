@@ -1,6 +1,5 @@
 -module(text_formatter).
 
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -59,6 +58,14 @@ write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) ->
       [append]
     ).
 
+
+format(Config, error, {LineNo, Message}) ->
+  ok =
+    write_file(
+      Config,
+      "~s line:~p desc: ~s",
+      [get_status_text(Config, fail), LineNo, Message]
+    );
 
 format(Config, feature, {FeatureName, LineNo, [], Description}) ->
   ok =

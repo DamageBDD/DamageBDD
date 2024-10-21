@@ -1,6 +1,5 @@
 -module(html_formatter).
 
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -30,6 +29,14 @@ write_file(#{output := Output}, FormatStr, Args) ->
       [append]
     ).
 
+
+format(Config, error, {LineNo, Message}) ->
+  ok =
+    write_file(
+      Config,
+      "<tr>\n<td>\nStatus\n</td>\n <td>Fail</td> <td>LineNo: ~p</td> <td>Message:~p</td></tr>",
+      [LineNo, Message]
+    );
 
 format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =
