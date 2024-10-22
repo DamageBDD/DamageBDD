@@ -36,9 +36,11 @@ step(
       Msg = damage_utils:strf("Unexpected status ~p", [UnExpected]),
       maps:put(fail, Msg, Context)
   end;
+
 step(Config, Context, <<"And">>, _N, ["I am using ai ", AiProvider], Args) ->
   ?LOG_DEBUG("and config: ~p context: ~p  args: ~p", [Config, AiProvider, Args]),
   Context.
+
 
 get_last_test_status(AeAccount, FeatureHash, Hours) ->
   ?LOG_DEBUG("Check balance ~p", [AeAccount]),
@@ -49,10 +51,9 @@ get_last_test_status(AeAccount, FeatureHash, Hours) ->
     ?AE_TIMEOUT
   ).
 
-test_get_last_test_status() ->
-    {ok, [NodeAdmin|_]} = application:get_env(damage, node_admins),
-    TestFeatureHash = <<"QmNPiDUFeGC6j35aBWNHSqgNLh5yXveLWoupzvrUwTWp4e">>,
-    Result = get_last_test_status(NodeAdmin, TestFeatureHash, 36),
-    ?LOG_INFO("Result ~p", [Result]).
 
-    
+test_get_last_test_status() ->
+  {ok, [NodeAdmin | _]} = application:get_env(damage, node_admins),
+  TestFeatureHash = <<"QmNPiDUFeGC6j35aBWNHSqgNLh5yXveLWoupzvrUwTWp4e">>,
+  Result = get_last_test_status(NodeAdmin, TestFeatureHash, 36),
+  ?LOG_INFO("Result ~p", [Result]).

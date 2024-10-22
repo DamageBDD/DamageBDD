@@ -103,16 +103,14 @@ get_ae_mdw_ws_node() ->
 
 
 get_block_height_since(SinceHours, ConnPid) ->
-    SinceSeconds = date_util:datetime_to_epoch(
-      calendar:now_to_datetime(erlang:timestamp()))
-      -
-      hours_to_seconds(SinceHours),
-    ?LOG_DEBUG("Since seconds ~p", [SinceSeconds]),
-  {ok, Result, _MicroBlocks} = find_block_at_timestamp(
-   SinceSeconds ,
-    ConnPid
-  ),
-    Result.
+  SinceSeconds =
+    date_util:datetime_to_epoch(calendar:now_to_datetime(erlang:timestamp()))
+    -
+    hours_to_seconds(SinceHours),
+  ?LOG_DEBUG("Since seconds ~p", [SinceSeconds]),
+  {ok, Result, _MicroBlocks} = find_block_at_timestamp(SinceSeconds, ConnPid),
+  Result.
+
 
 hours_to_seconds(Hours) -> 3600 * Hours.
 
@@ -124,7 +122,7 @@ handle_call(
   case get_ae_mdw_node() of
     {ok, ConnPid, PathPrefix} ->
       BlockHeight = get_block_height_since(Hours, ConnPid),
-          ?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
+      ?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
       Path =
         PathPrefix
         ++
@@ -133,8 +131,9 @@ handle_call(
         AeAccount
         ++
         "/activities?direction=backward&type=transactions&height="
-        ++  BlockHeight,
-          ?LOG_DEBUG("Path ~p", [Path]),
+        ++
+        BlockHeight,
+      ?LOG_DEBUG("Path ~p", [Path]),
       StreamRef = gun:get(ConnPid, Path),
       Balance =
         case read_stream(ConnPid, StreamRef) of
@@ -655,7 +654,7 @@ exec_aecli(Cmd) ->
       jsx:decode(damage_utils:binarystr_join(StdOutList), [{labels, atom}]);
 
     {ok, [{stdout, StdOutList}, {stderr, Err}]} ->
-      ?LOG_ERROR("Stderr ~p ~p", [StdOutList, Err]),
+      ?LOG_ERROR("Stderr ~p", [Err]),
       jsx:decode(damage_utils:binarystr_join(StdOutList), [{labels, atom}]);
 
     {error, [{exit_status, _ExitStatus}, {stdout, StdOutList}, {stderr, Err}]} ->
@@ -1185,19 +1184,17 @@ get_block_timestamp(Height, ConnPid) ->
 
 
 test_find_block() ->
-    {Today, _Now} = calendar:local_time(),
-    Yesterday = date_util:subtract(Today, {days, 1}),
-    ADayAgo = date_util:date_to_epoch(Yesterday),
+  {Today, _Now} = calendar:local_time(),
+  Yesterday = date_util:subtract(Today, {days, 1}),
+  ADayAgo = date_util:date_to_epoch(Yesterday),
   case get_ae_mdw_node() of
     {ok, ConnPid, _PathPrefix} ->
       case find_block_at_timestamp(ADayAgo * 1000, ConnPid) of
-          {ok, Block, Mblocks} ->
-              ?LOG_INFO("Found block ~p ~p", [Block, Mblocks]);
-          Error ->
-              ?LOG_ERROR("block not found ~p", [Error])
-          end;
-              
+        {ok, Block, Mblocks} ->
+          ?LOG_INFO("Found block ~p ~p", [Block, Mblocks]);
 
+        Error -> ?LOG_ERROR("block not found ~p", [Error])
+      end;
 
     Error -> ?LOG_ERROR("Failed to find block timestamp ~p", [Error])
   end.
@@ -1272,16 +1269,17 @@ test_sign_vw() ->
   ?LOG_DEBUG("contract data ~p", [ContractData]),
   Signed = ecu_eddsa:sign(ContractData, SecretKey),
   Signed.
+
+
 test_get_block_height_since() ->
   case get_ae_mdw_node() of
     {ok, ConnPid, _PathPrefix} ->
-          Result = get_block_height_since(36, ConnPid),
-          ?LOG_INFO("block height ~p", [Result]),
-          Result;
-    Err ->
-      ?LOG_DEBUG("Finding ae node failed ~p", [Err])
+      Result = get_block_height_since(36, ConnPid),
+      ?LOG_INFO("block height ~p", [Result]),
+      Result;
+
+    Err -> ?LOG_DEBUG("Finding ae node failed ~p", [Err])
   end.
-    
 
 
 sign_tx(UTx) ->

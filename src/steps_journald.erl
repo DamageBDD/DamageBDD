@@ -66,7 +66,7 @@ init([Service, Context]) ->
 handle_call({add_hook, Id, HookFun} = Event, _From, Context) ->
   ?LOG_DEBUG("handle_call ~p : ~p", [Event, Context]),
   Hooks = maps:get(journald_hooks, Context, []),
-  maps:put(journald_hooks, lists:append(Hooks,[{Id, HookFun}]), Context),
+  maps:put(journald_hooks, lists:append(Hooks, [{Id, HookFun}]), Context),
   {reply, ok, Context};
 
 handle_call(Event, _From, Context) ->

@@ -33,7 +33,6 @@ step(
     Context
   );
 
-
 step(
   _Config,
   #{ae_account := AeAccount} = Context,
@@ -74,5 +73,3 @@ is_admin(AeAccount) ->
       ?LOG_ERROR("not node admin ~p <> ~p", [Other, AeAccount]),
       false
   end.
-
-

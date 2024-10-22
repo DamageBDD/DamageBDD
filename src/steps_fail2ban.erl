@@ -113,7 +113,7 @@ handle_call({unban, Ip}, _From, Context) ->
   {reply, ok, Context};
 
 handle_call({check_ban, Data}, _From, Context) ->
-    ?LOG_DEBUG("check_ban ~p", [Data]),
+  ?LOG_DEBUG("check_ban ~p", [Data]),
   Result =
     case
     re:match("^<HOST>.*\"(GET|POST).*\" <STATUS>(404|444|403|400) .*$", Data) of
@@ -127,7 +127,7 @@ handle_call({check_ban, Data}, _From, Context) ->
               fun
                 (#{status := Status0, since := Since} = _Jail) ->
                   SinceLastSeen = Now - LastSeen,
-                      Status0 = Status,
+                  Status0 = Status,
                   SinceLastSeen > Since
               end,
               Jails
