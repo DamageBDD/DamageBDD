@@ -219,7 +219,7 @@ add_confirm_token(#{email := ToEmail} = Data0) ->
     base64:encode(
       damage_utils:encrypt(jsx:encode(#{email => ToEmail, expiry => Expiry}))
     ),
-  [] =
+  #{decodedResult := []} =
     damage_ae:contract_call_admin_account(
       "add_auth_token",
       [TempPasswordEncrypted, TokenEncrypted]
