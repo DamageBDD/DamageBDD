@@ -335,7 +335,7 @@ resolve_access_token(AccessToken, AppContext) ->
   %% returned from this function according to the spec.
   DamageAEPid = damage_ae:get_wallet_proc(admin),
   AccessTokenEncrypted = base64:encode(damage_utils:encrypt(AccessToken)),
-  case gen_server:call(DamageAEPid, {get_access_token, AccessTokenEncrypted}) of
+  case gen_server:call(DamageAEPid, {get_access_token, AccessTokenEncrypted}, ?AE_TIMEOUT) of
     notfound -> {error, notfound};
 
     Value ->
@@ -350,7 +350,7 @@ revoke_access_code(AccessCode, _AppContext) ->
 revoke_access_token(AccessToken, _) ->
   AccessTokenEncrypted = base64:encode(damage_utils:encrypt(AccessToken)),
   DamageAEPid = damage_ae:get_wallet_proc(admin),
-  ok = gen_server:call(DamageAEPid, {revoke_auth_token, AccessTokenEncrypted}).
+  ok = gen_server:call(DamageAEPid, {revoke_access_token, AccessTokenEncrypted}, ?AE_TIMEOUT).
 
 
 revoke_refresh_token(_RefreshToken, _) -> ok.
