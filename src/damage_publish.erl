@@ -271,7 +271,7 @@ publish_bdd(
       {400, jsx:encode(Response)};
 
     {parse_error, LineNo, Message} ->
-      ?LOG_DEBUG("failure ~p.", [Message]),
+      ?LOG_DEBUG("publish failure ~p.", [Message]),
       {
         400,
         jsx:encode(

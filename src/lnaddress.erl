@@ -124,19 +124,19 @@ to_json(Req, #{action := invoice} = State) ->
     undefined -> {<<"user required">>, Req, State};
 
     <<"asyncmind">> ->
-        case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
-              #{amount := AmountBin, comment := Memo} ->
-                Amount = binary_to_integer(AmountBin),
-                  #{r_hash := _RHash, payment_request := PaymentRequest} = Invoice = lnd:create_invoice(Amount div 1000, Memo),
-                  ?LOG_INFO("invoice ~p", [Invoice]),
-                  {jsx:encode(#{pr => PaymentRequest}), Req, State};
+      case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
+        #{amount := AmountBin, comment := Memo} ->
+          Amount = binary_to_integer(AmountBin),
+          #{r_hash := _RHash, payment_request := PaymentRequest} =
+            Invoice = lnd:create_invoice(Amount div 1000, Memo),
+          ?LOG_INFO("invoice ~p", [Invoice]),
+          {jsx:encode(#{pr => PaymentRequest}), Req, State};
 
-              Unexpected ->
-                  ?LOG_INFO("invalid invoice request ~p", [Unexpected]),
-                  {jsx:encode(#{names => []}), Req, State}
-          end
-end.
-
+        Unexpected ->
+          ?LOG_INFO("invalid invoice request ~p", [Unexpected]),
+          {jsx:encode(#{names => []}), Req, State}
+      end
+  end.
 
 
 from_html(Req, #{action := reset_password} = State) ->

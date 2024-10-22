@@ -33,29 +33,6 @@ step(
     Context
   );
 
-step(
-  _Config,
-  #{ae_account := AeAccount} = Context,
-  _,
-  _N,
-  [
-    "test case",
-    FeatureHash,
-    "status was",
-    Status,
-    "in the last",
-    Hours,
-    "hours"
-  ],
-  _
-) ->
-  case get_last_test_status(AeAccount, FeatureHash, list_to_integer(Hours)) of
-    Status -> Context;
-
-    UnExpected ->
-      Msg = damage_utils:strf("Unexpected status ~p", [UnExpected]),
-      maps:put(fail, Msg, Context)
-  end;
 
 step(
   _Config,
@@ -99,11 +76,3 @@ is_admin(AeAccount) ->
   end.
 
 
-get_last_test_status(AeAccount, FeatureHash, Hours) ->
-  ?LOG_DEBUG("Check balance ~p", [AeAccount]),
-  DamageAEPid = damage_ae:get_wallet_proc(AeAccount),
-  gen_server:call(
-    DamageAEPid,
-    {get_last_test_status, AeAccount, FeatureHash, Hours},
-    ?AE_TIMEOUT
-  ).
