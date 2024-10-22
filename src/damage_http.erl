@@ -192,7 +192,7 @@ get_config(
                 #{<<"content-type">> => <<"text/plain">>},
                 Req0
               ),
-            logger:info("execute_bdd req ~p", [Req]),
+            logger:info("get_config req ~p", [Req]),
             [
               {
                 text,
@@ -205,7 +205,7 @@ get_config(
         end;
 
       _ ->
-        ?LOG_DEBUG("execute_bdd concurrenc ~p", [Concurrency]),
+        ?LOG_DEBUG("get_config concurrenc ~p", [Concurrency]),
         []
     end,
   damage:get_default_config(AeAccount, Concurrency, Formatters).
@@ -343,15 +343,21 @@ from_html(Req0, State) ->
       stream => maybe_stream
     },
     State,
-    Req
+    Req0
   ) of
     {200, Response} ->
-      ?LOG_DEBUG("200 execute_feature from_html ~p", [Response]),
+      ?LOG_DEBUG(
+        "ok execute_feature from_html ~p concurrency ~p",
+        [Response, Concurrency]
+      ),
       {
         stop,
         case Concurrency of
-          1 -> cowboy_req:reply(200, Req);
-          _ -> cowboy_req:reply(200, cowboy_req:set_resp_body(Response, Req))
+          1 -> Req0;
+
+          _ ->
+            cowboy_req:reply(200, Req0),
+            cowboy_req:set_resp_body(jsx:encode(Response), Req0)
         end,
         State
       };
@@ -360,14 +366,18 @@ from_html(Req0, State) ->
       ?LOG_DEBUG("~p execute_feature from_html ~p", [Status, Response]),
       {
         stop,
-        cowboy_req:reply(Status, cowboy_req:set_resp_body(Response, Req)),
+        cowboy_req:reply(
+          Status,
+          cowboy_req:set_resp_body(jsx:encode(Response), Req0)
+        ),
         State
       };
 
     Error ->
+      ?LOG_ERROR("execute_feature from_html error ~p", [Error]),
       {
         stop,
-        cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Error), Req)),
+        cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Error), Req0)),
         State
       }
   end.
