@@ -56,7 +56,7 @@ init([Service, Context]) ->
   Timer = erlang:send_after(10000, self(), tic),
   {ok, Pid, _} =
     exec:run(
-      "journalctl -p 5 -f -o cat -u " ++ Service,
+      "journalctl -p 5..6 -f -o cat -u " ++ Service,
       [{stdout, self()}, monitor]
     ),
   ?LOG_DEBUG("tail pid ~p", [Pid]),
@@ -64,10 +64,13 @@ init([Service, Context]) ->
 
 
 handle_call({add_hook, Id, HookFun} = Event, _From, Context) ->
-  ?LOG_DEBUG("handle_call ~p : ~p", [Event, Context]),
+  ?LOG_DEBUG("handle_call add_hook ~p : ~p", [Event, Context]),
   Hooks = maps:get(journald_hooks, Context, []),
-  maps:put(journald_hooks, lists:append(Hooks, [{Id, HookFun}]), Context),
-  {reply, ok, Context};
+  {
+    reply,
+    ok,
+    maps:put(journald_hooks, lists:append(Hooks, [{Id, HookFun}]), Context)
+  };
 
 handle_call(Event, _From, Context) ->
   ?LOG_DEBUG("handle_call ~p : ~p", [Event, Context]),
@@ -81,8 +84,11 @@ handle_cast(Event, Context) ->
 
 handle_info({stdout, _Pid, Data}, Context) ->
   Hooks = maps:get(journald_hooks, Context, []),
-  ?LOG_DEBUG("calling journal hooks ~p ", [Hooks]),
-  [HookFun(Data) || {_Id, HookFun} <- Hooks],
+  [hook_wrapper(HookFun, Data) || {_Id, HookFun} <- Hooks],
+  {noreply, Context};
+
+handle_info(tic, Context) ->
+  ?LOG_DEBUG("tok", []),
   {noreply, Context};
 
 handle_info(Info, Context) ->
@@ -129,5 +135,14 @@ get_journal_proc(Service, Context) ->
     Pid -> Pid
   end.
 
+
+hook_wrapper(Hook, Data) -> try Hook(Data) catch
+    error : badfun ->
+      ?LOG_ERROR("Hook error badfun", []),
+      error;
+
+    Err ->
+      ?LOG_ERROR("Hook error ~p", [Err]),
+      error end.
 
 test() -> ok.
