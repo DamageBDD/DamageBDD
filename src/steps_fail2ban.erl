@@ -73,7 +73,7 @@ step(
 ) ->
   true = steps_utils:is_admin(AeAccount),
   Pid = get_fail2ban_proc("nginx", Context),
-  Exclusions = string:split(binary_to_list(Body), ","),
+  Exclusions = string:split(string:strip(binary_to_list(Body), both, $\n), ","),
   ?LOG_INFO("Set exclusions ~p", [Exclusions]),
   ok = gen_server:call(Pid, {set_exclusions, Exclusions}),
   Context;
@@ -148,7 +148,6 @@ handle_call(
   Now = date_util:epoch(),
   case catch parse_log(Data) of
     {ok, #{client_ip := Ip, status_code := Status}} ->
-      Status1 = list_to_integer(Status),
       Cache = maps:get(fail2ban_cache, Context, #{}),
       case lists:member(Ip, Exclusions) of
         true ->
@@ -177,9 +176,7 @@ handle_call(
                       ban_time := BanTime
                     } = _Jail
                   )
-                  when Status1 =:= Status0 ->
-                    SinceLastSeen = Now - LastSeen,
-                    true = SinceLastSeen > Since,
+                  when Status =:= Status0, (Now - LastSeen) > Since ->
                     ban(Ip, BanTime);
 
                   (Other) -> ?LOG_ERROR("checkban matchin failed ~p", [Other])
@@ -201,6 +198,21 @@ handle_call(
               };
 
             undefined ->
+              {
+                reply,
+                ok,
+                maps:put(
+                  fail2ban_cache,
+                  maps:put(
+                    Ip,
+                    #{last_seen => Now, status_code => Status},
+                    Cache
+                  ),
+                  Context
+                )
+              };
+              Other ->
+                ?LOG_DEBUG("checkban failed ip matching ~p", [Other]),
               {
                 reply,
                 ok,
@@ -353,7 +365,7 @@ parse_log(Log) ->
           log_timezone => LogTimezone,
           method => Method,
           request => Request,
-          status_code => StatusCode,
+          status_code => list_to_integer(StatusCode),
           response_size => ResponseSize,
           user_agent => UserAgent
         }
