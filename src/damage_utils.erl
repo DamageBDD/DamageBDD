@@ -33,6 +33,7 @@
   ]
 ).
 -export([encrypt/2, encrypt/1, decrypt/2, decrypt/1]).
+-export([max_by/2]).
 
 get_stepargs(Body) when is_list(Body) ->
   case lists:keytake(<<"\"\"\"">>, 1, Body) of
@@ -378,6 +379,22 @@ safe_json(String) ->
     String,
     ["\"", ":", "\\/", "\\\\", "\\\"", "\\\""]
   ).
+
+
+% Finds the maximum element in List using CompareFun as the comparison function
+max_by([H | T], CompareFun) ->
+    lists:foldl(
+      fun(Elem, Max) ->
+          case CompareFun(Elem, Max) of
+              true -> Elem;  % Elem is "greater" than Max
+              false -> Max   % Max remains
+          end
+      end,
+      H,
+      T
+    );
+max_by([], _) ->
+    undefined.  % or handle empty list case as you prefer
 
 
 test_encrypt_decrypt() ->

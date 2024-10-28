@@ -12,6 +12,7 @@
 -behaviour(gen_server).
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
+-define(AECLI_EXEC, "/home/steven/.npm-packages/bin/aecli").
 
 -export(
   [
@@ -59,9 +60,13 @@
 -export([test_get_block_height_since/0]).
 -export([test_find_block/0]).
 -export([get_wallet_proc/1]).
+-export([ae_to_aetto/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 
+ae_to_aetto(Ae) -> Ae * 1000000000000000.
+
+%Ae * 100000000000000000.
 init([]) ->
   process_flag(trap_exit, true),
   ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
@@ -114,33 +119,106 @@ get_block_height_since(SinceHours, ConnPid) ->
 
 hours_to_seconds(Hours) -> 3600 * Hours.
 
+%% Function to extract the "feature_hash" and other arguments into a map
+extract_arguments(Arguments) ->
+    %% Iterate through each argument to build the result map
+    lists:foldl(fun process_argument/2, #{}, Arguments).
+
+%% Helper function to process each argument
+process_argument(#{type := <<"map">>, value := MapValues}, Acc) ->
+    %% Iterate through the key-value pairs in the "map" argument and add to the accumulator
+    lists:foldl(fun process_map_entry/2, Acc, MapValues);
+
+process_argument(#{type := Type, value := Value}, Acc) ->
+    %% Handle other argument types (e.g., "address", "int")
+    %% We can label each by its type in the resulting map for clarity
+    maps:put(Type, Value, Acc).
+process_field(<<"execution_time">>, Value) ->
+     string:to_float(Value);
+process_field(<<"start_time">>, Value) ->
+     string:to_float(Value);
+process_field(<<"end_time">>, Value) ->
+     string:to_float(Value);
+process_field(_, Value) ->
+     Value.
+    
+%% Helper function to process each key-value pair inside the "map" argument
+process_map_entry(#{key := #{type := <<"string">>, value := Key}, val := #{type := <<"string">>, value := Val}}, Acc) ->
+    %% Add the key-value pair to the accumulator map
+    maps:put(Key, process_field(Key, Val), Acc).
+    
+
+%% Function to find the latest record with the given feature_hash
+find_latest_record_with_feature_hash(Records, FeatureHash) ->
+    ?LOG_DEBUG("call records ~p", [Records]),
+    %% Filter records with the given feature_hash
+    MatchingRecords = [Record || Record <- Records, Record =/= #{},maps:get(<<"feature_hash">>, Record) =:= FeatureHash],
+
+    %% Check if there are matching records
+    case MatchingRecords of
+        [] ->
+            {error, not_found};  %% Return error if no matching records
+        _ ->
+            %% Find the record with the latest end_time
+            damage_utils:max_by(MatchingRecords, fun compare_records/2)
+    end.
+
+%% Helper function to compare two records based on their end_time
+compare_records(Record1, Record2) ->
+    EndTime1 = maps:get(<<"end_time">>, Record1),
+    EndTime2 = maps:get(<<"end_time">>, Record2),
+    
+    if EndTime1 >= EndTime2 -> true;
+       EndTime1 < EndTime2 -> false
+    end.
+
+
+extract_feature_hash(Data) ->
+    %% Navigate through the parsed JSON to find the "feature_hash"
+    Payload = maps:get(payload, Data),
+    Tx = maps:get(tx, Payload),
+    Arguments = maps:get(arguments, Tx),
+
+    %% Find the map in the "arguments" that contains the key "feature_hash"
+      ?LOG_DEBUG("Arguments ~p", [Arguments]),
+    Result = extract_arguments(Arguments),
+    ?LOG_DEBUG("Arguments map ~p", [Result]),
+    Result.
+
 handle_call(
-  {get_last_test_status, AeAccount, _FeatureHash, Hours},
+  {get_last_test_status, AeAccount, FeatureHash, _Hours},
   _From,
   Cache
 ) ->
   case get_ae_mdw_node() of
     {ok, ConnPid, PathPrefix} ->
-      BlockHeight = get_block_height_since(Hours, ConnPid),
-      ?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
+      %BlockHeight = get_block_height_since(Hours, ConnPid),
+      %?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
       Path =
         PathPrefix
         ++
         "v3/accounts/"
         ++
-        AeAccount
+        binary_to_list(AeAccount)
         ++
-        "/activities?direction=backward&type=transactions&height="
-        ++
-        BlockHeight,
+        "/activities?owned_only=true&direction=backward&type=transactions",
+      %++
+      %integer_to_list(BlockHeight),
       ?LOG_DEBUG("Path ~p", [Path]),
       StreamRef = gun:get(ConnPid, Path),
-      Balance =
-        case read_stream(ConnPid, StreamRef) of
-          #{amount := null} -> 0;
-          #{amount := Balance0} -> Balance0
-        end,
-      {reply, Balance, Cache};
+      case read_stream(ConnPid, StreamRef) of
+        #{data := null} -> {reply, undefined, Cache};
+        #{data := Results} -> 
+              TxData = [extract_feature_hash(Result)|| Result <- Results],
+              case find_latest_record_with_feature_hash(TxData, FeatureHash) of
+                  #{<<"result_status">> := <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>} ->
+                      {reply, "success", Cache};
+                  #{<<"result_status">> := <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>} ->
+                      {reply, "failed", Cache};
+                  #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
+                      {reply, Result, Cache}
+                          end
+      end;
 
     Err ->
       ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
@@ -645,7 +723,7 @@ sign_tx(Tx, PrivKeys, SignHash, AdditionalPrefix, _Cfg) when is_list(PrivKeys) -
 
 
 exec_aecli(Cmd) ->
-  ?LOG_INFO("aecli cmd : ~p", [string:join(Cmd, " ")]),
+  ?LOG_DEBUG("aecli cmd : ~p", [string:join(Cmd, " ")]),
   AeNodeUrl = get_ae_node_url(),
   case
   exec:run(Cmd, [stdout, stderr, sync, {env, [{"AECLI_NODE_URL", AeNodeUrl}]}]) of
@@ -653,8 +731,8 @@ exec_aecli(Cmd) ->
     {ok, [{stdout, StdOutList}]} ->
       jsx:decode(damage_utils:binarystr_join(StdOutList), [{labels, atom}]);
 
-    {ok, [{stdout, StdOutList}, {stderr, Err}]} ->
-      ?LOG_ERROR("Stderr ~p", [Err]),
+    {ok, [{stdout, StdOutList}, {stderr, [Err | _]}]} ->
+      ?LOG_ERROR("Stderr ~s", [Err]),
       jsx:decode(damage_utils:binarystr_join(StdOutList), [{labels, atom}]);
 
     {error, [{exit_status, _ExitStatus}, {stdout, StdOutList}, {stderr, Err}]} ->
@@ -705,7 +783,7 @@ contract_call(EmailOrUsername, ContractAddress, Contract, Func, Args) ->
 contract_call(WalletPath, WalletPassword, ContractAddress, Contract, Func, Args) ->
   Cmd =
     [
-      "/home/steven/.npm-packages/bin/aecli",
+      ?AECLI_EXEC,
       "contract",
       "call",
       "--contractSource",
@@ -733,7 +811,7 @@ contract_deploy(EmailOrUsername, Contract, Args) ->
 contract_deploy(WalletPath, WalletPassword, Contract, Args) ->
   Cmd =
     [
-      "/home/steven/.npm-packages/bin/aecli",
+      ?AECLI_EXEC,
       "contract",
       "deploy",
       WalletPath,
@@ -942,9 +1020,9 @@ setup_vanillae_deps() ->
 
 read_stream(ConnPid, StreamRef) ->
   case gun:await(ConnPid, StreamRef, 600000) of
-    {response, nofin, Status, _Headers0} ->
+    {response, nofin, _Status, _Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
+      %?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
       jsx:decode(Body, [{labels, atom}, return_maps]);
 
     Default ->
@@ -978,7 +1056,7 @@ create_wallet(EmailOrUsername) ->
       _ ->
         Cmd =
           [
-            "/home/steven/.npm-packages/bin/aecli",
+            ?AECLI_EXEC,
             "account",
             "create",
             "--password",
@@ -1026,7 +1104,7 @@ fund_wallet(AeAccount, EmailOrUsername, Amount) ->
   AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
   Cmd =
     [
-      "/home/steven/.npm-packages/bin/aecli",
+      ?AECLI_EXEC,
       "spend",
       "--password",
       AdminPassword,
@@ -1105,7 +1183,7 @@ find_block_at_timestamp(Timestamp, ConnPid) ->
   ?LOG_INFO("High ~p", [TopBlockHeight]),
   % Initialize an empty cache
   Cache = #{},
-  binary_search_block(Timestamp, 100000, TopBlockHeight, ConnPid, Cache).
+  binary_search_block(Timestamp, 1015354, TopBlockHeight, ConnPid, Cache).
 
 %% Perform a binary search to find the closest block at or before the given timestamp.
 
@@ -1141,7 +1219,7 @@ binary_search_block(_, Low, _, _, Cache) ->
 
 get_latest_block_height(ConnPid) ->
   StreamRef = gun:get(ConnPid, "/v3/status"),
-  #{node_height := NodeHeight} = read_stream(ConnPid, StreamRef),
+  #{top_block_height := NodeHeight} = read_stream(ConnPid, StreamRef),
   {ok, NodeHeight}.
 
 %% Caching mechanism using a map: check the cache first, if not found, fetch from API and update the cache.

@@ -29,11 +29,11 @@ step(
   ],
   _
 ) ->
-  case get_last_test_status(AeAccount, FeatureHash, list_to_integer(Hours)) of
+  case get_last_test_status(AeAccount, list_to_binary(FeatureHash), list_to_integer(Hours)) of
     Status -> Context;
 
     UnExpected ->
-      Msg = damage_utils:strf("Unexpected status ~p", [UnExpected]),
+      Msg = damage_utils:strf("Unexpected status ~p expected ~p", [UnExpected,Status]),
       maps:put(fail, Msg, Context)
   end;
 
@@ -54,6 +54,7 @@ get_last_test_status(AeAccount, FeatureHash, Hours) ->
 
 test_get_last_test_status() ->
   {ok, [NodeAdmin | _]} = application:get_env(damage, node_admins),
-  TestFeatureHash = <<"QmNPiDUFeGC6j35aBWNHSqgNLh5yXveLWoupzvrUwTWp4e">>,
-  Result = get_last_test_status(NodeAdmin, TestFeatureHash, 36),
+  %TestFeatureHash = <<"QmNPiDUFeGC6j35aBWNHSqgNLh5yXveLWoupzvrUwTWp4e">>,
+    TestFeatureHash = <<"QmVZ3FApr4kwrnuPQVu3t1TQ2MSTz1L4PeFMymWqJ1TywF">>,
+  Result = get_last_test_status(list_to_binary(NodeAdmin), TestFeatureHash, 36),
   ?LOG_INFO("Result ~p", [Result]).
