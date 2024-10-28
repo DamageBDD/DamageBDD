@@ -211,8 +211,9 @@ handle_call(
                   Context
                 )
               };
-              Other ->
-                ?LOG_DEBUG("checkban failed ip matching ~p", [Other]),
+
+            Other ->
+              ?LOG_DEBUG("checkban failed ip matching ~p", [Other]),
               {
                 reply,
                 ok,
