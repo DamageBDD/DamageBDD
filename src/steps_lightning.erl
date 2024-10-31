@@ -19,5 +19,8 @@ step(
   ["I pay the invoice with payment request", PaymentRequest],
   _
 ) ->
-  Result = lnd:settle_invoice(PaymentRequest),
-  maps:put(lightning_payment_status, Result, Context).
+  maps:put(
+    lightning_payment_status,
+    lnd:settle_invoice(list_to_binary(PaymentRequest)),
+    Context
+  ).
