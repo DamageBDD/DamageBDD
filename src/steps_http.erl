@@ -224,11 +224,23 @@ ejsonpath_match(Path, Data, Expected, Context) ->
   case catch ejsonpath:q(Path, Data) of
     {[Expected0 | _], _} -> Context;
 
-    {[UnExpected], _} ->
-      Mesg = "the object at path ~p is not ~p, it is ~p.",
-      Args = [Path, Expected0, UnExpected],
+    UnExpected ->
+      Mesg = "the object at path ~p is not ~p, it is ~p. Data ~p",
+      Args = [Path, Expected0, UnExpected, Data],
       ?LOG_INFO(Mesg, Args),
       maps:put(fail, damage_utils:strf(Mesg, Args), Context)
+  end.
+
+
+build_url(PathOrUrl, DefaultBaseUrl) ->
+  case lists:prefix("http", PathOrUrl) of
+    true ->
+      % If the input is already a full URL, return it as is
+      PathOrUrl;
+
+    false ->
+      % Otherwise, prepend the base URL to form the complete URL
+      DefaultBaseUrl ++ "/" ++ string:trim(PathOrUrl, both, "/")
   end.
 
 
@@ -261,20 +273,20 @@ step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
   );
 
 step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
-  Path0 = string:concat(maps:get(base_url, Context, ""), Path),
+  Url = build_url(Path, maps:get(base_url, Context, "")),
   Headers = get_headers(Context, ?DEFAULT_HEADERS),
-  ?LOG_DEBUG("POST HEADERS ~p", [Headers]),
-  gun_post(Config, Context, Path0, Headers, Data);
+  ?LOG_DEBUG("POST Url ~p HEADERS ~p Data ~p", [Url, Headers, Data]),
+  gun_post(Config, Context, Url, Headers, Data);
 
 step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
   Headers = get_headers(Context, ?DEFAULT_HEADERS),
-  Path0 = string:concat(maps:get(base_url, Context, ""), Path),
-  gun_patch(Config, Context, Path0, Headers, Data);
+  Url = build_url(Path, maps:get(base_url, Context, "")),
+  gun_patch(Config, Context, Url, Headers, Data);
 
 step(Config, Context, <<"When">>, _N, ["I make a PUT request to", Path], Data) ->
   Headers = get_headers(Context, ?DEFAULT_HEADERS),
-  Path0 = string:concat(maps:get(base_url, Context, ""), Path),
-  gun_put(Config, Context, Path0, Headers, Data);
+  Url = build_url(Path, maps:get(base_url, Context, "")),
+  gun_put(Config, Context, Url, Headers, Data);
 
 step(
   Config,
@@ -287,7 +299,7 @@ step(
   gun_options(
     Config,
     Context,
-    string:concat(maps:get(base_url, Context, ""), Path),
+    build_url(Path, maps:get(base_url, Context, "")),
     get_headers(Context, ?DEFAULT_HEADERS)
   );
 
@@ -302,7 +314,7 @@ step(
   gun_delete(
     Config,
     Context,
-    string:concat(maps:get(base_url, Context, ""), Path),
+    build_url(Path, maps:get(base_url, Context, "")),
     get_headers(Context, ?DEFAULT_HEADERS)
   );
 
@@ -595,12 +607,13 @@ step(
   _
 ) ->
   case maps:get(response, Context) of
-    [{status_code, 200}, _Headers, {body, Body}] ->
+    [{status_code, _}, _Headers, {body, Body}] ->
       Variable0 = list_to_atom(Variable),
       case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
         {[Json0 | _], _} ->
-          ?LOG_DEBUG("storing json at path ~p json ~p", [Path, Json0]),
-          maps:put(Variable0, Json0, Context);
+          Json = binary_to_list(Json0),
+          ?LOG_DEBUG("storing json at path ~p json ~p", [Path, Json]),
+          maps:put(Variable0, Json, Context);
 
         UnExpected ->
           maps:put(
