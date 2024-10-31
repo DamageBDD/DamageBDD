@@ -55,7 +55,7 @@ trails() ->
       lnaddress,
       #{action => invoice},
       #{
-        get
+        post
         =>
         #{
           tags => ?TRAILS_TAG,
@@ -170,11 +170,22 @@ from_html(Req, #{action := reset_password} = State) ->
   }.
 
 
+do_post_action(
+  invoice,
+  #{memo := Memo, amount := Amount, expiry := Expiry} = Data,
+  _Req,
+  _State
+) ->
+  ?LOG_DEBUG("generate invoice ~p", [Data]),
+  Invoice = lnd:create_invoice(Amount, Memo, Expiry),
+  {201, Invoice};
+
 do_post_action(_Action, _Data, _Req, _State) -> ok.
+
 
 from_json(Req, #{action := Action} = State) ->
   {ok, Data, Req0} = cowboy_req:read_body(Req),
-  ?LOG_DEBUG("post action ~p ", [Data]),
+  ?LOG_DEBUG("lnaddress post action ~p ", [Data]),
   case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
     badarg ->
       Response =
