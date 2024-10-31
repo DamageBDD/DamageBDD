@@ -120,70 +120,81 @@ get_block_height_since(SinceHours, ConnPid) ->
 hours_to_seconds(Hours) -> 3600 * Hours.
 
 %% Function to extract the "feature_hash" and other arguments into a map
+
 extract_arguments(Arguments) ->
-    %% Iterate through each argument to build the result map
-    lists:foldl(fun process_argument/2, #{}, Arguments).
+  %% Iterate through each argument to build the result map
+  lists:foldl(fun process_argument/2, #{}, Arguments).
 
 %% Helper function to process each argument
+
 process_argument(#{type := <<"map">>, value := MapValues}, Acc) ->
-    %% Iterate through the key-value pairs in the "map" argument and add to the accumulator
-    lists:foldl(fun process_map_entry/2, Acc, MapValues);
+  %% Iterate through the key-value pairs in the "map" argument and add to the accumulator
+  lists:foldl(fun process_map_entry/2, Acc, MapValues);
 
 process_argument(#{type := Type, value := Value}, Acc) ->
-    %% Handle other argument types (e.g., "address", "int")
-    %% We can label each by its type in the resulting map for clarity
-    maps:put(Type, Value, Acc).
-process_field(<<"execution_time">>, Value) ->
-     string:to_float(Value);
-process_field(<<"start_time">>, Value) ->
-     string:to_float(Value);
-process_field(<<"end_time">>, Value) ->
-     string:to_float(Value);
-process_field(_, Value) ->
-     Value.
-    
+  %% Handle other argument types (e.g., "address", "int")
+  %% We can label each by its type in the resulting map for clarity
+  maps:put(Type, Value, Acc).
+
+
+process_field(<<"execution_time">>, Value) -> string:to_float(Value);
+process_field(<<"start_time">>, Value) -> string:to_float(Value);
+process_field(<<"end_time">>, Value) -> string:to_float(Value);
+process_field(_, Value) -> Value.
+
 %% Helper function to process each key-value pair inside the "map" argument
-process_map_entry(#{key := #{type := <<"string">>, value := Key}, val := #{type := <<"string">>, value := Val}}, Acc) ->
-    %% Add the key-value pair to the accumulator map
-    maps:put(Key, process_field(Key, Val), Acc).
-    
+
+process_map_entry(
+  #{
+    key := #{type := <<"string">>, value := Key},
+    val := #{type := <<"string">>, value := Val}
+  },
+  Acc
+) ->
+  %% Add the key-value pair to the accumulator map
+  maps:put(Key, process_field(Key, Val), Acc).
 
 %% Function to find the latest record with the given feature_hash
-find_latest_record_with_feature_hash(Records, FeatureHash) ->
-    ?LOG_DEBUG("call records ~p", [Records]),
-    %% Filter records with the given feature_hash
-    MatchingRecords = [Record || Record <- Records, Record =/= #{},maps:get(<<"feature_hash">>, Record) =:= FeatureHash],
 
-    %% Check if there are matching records
-    case MatchingRecords of
-        [] ->
-            {error, not_found};  %% Return error if no matching records
-        _ ->
-            %% Find the record with the latest end_time
-            damage_utils:max_by(MatchingRecords, fun compare_records/2)
-    end.
+find_latest_record_with_feature_hash(Records, FeatureHash) ->
+  ?LOG_DEBUG("call records ~p", [Records]),
+  %% Filter records with the given feature_hash
+  MatchingRecords =
+    [
+      Record || Record <- Records,
+      Record =/= #{},
+      maps:get(<<"feature_hash">>, Record) =:= FeatureHash
+    ],
+  %% Check if there are matching records
+  case MatchingRecords of
+    [] ->
+      %% Return error if no matching records
+      {error, not_found};
+
+    _ ->
+      %% Find the record with the latest end_time
+      damage_utils:max_by(MatchingRecords, fun compare_records/2)
+  end.
 
 %% Helper function to compare two records based on their end_time
+
 compare_records(Record1, Record2) ->
-    EndTime1 = maps:get(<<"end_time">>, Record1),
-    EndTime2 = maps:get(<<"end_time">>, Record2),
-    
-    if EndTime1 >= EndTime2 -> true;
-       EndTime1 < EndTime2 -> false
-    end.
+  EndTime1 = maps:get(<<"end_time">>, Record1),
+  EndTime2 = maps:get(<<"end_time">>, Record2),
+  if
+    EndTime1 >= EndTime2 -> true;
+    EndTime1 < EndTime2 -> false
+  end.
 
 
 extract_feature_hash(Data) ->
-    %% Navigate through the parsed JSON to find the "feature_hash"
-    Payload = maps:get(payload, Data),
-    Tx = maps:get(tx, Payload),
-    Arguments = maps:get(arguments, Tx),
+  %% Navigate through the parsed JSON to find the "feature_hash"
+  Payload = maps:get(payload, Data),
+  Tx = maps:get(tx, Payload),
+  Arguments = maps:get(arguments, Tx),
+  %% Find the map in the "arguments" that contains the key "feature_hash"
+  extract_arguments(Arguments).
 
-    %% Find the map in the "arguments" that contains the key "feature_hash"
-      ?LOG_DEBUG("Arguments ~p", [Arguments]),
-    Result = extract_arguments(Arguments),
-    ?LOG_DEBUG("Arguments map ~p", [Result]),
-    Result.
 
 handle_call(
   {get_last_test_status, AeAccount, FeatureHash, _Hours},
@@ -201,23 +212,36 @@ handle_call(
         ++
         binary_to_list(AeAccount)
         ++
-        "/activities?owned_only=true&direction=backward&type=transactions",
+        "/activities?owned_only=true&direction=backward&type=transactions&limit=100",
       %++
       %integer_to_list(BlockHeight),
       ?LOG_DEBUG("Path ~p", [Path]),
       StreamRef = gun:get(ConnPid, Path),
       case read_stream(ConnPid, StreamRef) of
         #{data := null} -> {reply, undefined, Cache};
-        #{data := Results} -> 
-              TxData = [extract_feature_hash(Result)|| Result <- Results],
-              case find_latest_record_with_feature_hash(TxData, FeatureHash) of
-                  #{<<"result_status">> := <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>} ->
-                      {reply, "success", Cache};
-                  #{<<"result_status">> := <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>} ->
-                      {reply, "failed", Cache};
-                  #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
-                      {reply, Result, Cache}
-                          end
+
+        #{data := Results} ->
+          TxData = [extract_feature_hash(Result) || Result <- Results],
+          case find_latest_record_with_feature_hash(TxData, FeatureHash) of
+            #{
+              <<"result_status">>
+              :=
+              <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>
+            } ->
+              {reply, "success", Cache};
+
+            #{
+              <<"result_status">>
+              :=
+              <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>
+            } ->
+              {reply, "failed", Cache};
+
+            {error, not_found} -> {reply, "not_found", Cache};
+
+            #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
+              {reply, Result, Cache}
+          end
       end;
 
     Err ->
