@@ -92,7 +92,17 @@ create_invoice(Amount, Description) ->
   poolboy:transaction(
     ?MODULE,
     fun
-      (Worker) -> gen_server:call(Worker, {create_invoice, Amount, Description})
+      (Worker) ->
+        gen_server:call(Worker, {create_invoice, Amount, Description, 3600})
+    end
+  ).
+
+create_invoice(Amount, Description, Expiry) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {create_invoice, Amount, Description, Expiry})
     end
   ).
 
@@ -168,7 +178,7 @@ handle_call(
   {reply, Invoice, State};
 
 handle_call(
-  {create_invoice, Amount, Description},
+  {create_invoice, Amount, Description, Expiry},
   _From,
   #state{host = Host, port = Port, headers = Headers, options = Options} = State
 ) ->
@@ -176,7 +186,7 @@ handle_call(
   %% Construct the API request URL
   Path = "/v1/invoices",
   %% Construct the request body
-  ReqData = #{memo => Description, value => Amount, expiry => 3600},
+  ReqData = #{memo => Description, value => Amount, expiry => Expiry},
   ReqJson = json_encode(ReqData),
   %% Send the HTTP POST request
   StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
