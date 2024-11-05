@@ -383,20 +383,27 @@ safe_json(String) ->
 
 % Finds the maximum element in List using CompareFun as the comparison function
 max_by([H | T], CompareFun) ->
-    lists:foldl(
-      fun(Elem, Max) ->
-          case CompareFun(Elem, Max) of
-              true -> Elem;  % Elem is "greater" than Max
-              false -> Max   % Max remains
-          end
-      end,
-      H,
-      T
-    );
-max_by([], _) ->
-    undefined.  % or handle empty list case as you prefer
+  lists:foldl(
+    fun
+      (Elem, Max) ->
+        case CompareFun(Elem, Max) of
+          true ->
+            % Elem is "greater" than Max
+            Elem;
+
+          false ->
+            % Max remains
+            Max
+        end
+    end,
+    H,
+    T
+  );
+
+max_by([], _) -> undefined.
 
 
+% or handle empty list case as you prefer
 test_encrypt_decrypt() ->
   Key = crypto:strong_rand_bytes(32),
   Nonce = crypto:strong_rand_bytes(16),

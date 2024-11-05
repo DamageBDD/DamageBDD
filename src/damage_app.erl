@@ -30,7 +30,7 @@ get_trails() ->
       damage_webhooks,
       damage_static,
       damage_http,
-      damage_publish,
+      damage_market,
       damage_schedule,
       damage_accounts,
       damage_tests,

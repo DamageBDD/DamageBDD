@@ -1,4 +1,4 @@
--module(damage_publish).
+-module(damage_market).
 
 -vsn("0.1.0").
 
@@ -30,7 +30,39 @@ trails() ->
   [
     trails:trail(
       "/publish_feature/",
-      damage_publish,
+      damage_market,
+      #{},
+      #{
+        get
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Form to schedule a test execution.",
+          produces => ["text/html"]
+        },
+        put
+        =>
+        #{
+          tags => ?TRAILS_TAG,
+          description => "Schedule a test on post",
+          produces => ["application/json", "application/x-yaml"],
+          parameters
+          =>
+          [
+            #{
+              name => <<"feature">>,
+              description => <<"Test feature data.">>,
+              in => <<"body">>,
+              required => true,
+              type => <<"string">>
+            }
+          ]
+        }
+      }
+    ),
+    trails:trail(
+      "/bid_feature/",
+      damage_market,
       #{},
       #{
         get
@@ -174,6 +206,9 @@ do_query(#{ae_account := AeAccount}) ->
       #{results => Results, status => <<"ok">>, length => length(Results)}
   end.
 
+
+do_action(bid_feature, Data, State) -> ok;
+do_action(publish_feature, Data, State) -> ok.
 
 check_publish_bdd(#{concurrency := Concurrency} = FeaturePayload, State)
 when is_binary(Concurrency) ->
