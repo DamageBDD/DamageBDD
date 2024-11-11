@@ -7,6 +7,7 @@
 -license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
 
 -behaviour(gen_server).
 
@@ -83,7 +84,7 @@ init([]) ->
       443,
       #{transport => tls, tls_opts => [{verify, verify_peer}]}
     ),
-  {ok, _} = gun:await_up(ConnPid),
+  {ok, _} = gun:await_up(ConnPid, ?DEFAULT_TIMEOUT),
   gproc:reg_other({n, l, ?NOSTR_PROC}, self()),
   StreamRef = gun:ws_upgrade(ConnPid, "/", []),
   {upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
@@ -346,7 +347,7 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
       };
 
     {parse_error, LineNo, Message} ->
-      ?LOG_DEBUG("failure ~p.", [Message]),
+      ?LOG_DEBUG("nostr execute_bdd failure ~p.", [Message]),
       #{
         status => <<"notok">>,
         message => list_to_binary(Message),
