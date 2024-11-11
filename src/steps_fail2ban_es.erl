@@ -10,7 +10,14 @@
 
 -export([step/6]).
 
-step(Config, Context, KeyWord, _N, ["He configurado la lista de exclusión de IP a"], Body) ->
+step(
+  Config,
+  Context,
+  KeyWord,
+  _N,
+  ["He configurado la lista de exclusión de IP a"],
+  Body
+) ->
   step(Config, Context, KeyWord, _N, ["I set the IP exclusion list to"], Body);
 
 step(
@@ -35,7 +42,15 @@ step(
   Context,
   KeyWord,
   _N,
-  ["la IP ha realizado más de", NumRequests, "solicitudes con estado", Status, "en los últimos", SinceSeconds, "segundos"],
+  [
+    "la IP ha realizado más de",
+    NumRequests,
+    "solicitudes con estado",
+    Status,
+    "en los últimos",
+    SinceSeconds,
+    "segundos"
+  ],
   Body
 ) ->
   step(

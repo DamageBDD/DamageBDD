@@ -179,7 +179,8 @@ handle_call(
                   when Status =:= Status0, (Now - LastSeen) > Since ->
                     ban(Ip, BanTime);
 
-                  (Other) -> ?LOG_ERROR("checkban matchin failed ~p ~p", [Other, Ip])
+                  (Other) ->
+                    ?LOG_ERROR("checkban matchin failed ~p Since:  status: ~p ip: ~p", [Other, Status, Ip])
                 end,
                 Jails
               ),
