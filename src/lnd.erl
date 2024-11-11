@@ -22,11 +22,13 @@
 -export(
   [
     create_invoice/2,
+    create_invoice/3,
     get_invoice/1,
     list_invoices/0,
     list_invoices/1,
     cancel_invoice/1,
-    settle_invoice/1
+    settle_invoice/1,
+   add_hold_invoice/2
   ]
 ).
 -export([test/0]).
@@ -88,6 +90,15 @@ init([]) -> {ok, open_connection()}.
 
 %% API function to create Lightning invoice
 
+add_hold_invoice(Amount, Description) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(Worker, {add_hold_invoice, Amount, Description, 3600})
+    end
+  ).
+
 create_invoice(Amount, Description) ->
   poolboy:transaction(
     ?MODULE,
@@ -145,6 +156,48 @@ settle_invoice(PaymentRequest) ->
 %% Handle call requests
 
 handle_call(
+  {add_hold_invoice, Amount, Memo, Hash, Expiry},
+  _From,
+  #state{host = Host, port = Port, headers = Headers, options = Options} = State
+) ->
+  {ok, ConnPid} = gun:open(Host, Port, Options),
+  %% Construct the API request URL
+  Path = "/v2/invoices/add_hold_invoice",
+  %% Construct the request body
+  ReqData =
+    #{
+      memo => Memo,
+      hash => Hash,
+      value => Amount,
+      expiry => Expiry,
+      cltv_expiry => Expiry,
+      %route_hints => RouteHints,
+      private => true
+    },
+  ReqJson = json_encode(ReqData),
+  %% Send the HTTP POST request
+  StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+  {ok, Response} =
+    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+      {response, fin, Status, _RespHeaders} ->
+        ?LOG_DEBUG("Got fin ~p", [Status]),
+        no_data;
+
+      {response, nofin, _Status, _RespHeaders} ->
+        gun:await_body(ConnPid, StreamRef);
+
+      {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
+      Default -> ?LOG_DEBUG("Got unknown ~p ", [Default])
+    end,
+  ?LOG_DEBUG("Got settle_invoice response ~p", [Response]),
+  Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
+  %% Parse the response JSON
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
+  %% Return the invoice details
+  {reply, Invoice, State};
+
+handle_call(
   {settle_invoice, PreImage},
   _From,
   #state{host = Host, port = Port, headers = Headers, options = Options} = State
@@ -153,7 +206,7 @@ handle_call(
   %% Construct the API request URL
   Path = "/v2/invoices/settle",
   %% Construct the request body
-  ReqData = #{preimage => PreImage},
+  ReqData = #{preimage => base64:encode(PreImage)},
   ReqJson = json_encode(ReqData),
   %% Send the HTTP POST request
   StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),

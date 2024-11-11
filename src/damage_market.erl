@@ -31,7 +31,7 @@ trails() ->
     trails:trail(
       "/publish_feature/",
       damage_market,
-      #{},
+      #{action => publish},
       #{
         get
         =>
@@ -63,7 +63,7 @@ trails() ->
     trails:trail(
       "/bid_feature/",
       damage_market,
-      #{},
+      #{action => bid},
       #{
         get
         =>
@@ -142,12 +142,12 @@ to_text(Req, #{ae_account := AeAccount} = State) ->
   {jsx:encode(Reports), Req, State}.
 
 
-from_yaml(Req, #{action := reset_password} = State) ->
+from_yaml(Req, #{action := reset_password, action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status0, Response0} =
     case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
       {ok, [#{feature := _FeatureData, concurrency := _Concurrency} = Data0]} ->
-        check_publish_bdd(Data0, State);
+        do_action(Action, Data0, State);
 
       {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
     end,
@@ -162,12 +162,12 @@ from_yaml(Req, #{action := reset_password} = State) ->
   }.
 
 
-from_json(Req, State) ->
+from_json(Req, #{action := Action} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case jsx:decode(Data, [{labels, atom}, return_maps]) of
       #{feature := _FeatureData, concurrency := _Concurrency} = FeatureJson ->
-        check_publish_bdd(FeatureJson, State);
+        do_action(Action, FeatureJson, State);
 
       Err ->
         logger:error("json decoding failed ~p.", [Data]),
@@ -178,7 +178,7 @@ from_json(Req, State) ->
   {stop, Resp, State}.
 
 
-from_html(Req0, State) ->
+from_html(Req0, #{action := Action} = State) ->
   {ok, Body, Req} = cowboy_req:read_body(Req0),
   Concurrency =
     binary_to_integer(
@@ -187,7 +187,8 @@ from_html(Req0, State) ->
   Fee =
     binary_to_integer(cowboy_req:header(<<"x-damage-fee">>, Req0, <<"4000">>)),
   {Status, Resp0} =
-    check_publish_bdd(
+    do_action(
+      Action,
       #{feature => Body, concurrency => Concurrency, fee => Fee},
       State
     ),
@@ -207,8 +208,36 @@ do_query(#{ae_account := AeAccount}) ->
   end.
 
 
-do_action(bid_feature, Data, State) -> ok;
-do_action(publish_feature, Data, State) -> ok.
+do_action(bid_feature, Data, State) -> check_bid_feature(Data, State);
+do_action(publish_feature, Data, State) -> check_publish_bdd(Data, State).
+
+check_bid_feature(
+  #{feature := FeatureHash} = _FeaturePayload,
+  #{ae_account := AeAccount, ip := IP} = State
+) ->
+  case throttle:check(damage_api_rate, IP) of
+    {limit_exceeded, _, _} ->
+      lager:warning("IP ~p exceeded api limit", [IP]),
+      {error, 429, "Rate limited"};
+
+    _ ->
+      case damage_ae:balance(AeAccount) of
+        Balance when Balance > 0 ->
+          case bid_feature(FeatureHash, State) of
+            {Status, Response} -> {Status, Response}
+          end;
+
+        Other ->
+          {
+            400,
+            <<
+              "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+              Other/binary
+            >>
+          }
+      end
+  end.
+
 
 check_publish_bdd(#{concurrency := Concurrency} = FeaturePayload, State)
 when is_binary(Concurrency) ->
@@ -278,8 +307,8 @@ publish_file(Username, AeAccount, Filename, Fee, Concurrency) ->
     damage_ae:contract_call(
       Username,
       AccountContract,
-      "contracts/account.aes",
-      "publish",
+      "contracts/market.aes",
+      "publish_feature",
       [Hash, Fee, Concurrency]
     ),
   ?LOG_DEBUG(
@@ -327,3 +356,33 @@ publish_bdd(
       ?LOG_DEBUG("No failure ~p.", [ResultOk]),
       {200, jsx:encode(ResultOk)}
   end.
+
+
+bid_feature(
+  #{feature := FeatureHash, bid := Bid} = _FeaturePayload,
+  #{ae_account := AeAccount, username := Username} = _State
+) ->
+  {ok, AccountContract} = application:get_env(damage, account_contract),
+  #{
+    decodedResult := [],
+    result
+    :=
+    #{
+      log := [],
+      gasPrice := GasPrice,
+      callerId := AeAccount,
+      gasUsed := GasUsed,
+      returnType := <<"ok">>
+    }
+  } =
+    damage_ae:contract_call(
+      Username,
+      AccountContract,
+      "contracts/market.aes",
+      "submit_bid",
+      [FeatureHash, Bid]
+    ),
+  ?LOG_DEBUG(
+    "call AE contract ~p gasprice ~p gasused ~p",
+    [AeAccount, GasPrice, GasUsed]
+  ).

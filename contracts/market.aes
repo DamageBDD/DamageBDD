@@ -1,0 +1,98 @@
+contract Market =
+
+  record Bid
+    bidder: address
+    amount: int
+    timestamp: int
+
+  record FeatureVersion
+    version: int
+    hash: string
+    bids: map(address, Bid)
+    acceptedBid: option(Bid)
+    isOpen: bool
+
+  record Feature
+    publisher: address
+    versions: map(int, FeatureVersion)
+    latestVersion: int
+
+  record state
+    features: map(int, Feature)
+    featureIds: list(int) // List to keep track of all feature IDs
+    nextFeatureId: int
+
+  stateful entrypoint init() =
+    { features = {},
+      featureIds = [],
+      nextFeatureId = 0 }
+
+  // Event definitions
+  event BDDPublished(featureId: int, publisher: address, hash: string)
+  event BidSubmitted(featureId: int, bidder: address, amount: int)
+  event BidAccepted(featureId: int, bidder: address, amount: int)
+
+  // Publish a new BDD feature hash
+  stateful entrypoint publish_feature(hash: string) : int =
+    let featureId = state.nextFeatureId
+    let newFeatureVersion = {
+      version = 0,
+      hash = hash,
+      bids = {},
+      acceptedBid = None,
+      isOpen = true
+    }
+    let newFeature = {
+      publisher = Call.caller,
+      versions = { [0] = newFeatureVersion },
+      latestVersion = 0
+    }
+    // Emit the BDDPublished event
+    BDDPublished(featureId, Call.caller, hash)
+    put(state{
+      features[featureId] = newFeature,
+      featureIds = featureId :: state.featureIds,
+      nextFeatureId = featureId + 1
+    })
+    featureId
+
+  // Submit a bid for a BDD feature
+  stateful entrypoint submit_bid(featureId: int, amount: int) =
+    require(amount > 0, "Bid amount must be greater than zero")
+    let feature = Map.lookup(featureId, state.bddFeatures)
+    require(feature != None, "BDD feature does not exist")
+    let bdd = Option.get(feature)
+    let currentVersion = bdd.versions[bdd.latestVersion]
+    require(currentVersion.isOpen, "Bidding is closed for this BDD feature")
+    let bid = { bidder = Call.caller, amount = amount, timestamp = Chain.timestamp }
+    let updatedBids = currentVersion.bids{ [Call.caller] = bid }
+    let updatedVersion = currentVersion{ bids = updatedBids }
+    let updatedVersions = bdd.versions{ [bdd.latestVersion] = updatedVersion }
+    let updatedFeature = bdd{ versions = updatedVersions }
+    // Emit the BidSubmitted event
+    BidSubmitted(featureId, Call.caller, amount)
+    put(state{ features[featureId] = updatedFeature })
+
+  // Accept a bid for the BDD feature
+  stateful entrypoint accept_bid(featureId: int, bidder: address) =
+    let feature = Map.lookup(featureId, state.features)
+    require(feature != None, "BDD feature does not exist")
+    let bdd = Option.get(feature)
+    require(bdd.publisher == Call.caller, "Only the publisher can accept a bid")
+    let currentVersion = bdd.versions[bdd.latestVersion]
+    require(currentVersion.isOpen, "Bidding is already closed")
+    let bid = Map.lookup(bidder, currentVersion.bids)
+    require(bid != None, "Bid does not exist")
+    let acceptedBid = Option.get(bid)
+    let updatedVersion = currentVersion{ acceptedBid = Some(acceptedBid), isOpen = false }
+    let updatedVersions = bdd.versions{ [bdd.latestVersion] = updatedVersion }
+    let updatedFeature = bdd{ versions = updatedVersions }
+    // Emit the BidAccepted event
+    BidAccepted(featureId, bidder, acceptedBid.amount)
+    put(state{ features[featureId] = updatedFeature })
+
+  // Get details of a BDD feature
+  entrypoint get_bdd_details(featureId: int) : Feature =
+    let feature = Map.lookup(featureId, state.features)
+    require(feature != None, "BDD feature does not exist")
+    Option.get(feature)
