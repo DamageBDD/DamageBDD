@@ -109,7 +109,7 @@ init([]) ->
         shutdown => 60,
         % optional
         type => worker,
-        modules => [damage_nostr]
+        modules => [damage_lightning]
       }
     ],
   logger:info("Worker definitions ~p~n", [PoolSpecs0]),
