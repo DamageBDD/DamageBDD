@@ -35,10 +35,14 @@ init_per_group(Name, Config) ->
         [{text, #{output => "report.txt"}}, {html, #{output => "report.html"}}]
       },
       %{openai_api_host, "api.endpoints.anyscale.com"},
-      {openai_api_host, "api.openai.com"},
-      {openai_api_path, "/v1/chat/completions"},
+      %{openai_api_path, "/v1/chat/completions"},
+      {openai_api_host, "localhost:8080"},
+      {openai_api_path, "/api/generate"},
+      %{openai_api_host, "api.openai.com"},
+      %{openai_api_path, "/v1/chat/completions"},
       %{openai_model, "codellama/CodeLlama-34b-Instruct-hf"},
-      {openai_model, "gpt-4"},
+      %{openai_model, "gpt-4"},
+      {openai_model, "mistral"},
       {openai_messages_yaml, MessagesYaml},
       {openai_functions_yaml, FunctionsYaml} | Config
     ]

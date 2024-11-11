@@ -297,17 +297,9 @@ generate_code(Config, FeatureFilename) ->
   ).
 
 generate_bdd(UserPrompt, AeAccount, Req) ->
-  poolboy:transaction(
-    ?MODULE,
-    fun
-      (Worker) ->
-        gen_server:call(
-          Worker,
-          {generate_bdd, UserPrompt, AeAccount, Req},
-          ?DEFAULT_TIMEOUT
-        )
-    end
-  ).
+  Pid = get_ai_proc(AeAccount),
+  gen_server:call(Pid, {generate_bdd, UserPrompt, AeAccount, Req}, ?AI_TIMEOUT).
+
 
 run_python_server(Config, Context, Code) ->
   poolboy:transaction(
@@ -443,6 +435,38 @@ from_html(Req0, State) ->
 
 check_generate_bdd(UserPrompt, #{ae_account := AeAccount} = _State, Req0) ->
   generate_bdd(UserPrompt, AeAccount, Req0).
+
+get_ai_proc(Username) ->
+  case gproc:lookup_local_name({?MODULE, Username}) of
+    undefined ->
+      case supervisor:start_child(
+        damage_sup,
+        #{
+          % mandatory
+          id => Username,
+          % mandatory
+          start => {damage_ai, start_link, []},
+          % optional
+          restart => permanent,
+          % optional
+          shutdown => 60,
+          % optional
+          type => worker,
+          modules => [damage_ai]
+        }
+      ) of
+        {ok, AiPid} ->
+          gproc:reg_other({n, l, {?MODULE, Username}}, AiPid),
+          AiPid;
+
+        {error, {already_started, AiPid}} ->
+          gproc:reg_other({n, l, {?MODULE, Username}}, AiPid),
+          AiPid
+      end;
+
+    Pid -> Pid
+  end.
+
 
 %  case damage_ae:balance(ContractAddress) of
 %    Balance when Balance >= ?DAMAGE_AI_FEE ->
