@@ -97,12 +97,17 @@ init([]) ->
         % optional
         type => worker,
         modules => [damage_nostr]
-      }
-      #{
+      } #{
         % mandatory
         id => damage_lightning,
         % mandatory
-        start => {damage_worker, start_link, ["lightningd --network=bitcoin --log-level=debug"]},
+        start
+        =>
+        {
+          damage_worker,
+          start_link,
+          ["lightningd --network=bitcoin --log-level=debug"]
+        },
         % optional
         restart => permanent,
         % optional
@@ -114,9 +119,6 @@ init([]) ->
     ],
   logger:info("Worker definitions ~p~n", [PoolSpecs0]),
   {ok, {SupFlags, PoolSpecs0}}.
-
-
-    
 
 %%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
 %%ChildSpecs =
