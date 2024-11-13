@@ -134,7 +134,8 @@ is_authorized(Req, State0) ->
                   #{
                     ae_account => maps:get(ae_account, User),
                     user => User,
-                    username => ResourceOwner
+                    username => ResourceOwner,
+                    access_token => Token
                   }
                 )
               }

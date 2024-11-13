@@ -12,6 +12,8 @@
 -export([step/6]).
 -export([gun_get/4]).
 -export([test_get_headers/0]).
+-export([test_gun_post/0]).
+-export([test_gun_get/0]).
 
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
@@ -39,11 +41,13 @@ response_to_list({StatusCode, Headers, Body}) ->
 get_gun_connection(Config0, #{ae_account := AeAccount} = Context) ->
   Host = damage_utils:get_context_value(host, Context, Config0),
   Port = damage_utils:get_context_value(port, Context, Config0),
+  ?LOG_DEBUG("Host ~p port ~p", [Host, Port]),
   Config =
     case Port of
       443 -> [{transport, tls} | Config0];
       _ -> Config0
     end,
+  ?LOG_DEBUG("HostConfig ~p ", [Config]),
   Opts =
     case lists:keyfind(transport, 1, Config) of
       false -> #{transport => tcp};
@@ -58,11 +62,28 @@ get_gun_connection(Config0, #{ae_account := AeAccount} = Context) ->
     end,
   Opts1 = maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts0),
   case lists:keyfind(concurrency, 1, Config0) of
-    {concurrency, 1} -> gun:open(Host, Port, Opts1);
+    false ->
+      ?LOG_DEBUG(
+        "Opening connecion Host ~p port ~p opts ~p",
+        [Host, Port, Opts1]
+      ),
+      gun:open(Host, Port, Opts1);
+
+    {concurrency, 1} ->
+      ?LOG_DEBUG(
+        "Opening connecion Host ~p port ~p opts ~p",
+        [Host, Port, Opts1]
+      ),
+      gun:open(Host, Port, Opts1);
 
     {concurrency, _Concurrency} ->
       case damage_domains:is_allowed_domain(Host, AeAccount) of
-        true -> gun:open(Host, Port, Opts1);
+        true ->
+          ?LOG_DEBUG(
+            "Opening connecion Host ~p port ~p opts ~p",
+            [Host, Port, Opts1]
+          ),
+          gun:open(Host, Port, Opts1);
 
         _ ->
           throw(
@@ -95,8 +116,10 @@ gun_await(ConnPid, StreamRef, Context) ->
 gun_post(Config0, Context, Path, Headers, Data) ->
   {ok, ConnPid} = get_gun_connection(Config0, Context),
   StreamRef = gun:post(ConnPid, Path, Headers, Data),
-  ?LOG_DEBUG("Post ~p", [Headers]),
-  gun_await(ConnPid, StreamRef, Context).
+  ?LOG_DEBUG("Post ~p ~p", [Path, Headers]),
+  Resp = gun_await(ConnPid, StreamRef, Context),
+  ?LOG_DEBUG("Post Resp ~p ", [Resp]),
+  Resp.
 
 
 gun_patch(Config0, Context, Path, Headers, Data) ->
@@ -113,6 +136,7 @@ gun_put(Config0, Context, Path, Headers, Data) ->
 
 gun_get(Config0, Context, Path, Headers) ->
   {ok, ConnPid} = get_gun_connection(Config0, Context),
+  ?LOG_DEBUG("Gun get ~p ~p", [Path, Headers]),
   StreamRef = gun:get(ConnPid, Path, Headers),
   gun_await(ConnPid, StreamRef, Context).
 
@@ -635,7 +659,8 @@ step(
       )
   end;
 
-step(_Config, Context, <<"Given">>, _N, ["I am using server", Server], _) ->
+step(_Config, Context0, <<"Given">>, _N, ["I am using server", Server], _) ->
+  Context = maps:put(base_url, Server, Context0),
   case uri_string:parse(Server) of
     #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->
       maps:put(port, Port, maps:put(host, Host, Context));
@@ -649,8 +674,12 @@ step(_Config, Context, <<"Given">>, _N, ["I am using server", Server], _) ->
     #{path := Host} -> maps:put(host, Host, Context)
   end;
 
-step(_Config, Context, <<"Given">>, _N, ["I set base URL to", URL], _) ->
-  maps:put(base_url, URL, Context);
+step(Config, Context, <<"Given">>, _N, ["I set base URL to", URL], Body) ->
+  maps:put(
+    base_url,
+    URL,
+    step(Config, Context, <<"Given">>, _N, ["I am using server", URL], Body)
+  );
 
 step(
   _Config,
@@ -797,3 +826,65 @@ test_get_headers() ->
     },
   Headers = get_headers(Context, ?DEFAULT_HEADERS),
   logger:info("Headers ~p", [Headers]).
+
+
+test_gun_post() ->
+  Context =
+    #{
+      %port => 8080,
+      %host => "localhost",
+      port => 443,
+      host => "run.staging.damagebdd.com",
+      modified => <<"20240424223344">>,
+      headers
+      =>
+      [
+        {<<"accept">>, "application/json"},
+        {<<"content-type">>, "application/json"},
+        {<<"user-agent">>, "damagebdd/1.0"}
+      ],
+      step_found => false,
+      example_context_variable
+      =>
+      #{value => <<"non redaacted">>, secret => false},
+      example_context_variable_redacted
+      =>
+      #{value => <<"ths will be redaacted">>, secret => true},
+      ae_account => <<"ak_ssssssssssssadsadadas">>
+    },
+  Headers = get_headers(Context, ?DEFAULT_HEADERS),
+  gun_post([], Context, "/publish_feature", Headers, #{}).
+
+
+test_gun_get() ->
+  Context =
+    #{
+      %port => 8080,
+      %host => "localhost",
+      port => 443,
+      host => "run.staging.damagebdd.com",
+      base_url => "https://run.staging.damagebdd.com",
+      modified => <<"20240424223344">>,
+      headers
+      =>
+      [
+        {<<"accept">>, "application/json"},
+        {<<"content-type">>, "application/json"},
+        {<<"user-agent">>, "damagebdd/1.0"}
+      ],
+      step_found => false,
+      example_context_variable
+      =>
+      #{value => <<"non redaacted">>, secret => false},
+      example_context_variable_redacted
+      =>
+      #{value => <<"ths will be redaacted">>, secret => true},
+      ae_account => <<"ak_ssssssssssssadsadadas">>
+    },
+  Headers = get_headers(Context, ?DEFAULT_HEADERS),
+  gun_get(
+    [],
+    Context,
+    string:concat(maps:get(base_url, Context, ""), "/publish_feature/"),
+    Headers
+  ).
