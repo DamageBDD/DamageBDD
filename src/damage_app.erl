@@ -112,12 +112,12 @@ start_phase(start_trails_http, _StartType, []) ->
 start_phase(start_sync, _StartType, []) ->
   logger:info("Starting sync."),
   case init:get_plain_arguments() of
-    [_, "shell"] ->
+    [_, "shell" | _] ->
       ?LOG_INFO("Sourc sync enabled.", []),
       sync:go();
 
-    _ ->
-      ?LOG_INFO("Sourc sync disabled.", []),
+    Cause ->
+      ?LOG_INFO("Sourc sync disabled. ~p", [Cause]),
       ok
   end,
   ?LOG_INFO("Sync Ready."),
