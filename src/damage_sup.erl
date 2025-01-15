@@ -1,4 +1,4 @@
-%%%-------------------------------------------------------------------
+%%-------------------------------------------------------------------
 %% @doc damage top level supervisor.
 %% @end
 %% https://erlang.org/doc/man/supervisor.html
@@ -44,21 +44,35 @@ init([]) ->
       end,
       Pools
     ),
+  BTCPassword =
+    case os:getenv("BTC_PASSWORD") of
+      false -> exit(btc_password_env_not_set);
+      Other -> Other
+    end,
+  Home = os:getenv("HOME"),
+    {ok, Cwd} = file:get_cwd(),
+  {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
+  CoreLightningCmd =
+    "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0"
+    ++
+    " --plugin="
+    ++
+    filename:join([Cwd, "ext_plugins/corelightning_plugin/wss.py"])
+    ++
+    " --log-file="
+    ++
+    filename:join([Home, ".local/var/logs/lightning.log"])
+    ++
+    " --bitcoin-rpcuser="
+    ++
+    BtcRpcUser
+    ++
+    " --bitcoin-rpcpassword="
+    ++
+    BTCPassword,
+  logger:info("Starting corelightning ~p~n", [CoreLightningCmd]),
   PoolSpecs0 =
     PoolSpecs ++ [
-      #{
-        % mandatory
-        id => lndconnect,
-        % mandatory
-        start => {lndconnect, start_link, []},
-        % optional
-        restart => permanent,
-        % optional
-        shutdown => 60,
-        % optional
-        type => worker,
-        modules => [lndconnect]
-      },
       #{
         % mandatory
         id => damage_ae,
@@ -97,17 +111,12 @@ init([]) ->
         % optional
         type => worker,
         modules => [damage_nostr]
-      } #{
+      },
+      #{
         % mandatory
         id => damage_lightning,
         % mandatory
-        start
-        =>
-        {
-          damage_worker,
-          start_link,
-          ["lightningd --network=bitcoin --log-level=debug"]
-        },
+        start => {damage_worker, start_link, [CoreLightningCmd]},
         % optional
         restart => permanent,
         % optional
@@ -115,6 +124,19 @@ init([]) ->
         % optional
         type => worker,
         modules => [damage_lightning]
+        %},
+        %#{
+        %  % mandatory
+        %  id => lndconnect,
+        %  % mandatory
+        %  start => {lndconnect, start_link, []},
+        %  % optional
+        %  restart => permanent,
+        %  % optional
+        %  shutdown => 60,
+        %  % optional
+        %  type => worker,
+        %  modules => [lndconnect]
       }
     ],
   logger:info("Worker definitions ~p~n", [PoolSpecs0]),
