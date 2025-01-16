@@ -128,7 +128,7 @@ to_json(Req, #{action := invoice} = State) ->
         #{amount := AmountBin, comment := Memo} ->
           Amount = binary_to_integer(AmountBin),
           #{r_hash := _RHash, payment_request := PaymentRequest} =
-            Invoice = lnd:create_invoice(Amount div 1000, Memo),
+            Invoice = cln:create_invoice(Amount div 1000, Memo),
           ?LOG_INFO("invoice ~p", [Invoice]),
           {jsx:encode(#{pr => PaymentRequest}), Req, State};
 
@@ -177,7 +177,7 @@ do_post_action(
   _State
 ) ->
   ?LOG_DEBUG("generate invoice ~p", [Data]),
-  Invoice = lnd:create_invoice(Amount, Memo, Expiry),
+  Invoice = cln:create_invoice(Amount, Memo, Expiry),
   {201, Invoice};
 
 do_post_action(_Action, _Data, _Req, _State) -> ok.

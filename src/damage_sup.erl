@@ -50,14 +50,9 @@ init([]) ->
       Other -> Other
     end,
   Home = os:getenv("HOME"),
-    {ok, Cwd} = file:get_cwd(),
   {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
   CoreLightningCmd =
-    "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0"
-    ++
-    " --plugin="
-    ++
-    filename:join([Cwd, "ext_plugins/corelightning_plugin/wss.py"])
+    "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0 --clnrest-port=3010 --clnrest-protocol=http"
     ++
     " --log-file="
     ++
@@ -137,6 +132,19 @@ init([]) ->
         %  % optional
         %  type => worker,
         %  modules => [lndconnect]
+      },
+      #{
+        % mandatory
+        id => cln,
+        % mandatory
+        start => {cln, start_link, []},
+        % optional
+        restart => permanent,
+        % optional
+        shutdown => 60,
+        % optional
+        type => worker,
+        modules => [cln]
       }
     ],
   logger:info("Worker definitions ~p~n", [PoolSpecs0]),

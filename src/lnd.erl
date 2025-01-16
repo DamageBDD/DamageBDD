@@ -28,7 +28,7 @@
     list_invoices/1,
     cancel_invoice/1,
     settle_invoice/1,
-   add_hold_invoice/2
+    add_hold_invoice/2
   ]
 ).
 -export([test/0]).
