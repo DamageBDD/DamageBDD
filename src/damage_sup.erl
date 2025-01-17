@@ -52,7 +52,7 @@ init([]) ->
   Home = os:getenv("HOME"),
   {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
   CoreLightningCmd =
-    "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0 --clnrest-port=3010 --clnrest-protocol=http"
+    "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0 --clnrest-port=3010 --clnrest-protocol=http --log-level=debug"
     ++
     " --log-file="
     ++
@@ -135,9 +135,9 @@ init([]) ->
       },
       #{
         % mandatory
-        id => cln,
+        id => cln_websocket,
         % mandatory
-        start => {cln, start_link, []},
+        start => {cln, start_link, [[]]},
         % optional
         restart => permanent,
         % optional

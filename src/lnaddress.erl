@@ -89,7 +89,7 @@ to_json(Req, #{action := lnurlp} = State) ->
     undefined -> {<<"user">>, Req, State};
 
     User ->
-      {ok, ApiUrl} = application:get_env(damage, api_url),
+      {ok, ApiUrl} = application:get_env(damage, lnpay_host),
       {
         jsx:encode(
           #{
@@ -127,10 +127,16 @@ to_json(Req, #{action := invoice} = State) ->
       case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
         #{amount := AmountBin, comment := Memo} ->
           Amount = binary_to_integer(AmountBin),
-          #{r_hash := _RHash, payment_request := PaymentRequest} =
-            Invoice = cln:create_invoice(Amount div 1000, Memo),
+          #{
+            payment_hash := _PaymentHash,
+            expires_at := _Expiry,
+            bolt11 := Bolt11,
+            payment_secret := _PaymentSecret,
+            created_index := _CreatedIndex,
+            warning_capacity := _WarningCapacity
+          } = Invoice = cln:create_invoice(Amount , Memo),
           ?LOG_INFO("invoice ~p", [Invoice]),
-          {jsx:encode(#{pr => PaymentRequest}), Req, State};
+          {jsx:encode(#{pr => Bolt11}), Req, State};
 
         Unexpected ->
           ?LOG_INFO("invalid invoice request ~p", [Unexpected]),
@@ -212,6 +218,7 @@ from_json(Req, #{action := Action} = State) ->
       {stop, Response, State};
 
     Data0 ->
+      ?LOG_DEBUG("post action  ~p ", [Data0]),
       case do_post_action(Action, Data0, Req0, State) of
         {204, <<"">>} ->
           Response = cowboy_req:reply(204, Req0),
