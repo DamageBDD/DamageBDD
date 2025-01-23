@@ -132,9 +132,8 @@ to_json(Req, #{action := invoice} = State) ->
             expires_at := _Expiry,
             bolt11 := Bolt11,
             payment_secret := _PaymentSecret,
-            created_index := _CreatedIndex,
-            warning_capacity := _WarningCapacity
-          } = Invoice = cln:create_invoice(Amount , Memo),
+            created_index := _CreatedIndex
+          } = Invoice = cln:create_invoice(Amount, Memo),
           ?LOG_INFO("invoice ~p", [Invoice]),
           {jsx:encode(#{pr => Bolt11}), Req, State};
 
@@ -186,7 +185,8 @@ do_post_action(
   Invoice = cln:create_invoice(Amount, Memo, Expiry),
   {201, Invoice};
 
-do_post_action(_Action, _Data, _Req, _State) -> ok.
+do_post_action(_Action, Data, _Req, _State) ->
+  ?LOG_DEBUG("unhandled do_post_action ~p", [Data]).
 
 
 from_json(Req, #{action := Action} = State) ->
