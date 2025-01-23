@@ -23,10 +23,7 @@
     code_change/3
   ]
 ).
--export(
-  [
-    restart/1
-]).
+-export([restart/1]).
 
 -record(state, {exec_pid}).
 
@@ -85,5 +82,5 @@ terminate(_Reason, #state{exec_pid = ExecPid}) ->
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 restart(Worker) ->
-    supervisor:terminate_child(damage_sup, Worker),
-    supervisor:restart_child(damage_sup, Worker).
+  supervisor:terminate_child(damage_sup, Worker),
+  supervisor:restart_child(damage_sup, Worker).
