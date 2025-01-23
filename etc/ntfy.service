@@ -1,0 +1,11 @@
+[Unit]
+Description=Run your script at startup
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/curl -d "%H booted" https://ntfy.sh/damagebdd
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
