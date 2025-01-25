@@ -29,6 +29,7 @@
     maybe_fund_wallet/2,
     maybe_fund_wallet/1,
     transfer_damage_tokens/2,
+    transfer_damage_tokens/3,
     get_account_context/1,
     get_webhooks/1,
     add_webhook/3,
@@ -59,6 +60,7 @@
 -export([get_block_height_since/2]).
 -export([test_get_block_height_since/0]).
 -export([test_find_block/0]).
+-export([test_verify_message/0]).
 -export([get_wallet_proc/1]).
 -export([ae_to_aetto/1]).
 
@@ -302,12 +304,12 @@ handle_call({balance, AeAccount}, _From, Cache) ->
       {reply, {error, not_found}, Cache}
   end;
 
-handle_call({get_schedules, Email}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({get_schedules, AeAccount}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   case catch maps:get(schedules, AccountCache, undefined) of
     undefined ->
       #{decodedResult := Results} =
-        contract_call_user_account(Email, "get_schedules", []),
+        contract_call_user_account(AeAccount, "get_schedules", []),
       Schedules =
         maps:from_list(
           [
@@ -321,18 +323,18 @@ handle_call({get_schedules, Email}, _From, Cache) ->
       {
         reply,
         Schedules,
-        maps:put(Email, maps:put(schedules, Schedules, AccountCache), Cache)
+        maps:put(AeAccount, maps:put(schedules, Schedules, AccountCache), Cache)
       };
 
     Schedules when is_map(Schedules) -> {reply, Schedules, Cache}
   end;
 
-handle_call({get_context, Email}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({get_context, AeAccount}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   case catch maps:get(context, AccountCache, undefined) of
     undefined ->
       #{decodedResult := Results} =
-        contract_call_user_account(Email, "get_context", []),
+        contract_call_user_account(AeAccount, "get_context", []),
       ClientContext =
         maps:from_list(
           [
@@ -347,33 +349,41 @@ handle_call({get_context, Email}, _From, Cache) ->
       {
         reply,
         ClientContext,
-        maps:put(Email, maps:put(context, ClientContext, AccountCache), Cache)
+        maps:put(
+          AeAccount,
+          maps:put(context, ClientContext, AccountCache),
+          Cache
+        )
       };
 
     Context when is_map(Context) -> {reply, Context, Cache}
   end;
 
-handle_call({set_context, Email, AccountContext}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({set_context, AeAccount, AccountContext}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   NewAccountContext =
     maps:merge(maps:get(context, AccountCache, #{}), AccountContext),
   Results =
-    contract_call_user_account(Email, "set_context", [NewAccountContext]),
+    contract_call_user_account(AeAccount, "set_context", [NewAccountContext]),
   ?LOG_DEBUG("set_context caching ~p, ~p", [NewAccountContext, Results]),
   {
     reply,
     NewAccountContext,
-    maps:put(Email, maps:put(context, NewAccountContext, AccountCache), Cache)
+    maps:put(
+      AeAccount,
+      maps:put(context, NewAccountContext, AccountCache),
+      Cache
+    )
   };
 
-handle_call({add_context, Email, Key, Value, Visibility}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({add_context, AeAccount, Key, Value, Visibility}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   ContextCache = maps:get(context, AccountCache, #{}),
   KeyEncrypted = base64:encode(damage_utils:encrypt(Key)),
   ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
   Results =
     damage_ae:contract_call_user_account(
-      Email,
+      AeAccount,
       "add_context",
       [KeyEncrypted, ValueEncrypted, Visibility]
     ),
@@ -382,19 +392,19 @@ handle_call({add_context, Email, Key, Value, Visibility}, _From, Cache) ->
     reply,
     Results,
     maps:put(
-      Email,
+      AeAccount,
       maps:put(context, maps:put(Key, Value, ContextCache), AccountCache),
       Cache
     )
   };
 
-handle_call({delete_context, Email, Key}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({delete_context, AeAccount, Key}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   ContextCache = maps:get(context, AccountCache, #{}),
   ContextKeyEnc = base64:encode(damage_utils:encrypt(Key)),
   Results =
     damage_ae:contract_call_user_account(
-      Email,
+      AeAccount,
       "delete_context",
       [ContextKeyEnc]
     ),
@@ -403,18 +413,18 @@ handle_call({delete_context, Email, Key}, _From, Cache) ->
     reply,
     Results,
     maps:put(
-      Email,
+      AeAccount,
       maps:put(context, maps:delete(Key, ContextCache), AccountCache),
       Cache
     )
   };
 
-handle_call({get_webhooks, Email}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({get_webhooks, AeAccount}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   case catch maps:get(webhooks, AccountCache, undefined) of
     undefined ->
       #{decodedResult := Results} =
-        contract_call_user_account(Email, "get_webhooks", []),
+        contract_call_user_account(AeAccount, "get_webhooks", []),
       WebHooks =
         maps:from_list(
           [
@@ -429,20 +439,20 @@ handle_call({get_webhooks, Email}, _From, Cache) ->
       {
         reply,
         WebHooks,
-        maps:put(Email, maps:put(webhooks, WebHooks, AccountCache), Cache)
+        maps:put(AeAccount, maps:put(webhooks, WebHooks, AccountCache), Cache)
       };
 
     Context when is_map(Context) -> {reply, Context, Cache}
   end;
 
-handle_call({add_webhook, Email, WebhookName, WebhookUrl}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({add_webhook, AeAccount, WebhookName, WebhookUrl}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   WebHookCache = maps:get(webhooks, AccountCache, #{}),
   WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
   WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
   Results =
     contract_call_user_account(
-      Email,
+      AeAccount,
       "add_webhook",
       [WebhookNameEncrypted, WebhookUrlEncrypted]
     ),
@@ -451,7 +461,7 @@ handle_call({add_webhook, Email, WebhookName, WebhookUrl}, _From, Cache) ->
     reply,
     Results,
     maps:put(
-      Email,
+      AeAccount,
       maps:put(
         webhooks,
         maps:put(WebhookName, WebhookUrl, WebHookCache),
@@ -461,15 +471,19 @@ handle_call({add_webhook, Email, WebhookName, WebhookUrl}, _From, Cache) ->
     )
   };
 
-handle_call({delete_webhook, Email, WebhookName}, _From, Cache) ->
+handle_call({delete_webhook, AeAccount, WebhookName}, _From, Cache) ->
   WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
   Results =
-    contract_call_user_account(Email, "delete_webhook", [WebhookNameEncrypted]),
+    contract_call_user_account(
+      AeAccount,
+      "delete_webhook",
+      [WebhookNameEncrypted]
+    ),
   ?LOG_DEBUG("Webhooks ~p", [Results]),
   {reply, Results, Cache};
 
-handle_call({get_auth_token, Email, TokenKey}, _From, Cache) ->
-  case contract_call_user_account(Email, "get_auth_token", [TokenKey]) of
+handle_call({get_auth_token, AeAccount, TokenKey}, _From, Cache) ->
+  case contract_call_user_account(AeAccount, "get_auth_token", [TokenKey]) of
     #{decodedResult := EncryptedConfirmToken} ->
       {reply, damage_utils:decrypt(base64:decode(EncryptedConfirmToken)), Cache};
 
@@ -486,28 +500,28 @@ handle_call({transaction, Data}, _From, State) ->
   ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
   {reply, ok, State};
 
-handle_call({delete_account, Email}, _From, Cache) ->
+handle_call({delete_account, AeAccount}, _From, Cache) ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
   #{decodedResult := []} =
     contract_call(
-      Email,
+      AeAccount,
       AccountContract,
       "contracts/account.aes",
       "delete_account",
       []
     ),
-  ?LOG_DEBUG("deleting account data ~p", [Email]),
-  {reply, #{}, maps:delete(Email, Cache)};
+  ?LOG_DEBUG("deleting account data ~p", [AeAccount]),
+  {reply, #{}, maps:delete(AeAccount, Cache)};
 
-handle_call({set_meta, #{email := Email} = AccountMeta}, _From, Cache) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_call({set_meta, #{email := AeAccount} = AccountMeta}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   NewAccountMeta = maps:merge(maps:get(meta, AccountCache, #{}), AccountMeta),
   {ok, AccountContract} = application:get_env(damage, account_contract),
   NewAccountMetaEncrypted =
     base64:encode(damage_utils:encrypt(jsx:encode(NewAccountMeta))),
   #{decodedResult := []} =
     contract_call(
-      Email,
+      AeAccount,
       AccountContract,
       "contracts/account.aes",
       "set_meta",
@@ -517,7 +531,7 @@ handle_call({set_meta, #{email := Email} = AccountMeta}, _From, Cache) ->
   {
     reply,
     NewAccountMeta,
-    maps:put(Email, maps:put(meta, NewAccountMeta, AccountCache), Cache)
+    maps:put(AeAccount, maps:put(meta, NewAccountMeta, AccountCache), Cache)
   };
 
 handle_call({revoke_access_token, TokenKey}, _From, Cache) ->
@@ -558,11 +572,11 @@ handle_call({get_access_token, AccessToken}, _From, Cache) ->
       {reply, Token, Cache}
   end;
 
-handle_call({get_meta, EmailOrUsername}, _From, Cache) ->
-  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+handle_call({get_meta, AeAccount}, _From, Cache) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   case catch maps:get(meta, AccountCache, undefined) of
     undefined ->
-      case contract_call_user_account(EmailOrUsername, "get_meta", []) of
+      case contract_call_user_account(AeAccount, "get_meta", []) of
         #{status := <<"fail">>} -> {reply, notfound, Cache};
         <<"notfound">> -> {reply, notfound, Cache};
 
@@ -583,7 +597,7 @@ handle_call({get_meta, EmailOrUsername}, _From, Cache) ->
           {
             reply,
             Meta,
-            maps:put(EmailOrUsername, maps:put(meta, Meta, AccountCache), Cache)
+            maps:put(AeAccount, maps:put(meta, Meta, AccountCache), Cache)
           }
       end;
 
@@ -623,7 +637,7 @@ handle_cast(
   {
     confirm_spend,
     #{
-      username := EmailOrUsername,
+      username := AeAccount,
       feature_hash := _FeatureHash,
       report_hash := _ReportHash,
       token_contract := DamageTokenContract,
@@ -647,12 +661,12 @@ handle_cast(
       ]
     ),
   ?LOG_DEBUG("confirm spend ~p", [RunRecord]),
-  AccountCache = maps:get(EmailOrUsername, Cache, #{}),
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   case maps:get(spent_balance, AccountCache, {0, 0}) of
     {_, Amount} when Amount > 0 ->
       case
       contract_call(
-        EmailOrUsername,
+        AeAccount,
         binary_to_list(DamageTokenContract),
         "contracts/token.aes",
         "spend",
@@ -671,7 +685,7 @@ handle_cast(
         } ->
           NewCache =
             maps:put(
-              EmailOrUsername,
+              AeAccount,
               maps:put(spent_balance, {Amount, 0}, AccountCache),
               Cache
             ),
@@ -688,16 +702,16 @@ handle_cast(
       {noreply, Cache}
   end;
 
-handle_cast({spend, Email, Amount}, Cache) when is_list(Email) ->
-  handle_cast({spend, list_to_binary(Email), Amount}, Cache);
+handle_cast({spend, AeAccount, Amount}, Cache) when is_list(AeAccount) ->
+  handle_cast({spend, list_to_binary(AeAccount), Amount}, Cache);
 
-handle_cast({spend, Email, Amount}, Cache) when is_binary(Email) ->
-  AccountCache = maps:get(Email, Cache, #{}),
+handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
+  AccountCache = maps:get(AeAccount, Cache, #{}),
   {Balance, Spend} = maps:get(spent_balance, AccountCache, {0, 0}),
   NewCache = maps:put(spent_balance, {Balance, Spend + Amount}, AccountCache),
-  {noreply, maps:put(Email, NewCache, Cache)};
+  {noreply, maps:put(AeAccount, NewCache, Cache)};
 
-handle_cast({invalidate_cache, _EmailOrUsername}, _Cache) -> {noreply, #{}};
+handle_cast({invalidate_cache, _AeAccount}, _Cache) -> {noreply, #{}};
 handle_cast(_Event, State) -> {noreply, State}.
 
 
@@ -775,9 +789,9 @@ exec_aecli(Cmd) ->
   end.
 
 
-contract_call_user_account(Email, Func, Args) ->
+contract_call_user_account(AeAccount, Func, Args) ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
-  contract_call(Email, AccountContract, "contracts/account.aes", Func, Args).
+  contract_call(AeAccount, AccountContract, "contracts/account.aes", Func, Args).
 
 
 contract_call_admin_account(Func, Args) ->
@@ -794,10 +808,10 @@ contract_call_admin_account(Func, Args) ->
   ).
 
 
-contract_call(EmailOrUsername, ContractAddress, Contract, Func, Args) ->
+contract_call(AeAccount, ContractAddress, Contract, Func, Args) ->
   contract_call(
-    get_wallet_path(EmailOrUsername),
-    get_wallet_password(EmailOrUsername),
+    get_wallet_path(AeAccount),
+    get_wallet_password(AeAccount),
     ContractAddress,
     Contract,
     Func,
@@ -824,10 +838,10 @@ contract_call(WalletPath, WalletPassword, ContractAddress, Contract, Func, Args)
   exec_aecli(Cmd).
 
 
-contract_deploy(EmailOrUsername, Contract, Args) ->
+contract_deploy(AeAccount, Contract, Args) ->
   contract_deploy(
-    get_wallet_path(EmailOrUsername),
-    get_wallet_password(EmailOrUsername),
+    get_wallet_path(AeAccount),
+    get_wallet_password(AeAccount),
     Contract,
     Args
   ).
@@ -849,14 +863,14 @@ contract_deploy(WalletPath, WalletPassword, Contract, Args) ->
   exec_aecli(Cmd).
 
 
-get_wallet_proc(Username) ->
-  case gproc:lookup_local_name({?MODULE, Username}) of
+get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
+  case gproc:lookup_local_name({?MODULE, AeAccount}) of
     undefined ->
       case supervisor:start_child(
         damage_sup,
         #{
           % mandatory
-          id => Username,
+          id => AeAccount,
           % mandatory
           start => {damage_ae, start_link, []},
           % optional
@@ -869,16 +883,19 @@ get_wallet_proc(Username) ->
         }
       ) of
         {ok, AePid} ->
-          gproc:reg_other({n, l, {?MODULE, Username}}, AePid),
+          gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
           AePid;
 
         {error, {already_started, AePid}} ->
-          gproc:reg_other({n, l, {?MODULE, Username}}, AePid),
+          gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
           AePid
       end;
 
     Pid -> Pid
-  end.
+  end;
+
+get_wallet_proc(Email) ->
+  get_wallet_proc(damage_accounts:get_ae_account(Email)).
 
 
 balance(AeAccount) when is_binary(AeAccount) ->
@@ -886,7 +903,7 @@ balance(AeAccount) when is_binary(AeAccount) ->
 
 balance(AeAccount) ->
   ?LOG_DEBUG("Check balance ~p", [AeAccount]),
-  DamageAEPid = get_wallet_proc(AeAccount),
+  DamageAEPid = get_wallet_proc(admin),
   gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
 
 
@@ -896,10 +913,10 @@ get_reports(AeAccount) ->
   gen_server:call(DamageAEPid, {reports, AeAccount}, ?AE_TIMEOUT).
 
 
-spend(Email, Amount) ->
+spend(AeAccount, Amount) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(Email),
-  gen_server:cast(DamageAEPid, {spend, Email, Amount}).
+  DamageAEPid = get_wallet_proc(AeAccount),
+  gen_server:cast(DamageAEPid, {spend, AeAccount, Amount}).
 
 
 confirm_spend_all() ->
@@ -915,79 +932,79 @@ start_batch_spend_timer() ->
   ).
 
 
-confirm_spend(#{username := Username} = Context) ->
-  DamageAEPid = get_wallet_proc(Username),
+confirm_spend(#{ae_account := AeAccount} = Context) ->
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:cast(DamageAEPid, {confirm_spend, Context}).
 
 
-get_account_context(EmailOrUsername) ->
+get_account_context(AeAccount) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(EmailOrUsername),
-  gen_server:call(DamageAEPid, {get_context, EmailOrUsername}, ?AE_TIMEOUT).
+  DamageAEPid = get_wallet_proc(AeAccount),
+  gen_server:call(DamageAEPid, {get_context, AeAccount}, ?AE_TIMEOUT).
 
 
-add_context(EmailOrUsername, Key, Value, Visibility) ->
+add_context(AeAccount, Key, Value, Visibility) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:call(
     DamageAEPid,
-    {add_context, EmailOrUsername, Key, Value, Visibility},
+    {add_context, AeAccount, Key, Value, Visibility},
     ?AE_TIMEOUT
   ).
 
 
-get_webhooks(EmailOrUsername) ->
+get_webhooks(AeAccount) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(EmailOrUsername),
-  gen_server:call(DamageAEPid, {get_webhooks, EmailOrUsername}, ?AE_TIMEOUT).
+  DamageAEPid = get_wallet_proc(AeAccount),
+  gen_server:call(DamageAEPid, {get_webhooks, AeAccount}, ?AE_TIMEOUT).
 
 
-add_webhook(EmailOrUsername, WebhookName, WebhookUrl) ->
+add_webhook(AeAccount, WebhookName, WebhookUrl) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:call(
     DamageAEPid,
-    {add_webhook, EmailOrUsername, WebhookName, WebhookUrl},
+    {add_webhook, AeAccount, WebhookName, WebhookUrl},
     ?AE_TIMEOUT
   ).
 
 
-delete_webhook(EmailOrUsername, WebhookName) ->
+delete_webhook(AeAccount, WebhookName) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(EmailOrUsername),
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:call(
     DamageAEPid,
-    {delete_webhook, EmailOrUsername, WebhookName},
+    {delete_webhook, AeAccount, WebhookName},
     ?AE_TIMEOUT
   ).
 
 
-get_schedules(EmailOrUsername) ->
-  DamageAEPid = get_wallet_proc(EmailOrUsername),
-  gen_server:call(DamageAEPid, {get_schedules, EmailOrUsername}, ?AE_TIMEOUT).
+get_schedules(AeAccount) ->
+  DamageAEPid = get_wallet_proc(AeAccount),
+  gen_server:call(DamageAEPid, {get_schedules, AeAccount}, ?AE_TIMEOUT).
 
 
-set_meta(#{email := Email} = Meta) ->
+set_meta(#{ae_account := AeAccount} = Meta) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(Email),
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:call(DamageAEPid, {set_meta, Meta}, ?AE_TIMEOUT).
 
 
-get_meta(Email) ->
-  case filelib:is_regular(get_wallet_path(Email)) of
+get_meta(AeAccount) ->
+  case filelib:is_regular(get_wallet_path(AeAccount)) of
     true ->
       % temporary storage to commit after feature execution
-      DamageAEPid = get_wallet_proc(Email),
-      gen_server:call(DamageAEPid, {get_meta, Email}, ?AE_TIMEOUT);
+      DamageAEPid = get_wallet_proc(AeAccount),
+      gen_server:call(DamageAEPid, {get_meta, AeAccount}, ?AE_TIMEOUT);
 
     _ -> notfound
   end.
 
 
-delete_account(Email) ->
+delete_account(AeAccount) ->
   % temporary storage to commit after feature execution
-  DamageAEPid = get_wallet_proc(Email),
-  gen_server:call(DamageAEPid, {delete_account, Email}, ?AE_TIMEOUT).
+  DamageAEPid = get_wallet_proc(AeAccount),
+  gen_server:call(DamageAEPid, {delete_account, AeAccount}, ?AE_TIMEOUT).
 
 
 invalidate_cache(Username) ->
@@ -995,23 +1012,23 @@ invalidate_cache(Username) ->
   gen_server:cast(DamageAEPid, {invalidate_cache, Username}).
 
 
-revoke_token(Email, Token) ->
-  DamageAEPid = get_wallet_proc(Email),
+revoke_token(AeAccount, Token) ->
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:cast(DamageAEPid, {revoke_access_token, Token}).
 
 
-get_domain_token(Email, Domain) ->
-  DamageAEPid = get_wallet_proc(Email),
+get_domain_token(AeAccount, Domain) ->
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:cast(DamageAEPid, {get_domain_token, Domain}).
 
 
-add_domain_token(Email, Domain, DomainContext) ->
-  DamageAEPid = get_wallet_proc(Email),
+add_domain_token(AeAccount, Domain, DomainContext) ->
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:cast(DamageAEPid, {add_domain_token, Domain, DomainContext}).
 
 
-revoke_domain_token(Email, Domain) ->
-  DamageAEPid = get_wallet_proc(Email),
+revoke_domain_token(AeAccount, Domain) ->
+  DamageAEPid = get_wallet_proc(AeAccount),
   gen_server:cast(DamageAEPid, {add_domain_token, Domain}).
 
 
@@ -1055,9 +1072,9 @@ read_stream(ConnPid, StreamRef) ->
   end.
 
 
-get_wallet_password(EmailOrUsername) ->
+get_wallet_password(Email) ->
   AEPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
-  binary_to_list(damage_utils:idhash_keys([EmailOrUsername, AEPassword])).
+  binary_to_list(damage_utils:idhash_keys([Email, AEPassword])).
 
 
 get_wallet_path(Email) ->
@@ -1068,8 +1085,8 @@ get_wallet_path(Email) ->
 create_wallet(WalletName) when is_binary(WalletName) ->
   create_wallet(binary_to_list(WalletName));
 
-create_wallet(EmailOrUsername) ->
-  WalletPath = get_wallet_path(EmailOrUsername),
+create_wallet(Email) ->
+  WalletPath = get_wallet_path(Email),
   ?LOG_DEBUG("Wallet path. ~p", [WalletPath]),
   Created =
     case filelib:is_regular(WalletPath) of
@@ -1084,7 +1101,7 @@ create_wallet(EmailOrUsername) ->
             "account",
             "create",
             "--password",
-            get_wallet_password(EmailOrUsername),
+            get_wallet_password(Email),
             "--json",
             WalletPath
           ],
@@ -1104,6 +1121,7 @@ get_ae_balance(AeAccount) ->
 
 
 transfer_damage_tokens(AeAccount, Amount) ->
+  % transfer damage tokens from admin account to to account
   {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
   AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
   {ok, TokenContract} = application:get_env(damage, token_contract),
@@ -1120,10 +1138,27 @@ transfer_damage_tokens(AeAccount, Amount) ->
   ContractCall.
 
 
-fund_wallet(AeAccount, EmailOrUsername, Amount) when is_binary(AeAccount) ->
-  fund_wallet(binary_to_list(AeAccount), EmailOrUsername, Amount);
+transfer_damage_tokens(FromAccountEmail, ToAeAccount, Amount) ->
+  WalletPath = get_wallet_path(FromAccountEmail),
+  {ok, TokenContract} = application:get_env(damage, token_contract),
+  Password = get_wallet_password(FromAccountEmail),
+  ContractCall =
+    contract_call(
+      WalletPath,
+      Password,
+      TokenContract,
+      "contracts/token.aes",
+      "transfer",
+      [ToAeAccount, Amount]
+    ),
+  ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
+  ContractCall.
 
-fund_wallet(AeAccount, EmailOrUsername, Amount) ->
+
+fund_wallet(AeAccount, AeAccount, Amount) when is_binary(AeAccount) ->
+  fund_wallet(binary_to_list(AeAccount), AeAccount, Amount);
+
+fund_wallet(AeAccount, AeAccount, Amount) ->
   {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
   AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
   Cmd =
@@ -1138,31 +1173,28 @@ fund_wallet(AeAccount, EmailOrUsername, Amount) ->
       integer_to_list(Amount)
     ],
   Result = exec_aecli(Cmd),
-  ?LOG_INFO("Funded wallet with pub key ~p ~p", [EmailOrUsername, Result]),
+  ?LOG_INFO("Funded wallet with pub key ~p ~p", [AeAccount, Result]),
   maps:put(public_key, AeAccount, Result).
 
 
-maybe_fund_wallet(EmailOrUsername) ->
-  maybe_fund_wallet(EmailOrUsername, ?AE_USER_WALLET_MINIMUM_BALANCE).
+maybe_fund_wallet(AeAccount) ->
+  maybe_fund_wallet(AeAccount, ?AE_USER_WALLET_MINIMUM_BALANCE).
 
-maybe_fund_wallet(EmailOrUsername, Amount) ->
-  UserWalletPath = get_wallet_path(EmailOrUsername),
+maybe_fund_wallet(AeAccount, Amount) ->
+  UserWalletPath = get_wallet_path(AeAccount),
   {ok, Wallet} = file:read_file(UserWalletPath),
   #{public_key := UserAccount} =
     jsx:decode(Wallet, [{labels, atom}, return_maps]),
   AeResult =
     case get_ae_balance(UserAccount) of
       #{balance := AeBalance} when AeBalance < ?AE_USER_WALLET_MINIMUM_BALANCE ->
-        {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
+        {funded, fund_wallet(UserAccount, AeAccount, Amount)};
 
       #{reason := <<"Account not found">>} ->
-        {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
+        {funded, fund_wallet(UserAccount, AeAccount, Amount)};
 
       Result ->
-        ?LOG_INFO(
-          "Wallet above minimum balance ~p ~p",
-          [EmailOrUsername, Result]
-        ),
+        ?LOG_INFO("Wallet above minimum balance ~p ~p", [AeAccount, Result]),
         {notfunded, #{public_key => UserAccount}}
     end,
   DamageTokenResult =
@@ -1171,22 +1203,21 @@ maybe_fund_wallet(EmailOrUsername, Amount) ->
         {funded, transfer_damage_tokens(UserAccount, Amount)};
 
       #{reason := <<"Account not found">>} ->
-        {funded, fund_wallet(UserAccount, EmailOrUsername, Amount)};
+        {funded, fund_wallet(UserAccount, AeAccount, Amount)};
 
       Result0 ->
-        ?LOG_INFO(
-          "Wallet above minimum balance ~p ~p",
-          [EmailOrUsername, Result0]
-        ),
+        ?LOG_INFO("Wallet above minimum balance ~p ~p", [AeAccount, Result0]),
         {notfunded, #{public_key => UserAccount}}
     end,
   {AeResult, DamageTokenResult}.
 
 
 maybe_create_wallet(Email, Password) ->
-  create_wallet(Email),
-  Funded = maybe_fund_wallet(Email),
-  set_meta(#{email => Email, password => Password}),
+  {_, #{publicKey := AeAccount}} = Data = create_wallet(Email),
+  EncEmail = damage_utils:encrypt(Email),
+  damage_riak:put(?USER_BUCKET, EncEmail, jsx:encode(Data)),
+  #{publicKey := AeAccount} = Funded = maybe_fund_wallet(AeAccount),
+  set_meta(#{ae_account => AeAccount, password => Password}),
   Funded.
 
 
@@ -1385,8 +1416,29 @@ test_get_block_height_since() ->
 
 
 sign_tx(UTx) ->
-  Password = list_to_binary(os:getenv("AE_SECRET_KEY")),
+  Password = list_to_binary(os:getenv("DAMAGE_AE_WALLET_PASSWORD")),
   sign_tx(UTx, Password).
+
+
+test_verify_message() ->
+  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
+  Cmd =
+    [
+      ?AECLI_EXEC,
+      "account",
+      "sign-message",
+      "--password",
+      AdminPassword,
+      "--json",
+      AdminWalletPath,
+      "test"
+    ],
+  #{data := Data, signature := _Sig, address := PubKey, signatureHex := SigHex} =
+    Result = exec_aecli(Cmd),
+  ?LOG_INFO("Result ~p", [Result]),
+  SigResult = vanillae:verify_signature(SigHex, Data, PubKey),
+  ?LOG_INFO("Sig Result ~p", [SigResult]).
 
 
 %sign_tx(UTx, PrivateKey) ->

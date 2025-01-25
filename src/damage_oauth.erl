@@ -75,15 +75,15 @@ validate_password(Password) ->
 reset_password(#{token := Token}) ->
   TokenEncrypted = base64:encode(damage_utils:encrypt(Token)),
   case damage_ae:contract_call_admin_account("get_auth_token", [TokenEncrypted]) of
-    {ok, #{email := Email, expiry := _Expiry}} ->
-      case damage_ae:set_meta(#{email => Email, password => Token}) of
+    {ok, #{ae_account := AeAccount, expiry := _Expiry}} ->
+      case damage_ae:set_meta(#{ae_account => AeAccount, password => Token}) of
         ok ->
           {
             ok,
             damage_utils:load_template(
               "reset_password.mustache",
               #{
-                email => Email,
+                email => damage_accounts:get_email(AeAccount),
                 current_password => Token,
                 current_password_type => <<"hidden">>
               }

@@ -84,12 +84,12 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
   {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-to_json(Req, #{email := Email} = State) ->
-  Domains = damage_ae:get_domains(Email),
+to_json(Req, #{ae_account := AeAccount} = State) ->
+  Domains = damage_ae:get_domains(AeAccount),
   {jsx:encode(Domains), Req, State}.
 
 
-from_json(Req, #{ae_account := AeAccount, email := Email} = State) ->
+from_json(Req, #{ae_account := AeAccount, ae_account := AeAccount} = State) ->
   {ok, Data, _Req2} = cowboy_req:read_body(Req),
   {Status, Resp0} =
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
@@ -101,7 +101,7 @@ from_json(Req, #{ae_account := AeAccount, email := Email} = State) ->
         DomainToken = list_to_binary(uuid:to_string(uuid:uuid4())),
         DomainTokenKey = damage_utils:idhash_keys([AeAccount, Domain]),
         ?LOG_DEBUG("Domain token ~p", [DomainTokenKey]),
-        case damage_ae:get_domain_token(Email, DomainTokenKey) of
+        case damage_ae:get_domain_token(AeAccount, DomainTokenKey) of
           notfound ->
             DomainObj =
               #{
@@ -109,7 +109,8 @@ from_json(Req, #{ae_account := AeAccount, email := Email} = State) ->
                 expiry => get_token_expiry(),
                 domain => Domain
               },
-            ok = damage_ae:add_domain_token(Email, DomainTokenKey, DomainObj),
+            ok =
+              damage_ae:add_domain_token(AeAccount, DomainTokenKey, DomainObj),
             {202, DomainObj};
 
           #{domain_token := Found} -> {200, Found}
@@ -120,13 +121,13 @@ from_json(Req, #{ae_account := AeAccount, email := Email} = State) ->
   {stop, Resp, State}.
 
 
-delete_resource(Req, #{email := Email} = State) ->
+delete_resource(Req, #{ae_account := AeAccount} = State) ->
   Deleted =
     lists:foldl(
       fun
         (DeleteId, Acc) ->
           ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-          ok = damage_ae:revoke_domain_token(Email, DeleteId),
+          ok = damage_ae:revoke_domain_token(AeAccount, DeleteId),
           Acc + 1
       end,
       0,

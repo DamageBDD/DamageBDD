@@ -77,9 +77,8 @@ create_model(Name) ->
 
 read_stream(ConnPid, StreamRef) ->
   case gun:await(ConnPid, StreamRef, 600000) of
-    {response, nofin, Status, _Headers0} ->
+    {response, nofin, _Status, _Headers0} ->
       {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      ?debugFmt("Got response ~p: ~p.", [Status, Body]),
       ?LOG_DEBUG("POST Response: ~p", [Body]),
       case jsx:decode(Body, [{labels, atom}, return_maps]) of
         #{response := Response} = _Response ->
@@ -87,7 +86,6 @@ read_stream(ConnPid, StreamRef) ->
           read_stream(ConnPid, StreamRef);
 
         NoChoice ->
-          ?debugFmt("Got function response ~p.", [NoChoice]),
           ?LOG_DEBUG("POST Response: ~p", [NoChoice]),
           notok
       end;

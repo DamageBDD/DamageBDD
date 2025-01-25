@@ -19,6 +19,8 @@
 -export([delete_account/1]).
 -export([delete_resource/2]).
 -export([notify_user/2]).
+-export([get_email/1]).
+-export([get_ae_account/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -628,3 +630,17 @@ delete_account(Email) ->
 
 notify_user(Username, Message) ->
   ?LOG_DEBUG("NotifyUser ~p, Message: ~p", [Username, Message]).
+
+get_email(AeAccount) ->
+  {ok, #{email := Email} = _KycData} = damage_riak:get(?USER_BUCKET, AeAccount),
+  Email.
+
+
+get_ae_account(admin) ->
+  {ok, AeAdmin} = application:get_env(damage, node_public_key),
+  AeAdmin;
+
+get_ae_account(Email) ->
+  {ok, #{ae_account := AeAccount} = _KycData} =
+    damage_riak:get(?AEACCOUNT_BUCKET, Email),
+  AeAccount.
