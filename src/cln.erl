@@ -54,11 +54,7 @@ init([]) ->
   {ok, CaCertFile} = application:get_env(damage, cln_cacertfile),
   {ok, CertFile} = application:get_env(damage, cln_certfile),
   {ok, KeyFile} = application:get_env(damage, cln_keyfile),
-  Rune =
-    case os:getenv("RUNE") of
-      false -> exit(invoice_macaroon_env_not_set);
-      Other -> Other
-    end,
+  Rune = damage_utils:pass_get(cln_rune_pass_path),
   RuneBin = list_to_binary(Rune),
   TLSOptions =
     [
@@ -193,7 +189,7 @@ handle_call(
   {reply, Invoice, State};
 
 handle_call(
-  {add_hold_invoice, Amount, Memo, Hash, Expiry},
+  {hold_invoice, Amount, Description, Expiry, CTLV},
   _From,
   #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
     State

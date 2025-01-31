@@ -291,7 +291,7 @@ load_all_schedules() ->
 list_all_schedules() ->
   {ok, AccountContract} = application:get_env(damage, account_contract),
   {ok, AdminWallet} = application:get_env(damage, ae_wallet),
-  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
   case
   damage_ae:contract_call(
     AdminWallet,

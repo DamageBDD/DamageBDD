@@ -42,7 +42,8 @@
     headers :: list(),
     options :: map(),
     host :: string(),
-    port :: integer()
+    port :: integer(),
+    macaroon :: string()
   }
 ).
 
@@ -59,11 +60,7 @@ open_connection() ->
   {ok, Port} = application:get_env(damage, lnd_port),
   %{ok, CertFile} = application:get_env(damage, lnd_certfile),
   %{ok, KeyFile} = application:get_env(damage, lnd_keyfile),
-  Macaroon =
-    case os:getenv("MACAROON") of
-      false -> exit(invoice_macaroon_env_not_set);
-      Other -> Other
-    end,
+  Macaroon = damage_utils:pass_get(lnd_macaroon_pass_path),
   %% Start the gun HTTP client
   BaseUrl = "http://" ++ Host ++ ":" ++ integer_to_list(Port),
   Headers = [{<<"Grpc-Metadata-Macaroon">>, Macaroon}],
@@ -82,7 +79,8 @@ open_connection() ->
     port = Port,
     base_url = BaseUrl,
     headers = Headers,
-    options = Options
+    options = Options,
+    macaroon = Macaroon
   }.
 
 
@@ -385,7 +383,12 @@ test() ->
   URL = "http://127.0.0.1:8011/v1/invoices",
   Macaroon =
     case os:getenv("MACAROON") of
-      false -> exit(invoice_macaroon_env_not_set);
+      false ->
+        case damage_utils:pass_get(lnd_macaroon_pass_path) of
+          false -> exit(invoice_macaroon_env_not_set);
+          Maca-> Maca
+        end;
+
       Other -> Other
     end,
   Headers = [{"Grpc-Metadata-Macaroon", Macaroon}],

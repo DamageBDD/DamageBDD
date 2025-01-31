@@ -47,11 +47,7 @@ init([]) ->
   {ok, Path} = application:get_env(damage, lnd_wspath),
   {ok, CertFile} = application:get_env(damage, lnd_certfile),
   {ok, KeyFile} = application:get_env(damage, lnd_keyfile),
-  Macaroon =
-    case os:getenv("MACAROON") of
-      false -> exit(invoice_macaroon_env_not_set);
-      Other -> Other
-    end,
+  Macaroon = damage_utils:pass_get(lnd_macaroon_pass_path),
   State =
     #state{
       lnd_host = Host,

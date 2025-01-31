@@ -45,12 +45,14 @@ start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 init([]) ->
   logger:info("Damage AI ~p starting.~n", [self()]),
   process_flag(trap_exit, true),
-  {ok, undefined}.
+  State = #{api_key => damage_utils:pass_get(openai_api_pass_path)},
+  {ok, State}.
 
 
 create_model(Name) ->
   {ok, Host} = application:get_env(damage, openai_bdd_api_host),
   {ok, Port} = application:get_env(damage, openai_bdd_api_port),
+  ApiKey = damage_utils:pass_get(openai_api_pass_path),
   Messages = [],
   Prompt0 = <<"TEst">>,
   PostData =
@@ -63,10 +65,7 @@ create_model(Name) ->
     ),
   Headers =
     [
-      {
-        <<"Authorization">>,
-        list_to_binary("Bearer " ++ os:getenv("OPENAI_API_KEY"))
-      },
+      {<<"Authorization">>, list_to_binary("Bearer " ++ ApiKey)},
       {<<"content-type">>, <<"application/json">>}
     ],
   {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
@@ -125,7 +124,11 @@ handle_call({generate_bdd, UserPrompt, _AeAccount, _Req}, _From, State) ->
   Resp = read_stream(ConnPid, StreamRef),
   {reply, Resp, State};
 
-handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
+handle_call(
+  {generate_code, Config, FeatureFilename},
+  _From,
+  #{api_key := ApiKey} = State
+) ->
   ?LOG_DEBUG("handle_call execute/1 : ~p", [FeatureFilename]),
   try
     case egherkin:parse_file(FeatureFilename) of
@@ -178,10 +181,7 @@ handle_call({generate_code, Config, FeatureFilename}, _From, State) ->
         Port = 443,
         Headers =
           [
-            {
-              <<"Authorization">>,
-              list_to_binary("Bearer " ++ os:getenv("OPENAI_API_KEY"))
-            },
+            {<<"Authorization">>, list_to_binary("Bearer " ++ ApiKey)},
             {<<"content-type">>, <<"application/json">>}
           ],
         {ok, ConnPid} =

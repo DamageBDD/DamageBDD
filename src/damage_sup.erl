@@ -44,11 +44,8 @@ init([]) ->
       end,
       Pools
     ),
-  BTCPassword =
-    case os:getenv("BTC_PASSWORD") of
-      false -> exit(btc_password_env_not_set);
-      Other -> Other
-    end,
+  {ok, BtcRpcPassPath} = application:get_env(damage, bitcoin_rpc_pass_path),
+  BTCPassword = damage_utils:pass_get(BtcRpcPassPath),
   Home = os:getenv("HOME"),
   {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
   CoreLightningCmd =
@@ -118,7 +115,7 @@ init([]) ->
         shutdown => 60,
         % optional
         type => worker,
-        modules => [damage_lightning]
+        modules => []
         %},
         %#{
         %  % mandatory

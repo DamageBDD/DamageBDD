@@ -44,11 +44,11 @@ bitcoin_req(Method, Params, Path) ->
       method => Method,
       params => Params
     },
-  Password =
-    case os:getenv("BTC_PASSWORD") of
-      false -> exit(btc_password_env_not_set);
-      Other -> Other
-    end,
+  Password = damage_utils:pass_get(bitcoin_rpc_pass_path),
+  case os:getenv("BTC_PASSWORD") of
+    false -> exit(btc_password_env_not_set);
+    Other -> Other
+  end,
   ?debugFmt("POST data: ~p", [Data]),
   StreamRef =
     gun:post(

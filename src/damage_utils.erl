@@ -29,11 +29,13 @@
     test_send_email/0,
     convert_context/1,
     idhash_keys/1,
-    safe_json/1
+    safe_json/1,
+    pass_get/1
   ]
 ).
 -export([encrypt/2, encrypt/1, decrypt/2, decrypt/1]).
 -export([max_by/2]).
+-export([normalize_email/1, denormalize_email/1]).
 
 get_stepargs(Body) when is_list(Body) ->
   case lists:keytake(<<"\"\"\"">>, 1, Body) of
@@ -177,7 +179,7 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
   {ok, SmtpHostname} = application:get_env(damage, smtp_hostname),
   {ok, SmtpPort} = application:get_env(damage, smtp_port),
   {ok, {FromName, From}} = application:get_env(damage, smtp_from),
-  SmtpPassword = os:getenv("SMTP_PASSWORD"),
+  SmtpPassword = damage_utils:pass_get(smtp_pass_path),
   %Body1 =
   %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
   %Body0 =
@@ -286,13 +288,8 @@ encrypt(PlainText) when is_list(PlainText) ->
   encrypt(list_to_binary(PlainText));
 
 encrypt(PlainText) when is_binary(PlainText) ->
-  case os:getenv("KYC_SECRET_KEY") of
-    false ->
-      logger:info("KYC_SECRET_KEY environment variable not set."),
-      exit(normal);
-
-    KycKey -> encrypt(PlainText, KycKey)
-  end.
+  KycKey = damage_utils:pass_get(kyc_secret_pass_path),
+  encrypt(PlainText, KycKey).
 
 
 encrypt(KYCInfo, Key) when is_binary(KYCInfo), is_list(Key) ->
@@ -307,13 +304,8 @@ encrypt(Data, Key) when is_binary(Data), is_binary(Key) ->
 %% Decrypt a information string
 
 decrypt(Encrypted) when is_binary(Encrypted) ->
-  case os:getenv("KYC_SECRET_KEY") of
-    false ->
-      logger:info("KYC_SECRET_KEY environment variable not set."),
-      exit(normal);
-
-    KycKey -> decrypt(Encrypted, list_to_binary(KycKey))
-  end.
+  KycKey = damage_utils:pass_get(kyc_secret_pass_path),
+  decrypt(Encrypted, list_to_binary(KycKey)).
 
 
 decrypt(Encrypted, Key) when is_binary(Encrypted), is_binary(Key) ->
@@ -434,6 +426,14 @@ test_send_email() ->
     TextBody,
     HtmlBody
   ).
+
+
+pass_get(AppEnvKey) when is_atom(AppEnvKey) ->
+  {ok, Path} = application:get_env(damage, AppEnvKey),
+    pass_get(Path);
+pass_get(Path) ->
+  {ok, [{stdout, [Secret]}]} = exec:run("pass  " ++ Path, [sync, stdout]),
+  string:strip(binary_to_list(Secret)).
 
 
 %test_simple_mail() ->

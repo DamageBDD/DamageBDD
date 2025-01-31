@@ -138,7 +138,7 @@ handle_call(
   %% - OriginalEventId: The ID of the event being replied to.
   %% - OriginalAuthorPubKey: The public key of the original event's author.
   %% - ReplyContent: The content of your reply message.
-  PrivateKey = os:getenv("DAMAGE_NOSTR_PRIVATE_KEY"),
+  PrivateKey = damage_utils:pass_get(
   %% Step 1: Create the event
   PublicKey = get_public_key(PrivateKey),
   Event =

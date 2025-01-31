@@ -108,6 +108,13 @@ start_phase(start_trails_http, _StartType, []) ->
   damage_ae:start_batch_spend_timer(),
   ?LOG_INFO("Started Damage.");
 
+start_phase(register_node, _StartType, []) ->
+  logger:info("registering node."),
+  {ok, Hostname} = inet:gethostname(),
+  NodeName = list_to_atom("damage@" ++ Hostname),
+  {ok, _Pid} = net_kernel:start([NodeName, longnames]),
+  ok;
+
 start_phase(start_sync, _StartType, []) ->
   logger:info("Starting sync."),
   case init:get_plain_arguments() of
@@ -120,6 +127,11 @@ start_phase(start_sync, _StartType, []) ->
       ok
   end,
   ?LOG_INFO("Sync Ready."),
+  ok;
+
+start_phase(os_tune, _StartType, []) ->
+  logger:info("Tuning os."),
+  {ok, _} = exec:run("ulimit -n 1000000", [sync]),
   ok.
 
 

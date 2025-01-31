@@ -13,6 +13,9 @@
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
 -define(AECLI_EXEC, "/home/steven/.npm-packages/bin/aecli").
+-define(TAG_CONTRACT_CALL_TX, 43).
+-define(TAG_SIGNED_TX, 11).
+-define(OBJECT_VERSION, 1).
 
 -export(
   [
@@ -47,7 +50,6 @@
     get_ae_mdw_ws_node/0
   ]
 ).
--export([sign_tx/2]).
 -export([contract_call/5, contract_call/6, contract_deploy/3]).
 -export([test_contract_call/0, test_sign_vw/0, test_create_wallet/0]).
 -export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
@@ -197,6 +199,24 @@ extract_feature_hash(Data) ->
   %% Find the map in the "arguments" that contains the key "feature_hash"
   extract_arguments(Arguments).
 
+
+handle_call({get_published, AeAccount}, _From, Cache) ->
+  case get_ae_mdw_node() of
+    {ok, ConnPid, PathPrefix} ->
+      Path =
+        PathPrefix ++ "v3/accounts/" ++ AeAccount ++ "activities?type=aex141",
+      StreamRef = gun:get(ConnPid, Path),
+      Balance =
+        case read_stream(ConnPid, StreamRef) of
+          #{amount := null} -> 0;
+          #{amount := Balance0} -> Balance0
+        end,
+      {reply, Balance, Cache};
+
+    Err ->
+      ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+      {reply, {error, not_found}, Cache}
+  end;
 
 handle_call(
   {get_last_test_status, AeAccount, FeatureHash, _Hours},
@@ -724,41 +744,7 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-sign_tx(Tx, PrivKey) -> sign_tx(Tx, PrivKey, false).
-
 -define(VALID_PRIVK(K), byte_size(K) =:= 64).
-
-sign_tx(Tx, PrivKey, SignHash) -> sign_tx(Tx, PrivKey, SignHash, undefined).
-
-sign_tx(Tx, PrivKey, SignHash, Pfx) ->
-  %% set debug true to meet legacy expectations (?)
-  sign_tx(Tx, PrivKey, SignHash, Pfx, [{debug, true}]).
-
-
-sign_tx(Tx, PrivKey, SignHash, AdditionalPrefix, Cfg) when is_binary(PrivKey) ->
-  sign_tx(Tx, [PrivKey], SignHash, AdditionalPrefix, Cfg);
-
-sign_tx(Tx, PrivKeys, SignHash, AdditionalPrefix, _Cfg) when is_list(PrivKeys) ->
-  Bin0 = aetx:serialize_to_binary(Tx),
-  Bin1 =
-    case SignHash of
-      true -> aec_hash:hash(signed_tx, Bin0);
-      false -> Bin0
-    end,
-  Bin =
-    case AdditionalPrefix of
-      undefined -> Bin1;
-      _ -> <<"-", AdditionalPrefix/binary, Bin1/binary>>
-    end,
-  BinForNetwork = aec_governance:add_network_id(Bin),
-  case lists:filter(fun (PrivKey) -> not (?VALID_PRIVK(PrivKey)) end, PrivKeys) of
-    [_ | _] = BrokenKeys -> erlang:error({invalid_priv_key, BrokenKeys});
-    [] -> pass
-  end,
-  Signatures =
-    [enacl:sign_detached(BinForNetwork, PrivKey) || PrivKey <- PrivKeys],
-  aetx_sign:new(Tx, Signatures).
-
 
 exec_aecli(Cmd) ->
   ?LOG_DEBUG("aecli cmd : ~p", [string:join(Cmd, " ")]),
@@ -795,7 +781,7 @@ contract_call_user_account(AeAccount, Func, Args) ->
 
 
 contract_call_admin_account(Func, Args) ->
-  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
   {ok, AdminWallet} = application:get_env(damage, ae_wallet),
   {ok, AccountContract} = application:get_env(damage, account_contract),
   contract_call(
@@ -1073,7 +1059,7 @@ read_stream(ConnPid, StreamRef) ->
 
 
 get_wallet_password(Email) ->
-  AEPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  AEPassword = damage_utils:pass_get(ae_wallet_pass_path),
   binary_to_list(damage_utils:idhash_keys([Email, AEPassword])).
 
 
@@ -1123,7 +1109,7 @@ get_ae_balance(AeAccount) ->
 transfer_damage_tokens(AeAccount, Amount) ->
   % transfer damage tokens from admin account to to account
   {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
-  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
   {ok, TokenContract} = application:get_env(damage, token_contract),
   ContractCall =
     contract_call(
@@ -1160,7 +1146,7 @@ fund_wallet(AeAccount, AeAccount, Amount) when is_binary(AeAccount) ->
 
 fund_wallet(AeAccount, AeAccount, Amount) ->
   {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
-  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
   Cmd =
     [
       ?AECLI_EXEC,
@@ -1222,10 +1208,10 @@ maybe_create_wallet(Email, Password) ->
 
 
 deploy_account_contract() ->
-  {ok, AdminWallet} = application:get_env(damage, ae_wallet),
-  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
+  AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
   #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-    contract_deploy(AdminWallet, AdminPassword, "contracts/account.aes", []),
+    contract_deploy(AdminWalletPath, AdminPassword, "contracts/account.aes", []),
   application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
   ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
   ContractAddress.
@@ -1341,6 +1327,10 @@ test_create_wallet() ->
 
 test_contract_call() ->
   {ok, AeAccount} = application:get_env(damage, ae_account),
+  {ok, AdminWallet} = application:get_env(damage, ae_wallet),
+  {ok, WalletDataJson} = file:read_file(AdminWallet),
+  #{crypto := #{ciphertext := PrivateKey}} =
+    _WalletData = jsx:decode(WalletDataJson, [{labels, atom}]),
   JobId = <<"sdds">>,
   %{ok, Nonce} = vanillae:next_nonce(AeAccount),
   #{nonce := Nonce} = get_ae_balance(AeAccount),
@@ -1349,8 +1339,8 @@ test_contract_call() ->
   ContractData =
     vanillae:contract_create(AeAccount, "contracts/account.aes", []),
   ?LOG_DEBUG("contract data ~p", [ContractData]),
-  {ok, STx} = sign_tx(ContractData),
-  ?LOG_DEBUG("contract create ~p", [STx]),
+  SignedContract = svt:sign_contract(ContractData, PrivateKey),
+  ?LOG_DEBUG("contract create ~p", [SignedContract]),
   {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
   ContractCall =
     vanillae:contract_call(
@@ -1365,13 +1355,13 @@ test_contract_call() ->
       % Fee
       0,
       AACI,
-      STx,
+      SignedContract,
       "update_schedule",
       [JobId]
     ),
   ?LOG_DEBUG("contract call ~p", [ContractCall]),
-  {ok, STx} = sign_tx(ContractCall),
-  case vanillae:post_tx(STx) of
+  SignedContractCall = svt:sign_contract(ContractCall, PrivateKey),
+  case vanillae:post_tx(SignedContractCall) of
     {ok, #{"tx_hash" := Hash}} ->
       ?LOG_DEBUG("contract call success ~p", [Hash]),
       Hash;
@@ -1415,13 +1405,8 @@ test_get_block_height_since() ->
   end.
 
 
-sign_tx(UTx) ->
-  Password = list_to_binary(os:getenv("DAMAGE_AE_WALLET_PASSWORD")),
-  sign_tx(UTx, Password).
-
-
 test_verify_message() ->
-  AdminPassword = os:getenv("DAMAGE_AE_WALLET_PASSWORD"),
+  AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
   {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
   Cmd =
     [
@@ -1439,58 +1424,3 @@ test_verify_message() ->
   ?LOG_INFO("Result ~p", [Result]),
   SigResult = vanillae:verify_signature(SigHex, Data, PubKey),
   ?LOG_INFO("Sig Result ~p", [SigResult]).
-
-
-%sign_tx(UTx, PrivateKey) ->
-%  SignData = base64:encode(<<"ae_uat", UTx/binary>>),
-%  Signature = enacl:sign_detached(SignData, base64:encode(PrivateKey)),
-%  TagBytes = <<11 : 64>>,
-%  VsnBytes = <<1 : 64>>,
-%  {ok, vrlp:encode([TagBytes, VsnBytes, [Signature], UTx])}.
-%update_schedules(ContractAddress, JobId, Cron)->
-%  ContractCreated =
-%    aecli(
-%      contract,
-%      call,
-%      binary_to_list(ContractAddress),
-%      "contracts/account.aes",
-%      "update_schedules",
-%      [BtcAddress, RefundAddress]
-%    ),
-%    ok.
-%
-%on_payment(Wallet) ->
-%    take_fee(Wallet)
-%    get_ae(Wallet)
-% FROM jrx/b_lib.ts:tx_sign
-%        let tx_bytes        : Uint8Array = (await vdk_aeser.unbaseNcheck(tx_str)).bytes;
-%        // thank you ulf
-%        // https://github.com/aeternity/protocol/tree/fd179822fc70241e79cbef7636625cf344a08109/consensus#transaction-signature
-%        // we sign <<NetworkId, SerializedObject>>
-%        // SerializedObject can either be the object or the hash of the object
-%        // let's stick with hash for now
-%        let network_id      : Uint8Array = vdk_binary.encode_utf8('ae_uat');
-%        // let tx_hash_bytes   : Uint8Array = hash(tx_bytes);
-%        let sign_data       : Uint8Array = vdk_binary.bytes_concat(network_id, tx_bytes);
-%        // @ts-ignore yes nacl is stupid
-%        let signature       : Uint8Array = nacl.sign.detached(sign_data, secret_key);
-%        let signed_tx_bytes : Uint8Array = vdk_aeser.signed_tx([signature], tx_bytes);
-%        let signed_tx_str   : string     = await vdk_aeser.baseNcheck('tx', signed_tx_bytes);
-%/**
-% * RLP-encode signed tx (signatures and tx are both the BINARY representations)
-% *
-% * See https://github.com/aeternity/protocol/blob/fd179822fc70241e79cbef7636625cf344a08109/serializations.md#signed-transaction
-% */
-%function
-%signed_tx
-%    (signatures : Array<Uint8Array>,
-%     tx         : Uint8Array)
-%    : Uint8Array
-%{
-%    // tag for signed tx
-%    let tag_bytes = vdk_rlp.encode_uint(11);
-%    // not sure what version number should be but guessing 1
-%    let vsn_bytes = vdk_rlp.encode_uint(1);
-%    // result is [tag, vsn, signatures, tx]
-%    return vdk_rlp.encode([tag_bytes, vsn_bytes, signatures, tx]);
-%}
