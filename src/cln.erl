@@ -190,6 +190,52 @@ handle_call(
   %% Return the invoice details
   {reply, Invoice, State};
 
+handle_call(
+  {add_hold_invoice, Amount, Memo, Hash, Expiry},
+  _From,
+  #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
+    State
+) ->
+  %% Construct the request body
+  Headers = [{<<"Rune">>, Rune}, {<<"Content-Type">>, <<"application/json">>}],
+  {ok, ConnPid} = gun:open(Host, Port, Options),
+  %% Construct the API request URL
+  Path = "/v1/holdinvoice",
+  %% Construct the request body
+  {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+  Label = list_to_binary("asyncmind" ++ Timestamp),
+  ReqJson =
+    jsx:encode(
+      #{
+        amount_msat => Amount,
+        label => Label,
+        description => Memo,
+        expiry => Expiry
+      }
+    ),
+  ?LOG_DEBUG("sending req head ~p ~p", [Headers, ReqJson]),
+  %% Send the HTTP POST request
+  StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+  {ok, Response} =
+    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+      {response, fin, Status, _RespHeaders} ->
+        ?LOG_DEBUG("Got fin ~p", [Status]),
+        no_data;
+
+      {response, nofin, _Status, _RespHeaders} ->
+        gun:await_body(ConnPid, StreamRef);
+
+      {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
+      Default -> ?LOG_DEBUG("Got unknown ~p ", [Default])
+    end,
+  ?LOG_DEBUG("Got create_invoice response ~p", [Response]),
+  Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
+  %% Parse the response JSON
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
+  %% Return the invoice details
+  {reply, Invoice, State};
+
 handle_call(Request, From, State) ->
   ?LOG_ERROR(
     "got unknown on gun websocket Call ~p, From ~p, State ~p",
