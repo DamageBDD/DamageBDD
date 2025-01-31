@@ -17,7 +17,9 @@
 ).
 -export([getinfo/0]).
 -export([subscribe_invoice/2]).
--export([create_invoice/2, create_invoice/3]).
+-export(
+  [create_invoice/2, create_invoice/3, hold_invoice/4, hold_invoice_cancel/1]
+).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -209,24 +211,55 @@ handle_call(
       #{
         amount_msat => Amount,
         label => Label,
-        description => Memo,
-        expiry => Expiry
+        description => Description,
+        expiry => Expiry,
+        ctlv => CTLV
       }
     ),
-  ?LOG_DEBUG("sending req head ~p ~p", [Headers, ReqJson]),
   %% Send the HTTP POST request
   StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
   {ok, Response} =
     case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-      {response, fin, Status, _RespHeaders} ->
-        ?LOG_DEBUG("Got fin ~p", [Status]),
-        no_data;
+      {response, fin, _Status, _RespHeaders} -> no_data;
 
       {response, nofin, _Status, _RespHeaders} ->
         gun:await_body(ConnPid, StreamRef);
 
       {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
-      Default -> ?LOG_DEBUG("Got unknown ~p ", [Default])
+      Default -> ?LOG_WARNING("Got unknown ~p ", [Default])
+    end,
+  ?LOG_DEBUG("Got create_invoice response ~p", [Response]),
+  Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
+  %% Parse the response JSON
+  gun:cancel(ConnPid, StreamRef),
+  gun:close(ConnPid),
+  %% Return the invoice details
+  {reply, Invoice, State};
+
+handle_call(
+  {hold_invoice_cancel, PaymentHash},
+  _From,
+  #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
+    State
+) ->
+  %% Construct the request body
+  Headers = [{<<"Rune">>, Rune}, {<<"Content-Type">>, <<"application/json">>}],
+  {ok, ConnPid} = gun:open(Host, Port, Options),
+  %% Construct the API request URL
+  Path = "/v1/holdinvoicecancel",
+  %% Construct the request body
+  ReqJson = jsx:encode(#{payment_hash => PaymentHash}),
+  %% Send the HTTP POST request
+  StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+  {ok, Response} =
+    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+      {response, fin, _Status, _RespHeaders} -> no_data;
+
+      {response, nofin, _Status, _RespHeaders} ->
+        gun:await_body(ConnPid, StreamRef);
+
+      {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
+      Default -> ?LOG_WARNING("Got unknown ~p ", [Default])
     end,
   ?LOG_DEBUG("Got create_invoice response ~p", [Response]),
   Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
@@ -358,5 +391,25 @@ create_invoice(Amount, Description, Expiry) ->
     fun
       (Worker) ->
         gen_server:call(Worker, {create_invoice, Amount, Description, Expiry})
+    end
+  ).
+
+hold_invoice(Amount, Description, Expiry, Cltv) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) ->
+        gen_server:call(
+          Worker,
+          {hold_invoice, Amount, Description, Expiry, Cltv}
+        )
+    end
+  ).
+
+hold_invoice_cancel(PaymentHash) ->
+  poolboy:transaction(
+    ?MODULE,
+    fun
+      (Worker) -> gen_server:call(Worker, {hold_invoice_cancel, PaymentHash})
     end
   ).
