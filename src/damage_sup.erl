@@ -43,19 +43,6 @@ init([]) ->
             end,
             Pools
         ),
-    {ok, BtcRpcPassPath} = application:get_env(damage, bitcoin_rpc_pass_path),
-    BTCPassword = damage_utils:pass_get(BtcRpcPassPath),
-    Home = os:getenv("HOME"),
-    {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
-    CoreLightningCmd =
-        "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0 --clnrest-port=3010 --clnrest-protocol=http --log-level=debug --alias=asyncmind --rgb=5e35b1" ++
-            " --log-file=" ++
-            filename:join([Home, ".local/var/logs/lightning.log"]) ++
-            " --bitcoin-rpcuser=" ++
-            BtcRpcUser ++
-            " --bitcoin-rpcpassword=" ++
-            BTCPassword,
-    logger:info("Starting corelightning ~p~n", [CoreLightningCmd]),
     LightPandaCmd = "bin/lightpanda-x86_64-linux --verbose",
     logger:info("Starting lightpanda ~p~n", [LightPandaCmd]),
     ChromedriverCmd = "chromedriver --port=9515",
@@ -101,32 +88,6 @@ init([]) ->
                     % optional
                     type => worker,
                     modules => [damage_nostr]
-                },
-                #{
-                    % mandatory
-                    id => damage_lightning,
-                    % mandatory
-                    start => {damage_worker, start_link, [CoreLightningCmd]},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => []
-                    %},
-                    %#{
-                    %  % mandatory
-                    %  id => lndconnect,
-                    %  % mandatory
-                    %  start => {lndconnect, start_link, []},
-                    %  % optional
-                    %  restart => permanent,
-                    %  % optional
-                    %  shutdown => 60,
-                    %  % optional
-                    %  type => worker,
-                    %  modules => [lndconnect]
                 },
                 #{
                     % mandatory
