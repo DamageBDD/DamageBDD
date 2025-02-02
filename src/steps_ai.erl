@@ -12,16 +12,15 @@
 -export([step/6]).
 
 step(Config, Context, <<"And">>, _N, ["I am using ai ", AiProvider], Args) ->
-  ?LOG_DEBUG("and config: ~p context: ~p  args: ~p", [Config, AiProvider, Args]),
-  Context;
-
+    ?LOG_DEBUG("and config: ~p context: ~p  args: ~p", [Config, AiProvider, Args]),
+    Context;
 step(
-  Config,
-  Context,
-  <<"And">>,
-  _N,
-  ["I set the messages context", GptContext],
-  Args
+    Config,
+    Context,
+    <<"And">>,
+    _N,
+    ["I set the messages context", GptContext],
+    Args
 ) ->
-  ?LOG_DEBUG("and config: ~p context: ~p  args: ~p", [Config, GptContext, Args]),
-  Context.
+    ?LOG_DEBUG("and config: ~p context: ~p  args: ~p", [Config, GptContext, Args]),
+    Context.

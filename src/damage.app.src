@@ -1,27 +1,30 @@
 %%% -*- mode: erlang; erlang-indent-level: 2; -*-
 
 {
-  application,
-  damage,
-  [
-    {description, "An OTP application to run bdd tests."},
-    {vsn, "0.1.0"},
-    {registered, []},
-    {mod, {damage_app, []}},
-    {applications, [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc]},
-    {env, []},
-    {modules, []},
-    {licenses, ["Apache 2.0"]},
-    {
-      start_phases,
-      [
-        {register_node, []},
-        {os_tune, []},
-        {start_trails_http, []},
-        {start_sync, []},
-        {start_vanillae, []}
-      ]
-    },
-    {links, []}
-  ]
+    application,
+    damage,
+    [
+        {description, "An OTP application to run bdd tests."},
+        {vsn, "0.1.0"},
+        {registered, []},
+        {mod, {damage_app, []}},
+        {
+            applications,
+            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, nostr]
+        },
+        {env, []},
+        {modules, []},
+        {licenses, ["Apache 2.0"]},
+        {
+            start_phases,
+            [
+                {register_node, []},
+                {os_tune, []},
+                {start_trails_http, []},
+                {start_sync, []},
+                {start_vanillae, []}
+            ]
+        },
+        {links, []}
+    ]
 }.

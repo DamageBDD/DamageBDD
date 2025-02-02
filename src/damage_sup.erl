@@ -32,120 +32,144 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
-  {ok, Pools} = application:get_env(damage, pools),
-  logger:info("Starting workers ~p~n", [Pools]),
-  SupFlags = {one_for_one, 10, 10},
-  PoolSpecs =
-    lists:map(
-      fun
-        ({Name, SizeArgs, WorkerArgs}) ->
-          PoolArgs = [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
-          poolboy:child_spec(Name, PoolArgs, WorkerArgs)
-      end,
-      Pools
-    ),
-  {ok, BtcRpcPassPath} = application:get_env(damage, bitcoin_rpc_pass_path),
-  BTCPassword = damage_utils:pass_get(BtcRpcPassPath),
-  Home = os:getenv("HOME"),
-  {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
-  CoreLightningCmd =
-    "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0 --clnrest-port=3010 --clnrest-protocol=http --log-level=debug --alias=asyncmind --rgb=5e35b1"
-    ++
-    " --log-file="
-    ++
-    filename:join([Home, ".local/var/logs/lightning.log"])
-    ++
-    " --bitcoin-rpcuser="
-    ++
-    BtcRpcUser
-    ++
-    " --bitcoin-rpcpassword="
-    ++
-    BTCPassword,
-  logger:info("Starting corelightning ~p~n", [CoreLightningCmd]),
-  PoolSpecs0 =
-    PoolSpecs ++ [
-      #{
-        % mandatory
-        id => damage_ae,
-        % mandatory
-        start => {damage_ae, start_link, []},
-        % optional
-        restart => permanent,
-        % optional
-        shutdown => 60,
-        % optional
-        type => worker,
-        modules => [damage_ae]
-      },
-      #{
-        % mandatory
-        id => damage_aemdw,
-        % mandatory
-        start => {damage_ae, start_link, []},
-        % optional
-        restart => permanent,
-        % optional
-        shutdown => 60,
-        % optional
-        type => worker,
-        modules => [damage_aemdw]
-      },
-      #{
-        % mandatory
-        id => damage_nostr,
-        % mandatory
-        start => {damage_nostr, start_link, []},
-        % optional
-        restart => permanent,
-        % optional
-        shutdown => 60,
-        % optional
-        type => worker,
-        modules => [damage_nostr]
-      },
-      #{
-        % mandatory
-        id => damage_lightning,
-        % mandatory
-        start => {damage_worker, start_link, [CoreLightningCmd]},
-        % optional
-        restart => permanent,
-        % optional
-        shutdown => 60,
-        % optional
-        type => worker,
-        modules => []
-        %},
-        %#{
-        %  % mandatory
-        %  id => lndconnect,
-        %  % mandatory
-        %  start => {lndconnect, start_link, []},
-        %  % optional
-        %  restart => permanent,
-        %  % optional
-        %  shutdown => 60,
-        %  % optional
-        %  type => worker,
-        %  modules => [lndconnect]
-      },
-      #{
-        % mandatory
-        id => cln_websocket,
-        % mandatory
-        start => {cln, start_link, [[]]},
-        % optional
-        restart => permanent,
-        % optional
-        shutdown => 60,
-        % optional
-        type => worker,
-        modules => [cln]
-      }
-    ],
-  logger:info("Worker definitions ~p~n", [PoolSpecs0]),
-  {ok, {SupFlags, PoolSpecs0}}.
+    {ok, Pools} = application:get_env(damage, pools),
+    logger:info("Starting workers ~p~n", [Pools]),
+    SupFlags = {one_for_one, 10, 10},
+    PoolSpecs =
+        lists:map(
+            fun({Name, SizeArgs, WorkerArgs}) ->
+                PoolArgs = [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
+                poolboy:child_spec(Name, PoolArgs, WorkerArgs)
+            end,
+            Pools
+        ),
+    {ok, BtcRpcPassPath} = application:get_env(damage, bitcoin_rpc_pass_path),
+    BTCPassword = damage_utils:pass_get(BtcRpcPassPath),
+    Home = os:getenv("HOME"),
+    {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
+    CoreLightningCmd =
+        "lightningd --network=bitcoin --log-level=info --addr=0.0.0.0 --grpc-port=10008 --grpc-host=0.0.0.0 --clnrest-port=3010 --clnrest-protocol=http --log-level=debug --alias=asyncmind --rgb=5e35b1" ++
+            " --log-file=" ++
+            filename:join([Home, ".local/var/logs/lightning.log"]) ++
+            " --bitcoin-rpcuser=" ++
+            BtcRpcUser ++
+            " --bitcoin-rpcpassword=" ++
+            BTCPassword,
+    logger:info("Starting corelightning ~p~n", [CoreLightningCmd]),
+    LightPandaCmd = "bin/lightpanda-x86_64-linux --verbose",
+    logger:info("Starting lightpanda ~p~n", [LightPandaCmd]),
+    ChromedriverCmd = "chromedriver --port=9515",
+    logger:info("Starting chromedriver ~p~n", [ChromedriverCmd]),
+    PoolSpecs0 =
+        PoolSpecs ++
+            [
+                #{
+                    % mandatory
+                    id => damage_ae,
+                    % mandatory
+                    start => {damage_ae, start_link, []},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => [damage_ae]
+                },
+                #{
+                    % mandatory
+                    id => damage_aemdw,
+                    % mandatory
+                    start => {damage_ae, start_link, []},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => [damage_aemdw]
+                },
+                #{
+                    % mandatory
+                    id => damage_nostr,
+                    % mandatory
+                    start => {damage_nostr, start_link, []},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => [damage_nostr]
+                },
+                #{
+                    % mandatory
+                    id => damage_lightning,
+                    % mandatory
+                    start => {damage_worker, start_link, [CoreLightningCmd]},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => []
+                    %},
+                    %#{
+                    %  % mandatory
+                    %  id => lndconnect,
+                    %  % mandatory
+                    %  start => {lndconnect, start_link, []},
+                    %  % optional
+                    %  restart => permanent,
+                    %  % optional
+                    %  shutdown => 60,
+                    %  % optional
+                    %  type => worker,
+                    %  modules => [lndconnect]
+                },
+                #{
+                    % mandatory
+                    id => cln_websocket,
+                    % mandatory
+                    start => {cln, start_link, [[]]},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => [cln]
+                },
+                #{
+                    % mandatory
+                    id => lightpanda,
+                    % mandatory
+                    start => {damage_worker, start_link, [LightPandaCmd]},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => []
+                },
+                #{
+                    % mandatory
+                    id => chromedriver,
+                    % mandatory
+                    start => {damage_worker, start_link, [ChromedriverCmd]},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => []
+                }
+            ],
+    logger:info("Worker definitions ~p~n", [PoolSpecs0]),
+    {ok, {SupFlags, PoolSpecs0}}.
 
 %%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
 %%ChildSpecs =

@@ -21,14 +21,11 @@
 -export([trigger_webhooks/1]).
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
--define(
-  DEFAULT_HEADERS,
-  [
+-define(DEFAULT_HEADERS, [
     {<<"accept">>, "application/json,text/html"},
     {<<"user-agent">>, "damagebdd/1.0"},
     {<<"content-type">>, "application/json"}
-  ]
-).
+]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -36,156 +33,143 @@
 -define(TRAILS_TAG, ["Manage Webhooks"]).
 
 trails() ->
-  [
-    trails:trail(
-      "/webhooks/[...]",
-      damage_webhooks,
-      #{},
-      #{
-        get
-        =>
-        #{
-          tags => ?TRAILS_TAG,
-          description => "Form to webhook a test execution.",
-          produces => ["text/html"]
-        },
-        put
-        =>
-        #{
-          tags => ?TRAILS_TAG,
-          description => "Webhook a test on post",
-          produces => ["application/json"],
-          parameters
-          =>
-          [
+    [
+        trails:trail(
+            "/webhooks/[...]",
+            damage_webhooks,
+            #{},
             #{
-              name => <<"feature">>,
-              description => <<"Test feature data.">>,
-              in => <<"body">>,
-              required => true,
-              type => <<"string">>
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Form to webhook a test execution.",
+                        produces => ["text/html"]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Webhook a test on post",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"feature">>,
+                                    description => <<"Test feature data.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    },
+                delete =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Delete webhook",
+                        produces => ["application/json"],
+                        parameters => []
+                    }
             }
-          ]
-        },
-        delete
-        =>
-        #{
-          tags => ?TRAILS_TAG,
-          description => "Delete webhook",
-          produces => ["application/json"],
-          parameters => []
-        }
-      }
-    )
-  ].
+        )
+    ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
-  {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
+    {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
 
 content_types_accepted(Req, State) ->
-  {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
+    {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
 allowed_methods(Req, State) ->
-  {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
+    {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 from_json(Req, State) ->
-  {ok, Data, _Req2} = cowboy_req:read_body(Req),
-  #{result := #{returnType := <<"ok">>}} =
-    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
-      {'EXIT', {badarg, Trace}} ->
-        logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
-        {400, <<"Json decoding failed.">>};
-
-      #{name := _WebhookName, url := _WebhookUrl} = Webhook ->
-        create_webhook(Webhook, Req, State)
-    end,
-  Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
-  {stop, cowboy_req:reply(201, Resp), State}.
-
+    {ok, Data, _Req2} = cowboy_req:read_body(Req),
+    #{result := #{returnType := <<"ok">>}} =
+        case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+            {'EXIT', {badarg, Trace}} ->
+                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+                {400, <<"Json decoding failed.">>};
+            #{name := _WebhookName, url := _WebhookUrl} = Webhook ->
+                create_webhook(Webhook, Req, State)
+        end,
+    Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
+    {stop, cowboy_req:reply(201, Resp), State}.
 
 to_json(Req, #{username := Username} = State) ->
-  Body = jsx:encode(damage_ae:get_webhooks(Username)),
-  logger:info("Loading webhooks for ~p ~p", [Username, Body]),
-  {Body, Req, State}.
-
+    Body = jsx:encode(damage_ae:get_webhooks(Username)),
+    logger:info("Loading webhooks for ~p ~p", [Username, Body]),
+    {Body, Req, State}.
 
 delete_resource(Req, #{username := Username} = State) ->
-  Deleted =
-    lists:foldl(
-      fun
-        (DeleteId, Acc) ->
-          ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-          ok = damage_ae:delete_webhook(Username, DeleteId),
-          Acc + 1
-      end,
-      0,
-      maps:get(path_info, Req)
-    ),
-  ?LOG_INFO("deleted ~p webhook", [Deleted]),
-  {true, Req, State}.
-
+    Deleted =
+        lists:foldl(
+            fun(DeleteId, Acc) ->
+                ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
+                ok = damage_ae:delete_webhook(Username, DeleteId),
+                Acc + 1
+            end,
+            0,
+            maps:get(path_info, Req)
+        ),
+    ?LOG_INFO("deleted ~p webhook", [Deleted]),
+    {true, Req, State}.
 
 create_webhook(
-  #{name := WebhookName, url := WebhookUrl} = _WebhookData,
-  _Req,
-  #{username := Username} = _State
+    #{name := WebhookName, url := WebhookUrl} = _WebhookData,
+    _Req,
+    #{username := Username} = _State
 ) ->
-  damage_ae:add_webhook(Username, WebhookName, WebhookUrl).
+    damage_ae:add_webhook(Username, WebhookName, WebhookUrl).
 
 load_all_webhooks(#{username := Username} = Context) ->
-  maps:put(webhooks, damage_ae:get_webhooks(Username), Context).
+    maps:put(webhooks, damage_ae:get_webhooks(Username), Context).
 
 gun_await(ConnPid, StreamRef) ->
-  case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-    {response, fin, _Status, _Headers} -> closed;
-
-    {response, nofin, _Status, _Headers} ->
-      {ok, Body} = gun:await_body(ConnPid, StreamRef),
-      Body
-  end.
-
+    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        {response, fin, _Status, _Headers} ->
+            closed;
+        {response, nofin, _Status, _Headers} ->
+            {ok, Body} = gun:await_body(ConnPid, StreamRef),
+            Body
+    end.
 
 trigger_webhook(Url, #{fail := FailMessage} = _Context) ->
-  trigger_webhook(Url, #{content => FailMessage});
-
+    trigger_webhook(Url, #{content => FailMessage});
 trigger_webhook(Url, #{content := Content} = Context) ->
-  {Host0, Port0, Path0} =
-    case uri_string:parse(binary_to_list(Url)) of
-      #{port := Port, scheme := _Scheme, path := Path, host := Host} ->
-        {Host, Port, Path};
-
-      #{scheme := "https", host := Host, path := Path} -> {Host, 443, Path};
-      #{scheme := "http", host := Host, path := Path} -> {Host, 80, Path}
-    end,
-  {ok, ConnPid} =
-    gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
-  TemplateContext = maps:put(content, damage_utils:safe_json(Content), Context),
-  Body =
-    case re:run(Url, "https://discord.com.*") of
-      nomatch -> damage_utils:safe_json(TemplateContext);
-
-      {match, _} ->
-        damage_utils:load_template("webhooks/discord.mustache", TemplateContext)
-    end,
-  %?LOG_DEBUG("webhook post ~p ~p.", [Body, TemplateContext]),
-  StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
-  Resp = gun_await(ConnPid, StreamRef),
-  ?LOG_DEBUG("Got response from webhook url ~p ~p.", [Url, Resp]);
-
-trigger_webhook(#{url := _Url} = _Webhook, _Context) -> ok.
-
+    {Host0, Port0, Path0} =
+        case uri_string:parse(binary_to_list(Url)) of
+            #{port := Port, scheme := _Scheme, path := Path, host := Host} ->
+                {Host, Port, Path};
+            #{scheme := "https", host := Host, path := Path} ->
+                {Host, 443, Path};
+            #{scheme := "http", host := Host, path := Path} ->
+                {Host, 80, Path}
+        end,
+    {ok, ConnPid} =
+        gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
+    TemplateContext = maps:put(content, damage_utils:safe_json(Content), Context),
+    Body =
+        case re:run(Url, "https://discord.com.*") of
+            nomatch -> damage_utils:safe_json(TemplateContext);
+            {match, _} -> damage_utils:load_template("webhooks/discord.mustache", TemplateContext)
+        end,
+    %?LOG_DEBUG("webhook post ~p ~p.", [Body, TemplateContext]),
+    StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
+    Resp = gun_await(ConnPid, StreamRef),
+    ?LOG_DEBUG("Got response from webhook url ~p ~p.", [Url, Resp]);
+trigger_webhook(#{url := _Url} = _Webhook, _Context) ->
+    ok.
 
 trigger_webhooks(FinalContext) ->
-  case maps:get(notify_urls, FinalContext, none) of
-    none -> ok;
-
-    #{"fail" := EventHooks} = _NotifyHooks ->
-      [
-        trigger_webhook(Webhook, FinalContext)
-        || Webhook <- sets:to_list(EventHooks)
-      ]
-  end.
+    case maps:get(notify_urls, FinalContext, none) of
+        none ->
+            ok;
+        #{"fail" := EventHooks} = _NotifyHooks ->
+            [
+                trigger_webhook(Webhook, FinalContext)
+             || Webhook <- sets:to_list(EventHooks)
+            ]
+    end.

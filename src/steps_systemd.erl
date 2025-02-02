@@ -14,31 +14,30 @@
 -include_lib("kernel/include/logger.hrl").
 
 step(
-  _Config,
-  Context,
-  <<"Given">>,
-  _N,
-  ["that status of service", Service, "is", Status],
-  _
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["that status of service", Service, "is", Status],
+    _
 ) ->
-  {ok, [{stdout, [Stdout]}]} =
-    exec:run(
-      "systemctl show -p ActiveState " ++ Service ++ "\n",
-      [stdout, sync]
-    ),
-  case binary_to_list(Stdout) of
-    "ActiveState=active\n" -> Context;
-
-    Other ->
-      maps:put(
-        fail,
-        damage_utils:strf(
-          "Service ~p is in state ~p not in state ~p",
-          [Service, Other, Status]
+    {ok, [{stdout, [Stdout]}]} =
+        exec:run(
+            "systemctl show -p ActiveState " ++ Service ++ "\n",
+            [stdout, sync]
         ),
-        Context
-      )
-  end.
-
+    case binary_to_list(Stdout) of
+        "ActiveState=active\n" ->
+            Context;
+        Other ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Service ~p is in state ~p not in state ~p",
+                    [Service, Other, Status]
+                ),
+                Context
+            )
+    end.
 
 test() -> ok.

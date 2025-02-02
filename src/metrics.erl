@@ -18,68 +18,70 @@
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
 
-init() -> [try prometheus_gauge:declare(M) of _ -> ok catch
-      _ ->
-        logger:error("Error initializing metrics"),
-        ok end ||
-    M
-    <-
+init() ->
     [
-      [{name, success}, {help, "number of success"}, {labels, ["ae_account"]}],
-      [{name, error}, {help, "number of errors"}, {labels, ["ae_account"]}],
-      [{name, fail}, {help, "number of fails"}, {labels, ["ae_account"]}],
-      [
-        {name, notfound},
-        {help, "number of notfounds"},
-        {labels, ["ae_account"]}
-      ],
-      [
-        {name, schedule_execution},
-        {help, "number of schedule executions"},
-        {labels, ["ae_account", "hash"]}
-      ]
-    ]].
+        try prometheus_gauge:declare(M) of
+            _ -> ok
+        catch
+            _ ->
+                logger:error("Error initializing metrics"),
+                ok
+        end
+     || M <-
+            [
+                [{name, success}, {help, "number of success"}, {labels, ["ae_account"]}],
+                [{name, error}, {help, "number of errors"}, {labels, ["ae_account"]}],
+                [{name, fail}, {help, "number of fails"}, {labels, ["ae_account"]}],
+                [
+                    {name, notfound},
+                    {help, "number of notfounds"},
+                    {labels, ["ae_account"]}
+                ],
+                [
+                    {name, schedule_execution},
+                    {help, "number of schedule executions"},
+                    {labels, ["ae_account", "hash"]}
+                ]
+            ]
+    ].
 
 update(schedule_execution, {AeAccount, Hash}) ->
-  prometheus_gauge:inc(schedule_execution, ["all"]),
-  prometheus_gauge:inc(schedule_execution, [AeAccount]),
-  prometheus_gauge:inc(schedule_execution, [AeAccount, Hash]);
-
+    prometheus_gauge:inc(schedule_execution, ["all"]),
+    prometheus_gauge:inc(schedule_execution, [AeAccount]),
+    prometheus_gauge:inc(schedule_execution, [AeAccount, Hash]);
 update(Event, AeAccount) ->
-  %?LOG_DEBUG("update prometheus_data  for event ~p ", [Event]),
-  prometheus_gauge:inc(Event, ["all"]),
-  prometheus_gauge:inc(Event, [AeAccount]).
-
+    %?LOG_DEBUG("update prometheus_data  for event ~p ", [Event]),
+    prometheus_gauge:inc(Event, ["all"]),
+    prometheus_gauge:inc(Event, [AeAccount]).
 
 %curl -g 'http://localhost:9090/api/v1/series?' --data-urlencode 'match[]={ae_account=~".+"}'|jq
 fetch_metrics(AeAccount) when is_binary(AeAccount) ->
-  fetch_metrics(binary_to_list(AeAccount));
-
+    fetch_metrics(binary_to_list(AeAccount));
 fetch_metrics(AeAccount) ->
-  Host = "localhost",
-  Port = 9090,
-  Headers = #{"Content-Type" => "application/x-www-form-urlencoded"},
-  Query =
-    "/api/v1/query?query=sum(success{ae_account=\"" ++ AeAccount ++ "\"})",
-  {ok, ConnPid} = gun:open(Host, Port, #{}),
-  %% Construct the request body
-  %% Send the HTTP POST request
-  StreamRef = gun:get(ConnPid, Query, Headers),
-  Response0 =
-    case gun:await(ConnPid, StreamRef) of
-      {response, fin, _Status, _Headers0} -> no_data;
-
-      {response, nofin, _Status, _Headers0} ->
-        {ok, Body} = gun:await_body(ConnPid, StreamRef),
-        Body
-    end,
-  %% Parse the response JSON
-  ?LOG_DEBUG("Got prometheus_data ~p for query ~p ", [Response0, Query]),
-  %% Parse the response JSON
-  Response = jsx:decode(Response0),
-  gun:cancel(ConnPid, StreamRef),
-  gun:close(ConnPid),
-  Response.
+    Host = "localhost",
+    Port = 9090,
+    Headers = #{"Content-Type" => "application/x-www-form-urlencoded"},
+    Query =
+        "/api/v1/query?query=sum(success{ae_account=\"" ++ AeAccount ++ "\"})",
+    {ok, ConnPid} = gun:open(Host, Port, #{}),
+    %% Construct the request body
+    %% Send the HTTP POST request
+    StreamRef = gun:get(ConnPid, Query, Headers),
+    Response0 =
+        case gun:await(ConnPid, StreamRef) of
+            {response, fin, _Status, _Headers0} ->
+                no_data;
+            {response, nofin, _Status, _Headers0} ->
+                {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                Body
+        end,
+    %% Parse the response JSON
+    ?LOG_DEBUG("Got prometheus_data ~p for query ~p ", [Response0, Query]),
+    %% Parse the response JSON
+    Response = jsx:decode(Response0),
+    gun:cancel(ConnPid, StreamRef),
+    gun:close(ConnPid),
+    Response.
 
 %%setup_prometheus_metrics()->
 %%

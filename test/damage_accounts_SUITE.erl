@@ -15,21 +15,20 @@ all() -> [{group, payment}].
 groups() -> [{payment, [parallel], [create_account_test]}].
 
 init_per_group(_Name, Config) ->
-  logger:info("Starting vanilla."),
-  damage_utils:setup_vanillae_deps(),
-  {ok, _} = application:ensure_all_started(vanillae),
-  ok = vanillae:network_id("ae_uat"),
-  {ok, AeNodes} = application:get_env(damage, ae_nodes),
-  ok = vanillae:ae_nodes(AeNodes),
-  logger:info("Started vanilla."),
-  {ok, _} = application:ensure_all_started(gun),
-  {ok, _} = application:ensure_all_started(erlexec),
-  Config.
-
+    logger:info("Starting vanilla."),
+    damage_utils:setup_vanillae_deps(),
+    {ok, _} = application:ensure_all_started(vanillae),
+    ok = vanillae:network_id("ae_uat"),
+    {ok, AeNodes} = application:get_env(damage, ae_nodes),
+    ok = vanillae:ae_nodes(AeNodes),
+    logger:info("Started vanilla."),
+    {ok, _} = application:ensure_all_started(gun),
+    {ok, _} = application:ensure_all_started(erlexec),
+    Config.
 
 end_per_group(_Name, _) -> ok.
 
 create_account_test(_TestConfig) ->
-  Account = damage_accounts:create_account(),
-  _Account = damage_accounts:check_spend(Account),
-  ok.
+    Account = damage_accounts:create_account(),
+    _Account = damage_accounts:check_spend(Account),
+    ok.
