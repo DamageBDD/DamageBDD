@@ -58,7 +58,6 @@
 -export([get_meta/1]).
 -export([delete_account/1]).
 -export([revoke_token/2]).
--export([resolve_npub/1]).
 -export([get_block_height_since/2]).
 -export([test_get_block_height_since/0]).
 -export([test_find_block/0]).
@@ -278,8 +277,11 @@ handle_call({balance, AeAccount}, _From, Cache) ->
                 PathPrefix ++ "v3/aex9/" ++ DamageToken ++ "/balances/" ++ AeAccount,
             StreamRef = gun:get(ConnPid, Path),
             Balance =
-                case read_stream(ConnPid, StreamRef) of
+                case catch read_stream(ConnPid, StreamRef) of
                     #{amount := null} ->
+                        0;
+                    {error, Error} ->
+                        ?LOG_ERROR("Error getting balance ~p", [Error]),
                         0;
                     #{error := Error} ->
                         ?LOG_ERROR("Error getting balance ~p", [Error]),
@@ -571,25 +573,6 @@ handle_call({get_meta, AeAccount}, _From, Cache) ->
         Meta when is_map(Meta) ->
             ?LOG_DEBUG("Cache hit get Meta ~p", [Meta]),
             {reply, Meta, Cache}
-    end;
-handle_call({resolve_npub, NPub}, _From, Cache) ->
-    case catch maps:get(NPub, Cache, undefined) of
-        undefined ->
-            case catch contract_call_admin_account("resolve_npub", [NPub]) of
-                #{decodedResult := EncryptedMetaJson} ->
-                    AeAccount = damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
-                    ?LOG_DEBUG("cache miss npub ~p ~p", [NPub, AeAccount]),
-                    {reply, AeAccount, maps:put(NPub, AeAccount, Cache)};
-                Error ->
-                    ?LOG_DEBUG("Error  ~p", [Error]),
-                    {reply, error, Cache}
-            end;
-        Meta when is_map(Meta) ->
-            ?LOG_DEBUG("Cache hit get Meta ~p", [Meta]),
-            {reply, Meta, Cache};
-        Error ->
-            ?LOG_DEBUG("Error  ~p", [Error]),
-            {reply, error, Cache}
     end.
 
 filter_map(Map, Keys) when is_map(Map), is_list(Keys) ->
@@ -807,8 +790,9 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
         Pid ->
             Pid
     end;
-get_wallet_proc(Email) ->
-    get_wallet_proc(damage_accounts:get_ae_account(Email)).
+get_wallet_proc(admin) ->
+    {ok, AeAdmin} = application:get_env(damage, node_public_key),
+    get_wallet_proc(list_to_binary(AeAdmin)).
 
 balance(AeAccount) when is_binary(AeAccount) ->
     balance(binary_to_list(AeAccount));
@@ -922,11 +906,6 @@ add_domain_token(AeAccount, Domain, DomainContext) ->
 revoke_domain_token(AeAccount, Domain) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {add_domain_token, Domain}).
-
-resolve_npub(Npub) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_wallet_proc(admin),
-    gen_server:call(DamageAEPid, {resolve_npub, Npub}, ?AE_TIMEOUT).
 
 setup_vanillae_deps() ->
     true = code:add_path("_checkouts/vanillae/ebin"),
