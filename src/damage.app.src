@@ -20,8 +20,8 @@
             [
                 {register_node, []},
                 {os_tune, []},
-                {start_trails_http, []},
                 {start_sync, []},
+                {start_trails_http, []},
                 {start_vanillae, []}
             ]
         },
