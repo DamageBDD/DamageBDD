@@ -24,6 +24,7 @@
     ]
 ).
 -export([hook/1]).
+-export([ban/2]).
 -export([unban/1]).
 -export([restart/1]).
 
