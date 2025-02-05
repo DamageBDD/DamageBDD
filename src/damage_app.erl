@@ -74,8 +74,6 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(throttle),
     {ok, _} = application:ensure_all_started(gen_smtp),
     {ok, _} = application:ensure_all_started(ssh),
-    {ok, _} = application:ensure_all_started(nostr),
-    {ok, _} = application:ensure_all_started(nostr_client),
     {ok, _} =
         gen_smtp_server:start(
             damage_smtp_server,

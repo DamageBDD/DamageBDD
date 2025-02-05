@@ -8,14 +8,13 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
--include_lib("nostrlib/include/nostrlib.hrl").
 
 -behaviour(gen_server).
 
 %% API
 
 -export([start_link/0, stop/0]).
--export([subscribe/0, getinfo/0, reply/4]).
+-export([subscribe/0, getinfo/0, reply_event/4]).
 
 %% gen_server callbacks
 
@@ -116,8 +115,13 @@ handle_call(
     #state{public_key = PublicKey} = State
 ) ->
     %% Subscribe to all messages
+    Timestamp = erlang:system_time(seconds),
     SubscriptionMessage =
-        jsx:encode([<<"REQ">>, <<"damagebdd">>, #{kinds => [1], '#p' => [lower_hex(PublicKey)]}]),
+        jsx:encode([
+            <<"REQ">>,
+            <<"damagebdd">>,
+            #{kinds => [1], since => Timestamp, '#p' => [lower_hex(PublicKey)]}
+        ]),
     ?LOG_INFO("Nostr Sending subscription request: ~p ~p", [State, SubscriptionMessage]),
     ok =
         gun:ws_send(
@@ -181,66 +185,61 @@ terminate(Reason, State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-find_feature(Str) ->
-    case re:match(<<"[^\"]FeatureK.*?">>, Str, [cased]) of
-        {ok, Matched} -> lists:sublist(Str, 0, string:index(Matched, ")") + 1);
-        error -> none
-    end.
-
-handle_feature(
-    AeAccount,
-    #{id := _OriginalEventId, tags := _Tags, content := Content, pubkey := Npub} =
-        _Event,
-    #state{npub_cache = Cache} = _State
-) ->
-    Context = #{npub => Npub, ae_account => AeAccount},
-    AeAccount = resolve_npub(Npub, Cache),
-    Config = damage:get_default_config(AeAccount, 1, []),
-    Feature = find_feature(Content),
-    jsx:encode(
-        execute_bdd(
-            Config,
-            damage_context:get_account_context(
-                damage_context:get_global_template_context(
-                    maps:put(feature, Feature, Context)
-                )
-            ),
-            Context
-        )
-    ).
-
-handle_event_payload(0, _, _) ->
+handle_event_payload(0, Event, _) ->
+    ?LOG_INFO("Got type 0 event ~p", [Event]),
     ok;
 handle_event_payload(
     _Found,
     #{id := OriginalEventId, tags := _Tags, content := Content, pubkey := Npub} =
-        Event,
+        _Event,
     #state{npub_cache = Cache} = State
 ) ->
     ?LOG_INFO("Got mention of damagebdd"),
-    case resolve_npub(Npub, Cache) of
-        error ->
-            ok;
-        notfound ->
-            ok;
-        AeAccount ->
-            case damage_ae:balance(AeAccount) of
-                Balance when Balance > 0 ->
-                    ?LOG_INFO("Nostr Received feature from: ~s ~s~n", [Npub, Content]),
-                    handle_feature(AeAccount, Event, State);
-                Other ->
-                    ?LOG_INFO("Nostr Received invalid feature from: ~s ~p result ~p~n", [
-                        Npub, Content, Other
-                    ]),
-                    reply(
-                        OriginalEventId,
-                        Npub,
-                        <<
-                            "Insufficient balance, please top up balance at `/api/accounts/topup`"
-                        >>,
-                        State
-                    )
-            end
+    case re:match(<<"[^\"]Feature.*?">>, Content, [cased]) of
+        {ok, Matched} ->
+            Feature = lists:sublist(Content, 0, string:index(Matched, ")") + 1),
+
+            case resolve_npub(Npub, Cache) of
+                error ->
+                    ok;
+                notfound ->
+                    ok;
+                AeAccount ->
+                    case damage_ae:balance(AeAccount) of
+                        Balance when Balance > 0 ->
+                            ?LOG_INFO("Nostr Received feature from: ~s ~s~n", [Npub, Content]),
+                            Context = #{npub => Npub, ae_account => AeAccount},
+                            AeAccount = resolve_npub(Npub, Cache),
+                            Config = damage:get_default_config(AeAccount, 1, []),
+                            jsx:encode(
+                                execute_bdd(
+                                    Config,
+                                    damage_context:get_account_context(
+                                        damage_context:get_global_template_context(
+                                            maps:put(feature, Feature, Context)
+                                        )
+                                    ),
+                                    Context
+                                )
+                            );
+                        Other ->
+                            ?LOG_INFO("Nostr Received invalid feature from: ~s ~p result ~p~n", [
+                                Npub, Content, Other
+                            ]),
+                            reply_event(
+                                OriginalEventId,
+                                Npub,
+                                <<
+                                    "Insufficient balance, please top up balance at `/api/accounts/topup`"
+                                >>,
+                                State
+                            )
+                    end
+            end;
+        none ->
+            ?LOG_INFO("Nostr Received invalid message from: ~s ~p~n", [
+                Npub, Content
+            ])
     end.
 
 handle_event([<<"OK">>, EventAck, true, <<>>] = _Event, _State) ->
@@ -298,7 +297,7 @@ get_public_keys(<<"asyncmind">>) ->
     [decode_npub(Npub)];
 get_public_keys(_) ->
     [].
-reply(
+reply_event(
     OriginalEventId,
     OriginalAuthorPubKey,
     ReplyContent,

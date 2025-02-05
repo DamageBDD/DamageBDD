@@ -10,7 +10,7 @@
         {mod, {damage_app, []}},
         {
             applications,
-            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, nostr]
+            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc]
         },
         {env, []},
         {modules, []},
