@@ -118,6 +118,17 @@ to_json(Req, #{action := invoice} = State) ->
             {<<"user required">>, Req, State};
         <<"asyncmind">> ->
             case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
+                #{amount := none, comment := Memo} ->
+                    Amount = 1000,
+                    #{
+                        payment_hash := _PaymentHash,
+                        expires_at := _Expiry,
+                        bolt11 := Bolt11,
+                        payment_secret := _PaymentSecret,
+                        created_index := _CreatedIndex
+                    } = Invoice = cln:create_invoice(Amount, Memo),
+                    ?LOG_INFO("invoice ~p", [Invoice]),
+                    {jsx:encode(#{pr => Bolt11}), Req, State};
                 #{amount := AmountBin, comment := Memo} ->
                     Amount = binary_to_integer(AmountBin),
                     #{
