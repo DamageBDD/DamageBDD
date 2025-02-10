@@ -268,7 +268,7 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
         ]
     ).
 
-%% Encrypt a information string
+%%% --- AES-GCM Encryption & Decryption ---
 
 % https://medium.com/@brucifi/how-to-encrypt-with-aes-256-gcm-with-erlang-2a2aec13598d
 encrypt(PlainText) when is_list(PlainText) ->
@@ -277,8 +277,8 @@ encrypt(PlainText) when is_binary(PlainText) ->
     KycKey = damage_utils:pass_get(kyc_secret_pass_path),
     encrypt(PlainText, KycKey).
 
-encrypt(KYCInfo, Key) when is_binary(KYCInfo), is_list(Key) ->
-    encrypt(KYCInfo, list_to_binary(Key));
+encrypt(Data, Key) when is_binary(Data), is_list(Key) ->
+    encrypt(Data, list_to_binary(Key));
 encrypt(Data, Key) when is_binary(Data), is_binary(Key) ->
     <<Key0:32/binary, Nonce:16/binary>> = base64:decode(Key),
     {CipherText, Tag} =

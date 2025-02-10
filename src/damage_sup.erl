@@ -104,6 +104,19 @@ init([]) ->
                 },
                 #{
                     % mandatory
+                    id => kyc_server,
+                    % mandatory
+                    start => {kyc_server, start_link, []},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => [kyc_server]
+                },
+                #{
+                    % mandatory
                     id => lightpanda,
                     % mandatory
                     start => {damage_worker, start_link, [LightPandaCmd]},
