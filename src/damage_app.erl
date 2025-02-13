@@ -38,7 +38,8 @@ get_trails() ->
             damage_reports,
             damage_ai,
             lnaddress,
-            cowboy_swagger_handler
+            cowboy_swagger_handler,
+            lightning_auth
         ],
     Trails =
         [
@@ -47,7 +48,8 @@ get_trails() ->
             {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
             {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},
             {"/steps.yaml", cowboy_static, {priv_file, damage, "static/steps.yaml"}},
-            {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}}
+            {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}},
+            {"/ws/auth", lightning_auth_ws, #{}}
             | trails:trails(Handlers)
         ],
     trails:store(Trails),
