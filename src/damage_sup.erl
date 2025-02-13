@@ -117,6 +117,19 @@ init([]) ->
                 },
                 #{
                     % mandatory
+                    id => lightning_auth_logic,
+                    % mandatory
+                    start => {lightning_auth_logic, start_link, []},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => [lightning_auth_logic]
+                },
+                #{
+                    % mandatory
                     id => lightpanda,
                     % mandatory
                     start => {damage_worker, start_link, [LightPandaCmd]},
