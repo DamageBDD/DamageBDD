@@ -36,7 +36,7 @@ trails() ->
     [
         trails:trail(
             "/accounts/ssh_keys",
-            damage_accounts,
+            damage_ssh,
             #{action => create},
             #{
                 get =>
