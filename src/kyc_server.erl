@@ -4,8 +4,18 @@
 -include_lib("kernel/include/logger.hrl").
 %% API
 -export([
-    start_link/0, insert_kyc/2, get_kyc/1, delete_kyc/1, change_password/2, 
-    resolve_wallet/1, link_wallet/2, store_wallet_password/2, check_wallet_password/2, resolve_email/1
+    start_link/0,
+    insert_kyc/2,
+    get_kyc/1,
+    delete_kyc/1,
+    change_password/2,
+    resolve_wallet/1,
+    link_wallet/2,
+    store_wallet_password/2,
+    check_wallet_password/2,
+    resolve_email/1,
+    generate_auth_token/1,
+    verify_auth_token/2
 ]).
 -export([test/0]).
 
@@ -17,11 +27,10 @@
 -define(WALLET_BUCKET, <<"wallet_data">>).
 -define(WALLET_REVERSE_BUCKET, <<"wallet_reverse_data">>).
 -define(WALLET_PASSWORD_BUCKET, <<"wallet_passwords">>).
-
-
+-define(AUTH_TOKEN_BUCKET, <<"auth_tokens">>).
 
 %%% --- Riak Client Setup ---
-init([]) ->
+init(_Args) ->
     {ok, {Host, Port}} = application:get_env(damage, riak),
     logger:info("initializing riak cluster ~p:~p", [Host, Port]),
     case
@@ -61,7 +70,6 @@ resolve_wallet(Email) ->
 resolve_email(Wallet) ->
     gen_server:call(?MODULE, {resolve_email, Wallet}).
 
-
 link_wallet(Email, Wallet) ->
     gen_server:call(?MODULE, {link_wallet, Email, Wallet}).
 
@@ -70,6 +78,29 @@ store_wallet_password(Email, Password) ->
 
 check_wallet_password(Email, Password) ->
     gen_server:call(?MODULE, {check_wallet_password, Email, Password}).
+
+generate_auth_token(Email) ->
+    gen_server:call(?MODULE, {generate_auth_token, Email}).
+
+verify_auth_token(Email, Token) ->
+    gen_server:call(?MODULE, {verify_auth_token, Email, Token}).
+%%% --- Generate Secure Auth Token ---
+generate_secure_token() ->
+    base64:encode(crypto:strong_rand_bytes(32)).
+
+%%% --- Generic Conflict Resolution Function ---
+resolve_conflict(Siblings) ->
+    Sorted = lists:sort(
+        fun(A, B) ->
+            maps:get(timestamp, binary_to_term(damage_utils:decrypt(A)), 0) >
+                maps:get(timestamp, binary_to_term(damage_utils:decrypt(B)), 0)
+        end,
+        Siblings
+    ),
+    case Sorted of
+        [Latest | _] -> {ok, binary_to_term(damage_utils:decrypt(Latest))};
+        _ -> {error, not_found}
+    end.
 
 %%% --- Handle Calls ---
 handle_call({insert_kyc, ID, Data}, _From, #{riak_conn := Riak} = State) ->
@@ -80,18 +111,22 @@ handle_call({insert_kyc, ID, Data}, _From, #{riak_conn := Riak} = State) ->
         ok -> {reply, {ok, ID}, State};
         {error, Reason} -> {reply, {error, Reason}, State}
     end;
-
+%% Get KYC Data (Uses Conflict Resolution)
 handle_call({get_kyc, ID}, _From, #{riak_conn := Riak} = State) ->
     EncId = damage_utils:encrypt(ID),
     case riakc_pb_socket:get(Riak, ?KYC_BUCKET, EncId) of
         {ok, Obj} ->
-            ?LOG_INFO("Retrieved ~p", [Obj]),
-            EncData = riakc_obj:get_value(Obj),
-            ?LOG_INFO("Retrieved enc ~p", [EncData]),
-            {reply,{ok, binary_to_term(damage_utils:decrypt(EncData))}, State};
-        {error, notfound} -> {reply, {error, not_found}, State}
+            Siblings = riakc_obj:get_values(Obj),
+            case resolve_conflict(Siblings) of
+                {ok, EncData} ->
+                    ?LOG_INFO("Retrieved enc ~p", [EncData]),
+                    {reply, {ok, EncData}, State};
+                _ ->
+                    {reply, {error, not_found}, State}
+            end;
+        {error, notfound} ->
+            {reply, {error, not_found}, State}
     end;
-
 %%% --- DELETE KYC & CLEAN UP ALL DATA ---
 handle_call({delete_kyc, ID}, _From, #{riak_conn := Riak} = State) ->
     case riakc_pb_socket:get(Riak, ?KYC_BUCKET, ID) of
@@ -102,7 +137,8 @@ handle_call({delete_kyc, ID}, _From, #{riak_conn := Riak} = State) ->
                 {ok, KYCData} ->
                     Email = maps:get(email, binary_to_term(KYCData), undefined),
                     case Email of
-                        undefined -> {reply, {error, email_not_found}, State};
+                        undefined ->
+                            {reply, {error, email_not_found}, State};
                         _ ->
                             %% Lookup Wallet Address
                             case riakc_pb_socket:get(Riak, ?WALLET_BUCKET, Email) of
@@ -125,31 +161,37 @@ handle_call({delete_kyc, ID}, _From, #{riak_conn := Riak} = State) ->
 
                             {reply, ok, State}
                     end;
-                {error, _} -> {reply, {error, invalid_decryption}, State}
+                {error, _} ->
+                    {reply, {error, invalid_decryption}, State}
             end;
-        {error, notfound} -> {reply, {error, not_found}, State}
+        {error, notfound} ->
+            {reply, {error, not_found}, State}
     end;
-
 handle_call({link_wallet, Email, Wallet}, _From, #{riak_conn := Riak} = State) ->
     EncEmail = damage_utils:encrypt(Email),
-%% Store Email -> Wallet
-    WalletObj = riakc_obj:new(?WALLET_BUCKET, EncEmail, Wallet),
+    EncWallet = damage_utils:encrypt(Wallet),
+    %% Store Email -> Wallet
+    WalletObj = riakc_obj:new(?WALLET_BUCKET, EncEmail, EncWallet),
     %% Store Wallet -> Email (Reverse Lookup)
-    ReverseObj = riakc_obj:new(?WALLET_REVERSE_BUCKET, Wallet, EncEmail),
+    ReverseObj = riakc_obj:new(?WALLET_REVERSE_BUCKET, EncWallet, EncEmail),
 
     case {riakc_pb_socket:put(Riak, WalletObj), riakc_pb_socket:put(Riak, ReverseObj)} of
         {ok, ok} -> {reply, ok, State};
         {error, Reason} -> {reply, {error, Reason}, State}
     end;
-
-
+%% Resolve Wallet (Uses Conflict Resolution)
 handle_call({resolve_wallet, Email}, _From, #{riak_conn := Riak} = State) ->
     EncEmail = damage_utils:encrypt(Email),
     case riakc_pb_socket:get(Riak, ?WALLET_BUCKET, EncEmail) of
-        {ok, Obj} -> {reply, {ok, riakc_obj:get_value(Obj)}, State};
-        {error, notfound} -> {reply, {error, not_found}, State}
+        {ok, Obj} ->
+            Siblings = riakc_obj:get_values(Obj),
+            case resolve_conflict(Siblings) of
+                {ok, Wallet} -> {reply, {ok, Wallet}, State};
+                _ -> {reply, {error, not_found}, State}
+            end;
+        {error, notfound} ->
+            {reply, {error, not_found}, State}
     end;
-
 handle_call({store_wallet_password, Email, Password}, _From, #{riak_conn := Riak} = State) ->
     EncPass = damage_utils:encrypt(Password),
     Obj = riakc_obj:new(?WALLET_PASSWORD_BUCKET, Email, term_to_binary(EncPass)),
@@ -157,7 +199,6 @@ handle_call({store_wallet_password, Email, Password}, _From, #{riak_conn := Riak
         ok -> {reply, ok, State};
         {error, Reason} -> {reply, {error, Reason}, State}
     end;
-
 handle_call({check_wallet_password, Email, Password}, _From, #{riak_conn := Riak} = State) ->
     case riakc_pb_socket:get(Riak, ?WALLET_PASSWORD_BUCKET, Email) of
         {ok, Obj} ->
@@ -166,14 +207,57 @@ handle_call({check_wallet_password, Email, Password}, _From, #{riak_conn := Riak
                 Password -> {reply, {ok, valid}, State};
                 _ -> {reply, {error, invalid_password}, State}
             end;
-        {error, notfound} -> {reply, {error, not_found}, State}
+        {error, notfound} ->
+            {reply, {error, not_found}, State}
     end;
+%% Resolve Email (Uses Conflict Resolution)
 handle_call({resolve_email, Wallet}, _From, #{riak_conn := Riak} = State) ->
     case riakc_pb_socket:get(Riak, ?WALLET_REVERSE_BUCKET, Wallet) of
-        {ok, Obj} -> {reply, {ok, damage_utils:decrypt(riakc_obj:get_value(Obj))}, State};
-        {error, notfound} -> {reply, {error, not_found}, State}
-    end.
+        {ok, Obj} ->
+            Siblings = riakc_obj:get_values(Obj),
+            case resolve_conflict(Siblings) of
+                {ok, Email} -> {reply, {ok, damage_utils:decrypt(Email)}, State};
+                _ -> {reply, {error, not_found}, State}
+            end;
+        {error, notfound} ->
+            {reply, {error, not_found}, State}
+    end;
+%% Generate & Store Auth Token
+handle_call({generate_auth_token, Email}, _From, #{riak_conn := Riak} = State) ->
+    Token = generate_secure_token(),
+    Timestamp = date_util:now_to_seconds(os:timestamp()),
+    AuthData = #{token => Token, timestamp => Timestamp},
+    Obj = riakc_obj:new(?AUTH_TOKEN_BUCKET, Email, term_to_binary(AuthData)),
 
+    case riakc_pb_socket:put(Riak, Obj) of
+        ok -> {reply, {ok, Token}, State};
+        {error, Reason} -> {reply, {error, Reason}, State}
+    end;
+%% Verify Auth Token (Uses Conflict Resolution)
+handle_call({verify_auth_token, Email, Token}, _From, #{riak_conn := Riak} = State) ->
+    case riakc_pb_socket:get(Riak, ?AUTH_TOKEN_BUCKET, Email) of
+        {ok, Obj} ->
+            Siblings = riakc_obj:get_values(Obj),
+            case resolve_conflict(Siblings) of
+                {ok, StoredData} ->
+                    StoredToken = maps:get(token, StoredData, <<"">>),
+                    Timestamp = maps:get(timestamp, StoredData, 0),
+                    CurrentTime = calendar:system_time(seconds),
+
+                    if
+                        CurrentTime - Timestamp > 86400 ->
+                            {reply, {error, expired_token}, State};
+                        Token =:= StoredToken ->
+                            {reply, {ok, verified}, State};
+                        true ->
+                            {reply, {error, invalid_token}, State}
+                    end;
+                _ ->
+                    {reply, {error, not_found}, State}
+            end;
+        {error, notfound} ->
+            {reply, {error, not_found}, State}
+    end.
 
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
@@ -183,10 +267,11 @@ test() ->
 
     %% Start the server
     case kyc_server:start_link() of
-    {ok, _Pid} ->
+        {ok, _Pid} ->
             ok;
-            {error, {already_started, _}} -> ok
-end,
+        {error, {already_started, _}} ->
+            ok
+    end,
 
     %% Test Data
     Email = <<"alice@example.com">>,
