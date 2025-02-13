@@ -11,7 +11,6 @@
         start_link/1,
         get_connection/0,
         get/2,
-        get/3,
         put/3,
         put/4,
         delete/2,
@@ -52,15 +51,12 @@ start_link(Members) -> gen_server:start_link(?MODULE, Members, []).
 get_connection() -> gen_server:call(?MODULE, get_connection).
 
 get({Type, Bucket}, Key) ->
-    get({Type, Bucket}, Key, [{labels, atom}, return_maps]).
-
-get({Type, Bucket}, Key, JsonDecodeOpts) ->
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
             gen_server:call(
                 Worker,
-                {get, {Type, Bucket}, Key, JsonDecodeOpts},
+                {get, {Type, Bucket}, Key},
                 ?RIAK_CALL_TIMEOUT
             )
         end
@@ -283,7 +279,7 @@ handle_call(
         end,
     {reply, Res, State};
 handle_call(
-    {get, Bucket, Key0, JsonDecodeOpts},
+    {get, Bucket, Key0},
     _From,
     #state{connection = Connection} = State
 ) ->
@@ -302,18 +298,7 @@ handle_call(
             {error, undef, State};
         {ok, RiakObject} ->
             Value = check_resolve_siblings(RiakObject, Connection),
-            %?LOG_DEBUG(
-            %  "get RiakObject ~p ~p",
-            %  [RiakObject, damage_utils:decrypt(Value)]
-            %),
-            DecValue = damage_utils:decrypt(Value),
-            case catch jsx:decode(DecValue, JsonDecodeOpts) of
-                {'EXIT', {badarg, _}} ->
-                    logger:error("Unexpected riak error ~p", [Value]),
-                    {reply, {decode_error, DecValue}, State};
-                Result ->
-                    {reply, {ok, Result}, State}
-            end
+            damage_utils:decrypt(Value)
     end;
 handle_call({put, Bucket, Key, Value, Index}, From, State) when is_map(Value) ->
     {ok, Modified} = datestring:format("YmdHMS", erlang:localtime()),
@@ -322,7 +307,7 @@ handle_call({put, Bucket, Key, Value, Index}, From, State) when is_map(Value) ->
             put,
             Bucket,
             Key,
-            jsx:encode(maps:put(<<"modified">>, list_to_binary(Modified), Value)),
+            term_to_binary(maps:put(<<"modified">>, list_to_binary(Modified), Value)),
             Index
         },
         From,
@@ -426,14 +411,14 @@ resolver_function({MA, A}, {MB, B}) ->
     BRiakModified =
         date_util:now_to_seconds_hires(dict:fetch(<<"X-Riak-Last-Modified">>, MB)),
     A1 =
-        case catch jsx:decode(damage_utils:decrypt(A), [return_maps]) of
+        case catch binary_to_term(damage_utils:decrypt(A)) of
             A0 when is_map(A0) ->
                 maps:get(modified, A0, maps:get(created, A0, ARiakModified));
             _ ->
                 ARiakModified
         end,
     B1 =
-        case catch jsx:decode(damage_utils:decrypt(B), [return_maps]) of
+        case catch binary_to_term(damage_utils:decrypt(B)) of
             B0 when is_map(B0) ->
                 maps:get(modified, B0, maps:get(created, B0, BRiakModified));
             _ ->
@@ -471,18 +456,19 @@ test_conflict_resolution() ->
     ok.
 
 test_crud() ->
-    logger:error("riak put data: ", []),
+    ?LOG_INFO("riak put data: ", []),
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     TimestampBin = list_to_binary(Timestamp),
     Bucket = {<<"Default">>, <<"TestBucket", TimestampBin/binary>>},
     Key1 = <<"Key1", TimestampBin/binary>>,
-    {ok, true} = damage_riak:put(Bucket, Key1, <<"Value">>),
+    ok = damage_riak:put(Bucket, Key1, <<"Value">>),
     Key2 = <<"Key2", TimestampBin/binary>>,
-    {ok, true} =
+    Value = #{value => <<"Value">>},
+    ok =
         damage_riak:put(
             Bucket,
+            term_to_binary(Value),
             Key2,
-            <<"Value">>,
             [
                 {
                     {binary_index, "key1index"},
