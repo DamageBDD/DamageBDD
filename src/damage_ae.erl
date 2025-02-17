@@ -16,6 +16,7 @@
 -define(TAG_CONTRACT_CALL_TX, 43).
 -define(TAG_SIGNED_TX, 11).
 -define(OBJECT_VERSION, 1).
+-define(HASH_BYTES, 32).
 
 -export(
     [
@@ -51,11 +52,9 @@
     ]
 ).
 -export([contract_call/5, contract_call/6, contract_deploy/3]).
--export([test_contract_call/0, test_sign_vw/0, test_create_wallet/0]).
+-export([test_contract_call/0,test_contract_create/0,  test_create_wallet/0]).
 -export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
 -export([get_schedules/1]).
--export([set_meta/1]).
--export([get_meta/1]).
 -export([delete_account/1]).
 -export([revoke_token/2]).
 -export([get_block_height_since/2]).
@@ -487,26 +486,6 @@ handle_call({delete_account, AeAccount}, _From, Cache) ->
         ),
     ?LOG_DEBUG("deleting account data ~p", [AeAccount]),
     {reply, #{}, maps:delete(AeAccount, Cache)};
-handle_call({set_meta, #{email := AeAccount} = AccountMeta}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    NewAccountMeta = maps:merge(maps:get(meta, AccountCache, #{}), AccountMeta),
-    {ok, AccountContract} = application:get_env(damage, account_contract),
-    NewAccountMetaEncrypted =
-        base64:encode(damage_utils:encrypt(jsx:encode(NewAccountMeta))),
-    #{decodedResult := []} =
-        contract_call(
-            AeAccount,
-            AccountContract,
-            "contracts/account.aes",
-            "set_meta",
-            [NewAccountMetaEncrypted]
-        ),
-    ?LOG_DEBUG("set_meta caching ~p", [NewAccountMeta]),
-    {
-        reply,
-        NewAccountMeta,
-        maps:put(AeAccount, maps:put(meta, NewAccountMeta, AccountCache), Cache)
-    };
 handle_call({revoke_access_token, TokenKey}, _From, Cache) ->
     #{decodedResult := []} =
         contract_call_admin_account("revoke_auth_token", [TokenKey]),
@@ -540,39 +519,6 @@ handle_call({get_access_token, AccessToken}, _From, Cache) ->
         Token when is_map(Token) ->
             ?LOG_DEBUG("Cache hit get_access_token ~p", [Token]),
             {reply, Token, Cache}
-    end;
-handle_call({get_meta, AeAccount}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    case catch maps:get(meta, AccountCache, undefined) of
-        undefined ->
-            case contract_call_user_account(AeAccount, "get_meta", []) of
-                #{status := <<"fail">>} ->
-                    {reply, notfound, Cache};
-                <<"notfound">> ->
-                    {reply, notfound, Cache};
-                #{
-                    result := #{callerId := AeAccount},
-                    decodedResult := EncryptedMetaJson
-                } ->
-                    Meta =
-                        maps:put(
-                            ae_account,
-                            AeAccount,
-                            jsx:decode(
-                                damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
-                                [{labels, atom}]
-                            )
-                        ),
-                    ?LOG_DEBUG("no Cache hit get Meta ~p", [Meta]),
-                    {
-                        reply,
-                        Meta,
-                        maps:put(AeAccount, maps:put(meta, Meta, AccountCache), Cache)
-                    }
-            end;
-        Meta when is_map(Meta) ->
-            ?LOG_DEBUG("Cache hit get Meta ~p", [Meta]),
-            {reply, Meta, Cache}
     end.
 
 filter_map(Map, Keys) when is_map(Map), is_list(Keys) ->
@@ -653,7 +599,8 @@ handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
     {noreply, maps:put(AeAccount, NewCache, Cache)};
 handle_cast({invalidate_cache, _AeAccount}, _Cache) ->
     {noreply, #{}};
-handle_cast(_Event, State) ->
+handle_cast(Event, State) ->
+    ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
 
 handle_info(_Info, State) -> {noreply, State}.
@@ -792,7 +739,12 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
     end;
 get_wallet_proc(admin) ->
     {ok, AeAdmin} = application:get_env(damage, node_public_key),
-    get_wallet_proc(list_to_binary(AeAdmin)).
+    get_wallet_proc(list_to_binary(AeAdmin));
+get_wallet_proc(Email) ->
+    case identity_server:get_account_by_email(Email) of
+        notfound -> {error, not_found};
+        Aeaccount -> get_wallet_proc(Aeaccount)
+    end.
 
 balance(AeAccount) when is_binary(AeAccount) ->
     balance(binary_to_list(AeAccount));
@@ -867,21 +819,6 @@ get_schedules(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {get_schedules, AeAccount}, ?AE_TIMEOUT).
 
-set_meta(#{ae_account := AeAccount} = Meta) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_wallet_proc(AeAccount),
-    gen_server:call(DamageAEPid, {set_meta, Meta}, ?AE_TIMEOUT).
-
-get_meta(AeAccount) ->
-    case filelib:is_regular(get_wallet_path(AeAccount)) of
-        true ->
-            % temporary storage to commit after feature execution
-            DamageAEPid = get_wallet_proc(AeAccount),
-            gen_server:call(DamageAEPid, {get_meta, AeAccount}, ?AE_TIMEOUT);
-        _ ->
-            notfound
-    end.
-
 delete_account(AeAccount) ->
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
@@ -928,9 +865,9 @@ setup_vanillae_deps() ->
 
 read_stream(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, 600000) of
-        {response, nofin, _Status, _Headers0} ->
+        {response, nofin, Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            %?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
+            ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
             jsx:decode(Body, [{labels, atom}, return_maps]);
         Default ->
             ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
@@ -945,9 +882,9 @@ get_wallet_path(Email) ->
     WalletName = binary_to_list(damage_utils:idhash_keys([Email])),
     filename:join(["wallets", "damagebdd_user_wallet_" ++ WalletName]).
 
-create_wallet(WalletName) when is_binary(WalletName) ->
-    create_wallet(binary_to_list(WalletName));
-create_wallet(Email) ->
+create_wallet(WalletName, Password) when is_binary(WalletName) ->
+    create_wallet(binary_to_list(WalletName), Password);
+create_wallet(Email, _Password) ->
     WalletPath = get_wallet_path(Email),
     ?LOG_DEBUG("Wallet path. ~p", [WalletPath]),
     Created =
@@ -1063,11 +1000,9 @@ maybe_fund_wallet(AeAccount, Amount) ->
     {AeResult, DamageTokenResult}.
 
 maybe_create_wallet(Email, Password) ->
-    {_, #{publicKey := AeAccount}} = Data = create_wallet(Email),
-    EncEmail = damage_utils:encrypt(Email),
-    damage_riak:put(?USER_BUCKET, EncEmail, jsx:encode(Data)),
+    {_, #{publicKey := AeAccount}} = create_wallet(Email, Password),
     #{publicKey := AeAccount} = Funded = maybe_fund_wallet(AeAccount),
-    set_meta(#{ae_account => AeAccount, password => Password}),
+    identity_server:register_email(Email, AeAccount),
     Funded.
 
 deploy_account_contract() ->
@@ -1177,72 +1112,121 @@ test_create_wallet() ->
     #{public_key := WalletAddress} =
         maybe_create_wallet("steven@gmail.com", "testpass"),
     ?LOG_INFO("Wallet created ~p ", [WalletAddress]).
+attach_signature(TX, Sig) ->
+    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
+    Fields = [{signatures, [Sig]}, {transaction, TX}],
+    aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields).
 
-test_contract_call() ->
-    {ok, AeAccount} = application:get_env(damage, ae_account),
-    {ok, AdminWallet} = application:get_env(damage, ae_wallet),
-    {ok, WalletDataJson} = file:read_file(AdminWallet),
-    #{crypto := #{ciphertext := PrivateKey}} =
-        _WalletData = jsx:decode(WalletDataJson, [{labels, atom}]),
-    JobId = <<"sdds">>,
-    %{ok, Nonce} = vanillae:next_nonce(AeAccount),
-    #{nonce := Nonce} = get_ae_balance(AeAccount),
-    ?LOG_DEBUG("nonce ~p", [Nonce]),
-    %{contract_pubkey, ContractData} =
-    ContractData =
-        vanillae:contract_create(AeAccount, "contracts/account.aes", []),
-    ?LOG_DEBUG("contract data ~p", [ContractData]),
-    SignedContract = svt:sign_contract(ContractData, PrivateKey),
-    ?LOG_DEBUG("contract create ~p", [SignedContract]),
-    {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
-    ContractCall =
-        vanillae:contract_call(
-            AeAccount,
-            Nonce,
-            % Amount
-            0,
-            % Gas
-            0,
-            % GasPrice
-            0,
-            % Fee
-            0,
-            AACI,
-            SignedContract,
-            "update_schedule",
-            [JobId]
-        ),
-    ?LOG_DEBUG("contract call ~p", [ContractCall]),
-    SignedContractCall = svt:sign_contract(ContractCall, PrivateKey),
-    case vanillae:post_tx(SignedContractCall) of
-        {ok, #{"tx_hash" := Hash}} ->
-            ?LOG_DEBUG("contract call success ~p", [Hash]),
-            Hash;
-        {ok, WTF} ->
-            logger:error("contract call Unexpected result ~p", [WTF]),
-            {error, unexpected};
-        {error, Reason} ->
-            logger:error("contract call error ~p", [Reason]),
-            {error, Reason}
+attach_signature_base58(EncodedTX, EncodedSig) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    {signature, Sig} = aeser_api_encoder:decode(EncodedSig),
+    SignedTX = attach_signature(TX, Sig),
+    aeser_api_encoder:encode(transaction, SignedTX).
+% returns the signature by itself
+make_transaction_signature_base58(Priv, EncodedTX) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    Sig = make_transaction_signature(Priv, TX),
+    aeser_api_encoder:encode(signature, Sig).
+make_transaction_signature(Priv, TX) ->
+    Id = list_to_binary(vanillae:network_id()),
+    Blob = <<Id/binary, TX/binary>>,
+    enacl:sign_detached(Blob, Priv).
+sign_transaction(Priv, TX) ->
+    Sig = make_transaction_signature(Priv, TX),
+    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
+    Fields = [{signatures, [Sig]}, {transaction, TX}],
+    aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields).
+sign_transaction_base58(Priv, EncodedTX) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    SignedTX = sign_transaction(Priv, TX),
+    aeser_api_encoder:encode(transaction, SignedTX).
+
+make_keypair() ->
+    #{public := Pub, secret := Priv} = enacl:sign_keypair(),
+    PubBin = aeser_api_encoder:encode(account_pubkey, Pub),
+    PubStr = unicode:characters_to_list(PubBin),
+    #{public_key => PubStr, private_key => Priv}.
+
+init_node_keypair() ->
+    Path = application:get_env(damage, keystore, "damage.key"),
+    case file:read_file(Path) of
+        {error, enoent} ->
+            ?LOG_INFO("damage.key not found ... creating.", []),
+            Data = make_keypair(),
+            ok = file:write_file(Path, term_to_binary(Data)),
+            Data;
+        {ok, Data} ->
+            #{public_key := _Pub, private_key := _Priv} = binary_to_term(Data)
     end.
 
-%% Ref:
-%%
-%% https://github.com/aeternity/protocol/blob/fd179822fc70241e79cbef7636625cf344a08109/node/api/api_encoding.md
-%% https://github.com/aeternity/protocol/blob/fd179822fc70241e79cbef7636625cf344a08109/serializations.md
+poll_until(ExpectedValue, Fun, Args, Interval, Timeout) ->
+    poll_until(ExpectedValue, Fun, Args, Interval, Timeout, erlang:monotonic_time(millisecond)).
 
-test_sign_vw() ->
-    #{public := PublicKey, secret := SecretKey} = ecu_eddsa:sign_keypair(),
-    PublicKey0 = vd:encode_id(PublicKey),
-    ?LOG_DEBUG("pubkey ~p", [PublicKey0]),
-    {ok, Nonce} = vanillae:next_nonce(PublicKey0),
-    ?LOG_DEBUG("nonce ~p", [Nonce]),
-    %{contract_pubkey, ContractData} =
-    ContractData =
-        vanillae:contract_create(PublicKey, "contracts/account.aes", []),
-    ?LOG_DEBUG("contract data ~p", [ContractData]),
-    Signed = ecu_eddsa:sign(ContractData, SecretKey),
-    Signed.
+poll_until(ExpectedValue, Fun, Args, Interval, Timeout, StartTime) ->
+    case apply(Fun, Args) of
+        ExpectedValue ->
+            {ok, ExpectedValue};
+        Result ->
+            ?LOG_DEBUG("Got value ~p", [Result]),
+            Elapsed = erlang:monotonic_time(millisecond) - StartTime,
+            if
+                Elapsed >= Timeout ->
+                    exit({timeout_error, {polling_failed, ExpectedValue, Fun, Args}});
+                true ->
+                    timer:sleep(Interval),
+                    poll_until(ExpectedValue, Fun, Args, Interval, Timeout, StartTime)
+            end
+    end.
+
+wait_tx(ConId) ->
+    poll_until(ok, fun vanillae:tx_info/1, [ConId], 1000, 15000).
+
+
+test_contract_call() ->
+    {ok, AccountContract} = application:get_env(damage, account_contract),
+    ?LOG_DEBUG("contract account ~p", [AccountContract]),
+    #{public_key := AeAccount, private_key := PrivateKey} = init_node_keypair(),
+    ?LOG_DEBUG("ae account ~p", [AeAccount]),
+    %vanillae_man:request(unicode:characters_to_list(Path)).
+    {ok, AACI} = vanillae:prepare_contract("contracts/account.aes"),
+    ?LOG_DEBUG("contract prepare_aaci success ~p", [size(AACI)]),
+    {ok, ContractCall} = vanillae:contract_call(AeAccount, AACI, AccountContract, "get_schedules", []),
+    ?LOG_DEBUG("contract call ~p", [ContractCall]),
+    Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
+    SignedTX = attach_signature_base58(ContractCall, Signature),
+    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTX),
+    ?LOG_DEBUG("contract call success ~p", [ContractCallTxHash]),
+    ok = wait_tx(ContractCallTxHash).
+
+test_contract_create() ->
+    #{public_key := AeAccount, private_key := PrivateKey} = init_node_keypair(),
+    {ok, ContractData} =
+        vanillae:contract_create(AeAccount, "contracts/account.aes", []),
+
+    SignedContract = sign_transaction_base58(PrivateKey, ContractData),
+    Nonce = vanillae:next_nonce(AeAccount),
+    ?LOG_DEBUG("tx_info ~p", [SignedContract]),
+    {ok, TxHashBinary} = eblake2:blake2b(?HASH_BYTES, <<SignedContract/binary,Nonce/integer>>),
+    TxHash = aeser_api_encoder:encode(tx_hash, TxHashBinary),
+    ?LOG_DEBUG("Transaction Hash: ~s~n", [TxHash]),
+    TxHash =
+        case vanillae:post_tx(SignedContract) of
+            {ok, #{"tx_hash" := TxHash}} ->
+                ?LOG_DEBUG("new contract create success ~p", [TxHash]),
+                TxHash;
+            {ok, #{"tx_hash" := OtherHash}} ->
+                ?LOG_DEBUG("tx_hash mismatch ~p", [OtherHash]),
+                OtherHash;
+            Err ->
+                ?LOG_DEBUG("contract exists tx_info ~p", [Err]),
+                TxHash
+        end,
+
+    ok = wait_tx(TxHash).
+    %{ok, Response} =
+%SignedContractCall = svt:sign_contract(ContractCall, PrivateKey),
+
+
 
 test_get_block_height_since() ->
     case get_ae_mdw_node() of
@@ -1271,5 +1255,4 @@ test_verify_message() ->
     #{data := Data, signature := _Sig, address := PubKey, signatureHex := SigHex} =
         Result = exec_aecli(Cmd),
     ?LOG_INFO("Result ~p", [Result]),
-    SigResult = vanillae:verify_signature(SigHex, Data, PubKey),
-    ?LOG_INFO("Sig Result ~p", [SigResult]).
+    _SigResult = vanillae:verify_signature(SigHex, Data, PubKey).

@@ -60,9 +60,8 @@ start_phase(start_vanillae, _StartType, []) ->
     logger:info("Starting vanilla."),
     damage_ae:setup_vanillae_deps(),
     {ok, _} = application:ensure_all_started(vanillae),
-    ok = vanillae:network_id("ae_uat"),
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
-    ok = vanillae:ae_nodes(AeNodes),
+    ok = vanillae:ae_nodes([{Host, Port} || {Host, Port, _} <- AeNodes]),
     logger:info("Started vanilla."),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
