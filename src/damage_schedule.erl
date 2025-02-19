@@ -252,7 +252,7 @@ validate(Gherkin) ->
 list_schedules(Username, AeAccount) ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
     ?LOG_DEBUG("Contract ~p", [Username]),
-    #{decodedResult := Results} =
+    Results =
         damage_ae:contract_call(
             Username,
             AccountContract,
@@ -271,12 +271,10 @@ load_all_schedules() ->
 
 list_all_schedules() ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
-    {ok, AdminWallet} = application:get_env(damage, ae_wallet),
-    AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = damage_ae:node_keypair(),
     case
         damage_ae:contract_call(
-            AdminWallet,
-            AdminPassword,
+            KeyPair,
             AccountContract,
             "contracts/account.aes",
             "get_all_schedules",
