@@ -49,7 +49,8 @@
         contract_call_admin_account/2,
         get_ae_mdw_node/0,
         get_ae_mdw_ws_node/0,
-        node_keypair/0
+        node_keypair/0,
+        account_keypair/1
     ]
 ).
 -export([contract_call/5, contract_deploy/3]).
@@ -1128,6 +1129,17 @@ node_keypair() ->
         {ok, Data} ->
             #{public_key := _Pub, private_key := _Priv} = binary_to_term(Data)
     end.
+account_keypair(AeAccount) ->
+    {ok, KeyStoreContract} = application:get_env(damage, keystore_contract),
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = damage_ae:node_keypair(),
+    damage_ae:contract_call(
+        KeyPair,
+        KeyStoreContract,
+        "contracts/keystore.aes",
+        "get_keypair",
+        []
+    ).
+
 tx_info_convert_result(ResultDef, Result) ->
     ?LOG_DEBUG("Got value ~p", [Result]),
     case Result of
