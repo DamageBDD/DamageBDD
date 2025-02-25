@@ -39,7 +39,6 @@
         add_webhook/3,
         delete_webhook/2,
         add_context/4,
-        deploy_account_contract/0,
         confirm_spend_all/0,
         start_batch_spend_timer/0,
         get_reports/1,
@@ -50,7 +49,11 @@
         get_ae_mdw_node/0,
         get_ae_mdw_ws_node/0,
         node_keypair/0,
-        account_keypair/1
+        account_keypair/1,
+        deploy_account_contract/0,
+        deploy_keystore_contract/0,
+        deploy_identity_contract/0,
+        deploy_knowledge_nft_contract/0
     ]
 ).
 -export([contract_call/5, contract_deploy/3]).
@@ -671,27 +674,12 @@ contract_call(
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, ContractData} =
         vanillae:contract_create(AeAccount, Contract, Args),
-
     SignedContract = sign_transaction_base58(PrivateKey, ContractData),
-    Nonce = vanillae:next_nonce(AeAccount),
-    ?LOG_DEBUG("tx_info ~p", [SignedContract]),
-    {ok, TxHashBinary} = eblake2:blake2b(?HASH_BYTES, <<SignedContract/binary, Nonce/integer>>),
-    TxHash = aeser_api_encoder:encode(tx_hash, TxHashBinary),
-    ?LOG_DEBUG("Transaction Hash: ~s~n", [TxHash]),
-    TxHash =
-        case vanillae:post_tx(SignedContract) of
-            {ok, #{"tx_hash" := TxHash}} ->
-                ?LOG_DEBUG("new contract create success ~p", [TxHash]),
-                TxHash;
-            {ok, #{"tx_hash" := OtherHash}} ->
-                ?LOG_DEBUG("tx_hash mismatch ~p", [OtherHash]),
-                OtherHash;
-            Err ->
-                ?LOG_DEBUG("contract exists tx_info ~p", [Err]),
-                TxHash
-        end,
-
-    ok = wait_tx(TxHash).
+    %{ok, Nonce} = vanillae:next_nonce(AeAccount),
+    %?LOG_DEBUG("tx_info ~p", [SignedContract]),
+    %{ok, TxHashBinary} = eblake2:blake2b(?HASH_BYTES, <<SignedContract/binary, Nonce/integer>>),
+    %TxHash = aeser_api_encoder:encode(tx_hash, TxHashBinary),
+    vanillae:post_tx(SignedContract).
 
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of
@@ -998,13 +986,6 @@ maybe_create_wallet(Email, Password) ->
     identity_server:register_email(Email, AeAccount),
     Funded.
 
-deploy_account_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/account.aes", []),
-    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
-
 %% Main function to find the block height at or near the given timestamp.
 %% It initializes an empty cache (map) and passes it along the recursive calls.
 
@@ -1137,7 +1118,7 @@ account_keypair(AeAccount) ->
         KeyStoreContract,
         "contracts/keystore.aes",
         "get_keypair",
-        []
+        [AeAccount]
     ).
 
 tx_info_convert_result(ResultDef, Result) ->
@@ -1251,3 +1232,29 @@ test_verify_message() ->
         Result = exec_aecli(Cmd),
     ?LOG_INFO("Result ~p", [Result]),
     _SigResult = vanillae:verify_signature(SigHex, Data, PubKey).
+
+deploy_account_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
+        contract_deploy(node_keypair(), "contracts/account.aes", []),
+    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
+
+deploy_keystore_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
+        contract_deploy(node_keypair(), "contracts/keystore.aes", []),
+    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Keystore Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
+deploy_identity_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
+        contract_deploy(node_keypair(), "contracts/identity.aes", []),
+    application:set_env(damage, keystore_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Identity Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
+deploy_knowledge_nft_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
+        contract_deploy(node_keypair(), "contracts/knowledge_nft.aes", []),
+    application:set_env(damage, knowledge_nft_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Knowledge NFT Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
