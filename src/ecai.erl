@@ -22,6 +22,17 @@
     train_high_school_math/0,
     process_math_query/1
 ]).
+-export([
+    hash_to_point/1,
+    batch_hash_to_point/1
+]).
+-nifs([
+    hash_to_point/1,
+    batch_hash_to_point/1
+]).
+-include_lib("kernel/include/logger.hrl").
+
+-on_load(init/0).
 
 %% Elliptic curve parameters (y^2 = x^3 + ax + b over prime field P)
 -define(A, -1).
@@ -32,7 +43,13 @@
 start() ->
     io:format("Elliptical AI initialized. Ready for computation.~n").
 
+init() ->
+    PrivDir = code:priv_dir(damage),
+    NifPath = filename:join([PrivDir, "ecai"]),
+    ok = erlang:load_nif(NifPath, 0).
 %% Generate a valid point on the elliptic curve
+hash_to_point(_Arg) -> erlang:nif_error(nif_library_not_loaded).
+batch_hash_to_point(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 
 %% Fallback to a known valid point
 generate_point(undefined) ->
@@ -119,7 +136,7 @@ train_math() ->
 
 %% Process a basic math query
 process_math_query(Query) ->
-    case re:run(Query, "(\\d+)\\s*([+\-*/])\\s*(\\d+)", [{capture, all_but_first, list}]) of
+    case re:run(Query, "(\\d+)\\s*([+\\-*/])\\s*(\\d+)", [{capture, all_but_first, list}]) of
         {match, [A, Op, B]} ->
             AInt = list_to_integer(A),
             BInt = list_to_integer(B),
