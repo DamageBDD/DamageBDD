@@ -12,6 +12,7 @@ typedef struct {
     mpz_t x, y;
 } ECPoint;
 
+// Hash input data and map it onto an elliptic curve point
 static ERL_NIF_TERM hash_to_point_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 1) {
         return enif_make_badarg(env);
@@ -25,15 +26,19 @@ static ERL_NIF_TERM hash_to_point_nif(ErlNifEnv* env, int argc, const ERL_NIF_TE
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256((unsigned char *)knowledge, strlen(knowledge), hash);
 
-    mpz_t x;
+    mpz_t x, p;
     mpz_init(x);
+    mpz_init(p);
+    mpz_set_str(p, P_STR, 16);  // Convert P_STR to an mpz_t integer
+
     mpz_import(x, SHA256_DIGEST_LENGTH, 1, 1, 1, 0, hash);
-    mpz_mod(x, x, P_STR);
+    mpz_mod(x, x, p);  // Now using the correct mpz_t variable
 
     char x_str[65];
     gmp_sprintf(x_str, "%Zx", x);
 
     mpz_clear(x);
+    mpz_clear(p);
 
     return enif_make_string(env, x_str, ERL_NIF_LATIN1);
 }
