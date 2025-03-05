@@ -1,9 +1,19 @@
 -module(ecai_chat).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
+-include_lib("damage.hrl").
+
 -behaviour(gen_server).
 
 %% API
 -export([
-    start_link/0,
+    start_link/1,
     encode_knowledge/2,
     query_subfield/2,
     get_all_mappings/0,
@@ -15,15 +25,19 @@
 ]).
 
 %% GenServer Callbacks
--export([init/1, handle_call/3, handle_cast/2]).
-
-
--define(DEFAULT_TIMEOUT, 5000).
-
+-export(
+    [
+        init/1,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        terminate/2,
+        code_change/3
+    ]
+).
 
 %% Start the GenServer
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, #{}, []).
+start_link([]) -> gen_server:start_link(?MODULE, [], []).
 
 %% Initialize state
 init([]) ->
@@ -68,10 +82,9 @@ store_message(
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(
+            gen_server:cast(
                 Worker,
-                {store_message, {SessionID, UserID, UserMessage, AIReply}},
-                ?DEFAULT_TIMEOUT
+                {store_message, SessionID, UserID, UserMessage, AIReply}
             )
         end
     ).
@@ -142,7 +155,7 @@ handle_call({query_subfield, Key, Field}, _From, State) ->
 handle_call(get_all_mappings, _From, State) ->
     {reply, {ok, State}, State};
 %% Retrieve an AI reply from the conversation context
-handle_call({get_reply, SessionID, UserMessage}, _From, State) ->
+handle_call({get_reply, {SessionID, UserMessage}}, _From, State) ->
     case maps:find(SessionID, State) of
         {ok, Conversation} ->
             EncodedUser = ecai:hash_to_point(UserMessage),
@@ -172,6 +185,7 @@ handle_cast({store_message, SessionID, UserID, UserMessage, AIReply}, State) ->
     Timestamp = erlang:system_time(millisecond),
     EncodedUser = ecai:hash_to_point(UserMessage),
     EncodedReply = ecai:hash_to_point(AIReply),
+    ?LOG_DEBUG("encoded message ~p", [EncodedReply]),
     UpdatedSession =
         case maps:find(SessionID, State) of
             {ok, Conversation} ->
@@ -180,4 +194,15 @@ handle_cast({store_message, SessionID, UserID, UserMessage, AIReply}, State) ->
                 [{UserID, Timestamp, EncodedUser, EncodedReply}]
         end,
     NewState = maps:put(SessionID, UpdatedSession, State),
+    ?LOG_DEBUG("stored message ~p", [NewState]),
     {noreply, NewState}.
+
+handle_info(Info, State) ->
+    ?LOG_DEBUG("ecai_chat handle_info ~p", [Info]),
+    {noreply, State}.
+
+terminate(Reason, _State) ->
+    logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
