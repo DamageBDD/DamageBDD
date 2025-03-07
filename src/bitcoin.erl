@@ -43,7 +43,7 @@ bitcoin_req(Method, Params, Path) ->
             method => Method,
             params => Params
         },
-    Password = damage_utils:pass_get(bitcoin_rpc_pass_path),
+    Password = secrets:retrieve_decrypt(bitcoin_rpc_pass),
     case os:getenv("BTC_PASSWORD") of
         false -> exit(btc_password_env_not_set);
         Other -> Other

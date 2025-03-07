@@ -51,7 +51,7 @@ init([]) ->
     {ok, CaCertFile} = application:get_env(damage, cln_cacertfile),
     {ok, CertFile} = application:get_env(damage, cln_certfile),
     {ok, KeyFile} = application:get_env(damage, cln_keyfile),
-    Rune = damage_utils:pass_get(cln_rune_pass_path),
+    Rune = secrets:retrieve_decrypt(cln_rune_pass),
     RuneBin = list_to_binary(Rune),
     TLSOptions =
         [
