@@ -1,0 +1,100 @@
+contract ECAI_Knowledge =
+
+  record knowledge_entry =
+    { full_x : string,    // Full Secp256k1 X mapping
+      full_y : string,    // Full Secp256k1 Y mapping
+      subfields : map(string, string),  // Partial subfield mappings
+      ipfs_hash : string,  // IPFS storage link
+      version_history : list(string),   // List of previous knowledge versions
+      reputation_score : int }   // AI Knowledge Reputation Score
+
+  record query_entry =
+    { query_x : string,
+      query_y : string,
+      stored_knowledge : string }
+
+  record payment_entry =
+    { user : address,
+      amount : int }
+
+  stateful entrypoint init() =
+    put({ 
+      knowledge_store = {}, 
+      query_store = {}, 
+      payment_store = {} 
+    })
+
+  /* Store a knowledge entry with subfield indexing and version tracking */
+  stateful entrypoint store_knowledge(
+      full_x: string, 
+      full_y: string, 
+      subfields: map(string, string), 
+      ipfs_hash: string) =
+    
+    let prev_versions = case Map.lookup((full_x, full_y), state.knowledge_store) of
+        None => [];
+        Some(k) => k.version_history
+    end
+
+    let new_entry = {
+      full_x = full_x,
+      full_y = full_y,
+      subfields = subfields,
+      ipfs_hash = ipfs_hash,
+      version_history = prev_versions ++ [ipfs_hash],
+      reputation_score = 0
+    }
+
+    put(state{knowledge_store[(full_x, full_y)] = new_entry})
+
+  /* Retrieve knowledge based on elliptic curve mapping */
+  entrypoint get_knowledge(full_x: string, full_y: string) : option(knowledge_entry) =
+    Map.lookup((full_x, full_y), state.knowledge_store)
+
+  /* Retrieve the previous versions of a knowledge entry */
+  entrypoint get_knowledge_history(full_x: string, full_y: string) : list(string) =
+    switch(Map.lookup((full_x, full_y), state.knowledge_store))
+      None => [];
+      Some(k) => k.version_history
+
+  /* Search for the best-matching subfield */
+  entrypoint scan_subfields(subquery: string) : list(knowledge_entry) =
+    List.filter((entry) =>
+      Map.member(subquery, entry.subfields), Map.values(state.knowledge_store))
+
+  /* Store a query as an elliptic curve point (no hashing needed) */
+  stateful entrypoint store_query(query_x: string, query_y: string, stored_knowledge: string) =
+    put(state{query_store[(query_x, query_y)] = { query_x = query_x, query_y = query_y, stored_knowledge = stored_knowledge }})
+
+  /* Retrieve stored queries */
+  entrypoint get_query(query_x: string, query_y: string) : option(query_entry) =
+    Map.lookup((query_x, query_y), state.query_store)
+
+  /* Add reputation to a knowledge entry */
+  stateful entrypoint upvote_knowledge(full_x: string, full_y: string) =
+    let updated_entry = switch(Map.lookup((full_x, full_y), state.knowledge_store))
+      None => abort("Knowledge not found");
+      Some(k) => {k with reputation_score = k.reputation_score + 1}
+    
+    put(state{knowledge_store[(full_x, full_y)] = updated_entry})
+
+  /* Pay for AI knowledge retrieval */
+  stateful entrypoint pay_for_query(user: address, amount: int) =
+    let payment = {user = user, amount = amount}
+    put(state{payment_store[user] = payment})
+
+  /* Get payment history */
+  entrypoint get_payment(user: address) : option(payment_entry) =
+    Map.lookup(user, state.payment_store)
+
+/* Compute Euclidean Distance between elliptic curve points */
+  function curve_distance(x1: string, y1: string, x2: string, y2: string) : int =
+    let dx = abs(Int.from_str(x1) - Int.from_str(x2))
+    let dy = abs(Int.from_str(y1) - Int.from_str(y2))
+    sqrt((dx * dx) + (dy * dy))
+
+  /* Find closest matching curve-mapped knowledge */
+  entrypoint scan_curve_proximity(query_x: string, query_y: string, max_distance: int) : list(knowledge_entry) =
+    List.filter((entry) =>
+      curve_distance(query_x, query_y, entry.full_x, entry.full_y) <= max_distance,
+      Map.values(state.knowledge_store))
