@@ -13,19 +13,20 @@
     retrieve_secret/1,
     encrypt_secret/2,
     decrypt_secret/2,
+    encrypt_store/2,
+    retrieve_decrypt/1,
+    import/0,
     test/0
 ]).
 
-%% Initialize SQLite database
+-define(DETS_FILE, "damage.dets").
+-define(DETS_ARGS, [{auto_save, 5000}]).
+%% Initialize dets database
 init_db() ->
-    {ok, Conn} = sqlite3:open("secrets.db"),
-    sqlite3:exec(
-        Conn,
-        "CREATE TABLE IF NOT EXISTS secrets (id TEXT PRIMARY KEY, iv BLOB, cipher_text BLOB, tag BLOB)"
-    ),
-    sqlite3:close(Conn),
     ok.
 
+%%% --- AES-GCM Encryption & Decryption ---
+% https://medium.com/@brucifi/how-to-encrypt-with-aes-256-gcm-with-erlang-2a2aec13598d
 %% Implement HKDF for AES-256 Key Derivation
 hkdf(Salt, InputKeyMaterial, Info, Length) ->
     %% Extract step
@@ -70,42 +71,55 @@ decrypt_secret({IV, CipherText, Tag}, PrivateKey) ->
     %crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, CipherText, <<>>, 16, true).
     ?LOG_DEBUG("decrypt ~p", [CipherText]),
 
-    crypto:crypto_one_time_aead(
-        aes_256_gcm,
-        AESKey,
-        IV,
-        CipherText,
-        AAD,
-        Tag,
-        false
+    binary_to_list(
+        crypto:crypto_one_time_aead(
+            aes_256_gcm,
+            AESKey,
+            IV,
+            CipherText,
+            AAD,
+            Tag,
+            false
+        )
     ).
 
 %% Store encrypted secret in SQLite
 store_secret(Name, {IV, CipherText, Tag}) ->
-    {ok, Conn} = sqlite3:open("secrets.db"),
-    Stmt = "INSERT OR REPLACE INTO secrets (id, iv, cipher_text, tag) VALUES (?1, ?2, ?3, ?4)",
-    sqlite3:bind(Conn, Stmt, [Name, IV, CipherText, Tag]),
-    sqlite3:step(Conn),
-    sqlite3:close(Conn),
-    ok.
+    {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
+    dets:insert(?DETS_FILE, {Name, {IV, CipherText, Tag}}).
 
 %% Retrieve encrypted secret from SQLite
 retrieve_secret(Name) ->
-    {ok, Conn} = sqlite3:open("secrets.db"),
-    Stmt = "SELECT iv, cipher_text, tag FROM secrets WHERE id = ?1",
-    case sqlite3:fetch(Conn, Stmt, [Name]) of
-        {ok, [[IV, CipherText, Tag]]} ->
-            sqlite3:close(Conn),
-            {ok, {IV, CipherText, Tag}};
-        _ ->
-            sqlite3:close(Conn),
-            {error, not_found}
+    dets:open_file(?DETS_FILE, ?DETS_ARGS),
+    dets:lookup(?DETS_FILE, Name).
+encrypt_store({Name, Secret}) ->
+    encrypt_store(Name, Secret).
+encrypt_store(Name, Secret) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = damage_ae:node_keypair(),
+    store_secret(Name, encrypt_secret(Secret, PrivateKey)).
+retrieve_decrypt(Name) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = damage_ae:node_keypair(),
+    [{Name, {IV, CipherText, Tag}}] = retrieve_secret(Name),
+    decrypt_secret({IV, CipherText, Tag}, PrivateKey).
+
+import() ->
+    case file:consult("damage.plain") of
+        {ok, Terms} ->
+            ?LOG_DEBUG("Got damage.plain ~p", [Terms]),
+            lists:map(fun encrypt_store/1, Terms);
+        {error, enoent} ->
+            ?LOG_ERROR("no damage.plain found ", []);
+        Error ->
+            ?LOG_ERROR("no damage.plain found ~p", [Error])
     end.
 
 test() ->
     #{public_key := AeAccount, private_key := PrivateKey} = damage_ae:node_keypair(),
     ?LOG_DEBUG("public_key ~p, private_key ~p", [AeAccount, PrivateKey]),
-    Secret = <<"Secret something something">>,
+    Secret = "Secret something something",
     {IV, CipherText, Tag} =
         encrypt_secret(Secret, PrivateKey),
-    Secret = decrypt_secret({IV, CipherText, Tag}, PrivateKey).
+    Secret = decrypt_secret({IV, CipherText, Tag}, PrivateKey),
+    StoredSecret = "store secre",
+    encrypt_store(test, StoredSecret),
+    StoredSecret = retrieve_decrypt(test).

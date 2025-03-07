@@ -25,15 +25,12 @@
         binary_to_atom_keys/1,
         get_concurrency_level/1,
         get_ip/1,
-        test_encrypt_decrypt/0,
         test_send_email/0,
         convert_context/1,
         idhash_keys/1,
-        safe_json/1,
-        pass_get/1
+        safe_json/1
     ]
 ).
--export([encrypt/2, encrypt/1, decrypt/2, decrypt/1]).
 -export([max_by/2]).
 -export([normalize_email/1, denormalize_email/1]).
 
@@ -167,7 +164,7 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
     {ok, SmtpHostname} = application:get_env(damage, smtp_hostname),
     {ok, SmtpPort} = application:get_env(damage, smtp_port),
     {ok, {FromName, From}} = application:get_env(damage, smtp_from),
-    SmtpPassword = damage_utils:pass_get(smtp_pass_path),
+    SmtpPassword = secrets:retrieve_decrypt(smtp_pass),
     %Body1 =
     %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
     %Body0 =
@@ -268,44 +265,6 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
         ]
     ).
 
-%%% --- AES-GCM Encryption & Decryption ---
-
-% https://medium.com/@brucifi/how-to-encrypt-with-aes-256-gcm-with-erlang-2a2aec13598d
-encrypt(PlainText) when is_list(PlainText) ->
-    encrypt(list_to_binary(PlainText));
-encrypt(PlainText) when is_binary(PlainText) ->
-    KycKey = damage_utils:pass_get(kyc_secret_pass_path),
-    encrypt(PlainText, KycKey).
-
-encrypt(Data, Key) when is_binary(Data), is_list(Key) ->
-    encrypt(Data, list_to_binary(Key));
-encrypt(Data, Key) when is_binary(Data), is_binary(Key) ->
-    <<Key0:32/binary, Nonce:16/binary>> = base64:decode(Key),
-    {CipherText, Tag} =
-        crypto:crypto_one_time_aead(aes_256_gcm, Key0, Nonce, Data, <<>>, true),
-    <<Tag/binary, CipherText/binary>>.
-
-%% Decrypt a information string
-
-decrypt(Encrypted) when is_binary(Encrypted) ->
-    KycKey = damage_utils:pass_get(kyc_secret_pass_path),
-    decrypt(Encrypted, list_to_binary(KycKey)).
-
-decrypt(Encrypted, Key) when is_binary(Encrypted), is_binary(Key) ->
-    EncryptedData = Encrypted,
-    <<Key0:32/binary, Nonce:16/binary>> = base64:decode(Key),
-    AAD = <<"">>,
-    <<Tag:16/binary, CipherText/binary>> = EncryptedData,
-    crypto:crypto_one_time_aead(
-        aes_256_gcm,
-        Key0,
-        Nonce,
-        CipherText,
-        AAD,
-        Tag,
-        false
-    ).
-
 get_concurrency_level(<<"sk_baby">>) -> 1;
 get_concurrency_level(<<"sk_easy">>) -> 10;
 get_concurrency_level(<<"sk_medium">>) -> 100;
@@ -404,17 +363,6 @@ reverse_replace_char(Char) ->
             Char
     end.
 
-% or handle empty list case as you prefer
-test_encrypt_decrypt() ->
-    Key = crypto:strong_rand_bytes(32),
-    Nonce = crypto:strong_rand_bytes(16),
-    KycKey0 = <<Key/binary, Nonce/binary>>,
-    KycKey = base64:encode(KycKey0),
-    ?LOG_INFO("Key ~p", [KycKey]),
-    KYCInfo = <<"Sensitive KYC Information">>,
-    CipherText = encrypt(KYCInfo, KycKey),
-    KYCInfo = decrypt(CipherText, KycKey).
-
 test_send_email() ->
     ToEmail = {<<"DamageBdd Test">>, <<"test@damagebdd.com">>},
     Context =
@@ -433,13 +381,6 @@ test_send_email() ->
         TextBody,
         HtmlBody
     ).
-
-pass_get(AppEnvKey) when is_atom(AppEnvKey) ->
-    {ok, Path} = application:get_env(damage, AppEnvKey),
-    pass_get(Path);
-pass_get(Path) ->
-    {ok, [{stdout, [Secret]}]} = exec:run("pass  " ++ Path, [sync, stdout]),
-    string:strip(binary_to_list(Secret), both, $\n).
 
 %test_simple_mail() ->
 %  {ok, Socket} = ssl:connect("smtp.sendgrid.net", 465, [{active, false}], 1000),

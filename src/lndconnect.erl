@@ -44,7 +44,7 @@ init([]) ->
     {ok, Path} = application:get_env(damage, lnd_wspath),
     {ok, CertFile} = application:get_env(damage, lnd_certfile),
     {ok, KeyFile} = application:get_env(damage, lnd_keyfile),
-    Macaroon = damage_utils:pass_get(lnd_macaroon_pass_path),
+    Macaroon = secrets:retrieve_decrypt(lnd_macaroon_pass),
     State =
         #state{
             lnd_host = Host,

@@ -578,7 +578,7 @@ notify_user(Username, Message) ->
     ?LOG_DEBUG("NotifyUser ~p, Message: ~p", [Username, Message]).
 
 get_email(AeAccount) ->
-    {ok, #{email := Email} = _KycData} = damage_riak:get(?USER_BUCKET, AeAccount),
+    {ok, #{email := Email} = _KycData} = damage_riak:get(?AEACCOUNT_BUCKET, AeAccount),
     Email.
 
 get_ae_account(admin) ->

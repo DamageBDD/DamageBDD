@@ -78,7 +78,7 @@ get_posts_since(Npub, Since) ->
 
 init([]) ->
     {ok, Host} = application:get_env(damage, nostr_relay),
-    Nsec = damage_utils:pass_get(nostr_nsec_pass_path),
+    Nsec = secrets:retrieve_decrypt(nostr_nsec_pass),
     PrivateKey = list_to_binary(decode_nsec(Nsec)),
     {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
     {ok, ConnPid} =
@@ -467,7 +467,7 @@ test_post() ->
     {upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
     %% Post a note
 
-    Nsec = damage_utils:pass_get(nostr_nsec_pass_path),
+    Nsec = secrets:retrieve_decrypt(nostr_nsec_pass),
     PostEvent = sign_note(Nsec, <<"Hello from Erlang!">>),
     ?LOG_DEBUG("sending note ~p", [PostEvent]),
     PostData = jsx:encode([<<"EVENT">>, PostEvent]),

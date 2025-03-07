@@ -57,7 +57,7 @@ open_connection() ->
     {ok, Port} = application:get_env(damage, lnd_port),
     %{ok, CertFile} = application:get_env(damage, lnd_certfile),
     %{ok, KeyFile} = application:get_env(damage, lnd_keyfile),
-    Macaroon = damage_utils:pass_get(lnd_macaroon_pass_path),
+    Macaroon = secrets:retrieve_decrypt(lnd_macaroon_pass),
     %% Start the gun HTTP client
     BaseUrl = "http://" ++ Host ++ ":" ++ integer_to_list(Port),
     Headers = [{<<"Grpc-Metadata-Macaroon">>, Macaroon}],
@@ -369,7 +369,7 @@ test() ->
     Macaroon =
         case os:getenv("MACAROON") of
             false ->
-                case damage_utils:pass_get(lnd_macaroon_pass_path) of
+                case secrets:retrieve_decrypt(lnd_macaroon_pass) of
                     false -> exit(invoice_macaroon_env_not_set);
                     Maca -> Maca
                 end;

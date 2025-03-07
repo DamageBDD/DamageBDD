@@ -45,13 +45,13 @@ start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 init([]) ->
     logger:info("Damage AI ~p starting.~n", [self()]),
     process_flag(trap_exit, true),
-    State = #{api_key => damage_utils:pass_get(openai_api_pass_path)},
+    State = #{api_key => secrets:retrieve_secret(openai_api_pass)},
     {ok, State}.
 
 create_model(Name) ->
     {ok, Host} = application:get_env(damage, openai_bdd_api_host),
     {ok, Port} = application:get_env(damage, openai_bdd_api_port),
-    ApiKey = damage_utils:pass_get(openai_api_pass_path),
+    ApiKey = secrets:retrieve_decrypt(openai_api_pass),
     Messages = [],
     Prompt0 = <<"TEst">>,
     PostData =
