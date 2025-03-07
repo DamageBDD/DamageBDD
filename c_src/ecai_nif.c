@@ -5,13 +5,54 @@
 #include <openssl/sha.h>
 #include "erl_nif.h"
 
-// Define secp256k1 parameters
-const char *P_STR = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F";
+// Define Secp256k1 (Main Knowledge Curve)
+const char *P_SECP256K1 = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F";
+
+
+// Define Curve25519 (Side Curve for Query Storage)
+const char *P_CURVE25519 = "7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED";
+
 
 typedef struct {
     mpz_t x, y;
 } ECPoint;
 
+// Function to encode long query into elliptic curve point
+static ERL_NIF_TERM encode_query_to_curve_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+    if (argc != 1) {
+        return enif_make_badarg(env);
+    }
+
+    char query[512];  // Large enough for complex queries
+    if (!enif_get_string(env, argv[0], query, sizeof(query), ERL_NIF_LATIN1)) {
+        return enif_make_badarg(env);
+    }
+
+    unsigned char hash[SHA512_DIGEST_LENGTH];
+    SHA512((unsigned char *)query, strlen(query), hash);
+
+    mpz_t x, y, p;
+    mpz_init(x);
+    mpz_init(y);
+    mpz_init_set_str(p, P_CURVE25519, 16);
+
+    mpz_import(x, SHA512_DIGEST_LENGTH / 2, 1, 1, 1, 0, hash);
+    mpz_import(y, SHA512_DIGEST_LENGTH / 2, 1, 1, 1, SHA512_DIGEST_LENGTH / 2, hash);
+    
+    mpz_mod(x, x, p);
+    mpz_mod(y, y, p);
+
+    char x_str[65], y_str[65];
+    gmp_sprintf(x_str, "%Zx", x);
+    gmp_sprintf(y_str, "%Zx", y);
+
+    mpz_clear(x);
+    mpz_clear(y);
+    mpz_clear(p);
+
+    return enif_make_tuple2(env, enif_make_string(env, x_str, ERL_NIF_LATIN1),
+                                  enif_make_string(env, y_str, ERL_NIF_LATIN1));
+}
 // Hash input data and map it onto an elliptic curve point
 static ERL_NIF_TERM hash_to_point_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 1) {
@@ -29,7 +70,7 @@ static ERL_NIF_TERM hash_to_point_nif(ErlNifEnv* env, int argc, const ERL_NIF_TE
     mpz_t x, p;
     mpz_init(x);
     mpz_init(p);
-    mpz_set_str(p, P_STR, 16);  // Convert P_STR to an mpz_t integer
+    mpz_set_str(p, P_SECP256K1, 16);  // Convert P_SECP256K1 to an mpz_t integer
 
     mpz_import(x, SHA256_DIGEST_LENGTH, 1, 1, 1, 0, hash);
     mpz_mod(x, x, p);  // Now using the correct mpz_t variable
@@ -66,7 +107,9 @@ static ERL_NIF_TERM batch_hash_to_point_nif(ErlNifEnv* env, int argc, const ERL_
 // Define NIF functions
 static ErlNifFunc nif_funcs[] = {
     {"hash_to_point", 1, hash_to_point_nif},
-    {"batch_hash_to_point", 1, batch_hash_to_point_nif}
+    {"batch_hash_to_point", 1, batch_hash_to_point_nif},
+    {"encode_query_to_curve", 1, encode_query_to_curve_nif}
+
 };
 
 // Load the NIF

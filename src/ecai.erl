@@ -24,11 +24,13 @@
 ]).
 -export([
     hash_to_point/1,
-    batch_hash_to_point/1
+    batch_hash_to_point/1,
+    encode_query_to_curve/1
 ]).
 -nifs([
     hash_to_point/1,
-    batch_hash_to_point/1
+    batch_hash_to_point/1,
+    encode_query_to_curve/1
 ]).
 -include_lib("kernel/include/logger.hrl").
 
@@ -50,6 +52,7 @@ init() ->
 %% Generate a valid point on the elliptic curve
 hash_to_point(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 batch_hash_to_point(_Arg) -> erlang:nif_error(nif_library_not_loaded).
+encode_query_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 
 %% Fallback to a known valid point
 generate_point(undefined) ->
