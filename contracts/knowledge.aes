@@ -21,8 +21,7 @@ contract ECAI_Knowledge =
     put({ 
       knowledge_store = {}, 
       query_store = {}, 
-      payment_store = {} 
-    })
+      payment_store = {}})
 
   /* Store a knowledge entry with subfield indexing and version tracking */
   stateful entrypoint store_knowledge(
