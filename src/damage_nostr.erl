@@ -14,7 +14,7 @@
 %% API
 
 -export([start_link/0, stop/0]).
--export([subscribe/0, getinfo/0, reply_event/4]).
+-export([subscribe/0, getinfo/0, reply_event/4, post_note/1]).
 
 %% gen_server callbacks
 
@@ -29,13 +29,13 @@
         test/0,
         test_nip05/0,
         test_generate_pdf/0,
-        test_simple/0,
-        test_post/0
+        test_simple/0
     ]
 ).
 -export([get_posts_since/2]).
 -export([get_public_keys/1]).
 -export([decode_npub/1]).
+-export([decode_nsec/1]).
 
 %% Define the record to store state
 
@@ -73,6 +73,7 @@ get_posts_since(Npub, Since) ->
         {get_posts_since, Npub, Since}
     ).
 
+post_note(Note) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note}).
 %%% gen_server Callbacks
 %% Initialize the server and open a WebSocket connection
 
@@ -103,6 +104,21 @@ init([]) ->
     }.
 
 %% Handle synchronous calls (stop request)
+
+handle_call({post_note, Content}, _From,
+    #state{conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey} = State
+            ) ->
+
+    Timestamp = erlang:system_time(seconds),
+    Event = construct_event(lower_hex(PublicKey), Content, Timestamp, []),
+    PostEvent = finalize_event(Event, PrivateKey),
+    EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
+    ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
+        gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
+    {ws, {text, Response}} =
+      gun:await(ConnPid, StreamRef),
+    ?LOG_DEBUG("got response ~p", [Response]),
+    {reply, Response, State};
 
 handle_call(stop, _From, State) ->
     ?LOG_INFO("Nostr handle_call stop: ~p ", [State]),
@@ -381,23 +397,6 @@ test_simple() ->
             io:format("~s~n", [Body])
     end.
 
-test() ->
-    {ok, ConnPid} =
-        gun:open(
-            "nos.lol",
-            443,
-            #{transport => tls, tls_opts => [{verify, verify_peer}]}
-        ),
-    %ProtocolString = <<"nostr">>,
-    {ok, _} = gun:await_up(ConnPid),
-    StreamRef = gun:ws_upgrade(ConnPid, "/", []),
-    {upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
-    SubscriptionMessage =
-        jsx:encode([<<"REQ">>, <<"damagebdd">>, #{kinds => [1], limit => 8}]),
-    Frame = {text, SubscriptionMessage},
-    gun:ws_send(ConnPid, StreamRef, Frame),
-    {ws, Frame} = gun:await(ConnPid, StreamRef),
-    gun:close(ConnPid).
 
 decode_nsec(Nsec) ->
     {ok, #{data := Data}} = bech32:decode(Nsec),
@@ -443,40 +442,9 @@ finalize_event(Event, PrivateKey) ->
     Sig = sign_event(PrivateKey, Hash),
     Event#{<<"id">> => lower_hex(Hash), <<"sig">> => Sig}.
 
-sign_note(Nsec, Content) ->
-    sign_note(Nsec, Content, []).
-sign_note(Nsec, Content, Tags) ->
-    PrivateKey = list_to_binary(decode_nsec(Nsec)),
-    {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
-    ?LOG_DEBUG("Privatekey PublicKey ~p ~p", [PrivateKey, PublicKey]),
 
-    Timestamp = erlang:system_time(seconds),
-    Event = construct_event(lower_hex(PublicKey), Content, Timestamp, Tags),
-    finalize_event(Event, PrivateKey).
-
-test_post() ->
-    {ok, ConnPid} =
-        gun:open(
-            "nos.lol",
-            443,
-            #{transport => tls, tls_opts => [{verify, verify_peer}]}
-        ),
-    %ProtocolString = <<"nostr">>,
-    {ok, _} = gun:await_up(ConnPid),
-    StreamRef = gun:ws_upgrade(ConnPid, "/", []),
-    {upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
-    %% Post a note
-
-    Nsec = secrets:retrieve_decrypt(nostr_nsec_pass),
-    PostEvent = sign_note(Nsec, <<"Hello from Erlang!">>),
-    ?LOG_DEBUG("sending note ~p", [PostEvent]),
-    PostData = jsx:encode([<<"EVENT">>, PostEvent]),
-    ?LOG_DEBUG("sending note data ~p", [PostData]),
-    Frame = {text, PostData},
-    gun:ws_send(ConnPid, StreamRef, Frame),
-    {ws, Response} = gun:await(ConnPid, StreamRef),
-    ?LOG_DEBUG("got response ~p", [Response]),
-    gun:close(ConnPid).
+test() ->
+    post_note( <<"Hello from Erlang!">>).
 
 test_nip05() ->
     Npub = "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc",
