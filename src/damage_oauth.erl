@@ -234,7 +234,7 @@ add_user(#{business_name := BusinessName} = Meta) ->
 add_user(#{email := Email} = Meta) when is_atom(Email) ->
     add_user(maps:put(email, atom_to_binary(Email), Meta));
 add_user(#{email := Email} = Meta) when is_binary(Email) ->
-    case catch damage_ae:get_meta(Email) of
+    case catch identity_server:get_account_by_email(Email) of
         notfound ->
             add_confirm_token(damage_utils:binary_to_atom_keys(Meta));
         {badmatch, #{status := <<"fail">>}} ->

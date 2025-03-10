@@ -104,19 +104,6 @@ init([]) ->
                 },
                 #{
                     % mandatory
-                    id => kyc_server,
-                    % mandatory
-                    start => {kyc_server, start_link, []},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => [kyc_server]
-                },
-                #{
-                    % mandatory
                     id => lightning_auth_logic,
                     % mandatory
                     start => {lightning_auth_logic, start_link, []},
@@ -146,6 +133,19 @@ init([]) ->
                     id => chromedriver,
                     % mandatory
                     start => {damage_worker, start_link, [ChromedriverCmd]},
+                    % optional
+                    restart => permanent,
+                    % optional
+                    shutdown => 60,
+                    % optional
+                    type => worker,
+                    modules => []
+                },
+                #{
+                    % mandatory
+                    id => identity_server,
+                    % mandatory
+                    start => {identity_server, start_link, []},
                     % optional
                     restart => permanent,
                     % optional

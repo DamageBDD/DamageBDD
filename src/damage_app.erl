@@ -74,6 +74,7 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(erlexec),
     {ok, _} = application:ensure_all_started(throttle),
     {ok, _} = application:ensure_all_started(gen_smtp),
+    {ok, _} = application:ensure_all_started(gproc),
     {ok, _} = application:ensure_all_started(ssh),
     {ok, _} =
         gen_smtp_server:start(
