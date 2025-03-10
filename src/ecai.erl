@@ -23,14 +23,14 @@
     process_math_query/1
 ]).
 -export([
-    hash_to_point/1,
-    batch_hash_to_point/1,
-    encode_query_to_curve/1
+    hash_to_curve/1,
+    store_knowledge/2,
+    infer_knowledge/1
 ]).
 -nifs([
-    hash_to_point/1,
-    batch_hash_to_point/1,
-    encode_query_to_curve/1
+    hash_to_curve/1,
+    store_knowledge/2,
+    infer_knowledge/1
 ]).
 -include_lib("kernel/include/logger.hrl").
 
@@ -50,10 +50,10 @@ init() ->
     NifPath = filename:join([PrivDir, "ecai"]),
     ok = erlang:load_nif(NifPath, 0).
 %% Generate a valid point on the elliptic curve
-hash_to_point(_Arg) -> erlang:nif_error(nif_library_not_loaded).
-batch_hash_to_point(_Arg) -> erlang:nif_error(nif_library_not_loaded).
-encode_query_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 
+    hash_to_curve(_Arg) ->erlang:nif_error(nif_library_not_loaded).
+    store_knowledge(_Arg, _Arg0) -> erlang:nif_error(nif_library_not_loaded).
+    infer_knowledge(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 %% Fallback to a known valid point
 generate_point(undefined) ->
     {0, 1};
