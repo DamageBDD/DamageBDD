@@ -19,8 +19,6 @@
 -export([delete_account/1]).
 -export([delete_resource/2]).
 -export([notify_user/2]).
--export([get_email/1]).
--export([get_ae_account/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -314,11 +312,14 @@ to_html(Req, #{action := reset_password} = State) ->
 
 -spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
     {integer(), map()}.
-do_post_action(create, Data, _Req, _State) ->
+do_post_action(create, #{email := Email} = Data, Req, State) when is_atom(Email) ->
+    do_post_action(create, maps:put(email, atom_to_binary(Email), Data), Req, State);
+do_post_action(create, #{email := Email} = Data, _Req, _State) ->
     ?LOG_DEBUG("account  ~p", [Data]),
-    case damage_oauth:add_user(Data) of
+    case damage_oauth:add_user(#{email => Email}) of
         {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
-        {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+        {error, Message} -> {400, #{status => <<"failed">>, message => Message}};
+        Error -> {400, #{status => <<"failed">>, message => Error}}
     end;
 do_post_action(invoices, #{amount := Amount}, _Req, _State) when
     Amount > ?MAX_DAMAGE_INVOICE
@@ -576,15 +577,3 @@ delete_account(Email) ->
 
 notify_user(Username, Message) ->
     ?LOG_DEBUG("NotifyUser ~p, Message: ~p", [Username, Message]).
-
-get_email(AeAccount) ->
-    {ok, #{email := Email} = _KycData} = damage_riak:get(?AEACCOUNT_BUCKET, AeAccount),
-    Email.
-
-get_ae_account(admin) ->
-    {ok, AeAdmin} = application:get_env(damage, node_public_key),
-    AeAdmin;
-get_ae_account(Email) ->
-    {ok, #{ae_account := AeAccount} = _KycData} =
-        damage_riak:get(?AEACCOUNT_BUCKET, Email),
-    AeAccount.
