@@ -4,7 +4,7 @@
 -define(CHROMEDRIVER, "http://localhost:9515/").
 
 % Accounts ---
--define(MAX_DAMAGE_INVOICE, 4000).
+-define(MAX_DAMAGE_INVOICE, 5000000).
 -define(INVOICE_BUCKET, {<<"Default">>, <<"Invoices">>}).
 -define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
 -define(AEACCOUNT_BUCKET, {<<"Default">>, <<"AeAccounts">>}).
