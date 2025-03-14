@@ -96,14 +96,6 @@
       {bitcoin_wallet, "damagebdd_test"},
       {ae_nodes, [{"192.168.1.197", 3013}]},
       {ae_wallet, "wallets/damagebdd_test"},
-      {
-        riak,
-        [
-          {"riak0.lan", 8087},
-          {"riak1.lan", 8087},
-          {"riak2.lan", 8087}
-        ]
-      },
       {chromedriver, "http://localhost:9515/"},
       {
         pools,
@@ -111,11 +103,6 @@
           {damage, [{size, 5}, {max_overflow, 10}], []},
           {damage_ai, [{size, 2}, {max_overflow, 5}], []},
           {formatter, [{size, 2}, {max_overflow, 5}], []},
-          {
-            damage_riak,
-            [{size, 2}, {max_overflow, 5}],
-            [{"riak0.lan", 8087}, {"riak0.lan", 8087}]
-          },
           {
             damage_ipfs,
             [{size, 20}, {max_overflow, 50}],
@@ -130,7 +117,6 @@
       }
     ]
   },
-  {riakc, [{allow_listing, true}]},
   {oauth2, [{backend, damage_oauth}, {expiry_time, 604800}]},
   {
     cowboy_swagger,
