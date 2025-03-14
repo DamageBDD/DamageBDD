@@ -28,8 +28,6 @@
         terminate/2,
         code_change/3,
         setup_vanillae_deps/0,
-        get_wallet_path/1,
-        maybe_create_wallet/2,
         maybe_fund_wallet/2,
         maybe_fund_wallet/1,
         transfer_damage_tokens/2,
@@ -45,19 +43,20 @@
         get_domain_token/2,
         add_domain_token/3,
         revoke_domain_token/2,
-        contract_call_admin_account/2,
+        contract_call_node_account/2,
         get_ae_mdw_node/0,
         get_ae_mdw_ws_node/0,
         node_keypair/0,
+        node_balance/0,
         account_keypair/1,
         deploy_account_contract/0,
         deploy_keystore_contract/0,
         deploy_identity_contract/0,
-        deploy_knowledge_nft_contract/0
+        deploy_knowledge_nft_contract/0,
+        wait_tx/1
     ]
 ).
 -export([contract_call/5, contract_deploy/3]).
--export([test_contract_call/0, test_create_wallet/0, test_contract_deploy/0]).
 -export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
 -export([get_schedules/1]).
 -export([delete_account/1]).
@@ -67,6 +66,8 @@
 -export([test_find_block/0]).
 -export([test_verify_message/0]).
 -export([test_get_user_keypair/0]).
+-export([test_contract_deploy/0]).
+-export([test_contract_call/0]).
 -export([get_wallet_proc/1]).
 -export([ae_to_aetto/1]).
 
@@ -494,19 +495,19 @@ handle_call({delete_account, AeAccount}, _From, Cache) ->
     {reply, #{}, maps:delete(AeAccount, Cache)};
 handle_call({revoke_access_token, TokenKey}, _From, Cache) ->
     #{decodedResult := []} =
-        contract_call_admin_account("revoke_auth_token", [TokenKey]),
+        contract_call_node_account("revoke_auth_token", [TokenKey]),
     TokenCache = maps:get(tokens, Cache, #{}),
     {reply, ok, maps:put(tokens, maps:remove(TokenKey, TokenCache), Cache)};
 handle_call({set_access_token, TokenKey, Token}, _From, Cache) ->
     #{decodedResult := []} =
-        contract_call_admin_account("add_auth_token", [TokenKey, Token]),
+        contract_call_node_account("add_auth_token", [TokenKey, Token]),
     TokenCache = maps:get(tokens, Cache, #{}),
     {reply, ok, maps:put(tokens, maps:put(TokenKey, Token, TokenCache), Cache)};
 handle_call({get_access_token, AccessToken}, _From, Cache) ->
     TokenCache = maps:get(tokens, Cache, #{}),
     case catch maps:get(AccessToken, TokenCache, undefined) of
         undefined ->
-            case contract_call_admin_account("get_auth_token", [AccessToken]) of
+            case contract_call_node_account("get_auth_token", [AccessToken]) of
                 #{decodedResult := <<"notfound">>} ->
                     {reply, notfound, Cache};
                 #{decodedResult := EncryptedMetaJson} ->
@@ -617,8 +618,6 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
--define(VALID_PRIVK(K), byte_size(K) =:= 64).
-
 exec_aecli(Cmd) ->
     ?LOG_DEBUG("aecli cmd : ~p", [string:join(Cmd, " ")]),
     AeNodeUrl = get_ae_node_url(),
@@ -646,7 +645,7 @@ contract_call_user_account(AeAccount, Func, Args) ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
     contract_call(AeAccount, AccountContract, "contracts/account.aes", Func, Args).
 
-contract_call_admin_account(Func, Args) ->
+contract_call_node_account(Func, Args) ->
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = node_keypair(),
     {ok, AccountContract} = application:get_env(damage, account_contract),
     contract_call(
@@ -660,26 +659,12 @@ contract_call_admin_account(Func, Args) ->
 contract_call(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractAddress, Contract, Func, Args
 ) ->
-    ?LOG_DEBUG("ae account ~p", [AeAccount]),
     {ok, AACI} = vanillae:prepare_contract(Contract),
-    ?LOG_DEBUG("contract prepare_aaci success ~p", [size(AACI)]),
     {ok, ContractCall} = vanillae:contract_call(AeAccount, AACI, ContractAddress, Func, Args),
-    ?LOG_DEBUG("contract call ~p", [ContractCall]),
     Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
     SignedTX = attach_signature_base58(ContractCall, Signature),
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTX),
-    ?LOG_DEBUG("contract call success ~p", [ContractCallTxHash]),
-    ok = wait_tx(ContractCallTxHash).
-
-contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
-    {ok, ContractData} =
-        vanillae:contract_create(AeAccount, Contract, Args),
-    SignedContract = sign_transaction_base58(PrivateKey, ContractData),
-    %{ok, Nonce} = vanillae:next_nonce(AeAccount),
-    %?LOG_DEBUG("tx_info ~p", [SignedContract]),
-    %{ok, TxHashBinary} = eblake2:blake2b(?HASH_BYTES, <<SignedContract/binary, Nonce/integer>>),
-    %TxHash = aeser_api_encoder:encode(tx_hash, TxHashBinary),
-    vanillae:post_tx(SignedContract).
+    wait_tx(ContractCallTxHash).
 
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of
@@ -849,42 +834,8 @@ read_stream(ConnPid, StreamRef) ->
             Default
     end.
 
-get_wallet_password(Email) ->
-    AEPassword = damage_utils:pass_get(ae_wallet_pass_path),
-    binary_to_list(damage_utils:idhash_keys([Email, AEPassword])).
-
-get_wallet_path(Email) ->
-    WalletName = binary_to_list(damage_utils:idhash_keys([Email])),
-    filename:join(["wallets", "damagebdd_user_wallet_" ++ WalletName]).
-
-create_wallet(WalletName, Password) when is_binary(WalletName) ->
-    create_wallet(binary_to_list(WalletName), Password);
-create_wallet(Email, _Password) ->
-    WalletPath = get_wallet_path(Email),
-    ?LOG_DEBUG("Wallet path. ~p", [WalletPath]),
-    Created =
-        case filelib:is_regular(WalletPath) of
-            true ->
-                ?LOG_DEBUG("Wallet exists not overwriting. ~p", [WalletPath]),
-                existing;
-            _ ->
-                Cmd =
-                    [
-                        ?AECLI_EXEC,
-                        "account",
-                        "create",
-                        "--password",
-                        get_wallet_password(Email),
-                        "--json",
-                        WalletPath
-                    ],
-                Result = exec_aecli(Cmd),
-                ?LOG_INFO("Generateed wallet with pub key ~p", [Result]),
-                created
-        end,
-    {ok, Wallet} = file:read_file(WalletPath),
-    {Created, jsx:decode(Wallet, [{labels, atom}, return_maps])}.
-
+get_ae_balance(AeAccount) when is_binary(AeAccount) ->
+    get_ae_balance(binary_to_list(AeAccount));
 get_ae_balance(AeAccount) ->
     {ok, ConnPid, PathPrefix} = get_ae_node(),
     Path = PathPrefix ++ "v3/accounts/" ++ AeAccount,
@@ -934,7 +885,7 @@ fund_wallet(AeAccount, AeAccount, Amount) when is_binary(AeAccount) ->
     fund_wallet(binary_to_list(AeAccount), AeAccount, Amount);
 fund_wallet(AeAccount, AeAccount, Amount) ->
     {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
-    AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
+    AdminPassword = secrets:retrieve_secret(ae_wallet_pass),
     Cmd =
         [
             ?AECLI_EXEC,
@@ -954,37 +905,28 @@ maybe_fund_wallet(AeAccount) ->
     maybe_fund_wallet(AeAccount, ?AE_USER_WALLET_MINIMUM_BALANCE).
 
 maybe_fund_wallet(AeAccount, Amount) ->
-    UserWalletPath = get_wallet_path(AeAccount),
-    {ok, Wallet} = file:read_file(UserWalletPath),
-    #{public_key := UserAccount} =
-        jsx:decode(Wallet, [{labels, atom}, return_maps]),
+    #{public_key := AeAccount, private_key := _PrivateKey} = _KeyPair = account_keypair(AeAccount),
     AeResult =
-        case get_ae_balance(UserAccount) of
+        case get_ae_balance(AeAccount) of
             #{balance := AeBalance} when AeBalance < ?AE_USER_WALLET_MINIMUM_BALANCE ->
-                {funded, fund_wallet(UserAccount, AeAccount, Amount)};
+                {funded, fund_wallet(AeAccount, AeAccount, Amount)};
             #{reason := <<"Account not found">>} ->
-                {funded, fund_wallet(UserAccount, AeAccount, Amount)};
+                {funded, fund_wallet(AeAccount, AeAccount, Amount)};
             Result ->
                 ?LOG_INFO("Wallet above minimum balance ~p ~p", [AeAccount, Result]),
-                {notfunded, #{public_key => UserAccount}}
+                {notfunded, #{public_key => AeAccount}}
         end,
     DamageTokenResult =
-        case balance(UserAccount) of
+        case balance(AeAccount) of
             Balance when Balance < ?DAMAGE_USER_WALLET_MINIMUM_BALANCE ->
-                {funded, transfer_damage_tokens(UserAccount, Amount)};
+                {funded, transfer_damage_tokens(AeAccount, Amount)};
             #{reason := <<"Account not found">>} ->
-                {funded, fund_wallet(UserAccount, AeAccount, Amount)};
+                {funded, fund_wallet(AeAccount, AeAccount, Amount)};
             Result0 ->
                 ?LOG_INFO("Wallet above minimum balance ~p ~p", [AeAccount, Result0]),
-                {notfunded, #{public_key => UserAccount}}
+                {notfunded, #{public_key => AeAccount}}
         end,
     {AeResult, DamageTokenResult}.
-
-maybe_create_wallet(Email, Password) ->
-    {_, #{publicKey := AeAccount}} = create_wallet(Email, Password),
-    #{publicKey := AeAccount} = Funded = maybe_fund_wallet(AeAccount),
-    identity_server:register_email(Email, AeAccount),
-    Funded.
 
 %% Main function to find the block height at or near the given timestamp.
 %% It initializes an empty cache (map) and passes it along the recursive calls.
@@ -1121,7 +1063,7 @@ account_keypair(AeAccount) ->
         [AeAccount]
     ).
 
-tx_info_convert_result(ResultDef, Result) ->
+tx_info_convert_result(Result) ->
     ?LOG_DEBUG("Got value ~p", [Result]),
     case Result of
         #{
@@ -1137,8 +1079,10 @@ tx_info_convert_result(ResultDef, Result) ->
                 "return_value" := Encoded
             }
         } ->
-            Res = vanillae:decode_bytearray(ResultDef, Encoded),
-            Res;
+            case vanillae:decode_bytearray_fate(Encoded) of
+                {ok, {tuple, Result}} -> Result;
+                Res -> Res
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -1149,9 +1093,10 @@ poll_tx(Fun, Args, Interval, Timeout) ->
 poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     case apply(Fun, Args) of
         {ok, Result} ->
-            tx_info_convert_result(map, Result);
+            ?LOG_DEBUG("result value ~p", [Result]),
+            tx_info_convert_result(Result);
         Result ->
-            ?LOG_DEBUG("error value ~p", [Result]),
+            ?LOG_DEBUG("error value ~p args ~p", [Result, Args]),
             Elapsed = erlang:monotonic_time(millisecond) - StartTime,
             if
                 Elapsed >= Timeout ->
@@ -1163,25 +1108,87 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     end.
 
 wait_tx(ConId) ->
-    poll_tx(fun vanillae:tx_info/1, [ConId], 1000, 15000).
+    poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 25000).
+min_gas_price() ->
+    3000000000.
+min_fee() ->
+    444400000000000.
+contract_create(CreatorID, Path, InitArgs) ->
+    case vanillae:next_nonce(CreatorID) of
+        {ok, Nonce} ->
+            Amount = 0,
+            Gas = 100000,
+            GasPrice = min_gas_price(),
+            Fee = min_fee(),
+            vanillae:contract_create(CreatorID, Nonce,
+                            Amount, Gas, GasPrice, Fee,
+                            Path, InitArgs);
+        Error ->
+            Error
+    end.
+
+contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
+    {ok, ContractData} =
+        contract_create(AeAccount, Contract, Args),
+    ?LOG_DEBUG("Contract Data ~p", [ContractData]),
+    ?LOG_DEBUG("Privkey ~p", [binary_to_list(PrivateKey)]),
+    SignedContract = sign_transaction_base58(PrivateKey, ContractData),
+    ?LOG_DEBUG("Contract Data ~p", [ContractData]),
+    case vanillae:dry_run(SignedContract) of
+        {ok, #{"reason" := Reason}} ->
+            ?LOG_DEBUG("contract call dry run failed ~p", [Reason]),
+            throw(Reason);
+        _ ->
+            {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedContract),
+            ?LOG_DEBUG("contract call success ~p", [ContractCallTxHash]),
+            wait_tx(ContractCallTxHash)
+    end.
+
+deploy_account_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
+        contract_deploy(node_keypair(), "contracts/account.aes", []),
+    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
+
+deploy_keystore_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
+        contract_deploy(node_keypair(), "contracts/keystore.aes", []),
+    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Keystore Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
+deploy_identity_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} = contract_deploy(
+        node_keypair(), "contracts/identity.aes", []
+    ),
+    application:set_env(damage, keystore_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Identity Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
+deploy_knowledge_nft_contract() ->
+    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
+        contract_deploy(node_keypair(), "contracts/knowledge_nft.aes", []),
+    application:set_env(damage, knowledge_nft_contract, binary_to_list(ContractAddress)),
+    ?LOG_INFO("Knowledge NFT Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
+    ContractAddress.
+
+node_balance() ->
+    #{public_key := AeAccount, private_key := _PrivateKey} = node_keypair(),
+    get_ae_balance(AeAccount).
 
 test_get_user_keypair() ->
     AeAccount = <<"">>,
     get_user_keypair(AeAccount).
+
+test_contract_deploy() ->
+    KeyPair = node_keypair(),
+    {ok, #{"tx_hash" := TxHash}} = contract_deploy(KeyPair, "contracts/test.aes", []),
+    wait_tx(TxHash).
 
 test_contract_call() ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = node_keypair(),
     ?LOG_DEBUG("contract account ~p", [AccountContract]),
     contract_call(KeyPair, AccountContract, "contracts/account.aes", "get_schedules", []).
-
-test_contract_deploy() ->
-    KeyPair = #{public_key := _AeAccount, private_key := _PrivateKey} = node_keypair(),
-
-    %KeyPair = get_user_keypair(AeAccount),
-    contract_deploy(KeyPair, "contracts/account.aes", []).
-%{ok, Response} =
-%SignedContractCall = svt:sign_contract(ContractCall, PrivateKey),
 
 test_find_block() ->
     {Today, _Now} = calendar:local_time(),
@@ -1199,11 +1206,6 @@ test_find_block() ->
             ?LOG_ERROR("Failed to find block timestamp ~p", [Error])
     end.
 
-test_create_wallet() ->
-    #{public_key := WalletAddress} =
-        maybe_create_wallet("steven@gmail.com", "testpass"),
-    ?LOG_INFO("Wallet created ~p ", [WalletAddress]).
-
 test_get_block_height_since() ->
     case get_ae_mdw_node() of
         {ok, ConnPid, _PathPrefix} ->
@@ -1215,46 +1217,8 @@ test_get_block_height_since() ->
     end.
 
 test_verify_message() ->
-    AdminPassword = damage_utils:pass_get(ae_wallet_pass_path),
-    {ok, AdminWalletPath} = application:get_env(damage, ae_wallet),
-    Cmd =
-        [
-            ?AECLI_EXEC,
-            "account",
-            "sign-message",
-            "--password",
-            AdminPassword,
-            "--json",
-            AdminWalletPath,
-            "test"
-        ],
-    #{data := Data, signature := _Sig, address := PubKey, signatureHex := SigHex} =
-        Result = exec_aecli(Cmd),
-    ?LOG_INFO("Result ~p", [Result]),
+    #{public_key := PubKey, private_key := PrivateKey} = node_keypair(),
+
+    Data = <<"test">>,
+    SigHex = sign_transaction_base58(PrivateKey, Data),
     _SigResult = vanillae:verify_signature(SigHex, Data, PubKey).
-
-deploy_account_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/account.aes", []),
-    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
-
-deploy_keystore_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/keystore.aes", []),
-    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Keystore Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
-deploy_identity_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/identity.aes", []),
-    application:set_env(damage, keystore_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Identity Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
-deploy_knowledge_nft_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/knowledge_nft.aes", []),
-    application:set_env(damage, knowledge_nft_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Knowledge NFT Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
