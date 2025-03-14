@@ -13,6 +13,7 @@
         terminate/2,
         code_change/3,
         test/0,
+        pin/1,
         add/1,
         get/2,
         cat/1,
@@ -79,6 +80,10 @@ handle_call(
     Resp = ipfs:add(Connection, {data, Data, FileName}, ?DEFAULT_IPFS_TIMEOUT),
     logger:info("added data to ipfs node ~p", [Resp]),
     {reply, Resp, State};
+handle_call({pin, Hashes}, _From, #{connection := Connection} = State) ->
+    Resp = ipfs:pin(Connection, Hashes, ?DEFAULT_IPFS_TIMEOUT),
+    logger:info("added data to ipfs node ~p", [Resp]),
+    {reply, Resp, State};
 handle_call({add, {file, File}}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:add(Connection, {file, File}, ?DEFAULT_IPFS_TIMEOUT),
     logger:info("added data to ipfs node ~p", [Resp]),
@@ -115,6 +120,13 @@ handle_info(_Info, State) -> {noreply, State}.
 terminate(_Reason, _State) -> ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
+pin(Hashes) ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) ->
+            gen_server:call(Worker, {pin, Hashes}, ?DEFAULT_IPFS_TIMEOUT)
+        end
+    ).
 
 add({data, Data, FileName}) ->
     poolboy:transaction(
