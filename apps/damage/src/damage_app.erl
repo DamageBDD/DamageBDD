@@ -39,7 +39,9 @@ get_trails() ->
             damage_ai,
             lnaddress,
             cowboy_swagger_handler,
-            lightning_auth
+            nostr_fileserver,
+            lightning_auth,
+            ecai_api
         ],
     Trails =
         [
@@ -49,6 +51,7 @@ get_trails() ->
             {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},
             {"/steps.yaml", cowboy_static, {priv_file, damage, "static/steps.yaml"}},
             {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}},
+            {"/nostr", nostr_websocket, #{}},
             {"/ws/auth", lightning_auth_ws, #{}}
             | trails:trails(Handlers)
         ],
@@ -61,7 +64,9 @@ start_phase(start_vanillae, _StartType, []) ->
     damage_ae:setup_vanillae_deps(),
     {ok, _} = application:ensure_all_started(vanillae),
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
-    ok = vanillae:ae_nodes([{Host, Port} || {Host, Port, _} <- AeNodes]),
+    Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
+    ok = vanillae:ae_nodes(Nodes),
+    vanillae:network_id("ae_mainnet"),
     logger:info("Started vanilla."),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
