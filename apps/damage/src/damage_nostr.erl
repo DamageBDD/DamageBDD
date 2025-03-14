@@ -14,7 +14,7 @@
 %% API
 
 -export([start_link/0, stop/0]).
--export([subscribe/0, getinfo/0, reply_event/4, post_note/1]).
+-export([subscribe/0, getinfo/0, reply_event/4]).
 
 %% gen_server callbacks
 
@@ -34,8 +34,12 @@
 ).
 -export([get_posts_since/2]).
 -export([get_public_keys/1]).
+-export([get_metadata/1]).
 -export([decode_npub/1]).
 -export([decode_nsec/1]).
+-export([xclip_post/1]).
+-export([post_note/1]).
+-export([post_note/3]).
 
 %% Define the record to store state
 
@@ -66,6 +70,7 @@ stop() ->
 subscribe() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), subscribe).
 
 getinfo() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), getinfo).
+get_metadata(Npub) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {get_metadata, Npub}).
 
 get_posts_since(Npub, Since) ->
     gen_server:call(
@@ -74,12 +79,15 @@ get_posts_since(Npub, Since) ->
     ).
 
 post_note(Note) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note}).
+
+post_note(Note, Tags, ImageURL) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note, Tags, ImageURL}).
 %%% gen_server Callbacks
 %% Initialize the server and open a WebSocket connection
 
 init([]) ->
     {ok, Host} = application:get_env(damage, nostr_relay),
-    Nsec = secrets:retrieve_decrypt(nostr_nsec_pass),
+    Nsec = secrets:retrieve_decrypt(nostr_nsec),
     PrivateKey = list_to_binary(decode_nsec(Nsec)),
     {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
     {ok, ConnPid} =
@@ -105,25 +113,75 @@ init([]) ->
 
 %% Handle synchronous calls (stop request)
 
-handle_call({post_note, Content}, _From,
-    #state{conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey} = State
-            ) ->
+handle_call(
+    {zap_note, OriginalEventId, OriginalAuthorPubKey, Amount},
+    _From,
+    #state{
+        conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey
+    } = State
+) ->
+    Tags = [
+        %["relays", "wss://nostr-pub.wellorder.com", "wss://anotherrelay.example.com"],
+        %["lnurl", "lnurl1dp68gurn8ghj7um5v93kketj9ehx2amn9uh8wetvdskkkmn0wahz7mrww4excup0dajx2mrv92x9xp"],
+        ["amount", integer_to_list(Amount)],
+        %% Tag for event ID being replied to
+        [<<"e">>, OriginalEventId],
+        %% Tag for public key of original author
+        [<<"p">>, OriginalAuthorPubKey]
+    ],
 
     Timestamp = erlang:system_time(seconds),
-    Event = construct_event(lower_hex(PublicKey), Content, Timestamp, []),
+    Event = construct_event(lower_hex(PublicKey), 9734, <<"Zap !">>, Timestamp, Tags),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
     ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
+    ok =
         gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
     {ws, {text, Response}} =
-      gun:await(ConnPid, StreamRef),
+        gun:await(ConnPid, StreamRef),
     ?LOG_DEBUG("got response ~p", [Response]),
     {reply, Response, State};
-
+handle_call(
+    {post_note, Content, Tags, ImageURL},
+    _From,
+    #state{
+        conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey
+    } = State
+) ->
+    Timestamp = erlang:system_time(seconds),
+    Event = construct_note(lower_hex(PublicKey), Content, Timestamp, Tags, ImageURL),
+    PostEvent = finalize_event(Event, PrivateKey),
+    EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
+    ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
+    gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
+    {ws, {text, Response}} =
+        gun:await(ConnPid, StreamRef),
+    ?LOG_DEBUG("got response ~p", [Response]),
+    {reply, Response, State};
 handle_call(stop, _From, State) ->
     ?LOG_INFO("Nostr handle_call stop: ~p ", [State]),
     gun:shutdown(State#state.conn_pid),
     {stop, normal, ok, State};
+handle_call(
+    {get_metadata, Npub},
+    _From,
+    #state{public_key = _PublicKey} = State
+) ->
+    ProfileRequest =
+        jsx:encode([
+            <<"REQ">>,
+            <<"kind">>,
+            #{kinds => [0], <<"authors">> => [lower_hex(Npub)]}
+        ]),
+    ?LOG_INFO("Nostr Sending profile request: ~p ~p", [State, ProfileRequest]),
+    ok =
+        gun:ws_send(
+            State#state.conn_pid,
+            State#state.streamref,
+            {text, ProfileRequest}
+        ),
+    gun:flush(State#state.conn_pid),
+    {reply, ok, State};
 %% Handle asynchronous casts (subscribe request)
 handle_call(
     subscribe,
@@ -178,6 +236,8 @@ handle_info({gun_up, ConnPid, _StreamRef}, State) ->
     {noreply, State};
 handle_info({gun_response, _ConnPid, _, nofin, _, _Headers} = Any, State) ->
     ?LOG_INFO("Nostr gun_response info ~p", [Any]),
+    {noreply, State};
+handle_info(reward, State) ->
     {noreply, State};
 handle_info(heartbeat, State) ->
     %% Send a ping message to check the connection
@@ -253,6 +313,7 @@ handle_event_payload(
                     end
             end;
         none ->
+            reward_mention(Npub),
             ?LOG_INFO("Nostr Received invalid message from: ~s ~p~n", [
                 Npub, Content
             ])
@@ -336,7 +397,7 @@ reply_event(
     ],
 
     Timestamp = erlang:system_time(seconds),
-    Event = construct_event(lower_hex(PublicKey), ReplyContent, Timestamp, Tags),
+    Event = construct_note(lower_hex(PublicKey), ReplyContent, Timestamp, Tags),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
     ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
@@ -397,7 +458,6 @@ test_simple() ->
             io:format("~s~n", [Body])
     end.
 
-
 decode_nsec(Nsec) ->
     {ok, #{data := Data}} = bech32:decode(Nsec),
     {ok, RawPrivateKey} = bech32:convertbits(Data, 5, 8, [{padding, false}]),
@@ -407,16 +467,20 @@ lower_hex(List) when is_list(List) ->
 lower_hex(Binary) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Binary)))).
 
-construct_event(PubKey, Content, Timestamp, Tags) ->
+construct_event(PubKey, Kind, Content, Timestamp, Tags) ->
     #{
         <<"id">> => <<"">>,
         <<"pubkey">> => PubKey,
         <<"created_at">> => Timestamp,
-        <<"kind">> => 1,
+        <<"kind">> => Kind,
         <<"tags">> => Tags,
         <<"content">> => Content,
         <<"sig">> => <<"">>
     }.
+construct_note(PubKey, Content, Timestamp, Tags, ImageURL) ->
+    maps:put(<<"image">>, ImageURL, construct_event(PubKey, 1, Content, Timestamp, Tags)).
+construct_note(PubKey, Content, Timestamp, Tags) ->
+    construct_event(PubKey, 1, Content, Timestamp, Tags).
 serialize_event(Event) ->
     Nip0Evt = [
         0,
@@ -442,9 +506,8 @@ finalize_event(Event, PrivateKey) ->
     Sig = sign_event(PrivateKey, Hash),
     Event#{<<"id">> => lower_hex(Hash), <<"sig">> => Sig}.
 
-
 test() ->
-    post_note( <<"Hello from Erlang!">>).
+    post_note(<<"Hello from Erlang!">>).
 
 test_nip05() ->
     Npub = "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc",
@@ -468,3 +531,81 @@ test_nip05() ->
         ).
 
 test_generate_pdf() -> _DataJson = file:open("test/nostr_pdftest.json").
+xclip_post(AltText) ->
+    {ok, [{stdout, Stdout}]} = exec:run("xclip -o -selection clipboard \n", [stdout, sync]),
+    {ok, [{stdout, ImageFile}]} = exec:run(
+        "rofi -show filebrowser -filebrowser-command 'echo' -modes filebrowser \n", [stdout, sync]
+    ),
+    {ok, Hash} = damage_ipfs:add({file, ImageFile}),
+    ImageURL = "https://damagebdd.com/ipfs/" ++ Hash,
+    ImageURLBin = list_to_binary(ImageURL),
+    Content = unicode:characters_to_binary(string:trim(Stdout)),
+    ContentType = <<"image/webp">>,
+    BlurHash = <<"eVF$^OI:${M{o#*0-nNFxakD-?xVM}WEWB%iNKxvR-oetmo#R-aen$">>,
+    Dimensions = <<"3024x4032">>,
+        ImgHash = lower_hex(file:read_file(ImageFile)),
+    Fallback1 = <<"https://nostrcheck.me/alt1.jpg">>,
+    Fallback2 = <<"https://void.cat/alt1.jpg">>,
+    Tags = [
+        [<<"t">>, <<"ECAI">>],
+        [<<"t">>, <<"Curve Encoding">>],
+        [<<"t">>, <<"Dark Matter">>],
+        [<<"t">>, <<"Astrophysics">>],
+        [
+            <<"imeta">>,
+            <<"url ", ImageURLBin/binary>>,
+            <<"m ", ContentType/binary>>,
+            <<"blurhash" , BlurHash/binary>>,
+            <<"dim ", Dimensions/binary>>,
+            <<"alt ", AltText/binary>>,
+                <<"x ", ImgHash/binary>>,
+            <<"fallback ", Fallback1/binary>>,
+            <<"fallback ", Fallback2/binary>>
+        ]
+    ],
+    post_note(Content, Tags, ImageURL).
+
+reward_mention(Npub) ->
+    AmountSats = 100,
+    case throttle:check(damage_nostr_mention_reward, Npub) of
+        {limit_exceeded, _, _} ->
+            ?LOG_WARNING("Npub ~p exceeded reward limit", [Npub]),
+            {429, <<"throttled">>};
+        _ ->
+            get_ln_invoice(Npub, AmountSats)
+    end.
+get_ln_invoice(Npub, AmountSats) ->
+    case get_lnurl_from_npub(Npub) of
+        {ok, LnUrl} ->
+            fetch_ln_invoice(LnUrl, AmountSats);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+%% Query a relay for the npub's metadata and extract LNURL
+get_lnurl_from_npub(Npub) ->
+    extract_lnurl(get_metadata(Npub)).
+
+%% Extract LNURL from metadata
+extract_lnurl(Content) ->
+    case jsone:decode(Content) of
+        #{<<"lud16">> := LightningAddress} ->
+            {ok, "https://" ++ LightningAddress ++ "/.well-known/lnurlp/"};
+        #{<<"lud06">> := LnUrlEncoded} ->
+            {ok, bech32:decode(LnUrlEncoded)};
+        _ ->
+            {error, "LNURL not found"}
+    end.
+
+%% Fetch a Lightning invoice from LNURL
+fetch_ln_invoice(LnUrl, AmountSats) ->
+    InvoiceRequestUrl = LnUrl ++ "?amount=" ++ integer_to_list(AmountSats * 1000),
+    case httpc:request(get, {InvoiceRequestUrl, []}, [], []) of
+        {ok, {_, _, Body}} ->
+            case jsone:decode(Body) of
+                #{<<"pr">> := Invoice} -> {ok, Invoice};
+                _ -> {error, "Invalid response"}
+            end;
+        Error ->
+            Error
+    end.
