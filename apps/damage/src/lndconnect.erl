@@ -44,53 +44,58 @@ init([]) ->
     {ok, Path} = application:get_env(damage, lnd_wspath),
     {ok, CertFile} = application:get_env(damage, lnd_certfile),
     {ok, KeyFile} = application:get_env(damage, lnd_keyfile),
-    Macaroon = secrets:retrieve_decrypt(lnd_macaroon_pass),
-    State =
-        #state{
-            lnd_host = Host,
-            lnd_port = Port,
-            lnd_wspath = Path,
-            lnd_certfile = CertFile,
-            lnd_keyfile = KeyFile,
-            macaroon = Macaroon
-        },
-    ?LOG_DEBUG("State ~p ", [State]),
-    MacaroonBin = list_to_binary(Macaroon),
-    % https://github.com/lightningnetwork/lnd/blob/master/docs/rest/websockets.md
-    ProtocolString = <<"Grpc-Metadata-Macaroon+", MacaroonBin/binary>>,
-    Options =
-        case Host of
-            "localhost" ->
-                #{};
-            %#{transport => tls, tls_opts => [{verify, none}, {cacertfile, CertFile}]};
-            _ ->
-                #{
-                    transport => tls,
-                    tls_opts => [{verify, verify_peer}, {cacertfile, CertFile}]
+    case secrets:retrieve_decrypt(lnd_macaroon) of
+        {ok, Macaroon} ->
+            State =
+                #state{
+                    lnd_host = Host,
+                    lnd_port = Port,
+                    lnd_wspath = Path,
+                    lnd_certfile = CertFile,
+                    lnd_keyfile = KeyFile,
+                    macaroon = Macaroon
+                },
+            ?LOG_DEBUG("State ~p ", [State]),
+            MacaroonBin = list_to_binary(Macaroon),
+            % https://github.com/lightningnetwork/lnd/blob/master/docs/rest/websockets.md
+            ProtocolString = <<"Grpc-Metadata-Macaroon+", MacaroonBin/binary>>,
+            Options =
+                case Host of
+                    "localhost" ->
+                        #{};
+                    %#{transport => tls, tls_opts => [{verify, none}, {cacertfile, CertFile}]};
+                    _ ->
+                        #{
+                            transport => tls,
+                            tls_opts => [{verify, verify_peer}, {cacertfile, CertFile}]
+                        }
+                end,
+            {ok, ConnPid} = gun:open(Host, Port, Options),
+            gproc:reg_other({n, l, {?MODULE, lnd}}, self()),
+            StreamRef =
+                gun:ws_upgrade(
+                    ConnPid,
+                    Path,
+                    [
+                        {<<"Grpc-Metadata-Macaroon">>, MacaroonBin},
+                        {<<"sec-websocket-protocol">>, ProtocolString}
+                    ]
+                ),
+            %gun:ws_send(ConnPid, StreamRef, {text, "{}"}),
+            ?LOG_DEBUG("lnd websocket upgrade successfull ~p", [ConnPid]),
+            HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+            {
+                ok,
+                #state{
+                    conn_pid = ConnPid,
+                    streamref = StreamRef,
+                    heartbeat_timer = HeartbeatTimer
                 }
-        end,
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    gproc:reg_other({n, l, {?MODULE, lnd}}, self()),
-    StreamRef =
-        gun:ws_upgrade(
-            ConnPid,
-            Path,
-            [
-                {<<"Grpc-Metadata-Macaroon">>, MacaroonBin},
-                {<<"sec-websocket-protocol">>, ProtocolString}
-            ]
-        ),
-    %gun:ws_send(ConnPid, StreamRef, {text, "{}"}),
-    ?LOG_DEBUG("lnd websocket upgrade successfull ~p", [ConnPid]),
-    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-    {
-        ok,
-        #state{
-            conn_pid = ConnPid,
-            streamref = StreamRef,
-            heartbeat_timer = HeartbeatTimer
-        }
-    }.
+            };
+        _ ->
+            ?LOG_WARNING("!!!! LNDconnect Integration disabled, set `lnd_macaroon` secret."),
+            #state{}
+    end.
 
 handle_call(
     {subscribe_invoice, AddIndex, SettleIndex},

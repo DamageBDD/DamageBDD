@@ -51,45 +51,50 @@ init([]) ->
     {ok, CaCertFile} = application:get_env(damage, cln_cacertfile),
     {ok, CertFile} = application:get_env(damage, cln_certfile),
     {ok, KeyFile} = application:get_env(damage, cln_keyfile),
-    Rune = secrets:retrieve_decrypt(cln_rune_pass),
-    RuneBin = list_to_binary(Rune),
-    TLSOptions =
-        [
-            {certfile, CertFile},
-            {keyfile, KeyFile},
-            {cacertfile, CaCertFile},
-            % This ensures the server's certificate is verified
-            {verify, verify_peer},
-            % Ensure compatibility with recent TLS versions
-            {versions, ['tlsv1.2', 'tlsv1.3']},
-            % HTTP2 or HTTP/1.1, depending on your setup
-            {alpn_protocols, ['http/1.1', h2]}
-        ],
-    Options =
-        case Host of
-            "localhost" -> #{};
-            _ -> #{transport => tls, tls_opts => TLSOptions}
-        end,
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    StreamRef = gun:ws_upgrade(ConnPid, Path, [{<<"rune">>, RuneBin}]),
-    %ok = gun:ws_send(ConnPid, StreamRef,  {text,  jsx:encode(#{jsonrpc => <<"2.0">>,  method => <<"getinfo">>, params => []})}),
-    ?LOG_DEBUG("cln websocket upgrade successfull ~p", [ConnPid]),
-    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-    State =
-        #state{
-            cln_host = Host,
-            cln_port = Port,
-            cln_wspath = Path,
-            cln_certfile = CertFile,
-            cln_keyfile = KeyFile,
-            rune = RuneBin,
-            conn_pid = ConnPid,
-            streamref = StreamRef,
-            heartbeat_timer = HeartbeatTimer,
-            options = Options
-        },
-    ?LOG_DEBUG("State ~p ", [State]),
-    {ok, State}.
+    case secrets:retrieve_decrypt(cln_rune) of
+        {ok, Rune} ->
+            RuneBin = list_to_binary(Rune),
+            TLSOptions =
+                [
+                    {certfile, CertFile},
+                    {keyfile, KeyFile},
+                    {cacertfile, CaCertFile},
+                    % This ensures the server's certificate is verified
+                    {verify, verify_peer},
+                    % Ensure compatibility with recent TLS versions
+                    {versions, ['tlsv1.2', 'tlsv1.3']},
+                    % HTTP2 or HTTP/1.1, depending on your setup
+                    {alpn_protocols, ['http/1.1', h2]}
+                ],
+            Options =
+                case Host of
+                    "localhost" -> #{};
+                    _ -> #{transport => tls, tls_opts => TLSOptions}
+                end,
+            {ok, ConnPid} = gun:open(Host, Port, Options),
+            StreamRef = gun:ws_upgrade(ConnPid, Path, [{<<"rune">>, RuneBin}]),
+            %ok = gun:ws_send(ConnPid, StreamRef,  {text,  jsx:encode(#{jsonrpc => <<"2.0">>,  method => <<"getinfo">>, params => []})}),
+            ?LOG_DEBUG("cln websocket upgrade successfull ~p", [ConnPid]),
+            HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+            State =
+                #state{
+                    cln_host = Host,
+                    cln_port = Port,
+                    cln_wspath = Path,
+                    cln_certfile = CertFile,
+                    cln_keyfile = KeyFile,
+                    rune = RuneBin,
+                    conn_pid = ConnPid,
+                    streamref = StreamRef,
+                    heartbeat_timer = HeartbeatTimer,
+                    options = Options
+                },
+            ?LOG_DEBUG("State ~p ", [State]),
+            {ok, State};
+        _Error ->
+            ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret."),
+            {ok, #state{}}
+    end.
 
 handle_call(
     {subscribe_invoice, AddIndex, SettleIndex},

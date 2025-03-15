@@ -38,6 +38,5 @@ handle_check_payment(LnAddress, State) ->
             {reply, {text, jsx:encode(#{error => Reason})}, State}
     end.
 
-
 websocket_info(_Info, State) ->
     {ok, State}.

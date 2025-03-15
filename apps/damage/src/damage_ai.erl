@@ -51,26 +51,31 @@ init([]) ->
 create_model(Name) ->
     {ok, Host} = application:get_env(damage, openai_bdd_api_host),
     {ok, Port} = application:get_env(damage, openai_bdd_api_port),
-    ApiKey = secrets:retrieve_decrypt(openai_api_pass),
-    Messages = [],
-    Prompt0 = <<"TEst">>,
-    PostData =
-        jsx:encode(
-            #{
-                name => Name,
-                messages => Messages ++ [[{role, <<"user">>}, {content, Prompt0}]],
-                temperature => 0.7
-            }
-        ),
-    Headers =
-        [
-            {<<"Authorization">>, list_to_binary("Bearer " ++ ApiKey)},
-            {<<"content-type">>, <<"application/json">>}
-        ],
-    {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
-    StreamRef = gun:post(ConnPid, <<"/api/create">>, Headers, PostData),
-    Resp = read_stream(ConnPid, StreamRef),
-    Resp.
+    case secrets:retrieve_decrypt(openai_api_key) of
+        {ok, ApiKey} ->
+            Messages = [],
+            Prompt0 = <<"TEst">>,
+            PostData =
+                jsx:encode(
+                    #{
+                        name => Name,
+                        messages => Messages ++ [[{role, <<"user">>}, {content, Prompt0}]],
+                        temperature => 0.7
+                    }
+                ),
+            Headers =
+                [
+                    {<<"Authorization">>, list_to_binary("Bearer " ++ ApiKey)},
+                    {<<"content-type">>, <<"application/json">>}
+                ],
+            {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+            StreamRef = gun:post(ConnPid, <<"/api/create">>, Headers, PostData),
+            Resp = read_stream(ConnPid, StreamRef),
+            Resp;
+        _Error ->
+            ?LOG_INFO("!!!! OpenAI Integration disabled, set `openai_api_key` secret."),
+            throw(unconfigured)
+    end.
 
 read_stream(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, 600000) of

@@ -99,8 +99,12 @@ encrypt_store(Name, Secret) ->
     store_secret(Name, encrypt_secret(Secret, PrivateKey)).
 retrieve_decrypt(Name) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = damage_ae:node_keypair(),
-    [{Name, {IV, CipherText, Tag}}] = retrieve_secret(Name),
-    decrypt_secret({IV, CipherText, Tag}, PrivateKey).
+    case retrieve_secret(Name) of
+        [{Name, {IV, CipherText, Tag}}] ->
+            {ok, decrypt_secret({IV, CipherText, Tag}, PrivateKey)};
+        [] ->
+            error
+    end.
 
 import() ->
     case file:consult("damage.plain") of

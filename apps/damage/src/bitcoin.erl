@@ -43,43 +43,44 @@ bitcoin_req(Method, Params, Path) ->
             method => Method,
             params => Params
         },
-    Password = secrets:retrieve_decrypt(bitcoin_rpc_pass),
-    case os:getenv("BTC_PASSWORD") of
-        false -> exit(btc_password_env_not_set);
-        Other -> Other
-    end,
-    ?debugFmt("POST data: ~p", [Data]),
-    StreamRef =
-        gun:post(
-            ConnPid,
-            Path,
-            [
-                {<<"content-type">>, <<"text/plain">>},
-                {
-                    <<"Authorization">>,
+    case secrets:retrieve_decrypt(bitcoin_rpc_password) of
+        {ok, Password} ->
+            ?debugFmt("POST data: ~p", [Data]),
+            StreamRef =
+                gun:post(
+                    ConnPid,
+                    Path,
                     [
-                        <<"Basic ">>,
-                        base64:encode(iolist_to_binary([BtcRpcUser, $:, Password]))
-                    ]
-                }
-            ],
-            jsx:encode(Data),
-            #{}
-        ),
-    case gun:await(ConnPid, StreamRef) of
-        {response, fin, Status, Headers0} ->
-            ?LOG_ERROR("POST Response: ~p ~p", [Status, Headers0]);
-        {response, nofin, Status, Headers0} ->
-            {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            ?debugFmt("POST Response: ~p ~p ~p", [Status, Headers0, Body]),
-            case jsx:decode(Body, [{labels, atom}, return_maps]) of
-                #{result := null, error := Error} ->
-                    ?debugFmt("bitcoin req error ~p", [Error]),
-                    {error, Error};
-                #{result := Account} ->
-                    ?debugFmt("bitcoin wallet creation ~p", [Account]),
-                    {ok, Account}
-            end
+                        {<<"content-type">>, <<"text/plain">>},
+                        {
+                            <<"Authorization">>,
+                            [
+                                <<"Basic ">>,
+                                base64:encode(iolist_to_binary([BtcRpcUser, $:, Password]))
+                            ]
+                        }
+                    ],
+                    jsx:encode(Data),
+                    #{}
+                ),
+            case gun:await(ConnPid, StreamRef) of
+                {response, fin, Status, Headers0} ->
+                    ?LOG_ERROR("POST Response: ~p ~p", [Status, Headers0]);
+                {response, nofin, Status, Headers0} ->
+                    {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                    ?debugFmt("POST Response: ~p ~p ~p", [Status, Headers0, Body]),
+                    case jsx:decode(Body, [{labels, atom}, return_maps]) of
+                        #{result := null, error := Error} ->
+                            ?debugFmt("bitcoin req error ~p", [Error]),
+                            {error, Error};
+                        #{result := Account} ->
+                            ?debugFmt("bitcoin wallet creation ~p", [Account]),
+                            {ok, Account}
+                    end
+            end;
+        _Error ->
+            ?LOG_INFO("!!!! Bitcoin Integration disabled, set `bitcoin_rpc_password` secret."),
+            {ok, #{}}
     end.
 
 validateaddress(BtcAddress) -> bitcoin_req(<<"validateaddress">>, [BtcAddress]).

@@ -15,7 +15,6 @@
 %% gen_server Callbacks
 -export([init/1, handle_call/3, handle_cast/2]).
 
-
 %%% --- Lightning API Configuration ---
 get_ln_node() ->
     % Replace with real LND/CLN node URL
@@ -96,7 +95,9 @@ hex_to_binary(Hex) ->
 %%% --- Handle Calls ---
 register_auth_invoice(LnAddress, Invoice) ->
     ?LOG_DEBUG("Address ~p Invoice ~p", [LnAddress, Invoice]),
-    {ok, Result} = damage_ae:contract_call("lnauth.aes", "register_auth_invoice", [LnAddress,Invoice]),
+    {ok, Result} = damage_ae:contract_call("lnauth.aes", "register_auth_invoice", [
+        LnAddress, Invoice
+    ]),
     {ok, Result}.
 fetch_auth_invoice(LnAddress) ->
     ?LOG_DEBUG("Address ~p ", [LnAddress]),
@@ -106,17 +107,18 @@ fetch_auth_invoice(LnAddress) ->
 store_auth_challenge(LnAddress) ->
     Challenge = base64:encode(crypto:strong_rand_bytes(32)),
     Timestamp = calendar:system_time(seconds),
-    ok = damage_ae:contract_call("lnauth.aes", "store_auth_challenge", [LnAddress, Challenge, Timestamp]),
+    ok = damage_ae:contract_call("lnauth.aes", "store_auth_challenge", [
+        LnAddress, Challenge, Timestamp
+    ]),
     {ok, Challenge}.
 fetch_auth_challenge(LnAddress) ->
     ?LOG_DEBUG("Address ~p ", [LnAddress]),
     %TODO
     {ok, Result} = damage_ae:contract_call("lnauth.aes", "fetch_auth_challenge", [LnAddress]),
     {ok, Result}.
-    
-    
+
 %% Generate a Lightning Invoice for Lightning Address Authentication
-handle_call({generate_ln_invoice, LnAddress}, _From,  State) ->
+handle_call({generate_ln_invoice, LnAddress}, _From, State) ->
     % 1000 sats for authentication
     Amount = 1000,
     PaymentRequestURL = "https://" ++ binary_to_list(LnAddress) ++ "/.well-known/lnurlp",
@@ -163,11 +165,11 @@ handle_call({verify_ln_payment, LnAddress}, _From, State) ->
     end;
 %% Generate LNURL-Auth Challenge
 handle_call({generate_lnurl_auth_challenge, LnAddress}, _From, State) ->
-
-    {reply, 
+    {reply,
         store_auth_challenge(
             LnAddress
-        ), State};
+        ),
+        State};
 handle_call({verify_lnurl_auth, LnAddress, Signature}, _From, State) ->
     case fetch_auth_challenge(LnAddress) of
         {ok, {Challenge, Timestamp}} ->

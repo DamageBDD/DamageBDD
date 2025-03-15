@@ -57,28 +57,33 @@ open_connection() ->
     {ok, Port} = application:get_env(damage, lnd_port),
     %{ok, CertFile} = application:get_env(damage, lnd_certfile),
     %{ok, KeyFile} = application:get_env(damage, lnd_keyfile),
-    Macaroon = secrets:retrieve_decrypt(lnd_macaroon_pass),
-    %% Start the gun HTTP client
-    BaseUrl = "http://" ++ Host ++ ":" ++ integer_to_list(Port),
-    Headers = [{<<"Grpc-Metadata-Macaroon">>, Macaroon}],
-    Options =
-        #{
-            %transport => tls,
-            %tls_opts
-            %=>
-            %[
-            %  {verify, true},
-            %  {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
-            %]
-        },
-    #state{
-        host = Host,
-        port = Port,
-        base_url = BaseUrl,
-        headers = Headers,
-        options = Options,
-        macaroon = Macaroon
-    }.
+    case secrets:retrieve_decrypt(lnd_macaroon) of
+        {ok, Macaroon} ->
+            %% Start the gun HTTP client
+            BaseUrl = "http://" ++ Host ++ ":" ++ integer_to_list(Port),
+            Headers = [{<<"Grpc-Metadata-Macaroon">>, Macaroon}],
+            Options =
+                #{
+                    %transport => tls,
+                    %tls_opts
+                    %=>
+                    %[
+                    %  {verify, true},
+                    %  {cacertfile, "/etc/ssl/certs/ca-certificates.crt"}
+                    %]
+                },
+            #state{
+                host = Host,
+                port = Port,
+                base_url = BaseUrl,
+                headers = Headers,
+                options = Options,
+                macaroon = Macaroon
+            };
+        _ ->
+            ?LOG_INFO("!!!! LND Integration disabled, set `lnd_macaroon` secret."),
+            #state{}
+    end.
 
 init([]) -> {ok, open_connection()}.
 

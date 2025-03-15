@@ -87,29 +87,34 @@ post_note(Note, Tags, ImageURL) ->
 
 init([]) ->
     {ok, Host} = application:get_env(damage, nostr_relay),
-    Nsec = secrets:retrieve_decrypt(nostr_nsec),
-    PrivateKey = list_to_binary(decode_nsec(Nsec)),
-    {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
-    {ok, ConnPid} =
-        gun:open(
-            Host,
-            443,
-            #{transport => tls, tls_opts => [{verify, verify_peer}]}
-        ),
-    StreamRef = gun:ws_upgrade(ConnPid, "/", []),
-    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-    gproc:reg_other({n, l, ?NOSTR_PROC}, self()),
-    {
-        ok,
-        #state{
-            conn_pid = ConnPid,
-            streamref = StreamRef,
-            heartbeat_timer = HeartbeatTimer,
-            private_key = PrivateKey,
-            public_key = PublicKey,
-            npub_cache = #{}
-        }
-    }.
+    case secrets:retrieve_decrypt(nostr_nsec) of
+        {ok, Nsec} ->
+            PrivateKey = list_to_binary(decode_nsec(Nsec)),
+            {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
+            {ok, ConnPid} =
+                gun:open(
+                    Host,
+                    443,
+                    #{transport => tls, tls_opts => [{verify, verify_peer}]}
+                ),
+            StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+            HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+            gproc:reg_other({n, l, ?NOSTR_PROC}, self()),
+            {
+                ok,
+                #state{
+                    conn_pid = ConnPid,
+                    streamref = StreamRef,
+                    heartbeat_timer = HeartbeatTimer,
+                    private_key = PrivateKey,
+                    public_key = PublicKey,
+                    npub_cache = #{}
+                }
+            };
+        _Error ->
+            ?LOG_INFO("!!!! Nostr Integration disabled, set `nostr_nsec` secret."),
+            {ok, #state{}}
+    end.
 
 %% Handle synchronous calls (stop request)
 
@@ -543,7 +548,7 @@ xclip_post(AltText) ->
     ContentType = <<"image/webp">>,
     BlurHash = <<"eVF$^OI:${M{o#*0-nNFxakD-?xVM}WEWB%iNKxvR-oetmo#R-aen$">>,
     Dimensions = <<"3024x4032">>,
-        ImgHash = lower_hex(file:read_file(ImageFile)),
+    ImgHash = lower_hex(file:read_file(ImageFile)),
     Fallback1 = <<"https://nostrcheck.me/alt1.jpg">>,
     Fallback2 = <<"https://void.cat/alt1.jpg">>,
     Tags = [
@@ -555,10 +560,10 @@ xclip_post(AltText) ->
             <<"imeta">>,
             <<"url ", ImageURLBin/binary>>,
             <<"m ", ContentType/binary>>,
-            <<"blurhash" , BlurHash/binary>>,
+            <<"blurhash", BlurHash/binary>>,
             <<"dim ", Dimensions/binary>>,
             <<"alt ", AltText/binary>>,
-                <<"x ", ImgHash/binary>>,
+            <<"x ", ImgHash/binary>>,
             <<"fallback ", Fallback1/binary>>,
             <<"fallback ", Fallback2/binary>>
         ]

@@ -164,7 +164,7 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
     {ok, SmtpHostname} = application:get_env(damage, smtp_hostname),
     {ok, SmtpPort} = application:get_env(damage, smtp_port),
     {ok, {FromName, From}} = application:get_env(damage, smtp_from),
-    SmtpPassword = secrets:retrieve_decrypt(smtp_pass),
+    {ok, SmtpPassword} = secrets:retrieve_decrypt(smtp_pass),
     %Body1 =
     %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
     %Body0 =
