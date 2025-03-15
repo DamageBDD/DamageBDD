@@ -112,7 +112,7 @@
   0},
  {<<"prometheus_cowboy">>,
   {git,"https://github.com/prometheus-erl/prometheus-cowboy.git",
-       {ref,"d49d0b79886f996a34a5e9c61159bd5236f3bc38"}},
+       {ref,"2597186ef32ecc79578d6f02a28759991c30ce0f"}},
   0},
  {<<"prometheus_httpd">>,{pkg,<<"prometheus_httpd">>,<<"2.1.13">>},1},
  {<<"proper">>,
