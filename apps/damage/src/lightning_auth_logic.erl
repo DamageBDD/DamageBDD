@@ -15,19 +15,16 @@
 %% gen_server Callbacks
 -export([init/1, handle_call/3, handle_cast/2]).
 
-%% Riak Bucket Names (Using CRDTs)
--define(LN_PAYMENT_BUCKET, <<"ln_payments_crdt">>).
--define(LNURL_AUTH_BUCKET, <<"lnurl_auth_crdt">>).
 
 %%% --- Lightning API Configuration ---
 get_ln_node() ->
     % Replace with real LND/CLN node URL
-    os:getenv("LIGHTNING_NODE", "http://localhost:8080").
+    {ok, Host} = application:get_env(damage, cln_host),
+    {ok, Port} = application:get_env(damage, cln_port),
+    os:getenv("LIGHTNING_NODE", "http://" ++ Host ++ ":" ++ integer_to_list(Port)).
 
-%%% --- Riak CRDT Client Setup ---
 init([]) ->
-    {ok, Pid} = riakc_pb_socket:start_link("127.0.0.1", 8087),
-    {ok, #{riak_conn => Pid}}.
+    {ok, #{}}.
 
 %%% --- API Functions ---
 start_link() ->
@@ -97,9 +94,29 @@ hex_to_binary(Hex) ->
     binary:decode_hex(Hex).
 
 %%% --- Handle Calls ---
-
+register_auth_invoice(LnAddress, Invoice) ->
+    ?LOG_DEBUG("Address ~p Invoice ~p", [LnAddress, Invoice]),
+    {ok, Result} = damage_ae:contract_call("lnauth.aes", "register_auth_invoice", [LnAddress,Invoice]),
+    {ok, Result}.
+fetch_auth_invoice(LnAddress) ->
+    ?LOG_DEBUG("Address ~p ", [LnAddress]),
+    %TODO
+    {ok, Result} = damage_ae:contract_call("lnauth.aes", "fetch_auth_invoice", [LnAddress]),
+    {ok, Result}.
+store_auth_challenge(LnAddress) ->
+    Challenge = base64:encode(crypto:strong_rand_bytes(32)),
+    Timestamp = calendar:system_time(seconds),
+    ok = damage_ae:contract_call("lnauth.aes", "store_auth_challenge", [LnAddress, Challenge, Timestamp]),
+    {ok, Challenge}.
+fetch_auth_challenge(LnAddress) ->
+    ?LOG_DEBUG("Address ~p ", [LnAddress]),
+    %TODO
+    {ok, Result} = damage_ae:contract_call("lnauth.aes", "fetch_auth_challenge", [LnAddress]),
+    {ok, Result}.
+    
+    
 %% Generate a Lightning Invoice for Lightning Address Authentication
-handle_call({generate_ln_invoice, LnAddress}, _From, #{riak_conn := Riak} = State) ->
+handle_call({generate_ln_invoice, LnAddress}, _From,  State) ->
     % 1000 sats for authentication
     Amount = 1000,
     PaymentRequestURL = "https://" ++ binary_to_list(LnAddress) ++ "/.well-known/lnurlp",
@@ -114,11 +131,9 @@ handle_call({generate_ln_invoice, LnAddress}, _From, #{riak_conn := Riak} = Stat
             case gun_request(get, CallbackWithAmount, <<>>) of
                 {ok, #{<<"pr">> := Invoice, <<"successAction">> := _}} ->
                     case
-                        riakc_pb_socket:update_type(
-                            Riak,
-                            ?LN_PAYMENT_BUCKET,
+                        register_auth_invoice(
                             LnAddress,
-                            {update, {map, [{update, <<"invoice">>, {assign, Invoice}}]}}
+                            Invoice
                         )
                     of
                         ok -> {reply, {ok, Invoice}, State};
@@ -131,10 +146,9 @@ handle_call({generate_ln_invoice, LnAddress}, _From, #{riak_conn := Riak} = Stat
             {reply, {error, lnurl_fetch_failed}, State}
     end;
 %% Verify Lightning Payment from Lightning Address
-handle_call({verify_ln_payment, LnAddress}, _From, #{riak_conn := Riak} = State) ->
-    case riakc_pb_socket:fetch_type(Riak, ?LN_PAYMENT_BUCKET, LnAddress) of
-        {ok, MapObj} ->
-            Invoice = riakc_map:fetch(<<"invoice">>, MapObj, <<"">>),
+handle_call({verify_ln_payment, LnAddress}, _From, State) ->
+    case fetch_auth_invoice(LnAddress) of
+        {ok, Invoice} ->
             PaymentCheckURL = get_ln_node() ++ "/v1/invoice_status/" ++ binary_to_list(Invoice),
 
             case gun_request(get, PaymentCheckURL, <<>>) of
@@ -148,30 +162,15 @@ handle_call({verify_ln_payment, LnAddress}, _From, #{riak_conn := Riak} = State)
             {reply, {error, not_found}, State}
     end;
 %% Generate LNURL-Auth Challenge
-handle_call({generate_lnurl_auth_challenge, LnAddress}, _From, #{riak_conn := Riak} = State) ->
-    Challenge = base64:encode(crypto:strong_rand_bytes(32)),
-    Timestamp = calendar:system_time(seconds),
+handle_call({generate_lnurl_auth_challenge, LnAddress}, _From, State) ->
 
-    case
-        riakc_pb_socket:update_type(
-            Riak,
-            ?LNURL_AUTH_BUCKET,
-            LnAddress,
-            {update,
-                {map, [
-                    {update, <<"challenge">>, {assign, Challenge}},
-                    {update, <<"timestamp">>, {assign, Timestamp}}
-                ]}}
-        )
-    of
-        ok -> {reply, {ok, Challenge}, State};
-        {error, Reason} -> {reply, {error, Reason}, State}
-    end;
-handle_call({verify_lnurl_auth, LnAddress, Signature}, _From, #{riak_conn := Riak} = State) ->
-    case riakc_pb_socket:fetch_type(Riak, ?LNURL_AUTH_BUCKET, LnAddress) of
-        {ok, MapObj} ->
-            Challenge = riakc_map:fetch(<<"challenge">>, MapObj, <<"">>),
-            Timestamp = riakc_map:fetch(<<"timestamp">>, MapObj, 0),
+    {reply, 
+        store_auth_challenge(
+            LnAddress
+        ), State};
+handle_call({verify_lnurl_auth, LnAddress, Signature}, _From, State) ->
+    case fetch_auth_challenge(LnAddress) of
+        {ok, {Challenge, Timestamp}} ->
             CurrentTime = calendar:system_time(seconds),
 
             if

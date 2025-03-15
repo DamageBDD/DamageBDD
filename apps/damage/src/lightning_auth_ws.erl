@@ -5,14 +5,12 @@
 
 -define(SESSION_BUCKET, <<"ws_sessions_crdt">>).
 -define(AUTH_BUCKET, <<"auth_links_crdt">>).
--record(state, {riak_conn}).
 
 init(Req, _State) ->
-    {cowboy_websocket, Req, #state{}}.
+    {cowboy_websocket, Req, #{}}.
 
 websocket_init(State) ->
-    {ok, Pid} = riakc_pb_socket:start_link("127.0.0.1", 8087),
-    {ok, State#state{riak_conn = Pid}}.
+    {ok, State}.
 
 websocket_handle({text, Msg}, State) ->
     case jsx:decode(Msg, [return_maps]) of
@@ -20,8 +18,6 @@ websocket_handle({text, Msg}, State) ->
             handle_ln_auth(LnAddress, State);
         #{<<"action">> := <<"check_payment">>, <<"lnaddress">> := LnAddress} ->
             handle_check_payment(LnAddress, State);
-        #{<<"action">> := <<"link_nostr">>, <<"lnaddress">> := LnAddress, <<"npub">> := NostrPub} ->
-            handle_link_nostr(LnAddress, NostrPub, State);
         _ ->
             {reply, {text, jsx:encode(#{error => <<"invalid_request">>})}, State}
     end.
@@ -36,26 +32,12 @@ handle_ln_auth(LnAddress, State) ->
 
 handle_check_payment(LnAddress, State) ->
     case lightning_auth_logic:verify_ln_payment(LnAddress) of
-        {ok, SessionID} ->
-            riakc_pb_socket:update_type(
-                State#state.riak_conn,
-                ?AUTH_BUCKET,
-                LnAddress,
-                {update, {map, [{update, <<"session">>, {assign, SessionID}}]}}
-            ),
-            {reply, {text, jsx:encode(#{status => <<"verified">>, session => SessionID})}, State};
+        {ok, verified} ->
+            {reply, {text, jsx:encode(#{status => <<"verified">>})}, State};
         {error, Reason} ->
             {reply, {text, jsx:encode(#{error => Reason})}, State}
     end.
 
-handle_link_nostr(LnAddress, NostrPub, State) ->
-    riakc_pb_socket:update_type(
-        State#state.riak_conn,
-        ?AUTH_BUCKET,
-        LnAddress,
-        {update, {map, [{update, <<"npub">>, {assign, NostrPub}}]}}
-    ),
-    {reply, {text, jsx:encode(#{status => <<"nostr_linked">>, npub => NostrPub})}, State}.
 
 websocket_info(_Info, State) ->
     {ok, State}.
