@@ -27,7 +27,6 @@
         handle_info/2,
         terminate/2,
         code_change/3,
-        setup_vanillae_deps/0,
         maybe_fund_wallet/2,
         maybe_fund_wallet/1,
         transfer_damage_tokens/2,
@@ -804,24 +803,6 @@ revoke_domain_token(AeAccount, Domain) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {add_domain_token, Domain}).
 
-setup_vanillae_deps() ->
-    true = code:add_path("_checkouts/vanillae/ebin"),
-    true = code:add_path("_checkouts/vw/ebin"),
-    Vanillae =
-        "otpr-vanillae-" ++ lists:droplast(os:cmd("zx latest otpr-vanillae")),
-    Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
-    ZX =
-        "otpr-zx-" ++
-            lists:nth(2, string:lexemes(lists:droplast(os:cmd("zx --version")), " ")),
-    Packages = [ZX, Vanillae | Deps],
-    ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
-    ?LOG_DEBUG("Packages paths ~p", [Packages]),
-    Converted =
-        [string:join(string:lexemes(Package, "-"), "/") || Package <- Packages],
-    PackagePaths =
-        [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
-    ?LOG_DEBUG("Code paths ~p", [PackagePaths]),
-    ok = code:add_paths(PackagePaths).
 
 read_stream(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, 600000) of

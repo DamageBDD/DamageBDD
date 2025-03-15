@@ -58,22 +58,42 @@ get_trails() ->
     trails:store(Trails),
     trails:single_host_compile(Trails).
 
+setup_vanillae_deps() ->
+    %true = code:add_path("_checkouts/vanillae/ebin"),
+    %true = code:add_path("_checkouts/vw/ebin"),
+    Vanillae =
+        "otpr-vanillae-" ++ lists:droplast(os:cmd("zx latest otpr-vanillae")),
+    Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
+    ZX =
+        "otpr-zx-" ++
+            lists:nth(2, string:lexemes(lists:droplast(os:cmd("zx --version")), " ")),
+    Packages = [ZX, Vanillae | Deps],
+    ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
+    ?LOG_DEBUG("Packages paths ~p", [Packages]),
+    Converted =
+        [string:join(string:lexemes(Package, "-"), "/") || Package <- Packages],
+    PackagePaths =
+        [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
+    ?LOG_DEBUG("Code paths ~p", [PackagePaths]),
+    ok = code:add_paths(PackagePaths).
+
 -spec start_phase(atom(), application:start_type(), []) -> ok.
 start_phase(start_vanillae, _StartType, []) ->
     logger:info("Starting vanilla."),
-    damage_ae:setup_vanillae_deps(),
+    %Version = "0.13.9",
+    %true = os:putenv("zx_include", filename:join([os:getenv("HOME"), "/zomp/lib/otpr/zx/",Version,"include"])),
+    setup_vanillae_deps(),
     {ok, _} = application:ensure_all_started(vanillae),
+    vanillae:network_id("ae_mainnet"),
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
     ok = vanillae:ae_nodes(Nodes),
-    vanillae:network_id("ae_mainnet"),
     logger:info("Started vanilla."),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
     logger:info("Starting Damage."),
     {ok, _} = application:ensure_all_started(gun),
     {ok, _} = application:ensure_all_started(fast_yaml),
-    {ok, _} = application:ensure_all_started(prometheus),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
     {ok, _} = application:ensure_all_started(cowboy_telemetry),
     {ok, _} = application:ensure_all_started(erlexec),
