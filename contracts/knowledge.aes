@@ -29,11 +29,11 @@ contract ECAI_Knowledge =
       full_y: string, 
       subfields: map(string, string), 
       ipfs_hash: string) =
+
     
-    let prev_versions = case Map.lookup((full_x, full_y), state.knowledge_store) of
-        None => [];
+    let prev_versions = switch(Map.lookup((full_x, full_y), state.knowledge_store))
+        None => []
         Some(k) => k.version_history
-    end
 
     let new_entry = {
       full_x = full_x,
@@ -41,8 +41,7 @@ contract ECAI_Knowledge =
       subfields = subfields,
       ipfs_hash = ipfs_hash,
       version_history = prev_versions ++ [ipfs_hash],
-      reputation_score = 0
-    }
+      reputation_score = 0 }
 
     put(state{knowledge_store[(full_x, full_y)] = new_entry})
 
@@ -53,7 +52,7 @@ contract ECAI_Knowledge =
   /* Retrieve the previous versions of a knowledge entry */
   entrypoint get_knowledge_history(full_x: string, full_y: string) : list(string) =
     switch(Map.lookup((full_x, full_y), state.knowledge_store))
-      None => [];
+      None => []
       Some(k) => k.version_history
 
   /* Search for the best-matching subfield */
@@ -72,7 +71,7 @@ contract ECAI_Knowledge =
   /* Add reputation to a knowledge entry */
   stateful entrypoint upvote_knowledge(full_x: string, full_y: string) =
     let updated_entry = switch(Map.lookup((full_x, full_y), state.knowledge_store))
-      None => abort("Knowledge not found");
+      None => abort("Knowledge not found")
       Some(k) => {k with reputation_score = k.reputation_score + 1}
     
     put(state{knowledge_store[(full_x, full_y)] = updated_entry})
