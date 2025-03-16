@@ -803,7 +803,6 @@ revoke_domain_token(AeAccount, Domain) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {add_domain_token, Domain}).
 
-
 read_stream(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, 600000) of
         {response, nofin, Status, _Headers0} ->
@@ -1101,9 +1100,16 @@ contract_create(CreatorID, Path, InitArgs) ->
             Gas = 100000,
             GasPrice = min_gas_price(),
             Fee = min_fee(),
-            vanillae:contract_create(CreatorID, Nonce,
-                            Amount, Gas, GasPrice, Fee,
-                            Path, InitArgs);
+            vanillae:contract_create(
+                CreatorID,
+                Nonce,
+                Amount,
+                Gas,
+                GasPrice,
+                Fee,
+                Path,
+                InitArgs
+            );
         Error ->
             Error
     end.
