@@ -5,25 +5,17 @@
 #include <openssl/sha.h>
 #include "erl_nif.h"
 
-#define MAX_ENTRIES 5000
 #define MAX_TEXT_SIZE 2048
-
 const char *P_CURVE25519 = "7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED";
 
-typedef struct {
-    char key[65];
-    int x;  // X coordinate of curve hash
-    int y;  // Approximate representation of secondary hash
-    char value[256];  
-} KnowledgeEntry;
 
-static KnowledgeEntry knowledge_store[MAX_ENTRIES];
-static int knowledge_size = 0;
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <gmp.h>
+#include "erl_nif.h"
 
-// Compute Euclidean Distance between two curve-mapped knowledge representations
-static double euclidean_distance(int x1, int y1, int x2, int y2) {
-    return sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2));
-}
+
 
 // Map text to a Curve25519 elliptic curve point as a numerical scalar
 static ERL_NIF_TERM hash_to_curve(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
@@ -51,83 +43,80 @@ static ERL_NIF_TERM hash_to_curve(ErlNifEnv *env, int argc, const ERL_NIF_TERM a
     mpz_clear(x);
     mpz_clear(p);
 
-    return enif_make_tuple3(env, enif_make_atom(env, "ok"),
+    return enif_make_tuple2(env, 
                                    enif_make_int(env, numeric_x),
                                    enif_make_int(env, numeric_y));
 }
 
-// Store Knowledge with X, Y curve representations
-static ERL_NIF_TERM store_knowledge(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+static ERL_NIF_TERM curve_add(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 2) return enif_make_badarg(env);
 
-    char text[MAX_TEXT_SIZE], response[256];
-    if (!enif_get_string(env, argv[0], text, sizeof(text), ERL_NIF_LATIN1) ||
-        !enif_get_string(env, argv[1], response, sizeof(response), ERL_NIF_LATIN1))
-        return enif_make_badarg(env);
-
-    if (knowledge_size >= MAX_ENTRIES) return enif_make_atom(env, "store_full");
-
-    ERL_NIF_TERM hashed_query = hash_to_curve(env, 1, &argv[0]);
-    
-    // Extract tuple values properly
-    const ERL_NIF_TERM *tuple;
-    int arity;
-    int x, y;
-
-    if (!enif_get_tuple(env, hashed_query, &arity, &tuple) || arity != 3 ||
-        !enif_get_int(env, tuple[1], &x) || !enif_get_int(env, tuple[2], &y)) {
+    int x1, y1, x2, y2;
+    if (!enif_get_int(env, argv[0], &x1) ||
+        !enif_get_int(env, argv[1], &y1) ||
+        !enif_get_int(env, argv[2], &x2) ||
+        !enif_get_int(env, argv[3], &y2)) {
         return enif_make_badarg(env);
     }
 
-    knowledge_store[knowledge_size].x = x;
-    knowledge_store[knowledge_size].y = y;
-    strncpy(knowledge_store[knowledge_size].value, response, sizeof(knowledge_store[knowledge_size].value) - 1);
-    knowledge_store[knowledge_size].value[255] = '\0';  // Ensure null termination
-    knowledge_size++;
+    mpz_t p, x1_mp, y1_mp, x2_mp, y2_mp, s, x3, y3, num, denom, denom_inv;
+    mpz_init_set_str(p, P_CURVE25519, 16);
+    mpz_inits(x1_mp, y1_mp, x2_mp, y2_mp, s, x3, y3, num, denom, denom_inv, NULL);
 
-    return enif_make_atom(env, "ok");
+    mpz_set_ui(x1_mp, x1);
+    mpz_set_ui(y1_mp, y1);
+    mpz_set_ui(x2_mp, x2);
+    mpz_set_ui(y2_mp, y2);
+
+    if (mpz_cmp(x1_mp, x2_mp) == 0 && mpz_cmp(y1_mp, y2_mp) == 0) {
+        // Point Doubling
+        mpz_mul_ui(num, x1_mp, 3);
+        mpz_add_ui(num, num, 486662);
+        mpz_mul(num, num, x1_mp);
+
+        mpz_mul_ui(denom, y1_mp, 2);
+    } else {
+        // Point Addition
+        mpz_sub(num, y2_mp, y1_mp);
+        mpz_sub(denom, x2_mp, x1_mp);
+    }
+
+    // Modular inverse for division
+    if (mpz_invert(denom_inv, denom, p) == 0) {
+        return enif_make_atom(env, "infinity");
+    }
+
+    // Compute slope
+    mpz_mul(s, num, denom_inv);
+    mpz_mod(s, s, p);
+
+    // Compute new x3 and y3
+    mpz_mul(x3, s, s);
+    mpz_sub(x3, x3, x1_mp);
+    mpz_sub(x3, x3, x2_mp);
+    mpz_mod(x3, x3, p);
+
+    mpz_sub(y3, x1_mp, x3);
+    mpz_mul(y3, s, y3);
+    mpz_sub(y3, y3, y1_mp);
+    mpz_mod(y3, y3, p);
+
+    int x3_int = mpz_get_ui(x3);
+    int y3_int = mpz_get_ui(y3);
+
+    mpz_clears(x1_mp, y1_mp, x2_mp, y2_mp, s, x3, y3, num, denom, denom_inv, NULL);
+    mpz_clear(p);
+
+    return enif_make_tuple2(env, enif_make_int(env, x3_int), enif_make_int(env, y3_int));
 }
 
-// Infer closest response using Euclidean Distance ranking
-static ERL_NIF_TERM infer_knowledge(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-    if (argc != 1) return enif_make_badarg(env);
 
-    char query[MAX_TEXT_SIZE];
-    if (!enif_get_string(env, argv[0], query, sizeof(query), ERL_NIF_LATIN1))
-        return enif_make_badarg(env);
 
-    ERL_NIF_TERM hashed_query = hash_to_curve(env, 1, &argv[0]);
-    
-    // Extract tuple values properly
-    const ERL_NIF_TERM *tuple;
-    int arity;
-    int x, y;
-
-    if (!enif_get_tuple(env, hashed_query, &arity, &tuple) || arity != 3 ||
-        !enif_get_int(env, tuple[1], &x) || !enif_get_int(env, tuple[2], &y)) {
-        return enif_make_badarg(env);
-    }
-
-    double best_distance = INFINITY;
-    char best_match[256] = "No close matches found.";
-
-    for (int i = 0; i < knowledge_size; i++) {
-        double distance = euclidean_distance(x, y, knowledge_store[i].x, knowledge_store[i].y);
-        if (distance < best_distance) {
-            best_distance = distance;
-            strncpy(best_match, knowledge_store[i].value, sizeof(best_match) - 1);
-            best_match[255] = '\0';  // Ensure null termination
-        }
-    }
-
-    return enif_make_string(env, best_match, ERL_NIF_LATIN1);
-}
 
 // Register NIF Functions
 static ErlNifFunc nif_funcs[] = {
     {"hash_to_curve", 1, hash_to_curve},
-    {"store_knowledge", 2, store_knowledge},
-    {"infer_knowledge", 1, infer_knowledge}
+    {"curve_add", 4, curve_add}
 };
 
 ERL_NIF_INIT(ecai, nif_funcs, NULL, NULL, NULL, NULL)

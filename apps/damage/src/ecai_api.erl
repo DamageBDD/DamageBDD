@@ -74,13 +74,13 @@ trails() ->
 
 %% Handle incoming requests
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
-is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
+is_authorized(Req, State) ->
+    damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
     {
         [
             {{<<"application">>, <<"json">>, []}, to_json},
-            %{{<<"text">>, <<"plain">>, '*'}, to_text},
             {{<<"text">>, <<"html">>, '*'}, to_html}
         ],
         Req,
