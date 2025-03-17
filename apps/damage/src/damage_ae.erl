@@ -696,8 +696,8 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
             Pid
     end;
 get_wallet_proc(admin) ->
-    {ok, AeAdmin} = application:get_env(damage, node_public_key),
-    get_wallet_proc(list_to_binary(AeAdmin));
+    #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
+    get_wallet_proc(list_to_binary(NodePublicKey));
 get_wallet_proc(Email) ->
     case identity_server:get_account_by_email(Email) of
         notfound -> {error, not_found};

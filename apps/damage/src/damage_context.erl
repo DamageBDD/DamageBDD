@@ -128,7 +128,7 @@ get_global_template_context(Context) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
     {ok, DamageTokenContract} = application:get_env(damage, token_contract),
     {ok, DamageAccountContract} = application:get_env(damage, account_contract),
-    {ok, NodePublicKey} = application:get_env(damage, node_public_key),
+    #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
     maps:merge(
         #{
             api_url => DamageApi,
