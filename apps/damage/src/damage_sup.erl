@@ -48,113 +48,126 @@ init([]) ->
     ChromedriverCmd = "chromedriver --port=9515",
     logger:info("Starting chromedriver ~p~n", [ChromedriverCmd]),
     PoolSpecs0 =
-        PoolSpecs ++
-            [
-                #{
-                    % mandatory
-                    id => damage_ae,
-                    % mandatory
-                    start => {damage_ae, start_link, []},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => [damage_ae]
-                },
-                #{
-                    % mandatory
-                    id => damage_aemdw,
-                    % mandatory
-                    start => {damage_ae, start_link, []},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => [damage_aemdw]
-                },
-                #{
-                    % mandatory
-                    id => damage_nostr,
-                    % mandatory
-                    start => {damage_nostr, start_link, []},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => [damage_nostr]
-                },
-                #{
-                    % mandatory
-                    id => cln_websocket,
-                    % mandatory
-                    start => {cln, start_link, [[]]},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => [cln]
-                },
-                #{
-                    % mandatory
-                    id => lightning_auth_logic,
-                    % mandatory
-                    start => {lightning_auth_logic, start_link, []},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => [lightning_auth_logic]
-                },
-                #{
-                    % mandatory
-                    id => lightpanda,
-                    % mandatory
-                    start => {damage_worker, start_link, [LightPandaCmd]},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => []
-                },
-                #{
-                    % mandatory
-                    id => chromedriver,
-                    % mandatory
-                    start => {damage_worker, start_link, [ChromedriverCmd]},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => []
-                },
-                #{
-                    % mandatory
-                    id => identity_server,
-                    % mandatory
-                    start => {identity_server, start_link, []},
-                    % optional
-                    restart => permanent,
-                    % optional
-                    shutdown => 60,
-                    % optional
-                    type => worker,
-                    modules => []
-                }
-            ],
+        [
+            #{
+                % mandatory
+                id => secrets,
+                % mandatory
+                start => {secrets, start_link, []},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => []
+            },
+            #{
+                % mandatory
+                id => damage_ae,
+                % mandatory
+                start => {damage_ae, start_link, []},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => [damage_ae]
+            },
+            #{
+                % mandatory
+                id => damage_aemdw,
+                % mandatory
+                start => {damage_ae, start_link, []},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => [damage_aemdw]
+            },
+            #{
+                % mandatory
+                id => damage_nostr,
+                % mandatory
+                start => {damage_nostr, start_link, []},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => [damage_nostr]
+            },
+            #{
+                % mandatory
+                id => cln_websocket,
+                % mandatory
+                start => {cln, start_link, [[]]},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => [cln]
+            },
+            #{
+                % mandatory
+                id => lightning_auth_logic,
+                % mandatory
+                start => {lightning_auth_logic, start_link, []},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => [lightning_auth_logic]
+            },
+            #{
+                % mandatory
+                id => lightpanda,
+                % mandatory
+                start => {damage_worker, start_link, [LightPandaCmd]},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => []
+            },
+            #{
+                % mandatory
+                id => chromedriver,
+                % mandatory
+                start => {damage_worker, start_link, [ChromedriverCmd]},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => []
+            },
+            #{
+                % mandatory
+                id => identity_server,
+                % mandatory
+                start => {identity_server, start_link, []},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => []
+            }
+        ] ++
+            PoolSpecs,
     logger:info("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
 

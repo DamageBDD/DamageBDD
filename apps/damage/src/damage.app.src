@@ -22,7 +22,8 @@
                 {os_tune, []},
                 {start_vanillae, []},
                 {start_sync, []},
-                {start_trails_http, []}
+                {start_trails_http, []},
+                {damage, []}
             ]
         },
         {links, []}

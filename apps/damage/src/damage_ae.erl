@@ -45,7 +45,6 @@
         contract_call_node_account/2,
         get_ae_mdw_node/0,
         get_ae_mdw_ws_node/0,
-        node_keypair/0,
         node_balance/0,
         account_keypair/1,
         deploy_account_contract/0,
@@ -645,7 +644,7 @@ contract_call_user_account(AeAccount, Func, Args) ->
     contract_call(AeAccount, AccountContract, "contracts/account.aes", Func, Args).
 
 contract_call_node_account(Func, Args) ->
-    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = node_keypair(),
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     {ok, AccountContract} = application:get_env(damage, account_contract),
     contract_call(
         KeyPair,
@@ -827,7 +826,7 @@ transfer_damage_tokens(AeAccount, Amount) ->
     {ok, TokenContract} = application:get_env(damage, token_contract),
     ContractCall =
         contract_call(
-            node_keypair(),
+            secrets:node_keypair(),
             TokenContract,
             "contracts/token.aes",
             "transfer",
@@ -839,7 +838,7 @@ get_user_keypair(PublicKey) ->
     {ok, KeystoreContract} = application:get_env(damage, keystore_contract),
     Result =
         contract_call(
-            node_keypair(),
+            secrets:node_keypair(),
             KeystoreContract,
             "contracts/keystore.aes",
             "get_keypair",
@@ -1015,26 +1014,9 @@ sign_transaction_base58(Priv, EncodedTX) ->
     SignedTX = sign_transaction(Priv, TX),
     aeser_api_encoder:encode(transaction, SignedTX).
 
-make_keypair() ->
-    #{public := Pub, secret := Priv} = enacl:sign_keypair(),
-    PubBin = aeser_api_encoder:encode(account_pubkey, Pub),
-    PubStr = unicode:characters_to_list(PubBin),
-    #{public_key => PubStr, private_key => Priv}.
-
-node_keypair() ->
-    Path = application:get_env(damage, keystore, "damage.key"),
-    case file:read_file(Path) of
-        {error, enoent} ->
-            ?LOG_INFO("damage.key not found ... creating.", []),
-            Data = make_keypair(),
-            ok = file:write_file(Path, term_to_binary(Data)),
-            Data;
-        {ok, Data} ->
-            #{public_key := _Pub, private_key := _Priv} = binary_to_term(Data)
-    end.
 account_keypair(AeAccount) ->
     {ok, KeyStoreContract} = application:get_env(damage, keystore_contract),
-    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = damage_ae:node_keypair(),
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     damage_ae:contract_call(
         KeyPair,
         KeyStoreContract,
@@ -1120,6 +1102,7 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
     ?LOG_DEBUG("Contract Data ~p", [ContractData]),
     ?LOG_DEBUG("Privkey ~p", [binary_to_list(PrivateKey)]),
     SignedContract = sign_transaction_base58(PrivateKey, ContractData),
+    svt:mainsplain(SignedContract),
     ?LOG_DEBUG("Contract Data ~p", [ContractData]),
     case vanillae:dry_run(SignedContract) of
         {ok, #{"reason" := Reason}} ->
@@ -1133,33 +1116,33 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
 
 deploy_account_contract() ->
     #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/account.aes", []),
+        contract_deploy(secrets:node_keypair(), "contracts/account.aes", []),
     application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
     ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
     ContractAddress.
 
 deploy_keystore_contract() ->
     #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/keystore.aes", []),
+        contract_deploy(secrets:node_keypair(), "contracts/keystore.aes", []),
     application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
     ?LOG_INFO("Keystore Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
     ContractAddress.
 deploy_identity_contract() ->
     #{address := ContractAddress, result := #{gasUsed := GasUsed}} = contract_deploy(
-        node_keypair(), "contracts/identity.aes", []
+        secrets:node_keypair(), "contracts/identity.aes", []
     ),
     application:set_env(damage, keystore_contract, binary_to_list(ContractAddress)),
     ?LOG_INFO("Identity Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
     ContractAddress.
 deploy_knowledge_nft_contract() ->
     #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(node_keypair(), "contracts/knowledge_nft.aes", []),
+        contract_deploy(secrets:node_keypair(), "contracts/knowledge_nft.aes", []),
     application:set_env(damage, knowledge_nft_contract, binary_to_list(ContractAddress)),
     ?LOG_INFO("Knowledge NFT Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
     ContractAddress.
 
 node_balance() ->
-    #{public_key := AeAccount, private_key := _PrivateKey} = node_keypair(),
+    #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
     get_ae_balance(AeAccount).
 
 test_get_user_keypair() ->
@@ -1167,13 +1150,13 @@ test_get_user_keypair() ->
     get_user_keypair(AeAccount).
 
 test_contract_deploy() ->
-    KeyPair = node_keypair(),
+    KeyPair = secrets:node_keypair(),
     {ok, #{"tx_hash" := TxHash}} = contract_deploy(KeyPair, "contracts/test.aes", []),
     wait_tx(TxHash).
 
 test_contract_call() ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
-    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = node_keypair(),
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     ?LOG_DEBUG("contract account ~p", [AccountContract]),
     contract_call(KeyPair, AccountContract, "contracts/account.aes", "get_schedules", []).
 
@@ -1204,7 +1187,7 @@ test_get_block_height_since() ->
     end.
 
 test_verify_message() ->
-    #{public_key := PubKey, private_key := PrivateKey} = node_keypair(),
+    #{public_key := PubKey, private_key := PrivateKey} = secret:node_keypair(),
 
     Data = <<"test">>,
     SigHex = sign_transaction_base58(PrivateKey, Data),

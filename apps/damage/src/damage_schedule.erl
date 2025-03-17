@@ -271,9 +271,9 @@ load_all_schedules() ->
 
 list_all_schedules() ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
-    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = damage_ae:node_keypair(),
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     case
-        damage_ae:contract_call(
+        catch damage_ae:contract_call(
             KeyPair,
             AccountContract,
             "contracts/account.aes",
@@ -292,6 +292,9 @@ list_all_schedules() ->
             Decrypted;
         #{status := <<"fail">>} ->
             ?LOG_ERROR("schedules loading failed ~p", [AccountContract]),
+            [];
+        Error ->
+            ?LOG_ERROR("schedules loading failed ~p", [Error]),
             []
     end.
 

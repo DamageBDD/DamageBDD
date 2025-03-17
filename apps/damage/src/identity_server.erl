@@ -96,5 +96,5 @@ terminate(_, _) -> ok.
 call_contract(Func, Args) ->
     {ok, IdentityContract} = application:get_env(damage, identity_contract),
     _Response = damage_ae:contract_call(
-        damage_ae:node_keypair(), IdentityContract, "contracts/identity.aes", Func, Args
+        secrets:node_keypair(), IdentityContract, "contracts/identity.aes", Func, Args
     ).

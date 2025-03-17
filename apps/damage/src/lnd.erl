@@ -374,7 +374,7 @@ test() ->
     Macaroon =
         case os:getenv("MACAROON") of
             false ->
-                case secrets:retrieve_decrypt(lnd_macaroon_pass) of
+                case secrets:retrieve_decrypt(lnd_macaroon) of
                     false -> exit(invoice_macaroon_env_not_set);
                     Maca -> Maca
                 end;

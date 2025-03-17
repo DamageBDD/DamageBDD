@@ -109,7 +109,7 @@ handle_info(Info, State) ->
 terminate(Reason, State) ->
     gun:shutdown(State#state.conn_pid),
     erlang:cancel_timer(State#state.heartbeat_timer),
-    ?LOG_ERROR("Terminating lndconnect ~p", [Reason]),
+    ?LOG_ERROR("Terminating damage_aemdw ~p", [Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.

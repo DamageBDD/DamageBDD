@@ -29,6 +29,7 @@
 ).
 -export([get_default_config/3]).
 -export([sats_to_damage/1]).
+-export([check_setup/0]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -553,3 +554,80 @@ get_default_config(AeAccount, Concurrency, Formatters) ->
 
 sats_to_damage(Sats) ->
     round((Sats / ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS)).
+check_setup() ->
+    ok =
+        case secrets:retrieve_decrypt(nostr_nsec) of
+            {ok, _} ->
+                ok;
+            _ ->
+                case erm:ask_password("Nostr Nsec for nostr integration.") of
+                    undefined ->
+                        ?LOG_WARNING("Nost Nsec not set, nostr functions will not work.", []),
+                        ok;
+                    Nsec ->
+                        ok = secrets:encrypt_store(nostr_nsec, Nsec)
+                end
+        end,
+    ok =
+        case secrets:retrieve_decrypt(bitcoin_rpc_password) of
+            {ok, _} ->
+                ok;
+            _ ->
+                case erm:ask_password("Bitcoin rpc_password for bitcoin integration.") of
+                    undefined ->
+                        ?LOG_WARNING(
+                            "Bitcoin rpc_password for bitcoin integration not set, bitcoin functions will not work.",
+                            []
+                        ),
+                        ok;
+                    BitcoinRpcPassword ->
+                        ok = secrets:encrypt_store(bitcoin_rpc_password, BitcoinRpcPassword)
+                end
+        end,
+    ok =
+        case secrets:retrieve_decrypt(lnd_macaroon) of
+            {ok, _} ->
+                ok;
+            _ ->
+                case erm:ask_password("lnd macaroon for lnd integration.") of
+                    undefined ->
+                        ?LOG_WARNING(
+                            "lnd macaroon for lnd integration not set, lnd functions will not work.",
+                            []
+                        ),
+                        ok;
+                    Macaroon ->
+                        ok = secrets:encrypt_store(lnd_macaroon, Macaroon)
+                end
+        end,
+    ok =
+        case secrets:retrieve_decrypt(cln_rune) of
+            {ok, _} ->
+                ok;
+            _ ->
+                case erm:ask_password("cln rune for core lightning integration.") of
+                    undefined ->
+                        ?LOG_WARNING(
+                            "cln rune for core lightning integration, cln functions will not work.",
+                            []
+                        ),
+                        ok;
+                    Rune ->
+                        ok = secrets:encrypt_store(cln_rune, Rune)
+                end
+        end,
+    ok =
+        case secrets:retrieve_decrypt(smtp_pass) of
+            {ok, _} ->
+                ok;
+            _ ->
+                case erm:ask_password("smtp password for smtp integration.") of
+                    undefined ->
+                        ?LOG_WARNING(
+                            "smtp password for smtp integration, smtp functions will not work.", []
+                        ),
+                        ok;
+                    SmtpPassword ->
+                        ok = secrets:encrypt_store(smtp_pass, SmtpPassword)
+                end
+        end.
