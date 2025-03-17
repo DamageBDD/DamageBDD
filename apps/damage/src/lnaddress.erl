@@ -19,6 +19,7 @@
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Damage LN Address resolver"]).
+-define(DEFAULT_AMOUNT_MSATS, 1000).
 
 trails() ->
     [
@@ -118,6 +119,17 @@ to_json(Req, #{action := invoice} = State) ->
             {<<"user required">>, Req, State};
         <<"asyncmind">> ->
             case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
+                #{amount := <<"0">>, comment := Memo} ->
+                    Amount = 1000,
+                    #{
+                        payment_hash := _PaymentHash,
+                        expires_at := _Expiry,
+                        bolt11 := Bolt11,
+                        payment_secret := _PaymentSecret,
+                        created_index := _CreatedIndex
+                    } = Invoice = cln:create_invoice(Amount, Memo),
+                    ?LOG_INFO("invoice ~p", [Invoice]),
+                    {jsx:encode(#{pr => Bolt11}), Req, State};
                 #{amount := none, comment := Memo} ->
                     Amount = 1000,
                     #{
@@ -175,6 +187,18 @@ from_html(Req, #{action := reset_password} = State) ->
         State
     }.
 
+do_post_action(
+    invoice,
+    #{amount := 0} = Data,
+    Req,
+    State
+) ->
+do_post_action(
+    invoice,
+    maps:put(amount, ?DEFAULT_AMOUNT_MSATS,Data),
+    Req,
+    State
+);
 do_post_action(
     invoice,
     #{memo := Memo, amount := Amount, expiry := Expiry} = Data,
