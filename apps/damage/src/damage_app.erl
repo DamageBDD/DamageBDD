@@ -112,7 +112,6 @@ start_phase(start_trails_http, _StartType, []) ->
                 }
             ]
         ),
-    damage_ssh:start(),
     Dispatch = get_trails(),
     {ok, WsPort} = application:get_env(damage, port),
     {ok, _} =

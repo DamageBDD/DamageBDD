@@ -15,7 +15,7 @@
 -export([init/2]).
 -export([content_types_provided/2]).
 -export([init/1, handle_msg/2, handle_ssh_msg/2, terminate/2]).
--export([start/0]).
+-export([start_link/0]).
 -export([to_html/2]).
 -export([to_json/2]).
 -export(
@@ -25,8 +25,6 @@
 -export([trails/0]).
 
 -define(TRAILS_TAG, ["SSH Tunnel Management"]).
--define(SSH_USERDIR, "/var/lib/damagebdd/sshtest_user/.ssh").
--define(SSH_KEYS_BUCKET, {<<"Default">>, <<"SSHKeys">>}).
 
 connect_func(User, PeerAddr, Method) ->
     ?LOG_DEBUG("user connecte ~p ~p ~p", [User, PeerAddr, Method]),
@@ -87,16 +85,18 @@ to_json(Req, #{action := balance} = State) ->
     {Body, Req, State}.
 
 write_ssh_public_key(Key) ->
-    FilePath = filename:join(?SSH_USERDIR, "known_hosts"),
+    {ok, UserDir} = application:get_env(damage_ssh, user_dir),
+    FilePath = filename:join(UserDir, "known_hosts"),
     file:write_file(FilePath, Key, [append, raw]).
 
 remove_ssh_key(Key) ->
-    {ok, File} = file:read_file(?SSH_USERDIR ++ "/known_hosts"),
+    {ok, UserDir} = application:get_env(damage_ssh, user_dir),
+    {ok, File} = file:read_file(UserDir ++ "/known_hosts"),
     Lines = string:tokens(binary_to_list(File), "\n"),
     NewLines =
         lists:filter(fun(Line) -> not lists:member(Line, [Key]) end, Lines),
     NewContents = string:join(NewLines, "\n"),
-    file:write_file(?SSH_USERDIR ++ "/known_hosts", list_to_binary(NewContents)).
+    file:write_file(UserDir ++ "/known_hosts", list_to_binary(NewContents)).
 
 do_post_action(ssh_key, Data) -> write_ssh_public_key(Data).
 
@@ -149,13 +149,17 @@ from_yaml(Req, #{action := Action} = State) ->
     Resp = cowboy_req:set_resp_body(YamlResult, Req),
     {stop, cowboy_req:reply(201, Resp), State}.
 
-start() ->
-    {ok, _SSHPid} =
+start_link() ->
+    {ok, UserDir} = application:get_env(damage_ssh, user_dir),
+    {ok, SystemDir} = application:get_env(damage_ssh, system_dir),
+
+    {ok, SSHPid} =
         ssh:daemon(
-            8989,
+            %{127,0,0,1},
+            0,
             [
-                {system_dir, "/var/lib/damagebdd/ssh_daemon"},
-                {user_dir, ?SSH_USERDIR},
+                {system_dir, SystemDir},
+                {user_dir, UserDir},
                 {subsystems, [{"damage_ssh", {damage_ssh, [0]}}]},
                 {shell, disabled},
                 {tcpip_tunnel_out, true},
@@ -163,7 +167,10 @@ start() ->
                 {exec, disabled},
                 {connectfun, fun connect_func/3}
             ]
-        ).
+        ),
+    DaemonInfo = ssh:daemon_info(SSHPid),
+    ?LOG_DEBUG("Daemon started ~p", [DaemonInfo]),
+    {ok, SSHPid}.
 
 init([N]) ->
     ?LOG_DEBUG("starting ssh_server_channel ~p ", [N]),

@@ -92,6 +92,19 @@ init([]) ->
             },
             #{
                 % mandatory
+                id => damage_ssh,
+                % mandatory
+                start => {damage_ssh, start_link, []},
+                % optional
+                restart => permanent,
+                % optional
+                shutdown => 60,
+                % optional
+                type => worker,
+                modules => [damage_ssh]
+            },
+            #{
+                % mandatory
                 id => damage_nostr,
                 % mandatory
                 start => {damage_nostr, start_link, []},
