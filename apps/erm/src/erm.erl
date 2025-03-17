@@ -69,19 +69,36 @@ askpass(Title) ->
     wx:new(),
     Frame = wxFrame:new(wx:null(), ?wxID_ANY, Title, [{size, {300, 150}}, {pos, {300, 300}}]),
     Panel = wxPanel:new(Frame),
+    Sizer = wxBoxSizer:new(?wxVERTICAL),
 
-    _Prompt = wxStaticText:new(Panel, ?wxID_ANY, "Enter Password:", [{pos, {20, 20}}]),
+    TitlePrompt = wxStaticText:new(Panel, ?wxID_ANY, Title, [{style, ?wxALIGN_CENTER}]),
+    wxSizer:add(Sizer, TitlePrompt, [{proportion, 1}]),
+    Prompt = wxStaticText:new(Panel, ?wxID_ANY, "Enter Password:", [{style, ?wxALIGN_CENTER}]),
+    wxSizer:add(Sizer, Prompt, [{proportion, 1}]),
     PasswordCtrl = wxTextCtrl:new(Panel, ?wxID_ANY, [
         {pos, {20, 50}}, {size, {250, -1}}, {style, ?wxTE_PASSWORD}
     ]),
+    wxSizer:add(
+        Sizer,
+        PasswordCtrl,
+        [{proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 5}]
+    ),
+
+    ButtonSzFlags = [{proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 5}],
+    ButtonSizer = wxBoxSizer:new(?wxHORIZONTAL),
 
     OkButton = wxButton:new(Panel, ?wxID_OK, [{label, "OK"}, {pos, {80, 90}}]),
     CancelButton = wxButton:new(Panel, ?wxID_CANCEL, [{label, "Cancel"}, {pos, {160, 90}}]),
+    wxSizer:add(ButtonSizer, OkButton, ButtonSzFlags),
+    wxSizer:add(ButtonSizer, CancelButton, ButtonSzFlags),
+    wxSizer:add(Sizer, ButtonSizer, [{flag, ?wxEXPAND bor ?wxALL}, {border, 5}]),
+    wxFrame:setSizerAndFit(Panel, Sizer),
 
     wxButton:connect(CancelButton, command_button_clicked, []),
     wxButton:connect(OkButton, command_button_clicked, []),
     wxTextCtrl:connect(PasswordCtrl, key_up, []),
 
+    wxSizer:setSizeHints(Sizer, Frame),
     wxFrame:show(Frame),
 
     %% Wait for user interaction

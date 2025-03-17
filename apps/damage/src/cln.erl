@@ -91,8 +91,8 @@ init([]) ->
                 },
             ?LOG_DEBUG("State ~p ", [State]),
             {ok, State};
-        _Error ->
-            ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret."),
+        Error ->
+            ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret. ~p", [Error]),
             {ok, #state{}}
     end.
 
@@ -321,11 +321,18 @@ handle_event(
     AmountPaid = binary_to_integer(AmountPaid0),
     damage_ae:transfer_damage_tokens(AeAccount, damage:sats_to_damage(AmountPaid)),
     ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount]),
-    {ok, SaleWebhook} = application:get_env(damage, sale_webhook),
-    damage_webhooks:trigger_webhook(
-        SaleWebhook,
-        #{content => <<"Damage Tokens purchsased by ">>, ae_account => AeAccount}
-    ),
+    case secrets:retrieve_decrypt(sale_webhook) of
+        {ok, SaleWebhook} ->
+            damage_webhooks:trigger_webhook(
+                SaleWebhook,
+                #{content => <<"Damage Tokens purchsased by ">>, ae_account => AeAccount}
+            );
+        _ ->
+            ?LOG_WARNING(
+                "Sale webhook is not configured: secrets:encrypt_store(sale_webhook, \"https://discord.com/api/webhooks/12....\")."
+            )
+    end,
+
     ok.
 
 terminate(Reason, State) ->

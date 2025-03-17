@@ -52,31 +52,52 @@ start_link() -> gen_server:start_link(?MODULE, [], []).
 init([]) ->
     gproc:reg_other({n, l, {?MODULE, secrets}}, self()),
     {ok, #{}}.
-handle_call({encrypt, Key, Prompt, Data}, _From, State) ->
-    Password =
-        case maps:get(Key, State, undefined) of
-            undefined ->
-                case erm:ask_password(Prompt) of
-                    undefined ->
-                        undefined;
-                    Password0 ->
-                        list_to_binary(Password0)
-                end;
-            Pass ->
-                Pass
-        end,
-    EncData = secrets:encrypt(Password, term_to_binary(Data)),
-    {reply, term_to_binary(EncData), maps:put(Key, Password, State)};
-handle_call({decrypt, Key, Prompt, EncData}, _From, State) ->
-    Password =
-        case maps:get(Key, State, undefined) of
-            undefined ->
-                list_to_binary(erm:ask_password(Prompt));
-            Pass ->
-                Pass
-        end,
-    Data = secrets:decrypt(Password, binary_to_term(EncData)),
-    {reply, binary_to_term(Data), maps:put(Key, Password, State)};
+
+get_node_password() ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, get_node_password, ?ASKPASS_TIMEOUT).
+get_node_password_cached(State) ->
+    Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
+    case maps:get(node_password, State, undefined) of
+        undefined ->
+            case erm:ask_password(Prompt) of
+                undefined ->
+                    throw(error);
+                NodePassword ->
+                    {NodePassword, maps:put(node_password, NodePassword, State)}
+            end;
+        NodePassword ->
+            {NodePassword, State}
+    end.
+
+handle_call(get_node_password, _From, State0) ->
+    {NodePassword, State} = get_node_password_cached(State0),
+    {reply, NodePassword, State};
+handle_call({encrypt, Key, Data}, _From, State0) ->
+    {NodePassword, State} = get_node_password_cached(State0),
+    case maps:get(Key, State, undefined) of
+        undefined ->
+            EncData = secrets:encrypt(
+                list_to_binary(NodePassword), term_to_binary(Data)
+            ),
+            {reply, {ok, term_to_binary(EncData)}, maps:put(Key, Data, State)};
+        Password ->
+            Password
+    end;
+handle_call({decrypt, Key, EncData}, _From, State0) ->
+    {NodePassword, State} = get_node_password_cached(State0),
+    case maps:get(Key, State, undefined) of
+        undefined ->
+            case secrets:decrypt(list_to_binary(NodePassword), binary_to_term(EncData)) of
+                Data when is_binary(Data) ->
+                    DecryptedData = binary_to_term(Data),
+                    {reply, DecryptedData, maps:put(Key, DecryptedData, State)};
+                _ ->
+                    {reply, error, State}
+            end;
+        Pass ->
+            Pass
+    end;
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
         "got unknown on gun websocket Call ~p, From ~p, State ~p",
@@ -107,20 +128,38 @@ node_keypair() ->
         {error, enoent} ->
             ?LOG_INFO("damage.key not found ... creating.", []),
             Data = make_keypair(),
-            EncData = secrets:encrypt(
-                node_passphrase,
-                "Damage Node Password (used to encrypt keys stored on disk)",
-                Data
-            ),
-            ok = file:write_file(Path, EncData),
-            Data;
-        {ok, EncData} ->
-            Data = secrets:decrypt(
-                node_passphrase,
-                "Damage Node Password (used to decrypt keys stored on disk)",
-                EncData
-            ),
-            #{public_key := _Pub, private_key := _Priv} = Data
+            case get_node_password() of
+                undefined ->
+                    ?LOG_WARNING("Failed get password for encrypting node_keypair", []),
+                    error;
+                Password ->
+                    EncData = secrets:encrypt(
+                        Password,
+                        term_to_binary(Data)
+                    ),
+                    ok = file:write_file(Path, term_to_binary(EncData)),
+                    Data
+            end;
+        {ok, EncDataBin} ->
+            case get_node_password() of
+                undefined ->
+                    ?LOG_WARNING("Failed get password for decrypting node_keypair", []),
+                    error;
+                Password ->
+                    ?LOG_DEBUG("enc data ~p", [Password]),
+                    case
+                        secrets:decrypt(
+                            Password,
+                            binary_to_term(EncDataBin)
+                        )
+                    of
+                        error ->
+                            ?LOG_WARNING("Failed to unlock node_keypair", []),
+                            error;
+                        Data ->
+                            binary_to_term(Data)
+                    end
+            end
     end.
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
@@ -134,6 +173,8 @@ encrypt(Key, Password, PlainText) ->
     gen_server:call(Pid, {encrypt, Key, Password, PlainText}, ?ASKPASS_TIMEOUT).
 
 %% Encrypts data with a password
+encrypt(Password, PlainText) when is_list(Password) ->
+    encrypt(list_to_binary(Password), PlainText);
 encrypt(Password, PlainText) ->
     Salt = random_bytes(?SALT_SIZE),
     IV = random_bytes(?IV_SIZE),
@@ -236,11 +277,15 @@ encrypt_store(Name, Secret) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
     store_secret(Name, encrypt_secret(Secret, PrivateKey)).
 retrieve_decrypt(Name) ->
-    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
-    case retrieve_secret(Name) of
-        [{Name, {IV, CipherText, Tag}}] ->
-            {ok, decrypt_secret({IV, CipherText, Tag}, PrivateKey)};
-        [] ->
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := PrivateKey} ->
+            case retrieve_secret(Name) of
+                [{Name, {IV, CipherText, Tag}}] ->
+                    {ok, decrypt_secret({IV, CipherText, Tag}, PrivateKey)};
+                [] ->
+                    error
+            end;
+        error ->
             error
     end.
 
@@ -265,12 +310,21 @@ test() ->
     StoredSecret = "store secre",
     encrypt_store(test, StoredSecret),
     StoredSecret = retrieve_decrypt(test).
+
 migrate() ->
     {ok, Data} = file:read_file("damage.prod.key"),
-    #{public_key := _Pub, private_key := _Priv} = binary_to_term(Data),
-    EncData = secrets:encrypt(
-        node_passphrase,
-        "Damage Node Password (used to encrypt keys stored on disk)",
-        binary_to_term(Data)
-    ),
-    ok = file:write_file("damage.key", EncData).
+    Path = application:get_env(damage, keystore, "damage.key"),
+    Keypair = binary_to_term(Data),
+    Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
+    case erm:ask_password(Prompt) of
+        undefined ->
+            ?LOG_WARNING("Failed to get node_password", []),
+            error;
+        Password ->
+            EncData = secrets:encrypt(
+                Password,
+                term_to_binary(Keypair)
+            ),
+            ok = file:write_file(Path, term_to_binary(EncData)),
+            Keypair
+    end.
