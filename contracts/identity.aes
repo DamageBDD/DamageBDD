@@ -1,0 +1,45 @@
+contract IdentityRegistry =
+  
+  record identity =
+    { account  : address }
+
+  record state =
+    { emails       : map(string, identity),   // Email → Account
+      npubs        : map(string, identity),   // Nostr PubKey → Account
+      lightning    : map(string, identity) }  // Lightning Auth → Account
+
+  stateful entrypoint init() : state =
+    { emails = {}, npubs = {}, lightning = {} }
+
+  // Register Email → Account (One-to-One)
+  stateful entrypoint register_email(email : string) =
+    require(Map.lookup(email, state.emails) == None, "Email already registered.")
+    put(state{emails[email] = { account = Call.caller }})
+
+  // Register Npub → Account (One-to-One)
+  stateful entrypoint register_npub(npub : string) =
+    require(Map.lookup(npub, state.npubs) == None, "Nostr PubKey already registered")
+    put(state{npubs[npub] = { account = Call.caller }})
+
+  // Register Lightning Auth → Account (One-to-One)
+  stateful entrypoint register_lightning(auth_key : string) =
+    require(Map.lookup(auth_key, state.lightning) == None, "Lightning auth key already registered")
+    put(state{lightning[auth_key] = { account = Call.caller }})
+
+  // Get Account by Email
+  entrypoint get_account_by_email(email : string) : option(address) =
+    switch(Map.lookup(email, state.emails))
+      Some(entry) => Some(entry.account)
+      None => None
+
+  // Get Account by Npub
+  entrypoint get_account_by_npub(npub : string) : option(address) =
+    switch(Map.lookup(npub, state.npubs))
+      Some(entry) => Some(entry.account)
+      None => None
+
+  // Get Account by Lightning Auth
+  entrypoint get_account_by_lightning(auth_key : string) : option(address) =
+    switch(Map.lookup(auth_key, state.lightning))
+      Some(entry) => Some(entry.account)
+      None => None
