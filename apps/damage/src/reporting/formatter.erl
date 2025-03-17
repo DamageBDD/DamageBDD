@@ -26,7 +26,7 @@
 -export([invoke_formatters/3]).
 
 start_link(_Args) ->
-  logger:info("formater process started ~p~n", [self()]),
+  ?LOG_INFO("formater process started ~p~n", [self()]),
   gen_server:start_link(?MODULE, [], []).
 
 
@@ -80,5 +80,5 @@ format(Config, Keyword, Data) ->
 
 
 terminate(Reason, _State) ->
-  logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+  ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
   ok.

@@ -48,7 +48,7 @@ select_server(Servers, Length) ->
                 {ok, _VersionInfo} ->
                     Pid;
                 Err ->
-                    logger:info(
+                    ?LOG_INFO(
                         "Error connecting to ipfs node ~p, index ~p",
                         [Err, RandomIndex]
                     ),
@@ -57,7 +57,7 @@ select_server(Servers, Length) ->
                     select_server(RemainingServers, Length - 1)
             end;
         Err ->
-            logger:info(
+            ?LOG_INFO(
                 "Error connecting to ipfs node ~p, index ~p",
                 [Err, RandomIndex]
             ),
@@ -67,7 +67,7 @@ select_server(Servers, Length) ->
     end.
 
 init(Members) ->
-    logger:info("initializing ipfs cluster ~p", [Members]),
+    ?LOG_INFO("initializing ipfs cluster ~p", [Members]),
     Connection =
         select_server([#{ip => Host, port => Port} || {Host, Port} <- Members]),
     {ok, #{connection => Connection}}.
@@ -78,15 +78,15 @@ handle_call(
     #{connection := Connection} = State
 ) ->
     Resp = ipfs:add(Connection, {data, Data, FileName}, ?DEFAULT_IPFS_TIMEOUT),
-    logger:info("added data to ipfs node ~p", [Resp]),
+    ?LOG_INFO("added data to ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({pin, Hashes}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:pin(Connection, Hashes, ?DEFAULT_IPFS_TIMEOUT),
-    logger:info("added data to ipfs node ~p", [Resp]),
+    ?LOG_INFO("added data to ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({add, {file, File}}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:add(Connection, {file, File}, ?DEFAULT_IPFS_TIMEOUT),
-    logger:info("added data to ipfs node ~p", [Resp]),
+    ?LOG_INFO("added data to ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call(
     {add, {directory, DirectoryPath}},
@@ -99,15 +99,15 @@ handle_call(
     {reply, Resp, State};
 handle_call({get, Hash, FileName}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:get(Connection, Hash, FileName, ?DEFAULT_IPFS_TIMEOUT),
-    logger:info("get data from ipfs node ~p", [Resp]),
+    ?LOG_INFO("get data from ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({cat, Hash}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:cat(Connection, Hash, ?DEFAULT_IPFS_TIMEOUT),
-    logger:info("cat data from ipfs node ~p", [Resp]),
+    ?LOG_INFO("cat data from ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({ls, Hash}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:ls(Connection, Hash, ?DEFAULT_IPFS_TIMEOUT),
-    logger:info("get data from ipfs node ~p", [Resp]),
+    ?LOG_INFO("get data from ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call(Request, _From, State) ->
     logger:error("unknown_request ~p", [Request]),
@@ -179,7 +179,7 @@ cat(Hash) ->
     ).
 
 test() ->
-    logger:info("ipfs add directory", []),
+    ?LOG_INFO("ipfs add directory", []),
     {ok, HashList} = damage_ipfs:add({directory, "features"}),
     [#{<<"Hash">> := Hash}] =
         lists:filter(
@@ -189,7 +189,7 @@ test() ->
             end,
             HashList
         ),
-    logger:info("ipfs add directory hash ~p", [Hash]),
+    ?LOG_INFO("ipfs add directory hash ~p", [Hash]),
     damage_ipfs:ls(Hash),
     test_publish_git_repo().
 

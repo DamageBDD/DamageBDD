@@ -175,7 +175,7 @@ execute_file(Config, Context, Filename) ->
     StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
     case catch parse_file(Filename) of
         {failed, LineNo, Message} ->
-            logger:error(
+            ?LOG_ERROR(
                 "Parsing Failed ~p +~p ~n     ~p.",
                 [Filename, LineNo, Message]
             ),
@@ -306,10 +306,10 @@ execute_file(Config, Context, Filename) ->
             damage_ae:confirm_spend(RunRecord),
             RunRecord;
         {error, enont} = Err ->
-            logger:error("Feature file ~p not found.", [Filename]),
+            ?LOG_ERROR("Feature file ~p not found.", [Filename]),
             Err;
         Err ->
-            logger:error("Feature parsing error file ~p .", [Filename]),
+            ?LOG_ERROR("Feature parsing error file ~p .", [Filename]),
             Err
     end.
 
@@ -509,7 +509,7 @@ execute_step(Config, Step, Context) ->
     Context0 = step_spend(Context2),
     case maps:get(step_found, Context0) of
         false ->
-            %logger:error("step not found:~p ~p", [StepKeyWord, Body1]),
+            %?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
             formatter:format(
                 Config,
                 step,

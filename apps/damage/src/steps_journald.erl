@@ -88,7 +88,7 @@ handle_info(Info, Context) ->
     {noreply, Context}.
 
 terminate(Reason, _Context) ->
-    logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
     ok.
 
 code_change(_OldVsn, Context, _Extra) -> {ok, Context}.

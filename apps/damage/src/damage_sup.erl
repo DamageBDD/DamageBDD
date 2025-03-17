@@ -14,6 +14,8 @@
 
 -behaviour(supervisor).
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_link/0]).
 -export([init/1]).
 
@@ -33,7 +35,7 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 init([]) ->
     {ok, Pools} = application:get_env(damage, pools),
-    logger:info("Starting workers ~p~n", [Pools]),
+    ?LOG_DEBUG("Starting workers ~p~n", [Pools]),
     SupFlags = {one_for_one, 10, 10},
     PoolSpecs =
         lists:map(
@@ -44,9 +46,9 @@ init([]) ->
             Pools
         ),
     LightPandaCmd = "bin/lightpanda-x86_64-linux --verbose",
-    logger:info("Starting lightpanda ~p~n", [LightPandaCmd]),
+    ?LOG_DEBUG("Starting lightpanda ~p~n", [LightPandaCmd]),
     ChromedriverCmd = "chromedriver --port=9515",
-    logger:info("Starting chromedriver ~p~n", [ChromedriverCmd]),
+    ?LOG_DEBUG("Starting chromedriver ~p~n", [ChromedriverCmd]),
     PoolSpecs0 =
         [
             #{
@@ -168,7 +170,7 @@ init([]) ->
             }
         ] ++
             PoolSpecs,
-    logger:info("Worker definitions ~p~n", [PoolSpecs0]),
+    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
 
 %%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},

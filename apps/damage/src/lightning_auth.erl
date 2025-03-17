@@ -347,7 +347,7 @@ from_json(Req, State) ->
     {Status, Resp0} =
         case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
             {'EXIT', {badarg, Trace}} ->
-                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+                ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};
             #{feature := _FeatureData} = FeatureJson ->
                 check_execute_bdd(FeatureJson, State, Req)

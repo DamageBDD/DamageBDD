@@ -30,7 +30,7 @@ start_session(ChromeDriver, Context) when is_list(ChromeDriver) ->
         {error, {already_started, WebDriverPid}} ->
             maps:put(chromedriver, WebDriverPid, Context);
         {error, {html_error, {failed_connect, Error}}} ->
-            logger:error("Webdriver error ~p", [Error]),
+            ?LOG_ERROR("Webdriver error ~p", [Error]),
             maps:put(fail, <<"Webdriver error, please try again later.">>, Context)
     end.
 
@@ -63,7 +63,7 @@ step(Config, Context, <<"And">>, _N, ["I open the url", Url], _) ->
         Reason ->
             Msg =
                 damage_utils:strf("Failed to open url ~p Reason ~p ", [Url, Reason]),
-            logger:error(Msg),
+            ?LOG_ERROR(Msg),
             maps:put(fail, Msg, Context)
     end;
 step(Config, Context, <<"Then">>, _N, ["I expect that the url is", Url], _Args) ->

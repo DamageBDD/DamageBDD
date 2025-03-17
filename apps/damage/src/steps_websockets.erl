@@ -6,6 +6,8 @@
 
 -license("Apache-2.0").
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([step/6]).
 
 step(
@@ -38,7 +40,7 @@ step(_Config, Context, <<"When">>, _N, ["I send data on the websocket"], Data) -
     StreamRef = maps:get(websocket_streamref, Context),
     ConnPid = maps:get(websocket_connpid, Context),
     Res = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode(Data)}),
-    logger:info("Received data back on websocket send: ~p ", [Res]),
+    ?LOG_INFO("Received data back on websocket send: ~p ", [Res]),
     maps:put(response, Res, Context);
 step(
     _Config,

@@ -43,7 +43,7 @@
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    logger:info("Damage AI ~p starting.~n", [self()]),
+    ?LOG_INFO("Damage AI ~p starting.~n", [self()]),
     process_flag(trap_exit, true),
     State = #{api_key => secrets:retrieve_secret(openai_api_pass)},
     {ok, State}.
@@ -241,7 +241,7 @@ handle_cast({run_python_server, Config, Context, Code}, State) ->
             ?LOG_DEBUG("Codefile ~p.  DataDir ~p", [CodeFile, DataDir]),
             case file:write_file(CodeFile, Code) of
                 ok ->
-                    logger:info("Starting server process ~p.", [CodeFile]),
+                    ?LOG_INFO("Starting server process ~p.", [CodeFile]),
                     {ok, Pid, OsPid} =
                         exec:run(
                             "/usr/sbin/python " ++ CodeFile,
@@ -266,7 +266,7 @@ handle_cast({run_python_server, Config, Context, Code}, State) ->
 handle_info(_Info, State) -> {noreply, State}.
 
 terminate(Reason, _State) ->
-    logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
@@ -366,7 +366,7 @@ to_html(Req, State) ->
 
 %logger:error("to text ipfs hash ~p ", [Req]),
 %Body = damage_utils:load_template("report.mustache", [{body, <<"Test">>}]),
-%logger:info("get ipfs hash ~p ", [Body]),
+%?LOG_INFO("get ipfs hash ~p ", [Body]),
 %{Body, Req, State}.
 to_json(Req, State) ->
     logger:error("to text ipfs hash ~p ", [Req]),
@@ -450,7 +450,7 @@ get_ai_proc(Username) ->
 %
 %    Other ->
 %          Msg = <<"Insufficient balance, please top up balance: ", Other/binary>>,
-%        logger:info("Damage AI ~p ", [Msg]),
+%        ?LOG_INFO("Damage AI ~p ", [Msg]),
 %      {400, Msg}
 %  end.
 test_create_bddmodel() -> create_model(<<"bdd">>).

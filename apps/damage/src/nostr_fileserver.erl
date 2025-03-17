@@ -83,7 +83,7 @@ from_json(Req, #{ae_account := AeAccount, ae_account := AeAccount} = State) ->
     {Status, Resp0} =
         case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
             {'EXIT', {badarg, Trace}} ->
-                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+                ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};
             #{domain := _Domain} ->
                 ok

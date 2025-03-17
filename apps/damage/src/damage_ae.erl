@@ -611,7 +611,7 @@ handle_cast(Event, State) ->
 handle_info(_Info, State) -> {noreply, State}.
 
 terminate(Reason, _State) ->
-    logger:info("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.

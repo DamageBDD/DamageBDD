@@ -752,7 +752,7 @@ test_get_headers() ->
                 #{value => <<"ths will be redaacted">>, secret => true}
         },
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
-    logger:info("Headers ~p", [Headers]).
+    ?LOG_INFO("Headers ~p", [Headers]).
 
 test_gun_post() ->
     Context =

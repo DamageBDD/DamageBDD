@@ -193,12 +193,12 @@ do_post_action(
     Req,
     State
 ) ->
-do_post_action(
-    invoice,
-    maps:put(amount, ?DEFAULT_AMOUNT_MSATS,Data),
-    Req,
-    State
-);
+    do_post_action(
+        invoice,
+        maps:put(amount, ?DEFAULT_AMOUNT_MSATS, Data),
+        Req,
+        State
+    );
 do_post_action(
     invoice,
     #{memo := Memo, amount := Amount, expiry := Expiry} = Data,

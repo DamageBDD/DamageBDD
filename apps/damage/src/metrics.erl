@@ -24,7 +24,7 @@ init() ->
             _ -> ok
         catch
             _ ->
-                logger:error("Error initializing metrics"),
+                ?LOG_ERROR("Error initializing metrics"),
                 ok
         end
      || M <-

@@ -513,9 +513,9 @@ delete_resource(Req, #{action := invoices} = State) ->
                         ),
                         case lnd:cancel_invoice(RHash) of
                             #{<<"code">> := 5} ->
-                                logger:info("Invoice not found ~p", [RHash]);
+                                ?LOG_INFO("Invoice not found ~p", [RHash]);
                             Other ->
-                                logger:info("Invoice found ~p", [Other]),
+                                ?LOG_INFO("Invoice found ~p", [Other]),
                                 Acc + 1
                         end
                     end,

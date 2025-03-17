@@ -127,9 +127,9 @@ from_text(Req, #{ae_account := AeAccount, username := Username} = State) ->
             username => Username,
             cron => CronSpec
         },
-    logger:info("schedule_job: ~p", [Schedule]),
+    ?LOG_INFO("schedule_job: ~p", [Schedule]),
     CronJob = apply(?MODULE, schedule_job, [Schedule]),
-    logger:info("Cron Job: ~p", [CronJob]),
+    ?LOG_INFO("Cron Job: ~p", [CronJob]),
     ok = add_schedule(Username, Name, Hash, CronSpec),
     %damage_accounts:update_schedules(AeAccount, Hash, CronJob),
     Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
@@ -145,7 +145,7 @@ to_json(Req, #{username := Username, ae_account := AeAccount} = State) ->
         jsx:encode(
             #{status => <<"ok">>, results => Schedules, length => length(Schedules)}
         ),
-    logger:info("Loading scheduled for ~p ~p", [Username, Body]),
+    ?LOG_INFO("Loading scheduled for ~p ~p", [Username, Body]),
     {Body, Req, State}.
 
 execute_bdd(

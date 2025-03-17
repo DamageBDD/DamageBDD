@@ -215,7 +215,7 @@ get_config(
                                 #{<<"content-type">> => <<"text/plain">>},
                                 Req0
                             ),
-                        logger:info("get_config req ~p", [Req]),
+                        ?LOG_INFO("get_config req ~p", [Req]),
                         [
                             {
                                 text,
@@ -377,7 +377,7 @@ from_json(Req, #{action := Action} = State) ->
             #{feature := _FeatureData, concurrency := _Concurrency} = FeatureJson ->
                 do_action(Action, FeatureJson, State);
             Err ->
-                logger:error("json decoding failed ~p.", [Data]),
+                ?LOG_ERROR("json decoding failed ~p.", [Data]),
                 {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
         end,
     Resp = cowboy_req:set_resp_body(Resp0, Req),

@@ -79,20 +79,20 @@ setup_vanillae_deps() ->
 
 -spec start_phase(atom(), application:start_type(), []) -> ok.
 start_phase(start_vanillae, _StartType, []) ->
-    logger:info("Starting vanilla."),
+    ?LOG_INFO("Starting vanilla."),
     %Version = "0.13.9",
     %true = os:putenv("zx_include", filename:join([os:getenv("HOME"), "/zomp/lib/otpr/zx/",Version,"include"])),
     setup_vanillae_deps(),
     {ok, _} = application:ensure_all_started(vanillae),
-    {ok, NetworkId} = application:get_env(damage, network_id),
+    {ok, NetworkId} = application:get_env(damage, ae_network_id),
     vanillae:network_id(NetworkId),
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
     ok = vanillae:ae_nodes(Nodes),
-    logger:info("Started vanilla."),
+    ?LOG_INFO("Started vanilla."),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
-    logger:info("Starting Damage."),
+    ?LOG_INFO("Starting Damage."),
     {ok, _} = application:ensure_all_started(gun),
     {ok, _} = application:ensure_all_started(fast_yaml),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
@@ -134,13 +134,13 @@ start_phase(damage, _StartType, []) ->
     damage_ae:start_batch_spend_timer(),
     ?LOG_INFO("Started Damage.");
 start_phase(register_node, _StartType, []) ->
-    logger:info("registering node."),
+    ?LOG_INFO("registering node."),
     {ok, Hostname} = inet:gethostname(),
     NodeName = list_to_atom("damage@" ++ Hostname),
     {ok, _Pid} = net_kernel:start([NodeName, longnames]),
     ok;
 start_phase(start_sync, _StartType, []) ->
-    logger:info("Starting sync."),
+    ?LOG_INFO("Starting sync."),
     case init:get_plain_arguments() of
         [_, "shell" | _] ->
             ?LOG_INFO("Sourc sync enabled.", []),
@@ -152,7 +152,7 @@ start_phase(start_sync, _StartType, []) ->
     ?LOG_INFO("Sync Ready."),
     ok;
 start_phase(os_tune, _StartType, []) ->
-    logger:info("Tuning os."),
+    ?LOG_INFO("Tuning os."),
     {ok, _} = exec:run("ulimit -n 1000000", [sync]),
     ok.
 
