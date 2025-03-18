@@ -43,10 +43,7 @@
         get_ae_mdw_ws_node/0,
         node_balance/0,
         account_keypair/1,
-        deploy_account_contract/0,
-        deploy_keystore_contract/0,
-        deploy_identity_contract/0,
-        deploy_knowledge_nft_contract/0,
+        deploy_default_contracts/0,
         wait_tx/1
     ]
 ).
@@ -1076,32 +1073,33 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedContract),
     wait_tx(ContractCallTxHash).
 
-deploy_account_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(secrets:node_keypair(), "contracts/account.aes", []),
-    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
+deploy_default_contract(Keypair, Contract, Args) ->
+    #{
+        "caller_id" :=
+            _CalledId,
+        "caller_nonce" := _Nonce,
+        "contract_id" :=
+            ContractAddress,
+        "gas_price" := _GasPrice,
+        "gas_used" := GasUsed,
+        "height" := _Height,
+        "log" := _Log,
+        "return_type" := "ok",
+        "return_value" := none
+    } =
+        contract_deploy(Keypair, Contract, Args),
     ?LOG_INFO("Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
-
-deploy_keystore_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(secrets:node_keypair(), "contracts/keystore.aes", []),
-    application:set_env(damage, account_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Keystore Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
-deploy_identity_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} = contract_deploy(
-        secrets:node_keypair(), "contracts/identity.aes", []
-    ),
-    application:set_env(damage, keystore_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Identity Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
-deploy_knowledge_nft_contract() ->
-    #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
-        contract_deploy(secrets:node_keypair(), "contracts/knowledge_nft.aes", []),
-    application:set_env(damage, knowledge_nft_contract, binary_to_list(ContractAddress)),
-    ?LOG_INFO("Knowledge NFT Contract deployed ~p gasused ~p", [ContractAddress, GasUsed]),
-    ContractAddress.
+    {Contract, ContractAddress}.
+deploy_default_contracts() ->
+    Contracts = [
+        {"contracts/account.aes", []},
+        {"contracts/keystore.aes", []},
+        {"contracts/identity.aes", []},
+        {"contracts/knowledge.aes", []},
+        {"contracts/knowledge_nft.aes", []}
+    ],
+    Keypair = secrets:node_keypair(),
+    [deploy_default_contract(Keypair, Contract, Args) || {Contract, Args} <- Contracts].
 
 node_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
