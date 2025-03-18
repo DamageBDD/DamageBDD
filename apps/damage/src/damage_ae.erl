@@ -13,10 +13,6 @@
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
 -define(AECLI_EXEC, "/home/steven/.npm-packages/bin/aecli").
--define(TAG_CONTRACT_CALL_TX, 43).
--define(TAG_SIGNED_TX, 11).
--define(OBJECT_VERSION, 1).
--define(HASH_BYTES, 32).
 
 -export(
     [
@@ -1039,11 +1035,12 @@ tx_info_convert_result(Result) ->
                 "log" := _log,
                 "return_type" := _ReturnType,
                 "return_value" := Encoded
-            }
+            } = CallInfo
         } ->
             case vanillae:decode_bytearray_fate(Encoded) of
-                {ok, {tuple, Result}} -> Result;
-                Res -> Res
+                {ok, {tuple, ReturnValue}} -> maps:put("return_value", ReturnValue, CallInfo);
+                {ok, ReturnValue} -> maps:put("return_value", ReturnValue, CallInfo);
+                ReturnValue -> maps:put("return_value", ReturnValue, CallInfo)
             end;
         {error, Reason} ->
             {error, Reason}
@@ -1071,48 +1068,13 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
 
 wait_tx(ConId) ->
     poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 25000).
-min_gas_price() ->
-    3000000000.
-min_fee() ->
-    444400000000000.
-contract_create(CreatorID, Path, InitArgs) ->
-    case vanillae:next_nonce(CreatorID) of
-        {ok, Nonce} ->
-            Amount = 0,
-            Gas = 100000,
-            GasPrice = min_gas_price(),
-            Fee = min_fee(),
-            vanillae:contract_create(
-                CreatorID,
-                Nonce,
-                Amount,
-                Gas,
-                GasPrice,
-                Fee,
-                Path,
-                InitArgs
-            );
-        Error ->
-            Error
-    end.
 
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, ContractData} =
-        contract_create(AeAccount, Contract, Args),
-    ?LOG_DEBUG("Contract Data ~p", [ContractData]),
-    ?LOG_DEBUG("Privkey ~p", [binary_to_list(PrivateKey)]),
+        vanillae:contract_create(AeAccount, Contract, Args),
     SignedContract = sign_transaction_base58(PrivateKey, ContractData),
-    svt:mainsplain(SignedContract),
-    ?LOG_DEBUG("Contract Data ~p", [ContractData]),
-    case vanillae:dry_run(SignedContract) of
-        {ok, #{"reason" := Reason}} ->
-            ?LOG_DEBUG("contract call dry run failed ~p", [Reason]),
-            throw(Reason);
-        _ ->
-            {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedContract),
-            ?LOG_DEBUG("contract call success ~p", [ContractCallTxHash]),
-            wait_tx(ContractCallTxHash)
-    end.
+    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedContract),
+    wait_tx(ContractCallTxHash).
 
 deploy_account_contract() ->
     #{address := ContractAddress, result := #{gasUsed := GasUsed}} =
@@ -1151,8 +1113,8 @@ test_get_user_keypair() ->
 
 test_contract_deploy() ->
     KeyPair = secrets:node_keypair(),
-    {ok, #{"tx_hash" := TxHash}} = contract_deploy(KeyPair, "contracts/test.aes", []),
-    wait_tx(TxHash).
+    #{"contract_id" := ContractId} = contract_deploy(KeyPair, "contracts/test.aes", []),
+    ContractId.
 
 test_contract_call() ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
