@@ -53,6 +53,9 @@ init([]) ->
     gproc:reg_other({n, l, {?MODULE, secrets}}, self()),
     {ok, #{}}.
 
+clear_cache() ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, clear_cache, ?ASKPASS_TIMEOUT).
 get_node_password() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, get_node_password, ?ASKPASS_TIMEOUT).
@@ -70,6 +73,8 @@ get_node_password_cached(State) ->
             {NodePassword, State}
     end.
 
+handle_call(clear_cache, _From, State) ->
+    {reply, ok, maps:remove(node_password, State)};
 handle_call(get_node_password, _From, State0) ->
     {NodePassword, State} = get_node_password_cached(State0),
     {reply, NodePassword, State};
@@ -131,7 +136,8 @@ node_keypair() ->
             case get_node_password() of
                 undefined ->
                     ?LOG_WARNING("Failed get password for encrypting node_keypair", []),
-                    error;
+                    clear_cache(),
+                    node_keypair();
                 Password ->
                     EncData = secrets:encrypt(
                         Password,
@@ -144,7 +150,8 @@ node_keypair() ->
             case get_node_password() of
                 undefined ->
                     ?LOG_WARNING("Failed get password for decrypting node_keypair", []),
-                    error;
+                    clear_cache(),
+                    node_keypair();
                 Password ->
                     ?LOG_DEBUG("enc data ~p", [Password]),
                     case
@@ -155,7 +162,8 @@ node_keypair() ->
                     of
                         error ->
                             ?LOG_WARNING("Failed to unlock node_keypair", []),
-                            error;
+                            clear_cache(),
+                            node_keypair();
                         Data ->
                             binary_to_term(Data)
                     end
