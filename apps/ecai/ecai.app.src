@@ -1,0 +1,25 @@
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+
+{
+    application,
+    ecai,
+    [
+        {description, "ECAI - Elliptic Curve Artificial Intelligence."},
+        {vsn, "0.1.0"},
+        {registered, []},
+        {mod, {ecai_app, []}},
+        {
+            applications,
+            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc]
+        },
+        {env, []},
+        {modules, []},
+        {licenses, ["Apache 2.0"]},
+        {
+            start_phases,
+            [
+            ]
+        },
+        {links, []}
+    ]
+}.
