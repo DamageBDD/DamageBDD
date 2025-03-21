@@ -261,6 +261,15 @@ step(
         _ ->
             Context
     end;
+step(Config, Context, <<"When">>, _N, ["I send a GET request to ", Path, " with parameters"], Body) ->
+    Params = steps_utils:parse_step_body(Body),
+    Query = uri_sring:compose_query(maps:to_list(Params)),
+    gun_get(
+        Config,
+        Context,
+        string:concat(maps:get(base_url, Context, ""), string:concat(Path, Query)),
+        get_headers(Context, ?DEFAULT_HEADERS)
+    );
 step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
     gun_get(
         Config,

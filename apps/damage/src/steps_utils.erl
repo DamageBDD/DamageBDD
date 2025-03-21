@@ -11,6 +11,8 @@
 
 -export([step/6]).
 -export([is_admin/1]).
+-export([parse_table/1]).
+-export([parse_step_body/1]).
 
 step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
     maps:put(Variable, list_to_binary(uuid:to_string(uuid:uuid4())), Context);
@@ -65,5 +67,35 @@ is_admin(AeAccount) ->
             lists:member(AeAccount, NodeAdmins);
         Other ->
             ?LOG_ERROR("not node admin ~p <> ~p", [Other, AeAccount]),
+            false
+    end.
+
+parse_step_body(Text) ->
+    case try_json_parse(Text) of
+        {ok, JsonMap} -> JsonMap;
+        error -> parse_table(Text)
+    end.
+
+try_json_parse(Text) ->
+    try
+        {ok, jsx:decode(Text, [return_maps])}
+    catch
+        _:_ -> error
+    end.
+
+parse_table(Text) ->
+    Lines = string:split(string:trim(Text), "\n", all),
+    ParsedLines = lists:filtermap(fun parse_line/1, Lines),
+    maps:from_list(ParsedLines).
+
+parse_line(Line) ->
+    case string:trim(Line) of
+        <<"|", Rest/binary>> ->
+            Parts = lists:map(fun string:trim/1, string:split(Rest, "|", all)),
+            case Parts of
+                [Key, Value] -> {true, {binary_to_atom(Key, utf8), Value}};
+                _ -> false
+            end;
+        _ ->
             false
     end.
