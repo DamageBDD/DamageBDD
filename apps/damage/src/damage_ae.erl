@@ -47,7 +47,7 @@
         wait_tx/1
     ]
 ).
--export([contract_call/5, contract_deploy/3]).
+-export([contract_call/5, contract_deploy/3, contract_deploy/2]).
 -export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
 -export([get_schedules/1]).
 -export([delete_account/1]).
@@ -1066,6 +1066,9 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
 wait_tx(ConId) ->
     poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 25000).
 
+contract_deploy(Contract, Args) ->
+    Keypair = secrets:node_keypair(),
+    contract_deploy(Keypair, Contract, Args).
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, ContractData} =
         vanillae:contract_create(AeAccount, Contract, Args),
