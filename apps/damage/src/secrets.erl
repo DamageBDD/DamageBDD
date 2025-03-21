@@ -32,7 +32,7 @@
     test/0,
     migrate/0
 ]).
--export([encrypt/2, decrypt/2, change_password/3]).
+-export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
 
 -define(ASKPASS_TIMEOUT, 60000).
@@ -176,6 +176,9 @@ random_bytes(N) -> crypto:strong_rand_bytes(N).
 derive_key(Password, Salt) ->
     hkdf(Salt, Password, <<"AES-KEY">>, 32).
 
+encrypt(PlainText) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    base64:encode(term_to_binary(encrypt_secret(PlainText, PrivateKey))).
 encrypt(Key, Password, PlainText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {encrypt, Key, Password, PlainText}, ?ASKPASS_TIMEOUT).
@@ -190,6 +193,9 @@ encrypt(Password, PlainText) ->
     {CipherText, Tag} = crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, PlainText, <<>>, true),
     {Salt, IV, Tag, CipherText}.
 
+decrypt(Base64EncodedCipherTuple) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    decrypt_secret(binary_to_term(base64:decode(Base64EncodedCipherTuple)), PrivateKey).
 decrypt(Key, Password, CipherText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {decrypt, Key, Password, CipherText}, ?ASKPASS_TIMEOUT).
