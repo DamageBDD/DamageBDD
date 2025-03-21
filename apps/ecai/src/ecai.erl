@@ -6,7 +6,6 @@
 -license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("damage.hrl").
 
 -export([
     start/0,
@@ -33,7 +32,7 @@ start() ->
     io:format("Elliptical AI initialized. Ready for computation.~n").
 
 init() ->
-    PrivDir = code:priv_dir(damage),
+    PrivDir = code:priv_dir(ecai),
     NifPath = filename:join([PrivDir, "ecai"]),
     ok = erlang:load_nif(NifPath, 0).
 %% Generate a valid point on the elliptic curve

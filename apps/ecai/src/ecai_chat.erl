@@ -7,7 +7,6 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("damage.hrl").
 
 -behaviour(gen_server).
 
@@ -33,6 +32,7 @@
 ).
 -define(KNOWLEDGE_POINTS_TABLE, ecai_knowledge).
 -define(KNOWLEDGE_EDGES_TABLE, ecai_knowledge_edges).
+-define(DEFAULT_TIMEOUT, 60000).
 
 %% Start the GenServer
 start_link([]) -> gen_server:start_link(?MODULE, [], []).
