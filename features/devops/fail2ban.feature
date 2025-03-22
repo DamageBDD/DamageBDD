@@ -13,6 +13,9 @@ Feature: Automatically ban IP addresses making bad requests to the Nginx server
 
 
   Scenario: Ban an IP address after multiple 404 requests
-    When the IP has made more than "10" requests with status "404" in the last "60" seconds
+    When the IP has made more than "5" requests with status "404" in the last "60" seconds
     Then the IP must be banned for "90" seconds
 
+  Scenario: Ban an IP address after multiple requests to a known path
+    When the IP has made more than "5" requests to path "/.env" in the last "60" seconds
+    Then the IP must be banned for "90" seconds
