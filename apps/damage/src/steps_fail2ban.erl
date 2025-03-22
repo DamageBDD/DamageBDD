@@ -154,100 +154,23 @@ handle_call({unban, Ip}, _From, Context) ->
 handle_call(
     {check_ban, Data},
     _From,
+    #{fail2ban_exclusions := Exclusions, fail2ban_service := "postfix"} = Context
+) ->
+    case catch parse_postfix_log(Data) of
+        {ok, Ip} ->
+            check_ban(Ip, 0, Exclusions, Context);
+        Fail ->
+            ?LOG_ERROR("checkban failed parsing ~p", [Fail]),
+            {reply, ok, Context}
+    end;
+handle_call(
+    {check_ban, Data},
+    _From,
     #{fail2ban_exclusions := Exclusions, fail2ban_service := "nginx"} = Context
 ) ->
-    Now = date_util:epoch(),
     case catch parse_nginx_log(Data) of
         {ok, #{client_ip := Ip, status_code := Status}} ->
-            Cache = maps:get(fail2ban_cache, Context, #{}),
-            case lists:member(Ip, Exclusions) of
-                true ->
-                    ?LOG_DEBUG("Excluded Ip ~p", [Ip]),
-                    {
-                        reply,
-                        ok,
-                        maps:put(
-                            fail2ban_cache,
-                            maps:put(Ip, #{last_seen => Now, status_code => Status}, Cache),
-                            Context
-                        )
-                    };
-                false ->
-                    case maps:get(Ip, Cache, undefined) of
-                        #{last_seen := LastSeen, status_code := Status} ->
-                            Jails =
-                                sets:to_list(maps:get(fail2ban_jails, Context, sets:new())),
-                            lists:map(
-                                fun
-                                    (
-                                        #{
-                                            status_code := Status0,
-                                            since_seconds := Since,
-                                            ban_time := BanTime
-                                        } = _Jail
-                                    ) when
-                                        Status =:= Status0, (Now - LastSeen) >= Since
-                                    ->
-                                        ban(Ip, BanTime);
-                                    (#{status_code := Status0, since_seconds := Since} = _Jail) when
-                                        Status =:= Status0
-                                    ->
-                                        ?LOG_DEBUG(
-                                            "checkban matchin failed ~p LastSeen: ~p Since: ~p status: ~p ip: ~p",
-                                            [Status0, LastSeen, Since, Status, Ip]
-                                        );
-                                    (Other) ->
-                                        ?LOG_DEBUG(
-                                            "checkban matchin failed ~p LastSeen: ~p Since: ~p status: ~p ip: ~p",
-                                            [Other, LastSeen, (Now - LastSeen), Status, Ip]
-                                        )
-                                end,
-                                Jails
-                            ),
-                            {
-                                reply,
-                                ok,
-                                maps:put(
-                                    fail2ban_cache,
-                                    maps:put(
-                                        Ip,
-                                        #{last_seen => Now, status_code => Status},
-                                        Cache
-                                    ),
-                                    Context
-                                )
-                            };
-                        undefined ->
-                            {
-                                reply,
-                                ok,
-                                maps:put(
-                                    fail2ban_cache,
-                                    maps:put(
-                                        Ip,
-                                        #{last_seen => Now, status_code => Status},
-                                        Cache
-                                    ),
-                                    Context
-                                )
-                            };
-                        Other ->
-                            ?LOG_ERROR("checkban failed ip ~p matching ~p", [Ip, Other]),
-                            {
-                                reply,
-                                ok,
-                                maps:put(
-                                    fail2ban_cache,
-                                    maps:put(
-                                        Ip,
-                                        #{last_seen => Now, status_code => Status},
-                                        Cache
-                                    ),
-                                    Context
-                                )
-                            }
-                    end
-            end;
+            check_ban(Ip, Status, Exclusions, Context);
         Fail ->
             ?LOG_ERROR("checkban failed parsing ~p", [Fail]),
             {reply, ok, Context}
@@ -307,6 +230,97 @@ terminate(Reason, _Context) ->
 
 code_change(_OldVsn, Context, _Extra) -> {ok, Context}.
 
+check_ban(Ip, Status, Exclusions, Context) ->
+    Now = date_util:epoch(),
+    Cache = maps:get(fail2ban_cache, Context, #{}),
+    case lists:member(Ip, Exclusions) of
+        true ->
+            ?LOG_DEBUG("Excluded Ip ~p", [Ip]),
+            {
+                reply,
+                ok,
+                maps:put(
+                    fail2ban_cache,
+                    maps:put(Ip, #{last_seen => Now, status_code => Status}, Cache),
+                    Context
+                )
+            };
+        false ->
+            case maps:get(Ip, Cache, undefined) of
+                #{last_seen := LastSeen, status_code := Status} ->
+                    Jails =
+                        sets:to_list(maps:get(fail2ban_jails, Context, sets:new())),
+                    lists:map(
+                        fun
+                            (
+                                #{
+                                    status_code := Status0,
+                                    since_seconds := Since,
+                                    ban_time := BanTime
+                                } = _Jail
+                            ) when
+                                Status =:= Status0, (Now - LastSeen) >= Since
+                            ->
+                                ban(Ip, BanTime);
+                            (#{status_code := Status0, since_seconds := Since} = _Jail) when
+                                Status =:= Status0
+                            ->
+                                ?LOG_DEBUG(
+                                    "checkban matchin failed ~p LastSeen: ~p Since: ~p status: ~p ip: ~p",
+                                    [Status0, LastSeen, Since, Status, Ip]
+                                );
+                            (Other) ->
+                                ?LOG_DEBUG(
+                                    "checkban matchin failed ~p LastSeen: ~p Since: ~p status: ~p ip: ~p",
+                                    [Other, LastSeen, (Now - LastSeen), Status, Ip]
+                                )
+                        end,
+                        Jails
+                    ),
+                    {
+                        reply,
+                        ok,
+                        maps:put(
+                            fail2ban_cache,
+                            maps:put(
+                                Ip,
+                                #{last_seen => Now, status_code => Status},
+                                Cache
+                            ),
+                            Context
+                        )
+                    };
+                undefined ->
+                    {
+                        reply,
+                        ok,
+                        maps:put(
+                            fail2ban_cache,
+                            maps:put(
+                                Ip,
+                                #{last_seen => Now, status_code => Status},
+                                Cache
+                            ),
+                            Context
+                        )
+                    };
+                Other ->
+                    ?LOG_ERROR("checkban failed ip ~p matching ~p", [Ip, Other]),
+                    {
+                        reply,
+                        ok,
+                        maps:put(
+                            fail2ban_cache,
+                            maps:put(
+                                Ip,
+                                #{last_seen => Now, status_code => Status},
+                                Cache
+                            ),
+                            Context
+                        )
+                    }
+            end
+    end.
 get_fail2ban_proc(Service, Context) ->
     Id = "fail2ban_" ++ Service,
     case gproc:lookup_local_name({?MODULE, Id}) of
@@ -380,6 +394,28 @@ parse_nginx_log(Log) ->
                     status_code => list_to_integer(StatusCode),
                     response_size => ResponseSize,
                     user_agent => UserAgent
+                }
+            };
+        nomatch ->
+            {error, "No match found"}
+    end.
+parse_postfix_log(Log) ->
+    % Convert binary to a list (string) if necessary
+    LogList = binary_to_list(Log),
+    % Regular expression to extract the components of the log
+    Regex = "unknown\\[(\\d+\\.\\d+\\.\\d+\\.\\d+)\\]",
+    % Match the log line with the regex and extract groups
+    case re:run(LogList, Regex, [{capture, all_but_first, list}]) of
+        {
+            match,
+            [
+                IpAddress
+            ]
+        } ->
+            {
+                ok,
+                #{
+                    ip => IpAddress
                 }
             };
         nomatch ->
