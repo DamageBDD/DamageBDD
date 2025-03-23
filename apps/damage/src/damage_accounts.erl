@@ -19,11 +19,13 @@
 -export([delete_account/1]).
 -export([delete_resource/2]).
 -export([notify_user/2]).
+-export([validate_access_token/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Account Management"]).
+-define(TOKEN_TIMEOUT, 86400).
 
 trails() ->
     [
@@ -108,6 +110,36 @@ trails() ->
                                     description =>
                                         <<"A valid confirmation token sent to account email.">>,
                                     in => <<"query">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Confirm account and set password form.",
+                        produces => ["text/html", "application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"confirm_token">>,
+                                    description => <<"Confirm Token">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"new_password">>,
+                                    description => <<"New password">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"new_password_confirm">>,
+                                    description => <<"New password confirmation">>,
+                                    in => <<"body">>,
                                     required => true,
                                     type => <<"string">>
                                 }
@@ -197,6 +229,36 @@ trails() ->
                             ]
                     }
             }
+        ),
+        trails:trail(
+            "/accounts/auth/",
+            damage_accounts,
+            #{action => authenticate},
+            #{
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Get auth token.",
+                        produces => ["text/html", "application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    username => <<"username">>,
+                                    description => <<"Username for account.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    password => <<"password">>,
+                                    description => <<"Account password.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    }
+            }
         )
     ].
 
@@ -262,35 +324,26 @@ to_html(Req, #{action := create} = State) ->
         damage_utils:load_template("create_account.mustache", #{body => <<"Test">>}),
     {Body, Req, State};
 to_html(Req, #{action := confirm} = State) ->
-    #{token := Token0} = cowboy_req:match_qs([token], Req),
-    Token = base64:encode(damage_utils:encrypt(Token0)),
+    #{token := Token} = cowboy_req:match_qs([token], Req),
     Now = date_util:now_to_seconds(os:timestamp()),
-    case catch damage_ae:contract_call_admin_account("get_auth_token", [Token]) of
-        #{decodedResult := EncryptedMetaJson} ->
-            case
-                jsx:decode(
-                    damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
-                    [return_maps, {labels, atom}]
-                )
-            of
-                #{email := _Email, expiry := Expiry} when Expiry - Now > 3600 ->
-                    Body = <<"Confirm Token Expired.">>,
-                    {Body, Req, State};
-                #{email := Email} ->
-                    ?LOG_DEBUG("get_auth_token ~p", [Email]),
-                    Body =
-                        damage_utils:load_template(
-                            "reset_password.mustache",
-                            #{
-                                email => Email,
-                                current_password => Token,
-                                body => <<"Test">>,
-                                current_password_type => <<"hidden">>
-                            }
-                        ),
-                    {Body, Req, State}
-            end;
-        _ ->
+    case catch binary_to_term(secrets:decrypt(Token)) of
+        #{email := _Email, expiry := Expiry} when Expiry < Now ->
+            Body = <<"Confirm Token Expired.">>,
+            {Body, Req, State};
+        #{email := Email, expiry := Expiry} when Expiry > Now ->
+            Body =
+                damage_utils:load_template(
+                    "reset_password.mustache",
+                    #{
+                        email => Email,
+                        current_password => Token,
+                        body => <<"Test">>,
+                        current_password_type => <<"hidden">>
+                    }
+                ),
+            {Body, Req, State};
+        Error ->
+            ?LOG_DEBUG("Error validating ~p", [Error]),
             {<<"Invalid confirmation link. Please try again.">>, Req, State}
     end;
 to_html(Req, #{action := invoices} = State) ->
@@ -301,22 +354,114 @@ to_html(Req, #{action := invoices} = State) ->
         Other ->
             ?LOG_DEBUG("Unexpected ~p", [Other]),
             {<<"Unauthorized.">>, Req, State}
-    end;
-to_html(Req, #{action := reset_password} = State) ->
-    Body =
-        case damage_oauth:reset_password(cowboy_req:match_qs([token], Req)) of
-            {ok, Body0} -> Body0;
-            {error, Msg} -> Msg
-        end,
-    {Body, Req, State}.
+    end.
+
+authenticate_user(Email, Password) ->
+    case identity_server:get_account_by_email(Email) of
+        {Account, Password} ->
+            Expiry = date_util:now_to_seconds(os:timestamp()) + ?TOKEN_TIMEOUT,
+            Token = secrets:encrypt(term_to_binary({Account, Email, Expiry})),
+            {ok, Token};
+        Error = {error, notfound} ->
+            ?LOG_ERROR("authenticate_user error ~p ", [Error]),
+            Error;
+        notfound ->
+            ?LOG_ERROR("authenticate_user error ~p ", [notfound]),
+            {error, notfound};
+        _ ->
+            {error, notauthorized}
+    end.
+validate_access_token(Token) ->
+    Now = date_util:now_to_seconds(os:timestamp()),
+    case binary_to_term(secrets:decrypt(Token)) of
+        {AeAccount, Email, Expiry} when Expiry < Now ->
+            {AeAccount, Email};
+        {_AeAccount, _Username, Expiry} when Expiry > Now ->
+            {error, exprired}
+    end.
+
+validate_password(Password) ->
+    %% For example, minimum 8 characters with at least one uppercase letter,
+    %% one lowercase letter, one digit, and one special character
+    Regex =
+        "^(?=.*\\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*()_+\\-=[\\]{};':\"\\\\|,.<>/?]).{8,}$",
+    case re:run(Password, Regex) of
+        {match, _} -> true;
+        _ -> false
+    end.
+add_user(#{email := Email} = Meta) when is_binary(Email) ->
+    {ok, ApiUrl} = application:get_env(damage, api_url),
+    ApiUrl0 = list_to_binary(ApiUrl),
+
+    Expiry = date_util:now_to_seconds(os:timestamp()) + 86400,
+    AuthTokenEncrypted = secrets:encrypt(term_to_binary(#{email => Email, expiry => Expiry})),
+
+    Data = maps:put(password, AuthTokenEncrypted, Meta),
+    Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
+    ?LOG_DEBUG("AuthToken sent ~p", [Query]),
+    Ctxt =
+        maps:put(
+            <<"password_reset_url">>,
+            <<ApiUrl0/binary, "/accounts/confirm?", Query/binary>>,
+            Data
+        ),
+    Result = damage_utils:send_email(
+        {maps:get(full_name, Meta, <<"">>), Email},
+        <<"DamageBDD Account SignUp">>,
+        damage_utils:load_template("signup_email.txt.mustache", Ctxt),
+        damage_utils:load_template("signup_email.html.mustache", Ctxt)
+    ),
+    ?LOG_DEBUG("Email sent ~p", [Result]),
+    {
+        ok,
+        <<
+            "Account created. Please check email for confirmation link. Don't forget to check spam folder too."
+        >>
+    }.
 
 -spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
     {integer(), map()}.
+do_post_action(
+    authenticate,
+    #{username := Email, password := Password},
+    _Req,
+    _State
+) ->
+    case authenticate_user(Email, Password) of
+        {ok, Token} -> {200, #{status => <<"ok">>, access_token => Token}};
+        {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+    end;
+do_post_action(
+    confirm,
+    #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm},
+    Req,
+    State
+) ->
+    Now = date_util:now_to_seconds(os:timestamp()),
+    case validate_password(NewPassword) of
+        true ->
+            case NewPassword of
+                NewPasswordConfirm ->
+                    case catch binary_to_term(secrets:decrypt(Token)) of
+                        #{email := _Email, expiry := Expiry} when Expiry < Now ->
+                            Body = <<"Confirm Token Expired.">>,
+                            {Body, Req, State};
+                        #{email := Email, expiry := Expiry} when Expiry > Now ->
+                            ok = identity_server:register_email(Email, NewPassword),
+                            {<<"Email confirmed and password set.">>, Req, State}
+                    end;
+                _ ->
+                    {<<"Password does not match.">>, Req, State}
+            end;
+        false ->
+            {ok,
+                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
+    end;
 do_post_action(create, #{email := Email} = Data, Req, State) when is_atom(Email) ->
     do_post_action(create, maps:put(email, atom_to_binary(Email), Data), Req, State);
 do_post_action(create, #{email := Email} = Data, _Req, _State) ->
     ?LOG_DEBUG("account  ~p", [Data]),
-    case damage_oauth:add_user(#{email => Email}) of
+    case add_user(#{email => Email}) of
         {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
         {error, Message} -> {400, #{status => <<"failed">>, message => Message}};
         Error -> {400, #{status => <<"failed">>, message => Error}}
@@ -395,11 +540,39 @@ unix_timestamp_hours_ago(HoursAgo) when is_integer(HoursAgo), HoursAgo >= 0 ->
     % Return the result
     TimestampHoursAgo.
 
+reset_password(
+    #{
+        <<"email">> := Email,
+        <<"current_password">> := Token,
+        <<"new_password_confirmation">> := NewPasswordConfirm,
+        <<"new_password">> := NewPassword
+    }
+) ->
+    Now = date_util:now_to_seconds(os:timestamp()),
+    case validate_password(NewPassword) of
+        true ->
+            case NewPassword of
+                NewPasswordConfirm ->
+                    case catch binary_to_term(secrets:decrypt(Token)) of
+                        #{email := _Email, expiry := Expiry} when Expiry < Now ->
+                            Body = <<"Confirm Token Expired.">>,
+                            {error, Body};
+                        #{email := Email, expiry := Expiry} when Expiry > Now ->
+                            ok = identity_server:register_email(Email, NewPassword),
+                            {ok, <<"Email confirmed and password set.">>}
+                    end;
+                _ ->
+                    {ok, <<"Email confirmed and password set.">>}
+            end;
+        false ->
+            {ok,
+                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
+    end.
 from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Data0 = maps:from_list(cow_qs:parse_qs(Data)),
     {Status0, Response0} =
-        case damage_oauth:reset_password(Data0) of
+        case reset_password(Data0) of
             {ok, Message} ->
                 {ok, ApiUrl} = application:get_env(damage, api_url),
                 {
@@ -525,7 +698,14 @@ delete_resource(Req, #{action := invoices} = State) ->
             ?LOG_INFO("deleted ~p schedules", [Deleted]),
             {true, Req, State};
         _Other ->
-            {<<"Unauthorized.">>, Req, State}
+            {
+                cowboy_req:reply(
+                    400,
+                    cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)
+                ),
+                Req,
+                State
+            }
     end.
 
 balance(AeAccount) -> #{amount => damage_ae:balance(AeAccount)}.

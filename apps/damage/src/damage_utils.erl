@@ -381,24 +381,3 @@ test_send_email() ->
         TextBody,
         HtmlBody
     ).
-
-%test_simple_mail() ->
-%  {ok, Socket} = ssl:connect("smtp.sendgrid.net", 465, [{active, false}], 1000),
-%  recv(Socket),
-%  send(Socket, "HELO localhost"),
-%  send(Socket, "AUTH LOGIN"),
-%  send(Socket, binary_to_list(base64:encode("apikey"))),
-%  send(Socket, binary_to_list(base64:encode("QVEQzrbjS1GKUUkLXymcsg"))),
-%  send(Socket, "MAIL FROM: <steven@damagebdd.com>"),
-%  send(Socket, "RCPT TO: <melit.stevenjoseph@gmail.com>"),
-%  send(Socket, "DATA"),
-%  send_no_receive(Socket, "From: <steven@damagebdd.com>"),
-%  send_no_receive(Socket, "To: <melit.stevenjoseph@gmail.com>"),
-%  send_no_receive(Socket, "Date: Tue, 20 Jun 2012 20:34:43 +0000"),
-%  send_no_receive(Socket, "Subject: Hi!"),
-%  send_no_receive(Socket, ""),
-%  send_no_receive(Socket, "This was sent from Erlang. So simple!"),
-%  send_no_receive(Socket, ""),
-%  send(Socket, "."),
-%  send(Socket, "QUIT"),
-%  ssl:close(Socket).

@@ -1049,7 +1049,7 @@ poll_tx(Fun, Args, Interval, Timeout) ->
 poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     case apply(Fun, Args) of
         {ok, Result} ->
-            ?LOG_DEBUG("result value ~p", [Result]),
+            %?LOG_DEBUG("result value ~p", [Result]),
             tx_info_convert_result(Result);
         Result ->
             ?LOG_DEBUG("error value ~p args ~p", [Result, Args]),

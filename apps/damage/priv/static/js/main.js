@@ -147,20 +147,25 @@ let bearer_token = null;
 		let vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0)
 		let vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0)
 
-		VANTA.GLOBE({
-			el: "#background",
-			mouseControls: true,
-			touchControls: true,
-			gyroControls: false,
-			minHeight: vh,
-			minWidth: vw,
-			scale: 1.00,
-			size: 1.50,
-			scaleMobile: 1.00,
-			color: 0x2b04,
-			color2: 0x2d6e45,
-			backgroundColor: 0xffffff
-		});
+		try{
+			VANTA.GLOBE({
+				el: "#background",
+				mouseControls: true,
+				touchControls: true,
+				gyroControls: false,
+				minHeight: vh,
+				minWidth: vw,
+				scale: 1.00,
+				size: 1.50,
+				scaleMobile: 1.00,
+				color: 0x2b04,
+				color2: 0x2d6e45,
+				backgroundColor: 0xffffff
+			});
+		} catch(e) {
+			console.log(e);
+			console.log("Failed to initialize vanta.");
+		}
 	}
 
 	function isAuthenticated() {
@@ -371,7 +376,7 @@ let bearer_token = null;
 		const headers = new Headers();
 		headers.append("Content-Type", "application/json");
 
-		fetch("/auth/", {
+		fetch("/accounts/auth/", {
 			method: "POST",
 			headers: headers,
 			body: JSON.stringify(signupData)
@@ -462,6 +467,8 @@ let bearer_token = null;
 		var xhr = new XMLHttpRequest();
 		xhr.open('GET', '/accounts/balance', true);
 		xhr.setRequestHeader('Content-Type', 'application/json');
+		var Bearer ='Bearer ' + bearer_token;
+		xhr.setRequestHeader('Authorization', Bearer);
 		xhr.withCredentials = true;
 
 		xhr.onload = function() {

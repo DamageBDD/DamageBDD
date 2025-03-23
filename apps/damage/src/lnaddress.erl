@@ -162,7 +162,7 @@ from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Data0 = maps:from_list(cow_qs:parse_qs(Data)),
     {Status0, Response0} =
-        case damage_oauth:reset_password(Data0) of
+        case damage_accounts:reset_password(Data0) of
             {ok, Message} ->
                 {ok, ApiUrl} = application:get_env(damage, api_url),
                 {

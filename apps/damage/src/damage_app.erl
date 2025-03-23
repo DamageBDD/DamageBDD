@@ -24,7 +24,6 @@ start(_StartType, _StartArgs) -> damage_sup:start_link().
 get_trails() ->
     Handlers =
         [
-            damage_auth,
             damage_context,
             damage_domains,
             damage_webhooks,

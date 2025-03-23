@@ -138,34 +138,22 @@ is_authorized(Req, State0) ->
                 _ -> {{false, <<"Bearer">>}, Req, State}
             end;
         {oauth, Token} ->
-            case oauth2:verify_access_token(Token, []) of
-                {ok, {[], Auth}} ->
-                    #{
-                        <<"client">> := _Client,
-                        <<"resource_owner">> := ResourceOwner,
-                        <<"expiry_time">> := _Expiry,
-                        <<"scope">> := _Scope
-                    } = maps:from_list(Auth),
-                    case damage_ae:get_meta(ResourceOwner) of
-                        notfound ->
-                            {{false, <<"Bearer">>}, Req, State};
-                        User ->
-                            {
-                                true,
-                                Req,
-                                maps:merge(
-                                    State,
-                                    #{
-                                        ae_account => maps:get(ae_account, User),
-                                        user => User,
-                                        username => ResourceOwner,
-                                        access_token => Token
-                                    }
-                                )
-                            }
-                    end;
+            case damage_accounts:validate_access_token(Token) of
                 {error, access_denied} ->
                     {{false, <<"Bearer">>}, Req, State};
+                {AeAccount, Username} ->
+                    {
+                        true,
+                        Req,
+                        maps:merge(
+                            State,
+                            #{
+                                ae_account => AeAccount,
+                                username => Username,
+                                access_token => Token
+                            }
+                        )
+                    };
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
                     {{false, <<"Bearer">>}, Req, State}

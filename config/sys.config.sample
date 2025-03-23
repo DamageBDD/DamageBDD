@@ -175,7 +175,6 @@
             }
         ]
     },
-    {oauth2, [{backend, damage_oauth}, {expiry_time, 604800}]},
     {
         cowboy_swagger,
         [
