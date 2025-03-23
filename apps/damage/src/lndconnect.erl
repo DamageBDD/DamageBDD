@@ -56,9 +56,8 @@ init([]) ->
                     macaroon = Macaroon
                 },
             ?LOG_DEBUG("State ~p ", [State]),
-            MacaroonBin = list_to_binary(Macaroon),
             % https://github.com/lightningnetwork/lnd/blob/master/docs/rest/websockets.md
-            ProtocolString = <<"Grpc-Metadata-Macaroon+", MacaroonBin/binary>>,
+            ProtocolString = <<"Grpc-Metadata-Macaroon+", Macaroon/binary>>,
             Options =
                 case Host of
                     "localhost" ->
@@ -77,7 +76,7 @@ init([]) ->
                     ConnPid,
                     Path,
                     [
-                        {<<"Grpc-Metadata-Macaroon">>, MacaroonBin},
+                        {<<"Grpc-Metadata-Macaroon">>, Macaroon},
                         {<<"sec-websocket-protocol">>, ProtocolString}
                     ]
                 ),

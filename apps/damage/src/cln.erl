@@ -52,8 +52,7 @@ init([]) ->
     {ok, CertFile} = application:get_env(damage, cln_certfile),
     {ok, KeyFile} = application:get_env(damage, cln_keyfile),
     case secrets:retrieve_decrypt(cln_rune) of
-        {ok, Rune} ->
-            RuneBin = list_to_binary(Rune),
+        {ok, RuneBin} ->
             TLSOptions =
                 [
                     {certfile, CertFile},

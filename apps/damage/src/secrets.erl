@@ -153,7 +153,6 @@ node_keypair() ->
                     clear_cache(),
                     node_keypair();
                 Password ->
-                    ?LOG_DEBUG("enc data ~p", [Password]),
                     case
                         secrets:decrypt(
                             Password,
@@ -227,7 +226,6 @@ hkdf(Salt, InputKeyMaterial, Info, Length) ->
     %% Expand step
     T1 = crypto:mac(hmac, sha256, PRK, <<Info/binary, 1>>),
     <<DerivedKey:Length/binary, _/binary>> = T1,
-    ?LOG_DEBUG("Derived key ~p", [DerivedKey]),
     DerivedKey.
 
 %% Derive AES-256 Key from Private Key
@@ -264,18 +262,15 @@ decrypt_secret({IV, CipherText, Tag}, PrivateKey) ->
     %crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, CipherText, <<>>, 16, true).
     ?LOG_DEBUG("decrypt ~p", [CipherText]),
 
-    binary_to_list(
-        crypto:crypto_one_time_aead(
-            aes_256_gcm,
-            AESKey,
-            IV,
-            CipherText,
-            AAD,
-            Tag,
-            false
-        )
+    crypto:crypto_one_time_aead(
+        aes_256_gcm,
+        AESKey,
+        IV,
+        CipherText,
+        AAD,
+        Tag,
+        false
     ).
-
 %% Store encrypted secret in SQLite
 store_secret(Name, {IV, CipherText, Tag}) ->
     {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
