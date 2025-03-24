@@ -568,6 +568,28 @@ reset_password(
             {ok,
                 <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
     end.
+from_html(Req, #{action := authenticate} = State) ->
+    {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
+    ?LOG_DEBUG(" form data: ~p ", [Params]),
+    Username = proplists:get_value(<<"username">>, Params),
+    Password = proplists:get_value(<<"password">>, Params),
+    case authenticate_user(Username, Password) of
+        {ok, Token} ->
+            {stop,
+                cowboy_req:reply(
+                    200, jsx:encode(#{status => <<"ok">>, access_token => Token}), Req0
+                ),
+                State};
+        {error, Message} ->
+            ?LOG_DEBUG("Auth failed ~p", [Message]),
+            {
+                stop,
+                cowboy_req:reply(
+                    401, cowboy_req:set_resp_body(jsx:encode(#{status => <<"fail">>}), Req0)
+                ),
+                State
+            }
+    end;
 from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Data0 = maps:from_list(cow_qs:parse_qs(Data)),
