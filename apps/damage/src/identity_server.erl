@@ -115,7 +115,8 @@ handle_call({get_account_by_email, Email}, _From, State) ->
         } ->
             Password = secrets:decrypt(PasswordEncrypted),
             PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
-            {reply, {Address, Password, PrivateKey}, State};
+            AddressStr = base58:binary_to_base58(Address),
+            {reply, {<<"ak_", AddressStr/binary>>, Password, PrivateKey}, State};
         Other ->
             ?LOG_DEBUG("Unexpected response ~p", [Other]),
             {reply, notfound, State}

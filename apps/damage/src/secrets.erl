@@ -261,7 +261,6 @@ decrypt_secret({IV, CipherText, Tag}, PrivateKey) ->
 
     %% Decrypt using AES-256-GCM (NO Tag argument in decryption mode)
     %crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, CipherText, <<>>, 16, true).
-    ?LOG_DEBUG("decrypt ~p", [CipherText]),
 
     crypto:crypto_one_time_aead(
         aes_256_gcm,
@@ -302,7 +301,6 @@ retrieve_decrypt(Name) ->
 import() ->
     case file:consult("damage.plain") of
         {ok, Terms} ->
-            ?LOG_DEBUG("Got damage.plain ~p", [Terms]),
             lists:map(fun encrypt_store/1, Terms);
         {error, enoent} ->
             ?LOG_ERROR("no damage.plain found ", []);

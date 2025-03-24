@@ -295,12 +295,11 @@ check_execute_bdd(
                 Other ->
                     {
                         400,
-                        io_lib:format(
-                            <<
-                                "Insufficient balance, please top up balance at `/api/accounts/topup` balance: ~p"
-                            >>,
-                            [Other]
-                        )
+                        #{
+                            message =>
+                                <<"Insufficient balance, please top up balance at `/api/accounts/topup`">>,
+                            balance => Other
+                        }
                     }
             end
     end.

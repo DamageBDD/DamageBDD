@@ -690,12 +690,7 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
     end;
 get_wallet_proc(admin) ->
     #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
-    get_wallet_proc(list_to_binary(NodePublicKey));
-get_wallet_proc(Email) ->
-    case identity_server:get_account_by_email(Email) of
-        notfound -> {error, not_found};
-        Aeaccount -> get_wallet_proc(Aeaccount)
-    end.
+    get_wallet_proc(list_to_binary(NodePublicKey)).
 
 balance(AeAccount) when is_binary(AeAccount) ->
     balance(binary_to_list(AeAccount));
@@ -775,9 +770,9 @@ delete_account(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {delete_account, AeAccount}, ?AE_TIMEOUT).
 
-invalidate_cache(Username) ->
-    DamageAEPid = get_wallet_proc(Username),
-    gen_server:cast(DamageAEPid, {invalidate_cache, Username}).
+invalidate_cache(AeAccount) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:cast(DamageAEPid, {invalidate_cache, AeAccount}).
 
 revoke_token(AeAccount, Token) ->
     DamageAEPid = get_wallet_proc(AeAccount),

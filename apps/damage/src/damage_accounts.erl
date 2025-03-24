@@ -401,9 +401,9 @@ authenticate_user(Email, Password) ->
 validate_access_token(Token) ->
     Now = date_util:now_to_seconds(os:timestamp()),
     case binary_to_term(secrets:decrypt(Token)) of
-        {AeAccount, Email, Expiry} when Expiry < Now ->
+        {AeAccount, Email, Expiry} when Expiry > Now ->
             {AeAccount, Email};
-        {_AeAccount, _Username, Expiry} when Expiry > Now ->
+        {_AeAccount, _Username, Expiry} when Expiry < Now ->
             {error, exprired}
     end.
 
@@ -416,7 +416,7 @@ validate_password(Password) ->
         {match, _} -> true;
         _ -> false
     end.
-add_user(#{email := Email} = Meta) when is_binary(Email) ->
+send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     {ok, ApiUrl} = application:get_env(damage, api_url),
     ApiUrl0 = list_to_binary(ApiUrl),
 
@@ -514,7 +514,7 @@ do_post_action(create, #{email := Email} = Data, Req, State) when is_atom(Email)
     do_post_action(create, maps:put(email, atom_to_binary(Email), Data), Req, State);
 do_post_action(create, #{email := Email} = Data, _Req, _State) ->
     ?LOG_DEBUG("account  ~p", [Data]),
-    case add_user(#{email => Email}) of
+    case send_account_confirm_email(#{email => Email}) of
         {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
         {error, Message} -> {400, #{status => <<"failed">>, message => Message}};
         Error -> {400, #{status => <<"failed">>, message => Error}}
@@ -629,7 +629,10 @@ from_html(Req, #{action := authenticate} = State) ->
         {ok, Token} ->
             {stop,
                 cowboy_req:reply(
-                    200, jsx:encode(#{status => <<"ok">>, access_token => Token}), Req0
+                    200,
+                    cowboy_req:set_resp_body(
+                        jsx:encode(#{status => <<"ok">>, access_token => Token}), Req0
+                    )
                 ),
                 State};
         {error, Message} ->
