@@ -1,4 +1,3 @@
-let bearer_token = null;
 (function(window, document, undefined) {
 
 	// code that should be taken care of right away
@@ -60,12 +59,12 @@ let bearer_token = null;
 		document.getElementById("login-modal").addEventListener("keydown", function(event){
 			if (event.keyCode === 13) {
 				submitLoginForm(event);
-		}
+			}
 		});
 		document.getElementById("signup-modal").addEventListener("keydown", function(event){
 			if (event.keyCode === 13) {
 				submitLoginForm(event);
-		}
+			}
 		});
 		document.getElementById("loginBtn").addEventListener("click",(event) => {
 			event.preventDefault();
@@ -73,7 +72,6 @@ let bearer_token = null;
 		});
 		document.getElementById("loginSubmitBtn").addEventListener("click", submitLoginForm);
 		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
-			bearer_token = null;
 			event.preventDefault();
 		});
 		document.getElementById("signupSubmitBtn").addEventListener("click", submitSignUpForm);
@@ -88,8 +86,7 @@ let bearer_token = null;
 			MicroModal.show("login-modal");
 		});
 		document.getElementById("logoutSubmitBtn").addEventListener("click", (event) => {
-			bearer_token = null;
-			clearSessionIdCookie();
+			localStorage.removeItem("access_token");
 			MicroModal.close('logout-modal');
 			showHideLoginButton();
 
@@ -169,19 +166,14 @@ let bearer_token = null;
 	}
 
 	function isAuthenticated() {
-		if (bearer_token == null) {
-			bearer_token = getSessionIdCookie();
-			return (bearer_token == null) ? false : true;
-		} else {
-			return true;
-		}
+			return (localStorage.access_token == null) ? false : true;
 	}
 
 	function showHideLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
-			loginButton = document.getElementById("loginBtn");
-			logoutButton = document.getElementById("logoutBtn");
+		loginButton = document.getElementById("loginBtn");
+		logoutButton = document.getElementById("logoutBtn");
 		if (isAuthenticated()) {
 			loginButton.style.display = "none";
 			content.style.display = "block";
@@ -201,24 +193,6 @@ let bearer_token = null;
 		}
 	}
 
-
-
-
-	function clearSessionIdCookie() {
-		document.cookie = "sessionid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-	}
-
-	function getSessionIdCookie() {
-		const name = "sessionid=";
-		const cookies = document.cookie.split(';');
-		for (let i = 0; i < cookies.length; i++) {
-			let cookie = cookies[i].trim();
-			if (cookie.indexOf(name) === 0) {
-				return cookie.substring(name.length, cookie.length);
-			}
-		}
-		return;
-	}
 	function upperCaseStream() {
 		return new TransformStream({
 			transform(chunk, controller) {
@@ -230,7 +204,7 @@ let bearer_token = null;
 	function appendToDOMStream(el) {
 		return new WritableStream({
 			write(chunk) {
-			el.append(chunk);
+				el.append(chunk);
 			},
 		});
 	}
@@ -283,10 +257,13 @@ let bearer_token = null;
 	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value;
 		const concurrencyText = document.getElementById("difficulty").value;
+		const headers = new Headers();
+		headers.append("Content-Type", "application/json");
+		headers.append("Authorization", "Bearer "+ localStorage.access_token);
 		const request = {
 			method: 'POST',
 			credentials: 'include',
-			headers: { 'Content-Type': 'application/json' },
+			headers: headers,
 			body: JSON.stringify({
 				feature: inputText,
 				concurrency: concurrencyText,
@@ -386,7 +363,7 @@ let bearer_token = null;
 			})
 			.then(data => {
 				if (data.access_token) {
-					bearer_token = data.access_token;
+					localStorage.setItem("access_token", data.access_token);
 					toasts.push({
 						title: 'Login Success',
 						content: 'Authentication Successful.',
@@ -424,6 +401,7 @@ let bearer_token = null;
 
 		const headers = new Headers();
 		headers.append("Content-Type", "application/json");
+		headers.append("Authorization", "Bearer "+ localStorage.access_token);
 
 		fetch("/accounts/reset_password/", {
 			method: "POST",
@@ -435,7 +413,7 @@ let bearer_token = null;
 			})
 			.then(data => {
 				if (data.access_token) {
-					bearer_token = data.access_token;
+					localStorage.setItem("access_token" , data.access_token);
 					toasts.push({
 						title: 'Reset Password Success',
 						content: 'Authentication Successful.',
@@ -467,8 +445,7 @@ let bearer_token = null;
 		var xhr = new XMLHttpRequest();
 		xhr.open('GET', '/accounts/balance', true);
 		xhr.setRequestHeader('Content-Type', 'application/json');
-		var Bearer ='Bearer ' + bearer_token;
-		xhr.setRequestHeader('Authorization', Bearer);
+		xhr.setRequestHeader('Authorization', 'Bearer ' + localStorage.access_token);
 		xhr.withCredentials = true;
 
 		xhr.onload = function() {
@@ -487,11 +464,13 @@ let bearer_token = null;
 	}
 
 	function generateInvoice() {
-				var amount = document.getElementById('invoice-amount').value;
+		var amount = document.getElementById('invoice-amount').value;
 		const request = {
 			method: 'POST',
 			credentials: 'include',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json',
+					   'Authorization': 'Bearer ' + localStorage.access_token
+					 },
 			body: JSON.stringify({
 				amount: parseInt(amount)
 			})

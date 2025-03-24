@@ -1,3 +1,26 @@
+//https://mainnet.aeternity.io/mdw/v3/accounts/ak_2DvCLqKqTdbDBwUb4HnjjXYoEboZ64htu7nn4Atfk2vWrqeSN2/activities
+// Function to fetch JSON data for a specific account
+async function fetchAccountActivities(accountId) {
+	const url = `https://mainnet.aeternity.io/mdw/v3/accounts/${accountId}/activities?type=transactions`;
+
+	try {
+		const response = await fetch(url);
+		
+		if (!response.ok) {
+			throw new Error(`HTTP error! status: ${response.status}`);
+		}
+
+		const data = await response.json();
+		console.log(data); // You can process or return the JSON data as needed
+	} catch (error) {
+		console.error('Error fetching account activities:', error);
+	}
+}
+
+// Example usage with a templatized account ID
+const accountId = 'ak_vVeTjJEx2xf9a1XXQLH1MjtcEiJGpzDKAwD7v1k4HCLh9Bagt';
+fetchAccountActivities(accountId);
+
 function formatCell(obj, cell, value, type) {
 
 	if (type === 'start_time' || type === 'end_time') {
@@ -48,12 +71,16 @@ function updateHistoryTable() {
 	const request = {
 		method: 'POST',
 		credentials: 'include',
-		headers: { 'Content-Type': 'application/json' },
+		headers: { 'Content-Type': 'application/json',
+				   'Authorization': 'Bearer ' + localStorage.access_token
+				 },
 		body: JSON.stringify({
 			since: "1day"
 		})
 	};
 
+
+	
 	fetch("/reports/", request)
 		.then(response => {
 			if (response.status === 200) {
@@ -125,4 +152,3 @@ function updateHistoryTable() {
 			} else {}
 		});
 }
-
