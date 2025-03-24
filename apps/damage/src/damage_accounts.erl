@@ -20,12 +20,14 @@
 -export([delete_resource/2]).
 -export([notify_user/2]).
 -export([validate_access_token/1]).
+-export([validate_password/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Account Management"]).
 -define(TOKEN_TIMEOUT, 86400).
+-define(RESET_PASSWORD_LINK_EXPIRY, 86400).
 
 trails() ->
     [
@@ -319,6 +321,31 @@ to_json(Req, #{action := balance} = State) ->
             {<<"Unauthorized.">>, Req, State}
     end.
 
+to_html(Req, #{action := reset_password} = State) ->
+    case cowboy_req:match_qs([token], Req) of
+        #{token := Token} ->
+            Now = date_util:now_to_seconds(os:timestamp()),
+            case catch binary_to_term(secrets:decrypt(Token)) of
+                #{email := _Email, expiry := Expiry} when Expiry < Now ->
+                    Body = <<"Confirm Token Expired.">>,
+                    {Body, Req, State};
+                #{email := Email, expiry := Expiry} when Expiry > Now ->
+                    Body =
+                        damage_utils:load_template(
+                            "reset_password.mustache",
+                            #{
+                                email => Email,
+                                current_password => Token,
+                                body => <<"Test">>,
+                                current_password_type => <<"hidden">>
+                            }
+                        ),
+                    {Body, Req, State};
+                Error ->
+                    ?LOG_DEBUG("Error validating ~p", [Error]),
+                    {<<"Invalid reset password link. Please try again.">>, Req, State}
+            end
+    end;
 to_html(Req, #{action := create} = State) ->
     Body =
         damage_utils:load_template("create_account.mustache", #{body => <<"Test">>}),
@@ -358,7 +385,7 @@ to_html(Req, #{action := invoices} = State) ->
 
 authenticate_user(Email, Password) ->
     case identity_server:get_account_by_email(Email) of
-        {Account, Password} ->
+        {Account, Password, _PrivateKey} ->
             Expiry = date_util:now_to_seconds(os:timestamp()) + ?TOKEN_TIMEOUT,
             Token = secrets:encrypt(term_to_binary({Account, Email, Expiry})),
             {ok, Token};
@@ -430,6 +457,32 @@ do_post_action(
     case authenticate_user(Email, Password) of
         {ok, Token} -> {200, #{status => <<"ok">>, access_token => Token}};
         {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+    end;
+do_post_action(
+    reset_password,
+    #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm},
+    Req,
+    State
+) ->
+    Now = date_util:now_to_seconds(os:timestamp()),
+    case validate_password(NewPassword) of
+        true ->
+            case NewPassword of
+                NewPasswordConfirm ->
+                    case catch binary_to_term(secrets:decrypt(Token)) of
+                        #{email := _Email, expiry := Expiry} when Expiry < Now ->
+                            Body = <<"Confirm Token Expired.">>,
+                            {Body, Req, State};
+                        #{email := Email, expiry := Expiry} when Expiry > Now ->
+                            ok = identity_server:set_email_password(Email, NewPassword),
+                            {<<"Email confirmed and password set.">>, Req, State}
+                    end;
+                _ ->
+                    {<<"Password does not match.">>, Req, State}
+            end;
+        false ->
+            {ok,
+                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
     end;
 do_post_action(
     confirm,
@@ -558,11 +611,10 @@ reset_password(
                             Body = <<"Confirm Token Expired.">>,
                             {error, Body};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            ok = identity_server:register_email(Email, NewPassword),
-                            {ok, <<"Email confirmed and password set.">>}
+                            identity_server:register_email(Email, NewPassword)
                     end;
                 _ ->
-                    {ok, <<"Email confirmed and password set.">>}
+                    {error, <<"Passwords do not match. Go back to try again.">>}
             end;
         false ->
             {ok,
@@ -593,8 +645,15 @@ from_html(Req, #{action := authenticate} = State) ->
 from_html(Req, #{action := create} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
     ?LOG_DEBUG(" form data: ~p ", [Params]),
-    Email = proplists:get_value(<<"email">>, Params),
-    case do_post_action(create, #{email => Email} , Req0, State) of
+    case proplists:get_value(<<"email">>, Params) of
+        undefined ->
+            Response = cowboy_req:set_resp_body(
+                jsx:encode(#{status => <<"failed">>, message => <<"email required">>}), Req0
+            ),
+            cowboy_req:reply(400, Response),
+            {stop, Response, State};
+        Email ->
+            case do_post_action(create, #{email => Email}, Req0, State) of
                 {204, <<"">>} ->
                     Response = cowboy_req:reply(204, Req0),
                     {stop, Response, State};
@@ -602,7 +661,8 @@ from_html(Req, #{action := create} = State) ->
                     Response = cowboy_req:set_resp_body(jsx:encode(Response0), Req0),
                     cowboy_req:reply(Status0, Response),
                     {stop, Response, State}
-            end;
+            end
+    end;
 from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Data0 = maps:from_list(cow_qs:parse_qs(Data)),

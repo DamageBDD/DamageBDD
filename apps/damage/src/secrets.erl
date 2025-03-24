@@ -29,6 +29,7 @@
     retrieve_decrypt/1,
     import/0,
     node_keypair/0,
+    make_keypair/0,
     test/0,
     migrate/0
 ]).

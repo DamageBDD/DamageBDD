@@ -9,8 +9,13 @@ main contract IdentityRegistry =
     { account  : address,
       meta : string}
 
+  record email_identity =
+    { account  : address,
+      password : string,
+      priv_key : string}
+
   record state =
-    { emails       : map(string, identity),   // Email → Account
+    { emails       : map(string, email_identity),   // Email → Account
       npubs        : map(string, identity),   // Nostr PubKey → Account
       lightning    : map(string, identity) }  // Lightning Auth → Account
 
@@ -18,9 +23,14 @@ main contract IdentityRegistry =
     { emails = {}, npubs = {}, lightning = {} }
 
   // Register Email → Account (One-to-One)
-  stateful entrypoint register_email(email : string, meta: string) =
+  stateful entrypoint register_email(email : string, account: address, password: string, priv_key: string) =
     require(Map.lookup(email, state.emails) == None, "Email already registered.")
-    put(state{emails[email] = { account = Call.caller, meta = meta }})
+    put(state{emails[email] = { account = account, password = password, priv_key = priv_key }})
+    true
+
+  stateful entrypoint set_email_password(email : string, password: string) =
+    require(Map.lookup(email, state.emails) != None, "Email not registered.")
+    put(state{emails[email].password = password})
     true
 
   // Register Npub → Account (One-to-One)
@@ -35,7 +45,7 @@ main contract IdentityRegistry =
     put(state{lightning[auth_key] = { account = Call.caller, meta = "" }})
 
   // Get Account by Email
-  stateful entrypoint get_account_by_email(email : string) : option(identity) =
+  stateful entrypoint get_account_by_email(email : string) : option(email_identity) =
     switch(Map.lookup(email, state.emails))
       Some(entry) => Some(entry)
       None => None

@@ -7,6 +7,7 @@
     register_email/2,
     register_npub/1,
     register_lightning/1,
+    set_email_password/2,
     get_account_by_email/1,
     get_account_by_npub/1,
     get_account_by_lightning/1,
@@ -29,14 +30,31 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 register_email(Email, Password) ->
-    Meta = secrets:make_keypair(),
+    #{public_key := PubKey, private_key := PrivateKey} =
+        secrets:make_keypair(),
     EmailHashed = binary_to_list(base64:encode(crypto:hash(sha256, Email))),
-    MetaEncrypted = binary_to_list(
-        secrets:encrypt(term_to_binary(maps:put(password, Password, Meta)))
-    ),
-    #{"return_type" := "ok", "return_value" := true} =
-        Result = gen_server:call(?MODULE, {register_email, EmailHashed, MetaEncrypted}),
-    {ok, Result}.
+    PasswordEncrypted = binary_to_list(secrets:encrypt(Password)),
+    PrivateKeyEncrypted = binary_to_list(secrets:encrypt(PrivateKey)),
+    case
+        gen_server:call(
+            ?MODULE, {register_email, EmailHashed, PubKey, PasswordEncrypted, PrivateKeyEncrypted}
+        )
+    of
+        #{"return_type" := "ok", "return_value" := true} ->
+            {ok, <<"Email confirmed and password set.">>};
+        #{"return_type" := _, "return_value" := Other} ->
+            {error, Other}
+    end.
+set_email_password(Email, Password) ->
+    PasswordEncrypted = binary_to_list(secrets:encrypt(Password)),
+    EmailHashed = binary_to_list(base64:encode(crypto:hash(sha256, Email))),
+    case gen_server:call(?MODULE, {set_email_password, EmailHashed, PasswordEncrypted}) of
+        #{"return_type" := "ok", "return_value" := true} ->
+            {ok, <<"Password set.">>};
+        #{"return_type" := _, "return_value" := Other} ->
+            {error, Other}
+    end.
+
 register_npub(Npub) ->
     NpubEncrypted = secrets:encrypt(Npub),
     gen_server:call(?MODULE, {register_npub, NpubEncrypted}).
@@ -68,8 +86,11 @@ verify_access_token(Token) ->
 init([]) ->
     {ok, #{}}.
 
-handle_call({register_email, Email, Password}, _From, State) ->
-    Response = call_contract("register_email", [Email, Password]),
+handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, State) ->
+    Response = call_contract("register_email", [Email, PublicKey, Password, PrivateKey]),
+    {reply, Response, State};
+handle_call({set_email_password, Email, Password}, _From, State) ->
+    Response = call_contract("set_email_password", [Email, Password]),
     {reply, Response, State};
 handle_call({register_npub, Npub}, _From, State) ->
     Response = call_contract("register_npub", [Npub]),
@@ -88,10 +109,13 @@ handle_call({get_account_by_email, Email}, _From, State) ->
             {reply, Response, State};
         #{
             "return_type" := "ok",
-            "return_value" := {variant, [0, 1], 1, {{tuple, {{address, Address}, Password}}}}
+            "return_value" :=
+                {variant, [0, 1], 1,
+                    {{tuple, {{address, Address}, PasswordEncrypted, PrivateKeyEncrypted}}}}
         } ->
-            Password0 = secrets:decrypt(Password),
-            {reply, {Address, Password0}, State};
+            Password = secrets:decrypt(PasswordEncrypted),
+            PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
+            {reply, {Address, Password, PrivateKey}, State};
         Other ->
             ?LOG_DEBUG("Unexpected response ~p", [Other]),
             {reply, notfound, State}
