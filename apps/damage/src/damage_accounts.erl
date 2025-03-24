@@ -590,6 +590,19 @@ from_html(Req, #{action := authenticate} = State) ->
                 State
             }
     end;
+from_html(Req, #{action := create} = State) ->
+    {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
+    ?LOG_DEBUG(" form data: ~p ", [Params]),
+    Email = proplists:get_value(<<"email">>, Params),
+    case do_post_action(create, #{email => Email} , Req0, State) of
+                {204, <<"">>} ->
+                    Response = cowboy_req:reply(204, Req0),
+                    {stop, Response, State};
+                {Status0, Response0} ->
+                    Response = cowboy_req:set_resp_body(jsx:encode(Response0), Req0),
+                    cowboy_req:reply(Status0, Response),
+                    {stop, Response, State}
+            end;
 from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Data0 = maps:from_list(cow_qs:parse_qs(Data)),
