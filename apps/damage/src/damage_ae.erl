@@ -44,7 +44,8 @@
         node_balance/0,
         account_keypair/1,
         deploy_default_contracts/0,
-        wait_tx/1
+        wait_tx/1,
+        restart_wallet_proc/1
     ]
 ).
 -export([contract_call/5, contract_deploy/3, contract_deploy/2]).
@@ -691,6 +692,15 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
 get_wallet_proc(admin) ->
     #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
     get_wallet_proc(list_to_binary(NodePublicKey)).
+
+restart_wallet_proc(AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            get_wallet_proc(AeAccount);
+        Pid ->
+            supervisor:terminate_child(damage_sup, Pid),
+            get_wallet_proc(AeAccount)
+    end.
 
 balance(AeAccount) when is_binary(AeAccount) ->
     balance(binary_to_list(AeAccount));

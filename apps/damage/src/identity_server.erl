@@ -30,8 +30,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 register_email(Email, Password) ->
-    #{public_key := PubKey, private_key := PrivateKey} =
-        secrets:make_keypair(),
+    #{public_key := PubKey, private_key := PrivateKey} = secrets:make_keypair(),
     EmailHashed = binary_to_list(base64:encode(crypto:hash(sha256, Email))),
     PasswordEncrypted = binary_to_list(secrets:encrypt(Password)),
     PrivateKeyEncrypted = binary_to_list(secrets:encrypt(PrivateKey)),
@@ -111,12 +110,12 @@ handle_call({get_account_by_email, Email}, _From, State) ->
             "return_type" := "ok",
             "return_value" :=
                 {variant, [0, 1], 1,
-                    {{tuple, {{address, Address}, PasswordEncrypted, PrivateKeyEncrypted}}}}
+                    {{tuple, {{address, AddressData}, PasswordEncrypted, PrivateKeyEncrypted}}}}
         } ->
             Password = secrets:decrypt(PasswordEncrypted),
             PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
-            AddressStr = base58:binary_to_base58(Address),
-            {reply, {<<"ak_", AddressStr/binary>>, Password, PrivateKey}, State};
+            Address = aeser_api_encoder:encode(account_pubkey, AddressData),
+            {reply, {Address, Password, PrivateKey}, State};
         Other ->
             ?LOG_DEBUG("Unexpected response ~p", [Other]),
             {reply, notfound, State}

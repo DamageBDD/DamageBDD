@@ -67,7 +67,7 @@
  {<<"hut">>,{pkg,<<"hut">>,<<"1.3.0">>},1},
  {<<"ipfs">>,
   {git,"https://github.com/jagguli/ipfs.git",
-       {ref,"8e9e8f9869a45c9ded51819bcc2d7ce1751f1374"}},
+       {ref,"00d174995b39deba244e4bb06e9af735da333e4c"}},
   0},
  {<<"iso8601">>,
   {git,"https://github.com/erlsci/iso8601.git",
