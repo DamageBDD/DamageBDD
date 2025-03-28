@@ -99,10 +99,46 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
-to_json(Data) -> jsx:encode(Data).
-reply_json(Req, Status, Body) ->
-    cowboy_req:reply(Status, #{<<"content-type">> => <<"application/json">>}, to_json(Body), Req).
+to_json(Req, #{ae_account := _AeAccount, action := get_knowledge} = State) ->
+    case cowboy_req:match_qs([hash], Req) of
+        #{hash := KnowledgeTxHash} ->
+            Knowledge = get_knowledge(KnowledgeTxHash),
+            {jsx:encode(Knowledge), Req, State};
+        Other ->
+            ?LOG_DEBUG("Unexpected ~p", [Other]),
+            {<<"Invalid hash.">>, Req, State}
+    end.
 
+from_json(Req, #{ae_account := AeAccount, action := train} = State) ->
+    {ok, KnowledgeNftContract} = application:get_env(damage, knowledge_contract),
+    {ok, Data, Req0} = cowboy_req:read_body(Req),
+    ?LOG_DEBUG("post action ~p ", [Data]),
+    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+        Data when is_map(Data) ->
+            Knowledge = ecai:train(Data),
+            MetaData = #{},
+            MintResult = damage_ae:contract_call(
+                damage_ae:account_keypair(AeAccount),
+                KnowledgeNftContract,
+                "contracts/knowledge_nft.aes",
+                "mint",
+                [AeAccount, MetaData, Knowledge]
+            ),
+            Response = cowboy_req:set_resp_body(jsx:encode(MintResult), Req0),
+            cowboy_req:reply(200, Response),
+            {stop, Response, State};
+        _ ->
+            Response =
+                cowboy_req:set_resp_body(
+                    jsx:encode(
+                        #{status => <<"failed">>, message => <<"Json decode error.">>}
+                    ),
+                    Req0
+                ),
+            cowboy_req:reply(400, Response),
+            ?LOG_DEBUG("post response 400 ~p ", [Response]),
+            {stop, Response, State}
+    end;
 from_json(Req, #{ae_account := AeAccount} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
@@ -119,5 +155,39 @@ from_json(Req, #{ae_account := AeAccount} = State) ->
             {ok, cowboy_req:reply(400, Req), State}
     end.
 
-to_json(Req, _State) ->
-    reply_json(Req, 404, #{error => <<"Not Found">>}).
+read_stream(ConnPid, StreamRef) ->
+    case gun:await(ConnPid, StreamRef, 600000) of
+        {response, nofin, Status, _Headers0} ->
+            {ok, Body} = gun:await_body(ConnPid, StreamRef),
+            ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
+            jsx:decode(Body, [{labels, atom}, return_maps]);
+        Default ->
+            ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
+            Default
+    end.
+
+get_knowledge(KnowledgeTxHash) ->
+    {ok, KnowledgeNftContract} = application:get_env(damage, knowledge_contract),
+    case damage_ae:get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path =
+                PathPrefix ++ "v3/aex141/" ++ KnowledgeNftContract ++ "/tokens/" ++ KnowledgeTxHash,
+            StreamRef = gun:get(ConnPid, Path),
+            MetaData =
+                case catch read_stream(ConnPid, StreamRef) of
+                    #{amount := null} ->
+                        0;
+                    {error, Error} ->
+                        ?LOG_ERROR("Error getting balance ~p", [Error]),
+                        0;
+                    #{error := Error} ->
+                        ?LOG_ERROR("Error getting balance ~p", [Error]),
+                        0;
+                    #{amount := Balance0} ->
+                        Balance0
+                end,
+            {reply, MetaData};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}}
+    end.
