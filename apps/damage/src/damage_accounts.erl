@@ -293,7 +293,7 @@ allowed_methods(Req, State) ->
 
 get_invoices(AeAccount) ->
     filter_valid_invoices(
-        lnd:list_invoices(
+        cln:list_invoices(
             [{"creation_date_start", integer_to_list(unix_timestamp_hours_ago(24))}]
         ),
         AeAccount
@@ -388,7 +388,7 @@ authenticate_user(Email, Password) ->
         {Account, Password, _PrivateKey} ->
             Expiry = date_util:now_to_seconds(os:timestamp()) + ?TOKEN_TIMEOUT,
             Token = secrets:encrypt(term_to_binary({Account, Email, Expiry})),
-            {ok, Token};
+            {ok, Account, Token};
         Error = {error, notfound} ->
             ?LOG_ERROR("authenticate_user error ~p ", [Error]),
             Error;
@@ -455,8 +455,10 @@ do_post_action(
     _State
 ) ->
     case authenticate_user(Email, Password) of
-        {ok, Token} -> {200, #{status => <<"ok">>, access_token => Token}};
-        {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
+        {ok, Account, Token} ->
+            {200, #{status => <<"ok">>, access_token => Token, address => Account}};
+        {error, Message} ->
+            {400, #{status => <<"failed">>, message => Message}}
     end;
 do_post_action(
     reset_password,
@@ -530,6 +532,17 @@ do_post_action(invoices, #{amount := Amount}, _Req, _State) when
             max_damage_invoice => ?MAX_DAMAGE_INVOICE
         }
     };
+do_post_action(invoices, #{amount := Amount}, _Req, _State) when
+    Amount < ?MIN_DAMAGE_INVOICE
+->
+    {
+        ?MIN_DAMAGE_INVOICE,
+        #{
+            status => <<"max_damage">>,
+            message => <<"invoice amount too large">>,
+            max_damage_invoice => ?MIN_DAMAGE_INVOICE
+        }
+    };
 do_post_action(invoices, #{amount := Amount}, Req, State) ->
     case damage_http:is_authorized(Req, State) of
         {true, _Req0, #{username := Username, ae_account := AeAccount} = _State0} ->
@@ -557,9 +570,16 @@ create_invoice(Amount, Username, AeAccount) ->
             )
         ),
     ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),
-    #{r_hash := _RHash} = Invoice = lnd:create_invoice(Amount, Memo),
+    Invoice = cln:create_invoice(Amount, Memo),
+    #{
+        payment_hash := _PaymentHash,
+        bolt11 := PaymentRequest,
+        created_index := _CreatedIndex,
+        expires_at := ExpiresAt,
+        payment_secret := _PaymentSecret
+    } = Invoice,
     ?LOG_DEBUG("saved invoice ~p", [Invoice]),
-    Invoice.
+    #{payment_request => PaymentRequest, expiry => ExpiresAt}.
 
 filter_valid_invoices(Invoices, AeAccount) ->
     lists:filter(
@@ -626,12 +646,13 @@ from_html(Req, #{action := authenticate} = State) ->
     Username = proplists:get_value(<<"username">>, Params),
     Password = proplists:get_value(<<"password">>, Params),
     case authenticate_user(Username, Password) of
-        {ok, Token} ->
+        {ok, Account, Token} ->
             {stop,
                 cowboy_req:reply(
                     200,
                     cowboy_req:set_resp_body(
-                        jsx:encode(#{status => <<"ok">>, access_token => Token}), Req0
+                        jsx:encode(#{status => <<"ok">>, access_token => Token, address => Account}),
+                        Req0
                     )
                 ),
                 State};
@@ -729,7 +750,6 @@ from_json(Req, #{action := Action} = State) ->
                 {Status0, Response0} ->
                     Response = cowboy_req:set_resp_body(jsx:encode(Response0), Req0),
                     cowboy_req:reply(Status0, Response),
-                    ?LOG_DEBUG("post response ~p ~p ", [Status0, Response]),
                     {stop, Response, State}
             end
     end.
@@ -782,7 +802,7 @@ delete_resource(Req, #{action := invoices} = State) ->
                             "cancelling invoice ~p ~p",
                             [maps:get(path_info, Req), RHash]
                         ),
-                        case lnd:cancel_invoice(RHash) of
+                        case cln:cancel_invoice(RHash) of
                             #{<<"code">> := 5} ->
                                 ?LOG_INFO("Invoice not found ~p", [RHash]);
                             Other ->
@@ -844,7 +864,7 @@ check_invoices() ->
     lists:foldl(
         fun check_invoice_foldn/2,
         [],
-        lnd:list_invoices([{"creation_date_start", CreationDate}])
+        cln:list_invoices([{"creation_date_start", CreationDate}])
     ).
 
 delete_account(Email) ->

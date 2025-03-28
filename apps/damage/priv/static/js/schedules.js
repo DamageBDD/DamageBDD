@@ -59,7 +59,9 @@ async function updateSchedulesTable() {
 	const request = {
 		method: 'GET',
 		credentials: 'include',
-		headers: { 'Content-Type': 'application/json' },
+		headers: { 'Content-Type': 'application/json',
+				   'Authorization': 'Bearer ' + localStorage.access_token
+				 }
 	};
 
 	const response = await fetch("/schedules/", request);

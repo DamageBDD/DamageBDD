@@ -87,6 +87,7 @@
 		});
 		document.getElementById("logoutSubmitBtn").addEventListener("click", (event) => {
 			localStorage.removeItem("access_token");
+			localStorage.removeItem("address");
 			MicroModal.close('logout-modal');
 			showHideLoginButton();
 
@@ -122,6 +123,13 @@
 				updateSchedulesTable();
 			}
 		}, false);
+		var tabs =Tabby('[data-token-tabs]');
+		document.addEventListener('tabby', function (event) {
+			var tab = event.target;
+			var content = event.detail.content;
+			console.log("switch tab");
+			console.log(event);
+		}, false);
 		document.getElementById("damageForm").addEventListener("submit", async function(event) {
 			event.preventDefault();
 			await submitDamageForm();
@@ -133,6 +141,11 @@
 				await submitDamageForm();
 			}
 		});
+		var address = localStorage.getItem("address");
+		if(address){
+			document.getElementById("damage-address").value = address;
+					generateAddressQrcode();
+		}
 	});
 
 
@@ -364,6 +377,8 @@
 			.then(data => {
 				if (data.access_token) {
 					localStorage.setItem("access_token", data.access_token);
+					localStorage.setItem("address", data.address);
+					generateAddressQrcode();
 					toasts.push({
 						title: 'Login Success',
 						content: 'Authentication Successful.',
@@ -463,6 +478,7 @@
 		xhr.send();
 	}
 
+
 	function generateInvoice() {
 		var amount = document.getElementById('invoice-amount').value;
 		const request = {
@@ -486,11 +502,12 @@
 			})
 			.then(data => {
 				if (data && data.status === "ok") {
-					document.getElementById("qrcode").innerText = "";
+					document.getElementById("qrcode-lightning").innerText = "";
 					var qrcode = new QRCode(
-						document.getElementById("qrcode"),
+						document.getElementById("qrcode-lightning"),
 						"lightning:" + data.invoice.payment_request
 					);
+					document.getElementById("lightning-invoice-input").value = "lightning:" + data.invoice.payment_request
 				} else {
 					console.error("Error Invoice fetching failed: ", data);
 					toasts.push({
@@ -509,11 +526,14 @@
 				});
 			});
 	}
-
-	function generateToken() {
-		var token = "Generated Token: ABC123";
-		document.getElementById("generatedToken").innerText = token;
+	function generateAddressQrcode(){
+		document.getElementById("qrcode-damage").innerText = "";
+		var qrcode = new QRCode(
+			document.getElementById("qrcode-damage"),
+			localStorage.getItem("address")
+		);
 	}
+
 
 	function addVariable() {
 		var variableName = document.getElementById("variableName").value;
@@ -528,3 +548,19 @@
 	}
 
 })(window, document, undefined);
+
+function copyInvoiceToClipboard(){
+	// Copy the text inside the text field
+	navigator.clipboard.writeText(document.getElementById("lightning-invoice-input").value);
+	var copyIcon = document.getElementById("copyInvoiceIcon");
+	copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
+	copyIcon.style.color = 'green'; // Change color to green
+}
+
+function copyAddressToClipboard(){
+	// Copy the text inside the text field
+	navigator.clipboard.writeText(document.getElementById("damage-address").value);
+	var copyIcon = document.getElementById("copyAddressIcon");
+	copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
+	copyIcon.style.color = 'green'; // Change color to green
+}
