@@ -19,6 +19,23 @@
 -export([is_authorized/2]).
 -export([load_all_webhooks/1]).
 -export([trigger_webhooks/1]).
+-export(
+    [
+        get_webhooks_proc/1,
+        restart_webhook_proc/1
+    ]
+).
+-export(
+    [
+        init/1,
+        start_link/1,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        terminate/2,
+        code_change/3
+    ]
+).
 
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
 -define(DEFAULT_HEADERS, [
@@ -28,6 +45,7 @@
 ]).
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
 
 -define(WEBHOOKS_BUCKET, {<<"Default">>, <<"Webhooks">>}).
 -define(TRAILS_TAG, ["Manage Webhooks"]).
@@ -71,6 +89,13 @@ trails() ->
             }
         )
     ].
+start_link(AeAccount) -> gen_server:start_link(?MODULE, [AeAccount], []).
+init([]) ->
+    process_flag(trap_exit, true),
+    {ok, #{}};
+init([AeAccount]) ->
+    process_flag(trap_exit, true),
+    {ok, #{ae_account => AeAccount}}.
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -98,17 +123,17 @@ from_json(Req, State) ->
     Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
     {stop, cowboy_req:reply(201, Resp), State}.
 
-to_json(Req, #{username := Username} = State) ->
-    Body = jsx:encode(damage_ae:get_webhooks(Username)),
-    logger:info("Loading webhooks for ~p ~p", [Username, Body]),
+to_json(Req, #{ae_account := AeAccount} = State) ->
+    Body = jsx:encode(damage_ae:get_webhooks(AeAccount)),
+    logger:info("Loading webhooks for ~p ~p", [AeAccount, Body]),
     {Body, Req, State}.
 
-delete_resource(Req, #{username := Username} = State) ->
+delete_resource(Req, #{ae_account := AeAccount} = State) ->
     Deleted =
         lists:foldl(
             fun(DeleteId, Acc) ->
                 ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-                ok = damage_ae:delete_webhook(Username, DeleteId),
+                ok = damage_ae:delete_webhook(AeAccount, DeleteId),
                 Acc + 1
             end,
             0,
@@ -120,12 +145,17 @@ delete_resource(Req, #{username := Username} = State) ->
 create_webhook(
     #{name := WebhookName, url := WebhookUrl} = _WebhookData,
     _Req,
-    #{username := Username} = _State
+    #{ae_account := AeAccount} = _State
 ) ->
-    damage_ae:add_webhook(Username, WebhookName, WebhookUrl).
+    damage_ae:add_webhook(AeAccount, WebhookName, WebhookUrl).
 
-load_all_webhooks(#{username := Username} = Context) ->
-    maps:put(webhooks, damage_ae:get_webhooks(Username), Context).
+get_webhooks(AeAccount) ->
+    Pid = get_webhooks_proc(AeAccount),
+
+    gen_server:call(Pid, get_webhooks, ?AE_TIMEOUT).
+
+load_all_webhooks(#{ae_account := AeAccount} = Context) ->
+    maps:put(webhooks, get_webhooks(AeAccount), Context).
 
 gun_await(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
@@ -172,4 +202,115 @@ trigger_webhooks(FinalContext) ->
                 trigger_webhook(Webhook, FinalContext)
              || Webhook <- sets:to_list(EventHooks)
             ]
+    end.
+
+handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{ae_account := AeAccount} = Cache) ->
+    AccountCache = maps:get(AeAccount, Cache, #{}),
+    WebHookCache = maps:get(webhooks, AccountCache, #{}),
+    WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
+    WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
+    Results =
+        damage_ae:contract_call_user_account(
+            AeAccount,
+            "add_webhook",
+            [WebhookNameEncrypted, WebhookUrlEncrypted]
+        ),
+    ?LOG_DEBUG("wWebhooks ~p", [Results]),
+    {
+        reply,
+        Results,
+        maps:put(
+            AeAccount,
+            maps:put(
+                webhooks,
+                maps:put(WebhookName, WebhookUrl, WebHookCache),
+                AccountCache
+            ),
+            Cache
+        )
+    };
+handle_call({delete_webhook, WebhookName}, _From, #{ae_account := AeAccount} = Cache) ->
+    WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
+    Results =
+        damage_ae:contract_call_user_account(
+            AeAccount,
+            "delete_webhook",
+            [WebhookNameEncrypted]
+        ),
+    ?LOG_DEBUG("Webhooks ~p", [Results]),
+    {reply, Results, Cache};
+handle_call(get_webhooks, _From, #{ae_account := AeAccount} = Cache) ->
+    case catch maps:get(webhooks, Cache, undefined) of
+        undefined ->
+            #{decodedResult := Results} =
+                damage_ae:contract_call_user_account(AeAccount, "get_webhooks", []),
+            WebHooks =
+                maps:from_list(
+                    [
+                        {
+                            damage_utils:decrypt(base64:decode(Key)),
+                            damage_utils:decrypt(base64:decode(Hook))
+                        }
+                     || [Key, Hook] <- Results
+                    ]
+                ),
+            ?LOG_DEBUG("Cache get Webhooks ~p", [WebHooks]),
+            {
+                reply,
+                WebHooks,
+                maps:put(webhooks, WebHooks, Cache)
+            };
+        Context when is_map(Context) -> {reply, Context, Cache}
+    end.
+handle_cast(Event, State) ->
+    ?LOG_DEBUG("unhandled cast : ~p", [Event]),
+    {noreply, State}.
+
+handle_info(_Info, State) -> {noreply, State}.
+
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+
+get_webhooks_proc(<<"ak_", _/binary>> = AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            case
+                supervisor:start_child(
+                    damage_sup,
+                    #{
+                        % mandatory
+                        id => {?MODULE, AeAccount},
+                        % mandatory
+                        start => {damage_webhooks, start_link, [AeAccount]},
+                        % optional
+                        restart => permanent,
+                        % optional
+                        shutdown => 60,
+                        % optional
+                        type => worker,
+                        modules => [damage_ae, damage_context, damage_webhooks]
+                    }
+                )
+            of
+                {ok, AePid} ->
+                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
+                    AePid;
+                {error, {already_started, AePid}} ->
+                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
+                    AePid
+            end;
+        Pid ->
+            Pid
+    end.
+
+restart_webhook_proc(AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            get_webhooks_proc(AeAccount);
+        Pid ->
+            supervisor:terminate_child(damage_sup, Pid),
+            get_webhooks_proc(AeAccount)
     end.

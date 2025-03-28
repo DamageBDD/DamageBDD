@@ -18,6 +18,25 @@
 -export([is_authorized/2]).
 -export([delete_resource/2]).
 -export([get_global_template_context/1]).
+-export(
+    [
+        get_context_proc/1,
+        add_context/3,
+        restart_context_proc/1
+    ]
+).
+-behaviour(gen_server).
+-export(
+    [
+        init/1,
+        start_link/1,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        terminate/2,
+        code_change/3
+    ]
+).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -56,6 +75,16 @@ trails() ->
             }
         )
     ].
+start_link(AeAccount) -> gen_server:start_link(?MODULE, [AeAccount], []).
+get_ets_id(AeAccount) when is_binary(AeAccount) ->
+    get_ets_id(binary_to_list(AeAccount));
+get_ets_id(AeAccount) ->
+    list_to_atom("context_" ++ AeAccount).
+%% gen_server init
+init([AeAccount]) ->
+    process_flag(trap_exit, true),
+    Table = ets:new(get_ets_id(AeAccount), [named_table, set, private]),
+    {ok, #{ets_table => Table}}.
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -79,7 +108,7 @@ allowed_methods(Req, State) ->
 
 from_html(Req, State) -> from_json(Req, State).
 
-from_json(Req, #{username := Username} = State) ->
+from_json(Req, #{ae_account := AeAccount} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
@@ -95,7 +124,7 @@ from_json(Req, #{username := Username} = State) ->
             ?LOG_DEBUG("post response 400 ~p ", [Response]),
             {stop, Response, State};
         #{key := Key, value := Value, masked := Masked} ->
-            Result = damage_ae:add_context(Username, Key, Value, Masked),
+            Result = damage_ae:add_context(AeAccount, Key, Value, Masked),
             Resp =
                 cowboy_req:set_resp_body(
                     jsx:encode(#{status => <<"ok">>, result => Result}),
@@ -124,6 +153,92 @@ delete_resource(Req, #{username := Username} = State) ->
     ?LOG_INFO("deleted ~p context", [Deleted]),
     {true, Req, State}.
 
+handle_call(get_context, _From, #{ets_table := Table} = State) ->
+    {
+        reply,
+        maps:from_list(ets:tab2list(Table)),
+        State
+    };
+handle_call(load_context, _From, #{ae_account := AeAccount, ets_table := Table} = State) ->
+    #{decodedResult := Results} =
+        damage_ae:contract_call_user_account(AeAccount, "get_context", []),
+    {
+        reply,
+        [
+            ets:insert(Table, {
+                damage_utils:decrypt(base64:decode(KeyEncrypted)),
+                damage_utils:decrypt(base64:decode(ValueEncrypted))
+            })
+         || [KeyEncrypted, ValueEncrypted] <- Results
+        ],
+        State
+    };
+handle_call({get_value, Key}, _From, #{ets := Table} = State) ->
+    case ets:lookup(Table, Key) of
+        [{Key, Val}] ->
+            io:format("Value: ~p~n", [Val]),
+            {reply, Val, State};
+        [] ->
+            io:format("Key not found~n"),
+            {reply, notfound, State}
+    end;
+handle_call({add_context, AeAccount, Key, Value, Visibility}, _From, State) ->
+    AccountCache = maps:get(AeAccount, State, #{}),
+    ContextCache = maps:get(context, AccountCache, #{}),
+    KeyHashed = secrets:salted_hash(Key),
+    ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
+    Results =
+        damage_ae:contract_call_user_account(
+            AeAccount,
+            "add_context",
+            [KeyHashed, ValueEncrypted, Visibility]
+        ),
+    ?LOG_DEBUG("AddContext ~p", [Results]),
+    {
+        reply,
+        Results,
+        maps:put(
+            AeAccount,
+            maps:put(context, maps:put(Key, Value, ContextCache), AccountCache),
+            State
+        )
+    };
+handle_call({delete_context, AeAccount, Key}, _From, State) ->
+    AccountCache = maps:get(AeAccount, State, #{}),
+    ContextCache = maps:get(context, AccountCache, #{}),
+    ContextKeyEnc = base64:encode(damage_utils:encrypt(Key)),
+    Results =
+        damage_ae:contract_call_user_account(
+            AeAccount,
+            "delete_context",
+            [ContextKeyEnc]
+        ),
+    ?LOG_DEBUG("wWebhooks ~p", [Results]),
+    {
+        reply,
+        Results,
+        maps:put(
+            AeAccount,
+            maps:put(context, maps:delete(Key, ContextCache), AccountCache),
+            State
+        )
+    }.
+
+handle_cast(Event, State) ->
+    ?LOG_DEBUG("unhandled cast : ~p", [Event]),
+    {noreply, State}.
+
+handle_info(_Info, State) -> {noreply, State}.
+
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+add_context(AeAccount, Key, Value) ->
+    Pid = get_context_proc(AeAccount),
+    gen_server:call(Pid, {set_context, AeAccount, Key, Value}, ?AE_TIMEOUT).
+
 get_global_template_context(Context) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
     {ok, DamageTokenContract} = application:get_env(damage, token_contract),
@@ -142,16 +257,10 @@ get_global_template_context(Context) ->
         Context
     ).
 
-get_account_context(#{username := Username} = DefaultContext) ->
-    ClientContextRaw = damage_ae:get_account_context(Username),
+get_account_context(#{ae_account := AeAccount} = DefaultContext) ->
+    Pid = get_context_proc(AeAccount),
     ClientContext =
-        maps:map(
-            fun
-                (_Key, Value) when is_map(Value) -> maps:get(value, Value);
-                (_Key, Value) -> Value
-            end,
-            ClientContextRaw
-        ),
+        gen_server:call(Pid, get_context, ?AE_TIMEOUT),
     damage_webhooks:load_all_webhooks(
         maps:put(
             client_context,
@@ -198,6 +307,46 @@ clean_context_secrets(AccountContext, Body, Args) ->
         AccountContext
     ).
 
+get_context_proc(<<"ak_", _/binary>> = AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            case
+                supervisor:start_child(
+                    damage_sup,
+                    #{
+                        % mandatory
+                        id => {?MODULE, AeAccount},
+                        % mandatory
+                        start => {damage_context, start_link, [AeAccount]},
+                        % optional
+                        restart => permanent,
+                        % optional
+                        shutdown => 60,
+                        % optional
+                        type => worker,
+                        modules => [damage_ae, damage_context]
+                    }
+                )
+            of
+                {ok, AePid} ->
+                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
+                    AePid;
+                {error, {already_started, AePid}} ->
+                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
+                    AePid
+            end;
+        Pid ->
+            Pid
+    end.
+
+restart_context_proc(AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            get_context_proc(AeAccount);
+        Pid ->
+            supervisor:terminate_child(damage_sup, Pid),
+            get_context_proc(AeAccount)
+    end.
 test_account_context() ->
     Body = <<"blah ablasd assd a testpasswordaasdsdada">>,
     Args = <<"blah ablasd assd a testpasswordaasdsdada">>,

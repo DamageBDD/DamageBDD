@@ -18,6 +18,7 @@
     [
         init/1,
         start_link/0,
+        start_link/1,
         handle_call/3,
         handle_cast/2,
         handle_info/2,
@@ -27,17 +28,13 @@
         maybe_fund_wallet/1,
         transfer_damage_tokens/2,
         transfer_damage_tokens/3,
-        get_account_context/1,
-        get_webhooks/1,
-        add_webhook/3,
-        delete_webhook/2,
-        add_context/4,
         confirm_spend_all/0,
         start_batch_spend_timer/0,
         get_reports/1,
         get_domain_token/2,
         add_domain_token/3,
         revoke_domain_token/2,
+        contract_call_user_account/3,
         contract_call_node_account/2,
         get_ae_mdw_node/0,
         get_ae_mdw_ws_node/0,
@@ -50,7 +47,6 @@
 ).
 -export([contract_call/5, contract_deploy/3, contract_deploy/2]).
 -export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
--export([get_schedules/1]).
 -export([delete_account/1]).
 -export([revoke_token/2]).
 -export([get_block_height_since/2]).
@@ -64,6 +60,7 @@
 -export([ae_to_aetto/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
+start_link(AeAccount) -> gen_server:start_link(?MODULE, [AeAccount], []).
 
 ae_to_aetto(Ae) -> Ae * 1000000000000000.
 
@@ -72,7 +69,10 @@ init([]) ->
     process_flag(trap_exit, true),
     ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
     {ok, WS, _Path} = get_ae_mdw_node(),
-    {ok, #{heartbeat_timer => ConfirmSpendTimer, websocket => WS}}.
+    {ok, #{heartbeat_timer => ConfirmSpendTimer, websocket => WS}};
+init([AeAccount]) ->
+    process_flag(trap_exit, true),
+    {ok, #{ae_account => AeAccount}}.
 
 find_active_node([{Host, Port, PathPrefix} | Rest]) ->
     case gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}) of
@@ -185,6 +185,20 @@ extract_feature_hash(Data) ->
     %% Find the map in the "arguments" that contains the key "feature_hash"
     extract_arguments(Arguments).
 
+handle_call(
+    {contract_call_user, Contract, ContractSource, Func, Args},
+    _From,
+    #{ae_account := AeAccount, private_key := PrivateKey} = Cache
+) ->
+    KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
+    Result = contract_call(
+        KeyPair,
+        Contract,
+        ContractSource,
+        Func,
+        Args
+    ),
+    {reply, Result, Cache};
 handle_call({get_published, AeAccount}, _From, Cache) ->
     case get_ae_mdw_node() of
         {ok, ConnPid, PathPrefix} ->
@@ -292,173 +306,6 @@ handle_call({balance, AeAccount}, _From, Cache) ->
             ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
             {reply, {error, not_found}, Cache}
     end;
-handle_call({get_schedules, AeAccount}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    case catch maps:get(schedules, AccountCache, undefined) of
-        undefined ->
-            #{decodedResult := Results} =
-                contract_call_user_account(AeAccount, "get_schedules", []),
-            Schedules =
-                maps:from_list(
-                    [
-                        {
-                            damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
-                            damage_utils:decrypt(base64:decode(CronEncrypted))
-                        }
-                     || [FeatureHashEncrypted, CronEncrypted] <- Results
-                    ]
-                ),
-            {
-                reply,
-                Schedules,
-                maps:put(AeAccount, maps:put(schedules, Schedules, AccountCache), Cache)
-            };
-        Schedules when is_map(Schedules) -> {reply, Schedules, Cache}
-    end;
-handle_call({get_context, AeAccount}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    case catch maps:get(context, AccountCache, undefined) of
-        undefined ->
-            #{decodedResult := Results} =
-                contract_call_user_account(AeAccount, "get_context", []),
-            ClientContext =
-                maps:from_list(
-                    [
-                        {
-                            damage_utils:decrypt(base64:decode(KeyEncrypted)),
-                            damage_utils:decrypt(base64:decode(ValueEncrypted))
-                        }
-                     || [KeyEncrypted, ValueEncrypted] <- Results
-                    ]
-                ),
-            ?LOG_DEBUG("context caching ~p", [ClientContext]),
-            {
-                reply,
-                ClientContext,
-                maps:put(
-                    AeAccount,
-                    maps:put(context, ClientContext, AccountCache),
-                    Cache
-                )
-            };
-        Context when is_map(Context) -> {reply, Context, Cache}
-    end;
-handle_call({set_context, AeAccount, AccountContext}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    NewAccountContext =
-        maps:merge(maps:get(context, AccountCache, #{}), AccountContext),
-    Results =
-        contract_call_user_account(AeAccount, "set_context", [NewAccountContext]),
-    ?LOG_DEBUG("set_context caching ~p, ~p", [NewAccountContext, Results]),
-    {
-        reply,
-        NewAccountContext,
-        maps:put(
-            AeAccount,
-            maps:put(context, NewAccountContext, AccountCache),
-            Cache
-        )
-    };
-handle_call({add_context, AeAccount, Key, Value, Visibility}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    ContextCache = maps:get(context, AccountCache, #{}),
-    KeyEncrypted = base64:encode(damage_utils:encrypt(Key)),
-    ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
-    Results =
-        contract_call_user_account(
-            AeAccount,
-            "add_context",
-            [KeyEncrypted, ValueEncrypted, Visibility]
-        ),
-    ?LOG_DEBUG("AddContext ~p", [Results]),
-    {
-        reply,
-        Results,
-        maps:put(
-            AeAccount,
-            maps:put(context, maps:put(Key, Value, ContextCache), AccountCache),
-            Cache
-        )
-    };
-handle_call({delete_context, AeAccount, Key}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    ContextCache = maps:get(context, AccountCache, #{}),
-    ContextKeyEnc = base64:encode(damage_utils:encrypt(Key)),
-    Results =
-        contract_call_user_account(
-            AeAccount,
-            "delete_context",
-            [ContextKeyEnc]
-        ),
-    ?LOG_DEBUG("wWebhooks ~p", [Results]),
-    {
-        reply,
-        Results,
-        maps:put(
-            AeAccount,
-            maps:put(context, maps:delete(Key, ContextCache), AccountCache),
-            Cache
-        )
-    };
-handle_call({get_webhooks, AeAccount}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    case catch maps:get(webhooks, AccountCache, undefined) of
-        undefined ->
-            #{decodedResult := Results} =
-                contract_call_user_account(AeAccount, "get_webhooks", []),
-            WebHooks =
-                maps:from_list(
-                    [
-                        {
-                            damage_utils:decrypt(base64:decode(Key)),
-                            damage_utils:decrypt(base64:decode(Hook))
-                        }
-                     || [Key, Hook] <- Results
-                    ]
-                ),
-            ?LOG_DEBUG("Cache get Webhooks ~p", [WebHooks]),
-            {
-                reply,
-                WebHooks,
-                maps:put(AeAccount, maps:put(webhooks, WebHooks, AccountCache), Cache)
-            };
-        Context when is_map(Context) -> {reply, Context, Cache}
-    end;
-handle_call({add_webhook, AeAccount, WebhookName, WebhookUrl}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    WebHookCache = maps:get(webhooks, AccountCache, #{}),
-    WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
-    WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
-    Results =
-        contract_call_user_account(
-            AeAccount,
-            "add_webhook",
-            [WebhookNameEncrypted, WebhookUrlEncrypted]
-        ),
-    ?LOG_DEBUG("wWebhooks ~p", [Results]),
-    {
-        reply,
-        Results,
-        maps:put(
-            AeAccount,
-            maps:put(
-                webhooks,
-                maps:put(WebhookName, WebhookUrl, WebHookCache),
-                AccountCache
-            ),
-            Cache
-        )
-    };
-handle_call({delete_webhook, AeAccount, WebhookName}, _From, Cache) ->
-    WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
-    Results =
-        contract_call_user_account(
-            AeAccount,
-            "delete_webhook",
-            [WebhookNameEncrypted]
-        ),
-    ?LOG_DEBUG("Webhooks ~p", [Results]),
-    {reply, Results, Cache};
 handle_call({get_auth_token, AeAccount, TokenKey}, _From, Cache) ->
     case contract_call_user_account(AeAccount, "get_auth_token", [TokenKey]) of
         #{decodedResult := EncryptedConfirmToken} ->
@@ -635,7 +482,13 @@ exec_aecli(Cmd) ->
 
 contract_call_user_account(AeAccount, Func, Args) ->
     {ok, AccountContract} = application:get_env(damage, account_contract),
-    contract_call(AeAccount, AccountContract, "contracts/account.aes", Func, Args).
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(
+        DamageAEPid,
+        {contract_call_user, AccountContract, "contracts/account.aes", Func, Args},
+        ?AE_TIMEOUT
+    ).
 
 contract_call_node_account(Func, Args) ->
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
@@ -666,9 +519,9 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
                     damage_sup,
                     #{
                         % mandatory
-                        id => AeAccount,
+                        id => {?MODULE, AeAccount},
                         % mandatory
-                        start => {damage_ae, start_link, []},
+                        start => {damage_ae, start_link, [AeAccount]},
                         % optional
                         restart => permanent,
                         % optional
@@ -710,7 +563,6 @@ balance(AeAccount) ->
     gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
 
 get_reports(AeAccount) ->
-    ?LOG_DEBUG("Check balance ~p", [AeAccount]),
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {reports, AeAccount}, ?AE_TIMEOUT).
 
@@ -733,47 +585,6 @@ start_batch_spend_timer() ->
 confirm_spend(#{ae_account := AeAccount} = Context) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {confirm_spend, Context}).
-
-get_account_context(AeAccount) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_wallet_proc(AeAccount),
-    gen_server:call(DamageAEPid, {get_context, AeAccount}, ?AE_TIMEOUT).
-
-add_context(AeAccount, Key, Value, Visibility) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_wallet_proc(AeAccount),
-    gen_server:call(
-        DamageAEPid,
-        {add_context, AeAccount, Key, Value, Visibility},
-        ?AE_TIMEOUT
-    ).
-
-get_webhooks(AeAccount) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_wallet_proc(AeAccount),
-    gen_server:call(DamageAEPid, {get_webhooks, AeAccount}, ?AE_TIMEOUT).
-
-add_webhook(AeAccount, WebhookName, WebhookUrl) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_wallet_proc(AeAccount),
-    gen_server:call(
-        DamageAEPid,
-        {add_webhook, AeAccount, WebhookName, WebhookUrl},
-        ?AE_TIMEOUT
-    ).
-
-delete_webhook(AeAccount, WebhookName) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_wallet_proc(AeAccount),
-    gen_server:call(
-        DamageAEPid,
-        {delete_webhook, AeAccount, WebhookName},
-        ?AE_TIMEOUT
-    ).
-
-get_schedules(AeAccount) ->
-    DamageAEPid = get_wallet_proc(AeAccount),
-    gen_server:call(DamageAEPid, {get_schedules, AeAccount}, ?AE_TIMEOUT).
 
 delete_account(AeAccount) ->
     % temporary storage to commit after feature execution

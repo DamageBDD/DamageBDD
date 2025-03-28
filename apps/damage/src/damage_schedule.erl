@@ -28,6 +28,28 @@
 -export([test_list_schedule/0]).
 -export([delete_resource/2]).
 -export([cancel_all_schedules/0]).
+-export([get_schedules/1]).
+-export(
+    [
+        restart_schedules_proc/1,
+        get_schedules_proc/1,
+        get_webhooks/1,
+        delete_webhook/2,
+        add_webhook/3
+    ]
+).
+-behaviour(gen_server).
+-export(
+    [
+        init/1,
+        start_link/1,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        terminate/2,
+        code_change/3
+    ]
+).
 
 -define(SCHEDULES_BUCKET, {<<"Default">>, <<"Schedules">>}).
 -define(SCHEDULE_EXECUTION_COUNTER, {<<"counters">>, <<"ScheduleExecution">>}).
@@ -73,6 +95,10 @@ trails() ->
         )
     ].
 
+start_link(AeAccount) -> gen_server:start_link(?MODULE, [AeAccount], []).
+init([AeAccount]) ->
+    process_flag(trap_exit, true),
+    {ok, #{ae_account => AeAccount}}.
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
@@ -400,6 +426,105 @@ decrypt_schedules(EncryptedSchedules) ->
         end,
         EncryptedSchedules
     ).
+handle_call({get_schedules, AeAccount}, _From, Cache) ->
+    AccountCache = maps:get(AeAccount, Cache, #{}),
+    case catch maps:get(schedules, AccountCache, undefined) of
+        undefined ->
+            #{decodedResult := Results} =
+                damage_ae:contract_call_user_account(AeAccount, "get_schedules", []),
+            Schedules =
+                maps:from_list(
+                    [
+                        {
+                            damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
+                            damage_utils:decrypt(base64:decode(CronEncrypted))
+                        }
+                     || [FeatureHashEncrypted, CronEncrypted] <- Results
+                    ]
+                ),
+            {
+                reply,
+                Schedules,
+                maps:put(AeAccount, maps:put(schedules, Schedules, AccountCache), Cache)
+            };
+        Schedules when is_map(Schedules) -> {reply, Schedules, Cache}
+    end.
+handle_cast(Event, State) ->
+    ?LOG_DEBUG("unhandled cast : ~p", [Event]),
+    {noreply, State}.
+
+handle_info(_Info, State) -> {noreply, State}.
+
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+get_schedules(AeAccount) ->
+    DamageAEPid = get_schedules_proc(AeAccount),
+    gen_server:call(DamageAEPid, {get_schedules, AeAccount}, ?AE_TIMEOUT).
+get_webhooks(AeAccount) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_schedules_proc(AeAccount),
+    gen_server:call(DamageAEPid, {get_webhooks, AeAccount}, ?AE_TIMEOUT).
+
+add_webhook(AeAccount, WebhookName, WebhookUrl) ->
+    % temporary storage to commit after feature execution
+    Pid = get_schedules_proc(AeAccount),
+    gen_server:call(
+        Pid,
+        {add_webhook, AeAccount, WebhookName, WebhookUrl},
+        ?AE_TIMEOUT
+    ).
+
+delete_webhook(AeAccount, WebhookName) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_schedules_proc(AeAccount),
+    gen_server:call(
+        DamageAEPid,
+        {delete_webhook, AeAccount, WebhookName},
+        ?AE_TIMEOUT
+    ).
+get_schedules_proc(<<"ak_", _/binary>> = AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            case
+                supervisor:start_child(
+                    damage_sup,
+                    #{
+                        % mandatory
+                        id => {?MODULE, AeAccount},
+                        % mandatory
+                        start => {?MODULE, start_link, [AeAccount]},
+                        % optional
+                        restart => permanent,
+                        % optional
+                        shutdown => 60,
+                        % optional
+                        type => worker,
+                        modules => [damage_ae, damage_context, damage_schedule]
+                    }
+                )
+            of
+                {ok, AePid} ->
+                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
+                    AePid;
+                {error, {already_started, AePid}} ->
+                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
+                    AePid
+            end;
+        Pid ->
+            Pid
+    end.
+
+restart_schedules_proc(AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            get_schedules_proc(AeAccount);
+        Pid ->
+            supervisor:terminate_child(damage_sup, Pid),
+            get_schedules_proc(AeAccount)
+    end.
 
 test_schedule() ->
     Name = <<"test schedule">>,

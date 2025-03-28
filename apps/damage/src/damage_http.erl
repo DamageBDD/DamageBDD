@@ -142,6 +142,7 @@ is_authorized(Req, State0) ->
                 {error, access_denied} ->
                     {{false, <<"Bearer">>}, Req, State};
                 {AeAccount, Username} ->
+                    {AeAccount, _, PrivateKey} = identity_server:get_account_by_email(Username),
                     {
                         true,
                         Req,
@@ -150,7 +151,8 @@ is_authorized(Req, State0) ->
                             #{
                                 ae_account => AeAccount,
                                 username => Username,
-                                access_token => Token
+                                access_token => Token,
+                                private_key => PrivateKey
                             }
                         )
                     };
@@ -303,71 +305,18 @@ check_execute_bdd(
                     }
             end
     end.
-read_stream(ConnPid, StreamRef) ->
-    case gun:await(ConnPid, StreamRef, 600000) of
-        {response, nofin, Status, _Headers0} ->
-            {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
-            jsx:decode(Body, [{labels, atom}, return_maps]);
-        Default ->
-            ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
-            Default
-    end.
 
-get_knowledge(KnowledgeTxHash) ->
-    {ok, KnowledgeNftContract} = application:get_env(damage, knowledge_contract),
-    case damage_ae:get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-            Path =
-                PathPrefix ++ "v3/aex141/" ++ KnowledgeNftContract ++ "/tokens/" ++ KnowledgeTxHash,
-            StreamRef = gun:get(ConnPid, Path),
-            MetaData =
-                case catch read_stream(ConnPid, StreamRef) of
-                    #{amount := null} ->
-                        0;
-                    {error, Error} ->
-                        ?LOG_ERROR("Error getting balance ~p", [Error]),
-                        0;
-                    #{error := Error} ->
-                        ?LOG_ERROR("Error getting balance ~p", [Error]),
-                        0;
-                    #{amount := Balance0} ->
-                        Balance0
-                end,
-            {reply, MetaData};
-        Err ->
-            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
-            {reply, {error, not_found}}
-    end.
-
-do_action(train, Data, #{ae_account := AeAccount} = _State) ->
-    {ok, KnowledgeNftContract} = application:get_env(damage, knowledge_contract),
-    Knowledge = ecai:train(Data),
-    MetaData = #{},
-    MintResult = damage_ae:contract_call(
-        damage_ae:account_keypair(AeAccount),
-        KnowledgeNftContract,
-        "contracts/knowledge_nft.aes",
-        "mint",
-        [AeAccount, MetaData, Knowledge]
-    ),
-    {200, jsx:encode(MintResult)};
-do_action(think, KnowledgeTxHash, _State) ->
-    Knowledge = get_knowledge(KnowledgeTxHash),
-    ThinkResult = ecai:think(Knowledge),
-    {200, jsx:encode(ThinkResult)}.
-
-from_json(Req, #{action := Action} = State) ->
+from_json(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
-        case jsx:decode(Data, [{labels, atom}, return_maps]) of
-            #{feature := _FeatureData, concurrency := _Concurrency} = FeatureJson ->
-                do_action(Action, FeatureJson, State);
-            Err ->
-                ?LOG_ERROR("json decoding failed ~p.", [Data]),
-                {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
+        case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+            {'EXIT', {badarg, Trace}} ->
+                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+                {400, <<"Json decoding failed.">>};
+            #{feature := _FeatureData} = FeatureJson ->
+                check_execute_bdd(FeatureJson, State, Req)
         end,
-    Resp = cowboy_req:set_resp_body(Resp0, Req),
+    Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
     cowboy_req:reply(Status, Resp),
     {stop, Resp, State}.
 
