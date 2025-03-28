@@ -1,0 +1,34 @@
+@compiler >= 6
+
+include "String.aes"
+include "token.aes"
+
+contract interface KeyStoreType =
+  stateful entrypoint store_key: (address, string) => unit
+
+main contract LightningAuthRegistry =
+  record identity =
+    { account  : address,
+      meta : string}
+
+  record state =
+    { lightning       : map(string, identity)}   // Lightning → Account
+
+  stateful entrypoint init() : state =
+    { lightning = {}}
+
+  // Register Lightning → Account (One-to-One)
+  stateful entrypoint register_lightning(keystore: KeyStoreType, lightning : string, account: address, meta: string, priv_key: string) =
+    require(Map.lookup(auth_key, state.lightning) == None, "Lightning already registered.")
+    keystore.store_key(account, priv_key)
+    put(state{lightning[auth_key] = { account = account, meta = meta }})
+    true
+
+  stateful entrypoint get_meta(auth_key : string) =
+    require(Map.lookup(auth_key, state.lightning) != None, "Lightning not registered.")
+    state.lightning[auth_key].meta
+
+  stateful entrypoint set_meta(auth_key : string, meta: string) =
+    require(Map.lookup(lightning, state.lightning) != None, "Lightning not registered.")
+    put(state{lightning[auth_key].meta = meta})
+    true

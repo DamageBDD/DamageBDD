@@ -1,0 +1,34 @@
+@compiler >= 6
+
+include "String.aes"
+include "token.aes"
+
+contract interface KeyStoreType =
+  stateful entrypoint store_key: (address, string) => unit
+
+main contract EmailRegistry =
+  record identity =
+    { account  : address,
+      meta : string}
+
+  record state =
+    { emails       : map(string, identity)}   // Email → Account
+
+  stateful entrypoint init() : state =
+    { emails = {}}
+
+  // Register Email → Account (One-to-One)
+  stateful entrypoint register_email(keystore: KeyStoreType, email : string, account: address, meta: string, priv_key: string) =
+    require(Map.lookup(email, state.emails) == None, "Email already registered.")
+    keystore.store_key(account, priv_key)
+    put(state{emails[email] = { account = account, meta = meta }})
+    true
+
+  stateful entrypoint get_meta(email : string) =
+    require(Map.lookup(email, state.emails) != None, "Email not registered.")
+    state.emails[email].meta
+
+  stateful entrypoint set_meta(email : string, meta: string) =
+    require(Map.lookup(email, state.emails) != None, "Email not registered.")
+    put(state{emails[email].meta = meta})
+    true

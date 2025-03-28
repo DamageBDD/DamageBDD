@@ -30,6 +30,8 @@
     import/0,
     node_keypair/0,
     make_keypair/0,
+    salted_hash/1,
+    salted_hash/2,
     test/0,
     migrate/0
 ]).
@@ -294,9 +296,19 @@ retrieve_decrypt(Name) ->
                 [] ->
                     error
             end;
-        error ->
+        _ ->
             error
     end.
+
+salted_hash(BinaryData) when is_binary(BinaryData) ->
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := PrivateKey} ->
+            base64:encode(crypto:mac(hmac, sha256, PrivateKey, BinaryData));
+        _ ->
+            error
+    end.
+salted_hash(BinarySalt, BinaryData) when is_binary(BinaryData) and is_binary(BinarySalt) ->
+    base64:encode(crypto:mac(hmac, sha256, BinarySalt, BinaryData)).
 
 import() ->
     case file:consult("damage.plain") of

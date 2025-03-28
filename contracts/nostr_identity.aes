@@ -1,0 +1,34 @@
+@compiler >= 6
+
+include "String.aes"
+include "token.aes"
+
+contract interface KeyStoreType =
+  stateful entrypoint store_key: (address, string) => unit
+
+main contract NostrRegistry =
+  record identity =
+    { account  : address,
+      meta : string}
+
+  record state =
+    { npubs       : map(string, identity)}   // Npub → Account
+
+  stateful entrypoint init() : state =
+    { npubs = {}}
+
+  // Register Npub → Account (One-to-One)
+  stateful entrypoint register_npub(keystore: KeyStoreType, npub : string, account: address, meta: string, priv_key: string) =
+    require(Map.lookup(npub, state.npubs) == None, "Npub already registered.")
+    keystore.store_key(account, priv_key)
+    put(state{npubs[npub] = { account = account, meta = meta }})
+    true
+
+  stateful entrypoint get_meta(npub : string) =
+    require(Map.lookup(npub, state.npubs) != None, "Npub not registered.")
+    state.npubs[npub].meta
+
+  stateful entrypoint set_meta(npub : string, meta: string) =
+    require(Map.lookup(npub, state.npubs) != None, "Npub not registered.")
+    put(state{npubs[npub].meta = meta})
+    true
