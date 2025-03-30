@@ -195,9 +195,17 @@ encrypt(Password, PlainText) ->
     {CipherText, Tag} = crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, PlainText, <<>>, true),
     {Salt, IV, Tag, CipherText}.
 
+decrypt(null) ->
+    error;
 decrypt(Base64EncodedCipherTuple) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
-    decrypt_secret(binary_to_term(base64:decode(Base64EncodedCipherTuple)), PrivateKey).
+    case base64:decode(Base64EncodedCipherTuple) of
+        Term when is_binary(Term) ->
+            decrypt_secret(binary_to_term(Term), PrivateKey);
+        _ ->
+            error
+    end.
+
 decrypt(Key, Password, CipherText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {decrypt, Key, Password, CipherText}, ?ASKPASS_TIMEOUT).

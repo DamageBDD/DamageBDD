@@ -103,10 +103,14 @@ get_access_token(Req) ->
     case cowboy_req:header(<<"authorization">>, Req) of
         <<"Nostr ", Token/binary>> ->
             {nostr, Token};
+        <<"Bearer null">> ->
+            {error, missing};
         <<"Bearer ", Token/binary>> ->
             {oauth, Token};
         _ ->
             case catch cowboy_req:match_qs([access_token], Req) of
+                #{access_token := null} ->
+                    {error, missing};
                 #{access_token := Token} ->
                     {oauth, Token};
                 _ ->

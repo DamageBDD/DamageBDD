@@ -31,12 +31,9 @@ start_link() ->
 
 register_email(Email, Password) ->
     #{public_key := PubKey, private_key := PrivateKey} = secrets:make_keypair(),
-    EmailHashed = binary_to_list(secrets:salted_hash(Email)),
-    PasswordEncrypted = binary_to_list(secrets:encrypt(Password)),
-    PrivateKeyEncrypted = binary_to_list(secrets:encrypt(PrivateKey)),
     case
         gen_server:call(
-            ?MODULE, {register_email, EmailHashed, PubKey, PasswordEncrypted, PrivateKeyEncrypted}
+            ?MODULE, {register_email, Email, PubKey, Password, PrivateKey}
         )
     of
         #{"return_type" := "ok", "return_value" := true} ->
@@ -45,9 +42,7 @@ register_email(Email, Password) ->
             {error, Other}
     end.
 set_email_password(Email, Password) ->
-    PasswordEncrypted = binary_to_list(secrets:encrypt(Password)),
-    EmailHashed = binary_to_list(secrets:salted_hash(Email)),
-    case gen_server:call(?MODULE, {set_email_password, EmailHashed, PasswordEncrypted}) of
+    case gen_server:call(?MODULE, {set_email_password, Email, Password}) of
         #{"return_type" := "ok", "return_value" := true} ->
             {ok, <<"Password set.">>};
         #{"return_type" := _, "return_value" := Other} ->
@@ -55,24 +50,19 @@ set_email_password(Email, Password) ->
     end.
 
 register_npub(Npub) ->
-    NpubHashed = binary_to_list(secrets:salted_hash(Npub)),
-    gen_server:call(?MODULE, {register_npub, NpubHashed}).
+    gen_server:call(?MODULE, {register_npub, Npub}).
 
 register_lightning(AuthKey) ->
-    AuthKeyHashed = binary_to_list(secrets:salted_hash(AuthKey)),
-    gen_server:call(?MODULE, {register_lightning, AuthKeyHashed}).
+    gen_server:call(?MODULE, {register_lightning, AuthKey}).
 
 get_account_by_email(Email) ->
-    EmailHashed = binary_to_list(secrets:salted_hash(Email)),
-    gen_server:call(?MODULE, {get_account_by_email, EmailHashed}).
+    gen_server:call(?MODULE, {get_account_by_email, Email}).
 
 get_account_by_npub(Npub) ->
-    NpubHashed = binary_to_list(secrets:salted_hash(Npub)),
-    gen_server:call(?MODULE, {get_account_by_npub, NpubHashed}).
+    gen_server:call(?MODULE, {get_account_by_npub, Npub}).
 
 get_account_by_lightning(AuthKey) ->
-    AuthKeyHashed = binary_to_list(secrets:salted_hash(AuthKey)),
-    gen_server:call(?MODULE, {get_account_by_lightning, AuthKeyHashed}).
+    gen_server:call(?MODULE, {get_account_by_lightning, AuthKey}).
 
 get_access_token(AeAccount) ->
     AeAccount.
@@ -86,59 +76,30 @@ init([]) ->
     {ok, #{}}.
 
 handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, State) ->
+    EmailHashed = binary_to_list(secrets:salted_hash(Email)),
+    PasswordEncrypted = binary_to_list(secrets:encrypt(Password)),
+    PrivateKeyEncrypted = binary_to_list(secrets:encrypt(PrivateKey)),
     KeyPair = secrets:node_keypair(),
-    {ok, EmailRegistry} = application:get_env(damage, email_registry_contract),
-    {ok, KeyStore} = application:get_env(damage, keystore_contract),
     Response = damage_ae:contract_call(
         KeyPair,
-        EmailRegistry,
+        ?EMAIL_REGISTRY_CONTRACT,
         "contracts/email_registry.aes",
         "register_email",
-        [KeyStore, Email, PublicKey, Password, PrivateKey]
-    ),
-    {reply, Response, State};
-handle_call({set_email_password, Email, Password}, _From, State) ->
-    KeyPair = secrets:node_keypair(),
-    {ok, KeyStore} = application:get_env(damage, keystore_contract),
-    {ok, EmailRegistry} = application:get_env(damage, email_registry_contract),
-    Response = damage_ae:contract_call(
-        KeyPair,
-        EmailRegistry,
-        "contracts/email_registry.aes",
-        "set_meta",
-        [KeyStore, Email, Password]
-    ),
-    {reply, Response, State};
-handle_call({register_npub, Npub, PublicKey}, _From, State) ->
-    KeyPair = secrets:node_keypair(),
-    {ok, KeyStore} = application:get_env(damage, keystore_contract),
-    {ok, NostrRegistry} = application:get_env(damage, nostr_registry_contract),
-    Response = damage_ae:contract_call(
-        KeyPair,
-        NostrRegistry,
-        "contracts/nostr_registry.aes",
-        "register_npub",
-        [KeyStore, Npub, PublicKey]
-    ),
-    {reply, Response, State};
-handle_call({register_lightning, AuthKey, PublicKey}, _From, State) ->
-    KeyPair = secrets:node_keypair(),
-    {ok, KeyStore} = application:get_env(damage, keystore_contract),
-    {ok, NostrRegistry} = application:get_env(damage, nostr_registry_contract),
-    Response = damage_ae:contract_call(
-        KeyPair,
-        NostrRegistry,
-        "contracts/lightning_registry.aes",
-        "register_lightning",
-        [KeyStore, AuthKey, PublicKey]
+        [?KEYSTORE_CONTRACT, EmailHashed, PublicKey, PasswordEncrypted, PrivateKeyEncrypted]
     ),
     {reply, Response, State};
 handle_call({get_account_by_email, Email}, _From, State) ->
-    case maps:get(Email, State, undefined) of
-        undefined ->
+    EmailHashed = binary_to_list(secrets:salted_hash(Email)),
+    KeyPair = secrets:node_keypair(),
+    case maps:get(Email, State, notfound) of
+        notfound ->
             case
-                call_contract(
-                    "get_account_by_email", [Email]
+                damage_ae:contract_call(
+                    KeyPair,
+                    ?EMAIL_REGISTRY_CONTRACT,
+                    "contracts/email_registry.aes",
+                    "get_account",
+                    [?KEYSTORE_CONTRACT, EmailHashed]
                 )
             of
                 #{"return_value" := #{email := _Email, meta := Meta}} ->
@@ -158,6 +119,12 @@ handle_call({get_account_by_email, Email}, _From, State) ->
                     Acccount = {Address, Password, PrivateKey},
 
                     {reply, Acccount, maps:put(Email, Acccount, State)};
+                #{
+                    "return_type" := "revert",
+                    "return_value" := <<"Email not registered.">>
+                } ->
+                    ?LOG_DEBUG("Email not registered", []),
+                    {reply, notfound, State};
                 Other ->
                     ?LOG_DEBUG("Unexpected response ~p", [Other]),
                     {reply, notfound, State}
@@ -165,11 +132,63 @@ handle_call({get_account_by_email, Email}, _From, State) ->
         Cached ->
             {reply, Cached, State}
     end;
+handle_call({set_email_password, Email, Password}, _From, State) ->
+    PasswordEncrypted = binary_to_list(secrets:encrypt(Password)),
+    EmailHashed = binary_to_list(secrets:salted_hash(Email)),
+    KeyPair = secrets:node_keypair(),
+    Response = damage_ae:contract_call(
+        KeyPair,
+        ?EMAIL_REGISTRY_CONTRACT,
+        "contracts/email_registry.aes",
+        "set_meta",
+        [?KEYSTORE_CONTRACT, EmailHashed, PasswordEncrypted]
+    ),
+    {reply, Response, State};
+handle_call({register_npub, Npub, PublicKey}, _From, State) ->
+    NpubHashed = binary_to_list(secrets:salted_hash(Npub)),
+    KeyPair = secrets:node_keypair(),
+    Response = damage_ae:contract_call(
+        KeyPair,
+        ?NPUB_REGISTRY_CONTRACT,
+        "contracts/nostr_registry.aes",
+        "register_npub",
+        [?KEYSTORE_CONTRACT, NpubHashed, PublicKey]
+    ),
+    {reply, Response, State};
+handle_call({register_lightning, AuthKey, PublicKey}, _From, State) ->
+    AuthKeyHashed = binary_to_list(secrets:salted_hash(AuthKey)),
+    KeyPair = secrets:node_keypair(),
+    Response = damage_ae:contract_call(
+        KeyPair,
+        ?NPUB_REGISTRY_CONTRACT,
+        "contracts/lightning_registry.aes",
+        "register_lightning",
+        [?KEYSTORE_CONTRACT, AuthKeyHashed, PublicKey]
+    ),
+    {reply, Response, State};
 handle_call({get_account_by_npub, Npub}, _From, State) ->
-    Response = call_contract("get_account_by_npub", [Npub]),
+    NpubHashed = binary_to_list(secrets:salted_hash(Npub)),
+    KeyPair = secrets:node_keypair(),
+    Response =
+        damage_ae:contract_call(
+            KeyPair,
+            ?NPUB_REGISTRY_CONTRACT,
+            "contracts/npub_registry.aes",
+            "get_account",
+            [?KEYSTORE_CONTRACT, NpubHashed]
+        ),
     {reply, Response, State};
 handle_call({get_account_by_lightning, AuthKey}, _From, State) ->
-    Response = call_contract("get_account_by_lightning", [AuthKey]),
+    AuthKeyHashed = binary_to_list(secrets:salted_hash(AuthKey)),
+    KeyPair = secrets:node_keypair(),
+    Response =
+        damage_ae:contract_call(
+            KeyPair,
+            ?LIGHTNING_REGISTRY_CONTRACT,
+            "contracts/lightning_registry.aes",
+            "get_account",
+            [?KEYSTORE_CONTRACT, AuthKeyHashed]
+        ),
     {reply, Response, State}.
 
 handle_cast(_, State) -> {noreply, State}.
@@ -178,13 +197,6 @@ terminate(_, _) -> ok.
 %%% =========================
 %%% HELPER FUNCTIONS
 %%% =========================
-
-call_contract(Func, Args) ->
-    {ok, IdentityContract} = application:get_env(damage, identity_contract),
-
-    _Response = damage_ae:contract_call(
-        secrets:node_keypair(), IdentityContract, "contracts/identity.aes", Func, Args
-    ).
 
 test() ->
     Res = register_email("test@gmail.com", "testpass"),

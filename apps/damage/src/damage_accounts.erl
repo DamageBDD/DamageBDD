@@ -21,6 +21,7 @@
 -export([notify_user/2]).
 -export([validate_access_token/1]).
 -export([validate_password/1]).
+-export([authenticate_user/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -400,11 +401,13 @@ authenticate_user(Email, Password) ->
     end.
 validate_access_token(Token) ->
     Now = date_util:now_to_seconds(os:timestamp()),
-    case binary_to_term(secrets:decrypt(Token)) of
+    case catch binary_to_term(secrets:decrypt(Token)) of
         {AeAccount, Email, Expiry} when Expiry > Now ->
             {AeAccount, Email};
         {_AeAccount, _Username, Expiry} when Expiry < Now ->
-            {error, exprired}
+            {error, exprired};
+        _ ->
+            {error, badrequest}
     end.
 
 validate_password(Password) ->

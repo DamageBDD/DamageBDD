@@ -260,13 +260,12 @@ handle_call(
             {reply, {error, not_found}, Cache}
     end;
 handle_call({reports, AeAccount}, _From, Cache) ->
-    {ok, DamageToken} = application:get_env(damage, token_contract),
     case get_ae_mdw_node() of
         {ok, ConnPid, PathPrefix} ->
             Path =
                 PathPrefix ++
                     "v3/transactions/?direction=backward&type=contract_call&contract=" ++
-                    DamageToken ++
+                    ?DAMAGE_TOKEN_CONTRACT ++
                     "&account=" ++
                     AeAccount ++
                     "&limit=10",
@@ -282,11 +281,10 @@ handle_call({reports, AeAccount}, _From, Cache) ->
             {reply, {error, not_found}, Cache}
     end;
 handle_call({balance, AeAccount}, _From, Cache) ->
-    {ok, DamageToken} = application:get_env(damage, token_contract),
     case get_ae_mdw_node() of
         {ok, ConnPid, PathPrefix} ->
             Path =
-                PathPrefix ++ "v3/aex9/" ++ DamageToken ++ "/balances/" ++ AeAccount,
+                PathPrefix ++ "v3/aex9/" ++ ?DAMAGE_TOKEN_CONTRACT ++ "/balances/" ++ AeAccount,
             StreamRef = gun:get(ConnPid, Path),
             Balance =
                 case catch read_stream(ConnPid, StreamRef) of
@@ -321,11 +319,10 @@ handle_call({transaction, Data}, _From, State) ->
     ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
     {reply, ok, State};
 handle_call({delete_account, AeAccount}, _From, Cache) ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     #{decodedResult := []} =
         contract_call(
             AeAccount,
-            AccountContract,
+            ?ACCOUNT_CONTRACT,
             "contracts/account.aes",
             "delete_account",
             []
@@ -481,21 +478,19 @@ exec_aecli(Cmd) ->
     end.
 
 contract_call_user_account(AeAccount, Func, Args) ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(
         DamageAEPid,
-        {contract_call_user, AccountContract, "contracts/account.aes", Func, Args},
+        {contract_call_user, ?ACCOUNT_CONTRACT, "contracts/account.aes", Func, Args},
         ?AE_TIMEOUT
     ).
 
 contract_call_node_account(Func, Args) ->
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     contract_call(
         KeyPair,
-        AccountContract,
+        ?ACCOUNT_CONTRACT,
         "contracts/account.aes",
         Func,
         Args
@@ -632,11 +627,10 @@ get_ae_balance(AeAccount) ->
 
 transfer_damage_tokens(AeAccount, Amount) ->
     % transfer damage tokens from admin account to to account
-    {ok, TokenContract} = application:get_env(damage, token_contract),
     ContractCall =
         contract_call(
             secrets:node_keypair(),
-            TokenContract,
+            ?DAMAGE_TOKEN_CONTRACT,
             "contracts/token.aes",
             "transfer",
             [AeAccount, Amount]
@@ -644,11 +638,10 @@ transfer_damage_tokens(AeAccount, Amount) ->
     ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
     ContractCall.
 get_user_keypair(PublicKey) ->
-    {ok, KeystoreContract} = application:get_env(damage, keystore_contract),
     Result =
         contract_call(
             secrets:node_keypair(),
-            KeystoreContract,
+            ?KEYSTORE_CONTRACT,
             "contracts/keystore.aes",
             "get_keypair",
             [PublicKey]
@@ -657,11 +650,10 @@ get_user_keypair(PublicKey) ->
     Result.
 
 transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
-    {ok, TokenContract} = application:get_env(damage, token_contract),
     Result =
         contract_call(
             get_user_keypair(FromAccount),
-            TokenContract,
+            ?DAMAGE_TOKEN_CONTRACT,
             "contracts/token.aes",
             "transfer",
             [ToAeAccount, Amount]
@@ -824,11 +816,10 @@ sign_transaction_base58(Priv, EncodedTX) ->
     aeser_api_encoder:encode(transaction, SignedTX).
 
 account_keypair(AeAccount) ->
-    {ok, KeyStoreContract} = application:get_env(damage, keystore_contract),
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     damage_ae:contract_call(
         KeyPair,
-        KeyStoreContract,
+        ?KEYSTORE_CONTRACT,
         "contracts/keystore.aes",
         "get_keypair",
         [AeAccount]
@@ -934,10 +925,9 @@ test_contract_deploy() ->
     ContractId.
 
 test_contract_call() ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
-    ?LOG_DEBUG("contract account ~p", [AccountContract]),
-    contract_call(KeyPair, AccountContract, "contracts/account.aes", "get_schedules", []).
+    ?LOG_DEBUG("contract account ~p", [?ACCOUNT_CONTRACT]),
+    contract_call(KeyPair, ?ACCOUNT_CONTRACT, "contracts/account.aes", "get_schedules", []).
 
 test_find_block() ->
     {Today, _Now} = calendar:local_time(),

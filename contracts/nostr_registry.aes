@@ -24,9 +24,9 @@ main contract NostrRegistry =
     put(state{npubs[npub] = { account = account, meta = meta }})
     true
 
-  stateful entrypoint get_meta(npub : string) =
+  stateful entrypoint get_account(npub : string) =
     require(Map.lookup(npub, state.npubs) != None, "Npub not registered.")
-    state.npubs[npub].meta
+    state.npubs[npub]
 
   stateful entrypoint set_meta(npub : string, meta: string) =
     require(Map.lookup(npub, state.npubs) != None, "Npub not registered.")

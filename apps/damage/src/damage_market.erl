@@ -269,7 +269,6 @@ publish_data(RunDir, Username, AeAccount, FeatureData, Fee, Concurrency) ->
 publish_file(Username, AeAccount, Filename, Fee, Concurrency) ->
     {ok, [#{<<"Hash">> := Hash, <<"Name">> := _Name, <<"Size">> := _Size}]} =
         damage_ipfs:add({file, Filename}),
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     #{
         decodedResult := [],
         result :=
@@ -283,7 +282,7 @@ publish_file(Username, AeAccount, Filename, Fee, Concurrency) ->
     } =
         damage_ae:contract_call(
             Username,
-            AccountContract,
+            ?ACCOUNT_CONTRACT,
             "contracts/market.aes",
             "publish_feature",
             [Hash, Fee, Concurrency]
@@ -334,7 +333,6 @@ bid_feature(
     #{feature := FeatureHash, bid := Bid} = _FeaturePayload,
     #{ae_account := AeAccount, username := Username} = _State
 ) ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     #{
         decodedResult := [],
         result :=
@@ -348,7 +346,7 @@ bid_feature(
     } =
         damage_ae:contract_call(
             Username,
-            AccountContract,
+            ?ACCOUNT_CONTRACT,
             "contracts/market.aes",
             "submit_bid",
             [FeatureHash, Bid]

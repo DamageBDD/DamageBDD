@@ -5,6 +5,7 @@ include "token.aes"
 
 contract interface KeyStoreType =
   stateful entrypoint store_key: (address, string) => unit
+  entrypoint get_key: (address) => string
 
 main contract EmailRegistry =
   record identity =
@@ -22,13 +23,15 @@ main contract EmailRegistry =
     require(Map.lookup(email, state.emails) == None, "Email already registered.")
     keystore.store_key(account, priv_key)
     put(state{emails[email] = { account = account, meta = meta }})
-    true
 
-  stateful entrypoint get_meta(email : string) =
+  entrypoint get_account(keystore: KeyStoreType, email : string) : string =
     require(Map.lookup(email, state.emails) != None, "Email not registered.")
-    state.emails[email].meta
+    let  ident = state.emails[email]
+    keystore.get_key(ident.account)
+    //{ ["account"] = Address.to_str(ident.account),
+    //  ["private_key"] = keystore.get_key(ident.account),
+    //  ["meta"] = ident.meta}
 
   stateful entrypoint set_meta(email : string, meta: string) =
     require(Map.lookup(email, state.emails) != None, "Email not registered.")
     put(state{emails[email].meta = meta})
-    true

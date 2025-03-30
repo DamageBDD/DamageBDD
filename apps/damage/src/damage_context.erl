@@ -241,16 +241,14 @@ add_context(AeAccount, Key, Value) ->
 
 get_global_template_context(Context) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
-    {ok, DamageTokenContract} = application:get_env(damage, token_contract),
-    {ok, DamageAccountContract} = application:get_env(damage, account_contract),
     #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
     maps:merge(
         #{
             api_url => DamageApi,
             formatter_state => #damage_state{},
             headers => [],
-            token_contract => list_to_binary(DamageTokenContract),
-            account_contract => list_to_binary(DamageAccountContract),
+            token_contract => list_to_binary(?DAMAGE_TOKEN_CONTRACT),
+            account_contract => list_to_binary(?ACCOUNT_CONTRACT),
             node_public_key => list_to_binary(NodePublicKey),
             timestamp => date_util:now_to_seconds_hires(os:timestamp())
         },

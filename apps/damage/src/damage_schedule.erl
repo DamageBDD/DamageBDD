@@ -276,12 +276,11 @@ validate(Gherkin) ->
     end.
 
 list_schedules(Username, AeAccount) ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     ?LOG_DEBUG("Contract ~p", [Username]),
     Results =
         damage_ae:contract_call(
             Username,
-            AccountContract,
+            ?ACCOUNT_CONTRACT,
             "contracts/account.aes",
             "get_schedules",
             []
@@ -296,12 +295,11 @@ load_all_schedules() ->
     ].
 
 list_all_schedules() ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     case
         catch damage_ae:contract_call(
             KeyPair,
-            AccountContract,
+            ?ACCOUNT_CONTRACT,
             "contracts/account.aes",
             "get_all_schedules",
             []
@@ -309,7 +307,7 @@ list_all_schedules() ->
     of
         {ok, <<"ONLY_OWNER_CALL_ALLOWED">>} ->
             ?LOG_ERROR("!!! schedules loading failed ~p Reason: ONLY_OWNER_CALL_ALLOWED", [
-                AccountContract
+                ?ACCOUNT_CONTRACT
             ]),
             [];
         #{decodedResult := Results} ->
@@ -317,7 +315,7 @@ list_all_schedules() ->
             ?LOG_DEBUG("schedules ~p", [Decrypted]),
             Decrypted;
         #{status := <<"fail">>} ->
-            ?LOG_ERROR("schedules loading failed ~p", [AccountContract]),
+            ?LOG_ERROR("schedules loading failed ~p", [?ACCOUNT_CONTRACT]),
             [];
         Error ->
             ?LOG_ERROR("schedules loading failed ~p", [Error]),
@@ -325,7 +323,6 @@ list_all_schedules() ->
     end.
 
 delete_schedule(Username, ScheduleId) ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     FeatureHashEncrypted = base64:encode(damage_utils:encrypt(ScheduleId)),
     #{
         decodedResult := [],
@@ -340,7 +337,7 @@ delete_schedule(Username, ScheduleId) ->
     } =
         damage_ae:contract_call(
             Username,
-            AccountContract,
+            ?ACCOUNT_CONTRACT,
             "contracts/account.aes",
             "delete_schedule",
             [FeatureHashEncrypted]
@@ -351,7 +348,6 @@ delete_schedule(Username, ScheduleId) ->
     ).
 
 add_schedule(Username, Name, FeatureHash, Cron) ->
-    {ok, AccountContract} = application:get_env(damage, account_contract),
     NameEncrypted = base64:encode(damage_utils:encrypt(Name)),
     FeatureHashEncrypted = base64:encode(damage_utils:encrypt(FeatureHash)),
     CronEncrypted = base64:encode(damage_utils:encrypt(jsx:encode(Cron))),
@@ -368,7 +364,7 @@ add_schedule(Username, Name, FeatureHash, Cron) ->
     } =
         damage_ae:contract_call(
             Username,
-            AccountContract,
+            ?ACCOUNT_CONTRACT,
             "contracts/account.aes",
             "add_schedule",
             [NameEncrypted, FeatureHashEncrypted, CronEncrypted]

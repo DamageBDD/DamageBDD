@@ -24,9 +24,9 @@ main contract LightningAuthRegistry =
     put(state{lightning[auth_key] = { account = account, meta = meta }})
     true
 
-  stateful entrypoint get_meta(auth_key : string) =
+  stateful entrypoint get_account(auth_key : string) =
     require(Map.lookup(auth_key, state.lightning) != None, "Lightning not registered.")
-    state.lightning[auth_key].meta
+    state.lightning[auth_key]
 
   stateful entrypoint set_meta(auth_key : string, meta: string) =
     require(Map.lookup(lightning, state.lightning) != None, "Lightning not registered.")
