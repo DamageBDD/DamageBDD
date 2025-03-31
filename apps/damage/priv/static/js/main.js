@@ -2,10 +2,6 @@
 
 	// code that should be taken care of right away
 	window.dataLayer = window.dataLayer || [];
-	function gtag(){dataLayer.push(arguments);}
-	gtag('js', new Date());
-
-	gtag('config', 'G-5QG625RHB7');
 
 	//https://codeshack.io/elegant-toast-notifications-javascript/
 	const toasts = new Toasts({
