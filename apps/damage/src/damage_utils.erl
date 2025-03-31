@@ -28,7 +28,8 @@
         test_send_email/0,
         convert_context/1,
         idhash_keys/1,
-        safe_json/1
+        safe_json/1,
+        is_valid_email/1
     ]
 ).
 -export([max_by/2]).
@@ -381,3 +382,11 @@ test_send_email() ->
         TextBody,
         HtmlBody
     ).
+is_valid_email(Email) when is_binary(Email) ->
+    is_valid_email(binary_to_list(Email));
+is_valid_email(Email) when is_list(Email) ->
+    Regex = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$",
+    case re:run(Email, Regex, [{capture, none}]) of
+        match -> true;
+        nomatch -> false
+    end.

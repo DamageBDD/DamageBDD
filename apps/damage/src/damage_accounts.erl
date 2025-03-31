@@ -518,11 +518,16 @@ do_post_action(
 do_post_action(create, #{email := Email} = Data, Req, State) when is_atom(Email) ->
     do_post_action(create, maps:put(email, atom_to_binary(Email), Data), Req, State);
 do_post_action(create, #{email := Email} = Data, _Req, _State) ->
-    ?LOG_DEBUG("account  ~p", [Data]),
-    case send_account_confirm_email(#{email => Email}) of
-        {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
-        {error, Message} -> {400, #{status => <<"failed">>, message => Message}};
-        Error -> {400, #{status => <<"failed">>, message => Error}}
+    case damage_utils:is_valid_email(Email) of
+        true ->
+            ?LOG_DEBUG("account  ~p", [Data]),
+            case send_account_confirm_email(#{email => Email}) of
+                {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
+                {error, Message} -> {400, #{status => <<"failed">>, message => Message}};
+                Error -> {400, #{status => <<"failed">>, message => Error}}
+            end;
+        false ->
+            {400, #{status => <<"failed">>, message => <<"Invalid email">>}}
     end;
 do_post_action(invoices, #{amount := Amount}, _Req, _State) when
     Amount > ?MAX_DAMAGE_INVOICE

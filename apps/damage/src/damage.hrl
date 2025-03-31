@@ -38,11 +38,8 @@
 -define(ACCOUNT_CONTRACT,
     "ct_vd3iN23kabz2qBX5JidDiaahVSQc1x1HRZDFDi4q54ATjsHo3"
 ).
--define(KEYSTORE_CONTRACT,
-    "ct_jcNfE8AKQkUMmqU9pLk9XR1LJfkkNx2ZK6bUtYLnTncpHGkED"
-).
 -define(EMAIL_REGISTRY_CONTRACT,
-    "ct_2dSCSX9u87XZKwyU1rmxpV6a7FMN7CYg3satoWu3Qm5bJd9XVr"
+    "ct_hbh7XR7QmWLwmhSdfBessE77moZHrL1hWcyBppQuREfVygAgu"
 ).
 -define(NPUB_REGISTRY_CONTRACT,
     "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"
