@@ -142,37 +142,10 @@
 			document.getElementById("damage-address").value = address;
 					generateAddressQrcode();
 		}
+		fetchVersion();
 	});
 
 
-	function removeBackground(){
-		const background = document.getElementById("background");
-		background.innerHTML = "";
-	}
-	function addBackround(){ 
-		let vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0)
-		let vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0)
-
-		try{
-			VANTA.GLOBE({
-				el: "#background",
-				mouseControls: true,
-				touchControls: true,
-				gyroControls: false,
-				minHeight: vh,
-				minWidth: vw,
-				scale: 1.00,
-				size: 1.50,
-				scaleMobile: 1.00,
-				color: 0x2b04,
-				color2: 0x2d6e45,
-				backgroundColor: 0xffffff
-			});
-		} catch(e) {
-			console.log(e);
-			console.log("Failed to initialize vanta.");
-		}
-	}
 
 	function isAuthenticated() {
 			return (localStorage.access_token == null) ? false : true;
@@ -186,7 +159,6 @@
 		if (isAuthenticated()) {
 			loginButton.style.display = "none";
 			content.style.display = "block";
-			removeBackground();
 			logoutButton.style.display = "inline-block";
 			updateBalance();
 			try{
@@ -197,7 +169,6 @@
 			loginButton.style.display = "inline-block";
 			content.style.display = "none";
 			background.style.display = "block";
-			addBackround();
 			MicroModal.show('login-modal');
 		}
 	}
@@ -449,6 +420,36 @@
 	function validateEmail(email) {
 		const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 		return regex.test(email);
+	}
+	function fetchVersion() {
+		var xhr = new XMLHttpRequest();
+		xhr.open('GET', '/version', true);
+		xhr.setRequestHeader('Content-Type', 'application/json');
+
+		xhr.onload = function() {
+			if (xhr.status === 200) {
+				var versionData = JSON.parse(xhr.responseText);
+				var versionDom= document.getElementById('node-version');
+				versionDom.innerText = 'node version: ' + versionData.version;
+				var nodePublicKeyDom= document.getElementById('node-public-key');
+				nodePublicKeyDom.innerText = 'node public key: ' + versionData.public_key;
+				document.getElementById("node-public-key").addEventListener("click",(event) => {
+					event.preventDefault();
+					MicroModal.show("node-public-key-modal");
+				});
+				document.getElementById("node-qrcode").innerText = "";
+				var qrcode = new QRCode(
+					document.getElementById("node-qrcode"),
+					versionData.public_key
+				);
+			}
+		};
+		
+		xhr.onerror = function() {
+			console.error('Error making the request.');
+		};
+
+		xhr.send();
 	}
 
 
