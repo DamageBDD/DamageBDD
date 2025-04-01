@@ -159,6 +159,7 @@ do_init(Config) ->
     wxSizer:setSizeHints(Sizer, Frame),
     set_window_size_and_position(Frame),
     wxFrame:show(Frame),
+    %wxFrame:connect(Frame, close_window),
     ?LOG_DEBUG("Frame ~p", [Frame]),
     gproc:reg_other({n, l, {?MODULE, erm_dose}}, self()),
     State =
@@ -180,7 +181,7 @@ do_init(Config) ->
 close() ->
     case gproc:lookup_local_name({?MODULE, erm_dose}) of
         undefined -> ok;
-        Pid -> wx_object:call(Pid, shutdown)
+        Pid -> wx_object:call(Pid, close)
     end.
 
 show() ->
@@ -223,17 +224,22 @@ handle_event(
             {noreply, State};
         "Dose" ->
             ?LOG_DEBUG("Dose Button: clicked~n", []),
-            {stop, normal, save_dose(State)};
+            wxWindow:close(Parent),
+            {noreply, save_dose(State)};
+        "Cancel" ->
+            ?LOG_DEBUG("Cancel Button: clicked~n", []),
+            wxWindow:hide(Parent),
+            {noreply, State};
         Label ->
             ?LOG_DEBUG("Button: '~ts' clicked~n", [Label]),
-            {stop, normal, State}
+            {noreply, State}
     end;
 handle_event(_Ev = #wx{event = #wxKey{keyCode = 13}}, State = #state{dirty = true}) ->
     ?LOG_DEBUG("Got Enter Key ~n", []),
-    {stop, normal, save_dose(State)};
+    {noreply, save_dose(State)};
 handle_event(_Ev = #wx{event = #wxKey{keyCode = 27}}, State = #state{parent = Frame}) ->
     ?LOG_DEBUG("Got Escape Key ~n", []),
-    wxWindow:close(Frame),
+    wxWindow:hide(Frame),
     {noreply, State};
 handle_event(
     _Ev = #wx{event = #wxCommand{type = command_slider_updated, commandInt = Value}},
@@ -253,10 +259,15 @@ handle_info(Msg, State) ->
     {noreply, State}.
 
 handle_call(get_value, _From, State = #state{slider = Slider}) ->
-    {stop, normal, wxSlider:getValue(Slider), State};
-handle_call(shutdown, _From, State = #state{parent = Panel}) ->
-    wxFrame:destroy(Panel),
-    {stop, normal, ok, State};
+    {reply, wxSlider:getValue(Slider), State};
+handle_call(show, From, State = #state{parent = Frame}) ->
+    ?LOG_DEBUG("closing ~p ~p", [From, State]),
+    wxFrame:show(Frame),
+    {reply, ok, State};
+handle_call(close, From, State = #state{parent = Frame}) ->
+    ?LOG_DEBUG("closing ~p ~p", [From, State]),
+    wxFrame:hide(Frame),
+    {reply, ok, State};
 handle_call(Msg, _From, State) ->
     ?LOG_DEBUG("Got Call ~p~n", [Msg]),
     {reply, ok, State}.
