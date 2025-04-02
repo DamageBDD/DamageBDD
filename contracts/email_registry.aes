@@ -1,7 +1,7 @@
 @compiler >= 6
 
-include "String.aes"
-include "token.aes"
+include "token-interface.aes"
+
 
 main contract EmailRegistry =
   record identity =
@@ -10,21 +10,37 @@ main contract EmailRegistry =
       password : string}
 
   record state =
-    { emails       : map(string, identity), // Email → Account
+    { owner        : address,
+      emails       : map(string, identity), // Email → Account
       accounts     : map(address, string)}   // Account → Email
 
   stateful entrypoint init() : state =
-    { emails = {}, accounts = {}}
+      { owner = Call.origin, emails = {}, accounts = {}}
+
+  function require_owner() =
+      require(Call.origin == state.owner, "only_owner_call_allowed")
 
   // Register Email → Account (One-to-One)
-  stateful entrypoint register_email(
+  payable stateful entrypoint register_email(
+      token: FungibleTokenFullInterface,
       email : string,
       account: address,
       password: string,
-      private_key: string ) =
+      private_key: string,
+      initial_damage: int,
+      initial_ae: int
+      ): bool =
+    require_owner()
     require(
         Map.lookup(email, state.emails) == None,
         "Email already registered.")
+    switch(token.balance(Call.caller))
+      Some(balance) =>
+        require(balance >= initial_damage, "ACCOUNT_INSUFFICIENT_BALANCE")
+      None => abort("BALANCE_ACCOUNT_NOT_EXISTENT")
+    require(Call.value > initial_ae, "call_balance_too_low")
+    Chain.spend(account,    initial_ae)
+    token.transfer(account, initial_damage)
     put(
         state{
             emails[email] = {
@@ -34,14 +50,20 @@ main contract EmailRegistry =
             accounts[account] = email} )
     true
 
+  entrypoint get_account_balance(token: FungibleTokenFullInterface) : option(int) =
+    token.balance(Call.origin)
+
   entrypoint get_account(email : string) : identity =
+    require_owner()
     require(Map.lookup(email, state.emails) != None, "Email not registered.")
     state.emails[email]
 
   entrypoint get_email(account : address) : identity =
+    require_owner()
     require(Map.lookup(account, state.accounts) != None, "Account not registered.")
     state.emails[state.accounts[account]]
 
   stateful entrypoint set_password(email : string, password: string) =
+    require_owner()
     require(Map.lookup(email, state.emails) != None, "Email not registered.")
     put(state{emails[email].password = password})

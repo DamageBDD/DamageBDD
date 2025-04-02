@@ -55,19 +55,19 @@ set_email_password(Email, Password) ->
     end.
 
 register_npub(Npub) ->
-    gen_server:call(?MODULE, {register_npub, Npub}).
+    gen_server:call(?MODULE, {register_npub, Npub}, ?AE_TIMEOUT).
 
 register_lightning(AuthKey) ->
-    gen_server:call(?MODULE, {register_lightning, AuthKey}).
+    gen_server:call(?MODULE, {register_lightning, AuthKey}, ?AE_TIMEOUT).
 
 get_account_by_email(Email) ->
-    gen_server:call(?MODULE, {get_account_by_email, Email}).
+    gen_server:call(?MODULE, {get_account_by_email, Email}, ?AE_TIMEOUT).
 
 get_account_by_npub(Npub) ->
-    gen_server:call(?MODULE, {get_account_by_npub, Npub}).
+    gen_server:call(?MODULE, {get_account_by_npub, Npub}, ?AE_TIMEOUT).
 
 get_account_by_lightning(AuthKey) ->
-    gen_server:call(?MODULE, {get_account_by_lightning, AuthKey}).
+    gen_server:call(?MODULE, {get_account_by_lightning, AuthKey}, ?AE_TIMEOUT).
 
 get_access_token(AeAccount) ->
     AeAccount.
@@ -120,12 +120,16 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
         KeyPair,
         ?EMAIL_REGISTRY_CONTRACT,
         "contracts/email_registry.aes",
+        1000000,
         "register_email",
         [
+            ?DAMAGE_TOKEN_CONTRACT,
             binary_to_list(secrets:salted_hash(Email)),
             PublicKey,
             binary_to_list(secrets:encrypt(Password)),
-            binary_to_list(secrets:encrypt(PrivateKey))
+            binary_to_list(secrets:encrypt(PrivateKey)),
+            10000000000,
+            100000
         ]
     ),
     {reply, Response, State};

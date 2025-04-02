@@ -24,10 +24,11 @@
 -define(RESULT_STATUS_PREFIX_FAIL, "7").
 -define(DAMAGE_PRICE, 100).
 -define(DAMAGE_DECIMALS, 8).
+-define(AE_DECIMALS, 18).
 
 -record(damage_state, {formatters = [], test_state = []}).
 
--define(AE_TIMEOUT, 36000).
+-define(AE_TIMEOUT, 136000).
 -define(AI_TIMEOUT, 36000).
 -define(DAMAGE_USER_WALLET_MINIMUM_BALANCE, 4000).
 -define(AE_USER_WALLET_MINIMUM_BALANCE, 1000000000000000000).
@@ -39,7 +40,7 @@
     "ct_vd3iN23kabz2qBX5JidDiaahVSQc1x1HRZDFDi4q54ATjsHo3"
 ).
 -define(EMAIL_REGISTRY_CONTRACT,
-    "ct_hbh7XR7QmWLwmhSdfBessE77moZHrL1hWcyBppQuREfVygAgu"
+    "ct_9arW6cnYKGoioHceaJ3v9rBWXpVXYP6VjKD19JEa5FosFGPBo"
 ).
 -define(NPUB_REGISTRY_CONTRACT,
     "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"
