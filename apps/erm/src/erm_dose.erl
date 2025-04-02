@@ -224,19 +224,20 @@ handle_event(
             {noreply, State};
         "Dose" ->
             ?LOG_DEBUG("Dose Button: clicked~n", []),
-            wxWindow:close(Parent),
-            {noreply, save_dose(State)};
+            wxWindow:hide(Parent),
+            {stop, normal, save_dose(State)};
         "Cancel" ->
             ?LOG_DEBUG("Cancel Button: clicked~n", []),
             wxWindow:hide(Parent),
-            {noreply, State};
+            {stop, normal, State};
         Label ->
             ?LOG_DEBUG("Button: '~ts' clicked~n", [Label]),
             {noreply, State}
     end;
-handle_event(_Ev = #wx{event = #wxKey{keyCode = 13}}, State = #state{dirty = true}) ->
+handle_event(_Ev = #wx{event = #wxKey{keyCode = 13}}, State = #state{parent = Parent, dirty = true}) ->
     ?LOG_DEBUG("Got Enter Key ~n", []),
-    {noreply, save_dose(State)};
+            wxWindow:hide(Parent),
+    {stop, normal, save_dose(State)};
 handle_event(_Ev = #wx{event = #wxKey{keyCode = 27}}, State = #state{parent = Frame}) ->
     ?LOG_DEBUG("Got Escape Key ~n", []),
     wxWindow:hide(Frame),
