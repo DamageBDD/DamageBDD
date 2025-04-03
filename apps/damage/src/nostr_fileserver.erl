@@ -78,7 +78,7 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 is_authorized(Req, #{action := version} = State) ->
     {true, Req, State}.
 
-from_json(Req, #{ae_account := AeAccount, ae_account := AeAccount} = State) ->
+from_json(Req, #{public_key := AeAccount, public_key := AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
         case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
@@ -92,6 +92,6 @@ from_json(Req, #{ae_account := AeAccount, ae_account := AeAccount} = State) ->
     cowboy_req:reply(Status, Resp),
     {stop, Resp, State}.
 
-to_json(Req, #{ae_account := AeAccount} = State) ->
+to_json(Req, #{public_key := AeAccount} = State) ->
     Domains = damage_ae:get_domains(AeAccount),
     {jsx:encode(Domains), Req, State}.

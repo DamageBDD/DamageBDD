@@ -60,7 +60,7 @@ ban(Ip, BanTime) ->
 
 step(
     _Config,
-    #{ae_account := AeAccount, fail2ban_service := Service} = Context,
+    #{public_key := AeAccount, fail2ban_service := Service} = Context,
     _,
     _N,
     ["I set the IP exclusion list to"],
@@ -74,7 +74,7 @@ step(
     Context;
 step(
     _Config,
-    #{ae_account := AeAccount, fail2ban_service := Service} = Context,
+    #{public_key := AeAccount, fail2ban_service := Service} = Context,
     <<"Then">>,
     _N,
     ["the IP must be banned for", BanTime, "seconds"],
@@ -94,7 +94,7 @@ step(
     Context;
 step(
     _Config,
-    #{ae_account := AeAccount} = Context,
+    #{public_key := AeAccount} = Context,
     _,
     _N,
     [
@@ -115,7 +115,7 @@ step(
     maps:put(fail2ban_postfix_jail, Jail, Context);
 step(
     _Config,
-    #{ae_account := AeAccount} = Context,
+    #{public_key := AeAccount} = Context,
     _,
     _N,
     [

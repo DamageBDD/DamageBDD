@@ -35,7 +35,7 @@ get_headers(Context, DefaultHeaders) ->
 response_to_list({StatusCode, Headers, Body}) ->
     [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
-get_gun_connection(Config0, #{ae_account := AeAccount} = Context) ->
+get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
     Host = damage_utils:get_context_value(host, Context, Config0),
     Port = damage_utils:get_context_value(port, Context, Config0),
     ?LOG_DEBUG("Host ~p port ~p", [Host, Port]),
@@ -782,7 +782,7 @@ test_gun_post() ->
                 #{value => <<"non redaacted">>, secret => false},
             example_context_variable_redacted =>
                 #{value => <<"ths will be redaacted">>, secret => true},
-            ae_account => <<"ak_ssssssssssssadsadadas">>
+            public_key => <<"ak_ssssssssssssadsadadas">>
         },
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     gun_post([], Context, "/publish_feature", Headers, #{}).
@@ -807,7 +807,7 @@ test_gun_get() ->
                 #{value => <<"non redaacted">>, secret => false},
             example_context_variable_redacted =>
                 #{value => <<"ths will be redaacted">>, secret => true},
-            ae_account => <<"ak_ssssssssssssadsadadas">>
+            public_key => <<"ak_ssssssssssssadsadadas">>
         },
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     gun_get(

@@ -13,7 +13,7 @@
 
 step(
     _Config,
-    #{ae_account := AeAccount} = Context,
+    #{public_key := AeAccount} = Context,
     <<"Then">>,
     _N,
     ["I pay the invoice with payment request", PaymentRequest],

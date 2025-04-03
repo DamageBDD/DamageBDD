@@ -29,7 +29,7 @@
 
 step(
     _Config,
-    #{ae_account := AeAccount} = Context,
+    #{public_key := AeAccount} = Context,
     _,
     _N,
     ["I am monitoring", Service, "journal"],

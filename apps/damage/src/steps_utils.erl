@@ -34,7 +34,7 @@ step(
     );
 step(
     _Config,
-    #{ae_account := AeAccount} = Context,
+    #{public_key := AeAccount} = Context,
     <<"Given">>,
     _N,
     ["I am an Admin"],
@@ -46,7 +46,7 @@ step(
     end;
 step(
     _Config,
-    #{ae_account := AeAccount} = Context,
+    #{public_key := AeAccount} = Context,
     <<"Given">>,
     _N,
     ["I am a", Service, "Admin"],
