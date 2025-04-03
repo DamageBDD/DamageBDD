@@ -48,3 +48,11 @@
 -define(LIGHTNING_REGISTRY_CONTRACT,
     "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"
 ).
+
+-define(CONTEXT_CONTRACT,
+    "ct_7rVLDU2eDG4ip7CKnX3Xzd43TnJ9BiYvGaWeEhtL6EVxfGAZQ"
+).
+
+-define(WEBHOOKS_CONTRACT,
+    "ct_d7jV5FFsSffqFVDgYybSc6HvPse8g21AAsSoBPFsW4MXpDjTj"
+).

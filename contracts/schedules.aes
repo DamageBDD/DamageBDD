@@ -1,0 +1,36 @@
+@compiler >= 6
+
+include "String.aes"
+include "token.aes"
+
+main contract Schedules =
+    record schedule =
+        { key : string, value: string, meta: string}
+    record state =
+        { owner      : address,
+          schedules  : map(address, map(string, schedule)) }
+
+    stateful entrypoint init() : state =
+        { owner = Call.caller,
+          schedules = {} }
+
+
+    function require_owner() =
+        require(call.caller == state.owner, "only_owner_call_allowed")
+
+    stateful entrypoint add_schedule(id: string, feature_hash: string, cronspec: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
+        let newmap = oldmap{[id] = {["cron"] = cronspec, ["feature_hash"] = feature_hash}}
+        put(state{schedules[Call.caller] = newmap})
+
+    stateful entrypoint delete_schedule(id: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
+        let newmap = Map.delete(id, oldmap)
+        put(state{schedules[Call.caller] = newmap})
+
+    stateful entrypoint get_schedules(): map(string, map(string, string)) =
+        Map.lookup_default(Call.caller, state.schedules, {})
+
+    stateful entrypoint get_all_schedules(): map(address, map(string, map(string, string))) =
+        require_owner()
+        state.schedules

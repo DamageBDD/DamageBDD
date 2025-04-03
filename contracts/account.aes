@@ -6,8 +6,6 @@ include "token.aes"
 payable main contract Account =
     record state = {
         owner: address,
-        meta: map(address, string),
-        auth_tokens: map(string, string),
 
         domain_tokens: map(address, map(string, string)),
         schedules: map(address, map(string, map(string, string))),
@@ -15,14 +13,11 @@ payable main contract Account =
         webhooks: map(address, map(string, string)),
         invoices: map(address, map(string, int)),
         published: map(address, map(string, int)),
-        claimed: map(address, map(string, string)),
-        npubs: map(string, address) //mapping nostr npubs to ae_addresses
+        claimed: map(address, map(string, string))
         }
 
     stateful entrypoint init() = {
         owner = Call.caller,
-        meta = {},
-        auth_tokens = {},
 
         domain_tokens = {},
         schedules = {},
@@ -33,17 +28,8 @@ payable main contract Account =
         claimed = {},
         npubs = {}
         }
-    stateful entrypoint resolve_npub(npub: string):  option(address) =
-        Map.lookup(npub, state.npubs)
-
-    stateful entrypoint get_meta():  string =
-        Map.lookup_default(Call.caller, state.meta, "notfound")
-
-    stateful entrypoint set_meta(meta: string) =
-        put(state{meta[Call.caller] = meta})
 
     stateful entrypoint delete_account() =
-        put(state{meta = Map.delete(Call.caller, state.meta)})
         put(state{schedules = Map.delete(Call.caller, state.schedules)})
         put(state{domain_tokens = Map.delete(Call.caller, state.domain_tokens)})
         put(state{contexts = Map.delete(Call.caller, state.contexts)})
@@ -52,44 +38,11 @@ payable main contract Account =
         put(state{published = Map.delete(Call.caller, state.published)})
         put(state{claimed = Map.delete(Call.caller, state.claimed)})
 
-    stateful entrypoint add_schedule(id: string, feature_hash: string, cronspec: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
-        let newmap = oldmap{[id] = {["cron"] = cronspec, ["feature_hash"] = feature_hash}}
-        put(state{schedules[Call.caller] = newmap})
 
-    stateful entrypoint delete_schedule(id: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
-        let newmap = Map.delete(id, oldmap)
-        put(state{schedules[Call.caller] = newmap})
 
-    stateful entrypoint get_schedules(): map(string, map(string, string)) =
-        Map.lookup_default(Call.caller, state.schedules, {})
-
-    stateful entrypoint get_all_schedules(): map(address, map(string, map(string, string))) =
-        require_owner()
-        state.schedules
-
-    stateful entrypoint add_context(name: string, value: string, visibility: string) =
-        put(state{contexts[Call.caller][name] = value})
-
-    stateful entrypoint get_context(): map(string, string) =
-        Map.lookup_default(Call.caller, state.contexts, {})
-
-    stateful entrypoint add_webhook(name: string, webhook: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.webhooks, {})
-        let newmap = oldmap{[name] = webhook}
-        put(state{webhooks[Call.caller] = newmap})
-
-    stateful entrypoint delete_webhook(name: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.webhooks, {})
-        let newmap = Map.delete(name, oldmap)
-        put(state{webhooks[Call.caller] = newmap})
-
-    stateful entrypoint get_webhooks(): map(string,string) =
-        Map.lookup_default(Call.caller, state.webhooks, {})
 
     function require_owner() =
-        require(Call.caller == state.owner, "ONLY_OWNER_CALL_ALLOWED")
+        require(call.caller == state.owner, "only_owner_call_allowed")
 
     stateful entrypoint add_invoice(token: DamageToken, rhash: string, amount: int, to_node_address: address) =
         token.transfer(to_node_address, amount)
@@ -120,16 +73,4 @@ payable main contract Account =
     stateful entrypoint revoke_auth_token(key: string) =
         put(state{auth_tokens = Map.delete(key, state.auth_tokens)})
 
-    stateful entrypoint add_domain_token(key: string, value: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
-        let newmap = oldmap{[key] = value}
-        put(state{domain_tokens[Call.caller] = newmap})
 
-    stateful entrypoint get_domain_token(key: string):  string =
-        let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
-        Map.lookup_default(key, oldmap, "notfound")
-
-    stateful entrypoint revoke_domain_token(key: string, value: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
-        let newmap = Map.delete(key, oldmap)
-        put(state{domain_tokens[Call.caller] = newmap})

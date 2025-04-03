@@ -1,0 +1,37 @@
+@compiler >= 6
+
+include "String.aes"
+include "token.aes"
+
+main contract Webhooks =
+    record webhook =
+        { name : string, target: string, meta: string}
+    record state =
+        { owner        : address,
+          webhooks     : map(address, map(string, webhook)) }
+
+    stateful entrypoint init() : state =
+        { owner = Call.caller,
+          webhooks = {} }
+
+    function require_owner() =
+        require(call.caller == state.owner, "only_owner_call_allowed")
+
+    stateful entrypoint add_webhook(account : address, name: string, target: string, meta: string) : bool =
+        require_owner()
+        require(Map.lookup(account, state.webhooks) != None, "Address not registered.")
+        put(state{webhooks[account][name] = {name = name, target = target, meta = meta}})
+        true
+
+    entrypoint get_webhooks(account : address) : map(string, webhook) =
+        require_owner()
+        require(Map.lookup(account, state.webhooks) != None, "Address not registered.")
+        state.webhooks[account]
+
+    stateful entrypoint delete_webhook(name: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.webhooks, {})
+        let newmap = Map.delete(name, oldmap)
+        put(state{webhooks[Call.caller] = newmap})
+
+    stateful entrypoint get_webhooks(): map(string,string) =
+        Map.lookup_default(Call.caller, state.webhooks, {})

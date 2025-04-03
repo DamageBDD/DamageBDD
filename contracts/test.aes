@@ -1,0 +1,4 @@
+contract C =
+    type state = unit
+    entrypoint init() = ()
+    entrypoint f(x) = x + 1

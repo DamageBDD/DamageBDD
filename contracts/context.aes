@@ -1,0 +1,29 @@
+@compiler >= 6
+
+include "String.aes"
+include "token.aes"
+
+main contract Context =
+    record context =
+        { key : string, value: string, meta: string}
+    record state =
+        { owner      : address,
+          contexts   : map(address, map(string, context)) }
+
+    stateful entrypoint init() : state =
+        { owner = Call.caller,
+          contexts = {} }
+
+    function require_owner() =
+        require(call.caller == state.owner, "only_owner_call_allowed")
+
+    stateful entrypoint add_context(account : address, key: string, value: string, meta: string) : bool =
+        require_owner()
+        require(Map.lookup(account, state.contexts) != None, "Address not registered.")
+        put(state{contexts[account][key] = {key = key, value = value, meta = meta})
+        true
+
+    entrypoint get_context(account : address) : map(string, string) =
+        require_owner()
+        require(Map.lookup(account, state.contexts) != None, "Address not registered.")
+        state.contexts[account]

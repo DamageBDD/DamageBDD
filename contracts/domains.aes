@@ -1,0 +1,51 @@
+@compiler >= 6
+
+include "String.aes"
+include "token.aes"
+
+main contract Domains =
+    record webhook =
+        { name : string, target: string, meta: string}
+    record state =
+        { owner        : address,
+          domains     : map(address, map(string, webhook)) }
+
+    stateful entrypoint init() : state =
+        { owner = Call.caller,
+          domains = {} }
+
+    function require_owner() =
+        require(call.caller == state.owner, "only_owner_call_allowed")
+
+    stateful entrypoint add_webhook(account : address, name: string, target: string, meta: string) : bool =
+        require_owner()
+        require(Map.lookup(account, state.domains) != None, "Address not registered.")
+        put(state{domains[account][name] = {name = name, target = target, meta = meta}})
+        true
+
+    entrypoint get_domains(account : address) : map(string, webhook) =
+        require_owner()
+        require(Map.lookup(account, state.domains) != None, "Address not registered.")
+        state.domains[account]
+
+    stateful entrypoint delete_webhook(name: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.domains, {})
+        let newmap = Map.delete(name, oldmap)
+        put(state{domains[Call.caller] = newmap})
+
+    stateful entrypoint get_domains(): map(string,string) =
+        Map.lookup_default(Call.caller, state.domains, {})
+
+    stateful entrypoint add_domain_token(key: string, value: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
+        let newmap = oldmap{[key] = value}
+        put(state{domain_tokens[Call.caller] = newmap})
+
+    stateful entrypoint get_domain_token(key: string):  string =
+        let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
+        Map.lookup_default(key, oldmap, "notfound")
+
+    stateful entrypoint revoke_domain_token(key: string, value: string) =
+        let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
+        let newmap = Map.delete(key, oldmap)
+        put(state{domain_tokens[Call.caller] = newmap})
