@@ -29,7 +29,8 @@
         test/0,
         test_nip05/0,
         test_generate_pdf/0,
-        test_simple/0
+        test_simple/0,
+        test_nip800/0
     ]
 ).
 -export([get_posts_since/2]).
@@ -39,7 +40,9 @@
 -export([decode_nsec/1]).
 -export([xclip_post/1]).
 -export([post_note/1]).
+-export([post_bdd/1]).
 -export([post_note/3]).
+-export([post_bdd/2]).
 
 %% Define the record to store state
 
@@ -82,6 +85,10 @@ post_note(Note) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_n
 
 post_note(Note, Tags, ImageURL) ->
     gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note, Tags, ImageURL}).
+post_bdd(BDD) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_bdd, BDD, []}).
+post_bdd(BDD, Tags) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_bdd, BDD, Tags}).
 %%% gen_server Callbacks
 %% Initialize the server and open a WebSocket connection
 
@@ -158,6 +165,23 @@ handle_call(
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
     ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
+    gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
+    {ws, {text, Response}} =
+        gun:await(ConnPid, StreamRef),
+    ?LOG_DEBUG("got response ~p", [Response]),
+    {reply, Response, State};
+handle_call(
+    {post_bdd, BDD, Tags},
+    _From,
+    #state{
+        conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey
+    } = State
+) ->
+    Timestamp = erlang:system_time(seconds),
+    Event = construct_bdd(lower_hex(PublicKey), BDD, Timestamp, Tags),
+    PostEvent = finalize_event(Event, PrivateKey),
+    EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
+    ?LOG_INFO("Nostr Sending bdd: ~p ~p", [State, EventJson]),
     gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
     {ws, {text, Response}} =
         gun:await(ConnPid, StreamRef),
@@ -482,6 +506,8 @@ construct_event(PubKey, Kind, Content, Timestamp, Tags) ->
         <<"content">> => Content,
         <<"sig">> => <<"">>
     }.
+construct_bdd(PubKey, BddContent, Timestamp, Tags) ->
+    construct_event(PubKey, 800, BddContent, Timestamp, Tags).
 construct_note(PubKey, Content, Timestamp, Tags, ImageURL) ->
     maps:put(<<"image">>, ImageURL, construct_event(PubKey, 1, Content, Timestamp, Tags)).
 construct_note(PubKey, Content, Timestamp, Tags) ->
@@ -513,6 +539,8 @@ finalize_event(Event, PrivateKey) ->
 
 test() ->
     post_note(<<"Hello from Erlang!">>).
+test_nip800() ->
+    post_bdd(file:read_file("features/jsontest.feature")).
 
 test_nip05() ->
     Npub = "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc",
