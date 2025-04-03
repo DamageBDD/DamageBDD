@@ -98,7 +98,7 @@ trails() ->
 start_link(AeAccount) -> gen_server:start_link(?MODULE, [AeAccount], []).
 init([AeAccount]) ->
     process_flag(trap_exit, true),
-    {ok, #{ae_account => AeAccount}}.
+    {ok, #{public_key => AeAccount}}.
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
@@ -134,7 +134,7 @@ delete_resource(Req, #{username := Username} = State) ->
     ?LOG_INFO("deleted ~p schedules", [Deleted]),
     {true, Req, State}.
 
-from_text(Req, #{ae_account := AeAccount, username := Username} = State) ->
+from_text(Req, #{public_key := AeAccount, username := Username} = State) ->
     ?LOG_DEBUG("From text ~p", [Req]),
     {ok, Body, _} = cowboy_req:read_body(Req),
     ok = validate(Body),
@@ -147,7 +147,7 @@ from_text(Req, #{ae_account := AeAccount, username := Username} = State) ->
     Schedule =
         #{
             id => Name,
-            ae_account => AeAccount,
+            public_key => AeAccount,
             feature_hash => Hash,
             concurrency => Concurrency,
             username => Username,
@@ -165,7 +165,7 @@ from_json(Req, State) -> from_text(Req, State).
 
 from_html(Req, State) -> from_text(Req, State).
 
-to_json(Req, #{username := Username, ae_account := AeAccount} = State) ->
+to_json(Req, #{username := Username, public_key := AeAccount} = State) ->
     Schedules = list_schedules(Username, AeAccount),
     Body =
         jsx:encode(
@@ -176,7 +176,7 @@ to_json(Req, #{username := Username, ae_account := AeAccount} = State) ->
 
 execute_bdd(
     %% Add the filter to allow PidToLog to send debug events
-    #{ae_account := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
+    #{public_key := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
         Schedule
 ) ->
     MinBalance = Concurrency * math:pow(10, ?DAMAGE_DECIMALS),
@@ -407,7 +407,7 @@ load_account_schedules(Account, Schedules) ->
                     )
                 ),
             maps:merge(
-                #{id => ScheduleId, ae_account => Account, concurrency => 1},
+                #{id => ScheduleId, public_key => Account, concurrency => 1},
                 Schedule0
             )
         end,

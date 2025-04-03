@@ -129,8 +129,8 @@ to_json(Req, State) ->
     logger:error("to text ipfs hash ~p ", [Req]),
     to_text(Req, State).
 
-to_text(Req, #{ae_account := AeAccount} = State) ->
-    Reports = do_query(#{ae_account => AeAccount}),
+to_text(Req, #{public_key := AeAccount} = State) ->
+    Reports = do_query(#{public_key => AeAccount}),
     ?LOG_DEBUG("list published contracts ~p ", [Reports]),
     {jsx:encode(Reports), Req, State}.
 
@@ -185,7 +185,7 @@ from_html(Req0, #{action := Action} = State) ->
     cowboy_req:reply(Status, Res1),
     {stop, Res1, State}.
 
-do_query(#{ae_account := AeAccount}) ->
+do_query(#{public_key := AeAccount}) ->
     case damage_ae:get_published(AeAccount) of
         [] ->
             logger:info("no reports for account"),
@@ -199,7 +199,7 @@ do_action(publish_feature, Data, State) -> check_publish_bdd(Data, State).
 
 check_bid_feature(
     #{feature := FeatureHash} = _FeaturePayload,
-    #{ae_account := AeAccount, ip := IP} = State
+    #{public_key := AeAccount, ip := IP} = State
 ) ->
     case throttle:check(damage_api_rate, IP) of
         {limit_exceeded, _, _} ->
@@ -236,7 +236,7 @@ check_publish_bdd(#{fee := Fee} = FeaturePayload, State) when is_binary(Fee) ->
     );
 check_publish_bdd(
     #{concurrency := Concurrency0} = FeaturePayload,
-    #{ae_account := AeAccount, ip := IP} = State
+    #{public_key := AeAccount, ip := IP} = State
 ) ->
     Concurrency = damage_utils:get_concurrency_level(Concurrency0),
     case throttle:check(damage_api_rate, IP) of
@@ -295,7 +295,7 @@ publish_file(Username, AeAccount, Filename, Fee, Concurrency) ->
 publish_bdd(
     #{feature := FeatureData, concurrency := Concurrency, fee := Fee} =
         _FeaturePayload,
-    #{ae_account := AeAccount, username := Username} = _State
+    #{public_key := AeAccount, username := Username} = _State
 ) ->
     Config = damage:get_default_config(AeAccount, Concurrency),
     {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
@@ -331,7 +331,7 @@ publish_bdd(
 
 bid_feature(
     #{feature := FeatureHash, bid := Bid} = _FeaturePayload,
-    #{ae_account := AeAccount, username := Username} = _State
+    #{public_key := AeAccount, username := Username} = _State
 ) ->
     #{
         decodedResult := [],

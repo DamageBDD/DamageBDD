@@ -289,7 +289,7 @@ handle_event_payload(
                     case damage_ae:balance(AeAccount) of
                         Balance when Balance > 0 ->
                             ?LOG_INFO("Nostr Received feature from: ~s ~s~n", [Npub, Content]),
-                            Context = #{npub => Npub, ae_account => AeAccount},
+                            Context = #{npub => Npub, public_key => AeAccount},
                             AeAccount = resolve_npub(Npub, Cache),
                             Config = damage:get_default_config(AeAccount, 1, []),
                             jsx:encode(

@@ -409,7 +409,7 @@ from_html(Req0, State) ->
     cowboy_req:reply(Status, Res1),
     {stop, Res1, State}.
 
-check_generate_bdd(UserPrompt, #{ae_account := AeAccount} = _State, Req0) ->
+check_generate_bdd(UserPrompt, #{public_key := AeAccount} = _State, Req0) ->
     generate_bdd(UserPrompt, AeAccount, Req0).
 
 get_ai_proc(Username) ->

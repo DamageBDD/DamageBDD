@@ -324,7 +324,7 @@ handle_event(
         {ok, SaleWebhook} ->
             damage_webhooks:trigger_webhook(
                 SaleWebhook,
-                #{content => <<"Damage Tokens purchsased by ">>, ae_account => AeAccount}
+                #{content => <<"Damage Tokens purchsased by ">>, public_key => AeAccount}
             );
         _ ->
             ?LOG_WARNING(

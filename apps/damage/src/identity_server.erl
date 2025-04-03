@@ -120,7 +120,7 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
         KeyPair,
         ?EMAIL_REGISTRY_CONTRACT,
         "contracts/email_registry.aes",
-        1000000,
+        ?AE_INITIAL_AETTOS,
         "register_email",
         [
             ?DAMAGE_TOKEN_CONTRACT,
@@ -128,8 +128,8 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
             PublicKey,
             binary_to_list(secrets:encrypt(Password)),
             binary_to_list(secrets:encrypt(PrivateKey)),
-            10000000000,
-            100000
+            ?DAMAGE_INITIAL_HITS,
+            ?AE_INITIAL_AETTOS
         ]
     ),
     {reply, Response, State};

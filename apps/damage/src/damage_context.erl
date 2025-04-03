@@ -22,6 +22,7 @@
     [
         get_context_proc/1,
         add_context/3,
+        add_context/4,
         restart_context_proc/1
     ]
 ).
@@ -108,7 +109,7 @@ allowed_methods(Req, State) ->
 
 from_html(Req, State) -> from_json(Req, State).
 
-from_json(Req, #{ae_account := AeAccount} = State) ->
+from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
@@ -124,7 +125,7 @@ from_json(Req, #{ae_account := AeAccount} = State) ->
             ?LOG_DEBUG("post response 400 ~p ", [Response]),
             {stop, Response, State};
         #{key := Key, value := Value, masked := Masked} ->
-            Result = damage_ae:add_context(AeAccount, Key, Value, Masked),
+            Result = contract_call(AeAccount, "add_context", [Key, Value, Masked]),
             Resp =
                 cowboy_req:set_resp_body(
                     jsx:encode(#{status => <<"ok">>, result => Result}),
@@ -136,15 +137,15 @@ from_json(Req, #{ae_account := AeAccount} = State) ->
 
 to_json(Req, #{action := context, username := Username} = State) ->
     ?LOG_DEBUG("context action ~p", [State]),
-    {ok, ClientContextRaw} = damage_ae:get_account_context(Username),
+    {ok, ClientContextRaw} = get_account_context(Username),
     {jsx:encode(ClientContextRaw), Req, State}.
 
-delete_resource(Req, #{username := Username} = State) ->
+delete_resource(Req, #{public_key := AeAccount} = State) ->
     Deleted =
         lists:foldl(
             fun(DeleteId, Acc) ->
                 ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-                ok = damage_ae:delete_context(Username, DeleteId),
+                ok = contract_call(AeAccount, "delete_context", [DeleteId]),
                 Acc + 1
             end,
             0,
@@ -159,7 +160,7 @@ handle_call(get_context, _From, #{ets_table := Table} = State) ->
         maps:from_list(ets:tab2list(Table)),
         State
     };
-handle_call(load_context, _From, #{ae_account := AeAccount, ets_table := Table} = State) ->
+handle_call(load_context, _From, #{public_key := AeAccount, ets_table := Table} = State) ->
     #{decodedResult := Results} =
         damage_ae:contract_call_user_account(AeAccount, "get_context", []),
     {
@@ -182,16 +183,17 @@ handle_call({get_value, Key}, _From, #{ets := Table} = State) ->
             io:format("Key not found~n"),
             {reply, notfound, State}
     end;
-handle_call({add_context, AeAccount, Key, Value, Visibility}, _From, State) ->
+handle_call({add_context, AeAccount, Key, Value, Meta}, _From, State) ->
     AccountCache = maps:get(AeAccount, State, #{}),
     ContextCache = maps:get(context, AccountCache, #{}),
     KeyHashed = secrets:salted_hash(Key),
-    ValueEncrypted = base64:encode(damage_utils:encrypt(Value)),
+    ValueEncrypted = secrets:encrypt(Value),
+    MetaEncrypted = secrets:encrypt(term_to_binary(Meta)),
     Results =
-        damage_ae:contract_call_user_account(
+        contract_call(
             AeAccount,
             "add_context",
-            [KeyHashed, ValueEncrypted, Visibility]
+            [KeyHashed, ValueEncrypted, MetaEncrypted]
         ),
     ?LOG_DEBUG("AddContext ~p", [Results]),
     {
@@ -208,7 +210,7 @@ handle_call({delete_context, AeAccount, Key}, _From, State) ->
     ContextCache = maps:get(context, AccountCache, #{}),
     ContextKeyEnc = base64:encode(damage_utils:encrypt(Key)),
     Results =
-        damage_ae:contract_call_user_account(
+        contract_call(
             AeAccount,
             "delete_context",
             [ContextKeyEnc]
@@ -237,7 +239,10 @@ terminate(Reason, _State) ->
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 add_context(AeAccount, Key, Value) ->
     Pid = get_context_proc(AeAccount),
-    gen_server:call(Pid, {set_context, AeAccount, Key, Value}, ?AE_TIMEOUT).
+    gen_server:call(Pid, {add_context, AeAccount, Key, Value, []}, ?AE_TIMEOUT).
+add_context(AeAccount, Key, Value, masked) ->
+    Pid = get_context_proc(AeAccount),
+    gen_server:call(Pid, {add_context, AeAccount, Key, Value, [masked]}, ?AE_TIMEOUT).
 
 get_global_template_context(Context) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
@@ -255,7 +260,7 @@ get_global_template_context(Context) ->
         Context
     ).
 
-get_account_context(#{ae_account := AeAccount} = DefaultContext) ->
+get_account_context(#{public_key := AeAccount} = DefaultContext) ->
     Pid = get_context_proc(AeAccount),
     ClientContext =
         gen_server:call(Pid, get_context, ?AE_TIMEOUT),
@@ -345,6 +350,14 @@ restart_context_proc(AeAccount) ->
             supervisor:terminate_child(damage_sup, Pid),
             get_context_proc(AeAccount)
     end.
+contract_call(AeAccount, Func, Args) ->
+    damage_ae:contract_call(
+        AeAccount,
+        ?CONTEXT_CONTRACT,
+        "contracts/context.aes",
+        Func,
+        Args
+    ).
 test_account_context() ->
     Body = <<"blah ablasd assd a testpasswordaasdsdada">>,
     Args = <<"blah ablasd assd a testpasswordaasdsdada">>,

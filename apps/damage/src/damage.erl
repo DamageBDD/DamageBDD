@@ -296,7 +296,7 @@ execute_file(Config, Context, Filename) ->
                             false -> false
                         end,
                     result => Result,
-                    ae_account => maps:get(ae_account, Context),
+                    public_key => maps:get(public_key, Context),
                     result_status => ResultStatus,
                     token_contract => maps:get(token_contract, FinalContext),
                     node_public_key => maps:get(node_public_key, FinalContext),
@@ -368,7 +368,7 @@ execute_scenario(Config, Context, {_, BackGroundSteps}, Scenario) ->
 % handled OR should the handling happen withing the execution function
 execute_step_module(
     Config,
-    #{ae_account := AeAccount} = Context,
+    #{public_key := AeAccount} = Context,
     {StepKeyWord, LineNo, Body, Args} = Step,
     StepModule
 ) ->
@@ -515,7 +515,7 @@ execute_step(Config, Step, Context) ->
                 step,
                 {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
             ),
-            metrics:update(notfound, maps:get(ae_account, Context)),
+            metrics:update(notfound, maps:get(public_key, Context)),
             maps:put(failing_step, Step, Context);
         true ->
             Context0

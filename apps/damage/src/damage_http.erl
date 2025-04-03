@@ -146,20 +146,23 @@ is_authorized(Req, State0) ->
                 {error, access_denied} ->
                     {{false, <<"Bearer">>}, Req, State};
                 {AeAccount, Username} ->
-                    {AeAccount, _, PrivateKey} = identity_server:get_account_by_email(Username),
-                    {
-                        true,
-                        Req,
-                        maps:merge(
-                            State,
-                            #{
-                                ae_account => AeAccount,
-                                username => Username,
-                                access_token => Token,
-                                private_key => PrivateKey
-                            }
-                        )
-                    };
+                    case identity_server:get_account_by_email(Username) of
+                        {AeAccount, _, _PrivateKey} ->
+                            {
+                                true,
+                                Req,
+                                maps:merge(
+                                    State,
+                                    #{
+                                        public_key => AeAccount,
+                                        username => Username,
+                                        access_token => Token
+                                    }
+                                )
+                            };
+                        _ ->
+                            {{false, <<"Bearer">>}, Req, State}
+                    end;
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
                     {{false, <<"Bearer">>}, Req, State}
@@ -192,7 +195,7 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 get_config(
-    #{ae_account := AeAccount, concurrency := Concurrency0} = Context,
+    #{public_key := AeAccount, concurrency := Concurrency0} = Context,
     Req0
 ) ->
     Concurrency = damage_utils:get_concurrency_level(Concurrency0),
@@ -273,7 +276,7 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
 
 check_execute_bdd(
     #{concurrency := Concurrency0} = Context0,
-    #{ae_account := AeAccount} = State,
+    #{public_key := AeAccount} = State,
     Req0
 ) ->
     Context = maps:merge(Context0, State),
@@ -392,7 +395,15 @@ to_html(Req, State) ->
 
 to_json(Req, #{action := version} = State) ->
     {ok, CommitHash} = file:read_file("commit_hash.txt"),
-    {jsx:encode(#{commit_hash => CommitHash}), Req, State};
+    {ok, Version} = file:read_file("VERSION"),
+    #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
+    {
+        jsx:encode(#{
+            commit_hash => CommitHash, version => Version, public_key => list_to_binary(PubKey)
+        }),
+        Req,
+        State
+    };
 to_json(Req0, State) ->
     Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,
     %Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),

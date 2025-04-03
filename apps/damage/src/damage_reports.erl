@@ -187,13 +187,13 @@ to_json(Req, #{action := features} = State) ->
             Hash = binary_to_list(Hash0),
             {cat(list_to_binary(Hash), <<"">>), Req, State}
     end;
-to_json(Req, #{ae_account := AeAccount} = State) ->
+to_json(Req, #{public_key := AeAccount} = State) ->
     Reports =
         case cowboy_req:match_qs([{schedule_id, [], none}], Req) of
             #{schedule_id := none} ->
-                do_query(#{ae_account => AeAccount});
+                do_query(#{public_key => AeAccount});
             #{schedule_id := ScheduleId} ->
-                do_query(#{ae_account => AeAccount, schedule_id => ScheduleId})
+                do_query(#{public_key => AeAccount, schedule_id => ScheduleId})
         end,
     {jsx:encode(Reports), Req, State};
 to_json(Req, #{hash := Hash0} = State) ->
@@ -229,7 +229,7 @@ do_query_base(Fun, Index, Args, AeAccount) ->
                 lists:filter(
                     fun
                         (none) -> false;
-                        (#{ae_account := AeAccount0}) when AeAccount0 =:= AeAccount -> true;
+                        (#{public_key := AeAccount0}) when AeAccount0 =:= AeAccount -> true;
                         (_) -> true
                     end,
                     [get_record(X) || X <- Found]
@@ -257,7 +257,7 @@ range_query(StartDateTime0, EndDateTime0, Prefix, AeAccount) ->
         AeAccount
     ).
 
-do_query(#{ae_account := AeAccount, since := Since0, status := Status}) ->
+do_query(#{public_key := AeAccount, since := Since0, status := Status}) ->
     Since = binary_to_list(Since0),
     case
         re:run(
@@ -294,7 +294,7 @@ do_query(#{ae_account := AeAccount, since := Since0, status := Status}) ->
             ?LOG_DEBUG("Invalid query ~p", [Other]),
             <<"Invalid query.">>
     end;
-do_query(#{ae_account := AeAccount, since := Since0}) ->
+do_query(#{public_key := AeAccount, since := Since0}) ->
     Since = binary_to_list(Since0),
     case
         re:run(
@@ -322,17 +322,17 @@ do_query(#{ae_account := AeAccount, since := Since0}) ->
             ?LOG_DEBUG("Invalid query ~p", [Other]),
             <<"Invalid query.">>
     end;
-do_query(#{ae_account := AeAccount, schedule_id := ScheduleId}) ->
+do_query(#{public_key := AeAccount, schedule_id := ScheduleId}) ->
     do_query_base(
         get_index,
         {binary_index, "schedule_id"},
         [ScheduleId],
         AeAccount
     );
-do_query(#{ae_account := AeAccount}) ->
-    do_query_base(get_index, {binary_index, "ae_account"}, [AeAccount], AeAccount).
+do_query(#{public_key := AeAccount}) ->
+    do_query_base(get_index, {binary_index, "public_key"}, [AeAccount], AeAccount).
 
-from_json(Req, #{ae_account := AeAccount} = State) ->
+from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
         case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
@@ -340,7 +340,7 @@ from_json(Req, #{ae_account := AeAccount} = State) ->
                 logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};
             PostData ->
-                QueryData = maps:merge(PostData, #{ae_account => AeAccount}),
+                QueryData = maps:merge(PostData, #{public_key => AeAccount}),
                 ?LOG_DEBUG("Query data ~p", [QueryData]),
                 {200, do_query(QueryData)}
         end,

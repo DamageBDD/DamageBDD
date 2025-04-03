@@ -21,7 +21,9 @@
 -export([trigger_webhooks/1]).
 -export(
     [
+        get_webhooks/1,
         get_webhooks_proc/1,
+        contract_call/3,
         restart_webhook_proc/1
     ]
 ).
@@ -95,7 +97,7 @@ init([]) ->
     {ok, #{}};
 init([AeAccount]) ->
     process_flag(trap_exit, true),
-    {ok, #{ae_account => AeAccount}}.
+    {ok, #{public_key => AeAccount}}.
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -123,12 +125,12 @@ from_json(Req, State) ->
     Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
     {stop, cowboy_req:reply(201, Resp), State}.
 
-to_json(Req, #{ae_account := AeAccount} = State) ->
-    Body = jsx:encode(damage_ae:get_webhooks(AeAccount)),
+to_json(Req, #{public_key := AeAccount} = State) ->
+    Body = jsx:encode(get_webhooks(AeAccount)),
     logger:info("Loading webhooks for ~p ~p", [AeAccount, Body]),
     {Body, Req, State}.
 
-delete_resource(Req, #{ae_account := AeAccount} = State) ->
+delete_resource(Req, #{public_key := AeAccount} = State) ->
     Deleted =
         lists:foldl(
             fun(DeleteId, Acc) ->
@@ -145,7 +147,7 @@ delete_resource(Req, #{ae_account := AeAccount} = State) ->
 create_webhook(
     #{name := WebhookName, url := WebhookUrl} = _WebhookData,
     _Req,
-    #{ae_account := AeAccount} = _State
+    #{public_key := AeAccount} = _State
 ) ->
     damage_ae:add_webhook(AeAccount, WebhookName, WebhookUrl).
 
@@ -154,7 +156,7 @@ get_webhooks(AeAccount) ->
 
     gen_server:call(Pid, get_webhooks, ?AE_TIMEOUT).
 
-load_all_webhooks(#{ae_account := AeAccount} = Context) ->
+load_all_webhooks(#{public_key := AeAccount} = Context) ->
     maps:put(webhooks, get_webhooks(AeAccount), Context).
 
 gun_await(ConnPid, StreamRef) ->
@@ -204,7 +206,7 @@ trigger_webhooks(FinalContext) ->
             ]
     end.
 
-handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{ae_account := AeAccount} = Cache) ->
+handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{public_key := AeAccount} = Cache) ->
     AccountCache = maps:get(AeAccount, Cache, #{}),
     WebHookCache = maps:get(webhooks, AccountCache, #{}),
     WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
@@ -215,7 +217,7 @@ handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{ae_account := AeAcc
             "add_webhook",
             [WebhookNameEncrypted, WebhookUrlEncrypted]
         ),
-    ?LOG_DEBUG("wWebhooks ~p", [Results]),
+    ?LOG_DEBUG("Webhooks ~p", [Results]),
     {
         reply,
         Results,
@@ -229,7 +231,7 @@ handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{ae_account := AeAcc
             Cache
         )
     };
-handle_call({delete_webhook, WebhookName}, _From, #{ae_account := AeAccount} = Cache) ->
+handle_call({delete_webhook, WebhookName}, _From, #{public_key := AeAccount} = Cache) ->
     WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
     Results =
         damage_ae:contract_call_user_account(
@@ -239,17 +241,17 @@ handle_call({delete_webhook, WebhookName}, _From, #{ae_account := AeAccount} = C
         ),
     ?LOG_DEBUG("Webhooks ~p", [Results]),
     {reply, Results, Cache};
-handle_call(get_webhooks, _From, #{ae_account := AeAccount} = Cache) ->
+handle_call(get_webhooks, _From, #{public_key := AeAccount} = Cache) ->
     case catch maps:get(webhooks, Cache, undefined) of
         undefined ->
             #{decodedResult := Results} =
-                damage_ae:contract_call_user_account(AeAccount, "get_webhooks", []),
+                contract_call(AeAccount, "get_webhooks", []),
             WebHooks =
                 maps:from_list(
                     [
                         {
-                            damage_utils:decrypt(base64:decode(Key)),
-                            damage_utils:decrypt(base64:decode(Hook))
+                            damage_utils:decrypt(Key),
+                            damage_utils:decrypt(Hook)
                         }
                      || [Key, Hook] <- Results
                     ]
@@ -314,3 +316,12 @@ restart_webhook_proc(AeAccount) ->
             supervisor:terminate_child(damage_sup, Pid),
             get_webhooks_proc(AeAccount)
     end.
+
+contract_call(AeAccount, Func, Args) ->
+    damage_ae:contract_call(
+        AeAccount,
+        ?WEBHOOKS_CONTRACT,
+        "contracts/webhooks.aes",
+        Func,
+        Args
+    ).

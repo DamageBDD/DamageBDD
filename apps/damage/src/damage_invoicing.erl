@@ -101,10 +101,10 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-to_json(Req, #{ae_account := _AeAccount} = State) ->
+to_json(Req, #{public_key := _AeAccount} = State) ->
     {jsx:encode(#{}), Req, State}.
 
-from_json(Req, #{ae_account := AeAccount, ae_account := AeAccount} = State) ->
+from_json(Req, #{public_key := _AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
         case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
@@ -136,7 +136,7 @@ from_json(Req, #{ae_account := AeAccount, ae_account := AeAccount} = State) ->
     cowboy_req:reply(Status, Resp),
     {stop, Resp, State}.
 
-delete_resource(Req, #{ae_account := _AeAccount} = State) ->
+delete_resource(Req, #{public_key := _AeAccount} = State) ->
     Deleted =
         lists:foldl(
             fun(PaymentHash, Acc) ->
