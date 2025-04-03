@@ -4,11 +4,11 @@ include "String.aes"
 include "token.aes"
 
 main contract Domains =
-    record webhook =
+    record domain =
         { name : string, target: string, meta: string}
     record state =
         { owner        : address,
-          domains     : map(address, map(string, webhook)) }
+          domains     : map(address, map(string, domain)) }
 
     stateful entrypoint init() : state =
         { owner = Call.caller,
@@ -17,18 +17,18 @@ main contract Domains =
     function require_owner() =
         require(call.caller == state.owner, "only_owner_call_allowed")
 
-    stateful entrypoint add_webhook(account : address, name: string, target: string, meta: string) : bool =
+    stateful entrypoint add_domain(account : address, name: string, target: string, meta: string) : bool =
         require_owner()
         require(Map.lookup(account, state.domains) != None, "Address not registered.")
         put(state{domains[account][name] = {name = name, target = target, meta = meta}})
         true
 
-    entrypoint get_domains(account : address) : map(string, webhook) =
+    entrypoint get_domains(account : address) : map(string, domain) =
         require_owner()
         require(Map.lookup(account, state.domains) != None, "Address not registered.")
         state.domains[account]
 
-    stateful entrypoint delete_webhook(name: string) =
+    stateful entrypoint delete_domain(name: string) =
         let oldmap = Map.lookup_default(Call.caller, state.domains, {})
         let newmap = Map.delete(name, oldmap)
         put(state{domains[Call.caller] = newmap})

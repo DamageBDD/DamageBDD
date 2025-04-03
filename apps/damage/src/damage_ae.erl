@@ -39,8 +39,7 @@
         account_keypair/1,
         wait_tx/1,
         restart_wallet_proc/1,
-        contract_call_payfor_user/5,
-        import_wallet/2
+        contract_call_payfor_user/5
     ]
 ).
 -export([contract_call/5, contract_call/6, contract_deploy/3, contract_deploy/2, contract_balance/1]).
@@ -862,35 +861,6 @@ node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
     Balance = balance(AeAccount),
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
-
-import_wallet(Path, Password) ->
-    {ok, Binary} = file:read_file(Path),
-
-    {ok, Json} = jsx:decode(Binary, [return_maps]),
-
-    #{<<"crypto">> := Crypto} = Json,
-    #{
-        <<"ciphertext">> := CipherTextB64,
-        <<"cipher_params">> := #{<<"nonce">> := NonceB64},
-        <<"kdf_params">> := KdfParams,
-        <<"salt">> := SaltB64
-    } = Crypto,
-
-    Salt = base64:decode(SaltB64),
-    Nonce = base64:decode(NonceB64),
-    CipherText = base64:decode(CipherTextB64),
-
-    #{
-        <<"memlimit_kib">> := MemKib,
-        <<"opslimit">> := OpsLimit,
-        <<"parallelism">> := Parallelism
-    } = KdfParams,
-
-    {ok, Key} = argon2_nif:hash_raw(Password, Salt, OpsLimit, MemKib * 1024, Parallelism, 32),
-
-    enacl:start(),
-    {ok, PlainText} = enacl:secretbox_open(CipherText, Nonce, Key),
-    PlainText.
 
 test_contract_cycle() ->
     #{public_key := PublicKey, private_key := PrivateKey} = secrets:make_keypair(),
