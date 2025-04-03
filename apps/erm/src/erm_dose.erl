@@ -234,9 +234,11 @@ handle_event(
             ?LOG_DEBUG("Button: '~ts' clicked~n", [Label]),
             {noreply, State}
     end;
-handle_event(_Ev = #wx{event = #wxKey{keyCode = 13}}, State = #state{parent = Parent, dirty = true}) ->
+handle_event(
+    _Ev = #wx{event = #wxKey{keyCode = 13}}, State = #state{parent = Parent, dirty = true}
+) ->
     ?LOG_DEBUG("Got Enter Key ~n", []),
-            wxWindow:hide(Parent),
+    wxWindow:hide(Parent),
     {stop, normal, save_dose(State)};
 handle_event(_Ev = #wx{event = #wxKey{keyCode = 27}}, State = #state{parent = Frame}) ->
     ?LOG_DEBUG("Got Escape Key ~n", []),
