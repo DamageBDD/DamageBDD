@@ -2,6 +2,7 @@
 -define(RUNRECORDS_BUCKET, {<<"Default">>, <<"RunRecords">>}).
 -define(CONTEXT_BUCKET, {<<"Default">>, <<"Contexts">>}).
 -define(CHROMEDRIVER, "http://localhost:9515/").
+-define(DEFAULT_HTTP_TIMEOUT, 60000).
 
 % Accounts ---
 -define(MAX_DAMAGE_INVOICE, 5000000).

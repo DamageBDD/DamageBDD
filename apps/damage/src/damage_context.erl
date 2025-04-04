@@ -113,7 +113,16 @@ from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
-        badarg ->
+        #{key := Key, value := Value, masked := Masked} ->
+            Result = contract_call(AeAccount, "add_context", [Key, Value, Masked]),
+            Resp =
+                cowboy_req:set_resp_body(
+                    jsx:encode(#{status => <<"ok">>, result => Result}),
+                    Req
+                ),
+            ?LOG_DEBUG("post response ~p ~p ", [Resp]),
+            {stop, cowboy_req:reply(201, Resp), State};
+        _ ->
             Response =
                 cowboy_req:set_resp_body(
                     jsx:encode(
@@ -123,16 +132,7 @@ from_json(Req, #{public_key := AeAccount} = State) ->
                 ),
             cowboy_req:reply(400, Response),
             ?LOG_DEBUG("post response 400 ~p ", [Response]),
-            {stop, Response, State};
-        #{key := Key, value := Value, masked := Masked} ->
-            Result = contract_call(AeAccount, "add_context", [Key, Value, Masked]),
-            Resp =
-                cowboy_req:set_resp_body(
-                    jsx:encode(#{status => <<"ok">>, result => Result}),
-                    Req
-                ),
-            ?LOG_DEBUG("post response ~p ~p ", [Resp]),
-            {stop, cowboy_req:reply(201, Resp), State}
+            {stop, Response, State}
     end.
 
 to_json(Req, #{action := context, public_key := AeAccount} = State) ->
@@ -167,8 +167,8 @@ handle_call(load_context, _From, #{public_key := AeAccount, ets_table := Table} 
         reply,
         [
             ets:insert(Table, {
-                damage_utils:decrypt(base64:decode(KeyEncrypted)),
-                damage_utils:decrypt(base64:decode(ValueEncrypted))
+                secrets:decrypt(KeyEncrypted),
+                secrets:decrypt(ValueEncrypted)
             })
          || [KeyEncrypted, ValueEncrypted] <- Results
         ],
@@ -177,10 +177,8 @@ handle_call(load_context, _From, #{public_key := AeAccount, ets_table := Table} 
 handle_call({get_value, Key}, _From, #{ets := Table} = State) ->
     case ets:lookup(Table, Key) of
         [{Key, Val}] ->
-            io:format("Value: ~p~n", [Val]),
             {reply, Val, State};
         [] ->
-            io:format("Key not found~n"),
             {reply, notfound, State}
     end;
 handle_call({add_context, AeAccount, Key, Value, Meta}, _From, State) ->
@@ -208,7 +206,7 @@ handle_call({add_context, AeAccount, Key, Value, Meta}, _From, State) ->
 handle_call({delete_context, AeAccount, Key}, _From, State) ->
     AccountCache = maps:get(AeAccount, State, #{}),
     ContextCache = maps:get(context, AccountCache, #{}),
-    ContextKeyEnc = base64:encode(damage_utils:encrypt(Key)),
+    ContextKeyEnc = secrets:encrypt(Key),
     Results =
         contract_call(
             AeAccount,

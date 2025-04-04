@@ -86,7 +86,9 @@ start_phase(start_vanillae, _StartType, []) ->
     {ok, NetworkId} = application:get_env(damage, ae_network_id),
     vanillae:network_id(NetworkId),
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
+    {ok, AeTls} = application:get_env(damage, ae_tls),
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
+    vanillae:tls(AeTls),
     ok = vanillae:ae_nodes(Nodes),
     ?LOG_INFO("Started vanilla."),
     ok;

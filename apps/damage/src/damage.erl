@@ -299,8 +299,7 @@ execute_file(Config, Context, Filename) ->
                     public_key => maps:get(public_key, Context),
                     result_status => ResultStatus,
                     token_contract => maps:get(token_contract, FinalContext),
-                    node_public_key => maps:get(node_public_key, FinalContext),
-                    username => maps:get(username, FinalContext)
+                    node_public_key => maps:get(node_public_key, FinalContext)
                 },
             damage_webhooks:trigger_webhooks(FinalContext),
             damage_ae:confirm_spend(RunRecord),
@@ -456,8 +455,8 @@ execute_step_module(
 
 step_spend(Context) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
-    %?LOG_DEBUG("Step spend ~p", [Spend]),
-    damage_ae:spend(maps:get(username, Context), Spend),
+    ?LOG_DEBUG("Step spend ~p", [Spend]),
+    damage_ae:spend(maps:get(public_key, Context), Spend),
     maps:remove(step_spend, Context).
 
 execute_step(Config, Step, [Context]) ->

@@ -11,53 +11,62 @@
 
 -behaviour(gen_server).
 
--define(DEFAULT_HTTP_TIMEOUT, 60000).
--define(AECLI_EXEC, "/home/steven/.npm-packages/bin/aecli").
-
--export(
-    [
-        init/1,
-        start_link/0,
-        start_link/2,
-        handle_call/3,
-        handle_cast/2,
-        handle_info/2,
-        terminate/2,
-        code_change/3,
-        transfer_damage_tokens/2,
-        transfer_damage_tokens/3,
-        confirm_spend_all/0,
-        start_batch_spend_timer/0,
-        get_reports/1,
-        get_domain_token/2,
-        add_domain_token/3,
-        revoke_domain_token/2,
-        get_ae_mdw_node/0,
-        get_ae_mdw_ws_node/0,
-        node_balance/0,
-        node_damage_balance/0,
-        account_keypair/1,
-        wait_tx/1,
-        restart_wallet_proc/1,
-        contract_call_payfor_user/5
-    ]
-).
--export([contract_call/5, contract_call/6, contract_deploy/3, contract_deploy/2, contract_balance/1]).
--export([balance/1, invalidate_cache/1, spend/2, confirm_spend/1]).
--export([delete_account/1]).
--export([revoke_token/2]).
--export([get_block_height_since/2]).
--export([test_get_block_height_since/0]).
--export([test_find_block/0]).
--export([test_verify_message/0]).
--export([test_contract_deploy/0]).
--export([test_contract_call/0]).
 -export([
+    init/1,
+    start_link/0,
+    start_link/2,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
+-export([
+    transfer_damage_tokens/2,
+    transfer_damage_tokens/3,
+    confirm_spend_all/0,
+    start_batch_spend_timer/0,
+    get_reports/1,
+    get_domain_token/2,
+    add_domain_token/3,
+    revoke_domain_token/2,
+    get_ae_mdw_node/0,
+    get_ae_mdw_ws_node/0,
+    node_balance/0,
+    node_damage_balance/0,
+    account_keypair/1,
+    wait_tx/1,
+    ae_to_aetto/1,
+    delete_account/1,
+    revoke_token/2,
+    get_block_height_since/2,
+    restart_wallet_proc/1,
     get_wallet_proc/1,
     get_wallet_proc/2
 ]).
--export([ae_to_aetto/1]).
--export([test_contract_cycle/0]).
+-export([
+    contract_call/5,
+    contract_call/6,
+    contract_call_dry/5,
+    contract_deploy/3,
+    contract_deploy/2,
+    contract_balance/1,
+    contract_call_payfor_user/5
+]).
+-export([
+    balance/1,
+    invalidate_cache/1,
+    spend/2,
+    confirm_spend/1
+]).
+-export([
+    test_get_block_height_since/0,
+    test_find_block/0,
+    test_verify_message/0,
+    test_contract_deploy/0,
+    test_contract_call/0,
+    test_contract_cycle/0
+]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -318,7 +327,6 @@ handle_cast(
             username := AeAccount,
             feature_hash := _FeatureHash,
             report_hash := _ReportHash,
-            token_contract := DamageTokenContract,
             node_public_key := NodePublicKey
         } = RunRecord
     },
@@ -345,7 +353,7 @@ handle_cast(
             case
                 contract_call(
                     AeAccount,
-                    binary_to_list(DamageTokenContract),
+                    ?DAMAGE_TOKEN_CONTRACT,
                     "contracts/token.aes",
                     "spend",
                     [NodePublicKey, Amount, SpendRecord]
@@ -627,11 +635,11 @@ contract_call(
     Func,
     Args
 ) ->
+    ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
     Fee = vanillae:min_fee(),
     Gas = 100000,
     GasPrice = vanillae:min_gas_price(),
-    %GasPrice = 4000000000,
     {ok, AACI} = vanillae:prepare_contract(Contract),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, Nonce, Gas, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
@@ -639,6 +647,26 @@ contract_call(
     Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
     SignedTX = attach_signature_base58(ContractCall, Signature),
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTX),
+    wait_tx(ContractCallTxHash).
+contract_call_dry(
+    #{public_key := AeAccount, private_key := PrivateKey},
+    ContractAddress,
+    Contract,
+    Func,
+    Args
+) ->
+    ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
+    {ok, Nonce} = vanillae:next_nonce(AeAccount),
+    Fee = vanillae:min_fee(),
+    Gas = 100000,
+    GasPrice = vanillae:min_gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(Contract),
+    {ok, ContractCall} = vanillae:contract_call(
+        AeAccount, Nonce, Gas, GasPrice, Fee, 0, AACI, ContractAddress, Func, Args
+    ),
+    Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
+    SignedTX = attach_signature_base58(ContractCall, Signature),
+    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:dry_run(SignedTX),
     wait_tx(ContractCallTxHash).
 
 contract_balance(Account) ->

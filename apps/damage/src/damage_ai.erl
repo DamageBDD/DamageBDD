@@ -412,15 +412,15 @@ from_html(Req0, State) ->
 check_generate_bdd(UserPrompt, #{public_key := AeAccount} = _State, Req0) ->
     generate_bdd(UserPrompt, AeAccount, Req0).
 
-get_ai_proc(Username) ->
-    case gproc:lookup_local_name({?MODULE, Username}) of
+get_ai_proc(Publickey) ->
+    case gproc:lookup_local_name({?MODULE, Publickey}) of
         undefined ->
             case
                 supervisor:start_child(
                     damage_sup,
                     #{
                         % mandatory
-                        id => Username,
+                        id => Publickey,
                         % mandatory
                         start => {damage_ai, start_link, []},
                         % optional
@@ -434,10 +434,10 @@ get_ai_proc(Username) ->
                 )
             of
                 {ok, AiPid} ->
-                    gproc:reg_other({n, l, {?MODULE, Username}}, AiPid),
+                    gproc:reg_other({n, l, {?MODULE, Publickey}}, AiPid),
                     AiPid;
                 {error, {already_started, AiPid}} ->
-                    gproc:reg_other({n, l, {?MODULE, Username}}, AiPid),
+                    gproc:reg_other({n, l, {?MODULE, Publickey}}, AiPid),
                     AiPid
             end;
         Pid ->

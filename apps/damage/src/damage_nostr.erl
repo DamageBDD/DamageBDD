@@ -437,9 +437,9 @@ reply_event(
 resolve_npub(NPub, Cache) ->
     case catch maps:get(NPub, Cache, undefined) of
         undefined ->
-            case catch damage_ae:contract_call_admin_account("resolve_npub", [NPub]) of
+            case identity_server:get_account_by_npub(NPub) of
                 #{decodedResult := EncryptedMetaJson} ->
-                    AeAccount = damage_utils:decrypt(base64:decode(EncryptedMetaJson)),
+                    AeAccount = secrets:decrypt(EncryptedMetaJson),
                     ?LOG_DEBUG("cache miss npub ~p ~p", [NPub, AeAccount]),
                     {reply, AeAccount, maps:put(NPub, AeAccount, Cache)};
                 Error ->

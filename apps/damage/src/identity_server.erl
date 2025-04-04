@@ -78,41 +78,50 @@ verify_access_token(Token) ->
 %%% =========================
 
 init([]) ->
-    {ok, #{}}.
+    Table = ets:new(identity_cache, [named_table, set, private]),
+    {ok, #{ets_table => Table}}.
 
-handle_call({get_account, PublicKey}, _From, State) ->
-    KeyPair = secrets:node_keypair(),
-    case
-        damage_ae:contract_call(
-            KeyPair,
-            ?EMAIL_REGISTRY_CONTRACT,
-            "contracts/email_registry.aes",
-            "get_email",
-            [
-                PublicKey
-            ]
-        )
-    of
-        #{
-            "return_type" := "ok",
-            "return_value" :=
-                {
-                    {address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted
-                }
-            %{variant, [0, 1], 1,
-            %    {{tuple, {
-            %        {address, AddressData}, PasswordEncrypted, PrivateKeyEncrypted
-            %    }}}}
-        } ->
-            Password = secrets:decrypt(PasswordEncrypted),
-            PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
-            Address = aeser_api_encoder:encode(account_pubkey, AddressData),
-            Acccount = #{public_key => Address, password => Password, private_key => PrivateKey},
+handle_call({get_account, PublicKey}, _From, #{ets_table := Table} = State) ->
+    case ets:lookup(Table, PublicKey) of
+        [{PublicKey, Account}] ->
+            {reply, Account, State};
+        [] ->
+            KeyPair = secrets:node_keypair(),
+            case
+                damage_ae:contract_call(
+                    KeyPair,
+                    ?EMAIL_REGISTRY_CONTRACT,
+                    "contracts/email_registry.aes",
+                    "get_email",
+                    [
+                        PublicKey
+                    ]
+                )
+            of
+                #{
+                    "return_type" := "ok",
+                    "return_value" :=
+                        {
+                            {address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted
+                        }
+                    %{variant, [0, 1], 1,
+                    %    {{tuple, {
+                    %        {address, AddressData}, PasswordEncrypted, PrivateKeyEncrypted
+                    %    }}}}
+                } ->
+                    Password = secrets:decrypt(PasswordEncrypted),
+                    PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
+                    Address = aeser_api_encoder:encode(account_pubkey, AddressData),
+                    Account = #{
+                        public_key => Address, password => Password, private_key => PrivateKey
+                    },
+                    ets:insert(Table, {PublicKey, Account}),
 
-            {reply, Acccount, State};
-        Other ->
-            ?LOG_DEBUG("Unexpected response ~p", [Other]),
-            {reply, notfound, State}
+                    {reply, Account, State};
+                Other ->
+                    ?LOG_DEBUG("Unexpected response ~p", [Other]),
+                    {reply, notfound, State}
+            end
     end;
 handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, State) ->
     KeyPair = secrets:node_keypair(),
@@ -133,48 +142,50 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
         ]
     ),
     {reply, Response, State};
-handle_call({get_account_by_email, Email}, _From, State) ->
-    KeyPair = secrets:node_keypair(),
-    case
-        damage_ae:contract_call(
-            KeyPair,
-            ?EMAIL_REGISTRY_CONTRACT,
-            "contracts/email_registry.aes",
-            "get_account",
-            [
-                binary_to_list(secrets:salted_hash(Email))
-            ]
-        )
-    of
-        #{"return_value" := #{email := _Email, meta := Meta}} ->
-            Response = #{email => Email, meta => binary_to_term(secrets:decrypt(Meta))},
-            {reply, Response, State};
-        #{
-            "return_type" := "ok",
-            "return_value" :=
-                {
-                    {address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted
-                }
-            %{variant, [0, 1], 1,
-            %    {{tuple, {
-            %        {address, AddressData}, PasswordEncrypted, PrivateKeyEncrypted
-            %    }}}}
-        } ->
-            Password = secrets:decrypt(PasswordEncrypted),
-            PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
-            Address = aeser_api_encoder:encode(account_pubkey, AddressData),
-            Acccount = {Address, Password, PrivateKey},
+handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State) ->
+    case ets:lookup(Table, Email) of
+        [{Email, Account}] ->
+            {reply, Account, State};
+        [] ->
+            KeyPair = secrets:node_keypair(),
+            case
+                damage_ae:contract_call(
+                    KeyPair,
+                    ?EMAIL_REGISTRY_CONTRACT,
+                    "contracts/email_registry.aes",
+                    "get_account",
+                    [
+                        binary_to_list(secrets:salted_hash(Email))
+                    ]
+                )
+            of
+                #{"return_value" := #{email := _Email, meta := Meta}} ->
+                    Response = #{email => Email, meta => binary_to_term(secrets:decrypt(Meta))},
+                    {reply, Response, State};
+                #{
+                    "return_type" := "ok",
+                    "return_value" :=
+                        {
+                            {address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted
+                        }
+                } ->
+                    Password = secrets:decrypt(PasswordEncrypted),
+                    PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
+                    Address = aeser_api_encoder:encode(account_pubkey, AddressData),
+                    Account = {Address, Password, PrivateKey},
+                    ets:insert(Table, {Email, Account}),
 
-            {reply, Acccount, maps:put(Email, Acccount, State)};
-        #{
-            "return_type" := "revert",
-            "return_value" := <<"Email not registered.">>
-        } ->
-            ?LOG_DEBUG("Email not registered", []),
-            {reply, notfound, State};
-        Other ->
-            ?LOG_DEBUG("Unexpected response ~p", [Other]),
-            {reply, notfound, State}
+                    {reply, Account, maps:put(Email, Account, State)};
+                #{
+                    "return_type" := "revert",
+                    "return_value" := <<"Email not registered.">>
+                } ->
+                    ?LOG_DEBUG("Email not registered", []),
+                    {reply, notfound, State};
+                Other ->
+                    ?LOG_DEBUG("Unexpected response ~p", [Other]),
+                    {reply, notfound, State}
+            end
     end;
 handle_call({set_email_password, Email, Password}, _From, State) ->
     KeyPair = secrets:node_keypair(),
