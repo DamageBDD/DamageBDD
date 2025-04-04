@@ -17,18 +17,24 @@ main contract NostrRegistry =
   stateful entrypoint init() : state =
     { npubs = {}}
 
+  function require_owner() =
+    require(call.caller == state.owner, "only_owner_call_allowed")
+
   // Register Npub → Account (One-to-One)
   stateful entrypoint register_npub(keystore: KeyStoreType, npub : string, account: address, meta: string, priv_key: string) =
+    require_owner()
     require(Map.lookup(npub, state.npubs) == None, "Npub already registered.")
     keystore.store_key(account, priv_key)
     put(state{npubs[npub] = { account = account, meta = meta }})
     true
 
   stateful entrypoint get_account(npub : string) =
+    require_owner()
     require(Map.lookup(npub, state.npubs) != None, "Npub not registered.")
     state.npubs[npub]
 
   stateful entrypoint set_meta(npub : string, meta: string) =
+    require_owner()
     require(Map.lookup(npub, state.npubs) != None, "Npub not registered.")
     put(state{npubs[npub].meta = meta})
     true

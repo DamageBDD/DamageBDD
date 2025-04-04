@@ -229,7 +229,7 @@ get_config(
         end,
     damage:get_default_config(AeAccount, Concurrency, Formatters).
 
-execute_bdd(Config, Context, #{feature := FeatureData}) ->
+execute_bdd(Config, Context, FeatureData) ->
     case damage:execute_data(Config, Context, FeatureData) of
         [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
             Response =
@@ -275,7 +275,7 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
     end.
 
 check_execute_bdd(
-    #{concurrency := Concurrency0} = Context0,
+    #{concurrency := Concurrency0, feature := FeatureData} = Context0,
     #{public_key := AeAccount} = State,
     Req0
 ) ->
@@ -294,12 +294,12 @@ check_execute_bdd(
                         "check_execute_bdd balance ~p context ~p",
                         [Balance, Context]
                     ),
+                    GlobalContext = damage_context:get_global_template_context(Context),
+                    AccountContext = damage_context:get_context(AeAccount),
                     execute_bdd(
                         Config,
-                        damage_context:get_account_context(
-                            damage_context:get_global_template_context(Context)
-                        ),
-                        Context
+                        maps:put(account_context, AccountContext, GlobalContext),
+                        FeatureData
                     );
                 Other ->
                     {
@@ -320,8 +320,8 @@ from_json(Req, State) ->
             {'EXIT', {badarg, Trace}} ->
                 logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};
-            #{feature := _FeatureData} = FeatureJson ->
-                check_execute_bdd(FeatureJson, State, Req)
+            #{feature := _FeatureData} = Json ->
+                check_execute_bdd(Json, State, Req)
         end,
     Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
     cowboy_req:reply(Status, Resp),

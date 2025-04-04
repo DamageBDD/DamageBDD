@@ -17,7 +17,6 @@
 -export([delete_resource/2]).
 -export([trails/0]).
 -export([is_authorized/2]).
--export([load_all_webhooks/1]).
 -export([trigger_webhooks/1]).
 -export(
     [
@@ -135,7 +134,7 @@ delete_resource(Req, #{public_key := AeAccount} = State) ->
         lists:foldl(
             fun(DeleteId, Acc) ->
                 ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-                ok = damage_ae:delete_webhook(AeAccount, DeleteId),
+                ok = delete_webhook(AeAccount, DeleteId),
                 Acc + 1
             end,
             0,
@@ -149,15 +148,14 @@ create_webhook(
     _Req,
     #{public_key := AeAccount} = _State
 ) ->
-    damage_ae:add_webhook(AeAccount, WebhookName, WebhookUrl).
+    Pid = get_webhooks_proc(AeAccount),
+
+    gen_server:call(Pid, {add_webhook, AeAccount, WebhookName, WebhookUrl}, ?AE_TIMEOUT).
 
 get_webhooks(AeAccount) ->
     Pid = get_webhooks_proc(AeAccount),
 
     gen_server:call(Pid, get_webhooks, ?AE_TIMEOUT).
-
-load_all_webhooks(#{public_key := AeAccount} = Context) ->
-    maps:put(webhooks, get_webhooks(AeAccount), Context).
 
 gun_await(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
@@ -212,7 +210,7 @@ handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{public_key := AeAcc
     WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
     WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
     Results =
-        damage_ae:contract_call_user_account(
+        contract_call(
             AeAccount,
             "add_webhook",
             [WebhookNameEncrypted, WebhookUrlEncrypted]
@@ -234,7 +232,7 @@ handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{public_key := AeAcc
 handle_call({delete_webhook, WebhookName}, _From, #{public_key := AeAccount} = Cache) ->
     WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
     Results =
-        damage_ae:contract_call_user_account(
+        contract_call(
             AeAccount,
             "delete_webhook",
             [WebhookNameEncrypted]

@@ -29,23 +29,28 @@ main contract Domains =
         state.domains[account]
 
     stateful entrypoint delete_domain(name: string) =
+        require_owner()
         let oldmap = Map.lookup_default(Call.caller, state.domains, {})
         let newmap = Map.delete(name, oldmap)
         put(state{domains[Call.caller] = newmap})
 
     stateful entrypoint get_domains(): map(string,string) =
+        require_owner()
         Map.lookup_default(Call.caller, state.domains, {})
 
     stateful entrypoint add_domain_token(key: string, value: string) =
+        require_owner()
         let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
         let newmap = oldmap{[key] = value}
         put(state{domain_tokens[Call.caller] = newmap})
 
     stateful entrypoint get_domain_token(key: string):  string =
+        require_owner()
         let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
         Map.lookup_default(key, oldmap, "notfound")
 
     stateful entrypoint revoke_domain_token(key: string, value: string) =
+        require_owner()
         let oldmap = Map.lookup_default(Call.caller, state.domain_tokens, {})
         let newmap = Map.delete(key, oldmap)
         put(state{domain_tokens[Call.caller] = newmap})

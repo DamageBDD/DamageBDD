@@ -15,23 +15,18 @@ main contract Webhooks =
           webhooks = {} }
 
     function require_owner() =
-        require(call.caller == state.owner, "only_owner_call_allowed")
+        require(Call.caller == state.owner, "only_owner_call_allowed")
 
-    stateful entrypoint add_webhook(account : address, name: string, target: string, meta: string) : bool =
-        require_owner()
-        require(Map.lookup(account, state.webhooks) != None, "Address not registered.")
-        put(state{webhooks[account][name] = {name = name, target = target, meta = meta}})
+    stateful entrypoint add_webhook(name: string, target: string, meta: string) : bool =
+        require(Map.lookup(Call.caller, state.webhooks) != None, "Address not registered.")
+        put(state{webhooks[Call.caller][name] = {name = name, target = target, meta = meta}})
         true
 
-    entrypoint get_webhooks(account : address) : map(string, webhook) =
-        require_owner()
-        require(Map.lookup(account, state.webhooks) != None, "Address not registered.")
-        state.webhooks[account]
+    entrypoint get_webhooks() : map(string, webhook) =
+        Map.lookup_default(Call.caller, state.webhooks, {})
 
     stateful entrypoint delete_webhook(name: string) =
         let oldmap = Map.lookup_default(Call.caller, state.webhooks, {})
         let newmap = Map.delete(name, oldmap)
         put(state{webhooks[Call.caller] = newmap})
 
-    stateful entrypoint get_webhooks(): map(string,string) =
-        Map.lookup_default(Call.caller, state.webhooks, {})

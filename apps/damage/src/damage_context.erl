@@ -11,7 +11,7 @@
 -export([to_json/2]).
 -export([from_json/2, allowed_methods/2, from_html/2]).
 -export([content_types_accepted/2]).
--export([get_account_context/1]).
+-export([get_context/1]).
 -export([trails/0]).
 -export([clean_secrets/3]).
 -export([test_account_context/0]).
@@ -135,9 +135,9 @@ from_json(Req, #{public_key := AeAccount} = State) ->
             {stop, cowboy_req:reply(201, Resp), State}
     end.
 
-to_json(Req, #{action := context, username := Username} = State) ->
+to_json(Req, #{action := context, public_key := AeAccount} = State) ->
     ?LOG_DEBUG("context action ~p", [State]),
-    {ok, ClientContextRaw} = get_account_context(Username),
+    {ok, ClientContextRaw} = get_context(AeAccount),
     {jsx:encode(ClientContextRaw), Req, State}.
 
 delete_resource(Req, #{public_key := AeAccount} = State) ->
@@ -260,17 +260,9 @@ get_global_template_context(Context) ->
         Context
     ).
 
-get_account_context(#{public_key := AeAccount} = DefaultContext) ->
+get_context(AeAccount) ->
     Pid = get_context_proc(AeAccount),
-    ClientContext =
-        gen_server:call(Pid, get_context, ?AE_TIMEOUT),
-    damage_webhooks:load_all_webhooks(
-        maps:put(
-            client_context,
-            ClientContext,
-            maps:merge(DefaultContext, ClientContext)
-        )
-    ).
+    gen_server:call(Pid, get_context, ?AE_TIMEOUT).
 
 clean_secrets(#{client_context := ClientContext} = Context, Body, Args) ->
     %Password = list_to_binary(maps:get(damage_password, Context, "")),

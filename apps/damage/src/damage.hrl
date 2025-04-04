@@ -16,8 +16,6 @@
 -define(DAMAGE_INITIAL_HITS, 10000000000).
 -define(AE_INITIAL_AETTOS, 100000).
 
-
-
 % Ai ---
 -define(DAMAGE_AI_FEE, 10).
 -define(DEFAULT_TIMEOUT, 60000).
@@ -58,5 +56,9 @@
 ).
 
 -define(WEBHOOKS_CONTRACT,
-    "ct_d7jV5FFsSffqFVDgYybSc6HvPse8g21AAsSoBPFsW4MXpDjTj"
+    "ct_f5LMGRP1p7Vdmp8Y5TXih8bXn8Sx8HLTFMm7gt4dLXDeeuGvS"
+).
+
+-define(SCHEDULES_CONTRACT,
+    "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
 ).

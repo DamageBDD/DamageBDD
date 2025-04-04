@@ -21,7 +21,7 @@
 -export([is_authorized/2]).
 -export([execute_bdd/1]).
 -export([schedule_job/1]).
--export([list_schedules/2]).
+-export([list_schedules/1]).
 -export([list_all_schedules/0]).
 -export([load_all_schedules/0]).
 -export([test_schedule/0]).
@@ -119,12 +119,12 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-delete_resource(Req, #{username := Username} = State) ->
+delete_resource(Req, #{public_key := AeAccount} = State) ->
     Deleted =
         lists:foldl(
             fun(DeleteId, Acc) ->
                 ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-                ok = delete_schedule(Username, DeleteId),
+                ok = delete_schedule(AeAccount, DeleteId),
                 erlcron:cancel(DeleteId),
                 Acc + 1
             end,
@@ -134,7 +134,7 @@ delete_resource(Req, #{username := Username} = State) ->
     ?LOG_INFO("deleted ~p schedules", [Deleted]),
     {true, Req, State}.
 
-from_text(Req, #{public_key := AeAccount, username := Username} = State) ->
+from_text(Req, #{public_key := AeAccount} = State) ->
     ?LOG_DEBUG("From text ~p", [Req]),
     {ok, Body, _} = cowboy_req:read_body(Req),
     ok = validate(Body),
@@ -150,13 +150,12 @@ from_text(Req, #{public_key := AeAccount, username := Username} = State) ->
             public_key => AeAccount,
             feature_hash => Hash,
             concurrency => Concurrency,
-            username => Username,
             cron => CronSpec
         },
     ?LOG_INFO("schedule_job: ~p", [Schedule]),
     CronJob = apply(?MODULE, schedule_job, [Schedule]),
     ?LOG_INFO("Cron Job: ~p", [CronJob]),
-    ok = add_schedule(Username, Name, Hash, CronSpec),
+    ok = add_schedule(AeAccount, Name, Hash, CronSpec),
     %damage_accounts:update_schedules(AeAccount, Hash, CronJob),
     Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
     {stop, cowboy_req:reply(201, Resp), State}.
@@ -165,13 +164,13 @@ from_json(Req, State) -> from_text(Req, State).
 
 from_html(Req, State) -> from_text(Req, State).
 
-to_json(Req, #{username := Username, public_key := AeAccount} = State) ->
-    Schedules = list_schedules(Username, AeAccount),
+to_json(Req, #{public_key := AeAccount} = State) ->
+    Schedules = list_schedules(AeAccount),
     Body =
         jsx:encode(
             #{status => <<"ok">>, results => Schedules, length => length(Schedules)}
         ),
-    ?LOG_INFO("Loading scheduled for ~p ~p", [Username, Body]),
+    ?LOG_INFO("Loading scheduled for  ~p", [Body]),
     {Body, Req, State}.
 
 execute_bdd(
@@ -275,13 +274,10 @@ validate(Gherkin) ->
             ok
     end.
 
-list_schedules(Username, AeAccount) ->
-    ?LOG_DEBUG("Contract ~p", [Username]),
+list_schedules(AeAccount) ->
     Results =
-        damage_ae:contract_call(
-            Username,
-            ?ACCOUNT_CONTRACT,
-            "contracts/account.aes",
+        contract_call(
+            AeAccount,
             "get_schedules",
             []
         ),
@@ -299,15 +295,15 @@ list_all_schedules() ->
     case
         catch damage_ae:contract_call(
             KeyPair,
-            ?ACCOUNT_CONTRACT,
-            "contracts/account.aes",
+            ?SCHEDULES_CONTRACT,
+            "contracts/schedules.aes",
             "get_all_schedules",
             []
         )
     of
         {ok, <<"ONLY_OWNER_CALL_ALLOWED">>} ->
             ?LOG_ERROR("!!! schedules loading failed ~p Reason: ONLY_OWNER_CALL_ALLOWED", [
-                ?ACCOUNT_CONTRACT
+                ?SCHEDULES_CONTRACT
             ]),
             [];
         #{decodedResult := Results} ->
@@ -315,15 +311,15 @@ list_all_schedules() ->
             ?LOG_DEBUG("schedules ~p", [Decrypted]),
             Decrypted;
         #{status := <<"fail">>} ->
-            ?LOG_ERROR("schedules loading failed ~p", [?ACCOUNT_CONTRACT]),
+            ?LOG_ERROR("schedules loading failed ~p", [?SCHEDULES_CONTRACT]),
             [];
         Error ->
             ?LOG_ERROR("schedules loading failed ~p", [Error]),
             []
     end.
 
-delete_schedule(Username, ScheduleId) ->
-    FeatureHashEncrypted = base64:encode(damage_utils:encrypt(ScheduleId)),
+delete_schedule(AeAccount, ScheduleId) ->
+    ScheduleIdHash = secrets:salted_hash(ScheduleId),
     #{
         decodedResult := [],
         result :=
@@ -335,22 +331,17 @@ delete_schedule(Username, ScheduleId) ->
                 returnType := <<"ok">>
             }
     } =
-        damage_ae:contract_call(
-            Username,
-            ?ACCOUNT_CONTRACT,
-            "contracts/account.aes",
+        contract_call(
+            AeAccount,
             "delete_schedule",
-            [FeatureHashEncrypted]
+            [ScheduleIdHash]
         ),
     ?LOG_DEBUG(
         "call AE contract ~p gasprice ~p gasused ~p",
         [AeAccount, GasPrice, GasUsed]
     ).
 
-add_schedule(Username, Name, FeatureHash, Cron) ->
-    NameEncrypted = base64:encode(damage_utils:encrypt(Name)),
-    FeatureHashEncrypted = base64:encode(damage_utils:encrypt(FeatureHash)),
-    CronEncrypted = base64:encode(damage_utils:encrypt(jsx:encode(Cron))),
+add_schedule(AeAccount, Name, FeatureHash, Cron) ->
     #{
         decodedResult := [],
         result :=
@@ -362,12 +353,14 @@ add_schedule(Username, Name, FeatureHash, Cron) ->
                 returnType := <<"ok">>
             }
     } =
-        damage_ae:contract_call(
-            Username,
-            ?ACCOUNT_CONTRACT,
-            "contracts/account.aes",
+        contract_call(
+            AeAccount,
             "add_schedule",
-            [NameEncrypted, FeatureHashEncrypted, CronEncrypted]
+            [
+                secrets:salted_hash(Name),
+                secrets:encrypt(FeatureHash),
+                secrets:encrypt(jsx:encode(Cron))
+            ]
         ),
     ?LOG_DEBUG(
         "call AE contract ~p gasprice ~p gasused ~p",
@@ -523,10 +516,11 @@ restart_schedules_proc(AeAccount) ->
     end.
 
 test_schedule() ->
+    #{public_key := PubKey, private_key := _PrivateKey} = secrets:make_keypair(),
     Name = <<"test schedule">>,
     ok =
         add_schedule(
-            <<"steven@stevenjoseph.in">>,
+            PubKey,
             Name,
             <<"QmVHFpuoHCiTHYcLYgkhdXqQ94EoBT6VdWtocVgurXVnRU">>,
             [<<"daily">>, <<"every">>, <<"60">>, <<"seconds">>]
@@ -551,3 +545,27 @@ test_list_schedule() ->
     Decrypted = load_account_schedules("Acc", Results),
     ?LOG_DEBUG("schedules ~p", [Decrypted]),
     Decrypted.
+
+contract_call(AeAccount, Func, Args) ->
+    #{
+        decodedResult := [],
+        result :=
+            #{
+                log := [],
+                gasPrice := GasPrice,
+                callerId := AeAccount,
+                gasUsed := GasUsed,
+                returnType := <<"ok">>
+            }
+    } =
+        damage_ae:contract_call(
+            AeAccount,
+            ?SCHEDULES_CONTRACT,
+            "contracts/schedules.aes",
+            Func,
+            Args
+        ),
+    ?LOG_DEBUG(
+        "call AE contract ~p gasprice ~p gasused ~p",
+        [AeAccount, GasPrice, GasUsed]
+    ).
