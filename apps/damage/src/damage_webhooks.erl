@@ -38,7 +38,6 @@
     ]
 ).
 
--define(DEFAULT_HTTP_TIMEOUT, 60000).
 -define(DEFAULT_HEADERS, [
     {<<"accept">>, "application/json,text/html"},
     {<<"user-agent">>, "damagebdd/1.0"},
@@ -152,9 +151,11 @@ create_webhook(
 
     gen_server:call(Pid, {add_webhook, AeAccount, WebhookName, WebhookUrl}, ?AE_TIMEOUT).
 
+delete_webhook(AeAccount, WebhookId) ->
+    Pid = get_webhooks_proc(AeAccount),
+    gen_server:call(Pid, {delete_webhook, WebhookId}, ?AE_TIMEOUT).
 get_webhooks(AeAccount) ->
     Pid = get_webhooks_proc(AeAccount),
-
     gen_server:call(Pid, get_webhooks, ?AE_TIMEOUT).
 
 gun_await(ConnPid, StreamRef) ->

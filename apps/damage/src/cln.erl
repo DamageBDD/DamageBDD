@@ -37,8 +37,6 @@
     heartbeat_timer = undefined
 }).
 
--define(DEFAULT_HTTP_TIMEOUT, 60000).
-
 %% API Functions
 
 start_link([]) -> gen_server:start_link(?MODULE, [], []).

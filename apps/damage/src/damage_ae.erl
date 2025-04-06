@@ -930,8 +930,9 @@ test_contract_deploy() ->
 
 test_contract_call() ->
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
-    ?LOG_DEBUG("contract account ~p", [?ACCOUNT_CONTRACT]),
-    contract_call(KeyPair, ?ACCOUNT_CONTRACT, "contracts/test.aes", "f", [2]).
+    ContractId = test_contract_deploy(),
+    ?LOG_DEBUG("contract account ~p", [ContractId]),
+    contract_call(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
 
 test_find_block() ->
     {Today, _Now} = calendar:local_time(),

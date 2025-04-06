@@ -282,7 +282,7 @@ publish_file(Username, AeAccount, Filename, Fee, Concurrency) ->
     } =
         damage_ae:contract_call(
             Username,
-            ?ACCOUNT_CONTRACT,
+            ?MARKETS_CONTRACT,
             "contracts/market.aes",
             "publish_feature",
             [Hash, Fee, Concurrency]
@@ -346,7 +346,7 @@ bid_feature(
     } =
         damage_ae:contract_call(
             Username,
-            ?ACCOUNT_CONTRACT,
+            ?MARKETS_CONTRACT,
             "contracts/market.aes",
             "submit_bid",
             [FeatureHash, Bid]
