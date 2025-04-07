@@ -33,7 +33,9 @@
     salted_hash/1,
     salted_hash/2,
     test/0,
-    migrate/0
+    migrate/0,
+    import_secret_key/2,
+    askpass/1
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
@@ -66,7 +68,7 @@ get_node_password_cached(State) ->
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
     case maps:get(node_password, State, undefined) of
         undefined ->
-            case erm:ask_password(Prompt) of
+            case ask_password(Prompt) of
                 undefined ->
                     throw(error);
                 NodePassword ->
@@ -327,6 +329,23 @@ import() ->
         Error ->
             ?LOG_ERROR("no damage.plain found ~p", [Error])
     end.
+import_secret_key(PublicKey, PrivateKeyHex) ->
+    Path = "damage.key.imported",
+    PrivateKey = binary:decode_hex(PrivateKeyHex),
+    Keypair = #{private_key => PrivateKey, public_key => PublicKey},
+    Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
+    case ask_password(Prompt) of
+        undefined ->
+            ?LOG_WARNING("Failed to get node_password", []),
+            error;
+        Password ->
+            EncData = secrets:encrypt(
+                Password,
+                term_to_binary(Keypair)
+            ),
+            ok = file:write_file(Path, term_to_binary(EncData)),
+            Keypair
+    end.
 
 test() ->
     #{public_key := AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
@@ -344,7 +363,7 @@ migrate() ->
     Path = application:get_env(damage, keystore, "damage.key"),
     Keypair = binary_to_term(Data),
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case erm:ask_password(Prompt) of
+    case ask_password(Prompt) of
         undefined ->
             ?LOG_WARNING("Failed to get node_password", []),
             error;
@@ -355,4 +374,14 @@ migrate() ->
             ),
             ok = file:write_file(Path, term_to_binary(EncData)),
             Keypair
+    end.
+
+ask_password(Prompt) ->
+    case os:getenv("DISPLAY") of
+        false ->
+            {ok, Term} = io:fread(Prompt, "~s"),
+
+            lists:flatten(Term);
+        _ ->
+            erm:ask_password(Prompt)
     end.
