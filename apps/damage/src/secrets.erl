@@ -35,7 +35,7 @@
     test/0,
     migrate/0,
     import_secret_key/2,
-    askpass/1
+    ask_password/1
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
