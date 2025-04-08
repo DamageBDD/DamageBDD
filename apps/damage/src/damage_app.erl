@@ -153,7 +153,7 @@ start_phase(start_sync, _StartType, []) ->
     ok;
 start_phase(os_tune, _StartType, []) ->
     ?LOG_INFO("Tuning os."),
-    {ok, _} = exec:run("ulimit -n 1000000", [sync]),
+    {ok, _} = exec:run("ulimit -n 100000", [sync]),
     ok.
 
 stop(_State) ->
