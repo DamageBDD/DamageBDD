@@ -60,8 +60,9 @@ get_trails() ->
 setup_vanillae_deps() ->
     %true = code:add_path("_checkouts/vanillae/ebin"),
     %true = code:add_path("_checkouts/vw/ebin"),
+    ZxBin = filename:join(os:getenv("HOME"), "zomp/zx"),
     Vanillae =
-        "otpr-vanillae-" ++ lists:droplast(os:cmd("zx latest otpr-vanillae")),
+        "otpr-vanillae-" ++ lists:droplast(os:cmd(ZxBin ++ " latest otpr-vanillae")),
     Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
     ZX =
         "otpr-zx-" ++
