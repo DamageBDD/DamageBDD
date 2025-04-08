@@ -14,7 +14,8 @@
     get_account_by_lightning/1,
     get_access_token/1,
     verify_access_token/1,
-    test/0
+    test/0,
+    test_email_contract/0
 ]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -271,3 +272,36 @@ test() ->
     ?LOG_INFO("register result ~p", [Res]),
     {_PubKey, Password, _PrivateKey} = Res0 = get_account_by_email(Email),
     ?LOG_INFO("lookup result ~p", [Res0]).
+
+test_email_contract() ->
+    #{public_key := PublicKey, private_key := PrivateKey} = secrets:make_keypair(),
+    ?LOG_DEBUG("New key pair created ~p ~p", [PublicKey, PrivateKey]),
+    Email = <<"steven@damagebdd.com">>,
+    Password = <<"testpassword">>,
+    #{
+        "caller_id" := _Caller,
+        "caller_nonce" := _Nonce,
+        "contract_id" :=
+            ContractId,
+        "gas_price" := _,
+        "gas_used" := _,
+        "height" := _,
+        "log" := [],
+        "return_type" := "ok",
+        "return_value" := none
+    } = damage_ae:contract_deploy("contracts/email_registry.aes", []),
+    KeyPair = secrets:node_keypair(),
+    ?LOG_DEBUG("contract account ~p", [ContractId]),
+    Args = [
+        ?DAMAGE_TOKEN_CONTRACT,
+        binary_to_list(secrets:salted_hash(Email)),
+        PublicKey,
+        binary_to_list(secrets:encrypt(Password)),
+        binary_to_list(secrets:encrypt(PrivateKey)),
+        100000000,
+        1000
+    ],
+    ?LOG_DEBUG("contaract call args ~p", [Args]),
+    damage_ae:contract_call(
+        KeyPair, ContractId, "contracts/email_registry.aes", 10000, "register_email", Args
+    ).

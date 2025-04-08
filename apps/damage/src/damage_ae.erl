@@ -64,8 +64,7 @@
     test_find_block/0,
     test_verify_message/0,
     test_contract_deploy/0,
-    test_contract_call/0,
-    test_contract_cycle/0
+    test_contract_call/0
 ]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
@@ -889,39 +888,6 @@ node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
     Balance = balance(AeAccount),
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
-
-test_contract_cycle() ->
-    #{public_key := PublicKey, private_key := PrivateKey} = secrets:make_keypair(),
-    ?LOG_DEBUG("New key pair created ~p ~p", [PublicKey, PrivateKey]),
-    Email = <<"steven@damagebdd.com">>,
-    Password = <<"testpassword">>,
-    #{
-        "caller_id" := _Caller,
-        "caller_nonce" := _Nonce,
-        "contract_id" :=
-            ContractId,
-        "gas_price" := _,
-        "gas_used" := _,
-        "height" := _,
-        "log" := [],
-        "return_type" := "ok",
-        "return_value" := none
-    } = damage_ae:contract_deploy("contracts/email_registry.aes", []),
-    KeyPair = secrets:node_keypair(),
-    ?LOG_DEBUG("contract account ~p", [?ACCOUNT_CONTRACT]),
-    Args = [
-        ?DAMAGE_TOKEN_CONTRACT,
-        binary_to_list(secrets:salted_hash(Email)),
-        PublicKey,
-        binary_to_list(secrets:encrypt(Password)),
-        binary_to_list(secrets:encrypt(PrivateKey)),
-        100000000,
-        1000
-    ],
-    ?LOG_DEBUG("contaract call args ~p", [Args]),
-    contract_call(
-        KeyPair, ContractId, "contracts/email_registry.aes", 10000, "register_email", Args
-    ).
 
 test_contract_deploy() ->
     KeyPair = secrets:node_keypair(),
