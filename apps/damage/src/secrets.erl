@@ -35,7 +35,8 @@
     test/0,
     migrate/0,
     import_secret_key/2,
-    ask_password/1
+    ask_password/1,
+    ask_password/2
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
@@ -68,11 +69,16 @@ get_node_password_cached(State) ->
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
     case maps:get(node_password, State, undefined) of
         undefined ->
-            case ask_password(Prompt) of
-                undefined ->
-                    throw(error);
+            case os:getenv("DAMAGE_SECRET_KEY") of
+                false ->
+                    case ask_password(Prompt) of
+                        undefined ->
+                            throw(error);
+                        NodePassword ->
+                            {NodePassword, maps:put(node_password, NodePassword, State)}
+                    end;
                 NodePassword ->
-                    {NodePassword, maps:put(node_password, NodePassword, State)}
+                    {NodePassword, State}
             end;
         NodePassword ->
             {NodePassword, State}
@@ -376,6 +382,10 @@ migrate() ->
             Keypair
     end.
 
+ask_password(Prompt, [nogui]) ->
+    {ok, Term} = io:get_password(Prompt, "~s"),
+    ?LOG_DEBUG("read password ~p", [Term]),
+    lists:flatten(Term).
 ask_password(Prompt) ->
     case os:getenv("DISPLAY") of
         false ->
