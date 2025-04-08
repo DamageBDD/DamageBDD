@@ -25,8 +25,10 @@ sudo mkdir -p $IPFS_CONFIG $IPFS_DATA
 sudo chown -R $IPFS_USER:$IPFS_USER $IPFS_CONFIG $IPFS_DATA
 
 # Temporary HOME to make IPFS init place config and data separately
-TMP_HOME=$(mktemp -d)
-chmod 700 "$TMP_HOME"
+TMP_HOME="$IPFS_DATA/init-home"
+sudo mkdir -p "$TMP_HOME"
+sudo chown -R $IPFS_USER:$IPFS_USER "$TMP_HOME"
+
 
 echo "[*] Initializing IPFS with split config/data..."
 sudo -u $IPFS_USER HOME=$TMP_HOME IPFS_PATH=$IPFS_CONFIG $IPFS_EXEC init
