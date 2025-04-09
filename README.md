@@ -17,7 +17,7 @@ Read The Manual [https://damagebdd.com/manual](here) to get started quickly.
 
 # Setup
 
-# Secrets
+## Secrets
 
 > secrets:encrypt_store(bitcoin_rpc_password, "bitcoin rpc password").
 > secrets:encrypt_store(nostr_nsec, "nostr private key (nsec)").
@@ -27,3 +27,13 @@ Read The Manual [https://damagebdd.com/manual](here) to get started quickly.
 For lnd support: 
 
 > secrets:encrypt_store(lnd_macaroon, "macaroon for lnd").
+
+## Bitcoin rpc
+
+> ./bin/bitcoin_rpcauth.py
+
+## Core Lightning
+
+Create Rune
+
+> lightning-cli createrune
