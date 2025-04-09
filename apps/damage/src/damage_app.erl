@@ -63,10 +63,10 @@ setup_vanillae_deps() ->
     ZxBin = filename:join(os:getenv("HOME"), "zomp/zx"),
     Vanillae =
         "otpr-vanillae-" ++ lists:droplast(os:cmd(ZxBin ++ " latest otpr-vanillae")),
-    Deps = string:lexemes(os:cmd("zx list deps " ++ Vanillae), "\n"),
+    Deps = string:lexemes(os:cmd(ZxBin ++ " list deps " ++ Vanillae), "\n"),
     ZX =
         "otpr-zx-" ++
-            lists:nth(2, string:lexemes(lists:droplast(os:cmd("zx --version")), " ")),
+            lists:nth(2, string:lexemes(lists:droplast(os:cmd(ZxBin ++ " --version")), " ")),
     Packages = [ZX, Vanillae | Deps],
     ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
     ?LOG_DEBUG("Packages paths ~p", [Packages]),
