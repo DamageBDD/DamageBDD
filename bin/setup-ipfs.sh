@@ -48,7 +48,7 @@ sudo -u $IPFS_USER ln -s $IPFS_DATA/keystore $IPFS_CONFIG/keystore
 sudo -u $IPFS_USER ln -s $IPFS_DATA/version $IPFS_CONFIG/version
 
 # Clean up temp
-rm -rf "$TMP_HOME"
+sudo rm -rf "$TMP_HOME"
 
 # Create systemd service
 echo "[*] Creating systemd unit..."

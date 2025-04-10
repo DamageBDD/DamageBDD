@@ -307,8 +307,7 @@ to_json(Req, #{action := invoices} = State) ->
     case damage_http:is_authorized(Req, State) of
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             {jsx:encode(get_invoices(AeAccount)), Req, State};
-        Other ->
-            ?LOG_DEBUG("Unexpected ~p", [Other]),
+        {false, _} ->
             {<<"Unauthorized.">>, Req, State}
     end;
 to_json(Req, #{action := rate} = State) ->
@@ -317,8 +316,7 @@ to_json(Req, #{action := balance} = State) ->
     case damage_http:is_authorized(Req, State) of
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             {jsx:encode(balance(AeAccount)), Req, State};
-        Other ->
-            ?LOG_DEBUG("Unexpected ~p", [Other]),
+        {false, _} ->
             {<<"Unauthorized.">>, Req, State}
     end.
 
@@ -379,8 +377,7 @@ to_html(Req, #{action := invoices} = State) ->
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             Invoices = get_invoices(AeAccount),
             {jsx:encode(Invoices), Req, State};
-        Other ->
-            ?LOG_DEBUG("Unexpected ~p", [Other]),
+        {false, _} ->
             {<<"Unauthorized.">>, Req, State}
     end.
 
@@ -561,8 +558,7 @@ do_post_action(invoices, #{amount := Amount}, Req, State) ->
                     invoice => create_invoice(Amount, Username, AeAccount)
                 }
             };
-        Other ->
-            ?LOG_DEBUG("Unexpected ~p", [Other]),
+        {false, _} ->
             {401, #{status => <<"noauth">>, message => <<"Unauthorized.">>}}
     end.
 
