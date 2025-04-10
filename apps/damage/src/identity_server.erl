@@ -32,12 +32,12 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 get_account(AeAccount) ->
-    gen_server:call(?MODULE, {get_account, AeAccount}).
+    gen_server:call(?MODULE, {get_account, AeAccount}, ?AE_TIMEOUT).
 register_email(Email, Password) ->
     #{public_key := PubKey, private_key := PrivateKey} = secrets:make_keypair(),
     case
         gen_server:call(
-            ?MODULE, {register_email, Email, PubKey, Password, PrivateKey}
+            ?MODULE, {register_email, Email, PubKey, Password, PrivateKey}, ?AE_TIMEOUT
         )
     of
         #{"return_type" := "ok", "return_value" := {}} ->
