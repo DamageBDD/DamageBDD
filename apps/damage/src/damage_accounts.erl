@@ -308,7 +308,7 @@ to_json(Req, #{action := invoices} = State) ->
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             {jsx:encode(get_invoices(AeAccount)), Req, State};
         {false, _} ->
-            {<<"Unauthorized.">>, Req, State}
+            {<<"Unauthorized.">>, cowboy_req:reply(401, Req), State}
     end;
 to_json(Req, #{action := rate} = State) ->
     {jsx:encode(#{price => ?DAMAGE_PRICE}), Req, State};
@@ -317,7 +317,7 @@ to_json(Req, #{action := balance} = State) ->
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             {jsx:encode(balance(AeAccount)), Req, State};
         {false, _} ->
-            {<<"Unauthorized.">>, Req, State}
+            {<<"Unauthorized.">>, cowboy_req:reply(401, Req), State}
     end.
 
 to_html(Req, #{action := reset_password} = State) ->
