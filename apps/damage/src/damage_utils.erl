@@ -165,106 +165,111 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
     {ok, SmtpHostname} = application:get_env(damage, smtp_hostname),
     {ok, SmtpPort} = application:get_env(damage, smtp_port),
     {ok, {FromName, From}} = application:get_env(damage, smtp_from),
-    {ok, SmtpPassword} = secrets:retrieve_decrypt(smtp_pass),
-    %Body1 =
-    %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
-    %Body0 =
-    %  mustache:render(
-    %    Body1,
-    %    convert_context(
-    %      #{
-    %        body => Body,
-    %        subject => Subject,
-    %        from => From,
-    %        from_name => FromName,
-    %        to => To,
-    %        to_name => ToName
-    %      }
-    %    )
-    %  ),
-    FromNameBin = list_to_binary(FromName),
-    FromBin = list_to_binary(From),
-    %ToBin = list_to_binary(To),
-    MultipartEmail =
-        {
-            <<"multipart">>,
-            <<"alternative">>,
-            [
-                {<<"From">>, <<FromNameBin/binary, " <", FromBin/binary, ">">>},
-                {<<"To">>, <<ToName/binary, " <", To/binary, ">">>},
-                {<<"Subject">>, Subject},
-                {<<"MIME-Version">>, <<"1.0">>},
+    case secrets:retrieve_decrypt(smtp_pass) of
+        {ok, SmtpPassword} ->
+            %Body1 =
+            %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
+            %Body0 =
+            %  mustache:render(
+            %    Body1,
+            %    convert_context(
+            %      #{
+            %        body => Body,
+            %        subject => Subject,
+            %        from => From,
+            %        from_name => FromName,
+            %        to => To,
+            %        to_name => ToName
+            %      }
+            %    )
+            %  ),
+            FromNameBin = list_to_binary(FromName),
+            FromBin = list_to_binary(From),
+            %ToBin = list_to_binary(To),
+            MultipartEmail =
                 {
-                    <<"Content-Type">>,
-                    <<"multipart/alternative; boundary=---damagebdd-0001">>
-                }
-            ],
-            #{
-                content_type_params => [{<<"boundary">>, <<"---damagebdd-0001">>}],
-                disposition => <<"inline">>,
-                disposition_params => []
-            },
-            [
-                {
-                    <<"text">>,
-                    <<"plain">>,
+                    <<"multipart">>,
+                    <<"alternative">>,
                     [
+                        {<<"From">>, <<FromNameBin/binary, " <", FromBin/binary, ">">>},
+                        {<<"To">>, <<ToName/binary, " <", To/binary, ">">>},
+                        {<<"Subject">>, Subject},
+                        {<<"MIME-Version">>, <<"1.0">>},
                         {
                             <<"Content-Type">>,
-                            <<"text/plain;charset=US-ASCII;format=flowed">>
-                        },
-                        {<<"Content-Transfer-Encoding">>, <<"quoted-printable">>}
+                            <<"multipart/alternative; boundary=---damagebdd-0001">>
+                        }
                     ],
                     #{
-                        content_type_params =>
-                            [{<<"charset">>, <<"US-ASCII">>}, {<<"format">>, <<"flowed">>}],
+                        content_type_params => [{<<"boundary">>, <<"---damagebdd-0001">>}],
                         disposition => <<"inline">>,
                         disposition_params => []
                     },
-                    list_to_binary(TextBody)
-                },
-                {
-                    <<"text">>,
-                    <<"html">>,
                     [
-                        {<<"Content-Type">>, <<"text/html;charset=US-ASCII">>},
-                        {<<"Content-Transfer-Encoding">>, <<"base64">>}
-                    ],
-                    #{
-                        content_type_params => [{<<"charset">>, <<"US-ASCII">>}],
-                        disposition => <<"inline">>,
-                        disposition_params => []
-                    },
-                    list_to_binary(HtmlBody)
-                }
-            ]
-        },
-    Email = {From, [To], mimemail:encode(MultipartEmail)},
-    %CaCerts = certifi:cacerts(),
-    gen_smtp_client:send(
-        Email,
-        [
-            {
-                tls_options,
+                        {
+                            <<"text">>,
+                            <<"plain">>,
+                            [
+                                {
+                                    <<"Content-Type">>,
+                                    <<"text/plain;charset=US-ASCII;format=flowed">>
+                                },
+                                {<<"Content-Transfer-Encoding">>, <<"quoted-printable">>}
+                            ],
+                            #{
+                                content_type_params =>
+                                    [{<<"charset">>, <<"US-ASCII">>}, {<<"format">>, <<"flowed">>}],
+                                disposition => <<"inline">>,
+                                disposition_params => []
+                            },
+                            list_to_binary(TextBody)
+                        },
+                        {
+                            <<"text">>,
+                            <<"html">>,
+                            [
+                                {<<"Content-Type">>, <<"text/html;charset=US-ASCII">>},
+                                {<<"Content-Transfer-Encoding">>, <<"base64">>}
+                            ],
+                            #{
+                                content_type_params => [{<<"charset">>, <<"US-ASCII">>}],
+                                disposition => <<"inline">>,
+                                disposition_params => []
+                            },
+                            list_to_binary(HtmlBody)
+                        }
+                    ]
+                },
+            Email = {From, [To], mimemail:encode(MultipartEmail)},
+            %CaCerts = certifi:cacerts(),
+            gen_smtp_client:send(
+                Email,
                 [
-                    {versions, ['tlsv1.2']},
-                    {verify, verify_none},
+                    {
+                        tls_options,
+                        [
+                            {versions, ['tlsv1.2']},
+                            {verify, verify_none},
+                            %,
+                            {depth, 99}
+                            %{cacerts, CaCerts}
+                        ]
+                    },
+                    {tls, always},
+                    {auth, always},
+                    {relay, SmtpHost},
+                    {port, SmtpPort},
+                    {hostname, SmtpHostname},
+                    {username, SmtpUser},
+                    {password, SmtpPassword}
                     %,
-                    {depth, 99}
-                    %{cacerts, CaCerts}
+                    %       {trace_fun, fun(Format, Args)-> logger:info(Format, Args) end}
                 ]
-            },
-            {tls, always},
-            {auth, always},
-            {relay, SmtpHost},
-            {port, SmtpPort},
-            {hostname, SmtpHostname},
-            {username, SmtpUser},
-            {password, SmtpPassword}
-            %,
-            %       {trace_fun, fun(Format, Args)-> logger:info(Format, Args) end}
-        ]
-    ).
+            );
+        Error ->
+            ?LOG_ERROR("Failed to get email auth ~p", [Error]),
+            error
+    end.
 
 get_concurrency_level(<<"sk_baby">>) -> 1;
 get_concurrency_level(<<"sk_easy">>) -> 10;
