@@ -90,6 +90,7 @@ start_phase(start_vanillae, _StartType, []) ->
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
     vanillae:tls(AeTls),
     ok = vanillae:ae_nodes(Nodes),
+    application:ensure_started(vanillae),
     ?LOG_INFO("Started vanilla."),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
