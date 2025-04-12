@@ -307,8 +307,8 @@ to_json(Req, #{action := invoices} = State) ->
     case damage_http:is_authorized(Req, State) of
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             {jsx:encode(get_invoices(AeAccount)), Req, State};
-        {false, _} ->
-            {<<"Unauthorized.">>, cowboy_req:reply(401, Req), State}
+        {false, _, _} ->
+            {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}
     end;
 to_json(Req, #{action := rate} = State) ->
     {jsx:encode(#{price => ?DAMAGE_PRICE}), Req, State};
@@ -316,8 +316,8 @@ to_json(Req, #{action := balance} = State) ->
     case damage_http:is_authorized(Req, State) of
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             {jsx:encode(balance(AeAccount)), Req, State};
-        {false, _} ->
-            {<<"Unauthorized.">>, cowboy_req:reply(401, Req), State}
+        {false, _, _} ->
+            {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}
     end.
 
 to_html(Req, #{action := reset_password} = State) ->
@@ -378,7 +378,7 @@ to_html(Req, #{action := invoices} = State) ->
             Invoices = get_invoices(AeAccount),
             {jsx:encode(Invoices), Req, State};
         {false, _} ->
-            {<<"Unauthorized.">>, Req, State}
+            {stop, cowboy_req:reply(401, Req), State}
     end.
 
 authenticate_user(Email, Password) ->

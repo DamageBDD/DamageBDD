@@ -139,12 +139,12 @@ is_authorized(Req, State0) ->
             ?LOG_INFO("Got Nostr auth ~p", [NostrEvent]),
             case nostrlib:verify(NostrEvent) of
                 true -> damage_ae:contract_call_admin_account("resolve_npub", [Npub]);
-                _ -> {{false, <<"Bearer">>}, Req, State}
+                _ -> {false, Req, State}
             end;
         {oauth, Token} ->
             case damage_accounts:validate_access_token(Token) of
                 {error, _} ->
-                    {{false, <<"Bearer">>}, Req, State};
+                    {false, Req, State};
                 {AeAccount, Username} ->
                     case identity_server:get_account_by_email(Username) of
                         {AeAccount, _, _PrivateKey} ->
@@ -161,14 +161,14 @@ is_authorized(Req, State0) ->
                                 )
                             };
                         _ ->
-                            {{false, <<"Bearer">>}, Req, State}
+                            {false, Req, State}
                     end;
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
-                    {{false, <<"Bearer">>}, Req, State}
+                    {false, Req, State}
             end;
         {error, _} ->
-            {{false, <<"Bearer">>}, Req, State}
+            {false, Req, State}
     end.
 
 content_types_provided(Req, State) ->

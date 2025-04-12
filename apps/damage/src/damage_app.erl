@@ -83,6 +83,7 @@ start_phase(start_vanillae, _StartType, []) ->
     %Version = "0.13.9",
     %true = os:putenv("zx_include", filename:join([os:getenv("HOME"), "/zomp/lib/otpr/zx/",Version,"include"])),
     setup_vanillae_deps(),
+    application:ensure_started(vanillae),
     {ok, NetworkId} = application:get_env(damage, ae_network_id),
     vanillae:network_id(NetworkId),
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
@@ -90,7 +91,6 @@ start_phase(start_vanillae, _StartType, []) ->
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
     vanillae:tls(AeTls),
     ok = vanillae:ae_nodes(Nodes),
-    application:ensure_started(vanillae),
     ?LOG_INFO("Started vanilla."),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
