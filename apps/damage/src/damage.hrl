@@ -39,11 +39,9 @@
 -define(DAMAGE_TOKEN_CONTRACT,
     "ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk"
 ).
--define(ACCOUNT_CONTRACT,
-    "ct_vd3iN23kabz2qBX5JidDiaahVSQc1x1HRZDFDi4q54ATjsHo3"
-).
 -define(EMAIL_REGISTRY_CONTRACT,
-    "ct_9arW6cnYKGoioHceaJ3v9rBWXpVXYP6VjKD19JEa5FosFGPBo"
+    % staging "ct_9arW6cnYKGoioHceaJ3v9rBWXpVXYP6VjKD19JEa5FosFGPBo"
+    "ct_BJi1Lg4JmpPZqY5Pt1JB4PoRiTNphMvkuxTzCk2kNLimKMHvB"
 ).
 -define(NPUB_REGISTRY_CONTRACT,
     "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"
@@ -53,15 +51,18 @@
 ).
 
 -define(CONTEXT_CONTRACT,
-    "ct_7rVLDU2eDG4ip7CKnX3Xzd43TnJ9BiYvGaWeEhtL6EVxfGAZQ"
+    % staging "ct_7rVLDU2eDG4ip7CKnX3Xzd43TnJ9BiYvGaWeEhtL6EVxfGAZQ"
+    "ct_Mz99gAjHDHEGpTJktsjRUXjr2A4FQa38VV57K9qxrsNznpSnt"
 ).
 
 -define(WEBHOOKS_CONTRACT,
-    "ct_f5LMGRP1p7Vdmp8Y5TXih8bXn8Sx8HLTFMm7gt4dLXDeeuGvS"
+    % staging "ct_f5LMGRP1p7Vdmp8Y5TXih8bXn8Sx8HLTFMm7gt4dLXDeeuGvS"
+    "ct_XDiXtNguPHqdFkR6q4AhtAWNnSMpvRsxuMVanNZM2EzR7yhZJ"
 ).
 
 -define(SCHEDULES_CONTRACT,
-    "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
+    % schedules "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
+    "ct_AaxgGT42E2mxVpcmYoUDx49kCNYcoGvVNACzEY9GnHiTakm1G"
 ).
 
 -define(MARKETS_CONTRACT,
