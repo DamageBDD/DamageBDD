@@ -105,6 +105,7 @@
 			event.preventDefault();
 		});
 
+			updateBalance();
 		showHideLoginButton();
 		MicroModal.init({
 			onShow: modal => console.info(`${modal.id} is shown`), // [1]
@@ -148,7 +149,7 @@
 
 
 	function isAuthenticated() {
-			return (localStorage.access_token == null) ? false : true;
+		return (localStorage.access_token == null) ? false : true;
 	}
 
 	function showHideLoginButton(){
@@ -160,7 +161,6 @@
 			loginButton.style.display = "none";
 			content.style.display = "block";
 			logoutButton.style.display = "inline-block";
-			updateBalance();
 			try{
 				MicroModal.close('login-modal');
 			}catch(e){}
@@ -346,6 +346,7 @@
 					localStorage.setItem("access_token", data.access_token);
 					localStorage.setItem("address", data.address);
 					generateAddressQrcode();
+					updateBalance();
 					toasts.push({
 						title: 'Login Success',
 						content: 'Authentication Successful.',
@@ -461,6 +462,10 @@
 		xhr.withCredentials = true;
 
 		xhr.onload = function() {
+			if (xhr.status === 401) {
+				localStorage.removeItem("access_token");
+				localStorage.removeItem("address");
+			}
 			if (xhr.status === 200) {
 				var balanceData = JSON.parse(xhr.responseText);
 				var balanceDiv = document.getElementById('balanceDiv');
