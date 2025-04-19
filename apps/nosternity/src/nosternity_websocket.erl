@@ -1,4 +1,4 @@
--module(nostr_websocket).
+-module(nosternity_websocket).
 -behaviour(cowboy_websocket).
 
 %% API

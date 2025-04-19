@@ -1,4 +1,4 @@
--module(nostr_relay).
+-module(nosternity_relay).
 -behaviour(gen_server).
 -include_lib("kernel/include/logger.hrl").
 

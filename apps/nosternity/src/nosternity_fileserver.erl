@@ -1,4 +1,4 @@
--module(nostr_fileserver).
+-module(nosternity_fileserver).
 
 -vsn("0.1.0").
 
