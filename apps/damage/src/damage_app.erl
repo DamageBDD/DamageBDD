@@ -38,7 +38,6 @@ get_trails() ->
             damage_ai,
             lnaddress,
             cowboy_swagger_handler,
-            nostr_fileserver,
             lightning_auth,
             ecai_api
         ],
@@ -50,7 +49,6 @@ get_trails() ->
             {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},
             {"/steps.yaml", cowboy_static, {priv_file, damage, "static/steps.yaml"}},
             {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}},
-            {"/nostr", nostr_websocket, #{}},
             {"/ws/auth", lightning_auth_ws, #{}}
             | trails:trails(Handlers)
         ],
