@@ -19,50 +19,77 @@
 -define(TRAILS_TAG, ["ECAI Api"]).
 %% API Routes
 trails() ->
-
     [
+        trails:trail(
+            "/ecai/",
+            damage_http,
+            #{action => ecai_train},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "list models.",
+                        produces => ["text/html"]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "create new model from data",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"data">>,
+                                    description => <<"training data.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    }
+            }
+        ),
         trails:trail("/ecai/ekef", ecai_api, #{}, #{
             description => "EKEF encoding endpoint",
             methods => #{
                 post => #{
-                    tags => [chat],
+                    tags => ?TRAILS_TAG,
                     description => "Get an AI-generated response",
                     parameters => [
-                                   #{name => <<"session_id">>,
-                                     type => <<"string">>,
-                                     required => true,
-                                     description => "Unique chat session ID"
-                                    },
-                                   #{name => <<"user_id">>,
-                                     type => <<"string">>,
-                                     required => true,
-                                     description => "User Identifier"
-                                    },
-                                   #{name => <<"message">>,
-                                     type => <<"string">>,
-                                     required => true,
-                                     description => "User message input"
-                                    }
-                            ],
-                    responses => #{
-                        200 => #{
-                            description => "Successful response",
-                            content => #{
-                                "application/json" => #{
-                                    schema => #{
-                                        type => object,
-                                        properties => #{
-                                            reply => #{
-                                                type => string,
-                                                description => "AI-generated response"
+                        #{
+                            name => <<"session_id">>,
+                            type => <<"string">>,
+                            required => true,
+                            description => "Unique chat session ID"
+                        },
+                        #{
+                            name => <<"user_id">>,
+                            type => <<"string">>,
+                            required => true,
+                            description => "User Identifier"
+                        },
+                        #{
+                            name => <<"message">>,
+                            type => <<"string">>,
+                            required => true,
+                            description => "User message input"
+                        }
+                    ],
+                    responses =>
+                        #{
+                            <<"200">> =>
+                                #{
+                                    description => "Successful response",
+                                    content => #{
+                                        <<"application/json">> => #{
+                                            <<"schema">> => #{
+                                                <<"type">> => <<"object">>
                                             }
                                         }
                                     }
-                                }
-                            }
-                        },
-                        400 => #{description => "Bad request"}
-                    }
+                                },
+                            <<"400">> => #{description => "Bad request"}
+                        }
                 }
             }
         }),
@@ -70,44 +97,43 @@ trails() ->
             description => "OpenAI-Compatible Chat API",
             methods => #{
                 post => #{
-                    tags => [chat],
+                    tags => ?TRAILS_TAG,
                     description => "Get an AI-generated response",
                     parameters => [
-                                   #{name => <<"session_id">>,
-                                     type => <<"string">>,
-                                     required => true,
-                                     description => "Unique chat session ID"
-                                    },
-                                   #{name => <<"user_id">>,
-                                     type => <<"string">>,
-                                     required => true,
-                                     description => "User Identifier"
-                                    },
-                                   #{name => <<"message">>,
-                                     type => <<"string">>,
-                                     required => true,
-                                     description => "User message input"
-                                    }
-                            ],
-                    responses => #{
-                        200 => #{
-                            description => "Successful response",
-                            content => #{
-                                "application/json" => #{
-                                    schema => #{
-                                        type => object,
-                                        properties => #{
-                                            reply => #{
-                                                type => string,
-                                                description => "AI-generated response"
+                        #{
+                            name => <<"session_id">>,
+                            type => <<"string">>,
+                            required => true,
+                            description => "Unique chat session ID"
+                        },
+                        #{
+                            name => <<"user_id">>,
+                            type => <<"string">>,
+                            required => true,
+                            description => "User Identifier"
+                        },
+                        #{
+                            name => <<"message">>,
+                            type => <<"string">>,
+                            required => true,
+                            description => "User message input"
+                        }
+                    ],
+                    responses =>
+                        #{
+                            <<"200">> =>
+                                #{
+                                    description => "Successful response",
+                                    content => #{
+                                        <<"application/json">> => #{
+                                            <<"schema">> => #{
+                                                <<"type">> => <<"object">>
                                             }
                                         }
                                     }
-                                }
-                            }
-                        },
-                        400 => #{description => "Bad request"}
-                    }
+                                },
+                            <<"400">> => #{description => "Bad request"}
+                        }
                 }
             }
         })
