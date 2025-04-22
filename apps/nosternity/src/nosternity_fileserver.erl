@@ -16,7 +16,7 @@
 -export([trails/0]).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("damage.hrl").
+-include_lib("nosternity.hrl").
 
 -define(TRAILS_TAG, ["Executing Tests"]).
 

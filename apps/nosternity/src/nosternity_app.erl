@@ -16,8 +16,7 @@
 start(_StartType, _StartArgs) -> damage_sup:start_link().
 get_trails() ->
     Handlers =
-        [ 
-        ],
+        [],
     Trails =
         [
             {"/nostr", nostr_websocket, #{}},
@@ -26,7 +25,7 @@ get_trails() ->
         ],
     trails:store(Trails),
     trails:single_host_compile(Trails).
-    
+
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Damage."),
     {ok, _} = application:ensure_all_started(gun),
@@ -52,7 +51,6 @@ start_phase(start_trails_http, _StartType, []) ->
         ),
     metrics:init(),
     ?LOG_INFO("Started Nostrernity cowboy.");
-
 start_phase(os_tune, _StartType, []) ->
     ?LOG_INFO("Tuning os."),
     {ok, _} = exec:run("ulimit -n 1000000", [sync]),
