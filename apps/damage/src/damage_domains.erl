@@ -23,7 +23,7 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
--define(TRAILS_TAG, ["Test Reports"]).
+-define(TRAILS_TAG, ["Authorized Domains"]).
 -define(DOMAIN_TOKEN_EXPIRY, 144000).
 
 trails() ->

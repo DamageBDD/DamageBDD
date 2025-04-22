@@ -18,7 +18,7 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
--define(TRAILS_TAG, ["Damage LN Address resolver"]).
+-define(TRAILS_TAG, ["LN Address resolver"]).
 -define(DEFAULT_AMOUNT_MSATS, 1000).
 
 trails() ->
