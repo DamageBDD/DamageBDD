@@ -19,34 +19,76 @@
 -define(TRAILS_TAG, ["ECAI Api"]).
 %% API Routes
 trails() ->
+
     [
+        trails:trail("/ecai/ekef", ecai_api, #{}, #{
+            description => "EKEF encoding endpoint",
+            methods => #{
+                post => #{
+                    tags => [chat],
+                    description => "Get an AI-generated response",
+                    parameters => [
+                                   #{name => <<"session_id">>,
+                                     type => <<"string">>,
+                                     required => true,
+                                     description => "Unique chat session ID"
+                                    },
+                                   #{name => <<"user_id">>,
+                                     type => <<"string">>,
+                                     required => true,
+                                     description => "User Identifier"
+                                    },
+                                   #{name => <<"message">>,
+                                     type => <<"string">>,
+                                     required => true,
+                                     description => "User message input"
+                                    }
+                            ],
+                    responses => #{
+                        200 => #{
+                            description => "Successful response",
+                            content => #{
+                                "application/json" => #{
+                                    schema => #{
+                                        type => object,
+                                        properties => #{
+                                            reply => #{
+                                                type => string,
+                                                description => "AI-generated response"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        400 => #{description => "Bad request"}
+                    }
+                }
+            }
+        }),
         trails:trail("/v1/chat/completions", ecai_api, #{}, #{
             description => "OpenAI-Compatible Chat API",
             methods => #{
                 post => #{
-                    summary => "Get an AI-generated response",
                     tags => [chat],
-                    request => #{
-                        content => #{
-                            "application/json" => #{
-                                schema => #{
-                                    type => object,
-                                    properties => #{
-                                        session_id => #{
-                                            type => string, description => "Unique chat session ID"
-                                        },
-                                        user_id => #{
-                                            type => string, description => "User identifier"
-                                        },
-                                        message => #{
-                                            type => string, description => "User message input"
-                                        }
+                    description => "Get an AI-generated response",
+                    parameters => [
+                                   #{name => <<"session_id">>,
+                                     type => <<"string">>,
+                                     required => true,
+                                     description => "Unique chat session ID"
                                     },
-                                    required => [session_id, user_id, message]
-                                }
-                            }
-                        }
-                    },
+                                   #{name => <<"user_id">>,
+                                     type => <<"string">>,
+                                     required => true,
+                                     description => "User Identifier"
+                                    },
+                                   #{name => <<"message">>,
+                                     type => <<"string">>,
+                                     required => true,
+                                     description => "User message input"
+                                    }
+                            ],
                     responses => #{
                         200 => #{
                             description => "Successful response",
@@ -109,22 +151,19 @@ to_json(Req, #{ae_account := _AeAccount, action := get_knowledge} = State) ->
             {<<"Invalid hash.">>, Req, State}
     end.
 
-from_json(Req, #{ae_account := AeAccount, action := train} = State) ->
-    {ok, KnowledgeNftContract} = application:get_env(damage, knowledge_contract),
+from_json(Req, #{ae_account := AeAccount, action := encode} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
-        Data when is_map(Data) ->
-            Knowledge = ecai:train(Data),
-            MetaData = #{},
-            MintResult = damage_ae:contract_call(
-                damage_ae:account_keypair(AeAccount),
-                KnowledgeNftContract,
-                "contracts/knowledge_nft.aes",
-                "mint",
-                [AeAccount, MetaData, Knowledge]
+        #{
+            subject := _Subject,
+            predicate := _Predicate,
+            object := _Object,
+            context := _Context
+        } when is_map(Data) ->
+            Response = cowboy_req:set_resp_body(
+                jsx:encode(ecai:mint_knowledge(AeAccount, Data)), Req0
             ),
-            Response = cowboy_req:set_resp_body(jsx:encode(MintResult), Req0),
             cowboy_req:reply(200, Response),
             {stop, Response, State};
         _ ->

@@ -21,7 +21,7 @@
 -export([from_json/2, allowed_methods/2, is_authorized/2]).
 
 %% Trails Route Definitions
--define(TRAILS_TAG, <<"Lightning Authentication">>).
+-define(TRAILS_TAG, ["Lightning Authentication"]).
 
 trails() ->
     [
