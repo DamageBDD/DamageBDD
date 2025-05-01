@@ -47,9 +47,12 @@
 
 %% API Functions
 
-start_link([]) -> gen_server:start_link(?MODULE, [], []).
+start_link([]) -> gen_server:start_link(?MODULE, [], []);
+start_link([ws]) -> gen_server:start_link(?MODULE, [ws], []).
 
 init([]) ->
+            {ok, #state{}};
+init([ws]) ->
     ?LOG_INFO("clnconnect started"),
     {ok, Host} = application:get_env(damage, cln_host),
     {ok, Port} = application:get_env(damage, cln_port),
@@ -534,8 +537,7 @@ hold_invoice_cancel(PaymentHash) ->
         ?MODULE,
         fun(Worker) -> gen_server:call(Worker, {hold_invoice_cancel, PaymentHash}) end
     ).
-parse_socketio_message(<<"0", Payload/binary>>) ->
-    %% "42" is Socket.IO event prefix for normal message
+decode_payload(Payload) ->
     try jsx:decode(Payload, [return_maps, {labels, atom}]) of
         Result when is_map(Result) ->
             Result;
@@ -544,18 +546,15 @@ parse_socketio_message(<<"0", Payload/binary>>) ->
     catch
         _:_ ->
             {error, Payload}
-    end;
+    end.
+parse_socketio_message(<<"0", Payload/binary>>) ->
+    %% "42" is Socket.IO event prefix for normal message
+    decode_payload(Payload);
+parse_socketio_message(<<"40", Payload/binary>>) ->
+    decode_payload(Payload);
 parse_socketio_message(<<"42", Payload/binary>>) ->
     %% "42" is Socket.IO event prefix for normal message
-    try jsx:decode(Payload, [return_maps, {labels, atom}]) of
-        Result when is_map(Result) ->
-            Result;
-        Result ->
-            Result
-    catch
-        _:_ ->
-            {error, Payload}
-    end;
+    decode_payload(Payload);
 parse_socketio_message(Other) ->
     ?LOG_DEBUG("unknown socketio message ~p", [Other]),
     Other.

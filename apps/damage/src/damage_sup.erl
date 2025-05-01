@@ -120,7 +120,7 @@ init([]) ->
                 % mandatory
                 id => cln_websocket,
                 % mandatory
-                start => {cln, start_link, [[]]},
+                start => {cln, start_link, [[ws]]},
                 % optional
                 restart => permanent,
                 % optional
