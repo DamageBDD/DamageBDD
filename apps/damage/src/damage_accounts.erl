@@ -318,7 +318,9 @@ to_json(Req, #{action := balance} = State) ->
             {jsx:encode(balance(AeAccount)), Req, State};
         {false, _, _} ->
             {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}
-    end.
+    end;
+to_json(Req, State) ->
+    {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}.
 
 to_html(Req, #{action := reset_password} = State) ->
     case cowboy_req:match_qs([token], Req) of

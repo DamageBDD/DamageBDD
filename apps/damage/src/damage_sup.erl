@@ -127,7 +127,7 @@ init([]) ->
                 shutdown => 60,
                 % optional
                 type => worker,
-                modules => [cln]
+                modules => []
             },
             #{
                 % mandatory

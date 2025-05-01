@@ -16,9 +16,17 @@
     ]
 ).
 -export([getinfo/0]).
--export([subscribe_invoice/2]).
+-export([wait_any_invoice/0]).
 -export(
-    [create_invoice/2, create_invoice/3, hold_invoice/4, hold_invoice_cancel/1]
+    [
+        create_invoice/2,
+        create_invoice/3,
+        create_invoice/4,
+        hold_invoice/4,
+        hold_invoice_cancel/1,
+        list_invoices_by_label/1,
+        list_invoices_by_invoicestring/1
+    ]
 ).
 
 -include_lib("kernel/include/logger.hrl").
@@ -49,62 +57,107 @@ init([]) ->
     {ok, CaCertFile} = application:get_env(damage, cln_cacertfile),
     {ok, CertFile} = application:get_env(damage, cln_certfile),
     {ok, KeyFile} = application:get_env(damage, cln_keyfile),
-    case secrets:retrieve_decrypt(cln_rune) of
-        {ok, RuneBin} ->
-            TLSOptions =
-                [
-                    {certfile, CertFile},
-                    {keyfile, KeyFile},
-                    {cacertfile, CaCertFile},
-                    % This ensures the server's certificate is verified
-                    {verify, verify_peer},
-                    % Ensure compatibility with recent TLS versions
-                    {versions, ['tlsv1.2', 'tlsv1.3']},
-                    % HTTP2 or HTTP/1.1, depending on your setup
-                    {alpn_protocols, ['http/1.1', h2]}
-                ],
-            Options =
-                case Host of
-                    "localhost" -> #{};
-                    _ -> #{transport => tls, tls_opts => TLSOptions}
-                end,
-            {ok, ConnPid} = gun:open(Host, Port, Options),
-            StreamRef = gun:ws_upgrade(ConnPid, Path, [{<<"rune">>, RuneBin}]),
-            %ok = gun:ws_send(ConnPid, StreamRef,  {text,  jsx:encode(#{jsonrpc => <<"2.0">>,  method => <<"getinfo">>, params => []})}),
-            ?LOG_DEBUG("cln websocket upgrade successfull ~p", [ConnPid]),
-            HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-            State =
-                #state{
-                    cln_host = Host,
-                    cln_port = Port,
-                    cln_wspath = Path,
-                    cln_certfile = CertFile,
-                    cln_keyfile = KeyFile,
-                    rune = RuneBin,
-                    conn_pid = ConnPid,
-                    streamref = StreamRef,
-                    heartbeat_timer = HeartbeatTimer,
-                    options = Options
-                },
-            ?LOG_DEBUG("State ~p ", [State]),
-            {ok, State};
+    case secrets:retrieve_decrypt(cln_readonly_rune) of
+        {ok, ReadOnlyRuneBin} ->
+            case secrets:retrieve_decrypt(cln_rune) of
+                {ok, RuneBin} ->
+                    TLSOptions =
+                        [
+                            {certfile, CertFile},
+                            {keyfile, KeyFile},
+                            {cacertfile, CaCertFile},
+                            % This ensures the server's certificate is verified
+                            {verify, verify_peer},
+                            % Ensure compatibility with recent TLS versions
+                            {versions, ['tlsv1.2', 'tlsv1.3']},
+                            % HTTP2 or HTTP/1.1, depending on your setup
+                            {alpn_protocols, ['http/1.1', h2]}
+                        ],
+                    Options =
+                        case Host of
+                            "localhost" -> #{};
+                            _ -> #{transport => tls, tls_opts => TLSOptions}
+                        end,
+                    {ok, ConnPid} = gun:open(Host, Port, Options),
+                    ?LOG_DEBUG("cln websocket upgrade using rune ~p", [ReadOnlyRuneBin]),
+                    StreamRef = gun:ws_upgrade(ConnPid, "/socket.io/?EIO=4&transport=websocket", [
+                        {<<"rune">>, ReadOnlyRuneBin}
+                    ]),
+                    ?LOG_DEBUG("cln websocket upgrade successfull ~p", [ConnPid]),
+                    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+                    State =
+                        #state{
+                            cln_host = Host,
+                            cln_port = Port,
+                            cln_wspath = Path,
+                            cln_certfile = CertFile,
+                            cln_keyfile = KeyFile,
+                            rune = RuneBin,
+                            conn_pid = ConnPid,
+                            streamref = StreamRef,
+                            heartbeat_timer = HeartbeatTimer,
+                            options = Options
+                        },
+                    ?LOG_DEBUG("State ~p ", [State]),
+                    {ok, State};
+                Error ->
+                    ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret. ~p", [Error]),
+                    {ok, #state{}}
+            end;
         Error ->
             ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret. ~p", [Error]),
             {ok, #state{}}
     end.
 
 handle_call(
-    {subscribe_invoice, AddIndex, SettleIndex},
+    waitanyinvoice,
     _From,
     #state{conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
+    Message0 = jsx:encode([<<"getinfo">>]),
+    Message =
+        <<"42", Message0/binary>>,
+
     ok =
         gun:ws_send(
             ConnPid,
             StreamRef,
-            {text, jsx:encode(#{add_index => AddIndex, settle_index => SettleIndex})}
+            {text, Message}
         ),
+    ?LOG_INFO("sent waitanyinfo. ~p", [Message]),
     {reply, ok, State};
+handle_call(
+    {list_invoices, Params},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
+        State
+) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    %% Construct the API request URL
+    Path = "/v1/listinvoices",
+    %% Construct the request body
+    ReqJson = jsx:encode(Params),
+    %% Send the HTTP POST request
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    {ok, Response} =
+        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+            {response, fin, Status, _RespHeaders} ->
+                ?LOG_DEBUG("Got fin ~p", [Status]),
+                no_data;
+            {response, nofin, _Status, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            {response, nofin, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            Default ->
+                ?LOG_DEBUG("Got unknown ~p ", [Default])
+        end,
+    Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
+    %% Parse the response JSON
+    gun:cancel(ConnPid, StreamRef),
+    gun:close(ConnPid),
+    %% Return the invoice details
+    {reply, Invoice, State};
 handle_call(
     getinfo,
     _From,
@@ -140,7 +193,7 @@ handle_call(
     %% Return the invoice details
     {reply, Invoice, State};
 handle_call(
-    {create_invoice, Amount, Description, Expiry},
+    {create_invoice, Amount, Description, Expiry, Label},
     _From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
         State
@@ -150,8 +203,6 @@ handle_call(
     %% Construct the API request URL
     Path = "/v1/invoice",
     %% Construct the request body
-    {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
-    Label = list_to_binary("asyncmind" ++ Timestamp),
     ReqJson =
         jsx:encode(
             #{
@@ -176,7 +227,6 @@ handle_call(
             Default ->
                 ?LOG_DEBUG("Got unknown ~p ", [Default])
         end,
-    ?LOG_DEBUG("Got create_invoice response ~p", [Response]),
     Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
     %% Parse the response JSON
     gun:cancel(ConnPid, StreamRef),
@@ -216,7 +266,7 @@ handle_call(
             {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
             Default -> ?LOG_WARNING("Got unknown ~p ", [Default])
         end,
-    ?LOG_DEBUG("Got create_invoice response ~p", [Response]),
+    ?LOG_DEBUG("Got hold_invoice response ~p", [Response]),
     Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
     %% Parse the response JSON
     gun:cancel(ConnPid, StreamRef),
@@ -245,7 +295,7 @@ handle_call(
             {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
             Default -> ?LOG_WARNING("Got unknown ~p ", [Default])
         end,
-    ?LOG_DEBUG("Got create_invoice response ~p", [Response]),
+    ?LOG_DEBUG("Got hold_invoice_cancel response ~p", [Response]),
     Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
     %% Parse the response JSON
     gun:cancel(ConnPid, StreamRef),
@@ -254,32 +304,32 @@ handle_call(
     {reply, Invoice, State};
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
-        "got unknown on gun websocket Call ~p, From ~p, State ~p",
+        "handle_call got unknown ~p, From ~p, State ~p",
         [Request, From, State]
     ),
     {reply, err, State}.
 
 handle_cast(Msg, State) ->
-    ?LOG_DEBUG("got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
+    ?LOG_DEBUG("handle_cast got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
     {noreply, State}.
 
 handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State) when
     StreamRef == State#state.streamref
 ->
-    ?LOG_DEBUG("upgraded ~p ", [StreamRef]),
+    ?LOG_DEBUG("gun_upgrade upgraded ~p ", [StreamRef]),
     {noreply, State#state{conn_pid = ConnPid}};
 handle_info(
     {gun_response, ConnPid, _, _, Status, Headers},
     State = #state{conn_pid = ConnPid}
 ) ->
     ?LOG_DEBUG(
-        "got message on gun websocket ConnPid ~p, \nStatus ~p Headers ~p",
+        "gun_response got message on gun websocket ConnPid ~p, \nStatus ~p Headers ~p",
         [ConnPid, Status, Headers]
     ),
     {noreply, State};
 handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
     ?LOG_ERROR(
-        "got error on gun websocket ConnPid ~p, StreamRef ~p, \nReason ~p",
+        "got gun error ConnPid ~p, StreamRef ~p, \nReason ~p",
         [ConnPid, StreamRef, Reason]
     ),
     {noreply, State};
@@ -295,19 +345,77 @@ handle_info({gun_down, ConnPid, _Reason}, State) when
     io:format("Connection closed~n"),
     erlang:cancel_timer(State#state.heartbeat_timer),
     {stop, normal, State};
-handle_info({gun_ws, _, _, {text, Message0}} = Info, State) ->
-    ?LOG_DEBUG("got known on gun websocket Info ~p, State ~p", [Info, State]),
-    Message = jsx:decode(Message0, [return_maps, {labels, atom}]),
+handle_info({gun_up, _, _} = Info, State) ->
+    ?LOG_DEBUG("handle_info gun_up websocket Info ~p, State ~p ", [Info, State]),
+    {noreply, State};
+handle_info({gun_ws, ConnPid, StreamRef, {text, <<"2">>}}, State) ->
+    ?LOG_DEBUG("cln socket Received ping, sending pong. ~p ~p ~n", [ConnPid, StreamRef]),
+    gun:ws_send(
+        ConnPid,
+        StreamRef,
+        {text, <<"3">>}
+    ),
+    {noreply, State};
+handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
+    ?LOG_DEBUG("handle_info gun_ws got message ~p", [Message0]),
+    Message = parse_socketio_message(Message0),
     ?LOG_DEBUG("got message ~p", [Message]),
-    ok = handle_event(Message),
+    ok = handle_event(ConnPid, StreamRef, Message),
+
+    {noreply, State};
+handle_info({gun_ws, _, _, close} = Info, State) ->
+    ?LOG_DEBUG("handle_info got close on gun websocket Info ~p, State ~p", [Info, State]),
+    {noreply, State};
+handle_info({gun_down, _, ws, normal, _} = Info, State) ->
+    ?LOG_DEBUG("handle_info got gun_down on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
 handle_info(Info, State) ->
-    ?LOG_DEBUG("got unknown on gun websocket Info ~p, State ~p", [Info, State]),
+    ?LOG_DEBUG("handle_info got unknown on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State}.
 
-handle_event(#{result := #{state := <<"OPEN">>}} = Event) ->
+handle_event(
+    ConnPid,
+    StreamRef,
+    #{
+        sid := SessionId,
+        upgrades := [],
+        pingTimeout := _PingTimeout,
+        pingInterval := _PingInteraval
+    } = _Event
+) ->
+    ?LOG_DEBUG("Websocket session created ~p", [SessionId]),
+    gun:ws_send(
+        ConnPid,
+        StreamRef,
+        {text, <<"40">>}
+    );
+handle_event(
+    ConnPid,
+    StreamRef,
+    #{
+        sid := SessionId
+    }
+) ->
+    ?LOG_DEBUG("Websocket session created ~p", [SessionId]),
+    Message0 = jsx:encode([<<"getinfo">>]),
+    Message =
+        <<"42", Message0/binary>>,
+
+    ok =
+        gun:ws_send(
+            ConnPid,
+            StreamRef,
+            {text, Message}
+        );
+handle_event(
+    _ConnPid,
+    _StreamRef,
+    #{result := #{state := <<"OPEN">>}} = Event
+) ->
     ?LOG_DEBUG("Invoice created or updated ~p", [Event]);
 handle_event(
+    _ConnPid,
+    _StreamRef,
     #{
         result :=
             #{state := <<"SETTLED">>, memo := Memo, amt_paid_sat := AmountPaid0}
@@ -330,7 +438,26 @@ handle_event(
             )
     end,
 
-    ok.
+    ok;
+handle_event(
+    _ConnPid,
+    _StreamRef,
+    [
+        <<"message">>,
+        #{
+            origin := <<"pay">>,
+            payload :=
+                #{
+                    payment_hash := PaymentHash,
+                    bolt11 :=
+                        PaymentRequest
+                }
+        }
+    ]
+) ->
+    ?LOG_DEBUG("Websocket payment event payrequest ~p payhash ~p", [PaymentRequest, PaymentHash]);
+handle_event(_ConnPid, _StreamRef, UnknownEvent) ->
+    ?LOG_DEBUG("Websocket unknown event ~p", [UnknownEvent]).
 
 terminate(Reason, State) ->
     gun:shutdown(State#state.conn_pid),
@@ -346,27 +473,48 @@ getinfo() ->
         fun(Worker) -> gen_server:call(Worker, getinfo) end
     ).
 
-subscribe_invoice(AddIndex, SettleIndex) ->
+list_invoices_by_label(Label) ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) -> gen_server:call(Worker, {list_invoices, #{label => Label}}) end
+    ).
+list_invoices_by_invoicestring(InvoiceString) ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) -> gen_server:call(Worker, {list_invoices, #{invstring => InvoiceString}}) end
+    ).
+wait_any_invoice() ->
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(Worker, {subscribe_invoice, AddIndex, SettleIndex})
+            gen_server:call(Worker, waitanyinvoice)
         end
     ).
 
 create_invoice(Amount, Description) ->
+    {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+    Label = list_to_binary("asyncmind" ++ Timestamp),
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(Worker, {create_invoice, Amount, Description, 3600})
+            gen_server:call(Worker, {create_invoice, Amount, Description, 3600, Label})
         end
     ).
 
 create_invoice(Amount, Description, Expiry) ->
+    {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+    Label = list_to_binary("asyncmind" ++ Timestamp),
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(Worker, {create_invoice, Amount, Description, Expiry})
+            gen_server:call(Worker, {create_invoice, Amount, Description, Expiry, Label})
+        end
+    ).
+create_invoice(Amount, Description, Expiry, Label) ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) ->
+            gen_server:call(Worker, {create_invoice, Amount, Description, Expiry, Label})
         end
     ).
 
@@ -386,3 +534,28 @@ hold_invoice_cancel(PaymentHash) ->
         ?MODULE,
         fun(Worker) -> gen_server:call(Worker, {hold_invoice_cancel, PaymentHash}) end
     ).
+parse_socketio_message(<<"0", Payload/binary>>) ->
+    %% "42" is Socket.IO event prefix for normal message
+    try jsx:decode(Payload, [return_maps, {labels, atom}]) of
+        Result when is_map(Result) ->
+            Result;
+        _ ->
+            {unknown, Payload}
+    catch
+        _:_ ->
+            {error, Payload}
+    end;
+parse_socketio_message(<<"42", Payload/binary>>) ->
+    %% "42" is Socket.IO event prefix for normal message
+    try jsx:decode(Payload, [return_maps, {labels, atom}]) of
+        Result when is_map(Result) ->
+            Result;
+        Result ->
+            Result
+    catch
+        _:_ ->
+            {error, Payload}
+    end;
+parse_socketio_message(Other) ->
+    ?LOG_DEBUG("unknown socketio message ~p", [Other]),
+    Other.

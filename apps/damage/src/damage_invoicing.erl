@@ -27,6 +27,20 @@
 trails() ->
     [
         trails:trail(
+            "/invoices/:payment_request",
+            damage_invoicing,
+            #{action => get_invoice},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "get invoice status.",
+                        produces => ["application/json"],
+                        parameters => []
+                    }
+            }
+        ),
+        trails:trail(
             "/invoices",
             damage_invoicing,
             #{},
@@ -90,7 +104,10 @@ trails() ->
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
-is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
+is_authorized(Req, #{action := get_invoice} = State) ->
+    {true, Req, State};
+is_authorized(Req, State) ->
+    damage_http:is_authorized(Req, State).
 
 content_types_provided(Req, State) ->
     {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
@@ -101,6 +118,14 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
+to_json(Req, #{action := get_invoice} = State) ->
+    case cowboy_req:binding(payment_request, Req) of
+        undefined ->
+            {jsx:encode(#{}), Req, State};
+        InvoiceString ->
+            #{invoices := [Invoice | _]} = cln:list_invoices_by_invoicestring(InvoiceString),
+            {jsx:encode(Invoice), Req, State}
+    end;
 to_json(Req, #{public_key := _AeAccount} = State) ->
     {jsx:encode(#{}), Req, State}.
 

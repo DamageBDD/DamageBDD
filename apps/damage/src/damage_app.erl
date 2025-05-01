@@ -31,6 +31,7 @@ get_trails() ->
             damage_http,
             damage_market,
             damage_schedule,
+            damage_invoicing,
             damage_accounts,
             damage_tests,
             damage_analytics,

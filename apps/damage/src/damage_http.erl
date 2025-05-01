@@ -38,6 +38,49 @@ trails() ->
             }
         ),
         trails:trail(
+            "/tx/",
+            damage_http,
+            #{action => tx},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Form to execute a test on this DamageBDD server.",
+                        produces => ["text/html"]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Get an lightning invoice from signed message",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"message">>,
+                                    description => <<"Test feature data.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"account">>,
+                                    description => <<"account.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"signature">>,
+                                    description => <<"signature of message.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    }
+            }
+        ),
+        trails:trail(
             "/execute_feature/",
             damage_http,
             #{action => execute_feature},
@@ -93,6 +136,8 @@ get_access_token(Req) ->
             end
     end.
 
+is_authorized(Req, #{action := tx} = State) ->
+    {true, Req, State};
 is_authorized(Req, #{action := version} = State) ->
     {true, Req, State};
 is_authorized(Req, State0) ->
@@ -283,7 +328,61 @@ check_execute_bdd(
                     }
             end
     end.
+do_action_tx(Json, _State, Req) ->
+    IP = damage_utils:get_ip(Req),
+    case throttle:check(damage_api_rate, IP) of
+        {limit_exceeded, _, _} ->
+            ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
+            {429, <<"throttled">>};
+        _ ->
+            case Json of
+                #{signature := Sig, message := Message, pubkey := PubKey} ->
+                    case vanillae:verify_signature(Sig, Message, PubKey) of
+                        {ok, _Result} ->
+                            case catch jsx:decode(Message, [{labels, atom}, return_maps]) of
+                                #{amount := Amount} ->
+                                    Description = <<"Pay amount for amount of DAMAGE">>,
+                                    {ok, Timestamp} = datestring:format(
+                                        "YmdHMS", erlang:localtime()
+                                    ),
+                                    Label0 = list_to_binary("buy:" ++ Timestamp ++ ":"),
+                                    Label = <<Label0/binary, PubKey/binary>>,
 
+                                    #{
+                                        payment_hash := _PaymentHash,
+                                        expires_at := _Expiry,
+                                        bolt11 := Bolt11,
+                                        payment_secret := _PaymentSecret,
+                                        created_index := _CreatedIndex
+                                    } =
+                                        Invoice = cln:create_invoice(
+                                            Amount * 1000, Description, 3600, Label
+                                        ),
+                                    ?LOG_INFO("invoice ~p", [Invoice]),
+                                    {
+                                        200,
+                                        #{payment_request => Bolt11}
+                                    };
+                                Reason ->
+                                    {
+                                        400,
+                                        #{
+                                            message =>
+                                                Reason
+                                        }
+                                    }
+                            end;
+                        {error, Reason} ->
+                            {
+                                400,
+                                #{
+                                    message =>
+                                        Reason
+                                }
+                            }
+                    end
+            end
+    end.
 from_json(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
@@ -291,6 +390,8 @@ from_json(Req, State) ->
             {'EXIT', {badarg, Trace}} ->
                 logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};
+            #{message := _Message, signature := _Sig} = Json ->
+                do_action_tx(Json, State, Req);
             #{feature := _FeatureData} = Json ->
                 check_execute_bdd(Json, State, Req)
         end,
