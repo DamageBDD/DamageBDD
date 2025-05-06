@@ -35,6 +35,7 @@
 ).
 -export([get_posts_since/2]).
 -export([get_public_keys/1]).
+-export([get_nostr_json/0]).
 -export([get_metadata/1]).
 -export([decode_npub/1]).
 -export([decode_nsec/1]).
@@ -398,11 +399,25 @@ execute_bdd(Config, Context, #{feature := FeatureData}) ->
             maps:merge(Result, #{status => <<"ok">>})
     end.
 
+get_public_keys(<<"coordinator">>) ->
+    {ok, Npub} = application:get_env(bop, nostr_npub),
+    [decode_npub(Npub)];
 get_public_keys(<<"asyncmind">>) ->
-    {ok, Npub} = application:get_env(damage, nost_npub),
+    {ok, Npub} = application:get_env(damage, nostr_npub),
     [decode_npub(Npub)];
 get_public_keys(_) ->
     [].
+get_nostr_json()->
+
+    {ok, BopNpub} = application:get_env(bop, nostr_npub),
+    {ok, DamageNpub} = application:get_env(damage, nostr_npub),
+    #{
+      names => #{
+                 asyncmind => list_to_binary(decode_npub(DamageNpub)),
+                 damage => list_to_binary(decode_npub(DamageNpub)),
+                 coordinator => list_to_binary(decode_npub(BopNpub))
+                 }}.
+    
 reply_event(
     OriginalEventId,
     OriginalAuthorPubKey,
