@@ -1,14 +1,12 @@
 -module(lightning_auth).
--behaviour(cowboy_handler).
 -vsn("0.1.0").
-
--author("Steven Joseph <steven@stevenjoseph.in>").
-
--copyright("Steven Joseph <steven@stevenjoseph.in>").
-
+-author("Steven Joseph <steven@damagebdd.com>").
+-copyright("Steven Joseph <steven@damagebdd.com>").
 -license("Apache-2.0").
 -include_lib("kernel/include/logger.hrl").
+
 -include_lib("damage.hrl").
+
 
 %% API Exports
 -export([init/2, trails/0]).
@@ -25,6 +23,84 @@
 
 trails() ->
     [
+        trails:trail(
+            "/lnurl-auth",
+            lightning_auth,
+            #{action => lnurl_auth},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "LnUrl authentication.",
+                        produces => ["application/json"],
+                        parameters => [
+                            #{
+                                name => "tag",
+                                in => path,
+                                required => true,
+                                type => string,
+                                description => "Lightning address of the user"
+                            },
+                            #{
+                                name => "action",
+                                in => path,
+                                required => true,
+                                type => string,
+                                description => "Lightning auth action."
+                            },
+                            #{
+                                name => "k1",
+                                in => path,
+                                required => true,
+                                type => string,
+                                description => "Lightning challenge."
+                            }
+                        ],
+                        responses => #{
+                            200 => #{
+                                description => "Authenticated successfully",
+                                schema => #{invoice => string}
+                            },
+                            400 => #{
+                                description => "Error authenticating",
+                                schema => #{error => string}
+                            }
+                        }
+                    }
+            }
+        ),
+        trails:trail(
+            "/auth/lninvoice/:lnaddress",
+            lightning_auth,
+            #{action => generate_ln_invoice},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Generates a Lightning invoice for authentication.",
+                        produces => ["application/json"],
+                        parameters => [
+                            #{
+                                name => "lnaddress",
+                                in => path,
+                                required => true,
+                                type => string,
+                                description => "Lightning address of the user"
+                            }
+                        ],
+                        responses => #{
+                            200 => #{
+                                description => "Invoice generated successfully",
+                                schema => #{invoice => string}
+                            },
+                            400 => #{
+                                description => "Error generating invoice",
+                                schema => #{error => string}
+                            }
+                        }
+                    }
+            }
+        ),
         trails:trail(
             "/auth/lninvoice/:lnaddress",
             lightning_auth,
@@ -252,96 +328,99 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 %    {ok, Response, State}.
 
 %% Helper: Respond with JSON
-reply_json(Req, Status, Body) ->
-    cowboy_req:reply(
-        Status, #{<<"content-type">> => <<"application/json">>}, jsx:encode(Body), Req
-    ).
 
 to_json(
     Req,
-    #{action := generate_ln_invoice} = _State
+    #{action := lnurl_auth} = State
+) ->
+    Qs = cowboy_req:match_qs([tag, sig, k1, action, key], Req),
+    ?LOG_DEBUG("lnurl_auth ~p", [Qs]),
+    case Qs of
+         #{tag := _Tag,sig := Sig,action := _Action,k1 := K1, key := Key} ->
+            case lightning_auth_logic:verify_lnurl_auth(K1, Sig, Key) of
+                {ok, verified, _PubKey} ->
+                    lightning_auth_ws:authenticate_socket(K1,Key),
+                    ?LOG_DEBUG("lnurl_auth Success ~p", [Key]),
+                    {jsx:encode(#{status => <<"OK">>}),  Req, State};
+                {error, Reason} -> 
+                    ?LOG_ERROR("lnurl_auth verify Fail ~p", [Reason]),
+                    {jsx:encode(#{status => "ERROR", reason => Reason}),  Req, State}
+            end;
+        Reason ->
+    ?LOG_ERROR("lnurl_auth Fail ~p", [Reason]),
+                    {jsx:encode(#{status => "ERROR", reason => <<"k1,action,tag required">>}),  Req, State}
+    end;
+to_json(
+    Req,
+    #{action := generate_ln_invoice} = State
 ) ->
     case cowboy_req:binding(lnaddress, Req) of
         undefined ->
-            reply_json(Req, 400, #{error => <<"lnaddress required">>});
+                    {jsx:encode(#{status => "ERROR", reason => <<"lnaddress required">>}), Req, State};
         LnAddress ->
             case lightning_auth_logic:generate_ln_invoice(LnAddress) of
-                {ok, Invoice} -> reply_json(Req, 200, #{invoice => Invoice});
-                {error, Reason} -> reply_json(Req, 400, #{error => Reason})
+                {ok, Invoice} -> 
+                    {jsx:encode(#{invoice => Invoice}), Req, State};
+                {error, Reason} -> 
+                    {jsx:encode(#{status => "ERROR", reason => Reason}), Req, State}
             end
     end;
 to_json(
     Req,
-    #{action := verify_ln_payment} = _State
+    #{action := verify_ln_payment} = State
 ) ->
     case cowboy_req:binding(lnaddress, Req) of
         undefined ->
-            reply_json(Req, 400, #{error => <<"lnaddress required">>});
+                    {jsx:encode(#{error => <<"lnaddress required">>}), Req, State};
         LnAddress ->
             case lightning_auth_logic:verify_ln_payment(LnAddress) of
                 {ok, verified} ->
                     Token = generate_jwt(LnAddress),
-                    reply_json(Req, 200, #{status => <<"verified">>, token => Token});
+                    {jsx:encode(#{status => <<"verified">>, token => Token}),  Req, State};
                 {error, Reason} ->
-                    reply_json(Req, 400, #{error => Reason})
+                    {jsx:encode(#{error => Reason}),  Req, State}
             end
     end;
 to_json(
     Req,
-    #{action := generate_lnurl_auth_challenge} = _State
+    #{action := generate_lnurl_auth_challenge} = State
 ) ->
     case cowboy_req:binding(lnaddress, Req) of
         undefined ->
-            reply_json(Req, 400, #{error => <<"lnaddress required">>});
+                    {jsx:encode(#{error => <<"lnaddress required">>}),  Req, State};
         LnAddress ->
             case lightning_auth_logic:generate_lnurl_auth_challenge(LnAddress) of
-                {ok, Challenge} -> reply_json(Req, 200, #{challenge => Challenge});
-                {error, Reason} -> reply_json(Req, 400, #{error => Reason})
+                {ok, Challenge} ->
+                    {jsx:encode(#{challenge => Challenge}),  Req, State};
+                {error, Reason} ->
+                    {jsx:encode(#{error => Reason}),  Req, State}
             end
     end;
 %        {<<"GET">>, {, [{lnaddress, LnAddress}]}} ->
 %
 to_json(
     Req,
-    #{action := verify_lnurl_auth} = _State
-) ->
-    case cowboy_req:binding(lnaddress, Req) of
-        undefined ->
-            reply_json(Req, 400, #{error => <<"lnaddress required">>});
-        LnAddress ->
-            case cowboy_req:binding(signature, Req) of
-                undefined ->
-                    reply_json(Req, 400, #{error => <<"signature required">>});
-                Signature ->
-                    case lightning_auth_logic:verify_lnurl_auth(LnAddress, Signature) of
-                        {ok, verified} ->
-                            Token = generate_jwt(LnAddress),
-                            reply_json(Req, 200, #{status => <<"verified">>, token => Token});
-                        {error, Reason} ->
-                            reply_json(Req, 400, #{error => Reason})
-                    end
-            end
-    end;
-to_json(
-    Req,
-    #{action := validate_jwt} = _State
+    #{action := validate_jwt} = State
 ) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
         {ok, <<"Bearer ", Token/binary>>} ->
             case validate_jwt(Token) of
-                {ok, Claims} -> reply_json(Req, 200, #{status => <<"valid">>, claims => Claims});
-                {error, Reason} -> reply_json(Req, 401, #{error => Reason})
+                {ok, Claims} ->
+                    {jsx:encode(#{status => <<"valid">>, claims => Claims}),  Req, State};
+                {error, Reason} -> 
+                    {jsx:encode(#{error =>Reason}), Req, State}
             end;
         _ ->
-            reply_json(Req, 401, #{error => <<"Missing or invalid token">>})
+                    {jsx:encode(#{error =><<"Missing or invalid token">>}),  Req, State}
     end;
 %
 %        %% Validate JWT Token
 %        {<<"GET">>, {validate_jwt, []}} ->
 %
 %        %% Default Case: Not Found
-to_json(Req, _State) ->
-    reply_json(Req, 404, #{error => <<"Not Found">>}).
+to_json(Req, State) ->
+    {jsx:encode(#{error =><<"Not Found">>}),  Req, State}.
+
 from_json(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
