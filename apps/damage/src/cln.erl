@@ -23,13 +23,16 @@
         create_invoice/4,
         hold_invoice/4,
         hold_invoice_cancel/1,
+        list_invoices/0,
         list_invoices_by_label/1,
         list_invoices_by_invoicestring/1,
         channel_id_to_scid/1,
         list_channels/0,
-subscribe/0
+        subscribe/0
     ]
 ).
+-export([register_listener/1]).
+-export([broadcast/2]).
 -export([test/0]).
 % 5 minutes in ms
 -define(CACHE_TTL, 300000).
@@ -236,7 +239,7 @@ get_node_alias(Host, Port, Options, Rune, _NodeId) ->
 handle_call(
     subscribe,
     _From,
-    #state{conn_pid = ConnPid, streamref   = StreamRef} = State
+    #state{conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
     Message0 = jsx:encode([<<"subscribe">>]),
     Message =
@@ -584,7 +587,7 @@ handle_info(
         [ConnPid, Status, Headers]
     ),
     {noreply, State};
-handle_info({gun_error, _ConnPid, _StreamRef, {badstate,"The stream cannot be found."}}, State) ->
+handle_info({gun_error, _ConnPid, _StreamRef, {badstate, "The stream cannot be found."}}, State) ->
     {noreply, State};
 handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
     ?LOG_ERROR(
@@ -604,7 +607,7 @@ handle_info({gun_down, ConnPid, _Reason}, State) when
     io:format("Connection closed~n"),
     erlang:cancel_timer(State#state.heartbeat_timer),
     {stop, normal, State};
-handle_info({gun_up, _, _} = Info, State) ->
+handle_info({gun_up, _, _} = _Info, State) ->
     %?LOG_DEBUG("handle_info gun_up websocket Info ~p, State ~p ", [Info, State]),
     {noreply, State};
 handle_info({gun_ws, ConnPid, StreamRef, {text, <<"2">>}}, State) ->
@@ -642,9 +645,9 @@ handle_event(
                         _PeerId
                 }
         }
-    ] =Message
+    ] = _Message
 ) ->
-    ?LOG_DEBUG("handle_event custommsg ~p", [Message]),
+    %?LOG_DEBUG("handle_event custommsg ~p", [Message]),
     ok;
 handle_event(
     ConnPid,
@@ -667,13 +670,12 @@ handle_event(
     StreamRef,
     #{
         sid := _SessionId
-    } =Event
+    } = Event
 ) ->
     ?LOG_DEBUG("Websocket session got ~p", [Event]),
     Message0 = jsx:encode([<<"subscribe">>]),
     Message =
         <<"42", Message0/binary>>,
-
     ?LOG_DEBUG("sending waitanyinvoice ~p", [Message]),
     ok =
         gun:ws_send(
@@ -681,38 +683,6 @@ handle_event(
             StreamRef,
             {text, Message}
         );
-handle_event(
-    _ConnPid,
-    _StreamRef,
-    #{result := #{state := <<"OPEN">>}} = Event
-) ->
-    ?LOG_DEBUG("Invoice created or updated ~p", [Event]);
-handle_event(
-    _ConnPid,
-    _StreamRef,
-    #{
-        result :=
-            #{state := <<"SETTLED">>, memo := Memo, amt_paid_sat := AmountPaid0}
-    } = Event
-) ->
-    [_, AeAccount] = string:split(Memo, " ", trailing),
-    ?LOG_INFO("Invoice paid for ~p ~p", [AeAccount, Event]),
-    AmountPaid = binary_to_integer(AmountPaid0),
-    damage_ae:transfer_damage_tokens(AeAccount, damage:sats_to_damage(AmountPaid)),
-    ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount]),
-    case secrets:retrieve_decrypt(sale_webhook) of
-        {ok, SaleWebhook} ->
-            damage_webhooks:trigger_webhook(
-                SaleWebhook,
-                #{content => <<"Damage Tokens purchsased by ">>, public_key => AeAccount}
-            );
-        _ ->
-            ?LOG_WARNING(
-                "Sale webhook is not configured: secrets:encrypt_store(sale_webhook, \"https://discord.com/api/webhooks/12....\")."
-            )
-    end,
-
-    ok;
 handle_event(
     _ConnPid,
     _StreamRef,
@@ -729,10 +699,13 @@ handle_event(
         }
     ]
 ) ->
-    ?LOG_DEBUG("Websocket payment event payrequest ~p payhash ~p", [PaymentRequest, PaymentHash]);
+    ?LOG_INFO("cln: websocket payment event payrequest ~p payhash ~p", [PaymentRequest, PaymentHash]),
+    #{invoices := [Invoice | _]} = list_invoices_by_invoicestring(PaymentRequest),
+    ?LOG_INFO("cln: websocket payment invoice ~p", [Invoice]),
+    broadcast(invoice_paid, Invoice);
 handle_event(_ConnPid, _StreamRef, _UnknownEvent) ->
     %?LOG_DEBUG("Websocket unknown event ~p", [UnknownEvent]),
-ok.
+    ok.
 
 terminate(Reason, State) ->
     gun:shutdown(State#state.conn_pid),
@@ -753,6 +726,13 @@ getinfo() ->
         fun(Worker) -> gen_server:call(Worker, getinfo) end
     ).
 
+list_invoices() ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) ->
+            gen_server:call(Worker, {list_invoices, #{index => <<"created">>, limit => 10}})
+        end
+    ).
 list_invoices_by_label(Label) ->
     poolboy:transaction(
         ?MODULE,
@@ -826,6 +806,18 @@ parse_socketio_message(<<"42", Payload/binary>>) ->
 parse_socketio_message(Other) ->
     %?LOG_DEBUG("unknown socketio message ~p", [Other]),
     Other.
+register_listener(Topic) when is_atom(Topic) ->
+    gproc:reg({p, l, {cln_event, Topic}}).
+
+broadcast(Topic, Payload) ->
+    Message = {cln_event, Topic, Payload},
+    lists:foreach(
+        fun(Pid) ->
+            Pid ! Message,
+            ?LOG_DEBUG("broadcast pid ~p", [Pid])
+        end,
+        gproc:lookup_pids({p, l, {cln_event, Topic}})
+    ).
 
 test() ->
     test_listchannels().

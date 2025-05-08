@@ -263,6 +263,25 @@ handle_call(
             ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
             {reply, {error, not_found}, Cache}
     end;
+handle_call({events, ContractId, Limit}, _From, Cache) ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path =
+                PathPrefix ++
+                    "v3/contracts/logs?direction=forward&contract_id=" ++
+                    ContractId ++
+                    "&limit=" ++ integer_to_list(Limit),
+            StreamRef = gun:get(ConnPid, Path),
+            Reports =
+                case read_stream(ConnPid, StreamRef) of
+                    #{amount := null} -> 0;
+                    #{amount := Reports0} -> Reports0
+                end,
+            {reply, Reports, Cache};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
 handle_call({reports, AeAccount}, _From, Cache) ->
     case get_ae_mdw_node() of
         {ok, ConnPid, PathPrefix} ->

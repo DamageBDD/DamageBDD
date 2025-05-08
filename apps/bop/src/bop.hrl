@@ -1,0 +1,3 @@
+-define(BOP_VAULT_CONTRACT,
+        "ct_2qFEkVvX79MVnNoMMAGGSMYJAzQN6ap365XoX7AeKG2c33ijPf"
+).

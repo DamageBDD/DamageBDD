@@ -1,0 +1,60 @@
+contract LightningProofRegistry =
+
+  record payment =
+    { hash : string       // payment_hash (SHA256 of preimage, off-chain verified)
+    , sats : int
+    , aud_milli : int
+    , timestamp : int }
+
+  record state =
+    { recipient_ln : string                // LN address for human reference
+    , payments : map(string, payment)
+    , total_sats : int
+    , goal_sats : int
+    , deadline : int
+    , finalized : bool }
+
+  datatype event =
+    PaymentRegistered(string, int, int)
+
+  entrypoint init(_recipient_ln : string, _goal_sats : int, _duration_secs : int) : state =
+    require(_goal_sats > 0, "Goal must be positive")
+    require(_duration_secs > 0, "Duration must be positive")
+    { recipient_ln = _recipient_ln,
+      payments = {},
+      total_sats = 0,
+      goal_sats = _goal_sats,
+      deadline = Chain.timestamp + _duration_secs,
+      finalized = false } 
+  // Off-chain backend submits Lightning payment_hash as proof
+  stateful entrypoint register_payment(payment_hash : string, sats : int, aud_milli : int) =
+    require(Chain.timestamp < state.deadline, "Fundraising ended")
+    require(! Map.member(payment_hash, state.payments), "Already registered")
+    require(sats > 0, "Invalid sats")
+
+    let new_payment = {
+      hash = payment_hash,
+      sats = sats,
+      aud_milli = aud_milli,
+      timestamp = Chain.timestamp}
+
+    Chain.event(PaymentRegistered(payment_hash, sats, aud_milli))
+    put(state{
+      payments[payment_hash] = new_payment,
+      total_sats = state.total_sats + sats})
+
+  stateful entrypoint finalize() =
+    require(! state.finalized, "Already finalized")
+    require(state.total_sats >= state.goal_sats, "Goal not reached")
+
+    put(state{ finalized = true })
+
+  // Read-only API
+  entrypoint is_registered(payment_hash : string) : bool =
+    Map.member(payment_hash, state.payments)
+
+  entrypoint get_total_sats() : int = state.total_sats
+  entrypoint get_goal_sats() : int = state.goal_sats
+  entrypoint is_finalized() : bool = state.finalized
+  entrypoint get_recipient_ln() : string = state.recipient_ln
+  entrypoint get_deadline() : int = state.deadline

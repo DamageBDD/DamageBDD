@@ -6,7 +6,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, store/2 ]).
+-export([start_link/0, store/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 -export([fetch_by_k1/1]).
 -export([fetch_key_by_lnaddress/1]).
@@ -14,14 +14,15 @@
 
 -define(TABLE, auth_challenges).
 -define(LNADDR_TABLE, lnaddress_keys).
--define(TTL, 600). % seconds
+% seconds
+-define(TTL, 600).
 
 %%% API
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 store(Challenge, Meta) ->
-            ?LOG_DEBUG("storing cache ~p", [Challenge]),
+    ?LOG_DEBUG("storing cache ~p", [Challenge]),
     gen_server:call(?MODULE, {store, Challenge, Meta}).
 store_key_for_lnaddress(LnAddress, PubKey) ->
     gen_server:call(?MODULE, {store_key_for_lnaddress, LnAddress, PubKey}).
@@ -40,11 +41,9 @@ handle_call({store, Challenge, Meta}, _From, State) ->
     Timestamp = erlang:system_time(seconds),
     ets:insert(?TABLE, {Challenge, Meta, Timestamp}),
     {reply, ok, State};
-
 handle_call({store_key_for_lnaddress, LnAddress, PubKey}, _From, State) ->
     ets:insert(?LNADDR_TABLE, {LnAddress, PubKey}),
     {reply, ok, State};
-
 handle_call({fetch_key_by_lnaddress, LnAddress}, _From, State) ->
     case ets:lookup(?LNADDR_TABLE, LnAddress) of
         [{LnAddress, Key}] ->
@@ -52,7 +51,6 @@ handle_call({fetch_key_by_lnaddress, LnAddress}, _From, State) ->
         [] ->
             {reply, {error, not_found}, State}
     end;
-
 handle_call({fetch_by_k1, Challenge}, _From, State) ->
     case ets:lookup(?TABLE, Challenge) of
         [{Challenge, Meta, Timestamp}] ->
@@ -69,7 +67,6 @@ handle_info(clean_expired, State) ->
     Now = erlang:system_time(seconds),
     [ets:delete(?TABLE, K) || {K, _, T} <- ets:tab2list(?TABLE), Now - T > ?TTL],
     {noreply, State};
-
 handle_info(_, State) ->
     {noreply, State}.
 

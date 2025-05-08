@@ -33,7 +33,6 @@ init([]) ->
 %%% --- API Functions ---
 start_link([]) -> gen_server:start_link(?MODULE, [], []).
 
-
 generate_ln_invoice(LnAddress) ->
     poolboy:transaction(
         ?MODULE,
@@ -73,13 +72,13 @@ gun_get(URL) ->
     Path = maps:get(path, URI, <<"/">>),
 
     Config = #{
-               connect_timeout => ?DEFAULT_HTTP_TIMEOUT, 
-               transport => transport(Scheme),
-               tls_opts => [{verify, verify_none}]
-              },
+        connect_timeout => ?DEFAULT_HTTP_TIMEOUT,
+        transport => transport(Scheme),
+        tls_opts => [{verify, verify_none}]
+    },
     %% Open connection
     {ok, ConnPid} = gun:open(Host, Port, Config),
-    ?LOG_DEBUG("Auth Config ~p ~p", [{Host, Port},Config]),
+    ?LOG_DEBUG("Auth Config ~p ~p", [{Host, Port}, Config]),
     {ok, OpenResult} = gun:await_up(ConnPid),
     ?LOG_DEBUG("Auth Connection Opened ~p ~p ~p", [Config, OpenResult, Scheme]),
 
@@ -118,13 +117,14 @@ transport(<<"https">>) -> tls;
 transport("https") -> tls;
 transport(_) -> tcp.
 
-
 %% generate_lnurl_auth(Domain, Action) -> {K1Binary, LNURL_bech32}.
 -spec generate_lnurl_auth(string(), string()) -> {binary(), string()}.
 generate_lnurl_auth(Domain, Action) ->
     K1 = crypto:strong_rand_bytes(32),
     K1Hex = binary_to_hex(K1),
-    BaseURL = io_lib:format("https://~s/lnurl-auth?tag=login&k1=~s&action=~s", [Domain, K1Hex, Action]),
+    BaseURL = io_lib:format("https://~s/lnurl-auth?tag=login&k1=~s&action=~s", [
+        Domain, K1Hex, Action
+    ]),
     URL = iolist_to_binary(BaseURL),
 
     {ok, Base5} = bech32:convertbits(URL, 8, 5),
@@ -132,14 +132,12 @@ generate_lnurl_auth(Domain, Action) ->
     {K1Hex, Bech32}.
 
 binary_to_hex(Bin) ->
-    << <<(hex_digit((B bsr 4) band 15)), (hex_digit(B band 15))>> || <<B>> <= Bin >>.
+    <<<<(hex_digit((B bsr 4) band 15)), (hex_digit(B band 15))>> || <<B>> <= Bin>>.
 
 hex_digit(N) when N < 10 -> $0 + N;
 hex_digit(N) -> $a + (N - 10).
 
-
 %%% --- LNURL-Auth Signature Verification ---
-
 
 %%% --- Extract Public Key from LNURL ---
 %extract_pubkey_from_lnaddress(LnAddress) ->
@@ -166,42 +164,41 @@ pad32(Bin) when is_binary(Bin) ->
 %% Takes a hex-encoded DER signature and returns a raw 64-byte {ok, RawSig} or {error, Reason}
 decode_lnurl_signature(HexSig) when is_binary(HexSig) ->
     try
-     {_, R, S} = public_key:der_decode('ECDSA-Sig-Value', binary:decode_hex(HexSig)),
-    RPadded = pad32(R),
-    SPadded = pad32(S),
-    SigRaw = <<RPadded:32/binary, SPadded:32/binary>>,
+        {_, R, S} = public_key:der_decode('ECDSA-Sig-Value', binary:decode_hex(HexSig)),
+        RPadded = pad32(R),
+        SPadded = pad32(S),
+        SigRaw = <<RPadded:32/binary, SPadded:32/binary>>,
         {ok, SigRaw}
     catch
         _:Reason -> {error, Reason}
     end.
 
 der_sig_part(P = <<1:1, _/bitstring>>) -> <<0:8, P/binary>>;
-der_sig_part(<<0, Rest/binary>>)       -> der_sig_part(Rest);
-der_sig_part(P)                        -> P.
+der_sig_part(<<0, Rest/binary>>) -> der_sig_part(Rest);
+der_sig_part(P) -> P.
 ecdsa_to_der_sig(<<R0:32/binary, S0:32/binary>>) ->
     {R1, S1} = {der_sig_part(R0), der_sig_part(S0)},
     {LR, LS} = {byte_size(R1), byte_size(S1)},
     <<16#30, (4 + LR + LS), 16#02, LR, R1/binary, 16#02, LS, S1/binary>>.
 %%% --- Verify Signature with Secp256k1 ---
 verify_lnurl_auth(K1Hex, SigHex, PubKeyHex) ->
-        %% Decode hex strings to binary
-         K1 = binary:decode_hex(K1Hex),
-         PubKey = binary:decode_hex(PubKeyHex),
-         {ok, SigRaw} = decode_lnurl_signature(SigHex),
- Sig = ecdsa_to_der_sig(SigRaw),
+    %% Decode hex strings to binary
+    K1 = binary:decode_hex(K1Hex),
+    PubKey = binary:decode_hex(PubKeyHex),
+    {ok, SigRaw} = decode_lnurl_signature(SigHex),
+    Sig = ecdsa_to_der_sig(SigRaw),
 
-        %% Ensure correct sizes
-        true = byte_size(K1) =:= 32,
-        true = byte_size(PubKey) =:= 33,
-        true = byte_size(SigRaw) =:= 64,
+    %% Ensure correct sizes
+    true = byte_size(K1) =:= 32,
+    true = byte_size(PubKey) =:= 33,
+    true = byte_size(SigRaw) =:= 64,
 
-        %% Perform verification
-                    ?LOG_INFO("verify_lnurl_auth verify (~p,~p,~p)", [K1, SigRaw, PubKey]),
-                case crypto:verify(ecdsa, sha256, {digest, K1}, Sig, [PubKey, secp256k1]) of
-            true -> {ok, verified, PubKey};
-            false -> {error, invalid_signature}
-        end.
-
+    %% Perform verification
+    ?LOG_INFO("verify_lnurl_auth verify (~p,~p,~p)", [K1, SigRaw, PubKey]),
+    case crypto:verify(ecdsa, sha256, {digest, K1}, Sig, [PubKey, secp256k1]) of
+        true -> {ok, verified, PubKey};
+        false -> {error, invalid_signature}
+    end.
 
 %%% --- Helper: Convert Hex to Binary ---
 %hex_to_binary(Hex) ->
@@ -213,7 +210,7 @@ call_payment_callback(CallbackUrl) ->
     ?LOG_DEBUG("call_payment_callback payment callback ~p", [CallbackUrl]),
     case gun_get(CallbackUrl) of
         #{pr := PaymentRequest} ->
-                {ok, PaymentRequest};
+            {ok, PaymentRequest};
         Error ->
             ?LOG_ERROR("Calling payment callback ~p", [Error]),
             {error, invoice_fetch_failed}
@@ -241,7 +238,8 @@ handle_call({generate_ln_invoice, LnAddress}, _From, State) ->
             tag := <<"payRequest">>,
             callback := Callback
         } = _PayCallbackResp ->
-            CallbackWithAmount = binary_to_list(Callback) ++ "?amount=" ++ integer_to_list(Amount * 1000),
+            CallbackWithAmount =
+                binary_to_list(Callback) ++ "?amount=" ++ integer_to_list(Amount * 1000),
             {reply, call_payment_callback(CallbackWithAmount), State};
         #{
             <<"callback">> := Callback, <<"minSendable">> := MinSend, <<"maxSendable">> := MaxSend
@@ -273,11 +271,8 @@ handle_call({verify_ln_payment, LnAddress}, _From, State) ->
     end;
 %% Generate LNURL-Auth Challenge
 handle_call({generate_lnurl_auth_challenge, _LnAddress}, _From, State) ->
-    {reply,
-        ok,
-        State}.
+    {reply, ok, State}.
 
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
-

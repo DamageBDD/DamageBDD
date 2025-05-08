@@ -129,9 +129,8 @@ to_json(Req, #{action := lnurlp} = State) ->
     end;
 to_json(Req, #{action := nip05} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
-            ?LOG_INFO("Nip05 request data ~p", [Data]),
+    ?LOG_INFO("Nip05 request data ~p", [Data]),
     {jsx:encode(damage_nostr:get_nostr_json()), Req, State};
-
 to_json(Req, #{action := invoice} = State) ->
     case lookup_user_npub(cowboy_req:binding(user, Req)) of
         undefined ->

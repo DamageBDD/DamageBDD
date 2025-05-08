@@ -7,7 +7,6 @@
 
 -include_lib("damage.hrl").
 
-
 %% API Exports
 -export([init/2, trails/0]).
 
@@ -336,19 +335,19 @@ to_json(
     Qs = cowboy_req:match_qs([tag, sig, k1, action, key], Req),
     ?LOG_DEBUG("lnurl_auth ~p", [Qs]),
     case Qs of
-         #{tag := _Tag,sig := Sig,action := _Action,k1 := K1, key := Key} ->
+        #{tag := _Tag, sig := Sig, action := _Action, k1 := K1, key := Key} ->
             case lightning_auth_logic:verify_lnurl_auth(K1, Sig, Key) of
                 {ok, verified, _PubKey} ->
-                    lightning_auth_ws:authenticate_socket(K1,Key),
+                    lightning_auth_ws:authenticate_socket(K1, Key),
                     ?LOG_DEBUG("lnurl_auth Success ~p", [Key]),
-                    {jsx:encode(#{status => <<"OK">>}),  Req, State};
-                {error, Reason} -> 
+                    {jsx:encode(#{status => <<"OK">>}), Req, State};
+                {error, Reason} ->
                     ?LOG_ERROR("lnurl_auth verify Fail ~p", [Reason]),
-                    {jsx:encode(#{status => "ERROR", reason => Reason}),  Req, State}
+                    {jsx:encode(#{status => "ERROR", reason => Reason}), Req, State}
             end;
         Reason ->
-    ?LOG_ERROR("lnurl_auth Fail ~p", [Reason]),
-                    {jsx:encode(#{status => "ERROR", reason => <<"k1,action,tag required">>}),  Req, State}
+            ?LOG_ERROR("lnurl_auth Fail ~p", [Reason]),
+            {jsx:encode(#{status => "ERROR", reason => <<"k1,action,tag required">>}), Req, State}
     end;
 to_json(
     Req,
@@ -356,12 +355,12 @@ to_json(
 ) ->
     case cowboy_req:binding(lnaddress, Req) of
         undefined ->
-                    {jsx:encode(#{status => "ERROR", reason => <<"lnaddress required">>}), Req, State};
+            {jsx:encode(#{status => "ERROR", reason => <<"lnaddress required">>}), Req, State};
         LnAddress ->
             case lightning_auth_logic:generate_ln_invoice(LnAddress) of
-                {ok, Invoice} -> 
+                {ok, Invoice} ->
                     {jsx:encode(#{invoice => Invoice}), Req, State};
-                {error, Reason} -> 
+                {error, Reason} ->
                     {jsx:encode(#{status => "ERROR", reason => Reason}), Req, State}
             end
     end;
@@ -371,14 +370,14 @@ to_json(
 ) ->
     case cowboy_req:binding(lnaddress, Req) of
         undefined ->
-                    {jsx:encode(#{error => <<"lnaddress required">>}), Req, State};
+            {jsx:encode(#{error => <<"lnaddress required">>}), Req, State};
         LnAddress ->
             case lightning_auth_logic:verify_ln_payment(LnAddress) of
                 {ok, verified} ->
                     Token = generate_jwt(LnAddress),
-                    {jsx:encode(#{status => <<"verified">>, token => Token}),  Req, State};
+                    {jsx:encode(#{status => <<"verified">>, token => Token}), Req, State};
                 {error, Reason} ->
-                    {jsx:encode(#{error => Reason}),  Req, State}
+                    {jsx:encode(#{error => Reason}), Req, State}
             end
     end;
 to_json(
@@ -387,13 +386,13 @@ to_json(
 ) ->
     case cowboy_req:binding(lnaddress, Req) of
         undefined ->
-                    {jsx:encode(#{error => <<"lnaddress required">>}),  Req, State};
+            {jsx:encode(#{error => <<"lnaddress required">>}), Req, State};
         LnAddress ->
             case lightning_auth_logic:generate_lnurl_auth_challenge(LnAddress) of
                 {ok, Challenge} ->
-                    {jsx:encode(#{challenge => Challenge}),  Req, State};
+                    {jsx:encode(#{challenge => Challenge}), Req, State};
                 {error, Reason} ->
-                    {jsx:encode(#{error => Reason}),  Req, State}
+                    {jsx:encode(#{error => Reason}), Req, State}
             end
     end;
 %        {<<"GET">>, {, [{lnaddress, LnAddress}]}} ->
@@ -406,12 +405,12 @@ to_json(
         {ok, <<"Bearer ", Token/binary>>} ->
             case validate_jwt(Token) of
                 {ok, Claims} ->
-                    {jsx:encode(#{status => <<"valid">>, claims => Claims}),  Req, State};
-                {error, Reason} -> 
-                    {jsx:encode(#{error =>Reason}), Req, State}
+                    {jsx:encode(#{status => <<"valid">>, claims => Claims}), Req, State};
+                {error, Reason} ->
+                    {jsx:encode(#{error => Reason}), Req, State}
             end;
         _ ->
-                    {jsx:encode(#{error =><<"Missing or invalid token">>}),  Req, State}
+            {jsx:encode(#{error => <<"Missing or invalid token">>}), Req, State}
     end;
 %
 %        %% Validate JWT Token
@@ -419,7 +418,7 @@ to_json(
 %
 %        %% Default Case: Not Found
 to_json(Req, State) ->
-    {jsx:encode(#{error =><<"Not Found">>}),  Req, State}.
+    {jsx:encode(#{error => <<"Not Found">>}), Req, State}.
 
 from_json(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),

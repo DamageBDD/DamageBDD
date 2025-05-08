@@ -28,6 +28,7 @@
     encrypt_store/2,
     retrieve_decrypt/1,
     import/0,
+    keypair/1,
     node_keypair/0,
     make_keypair/0,
     salted_hash/1,
@@ -138,17 +139,16 @@ make_keypair() ->
     PubBin = aeser_api_encoder:encode(account_pubkey, Pub),
     PubStr = unicode:characters_to_list(PubBin),
     #{public_key => PubStr, private_key => Priv}.
-node_keypair() ->
-    Path = application:get_env(damage, keystore, "damage.key"),
+keypair(Path) ->
     case file:read_file(Path) of
         {error, enoent} ->
-            ?LOG_INFO("damage.key not found ... creating.", []),
+            ?LOG_INFO(Path ++ " not found ... creating.", []),
             Data = make_keypair(),
             case get_node_password() of
                 undefined ->
-                    ?LOG_WARNING("Failed get password for encrypting node_keypair", []),
+                    ?LOG_WARNING("Failed get password for encrypting keypair ~p", [Path]),
                     clear_cache(),
-                    node_keypair();
+                    keypair(Path);
                 Password ->
                     EncData = secrets:encrypt(
                         Password,
@@ -160,9 +160,9 @@ node_keypair() ->
         {ok, EncDataBin} ->
             case get_node_password() of
                 undefined ->
-                    ?LOG_WARNING("Failed get password for decrypting node_keypair", []),
+                    ?LOG_WARNING("Failed get password for decrypting keypair ~p", [Path]),
                     clear_cache(),
-                    node_keypair();
+                    keypair(Path);
                 Password ->
                     case
                         secrets:decrypt(
@@ -171,14 +171,17 @@ node_keypair() ->
                         )
                     of
                         error ->
-                            ?LOG_WARNING("Failed to unlock node_keypair", []),
+                            ?LOG_WARNING("Failed to unlock keypair ~p", [Path]),
                             clear_cache(),
-                            node_keypair();
+                            keypair(Path);
                         Data ->
                             binary_to_term(Data)
                     end
             end
     end.
+node_keypair() ->
+    Path = application:get_env(damage, keystore, "damage.key"),
+    keypair(Path).
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
 
