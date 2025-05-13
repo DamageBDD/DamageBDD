@@ -47,19 +47,19 @@ init([]) ->
         ),
     PoolSpecs0 =
         [
-            #{
-                % mandatory
-                id => bop,
-                % mandatory
-                start => {bop, start_link, []},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => []
-            }
+            %#{
+            %    % mandatory
+            %    id => bop,
+            %    % mandatory
+            %    start => {bop, start_link, []},
+            %    % optional
+            %    restart => permanent,
+            %    % optional
+            %    shutdown => 60,
+            %    % optional
+            %    type => worker,
+            %    modules => []
+            %}
         ] ++
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
