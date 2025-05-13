@@ -21,35 +21,10 @@
 trails() ->
     [
         trails:trail(
-            "/ecai/",
-            damage_http,
-            #{action => ecai_train},
-            #{
-                get =>
-                    #{
-                        tags => ?TRAILS_TAG,
-                        description => "list models.",
-                        produces => ["text/html"]
-                    },
-                put =>
-                    #{
-                        tags => ?TRAILS_TAG,
-                        description => "create new model from data",
-                        produces => ["application/json"],
-                        parameters =>
-                            [
-                                #{
-                                    name => <<"data">>,
-                                    description => <<"training data.">>,
-                                    in => <<"body">>,
-                                    required => true,
-                                    type => <<"string">>
-                                }
-                            ]
-                    }
-            }
-        ),
-        trails:trail("/ecai/ekef", ecai_api, #{}, #{
+          "/ecai/ekef",
+          ecai_api,
+          #{action => encode},
+          #{
             description => "EKEF encoding endpoint",
             methods => #{
                 post => #{
