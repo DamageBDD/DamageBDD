@@ -336,9 +336,7 @@ to_html(Req, #{action := reset_password} = State) ->
                             "reset_password.mustache",
                             #{
                                 email => Email,
-                                current_password => Token,
-                                body => <<"Test">>,
-                                current_password_type => <<"hidden">>
+                                token => Token
                             }
                         ),
                     {Body, Req, State};
@@ -364,9 +362,7 @@ to_html(Req, #{action := confirm} = State) ->
                     "reset_password.mustache",
                     #{
                         email => Email,
-                        current_password => Token,
-                        body => <<"Test">>,
-                        current_password_type => <<"hidden">>
+                        token => Token
                     }
                 ),
             {Body, Req, State};
@@ -418,6 +414,32 @@ validate_password(Password) ->
         {match, _} -> true;
         _ -> false
     end.
+send_reset_password_email(Email) when is_binary(Email) ->
+    {ok, ApiUrl} = application:get_env(damage, api_url),
+    ApiUrl0 = list_to_binary(ApiUrl),
+
+    Expiry = date_util:now_to_seconds(os:timestamp()) + 86400,
+    AuthTokenEncrypted = secrets:encrypt(term_to_binary(#{email => Email, expiry => Expiry})),
+
+    Data = maps:put(password, AuthTokenEncrypted, #{email => Email}),
+    Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
+    ?LOG_DEBUG("AuthToken sent ~p", [Query]),
+    Ctxt =
+        maps:put(
+            <<"password_reset_url">>,
+            <<ApiUrl0/binary, "/accounts/reset_password?", Query/binary>>,
+            Data
+        ),
+    Result = damage_utils:send_email(
+        {maps:get(full_name, Data, <<"">>), Email},
+        <<"DamageBDD Account Reset Password">>,
+        damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
+        damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
+    ),
+    ?LOG_DEBUG("Email sent ~p", [Result]),
+    <<
+        "Account password reset. Please check email for confirmation link. Don't forget to check spam folder too."
+    >>.
 send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     {ok, ApiUrl} = application:get_env(damage, api_url),
     ApiUrl0 = list_to_binary(ApiUrl),
@@ -448,6 +470,37 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
         >>
     }.
 
+reset_password(
+    #{
+        <<"email">> := Email,
+        <<"token">> := Token,
+        <<"new_password_confirmation">> := NewPasswordConfirm,
+        <<"new_password">> := NewPassword
+    }
+) ->
+    Now = date_util:now_to_seconds(os:timestamp()),
+    case validate_password(NewPassword) of
+        true ->
+            case NewPassword of
+                NewPasswordConfirm ->
+                    case catch binary_to_term(secrets:decrypt(Token)) of
+                        #{email := _Email, expiry := Expiry} when Expiry < Now ->
+                            Body = <<"Confirm Token Expired.">>,
+                            {error, Body};
+                        #{email := Email, expiry := Expiry, action := <<"reset">>} when
+                            Expiry > Now
+                        ->
+                            identity_server:set_email_password(Email, NewPassword);
+                        #{email := Email, expiry := Expiry} when Expiry > Now ->
+                            identity_server:register_email(Email, NewPassword)
+                    end;
+                _ ->
+                    {error, <<"Passwords do not match. Go back to try again.">>}
+            end;
+        false ->
+            {ok,
+                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
+    end.
 -spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
     {integer(), map()}.
 do_post_action(
@@ -475,19 +528,28 @@ do_post_action(
                 NewPasswordConfirm ->
                     case catch binary_to_term(secrets:decrypt(Token)) of
                         #{email := _Email, expiry := Expiry} when Expiry < Now ->
-                            Body = <<"Confirm Token Expired.">>,
-                            {Body, Req, State};
+                            Message = <<"Reset password token expired.">>,
+                            {400, #{status => <<"failed">>, message => Message}};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            ok = identity_server:set_email_password(Email, NewPassword),
-                            {<<"Email confirmed and password set.">>, Req, State}
+                            {ok, _Message} = identity_server:set_email_password(Email, NewPassword),
+                            {200, #{status => <<"ok">>, message => <<"Password has been reset.">>}}
                     end;
                 _ ->
-                    {<<"Password does not match.">>, Req, State}
+                    Message = <<"Password does match.">>,
+                    {400, #{status => <<"failed">>, message => Message}}
             end;
         false ->
-            {ok,
-                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
+            Message =
+                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>,
+            {400, #{status => <<"failed">>, message => Message}}
     end;
+do_post_action(
+    reset_password,
+    #{email := Email},
+    Req,
+    State
+) ->
+    {200, send_reset_password_email(Email)};
 do_post_action(
     confirm,
     #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm},
@@ -501,18 +563,22 @@ do_post_action(
                 NewPasswordConfirm ->
                     case catch binary_to_term(secrets:decrypt(Token)) of
                         #{email := _Email, expiry := Expiry} when Expiry < Now ->
-                            Body = <<"Confirm Token Expired.">>,
-                            {Body, Req, State};
+                            Message = <<"Confirm Token Expired.">>,
+                            {400, #{status => <<"failed">>, message => Message}};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
                             ok = identity_server:register_email(Email, NewPassword),
-                            {<<"Email confirmed and password set.">>, Req, State}
+                            {200, #{
+                                status => <<"ok">>,
+                                message => <<"Email confirmed and password set.">>
+                            }}
                     end;
                 _ ->
-                    {<<"Password does not match.">>, Req, State}
+                    {400, <<"Password does not match.">>}
             end;
         false ->
-            {ok,
-                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
+            Message =
+                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>,
+            {400, #{status => <<"failed">>, message => Message}}
     end;
 do_post_action(create, #{email := Email} = Data, Req, State) when is_atom(Email) ->
     do_post_action(create, maps:put(email, atom_to_binary(Email), Data), Req, State);
@@ -619,33 +685,6 @@ unix_timestamp_hours_ago(HoursAgo) when is_integer(HoursAgo), HoursAgo >= 0 ->
     % Return the result
     TimestampHoursAgo.
 
-reset_password(
-    #{
-        <<"email">> := Email,
-        <<"current_password">> := Token,
-        <<"new_password_confirmation">> := NewPasswordConfirm,
-        <<"new_password">> := NewPassword
-    }
-) ->
-    Now = date_util:now_to_seconds(os:timestamp()),
-    case validate_password(NewPassword) of
-        true ->
-            case NewPassword of
-                NewPasswordConfirm ->
-                    case catch binary_to_term(secrets:decrypt(Token)) of
-                        #{email := _Email, expiry := Expiry} when Expiry < Now ->
-                            Body = <<"Confirm Token Expired.">>,
-                            {error, Body};
-                        #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            identity_server:register_email(Email, NewPassword)
-                    end;
-                _ ->
-                    {error, <<"Passwords do not match. Go back to try again.">>}
-            end;
-        false ->
-            {ok,
-                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
-    end.
 from_html(Req, #{action := authenticate} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
     ?LOG_DEBUG(" form data: ~p ", [Params]),
@@ -697,8 +736,8 @@ from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Data0 = maps:from_list(cow_qs:parse_qs(Data)),
     {Status0, Response0} =
-        case reset_password(Data0) of
-            {ok, Message} ->
+        case do_post_action(reset_password, damage_utils:binary_to_atom_keys(Data0), Req, State) of
+            {200, #{message := Message}} ->
                 {ok, ApiUrl} = application:get_env(damage, api_url),
                 {
                     200,
@@ -707,7 +746,7 @@ from_html(Req, #{action := reset_password} = State) ->
                         #{status => <<"ok">>, message => Message, login_url => ApiUrl}
                     )
                 };
-            {error, Message} ->
+            {_, Message} ->
                 {
                     400,
                     damage_utils:load_template(
@@ -753,8 +792,22 @@ from_json(Req, #{action := Action} = State) ->
                 {204, <<"">>} ->
                     Response = cowboy_req:reply(204, Req0),
                     {stop, Response, State};
+                {200, Response0} ->
+                    Response = cowboy_req:set_resp_body(
+                        jsx:encode(
+                            #{
+                                status => <<"ok">>,
+                                message => Response0
+                            }
+                        ),
+                        Req0
+                    ),
+                    cowboy_req:reply(200, Response),
+                    {stop, Response, State};
                 {Status0, Response0} ->
-                    Response = cowboy_req:set_resp_body(jsx:encode(Response0), Req0),
+                    Response = cowboy_req:set_resp_body(
+                        jsx:encode(#{status => <<"fail">>, message => Response0}), Req0
+                    ),
                     cowboy_req:reply(Status0, Response),
                     {stop, Response, State}
             end

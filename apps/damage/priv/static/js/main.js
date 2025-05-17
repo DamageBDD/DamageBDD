@@ -76,6 +76,7 @@
 			MicroModal.close("login-modal");
 			MicroModal.show("signup-modal");
 		});
+		document.getElementById("loginResetPasswdBtn").addEventListener("click", submitForgotPasswordForm);
 		document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
 			event.preventDefault();
 			MicroModal.close("signup-modal");
@@ -236,7 +237,7 @@
 	}
 	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value;
-		const concurrencyText = document.getElementById("difficulty").value;
+		const concurrencyText = 1;
 		const headers = new Headers();
 		headers.append("Content-Type", "application/json");
 		headers.append("Authorization", "Bearer "+ localStorage.access_token);
@@ -268,14 +269,13 @@
 		if (reportElement.hasAttribute('data-highlighted')) { // check if the attribute exists
 			reportElement.removeAttribute('data-highlighted'); // remove the specified attribute
 		}
-		hljs.highlightAll();
 	}
 
 
 	function submitSignUpForm(event) {
 		const username = document.getElementById("signup-username").value;
 		if (!validateEmail(username)) {
-			Toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
 			return;
 		}
 
@@ -319,7 +319,7 @@
 		const password = document.getElementById("password").value;
 
 		if (!validateEmail(username)) {
-			Toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
 			return;
 		}
 
@@ -368,19 +368,13 @@
 		return;
 	}
 	function submitForgotPasswordForm(event) {
-		const username = document.getElementById("username").value;
+		const username = document.getElementById("login-username").value;
 
 		if (!validateEmail(username)) {
-			Toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
 			return;
 		}
 
-		const signupData = {
-			grant_type: "password",
-			scope: "basic",
-			username: username,
-			password: password
-		};
 
 		const headers = new Headers();
 		headers.append("Content-Type", "application/json");
@@ -389,20 +383,18 @@
 		fetch("/accounts/reset_password/", {
 			method: "POST",
 			headers: headers,
-			body: JSON.stringify(signupData)
+			body: JSON.stringify({email : username})
 		})
 			.then(response => {
 				return response.json();
 			})
 			.then(data => {
-				if (data.access_token) {
-					localStorage.setItem("access_token" , data.access_token);
+				if (data.status === "ok") {
 					toasts.push({
 						title: 'Reset Password Success',
-						content: 'Authentication Successful.',
+						content: data.message,
 						style: 'success'
 					});
-					showHideLoginButton();
 				} else {
 					toasts.push({
 						title: 'Login Failed',

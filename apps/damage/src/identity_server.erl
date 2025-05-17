@@ -49,7 +49,7 @@ register_email(Email, Password) ->
     end.
 set_email_password(Email, Password) ->
     case gen_server:call(?MODULE, {set_email_password, Email, Password}) of
-        #{"return_type" := "ok", "return_value" := true} ->
+        #{"return_type" := "ok", "return_value" := {}} ->
             {ok, <<"Password set.">>};
         #{"return_type" := _, "return_value" := Other} ->
             {error, Other}
@@ -146,6 +146,7 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
 handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State) ->
     case ets:lookup(Table, Email) of
         [{Email, Account}] ->
+            ?LOG_DEBUG("Table look up ~p ~p", [Table, Account]),
             {reply, Account, State};
         [] ->
             KeyPair = secrets:node_keypair(),
@@ -188,7 +189,7 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
                     {reply, notfound, State}
             end
     end;
-handle_call({set_email_password, Email, Password}, _From, State) ->
+handle_call({set_email_password, Email, Password}, _From, #{ets_table := Table} = State) ->
     KeyPair = secrets:node_keypair(),
     Response = damage_ae:contract_call(
         KeyPair,
@@ -200,6 +201,8 @@ handle_call({set_email_password, Email, Password}, _From, State) ->
             binary_to_list(secrets:encrypt(Password))
         ]
     ),
+
+    ets:delete(Table, Email),
     {reply, Response, State};
 handle_call({register_npub, Npub, PublicKey}, _From, State) ->
     KeyPair = secrets:node_keypair(),
