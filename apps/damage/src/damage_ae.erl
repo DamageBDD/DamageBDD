@@ -42,7 +42,8 @@
     get_block_height_since/2,
     restart_wallet_proc/1,
     get_wallet_proc/1,
-    get_wallet_proc/2
+    get_wallet_proc/2,
+    get_events/3
 ]).
 -export([
     contract_call/5,
@@ -272,12 +273,16 @@ handle_call({events, ContractId, Limit}, _From, Cache) ->
                     ContractId ++
                     "&limit=" ++ integer_to_list(Limit),
             StreamRef = gun:get(ConnPid, Path),
-            Reports =
+
+            Events =
                 case read_stream(ConnPid, StreamRef) of
-                    #{amount := null} -> 0;
-                    #{amount := Reports0} -> Reports0
+                    #{data := Data} ->
+                        Data;
+                    Other ->
+                        ?LOG_ERROR("Invalid response from events endpoint ~p", [Other]),
+                        []
                 end,
-            {reply, Reports, Cache};
+            {reply, Events, Cache};
         Err ->
             ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
             {reply, {error, not_found}, Cache}
@@ -424,6 +429,8 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+get_wallet_proc(AeAccount) when is_list(AeAccount) ->
+    get_wallet_proc(list_to_binary(AeAccount));
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
     #{public_key := AeAccount, password := _Password, private_key := PrivateKey} = identity_server:get_account(
         AeAccount
@@ -432,6 +439,8 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
 get_wallet_proc(admin) ->
     #{public_key := NodePublicKey, private_key := PrivateKey} = secrets:node_keypair(),
     get_wallet_proc(list_to_binary(NodePublicKey), PrivateKey).
+get_wallet_proc(AeAccount, PrivateKey) when is_list(AeAccount) ->
+    get_wallet_proc(list_to_binary(AeAccount), PrivateKey);
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of
         undefined ->
@@ -484,13 +493,20 @@ get_reports(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {reports, AeAccount}, ?AE_TIMEOUT).
 
+get_events(#{public_key := PubKey, private_key := PrivateKey}, ContractId, Limit) ->
+    DamageAEPid = get_wallet_proc(PubKey, PrivateKey),
+    gen_server:call(DamageAEPid, {events, ContractId, Limit}, ?AE_TIMEOUT);
+get_events(AeAccount, ContractId, Limit) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {events, ContractId, Limit}, ?AE_TIMEOUT).
+
 spend(AeAccount, Amount) ->
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {spend, AeAccount, Amount}).
 
 confirm_spend_all() ->
-    DamageAEPid = get_wallet_proc(ae),
+    DamageAEPid = get_wallet_proc(admin),
     gen_server:cast(DamageAEPid, {confirm_spend_all}).
 
 start_batch_spend_timer() ->
