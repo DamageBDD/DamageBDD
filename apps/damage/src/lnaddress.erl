@@ -136,6 +136,8 @@ to_json(Req, #{action := invoice} = State) ->
         undefined ->
             {<<"user required">>, Req, State};
         _User ->
+            {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+            Label = list_to_binary("zap:" ++ Timestamp),
             case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
                 #{amount := <<"0">>, comment := Memo} ->
                     Amount = 1000,
@@ -145,7 +147,7 @@ to_json(Req, #{action := invoice} = State) ->
                         bolt11 := Bolt11,
                         payment_secret := _PaymentSecret,
                         created_index := _CreatedIndex
-                    } = Invoice = cln:create_invoice(Amount, Memo),
+                    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
                     ?LOG_INFO("invoice ~p", [Invoice]),
                     {jsx:encode(#{pr => Bolt11}), Req, State};
                 #{amount := none, comment := Memo} ->
@@ -156,7 +158,7 @@ to_json(Req, #{action := invoice} = State) ->
                         bolt11 := Bolt11,
                         payment_secret := _PaymentSecret,
                         created_index := _CreatedIndex
-                    } = Invoice = cln:create_invoice(Amount, Memo),
+                    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
                     ?LOG_INFO("invoice ~p", [Invoice]),
                     {jsx:encode(#{pr => Bolt11}), Req, State};
                 #{amount := AmountBin, comment := Memo} ->
@@ -167,7 +169,7 @@ to_json(Req, #{action := invoice} = State) ->
                         bolt11 := Bolt11,
                         payment_secret := _PaymentSecret,
                         created_index := _CreatedIndex
-                    } = Invoice = cln:create_invoice(Amount, Memo),
+                    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
                     ?LOG_INFO("invoice ~p", [Invoice]),
                     {jsx:encode(#{pr => Bolt11}), Req, State};
                 Unexpected ->
@@ -204,37 +206,39 @@ from_html(Req, #{action := reset_password} = State) ->
         cowboy_req:reply(Status0, cowboy_req:set_resp_body(Response0, Req)),
         State
     }.
+extract_tag(Key, Tags) ->
+    case lists:dropwhile(fun([K | _]) -> K =/= Key end, Tags) of
+        [[_, Value | _] | _] -> Value;
+        _ -> <<>>
+    end.
 
 do_post_action(
     zap,
-    #{memo := Memo, amount := Amount, expiry := Expiry} = Data,
+    #{nostr := ZapJsonBin, amount := AmountMsat} = _Data,
     _Req,
     _State
 ) ->
-    ?LOG_DEBUG("generate invoice ~p", [Data]),
-    Invoice = cln:create_invoice(Amount, Memo, Expiry),
-    %ZapRecipt = #{
-    %    "id"=> Id,
-    %    "pubkey":"9630f464cca6a5147aa8a35f0bcdd3ce485324e732fd39e09233b1d848238f31",
-    %    "created_at":1674164545,
-    %    "kind":9735,
-    %    "tags":[
-    %        ["p", "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245"],
-    %        ["P", "97c70a44366a6535c145b333f973ea86dfdc2d7a99da618c40c64705ad98e322"],
-    %        ["e", "3624762a1274dd9636e0c552b53086d70bc88c165bc4dc0f9e836a1eaf86c3b8"],
-    %        [
-    %            "bolt11",
-    %            "lnbc10u1p3unwfusp5t9r3yymhpfqculx78u027lxspgxcr2n2987mx2j55nnfs95nxnzqpp5jmrh92pfld78spqs78v9euf2385t83uvpwk9ldrlvf6ch7tpascqhp5zvkrmemgth3tufcvflmzjzfvjt023nazlhljz2n9hattj4f8jq8qxqyjw5qcqpjrzjqtc4fc44feggv7065fqe5m4ytjarg3repr5j9el35xhmtfexc42yczarjuqqfzqqqqqqqqlgqqqqqqgq9q9qxpqysgq079nkq507a5tw7xgttmj4u990j7wfggtrasah5gd4ywfr2pjcn29383tphp4t48gquelz9z78p4cq7ml3nrrphw5w6eckhjwmhezhnqpy6gyf0"
-    %        ],
-    %        [
-    %            "description",
-    %            "{\"pubkey\":\"97c70a44366a6535c145b333f973ea86dfdc2d7a99da618c40c64705ad98e322\",\"content\":\"\",\"id\":\"d9cc14d50fcb8c27539aacf776882942c1a11ea4472f8cdec1dea82fab66279d\",\"created_at\":1674164539,\"sig\":\"77127f636577e9029276be060332ea565deaf89ff215a494ccff16ae3f757065e2bc59b2e8c113dd407917a010b3abd36c8d7ad84c0e3ab7dab3a0b0caa9835d\",\"kind\":9734,\"tags\":[[\"e\",\"3624762a1274dd9636e0c552b53086d70bc88c165bc4dc0f9e836a1eaf86c3b8\"],[\"p\",\"32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245\"],[\"relays\",\"wss://relay.damus.io\",\"wss://nostr-relay.wlvs.space\",\"wss://nostr.fmt.wiz.biz\",\"wss://relay.nostr.bg\",\"wss://nostr.oxtr.dev\",\"wss://nostr.v0l.io\",\"wss://brb.io\",\"wss://nostr.bitcoiner.social\",\"ws://monad.jb55.com:8080\",\"wss://relay.snort.social\"]]}"
-    %        ],
-    %        ["preimage", "5d006d2cf1e73c7148e7519a4c68adc81642ce0e25a432b2434c99f97344c15f"]
-    %    ],
-    %    "content":""
-    %},
-    {201, Invoice};
+    ?LOG_DEBUG("Received zap request: ~p", [ZapJsonBin]),
+    try
+        ZapMap = jsx:decode(ZapJsonBin, [return_maps]),
+        Tags = maps:get(<<"tags">>, ZapMap, []),
+        EventId = extract_tag(<<"e">>, Tags),
+        PubKey = extract_tag(<<"p">>, Tags),
+        Memo = maps:get(<<"content">>, ZapMap, <<"Zap! ⚡">>),
+        %% convert msat to sat
+        Amount = AmountMsat div 1000,
+
+        Label = <<"zap:", EventId/binary, ":", PubKey/binary>>,
+        Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
+        #{
+            bolt11 := Bolt11
+        } = Invoice,
+        {201, #{pr => Bolt11, routes => []}}
+    catch
+        _:Error ->
+            ?LOG_WARNING("Invalid zap request format ~p", [Error]),
+            {400, #{error => <<"Invalid zap request">>}}
+    end;
 do_post_action(
     invoice,
     #{amount := 0} = Data,
@@ -254,7 +258,9 @@ do_post_action(
     _State
 ) ->
     ?LOG_DEBUG("generate invoice ~p", [Data]),
-    Invoice = cln:create_invoice(Amount, Memo, Expiry),
+    {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+    Label = list_to_binary("zap:" ++ Timestamp),
+    Invoice = cln:create_invoice(Amount, Memo, Expiry, Label),
     {201, Invoice};
 do_post_action(_Action, Data, _Req, _State) ->
     ?LOG_DEBUG("unhandled do_post_action ~p", [Data]).
