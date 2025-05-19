@@ -19,6 +19,7 @@
 -export([delete_resource/2]).
 -export([lookup_invoice/2]).
 -export([check_invoices/0]).
+-export([filter_valid_invoices/2]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
