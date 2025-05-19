@@ -15,7 +15,6 @@
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
 -export([content_types_accepted/2]).
 -export([trails/0]).
--export([check_invoices/0]).
 -export([delete_account/1]).
 -export([delete_resource/2]).
 -export([notify_user/2]).
@@ -99,7 +98,7 @@ trails() ->
         trails:trail(
             "/accounts/confirm",
             damage_accounts,
-            #{action => confirm},
+            #{action => confirm_email},
             #{
                 get =>
                     #{
@@ -145,35 +144,6 @@ trails() ->
                                     in => <<"body">>,
                                     required => true,
                                     type => <<"string">>
-                                }
-                            ]
-                    }
-            }
-        ),
-        trails:trail(
-            "/accounts/invoices",
-            damage_accounts,
-            #{action => invoices},
-            #{
-                get =>
-                    #{
-                        tags => ?TRAILS_TAG,
-                        description => "list invoices for account",
-                        produces => ["text/html", "application/json", "application/x-yaml"]
-                    },
-                put =>
-                    #{
-                        tags => ?TRAILS_TAG,
-                        description => "Create a new invoice.",
-                        produces => ["text/html", "application/json", "application/x-yaml"],
-                        parameters =>
-                            [
-                                #{
-                                    amount => <<"amount">>,
-                                    description => <<"ammount to create invoice">>,
-                                    in => <<"body">>,
-                                    required => true,
-                                    type => <<"integer">>
                                 }
                             ]
                     }
@@ -292,24 +262,9 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-get_invoices(AeAccount) ->
-    filter_valid_invoices(
-        cln:list_invoices(
-            [{"creation_date_start", integer_to_list(unix_timestamp_hours_ago(24))}]
-        ),
-        AeAccount
-    ).
-
 to_json(Req, #{action := confirm} = State) ->
     % for some browsers who send in applicaion/json contenttype
     to_html(Req, State);
-to_json(Req, #{action := invoices} = State) ->
-    case damage_http:is_authorized(Req, State) of
-        {true, _Req0, #{public_key := AeAccount} = _State0} ->
-            {jsx:encode(get_invoices(AeAccount)), Req, State};
-        {false, _, _} ->
-            {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}
-    end;
 to_json(Req, #{action := rate} = State) ->
     {jsx:encode(#{price => ?DAMAGE_PRICE}), Req, State};
 to_json(Req, #{action := balance} = State) ->
@@ -369,14 +324,6 @@ to_html(Req, #{action := confirm} = State) ->
         Error ->
             ?LOG_DEBUG("Error validating ~p", [Error]),
             {<<"Invalid confirmation link. Please try again.">>, Req, State}
-    end;
-to_html(Req, #{action := invoices} = State) ->
-    case damage_http:is_authorized(Req, State) of
-        {true, _Req0, #{public_key := AeAccount} = _State0} ->
-            Invoices = get_invoices(AeAccount),
-            {jsx:encode(Invoices), Req, State};
-        {false, _} ->
-            {stop, cowboy_req:reply(401, Req), State}
     end.
 
 authenticate_user(Email, Password) ->
@@ -414,32 +361,6 @@ validate_password(Password) ->
         {match, _} -> true;
         _ -> false
     end.
-send_reset_password_email(Email) when is_binary(Email) ->
-    {ok, ApiUrl} = application:get_env(damage, api_url),
-    ApiUrl0 = list_to_binary(ApiUrl),
-
-    Expiry = date_util:now_to_seconds(os:timestamp()) + 86400,
-    AuthTokenEncrypted = secrets:encrypt(term_to_binary(#{email => Email, expiry => Expiry})),
-
-    Data = maps:put(password, AuthTokenEncrypted, #{email => Email}),
-    Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
-    ?LOG_DEBUG("AuthToken sent ~p", [Query]),
-    Ctxt =
-        maps:put(
-            <<"password_reset_url">>,
-            <<ApiUrl0/binary, "/accounts/reset_password?", Query/binary>>,
-            Data
-        ),
-    Result = damage_utils:send_email(
-        {maps:get(full_name, Data, <<"">>), Email},
-        <<"DamageBDD Account Reset Password">>,
-        damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
-        damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
-    ),
-    ?LOG_DEBUG("Email sent ~p", [Result]),
-    <<
-        "Account password reset. Please check email for confirmation link. Don't forget to check spam folder too."
-    >>.
 send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     {ok, ApiUrl} = application:get_env(damage, api_url),
     ApiUrl0 = list_to_binary(ApiUrl),
@@ -464,50 +385,21 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     ),
     ?LOG_DEBUG("Email sent ~p", [Result]),
     {
-        ok,
-        <<
-            "Account created. Please check email for confirmation link. Don't forget to check spam folder too."
-        >>
+        200,
+        #{
+            status => <<"ok">>,
+            message =>
+                <<
+                    "Account created. Please check email for confirmation link. Don't forget to check spam folder too."
+                >>
+        }
     }.
 
-reset_password(
-    #{
-        <<"email">> := Email,
-        <<"token">> := Token,
-        <<"new_password_confirmation">> := NewPasswordConfirm,
-        <<"new_password">> := NewPassword
-    }
-) ->
-    Now = date_util:now_to_seconds(os:timestamp()),
-    case validate_password(NewPassword) of
-        true ->
-            case NewPassword of
-                NewPasswordConfirm ->
-                    case catch binary_to_term(secrets:decrypt(Token)) of
-                        #{email := _Email, expiry := Expiry} when Expiry < Now ->
-                            Body = <<"Confirm Token Expired.">>,
-                            {error, Body};
-                        #{email := Email, expiry := Expiry, action := <<"reset">>} when
-                            Expiry > Now
-                        ->
-                            identity_server:set_email_password(Email, NewPassword);
-                        #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            identity_server:register_email(Email, NewPassword)
-                    end;
-                _ ->
-                    {error, <<"Passwords do not match. Go back to try again.">>}
-            end;
-        false ->
-            {ok,
-                <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>}
-    end.
--spec do_post_action(atom(), map(), cowboy_req:req(), map()) ->
+-spec do_post_action(atom(), map()) ->
     {integer(), map()}.
 do_post_action(
     authenticate,
-    #{username := Email, password := Password},
-    _Req,
-    _State
+    #{username := Email, password := Password}
 ) ->
     case authenticate_user(Email, Password) of
         {ok, Account, Token} ->
@@ -517,9 +409,7 @@ do_post_action(
     end;
 do_post_action(
     reset_password,
-    #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm},
-    Req,
-    State
+    #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm}
 ) ->
     Now = date_util:now_to_seconds(os:timestamp()),
     case validate_password(NewPassword) of
@@ -545,16 +435,38 @@ do_post_action(
     end;
 do_post_action(
     reset_password,
-    #{email := Email},
-    Req,
-    State
+    #{email := Email}
 ) ->
-    {200, send_reset_password_email(Email)};
+    {ok, ApiUrl} = application:get_env(damage, api_url),
+    ApiUrl0 = list_to_binary(ApiUrl),
+
+    Expiry = date_util:now_to_seconds(os:timestamp()) + 86400,
+    AuthTokenEncrypted = secrets:encrypt(term_to_binary(#{email => Email, expiry => Expiry})),
+
+    Data = maps:put(password, AuthTokenEncrypted, #{email => Email}),
+    Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
+    ?LOG_DEBUG("AuthToken sent ~p", [Query]),
+    Ctxt =
+        maps:put(
+            <<"password_reset_url">>,
+            <<ApiUrl0/binary, "/accounts/reset_password?", Query/binary>>,
+            Data
+        ),
+    Result = damage_utils:send_email(
+        {maps:get(full_name, Data, <<"">>), Email},
+        <<"DamageBDD Account Reset Password">>,
+        damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
+        damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
+    ),
+    ?LOG_DEBUG("Email sent ~p", [Result]),
+    {200, #{
+        status => <<"ok">>,
+        message =>
+            <<"Account password reset. Please check email for confirmation link. Don't forget to check spam folder too.">>
+    }};
 do_post_action(
-    confirm,
-    #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm},
-    Req,
-    State
+    confirm_email,
+    #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm}
 ) ->
     Now = date_util:now_to_seconds(os:timestamp()),
     case validate_password(NewPassword) of
@@ -580,9 +492,9 @@ do_post_action(
                 <<"Password does not meet complexity requirement: minimum 8 characters with at least one uppercase letter, one lowercase letter, one digit, and one special character.">>,
             {400, #{status => <<"failed">>, message => Message}}
     end;
-do_post_action(create, #{email := Email} = Data, Req, State) when is_atom(Email) ->
-    do_post_action(create, maps:put(email, atom_to_binary(Email), Data), Req, State);
-do_post_action(create, #{email := Email} = Data, _Req, _State) ->
+do_post_action(create, #{email := Email} = Data) when is_atom(Email) ->
+    do_post_action(create, maps:put(email, atom_to_binary(Email), Data));
+do_post_action(create, #{email := Email} = Data) ->
     case damage_utils:is_valid_email(Email) of
         true ->
             ?LOG_DEBUG("account  ~p", [Data]),
@@ -593,87 +505,7 @@ do_post_action(create, #{email := Email} = Data, _Req, _State) ->
             end;
         false ->
             {400, #{status => <<"failed">>, message => <<"Invalid email">>}}
-    end;
-do_post_action(invoices, #{amount := Amount}, _Req, _State) when
-    Amount > ?MAX_DAMAGE_INVOICE
-->
-    {
-        4000,
-        #{
-            status => <<"max_damage">>,
-            message => <<"invoice amount too large">>,
-            max_damage_invoice => ?MAX_DAMAGE_INVOICE
-        }
-    };
-do_post_action(invoices, #{amount := Amount}, _Req, _State) when
-    Amount < ?MIN_DAMAGE_INVOICE
-->
-    {
-        ?MIN_DAMAGE_INVOICE,
-        #{
-            status => <<"max_damage">>,
-            message => <<"invoice amount too large">>,
-            max_damage_invoice => ?MIN_DAMAGE_INVOICE
-        }
-    };
-do_post_action(invoices, #{amount := Amount}, Req, State) ->
-    case damage_http:is_authorized(Req, State) of
-        {true, _Req0, #{username := Username, public_key := AeAccount} = _State0} ->
-            {
-                201,
-                #{
-                    status => <<"ok">>,
-                    invoice => create_invoice(Amount, Username, AeAccount)
-                }
-            };
-        {false, _} ->
-            {401, #{status => <<"noauth">>, message => <<"Unauthorized.">>}}
     end.
-
-create_invoice(Amount, Username, AeAccount) ->
-    DmgAmount = damage:sats_to_damage(Amount),
-    Memo =
-        list_to_binary(
-            lists:flatten(
-                io_lib:format(
-                    "Invoice for ~p damage tokens for user ~s, with AE Account ~s",
-                    [DmgAmount, Username, AeAccount]
-                )
-            )
-        ),
-    ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),
-    Invoice = cln:create_invoice(Amount, Memo),
-    #{
-        payment_hash := _PaymentHash,
-        bolt11 := PaymentRequest,
-        created_index := _CreatedIndex,
-        expires_at := ExpiresAt,
-        payment_secret := _PaymentSecret
-    } = Invoice,
-    ?LOG_DEBUG("saved invoice ~p", [Invoice]),
-    #{payment_request => PaymentRequest, expiry => ExpiresAt}.
-
-filter_valid_invoices(Invoices, AeAccount) ->
-    lists:filter(
-        fun(Invoice) ->
-            case Invoice of
-                #{<<"state">> := <<"OPEN">>, <<"memo">> := Memo} ->
-                    MemoRe = lists:flatten(io_lib:format(".*~s$", [AeAccount])),
-                    case re:run(Memo, MemoRe) of
-                        {match, _Matched} ->
-                            true;
-                        NotMatched ->
-                            ?LOG_DEBUG("Re Not matched invoice ~p", [NotMatched]),
-                            false
-                    end;
-                NotMatched ->
-                    ?LOG_DEBUG("Not matched invoice ~p", [NotMatched]),
-                    false
-            end
-        end,
-        Invoices
-    ).
-
 unix_timestamp_hours_ago(HoursAgo) when is_integer(HoursAgo), HoursAgo >= 0 ->
     % Get the current time in seconds since Unix epoch
     {MegaSecs, Secs, _MicroSecs} = os:timestamp(),
@@ -722,7 +554,7 @@ from_html(Req, #{action := create} = State) ->
             cowboy_req:reply(400, Response),
             {stop, Response, State};
         Email ->
-            case do_post_action(create, #{email => Email}, Req0, State) of
+            case do_post_action(create, #{email => Email}) of
                 {204, <<"">>} ->
                     Response = cowboy_req:reply(204, Req0),
                     {stop, Response, State};
@@ -736,7 +568,7 @@ from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Data0 = maps:from_list(cow_qs:parse_qs(Data)),
     {Status0, Response0} =
-        case do_post_action(reset_password, damage_utils:binary_to_atom_keys(Data0), Req, State) of
+        case do_post_action(reset_password, damage_utils:binary_to_atom_keys(Data0)) of
             {200, #{message := Message}} ->
                 {ok, ApiUrl} = application:get_env(damage, api_url),
                 {
@@ -788,25 +620,13 @@ from_json(Req, #{action := Action} = State) ->
             ?LOG_DEBUG("post response 400 ~p ", [Response]),
             {stop, Response, State};
         Data0 ->
-            case do_post_action(Action, Data0, Req0, State) of
+            case do_post_action(Action, Data0) of
                 {204, <<"">>} ->
-                    Response = cowboy_req:reply(204, Req0),
-                    {stop, Response, State};
-                {200, Response0} ->
-                    Response = cowboy_req:set_resp_body(
-                        jsx:encode(
-                            #{
-                                status => <<"ok">>,
-                                message => Response0
-                            }
-                        ),
-                        Req0
-                    ),
-                    cowboy_req:reply(200, Response),
-                    {stop, Response, State};
+                    {stop, cowboy_req:reply(204, Req0), State};
                 {Status0, Response0} ->
                     Response = cowboy_req:set_resp_body(
-                        jsx:encode(#{status => <<"fail">>, message => Response0}), Req0
+                        jsx:encode(Response0),
+                        Req0
                     ),
                     cowboy_req:reply(Status0, Response),
                     {stop, Response, State}
@@ -838,7 +658,7 @@ from_yaml(Req, #{action := Action} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status0, Response0} =
         case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
-            {ok, [Data0]} -> do_post_action(Action, Data0, Req, State);
+            {ok, [Data0]} -> do_post_action(Action, Data0);
             {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
         end,
     ?LOG_DEBUG("post action ~p resp ~p", [Data, Response0]),
@@ -886,45 +706,6 @@ delete_resource(Req, #{action := invoices} = State) ->
     end.
 
 balance(AeAccount) -> #{amount => damage_ae:balance(AeAccount)}.
-
-check_invoice_foldn(Invoice, Acc) ->
-    case maps:get(<<"state">>, Invoice) of
-        <<"ACCEPTED">> ->
-            ?LOG_INFO("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
-            Acc;
-        <<"SETTLED">> ->
-            ?LOG_INFO("Settled Invoice ~p", [Invoice]),
-            AmountPaid = maps:get(<<"amt_paid_sat">>, Invoice),
-            case maps:get(<<"memo">>, Invoice) of
-                AeAccountEncrypted when is_binary(AeAccountEncrypted) ->
-                    ?LOG_INFO("Acceptd Invoice ~p ~p", [Invoice, AmountPaid]),
-                    AeAccount = damage_utils:decrypt(AeAccountEncrypted),
-                    Result =
-                        damage_ae:transfer_damage_tokens(
-                            AeAccount,
-                            AmountPaid * ?DAMAGE_PRICE
-                        ),
-                    ?LOG_INFO("Funded contract ~p ~p", [Result, AmountPaid]),
-                    Acc ++ [Invoice];
-                _ ->
-                    Acc
-            end;
-        <<"CANCELED">> ->
-            ?LOG_DEBUG("Cancelled Invoice ~p", [maps:get(<<"memo">>, Invoice)]),
-            Acc
-    end.
-
-check_invoices() ->
-    {Date, _} = calendar:now_to_datetime(os:timestamp()),
-    CreationDate =
-        integer_to_list(
-            date_util:date_to_epoch(date_util:subtract(Date, {days, ?INVOICES_SINCE}))
-        ),
-    lists:foldl(
-        fun check_invoice_foldn/2,
-        [],
-        cln:list_invoices([{"creation_date_start", CreationDate}])
-    ).
 
 delete_account(Email) ->
     case damage_ae:delete_account(Email) of
