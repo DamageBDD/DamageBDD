@@ -89,20 +89,21 @@ get_cln_client_config() ->
             "localhost" -> #{};
             _ -> #{transport => tls, tls_opts => TLSOptions}
         end,
+    State =
+        #state{
+            cln_host = Host,
+            cln_port = Port,
+            cln_wspath = Path,
+            cln_certfile = CertFile,
+            cln_keyfile = KeyFile,
+            options = Options
+        },
     case secrets:retrieve_decrypt(cln_rune) of
         {ok, RuneBin} ->
-            #state{
-                cln_host = Host,
-                cln_port = Port,
-                cln_wspath = Path,
-                cln_certfile = CertFile,
-                cln_keyfile = KeyFile,
-                rune = RuneBin,
-                options = Options
-            };
+            State#state{rune = RuneBin};
         Error ->
             ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret. ~p", [Error]),
-            {ok, #state{}}
+            State#state{rune = <<"">>}
     end.
 
 init([]) ->

@@ -121,17 +121,16 @@ from_json(Req, #{username := Username, public_key := AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
         {'EXIT', {badarg, Trace}} ->
-           ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
-            {stop, 
-             #{status => <<"failed">>, message => <<"Json decoding failed.">>}, State};
+            ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
+            {stop, #{status => <<"failed">>, message => <<"Json decoding failed.">>}, State};
         #{
-          amount_sats := Amount
-         } ->
-           ?LOG_INFO("Generating invoice ~p.", [Amount]),
+            amount_sats := Amount
+        } ->
+            ?LOG_INFO("Generating invoice ~p.", [Amount]),
             Response = #{
-                         status => <<"ok">>,
-                         invoice => create_invoice(Amount, Username, AeAccount)
-                        },
+                status => <<"ok">>,
+                invoice => create_invoice(Amount, Username, AeAccount)
+            },
             {
                 stop,
                 cowboy_req:reply(
@@ -184,13 +183,13 @@ create_invoice(Amount, Username, AeAccount) ->
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("damage:" ++ Timestamp),
     ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),
-            #{
-              payment_hash := PaymentHash,
-              expires_at := Expiry,
-              bolt11 := PaymentRequest,
-              payment_secret := _PaymentSecret,
-              created_index := _CreatedIndex
-             } = Invoice = cln:create_invoice(Amount , Memo, 3600, Label),
+    #{
+        payment_hash := PaymentHash,
+        expires_at := Expiry,
+        bolt11 := PaymentRequest,
+        payment_secret := _PaymentSecret,
+        created_index := _CreatedIndex
+    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
     ?LOG_DEBUG("saved invoice ~p", [Invoice]),
     #{payment_request => PaymentRequest, payment_hash => PaymentHash, expiry => Expiry}.
 

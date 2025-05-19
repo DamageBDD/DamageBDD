@@ -391,30 +391,30 @@ from_json(Req, State) ->
         {'EXIT', {badarg, Trace}} ->
             ?LOG_ERROR("Json decoding failed ~p", [Trace]),
             {
-             cowboy_req:reply(
-               400,
-                  cowboy_req:set_resp_body(<<"Json decoding failed.">>, Req)
-              ),
-             Req,
-             State
+                cowboy_req:reply(
+                    400,
+                    cowboy_req:set_resp_body(<<"Json decoding failed.">>, Req)
+                ),
+                Req,
+                State
             };
         #{message := _Message, signature := _Sig} = Json ->
             {Status0, Response0} = do_action_tx(Json, State, Req),
             {
-             stop,
-             cowboy_req:reply(
-               Status0,
-               cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
-              ),
-             State
+                stop,
+                cowboy_req:reply(
+                    Status0,
+                    cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+                ),
+                State
             };
         #{feature := _FeatureData, stream := true} = Json ->
             {Status, Response} = check_execute_bdd(Json, State, Req),
             {stop, Response, State};
         #{feature := _FeatureData, concurrency := Concurrency} = Json when Concurrency > 1 ->
             {Status, Response} = check_execute_bdd(Json, State, Req),
-            {stop, cowboy_req:reply(Status,cowboy_req:set_resp_body(jsx:encode(Response))), State}
-        end.
+            {stop, cowboy_req:reply(Status, cowboy_req:set_resp_body(jsx:encode(Response))), State}
+    end.
 
 from_html(Req0, State) ->
     {ok, Body, Req} = cowboy_req:read_body(Req0),

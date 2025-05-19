@@ -424,6 +424,8 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 				var versionData = JSON.parse(xhr.responseText);
 				var versionDom= document.getElementById('node-version');
 				versionDom.innerText = 'node version: ' + versionData.version;
+				console.log("version: ");
+				console.log( versionData);
 				var nodePublicKeyDom= document.getElementById('node-public-key');
 				nodePublicKeyDom.innerText = 'node public key: ' + versionData.public_key;
 				document.getElementById("node-public-key").addEventListener("click",(event) => {
