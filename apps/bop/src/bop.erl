@@ -30,7 +30,6 @@
 start_link() -> 
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 start_link([]) -> gen_server:start_link(?MODULE, [], []).
-
 init([]) ->
     process_flag(trap_exit, true),
     cln:register_listener(invoice_paid),
@@ -38,8 +37,23 @@ init([]) ->
                {ok, Rate0} -> Rate0;
                _ -> 161539
            end,
+case ets:info(bop_goal_cache) of
+    undefined ->
+        ets:new(bop_goal_cache, [named_table, public, {read_concurrency, true}, {write_concurrency, true}]);
+    _ ->
+        ok
+end,
 
     {ok, #{total_msats => null, goal_msats => null, goal_deadline => null, rate => Rate}}.
+
+get_cached(Key) ->
+    case ets:lookup(bop_goal_cache, Key) of
+        [{_, Value}] -> {ok, Value};
+        [] -> not_found
+    end.
+
+put_cached(Key, Value) ->
+    ets:insert(bop_goal_cache, {Key, Value}).
 
 -spec fetch_btc_aud_price() -> {ok, float()} | {error, term()}.
 fetch_btc_aud_price() ->
@@ -66,7 +80,7 @@ msats_to_aud(Msats, BtcAudRate) ->
 
 
 handle_info({cln_event, invoice_paid, 
-                 #{label := _Label,status := <<"paid">>,
+                 #{label := Label, status := <<"paid">>,
                    description := _Description,
                    payment_hash := PaymentHash,
                    expires_at := _Expiry,
@@ -78,86 +92,84 @@ handle_info({cln_event, invoice_paid,
                    pay_index := _PayIndex,
                    amount_received_msat := AmountReceivedMsat,
                    paid_at := _PaidAt
-                  }
-} = Data, #{rate := Rate} = State) ->
-    AudMilli = ceil(msats_to_aud(AmountReceivedMsat, Rate) * 1000), % TODO implement price feed oracle
-    ?LOG_INFO("bop: Invoice paid: ~p ~p audm ~p~n", [PaymentHash, Data, AudMilli]),
-    case gproc:lookup_local_name({bop_ws, PaymentHash}) of
-        undefined -> 
-            %?LOG_INFO("bop: Invoice response websocket not found.", []),
-            ok;
-        Pid ->
-            Pid ! {invoice_paid, PaymentHash},
-            ok
-    end,
-    case catch contract_call(
-      "LightningProofRegistry",
-      ?BOP_VAULT_CONTRACT,
-      "register_payment",
-      [
-       PaymentHash,
-       AmountReceivedMsat,
-       AudMilli
-      ]) of
-        #{"error_code" := "already_known",
-                                "reason" := "Invalid tx"} ->
-            {noreply, State};
-        Result ->
-            ?LOG_INFO("bop: Invoice recorded: ~p ~n", [Result]),
-            {noreply, State#{total_msats => null}}
-end;
+                  }} = Data,
+            #{rate := Rate} = State) ->
+    case Label of
+        << "bop:", _/binary >> ->
+            AudMilli = ceil(msats_to_aud(AmountReceivedMsat, Rate) * 1000),
+            ?LOG_INFO("bop: Invoice paid: ~p ~p ~p audm ~p~n", [Label, PaymentHash, Data, AudMilli]),
+            case gproc:lookup_local_name({bop_ws, PaymentHash}) of
+                undefined -> ok;
+                Pid ->
+                    Pid ! {invoice_paid, PaymentHash},
+                    ok
+            end,
+            case catch contract_call(
+                "LightningProofRegistry",
+                ?BOP_VAULT_CONTRACT,
+                "register_payment",
+                [
+                 PaymentHash,
+                 AmountReceivedMsat,
+                 AudMilli
+                ]) of
+                #{"error_code" := "already_known", "reason" := "Invalid tx"} ->
+                    {noreply, State};
+                Result ->
+                    ets:delete(bop_goal_cache, {?BOP_VAULT_CONTRACT, total_msats}),
+                    ?LOG_INFO("bop: Invoice recorded: ~p ~n", [Result]),
+                    {noreply, State#{total_msats => null}}
+            end;
+        _Other ->
+            % Not a bop invoice, ignore it
+            {noreply, State}
+    end;
 
 handle_info(Info, State) ->
-    ?LOG_INFO("bop: Invoice response websocket info ~p.", [Info]),
- {noreply, State}.
-handle_call({get_deadline, _GoalId}, _From, #{goal_deadline := Deadline} = State) when is_number(Deadline) -> 
-    {reply, Deadline, State};
-handle_call({get_deadline, GoalId}, _From, #{goal_deadline := null} = State) -> 
-    #{"caller_id" :=
-          _CallerId,
-      "caller_nonce" := _Nonce,
-      "contract_id" :=
-          _ContractId,
-      "gas_price" := _GasPrice,"gas_used" := _GasUsed,
-      "height" := _BlockHeight,"log" := [],"return_type" := "ok",
-      "return_value" := Deadline} = bop:contract_call(
-                                   "LightningProofRegistry",
-                                   GoalId,
-                                   "get_deadline",
-                                   []),
-    {reply, Deadline, maps:put(goal_deadline, Deadline, State)};
-handle_call({get_goal, _GoalId}, _From, #{goal_msats := GoalMsats} = State) when is_number(GoalMsats) -> 
-    {reply, GoalMsats, State};
-handle_call({get_goal, GoalId}, _From, #{goal_msats := null} = State) -> 
-    #{"caller_id" :=
-          _CallerId,
-      "caller_nonce" := _Nonce,
-      "contract_id" :=
-          _ContractId,
-      "gas_price" := _GasPrice,"gas_used" := _GasUsed,
-      "height" := _BlockHeight,"log" := [],"return_type" := "ok",
-      "return_value" := GoalMsats} = bop:contract_call(
-                                   "LightningProofRegistry",
-                                   GoalId,
-                                   "get_goal_msats",
-                                   []),
-    {reply, GoalMsats, maps:put(goal_msats, GoalMsats, State)};
-handle_call({get_total, _GoalId}, _From, #{total_msats := TotalMSats} = State) when is_number(TotalMSats) -> 
-    {reply, TotalMSats, State};
-handle_call({get_total, GoalId}, _From, #{total_msats := null} = State) -> 
-    #{"caller_id" :=
-          _CallerId,
-      "caller_nonce" := _Nonce,
-      "contract_id" :=
-          _ContractId,
-      "gas_price" := _GasPrice,"gas_used" := _GasUsed,
-      "height" := _BlockHeight,"log" := [],"return_type" := "ok",
-      "return_value" := TotalMSats} = bop:contract_call(
-                                   "LightningProofRegistry",
-                                   GoalId,
-                                   "get_total_msats",
-                                   []),
-    {reply, TotalMSats, maps:put(total_msats, TotalMSats, State)};
+    ?LOG_DEBUG("bop:handle_info ~p.", [Info]),
+    {noreply, State}.
+handle_call({get_goal, GoalId}, _From, State) ->
+    case get_cached({GoalId, goal_msats}) of
+        {ok, Cached} ->
+            {reply, Cached, State};
+        not_found ->
+            #{"return_value" := GoalMsats} = bop:contract_call(
+              "LightningProofRegistry",
+              GoalId,
+              "get_goal_aud",
+              []),
+            put_cached({GoalId, goal_msats}, GoalMsats),
+            {reply, GoalMsats, State}
+    end;
+
+handle_call({get_total, GoalId}, _From, State) ->
+    case get_cached({GoalId, total_msats}) of
+        {ok, Cached} ->
+            {reply, Cached, State};
+        not_found ->
+            #{"return_value" := TotalMSats} = bop:contract_call(
+              "LightningProofRegistry",
+              GoalId,
+              "get_total_msats",
+              []),
+            put_cached({GoalId, total_msats}, TotalMSats),
+            {reply, TotalMSats, State}
+    end;
+handle_call({get_deadline, GoalId}, _From, State) ->
+    case get_cached({GoalId, goal_deadline}) of
+        {ok, Cached} ->
+            {reply, Cached, State};
+        not_found ->
+            #{"return_value" := Deadline} = bop:contract_call(
+              "LightningProofRegistry",
+              GoalId,
+              "get_deadline",
+              []),
+            put_cached({GoalId, goal_deadline}, Deadline),
+            {reply, Deadline, State}
+    end;
+
+
 handle_call(Info, _, State) -> 
     ?LOG_INFO("Unhandled call ~p ~p", [Info, State]),
 {reply, not_implemented, State}.
@@ -206,9 +218,9 @@ bop_keypair() ->
     secrets:keypair(Path).
 deploy_goal_contract() ->
     Deadline =  date_util:now_to_seconds(os:timestamp()) +   date_util:days_to_seconds(60),
-    AmountMsats =300000000,
+    GoalAud = 500,
     RecepientLnAddr = "coordinator@bitcoinonly.party",
-    bop:contract_deploy("LightningProofRegistry", [RecepientLnAddr, AmountMsats, Deadline]) .
+    bop:contract_deploy("LightningProofRegistry", [RecepientLnAddr, GoalAud, Deadline]) .
 test() ->
     _Result = contract_call(
       "LightningProofRegistry",

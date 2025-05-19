@@ -10,8 +10,6 @@
 -export([init/2, websocket_init/1, websocket_handle/2, websocket_info/2]).
 -export([test/0]).
 
--define(SESSION_BUCKET, <<"ws_sessions_crdt">>).
--define(AUTH_BUCKET, <<"auth_links_crdt">>).
 
 init(Req, State) ->
     {cowboy_websocket, Req, State, #{idle_timeout => 60000}}. %% or higher
@@ -26,13 +24,17 @@ websocket_handle({text, Msg}, State) ->
         #{action := <<"list_invoices">>} ->
             Total = bop:get_total(?BOP_VAULT_CONTRACT),
             ?LOG_INFO("Total ~p", [Total]),
+            GoalTotal = bop:get_goal(?BOP_VAULT_CONTRACT),
+            ?LOG_INFO("GoalTotal ~p", [GoalTotal]),
             Invoices = handle_list_payments(State),
             ?LOG_INFO("Invoices ~p", [Invoices]),
             {reply, {text, jsx:encode(
                              #{
                                type => <<"list_invoices">>,
                                invoices => Invoices,
-                               total_funds => Total
+                               total_funds => Total,
+                               goal_total_funds => GoalTotal,
+                               contract_id => ?BOP_VAULT_CONTRACT
                               })}, State};
         #{action := <<"request_invoice">>, amount:= Amount0} ->
             Amount = Amount0 * 1000,
@@ -94,7 +96,7 @@ websocket_info(ping, State) ->
     {reply, {text, jsx:encode(#{type => <<"ping">>})}, State};
 
 websocket_info({invoice_paid,PaymentHash} = Info, State) ->
-    ?LOG_INFO("bop ws info ~p", [Info]),
+    ?LOG_INFO("bop ws invoice_paid ~p", [Info]),
     Reply = #{type => <<"paid">>, payment_hash => PaymentHash},
     {reply, {text, jsx:encode(Reply)}, State}.
 

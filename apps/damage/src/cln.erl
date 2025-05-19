@@ -26,8 +26,14 @@
         list_invoices/0,
         list_invoices_by_label/1,
         list_invoices_by_invoicestring/1,
+        list_invoices_by_payment_hash/1,
         channel_id_to_scid/1,
         list_channels/0,
+        find_best_peer_to_open/0,
+        score_peers_for_opening/1,
+        top_five_nodes/1,
+        inbound_capacity/2,
+        verify_peer/1,
         subscribe/0
     ]
 ).
@@ -36,6 +42,7 @@
 -export([test/0]).
 % 5 minutes in ms
 -define(CACHE_TTL, 300000).
+-define(CLN_HTTP_TIMEOUT, 300000).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -181,61 +188,97 @@ channel_id_to_scid(CID0) when is_binary(CID0); is_list(CID0) ->
     end.
 
 get_channel_balances(Host, Port, Options, Rune) ->
-    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    Path = "/v1/listpeerchannels",
-    ReqJson = jsx:encode(#{}),
-    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
-    Result =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-            {response, fin, _Status, _} ->
-                #{};
-            {response, nofin, _Status, _} ->
-                {ok, Body} = gun:await_body(ConnPid, StreamRef),
-                case jsx:decode(Body, [return_maps, {labels, atom}]) of
-                    #{channels := Channels} ->
-                        lists:foldl(
-                            fun(Chan, Acc) ->
-                                ChannelId = maps:get(channel_id, Chan),
-                                OurMsat = maps:get(to_us_msat, Chan),
-                                TheirMsat = maps:get(total_msat, Chan) - OurMsat,
-                                maps:put(ChannelId, #{ours => OurMsat, theirs => TheirMsat}, Acc)
-                            end,
-                            #{},
-                            Channels
-                        );
+    case get_cache(channel_balances) of
+        {ok, Cached} ->
+            Cached;
+        not_found ->
+            Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+            {ok, ConnPid} = gun:open(Host, Port, Options),
+            Path = "/v1/listpeerchannels",
+            ReqJson = jsx:encode(#{}),
+            StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+            Result =
+                case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+                    {response, fin, _Status, _} ->
+                        #{};
+                    {response, nofin, _Status, _} ->
+                        {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                        case jsx:decode(Body, [return_maps, {labels, atom}]) of
+                            #{channels := Channels} ->
+                                lists:foldl(
+                                    fun(Chan, Acc) ->
+                                        ChannelId = maps:get(channel_id, Chan),
+                                        OurMsat = maps:get(to_us_msat, Chan),
+                                        TheirMsat = maps:get(total_msat, Chan) - OurMsat,
+                                        maps:put(
+                                            ChannelId, #{ours => OurMsat, theirs => TheirMsat}, Acc
+                                        )
+                                    end,
+                                    #{},
+                                    Channels
+                                );
+                            _ ->
+                                #{}
+                        end;
                     _ ->
                         #{}
-                end;
-            _ ->
-                #{}
-        end,
-    gun:cancel(ConnPid, StreamRef),
-    gun:close(ConnPid),
-    Result.
+                end,
+            gun:cancel(ConnPid, StreamRef),
+            gun:close(ConnPid),
+            put_cache(channel_balances, Result),
+            Result
+    end.
 
-get_node_alias(Host, Port, Options, Rune, _NodeId) ->
-    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    Path = "/v1/listnodes",
-    ReqJson = jsx:encode(#{}),
-    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
-    Result =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-            {response, fin, _Status, _} ->
-                <<"unknown">>;
-            {response, nofin, _Status, _} ->
-                {ok, Body} = gun:await_body(ConnPid, StreamRef),
-                case jsx:decode(Body, [return_maps, {labels, atom}]) of
-                    #{node := #{alias := Alias}} -> Alias;
-                    _ -> <<"unknown">>
-                end;
-            _ ->
-                <<"unknown">>
-        end,
-    gun:cancel(ConnPid, StreamRef),
-    gun:close(ConnPid),
-    Result.
+get_node_alias(Host, Port, Options, Rune, NodeId) ->
+    case get_cache({node_alias, NodeId}) of
+        {ok, Alias} ->
+            ?LOG_INFO("got alias from cache ~p", [Alias]),
+            Alias;
+        not_found ->
+            ?LOG_INFO("fetching aliases from node", []),
+            Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+            {ok, ConnPid} = gun:open(Host, Port, Options),
+            Path = "/v1/listnodes",
+            ReqJson = jsx:encode(#{}),
+            StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+
+            Alias =
+                case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+                    {response, nofin, _Status, _} ->
+                        {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                        case jsx:decode(Body, [return_maps, {labels, atom}]) of
+                            #{nodes := Nodes} ->
+                                % Cache all aliases
+                                lists:foreach(
+                                    fun(N) ->
+                                        NId = maps:get(nodeid, N),
+                                        A = maps:get(alias, N, <<"unknown">>),
+                                        put_cache({node_alias, NId}, A)
+                                    end,
+                                    Nodes
+                                ),
+                                % Return requested NodeId alias
+                                case
+                                    lists:keyfind(NodeId, 2, [
+                                        {maps:get(nodeid, N), maps:get(alias, N, <<"unknown">>)}
+                                     || N <- Nodes
+                                    ])
+                                of
+                                    {_, A} -> A;
+                                    false -> <<"unknown">>
+                                end;
+                            _ ->
+                                <<"unknown">>
+                        end;
+                    _ ->
+                        <<"unknown">>
+                end,
+
+            gun:cancel(ConnPid, StreamRef),
+            gun:close(ConnPid),
+            Alias
+    end.
+
 handle_call(
     subscribe,
     _From,
@@ -280,8 +323,11 @@ handle_call(
     ),
     ChannelId =
         case Match of
-            [#{channel_id := CID} | _] -> CID;
-            _ -> <<"not_found">>
+            [#{channel_id := CID} | _] ->
+                CID;
+            ChannelId0 ->
+                ?LOG_INFO("Channel cache ~p", [ChannelId0]),
+                <<"not_found">>
         end,
     {reply, ChannelId, State};
 handle_call(
@@ -318,42 +364,18 @@ handle_call(
 handle_call(
     list_channels,
     From,
-    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+    State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
 ) ->
-    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    Path = "/v1/listchannels",
-    {reply, #{id := SourceNodeId} = _Info, _} =
-        handle_call(
-            getinfo,
-            From,
-            State
-        ),
-    ReqJson = jsx:encode(#{source => SourceNodeId}),
-    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
-    {ok, Response} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-            {response, fin, _Status, _} -> no_data;
-            {response, nofin, _Status, _} -> gun:await_body(ConnPid, StreamRef);
-            {response, nofin, _} -> gun:await_body(ConnPid, StreamRef);
-            Default -> ?LOG_ERROR("Unexpected gun response: ~p", [Default])
-        end,
-    ChannelsDecoded = jsx:decode(Response, [return_maps, {labels, atom}]),
-    gun:cancel(ConnPid, StreamRef),
-    gun:close(ConnPid),
-    ChannelList = maps:get(channels, ChannelsDecoded, []),
-    ?LOG_DEBUG("Channels ~p", [ChannelList]),
+    Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
+    {reply, #{id := SourceNodeId}, _} = handle_call(getinfo, From, State),
+
+    ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{source => SourceNodeId}),
+
     NodeIds = lists:usort(
         lists:flatten([[maps:get(source, Chan), maps:get(destination, Chan)] || Chan <- ChannelList])
     ),
-    Aliases = lists:foldl(
-        fun(NodeId, Acc) ->
-            Alias = get_node_alias(Host, Port, Options, Rune, NodeId),
-            maps:put(NodeId, Alias, Acc)
-        end,
-        #{},
-        NodeIds
-    ),
+
+    Aliases = resolve_aliases(NodeIds, Host, Port, Options, Rune),
     ChannelBalances = get_channel_balances(Host, Port, Options, Rune),
 
     lists:foreach(
@@ -361,10 +383,7 @@ handle_call(
             SourceAlias = maps:get(Source, Aliases, <<"unknown">>),
             DestAlias = maps:get(Destination, Aliases, <<"unknown">>),
             ChannelId = scid_to_channel_id(ShortChannelId),
-            ?LOG_DEBUG("Channelid ~p", [ChannelId]),
-            ?LOG_DEBUG("Channel Balance es ~p", [ChannelBalances]),
             Balance = maps:get(ChannelId, ChannelBalances, #{ours => 0, theirs => 0}),
-            ?LOG_DEBUG("Balance ~p", [Balance]),
             OurMsat = maps:get(ours, Balance),
             TheirMsat = maps:get(theirs, Balance),
             Total = OurMsat + TheirMsat,
@@ -385,7 +404,49 @@ handle_call(
         end,
         ChannelList
     ),
-    {reply, ok, State};
+
+    {reply, ChannelList, State};
+handle_call(
+    find_best_peer_to_open,
+    _From,
+    State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
+) ->
+    Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
+    ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
+
+    NodeCount = lists:foldl(
+        fun(#{source := Src, destination := Dst}, Acc) ->
+            Acc1 = maps:update_with(Src, fun(N) -> N + 1 end, 1, Acc),
+            maps:update_with(Dst, fun(N) -> N + 1 end, 1, Acc1)
+        end,
+        #{},
+        ChannelList
+    ),
+
+    Sorted = lists:sort(fun({_, A}, {_, B}) -> A > B end, maps:to_list(NodeCount)),
+    Top = lists:sublist(Sorted, 5),
+    Aliases = lists:map(
+        fun({NodeId, Count}) ->
+            {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId), Count}
+        end,
+        Top
+    ),
+    {reply, Aliases, State};
+handle_call(
+    {verify_peer, NodeId},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    %% 1. Connect to node
+
+    %% 2. List node info
+    NodeInfo = list_node_info(NodeId, Host, Port, Options, Rune),
+
+    %% 3. List channel policy entries (if any)
+    ChannelPolicies = list_channel_policies(NodeId, Host, Port, Options, Rune),
+
+    {reply, #{connectable => true, node_info => NodeInfo, channels => ChannelPolicies}, State};
 handle_call(
     {list_invoices, Params},
     _From,
@@ -700,9 +761,14 @@ handle_event(
     ]
 ) ->
     ?LOG_INFO("cln: websocket payment event payrequest ~p payhash ~p", [PaymentRequest, PaymentHash]),
-    #{invoices := [Invoice | _]} = list_invoices_by_invoicestring(PaymentRequest),
-    ?LOG_INFO("cln: websocket payment invoice ~p", [Invoice]),
-    broadcast(invoice_paid, Invoice);
+    case list_invoices_by_payment_hash(PaymentHash) of
+        #{invoices := [Invoice | _]} ->
+            ?LOG_INFO("cln: websocket payment invoice ~p", [Invoice]),
+            broadcast(invoice_paid, Invoice);
+        #{invoices := []} ->
+            ?LOG_INFO("cln: unknown payment invoice ~p", [PaymentHash]),
+            []
+    end;
 handle_event(_ConnPid, _StreamRef, _UnknownEvent) ->
     %?LOG_DEBUG("Websocket unknown event ~p", [UnknownEvent]),
     ok.
@@ -742,6 +808,11 @@ list_invoices_by_invoicestring(InvoiceString) ->
     poolboy:transaction(
         ?MODULE,
         fun(Worker) -> gen_server:call(Worker, {list_invoices, #{invstring => InvoiceString}}) end
+    ).
+list_invoices_by_payment_hash(PaymentHash) ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) -> gen_server:call(Worker, {list_invoices, #{payment_hash => PaymentHash}}) end
     ).
 
 create_invoice(Amount, Description) ->
@@ -818,9 +889,160 @@ broadcast(Topic, Payload) ->
         end,
         gproc:lookup_pids({p, l, {cln_event, Topic}})
     ).
+find_best_peer_to_open() ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, find_best_peer_to_open, ?CLN_HTTP_TIMEOUT)
+    end).
+-spec score_peers_for_opening([map()]) -> [{binary(), float()}].
+score_peers_for_opening(ChannelList) ->
+    %% 100k sats = $100 AUD
+    MinSats = 100000,
+    Now = erlang:system_time(second),
 
+    lists:foldl(
+        fun(
+            #{
+                source := Src,
+                destination := Dst,
+                satoshis := Sats,
+                base_fee_millisatoshi := BaseFee,
+                fee_per_millionth := FeeRate,
+                last_update := LU
+            },
+            Acc
+        ) ->
+            PeerPairs = [Src, Dst],
+            lists:foldl(
+                fun(NodeId, InnerAcc) ->
+                    case Sats >= MinSats of
+                        true ->
+                            Score = compute_score(Sats, BaseFee, FeeRate, LU, Now),
+                            update_score(NodeId, Score, InnerAcc);
+                        false ->
+                            InnerAcc
+                    end
+                end,
+                Acc,
+                PeerPairs
+            )
+        end,
+        #{},
+        ChannelList
+    ).
+top_five_nodes(ChannelList) ->
+    {ok, ScoreMap} = score_peers_for_opening(ChannelList),
+    Sorted = lists:sort(fun({_, A}, {_, B}) -> A > B end, maps:to_list(ScoreMap)),
+    _Top5 = lists:sublist(Sorted, 5).
+
+compute_score(Sats, BaseFee, FeeRate, LastUpdate, Now) ->
+    %% Higher sats = better; lower fee = better; recent = better
+    NormalizedSats = math:log10(Sats + 1),
+    NormalizedFee = 1000000 / (FeeRate + 1),
+    %% decays over time
+    RecencyBonus = 1.0 / (1.0 + (Now - LastUpdate) / 3600),
+    NormalizedSats + NormalizedFee * 0.1 + RecencyBonus * 5.
+
+update_score(NodeId, Score, Map) ->
+    maps:update_with(NodeId, fun(S) -> S + Score end, Score, Map).
+
+-spec inbound_capacity(binary(), [map()]) -> integer().
+inbound_capacity(NodeId, Channels) ->
+    lists:foldl(
+        fun
+            (#{destination := NodeId1, satoshis := Sats}, Acc) when NodeId1 =:= NodeId ->
+                Acc + Sats;
+            (_, Acc) ->
+                Acc
+        end,
+        0,
+        Channels
+    ).
 test() ->
     test_listchannels().
 
 test_listchannels() ->
     list_channels().
+
+%% Shared global cache for listchannels
+get_cached_channel_list(Host, Port, Options, Headers, ReqMap) ->
+    Now = erlang:monotonic_time(second),
+    TTL = 60,
+    case ets:lookup(cln_channel_cache, listchannels) of
+        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < TTL ->
+            ?LOG_DEBUG("Using cached listchannels", []),
+            Channels;
+        _ ->
+            ?LOG_DEBUG("Fetching listchannels from CLN", []),
+            Channels = fetch_channel_list(Host, Port, Options, Headers, ReqMap),
+            ets:insert(cln_channel_cache, {listchannels, {Now, Channels}}),
+            Channels
+    end.
+
+%% Helper: fetch /v1/listchannels
+fetch_channel_list(Host, Port, Options, Headers, ReqMap) ->
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/listchannels",
+    ReqJson = jsx:encode(ReqMap),
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    {ok, Body} =
+        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+            {response, nofin, _, _} -> gun:await_body(ConnPid, StreamRef);
+            _ -> <<"{}">>
+        end,
+    gun:cancel(ConnPid, StreamRef),
+    gun:close(ConnPid),
+    Decoded = jsx:decode(Body, [return_maps, {labels, atom}]),
+    maps:get(channels, Decoded, []).
+
+%% Helper: resolve aliases
+resolve_aliases(NodeIds, Host, Port, Options, Rune) ->
+    lists:foldl(
+        fun(NodeId, Acc) ->
+            Alias = get_node_alias(Host, Port, Options, Rune, NodeId),
+            maps:put(NodeId, Alias, Acc)
+        end,
+        #{},
+        NodeIds
+    ).
+list_node_info(NodeId, Host, Port, Options, Rune) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/listnodes",
+    ReqJson = jsx:encode(#{id => NodeId}),
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    Body = get_json_body(ConnPid, StreamRef),
+    gun:close(ConnPid),
+    case maps:get(nodes, Body, []) of
+        [NodeData | _] -> maps:with([alias, features, last_timestamp], NodeData);
+        _ -> #{}
+    end.
+
+list_channel_policies(NodeId, Host, Port, Options, Rune) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/listchannels",
+    ReqJson = jsx:encode(#{destination => NodeId}),
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    Body = get_json_body(ConnPid, StreamRef),
+    gun:close(ConnPid),
+    maps:get(channels, Body, []).
+
+get_json_body(ConnPid, StreamRef) ->
+    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        {response, nofin, _, _} ->
+            {ok, Body} = gun:await_body(ConnPid, StreamRef),
+            jsx:decode(Body, [return_maps, {labels, atom}]);
+        _ ->
+            #{}
+    end.
+verify_peer(NodeId) when is_binary(NodeId) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {verify_peer, NodeId})
+    end).
+%% Channel = #{base_fee_msat => integer(), fee_per_millionth => integer()}
+%% AmountMsat = integer(), e.g., 100000000 for 100,000 sats
+estimate_routing_fee(Channel, AmountMsat) ->
+    BaseFee = maps:get(base_fee_msat, Channel, 0),
+    FeePPM = maps:get(fee_per_millionth, Channel, 0),
+    Fee = BaseFee + ((AmountMsat * FeePPM) div 1000000),
+    Fee.
