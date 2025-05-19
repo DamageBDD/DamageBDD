@@ -39,8 +39,7 @@ get_trails() ->
             damage_ai,
             lnaddress,
             cowboy_swagger_handler,
-            lightning_auth,
-            ecai_api
+            lightning_auth
         ],
     Trails =
         [

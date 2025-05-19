@@ -201,6 +201,7 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
     {
         [
+            {{<<"text">>, <<"plain">>, '*'}, from_html},
             {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
             {{<<"application">>, <<"json">>, '*'}, from_json}
         ],
@@ -385,23 +386,38 @@ do_action_tx(Json, _State, Req) ->
     end.
 from_json(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
-    {Status, Resp0} =
-        case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
-            {'EXIT', {badarg, Trace}} ->
-                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
-                {400, <<"Json decoding failed.">>};
-            #{message := _Message, signature := _Sig} = Json ->
-                do_action_tx(Json, State, Req);
-            #{feature := _FeatureData} = Json ->
-                check_execute_bdd(Json, State, Req)
-        end,
-    Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
-    cowboy_req:reply(Status, Resp),
-    {stop, Resp, State}.
+    ?LOG_DEBUG("from_json ~p.", [Req]),
+    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+        {'EXIT', {badarg, Trace}} ->
+            ?LOG_ERROR("Json decoding failed ~p", [Trace]),
+            {
+             cowboy_req:reply(
+               400,
+                  cowboy_req:set_resp_body(<<"Json decoding failed.">>, Req)
+              ),
+             Req,
+             State
+            };
+        #{message := _Message, signature := _Sig} = Json ->
+            {Status0, Response0} = do_action_tx(Json, State, Req),
+            {
+             stop,
+             cowboy_req:reply(
+               Status0,
+               cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+              ),
+             State
+            };
+        #{feature := _FeatureData, stream := true} = Json ->
+            {Status, Response} = check_execute_bdd(Json, State, Req),
+            {stop, Response, State};
+        #{feature := _FeatureData, concurrency := Concurrency} = Json when Concurrency > 1 ->
+            {Status, Response} = check_execute_bdd(Json, State, Req),
+            {stop, cowboy_req:reply(Status,cowboy_req:set_resp_body(jsx:encode(Response))), State}
+        end.
 
 from_html(Req0, State) ->
     {ok, Body, Req} = cowboy_req:read_body(Req0),
-    ?LOG_DEBUG("Req ~p.", [Req]),
     _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
     Concurrency =
         binary_to_integer(
@@ -425,7 +441,7 @@ from_html(Req0, State) ->
         )
     of
         {200, Response} ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                 "ok execute_feature from_html ~p concurrency ~p",
                 [Response, Concurrency]
             ),
@@ -434,14 +450,15 @@ from_html(Req0, State) ->
                 case Concurrency of
                     1 ->
                         Req0;
-                    _ ->
+                    C ->
+                        ?LOG_DEBUG("got concurrency of ~p", [Concurrency]),
                         cowboy_req:reply(200, Req0),
                         cowboy_req:set_resp_body(jsx:encode(Response), Req0)
                 end,
                 State
             };
         {Status, Response} ->
-            ?LOG_DEBUG("~p execute_feature from_html ~p", [Status, Response]),
+            ?LOG_INFO("~p execute_feature from_html ~p", [Status, Response]),
             {
                 stop,
                 cowboy_req:reply(

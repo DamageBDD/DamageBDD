@@ -549,7 +549,6 @@ read_stream(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, 600000) of
         {response, nofin, Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
             jsx:decode(Body, [{labels, atom}, return_maps]);
         Default ->
             ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
