@@ -44,7 +44,6 @@ get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
             443 -> [{transport, tls} | Config0];
             _ -> Config0
         end,
-    ?LOG_DEBUG("HostConfig ~p ", [Config]),
     Opts =
         case lists:keyfind(transport, 1, Config) of
             false -> #{transport => tcp};
@@ -104,9 +103,7 @@ gun_await(ConnPid, StreamRef, Context) ->
 gun_post(Config0, Context, Path, Headers, Data) ->
     {ok, ConnPid} = get_gun_connection(Config0, Context),
     StreamRef = gun:post(ConnPid, Path, Headers, Data),
-    ?LOG_DEBUG("Post ~p ~p", [Path, Headers]),
     Resp = gun_await(ConnPid, StreamRef, Context),
-    ?LOG_DEBUG("Post Resp ~p ", [Resp]),
     Resp.
 
 gun_patch(Config0, Context, Path, Headers, Data) ->
@@ -280,7 +277,6 @@ step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
 step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
     Url = build_url(Path, maps:get(base_url, Context, "")),
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
-    ?LOG_DEBUG("POST Url ~p HEADERS ~p Data ~p", [Url, Headers, Data]),
     gun_post(Config, Context, Url, Headers, Data);
 step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
     Headers = get_headers(Context, ?DEFAULT_HEADERS),

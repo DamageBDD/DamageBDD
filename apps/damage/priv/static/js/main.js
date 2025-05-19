@@ -1,3 +1,4 @@
+import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 (function(window, document, undefined) {
 
 	// code that should be taken care of right away
@@ -50,7 +51,6 @@
 					});
 			});
 		}
-		hljs.highlightAll();
 
 		document.getElementById("login-modal").addEventListener("keydown", function(event){
 			if (event.keyCode === 13) {
@@ -156,8 +156,8 @@
 	function showHideLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
-		loginButton = document.getElementById("loginBtn");
-		logoutButton = document.getElementById("logoutBtn");
+		const loginButton = document.getElementById("loginBtn");
+		const logoutButton = document.getElementById("logoutBtn");
 		if (isAuthenticated()) {
 			loginButton.style.display = "none";
 			content.style.display = "block";
@@ -482,11 +482,11 @@
 					   'Authorization': 'Bearer ' + localStorage.access_token
 					 },
 			body: JSON.stringify({
-				amount: parseInt(amount)
+				amount_sats: parseInt(amount)
 			})
 		};
 
-		fetch("/accounts/invoices/", request)
+		fetch("/invoices/", request)
 			.then(response => {
 				if (response.status === 201) {
 					return response.json();
@@ -497,11 +497,12 @@
 			.then(data => {
 				if (data && data.status === "ok") {
 					document.getElementById("qrcode-lightning").innerText = "";
-					var qrcode = new QRCode(
-						document.getElementById("qrcode-lightning"),
-						"lightning:" + data.invoice.payment_request
-					);
-					document.getElementById("lightning-invoice-input").value = "lightning:" + data.invoice.payment_request
+					document.getElementById("lightning-invoice-input").value = "lightning:" + data.invoice.payment_request;
+					showLightningQR({containerId : "qrcode-lightning",
+									 paymentRequest:  data.invoice.payment_request,
+									 address: localStorage.getItem("address"),
+									 logo: "/static/img/logo.png"
+									});
 				} else {
 					console.error("Error Invoice fetching failed: ", data);
 					toasts.push({

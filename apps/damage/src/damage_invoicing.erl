@@ -61,22 +61,8 @@ trails() ->
                         parameters =>
                             [
                                 #{
-                                    name => <<"label">>,
-                                    description => <<"label for invoice.">>,
-                                    in => <<"body">>,
-                                    required => true,
-                                    type => <<"string">>
-                                },
-                                #{
-                                    name => <<"description">>,
-                                    description => <<"description for invoice.">>,
-                                    in => <<"body">>,
-                                    required => true,
-                                    type => <<"string">>
-                                },
-                                #{
-                                    name => <<"amount_msats">>,
-                                    description => <<"amount in micro sats for invoice.">>,
+                                    name => <<"amount_sats">>,
+                                    description => <<"amount in sats for invoice.">>,
                                     in => <<"body">>,
                                     required => true,
                                     type => <<"string">>
@@ -130,37 +116,29 @@ to_json(Req, #{action := get_invoice} = State) ->
 to_json(Req, #{public_key := _AeAccount} = State) ->
     {jsx:encode(#{}), Req, State}.
 
-from_json(Req, #{public_key := _AeAccount} = State) ->
+from_json(Req, #{username := Username, public_key := AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
-    {Status, Resp0} =
-        case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
-            {'EXIT', {badarg, Trace}} ->
-                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
-                {400, <<"Json decoding failed.">>};
-            #{
-                label := Label,
-                amount_msats := Amount,
-                cltv := Cltv,
-                description := Description
-            } = InvReq ->
-                ?LOG_DEBUG("Invoice request ~p", [InvReq]),
-                case cln:hold_invoice(Amount, Description, Label, Cltv) of
-                    #{
-                        bolt11 := _Bolt11,
-                        created_index := _Index,
-                        expires_at := _Expiry,
-                        payment_hash := _PaymentHash,
-                        payment_secret := _PaymentSecret
-                    } = Invoice ->
-                        {202, Invoice};
-                    Error ->
-                        ?LOG_ERROR("Failed to create invoice ~p", [Error]),
-                        {400, "Failed to create invoice."}
-                end
-        end,
-    Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
-    cowboy_req:reply(Status, Resp),
-    {stop, Resp, State}.
+    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+        {'EXIT', {badarg, Trace}} ->
+           ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
+            {stop, 
+             #{status => <<"failed">>, message => <<"Json decoding failed.">>}, State};
+        #{
+          amount_sats := Amount
+         } ->
+           ?LOG_INFO("Generating invoice ~p.", [Amount]),
+            Response = #{
+                         status => <<"ok">>,
+                         invoice => create_invoice(Amount, Username, AeAccount)
+                        },
+            {
+                stop,
+                cowboy_req:reply(
+                    201, cowboy_req:set_resp_body(jsx:encode(Response), Req)
+                ),
+                State
+            }
+    end.
 
 delete_resource(Req, #{public_key := _AeAccount} = State) ->
     Deleted =
@@ -191,43 +169,6 @@ check_invoices() ->
         [],
         cln:list_invoices([{"creation_date_start", CreationDate}])
     ).
-
-do_post_action(invoices, #{amount := Amount}, _Req, _State) when
-    Amount > ?MAX_DAMAGE_INVOICE
-->
-    {
-        4000,
-        #{
-            status => <<"max_damage">>,
-            message => <<"invoice amount too large">>,
-            max_damage_invoice => ?MAX_DAMAGE_INVOICE
-        }
-    };
-do_post_action(invoices, #{amount := Amount}, _Req, _State) when
-    Amount < ?MIN_DAMAGE_INVOICE
-->
-    {
-        ?MIN_DAMAGE_INVOICE,
-        #{
-            status => <<"max_damage">>,
-            message => <<"invoice amount too large">>,
-            max_damage_invoice => ?MIN_DAMAGE_INVOICE
-        }
-    };
-do_post_action(invoices, #{amount := Amount}, Req, State) ->
-    case damage_http:is_authorized(Req, State) of
-        {true, _Req0, #{username := Username, public_key := AeAccount} = _State0} ->
-            {
-                201,
-                #{
-                    status => <<"ok">>,
-                    invoice => create_invoice(Amount, Username, AeAccount)
-                }
-            };
-        {false, _} ->
-            {401, #{status => <<"noauth">>, message => <<"Unauthorized.">>}}
-    end.
-
 create_invoice(Amount, Username, AeAccount) ->
     DmgAmount = damage:sats_to_damage(Amount),
     Memo =
@@ -239,17 +180,18 @@ create_invoice(Amount, Username, AeAccount) ->
                 )
             )
         ),
+    {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
+    Label = list_to_binary("damage:" ++ Timestamp),
     ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),
-    Invoice = cln:create_invoice(Amount, Memo),
-    #{
-        payment_hash := _PaymentHash,
-        bolt11 := PaymentRequest,
-        created_index := _CreatedIndex,
-        expires_at := ExpiresAt,
-        payment_secret := _PaymentSecret
-    } = Invoice,
+            #{
+              payment_hash := PaymentHash,
+              expires_at := Expiry,
+              bolt11 := PaymentRequest,
+              payment_secret := _PaymentSecret,
+              created_index := _CreatedIndex
+             } = Invoice = cln:create_invoice(Amount , Memo, 3600, Label),
     ?LOG_DEBUG("saved invoice ~p", [Invoice]),
-    #{payment_request => PaymentRequest, expiry => ExpiresAt}.
+    #{payment_request => PaymentRequest, payment_hash => PaymentHash, expiry => Expiry}.
 
 filter_valid_invoices(Invoices, AeAccount) ->
     lists:filter(
