@@ -547,7 +547,7 @@ revoke_domain_token(AeAccount, Domain) ->
 
 read_stream(ConnPid, StreamRef) ->
     case gun:await(ConnPid, StreamRef, 600000) of
-        {response, nofin, Status, _Headers0} ->
+        {response, nofin, _Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
             jsx:decode(Body, [{labels, atom}, return_maps]);
         Default ->

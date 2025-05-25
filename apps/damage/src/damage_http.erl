@@ -409,7 +409,7 @@ from_json(Req, State) ->
                 State
             };
         #{feature := _FeatureData, stream := true} = Json ->
-            {Status, Response} = check_execute_bdd(Json, State, Req),
+            {_Status, Response} = check_execute_bdd(Json, State, Req),
             {stop, Response, State};
         #{feature := _FeatureData, concurrency := Concurrency} = Json when Concurrency > 1 ->
             {Status, Response} = check_execute_bdd(Json, State, Req),
@@ -417,7 +417,7 @@ from_json(Req, State) ->
     end.
 
 from_html(Req0, State) ->
-    {ok, Body, Req} = cowboy_req:read_body(Req0),
+    {ok, Body, _Req} = cowboy_req:read_body(Req0),
     _UserAgent = cowboy_req:header(<<"user-agent">>, Req0, ""),
     Concurrency =
         binary_to_integer(
@@ -451,7 +451,7 @@ from_html(Req0, State) ->
                     1 ->
                         Req0;
                     C ->
-                        ?LOG_DEBUG("got concurrency of ~p", [Concurrency]),
+                        ?LOG_DEBUG("got concurrency of ~p", [C]),
                         cowboy_req:reply(200, Req0),
                         cowboy_req:set_resp_body(jsx:encode(Response), Req0)
                 end,
