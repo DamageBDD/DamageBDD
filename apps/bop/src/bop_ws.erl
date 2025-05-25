@@ -34,7 +34,7 @@ websocket_handle({text, Msg}, State) ->
                                invoices => Invoices,
                                total_funds => Total,
                                goal_total_funds => GoalTotal,
-                               contract_id => ?BOP_VAULT_CONTRACT
+                               contract_id => list_to_binary(?BOP_VAULT_CONTRACT)
                               })}, State};
         #{action := <<"request_invoice">>, amount:= Amount0} ->
             Amount = Amount0 * 1000,
@@ -51,6 +51,8 @@ websocket_handle({text, Msg}, State) ->
             %?LOG_INFO("invoice ws ~p", [Invoice]),
             gproc:reg_other({n, l, {?MODULE, PaymentHash}}, self()),
             {reply, {text, jsx:encode(#{type => <<"invoice">>, payment_request => Bolt11, payment_hash => PaymentHash})},  State};
+        #{action := <<"get_price">>} ->
+            {reply, {text, jsx:encode(#{type => <<"price">>, btc =>price_feed:get_price()})}, State};
         #{action := <<"ping">>} ->
             {reply, {text, jsx:encode(#{type => <<"pong">>})}, State};
         #{action := <<"pong">>} ->

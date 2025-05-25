@@ -169,15 +169,18 @@ init([]) ->
                 modules => []
             },
             #{
-                % mandatory
                 id => lightning_auth_cache,
-                % mandatory
                 start => {lightning_auth_cache, start_link, []},
-                % optional
                 restart => permanent,
-                % optional
                 shutdown => 60,
-                % optional
+                type => worker,
+                modules => []
+            },
+            #{
+                id => price_feed,
+                start => {price_feed, start_link, []},
+                restart => permanent,
+                shutdown => 60,
                 type => worker,
                 modules => []
             }

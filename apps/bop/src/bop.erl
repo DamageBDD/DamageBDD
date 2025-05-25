@@ -21,8 +21,7 @@
          get_deadline/1,
          get_deadline/0,
          deploy_goal_contract/0,
-         msats_to_aud/2,
-         fetch_btc_aud_price/0
+         msats_to_aud/2
 ]).
 -export([test/0]).
 
@@ -33,7 +32,7 @@ start_link([]) -> gen_server:start_link(?MODULE, [], []).
 init([]) ->
     process_flag(trap_exit, true),
     cln:register_listener(invoice_paid),
-    Rate = case fetch_btc_aud_price() of
+    Rate = case price_feed:get_price() of
                {ok, Rate0} -> Rate0;
                _ -> 161539
            end,
@@ -55,24 +54,6 @@ get_cached(Key) ->
 put_cached(Key, Value) ->
     ets:insert(bop_goal_cache, {Key, Value}).
 
--spec fetch_btc_aud_price() -> {ok, float()} | {error, term()}.
-fetch_btc_aud_price() ->
-    % TODO: use oracles instead
-    {ok, ConnPid} = gun:open("api.coinbase.com", 443, #{transport => tls,tls_opts => [{verify, verify_none}]}),
-    StreamRef = gun:get(ConnPid, "/v2/prices/BTC-AUD/spot", [
-        {<<"accept">>, <<"application/json">>}
-    ]),
-    case gun:await(ConnPid, StreamRef, 600000) of
-        {response, nofin, Status, _Headers0} ->
-            {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
-            Map = jsx:decode(Body, [return_maps]),
-            PriceStr = maps:get(<<"amount">>, maps:get(<<"data">>, Map)),
-            {ok, binary_to_float(PriceStr)};
-        Default ->
-            ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
-            {error, Default}
-    end.
 
 -spec msats_to_aud(non_neg_integer(), float()) -> float().
 msats_to_aud(Msats, BtcAudRate) ->

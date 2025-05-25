@@ -29,6 +29,20 @@
 trails() ->
     [
         trails:trail(
+            "/price/",
+            damage_invoicing,
+            #{action => price},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "get invoice status.",
+                        produces => ["application/json"],
+                        parameters => []
+                    }
+            }
+        ),
+        trails:trail(
             "/invoices/:payment_request",
             damage_invoicing,
             #{action => get_invoice},
@@ -106,6 +120,9 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
+to_json(Req, #{action := price} = State) ->
+    Price = price_feed:get_price(),
+    {jsx:encode(#{btc => #{aud => Price}}), Req, State};
 to_json(Req, #{action := get_invoice} = State) ->
     case cowboy_req:binding(payment_request, Req) of
         undefined ->
