@@ -385,14 +385,10 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     ),
     ?LOG_DEBUG("Email sent ~p", [Result]),
     {
-        200,
-        #{
-            status => <<"ok">>,
-            message =>
+     ok,
                 <<
                     "Account created. Please check email for confirmation link. Don't forget to check spam folder too."
                 >>
-        }
     }.
 
 -spec do_post_action(atom(), map()) ->
