@@ -159,8 +159,8 @@ is_authorized(Req, State0) ->
             end;
         {oauth, Token} ->
             case damage_accounts:validate_access_token(Token) of
-                {error, _} ->
-                    {false, Req, State};
+                {error, E} ->
+                    {{false,jsx:encode(E)}, Req, State};
                 {AeAccount, Username} ->
                     case identity_server:get_account_by_email(Username) of
                         {AeAccount, _, _PrivateKey} ->
