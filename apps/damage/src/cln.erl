@@ -34,6 +34,7 @@
         top_five_nodes/1,
         inbound_capacity/2,
         verify_peer/1,
+        estimate_routing_fee/2,
         subscribe/0
     ]
 ).
@@ -438,13 +439,10 @@ handle_call(
     _From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
 ) ->
-    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
-    %% 1. Connect to node
-
-    %% 2. List node info
+    %% List node info
     NodeInfo = list_node_info(NodeId, Host, Port, Options, Rune),
 
-    %% 3. List channel policy entries (if any)
+    %% List channel policy entries (if any)
     ChannelPolicies = list_channel_policies(NodeId, Host, Port, Options, Rune),
 
     {reply, #{connectable => true, node_info => NodeInfo, channels => ChannelPolicies}, State};
@@ -935,7 +933,7 @@ top_five_nodes(ChannelList) ->
     Sorted = lists:sort(fun({_, A}, {_, B}) -> A > B end, maps:to_list(ScoreMap)),
     _Top5 = lists:sublist(Sorted, 5).
 
-compute_score(Sats, BaseFee, FeeRate, LastUpdate, Now) ->
+compute_score(Sats, _BaseFee, FeeRate, LastUpdate, Now) ->
     %% Higher sats = better; lower fee = better; recent = better
     NormalizedSats = math:log10(Sats + 1),
     NormalizedFee = 1000000 / (FeeRate + 1),
