@@ -385,10 +385,10 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     ),
     ?LOG_DEBUG("Email sent ~p", [Result]),
     {
-     ok,
-                <<
-                    "Account created. Please check email for confirmation link. Don't forget to check spam folder too."
-                >>
+        ok,
+        <<
+            "Please check email for confirmation link. Don't forget to check spam folder too."
+        >>
     }.
 
 -spec do_post_action(atom(), map()) ->
@@ -502,16 +502,6 @@ do_post_action(create, #{email := Email} = Data) ->
         false ->
             {400, #{status => <<"failed">>, message => <<"Invalid email">>}}
     end.
-unix_timestamp_hours_ago(HoursAgo) when is_integer(HoursAgo), HoursAgo >= 0 ->
-    % Get the current time in seconds since Unix epoch
-    {MegaSecs, Secs, _MicroSecs} = os:timestamp(),
-    CurrentTimestamp = MegaSecs * 1000000 + Secs,
-    % Calculate the number of seconds to subtract
-    SecondsToSubtract = HoursAgo * 3600,
-    % Subtract seconds from the current timestamp
-    TimestampHoursAgo = CurrentTimestamp - SecondsToSubtract,
-    % Return the result
-    TimestampHoursAgo.
 
 from_html(Req, #{action := authenticate} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
