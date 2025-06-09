@@ -93,7 +93,10 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 			event.preventDefault();
 			generateInvoice();
 		});
-		const logoutButton = document.getElementById("logoutBtn");
+		document.getElementById("logoutBtn").addEventListener("click",(event) => {
+			event.preventDefault();
+			MicroModal.show("logout-modal");
+		});
 		const balanceDiv = document.getElementById("balanceDiv");
 		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
 			console.log("add schedule");
@@ -106,8 +109,8 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 			event.preventDefault();
 		});
 
-			updateBalance();
 		showHideLoginButton();
+		updateBalance();
 		MicroModal.init({
 			onShow: modal => console.info(`${modal.id} is shown`), // [1]
 		});

@@ -134,12 +134,17 @@
               <!--<label for="password" >Password:</label>-->
               <input type="password" id="password" autocomplete="current-password" required placeholder="Password">
               <br>
-              <button class="buttonlink" id="signupDialogBtn" aria-label="Signup Form.">SignUp</button>
-              <button class="buttonlink" id="loginResetPasswdBtn" aria-label="Forgot Password.">Forgot Password</button>
+              <div class="link-group">
+                <button id="signupDialogBtn" class="buttonlink" aria-label="Signup Form.">SignUp</button>
+                <button id="loginResetPasswdBtn" class="buttonlink" aria-label="Forgot Password">Forgot Password</button>
+              </div>
+
+
+              <p>By signing up, you acknowledge and agree to the <a href="/terms">Terms and Conditions. </a></p>
             </form>
           </main>
           <footer class="modal__footer">
-            <button id="loginSubmitBtn" class="modal__btn modal__btn-primary" aria-label="Login with email and password">Submit</button>
+            <button id="loginSubmitBtn" class="modal__btn modal__btn-primary submit-button" aria-label="Login with email and password">Submit</button>
           </footer>
         </div>
       </div>
