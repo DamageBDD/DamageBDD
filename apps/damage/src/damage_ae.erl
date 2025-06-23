@@ -65,7 +65,8 @@
     test_find_block/0,
     test_verify_message/0,
     test_contract_deploy/0,
-    test_contract_call/0
+    test_contract_call/0,
+    test_paying_for_tx/0
 ]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
@@ -591,7 +592,8 @@ transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
 paying_for(PayerId, Tx) ->
     {ok, Nonce} = vanillae:next_nonce(PayerId),
     Fee = vanillae:min_fee(),
-    paying_for(PayerId, Nonce, Fee, Tx).
+    {account_pubkey, PayerID} = aeser_api_encoder:decode(list_to_binary(PayerId)),
+    paying_for(PayerID, Nonce, Fee, Tx).
 
 %### PayingFor
 %The `PayingFor` transaction is available from version 5, Iris release. By using
@@ -607,9 +609,10 @@ paying_for(PayerId, Tx) ->
 %]
 %```
 
-paying_for(PayerId, Nonce, Fee, Tx) ->
+paying_for(PK, Nonce, Fee, Tx) ->
     CallVersion = 1,
-    Type = contract_call_tx,
+    Type = paying_for_tx,
+    {account_pubkey, PayerId} = aeser_api_encoder:decode(PK),
     Fields =
         [
             {payer_id, aeser_id:create(account, PayerId)},
@@ -630,16 +633,36 @@ paying_for(PayerId, Nonce, Fee, Tx) ->
         error:Reason -> {error, Reason}
     end.
 
-contract_call_payfor_user(AeAccount, ContractId, ContractSource, Func, Args) ->
-    #{public_key := NodeAeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+contract_call_payfor_user(
+    #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
+) ->
+    #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+    ?LOG_DEBUG("Contract call ~p:~p ~p", [ContractSource, Func, Args]),
+    {ok, Nonce} = vanillae:next_nonce(AeAccount),
+    Fee = vanillae:min_fee(),
+    Gas = 100000,
+    Amount = 0,
+    GasPrice = vanillae:min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
-    {ok, ContractCall} = vanillae:contract_call(AeAccount, AACI, ContractId, Func, Args),
+    {ok, ContractCall} = vanillae:contract_call(
+        AeAccount, Nonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+    ),
+
     Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
     SignedTX = attach_signature_base58(ContractCall, Signature),
-    PayingForTx = paying_for(NodeAeAccount, SignedTX),
-    PayingSignature = make_transaction_signature_base58(PrivateKey, PayingForTx),
+    ?LOG_INFO("Paying for tx signed ~p", [SignedTX]),
+    {transaction, BinaryTx} = aeser_api_encoder:decode(SignedTX),
+    %{transaction, BinaryTx} = aeser_api_encoder:decode(ContractCall),
+
+    {ok, PayingForNonce} = vanillae:next_nonce(NodeAeAccount),
+    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), PayingForNonce, Fee, BinaryTx),
+    %?LOG_INFO("Paying for tx ~p", [BinaryTx]),
+    ?LOG_INFO("Paying for tx ~p", [PayingForTx]),
+
+    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTx),
     PayingSignedTX = attach_signature_base58(PayingForTx, PayingSignature),
 
+    %{ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:dry_run(PayingSignedTX),
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(PayingSignedTX),
     wait_tx(ContractCallTxHash).
 
@@ -681,6 +704,7 @@ contract_call(
     SignedTX = attach_signature_base58(ContractCall, Signature),
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTX),
     wait_tx(ContractCallTxHash).
+
 contract_call_dry(
     #{public_key := AeAccount, private_key := PrivateKey},
     ContractAddress,
@@ -933,6 +957,19 @@ test_contract_call() ->
     ContractId = test_contract_deploy(),
     ?LOG_DEBUG("contract account ~p", [ContractId]),
     contract_call(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
+
+test_paying_for_tx() ->
+    KeyPair = secrets:node_keypair(),
+    #{public_key := NodePublicKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
+    Amount = 1.0,
+    SpendRecord = #{},
+    contract_call_payfor_user(
+        KeyPair,
+        ?DAMAGE_TOKEN_CONTRACT,
+        "contracts/token.aes",
+        "spend",
+        [NodePublicKey, float_to_full_integer(Amount), SpendRecord]
+    ).
 
 test_find_block() ->
     {Today, _Now} = calendar:local_time(),
