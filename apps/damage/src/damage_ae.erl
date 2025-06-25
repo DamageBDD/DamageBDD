@@ -341,46 +341,35 @@ handle_call({transaction, Data}, _From, State) ->
     ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
     {reply, ok, State}.
 
-filter_map(Map, Keys) when is_map(Map), is_list(Keys) ->
-    maps:filter(fun(Key, _) -> lists:member(Key, Keys) end, Map).
+-spec float_to_full_integer(float()) -> integer().
+float_to_full_integer(F) when is_float(F) ->
+    round(F).
 
 handle_cast(
     {
         confirm_spend,
         #{
-            username := AeAccount,
+            public_key := AeAccount,
             feature_hash := _FeatureHash,
-            report_hash := _ReportHash,
+            report_hash := ReportHash,
             node_public_key := NodePublicKey
-        } = RunRecord
+        } = _RunRecord
     },
-    Cache
+    #{public_key := AeAccount, private_key := PrivateKey} = Cache
 ) ->
-    SpendRecord =
-        filter_map(
-            RunRecord,
-            [
-                feature_hash,
-                report_hash,
-                run_id,
-                schedule_id,
-                start_time,
-                end_time,
-                result_status,
-                execution_time
-            ]
-        ),
-    ?LOG_DEBUG("confirm spend ~p", [RunRecord]),
+    KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
+    SpendRecord = #{"report_hash" => binary_to_list(ReportHash)},
     AccountCache = maps:get(AeAccount, Cache, #{}),
     case maps:get(spent_balance, AccountCache, {0, 0}) of
         {_, Amount} when Amount > 0 ->
+            ?LOG_DEBUG("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
             case
-                contract_call(
-                    AeAccount,
+                contract_call_payfor_user(
+                    KeyPair,
                     ?DAMAGE_TOKEN_CONTRACT,
                     "contracts/token.aes",
                     "spend",
-                    [NodePublicKey, Amount, SpendRecord]
+                    [binary_to_list(NodePublicKey), float_to_full_integer(Amount), SpendRecord]
                 )
             of
                 #{
@@ -628,7 +617,8 @@ paying_for(PK, Nonce, Fee, Tx) ->
     ],
     TXB = aeser_chain_objects:serialize(Type, CallVersion, Template, Fields),
     try
-        {ok, aeser_api_encoder:encode(transaction, TXB)}
+        TX = aeser_api_encoder:encode(transaction, TXB),
+        {ok, TX}
     catch
         error:Reason -> {error, Reason}
     end.
@@ -638,25 +628,23 @@ contract_call_payfor_user(
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     ?LOG_DEBUG("Contract call ~p:~p ~p", [ContractSource, Func, Args]),
-    {ok, Nonce} = vanillae:next_nonce(AeAccount),
+    {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Fee = vanillae:min_fee(),
-    Gas = 100000,
+    Gas = vanillae:min_gas(),
     Amount = 0,
     GasPrice = vanillae:min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
     {ok, ContractCall} = vanillae:contract_call(
-        AeAccount, Nonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+        AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
 
-    Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
+    Signature = make_transaction_signature_base58(PrivateKey, {inner,ContractCall}),
     SignedTX = attach_signature_base58(ContractCall, Signature),
     ?LOG_INFO("Paying for tx signed ~p", [SignedTX]),
     {transaction, BinaryTx} = aeser_api_encoder:decode(SignedTX),
-    %{transaction, BinaryTx} = aeser_api_encoder:decode(ContractCall),
 
-    {ok, PayingForNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), PayingForNonce, Fee, BinaryTx),
-    %?LOG_INFO("Paying for tx ~p", [BinaryTx]),
+    {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
+    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, Fee, BinaryTx),
     ?LOG_INFO("Paying for tx ~p", [PayingForTx]),
 
     PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTx),
@@ -838,14 +826,25 @@ attach_signature_base58(EncodedTX, EncodedSig) ->
     SignedTX = attach_signature(TX, Sig),
     aeser_api_encoder:encode(transaction, SignedTX).
 % returns the signature by itself
+make_transaction_signature_base58(Priv, {inner, EncodedTX}) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    Sig = make_transaction_signature(Priv, {inner, TX}),
+    aeser_api_encoder:encode(signature, Sig);
 make_transaction_signature_base58(Priv, EncodedTX) ->
     {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
     Sig = make_transaction_signature(Priv, TX),
     aeser_api_encoder:encode(signature, Sig).
+
+make_transaction_signature(Priv, {inner,TX}) ->
+    Id = list_to_binary(vanillae:network_id() ++ "-inner_tx"),
+    Blob = <<Id/binary, TX/binary>>,
+    ?LOG_INFO("sig id ~p ~p",[Id, Blob]),
+    enacl:sign_detached(Blob, Priv);
 make_transaction_signature(Priv, TX) ->
     Id = list_to_binary(vanillae:network_id()),
     Blob = <<Id/binary, TX/binary>>,
     enacl:sign_detached(Blob, Priv).
+
 sign_transaction(Priv, TX) ->
     Sig = make_transaction_signature(Priv, TX),
     SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
@@ -957,6 +956,7 @@ test_contract_call() ->
     ContractId = test_contract_deploy(),
     ?LOG_DEBUG("contract account ~p", [ContractId]),
     contract_call(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
+    %contract_call_dry(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
 
 test_paying_for_tx() ->
     KeyPair = secrets:node_keypair(),
