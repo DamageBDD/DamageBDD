@@ -79,6 +79,7 @@
         damage,
         [
             {api_url, "https://run.staging.damagebdd.com"},
+            {allowance, 1000},
             {lnpay_host, "https://asyncmind.xyz"},
             {token_contract, "ct_2taq2WPRer6pkVV7JjiYrkTNr8vr61nLAHQFWbJ3jpX6iyCeBi"},
             {account_contract, "ct_aBXwRhTXYXyD6Gqz7Vk7Nq3U1QhMsZuxFyZ2GvoiroKavxW6B"},

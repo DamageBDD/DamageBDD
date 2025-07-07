@@ -363,12 +363,13 @@ validate_password(Password) ->
     end.
 send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     {ok, ApiUrl} = application:get_env(damage, api_url),
+    {ok, Allowance} = application:get_env(damage, allowance),
     ApiUrl0 = list_to_binary(ApiUrl),
 
     Expiry = date_util:now_to_seconds(os:timestamp()) + 86400,
     AuthTokenEncrypted = secrets:encrypt(term_to_binary(#{email => Email, expiry => Expiry})),
 
-    Data = maps:put(password, AuthTokenEncrypted, Meta),
+    Data = maps:put(allowance, Allowance, maps:put(password, AuthTokenEncrypted, Meta)),
     Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
     ?LOG_DEBUG("AuthToken sent ~p", [Query]),
     Ctxt =
