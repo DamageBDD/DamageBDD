@@ -98,7 +98,7 @@ trails() ->
         trails:trail(
             "/accounts/confirm",
             damage_accounts,
-            #{action => confirm_email},
+            #{action => confirm},
             #{
                 get =>
                     #{
@@ -418,8 +418,15 @@ do_post_action(
                             Message = <<"Reset password token expired.">>,
                             {400, #{status => <<"failed">>, message => Message}};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            {ok, _Message} = identity_server:set_email_password(Email, NewPassword),
-                            {200, #{status => <<"ok">>, message => <<"Password has been reset.">>}}
+                            case identity_server:set_email_password(Email, NewPassword) of
+                                {ok, _Message} ->
+                                    {200, #{
+                                        status => <<"ok">>,
+                                        message => <<"Password has been reset.">>
+                                    }};
+                                {error, Message} ->
+                                    {400, #{status => <<"failed">>, message => Message}}
+                            end
                     end;
                 _ ->
                     Message = <<"Password does match.">>,
@@ -462,7 +469,7 @@ do_post_action(
             <<"Account password reset. Please check email for confirmation link. Don't forget to check spam folder too.">>
     }};
 do_post_action(
-    confirm_email,
+    confirm,
     #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm}
 ) ->
     Now = date_util:now_to_seconds(os:timestamp()),
@@ -565,7 +572,7 @@ from_html(Req, #{action := reset_password} = State) ->
                         #{status => <<"ok">>, message => Message, login_url => ApiUrl}
                     )
                 };
-            {_, Message} ->
+            {_, #{message := Message, status := _}} ->
                 {
                     400,
                     damage_utils:load_template(
