@@ -300,3 +300,24 @@ html, body {
 #damageForm{
   height: 100%;
 }
+.buttonlink {
+    display: inline-block;
+    margin-right: 10px;
+    font-weight: 500;
+    color: #007bff;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.buttonlink:hover {
+    color: #0056b3;
+    text-decoration: none;
+}
+
+.login-links {
+    margin-top: 10px;
+    margin-bottom: 15px;
+    text-align: left;
+    display: flex;
+    gap: 20px;
+}
