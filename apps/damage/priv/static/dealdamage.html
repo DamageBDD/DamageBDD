@@ -122,6 +122,7 @@
       <div class="modal__overlay" tabindex="-1">
         <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
           <header class="modal__header">
+            <img src="/static/img/logo.png"/>
             <h2 class="modal__title" id="modal-1-title">
               DamageBDD Login
             </h2>
@@ -133,18 +134,21 @@
               <br>
               <!--<label for="password" >Password:</label>-->
               <input type="password" id="password" autocomplete="current-password" required placeholder="Password">
+            <button id="loginSubmitBtn" class="modal__btn modal__btn-primary submit-button" aria-label="Login with email and password" title="Login Submit">Login</button>
               <br>
-              <div class="login-links">
-                <button id="signupDialogBtn" class="buttonlink" aria-label="Signup Form.">SignUp</button>
-                <button id="loginResetPasswdBtn" class="buttonlink" aria-label="Forgot Password">Forgot Password</button>
-              </div>
 
-
-              <p>By signing up, you acknowledge and agree to the <a href="/terms">Terms and Conditions. </a></p>
             </form>
           </main>
           <footer class="modal__footer">
-            <button id="loginSubmitBtn" class="modal__btn modal__btn-primary submit-button" aria-label="Login with email and password">Submit</button>
+              <div class="login-links">
+                <button id="signupDialogBtn" class="buttonlink" aria-label="Signup Form." title="Create an Account">Sign Up</button>
+                <button id="loginResetPasswdBtn" class="buttonlink" aria-label="Forgot Password" title="Reset Password">Forgot Password</button>
+              </div>
+
+              <div class="terms">
+                By logging in, you accept the <a href="/terms">Terms and Conditions</a>.
+              </div>
+
           </footer>
         </div>
       </div>
@@ -154,8 +158,9 @@
       <div class="modal__overlay" tabindex="-1">
         <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
           <header class="modal__header">
+            <img src="/static/img/logo.png"/>
             <h2 class="modal__title" id="modal-1-title">
-              DamageBDD Signup
+              DamageBDD Sign Up
             </h2>
           </header>
           <main class="modal__content" id="modal-1-content">
@@ -163,12 +168,17 @@
               <!--<label for="username">Username (Email):</label>-->
               <input type="email" id="signup-username" autocomplete="username" required placeholder="Email Address">
               <br>
-              <button class="buttonlink" id="loginDialogBtn" aria-label="Login Form.">Login</button>
-              <button class="buttonlink" id="signupResetPasswdBtn" aria-label="Forgot Password.">Forgot Password</button>
+            <button id="signupSubmitBtn" class="modal__btn modal__btn-primary" aria-label="Signup with email and password" title="Sign Up Submit">Sign Up</button>
             </form>
           </main>
           <footer class="modal__footer">
-            <button id="signupSubmitBtn" class="modal__btn modal__btn-primary" aria-label="Signup with email and password">Submit</button>
+              <div class="login-links">
+                <button class="buttonlink" id="loginDialogBtn" aria-label="Login Form.">Login</button>
+                <button class="buttonlink" id="signupResetPasswdBtn" aria-label="Forgot Password.">Forgot Password</button>
+              </div>
+              <div class="terms">
+                By signing up, you acknowledge and agree to the <a href="/terms">Terms and Conditions</a>.
+              </div>
           </footer>
         </div>
       </div>
