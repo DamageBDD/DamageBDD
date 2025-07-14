@@ -589,6 +589,34 @@ from_html(Req, #{action := reset_password} = State) ->
         stop,
         cowboy_req:reply(Status0, cowboy_req:set_resp_body(Response0, Req)),
         State
+    };
+from_html(Req, #{action := Action} = State) ->
+    {ok, Data, _Req2} = cowboy_req:read_body(Req),
+    Data0 = maps:from_list(cow_qs:parse_qs(Data)),
+    {Status0, Response0} =
+        case do_post_action(Action, damage_utils:binary_to_atom_keys(Data0)) of
+            {200, #{message := Message}} ->
+                {ok, ApiUrl} = application:get_env(damage, api_url),
+                {
+                    200,
+                    damage_utils:load_template(
+                        "reset_password_response.html.mustache",
+                        #{status => <<"ok">>, message => Message, login_url => ApiUrl}
+                    )
+                };
+            {_, #{message := Message, status := _}} ->
+                {
+                    400,
+                    damage_utils:load_template(
+                        "reset_password_response.html.mustache",
+                        #{status => <<"failed">>, message => Message}
+                    )
+                }
+        end,
+    {
+        stop,
+        cowboy_req:reply(Status0, cowboy_req:set_resp_body(Response0, Req)),
+        State
     }.
 
 from_json(Req, #{action := Action} = State) ->
