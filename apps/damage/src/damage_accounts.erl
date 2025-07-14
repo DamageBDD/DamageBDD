@@ -291,7 +291,9 @@ to_html(Req, #{action := reset_password} = State) ->
                             "reset_password.mustache",
                             #{
                                 email => Email,
-                                token => Token
+                                token => Token,
+                                action => <<"reset_password">>,
+                                action_label => <<"Reset">>
                             }
                         ),
                     {Body, Req, State};
@@ -317,7 +319,9 @@ to_html(Req, #{action := confirm} = State) ->
                     "reset_password.mustache",
                     #{
                         email => Email,
-                        token => Token
+                        token => Token,
+                        action => <<"confirm">>,
+                        action_label => <<"Set">>
                     }
                 ),
             {Body, Req, State};
