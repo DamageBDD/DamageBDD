@@ -149,18 +149,19 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 		}
 		fetchVersion();
 
-		function setupTogglePassword(inputSelector, toggleButtonSelector) {
-            const input = document.querySelector(inputSelector);
-            const toggleBtn = document.querySelector(toggleButtonSelector);
 
-            toggleBtn.addEventListener("click", () => {
-                const isHidden = input.type === "password";
-                input.type = isHidden ? "text" : "password";
-                toggleBtn.textContent = isHidden ? "Hide" : "Show";
-            });
-        }
-
-        setupTogglePassword("input[name='password']", "#togglePass");
+          document.querySelectorAll(".toggle-password").forEach((btn) => {
+              btn.addEventListener("click", () => {
+                  const input = document.querySelector(`input[name='${btn.dataset.target}']`);
+                  if (input.type === "password") {
+                      input.type = "text";
+                      btn.textContent = "🙈"; // Eye with slash
+                  } else {
+                      input.type = "password";
+                      btn.textContent = "👁️"; // Eye
+                  }
+              });
+          });
 
 	});
 

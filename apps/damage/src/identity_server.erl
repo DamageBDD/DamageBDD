@@ -105,10 +105,6 @@ handle_call({get_account, PublicKey}, _From, #{ets_table := Table} = State) ->
                         {
                             {address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted
                         }
-                    %{variant, [0, 1], 1,
-                    %    {{tuple, {
-                    %        {address, AddressData}, PasswordEncrypted, PrivateKeyEncrypted
-                    %    }}}}
                 } ->
                     Password = secrets:decrypt(PasswordEncrypted),
                     PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
@@ -130,7 +126,7 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
         KeyPair,
         ?EMAIL_REGISTRY_CONTRACT,
         "contracts/email_registry.aes",
-        ?AE_INITIAL_AETTOS,
+        ?AE_INITIAL_AETTOS + 1, % TODO update contract
         "register_email",
         [
             ?DAMAGE_TOKEN_CONTRACT,

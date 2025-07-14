@@ -24,7 +24,9 @@
 
     <script type='module' src='/static/js/sidekick.js'></script>
 
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css" integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css"
+          integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls"
+          crossorigin="anonymous">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/base-min.css">
     <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
@@ -40,7 +42,10 @@
   <body>
     <div class="modal micromodal-slide" id="invoice-modal" aria-hidden="true">
       <div class="modal__overlay" tabindex="-1" data-micromodal-close>
-        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+        <div class="modal__container"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="modal-1-title">
           <header class="modal__header">
             <h2 class="modal__title" id="modal-1-title">
               Manage Damage Tokens
@@ -59,7 +64,9 @@
                 </p>
                 <p>
                   Custodial Wallet Address: 
-                  <span id="copyAddressIcon" onclick="copyAddressToClipboard()" style="cursor: pointer; font-size: 20px;">
+                  <span id="copyAddressIcon"
+                        onclick="copyAddressToClipboard()"
+                        style="cursor: pointer; font-size: 20px;">
                     📝 Copy
                   </span>
                 <input id="damage-address" readonly style="height: 100%; width: 100%;">
@@ -102,10 +109,12 @@
                   </summary>
 
                   <p id="lightning-invoice">
-                    <span id="copyInvoiceIcon" onclick="copyInvoiceToClipboard()" style="cursor: pointer; font-size: 20px;">
-    📝 Copy
-  </span>
-                    <textarea id="lightning-invoice-input" readonly style="height: 100%; width: 100%;"></textarea>
+                    <span id="copyInvoiceIcon"
+                          onclick="copyInvoiceToClipboard()"
+                          style="cursor: pointer; font-size: 20px;">📝 Copy</span>
+                    <textarea id="lightning-invoice-input"
+                              readonly
+                              style="height: 100%; width: 100%;"></textarea>
                   </p>
                 </details>
               </div>
@@ -130,20 +139,43 @@
           <main class="modal__content" id="modal-1-content">
             <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
               <!--<label for="username">Username (Email):</label>-->
-              <input type="email" id="login-username" autocomplete="username" required placeholder="Email Address">
+              <input type="email"
+                     id="login-username"
+                     autocomplete="username"
+                     required
+                     placeholder="Email Address">
               <br>
               <!--<label for="password" >Password:</label>-->
-              <input type="password" name="password" id="password" autocomplete="current-password" required placeholder="Password">
-              <button type="button" id="togglePass">Show</button>
-            <button id="loginSubmitBtn" class="modal__btn modal__btn-primary submit-button" aria-label="Login with email and password" title="Login Submit">Login</button>
+              <div class="password-wrapper">
+                <input
+                  type="password"
+                  name="password"
+                  id="password"
+                  autocomplete="current-password"
+                  required
+                  placeholder="Password">
+                <button type="button" class="toggle-password" data-target="password">
+                  👁️
+                </button>
+              </div>
+              <button id="loginSubmitBtn"
+                      class="modal__btn modal__btn-primary submit-button"
+                      aria-label="Login with email and password"
+                      title="Login Submit">Login</button>
               <br>
 
             </form>
           </main>
           <footer class="modal__footer">
               <div class="login-links">
-                <button id="signupDialogBtn" class="buttonlink" aria-label="Signup Form." title="Create an Account">Sign Up</button>
-                <button id="loginResetPasswdBtn" class="buttonlink" aria-label="Forgot Password" title="Reset Password">Forgot Password</button>
+                <button id="signupDialogBtn"
+                        class="buttonlink"
+                        aria-label="Signup Form."
+                        title="Create an Account">Sign Up</button>
+                <button id="loginResetPasswdBtn"
+                        class="buttonlink"
+                        aria-label="Forgot Password"
+                        title="Reset Password">Forgot Password</button>
               </div>
 
               <div class="terms">
@@ -157,7 +189,10 @@
 
     <div class="modal micromodal-slide" id="signup-modal" aria-hidden="true">
       <div class="modal__overlay" tabindex="-1">
-        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+        <div class="modal__container"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="modal-1-title">
           <header class="modal__header">
             <img src="/static/img/logo.png"/>
             <h2 class="modal__title" id="modal-1-title">
@@ -167,7 +202,11 @@
           <main class="modal__content" id="modal-1-content">
             <form id="signupForm" onsubmit="submitSignupForm(event)">
               <!--<label for="username">Username (Email):</label>-->
-              <input type="email" id="signup-username" autocomplete="username" required placeholder="Email Address">
+              <input type="email"
+                     id="signup-username"
+                     autocomplete="username"
+                     required
+                     placeholder="Email Address">
               <br>
             <button id="signupSubmitBtn" class="modal__btn modal__btn-primary" aria-label="Signup with email and password" title="Sign Up Submit">Sign Up</button>
             </form>
