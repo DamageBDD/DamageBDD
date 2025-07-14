@@ -165,7 +165,7 @@ input[type="password"], input[type="email"] {
   flex-wrap: wrap;*/
 }
 
-input[type="password"], input[type="email"] {
+input[type="text"],input[type="password"], input[type="email"] {
   /* common styles for labels and form fields inside kycForm */
     margin: 8px;
   width: 250px;
@@ -473,3 +473,31 @@ html, body {
   background-color: #003380;
 }
 
+input[type="password"] + button,
+input[type="text"] + button {
+  margin-left: 10px;
+  font-size: 0.8em;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.password-wrapper input {
+  flex: 1;
+  padding-right: 2.5rem;
+}
+
+.toggle-password {
+  position: absolute;
+  right: 20px;
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #555;
+}

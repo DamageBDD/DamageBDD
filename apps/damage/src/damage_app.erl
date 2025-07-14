@@ -44,6 +44,7 @@ get_trails() ->
     Trails =
         [
             {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
+            {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}},
             {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
             {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
             {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},

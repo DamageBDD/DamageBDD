@@ -148,6 +148,20 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 					generateAddressQrcode();
 		}
 		fetchVersion();
+
+		function setupTogglePassword(inputSelector, toggleButtonSelector) {
+            const input = document.querySelector(inputSelector);
+            const toggleBtn = document.querySelector(toggleButtonSelector);
+
+            toggleBtn.addEventListener("click", () => {
+                const isHidden = input.type === "password";
+                input.type = isHidden ? "text" : "password";
+                toggleBtn.textContent = isHidden ? "Hide" : "Show";
+            });
+        }
+
+        setupTogglePassword("input[name='password']", "#togglePass");
+
 	});
 
 
@@ -412,6 +426,7 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 		event.preventDefault();
 		return;
 	}
+
 
 	function validateEmail(email) {
 		const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
