@@ -513,7 +513,7 @@ handle_call(
     %% Return the invoice details
     {reply, Info, State};
 handle_call(
-    {create_invoice, Amount, Description, Expiry, Label},
+    {create_invoice, AmountMsats, Description, Expiry, Label},
     _From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
         State
@@ -526,7 +526,7 @@ handle_call(
     ReqJson =
         jsx:encode(
             #{
-                amount_msat => Amount,
+                amount_msat => AmountMsats,
                 label => Label,
                 description => Description,
                 expiry => Expiry
@@ -814,30 +814,30 @@ list_invoices_by_payment_hash(PaymentHash) ->
         fun(Worker) -> gen_server:call(Worker, {list_invoices, #{payment_hash => PaymentHash}}) end
     ).
 
-create_invoice(Amount, Description) ->
+create_invoice(AmountMsats, Description) ->
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("asyncmind" ++ Timestamp),
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(Worker, {create_invoice, Amount, Description, 3600, Label})
+            gen_server:call(Worker, {create_invoice, AmountMsats, Description, 3600, Label})
         end
     ).
 
-create_invoice(Amount, Description, Expiry) ->
+create_invoice(AmountMsats, Description, Expiry) ->
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("asyncmind" ++ Timestamp),
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(Worker, {create_invoice, Amount, Description, Expiry, Label})
+            gen_server:call(Worker, {create_invoice, AmountMsats, Description, Expiry, Label})
         end
     ).
-create_invoice(Amount, Description, Expiry, Label) ->
+create_invoice(AmountMsats, Description, Expiry, Label) ->
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(Worker, {create_invoice, Amount, Description, Expiry, Label})
+            gen_server:call(Worker, {create_invoice, AmountMsats, Description, Expiry, Label})
         end
     ).
 

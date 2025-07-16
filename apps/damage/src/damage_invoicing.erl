@@ -146,7 +146,7 @@ from_json(Req, #{username := Username, public_key := AeAccount} = State) ->
             ?LOG_INFO("Generating invoice ~p.", [Amount]),
             Response = #{
                 status => <<"ok">>,
-                invoice => create_invoice(Amount, Username, AeAccount)
+                invoice => create_invoice(Amount * 1000, Username, AeAccount)
             },
             {
                 stop,
@@ -186,8 +186,8 @@ check_invoices() ->
         [],
         cln:list_invoices([{"creation_date_start", CreationDate}])
     ).
-create_invoice(Amount, Username, AeAccount) ->
-    DmgAmount = damage:sats_to_damage(Amount),
+create_invoice(AmountSats, Username, AeAccount) ->
+    DmgAmount = damage:sats_to_damage(AmountSats),
     Memo =
         list_to_binary(
             lists:flatten(
@@ -206,7 +206,7 @@ create_invoice(Amount, Username, AeAccount) ->
         bolt11 := PaymentRequest,
         payment_secret := _PaymentSecret,
         created_index := _CreatedIndex
-    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
+    } = Invoice = cln:create_invoice(AmountSats * 1000, Memo, 3600, Label),
     ?LOG_DEBUG("saved invoice ~p", [Invoice]),
     #{payment_request => PaymentRequest, payment_hash => PaymentHash, expiry => Expiry}.
 
