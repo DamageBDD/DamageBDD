@@ -146,7 +146,7 @@ from_json(Req, #{username := Username, public_key := AeAccount} = State) ->
             ?LOG_INFO("Generating invoice ~p.", [Amount]),
             Response = #{
                 status => <<"ok">>,
-                invoice => create_invoice(Amount * 1000, Username, AeAccount)
+                invoice => create_invoice(Amount, Username, AeAccount)
             },
             {
                 stop,

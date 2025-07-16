@@ -551,8 +551,15 @@ get_default_config(AeAccount, Concurrency, Formatters) ->
         {api_url, DamageApi}
     ].
 
+
 sats_to_damage(Sats) ->
-    round((Sats / ?DAMAGE_PRICE) * math:pow(10, ?DAMAGE_DECIMALS)).
+    BTCUSDT = 112000, %TODO get prices from coinstore
+    DamageUSDT = 0.0117,
+    BTC = Sats / 1.0e8,
+    USDT = BTC * BTCUSDT,
+    Damage = USDT / DamageUSDT,
+    round(Damage).
+
 check_setup() ->
     ok =
         case secrets:retrieve_decrypt(nostr_nsec) of
