@@ -198,7 +198,10 @@ create_invoice(AmountSats, Username, AeAccount) ->
             )
         ),
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
-    Label = list_to_binary("damage:" ++ Timestamp),
+    Label = list_to_binary(
+        "damage:" ++ binary_to_list(AeAccount) ++ ":" ++ integer_to_list(DmgAmount) ++ ":" ++
+            Timestamp
+    ),
     ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),
     #{
         payment_hash := PaymentHash,

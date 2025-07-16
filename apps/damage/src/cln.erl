@@ -749,17 +749,24 @@ handle_event(
     [
         <<"message">>,
         #{
-            origin := <<"pay">>,
-            payload :=
+            coin_movement :=
                 #{
+                    timestamp := _Timestamp,
+                    type := <<"channel_mvt">>,
+                    version := _,
+                    tags := _Tags,
                     payment_hash := PaymentHash,
-                    bolt11 :=
-                        PaymentRequest
+                    node_id := _NodeId,
+                    account_id := _AccountId,
+                    credit_msat := MSats,
+                    debit_msat := _,
+                    fees_msat := _Fees,
+                    coin_type := <<"bc">>
                 }
         }
     ]
 ) ->
-    ?LOG_INFO("cln: websocket payment event payrequest ~p payhash ~p", [PaymentRequest, PaymentHash]),
+    ?LOG_INFO("cln: websocket payment event payhash ~p msats ~p", [PaymentHash, MSats]),
     case list_invoices_by_payment_hash(PaymentHash) of
         #{invoices := [Invoice | _]} ->
             ?LOG_INFO("cln: websocket payment invoice ~p", [Invoice]),
