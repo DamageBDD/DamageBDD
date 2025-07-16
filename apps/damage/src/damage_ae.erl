@@ -79,6 +79,7 @@ init([]) ->
     process_flag(trap_exit, true),
     ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
     {ok, WS, _Path} = get_ae_mdw_node(),
+    cln:register_listener(invoice_paid),
     {ok, #{heartbeat_timer => ConfirmSpendTimer, websocket => WS}};
 init([AeAccount, PrivateKey]) ->
     process_flag(trap_exit, true),
@@ -411,7 +412,26 @@ handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
 
-handle_info(_Info, State) -> {noreply, State}.
+damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
+    case binary:split(Label, <<":">>, [global]) of
+        [<<"damage">>, AeAccount, AmountDamage, _Timestamp] ->
+            ?LOG_INFO("Transfering ~p damage to ~p", [AmountDamage, AeAccount]),
+            transfer_damage_tokens(
+                AeAccount, trunc(binary_to_integer(AmountDamage) * math:pow(10, ?DAMAGE_DECIMALS))
+            );
+        Err ->
+            ?LOG_INFO("No metadata in label: ~p", [Err])
+    end.
+handle_info({cln_event, invoice_paid, Invoice}, State) ->
+    try
+        damage_for_invoice(Invoice)
+    catch
+        _:Reason ->
+            ?LOG_WARNING("Failed to send damage for invoice: ~p", [Reason])
+    end,
+    {noreply, State};
+handle_info(_Info, State) ->
+    {noreply, State}.
 
 terminate(Reason, _State) ->
     ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
