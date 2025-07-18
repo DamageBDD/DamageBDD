@@ -193,6 +193,20 @@ extract_feature_hash(Data) ->
     extract_arguments(Arguments).
 
 handle_call(
+    {contract_call_payfor_user, Contract, ContractSource, Func, Args},
+    _From,
+    #{public_key := AeAccount, private_key := PrivateKey} = State
+) ->
+    KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
+    Result = contract_call_payfor_user(
+        KeyPair,
+        Contract,
+        ContractSource,
+        Func,
+        Args
+    ),
+    {reply, Result, State};
+handle_call(
     {contract_call, Contract, ContractSource, Func, Args},
     _From,
     #{public_key := AeAccount, private_key := PrivateKey} = State
@@ -370,7 +384,11 @@ handle_cast(
                     ?DAMAGE_TOKEN_CONTRACT,
                     "contracts/token.aes",
                     "spend",
-                    [binary_to_list(NodePublicKey), float_to_full_integer(Amount), SpendRecord]
+                    [
+                        binary_to_list(NodePublicKey),
+                        integer_to_list(float_to_full_integer(Amount)),
+                        SpendRecord
+                    ]
                 )
             of
                 #{
@@ -598,11 +616,11 @@ transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
     ?LOG_DEBUG("Tokens transfered ~p", [Result]),
     Result.
 
-paying_for(PayerId, Tx) ->
-    {ok, Nonce} = vanillae:next_nonce(PayerId),
-    Fee = vanillae:min_fee(),
-    {account_pubkey, PayerID} = aeser_api_encoder:decode(list_to_binary(PayerId)),
-    paying_for(PayerID, Nonce, Fee, Tx).
+%paying_for(PayerId, Tx) ->
+%    {ok, Nonce} = vanillae:next_nonce(PayerId),
+%    Fee = vanillae:min_fee(),
+%    {account_pubkey, PayerID} = aeser_api_encoder:decode(list_to_binary(PayerId)),
+%    paying_for(PayerID, Nonce, Fee, Tx).
 
 %### PayingFor
 %The `PayingFor` transaction is available from version 5, Iris release. By using
@@ -642,37 +660,69 @@ paying_for(PK, Nonce, Fee, Tx) ->
     catch
         error:Reason -> {error, Reason}
     end.
-
+-spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
+calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
+    BaseGas = 25000,
+    GasPerByte = 20,
+    SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
+    BaseGas + (SizeDiff * GasPerByte).
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
-    ?LOG_DEBUG("Contract call ~p:~p ~p", [ContractSource, Func, Args]),
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Fee = vanillae:min_fee(),
     Gas = vanillae:min_gas(),
     Amount = 0,
     GasPrice = vanillae:min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
+    %?LOG_INFO("Contract call ~p ~p ~p:~p ~p", [
+    %    AeAccount, AeAccountNonce, ContractSource, Func, Args
+    %]),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
 
-    Signature = make_transaction_signature_base58(PrivateKey, {inner,ContractCall}),
+    Signature = make_transaction_signature_base58(PrivateKey, {inner, ContractCall}),
     SignedTX = attach_signature_base58(ContractCall, Signature),
-    ?LOG_INFO("Paying for tx signed ~p", [SignedTX]),
-    {transaction, BinaryTx} = aeser_api_encoder:decode(SignedTX),
+    %?LOG_INFO("Paying for tx signed ~p", [SignedTX]),
+    {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
 
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, Fee, BinaryTx),
-    ?LOG_INFO("Paying for tx ~p", [PayingForTx]),
+    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, Fee, InnerTxBin),
+    {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
+    %?LOG_INFO("Paying for tx ~p ~p ~p", [NodeAeAccount, NodeNonce, PayingForTx]),
 
-    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTx),
-    PayingSignedTX = attach_signature_base58(PayingForTx, PayingSignature),
+    CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin) + 1000,
+    CorrectFee = CorrectGas * GasPrice,
 
-    %{ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:dry_run(PayingSignedTX),
+    ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
+
+    % Regenerate the paying_for tx with correct gas/fee
+    {ok, ContractCall0} = vanillae:contract_call(
+        AeAccount, AeAccountNonce, CorrectGas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+    ),
+
+    Signature0 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall0}),
+    SignedTX0 = attach_signature_base58(ContractCall0, Signature0),
+    %?LOG_INFO("Paying for tx signed ~p", [SignedTX]),
+    {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedTX0),
+
+    {ok, PayingForTxFinal} = paying_for(
+        list_to_binary(NodeAeAccount), NodeNonce, CorrectFee, InnerTxBin0
+    ),
+    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
+    PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
+
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(PayingSignedTX),
-    wait_tx(ContractCallTxHash).
+    wait_tx(ContractCallTxHash);
+contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(
+        DamageAEPid,
+        {contract_call_payfor_user, Contract, ContractSource, Func, Args},
+        ?AE_TIMEOUT
+    ).
 
 contract_call(
     #{public_key := _AeAccount, private_key := _PrivateKey} = Keypair,
@@ -702,7 +752,7 @@ contract_call(
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
     Fee = vanillae:min_fee(),
-    Gas = 100000,
+    Gas = vanillae:min_gas(),
     GasPrice = vanillae:min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(Contract),
     {ok, ContractCall} = vanillae:contract_call(
@@ -729,16 +779,19 @@ contract_call_dry(
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, Nonce, Gas, GasPrice, Fee, 0, AACI, ContractAddress, Func, Args
     ),
-    Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
-    SignedTX = attach_signature_base58(ContractCall, Signature),
-    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:dry_run(SignedTX),
-    wait_tx(ContractCallTxHash).
+    {ok, #{
+        "results" :=
+            [Result | _],
+        "tx_events" := []
+    }} =
+        vanillae:dry_run(ContractCall),
+    tx_info_convert_dry_run_result(Result).
 
 contract_balance(Account) ->
-    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
+    #{public_key := NodeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     #{
         "caller_id" :=
-            Account,
+            NodeAccount,
         "caller_nonce" := _,
         "contract_id" :=
             ?DAMAGE_TOKEN_CONTRACT,
@@ -855,10 +908,10 @@ make_transaction_signature_base58(Priv, EncodedTX) ->
     Sig = make_transaction_signature(Priv, TX),
     aeser_api_encoder:encode(signature, Sig).
 
-make_transaction_signature(Priv, {inner,TX}) ->
+make_transaction_signature(Priv, {inner, TX}) ->
     Id = list_to_binary(vanillae:network_id() ++ "-inner_tx"),
     Blob = <<Id/binary, TX/binary>>,
-    ?LOG_INFO("sig id ~p ~p",[Id, Blob]),
+    %?LOG_INFO("sig id ~p ~p", [Id, Blob]),
     enacl:sign_detached(Blob, Priv);
 make_transaction_signature(Priv, TX) ->
     Id = list_to_binary(vanillae:network_id()),
@@ -888,6 +941,29 @@ account_keypair(AeAccount) ->
             [AeAccount]
         ),
     KeyPair.
+tx_info_convert_dry_run_result(Result) ->
+    case Result of
+        #{
+            "call_obj" := #{
+                "caller_id" := _CallerId,
+                "caller_nonce" := _CallerNonce,
+                "contract_id" := _ContractId,
+                "gas_price" := _GasPrice,
+                "gas_used" := _GasUsed,
+                "height" := _Height,
+                "log" := _log,
+                "return_type" := _ReturnType,
+                "return_value" := Encoded
+            } = CallInfo
+        } ->
+            case vanillae:decode_bytearray_fate(Encoded) of
+                {ok, {tuple, ReturnValue}} -> maps:put("return_value", ReturnValue, CallInfo);
+                {ok, ReturnValue} -> maps:put("return_value", ReturnValue, CallInfo);
+                ReturnValue -> maps:put("return_value", ReturnValue, CallInfo)
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 tx_info_convert_result(Result) ->
     case Result of
@@ -976,19 +1052,31 @@ test_contract_call() ->
     ContractId = test_contract_deploy(),
     ?LOG_DEBUG("contract account ~p", [ContractId]),
     contract_call(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
-    %contract_call_dry(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
+%contract_call_dry(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
 
 test_paying_for_tx() ->
-    KeyPair = secrets:node_keypair(),
-    #{public_key := NodePublicKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
-    Amount = 1.0,
-    SpendRecord = #{},
+    {ok, TestUserEmail} = application:get_env(damage, test_user),
+    {PubKey, _Password, PrivateKey} = identity_server:get_account_by_email(
+        list_to_binary(TestUserEmail)
+    ),
+    #{public_key := NodePublicKey, private_key := _NodePrivateKey} =
+        _KeyPair = secrets:node_keypair(),
+    Amount = 1 * math:pow(10, ?DAMAGE_DECIMALS),
+    %contract_call(
+    %  KeyPair,
+    %    ?DAMAGE_TOKEN_CONTRACT,
+    %    "contracts/token.aes",
+    %    "spend",
+    %    [NodePublicKey, float_to_full_integer(Amount), "testfeaturehash", "testreporthash"]
+    %).
     contract_call_payfor_user(
-        KeyPair,
+        #{public_key => PubKey, private_key => PrivateKey},
         ?DAMAGE_TOKEN_CONTRACT,
         "contracts/token.aes",
+        %"balance",
+        %[PubKey]
         "spend",
-        [NodePublicKey, float_to_full_integer(Amount), SpendRecord]
+        [NodePublicKey, float_to_full_integer(Amount), "testfeaturehash", "testreporthash"]
     ).
 
 test_find_block() ->
