@@ -325,29 +325,19 @@ handle_call({reports, AeAccount}, _From, Cache) ->
             ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
             {reply, {error, not_found}, Cache}
     end;
-handle_call({balance, AeAccount}, _From, Cache) ->
-    case get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-            Path =
-                PathPrefix ++ "v3/aex9/" ++ ?DAMAGE_TOKEN_CONTRACT ++ "/balances/" ++ AeAccount,
-            StreamRef = gun:get(ConnPid, Path),
-            Balance =
-                case catch read_stream(ConnPid, StreamRef) of
-                    #{amount := null} ->
-                        contract_balance(AeAccount);
-                    {error, Error} ->
-                        ?LOG_ERROR("Error getting balance ~p", [Error]),
-                        contract_balance(AeAccount);
-                    #{error := Error} ->
-                        ?LOG_ERROR("Error getting balance ~p", [Error]),
-                        contract_balance(AeAccount);
-                    #{amount := Balance0} ->
-                        Balance0
-                end,
+handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
+    case maps:get({balance, AeAccount}, Cache, none) of
+        Balance when is_integer(Balance) ->
             {reply, Balance, Cache};
-        Err ->
-            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
-            {reply, {error, not_found}, Cache}
+        _ ->
+            case contract_balance(AeAccount) of
+                ContractBalance when is_integer(ContractBalance) ->
+                    {reply, ContractBalance,
+                        maps:put({balance, AeAccount}, ContractBalance, Cache)};
+                Err ->
+                    ?LOG_DEBUG("ContractBalance failed ~p", [Err]),
+                    {reply, error, Cache}
+            end
     end;
 handle_call({confirm_spend_all}, _From, Cache) ->
     ?LOG_DEBUG("handle_call confirm_spend_all/0 : ~p", [Cache]),
@@ -365,7 +355,7 @@ handle_cast(
         confirm_spend,
         #{
             public_key := AeAccount,
-            feature_hash := _FeatureHash,
+            feature_hash := FeatureHash,
             report_hash := ReportHash,
             node_public_key := NodePublicKey
         } = _RunRecord
@@ -387,19 +377,24 @@ handle_cast(
                     [
                         binary_to_list(NodePublicKey),
                         integer_to_list(float_to_full_integer(Amount)),
-                        SpendRecord
+                        FeatureHash,
+                        ReportHash
                     ]
                 )
             of
                 #{
-                    decodedEvents :=
-                        [
-                            #{
-                                args := [_UserAeAccount, _NodeAeAccount, _Amount],
-                                name := <<"Transfer">>,
-                                contract := #{name := <<"DamageToken">>, address := _TokenAddress}
-                            }
-                        ]
+                    "caller_id" :=
+                        _UserAeAccount,
+                    "caller_nonce" := _Nonce,
+                    "contract_id" :=
+                        _ContractId,
+                    "gas_price" := _,
+                    "gas_used" := _GasUsed,
+                    "height" := _Height,
+                    "log" :=
+                        _Log,
+                    "return_type" := "ok",
+                    "return_value" := {}
                 } ->
                     NewCache =
                         maps:put(
@@ -408,7 +403,7 @@ handle_cast(
                             Cache
                         ),
                     ?LOG_DEBUG("confirm spend cached ~p", [NewCache]),
-                    {noreply, NewCache};
+                    {noreply, maps:put({balance, AeAccount}, none, NewCache)};
                 #{status := <<"fail">>} ->
                     ?LOG_DEBUG("confirm spend failed ~p", [Cache]),
                     {noreply, Cache}
@@ -510,11 +505,9 @@ restart_wallet_proc(AeAccount) ->
             get_wallet_proc(AeAccount)
     end.
 
-balance(AeAccount) when is_binary(AeAccount) ->
-    balance(binary_to_list(AeAccount));
 balance(AeAccount) ->
     ?LOG_DEBUG("Check balance ~p", [AeAccount]),
-    DamageAEPid = get_wallet_proc(admin),
+    DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
 
 get_reports(AeAccount) ->
