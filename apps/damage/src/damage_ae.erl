@@ -11,6 +11,9 @@
 
 -behaviour(gen_server).
 
+-define(BASE_GAS, 15000).
+-define(GAS_PER_BYTE, 20).
+
 -export([
     init/1,
     start_link/0,
@@ -608,6 +611,23 @@ transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [Result]),
     Result.
+%% Generic base function
+-spec calculate_gas(non_neg_integer(), binary()) -> non_neg_integer().
+calculate_gas(BaseMultiplier, TxBin) ->
+    Base = BaseMultiplier * ?BASE_GAS,
+    SizeFee = byte_size(TxBin) * ?GAS_PER_BYTE,
+    Base + SizeFee.
+
+%% Contract create gas
+-spec gas_for_contract_create(binary()) -> non_neg_integer().
+gas_for_contract_create(TxBin) ->
+    calculate_gas(5, TxBin).
+
+%% Contract call (FATE) gas
+-spec gas_for_contract_call_fate(binary()) -> non_neg_integer().
+gas_for_contract_call_fate(TxBin) ->
+    calculate_gas(12, TxBin).
+
 
 %paying_for(PayerId, Tx) ->
 %    {ok, Nonce} = vanillae:next_nonce(PayerId),
@@ -743,21 +763,39 @@ contract_call(
     Args
 ) ->
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
+
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
-    Gas = vanillae:min_gas(),
     GasPrice = vanillae:min_gas_price(),
+
     {ok, AACI} = vanillae:prepare_contract(Contract),
+
+    %% First build raw tx with dummy values to estimate gas
+    DummyGas = vanillae:min_gas(),
+    DummyFee = vanillae:min_fee(),
+
+    {ok, ContractCall0} = vanillae:contract_call(
+        AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args
+    ),
+    Signature0 = make_transaction_signature_base58(PrivateKey, ContractCall0),
+    SignedTx0 = attach_signature_base58(ContractCall0, Signature0),
+    {transaction, TxBin} = aeser_api_encoder:decode(SignedTx0),
+
+    %% Calculate correct gas + fee
+    Gas = gas_for_contract_call_fate(TxBin),
+    Fee = Gas * GasPrice,
+
+    %% Rebuild final tx with correct gas and fee
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, Nonce, Gas, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
     ),
     Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
     SignedTX = attach_signature_base58(ContractCall, Signature),
+
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTX),
     wait_tx(ContractCallTxHash).
 
 contract_call_dry(
-    #{public_key := AeAccount, private_key := PrivateKey},
+    #{public_key := AeAccount, private_key := _PrivateKey},
     ContractAddress,
     Contract,
     Func,
