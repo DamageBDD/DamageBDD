@@ -45,10 +45,6 @@ init([]) ->
             end,
             Pools
         ),
-    LightPandaCmd = "bin/lightpanda-x86_64-linux --verbose",
-    ?LOG_DEBUG("Starting lightpanda ~p~n", [LightPandaCmd]),
-    ChromedriverCmd = "chromedriver --port=9515",
-    ?LOG_DEBUG("Starting chromedriver ~p~n", [ChromedriverCmd]),
     PoolSpecs0 =
         [
             #{
@@ -63,6 +59,26 @@ init([]) ->
                 % optional
                 type => worker,
                 modules => []
+            },
+            #{
+                id => abduco_services,
+                start =>
+                    {abduco_sup, start_link, [
+                        [
+                            #{
+                                name => "lightningd",
+                                cmd =>
+                                    "/usr/sbin/lightningd --bitcoin-rpcpassword=\"{{bitcoin_rpc_password}}\""
+                            },
+                            #{name => "lightpanda", cmd => "bin/lightpanda-x86_64-linux --verbose"},
+                            #{name => "chromedriver", cmd => "chromedriver --port=9515"},
+                            #{name => "redshift", cmd => "/usr/bin/redshift"}
+                        ]
+                    ]},
+                restart => permanent,
+                shutdown => 10000,
+                type => supervisor,
+                modules => [abduco_sup]
             },
             #{
                 % mandatory
@@ -121,32 +137,6 @@ init([]) ->
                 id => cln_websocket,
                 % mandatory
                 start => {cln, start_link, [[ws]]},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => []
-            },
-            #{
-                % mandatory
-                id => lightpanda,
-                % mandatory
-                start => {damage_worker, start_link, [LightPandaCmd]},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => []
-            },
-            #{
-                % mandatory
-                id => chromedriver,
-                % mandatory
-                start => {damage_worker, start_link, [ChromedriverCmd]},
                 % optional
                 restart => permanent,
                 % optional
