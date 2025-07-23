@@ -37,7 +37,9 @@
     migrate/0,
     import_secret_key/2,
     ask_password/1,
-    ask_password/2
+    ask_password/2,
+    list_secrets/0,
+    interpolate_template/1
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
@@ -392,9 +394,43 @@ ask_password(Prompt, [nogui]) ->
 ask_password(Prompt) ->
     case os:getenv("DISPLAY") of
         false ->
-            {ok, Term} = io:fread(Prompt, "~s"),
-
-            lists:flatten(Term);
+            ask_password(Prompt, [nogui]);
         _ ->
             erm:ask_password(Prompt)
+    end.
+
+list_secrets() ->
+    case dets:open_file(?DETS_FILE, ?DETS_ARGS) of
+        {ok, _} ->
+            Keys = dets:foldl(fun({Key, _}, Acc) -> [Key | Acc] end, [], ?DETS_FILE),
+            dets:close(?DETS_FILE),
+            lists:reverse(Keys);
+        {error, Reason} ->
+            ?LOG_ERROR("Failed to open secrets DETS: ~p", [Reason]),
+            []
+    end.
+interpolate_template(Template) when is_binary(Template) ->
+    interpolate_template(binary_to_list(Template));
+interpolate_template(Template) when is_list(Template) ->
+    %% Match all {{key}} patterns
+    Pattern = "\\{\\{([^}]+)\\}\\}",
+    case re:run(Template, Pattern, [{capture, all_but_first, list}, global]) of
+        {match, Matches} ->
+            lists:flatten(
+                lists:foldl(
+                    fun([Key], Acc) ->
+                        Replacement =
+                            case retrieve_decrypt(list_to_atom(Key)) of
+                                {ok, Value} when is_binary(Value) -> binary_to_list(Value);
+                                {ok, Value} -> io_lib:format("~p", [Value]);
+                                error -> "<<missing:" ++ Key ++ ">>"
+                            end,
+                        string:replace(Acc, "{{" ++ Key ++ "}}", Replacement, all)
+                    end,
+                    Template,
+                    Matches
+                )
+            );
+        nomatch ->
+            Template
     end.
