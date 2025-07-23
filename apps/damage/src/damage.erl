@@ -473,51 +473,61 @@ execute_step(Config, Step, #{fail := _} = Context) ->
     Context;
 execute_step(Config, Step, Context) ->
     {LineNo, StepKeyWord, Body} = Step,
-    {Body1, Args1} = damage_utils:render_body_args(Body, Context),
-    Context2 =
-        lists:foldl(
-            fun
-                (StepModule, #{step_found := false} = ContextIn) ->
-                    Step0 = {StepKeyWord, LineNo, Body1, Args1},
-                    case execute_step_module(Config, ContextIn, Step0, StepModule) of
-                        #{failing_step := _} = Context1 ->
-                            Context1;
-                        #{fail := Err} = Context1 ->
-                            formatter:format(
-                                Config,
-                                step,
-                                {StepKeyWord, LineNo, Body1, Args1, Context1, {fail, Err}}
-                            ),
-                            maps:put(failing_step, Step0, Context1);
-                        #{step_found := false} = Context1 ->
-                            Context1;
-                        #{step_found := true} = Context1 ->
-                            formatter:format(
-                                Config,
-                                step,
-                                {StepKeyWord, LineNo, Body1, Args1, Context1, success}
-                            ),
-                            Context1
-                    end;
-                (_StepModule, #{step_found := true} = ContextIn) ->
-                    ContextIn
-            end,
-            maps:remove(fail, maps:put(step_found, false, Context)),
-            damage_utils:loaded_steps()
-        ),
-    Context0 = step_spend(Context2),
-    case maps:get(step_found, Context0) of
-        false ->
-            %?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
+    case damage_utils:render_body_args(Body, Context) of
+        {error, {Body1, Args1}, Reason} ->
             formatter:format(
                 Config,
                 step,
-                {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
+                {StepKeyWord, LineNo, Body1, Args1, Context, {fail, Reason}}
             ),
-            metrics:update(notfound, maps:get(public_key, Context)),
+            metrics:update(fail, maps:get(public_key, Context)),
             maps:put(failing_step, Step, Context);
-        true ->
-            Context0
+        {ok, {Body1, Args1}} ->
+            Context2 =
+                lists:foldl(
+                    fun
+                        (StepModule, #{step_found := false} = ContextIn) ->
+                            Step0 = {StepKeyWord, LineNo, Body1, Args1},
+                            case execute_step_module(Config, ContextIn, Step0, StepModule) of
+                                #{failing_step := _} = Context1 ->
+                                    Context1;
+                                #{fail := Err} = Context1 ->
+                                    formatter:format(
+                                        Config,
+                                        step,
+                                        {StepKeyWord, LineNo, Body1, Args1, Context1, {fail, Err}}
+                                    ),
+                                    maps:put(failing_step, Step0, Context1);
+                                #{step_found := false} = Context1 ->
+                                    Context1;
+                                #{step_found := true} = Context1 ->
+                                    formatter:format(
+                                        Config,
+                                        step,
+                                        {StepKeyWord, LineNo, Body1, Args1, Context1, success}
+                                    ),
+                                    Context1
+                            end;
+                        (_StepModule, #{step_found := true} = ContextIn) ->
+                            ContextIn
+                    end,
+                    maps:remove(fail, maps:put(step_found, false, Context)),
+                    damage_utils:loaded_steps()
+                ),
+            Context0 = step_spend(Context2),
+            case maps:get(step_found, Context0) of
+                false ->
+                    %?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
+                    formatter:format(
+                        Config,
+                        step,
+                        {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
+                    ),
+                    metrics:update(notfound, maps:get(public_key, Context)),
+                    maps:put(failing_step, Step, Context);
+                true ->
+                    Context0
+            end
     end.
 
 get_default_config(AeAccount, Concurrency, Formatters) ->
@@ -551,9 +561,9 @@ get_default_config(AeAccount, Concurrency, Formatters) ->
         {api_url, DamageApi}
     ].
 
-
 sats_to_damage(Sats) ->
-    BTCUSDT = 112000, %TODO get prices from coinstore
+    %TODO get prices from coinstore
+    BTCUSDT = 112000,
     DamageUSDT = 0.0117,
     BTC = Sats / 1.0e8,
     USDT = BTC * BTCUSDT,
