@@ -513,7 +513,7 @@ restart_wallet_proc(AeAccount) ->
 
 balance(AeAccount) ->
     ?LOG_DEBUG("Check balance ~p", [AeAccount]),
-    DamageAEPid = get_wallet_proc(AeAccount),
+    DamageAEPid = get_wallet_proc(admin),
     gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
 
 get_reports(AeAccount) ->
@@ -914,7 +914,7 @@ contract_balance(Account) ->
         "height" := _,
         "log" := [],
         "return_type" := "ok",
-        "return_value" := {variant, [0, 1], 1, {Balance}}
+        "return_value" := ReturnValue
     } = contract_call(
         KeyPair,
         ?DAMAGE_TOKEN_CONTRACT,
@@ -922,7 +922,12 @@ contract_balance(Account) ->
         "balance",
         [Account]
     ),
-    Balance.
+    case ReturnValue of
+        {variant, [0, 1], 1, {Balance}} ->
+            Balance;
+        {variant, [0, 1], 0, {}} ->
+            0
+    end.
 
 %% Main function to find the block height at or near the given timestamp.
 %% It initializes an empty cache (map) and passes it along the recursive calls.

@@ -1,4 +1,12 @@
+import * as wallet from "/static/js/wallet.js";
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
+function showConnectStatus(message, type = 'info') {
+  const statusDiv = document.getElementById('connectStatus');
+  statusDiv.textContent = message;
+  statusDiv.className = type; // e.g., 'success', 'error', 'info'
+}
+
+
 (function(window, document, undefined) {
 
 	// code that should be taken care of right away
@@ -67,6 +75,7 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 			MicroModal.show("login-modal");
 		});
 		document.getElementById("loginSubmitBtn").addEventListener("click", submitLoginForm);
+		document.getElementById("connect-button").addEventListener("click", connectWalletSmart1);
 		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
 			event.preventDefault();
 		});
@@ -163,7 +172,7 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
               });
           });
 
-	});
+	}); // end DOMContentLoaded 
 
 
 
@@ -365,18 +374,10 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 					localStorage.setItem("address", data.address);
 					generateAddressQrcode();
 					updateBalance();
-					toasts.push({
-						title: 'Login Success',
-						content: 'Authentication Successful.',
-						style: 'success'
-					});
+					showConnectStatus("Login Success!", "success");
 					showHideLoginButton();
 				} else {
-					toasts.push({
-						title: 'Login Failed',
-						content: 'Authentication Un-Successful.',
-						style: 'error'
-					});
+					showConnectStatus("Login Failed!", "failed");
 				}
 			})
 			.catch(error => {
@@ -579,4 +580,66 @@ function copyAddressToClipboard(){
 	var copyIcon = document.getElementById("copyAddressIcon");
 	copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
 	copyIcon.style.color = 'green'; // Change color to green
+}
+
+async function connectWalletSmart1() {
+  const status = document.getElementById('connect-status');
+  status.textContent = "Connecting...";
+  status.className = "info";
+	    const origin = window.location.origin;
+
+  try {
+    await wallet.connectWalletSmart(
+		origin, origin
+    );
+	  var address = await wallet.getAddress();
+
+    const sessionMeta = JSON.stringify({
+      token: address, // or another identifier
+      timestamp: new Date().toISOString()
+    });
+
+    const signed = await wallet.signMessageSmart(
+		sessionMeta, origin, origin
+    );
+	  var signature = false;
+	  if(signed.ok){
+		  signature = signed.result.signature;
+	  }
+
+    // ✅ Submit to server for login verification
+	const loginResponse = await fetch(`${origin}/accounts/auth`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Wallet ${signature}`
+      },
+      body: JSON.stringify({
+          address: address,
+        meta: sessionMeta,
+        signature: signature
+      })
+    });
+
+    const result = await loginResponse.json();
+
+    if (loginResponse.ok && result.access_token) {
+      status.textContent = "Wallet connected and authenticated.";
+      status.className = "success";
+
+      // Store token in localStorage or cookie if needed
+		localStorage.setItem("access_token", result.access_token);
+
+      // Redirect or update UI
+      window.location.href = "/"; // adjust as needed
+    } else {
+      status.textContent = result.message || "Wallet login failed.";
+      status.className = "error";
+    }
+
+  } catch (err) {
+    console.error(err);
+    status.textContent = "Error during wallet connection.";
+    status.className = "error";
+  }
 }

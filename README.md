@@ -15,9 +15,16 @@ Read The Manual [https://damagebdd.com/manual](here) to get started quickly.
 
 [https://damagebdd.com/api/](Swagger API) 
 
-# Setup
+# Damage Node Setup
 
-## Secrets
+To run a damage node locally:
+
+```
+git clone https://github.com/DamageBDD/DamageBDD.git
+rebar3 shell
+```
+
+## Setup Secrets
 
 > secrets:encrypt_store(bitcoin_rpc_password, "bitcoin rpc password").
 > secrets:encrypt_store(nostr_nsec, "nostr private key (nsec)").
@@ -28,7 +35,7 @@ For lnd support:
 
 > secrets:encrypt_store(lnd_macaroon, "macaroon for lnd").
 
-## Bitcoin rpc
+## Generate Bitcoin RPC auth
 
 > ./bin/bitcoin_rpcauth.py
 

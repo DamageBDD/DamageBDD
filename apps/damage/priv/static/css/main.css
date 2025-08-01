@@ -70,16 +70,6 @@ select{
   overflow-y: auto;
   box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
 }
-.submit-button {
-    background-color: #007bff;
-    color: #fff;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    display: inline-block;
-}
 #invoiceModal {
     display: none;
 }
@@ -500,4 +490,35 @@ input[type="text"] + button {
   font-size: 1.1rem;
   cursor: pointer;
   color: #555;
+}
+.styled-btn {
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  width: 100%;
+  box-shadow: 0 4px 10px rgba(0, 82, 204, 0.2);
+  cursor: pointer;
+  transition: all 0.25s ease-in-out;
+  margin-top: 1rem;
+}
+
+.styled-btn:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: scale(1.02);
+}
+#connect-button.success {
+  color: green;
+}
+
+#connect-button.error {
+  color: crimson;
+}
+
+#connect-button.info {
+  color: #0052cc;
 }

@@ -18,8 +18,7 @@ async function fetchAccountActivities(accountId) {
 }
 
 // Example usage with a templatized account ID
-const accountId = 'ak_vVeTjJEx2xf9a1XXQLH1MjtcEiJGpzDKAwD7v1k4HCLh9Bagt';
-fetchAccountActivities(accountId);
+//fetchAccountActivities(accountId);
 
 function formatCell(obj, cell, value, type) {
 

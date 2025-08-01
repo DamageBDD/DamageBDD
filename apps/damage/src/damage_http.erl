@@ -161,6 +161,18 @@ is_authorized(Req, State0) ->
             case damage_accounts:validate_access_token(Token) of
                 {error, _E} ->
                     {false, Req, State};
+                {AeAccount, <<"wallet">>} ->
+                    {
+                        true,
+                        Req,
+                        maps:merge(
+                            State,
+                            #{
+                                public_key => AeAccount,
+                                access_token => Token
+                            }
+                        )
+                    };
                 {AeAccount, Username} ->
                     case identity_server:get_account_by_email(Username) of
                         {AeAccount, _, _PrivateKey} ->

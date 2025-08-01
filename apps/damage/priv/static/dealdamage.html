@@ -159,11 +159,25 @@
                 </button>
               </div>
               <button id="loginSubmitBtn"
-                      class="modal__btn modal__btn-primary submit-button"
+                      class="modal__btn modal__btn-primary styled-btn"
                       aria-label="Login with email and password"
                       title="Login Submit">Login</button>
               <br>
+               <p style="text-align: center; margin: 0.75rem 0;">Or</p> 
+              <button id="connect-button"
+                      class="modal__btn modal__btn-primary styled-btn"
+                      aria-label="Connect wallet."
+                      title="Wallet Connect">Connect Wallet</button>
+              <br>
+              <!-- 🟢 Connect Status Message -->
+<div id="connect-status" style="margin-top: 0.5rem; font-size: 0.9rem; text-align: center; color: #555;"></div>
 
+              <p style="margin-top: 0.75rem; font-size: 0.85rem; text-align: center; color: #555;">
+                Don’t have a wallet? 
+                <a href="https://www.superherowallet.com" target="_blank" style="color: #0052cc; font-weight: 500;">
+                  Install Superhero Wallet
+                </a>
+              </p>
             </form>
           </main>
           <footer class="modal__footer">
@@ -353,7 +367,7 @@ Feature: Http test feature
                   </select>-->
                   <br>
                   <br>
-                  <button type="submit" class="submit-button">Execute Feature</button>
+                  <button type="submit" class="styled-btn">Execute Feature</button>
                 </div>
               </form>
             </p>

@@ -409,6 +409,20 @@ do_post_action(
             {400, #{status => <<"failed">>, message => Message}}
     end;
 do_post_action(
+    authenticate,
+    #{address := Account, signature := Signature, meta := SessionMeta}
+) ->
+    case vanillae:verify_signature(Signature, SessionMeta, Account) of
+        {ok, true} ->
+            Expiry = date_util:now_to_seconds(os:timestamp()) + 86400,
+            Token = secrets:encrypt(term_to_binary({Account, <<"wallet">>, Expiry})),
+            {200, #{
+                status => <<"ok">>, access_token => Token, address => Account, meta => SessionMeta
+            }};
+        {error, Message} ->
+            {400, #{status => <<"failed">>, message => Message}}
+    end;
+do_post_action(
     reset_password,
     #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm}
 ) ->
@@ -424,6 +438,7 @@ do_post_action(
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
                             case identity_server:set_email_password(Email, NewPassword) of
                                 {ok, _Message} ->
+                                    %mark_token_used(Token, Expiry),
                                     {200, #{
                                         status => <<"ok">>,
                                         message => <<"Password has been reset.">>
