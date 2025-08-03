@@ -13,6 +13,8 @@
 
 -define(BASE_GAS, 15000).
 -define(GAS_PER_BYTE, 20).
+% Time-to-live in seconds
+-define(CACHE_TTL, 60).
 
 -export([
     init/1,
@@ -30,6 +32,7 @@
     confirm_spend_all/0,
     start_batch_spend_timer/0,
     get_reports/1,
+    get_reports/2,
     get_domain_token/2,
     add_domain_token/3,
     revoke_domain_token/2,
@@ -318,28 +321,25 @@ handle_call({reports, AeAccount}, _From, Cache) ->
                     "v3/transactions/?direction=backward&type=contract_call&contract=" ++
                     ?DAMAGE_TOKEN_CONTRACT ++
                     "&account=" ++
-                    AeAccount ++
+                    binary_to_list(AeAccount) ++
                     "&limit=10",
             StreamRef = gun:get(ConnPid, Path),
-            Reports =
-                case read_stream(ConnPid, StreamRef) of
-                    #{amount := null} -> 0;
-                    #{amount := Reports0} -> Reports0
-                end,
-            {reply, Reports, Cache};
+            {reply, read_stream(ConnPid, StreamRef), Cache};
         Err ->
             ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
             {reply, {error, not_found}, Cache}
     end;
 handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
+    Now = erlang:monotonic_time(second),
     case maps:get({balance, AeAccount}, Cache, none) of
-        Balance when is_integer(Balance) ->
+        {Balance, Expiry} when is_integer(Balance), Now < Expiry ->
             {reply, Balance, Cache};
         _ ->
             case contract_balance(AeAccount) of
                 ContractBalance when is_integer(ContractBalance) ->
-                    {reply, ContractBalance,
-                        maps:put({balance, AeAccount}, ContractBalance, Cache)};
+                    ExpiryTime = Now + ?CACHE_TTL,
+                    NewCache = maps:put({balance, AeAccount}, {ContractBalance, ExpiryTime}, Cache),
+                    {reply, ContractBalance, NewCache};
                 Err ->
                     ?LOG_DEBUG("ContractBalance failed ~p", [Err]),
                     {reply, error, Cache}
@@ -356,6 +356,20 @@ handle_call({transaction, Data}, _From, State) ->
 float_to_full_integer(F) when is_float(F) ->
     round(F).
 
+handle_cast(
+    {
+        confirm_spend,
+        #{
+            public_key := AeAccount,
+            feature_hash := FeatureHash,
+            report_hash := _ReportHash,
+            node_public_key := _NodePublicKey
+        } = _RunRecord
+    },
+    #{public_key := AeAccount, private_key := none} = Cache
+) ->
+    ?LOG_DEBUG("confirm spend on wallet account ~p ~p", [AeAccount, FeatureHash]),
+    {noreply, Cache};
 handle_cast(
     {
         confirm_spend,
@@ -461,10 +475,12 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 get_wallet_proc(AeAccount) when is_list(AeAccount) ->
     get_wallet_proc(list_to_binary(AeAccount));
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
-    #{public_key := AeAccount, password := _Password, private_key := PrivateKey} = identity_server:get_account(
-        AeAccount
-    ),
-    get_wallet_proc(AeAccount, PrivateKey);
+    case identity_server:get_account(AeAccount) of
+        #{public_key := AeAccount, password := _Password, private_key := PrivateKey} ->
+            get_wallet_proc(AeAccount, PrivateKey);
+        notfound ->
+            get_wallet_proc(AeAccount, none)
+    end;
 get_wallet_proc(admin) ->
     #{public_key := NodePublicKey, private_key := PrivateKey} = secrets:node_keypair(),
     get_wallet_proc(list_to_binary(NodePublicKey), PrivateKey).
@@ -519,6 +535,9 @@ balance(AeAccount) ->
 get_reports(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {reports, AeAccount}, ?AE_TIMEOUT).
+get_reports(AeAccount, Query) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {reports, AeAccount, Query}, ?AE_TIMEOUT).
 
 get_events(#{public_key := PubKey, private_key := PrivateKey}, ContractId, Limit) ->
     DamageAEPid = get_wallet_proc(PubKey, PrivateKey),
