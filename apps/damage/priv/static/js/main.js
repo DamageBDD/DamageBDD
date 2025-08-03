@@ -646,3 +646,60 @@ async function connectWalletSmart1() {
     status.className = "error";
   }
 }
+function copyToClipboard(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+
+  const icon = el.parentElement?.querySelector(".copy-icon");
+  const text = el.value || el.textContent;
+
+  const showSuccess = () => {
+    if (icon) {
+      const original = icon.textContent;
+      icon.textContent = "✅";
+      icon.style.color = "#00ff88";
+      setTimeout(() => {
+        icon.textContent = original;
+        icon.style.color = "";
+      }, 1500);
+    }
+  };
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        console.log("Copied to clipboard:", text);
+        showSuccess();
+      })
+      .catch(err => {
+        console.error("Clipboard copy failed:", err);
+      });
+  } else {
+    let range, selection;
+
+    if (el.nodeName === "INPUT" || el.nodeName === "TEXTAREA") {
+      el.select();
+      el.setSelectionRange(0, text.length);
+    } else {
+      range = document.createRange();
+      range.selectNodeContents(el);
+      selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    try {
+      document.execCommand("copy");
+      console.log("Copied (fallback):", text);
+      showSuccess();
+    } catch (err) {
+      console.error("Fallback copy failed:", err);
+    }
+
+    if (selection) selection.removeAllRanges();
+    if (el.blur) el.blur();
+  }
+}
+
+// ⬅️ Make it accessible from HTML inline
+window.copyToClipboard = copyToClipboard;
