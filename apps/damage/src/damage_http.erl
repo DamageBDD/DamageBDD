@@ -421,8 +421,23 @@ from_json(Req, State) ->
                 State
             };
         #{feature := _FeatureData, stream := true} = Json ->
-            {_Status, Response} = check_execute_bdd(Json, State, Req),
-            {stop, Response, State};
+            case check_execute_bdd(Json, State, Req) of
+                {400, #{
+                    message := _Message,
+                    balance := 0
+                }} ->
+                    Message = <<"Insufficient balance, please top up $DAMAGE.">>,
+                    {
+                        cowboy_req:reply(
+                            200,
+                            cowboy_req:set_resp_body(Message, Req)
+                        ),
+                        Req,
+                        State
+                    };
+                {_Status, Response} ->
+                    {stop, Response, State}
+            end;
         #{feature := _FeatureData, concurrency := Concurrency} = Json when Concurrency > 1 ->
             {Status, Response} = check_execute_bdd(Json, State, Req),
             {stop, cowboy_req:reply(Status, cowboy_req:set_resp_body(jsx:encode(Response))), State}
