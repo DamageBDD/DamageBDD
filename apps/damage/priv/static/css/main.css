@@ -1,19 +1,6 @@
 html, body {
     margin: 0;
 }
-/*
-
-body {
-  font-family: Arial, sans-serif;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: left;
-  justify-content: left;
-  /*height: 100vh;*
-  background-color: #f0f0f0;
-}
-*/
   body {
   font-family: 'Inter', system-ui, sans-serif;
   font-weight: 400;
@@ -22,20 +9,21 @@ body {
 }
 h1, h2, h3 {
   font-weight: 600;
+  font-family: 'Rubik', sans-serif;
 }
 
 
-  h1, h2, h3, h4 { font-family: 'Rubik', sans-serif; }
-  .dark-mode { background: linear-gradient(to bottom right, #2d2d2d, #1a1a1a); color: #e0e0e0; }
-  .dark-mode table { background-color: #2b2b2b; }
-  .circle-bg {
-    position: absolute; width: 400px; height: 400px; border-radius: 50%;
-    background: rgba(255, 255, 255, 0.2); animation: float 20s infinite alternate;
-  }
-  @keyframes float {
-    0% { transform: translate(0, 0); }
-    100% { transform: translate(100px, 50px); }
-  }
+h1, h2, h3, h4 { font-family: 'Rubik', sans-serif; }
+.dark-mode { background: linear-gradient(to bottom right, #2d2d2d, #1a1a1a); color: #e0e0e0; }
+.dark-mode table { background-color: #2b2b2b; }
+.circle-bg {
+position: absolute; width: 400px; height: 400px; border-radius: 50%;
+background: rgba(255, 255, 255, 0.2); animation: float 20s infinite alternate;
+}
+@keyframes float {
+0% { transform: translate(0, 0); }
+100% { transform: translate(100px, 50px); }
+}
 .title {
   font-size: 24px;
   font-weight: bold;
@@ -122,57 +110,7 @@ select{
 
 
 
-#kycForm{
-    width: 30em;
-}
 
-#kycForm {
-  display: flex;
-  flex-wrap: wrap;
-}
-
-input[type="password"], input[type="email"] {
-  /* common styles for labels and form fields inside kycForm */
-    margin: 8px;
-  width: 250px;
-  margin-right: 20px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
-#kycForm :where(input, textarea) {
-  /* styles specific to form fields inside kycForm */
-  background-color: #f5f5f5;
-  color: #333;
-}
-
-#resetPasswdForm{
-    width: 30em;
-}
-#resetPasswdForm {
-  /*display: flex;
-  flex-wrap: wrap;*/
-}
-
-input[type="text"],input[type="password"], input[type="email"] {
-  /* common styles for labels and form fields inside kycForm */
-    margin: 8px;
-  width: 250px;
-  margin-right: 20px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
-#resetPasswdBtn{
-    margin: 8px;
-  width: 250px;
-  margin-right: 20px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
 .buttonlink {
   background: none!important;
   border: none;
@@ -206,7 +144,7 @@ pre{
 .is-open{
     z-index: 99999;
 }
-#runreport{
+#run-report{
     font-size: xx-small;
 }
 table {
@@ -287,9 +225,6 @@ html, body {
   box-sizing: border-box;
 }
 
-#damageForm{
-  height: 100%;
-}
 
 .buttonlink {
   display: inline-block;
@@ -313,80 +248,9 @@ html, body {
   outline: none;
 }
 
-.login-links {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-@media (max-width: 600px) {
-  .buttonlink {
-    padding: 10px 16px;
-    font-size: 16px;
-  }
-  .login-links {
-    flex-direction: column;
-    gap: 12px;
-  }
-}
-/* Reset basic form styling */
-#loginSignupForm {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding: 2rem;
-  border-radius: 16px;
-  background: #ffffff;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
-  /*width: 100%;*/
-  max-width: 400px;
-  font-family: 'Segoe UI', sans-serif;
-}
-
-/* Input Fields */
-#loginSignupForm input {
-  padding: 12px 16px;
-  font-size: 15px;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  transition: border 0.2s;
-}
-
-#loginSignupForm input:focus {
-  border-color: #007bff;
-  outline: none;
-}
-
-/* Login button */
-#loginSignupForm button[type="submit"] {
-  background: #007bff;
-  color: #fff;
-  border: none;
-  padding: 12px;
-  font-size: 16px;
-  font-weight: bold;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.3s ease;
-}
-
-#loginSignupForm button[type="submit"]:hover {
-  background: #0056b3;
-}
 
 
-/* Terms section */
-.terms {
-  font-size: 12px;
-  color: #666;
-  margin-top: -0.5rem;
-  text-align: center;
-}
 
-.terms a {
-  color: #007bff;
-  text-decoration: underline;
-}
 .modal__header img {
   max-width: 120px;
   height: auto;
@@ -398,99 +262,7 @@ html, body {
   padding: 2rem 1rem 0 1rem;
 }
 
-#loginSignupForm {
-  margin-top: 1rem;
-  padding: 2rem 1.5rem;
-  border-radius: 16px;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
-  background-color: #fff;
-}
 
-/* Container styling */
-#signupForm {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding: 2rem 1.5rem;
-  border-radius: 16px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-  background-color: #ffffff;
-  /*width: 100%;*/
-  max-width: 400px;
-  font-family: 'Segoe UI', sans-serif;
-  margin: 0 auto;
-}
-
-/* Headline */
-#signupForm h2 {
-  font-size: 20px;
-  font-weight: 600;
-  color: #004aad;
-  margin-bottom: 1rem;
-  text-align: center;
-}
-
-/* Input Field */
-#signupForm input[type="email"],
-#signupForm input[type="text"],
-#signupForm input[type="password"] {
-  padding: 12px 16px;
-  font-size: 15px;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  transition: border-color 0.2s;
-}
-
-#signupForm input:focus {
-  border-color: #007bff;
-  outline: none;
-}
-
-/* Submit Button */
-#signupForm button[type="submit"] {
-  background-color: #004aad;
-  color: white;
-  border: none;
-  padding: 12px;
-  font-size: 15px;
-  font-weight: 600;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-
-#signupForm button[type="submit"]:hover {
-  background-color: #003380;
-}
-
-input[type="password"] + button,
-input[type="text"] + button {
-  margin-left: 10px;
-  font-size: 0.8em;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-.password-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin-bottom: 15px;
-}
-
-.password-wrapper input {
-  flex: 1;
-  padding-right: 2.5rem;
-}
-
-.toggle-password {
-  position: absolute;
-  right: 20px;
-  background: none;
-  border: none;
-  font-size: 1.1rem;
-  cursor: pointer;
-  color: #555;
-}
 .styled-btn {
   background: linear-gradient(to right, #0052cc, #007bff);
   color: #fff;
@@ -511,14 +283,287 @@ input[type="text"] + button {
   background: linear-gradient(to right, #003fa6, #005ec4);
   transform: scale(1.02);
 }
-#connect-button.success {
-  color: green;
+#balanceDiv {
+  cursor: pointer;
+  border: 1px solid #555;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  background-color: rgba(0, 123, 255, 0.1);
+  transition: all 0.2s ease-in-out;
 }
 
-#connect-button.error {
-  color: crimson;
+#balanceDiv:hover {
+  background-color: rgba(0, 123, 255, 0.2);
+}
+#toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  align-items: center;
+}
+#damageTextArea {
+  padding: 1rem;
+  border-radius: 6px;
+  background-color: #1a1a1a;
+  color: #eee;
+  font-family: monospace;
+  box-shadow: inset 0 0 5px rgba(255,255,255,0.1);
+}
+.styled-btn:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: scale(1.02);
+  box-shadow: 0 0 10px rgba(0, 123, 255, 0.4);
+}
+#runreports {
+  padding: 1rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #ccc;
+  font-family: monospace;
+}
+/* === Modal Container Cleanup === */
+.modal__container {
+  background: #1e1e2f;
+  color: #eaeaea;
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 540px;
+  margin: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
-#connect-button.info {
-  color: #0052cc;
+/* === Modal Header and Title === */
+.modal__header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.modal__title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* === Tab Links === */
+[data-token-tabs] {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  justify-content: center;
+  border-bottom: 1px solid #444;
+  padding-bottom: 0.5rem;
+}
+
+[data-token-tabs] a {
+  color: #00bfff;
+  text-decoration: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 500;
+  background-color: #2a2a3d;
+}
+
+[data-token-tabs] a:hover,
+[data-token-tabs] a[data-tabby-default] {
+  background-color: #007bff;
+  color: white;
+}
+
+
+* === Form Buttons === */
+#damage-transfer-out-btn,
+#generate-invoice-btn,
+.modal__btn {
+  background: linear-gradient(to right, #0052cc, #007bff);
+  border: none;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-size: 1rem;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 0.75rem;
+  transition: all 0.2s ease-in-out;
+}
+
+#damage-transfer-out-btn:hover,
+#generate-invoice-btn:hover,
+.modal__btn:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: scale(1.02);
+}
+
+/* === Copy Icon === */
+#copyAddressIcon,
+#copyInvoiceIcon {
+  color: #ffcc00;
+  margin-left: 0.5rem;
+}
+
+#copyAddressIcon:hover,
+#copyInvoiceIcon:hover {
+  color: #ffffff;
+}
+
+/* === QR Code Box === */
+#qrcode-damage,
+#qrcode-lightning {
+  margin: 1rem 0;
+  text-align: center;
+  background-color: #2a2a3d;
+  padding: 1rem;
+  border-radius: 6px;
+}
+
+/* === Invoice Detail Expand === */
+details {
+  margin-top: 1rem;
+  background-color: #2a2a3d;
+  padding: 0.75rem;
+  border-radius: 6px;
+  color: #ddd;
+}
+
+summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+textarea#lightning-invoice-input {
+  font-family: monospace;
+  font-size: 0.85rem;
+  resize: none;
+  background-color: #1a1a1a;
+  color: #eee;
+  padding: 1rem;
+  border-radius: 6px;
+  border: none;
+}
+/* Center the QR code image inside modal */
+#qrcode-damage,
+#qrcode-lightning {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+  background-color: #2a2a3d;
+  border-radius: 6px;
+  margin: 1rem auto;
+  max-width: 300px;
+}
+
+/* Fix img inside QR div to avoid double alignment issues */
+#qrcode-damage img,
+#qrcode-lightning img {
+  display: block;
+  margin: auto;
+}
+
+/* Fix dark mode modal content text */
+.modal__content,
+.modal__title,
+.modal__content p,
+.modal__content label,
+.modal__content input,
+.modal__footer button {
+  color: #e0e0e0 !important;
+}
+
+/* Close (X) button styling */
+.modal__close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #aaa;
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  cursor: pointer;
+  transition: color 0.2s ease-in-out;
+}
+
+.modal__close:hover {
+  color: #fff;
+}
+
+/* Input field dark styling */
+.modal__content input[type="text"],
+.modal__content input[type="number"],
+.modal__content textarea {
+  background-color: #1c1c2b;
+  color: #f5f5f5;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  width: 90%;
+  margin-top: 0.5rem;
+  margin-bottom: 0.75rem;
+  margin-left: 0.5rem;
+  margin-right: 0.5rem;
+  font-size: 0.95rem;
+}
+
+/* Tabs container */
+ul[data-tabs] {
+  display: flex;
+  border-bottom: 2px solid #3a3a3a;
+  padding: 0;
+  gap: 0.5rem;
+  justify-content: flex-start;
+  background-color: #1e1e2f;
+  padding-left: 1rem;
+  padding-top:0.5rem;
+}
+
+/* Tab links */
+ul[data-tabs] li a {
+  display: inline-block;
+  padding: 0.75rem 1.25rem;
+  border-radius: 6px 6px 0 0;
+  background-color: #2a2a3d;
+  color: #ccc;
+  font-weight: 500;
+  transition: background 0.3s, color 0.3s;
+  border: 1px solid #2f2f2f;
+  border-bottom: none;
+  text-decoration: none;
+}
+
+/* Active tab */
+ul[data-tabs] li a[data-tabby-default],
+ul[data-tabs] li a[aria-selected="true"] {
+  background-color: #007bff;
+  color: #fff;
+  border-color: #007bff;
+  font-weight: 600;
+}
+
+/* Hover state */
+ul[data-tabs] li a:hover {
+  background-color: #44475a;
+  color: #fff;
+}
+
+/* Panel styling (like #execution-tab, #history-tab) */
+.execute-container,
+#history-tab,
+#analytics-tab,
+#schedules-tab,
+#settings-tab {
+  background-color: #252535;
+  border-radius: 0 0 10px 10px;
+  border: 1px solid #3a3a3a;
+  border-top: none;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+#run-reports-panel {
+  padding: 1rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #ccc;
+  font-family: monospace;
 }

@@ -10,13 +10,8 @@
     <link rel="stylesheet" type="text/css" href='/static/css/toast.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/damage-lightning-ui.css' />
-    <script async src='https://www.googletagmanager.com/gtag/js?id=G-5QG625RHB7'></script>
-    <link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet'>
-    <style type="text/css">
-      body {
-          font-family: 'Roboto', sans-serif;
-      }
-    </style>
+<link rel="stylesheet" type="text/css" href="/static/css/tango-steven-theme.css" />
+
     <script src="/static/js/three.min.js"></script>
     <script src="/static/js/qrcode.min.js"></script>
     <script src="/static/js/micromodal.min.js"></script>
@@ -33,6 +28,7 @@
 
     <link rel="stylesheet" type="text/css" href='/static/css/prism.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/main.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/auth.css' />
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
 
@@ -60,22 +56,22 @@
               </ul>
               <div id="damage-transfers-tab">
                 <p>
-                  If you already have some DAMAGE tokens use this address to transfer them to your account.
+                  If you already have some DAMAGE tokens use this address to transfer them to your account address.
                 </p>
                 <p>
-                  Custodial Wallet Address: 
+                  Wallet Address: 
                   <span id="copyAddressIcon"
                         onclick="copyAddressToClipboard()"
                         style="cursor: pointer; font-size: 20px;">
                     📝 Copy
                   </span>
-                <input id="damage-address" readonly style="height: 100%; width: 100%;">
+                <input type="text" id="damage-address" readonly>
                 </p>
                 <div id="qrcode-damage">
                 </div>
                 <div id="damage-transfer">
                   <form id="transfer-out-form">
-                    <label for="totalAmt">Transfer DAMAGE tokens to address.</label>
+                    <label for="totalAmt">Transfer DAMAGE tokens out to address.</label>
                     <input type="text"  id="damage-transfer-out-address">
                     <input type="number" step="1" id="damage-transfer-out-amount">
                     <button id="damage-transfer-out-btn">Transfer Out!</button>
@@ -303,8 +299,10 @@
     <div id="content">
       <div id="toolbar">
         <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
-        <div id="balanceDiv" data-micromodal-trigger="invoice-modal"></div> |
-        <div id="logoutBtn" data-micromodal-trigger="logout-modal">Logout </div>
+        <div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal">
+
+        </div> 
+        <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">Logout </div>
         <!--generate javascript code to make the qrcode modal show when balanceDiv is clicked, and add css to  indicate that balance div is clickable-->
       </div>
       <div class="title">DamageBDD</div>
@@ -324,13 +322,13 @@
         <div class="pure-g">
           <div class="pure-u-1 pure-u-md-1-2">
             <p>
+              <form id="damageForm">
               <div>
                 <h3>Create/Edit Feature</h3>
                 <p>Write the test case in the textarea below:</p>
                 <p>You can find more example test cases <a href="https://github.com/jagguli/DamageBDD/tree/master/features" target="_blank">here</a>:
                 </p>
               </div>
-              <form id="damageForm">
                 <!--<textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>-->
                   <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted" rows=20>
 Feature: Http test feature
@@ -355,8 +353,6 @@ Feature: Http test feature
                     <option value="sk_hard">Ultra-Violence. (1000 rps)</option>
                     <option value="sk_nightmare">Nightmare! (100000 rps)</option>
                   </select>
-                  <br>
-                  <br>
                   <label for="duration">Duration:</label>
                   <select id="duration">
                     <option value="sk_baby">Im too young to die. (1 minute)</option>
@@ -365,8 +361,6 @@ Feature: Http test feature
                     <option value="sk_hard">Ultra-Violence. (10 hours)</option>
                     <option value="sk_nightmare">Nightmare! (1 day)</option>
                   </select>-->
-                  <br>
-                  <br>
                   <button type="submit" class="styled-btn">Execute Feature</button>
                 </div>
               </form>
@@ -374,12 +368,12 @@ Feature: Http test feature
           </div>
           <div class="pure-u-1 pure-u-md-1-2">
             <p>
-              <div>
+              <div id="run-reports-panel">
                 <h3>Run Report</h3>
                 <p>Result of the run will be streamed here.</p>
                 <p>You can see previous results in the <a id="historylink" href="#history-tab">history tab</a>.</p>
-                <div id="runreports">
-                  <ul id="runreports-ul" data-tabs-reports>
+                <div id="run-reports">
+                  <ul id="run-reports-ul" data-tabs-reports>
                   </ul>
                 </div>
               </div>

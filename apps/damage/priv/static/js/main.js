@@ -5,7 +5,14 @@ function showConnectStatus(message, type = 'info') {
   statusDiv.textContent = message;
   statusDiv.className = type; // e.g., 'success', 'error', 'info'
 }
-
+function generateDamageQR(address){
+	//showLightningQR({containerId:"qrcode-damage", address: address});
+		document.getElementById("qrcode-damage").innerText = "";
+		var qrcode = new QRCode(
+			document.getElementById("qrcode-damage"),
+			localStorage.getItem("address")
+		);
+}
 
 (function(window, document, undefined) {
 
@@ -154,7 +161,6 @@ function showConnectStatus(message, type = 'info') {
 		var address = localStorage.getItem("address");
 		if(address){
 			document.getElementById("damage-address").value = address;
-					generateAddressQrcode();
 		}
 		fetchVersion();
 
@@ -171,6 +177,9 @@ function showConnectStatus(message, type = 'info') {
                   }
               });
           });
+		if(isAuthenticated()){
+					generateDamageQR(address);
+		}
 
 	}); // end DOMContentLoaded 
 
@@ -231,7 +240,7 @@ function showConnectStatus(message, type = 'info') {
 		};
 		const reportDateTime = new Intl.DateTimeFormat("en-US", options).format;
 
-		const ulEl = document.getElementById('runreports-ul');
+		const ulEl = document.getElementById('run-reports-ul');
 		ulEl.role='tablist';
 		const liEl = document.createElement('li');
 		const aEl = document.createElement('a');
@@ -242,7 +251,7 @@ function showConnectStatus(message, type = 'info') {
 		ulEl.appendChild(liEl);
 
 
-		const runreportsTabPanels = document.getElementById('runreports');
+		const runreportsTabPanels = document.getElementById('run-reports');
 		const div = document.createElement('div');
 		div.id = `run-${runDateTime}`;
 		div.setAttribute('aria-selected', true);
@@ -372,7 +381,6 @@ function showConnectStatus(message, type = 'info') {
 				if (data.access_token) {
 					localStorage.setItem("access_token", data.access_token);
 					localStorage.setItem("address", data.address);
-					generateAddressQrcode();
 					updateBalance();
 					showConnectStatus("Login Success!", "success");
 					showHideLoginButton();
@@ -483,7 +491,8 @@ function showConnectStatus(message, type = 'info') {
 			if (xhr.status === 200) {
 				var balanceData = JSON.parse(xhr.responseText);
 				var balanceDiv = document.getElementById('balanceDiv');
-				balanceDiv.innerText = 'Damage Tokens: ' + Math.round(balanceData.amount/100000000) + ' 🧪';
+				var balanceText = '💀 DAMAGE TOKENS: ' + Math.round(balanceData.amount/100000000) + '🩸';
+				balanceDiv.innerText = balanceText;
 			}
 		};
 		
@@ -543,13 +552,6 @@ function showConnectStatus(message, type = 'info') {
 				});
 			});
 	}
-	function generateAddressQrcode(){
-		document.getElementById("qrcode-damage").innerText = "";
-		var qrcode = new QRCode(
-			document.getElementById("qrcode-damage"),
-			localStorage.getItem("address")
-		);
-	}
 
 
 	function addVariable() {
@@ -593,6 +595,7 @@ async function connectWalletSmart1() {
 		origin, origin
     );
 	  var address = await wallet.getAddress();
+	  localStorage.setItem("address", address);
 
     const sessionMeta = JSON.stringify({
       token: address, // or another identifier
