@@ -48,7 +48,6 @@
     get_block_height_since/2,
     restart_wallet_proc/1,
     get_wallet_proc/1,
-    get_wallet_proc/2,
     get_events/3
 ]).
 -export([
@@ -475,12 +474,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 get_wallet_proc(AeAccount) when is_list(AeAccount) ->
     get_wallet_proc(list_to_binary(AeAccount));
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
-    case identity_server:get_account(AeAccount) of
-        #{public_key := AeAccount, password := _Password, private_key := PrivateKey} ->
-            get_wallet_proc(AeAccount, PrivateKey);
-        notfound ->
-            get_wallet_proc(AeAccount, none)
-    end;
+    get_wallet_proc(AeAccount, none);
 get_wallet_proc(admin) ->
     #{public_key := NodePublicKey, private_key := PrivateKey} = secrets:node_keypair(),
     get_wallet_proc(list_to_binary(NodePublicKey), PrivateKey).
@@ -539,8 +533,8 @@ get_reports(AeAccount, Query) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {reports, AeAccount, Query}, ?AE_TIMEOUT).
 
-get_events(#{public_key := PubKey, private_key := PrivateKey}, ContractId, Limit) ->
-    DamageAEPid = get_wallet_proc(PubKey, PrivateKey),
+get_events(#{public_key := PubKey}, ContractId, Limit) ->
+    DamageAEPid = get_wallet_proc(PubKey),
     gen_server:call(DamageAEPid, {events, ContractId, Limit}, ?AE_TIMEOUT);
 get_events(AeAccount, ContractId, Limit) ->
     DamageAEPid = get_wallet_proc(AeAccount),
