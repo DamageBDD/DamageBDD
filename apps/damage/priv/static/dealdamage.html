@@ -297,16 +297,21 @@
     </div>
     <div id="background"></div>
     <div id="content">
-      <div id="toolbar">
-        <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
-        <div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal">
-
-        </div> 
-        <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">Logout </div>
-        <!--generate javascript code to make the qrcode modal show when balanceDiv is clicked, and add css to  indicate that balance div is clickable-->
+      <div class="topbar">
+        <div class="site-header">
+          <img class="logo" src="/static/img/logo.png" alt="DamageBDD Logo" />
+          <div class="brand-text">
+            <div class="title">DamageBDD</div>
+            <div class="subtitle">The tool to break your stack</div>
+          </div>
+        </div>
+        <div class="toolbar-items">
+          <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
+          <div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal"></div>
+          <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">Logout</div>
+        </div>
       </div>
-      <div class="title">DamageBDD</div>
-      <div class="header">The tool to break your stack</div>
+
 
 
       <ul data-tabs>
