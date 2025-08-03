@@ -15,7 +15,6 @@
 -export([to_json/2]).
 -export([to_html/2]).
 -export([from_json/2, allowed_methods/2, is_authorized/2]).
--export([clean_reports/0]).
 -export([test/0]).
 -export([ls/1]).
 -export([content_types_accepted/2]).
@@ -209,33 +208,18 @@ get_reports(Req, Hash) ->
             cat(Hash, Path0)
     end.
 
-get_record(Id) ->
-    case damage_riak:get(?RUNRECORDS_BUCKET, damage_utils:decrypt(Id)) of
+get_record(Hash) ->
+    case damage_ipfs:cat(Hash) of
         {ok, Record} -> Record;
         notfound -> none
     end.
 
 do_query_base(Fun, Index, Args, AeAccount) when is_list(AeAccount) ->
     do_query_base(Fun, Index, Args, list_to_binary(AeAccount));
-do_query_base(Fun, Index, Args, AeAccount) ->
+do_query_base(_Fun, Index, Args, AeAccount) ->
     Args0 = [?RUNRECORDS_BUCKET, Index] ++ Args ++ [[{max_results, 30}]],
-    ?LOG_DEBUG("riak query index ~p", [Args0]),
-    case apply(damage_riak, Fun, Args0) of
-        [] ->
-            logger:info("no reports for account ~p ~p", [Index, Args]),
-            #{results => [], status => <<"ok">>, length => 0};
-        Found ->
-            Results =
-                lists:filter(
-                    fun
-                        (none) -> false;
-                        (#{public_key := AeAccount0}) when AeAccount0 =:= AeAccount -> true;
-                        (_) -> true
-                    end,
-                    [get_record(X) || X <- Found]
-                ),
-            #{results => Results, status => <<"ok">>, length => length(Results)}
-    end.
+    ?LOG_DEBUG("get reports query ~p", [Args0]),
+    damage_ae:get_reports(AeAccount).
 
 since_seconds(hours, Value) -> Value * 3600;
 since_seconds(hour, Value) -> Value * 3600;
@@ -330,7 +314,20 @@ do_query(#{public_key := AeAccount, schedule_id := ScheduleId}) ->
         AeAccount
     );
 do_query(#{public_key := AeAccount}) ->
-    do_query_base(get_index, {binary_index, "public_key"}, [AeAccount], AeAccount).
+    case damage_ae:get_reports(AeAccount) of
+        [] ->
+            #{results => [], status => <<"ok">>, length => 0};
+        Found ->
+            Results =
+                lists:filter(
+                    fun
+                        (none) -> false;
+                        (_) -> true
+                    end,
+                    [get_record(X) || X <- Found]
+                ),
+            #{results => Results, status => <<"ok">>, length => length(Results)}
+    end.
 
 from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
@@ -363,35 +360,9 @@ cat(Hash, Path) ->
         ),
     logger:info("get ipfs hash ~p ", [Hash]),
     Data.
-
 test() ->
     {
         ok,
         [#{<<"Objects">> := [#{<<"Hash">> := Hash, <<"Links">> := Links} | Rest]}]
     } = damage_ipfs:test(),
     logger:info("list ipfs directory ~p ~p ~p", [Hash, Links, Rest]).
-
-clean_record(#{result := Result} = Record, Key) when is_list(Result) ->
-    ?LOG_INFO("deleting invalid record~p", [Key]),
-    damage_riak:delete(?RUNRECORDS_BUCKET, damage_utils:decrypt(Key)),
-    Record;
-clean_record(#{run_id := RunId} = Record, Key) when is_list(RunId) ->
-    ?LOG_INFO("deleting invalid record~p", [Key]),
-    damage_riak:delete(?RUNRECORDS_BUCKET, damage_utils:decrypt(Key)),
-    Record;
-clean_record(Record, Key) ->
-    ?LOG_INFO("record ~p", [Key]),
-    Record.
-
-clean_record(RecordId) -> clean_record(get_record(RecordId), RecordId).
-
-clean_reports() ->
-    case damage_riak:list_keys(?RUNRECORDS_BUCKET) of
-        [] ->
-            logger:info("no reports for account"),
-            [];
-        Found ->
-            ?LOG_DEBUG(" reports exists data: ~p ", [Found]),
-            Results = [clean_record(X) || X <- Found],
-            #{results => Results, status => <<"ok">>, length => length(Results)}
-    end.
