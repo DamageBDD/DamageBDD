@@ -561,9 +561,55 @@ ul[data-tabs] li a:hover {
 }
 
 #run-reports-panel {
+    margin-left:0.5rem;
   padding: 1rem;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.05);
   color: #ccc;
   font-family: monospace;
+}
+
+/* Generic wrapper for both input and textarea */
+.click-copy {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+/* Shared styling for input and textarea */
+.click-copy input[type="text"],
+.click-copy textarea[readonly] {
+  width: 100%;
+  padding: 0.75rem 2.5rem 0.75rem 1rem;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background-color: #1c1c2b;
+  color: #e0e0e0;
+  font-size: 0.95rem;
+  font-family: monospace;
+  resize: none;
+  outline: none;
+}
+
+/* Adjust for taller textareas */
+.click-copy textarea {
+  min-height: 5rem;
+  line-height: 1.5;
+}
+
+/* The copy icon */
+.click-copy .copy-icon {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.2rem;
+  color: #ffcc00;
+  cursor: pointer;
+  transition: color 0.2s ease-in-out;
+}
+
+.click-copy .copy-icon:hover {
+  color: #ffffff;
 }

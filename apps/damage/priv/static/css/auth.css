@@ -9,11 +9,14 @@
   background: #0056b3;
 }
 
+/* Flex container for alignment */
 .login-links {
-  display: flex;
-  gap: 16px;
   flex-wrap: wrap;
   margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
 }
 @media (max-width: 600px) {
   .buttonlink {
@@ -32,11 +35,21 @@
   gap: 1rem;
   padding: 2rem;
   border-radius: 16px;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.05);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
   /*width: 100%;*/
   max-width: 400px;
   font-family: 'Segoe UI', sans-serif;
+}
+#loginSignupForm p{
+    margin-top: 0.75rem; font-size: 0.85rem; text-align: center; color: #555;
+}
+.panel {
+    margin-left:0.5rem;
+  padding: 1rem;
+  border-radius: 6px;
+  color: #ccc;
+  font-family: monospace;
 }
 
 /* Input Fields */
@@ -169,8 +182,8 @@ input[type="text"] + button {
   flex-wrap: wrap;*/
 }
 
+/*
 .password-wrapper input[type="text"],input[type="password"], input[type="email"] {
-  /* common styles for labels and form fields inside kycForm */
     margin: 8px;
   width: 250px;
   margin-right: 20px;
@@ -178,6 +191,7 @@ input[type="text"] + button {
   border: 1px solid #ccc;
   border-radius: 4px;
 }
+ */
 
 #resetPasswdBtn{
     margin: 8px;
@@ -199,3 +213,30 @@ input[type="text"] + button {
   color: #007bff;
   text-decoration: underline;
 }
+#connect-status{
+    margin-top: 0.5rem; font-size: 0.9rem; text-align: center;
+}
+
+/* Style the Sign Up and Forgot Password buttons */
+#signupDialogBtn,
+#loginResetPasswdBtn {
+  background-color: transparent;
+  color: #00bfff;
+  border: 1px solid transparent;
+  font-size: 0.95rem;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  margin: 0.5rem 0.5rem 0 0;
+  border-radius: 6px;
+  transition: all 0.2s ease-in-out;
+}
+
+#signupDialogBtn:hover,
+#loginResetPasswdBtn:hover {
+  background-color: rgba(0, 191, 255, 0.1);
+  color: #fff;
+  border-color: #00bfff;
+  cursor: pointer;
+  transform: scale(1.03);
+}
+

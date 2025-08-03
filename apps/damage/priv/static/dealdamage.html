@@ -60,12 +60,11 @@
                 </p>
                 <p>
                   Wallet Address: 
-                  <span id="copyAddressIcon"
-                        onclick="copyAddressToClipboard()"
-                        style="cursor: pointer; font-size: 20px;">
-                    📝 Copy
-                  </span>
-                <input type="text" id="damage-address" readonly>
+                  <div class="click-copy">
+                    <input type="text" id="damage-address" readonly>
+                    <span class="copy-icon" onclick="copyToClipboard('damage-address')">📝</span>
+                  </div>
+
                 </p>
                 <div id="qrcode-damage">
                 </div>
@@ -105,12 +104,13 @@
                   </summary>
 
                   <p id="lightning-invoice">
-                    <span id="copyInvoiceIcon"
-                          onclick="copyInvoiceToClipboard()"
-                          style="cursor: pointer; font-size: 20px;">📝 Copy</span>
-                    <textarea id="lightning-invoice-input"
-                              readonly
-                              style="height: 100%; width: 100%;"></textarea>
+                    <div class="click-copy">
+                      <textarea id="lightning-invoice-input"
+                                readonly
+                                class='click-copy'
+                                ></textarea>
+                      <span class="copy-icon" onclick="copyToClipboard('lightning-invoice-input')">📝</span>
+                    </div>
                   </p>
                 </details>
               </div>
@@ -133,7 +133,7 @@
             </h2>
           </header>
           <main class="modal__content" id="modal-1-content">
-            <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
+            <form id="loginSignupForm" class='panel' onsubmit="submitLoginForm(event)">
               <!--<label for="username">Username (Email):</label>-->
               <input type="email"
                      id="login-username"
@@ -159,18 +159,18 @@
                       aria-label="Login with email and password"
                       title="Login Submit">Login</button>
               <br>
-               <p style="text-align: center; margin: 0.75rem 0;">Or</p> 
+               <p >Or</p> 
               <button id="connect-button"
                       class="modal__btn modal__btn-primary styled-btn"
                       aria-label="Connect wallet."
                       title="Wallet Connect">Connect Wallet</button>
               <br>
               <!-- 🟢 Connect Status Message -->
-<div id="connect-status" style="margin-top: 0.5rem; font-size: 0.9rem; text-align: center; color: #555;"></div>
+                <div id="connect-status" ></div>
 
-              <p style="margin-top: 0.75rem; font-size: 0.85rem; text-align: center; color: #555;">
+              <p >
                 Don’t have a wallet? 
-                <a href="https://www.superherowallet.com" target="_blank" style="color: #0052cc; font-weight: 500;">
+                <a href="https://www.superherowallet.com" target="_blank" >
                   Install Superhero Wallet
                 </a>
               </p>
