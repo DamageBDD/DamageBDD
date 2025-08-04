@@ -268,9 +268,19 @@ function generateDamageQR(address){
 		tabs.toggle(div.id);
 
 
+
 		return code;
 
 	}
+	function replaceMarkers(el) {
+		const html = el.innerHTML
+			  .replace(/line:(\d+)/g, '<span class="gherkin-line">line:$1</span>')
+			  .replace(/\bsuccess\b/g, '<span class="gherkin-success">success</span>')
+			  .replace(/\bfail:([^\s]+)/g, '<span class="gherkin-fail">fail:$1</span>');
+
+		el.innerHTML = html;
+	}
+
 	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value;
 		const concurrencyText = 1;
@@ -296,8 +306,9 @@ function generateDamageQR(address){
 
 			await response.body
 				.pipeThrough(new TextDecoderStream())
-			//.pipeThrough(upperCaseStream())
 				.pipeTo(appendToDOMStream(reportElement));
+			Prism.highlightElement(reportElement);
+			replaceMarkers(reportElement);
 
 		} else if (response.status === 401) {
 			MicroModal.show("login-modal");

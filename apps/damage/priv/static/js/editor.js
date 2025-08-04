@@ -46,15 +46,11 @@
 		}
 		codeInput.registerTemplate(
 			"syntax-highlighted",
-			codeInput.templates.hljs(
-				hljs,
-				[
-					new codeInput.plugins.Autocomplete(updatePopup),
-					new codeInput.plugins.Indent(true, 2) // 2 spaces indentation
-				]
-			)
+			codeInput.templates.prism(Prism, [
+				new codeInput.plugins.Autodetect(), 
+				new codeInput.plugins.Indent(true, 2) // 2 spaces indentation
+			] /* Array of plugins (see below) */),
 		);
-		hljs.highlightAll();
 
 	});
 

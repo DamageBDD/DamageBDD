@@ -124,7 +124,6 @@ select{
 }
 code-input {
   width: calc(100% - 40px); /* 100% - 2*margin */
-  margin: 20px;
   --padding: 20px;
 }
 /*
