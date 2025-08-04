@@ -77,7 +77,7 @@ do_init(Config) ->
     CancelButton = wxButton:new(Panel, ?wxID_ANY, [{label, "Cancel"}, ButtonStyle]),
     IncButton = wxButton:new(Panel, ?wxID_ANY, [{label, "+"}, ButtonStyle]),
     DecButton = wxButton:new(Panel, ?wxID_ANY, [{label, "-"}, ButtonStyle]),
-    StrainChoice = wxChoice:new(Panel, ?wxID_ANY, [{choices, ["Master Kush"]}]),
+    StrainChoice = wxChoice:new(Panel, ?wxID_ANY, [{choices, ["Blue Dream", "Master Kush"]}]),
     wxChoice:setSelection(StrainChoice, 0),
     %% Setup sizers
     % 4 rows, 10 columns, spacing 5
