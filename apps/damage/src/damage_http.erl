@@ -114,7 +114,7 @@ trails() ->
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 get_access_token(Req) ->
-    case cowboy_req:header(<<"authorization">>, Req) of
+    case cowboy_req:header(?AUTH_HEADER, Req) of
         <<"Nostr ", Token/binary>> ->
             {nostr, Token};
         <<"Bearer null">> ->
@@ -136,8 +136,6 @@ get_access_token(Req) ->
             end
     end.
 
-is_authorized(Req, #{action := tx} = State) ->
-    {true, Req, State};
 is_authorized(Req, #{action := version} = State) ->
     {true, Req, State};
 is_authorized(Req, State0) ->
@@ -155,12 +153,13 @@ is_authorized(Req, State0) ->
             ?LOG_INFO("Got Nostr auth ~p", [NostrEvent]),
             case nostrlib:verify(NostrEvent) of
                 true -> damage_ae:contract_call_admin_account("resolve_npub", [Npub]);
-                _ -> {false, Req, State}
+                _ ->
+                    {{false, ?AUTH_HEADER}, Req, State}
             end;
         {oauth, Token} ->
             case damage_accounts:validate_access_token(Token) of
                 {error, _E} ->
-                    {false, Req, State};
+                    {{false, ?AUTH_HEADER}, Req, State};
                 {AeAccount, <<"wallet">>} ->
                     {
                         true,
@@ -175,7 +174,7 @@ is_authorized(Req, State0) ->
                     };
                 {AeAccount, Username} ->
                     case identity_server:get_account_by_email(Username) of
-                        {AeAccount, _, _PrivateKey} ->
+                        {AeAccount, _, PrivateKey} ->
                             {
                                 true,
                                 Req,
@@ -184,19 +183,20 @@ is_authorized(Req, State0) ->
                                     #{
                                         public_key => AeAccount,
                                         username => Username,
-                                        access_token => Token
+                                        access_token => Token,
+                                        private_key => PrivateKey
                                     }
                                 )
                             };
                         _ ->
-                            {false, Req, State}
+                            {{false, ?AUTH_HEADER}, Req, State}
                     end;
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
-                    {false, Req, State}
+                    {{false, ?AUTH_HEADER}, Req, State}
             end;
         {error, _} ->
-            {false, Req, State}
+            {{false, ?AUTH_HEADER}, Req, State}
     end.
 
 content_types_provided(Req, State) ->

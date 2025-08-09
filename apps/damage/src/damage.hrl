@@ -68,3 +68,5 @@
 -define(MARKETS_CONTRACT,
     "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
 ).
+
+-define(AUTH_HEADER, <<"authorization">>).

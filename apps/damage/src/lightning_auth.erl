@@ -263,10 +263,10 @@ is_authorized(Req, State) ->
                 {ok, _Claims} ->
                     {true, Req, State};
                 {error, _Reason} ->
-                    {false, Req, State}
+                    {{false, ?AUTH_HEADER}, Req, State}
             end;
         _ ->
-            {false, Req, State}
+            {{false, ?AUTH_HEADER}, Req, State}
     end.
 
 %% HTTP Handler

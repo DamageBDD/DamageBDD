@@ -272,7 +272,7 @@ to_json(Req, #{action := balance} = State) ->
         {true, _Req0, #{public_key := AeAccount} = _State0} ->
             {jsx:encode(balance(AeAccount)), Req, State};
         {false, _, _} ->
-            {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}
+            {{false, ?AUTH_HEADER}, Req, State}
     end;
 to_json(Req, State) ->
     {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}.
