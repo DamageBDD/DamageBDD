@@ -26,21 +26,47 @@ rebar3 shell
 
 ## Setup Secrets
 
-> secrets:encrypt_store(bitcoin_rpc_password, "bitcoin rpc password").
-> secrets:encrypt_store(nostr_nsec, "nostr private key (nsec)").
-> secrets:encrypt_store(smtp_password, "password for smtp sending").
-> secrets:encrypt_store(cln_rune, "rune for core lightning cln").
+### Bitcoin RPC
 
-For lnd support: 
 
-> secrets:encrypt_store(lnd_macaroon, "macaroon for lnd").
+```
+secrets:encrypt_store(bitcoin_rpc_password, "bitcoin rpc password").
 
-## Generate Bitcoin RPC auth
+```
+#### Generate Bitcoin RPC auth
 
-> ./bin/bitcoin_rpcauth.py
+```
+ ./bin/bitcoin_rpcauth.py
+```
 
-## Core Lightning
+### Nostr Integration
+
+```
+secrets:encrypt_store(nostr_nsec, "nostr private key (nsec)").
+```
+
+### SMTP Auth
+
+```
+secrets:encrypt_store(smtp_password, "password for smtp sending").
+```
+### Core Lightning Integration
 
 Create Rune
 
-> lightning-cli createrune
+```
+lightning-cli createrune
+```
+
+
+```
+secrets:encrypt_store(cln_rune, "rune for core lightning cln").
+```
+
+### LND Lightning Integration
+
+```
+secrets:encrypt_store(lnd_macaroon, "macaroon for lnd").
+```
+
+
