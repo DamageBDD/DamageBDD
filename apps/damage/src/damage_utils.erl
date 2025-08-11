@@ -31,7 +31,17 @@
         safe_json/1,
         is_valid_email/1,
         add_log_filter/1,
-        get_stepargs/1
+        get_stepargs/1,
+        ensure_dir/1,
+        ensure_group/1,
+        ensure_user/2,
+        chown_r/2,
+        ensure_ssh_host_key/1,
+        exists_cmd/1,
+        fail/2,
+        ctx/1,
+        run_ok/2,
+        run/2
     ]
 ).
 -export([max_by/2]).
@@ -420,3 +430,108 @@ add_log_filter(Module) ->
     },
 
     logger:add_primary_filter(no_tls_logs, Filter).
+
+sudo_prefix() ->
+    case string:trim(os:cmd("id -u")) of
+        % root doesn't need sudo
+        "0" -> "";
+        _ -> "sudo "
+    end.
+
+run(Cmd) ->
+    ?LOG_INFO("exec: ~s", [Cmd]),
+    case exec:run(Cmd, [sync, stdout, stderr]) of
+        {ok, _Pid, _Out} ->
+            ok;
+        {ok, _Out} ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Cmd]),
+            {error, Reason}
+    end.
+
+-record(ctx, {sudo = ""}).
+
+ctx(Context) ->
+    Sudo =
+        case string:trim(os:cmd("id -u")) of
+            "0" -> "";
+            _ -> "sudo "
+        end,
+    Context#{
+        exec_ctx => #ctx{sudo = Sudo}
+    }.
+
+ensure_dir(Dir) ->
+    ok = filelib:ensure_dir(filename:join(Dir, ".keep")),
+    ok.
+
+exists_cmd(Cmd) ->
+    case os:find_executable(Cmd) of
+        false -> false;
+        _ -> true
+    end.
+
+ensure_group(Group) ->
+    case os:cmd("getent group " ++ Group) of
+        "" ->
+            run(sudo_prefix() ++ "groupadd --system " ++ Group);
+        _ ->
+            ok
+    end.
+
+ensure_user(User, Group) ->
+    case os:cmd("getent passwd " ++ User) of
+        "" ->
+            ShellPath =
+                case filelib:is_file("/usr/bin/nologin") of
+                    true -> "/usr/bin/nologin";
+                    false -> "/usr/sbin/nologin"
+                end,
+            Cmd = damage_utils:strf(
+                "useradd --system --create-home --gid ~s --shell ~s --comment \"User for DamageBDD system service\" ~s",
+                [Group, ShellPath, User]
+            ),
+            run(sudo_prefix() ++ Cmd);
+        _ ->
+            ok
+    end.
+
+chown_r(Path, OwnerGroup) ->
+    %% chown recursively; best done via system chown
+    run(sudo_prefix() ++ damage_utils:strf("chown -R ~s ~s", [OwnerGroup, Path])).
+
+ensure_ssh_host_key(KeyPath) ->
+    case filelib:is_file(KeyPath) of
+        true ->
+            ok;
+        false ->
+            ok = ensure_dir(filename:dirname(KeyPath) ++ "/"),
+            run(damage_utils:strf("ssh-keygen -t rsa -f ~s -N '' -q", [KeyPath]))
+    end.
+run_ok(Context, CmdIolist) ->
+    case run(Context, CmdIolist) of
+        ok -> Context;
+        {error, R} -> fail(Context, R)
+    end.
+
+run(Context, CmdIolist) when is_list(CmdIolist) ->
+    run(Context, lists:flatten(CmdIolist));
+run(Context, Cmd) when is_binary(Cmd) ->
+    run(Context, binary_to_list(Cmd));
+run(_Context = #{exec_ctx := #ctx{sudo = Sudo}}, Cmd) when is_list(Cmd) ->
+    Full = Sudo ++ Cmd,
+    ?LOG_INFO("exec: ~s", [Full]),
+    case exec:run(Full, [sync, stdout, stderr]) of
+        {ok, _Pid, _Out} ->
+            ok;
+        {ok, _Out} ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Full]),
+            {error, Reason}
+    end.
+
+fail(Context, Reason) ->
+    ?LOG_ERROR("step failed ~p", [Reason]),
+    maps:put(fail, Reason, Context).

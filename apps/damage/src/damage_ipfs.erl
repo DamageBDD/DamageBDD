@@ -17,7 +17,8 @@
         add/1,
         get/2,
         cat/1,
-        ls/1
+        ls/1,
+        ensure_ipfs_asset/2
     ]
 ).
 
@@ -204,3 +205,24 @@ test_publish_git_repo() ->
     % cd /tmp
     % git clone http://QmX679gmfyaRkKMvPA4WGNWXj9PtpvKWGPgtXaF18etC95.ipfs.localhost:8080/ myrepo
     error.
+
+ensure_ipfs_asset(Hash, OutPath) ->
+    case filelib:is_file(OutPath) of
+        true ->
+            ok;
+        false ->
+            ok = damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
+            case damage_utils:exists_cmd("ipfs") of
+                false ->
+                    ?LOG_WARNING("ipfs not found in PATH; skipping fetch for ~s", [OutPath]),
+                    ok;
+                true ->
+                    case get(Hash, OutPath) of
+                        ok ->
+                            ok;
+                        {error, R} ->
+                            ?LOG_ERROR("ipfs get failed: ~p", [R]),
+                            {error, R}
+                    end
+            end
+    end.

@@ -151,6 +151,26 @@ start_phase(start_sync, _StartType, []) ->
     end,
     ?LOG_INFO("Sync Ready."),
     ok;
+%% --- Essentials setup phase (parity with setup.sh) --------------------------
+start_phase(setup_essentials, _StartType, []) ->
+    ?LOG_INFO("setup_essentials: starting."),
+
+    ok = damage_utils:ensure_group("damage"),
+    ok = damage_utils:ensure_user("damage", "damage"),
+
+    ok = damage_utils:ensure_dir("/var/lib/damagebdd/sshtest_user/.ssh/"),
+    ok = damage_utils:chown_r("/var/lib/damagebdd/", "damage:damage"),
+
+    ok = damage_utils:ensure_dir("/var/lib/damagebdd/ssh_daemon/"),
+    ok = damage_utils:ensure_ssh_host_key("/var/lib/damagebdd/ssh_daemon/ssh_host_rsa_key"),
+
+    ok = damage_ipfs:ensure_ipfs_asset(
+        "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
+        "bin/lightpanda-x86_64-linux"
+    ),
+
+    ?LOG_INFO("setup_essentials: done."),
+    ok;
 start_phase(os_tune, _StartType, []) ->
     ?LOG_INFO("Tuning os."),
     {ok, _} = exec:run("ulimit -n 100000", [sync]),
