@@ -11,9 +11,9 @@ DamageBDD Hosted Service
 
 You can use the server at https://run.damagebdd.com to run tests
 
-Read The Manual [https://damagebdd.com/manual](here) to get started quickly.
+Read [The Manual](https://damagebdd.com/manual) to get started quickly.
 
-[https://damagebdd.com/api/](Swagger API) 
+[Swagger API](https://damagebdd.com/api/)
 
 # Damage Node Setup
 
