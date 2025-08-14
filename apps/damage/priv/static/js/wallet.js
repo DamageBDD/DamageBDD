@@ -93,6 +93,15 @@ export function signMessageSmart(message, successURL, cancelURL) {
         //});
     }
 }
+export function signTransactionSmart(message, successURL, cancelURL) {
+	if (isMobileDevice()) {
+		signTransaction(message, successURL, cancelURL);
+	} else {
+		//const sigData = await sk.msg_sign(msg); // Sidekick signs message
+		let logger = sk.cl();
+		return sk.tx_sign_noprop('sk-tx-sign-noprop-1', message, sk.TIMEOUT_DEF_MSG_SIGN_MS, 'message signing took too long', logger);
+	}
+}
 export function checkWalletSignature(required = true) {
     const params = new URLSearchParams(window.location.search);
     const signature = params.get("signature");

@@ -101,6 +101,7 @@ function generateDamageQR(address){
 		document.getElementById("logoutSubmitBtn").addEventListener("click", (event) => {
 			localStorage.removeItem("access_token");
 			localStorage.removeItem("address");
+			localStorage.removeItem("wallet_connected");
 			MicroModal.close('logout-modal');
 			showHideLoginButton();
 
@@ -281,42 +282,110 @@ function generateDamageQR(address){
 		el.innerHTML = html;
 	}
 
+	async function streamResponseToDOM(response, reportElement) {
+		reportElement.innerHTML = "";
+
+		await response.body
+			.pipeThrough(new TextDecoderStream())
+			.pipeTo(appendToDOMStream(reportElement));
+
+		Prism.highlightElement(reportElement);
+		replaceMarkers(reportElement);
+
+		if (reportElement.hasAttribute('data-highlighted')) {
+			reportElement.removeAttribute('data-highlighted');
+		}
+	}
+
 	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value;
 		const concurrencyText = 1;
+
 		const headers = new Headers();
 		headers.append("Content-Type", "application/json");
-		headers.append("Authorization", "Bearer "+ localStorage.access_token);
-		const request = {
-			method: 'POST',
-			credentials: 'include',
-			headers: headers,
-			body: JSON.stringify({
-				feature: inputText,
-				concurrency: concurrencyText,
-				stream: true
-			})
-		};
-		const reportElement = addReport();
-		const response = await fetch("/execute_feature/", request);
 
-		if (response.status === 200 /*&& response.headers.get('content-type') ===
-									  'application/octet-stream'*/) {
-			reportElement.innerHTML ="";
-
-			await response.body
-				.pipeThrough(new TextDecoderStream())
-				.pipeTo(appendToDOMStream(reportElement));
-			Prism.highlightElement(reportElement);
-			replaceMarkers(reportElement);
-
-		} else if (response.status === 401) {
-			MicroModal.show("login-modal");
+		if (localStorage.access_token) {
+			headers.append("Authorization", "Bearer " + localStorage.access_token);
 		}
-		if (reportElement.hasAttribute('data-highlighted')) { // check if the attribute exists
-			reportElement.removeAttribute('data-highlighted'); // remove the specified attribute
+
+
+		const reportElement = addReport();
+        const walletConnected = localStorage.getItem("wallet_connected");
+		if(walletConnected){
+			const request = {
+				method: 'POST',
+				credentials: 'include',
+				headers: headers,
+				body: JSON.stringify({
+					feature: inputText,
+					address: localStorage.getItem("address"),
+					concurrency: concurrencyText
+				})
+			};
+			const response = await fetch("/tx/", request);
+			// Optional: handle server asking for a signature
+			const data = await response.json();
+			const message = data.tx;
+
+			//await wallet.connectWalletSmart(
+			//	origin, origin
+			//);
+			const signature = await wallet.signTransactionSmart(
+				message,
+				"ae_mainnet",
+				window.location.origin,
+				window.location.origin
+			);
+			if(signature) {
+
+				const signedRequest = {
+					method: 'POST',
+					credentials: 'include',
+					headers: headers,
+					body: JSON.stringify({
+						feature: inputText,
+						address: localStorage.getItem("address"),
+						concurrency: concurrencyText,
+						signed_tx: signature.result.signature
+					})
+				};
+
+				const signedResponse = await fetch("/tx/", signedRequest);
+
+				if (signedResponse.status === 200) {
+					await streamResponseToDOM(signedResponse, reportElement);
+				} else {
+					const errText = await signedResponse.text();
+					reportElement.innerText = "Error after signing: " + errText;
+				}
+			} else {
+				const errText = await signedResponse.text();
+				reportElement.innerText = "Error after signing: " + errText;
+			}
+		}else{
+			const request = {
+				method: 'POST',
+				credentials: 'include',
+				headers: headers,
+				body: JSON.stringify({
+					feature: inputText,
+					concurrency: concurrencyText,
+					stream: true
+				})
+			};
+			const response = await fetch("/execute_feature/", request);
+
+			if (response.status === 200) {
+				await streamResponseToDOM(response, reportElement);
+			} else if (response.status === 401) {
+				MicroModal.show("login-modal");
+			} else {
+				const errText = await response.text();
+				reportElement.innerText = "Error: " + errText;
+			}
 		}
 	}
+
 
 
 	function submitSignUpForm(event) {
@@ -607,6 +676,7 @@ async function connectWalletSmart1() {
     );
 	  var address = await wallet.getAddress();
 	  localStorage.setItem("address", address);
+	  localStorage.setItem("wallet_connected", address);
 
     const sessionMeta = JSON.stringify({
       token: address, // or another identifier
