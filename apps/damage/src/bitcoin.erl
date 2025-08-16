@@ -32,7 +32,7 @@ bitcoin_req(Method, Params) ->
     bitcoin_req(Method, Params, WalletPath).
 
 bitcoin_req(Method, Params, Path) ->
-    {ok, BtcRpcHost} = application:get_env(damage, bitcoin_rpc_host),
+    BtcRpcHost = application:get_env(damage, bitcoin_rpc_host, "localhost"),
     {ok, BtcRpcPort} = application:get_env(damage, bitcoin_rpc_port),
     {ok, BtcRpcUser} = application:get_env(damage, bitcoin_rpc_user),
     {ok, ConnPid} = gun:open(BtcRpcHost, BtcRpcPort, #{}),
