@@ -153,8 +153,7 @@ is_authorized(Req, State0) ->
             ?LOG_INFO("Got Nostr auth ~p", [NostrEvent]),
             case nostrlib:verify(NostrEvent) of
                 true -> damage_ae:contract_call_admin_account("resolve_npub", [Npub]);
-                _ ->
-                    {{false, ?AUTH_HEADER}, Req, State}
+                _ -> {{false, ?AUTH_HEADER}, Req, State}
             end;
         {oauth, Token} ->
             case damage_accounts:validate_access_token(Token) of
@@ -286,6 +285,8 @@ execute_bdd(Config, Context, FeatureData) ->
             };
         #{report_hash := _} = Result ->
             {200, maps:merge(Result, #{status => <<"ok">>})};
+        #{dry_run := true, report_hash := _, cost := Cost} = Result ->
+            {200, maps:merge(Result, #{status => <<"ok">>, cost => Cost})};
         Error ->
             ?LOG_DEBUG("execute_bdd failure ~p.", [Error]),
             {
@@ -304,9 +305,22 @@ execute_bdd(Config, Context, FeatureData) ->
     end.
 
 check_execute_bdd(
+    Context,
+    State,
+    Req0
+) ->
+    check_execute_bdd(
+        Context,
+        State,
+        Req0,
+        []
+    ).
+
+check_execute_bdd(
     #{concurrency := Concurrency0, feature := FeatureData} = Context0,
     #{public_key := AeAccount} = State,
-    Req0
+    Req0,
+    Config
 ) ->
     Context = maps:merge(Context0, State),
     Concurrency = damage_utils:get_concurrency_level(Concurrency0),
@@ -318,15 +332,16 @@ check_execute_bdd(
         _ ->
             case damage_ae:balance(AeAccount) of
                 Balance when Balance >= Concurrency ->
-                    Config = get_config(Context, Req0),
-                    ?LOG_DEBUG(
-                        "check_execute_bdd balance ~p context ~p",
-                        [Balance, Context]
-                    ),
                     GlobalContext = damage_context:get_global_template_context(Context),
                     AccountContext = damage_context:get_context(AeAccount),
+                    Config0 =
+                        lists:flatten([Config | get_config(Context, Req0)]),
+                    ?LOG_DEBUG(
+                        "check_execute_bdd balance ~p context ~p config ~p",
+                        [Balance, Context, Config0]
+                    ),
                     execute_bdd(
-                        Config,
+                        Config0,
                         maps:put(account_context, AccountContext, GlobalContext),
                         FeatureData
                     );
@@ -341,7 +356,7 @@ check_execute_bdd(
                     }
             end
     end.
-do_action_tx(Json, _State, Req) ->
+do_action_tx(Json, State, Req) ->
     IP = damage_utils:get_ip(Req),
     case throttle:check(damage_api_rate, IP) of
         {limit_exceeded, _, _} ->
@@ -349,6 +364,39 @@ do_action_tx(Json, _State, Req) ->
             {429, <<"throttled">>};
         _ ->
             case Json of
+                #{
+                    feature := _FeatureData,
+                    signed_tx := SignedTx,
+                    concurrency := _Concurrency,
+                    address := _AeAccount
+                } ->
+                    ?LOG_DEBUG("signed tx received ~p", [SignedTx]),
+                    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTx),
+                    Result = damage_ae:wait_tx(ContractCallTxHash),
+                    {
+                        200,
+                        Result
+                    };
+                #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} ->
+                    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+                    {200, DryRunRecord} = check_execute_bdd(
+                        maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
+                    ),
+                    #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
+                        DryRunRecord,
+                    Tx = damage_ae:contract_call_prepare_tx(
+                        #{public_key => AeAccount},
+                        ?DAMAGE_TOKEN_CONTRACT,
+                        "contracts/token.aes",
+                        "spend",
+                        [
+                            NodeAeAccount,
+                            integer_to_list(round(Cost)),
+                            FeatureHash,
+                            ReportHash
+                        ]
+                    ),
+                    {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
                 #{signature := Sig, message := Message, pubkey := PubKey} ->
                     case vanillae:verify_signature(Sig, Message, PubKey) of
                         {ok, _Result} ->
@@ -396,6 +444,31 @@ do_action_tx(Json, _State, Req) ->
                     end
             end
     end.
+from_json(Req, #{action := tx} = State) ->
+    {ok, Data, _Req2} = cowboy_req:read_body(Req),
+    ?LOG_DEBUG("from_json tx ~p.", [Req]),
+    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+        {'EXIT', {badarg, Trace}} ->
+            ?LOG_ERROR("Json decoding failed ~p", [Trace]),
+            {
+                cowboy_req:reply(
+                    400,
+                    cowboy_req:set_resp_body(<<"Json decoding failed.">>, Req)
+                ),
+                Req,
+                State
+            };
+        #{feature := _FeatureData, concurrency := _Concurrency} = Json ->
+            {Status0, Response0} = do_action_tx(Json, State, Req),
+            {
+                stop,
+                cowboy_req:reply(
+                    Status0,
+                    cowboy_req:set_resp_body(jsx:encode(Response0), Req)
+                ),
+                State
+            }
+    end;
 from_json(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("from_json ~p.", [Req]),
@@ -410,18 +483,21 @@ from_json(Req, State) ->
                 Req,
                 State
             };
-        #{message := _Message, signature := _Sig} = Json ->
-            {Status0, Response0} = do_action_tx(Json, State, Req),
-            {
-                stop,
-                cowboy_req:reply(
-                    Status0,
-                    cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
-                ),
-                State
-            };
         #{feature := _FeatureData, stream := true} = Json ->
             case check_execute_bdd(Json, State, Req) of
+                {204, #{
+                    message := _Message,
+                    balance := 0
+                }} ->
+                    Message = <<"Insufficient balance, please top up $DAMAGE.">>,
+                    {
+                        cowboy_req:reply(
+                            200,
+                            cowboy_req:set_resp_body(Message, Req)
+                        ),
+                        Req,
+                        State
+                    };
                 {400, #{
                     message := _Message,
                     balance := 0
