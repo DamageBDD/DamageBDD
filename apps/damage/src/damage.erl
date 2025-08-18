@@ -470,17 +470,27 @@ execute_step(Config, Step, [Context]) ->
     execute_step(Config, Step, Context);
 execute_step(Config, Step, #{fail := _} = Context) ->
     {LineNo, StepKeyWord, Body} = Step,
-    {ok, {Body1, Args1}} = damage_utils:render_body_args(Body, Context),
-    ?LOG_DEBUG("execute_step : ~p, ~p.", [Body1, Args1]),
-    formatter:format(
-        Config,
-        step,
-        {StepKeyWord, LineNo, Body1, Args1, Context, skip}
-    ),
-    Context;
+    case damage_context:render_body_args(Body, Context) of
+        {error, {Body1, Args1}, Reason} ->
+            ?LOG_DEBUG("execute_step fail error: ~p, ~p.", [Body1, Args1]),
+            formatter:format(
+                Config,
+                step,
+                {StepKeyWord, LineNo, Body1, Args1, Context, {fail, Reason}}
+            ),
+            Context;
+        {ok, {Body1, Args1}} ->
+            ?LOG_DEBUG("execute_step fail : ~p, ~p.", [Body1, Args1]),
+            formatter:format(
+                Config,
+                step,
+                {StepKeyWord, LineNo, Body1, Args1, Context, skip}
+            ),
+            Context
+    end;
 execute_step(Config, Step, Context) ->
     {LineNo, StepKeyWord, Body} = Step,
-    case damage_utils:render_body_args(Body, Context) of
+    case damage_context:render_body_args(Body, Context) of
         {error, {Body1, Args1}, Reason} ->
             formatter:format(
                 Config,
