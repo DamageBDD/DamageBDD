@@ -16,6 +16,8 @@ Feature: Customer account management for DamageBDD
     """
 Hello
     """
+    When I make a GET request to "/accounts/confirm?token={{confirm_token}}"
+    Then the response status must be "200"
 
     @wip
   Scenario: User account creation and kyc for billing use of DamageBDD yaml endpoint
