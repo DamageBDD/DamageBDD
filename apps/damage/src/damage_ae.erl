@@ -49,7 +49,8 @@
     restart_wallet_proc/1,
     get_wallet_proc/1,
     get_events/3,
-    is_custodial/1
+    is_custodial/1,
+    set_private_key/2
 ]).
 -export([
     contract_call/5,
@@ -363,6 +364,12 @@ handle_call(
 ) ->
     {reply, false, Cache};
 handle_call(
+    {set_private_key, AeAccount, PrivateKey},
+    _From,
+    #{public_key := AeAccount} = State
+) ->
+    {reply, false, maps:put(private_key, PrivateKey, State)};
+handle_call(
     {
         confirm_spend,
         #{
@@ -406,7 +413,7 @@ handle_cast(
             node_public_key := _NodePublicKey
         } = _RunRecord
     },
-    #{public_key := AeAccount, private_key := none} = Cache
+    #{public_key := AeAccount, private_key := none, username := <<"wallet">>} = Cache
 ) ->
     ?LOG_DEBUG("confirm spend on wallet account ~p ~p", [AeAccount, FeatureHash]),
     {noreply, Cache};
@@ -615,6 +622,11 @@ is_custodial(AeAccount) ->
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {is_custodial, AeAccount}, ?AE_TIMEOUT).
+
+set_private_key(AeAccount, PrivateKey) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {set_private_key, AeAccount, PrivateKey}, ?AE_TIMEOUT).
 
 invalidate_cache(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),

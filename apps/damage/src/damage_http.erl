@@ -174,6 +174,7 @@ is_authorized(Req, State0) ->
                 {AeAccount, Username} ->
                     case identity_server:get_account_by_email(Username) of
                         {AeAccount, _, PrivateKey} ->
+                            damage_ae:set_private_key(AeAccount, PrivateKey),
                             {
                                 true,
                                 Req,
@@ -182,8 +183,7 @@ is_authorized(Req, State0) ->
                                     #{
                                         public_key => AeAccount,
                                         username => Username,
-                                        access_token => Token,
-                                        private_key => PrivateKey
+                                        access_token => Token
                                     }
                                 )
                             };
