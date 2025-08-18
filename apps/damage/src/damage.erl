@@ -302,8 +302,7 @@ execute_file(Config, Context, Filename) ->
                     node_public_key => maps:get(node_public_key, FinalContext)
                 },
             damage_webhooks:trigger_webhooks(FinalContext),
-            damage_ae:confirm_spend(RunRecord),
-            RunRecord;
+            damage_ae:confirm_spend(Config, RunRecord);
         {error, enont} = Err ->
             ?LOG_ERROR("Feature file ~p not found.", [Filename]),
             Err;
@@ -365,6 +364,26 @@ execute_scenario(Config, Context, {_, BackGroundSteps}, Scenario) ->
 
 % step execution: should execution output be passed in state and then
 % handled OR should the handling happen withing the execution function
+execute_step_function(
+    Config,
+    #{public_key := AeAccount} = Context,
+    {StepKeyWord, LineNo, Body, Args} = _Step,
+    StepModule
+) ->
+    case proplists:get_value(dry_run, Config) of
+        true ->
+            apply(
+                list_to_atom(StepModule),
+                step_dry,
+                [Config, Context, StepKeyWord, LineNo, Body, Args]
+            );
+        _ ->
+            apply(
+                list_to_atom(StepModule),
+                step,
+                [Config, Context, StepKeyWord, LineNo, Body, Args]
+            )
+    end.
 execute_step_module(
     Config,
     #{public_key := AeAccount} = Context,
@@ -376,11 +395,7 @@ execute_step_module(
             maps:put(
                 step_found,
                 true,
-                apply(
-                    list_to_atom(StepModule),
-                    step,
-                    [Config, Context, StepKeyWord, LineNo, Body, Args]
-                )
+                execute_step_function(Config, Context, Step, StepModule)
             ),
         metrics:update(success, AeAccount),
         Context0
@@ -433,14 +448,6 @@ execute_step_module(
             end;
         error:Reason:Stacktrace ->
             metrics:update(fail, AeAccount),
-            ?LOG_ERROR(
-                #{
-                    reason => Reason,
-                    stacktrace => Stacktrace,
-                    step => Step,
-                    step_module => StepModule
-                }
-            ),
             formatter:format(
                 Config,
                 step,
@@ -462,9 +469,9 @@ step_spend(Context) ->
 execute_step(Config, Step, [Context]) ->
     execute_step(Config, Step, Context);
 execute_step(Config, Step, #{fail := _} = Context) ->
-    %?LOG_INFO("step skipped: ~p.", [Step]),
     {LineNo, StepKeyWord, Body} = Step,
-    {Body1, Args1} = damage_utils:render_body_args(Body, Context),
+    {ok, {Body1, Args1}} = damage_utils:render_body_args(Body, Context),
+    ?LOG_DEBUG("execute_step : ~p, ~p.", [Body1, Args1]),
     formatter:format(
         Config,
         step,
