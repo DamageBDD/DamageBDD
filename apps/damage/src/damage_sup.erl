@@ -174,10 +174,28 @@ init([]) ->
                 type => worker,
                 modules => []
             }
-        ] ++
-            PoolSpecs,
-    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
-    {ok, {SupFlags, PoolSpecs0}}.
+        ] ++ PoolSpecs,
+    PoolSpecs1 =
+        case application:get_env(damage, market_rules) of
+            {ok, Rules} ->
+                ?LOG_INFO("Damage market making enabled with rules: ~p~n", [Rules]),
+                PoolSpecs0 ++
+                    [
+                        #{
+                            id => damage_mm,
+                            start => {damage_mm, start_link, [Rules]},
+                            restart => permanent,
+                            shutdown => 60,
+                            type => worker,
+                            modules => []
+                        }
+                    ];
+            Other ->
+                ?LOG_DEBUG("Damage market making disabled ~p~n", [Other]),
+                PoolSpecs0
+        end,
+    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs1]),
+    {ok, {SupFlags, PoolSpecs1}}.
 
 %%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
 %%ChildSpecs =
