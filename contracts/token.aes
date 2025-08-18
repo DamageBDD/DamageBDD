@@ -242,5 +242,5 @@ contract DamageToken =
     Chain.event(Allowance(allowance_accounts.from_account, allowance_accounts.for_account, new_allowance))
 
   // DamageBDD functions
-  stateful entrypoint spend(node_address: address, amount: int, run_record: map(string, string)) =
+  stateful entrypoint spend(node_address: address, amount: int, feature_hash: string, report_hash: string) =
     internal_transfer(Call.origin, node_address, amount)
