@@ -5,6 +5,7 @@
 -export([
     start/0,
     start_link/0,
+    start_link/1,
     init/1,
     handle_call/3,
     handle_cast/2,
@@ -13,7 +14,7 @@
     code_change/3
 ]).
 -export([
-    get_mid_price/0,
+    get_mid_price/2,
     place_order/3,
     fetch_order_book/1,
     start_ws_ticker/0,
@@ -54,7 +55,8 @@
     gun_pid,
     stream_ref,
     %% float
-    damage_rate_usdt
+    damage_rate_usdt,
+    market_rules
 }).
 
 start() ->
@@ -62,8 +64,10 @@ start() ->
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Args) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
-init([]) ->
+init(Rules) ->
     io:format("Starting DAMAGE market maker...~n"),
     %self() ! run_strategy,
     {ok, ConnPid} = gun:open(?COIN_WS, 443, #{transport => tls, tls_opts => [{verify, verify_none}]}),
@@ -75,12 +79,14 @@ init([]) ->
         op => <<"subscribe">>, args => [#{channel => <<"ticker">>, symbol => ?SYMBOL}]
     }),
     gun:ws_send(ConnPid, Stream, {text, SubscribeMsg}),
-    State = #state{gun_pid = ConnPid, stream_ref = Stream, damage_rate_usdt = 0.0},
+    State = #state{gun_pid = ConnPid, stream_ref = Stream, damage_rate_usdt = 0.0, market_rules = Rules},
     {ok, State}.
 
 handle_info(rebalance, State) ->
     ?LOG_DEBUG("damage_mm got rebalance ~p", [State]),
-    case get_mid_price() of
+    Symbol = "DAMAGEUSDT",
+    Rules = get_rules(Symbol),
+    case get_mid_price(Symbol, Rules) of
         {ok, Mid0} when Mid0 > 0 ->
             Mid = round_tick(Mid0),
             BuyL = gen_ladder(buy, Mid),
@@ -101,8 +107,10 @@ handle_info(rebalance, State) ->
     end,
     erlang:send_after(?REFRESH_MS, self(), rebalance),
     {noreply, State};
-handle_info(run_strategy, State) ->
-    case get_mid_price() of
+handle_info(run_strategy, #state{market_rules = Rules} = State) ->
+    Symbol = "DAMAGEUSDT",
+    Rules = get_rules(Symbol),
+    case get_mid_price(Symbol, Rules) of
         {ok, Mid} ->
             Qty = 1000,
             Spread = 0.002,
@@ -160,9 +168,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%     <<"DAMAGEUSDT">> => #{price_precision => 4, min_qty => 100.0}
 %% }}.
 
-get_mid_price() ->
-    Symbol = "DAMAGEUSDT",
-    {PricePrec, MinQty} = get_rules(Symbol),
+get_mid_price(Symbol, #{price_precision := PricePrecision, min_qty := MinQty}) ->
     case fetch_order_book(Symbol) of
         {ok, Orders} when is_list(Orders) ->
             %% filter by available quantity
@@ -184,7 +190,7 @@ get_mid_price() ->
                     BestBid = lists:max(Bids),
                     Mid0 = (BestAsk + BestBid) / 2,
                     %% avoid 3105
-                    {ok, round_up(Mid0, PricePrec)};
+                    {ok, round_up(Mid0, PricePrecision)};
                 _ ->
                     {error, no_liquidity}
             end;

@@ -133,7 +133,7 @@
             },
             {ae_mdw_ws_nodes, [{"localhost", 4002, "/"}]},
             {cmd_allowed, ["zx list deps"]},
-            {chromedriver, "http://razorjack.lan:9515/"},
+            {chromedriver, "http://localhost:9515/"},
             {
                 pools,
                 [
@@ -148,16 +148,16 @@
                         damage_ipfs,
                         [{size, 2}, {max_overflow, 5}],
                         [
-                            {"threadripper0.lan", 5001},
-                            {"threadripper1.lan", 5001},
-                            {"razorjack.lan", 5001}
-                            %{"doombox.lan", 5001},
-                            %{"zenbook.lan", 5001},
-                            %{"yoga0.lan", 5001}
+                            {"ipfs0.lan", 5001},
+                            {"ipfs1.lan", 5001},
+                            {"ipfs2.lan", 5001}
                         ]
                     }
                 ]
-            }
+            },
+            {market_rules, #{
+                <<"DAMAGEUSDT">> => #{price_precision => 4, min_qty => 100.0}
+            }}
         ]
     },
     {
