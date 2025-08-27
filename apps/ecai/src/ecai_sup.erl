@@ -46,7 +46,16 @@ init([]) ->
             Pools
         ),
     PoolSpecs0 =
-        [] ++
+        [
+            #{
+                id => wikipedia_loader,
+                start => {wikipedia_loader, start_link, []},
+                restart => permanent,
+                shutdown => 60,
+                type => worker,
+                modules => []
+            }
+        ] ++
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.

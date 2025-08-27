@@ -21,53 +21,54 @@
 trails() ->
     [
         trails:trail(
-          "/ecai/ekef",
-          ecai_api,
-          #{action => encode},
-          #{
-            description => "EKEF encoding endpoint",
-            methods => #{
-                post => #{
-                    tags => ?TRAILS_TAG,
-                    description => "Get an AI-generated response",
-                    parameters => [
-                        #{
-                            name => <<"session_id">>,
-                            type => <<"string">>,
-                            required => true,
-                            description => "Unique chat session ID"
-                        },
-                        #{
-                            name => <<"user_id">>,
-                            type => <<"string">>,
-                            required => true,
-                            description => "User Identifier"
-                        },
-                        #{
-                            name => <<"message">>,
-                            type => <<"string">>,
-                            required => true,
-                            description => "User message input"
-                        }
-                    ],
-                    responses =>
-                        #{
-                            <<"200">> =>
-                                #{
-                                    description => "Successful response",
-                                    content => #{
-                                        <<"application/json">> => #{
-                                            <<"schema">> => #{
-                                                <<"type">> => <<"object">>
+            "/ecai/ekef",
+            ecai_api,
+            #{action => encode},
+            #{
+                description => "EKEF encoding endpoint",
+                methods => #{
+                    post => #{
+                        tags => ?TRAILS_TAG,
+                        description => "Get an AI-generated response",
+                        parameters => [
+                            #{
+                                name => <<"session_id">>,
+                                type => <<"string">>,
+                                required => true,
+                                description => "Unique chat session ID"
+                            },
+                            #{
+                                name => <<"user_id">>,
+                                type => <<"string">>,
+                                required => true,
+                                description => "User Identifier"
+                            },
+                            #{
+                                name => <<"message">>,
+                                type => <<"string">>,
+                                required => true,
+                                description => "User message input"
+                            }
+                        ],
+                        responses =>
+                            #{
+                                <<"200">> =>
+                                    #{
+                                        description => "Successful response",
+                                        content => #{
+                                            <<"application/json">> => #{
+                                                <<"schema">> => #{
+                                                    <<"type">> => <<"object">>
+                                                }
                                             }
                                         }
-                                    }
-                                },
-                            <<"400">> => #{description => "Bad request"}
-                        }
+                                    },
+                                <<"400">> => #{description => "Bad request"}
+                            }
+                    }
                 }
             }
-        }),
+        ),
         trails:trail("/v1/chat/completions", ecai_api, #{}, #{
             description => "OpenAI-Compatible Chat API",
             methods => #{
