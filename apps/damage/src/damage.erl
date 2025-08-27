@@ -516,7 +516,7 @@ execute_step(Config, Step, Context) ->
                 {StepKeyWord, LineNo, Body1, Args1, Context, {fail, Reason}}
             ),
             metrics:update(fail, maps:get(public_key, Context)),
-            maps:put(failing_step, Step, Context);
+            maps:put(failing_step, tuple_to_list(Step), Context);
         {ok, {Body1, Args1}} ->
             case
                 lists:foldl(

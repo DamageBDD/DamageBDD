@@ -402,20 +402,23 @@ render_body_args(Body, Context) when is_map(Context) ->
                     Context
                 )
             ),
-
-        Args0 =
-            list_to_binary(
-                bbmustache:render(
+        case Args of
+            <<>> ->
+                {ok, {Body1, Args}};
+            _ ->
+                Args0 = bbmustache:render(
                     Args,
                     Context
-                )
-            ),
-        {ok, {Body1, Args0}}
+                ),
+                {ok, {Body1, Args0}}
+        end
     catch
         error:{unbound_var, Fail} ->
             ?LOG_ERROR("unbound_var ~p", [Fail]),
             {error, {Body0, Args}, {unbound_var, Fail}};
-        error:Reason ->
+        error:Reason:Trace ->
+            ?LOG_ERROR("render error ~p ~p ~p ~p", [Reason, Body0, Context, Trace]),
+
             {error, {Body0, Args}, {render, Reason}};
         Other ->
             {error, {Body0, Args}, {unknown, Other}}
