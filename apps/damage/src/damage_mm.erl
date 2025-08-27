@@ -79,7 +79,9 @@ init(Rules) ->
         op => <<"subscribe">>, args => [#{channel => <<"ticker">>, symbol => ?SYMBOL}]
     }),
     gun:ws_send(ConnPid, Stream, {text, SubscribeMsg}),
-    State = #state{gun_pid = ConnPid, stream_ref = Stream, damage_rate_usdt = 0.0, market_rules = Rules},
+    State = #state{
+        gun_pid = ConnPid, stream_ref = Stream, damage_rate_usdt = 0.0, market_rules = Rules
+    },
     {ok, State}.
 
 handle_info(rebalance, State) ->
