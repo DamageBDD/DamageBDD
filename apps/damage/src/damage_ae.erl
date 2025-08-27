@@ -14,7 +14,7 @@
 -define(BASE_GAS, 15000).
 -define(GAS_PER_BYTE, 20).
 % Time-to-live in seconds
--define(CACHE_TTL, 600).
+-define(CACHE_TTL, 86400).
 
 -export([
     init/1,
@@ -500,7 +500,7 @@ damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
                 AeAccount, trunc(binary_to_integer(AmountDamage) * math:pow(10, ?DAMAGE_DECIMALS))
             );
         Err ->
-            ?LOG_INFO("No metadata in label: ~p", [Err])
+            ?LOG_INFO("damage_ae ignores label: ~p", [Err])
     end.
 handle_info({cln_event, invoice_paid, Invoice}, State) ->
     try
