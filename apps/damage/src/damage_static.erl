@@ -44,8 +44,8 @@ serve_file(Req, File, Mime) ->
             Uri = cowboy_req:uri(Req, #{path => undefined, qs => undefined}),
             Resp =
                 cowboy_req:set_resp_body(
-                    mustache:render(
-                        binary_to_list(Data),
+                    bbmustache:render(
+                        Data,
                         [
                             {
                                 damage_url,

@@ -152,8 +152,8 @@ to_html(Req, #{hash := Hash} = State) ->
                 list_to_binary(
                     string:join(
                         [
-                            mustache:render(
-                                "<a href=\"{{api_url}}/reports/{{hash}}/{{file}}\">{{hash}}/{{file}}</a>",
+                            bbmustache:render(
+                                <<"<a href=\"{{api_url}}/reports/{{hash}}/{{file}}\">{{hash}}/{{file}}</a>">>,
                                 [
                                     {api_url, DamageApi},
                                     {hash, binary_to_list(Hash)},

@@ -25,7 +25,6 @@
         get_concurrency_level/1,
         get_ip/1,
         test_send_email/0,
-        convert_context/1,
         idhash_keys/1,
         safe_json/1,
         is_valid_email/1,
@@ -118,27 +117,12 @@ binary_to_atom_keys(Map) ->
         )
     ).
 
-convert_context(Context) ->
-    lists:map(
-        fun
-            ({Key, Value}) when is_binary(Key), is_binary(Value) ->
-                {binary_to_atom(Key), binary_to_list(Value)};
-            ({Key, Value}) when is_binary(Key) -> {binary_to_atom(Key), Value};
-            ({Key, Value}) when is_binary(Value) -> {Key, binary_to_list(Value)};
-            ({Key, Value}) when is_binary(Key), is_list(Value) ->
-                {binary_to_atom(Key), Value};
-            (Value) ->
-                Value
-        end,
-        maps:to_list(Context)
-    ).
-
 load_template(Template, Context) ->
     PrivDir = code:priv_dir(damage),
     FilePath = filename:join([PrivDir, "templates", Template]),
     logger:info("Loading template from ~p", [FilePath]),
     {ok, TemplateBin} = file:read_file(FilePath),
-    mustache:render(binary_to_list(TemplateBin), convert_context(Context)).
+    bbmustache:render(TemplateBin, Context).
 
 send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
     {ok, SmtpHost} = application:get_env(damage, smtp_host),

@@ -397,17 +397,17 @@ render_body_args(Body, Context) when is_map(Context) ->
     try
         Body1 =
             damage_utils:tokenize(
-                mustache:render(
-                    binary_to_list(Body0),
-                    dict:from_list(maps:to_list(Context))
+                bbmustache:render(
+                    Body0,
+                    Context
                 )
             ),
 
         Args0 =
             list_to_binary(
-                mustache:render(
-                    binary_to_list(Args),
-                    dict:from_list(maps:to_list(Context))
+                bbmustache:render(
+                    Args,
+                    Context
                 )
             ),
         {ok, {Body1, Args0}}
