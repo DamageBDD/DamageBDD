@@ -14,7 +14,7 @@
 -export([get_context/1]).
 -export([trails/0]).
 -export([clean_secrets/3]).
--export([test_account_context/0]).
+-export([test/0, test_account_context/0]).
 -export([is_authorized/2]).
 -export([delete_resource/2]).
 -export([get_global_template_context/1]).
@@ -23,6 +23,7 @@
         get_context_proc/1,
         add_context/3,
         add_context/4,
+     load_context/1,
         restart_context_proc/1
     ]
 ).
@@ -38,6 +39,13 @@
         code_change/3
     ]
 ).
+-export([
+    contract_add_context/4,
+    contract_delete_context/2,
+    get_stepargs/1,
+    render_body_args/2,
+    contract_get_context/1
+]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -114,7 +122,16 @@ from_json(Req, #{public_key := AeAccount} = State) ->
     ?LOG_DEBUG("post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
         #{key := Key, value := Value, masked := Masked} ->
-            Result = contract_call(AeAccount, "add_context", [Key, Value, Masked]),
+            Result = contract_add_context(AeAccount, Key, Value, #{masked => Masked}),
+            Resp =
+                cowboy_req:set_resp_body(
+                    jsx:encode(#{status => <<"ok">>, result => Result}),
+                    Req
+                ),
+            ?LOG_DEBUG("post response ~p ~p ", [Resp]),
+            {stop, cowboy_req:reply(201, Resp), State};
+        #{key := Key, value := Value} ->
+            Result = contract_add_context(AeAccount, Key, Value, #{masked => false}),
             Resp =
                 cowboy_req:set_resp_body(
                     jsx:encode(#{status => <<"ok">>, result => Result}),
@@ -137,7 +154,7 @@ from_json(Req, #{public_key := AeAccount} = State) ->
 
 to_json(Req, #{action := context, public_key := AeAccount} = State) ->
     ?LOG_DEBUG("context action ~p", [State]),
-    {ok, ClientContextRaw} = get_context(AeAccount),
+    ClientContextRaw = get_context(AeAccount),
     {jsx:encode(ClientContextRaw), Req, State}.
 
 delete_resource(Req, #{public_key := AeAccount} = State) ->
@@ -161,8 +178,8 @@ handle_call(get_context, _From, #{ets_table := Table} = State) ->
         State
     };
 handle_call(load_context, _From, #{public_key := AeAccount, ets_table := Table} = State) ->
-    #{decodedResult := Results} =
-        damage_ae:contract_call_user_account(AeAccount, "get_context", []),
+    #{decodedResult := Results} = contract_get_context(AeAccount),
+
     {
         reply,
         [
@@ -241,6 +258,9 @@ add_context(AeAccount, Key, Value) ->
 add_context(AeAccount, Key, Value, masked) ->
     Pid = get_context_proc(AeAccount),
     gen_server:call(Pid, {add_context, AeAccount, Key, Value, [masked]}, ?AE_TIMEOUT).
+load_context(AeAccount) ->
+    Pid = get_context_proc(AeAccount),
+    gen_server:call(Pid, {load_context, AeAccount}, ?AE_TIMEOUT).
 
 get_global_template_context(Context) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
@@ -340,13 +360,77 @@ restart_context_proc(AeAccount) ->
             get_context_proc(AeAccount)
     end.
 contract_call(AeAccount, Func, Args) ->
-    damage_ae:contract_call(
+    ?LOG_DEBUG("damage_context ~p ~p ~p", [AeAccount, Func, Args]),
+    damage_ae:contract_call_payfor_user(
         AeAccount,
         ?CONTEXT_CONTRACT,
         "contracts/context.aes",
         Func,
         Args
     ).
+contract_add_context(AccountPubKey, Key, Value, Meta) ->
+    KeyHash = secrets:salted_hash(Key),
+    EncValue = secrets:encrypt(Value),
+    EncMeta = secrets:encrypt(term_to_binary(Meta)),
+    contract_call(AccountPubKey, "add_context", [KeyHash, EncValue, EncMeta]).
+
+contract_delete_context(AccountPubKey, Key) ->
+    KeyEnc = secrets:encrypt(Key),
+    contract_call(AccountPubKey, "delete_context", [KeyEnc]).
+
+contract_get_context(AccountPubKey) ->
+    contract_call(AccountPubKey, "get_context", []).
+
+get_stepargs(Body) when is_list(Body) ->
+    case lists:keytake(<<"\"\"\"">>, 1, Body) of
+        {value, {<<"\"\"\"">>, Doc}, Body0} ->
+            {
+                damage_utils:binarystr_join(Body0, <<" ">>),
+                damage_utils:binarystr_join(Doc)
+            };
+        _ ->
+            {damage_utils:binarystr_join(Body, <<" ">>), <<"">>}
+    end.
+
+render_body_args(Body, Context) when is_map(Context) ->
+    {Body0, Args} = get_stepargs(Body),
+    try
+        Body1 =
+            damage_utils:tokenize(
+                mustache:render(
+                    binary_to_list(Body0),
+                    dict:from_list(maps:to_list(Context))
+                )
+            ),
+
+        Args0 =
+            list_to_binary(
+                mustache:render(
+                    binary_to_list(Args),
+                    dict:from_list(maps:to_list(Context))
+                )
+            ),
+        {ok, {Body1, Args0}}
+    catch
+        error:{unbound_var, Fail} ->
+            ?LOG_ERROR("unbound_var ~p", [Fail]),
+            {error, {Body0, Args}, {unbound_var, Fail}};
+        error:Reason ->
+            {error, {Body0, Args}, {render, Reason}};
+        Other ->
+            {error, {Body0, Args}, {unknown, Other}}
+    end.
+
+test() ->
+    {ok, TestUserEmail} = application:get_env(damage, test_user),
+    {PubKey, _Password, _PrivateKey} = identity_server:get_account_by_email(
+        list_to_binary(TestUserEmail)
+    ),
+    TestKey = <<"testkey">>,
+    TestValue = <<"testvalue">>,
+    TestMeta = #{},
+    contract_add_context(PubKey, TestKey, TestValue, TestMeta).
+
 test_account_context() ->
     Body = <<"blah ablasd assd a testpasswordaasdsdada">>,
     Args = <<"blah ablasd assd a testpasswordaasdsdada">>,

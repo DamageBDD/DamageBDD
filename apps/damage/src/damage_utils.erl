@@ -10,7 +10,6 @@
 
 -export(
     [
-        render_body_args/2,
         tokenize/1,
         binarystr_join/1,
         binarystr_join/2,
@@ -31,7 +30,6 @@
         safe_json/1,
         is_valid_email/1,
         add_log_filter/1,
-        get_stepargs/1,
         ensure_dir/1,
         ensure_group/1,
         ensure_user/2,
@@ -46,45 +44,6 @@
 ).
 -export([max_by/2]).
 -export([normalize_email/1, denormalize_email/1]).
-
-get_stepargs(Body) when is_list(Body) ->
-    case lists:keytake(<<"\"\"\"">>, 1, Body) of
-        {value, {<<"\"\"\"">>, Doc}, Body0} ->
-            {
-                damage_utils:binarystr_join(Body0, <<" ">>),
-                damage_utils:binarystr_join(Doc)
-            };
-        _ ->
-            {damage_utils:binarystr_join(Body, <<" ">>), <<"">>}
-    end.
-
-render_body_args(Body, Context) ->
-    {Body0, Args} = get_stepargs(Body),
-    try
-        Body1 =
-            damage_utils:tokenize(
-                mustache:render(
-                    binary_to_list(Body0),
-                    dict:from_list(maps:to_list(Context))
-                )
-            ),
-
-        Args0 =
-            list_to_binary(
-                mustache:render(
-                    binary_to_list(Args),
-                    dict:from_list(maps:to_list(Context))
-                )
-            ),
-        {ok, {Body1, Args0}}
-    catch
-        error:{unbound_var, Fail} ->
-            {error, {Body0, Args}, {unbound_var, Fail}};
-        error:Reason ->
-            {error, {Body0, Args}, {render, Reason}};
-        Other ->
-            {error, {Body0, Args}, {unknown, Other}}
-    end.
 
 tokenize(Step) when is_binary(Step) -> tokenize(binary_to_list(Step));
 tokenize(Step) ->

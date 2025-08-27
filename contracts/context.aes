@@ -17,13 +17,11 @@ main contract Context =
     function require_owner() =
         require(Call.caller == state.owner, "only_owner_call_allowed")
 
-    stateful entrypoint add_context(account : address, key: string, value: string, meta: string) : bool =
-        require_owner()
-        require(Map.lookup(account, state.contexts) != None, "Address not registered.")
-        put(state{contexts[account][key] = {key = key, value = value, meta = meta}})
+    stateful entrypoint add_context( key: string, value: string, meta: string) : bool =
+        require(Map.lookup(Call.caller, state.contexts) != None, "Address not registered.")
+        put(state{contexts[Call.caller][key] = {key = key, value = value, meta = meta}})
         true
 
-    entrypoint get_context(account : address) : map(string, context) =
-        require_owner()
-        require(Map.lookup(account, state.contexts) != None, "Address not registered.")
-        state.contexts[account]
+    entrypoint get_context() : map(string, context) =
+        require(Map.lookup(Call.caller, state.contexts) != None, "Address not registered.")
+        state.contexts[Call.caller]
