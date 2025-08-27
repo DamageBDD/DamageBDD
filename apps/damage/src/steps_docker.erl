@@ -10,21 +10,42 @@
 -export([step/6]).
 -export([test/0]).
 
-step(_Config, Context, _Bindings, _StepN, ["the system has unused Docker containers or resources since", Relative], _Meta) ->
+step(
+    _Config,
+    Context,
+    _Bindings,
+    _StepN,
+    ["the system has unused Docker containers or resources since", Relative],
+    _Meta
+) ->
     {ok, ISODate} = relative_string_to_date(Relative),
     logger:notice("Checking for Docker resources older than ~s", [ISODate]),
     Context#{since => ISODate};
-
-step(_Config, Context, _Bindings, _StepN, ["I clean up all unused Docker containers, images, volumes and networks since", Relative], _Meta) ->
+step(
+    _Config,
+    Context,
+    _Bindings,
+    _StepN,
+    ["I clean up all unused Docker containers, images, volumes and networks since", Relative],
+    _Meta
+) ->
     {ok, ISODate} = relative_string_to_date(Relative),
     Command = "docker system prune -a --force --filter \"until=" ++ ISODate ++ "\"",
     Output = os:cmd(Command),
     logger:notice("Docker cleanup output: ~s", [Output]),
     maps:merge(Context, #{cleanup_output => Output, since => ISODate});
-
-step(_Config, Context, _Bindings, _StepN, ["the Docker system should have no unused resources older than", Relative], _Meta) ->
+step(
+    _Config,
+    Context,
+    _Bindings,
+    _StepN,
+    ["the Docker system should have no unused resources older than", Relative],
+    _Meta
+) ->
     {ok, ISODate} = relative_string_to_date(Relative),
-    CheckCmd = "docker ps -a --filter \"status=exited\" --filter \"until=" ++ ISODate ++ "\" --format '{{.ID}}'",
+    CheckCmd =
+        "docker ps -a --filter \"status=exited\" --filter \"until=" ++ ISODate ++
+            "\" --format '{{.ID}}'",
     Output = os:cmd(CheckCmd),
     case string:trim(Output) of
         "" ->
@@ -32,7 +53,6 @@ step(_Config, Context, _Bindings, _StepN, ["the Docker system should have no unu
         _ ->
             erlang:error({docker_cleanup_failed, Output})
     end;
-
 step(_, Context, _, _, _, _) ->
     Context.
 

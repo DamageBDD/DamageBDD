@@ -23,7 +23,7 @@
         get_context_proc/1,
         add_context/3,
         add_context/4,
-     load_context/1,
+        load_context/1,
         restart_context_proc/1
     ]
 ).

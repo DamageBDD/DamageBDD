@@ -39,13 +39,14 @@ get_conn(Config0, #{public_key := Ae} = Context) ->
     Opts =
         case Port of
             443 -> #{transport => tls, tls_opts => [{verify, verify_none}]};
-            _   -> #{transport => tcp}
+            _ -> #{transport => tcp}
         end,
     case lists:keyfind(concurrency, 1, Config0) of
-        {concurrency, 1} -> gun:open(Host, Port, Opts#{connect_timeout => ?DEFAULT_HTTP_TIMEOUT});
+        {concurrency, 1} ->
+            gun:open(Host, Port, Opts#{connect_timeout => ?DEFAULT_HTTP_TIMEOUT});
         {concurrency, _} ->
             case damage_domains:is_allowed_domain(Host, Ae) of
-                true  -> gun:open(Host, Port, Opts#{connect_timeout => ?DEFAULT_HTTP_TIMEOUT});
+                true -> gun:open(Host, Port, Opts#{connect_timeout => ?DEFAULT_HTTP_TIMEOUT});
                 false -> throw(<<"Host not allowed for concurrent tests. See docs.">>)
             end;
         false ->
@@ -74,22 +75,26 @@ build_url(PathOrUrl, Base) ->
 ejsonpath_match(Path, Data, Expected, Context) ->
     Expected1 =
         case Expected of
-            <<"false">> -> false;
-            <<"true">>  -> true;
+            <<"false">> ->
+                false;
+            <<"true">> ->
+                true;
             Bin when is_binary(Bin) ->
                 case re:run(Bin, "^[0-9]+$") of
                     nomatch -> Bin;
-                    _       -> binary_to_integer(Bin)
+                    _ -> binary_to_integer(Bin)
                 end;
             L when is_list(L) ->
                 case re:run(L, "^[0-9]+$") of
                     nomatch -> list_to_binary(L);
-                    _       -> list_to_integer(L)
+                    _ -> list_to_integer(L)
                 end;
-            Other -> Other
+            Other ->
+                Other
         end,
     case catch ejsonpath:q(Path, Data) of
-        {[Expected1 | _], _} -> Context;
+        {[Expected1 | _], _} ->
+            Context;
         UnExp ->
             Msg = "the object at path ~p is not ~p, it is ~p",
             maps:put(fail, damage_utils:strf(Msg, [Path, Expected1, UnExp]), Context)
@@ -131,76 +136,88 @@ ipfs_get(Config, Context, Url, Headers) ->
 
 step(_Cfg, Context, <<"Given">>, _N, ["I am using IPFS API at", Url], _) ->
     set_server(Context, Url);
-
 step(_Cfg, Context, <<"Given">>, _N, ["I am using IPFS gateway", Url], _) ->
     maps:put(ipfs_gateway, Url, Context);
-
 step(_Cfg, Context, <<"Given">>, _N, ["a CID", CID], _) ->
     maps:put(cid, CID, Context);
-
 %% When I call IPFS "block/stat" for the CID
 step(Cfg, Context0, <<"When">>, _N, ["I call IPFS", Cmd, "for the CID"], _Body) ->
     CID = maps:get(cid, Context0, undefined),
     case CID of
-        undefined -> maps:put(fail, <<"CID not set">>, Context0);
+        undefined ->
+            maps:put(fail, <<"CID not set">>, Context0);
         _ ->
             Url = ipfs_api_url(Context0, Cmd, [{"arg", CID}]),
             Headers = get_headers(Context0, ?DEFAULT_HEADERS),
             ipfs_post(Cfg, Context0, Url, Headers)
     end;
-
 %% When I call IPFS "pin/ls" for the CID with type "all"
-step(Cfg, Context0, <<"When">>, _N,
-     ["I call IPFS", Cmd, "for the CID with type", Type], _Body) ->
+step(
+    Cfg,
+    Context0,
+    <<"When">>,
+    _N,
+    ["I call IPFS", Cmd, "for the CID with type", Type],
+    _Body
+) ->
     CID = maps:get(cid, Context0, undefined),
     case CID of
-        undefined -> maps:put(fail, <<"CID not set">>, Context0);
+        undefined ->
+            maps:put(fail, <<"CID not set">>, Context0);
         _ ->
             Url = ipfs_api_url(Context0, Cmd, [{"arg", CID}, {"type", Type}]),
             Headers = get_headers(Context0, ?DEFAULT_HEADERS),
             ipfs_post(Cfg, Context0, Url, Headers)
     end;
-
 %% When I GET "/ipfs/<cid>" from the gateway with Range "bytes=0-63"
-step(Cfg, Context0, <<"When">>, _N,
-     ["I GET", Path0, "from the gateway with Range", Range], _B) ->
-    Gw  = maps:get(ipfs_gateway, Context0, undefined),
+step(
+    Cfg,
+    Context0,
+    <<"When">>,
+    _N,
+    ["I GET", Path0, "from the gateway with Range", Range],
+    _B
+) ->
+    Gw = maps:get(ipfs_gateway, Context0, undefined),
     CID = maps:get(cid, Context0, undefined),
     case {Gw, CID} of
-        {undefined, _} -> maps:put(fail, <<"IPFS gateway not set">>, Context0);
-        {_, undefined} -> maps:put(fail, <<"CID not set">>, Context0);
+        {undefined, _} ->
+            maps:put(fail, <<"IPFS gateway not set">>, Context0);
+        {_, undefined} ->
+            maps:put(fail, <<"CID not set">>, Context0);
         {Gateway, _} ->
             Path = binary_to_list(
-                     binary:replace(list_to_binary(Path0), <<"<cid>">>, list_to_binary(CID), [global])),
+                binary:replace(list_to_binary(Path0), <<"<cid>">>, list_to_binary(CID), [global])
+            ),
             Url = build_url(Path, Gateway),
             Headers = [{<<"range">>, Range} | get_headers(Context0, ?DEFAULT_HEADERS)],
             ipfs_get(Cfg, Context0, Url, Headers)
     end;
-
 %% ----- Assertions (reuse steps_http semantics) --------------------------------
 
 %% Then the response status must be N
 step(_Cfg, Context, <<"Then">>, _N, ["the response status must be", NStr], _) ->
     Want = list_to_integer(NStr),
     case maps:get(response, Context) of
-        [{status_code, Want} | _] -> Context;
-        [{status_code, Got} | _]  ->
+        [{status_code, Want} | _] ->
+            Context;
+        [{status_code, Got} | _] ->
             maps:put(fail, damage_utils:strf("Response status ~p /= ~p", [Got, Want]), Context);
         Unexpected ->
             maps:put(fail, damage_utils:strf("Unexpected response ~p", [Unexpected]), Context)
     end;
-
 %% Then the response status must be 200 or 206
 step(_Cfg, Context, <<"Then">>, _N, ["the response status must be 200 or 206"], _) ->
     case maps:get(response, Context) of
-        [{status_code, 200} | _] -> Context;
-        [{status_code, 206} | _] -> Context;
+        [{status_code, 200} | _] ->
+            Context;
+        [{status_code, 206} | _] ->
+            Context;
         [{status_code, Got} | _] ->
             maps:put(fail, damage_utils:strf("Response not 200/206: ~p", [Got]), Context);
         Unexpected ->
             maps:put(fail, damage_utils:strf("Unexpected response ~p", [Unexpected]), Context)
     end;
-
 %% Then the json at path $.Key must be "<cid>"
 step(_Cfg, Context, <<"Then">>, _N, ["the json at path", Path, "must be", Expect], _) ->
     case maps:get(response, Context) of
@@ -214,7 +231,6 @@ step(_Cfg, Context, <<"Then">>, _N, ["the json at path", Path, "must be", Expect
         Unexpected ->
             maps:put(fail, damage_utils:strf("Unexpected response ~p", [Unexpected]), Context)
     end;
-
 %% Then the JSON integer field at $.Size must be >= N
 step(_Cfg, Context, <<"Then">>, _N, ["the json int at path", Path, "must be >=", MinStr], _) ->
     case maps:get(response, Context) of
@@ -225,27 +241,42 @@ step(_Cfg, Context, <<"Then">>, _N, ["the json int at path", Path, "must be >=",
                 Json ->
                     case ejsonpath:q(Path, Json) of
                         {[Val | _], _} ->
-                            V = case Val of
+                            V =
+                                case Val of
                                     I when is_integer(I) -> I;
                                     B when is_binary(B) -> binary_to_integer(B);
-                                    L when is_list(L)   -> list_to_integer(L);
+                                    L when is_list(L) -> list_to_integer(L);
                                     _ -> -1
                                 end,
                             Min = list_to_integer(MinStr),
-                            if V >= Min -> Context;
-                               true -> maps:put(fail, damage_utils:strf("Value ~p < ~p", [V, Min]), Context)
+                            if
+                                V >= Min ->
+                                    Context;
+                                true ->
+                                    maps:put(
+                                        fail, damage_utils:strf("Value ~p < ~p", [V, Min]), Context
+                                    )
                             end;
                         Other ->
-                            maps:put(fail, damage_utils:strf("Path ~p not found (~p)", [Path, Other]), Context)
+                            maps:put(
+                                fail,
+                                damage_utils:strf("Path ~p not found (~p)", [Path, Other]),
+                                Context
+                            )
                     end
             end;
         Unexpected ->
             maps:put(fail, damage_utils:strf("Unexpected response ~p", [Unexpected]), Context)
     end;
-
 %% Then the JSON at path "Keys.<cid>.Type" must be one of "recursive,direct,indirect"
-step(_Cfg, Context0, <<"Then">>, _N,
-     ["the json at path", Path0, "must be one of", Csv], _) ->
+step(
+    _Cfg,
+    Context0,
+    <<"Then">>,
+    _N,
+    ["the json at path", Path0, "must be one of", Csv],
+    _
+) ->
     [{status_code, _}, _Hdrs, {body, Body}] = maps:get(response, Context0),
     case catch jsx:decode(Body, [return_maps]) of
         {'EXIT', _} ->
@@ -253,28 +284,37 @@ step(_Cfg, Context0, <<"Then">>, _N,
         Json ->
             case ejsonpath:q(Path0, Json) of
                 {[Val | _], _} ->
-                    ValB = case Val of
-                               B when is_binary(B) -> B;
-                               L when is_list(L)   -> list_to_binary(L);
-                               Other               -> list_to_binary(io_lib:format("~p", [Other]))
-                           end,
-                    Allowed = [ list_to_binary(string:trim(S))
-                                || S <- string:split(Csv, ",", all) ],
+                    ValB =
+                        case Val of
+                            B when is_binary(B) -> B;
+                            L when is_list(L) -> list_to_binary(L);
+                            Other -> list_to_binary(io_lib:format("~p", [Other]))
+                        end,
+                    Allowed = [
+                        list_to_binary(string:trim(S))
+                     || S <- string:split(Csv, ",", all)
+                    ],
                     case lists:member(ValB, Allowed) of
-                        true  -> Context0;
-                        false -> maps:put(fail, damage_utils:strf("~p not in ~p", [ValB, Allowed]), Context0)
+                        true ->
+                            Context0;
+                        false ->
+                            maps:put(
+                                fail, damage_utils:strf("~p not in ~p", [ValB, Allowed]), Context0
+                            )
                     end;
                 Other ->
-                    maps:put(fail, damage_utils:strf("Path ~p not found (~p)", [Path0, Other]), Context0)
+                    maps:put(
+                        fail, damage_utils:strf("Path ~p not found (~p)", [Path0, Other]), Context0
+                    )
             end
     end;
-
 %% Print helpers (optional)
 step(Cfg, Context, <<"Then">>, N, ["I print the response"], _) ->
     Resp = maps:get(response, Context, <<"">>),
-    formatter:format(Cfg, print, {<<"Then">>, N, ["Response:"], jsx:encode(Resp), Context, success}),
+    formatter:format(
+        Cfg, print, {<<"Then">>, N, ["Response:"], jsx:encode(Resp), Context, success}
+    ),
     Context;
-
 %% fall-through (unhandled)
 step(_Cfg, Context, _Kw, _N, _Body, _Data) ->
     Context.

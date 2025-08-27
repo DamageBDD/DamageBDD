@@ -337,8 +337,8 @@ check_execute_bdd(
                     Config0 =
                         lists:flatten([Config | get_config(Context, Req0)]),
                     ?LOG_DEBUG(
-                        "check_execute_bdd balance ~p context ~p config ~p",
-                        [Balance, Context, Config0]
+                        "check_execute_bdd balance ~p account context ~p global context ~p config ~p",
+                        [Balance, AccountContext, GlobalContext, Config0]
                     ),
                     execute_bdd(
                         Config0,

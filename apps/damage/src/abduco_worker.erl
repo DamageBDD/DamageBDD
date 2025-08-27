@@ -12,13 +12,14 @@ start_link(#{name := Name, cmd := Cmd}) ->
 
 init(#{name := Name, cmd := Cmd} = State) ->
     ensure_abduco_session(Name, Cmd),
-    {ok, #state{name=Name, cmd=Cmd}}.
+    {ok, #state{name = Name, cmd = Cmd}}.
 
 ensure_abduco_session(Name, Cmd) ->
     Sessions = os:cmd("abduco -l"),
     SessionList = string:tokens(Sessions, "\n"),
     case lists:any(fun(Line) -> string:find(Line, Name) =/= nomatch end, SessionList) of
-        true -> ok;
+        true ->
+            ok;
         false ->
             Cmd0 = secrets:interpolate_template(Cmd),
             ?LOG_INFO("Starting abduco session ~s: ~s", [Name, Cmd0]),

@@ -395,10 +395,10 @@ execute_step_module(
         Context when is_map(Context) ->
             Context0 =
                 maps:put(
-                  step_found,
-                  true,
-                  Context 
-                 ),
+                    step_found,
+                    true,
+                    Context
+                ),
             metrics:update(success, AeAccount),
             Context0;
         {throw, Reason, Stack} ->
@@ -421,8 +421,7 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
-        {'EXIT', 
-             {function_clause, Err0}} ->
+        {'EXIT', {function_clause, Err0}} ->
             case Err0 of
                 [{_, step, _, _Loc} | _] ->
                     ContextIn;
@@ -460,9 +459,11 @@ execute_step_module(
                 step_found,
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
-             );
+            );
         Other ->
-            Reason = damage_utils:strf(<<"invalid context ~p from ~p ~p">>,[Other, StepModule, Step]),
+            Reason = damage_utils:strf(<<"invalid context ~p from ~p ~p">>, [
+                Other, StepModule, Step
+            ]),
             metrics:update(fail, AeAccount),
             ?LOG_ERROR("Step execution failed! ~p", [Other]),
             formatter:format(
@@ -474,8 +475,7 @@ execute_step_module(
                 step_found,
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
-             )
-
+            )
     end.
 
 step_spend(Context) ->
@@ -518,7 +518,8 @@ execute_step(Config, Step, Context) ->
             metrics:update(fail, maps:get(public_key, Context)),
             maps:put(failing_step, Step, Context);
         {ok, {Body1, Args1}} ->
-                case lists:foldl(
+            case
+                lists:foldl(
                     fun
                         (StepModule, #{step_found := false} = ContextIn) ->
                             Step0 = {StepKeyWord, LineNo, Body1, Args1},
@@ -547,32 +548,33 @@ execute_step(Config, Step, Context) ->
                     end,
                     maps:remove(fail, maps:put(step_found, false, Context)),
                     damage_utils:loaded_steps()
-                ) of
-            Context2 when is_map(Context2) ->
-                Context0 = step_spend(Context2),
-                case maps:get(step_found, Context0) of
-                    false ->
-                        %?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
-                        formatter:format(
-                            Config,
-                            step,
-                            {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
-                        ),
-                        metrics:update(notfound, maps:get(public_key, Context)),
-                        maps:put(failing_step, Step, Context);
-                    true ->
-                        Context0
-                end;
-                   Other  ->
-                        ?LOG_ERROR("execute_step error :~p ~p ~p", [StepKeyWord, Body1, Other]),
-                        formatter:format(
-                            Config,
-                            step,
-                            {StepKeyWord, LineNo, Body1, Args1, Context, invalid_context}
-                        ),
-                        metrics:update(notfound, maps:get(public_key, Context)),
-                        maps:put(failing_step, Step, Context)
-                end
+                )
+            of
+                Context2 when is_map(Context2) ->
+                    Context0 = step_spend(Context2),
+                    case maps:get(step_found, Context0) of
+                        false ->
+                            %?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
+                            formatter:format(
+                                Config,
+                                step,
+                                {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
+                            ),
+                            metrics:update(notfound, maps:get(public_key, Context)),
+                            maps:put(failing_step, Step, Context);
+                        true ->
+                            Context0
+                    end;
+                Other ->
+                    ?LOG_ERROR("execute_step error :~p ~p ~p", [StepKeyWord, Body1, Other]),
+                    formatter:format(
+                        Config,
+                        step,
+                        {StepKeyWord, LineNo, Body1, Args1, Context, invalid_context}
+                    ),
+                    metrics:update(notfound, maps:get(public_key, Context)),
+                    maps:put(failing_step, Step, Context)
+            end
     end.
 
 get_default_config(AeAccount, Concurrency, Formatters) ->
