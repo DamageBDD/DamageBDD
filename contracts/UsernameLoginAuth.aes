@@ -1,0 +1,27 @@
+contract UsernameLoginAuth =
+  record state = {
+    nonce  : int,
+    issuer : bytes(20),   // backend’s secp256k1 identity (same shape as ECDSAAuth example)
+    user   : string       // bound user identifier (email/uid)
+  }
+
+  entrypoint init(issuer_pk20 : bytes(20), user_id : string) =
+    { nonce = 1, issuer = issuer_pk20, user = user_id }
+
+  // Off-chain helper for clients to get the exact message to sign (via dry-run)
+  function to_sign(h : hash, n : int, u : string, exp : int) : hash =
+    // Hash the Sophia-ABI tuple to avoid malleability; matches the GA docs pattern
+    Crypto.blake2b((h, n, u, exp))
+
+  // Authorize(meta): n is GA nonce; u, exp, sig come from the backend-issued login token
+  stateful entrypoint authorize(n : int, u : string, exp : int, sig : bytes(65)) : bool =
+    require(n >= state.nonce, "Nonce too low")
+    require(n =< state.nonce, "Nonce too high")
+    require(u == state.user, "Wrong user")
+    // Optional: light expiry check (block heights fit most flows)
+    require(Chain.block_height <= exp, "Token expired")
+    put(state{ nonce = n + 1 })
+    switch(Auth.tx_hash)
+      None => abort("Not in Auth context")
+      Some(txh) =>
+        Crypto.ecverify_secp256k1(to_sign(txh, n, u, exp), state.issuer, sig)

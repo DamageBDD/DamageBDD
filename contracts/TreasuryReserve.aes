@@ -1,0 +1,81 @@
+// TreasuryReserve.aes
+// Minimal, auditable DAMAGE (AEX-9) treasury.
+//
+// Surface area:
+// - owner(): view of current owner
+// - paused(): view of pause flag
+// - damage_balance(): AEX-9 balance of this contract
+// - payout(to, amount): owner-only, requires !paused
+// - pause()/unpause(): circuit-breaker
+// - transfer_ownership(new_owner): owner-only
+//
+// Notes:
+// - Uses AEX-9 interface with balance() and transfer()
+// - Emits events for every state change (indexer-friendly)
+
+contract interface IAEX9 =
+  entrypoint balance  : address => option(int)
+  stateful entrypoint transfer : address * int => unit
+
+datatype event =
+  | OwnerChanged(address, address)   // (old, new)
+  | Paused(bool)                     // true/false
+  | Payout(address, int)             // (to, amount)
+
+record state =
+  { token   : address
+  , owner   : address
+  , paused  : bool }
+
+stateful entrypoint init(token' : address, owner' : address) =
+  require(owner' != #0, "ERR_OWNER_ZERO")
+  { token = token', owner = owner', paused = false }
+
+// --------- views ---------
+entrypoint token_address() : address = state.token
+entrypoint owner()        : address = state.owner
+entrypoint paused()       : bool    = state.paused
+
+function _token() : IAEX9 = IAEX9(state.token)
+
+entrypoint damage_balance() : int =
+  switch(_token().balance(Contract.address))
+    None    => 0
+    Some(b) => b
+
+// --------- auth helpers ---------
+function _only_owner() =
+  require(Call.caller == state.owner, "ERR_NOT_OWNER")
+
+function _not_paused() =
+  require(state.paused == false, "ERR_PAUSED")
+
+// --------- controls ---------
+stateful entrypoint transfer_ownership(new_owner : address) =
+  _only_owner()
+  require(new_owner != #0, "ERR_OWNER_ZERO")
+  let old = state.owner
+  put(state{ owner = new_owner })
+  Chain.event(OwnerChanged(old, new_owner))
+
+stateful entrypoint pause() =
+  _only_owner()
+  require(state.paused == false, "ERR_ALREADY_PAUSED")
+  put(state{ paused = true })
+  Chain.event(Paused(true))
+
+stateful entrypoint unpause() =
+  _only_owner()
+  require(state.paused == true, "ERR_NOT_PAUSED")
+  put(state{ paused = false })
+  Chain.event(Paused(false))
+
+// --------- payouts ---------
+stateful entrypoint payout(to : address, amount : int) =
+  _only_owner()
+  _not_paused()
+  require(amount > 0, "ERR_AMOUNT_ZERO")
+  require(to != #0, "ERR_TO_ZERO")
+  require(amount <= damage_balance(), "ERR_INSUFF_BAL")
+  _token().transfer(to, amount)
+  Chain.event(Payout(to, amount))
