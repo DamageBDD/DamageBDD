@@ -156,8 +156,8 @@ to_html(Req, #{hash := Hash} = State) ->
                                 <<"<a href=\"{{api_url}}/reports/{{hash}}/{{file}}\">{{hash}}/{{file}}</a>">>,
                                 [
                                     {api_url, DamageApi},
-                                    {hash, binary_to_list(Hash)},
-                                    {file, binary_to_list(X)}
+                                    {hash, Hash},
+                                    {file, X}
                                 ]
                             )
                          || X <- Dir

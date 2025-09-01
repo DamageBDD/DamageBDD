@@ -38,6 +38,7 @@
         fail/2,
         ctx/1,
         run_ok/2,
+        render/2,
         run/2
     ]
 ).
@@ -123,6 +124,29 @@ load_template(Template, Context) ->
     logger:info("Loading template from ~p", [FilePath]),
     {ok, TemplateBin} = file:read_file(FilePath),
     bbmustache:render(TemplateBin, Context).
+
+normalize_context(Context) when is_map(Context) ->
+    maps:from_list([{key_to_string(K), V} || {K, V} <- maps:to_list(Context)]);
+normalize_context(Context) when is_list(Context) ->
+    maps:from_list([{key_to_string(K), V} || {K, V} <- Context]);
+normalize_context({K, V}) ->
+    maps:from_list([{key_to_string(K), V}]);
+normalize_context(_) ->
+    #{}.
+
+key_to_string(K) when is_atom(K) ->
+    atom_to_list(K);
+key_to_string(K) when is_binary(K) ->
+    binary_to_list(K);
+key_to_string(K) when is_list(K) ->
+    %% already a string
+    K;
+key_to_string(K) ->
+    %% fallback to string
+    io_lib:format("~p", [K]).
+
+render(Template, Context) ->
+    bbmustache:render(Template, normalize_context(Context)).
 
 send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
     {ok, SmtpHost} = application:get_env(damage, smtp_host),
