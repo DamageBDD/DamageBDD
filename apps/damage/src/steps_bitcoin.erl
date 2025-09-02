@@ -114,6 +114,6 @@ step(
     _
 ) ->
     ?debugFmt("the balance must be greater than ~p", [ExpectedBalance]),
-    Result = bicoin:getbalance(),
+    Result = bitcoin:getbalance(),
     ?debugFmt("Result ~p", [Result]),
     Context.
