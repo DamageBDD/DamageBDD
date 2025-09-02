@@ -22,27 +22,38 @@
 step(_Cfg, Ctx, <<"Given">>, _N, ["I enable wifi motion on", Iface], _) ->
     start_motion(Ctx, #{iface => Iface});
 step(_Cfg, Ctx, <<"Given">>, _N, ["I enable wifi motion"], _) ->
-    start_motion(Ctx, #{}); % defaults
-
-step(_Cfg, Ctx, <<"Given">>, _N,
-     ["I enable wifi motion on", Iface, "with interval", IntervalMsStr,
-      "alpha", AlphaStr, "k-sigma", KSigmaStr], _) ->
+    % defaults
+    start_motion(Ctx, #{});
+step(
+    _Cfg,
+    Ctx,
+    <<"Given">>,
+    _N,
+    [
+        "I enable wifi motion on",
+        Iface,
+        "with interval",
+        IntervalMsStr,
+        "alpha",
+        AlphaStr,
+        "k-sigma",
+        KSigmaStr
+    ],
+    _
+) ->
     {IntervalMs, Alpha, KSigma} =
         {list_to_integer(IntervalMsStr), list_to_float(AlphaStr), list_to_float(KSigmaStr)},
-    start_motion(Ctx, #{iface => Iface, interval_ms => IntervalMs, alpha => Alpha, k_sigma => KSigma});
-
+    start_motion(Ctx, #{
+        iface => Iface, interval_ms => IntervalMs, alpha => Alpha, k_sigma => KSigma
+    });
 step(_Cfg, Ctx, <<"When">>, _N, ["I wait for motion for", MsStr, "ms"], _) ->
     wait_for_motion(Ctx, list_to_integer(MsStr), false);
-
 step(_Cfg, Ctx, <<"Then">>, _N, ["motion must be detected within", MsStr, "ms"], _) ->
     wait_for_motion(Ctx, list_to_integer(MsStr), true);
-
 step(_Cfg, Ctx, <<"Then">>, _N, ["no motion must be detected within", MsStr, "ms"], _) ->
     wait_for_no_motion(Ctx, list_to_integer(MsStr));
-
 step(_Cfg, Ctx, <<"When">>, _N, ["I clear motion events"], _) ->
     maps:remove(motion_last, Ctx);
-
 step(_Cfg, Ctx, <<"Then">>, _N, ["the last motion mac must be", Mac], _) ->
     case maps:get(motion_last, Ctx, undefined) of
         undefined ->
@@ -52,7 +63,6 @@ step(_Cfg, Ctx, <<"Then">>, _N, ["the last motion mac must be", Mac], _) ->
         #{mac := Other} ->
             fail(Ctx, damage_utils:strf("Expected MAC ~p but got ~p", [Mac, Other]))
     end;
-
 step(_Cfg, Ctx, <<"Then">>, _N, ["the last motion rssi must be >=", RssiStr], _) ->
     RssiMin = list_to_integer(RssiStr),
     case maps:get(motion_last, Ctx, undefined) of
@@ -63,7 +73,6 @@ step(_Cfg, Ctx, <<"Then">>, _N, ["the last motion rssi must be >=", RssiStr], _)
         #{rssi := Rssi} ->
             fail(Ctx, damage_utils:strf("Expected RSSI >= ~p but got ~p", [RssiMin, Rssi]))
     end;
-
 %% Fallback (unhandled)
 step(_Cfg, Ctx, _Phase, _N, _Tokens, _Line) ->
     Ctx.
@@ -71,10 +80,10 @@ step(_Cfg, Ctx, _Phase, _N, _Tokens, _Line) ->
 %% ------------- Helpers -------------
 
 start_motion(Ctx, Opts0) ->
-    Iface    = maps:get(iface, Opts0, ?DEFAULT_IFACE),
+    Iface = maps:get(iface, Opts0, ?DEFAULT_IFACE),
     Interval = maps:get(interval_ms, Opts0, ?DEFAULT_INTERVAL),
-    Alpha    = maps:get(alpha, Opts0, ?DEFAULT_ALPHA),
-    KSigma   = maps:get(k_sigma, Opts0, ?DEFAULT_KSIGMA),
+    Alpha = maps:get(alpha, Opts0, ?DEFAULT_ALPHA),
+    KSigma = maps:get(k_sigma, Opts0, ?DEFAULT_KSIGMA),
 
     %% Ensure singleton per test context
     case maps:get(wifi_motion_pid, Ctx, undefined) of
@@ -84,21 +93,29 @@ start_motion(Ctx, Opts0) ->
         _ ->
             case whereis(wifi_motion) of
                 undefined ->
-                    case wifi_motion:start_link(#{
-                           iface => Iface, interval_ms => Interval,
-                           alpha => Alpha, k_sigma => KSigma
-                       }) of
+                    case
+                        wifi_motion:start_link(#{
+                            iface => Iface,
+                            interval_ms => Interval,
+                            alpha => Alpha,
+                            k_sigma => KSigma
+                        })
+                    of
                         {ok, _Pid} ->
                             ok = wifi_motion:subscribe(),
-                            Ctx#{wifi_motion_pid => whereis(wifi_motion),
-                                 wifi_motion_iface => Iface};
+                            Ctx#{
+                                wifi_motion_pid => whereis(wifi_motion),
+                                wifi_motion_iface => Iface
+                            };
                         Error ->
                             fail(Ctx, damage_utils:strf("wifi_motion start failed: ~p", [Error]))
                     end;
                 _Pid ->
                     ok = wifi_motion:subscribe(),
-                    Ctx#{wifi_motion_pid => whereis(wifi_motion),
-                         wifi_motion_iface => Iface}
+                    Ctx#{
+                        wifi_motion_pid => whereis(wifi_motion),
+                        wifi_motion_iface => Iface
+                    }
             end
     end.
 
@@ -111,11 +128,14 @@ wait_for_motion(Ctx, TimeoutMs, MustAssert) ->
         EvMap = event_to_map(Event),
         Self ! {?TAG_KEEP, Ref, EvMap}
     end,
-    Motion = receive
-                 {motion, ?TAG_KEEP}=Ev -> AfterFun(Ev), Ev
-             after TimeoutMs ->
-                 timeout
-             end,
+    Motion =
+        receive
+            {motion, ?TAG_KEEP} = Ev ->
+                AfterFun(Ev),
+                Ev
+        after TimeoutMs ->
+            timeout
+        end,
     case {MustAssert, Motion} of
         {true, timeout} ->
             fail(Ctx, damage_utils:strf("No motion within ~p ms", [TimeoutMs]));
@@ -123,7 +143,10 @@ wait_for_motion(Ctx, TimeoutMs, MustAssert) ->
             Ctx;
         {_, {motion, _}} ->
             %% pull back the stored EvMap for persistence
-            EvMap = receive {?TAG_KEEP, Ref, M} -> M end,
+            EvMap =
+                receive
+                    {?TAG_KEEP, Ref, M} -> M
+                end,
             Ctx#{motion_last => EvMap}
     end.
 

@@ -609,7 +609,7 @@ step(
                 Context
             )
     end;
-step(_Config, Context0, <<"Given">>, _N, ["I am using server", Server], _) ->
+step(_Config, Context0, <<"Given">>, _N, ["I am using server", Server], _) when is_map(Context0) ->
     Context = maps:put(base_url, Server, Context0),
     case uri_string:parse(Server) of
         #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->

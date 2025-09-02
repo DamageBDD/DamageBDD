@@ -5,6 +5,7 @@
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
 
 -license("Apache-2.0").
+-include_lib("kernel/include/logger.hrl").
 
 -export([format/3]).
 
@@ -44,13 +45,14 @@ write_file(#{output := Req}, FormatStr, Args) when is_map(Req) ->
   ok;
 
 write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) ->
-  [_, _, PidStr0] = string:replace(pid_to_list(self()), "<", "", all),
-  [PidStr, _, _] = string:replace(PidStr0, ">", "", all),
+  [_, PidStr, _] =  string:split(pid_to_list(self()), ".", all),
+    ?LOG_INFO("output file prerender ~p, ~p", [Output, PidStr]),
   OutputFile =
-    mustache:render(
-      binary_to_list(Output),
-      [{process_id, PidStr}, {node_id, node()}]
+    damage_utils:render(
+      Output,
+      [{process_id, list_to_binary(PidStr)}, {node_id, atom_to_binary(node())}]
     ),
+    ?LOG_INFO("output file ~p", [OutputFile]),
   ok =
     file:write_file(
       OutputFile,

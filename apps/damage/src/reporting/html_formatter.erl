@@ -18,9 +18,9 @@ write_file(#{output := Output}, FormatStr, Args) ->
   [_, _, PidStr0] = string:replace(pid_to_list(self()), "<", "", all),
   [PidStr, _, _] = string:replace(PidStr0, ">", "", all),
   OutputFile =
-    mustache:render(
-      binary_to_list(Output),
-      [{process_id, PidStr}, {node_id, node()}]
+    damage_utils:render(
+      Output,
+      [{process_id, list_to_binary(PidStr)}, {node_id, atom_to_binary(node())}]
     ),
   ok =
     file:write_file(

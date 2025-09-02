@@ -22,8 +22,10 @@
     interval,
     alpha,
     k_sigma,
-    table = #{} ,        %% MAC() -> #client{}
-    subs  = []           %% Pids to receive motion msgs
+    %% MAC() -> #client{}
+    table = #{},
+    %% Pids to receive motion msgs
+    subs = []
 }).
 
 %% API
@@ -41,25 +43,25 @@ unsubscribe() ->
 
 %% gen_server
 init(Opts) ->
-    Iface     = maps:get(iface, Opts, ?DEFAULT_IFACE),
-    Interval  = maps:get(interval_ms, Opts, ?DEFAULT_INTERVAL),
-    Alpha     = maps:get(alpha, Opts, ?DEFAULT_ALPHA),
-    KSigma    = maps:get(k_sigma, Opts, ?DEFAULT_KSIGMA),
+    Iface = maps:get(iface, Opts, ?DEFAULT_IFACE),
+    Interval = maps:get(interval_ms, Opts, ?DEFAULT_INTERVAL),
+    Alpha = maps:get(alpha, Opts, ?DEFAULT_ALPHA),
+    KSigma = maps:get(k_sigma, Opts, ?DEFAULT_KSIGMA),
     erlang:send_after(Interval, self(), tick),
-    {ok, #state{iface=Iface, interval=Interval, alpha=Alpha, k_sigma=KSigma}}.
+    {ok, #state{iface = Iface, interval = Interval, alpha = Alpha, k_sigma = KSigma}}.
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-handle_call({sub, Pid}, _From, State=#state{subs=Subs}) ->
-    {reply, ok, State#state{subs=lists:usort([Pid|Subs])}};
-handle_call({unsub, Pid}, _From, State=#state{subs=Subs}) ->
-    {reply, ok, State#state{subs=lists:delete(Pid, Subs)}};
+handle_call({sub, Pid}, _From, State = #state{subs = Subs}) ->
+    {reply, ok, State#state{subs = lists:usort([Pid | Subs])}};
+handle_call({unsub, Pid}, _From, State = #state{subs = Subs}) ->
+    {reply, ok, State#state{subs = lists:delete(Pid, Subs)}};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
 handle_cast(_Msg, State) -> {noreply, State}.
 
-handle_info(tick, State0=#state{interval=I}) ->
+handle_info(tick, State0 = #state{interval = I}) ->
     {State1, Events} = sample_and_update(State0),
     %% broadcast motion events
     lists:foreach(fun(Ev) -> notify(State1#state.subs, Ev) end, Events),
@@ -75,33 +77,52 @@ notify(Subs, Ev) ->
     lists:foreach(fun(P) -> P ! Ev end, Subs).
 
 %% Core
-sample_and_update(State=#state{iface=Iface, alpha=Alpha, k_sigma=KSigma, table=Tab0}) ->
+sample_and_update(State = #state{iface = Iface, alpha = Alpha, k_sigma = KSigma, table = Tab0}) ->
     %% Get map of MAC()->Signal (dBm) from iw text
     Readings = read_signals(Iface),
     {Tab1, Events} =
         maps:fold(
-          fun(Mac, X, {AccTab, AccEv}) ->
-                  {Entry1, MaybeEv} = update_stat(maps:get(Mac, AccTab, #client{}), X, Alpha, KSigma, Mac),
-                  {maps:put(Mac, Entry1, AccTab),
-                   case MaybeEv of none -> AccEv; Ev -> [Ev|AccEv] end}
-          end,
-          {Tab0, []}, Readings),
-    {State#state{table=Tab1}, lists:reverse(Events)}.
+            fun(Mac, X, {AccTab, AccEv}) ->
+                {Entry1, MaybeEv} = update_stat(
+                    maps:get(Mac, AccTab, #client{}), X, Alpha, KSigma, Mac
+                ),
+                {
+                    maps:put(Mac, Entry1, AccTab),
+                    case MaybeEv of
+                        none -> AccEv;
+                        Ev -> [Ev | AccEv]
+                    end
+                }
+            end,
+            {Tab0, []},
+            Readings
+        ),
+    {State#state{table = Tab1}, lists:reverse(Events)}.
 
-update_stat(Entry=#client{mu=undefined}, X, _Alpha, _KSigma, _Mac) ->
-    {Entry#client{mu=X, var=1.0}, none};
-update_stat(Entry=#client{mu=Mu0, var=Var0}, X, Alpha, KSigma, Mac) ->
+update_stat(Entry = #client{mu = undefined}, X, _Alpha, _KSigma, _Mac) ->
+    {Entry#client{mu = X, var = 1.0}, none};
+update_stat(Entry = #client{mu = Mu0, var = Var0}, X, Alpha, KSigma, Mac) ->
     %% EWMA mean and EWMA variance update
-    Mu1  = (1.0-Alpha)*Mu0 + Alpha*X,
-    D    = X - Mu0,
-    Var1 = (1.0-Alpha)*(Var0 + Alpha*D*D),
-    Sigma = math:sqrt(max(Var1, 1.0)), %% avoid zero
+    Mu1 = (1.0 - Alpha) * Mu0 + Alpha * X,
+    D = X - Mu0,
+    Var1 = (1.0 - Alpha) * (Var0 + Alpha * D * D),
+    %% avoid zero
+    Sigma = math:sqrt(max(Var1, 1.0)),
     Deviation = abs(X - Mu1),
-    Ev = case Deviation > KSigma*Sigma of
-             true  -> {motion, #{mac=>Mac, rssi=>X, mu=>Mu1, sigma=>Sigma, at=>os:system_time(millisecond)}};
-             false -> none
-         end,
-    {Entry#client{mu=Mu1, var=Var1}, Ev}.
+    Ev =
+        case Deviation > KSigma * Sigma of
+            true ->
+                {motion, #{
+                    mac => Mac,
+                    rssi => X,
+                    mu => Mu1,
+                    sigma => Sigma,
+                    at => os:system_time(millisecond)
+                }};
+            false ->
+                none
+        end,
+    {Entry#client{mu = Mu1, var = Var1}, Ev}.
 
 %% --- Collect RSSI via `iw`
 read_signals(Iface) ->
@@ -116,8 +137,9 @@ parse_iw_station_dump(Txt) ->
     Lines = string:split(Txt, "\n", all),
     parse_lines(Lines, undefined, #{}).
 
-parse_lines([], _CurMac, Acc) -> Acc;
-parse_lines([L|Ls], CurMac, Acc) ->
+parse_lines([], _CurMac, Acc) ->
+    Acc;
+parse_lines([L | Ls], CurMac, Acc) ->
     case re:run(L, "Station\\s+([0-9a-f:]{17})", [{capture, [1], list}, unicode, caseless]) of
         {match, [Mac]} ->
             parse_lines(Ls, Mac, Acc);
