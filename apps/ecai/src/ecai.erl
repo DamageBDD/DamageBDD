@@ -11,6 +11,7 @@
     start/0,
     test/0,
     mint_knowledge/2,
+    mint_alphanumerics_with_ordinals/0,
     encode/1
 ]).
 -export([
@@ -47,7 +48,7 @@ hash_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 curve_add(_X1, _Y1, _X2, _Y2) -> erlang:nif_error(nif_library_not_loaded).
 
 mint_knowledge(
-    AeAccount,
+    #{public_key := AeAccount, private_key := PrivateKey} = KeyPair,
     #{
         subject := _Subject,
         predicate := _Predicate,
@@ -60,7 +61,7 @@ mint_knowledge(
     MetaData = #{Point => ecai:hash_to_curve(EncodedKnowledge)},
 
     damage_ae:contract_call(
-        secrets:node_keypair(),
+        KeyPair,
         ?ECAI_KNOWLEDGE_NFT_CONTRACT,
         "contracts/knowledge_nft.aes",
         "mint",
@@ -70,10 +71,101 @@ mint_knowledge(
 encode(#{subject := Subject, predicate := Predicate, object := Object, context := Context}) ->
     Timestamp = erlang:system_time(seconds),
     vrlp:encode([Subject, Predicate, Object, Context, Timestamp]).
+%%% -----------------------------
+%%% SPOC builders with ordinals
+%%% -----------------------------
+
+%% Public API
+mint_alphanumerics_with_ordinals() ->
+    NodeKeyPair = secrets:node_keypair(),
+    Letters = lists:seq($a, $z),
+    Digits = lists:seq($0, $9),
+    ok = mint_letters(NodeKeyPair, Letters),
+    ok = mint_digits(NodeKeyPair, Digits),
+    ok.
+
+%%% Letters
+
+mint_letters(KeyPair, Letters) ->
+    lists:foreach(
+        fun(Char) ->
+            %% 1) a is instance of letter (latin alphabet)
+            mint_knowledge(KeyPair, spoc_letter_instance(Char)),
+            %% 2) a has ordinal position 1 in latin alphabet
+            mint_knowledge(KeyPair, spoc_letter_ordinal(Char))
+        end,
+        Letters
+    ),
+    ok.
+
+spoc_letter_instance(Char) when Char >= $a, Char =< $z ->
+    #{
+        subject => <<Char>>,
+        predicate => "is instance of",
+        object => "letter",
+        context => "latin alphabet"
+    }.
+
+spoc_letter_ordinal(Char) when Char >= $a, Char =< $z ->
+    #{
+        subject => <<Char>>,
+        predicate => "has ordinal position",
+        %% Store as string so your encode/VRLP stays uniform:
+        object => integer_to_binary(letter_index(Char)),
+        context => "latin alphabet"
+    }.
+
+letter_index(Char) ->
+    %% a=1, ..., z=26
+    (Char - $a) + 1.
+
+%%% Digits
+
+mint_digits(KeyPair, Digits) ->
+    lists:foreach(
+        fun(Char) ->
+            %% 1) 7 is instance of digit (arabic numerals)
+            mint_knowledge(KeyPair, spoc_digit_instance(Char)),
+            %% 2) 7 has ordinal position 8 in arabic numerals (0-based display sets)
+            mint_knowledge(KeyPair, spoc_digit_ordinal(Char)),
+            %% Optional: “represents integer seven”
+            mint_knowledge(KeyPair, spoc_digit_semantics(Char))
+        end,
+        Digits
+    ),
+    ok.
+
+spoc_digit_instance(Char) when Char >= $0, Char =< $9 ->
+    #{
+        subject => <<Char>>,
+        predicate => "is instance of",
+        object => "digit",
+        context => "arabic numerals"
+    }.
+
+spoc_digit_ordinal(Char) when Char >= $0, Char =< $9 ->
+    #{
+        subject => <<Char>>,
+        predicate => "has ordinal position",
+        %% Common to say 0..9 are the “first ten digits”; we’ll use 0-based index:
+        object => integer_to_binary(digit_index(Char)),
+        context => "arabic numerals (0-based)"
+    }.
+
+spoc_digit_semantics(Char) when Char >= $0, Char =< $9 ->
+    #{
+        subject => <<Char>>,
+        predicate => "represents",
+        object => integer_to_binary(Char - $0),
+        context => "natural numbers"
+    }.
+
+digit_index(Char) ->
+    %% '0'->0, ..., '9'->9
+    Char - $0.
+
 %% Example execution
 test() ->
-    [
-        mint_knowledge(secrets:node_keypair(), Char)
-     || Char <- "abcdefghijklmnopqrstuvwxyz1234567890"
-    ],
-    mint_knowledge(secrets:node_keypair(), "test").
+    NodeKeyPair = secrets:node_keypair(),
+    mint_letters(NodeKeyPair, "abcdefghijklmnopqrstuvwxyz"),
+    mint_digits(NodeKeyPair, "1234567890").
