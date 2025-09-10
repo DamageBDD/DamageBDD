@@ -52,9 +52,7 @@ step(
             Context;
         _ ->
             erlang:error({docker_cleanup_failed, Output})
-    end;
-step(_, Context, _, _, _, _) ->
-    Context.
+    end.
 
 %% Convert "3 days ago" into "YYYY-MM-DD" using date_util
 relative_string_to_date(Relative) ->
