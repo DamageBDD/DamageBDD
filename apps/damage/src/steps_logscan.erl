@@ -81,11 +81,5 @@ step(_Cfg, Context, <<"Then">>, _N,
             maps:put(fail, "Expected patterns not found in logs", Context);
         Ms ->
             Context#{ ?K_LAST_MATCHES => Ms }
-    end;
+    end.
 
-%% ------------------------------------------------------------
-%% Fallback
-%% ------------------------------------------------------------
-
-step(_Cfg, Context, _Phase, _N, _Tokens, _Doc) ->
-    Context.
