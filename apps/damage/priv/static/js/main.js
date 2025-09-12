@@ -1,7 +1,7 @@
-import * as wallet from "/static/js/wallet.js";
+ import * as wallet from "/static/js/wallet.js";
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 function showConnectStatus(message, type = 'info') {
-  const statusDiv = document.getElementById('connectStatus');
+  const statusDiv = document.getElementById('connect-status');
   statusDiv.textContent = message;
   statusDiv.className = type; // e.g., 'success', 'error', 'info'
 }
@@ -136,7 +136,7 @@ function generateDamageQR(address){
 			var tab = event.target;
 			var content = event.detail.content;
 			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
-				updateHistoryTable();
+				  Reports.renderRunReports(address, { limit: 10 });
 			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
 				updateSchedulesTable();
 			}
@@ -181,6 +181,8 @@ function generateDamageQR(address){
 		if(isAuthenticated()){
 					generateDamageQR(address);
 		}
+			var tabs =Tabby('[data-tabs]');
+			tabs.toggle('execution');
 
 	}); // end DOMContentLoaded 
 
