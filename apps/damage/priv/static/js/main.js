@@ -313,7 +313,7 @@ function generateDamageQR(address){
 
 		const reportElement = addReport();
         const walletConnected = localStorage.getItem("wallet_connected");
-		if(walletConnected){
+		if(walletConnected != "undefined"){
 			const request = {
 				method: 'POST',
 				credentials: 'include',
