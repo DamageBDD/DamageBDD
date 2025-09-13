@@ -1,0 +1,49 @@
+/* Terminal-style output for reports */
+
+pre code.language-gherkin.report {
+  white-space: pre-wrap;
+  padding: 1rem;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: 'Fira Code', monospace;
+}
+.gherkin-line {
+  color: #aaa;
+  font-style: italic;
+}
+
+.gherkin-success {
+  color: #00ff88;
+  font-weight: bold;
+}
+
+.gherkin-fail {
+  color: #ff5555;
+  font-weight: bold;
+}
+/*  html report table */
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto; /* let columns expand based on content */
+}
+
+.report-table th,
+.report-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+  white-space: nowrap;   /* remove if you want wrapping */
+}
+
+.report-table td a {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere; /* allow breaking long hashes/links */
+  text-decoration: none;
+  color: #007acc;
+}
+
+.report-table td a:hover {
+  text-decoration: underline;
+}

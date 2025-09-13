@@ -46,13 +46,11 @@ write_file(#{output := Req}, FormatStr, Args) when is_map(Req) ->
 
 write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) ->
   [_, PidStr, _] =  string:split(pid_to_list(self()), ".", all),
-    ?LOG_INFO("output file prerender ~p, ~p", [Output, PidStr]),
   OutputFile =
     damage_utils:render(
       Output,
       [{process_id, list_to_binary(PidStr)}, {node_id, atom_to_binary(node())}]
     ),
-    ?LOG_INFO("output file ~p", [OutputFile]),
   ok =
     file:write_file(
       OutputFile,

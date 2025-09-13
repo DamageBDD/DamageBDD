@@ -15,8 +15,7 @@ get_keyword(given_keyword) -> "Given";
 get_keyword(KeyWord) when is_binary(KeyWord) -> binary_to_list(KeyWord).
 
 write_file(#{output := Output}, FormatStr, Args) ->
-  [_, _, PidStr0] = string:replace(pid_to_list(self()), "<", "", all),
-  [PidStr, _, _] = string:replace(PidStr0, ">", "", all),
+  [_, PidStr, _] =  string:split(pid_to_list(self()), ".", all),
   OutputFile =
     damage_utils:render(
       Output,
@@ -25,7 +24,7 @@ write_file(#{output := Output}, FormatStr, Args) ->
   ok =
     file:write_file(
       OutputFile,
-      lists:flatten(io_lib:format(FormatStr, Args)),
+      lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
       [append]
     ).
 

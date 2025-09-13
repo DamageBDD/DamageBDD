@@ -125,6 +125,70 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
+%% ================= Helpers =================
+
+get_reports_dir(Hash) ->
+    list_to_binary(string:join([binary_to_list(Hash), "reports"], "/")).
+
+list_reports(Hash) ->
+    Dir0 = ls(get_reports_dir(Hash)),
+    lists:sort(fun(A, B) -> A =< B end, Dir0).
+
+build_report_li(DamageApi, Hash, File) ->
+    bbmustache:render(
+        <<"<li><a href=\"{{api_url}}/reports/{{hash}}/{{file}}\">{{file}}</a></li>">>,
+        damage_utils:normalize_context([
+            {api_url, DamageApi},
+            {hash, Hash},
+            {file, File}
+        ])
+    ).
+
+render_reports_index(Hash) ->
+    {ok, DamageApi} = application:get_env(damage, api_url),
+    Items =
+        [ binary_to_list(build_report_li(DamageApi, Hash, X))
+        || X <- list_reports(Hash)
+        ],
+    ReportList = list_to_binary(string:join(Items, "\n")),
+    damage_utils:load_template("report.mustache", #{reports_list => ReportList, hash => Hash}).
+
+full_reports_path(PathList) ->
+    string:join(["reports", PathList], "/").
+
+render_report_html(Hash, PathList) ->
+    FullPath = full_reports_path(PathList),
+    HtmlFrag = cat(Hash, FullPath),
+    damage_utils:load_template(
+        "report_html.mustache",
+        #{ hash => Hash
+         , path => list_to_binary(PathList)
+         , report_fragment => HtmlFrag
+         }).
+
+reply_plain_text(Req, Txt) ->
+    cowboy_req:reply(
+        200,
+        #{<<"content-type">> => <<"text/plain; charset=utf-8">>},
+        Txt,
+        Req
+    ).
+
+route_report_file(Hash, Req, State, PathBin) ->
+    PathList = binary_to_list(PathBin),
+    FullPath = full_reports_path(PathList),
+    case filename:extension(PathList) of
+        ".html" ->
+            {render_report_html(Hash, PathList), Req, State};
+        ".txt" ->
+            Txt = cat(Hash, FullPath),
+            Req1 = reply_plain_text(Req, Txt),
+            {stop, Req1, State};
+        _Other ->
+            {cat(Hash, FullPath), Req, State}
+    end.
+
+%% ================= Controller =================
 to_html(Req, #{action := features} = State) ->
     ?LOG_DEBUG("feature to ", []),
     case cowboy_req:binding(hash, Req) of
@@ -145,37 +209,14 @@ to_html(Req, #{action := features} = State) ->
 to_html(Req, #{hash := Hash} = State) ->
     case cowboy_req:binding(path, Req) of
         undefined ->
-            {ok, DamageApi} = application:get_env(damage, api_url),
-            Dir =
-                ls(list_to_binary(string:join([binary_to_list(Hash), "reports"], "/"))),
-            ReportList =
-                list_to_binary(
-                    string:join(
-                        [
-                            bbmustache:render(
-                                <<"<a href=\"{{api_url}}/reports/{{hash}}/{{file}}\">{{hash}}/{{file}}</a>">>,
-                                [
-                                    {api_url, DamageApi},
-                                    {hash, Hash},
-                                    {file, X}
-                                ]
-                            )
-                         || X <- Dir
-                        ],
-                        "<br>"
-                    )
-                ),
-            Data =
-                damage_utils:load_template(
-                    "report.mustache",
-                    #{reports_list => ReportList}
-                ),
-            {Data, Req, State};
-        Path ->
-            Path0 = string:join(["reports", binary_to_list(Path)], "/"),
-            ?LOG_DEBUG(" cat hash ~p", [Hash]),
-            {cat(Hash, Path0), Req, State}
+            Body = render_reports_index(Hash),
+            ?LOG_INFO("report html ~p", [Body]),
+            {Body, Req, State};
+        PathBin ->
+            ?LOG_DEBUG("cat hash ~p", [Hash]),
+            route_report_file(Hash, Req, State, PathBin)
     end.
+
 
 to_json(Req, #{action := features} = State) ->
     ?LOG_DEBUG("feature to ", []),

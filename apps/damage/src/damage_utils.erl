@@ -39,6 +39,7 @@
         ctx/1,
         run_ok/2,
         render/2,
+        normalize_context/1,
         run/2
     ]
 ).
@@ -123,7 +124,7 @@ load_template(Template, Context) ->
     FilePath = filename:join([PrivDir, "templates", Template]),
     logger:info("Loading template from ~p", [FilePath]),
     {ok, TemplateBin} = file:read_file(FilePath),
-    bbmustache:render(TemplateBin, Context).
+    bbmustache:render(TemplateBin, normalize_context(Context)).
 
 normalize_context(Context) when is_map(Context) ->
     maps:from_list([{key_to_string(K), V} || {K, V} <- maps:to_list(Context)]);
