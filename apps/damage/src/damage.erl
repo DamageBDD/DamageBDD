@@ -402,14 +402,14 @@ execute_step_module(
             metrics:update(success, AeAccount),
             Context0;
         {throw, Reason, Stack} ->
-            ?LOG_ERROR(
+            ?LOG_ERROR("Step execution failed! ~p", [
                 #{
                     reason => Reason,
                     stacktrace => Stack,
                     step => Step,
                     step_module => StepModule
                 }
-            ),
+            ]),
             metrics:update(fail, AeAccount),
             formatter:format(
                 Config,
@@ -421,20 +421,31 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
+        % case for dry_run
+        {'EXIT', {undef, _Err0}} ->
+            maps:put(
+                step_found,
+                false,
+                ContextIn
+            );
         {'EXIT', {function_clause, Err0}} ->
             case Err0 of
                 [{_, step, _, _Loc} | _] ->
-                    ContextIn;
+                    maps:put(
+                        step_found,
+                        false,
+                        ContextIn
+                    );
                 Err ->
                     Reason = <<"Step error">>,
-                    ?LOG_DEBUG(
+                    ?LOG_ERROR("Step execution failed! ~p", [
                         #{
                             reason => Reason,
                             stacktrace => Err,
                             step => Step,
                             step_module => StepModule
                         }
-                    ),
+                    ]),
                     metrics:update(fail, AeAccount),
                     formatter:format(
                         Config,
@@ -443,7 +454,7 @@ execute_step_module(
                     ),
                     maps:put(
                         step_found,
-                        true,
+                        false,
                         maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
                     )
             end;
@@ -461,8 +472,8 @@ execute_step_module(
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
         Other ->
-            Reason = damage_utils:strf(<<"invalid context ~p from ~p ~p">>, [
-                Other, StepModule, Step
+            Reason = damage_utils:strf(<<"invalid context from ~p ~p ~p">>, [
+                StepModule, Step, Other
             ]),
             metrics:update(fail, AeAccount),
             ?LOG_ERROR("Step execution failed! ~p", [Other]),
@@ -526,7 +537,7 @@ execute_step(Config, Step, Context) ->
                             case execute_step_module(Config, ContextIn, Step0, StepModule) of
                                 #{failing_step := _} = Context1 ->
                                     Context1;
-                                #{fail := Err} = Context1 ->
+                                #{step_found := true, fail := Err} = Context1 ->
                                     formatter:format(
                                         Config,
                                         step,

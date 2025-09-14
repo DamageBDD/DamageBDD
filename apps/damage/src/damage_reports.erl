@@ -147,8 +147,9 @@ build_report_li(DamageApi, Hash, File) ->
 render_reports_index(Hash) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
     Items =
-        [ binary_to_list(build_report_li(DamageApi, Hash, X))
-        || X <- list_reports(Hash)
+        [
+            binary_to_list(build_report_li(DamageApi, Hash, X))
+         || X <- list_reports(Hash)
         ],
     ReportList = list_to_binary(string:join(Items, "\n")),
     damage_utils:load_template("report.mustache", #{reports_list => ReportList, hash => Hash}).
@@ -161,10 +162,12 @@ render_report_html(Hash, PathList) ->
     HtmlFrag = cat(Hash, FullPath),
     damage_utils:load_template(
         "report_html.mustache",
-        #{ hash => Hash
-         , path => list_to_binary(PathList)
-         , report_fragment => HtmlFrag
-         }).
+        #{
+            hash => Hash,
+            path => list_to_binary(PathList),
+            report_fragment => HtmlFrag
+        }
+    ).
 
 reply_plain_text(Req, Txt) ->
     cowboy_req:reply(
@@ -216,7 +219,6 @@ to_html(Req, #{hash := Hash} = State) ->
             ?LOG_DEBUG("cat hash ~p", [Hash]),
             route_report_file(Hash, Req, State, PathBin)
     end.
-
 
 to_json(Req, #{action := features} = State) ->
     ?LOG_DEBUG("feature to ", []),

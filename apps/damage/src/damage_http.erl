@@ -240,7 +240,7 @@ get_config(
                                 #{<<"content-type">> => <<"text/plain">>},
                                 Req0
                             ),
-                        ?LOG_INFO("get_config req ~p", [Req]),
+                        ?LOG_INFO("get_config req streaming ~p", [Req]),
                         [
                             {
                                 text,
@@ -330,22 +330,50 @@ check_execute_bdd(
             ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
             {429, <<"throttled">>};
         _ ->
+            GlobalContext = damage_context:get_global_template_context(Context),
+            AccountContext = damage_context:get_context(AeAccount),
+            ContextIn =
+                maps:put(
+                    account_context,
+                    AccountContext,
+                    GlobalContext
+                ),
+            DryContextIn =
+                maps:put(
+                    stream,
+                    nostream,
+                    ContextIn
+                ),
+            DryConfig =
+                lists:flatten([
+                    [{dry_run, true} | Config]
+                    | get_config(
+                        DryContextIn,
+                        Req0
+                    )
+                ]),
+
+            ?LOG_INFO("Dry run config ~p ~p", [DryConfig, DryContextIn]),
+            {200, DryRunRecord} = execute_bdd(
+                DryConfig,
+                ContextIn,
+                FeatureData
+            ),
+            #{cost := Cost, feature_hash := _FeatureHash, report_hash := _ReportHash} =
+                DryRunRecord,
+            ?LOG_INFO("Dry run record ~p", [DryRunRecord]),
             case damage_ae:balance(AeAccount) of
-                Balance when Balance >= Concurrency ->
-                    GlobalContext = damage_context:get_global_template_context(Context),
-                    AccountContext = damage_context:get_context(AeAccount),
+                Balance when Balance >= Cost ->
+                    ?LOG_INFO("run cost ~p ~p", [Cost, Balance]),
                     Config0 =
                         lists:flatten([Config | get_config(Context, Req0)]),
-                    ?LOG_DEBUG(
-                        "check_execute_bdd balance ~p account context ~p global context ~p config ~p",
-                        [Balance, AccountContext, GlobalContext, Config0]
-                    ),
                     execute_bdd(
                         Config0,
-                        maps:put(account_context, AccountContext, GlobalContext),
+                        ContextIn,
                         FeatureData
                     );
                 Other ->
+                    ?LOG_INFO("run denied cost ~p ~p", [Cost, Other]),
                     {
                         400,
                         #{
@@ -485,38 +513,19 @@ from_json(Req, State) ->
             };
         #{feature := _FeatureData, stream := true} = Json ->
             case check_execute_bdd(Json, State, Req) of
-                {204, #{
-                    message := _Message,
-                    balance := 0
-                }} ->
-                    Message = <<"Insufficient balance, please top up $DAMAGE.">>,
-                    {
-                        cowboy_req:reply(
-                            200,
-                            cowboy_req:set_resp_body(Message, Req)
-                        ),
-                        Req,
-                        State
-                    };
-                {400, #{
-                    message := _Message,
-                    balance := 0
-                }} ->
-                    Message = <<"Insufficient balance, please top up $DAMAGE.">>,
-                    {
-                        cowboy_req:reply(
-                            200,
-                            cowboy_req:set_resp_body(Message, Req)
-                        ),
-                        Req,
-                        State
-                    };
+                {400, Response} ->
+                    ?LOG_INFO("From_json resposne ~p", [Response]),
+                    {stop,
+                        cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Response), Req)),
+                        State};
                 {_Status, Response} ->
+                    ?LOG_INFO("From_json resposne ~p", [Response]),
                     {stop, Response, State}
             end;
         #{feature := _FeatureData, concurrency := Concurrency} = Json when Concurrency > 1 ->
             {Status, Response} = check_execute_bdd(Json, State, Req),
-            {stop, cowboy_req:reply(Status, cowboy_req:set_resp_body(jsx:encode(Response))), State}
+            {stop, cowboy_req:reply(Status, cowboy_req:set_resp_body(jsx:encode(Response), Req)),
+                State}
     end.
 
 from_html(Req0, State) ->
