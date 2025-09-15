@@ -8,10 +8,12 @@ function showConnectStatus(message, type = 'info') {
 function generateDamageQR(address){
 	//showLightningQR({containerId:"qrcode-damage", address: address});
 		document.getElementById("qrcode-damage").innerText = "";
-		var qrcode = new QRCode(
-			document.getElementById("qrcode-damage"),
-			localStorage.getItem("address")
-		);
+	var qrcode = new QRCode(document.getElementById("qrcode-damage"), {
+		text: localStorage.getItem("address"),
+		colorDark : "#000000",
+		colorLight : "#ffffff",
+		correctLevel : QRCode.CorrectLevel.H
+	});
 }
 
 (function(window, document, undefined) {
