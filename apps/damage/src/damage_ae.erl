@@ -14,7 +14,7 @@
 -define(BASE_GAS, 15000).
 -define(GAS_PER_BYTE, 20).
 % Time-to-live in seconds
--define(CACHE_TTL, 86400).
+-define(CACHE_TTL, 30000).
 
 -export([
     init/1,
