@@ -14,7 +14,7 @@
 -define(BASE_GAS, 15000).
 -define(GAS_PER_BYTE, 20).
 % Time-to-live in seconds
--define(CACHE_TTL, 30000).
+-define(CACHE_TTL_SECONDS, 30).
 
 -export([
     init/1,
@@ -340,7 +340,7 @@ handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
         _ ->
             case contract_balance(AeAccount) of
                 ContractBalance when is_integer(ContractBalance) ->
-                    ExpiryTime = Now + ?CACHE_TTL,
+                    ExpiryTime = Now + ?CACHE_TTL_SECONDS,
                     NewCache = maps:put({balance, AeAccount}, {ContractBalance, ExpiryTime}, Cache),
                     {reply, ContractBalance, NewCache};
                 Err ->
@@ -1232,8 +1232,6 @@ poll_tx(Fun, Args, Interval, Timeout) ->
 poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     case apply(Fun, Args) of
         {ok, Result} ->
-            %?LOG_DEBUG("result value ~p", [Result]),
-            ?LOG_DEBUG("poll tx got value ~p", [Result]),
             tx_info_convert_result(Result);
         Result ->
             ?LOG_DEBUG("poll tx error value ~p args ~p", [Result, Args]),

@@ -212,7 +212,7 @@ create_invoice(AmountSats, Username, AeAccount) ->
         payment_secret := _PaymentSecret,
         created_index := _CreatedIndex
     } = Invoice = cln:create_invoice(AmountSats * 1000, Memo, 3600, Label),
-    ?LOG_DEBUG("saved invoice ~p", [Invoice]),
+    ?LOG_DEBUG("created invoice ~p", [Invoice]),
     #{payment_request => PaymentRequest, payment_hash => PaymentHash, expiry => Expiry}.
 
 filter_valid_invoices(Invoices, AeAccount) ->

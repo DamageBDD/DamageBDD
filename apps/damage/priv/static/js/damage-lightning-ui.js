@@ -20,7 +20,7 @@ function invoicePolling() {
                 }
 
                 // Show success tick
-                const container = document.getElementById("damage-wallet"); // Or your dynamic containerId
+                const container = document.getElementById("qrcode-lightning"); // Or your dynamic containerId
                 container.innerHTML = `<p style="text-align:center; font-size:1.5em; margin-top:1em;">✅ Payment Confirmed</p>`;
                 qrCanvas.isPolling = false;
                 const oldQR = document.getElementById("lnqr");
