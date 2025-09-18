@@ -13,25 +13,29 @@
 ]).
 
 -define(REGEX_OPTS, [unicode, dotall, multiline]).
--define(BUF, 1048576). % 1 MiB
+% 1 MiB
+-define(BUF, 1048576).
 
 %% -------------------------
 %% Pattern compilation
 %% -------------------------
 
-compile_patterns(undefined) -> [];
-compile_patterns(<<>>)      -> [];
-compile_patterns("")        -> [];
+compile_patterns(undefined) ->
+    [];
+compile_patterns(<<>>) ->
+    [];
+compile_patterns("") ->
+    [];
 compile_patterns(Doc) when is_binary(Doc) ->
     compile_patterns(binary_to_list(Doc));
 compile_patterns(Doc) when is_list(Doc) ->
     Lines0 = string:split(Doc, "\n", all),
-    Lines  = [string:trim(L) || L <- Lines0, L =/= ""],
+    Lines = [string:trim(L) || L <- Lines0, L =/= ""],
     [compile_one(L) || L <- Lines].
 
 compile_one(Line) ->
     case re:compile(Line, ?REGEX_OPTS) of
-        {ok, MP}      -> {regex, MP};
+        {ok, MP} -> {regex, MP};
         {error, _Err} -> {literal, Line}
     end.
 
@@ -44,7 +48,7 @@ tail_file(File, State0, Patterns) ->
     case file:read_link_info(File) of
         {ok, FI} ->
             Inode = FI#file_info.inode,
-            Size  = FI#file_info.size,
+            Size = FI#file_info.size,
             {Offset0, Rotated} =
                 case State0 of
                     #{inode := Inode0, offset := Off0} when Inode0 =:= Inode, Off0 =< Size ->
@@ -64,11 +68,12 @@ tail_file(File, State0, Patterns) ->
             {State0, [], []}
     end.
 
-pread_all(_Fd, _Pos, 0) -> {ok, <<>>};
+pread_all(_Fd, _Pos, 0) ->
+    {ok, <<>>};
 pread_all(Fd, Pos, Len) when Len =< ?BUF ->
     case file:pread(Fd, Pos, Len) of
         {ok, Data} -> {ok, Data};
-        eof        -> {ok, <<>>}
+        eof -> {ok, <<>>}
     end;
 pread_all(Fd, Pos, Len) ->
     Chunk = min(Len, ?BUF),
@@ -77,10 +82,10 @@ pread_all(Fd, Pos, Len) ->
     {ok, <<A/binary, B/binary>>}.
 
 split_lines(<<>>) -> [];
-split_lines(Bin)  ->
-    [binary_to_list(L) || L <- binary:split(Bin, <<"\n">>, [global])].
+split_lines(Bin) -> [binary_to_list(L) || L <- binary:split(Bin, <<"\n">>, [global])].
 
-min(A, B) when A =< B -> A; min(_A, B) -> B.
+min(A, B) when A =< B -> A;
+min(_A, B) -> B.
 
 %% -------------------------
 %% Journald query (cursor)
@@ -89,11 +94,12 @@ min(A, B) when A =< B -> A; min(_A, B) -> B.
 
 query_journald(Selector, Minutes, Cursor0, Patterns) ->
     SinceArg = io_lib:format("--since=-~Bmin", [Minutes]),
-    Base = ["journalctl","-o","cat"] ++ [lists:flatten(SinceArg)] ++ [Selector],
-    Args = case Cursor0 of
-        undefined -> Base ++ ["--show-cursor"];
-        C         -> Base ++ ["--after-cursor=" ++ C, "--show-cursor"]
-    end,
+    Base = ["journalctl", "-o", "cat"] ++ [lists:flatten(SinceArg)] ++ [Selector],
+    Args =
+        case Cursor0 of
+            undefined -> Base ++ ["--show-cursor"];
+            C -> Base ++ ["--after-cursor=" ++ C, "--show-cursor"]
+        end,
     Cmd = string:join(Args, " "),
     Out = os:cmd(Cmd),
     {LinesRaw, Cursor1} = split_cursor(Out),
@@ -103,12 +109,14 @@ query_journald(Selector, Minutes, Cursor0, Patterns) ->
 split_cursor(OutStr) when is_list(OutStr) ->
     Lines = string:split(OutStr, "\n", all),
     CursorLines = [L || L <- Lines, lists:prefix("-- cursor:", string:trim(L))],
-    Cursor = case CursorLines of
-        [] -> undefined;
-        _  ->
-            CLine = lists:last(CursorLines),
-            string:trim(lists:nthtail(length("-- cursor:"), CLine))
-    end,
+    Cursor =
+        case CursorLines of
+            [] ->
+                undefined;
+            _ ->
+                CLine = lists:last(CursorLines),
+                string:trim(lists:nthtail(length("-- cursor:"), CLine))
+        end,
     CleanLines = [L || L <- Lines, not lists:prefix("-- cursor:", string:trim(L))],
     {CleanLines, Cursor}.
 
@@ -117,17 +125,17 @@ split_cursor(OutStr) when is_list(OutStr) ->
 %% -------------------------
 
 match_lines(Lines, []) -> [];
-match_lines(Lines, Pats) ->
-    [L || L <- Lines, any_match(L, Pats)].
+match_lines(Lines, Pats) -> [L || L <- Lines, any_match(L, Pats)].
 
 any_match(Line, [{regex, MP} | Rest]) ->
     case re:run(Line, MP, [{capture, none}]) of
-        match   -> true;
+        match -> true;
         nomatch -> any_match(Line, Rest)
     end;
 any_match(Line, [{literal, S} | Rest]) ->
     case string:find(Line, S) of
         nomatch -> any_match(Line, Rest);
-        _       -> true
+        _ -> true
     end;
-any_match(_Line, []) -> false.
+any_match(_Line, []) ->
+    false.
