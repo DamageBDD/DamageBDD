@@ -14,6 +14,7 @@
 -export([test_get_headers/0]).
 -export([test_gun_post/0]).
 -export([test_gun_get/0]).
+-export([test_using_server/0]).
 
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
@@ -812,3 +813,27 @@ test_gun_get() ->
         string:concat(maps:get(base_url, Context, ""), "/publish_feature/"),
         Headers
     ).
+
+test_using_server() ->
+    Context =
+        #{
+            %port => 8080,
+            %host => "localhost",
+            port => 443,
+            host => "run.staging.damagebdd.com",
+            base_url => "https://run.staging.damagebdd.com",
+            modified => <<"20240424223344">>,
+            headers =>
+                [
+                    {<<"accept">>, "application/json"},
+                    {<<"content-type">>, "application/json"},
+                    {<<"user-agent">>, "damagebdd/1.0"}
+                ],
+            step_found => false,
+            example_context_variable =>
+                #{value => <<"non redaacted">>, secret => false},
+            example_context_variable_redacted =>
+                #{value => <<"ths will be redaacted">>, secret => true},
+            public_key => <<"ak_ssssssssssssadsadadas">>
+        },
+step([], Context, <<"Given">>, 0, ["I am using server", "test"], <<"">>).

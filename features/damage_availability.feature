@@ -3,19 +3,16 @@ Feature: Ensure availability of damagebdd system services
   Background:
     Given I notify "fail" to "discord" webhook
    
-  Scenario: ensure riak servers are available
+  Scenario: ensure damage servers are available
 
-    Given I am using server "http://threadripper0.lan:8098"
-    When I make a GET request to "/ping"
+    Given I am using server "https://damagebdd.com"
+    When I make a GET request to "/version"
     Then the response status must be "200"
 
-    Given I am using server "http://doombox.lan:8098"
-    When I make a GET request to "/ping"
+    Given I am using server "https://run.damagebdd.com"
+    When I make a GET request to "/status"
     Then the response status must be "200"
 
-    Given I am using server "http://zenbook.lan:8098"
-    When I make a GET request to "/ping"
-    Then the response status must be "200"
 
   Scenario: ensure IPFS servers are available
     Given I am using server "http://threadripper0.lan:5001"
@@ -49,7 +46,7 @@ Feature: Ensure availability of damagebdd system services
     Then the json at path "$.syncing" must be "false"
 
   Scenario: ensure zx is able to resolve packages
-    When I run the command "~/bin/zx list deps"
+    When I run the command "zx list deps"
     Then the exit status must be "0"
 
   Scenario: ensure LLM service is available
