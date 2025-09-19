@@ -680,17 +680,17 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, <<"2">>}}, State) ->
     {noreply, State};
 handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
     Message = parse_socketio_message(Message0),
-    ?LOG_DEBUG("cln handle_info gun_ws ~p", [Message]),
+    %?LOG_DEBUG("cln handle_info gun_ws ~p", [Message]),
     handle_event(ConnPid, StreamRef, Message),
     {noreply, State};
 handle_info({gun_ws, _, _, close} = Info, State) ->
-    ?LOG_DEBUG("cln handle_info got close on gun websocket Info ~p, State ~p", [Info, State]),
+    %?LOG_DEBUG("cln handle_info got close on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
 handle_info({gun_down, _, ws, normal, _} = Info, State) ->
-    ?LOG_DEBUG("cln handle_info got gun_down on gun websocket Info ~p, State ~p", [Info, State]),
+    %?LOG_DEBUG("cln handle_info got gun_down on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
 handle_info(Info, State) ->
-    ?LOG_DEBUG("cln handle_info got unknown on gun websocket Info ~p, State ~p", [Info, State]),
+    %?LOG_DEBUG("cln handle_info got unknown on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State}.
 handle_event(
     _ConnPid,
@@ -744,7 +744,6 @@ handle_event(
             StreamRef,
             {text, Message}
         );
-
 %% Inbound invoice was paid (authoritative)
 handle_event(
     _ConnPid,
@@ -754,9 +753,9 @@ handle_event(
         #{
             invoice_payment :=
                 #{
-                    label    := Label,
+                    label := Label,
                     preimage := Preimage,
-                    msat     := MSat
+                    msat := MSat
                 } = Pay
         }
     ]
@@ -767,21 +766,21 @@ handle_event(
         #{invoices := [Inv | _]} ->
             %% Enrich the invoice record with runtime facts and broadcast a single canonical event.
             PaidInv = Inv#{
-                event          => invoice_payment,
-                details        => Pay,
-                preimage       => Preimage,
-                received_msat  => MSat,
-                paid_at_unix   => erlang:system_time(second),
+                event => invoice_payment,
+                details => Pay,
+                preimage => Preimage,
+                received_msat => MSat,
+                paid_at_unix => erlang:system_time(second),
                 status_runtime => <<"paid">>
             },
             broadcast(invoice_paid, PaidInv);
         _ ->
             %% We didn't create/track this label locally (rare). Still surface a useful payload.
             broadcast(invoice_paid, #{
-                label         => Label,
-                preimage      => Preimage,
+                label => Label,
+                preimage => Preimage,
                 received_msat => MSat,
-                details       => Pay
+                details => Pay
             })
     end;
 handle_event(_ConnPid, _StreamRef, _UnknownEvent) ->
