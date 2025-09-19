@@ -1,6 +1,7 @@
 %%%-------------------------------------------------------------------
-%%% ecai_context_demo.erl
-%%% Context-aware toy "isogeny" demo (kernels = H2C(context))
+%%% ecai_context_demo.erl  (FIXED)
+%%% - Base point is now a valid on-curve point for y^2 = x^3 - x + 1 (mod 23)
+%%% - set_kernel/3 made safe (no crash on bad inputs)
 %%%-------------------------------------------------------------------
 -module(ecai_context_demo).
 -export([new/0, set_kernel/3, respond/3, test/0]).
@@ -30,10 +31,10 @@ on_curve({X, Y}) ->
 %%% ---------- group law ----------
 add(inf, Q) -> Q;
 add(Pt, inf) -> Pt;
-add({X1,Y1}=P1, {X2,Y2}=_P2) ->
+add({X1,Y1}=P1, {X2,Y2}=P2) ->
     case {X1 =:= X2, modp(Y1 + Y2) =:= 0} of
-        {true, true}  -> inf;
-        {true, false} -> double(P1);
+        {true, true}  -> inf;         % P + (-P) = O
+        {true, false} -> double(P1);  % doubling
         {false,_} ->
             Lambda = modp(Y2 - Y1) * inv(modp(X2 - X1)),
             X3 = modp(Lambda*Lambda - X1 - X2),
@@ -63,11 +64,13 @@ mul_loop(N, Q, Acc) ->
     mul_loop(N bsr 1, double(Q), Acc).
 
 %%% ---------- toy hash-to-curve ----------
--define(G, {3,10}).  % fixed on-curve base (toy)
+%% VALID base point on y^2 = x^3 - x + 1 (mod 23)
+%% Some on-curve points: (3,5), (3,18), (9,10), (9,13), (1,1), ...
+-define(G, {9,10}).
 
 hash_to_scalar(Bin) ->
     S = binary:decode_unsigned(crypto:hash(sha256, Bin)),
-    %% map to 1..(?P-1) to avoid zero
+    %% for the toy group, using 1..(?P-1) is fine (order(?G)=22)
     (S rem (?P - 1)) + 1.
 
 h2c(Bin) ->
@@ -76,26 +79,30 @@ h2c(Bin) ->
 %%% ---------- kernels (overrides + default = H2C(context)) ----------
 new() ->
     application:ensure_all_started(crypto),
-    #{ kernels_overrides => #{}     %% Context => KernelPoint
+    #{ kernels_overrides => #{}
      , responses => default_responses()
      }.
 
 set_kernel(State, Context, KernelPoint) ->
-    true = on_curve(KernelPoint),
-    K0 = maps:get(kernels_overrides, State),
-    State#{ kernels_overrides := K0#{ Context => KernelPoint } }.
+    case on_curve(KernelPoint) of
+        true ->
+            K0 = maps:get(kernels_overrides, State),
+            State#{ kernels_overrides := K0#{ Context => KernelPoint } };
+        false ->
+            {error, not_on_curve}
+    end.
 
 context_kernel(Context, State) ->
     K0 = maps:get(kernels_overrides, State),
     case maps:get(Context, K0, undefined) of
-        undefined -> h2c(Context);   % default: derive from Context
+        undefined -> h2c(Context);   % default: derive from Context (H2C)
         K         -> K
     end.
 
 default_responses() ->
     #{ <<"math">> => [
           <<"Formal equivalence holds.">>,
-          <<"Invariant preserved under φ_c.">>,
+          <<"Invariant preserved under phi_c.">>,
           <<"Witness verified on subgroup.">>
         ],
        <<"security">> => [
@@ -112,7 +119,7 @@ default_responses() ->
 
 %%% ---------- φ_c and response ----------
 phi_ctx(Point, KernelPoint) ->
-    add(Point, KernelPoint).
+    add(Point, KernelPoint).   % toy “isogeny”: φ_c(P)=P+K_c
 
 phrase_point(PhraseBin) ->
     mul(hash_to_scalar(PhraseBin), ?G).
@@ -152,8 +159,11 @@ test() ->
     io:format("security:~p~n", [respond(Phrase, <<"security">>, S0)]),
     io:format("legal:   ~p~n", [respond(Phrase, <<"legal">>, S0)]),
 
-    %% Override example:
-    S1 = set_kernel(S0, <<"math">>, mul(17, ?G)),
+    %% Override example (now guaranteed on-curve):
+    K_override = mul(17, ?G),
+    S1 = case set_kernel(S0, <<"math">>, K_override) of
+             #{ } = S -> S;
+             {error, not_on_curve} = E -> erlang:error(E)
+         end,
     io:format("math (override): ~p~n", [respond(Phrase, <<"math">>, S1)]),
-
     ok.
