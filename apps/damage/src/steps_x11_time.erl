@@ -90,7 +90,27 @@ step(_Cfg, Ctx, <<"Then">>, _N, ["I print x11 usage summary"], _Body) ->
     #{by_class := BC, by_title := BT} = x11_time:summary(),
     ?LOG_INFO("X11 by_class=~p", [pretty(BC)]),
     ?LOG_INFO("X11 by_title=~p", [pretty(BT)]),
-    Ctx.
+    Ctx;
+%% Notify via notify-send if time exceeds limit
+step(_Cfg, Ctx, <<"Then">>, _N,
+     ["notify if x11 time for", Target, Name, "exceeds", LimitStr, "with", Msg], _Body) ->
+    Summary = x11_time:summary(),
+    ByClass = maps:get(by_class, Summary, #{}),
+    ByTitle = maps:get(by_title, Summary, #{}),
+    Val = case Target of
+        "class" -> maps:get(list_to_binary(Name), ByClass, 0);
+        "alias" -> maps:get(list_to_binary(Name), ByClass, 0);
+        "title" -> maps:get(list_to_binary(Name), ByTitle, 0);
+        _ -> 0
+    end,
+    Limit = parse_dur(LimitStr),
+    case Val > Limit of
+        true ->
+            _ = os:cmd("notify-send 'Time Limit Exceeded' '" ++ Msg ++ "'"),
+            Ctx;
+        false ->
+            Ctx
+    end.
 
 %%% ===== Helpers =====
 
