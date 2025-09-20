@@ -354,34 +354,40 @@ check_execute_bdd(
                 ]),
 
             ?LOG_INFO("Dry run config ~p ~p", [DryConfig, DryContextIn]),
-            {200, DryRunRecord} = execute_bdd(
-                DryConfig,
-                ContextIn,
-                FeatureData
-            ),
-            #{cost := Cost, feature_hash := _FeatureHash, report_hash := _ReportHash} =
-                DryRunRecord,
-            ?LOG_INFO("Dry run record ~p", [DryRunRecord]),
-            case damage_ae:balance(AeAccount) of
-                Balance when Balance >= Cost ->
-                    ?LOG_INFO("run cost ~p ~p", [Cost, Balance]),
-                    Config0 =
-                        lists:flatten([Config | get_config(Context, Req0)]),
-                    execute_bdd(
-                        Config0,
-                        ContextIn,
-                        FeatureData
-                    );
+            case
+                execute_bdd(
+                    DryConfig,
+                    ContextIn,
+                    FeatureData
+                )
+            of
+                {200,
+                    #{cost := Cost, feature_hash := _FeatureHash, report_hash := _ReportHash} =
+                        DryRunRecord} ->
+                    ?LOG_INFO("Dry run record ~p", [DryRunRecord]),
+                    case damage_ae:balance(AeAccount) of
+                        Balance when Balance >= Cost ->
+                            ?LOG_INFO("run cost ~p ~p", [Cost, Balance]),
+                            Config0 =
+                                lists:flatten([Config | get_config(Context, Req0)]),
+                            execute_bdd(
+                                Config0,
+                                ContextIn,
+                                FeatureData
+                            );
+                        Other ->
+                            ?LOG_INFO("run denied cost ~p ~p", [Cost, Other]),
+                            {
+                                400,
+                                #{
+                                    message =>
+                                        <<"Insufficient balance, please top up balance at `/api/accounts/topup`">>,
+                                    balance => Other
+                                }
+                            }
+                    end;
                 Other ->
-                    ?LOG_INFO("run denied cost ~p ~p", [Cost, Other]),
-                    {
-                        400,
-                        #{
-                            message =>
-                                <<"Insufficient balance, please top up balance at `/api/accounts/topup`">>,
-                            balance => Other
-                        }
-                    }
+                    Other
             end
     end.
 do_action_tx(Json, State, Req) ->
