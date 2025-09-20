@@ -1,0 +1,11 @@
+# RFC 9116 security.txt for DamageBDD
+Contact: mailto:security@damagebdd.com
+Contact: https://njump.me/npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8
+Policy: https://damagebdd.com/security
+Canonical: https://damagebdd.com/.well-known/security.txt
+Encryption: https://damagebdd.com/security/keys/damagebdd-security.asc
+Acknowledgments: https://damagebdd.com/security/thanks
+Preferred-Languages: en
+Hiring: https://damagebdd.com/hiring
+Expires: 2026-09-20T23:59:59Z
+Signature: https://damagebdd.com/.well-known/security.txt.asc
