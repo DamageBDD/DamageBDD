@@ -123,9 +123,66 @@ step(
             Ctx;
         false ->
             Ctx
+    end;
+%% ===== Generic class+title steps =====
+%% Assert: time for <Class> titles matching <Regex> under <Dur>
+step(_Cfg, Ctx, <<"Then">>, _N,
+     ["x11 time for", Class, "titles matching", Regex, "should be under", LimitStr], _Body) ->
+    Val   = sum_class_regex(Class, Regex),
+    Limit = parse_dur(LimitStr),
+    case Val =< Limit of
+        true  -> Ctx;
+        false ->
+            Msg = io_lib:format("~s(~s) ~Bs (> ~Bs)", [Class, Regex, human(Val), human(Limit)]),
+            maps:put(fail, lists:flatten(Msg), Ctx)
+    end;
+
+%% Assert: time for <Class> titles matching <Regex> at least <Dur>
+step(_Cfg, Ctx, <<"Then">>, _N,
+     ["x11 time for", Class, "titles matching", Regex, "should be at least", MinStr], _Body) ->
+    Val = sum_class_regex(Class, Regex),
+    Min = parse_dur(MinStr),
+    case Val >= Min of
+        true  -> Ctx;
+        false ->
+            Msg = io_lib:format("~s(~s) ~Bs (< ~Bs)", [Class, Regex, human(Val), human(Min)]),
+            maps:put(fail, lists:flatten(Msg), Ctx)
+    end;
+
+%% Notify: if time for <Class> titles matching <Regex> exceeds <Dur>
+step(_Cfg, Ctx, <<"Then">>, _N,
+     ["notify if x11 time for", Class, "titles matching", Regex, "exceeds", LimitStr, "with", Msg], _Body) ->
+    Val   = sum_class_regex(Class, Regex),
+    Limit = parse_dur(LimitStr),
+    case Val > Limit of
+        true  ->
+            _ = os:cmd("notify-send 'Time Limit Exceeded' '" ++ Msg ++ "'"),
+            Ctx;
+        false -> Ctx
+    end.
+%% ===== Generic class+title matching helpers =====
+
+sum_class_regex(Class0, Regex) ->
+    Summary = x11_time:summary(),
+    BQ = maps:get(by_qual, Summary, #{}),
+    Class = to_bin(Class0),
+    {ok, RE} = re:compile(Regex, [unicode, caseless]),
+    lists:sum([ V || {K, V} <- maps:to_list(BQ), match_class_title(Class, K, RE) ]).
+
+match_class_title(Class, Key, RE) when is_binary(Key) ->
+    case binary:split(Key, <<"|">>, [global, trim]) of
+        [KClass, KTitle] when KClass =:= Class ->
+            case re:run(KTitle, RE) of
+                {match, _} -> true;
+                nomatch    -> false
+            end;
+        _ -> false
     end.
 
-%%% ===== Helpers =====
+
+x_title(_, _) -> false.
+
+parse_limit(Str) -> parse_dur(Str).  %% reuse existing helper
 
 pretty(Map) ->
     lists:sort(
