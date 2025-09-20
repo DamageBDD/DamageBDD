@@ -459,15 +459,6 @@ textarea#lightning-invoice-input {
   margin: auto;
 }
 
-/* Fix dark mode modal content text */
-.modal__content,
-.modal__title,
-.modal__content p,
-.modal__content label,
-.modal__content input,
-.modal__footer button {
-  color: #e0e0e0 !important;
-}
 
 /* Close (X) button styling */
 .modal__close {

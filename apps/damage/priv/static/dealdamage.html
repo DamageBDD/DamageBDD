@@ -24,6 +24,7 @@
     <link rel="stylesheet" type="text/css" href='/static/css/toast.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/damage-lightning-ui.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/feature-picker.css' />
     <link rel="stylesheet" type="text/css" href="/static/css/tango-steven-theme.css" />
     <link rel="stylesheet" type="text/css" href='/static/css/prism.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/main.css' />
@@ -296,6 +297,23 @@
         </div>
       </div>
     </div>
+    <div class="modal micromodal-slide" id="feature-picker-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1">
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">
+              Pick a sample feature to start. 
+            </h2>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+                <div id="picker"></div>
+          </main>
+          <footer class="modal__footer">
+            <button class="modal__btn " data-micromodal-close aria-label="Close this dialog window">Cancel</button>
+          </footer>
+        </div>
+      </div>
+    </div>
     <div id="background"></div>
     <div id="content">
       <div class="topbar">
@@ -331,24 +349,14 @@
               <form id="damageForm">
               <div>
                 <h3>Create/Edit Feature</h3>
-                <p>Write the test case in the textarea below:</p>
-                <p>You can find more example test cases <a href="https://github.com/jagguli/DamageBDD/tree/master/features" target="_blank">here</a>:
-                </p>
+                <button id="picker-dialog-btn"
+                        class="styled-btn"
+                        aria-label="Select Feature."
+                        title="Select a Feature to begin">Select Feature To Begin</button>
               </div>
-                <!--<textarea type="text" class="input-box" id="damageInput" placeholder="Enter test case here ..."></textarea>-->
-                  <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted" rows=20>
-Feature: Http test feature
-  Scenario: Test post json
-    Given I am using server "https://run.damagebdd.com"
-    And I set "Content-Type" header to "application/json"
-    When I make a POST request to "/tests/echo/"
-    """
-    {
-        "test_key": "test_data"
-    }
-    """
-    Then the response status must be "200"
-    Then the json at path "$.test_key" must be "test_data"
+                <p> Edit Feature in the textarea below.
+                </p>
+                  <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted" placeholder="Enter test case here ..." rows=20>
                   </textarea>
                 <div id="runsettings">
                   <!--<label for="difficulty">Concurrency:</label>
@@ -469,6 +477,7 @@ Feature: Http test feature
       <script src="/static/js/reports.js"></script>
       <script src="/static/js/schedules.js"></script>
       <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
+      <script type="module" src="/static/js/damage-scheduler-ui.js"></script>
       <script type='module' src="/static/js/main.js" defer></script>
   </body>
 

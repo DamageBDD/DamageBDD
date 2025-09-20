@@ -1,4 +1,5 @@
  import * as wallet from "/static/js/wallet.js";
+import { initDamageBDDPicker } from '/static/js/featurePicker.js';
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 function showConnectStatus(message, type = 'info') {
   const statusDiv = document.getElementById('connect-status');
@@ -185,7 +186,28 @@ function generateDamageQR(address){
 		}
 			var tabs =Tabby('[data-tabs]');
 			tabs.toggle('execution');
+const hashes = [
+    { cid: 'Qmb4MG3F6W8P7Xe64snfpmfgTCURoq6ZjSMRLvFxW1W9DP', label: 'Echo Test' },
+	'QmYv9TtWt38aXY4AGiqM4H4myF8UCp6TE8SWtDVK7PoA4i',
+	'QmcN6mqiVCdp5ZGarWVXwKT3UPwbFgzRoGgjaNcP9vXB1a',
+	'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
+	'QmS1RRvJ2Y6SyvDUZNELsvBSefov4SisUQG97xH2vybxqu',
+	'QmdvmxqusyjGDPDXni2nMAAthBxrXUuoJmR2whsRmVo8CL',
+	'QmcLedvbu4jXNcyJSDXNKPrhmK6iM4Ff2SwVkXi2AX3prP',
+	'QmeTPPWN5c5ZBq6mteX6k6inZhVTm9kf27KkTPVbsYPFGb',
+	'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
+	'QmWy67JWeujue9jLhnPJe9xHUSjjrSB41KtSGepR2K77R8',
+	'QmYJF7LbpHvuUXVpjWAksht3ypGvzPbViCo16gFmiCUa1D'
+  ];
 
+  initDamageBDDPicker({
+	opener: '#picker-dialog-btn',
+    mount: '#picker',
+    editor: '#damageTextArea',
+    hashes,
+    gateway: window.location.origin + '/features/', // swap for your private gateway if needed
+    title: 'Pick a DamageBDD Feature',
+  });
 	}); // end DOMContentLoaded 
 
 
