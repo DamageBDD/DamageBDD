@@ -1,0 +1,20 @@
+#requires -RunAsAdministrator
+Write-Host "Enabling WSL + VM Platform" -ForegroundColor Cyan
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
+
+if (-not (wsl -l -q | Select-String -Pattern "^Ubuntu$")) {
+  Write-Host "Installing Ubuntu..." -ForegroundColor Cyan
+  Invoke-WebRequest https://aka.ms/wslubuntu2004 -OutFile ubuntu.appx -UseBasicParsing
+  Add-AppxPackage .\ubuntu.appx
+  Remove-Item .\ubuntu.appx
+}
+
+wsl -d Ubuntu -- echo "WSL Ubuntu ready."
+$domain = "{{domain}}"
+$email  = "{{email}}"
+
+$cmd = @"
+bash -lc 'sudo apt update && sudo apt install -y curl && curl -fsSL https://{{domain}}/install.sh?domain={{domain}}&email={{email}} | bash'
+"@
+wsl -d Ubuntu sh -c $cmd

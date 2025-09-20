@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DamageBDD — One-Click Installer</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:880px;margin:32px auto;padding:0 16px}
+    label{display:block;margin-top:12px;font-weight:600}
+    input{width:100%;padding:8px 10px;margin-top:6px;border:1px solid #ccc;border-radius:6px}
+    code,pre{background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;display:block;overflow:auto}
+    button{margin-top:16px;padding:10px 14px;border-radius:8px;border:1px solid #334155;background:#0ea5e9;color:#fff;cursor:pointer}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .note{color:#334155;margin-top:8px;font-size:14px}
+  </style>
+</head>
+<body>
+  <h1>DamageBDD — One-Click Installer</h1>
+
+  <form method="GET" action="/install.sh">
+    <label>Domain (TLS)</label>
+    <input name="domain" value="{{domain}}" required>
+
+    <div class="row">
+      <div>
+        <label>Email (Let’s Encrypt)</label>
+        <input name="email" value="{{email}}" required>
+      </div>
+      <div>
+        <label>Port</label>
+        <input name="port" value="{{port}}">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Repo</label>
+        <input name="repo" value="{{repo}}">
+      </div>
+      <div>
+        <label>Branch</label>
+        <input name="branch" value="{{branch}}">
+      </div>
+    </div>
+
+    <button type="submit">Download install.sh</button>
+
+    <div class="note">Tip: run directly with a one-liner:</div>
+    <pre><code>curl -fsSL "https://{{domain}}/install.sh?domain={{domain}}&email={{email}}&port={{port}}&repo={{repo}}&branch={{branch}}" | bash</code></pre>
+
+    <div class="note">Windows (PowerShell as Administrator):</div>
+    <pre><code>iwr "https://{{domain}}/install.ps1?domain={{domain}}&email={{email}}" | iex</code></pre>
+  </form>
+</body>
+</html>

@@ -29,6 +29,7 @@ get_trails() ->
             damage_webhooks,
             damage_static,
             damage_http,
+            damage_install_http,
             damage_market,
             damage_schedule,
             damage_invoicing,
