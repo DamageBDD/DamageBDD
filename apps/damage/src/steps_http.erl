@@ -836,4 +836,4 @@ test_using_server() ->
                 #{value => <<"ths will be redaacted">>, secret => true},
             public_key => <<"ak_ssssssssssssadsadadas">>
         },
-step([], Context, <<"Given">>, 0, ["I am using server", "test"], <<"">>).
+    step([], Context, <<"Given">>, 0, ["I am using server", "test"], <<"">>).

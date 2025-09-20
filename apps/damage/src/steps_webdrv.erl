@@ -13,7 +13,7 @@
 -export([test/0]).
 -export([ensure_session/2]).
 
--define(CHROMEDRIVER, "http://localhost:9222/").
+-define(CHROMEDRIVER, "http://localhost:9515/").
 
 %-define(CHROMEDRIVER, "http://localhost:9515/").
 start_session(ChromeDriver, Context) when is_list(ChromeDriver) ->
@@ -37,11 +37,16 @@ start_session(ChromeDriver, Context) when is_list(ChromeDriver) ->
 ensure_session(Config, Context) ->
     case catch maps:get(chromedriver, Context, none) of
         none ->
-            {chromedriver, ChromeDriver} = lists:keyfind(chromedriver, 1, Config),
-            start_session(ChromeDriver, Context);
-        _WebDriverPid0 ->
-            ?LOG_INFO("Using default chromedriver ~p", [?CHROMEDRIVER]),
-            start_session(?CHROMEDRIVER, Context)
+            case lists:keyfind(chromedriver, 1, Config) of
+                {chromedriver, ChromeDriver} ->
+                    start_session(ChromeDriver, Context);
+                _ ->
+                    ?LOG_INFO("Using default chromedriver ~p", [?CHROMEDRIVER]),
+                    start_session(?CHROMEDRIVER, Context)
+            end;
+        ChromeDriver ->
+            ?LOG_INFO("Using chromedriver ~p", [ChromeDriver]),
+            start_session(ChromeDriver, Context)
     end.
 
 step(Config, Context, <<"And">>, _N, ["I click on the link", Link], _) ->
