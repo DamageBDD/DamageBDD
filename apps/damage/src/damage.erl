@@ -248,7 +248,8 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                 #{
                     report_dir =>
                         string:join([DamageApi, "reports", binary_to_list(ReportHash)], "/"),
-                    run_id => RunId
+                    run_id => RunId,
+                    feature_hash => FeatureHash
                 }
             ),
             FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
@@ -378,7 +379,7 @@ execute_step_function(
                 [Config, Context, StepKeyWord, LineNo, Body, Args]
             );
         _ ->
-            ?LOG_DEBUG("execute_step_function ~p ~p", [Context, StepModule]),
+            %?LOG_DEBUG("execute_step_function ~p ~p", [Context, StepModule]),
             apply(
                 list_to_atom(StepModule),
                 step,
@@ -476,11 +477,11 @@ execute_step_module(
                 StepModule, Step, Other
             ]),
             metrics:update(fail, AeAccount),
-            ?LOG_ERROR("Step execution failed! ~p", [Other]),
+            ?LOG_ERROR("Step execution failed! unhandled ~p", [Reason]),
             formatter:format(
                 Config,
                 step,
-                {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, Reason}}
+                {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, <<"Unhandled">>}}
             ),
             maps:put(
                 step_found,
@@ -491,7 +492,7 @@ execute_step_module(
 
 step_spend(Context) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
-    ?LOG_DEBUG("Step spend ~p", [Spend]),
+    %?LOG_DEBUG("Step spend ~p", [Spend]),
     damage_ae:spend(maps:get(public_key, Context), Spend),
     maps:remove(step_spend, Context).
 
