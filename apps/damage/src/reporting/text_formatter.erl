@@ -145,8 +145,8 @@ format(
 ) ->
   ok = write_file(Config, "\n~s \n\n~s\n", [StepStatement, Args]);
 
-format(Config, summary, #{report_dir := ReportDir, run_id := RunId}) ->
-  ok = write_file(Config, "\nSummary: ~s ~p\n", [ReportDir, RunId]).
+format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash}) ->
+  ok = write_file(Config, "\nSummary: \n Feature: ~s\nReport ~s\nRunId: ~p\n", [FeatureHash, ReportDir, RunId]).
 
 
 format_args([]) -> <<"\n">>;

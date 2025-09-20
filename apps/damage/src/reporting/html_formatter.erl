@@ -84,8 +84,8 @@ format(
 ) ->
   ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]);
 
-format(Config, summary, #{report_dir := FeatureHash, run_id := RunId}) ->
-  ok = write_file(Config, "<h2>Summary</h2>: ~s ~p\n", [FeatureHash, RunId]).
+format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash}) ->
+  ok = write_file(Config, "<h2>Summary</h2> <br> Feature: ~s<br>Report ~s<br>RunId: ~p<br>", [FeatureHash, ReportDir, RunId]).
 
 format_args([]) -> <<"\n">>;
 format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p<br>">>, [Reason]);
