@@ -85,8 +85,8 @@ sudo brew services start nginx  # or: sudo nginx
 mkdir -p ~/apps && cd ~/apps
 
 # Clone your repo (replace with your origin)
-git clone https://github.com/<your-org>/damagebdd.git
-cd damagebdd
+git clone https://github.com/DamageBDD/DamageBDD.git
+cd DamageBDD
 
 # If you have bootstrap helpers:
 #  - bootstrap_sudoers.sh (optional convenience for admin paths)
