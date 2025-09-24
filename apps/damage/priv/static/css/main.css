@@ -677,3 +677,31 @@ ul[data-tabs] li a:hover {
 .toolbar-items div:hover {
   color: #fff;
 }
+/* Make the topbar Install button look obviously clickable */
+.install-btn {
+  background: linear-gradient(to right, #28a745, #218838);
+  color: #fff;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s ease-in-out;
+  user-select: none;
+}
+.install-btn:hover { transform: scale(1.03); }
+
+/* Uniform inputs/selects inside the install wizard */
+#install-modal input, #install-modal select, #install-modal textarea {
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+#installRequestForm label {
+  display: block;
+  margin: .5rem 0 .25rem;
+  font-weight: 500;
+}
+
