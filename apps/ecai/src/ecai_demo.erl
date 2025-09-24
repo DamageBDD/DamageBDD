@@ -7,7 +7,7 @@
 -export([test/0, toy_isogeny/2, on_curve/1, add/2, double/1]).
 
 -define(A, -1).
--define(B,  1).
+-define(B, 1).
 -define(P, 23).
 
 %%% ---------- helpers ----------
@@ -17,7 +17,8 @@ modp(N) ->
 inv(A) ->
     modinv(modp(A), ?P).
 
-modinv(0, _P) -> error(no_inverse);
+modinv(0, _P) ->
+    error(no_inverse);
 modinv(A, P) ->
     {G, X, _Y} = egcd(A, P),
     case G of
@@ -25,26 +26,31 @@ modinv(A, P) ->
         _ -> error(no_inverse)
     end.
 
-egcd(0, B) -> {B, 0, 1};
+egcd(0, B) ->
+    {B, 0, 1};
 egcd(A, B) ->
     {G, X1, Y1} = egcd(B rem A, A),
     {G, Y1 - (B div A) * X1, X1}.
 
 %%% ---------- curve predicates ----------
-on_curve(inf) -> true;
+on_curve(inf) ->
+    true;
 on_curve({X, Y}) ->
-    L = modp(Y*Y),
-    R = modp(X*X*X + ?A*X + ?B),
+    L = modp(Y * Y),
+    R = modp(X * X * X + ?A * X + ?B),
     L =:= R.
 
 %%% ---------- group law ----------
 %% Point addition with full cases (including infinity and doubling)
-add(inf, Q) -> Q;
-add(Pt, inf) -> Pt;
+add(inf, Q) ->
+    Q;
+add(Pt, inf) ->
+    Pt;
 add({X1, Y1} = P1, {X2, Y2} = P2) ->
     case {X1 =:= X2, modp(Y1 + Y2) =:= 0} of
         %% P + (-P) = inf
-        {true, true} -> inf;
+        {true, true} ->
+            inf;
         %% Doubling case (P == Q)
         {true, false} ->
             double(P1);
@@ -52,19 +58,22 @@ add({X1, Y1} = P1, {X2, Y2} = P2) ->
         {false, _} ->
             %% IMPORTANT FIX: use ?P (the modulus), not a bare P
             Lambda = modp((Y2 - Y1)) * inv(modp(X2 - X1)),
-            X3 = modp(Lambda*Lambda - X1 - X2),
-            Y3 = modp(Lambda*(X1 - X3) - Y1),
+            X3 = modp(Lambda * Lambda - X1 - X2),
+            Y3 = modp(Lambda * (X1 - X3) - Y1),
             {X3, Y3}
     end.
 
-double(inf) -> inf;
+double(inf) ->
+    inf;
 double({X, Y}) ->
     case modp(Y) of
-        0 -> inf; % tangent is vertical
+        % tangent is vertical
+        0 ->
+            inf;
         _ ->
-            Lambda = modp(3*X*X + ?A) * inv(modp(2*Y)),
-            X3 = modp(Lambda*Lambda - 2*X),
-            Y3 = modp(Lambda*(X - X3) - Y),
+            Lambda = modp(3 * X * X + ?A) * inv(modp(2 * Y)),
+            X3 = modp(Lambda * Lambda - 2 * X),
+            Y3 = modp(Lambda * (X - X3) - Y),
             {X3, Y3}
     end.
 
@@ -76,8 +85,8 @@ toy_isogeny(Pt, KernelPt) ->
 %%% ---------- demo ----------
 test() ->
     %% Two known points on y^2 = x^3 - x + 1 mod 23
-    P = {3,10},
-    K = {9,7},
+    P = {3, 10},
+    K = {9, 7},
 
     io:format("P on curve? ~p~n", [on_curve(P)]),
     io:format("K on curve? ~p~n", [on_curve(K)]),

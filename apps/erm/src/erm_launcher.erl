@@ -220,4 +220,63 @@ update_grid(FilteredApps, State) ->
     GridSizer = wxFlexGridSizer:new(4, 5, 10, 10),
     add_apps_to_grid(FilteredApps, State#state.panel, GridSizer),
     wxSizer:replace(State#state.sizer, GridSizer),
-    wxPanel:layout(State#state.panel).
+    wxPanel:layout(State#state.panel),
+    proportional_resize_with_alignments(State#state.panel).
+
+create_box(Parent) ->
+    Win = wxWindow:new(Parent, ?wxID_ANY, [
+        {style, ?wxBORDER_SIMPLE},
+        {size, {50, 25}}
+    ]),
+    wxWindow:setBackgroundColour(Win, ?wxWHITE),
+    Win.
+proportional_resize_with_alignments(Parent) ->
+    % rows, cols, vgap, hgap
+    GridSizer = wxGridSizer:new(3, 3, 2, 2),
+
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_TOP bor ?wxALIGN_LEFT}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_TOP bor ?wxALIGN_CENTER_HORIZONTAL}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_TOP bor ?wxALIGN_RIGHT}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_CENTER_VERTICAL bor ?wxALIGN_LEFT}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_CENTER}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_CENTER_VERTICAL bor ?wxALIGN_RIGHT}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_BOTTOM bor ?wxALIGN_LEFT}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_BOTTOM bor ?wxALIGN_CENTER_HORIZONTAL}]
+    ),
+    wxSizer:add(
+        GridSizer,
+        create_box(Parent),
+        [{proportion, 0}, {flag, ?wxSHAPED bor ?wxALIGN_BOTTOM bor ?wxALIGN_RIGHT}]
+    ),
+    GridSizer.

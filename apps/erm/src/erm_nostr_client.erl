@@ -9,12 +9,12 @@
 
 -record(state, {
     frame,
-                config,
+    config,
     listbox,
     input,
     relay = "wss://relay.damus.io",
-panel,
-editor
+    panel,
+    editor
 }).
 -export([show/0]).
 -export([close/0]).
@@ -46,7 +46,7 @@ do_init(Config) ->
             frame = Frame,
             config = Config,
             panel = Panel,
-           listbox = ListBox,
+            listbox = ListBox,
             editor = Input
         },
     wxPanel:connect(ListBox, key_up, []),
