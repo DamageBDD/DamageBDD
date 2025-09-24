@@ -85,7 +85,10 @@ function generateDamageQR(address){
 			MicroModal.show("login-modal");
 		});
 		document.getElementById("loginSubmitBtn").addEventListener("click", submitLoginForm);
-		document.getElementById("connect-button").addEventListener("click", connectWalletSmart1);
+		document.getElementById("connect-button").addEventListener("click",(event) => {
+			connectWalletSmart1();
+			event.preventDefault();
+		});
 		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
 			event.preventDefault();
 		});
