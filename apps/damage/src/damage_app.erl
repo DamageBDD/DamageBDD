@@ -45,7 +45,7 @@ get_trails() ->
         ],
     Trails =
         [
-            {"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
+            %{"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
             {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}},
             {"/.well-known/security.txt", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt"}},
@@ -105,7 +105,6 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(fast_yaml),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
     {ok, _} = application:ensure_all_started(cowboy_telemetry),
-    {ok, _} = application:ensure_all_started(erlexec),
     {ok, _} = application:ensure_all_started(throttle),
     {ok, _} = application:ensure_all_started(gen_smtp),
     {ok, _} = application:ensure_all_started(gproc),

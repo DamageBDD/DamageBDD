@@ -18,7 +18,7 @@
 trails() ->
     [
         trails:trail(
-            "/ui/dealdamage",
+            "/",
             ?MODULE,
             #{action => index},
             #{get => #{tags => ["UI", "HTML"], produces => ["text/html"]}}
@@ -65,9 +65,10 @@ render_full_page(Ctx) ->
     SignM = render_tpl(?TPL("signup_modal.mustache"), Ctx),
     LogOutM = render_tpl(?TPL("logout_modal.mustache"), Ctx),
     SchM = render_tpl(?TPL("schedule_modal.mustache"), Ctx),
-    NpkM = render_tpl(?TPL("node_public_key_modal.mustache"), Ctx),
+    NpkM = render_tpl(?TPL("node_details_modal.mustache"), Ctx),
     InstM = render_tpl(?TPL("install_modal.mustache"), Ctx),
     PickM = render_tpl(?TPL("feature_picker_modal.mustache"), Ctx),
+    NotifyM = render_tpl(?TPL("notification_modal.mustache"), Ctx),
     Foot = render_tpl(?TPL("footer.mustache"), Ctx),
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
@@ -86,6 +87,7 @@ render_full_page(Ctx) ->
         node_public_key_modal => NpkM,
         install_modal => InstM,
         feature_picker_modal => PickM,
+        notification_modal => NotifyM,
         footer => Foot
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).

@@ -1,14 +1,21 @@
- import * as wallet from "/static/js/wallet.js";
+import * as wallet from "/static/js/wallet.js";
 import { initDamageBDDPicker } from '/static/js/featurePicker.js';
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 function showConnectStatus(message, type = 'info') {
-  const statusDiv = document.getElementById('connect-status');
-  statusDiv.textContent = message;
-  statusDiv.className = type; // e.g., 'success', 'error', 'info'
+	const statusDiv = document.getElementById('connect-status');
+	statusDiv.textContent = message;
+	statusDiv.className = type; // e.g., 'success', 'error', 'info'
+}
+function showNotification(notification) {
+	MicroModal.show("notification-modal");
+	const notifyTitle = document.getElementById('modal-notification-title');
+	notifyTitle.textContent = notification.title;
+	const notifyContent = document.getElementById('modal-notification-content');
+	notifyContent.textContent = notification.content;
 }
 function generateDamageQR(address){
 	//showLightningQR({containerId:"qrcode-damage", address: address});
-		document.getElementById("qrcode-damage").innerText = "";
+	document.getElementById("qrcode-damage").innerText = "";
 	var qrcode = new QRCode(document.getElementById("qrcode-damage"), {
 		text: localStorage.getItem("address"),
 		colorDark : "#000000",
@@ -22,7 +29,6 @@ function generateDamageQR(address){
 	// code that should be taken care of right away
 	window.dataLayer = window.dataLayer || [];
 
-	//https://codeshack.io/elegant-toast-notifications-javascript/
 
 	document.addEventListener("DOMContentLoaded", async function() {
 		var kycForm = document.getElementById('kycForm');
@@ -44,14 +50,14 @@ function generateDamageQR(address){
 				})
 					.then(response => response.json())
 					.then(data => {
-						toasts.push({
+						showNotification({
 							title: 'Success',
 							content: data.message,
 							style: 'success'
 						});
 					})
 					.catch((error) => {
-						toasts.push({
+						showNotification({
 							title: 'Request Failed',
 							content: error.message,
 							style: 'error'
@@ -61,11 +67,6 @@ function generateDamageQR(address){
 		}
 
 		document.getElementById("login-modal").addEventListener("keydown", function(event){
-			if (event.keyCode === 13) {
-				submitLoginForm(event);
-			}
-		});
-		document.getElementById("signup-modal").addEventListener("keydown", function(event){
 			if (event.keyCode === 13) {
 				submitLoginForm(event);
 			}
@@ -82,11 +83,25 @@ function generateDamageQR(address){
 		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
 			event.preventDefault();
 		});
+
+		document.getElementById("signup-modal").addEventListener("keydown", function(event){
+			if (event.keyCode === 13) {
+				submitSignUpForm(event);
+			}
+		});
+		document.getElementById("signupForm").addEventListener("submit", (event) => {
+			event.preventDefault();
+		});
+		document.getElementById("signup-username").addEventListener("keydown", (event) => {
+			if (event.key === "Enter") {
+				submitSignUpForm(event);
+			}
+		});
 		document.getElementById("signupSubmitBtn").addEventListener("click", submitSignUpForm);
 		document.getElementById("signupDialogBtn").addEventListener("click", (event) => {
-			event.preventDefault();
 			MicroModal.close("login-modal");
 			MicroModal.show("signup-modal");
+			event.preventDefault();
 		});
 		document.getElementById("loginResetPasswdBtn").addEventListener("click", submitForgotPasswordForm);
 		document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
@@ -108,8 +123,8 @@ function generateDamageQR(address){
 			generateInvoice();
 		});
 		document.getElementById("logoutBtn").addEventListener("click",(event) => {
-			event.preventDefault();
 			MicroModal.show("logout-modal");
+			event.preventDefault();
 		});
 		const balanceDiv = document.getElementById("balanceDiv");
 		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
@@ -169,7 +184,7 @@ function generateDamageQR(address){
 			var tab = event.target;
 			var content = event.detail.content;
 			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
-				  Reports.renderRunReports(address, { limit: 10 });
+				Reports.renderRunReports(address, { limit: 10 });
 			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
 				if(localStorage.getItem("access_token") != undefined){
 					updateSchedulesTable();}
@@ -200,45 +215,45 @@ function generateDamageQR(address){
 		fetchVersion();
 
 
-          document.querySelectorAll(".toggle-password").forEach((btn) => {
-              btn.addEventListener("click", () => {
-                  const input = document.querySelector(`input[name='${btn.dataset.target}']`);
-                  if (input.type === "password") {
-                      input.type = "text";
-                      btn.textContent = "🙈"; // Eye with slash
-                  } else {
-                      input.type = "password";
-                      btn.textContent = "👁️"; // Eye
-                  }
-              });
-          });
+        document.querySelectorAll(".toggle-password").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const input = document.querySelector(`input[name='${btn.dataset.target}']`);
+                if (input.type === "password") {
+                    input.type = "text";
+                    btn.textContent = "🙈"; // Eye with slash
+                } else {
+                    input.type = "password";
+                    btn.textContent = "👁️"; // Eye
+                }
+            });
+        });
 		if(isAuthenticated()){
-					generateDamageQR(address);
+			generateDamageQR(address);
 		}
-			var tabs =Tabby('[data-tabs]');
-			tabs.toggle('execution');
-const hashes = [
-    { cid: 'Qmb4MG3F6W8P7Xe64snfpmfgTCURoq6ZjSMRLvFxW1W9DP', label: 'Echo Test' },
-	'QmYv9TtWt38aXY4AGiqM4H4myF8UCp6TE8SWtDVK7PoA4i',
-	'QmcN6mqiVCdp5ZGarWVXwKT3UPwbFgzRoGgjaNcP9vXB1a',
-	'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
-	'QmS1RRvJ2Y6SyvDUZNELsvBSefov4SisUQG97xH2vybxqu',
-	'QmdvmxqusyjGDPDXni2nMAAthBxrXUuoJmR2whsRmVo8CL',
-	'QmcLedvbu4jXNcyJSDXNKPrhmK6iM4Ff2SwVkXi2AX3prP',
-	'QmeTPPWN5c5ZBq6mteX6k6inZhVTm9kf27KkTPVbsYPFGb',
-	'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
-	'QmWy67JWeujue9jLhnPJe9xHUSjjrSB41KtSGepR2K77R8',
-	'QmYJF7LbpHvuUXVpjWAksht3ypGvzPbViCo16gFmiCUa1D'
-  ];
+		var tabs =Tabby('[data-tabs]');
+		tabs.toggle('execution');
+		const hashes = [
+			{ cid: 'Qmb4MG3F6W8P7Xe64snfpmfgTCURoq6ZjSMRLvFxW1W9DP', label: 'Echo Test' },
+			'QmYv9TtWt38aXY4AGiqM4H4myF8UCp6TE8SWtDVK7PoA4i',
+			'QmcN6mqiVCdp5ZGarWVXwKT3UPwbFgzRoGgjaNcP9vXB1a',
+			'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
+			'QmS1RRvJ2Y6SyvDUZNELsvBSefov4SisUQG97xH2vybxqu',
+			'QmdvmxqusyjGDPDXni2nMAAthBxrXUuoJmR2whsRmVo8CL',
+			'QmcLedvbu4jXNcyJSDXNKPrhmK6iM4Ff2SwVkXi2AX3prP',
+			'QmeTPPWN5c5ZBq6mteX6k6inZhVTm9kf27KkTPVbsYPFGb',
+			'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
+			'QmWy67JWeujue9jLhnPJe9xHUSjjrSB41KtSGepR2K77R8',
+			'QmYJF7LbpHvuUXVpjWAksht3ypGvzPbViCo16gFmiCUa1D'
+		];
 
-  initDamageBDDPicker({
-	opener: '#picker-dialog-btn',
-    mount: '#picker',
-    editor: '#damageTextArea',
-    hashes,
-    gateway: window.location.origin + '/features/', // swap for your private gateway if needed
-    title: 'Pick a DamageBDD Feature',
-  });
+		initDamageBDDPicker({
+			opener: '#picker-dialog-btn',
+			mount: '#picker',
+			editor: '#damageTextArea',
+			hashes,
+			gateway: window.location.origin + '/features/', // swap for your private gateway if needed
+			title: 'Pick a DamageBDD Feature',
+		});
 	}); // end DOMContentLoaded 
 
 
@@ -453,7 +468,7 @@ const hashes = [
 	function submitSignUpForm(event) {
 		const username = document.getElementById("signup-username").value;
 		if (!validateEmail(username)) {
-			toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			showNotification({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
 			return;
 		}
 
@@ -473,15 +488,15 @@ const hashes = [
 			})
 			.then(data => {
 				if (data.status == "ok") {
-					toasts.push({
+					showNotification({
 						title: 'Success - Confirmation Required',
 						content: data.message,
 						style: 'success'
 					});
 				} else {
-					toasts.push({
-						title: 'Login Failed',
-						content: 'Authentication Un-Successful.',
+					showNotification({
+						title: 'Signup Failed',
+						content: 'Signup Error.',
 						style: 'error'
 					});
 				}
@@ -497,7 +512,8 @@ const hashes = [
 		const password = document.getElementById("password").value;
 
 		if (!validateEmail(username)) {
-			toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			showNotification({
+				title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
 			return;
 		}
 
@@ -541,7 +557,7 @@ const hashes = [
 		const username = document.getElementById("login-username").value;
 
 		if (!validateEmail(username)) {
-			toasts.push({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			showNotification({title:"Invalid email", content: "Please enter a valid email address.",  style:"error"});
 			return;
 		}
 
@@ -560,13 +576,13 @@ const hashes = [
 			})
 			.then(data => {
 				if (data.status === "ok") {
-					toasts.push({
+					showNotification({
 						title: 'Reset Password Success',
 						content: data.message,
 						style: 'success'
 					});
 				} else {
-					toasts.push({
+					showNotification({
 						title: 'Login Failed',
 						content: 'Authentication Un-Successful.',
 						style: 'error'
@@ -679,7 +695,7 @@ const hashes = [
 									});
 				} else {
 					console.error("Error Invoice fetching failed: ", data);
-					toasts.push({
+					showDialog({
 						title: 'Request Failed',
 						content: data.message,
 						style: 'error'
@@ -688,7 +704,7 @@ const hashes = [
 			})
 			.catch(error => {
 				console.error("Error Invoice fetching failed: ", error.message);
-				toasts.push({
+				showDialog({
 					title: 'Request Failed',
 					content: error.message,
 					style: 'error'
@@ -728,121 +744,121 @@ function copyAddressToClipboard(){
 }
 
 async function connectWalletSmart1() {
-  const status = document.getElementById('connect-status');
-  status.textContent = "Connecting...";
-  status.className = "info";
-	    const origin = window.location.origin;
+	const status = document.getElementById('connect-status');
+	status.textContent = "Connecting...";
+	status.className = "info";
+	const origin = window.location.origin;
 
-  try {
-    await wallet.connectWalletSmart(
-		origin, origin
-    );
-	  var address = await wallet.getAddress();
-	  localStorage.setItem("address", address);
-	  localStorage.setItem("wallet_connected", address);
+	try {
+		await wallet.connectWalletSmart(
+			origin, origin
+		);
+		var address = await wallet.getAddress();
+		localStorage.setItem("address", address);
+		localStorage.setItem("wallet_connected", address);
 
-    const sessionMeta = JSON.stringify({
-      token: address, // or another identifier
-      timestamp: new Date().toISOString()
-    });
+		const sessionMeta = JSON.stringify({
+			token: address, // or another identifier
+			timestamp: new Date().toISOString()
+		});
 
-    const signed = await wallet.signMessageSmart(
-		sessionMeta, origin, origin
-    );
-	  var signature = false;
-	  if(signed.ok){
-		  signature = signed.result.signature;
-	  }
+		const signed = await wallet.signMessageSmart(
+			sessionMeta, origin, origin
+		);
+		var signature = false;
+		if(signed.ok){
+			signature = signed.result.signature;
+		}
 
-    // ✅ Submit to server for login verification
-	const loginResponse = await fetch(`${origin}/accounts/auth`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Wallet ${signature}`
-      },
-      body: JSON.stringify({
-          address: address,
-        meta: sessionMeta,
-        signature: signature
-      })
-    });
+		// ✅ Submit to server for login verification
+		const loginResponse = await fetch(`${origin}/accounts/auth`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Authorization": `Wallet ${signature}`
+			},
+			body: JSON.stringify({
+				address: address,
+				meta: sessionMeta,
+				signature: signature
+			})
+		});
 
-    const result = await loginResponse.json();
+		const result = await loginResponse.json();
 
-    if (loginResponse.ok && result.access_token) {
-      status.textContent = "Wallet connected and authenticated.";
-      status.className = "success";
+		if (loginResponse.ok && result.access_token) {
+			status.textContent = "Wallet connected and authenticated.";
+			status.className = "success";
 
-      // Store token in localStorage or cookie if needed
-		localStorage.setItem("access_token", result.access_token);
+			// Store token in localStorage or cookie if needed
+			localStorage.setItem("access_token", result.access_token);
 
-      // Redirect or update UI
-      window.location.href = "/"; // adjust as needed
-    } else {
-      status.textContent = result.message || "Wallet login failed.";
-      status.className = "error";
-    }
+			// Redirect or update UI
+			window.location.href = "/"; // adjust as needed
+		} else {
+			status.textContent = result.message || "Wallet login failed.";
+			status.className = "error";
+		}
 
-  } catch (err) {
-    console.error(err);
-    status.textContent = "Error during wallet connection.";
-    status.className = "error";
-  }
+	} catch (err) {
+		console.error(err);
+		status.textContent = "Error during wallet connection.";
+		status.className = "error";
+	}
 }
 function copyToClipboard(elementId) {
-  const el = document.getElementById(elementId);
-  if (!el) return;
+	const el = document.getElementById(elementId);
+	if (!el) return;
 
-  const icon = el.parentElement?.querySelector(".copy-icon");
-  const text = el.value || el.textContent;
+	const icon = el.parentElement?.querySelector(".copy-icon");
+	const text = el.value || el.textContent;
 
-  const showSuccess = () => {
-    if (icon) {
-      const original = icon.textContent;
-      icon.textContent = "✅";
-      icon.style.color = "#00ff88";
-      setTimeout(() => {
-        icon.textContent = original;
-        icon.style.color = "";
-      }, 1500);
-    }
-  };
+	const showSuccess = () => {
+		if (icon) {
+			const original = icon.textContent;
+			icon.textContent = "✅";
+			icon.style.color = "#00ff88";
+			setTimeout(() => {
+				icon.textContent = original;
+				icon.style.color = "";
+			}, 1500);
+		}
+	};
 
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text)
-      .then(() => {
-        console.log("Copied to clipboard:", text);
-        showSuccess();
-      })
-      .catch(err => {
-        console.error("Clipboard copy failed:", err);
-      });
-  } else {
-    let range, selection;
+	if (navigator.clipboard && window.isSecureContext) {
+		navigator.clipboard.writeText(text)
+			.then(() => {
+				console.log("Copied to clipboard:", text);
+				showSuccess();
+			})
+			.catch(err => {
+				console.error("Clipboard copy failed:", err);
+			});
+	} else {
+		let range, selection;
 
-    if (el.nodeName === "INPUT" || el.nodeName === "TEXTAREA") {
-      el.select();
-      el.setSelectionRange(0, text.length);
-    } else {
-      range = document.createRange();
-      range.selectNodeContents(el);
-      selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
+		if (el.nodeName === "INPUT" || el.nodeName === "TEXTAREA") {
+			el.select();
+			el.setSelectionRange(0, text.length);
+		} else {
+			range = document.createRange();
+			range.selectNodeContents(el);
+			selection = window.getSelection();
+			selection.removeAllRanges();
+			selection.addRange(range);
+		}
 
-    try {
-      document.execCommand("copy");
-      console.log("Copied (fallback):", text);
-      showSuccess();
-    } catch (err) {
-      console.error("Fallback copy failed:", err);
-    }
+		try {
+			document.execCommand("copy");
+			console.log("Copied (fallback):", text);
+			showSuccess();
+		} catch (err) {
+			console.error("Fallback copy failed:", err);
+		}
 
-    if (selection) selection.removeAllRanges();
-    if (el.blur) el.blur();
-  }
+		if (selection) selection.removeAllRanges();
+		if (el.blur) el.blur();
+	}
 }
 
 // ⬅️ Make it accessible from HTML inline

@@ -98,8 +98,15 @@ export function signTransactionSmart(message, successURL, cancelURL) {
 		signTransaction(message, successURL, cancelURL);
 	} else {
 		//const sigData = await sk.msg_sign(msg); // Sidekick signs message
+		let sign_params = {
+			tx: message,
+			// returnsigned: false tells it to propagate the transaction
+			// returnsigned: true just signs it and returns the signed tx back
+			returnSigned: true ,
+			networkId: "ae_mainnet"
+		};
 		let logger = sk.cl();
-		return sk.tx_sign_noprop('sk-tx-sign-noprop-1', message, sk.TIMEOUT_DEF_MSG_SIGN_MS, 'message signing took too long', logger);
+		return sk.tx_sign_noprop('sk-tx-sign-noprop-1', sign_params, sk.TIMEOUT_DEF_MSG_SIGN_MS, 'message signing took too long', logger);
 	}
 }
 export function checkWalletSignature(required = true) {

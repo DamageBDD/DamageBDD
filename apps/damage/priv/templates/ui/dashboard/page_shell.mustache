@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8">
+
+  <head>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
     <title>DamageBDD Execute Feature</title>
@@ -12,7 +14,9 @@
 
     <script type='module' src='/static/js/sidekick.js'></script>
 
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css"
+          integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls"
+          crossorigin="anonymous">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/base-min.css">
 
@@ -28,9 +32,9 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
-<!-- Wizard-JS CSS + JS -->
-<link rel=
-</head>
+    <!-- Wizard-JS CSS + JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/AdrianVillamayor/Wizard-JS@2.0.3/dist/main.min.css">
+  </head>
 <body>
   {{{invoice_modal}}}
   {{{login_modal}}}
@@ -40,6 +44,7 @@
   {{{node_public_key_modal}}}
   {{{install_modal}}}
   {{{feature_picker_modal}}}
+  {{{notification_modal}}}
 
   <div id="background"></div>
   <div id="content">
@@ -64,6 +69,18 @@
   </div>
 
   {{{footer}}}
+      <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
+      <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+      <script src="https://cdn.jsdelivr.net/gh/AdrianVillamayor/Wizard-JS@2.0.3/dist/index.js"></script>
+
+      <script src="/static/js/toasts.js"></script>
+      <script src="/static/js/reports.js"></script>
+      <script src="/static/js/schedules.js"></script>
+      <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
+      <script type="module" src="/static/js/damage-scheduler-ui.js"></script>
+      <script type='module' src="/static/js/main.js" defer></script>
+      <script type='module' src="/static/js/installer.js" defer></script>
 </body>
 </html>
 

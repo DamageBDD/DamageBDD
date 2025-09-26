@@ -513,7 +513,7 @@ do_post_action(
                             }}
                     end;
                 _ ->
-                    {400, <<"Password does not match.">>}
+                    {400, #{status => <<"failed">>, message => <<"Password does not match. Go back to try again.">>}}
             end;
         false ->
             Message =
@@ -626,7 +626,7 @@ from_html(Req, #{action := Action} = State) ->
                 };
             {_, #{message := Message, status := _}} ->
                 {
-                    400,
+                    200,
                     damage_utils:load_template(
                         "reset_password_response.html.mustache",
                         #{status => <<"failed">>, message => Message}
