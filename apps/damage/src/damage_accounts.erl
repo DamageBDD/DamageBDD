@@ -506,14 +506,24 @@ do_post_action(
                             Message = <<"Confirm Token Expired.">>,
                             {400, #{status => <<"failed">>, message => Message}};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            {ok, Message}= identity_server:register_email(Email, NewPassword),
-                            {200, #{
-                                status => <<"ok">>,
-                                message => Message
-                            }}
+                            case identity_server:register_email(Email, NewPassword) of
+                                {ok, Message, _PubKey, _PrivKey} ->
+                                    {200, #{
+                                        status => <<"ok">>,
+                                        message => Message
+                                    }};
+                                {error, Error} ->
+                                    {200, #{
+                                        status => <<"fail">>,
+                                        message => Error
+                                    }}
+                            end
                     end;
                 _ ->
-                    {400, #{status => <<"failed">>, message => <<"Password does not match. Go back to try again.">>}}
+                    {400, #{
+                        status => <<"failed">>,
+                        message => <<"Password does not match. Go back to try again.">>
+                    }}
             end;
         false ->
             Message =

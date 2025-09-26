@@ -614,7 +614,10 @@ to_json(Req, #{action := version} = State) ->
     #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
     {
         jsx:encode(#{
-            commit_hash => CommitHash, version => Version, public_key => list_to_binary(PubKey), node_balance => NodeBalance
+            commit_hash => CommitHash,
+            version => Version,
+            public_key => list_to_binary(PubKey),
+            node_balance => NodeBalance
         }),
         Req,
         State
