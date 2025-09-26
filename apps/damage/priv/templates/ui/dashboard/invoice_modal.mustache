@@ -1,0 +1,58 @@
+<div class="modal micromodal-slide" id="invoice-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">Manage Damage Tokens</h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <div id="purchase-damage-tabs">
+              <ul data-token-tabs>
+                <li><a data-tabby-default href="#damage-transfers-tab">Transfer Damage</a></li>
+                <li><a href="#lightning-invoice-tab">Purchase Damage.</a></li>
+              </ul>
+              <div id="damage-transfers-tab">
+                <p>If you already have some DAMAGE tokens use this address to transfer them to your account address.</p>
+                <p>Wallet Address:
+                  <div class="click-copy">
+                    <input type="text" id="damage-address" readonly>
+                    <span class="copy-icon" onclick="copyToClipboard('damage-address')">📝</span>
+                  </div>
+                </p>
+                <div id="qrcode-damage"></div>
+                <div id="damage-transfer">
+                  <form id="transfer-out-form">
+                    <label for="totalAmt">Transfer DAMAGE tokens out to address.</label>
+                    <input type="text" id="damage-transfer-out-address">
+                    <input type="number" step="1" id="damage-transfer-out-amount">
+                    <button id="damage-transfer-out-btn">Transfer Out!</button>
+                  </form>
+                </div>
+              </div>
+              <div id="lightning-invoice-tab">
+                <p>Buy Damage Tokens to power more tests at higher concurrency and for longer durations.</p>
+                <p>To top up on damage tokens to deal more damage. Make a payment by scanning the QR code below, using a lightning BIP21 compatible wallet.</p>
+                <p>Please review the <a href="/token_tos">Token Sale Terms and Conditions</a> before purchasing tokens.</p>
+                <div id="qrcode-lightning">
+                  <form id="invoice-form">
+                    <label for="totalAmt">Invoice Amount in Sats</label>
+                    <input type="number" step="1000" id="invoice-amount">
+                    <button id="generate-invoice-btn">Generate Invoice</button>
+                  </form>
+                </div>
+                <p>Or pay this lightning invoice directly using a lightning wallet.</p>
+                <details><summary>Show full Lightning Invoice: <span class="icon">👇</span></summary>
+                  <div class="click-copy">
+                    <textarea id="lightning-invoice-input" readonly class='click-copy'></textarea>
+                    <span class="copy-icon" onclick="copyToClipboard('lightning-invoice-input')">📝</span>
+                  </div>
+                </details>
+              </div>
+            </div>
+          </main>
+          <footer class="modal__footer">
+            <button class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Close this dialog window">Close</button>
+          </footer>
+        </div>
+      </div>
+    </div>

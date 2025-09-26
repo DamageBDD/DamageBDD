@@ -1,0 +1,16 @@
+<div class="topbar">
+  <div class="site-header">
+    <img class="logo" src="/static/img/logo.png" alt="DamageBDD Logo" />
+    <div class="brand-text">
+      <div class="title">DamageBDD</div>
+      <div class="subtitle">The tool to break your stack</div>
+    </div>
+  </div>
+  <div class="toolbar-items">
+    <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
+    <div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal"></div>
+    <div id="installBtn" class="install-btn" data-micromodal-trigger="install-modal">Install Node</div>
+    <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">Logout</div>
+  </div>
+</div>
+

@@ -1,0 +1,48 @@
+<h2 id="modal-1-title">Settings</h2>
+    <form action="submit_settings" method="post">
+      <fieldset>
+        <legend>DNS Auth Token Settings</legend>
+        <button type="button" onclick="generateToken()">Generate Token</button>
+        <div id="generatedToken"></div>
+      </fieldset>
+      <fieldset id="contextVariablesForm">
+        <legend>Context Variables Settings</legend>
+        <label for="variableName">Name:</label>
+        <input type="text" id="variableName" name="variableName" placeholder="Enter variable name"><br>
+        <label for="value">Value:</label>
+        <input type="text" id="value" name="value" placeholder="Enter variable value"><br>
+        <label for="varType">Type:</label>
+        <select id="varType" name="varType">
+          <option value="integer">Integer</option>
+          <option value="float">Float</option>
+          <option value="boolean">Boolean</option>
+          <option value="string">String</option>
+        </select><br>
+        <label for="variableVisibility">Visibility:</label>
+        <select id="variableVisibility" name="variableVisibility">
+          <option value="public">Public</option>
+          <option value="private">Private</option>
+          <option value="obfuscated">Obfuscated</option>
+        </select><br>
+        <button type="button" onclick="addVariable()">Add Variable</button>
+        <div id="contextVariables"></div>
+      </fieldset>
+      <input type="submit" value="Submit">
+    </form>
+    <form action="submit_webhook" method="post">
+      <fieldset id="contextVariablesForm">
+        <legend>Webhooks</legend>
+        <label for="variableName">Name:</label>
+        <input type="text" id="variableName" name="variableName" placeholder="Enter variable name"><br>
+        <label for="value">Webhook Url:</label>
+        <input type="text" id="value" name="value" placeholder="Enter variable value"><br>
+        <label for="method">Method:</label>
+        <select id="method" name="method">
+          <option value="POST">POST</option>
+          <option value="GET">GET</option>
+        </select><br>
+        <button type="button" onclick="addWebhook()">Add Webhook</button>
+        <div id="contextVariables"></div>
+      </fieldset>
+      <input type="submit" value="Submit">
+    </form>

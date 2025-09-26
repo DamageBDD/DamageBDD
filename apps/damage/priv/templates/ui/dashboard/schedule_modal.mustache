@@ -1,0 +1,21 @@
+<div class="modal micromodal-slide" id="schedule-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="modal-1-title">Add Schedule</h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+          <main class="modal__content" id="modal-1-content">
+            <form id="scheduleForm" onsubmit="submitScheduleForm(event)">
+              <input type="input" id="featurehash" required placeholder="Feature"><br>
+              <input type="password" id="password" autocomplete="current-password" required placeholder="Password"><br>
+              <button id="addScheduleBtn" aria-label="Add Schedule">Add Schedule.</button>
+            </form>
+          </main>
+          <footer class="modal__footer">
+            <button id="scheduleSubmitBtn" class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Schedule">Schedule</button>
+            <button class="modal__btn" data-micromodal-close aria-label="Close this dialog window">Cancel</button>
+          </footer>
+        </div>
+      </div>
+    </div>
