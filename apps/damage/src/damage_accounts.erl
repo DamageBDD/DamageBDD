@@ -410,6 +410,11 @@ do_post_action(
     end;
 do_post_action(
     authenticate,
+    #{address := Account, signature := false}
+) ->
+    {400, #{status => <<"failed">>, message => <<"Connect Failed">>}};
+do_post_action(
+    authenticate,
     #{address := Account, signature := Signature, meta := SessionMeta}
 ) ->
     case vanillae:verify_signature(Signature, SessionMeta, Account) of
@@ -756,3 +761,5 @@ delete_account(Email) ->
 
 notify_user(Username, Message) ->
     ?LOG_DEBUG("NotifyUser ~p, Message: ~p", [Username, Message]).
+register_account(UserAccount, Meta) ->
+    ok.

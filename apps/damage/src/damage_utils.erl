@@ -155,7 +155,7 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
     {ok, SmtpHostname} = application:get_env(damage, smtp_hostname),
     {ok, SmtpPort} = application:get_env(damage, smtp_port),
     {ok, {FromName, From}} = application:get_env(damage, smtp_from),
-    case secrets:retrieve_decrypt(smtp_pass) of
+    case secrets:retrieve_decrypt(smtp_password) of
         {ok, SmtpPassword} ->
             %Body1 =
             %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
@@ -212,7 +212,7 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
                                 disposition => <<"inline">>,
                                 disposition_params => []
                             },
-                            list_to_binary(TextBody)
+                            TextBody
                         },
                         {
                             <<"text">>,
@@ -226,7 +226,7 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
                                 disposition => <<"inline">>,
                                 disposition_params => []
                             },
-                            list_to_binary(HtmlBody)
+                            HtmlBody
                         }
                     ]
                 },
@@ -360,7 +360,8 @@ reverse_replace_char(Char) ->
     end.
 
 test_send_email() ->
-    ToEmail = {<<"DamageBdd Test">>, <<"test@damagebdd.com">>},
+    {ok, TestUserEmail} = application:get_env(damage, test_user),
+    ToEmail = {<<"DamageBdd Test">>, list_to_binary(TestUserEmail)},
     Context =
         #{
             <<"first_name">> => <<"FirstName">>,
@@ -371,7 +372,7 @@ test_send_email() ->
     TextBody = damage_utils:load_template("signup_email.txt.mustache", Context),
     HtmlBody = damage_utils:load_template("signup_email.html.mustache", Context),
     ?LOG_DEBUG("Email body ~p~n htmlBody: ~p", [TextBody, HtmlBody]),
-    damage_utils:send_email(
+    {ok, _Pid} = damage_utils:send_email(
         ToEmail,
         <<"DamageBDD Email Test">>,
         TextBody,
