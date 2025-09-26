@@ -506,10 +506,10 @@ do_post_action(
                             Message = <<"Confirm Token Expired.">>,
                             {400, #{status => <<"failed">>, message => Message}};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            ok = identity_server:register_email(Email, NewPassword),
+                            {ok, Message}= identity_server:register_email(Email, NewPassword),
                             {200, #{
                                 status => <<"ok">>,
-                                message => <<"Email confirmed and password set.">>
+                                message => Message
                             }}
                     end;
                 _ ->
