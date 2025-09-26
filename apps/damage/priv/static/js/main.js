@@ -23,16 +23,6 @@ function generateDamageQR(address){
 	window.dataLayer = window.dataLayer || [];
 
 	//https://codeshack.io/elegant-toast-notifications-javascript/
-	const toasts = new Toasts({
-		offsetX: 20, // 20px
-		offsetY: 20, // 20px
-		gap: 20, // The gap size in pixels between toasts
-		width: 300, // 300px
-		timing: 'ease', // See list of available CSS transition timings
-		duration: '.5s', // Transition duration
-		dimOld: true, // Dim old notifications while the newest notification stays highlighted
-		position: 'top-center' // top-left | top-center | top-right | bottom-left | bottom-center | bottom-right
-	});
 
 	document.addEventListener("DOMContentLoaded", async function() {
 		var kycForm = document.getElementById('kycForm');
@@ -108,6 +98,7 @@ function generateDamageQR(address){
 			localStorage.removeItem("access_token");
 			localStorage.removeItem("address");
 			localStorage.removeItem("wallet_connected");
+			localStorage.removeItem("email_auth");
 			MicroModal.close('logout-modal');
 			showHideLoginButton();
 
@@ -133,10 +124,46 @@ function generateDamageQR(address){
 		});
 
 		showHideLoginButton();
-		updateBalance();
+		if(localStorage.getItem("access_token") != undefined){
+			updateBalance();
+		}
 		MicroModal.init({
-			onShow: modal => console.info(`${modal.id} is shown`), // [1]
+			onShow: modal => {
+				console.info(`${modal.id} is shown`);
+
+				if (modal.id === 'install-modal') {
+					// Re/initialize the Wizard *after* the modal is visible
+					if (typeof window.Wizard !== 'undefined') {
+						try {
+							const args = {
+								wz_class: ".wizard",
+								wz_nav_style: "dots",
+								wz_button_style: ".styled-btn",
+								wz_ori: "horizontal",
+								buttons: true,
+								navigation: "buttons",
+								finish: "Close"
+							};
+
+							if (!window._installWizard) {
+								window._installWizard = new window.Wizard(args);
+								window._installWizard.init();
+								// Close modal on Finish
+								document.querySelector('.wizard')?.addEventListener('wz.end', () => {
+									MicroModal.close('install-modal');
+								});
+							} else {
+								window._installWizard.reset();
+							}
+						} catch (e) { console.warn('Wizard init failed:', e); }
+					}
+
+					// Prepare/refresh the form defaults and handlers on every open
+					if (typeof window.initInstallForm === 'function') window.initInstallForm();
+				}
+			}
 		});
+		
 		var tabs =Tabby('[data-tabs]');
 		document.addEventListener('tabby', function (event) {
 			var tab = event.target;
@@ -144,7 +171,8 @@ function generateDamageQR(address){
 			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
 				  Reports.renderRunReports(address, { limit: 10 });
 			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
-				updateSchedulesTable();
+				if(localStorage.getItem("access_token") != undefined){
+					updateSchedulesTable();}
 			}
 		}, false);
 		var tabs =Tabby('[data-token-tabs]');
@@ -339,8 +367,31 @@ const hashes = [
 
 
 		const reportElement = addReport();
+        const username = localStorage.getItem("email_auth");
         const walletConnected = localStorage.getItem("wallet_connected");
-		if(walletConnected != "undefined"){
+		if(username){
+			const request = {
+				method: 'POST',
+				credentials: 'include',
+				headers: headers,
+				body: JSON.stringify({
+					feature: inputText,
+					concurrency: concurrencyText,
+					stream: true
+				})
+			};
+			const response = await fetch("/execute_feature/", request);
+
+			if (response.status === 200) {
+				await streamResponseToDOM(response, reportElement);
+			} else if (response.status === 401) {
+				MicroModal.show("login-modal");
+			} else {
+				const errText = await response.text();
+				reportElement.innerText = "Error: " + errText;
+			}
+		}
+		else if(walletConnected){
 			const request = {
 				method: 'POST',
 				credentials: 'include',
@@ -359,13 +410,17 @@ const hashes = [
 			//await wallet.connectWalletSmart(
 			//	origin, origin
 			//);
+			await wallet.connectWalletSmart(
+				window.location.origin,
+				window.location.origin
+			);
 			const signature = await wallet.signTransactionSmart(
 				message,
 				"ae_mainnet",
 				window.location.origin,
 				window.location.origin
 			);
-			if(signature) {
+			if(signature.ok) {
 
 				const signedRequest = {
 					method: 'POST',
@@ -388,29 +443,7 @@ const hashes = [
 					reportElement.innerText = "Error after signing: " + errText;
 				}
 			} else {
-				const errText = await signedResponse.text();
-				reportElement.innerText = "Error after signing: " + errText;
-			}
-		}else{
-			const request = {
-				method: 'POST',
-				credentials: 'include',
-				headers: headers,
-				body: JSON.stringify({
-					feature: inputText,
-					concurrency: concurrencyText,
-					stream: true
-				})
-			};
-			const response = await fetch("/execute_feature/", request);
-
-			if (response.status === 200) {
-				await streamResponseToDOM(response, reportElement);
-			} else if (response.status === 401) {
-				MicroModal.show("login-modal");
-			} else {
-				const errText = await response.text();
-				reportElement.innerText = "Error: " + errText;
+				reportElement.innerText = "Failed to sign: " + signature.error.message;
 			}
 		}
 	}
@@ -490,6 +523,7 @@ const hashes = [
 				if (data.access_token) {
 					localStorage.setItem("access_token", data.access_token);
 					localStorage.setItem("address", data.address);
+					localStorage.setItem("email_auth", username);
 					updateBalance();
 					showConnectStatus("Login Success!", "success");
 					showHideLoginButton();
@@ -560,7 +594,7 @@ const hashes = [
 			if (xhr.status === 200) {
 				var versionData = JSON.parse(xhr.responseText);
 				var versionDom= document.getElementById('node-version');
-				versionDom.innerText = 'node version: ' + versionData.version;
+				versionDom.innerText = 'node version: ' + versionData.version + '\n node balance: ' + versionData.node_balance;
 				console.log("version: ");
 				console.log( versionData);
 				var nodePublicKeyDom= document.getElementById('node-public-key');

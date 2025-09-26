@@ -413,24 +413,31 @@ do_action_tx(Json, State, Req) ->
                     };
                 #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} ->
                     #{public_key := NodeAeAccount} = secrets:node_keypair(),
-                    {200, DryRunRecord} = check_execute_bdd(
-                        maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
-                    ),
-                    #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
-                        DryRunRecord,
-                    Tx = damage_ae:contract_call_prepare_tx(
-                        #{public_key => AeAccount},
-                        ?DAMAGE_TOKEN_CONTRACT,
-                        "contracts/token.aes",
-                        "spend",
-                        [
-                            NodeAeAccount,
-                            integer_to_list(round(Cost)),
-                            FeatureHash,
-                            ReportHash
-                        ]
-                    ),
-                    {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+
+                    case
+                        check_execute_bdd(
+                            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
+                        )
+                    of
+                        {200, DryRunRecord} ->
+                            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
+                                DryRunRecord,
+                            Tx = damage_ae:contract_call_prepare_tx(
+                                #{public_key => AeAccount},
+                                ?DAMAGE_TOKEN_CONTRACT,
+                                "contracts/token.aes",
+                                "spend",
+                                [
+                                    NodeAeAccount,
+                                    integer_to_list(round(Cost)),
+                                    FeatureHash,
+                                    ReportHash
+                                ]
+                            ),
+                            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+                        {Status, Response} ->
+                            {Status, Response}
+                    end;
                 #{signature := Sig, message := Message, pubkey := PubKey} ->
                     case vanillae:verify_signature(Sig, Message, PubKey) of
                         {ok, _Result} ->
@@ -602,11 +609,12 @@ to_html(Req, State) ->
 
 to_json(Req, #{action := version} = State) ->
     {ok, CommitHash} = file:read_file("commit_hash.txt"),
+    NodeBalance = damage_ae:node_balance(),
     {ok, Version} = file:read_file("VERSION"),
     #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
     {
         jsx:encode(#{
-            commit_hash => CommitHash, version => Version, public_key => list_to_binary(PubKey)
+            commit_hash => CommitHash, version => Version, public_key => list_to_binary(PubKey), node_balance => NodeBalance
         }),
         Req,
         State

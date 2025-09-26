@@ -32,6 +32,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
+    <!-- Wizard-JS CSS + JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/AdrianVillamayor/Wizard-JS@2.0.3/dist/main.min.css">
 
 
 
@@ -297,6 +299,115 @@
         </div>
       </div>
     </div>
+    <div class="modal micromodal-slide" id="install-modal" aria-hidden="true">
+      <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="install-modal-title">
+          <header class="modal__header">
+            <h2 class="modal__title" id="install-modal-title">Install a DamageBDD Node</h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+          </header>
+
+          <main class="modal__content">
+            <!-- Setup Wizard -->
+            <form id="installRequestForm" class="wizard" method="POST">
+              <aside class="wizard-content container">
+                <!-- Step 1: Target -->
+                <div class="wizard-step" data-wz-title="Target">
+                  <fieldset>
+                    <legend>Target</legend>
+                    <label>Domain (TLS host)</label>
+                    <input id="inst-domain" name="domain" required placeholder="run.example.com">
+
+                    <label>Admin Email (Let’s Encrypt)</label>
+                    <input id="inst-email" name="email" type="email" required placeholder="admin@example.com">
+                  </fieldset>
+                </div>
+
+                <!-- Step 2: Platform -->
+                <div class="wizard-step" data-wz-title="Platform">
+                  <fieldset>
+                    <legend>Platform</legend>
+                    <div class="pure-g">
+                      <div class="pure-u-1 pure-u-md-1-2">
+                        <label>OS</label>
+                        <select id="inst-os" class="on-active-required">
+                          <option value="linux">Linux</option>
+                          <option value="macos">macOS</option>
+                          <option value="windows">Windows</option>
+                          <option value="android">Android (Termux)</option>
+                        </select>
+                      </div>
+                      <div class="pure-u-1 pure-u-md-1-2">
+                        <label>Distro / Shell</label>
+                        <select id="inst-variant" class="on-active-required">
+                          <!-- populated by JS -->
+                        </select>
+                      </div>
+                    </div>
+                  </fieldset>
+                </div>
+
+                <!-- Step 3: Advanced -->
+                <div class="wizard-step" data-wz-title="Advanced">
+                  <fieldset>
+                    <legend>Advanced</legend>
+                    <div class="pure-g">
+                      <div class="pure-u-1 pure-u-md-1-3">
+                        <label>Port</label>
+                        <input id="inst-port" name="port" value="8080">
+                      </div>
+                      <div class="pure-u-1 pure-u-md-1-3">
+                        <label>Repo</label>
+                        <input id="inst-repo" name="repo" value="https://github.com/DamageBDD/DamageBDD.git">
+                      </div>
+                      <div class="pure-u-1 pure-u-md-1-3">
+                        <label>Branch</label>
+                        <input id="inst-branch" name="branch" value="develop">
+                      </div>
+                    </div>
+                  </fieldset>
+                </div>
+
+                <!-- Step 4: Generate -->
+                <div class="wizard-step" data-wz-title="Generate">
+                  <fieldset>
+                    <legend>Signed Link</legend>
+                    <div class="pure-g">
+                      <div class="pure-u-1 pure-u-md-1-2">
+                        <button id="generateSignedInstallBtn" class="styled-btn" type="button">Generate Signed Link</button>
+                      </div>
+                      <div class="pure-u-1 pure-u-md-1-2">
+                        <span id="installStatus" class="note"></span>
+                      </div>
+                      <div>
+                        <h3>One-liner</h3>
+                        <div id="preview-linux-macos" style="display:none;">
+                          <pre><code id="cmd-bash"></code></pre>
+                          <button class="styled-btn" type="button" data-copy="#cmd-bash">Copy</button>
+                        </div>
+
+                        <div id="preview-windows" style="display:none;">
+                          <pre><code id="cmd-ps1"></code></pre>
+                          <button class="styled-btn" type="button" data-copy="#cmd-ps1">Copy</button>
+                        </div>
+                        <div id="preview-android" style="display:none;">
+                          <pre><code id="cmd-termux"></code></pre>
+                          <button class="styled-btn" type="button" data-copy="#cmd-termux">Copy</button>
+                        </div>
+
+                      </div>
+                    </div>
+                  </fieldset>
+                </div>
+              </aside>
+            </form>
+          </main>
+          <footer class="modal__footer">
+            <button class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Close">Close</button>
+          </footer>
+        </div>
+      </div>
+    </div>
     <div class="modal micromodal-slide" id="feature-picker-modal" aria-hidden="true">
       <div class="modal__overlay" tabindex="-1">
         <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
@@ -327,11 +438,10 @@
         <div class="toolbar-items">
           <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
           <div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal"></div>
+          <div id="installBtn" class="install-btn" data-micromodal-trigger="install-modal">Install Node</div>
           <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">Logout</div>
         </div>
       </div>
-
-
 
       <ul data-tabs>
         <li><a href="#execution-tab">Execute</a></li>
@@ -340,7 +450,6 @@
         <li><a href="#schedules-tab">Schedules</a></li>
         <li><a href="#settings-tab">Settings</a></li>
       </ul>
-
 
       <div id="execution-tab" class="execute-container">
         <div class="pure-g">
@@ -467,11 +576,12 @@
       </div>
       <footer>
          <p id="node-public-key"></p>
-        <p id="node-version"></p>
-        </footer>
-    <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
-    <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+         <p id="node-version"></p>
+      </footer>
+      <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
+      <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+      <script src="https://cdn.jsdelivr.net/gh/AdrianVillamayor/Wizard-JS@2.0.3/dist/index.js"></script>
 
       <script src="/static/js/toasts.js"></script>
       <script src="/static/js/reports.js"></script>
@@ -479,6 +589,7 @@
       <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
       <script type="module" src="/static/js/damage-scheduler-ui.js"></script>
       <script type='module' src="/static/js/main.js" defer></script>
+      <script type='module' src="/static/js/installer.js" defer></script>
   </body>
 
 </html>
