@@ -1,0 +1,466 @@
+/* bop.css - Bitcoin Only Party CSS */
+/* bitcoin orange https://gist.github.com/paladini/ef383fce1b782d919898 */
+
+/* Systematic base: minimalism, clarity, no bloat */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: "Ubuntu Mono", monospace, sans-serif;
+  background-color: #fefefe;
+  color: #1a1a1a;
+  line-height: 1.6;
+  padding: 0 1rem;
+}
+
+/* Main content */
+.content {
+  max-width: 800px;
+  margin: 2rem auto;
+  padding-bottom: 3rem;
+}
+
+h1.title {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+  border-bottom: 3px solid #FF9900;
+  padding-bottom: 0.3rem;
+}
+
+h2, h3 {
+  color: #111;
+  margin-top: 2rem;
+  margin-bottom: 0.5rem;
+}
+
+ul.org-ul {
+  margin-left: 1.5rem;
+  list-style-type: square;
+}
+
+code {
+  background: #eee;
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-family: "Ubuntu Mono", monospace;
+}
+
+blockquote {
+  border-left: 4px solid #FF9900;
+  padding-left: 1rem;
+  font-style: italic;
+  margin: 1.5rem 0;
+  color: #444;
+}
+
+/* Table of contents */
+#table-of-contents {
+  background: #f0f0f0;
+  padding: 1rem;
+  border-left: 4px solid #FF9900;
+  margin-bottom: 2rem;
+}
+
+#table-of-contents h2 {
+  margin-top: 0;
+}
+
+#text-table-of-contents ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+#text-table-of-contents a {
+  text-decoration: none;
+  color: #1a1a1a;
+}
+
+.org-center {
+  text-align: center;
+  font-weight: bold;
+  margin-top: 2rem;
+}
+
+/* Accessibility */
+a:focus,
+button:focus,
+input:focus {
+  outline: 2px solid #FF9900;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .nav-menu {
+    flex-direction: column;
+  }
+
+  .nav-menu li {
+    margin-bottom: 0.5rem;
+  }
+}
+#lnaddress{
+    font-size:1.2em;
+    padding:0.4em;
+    text-align:center;
+    width:80%;
+}
+
+#registration-stack {
+  text-align: center;
+  padding: 2em;
+  max-width: 600px;
+  margin: auto;
+}
+
+#registration-stack input {
+  font-size: 1.1em;
+  padding: 0.5em;
+  width: 90%;
+  max-width: 400px;
+  text-align: center;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background-color: #f9f9f9;
+  margin-bottom: 1em;
+}
+
+#stack-btn {
+  font-size: 1.2em;
+  padding: 0.75em 2em;
+  background: linear-gradient(135deg, #FF9900, #ffcc00);
+  color: #111;
+  font-weight: bold;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  transition: all 0.2s ease-in-out;
+}
+
+#stack-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+  background: linear-gradient(135deg, #ffd700, #FF9900);
+}
+
+#registration-stack-recents {
+  list-style: none;
+  padding: 0;
+  margin-top: 1.5em;
+  font-family: monospace;
+  background: #f5f5f5;
+  border-radius: 0.5em;
+  padding: 1em;
+  text-align: left;
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* Container to hold input and icon */
+.input-icon-container {
+  position: relative;
+  display: inline-block;
+  width: 240px;
+  max-width: 100%;
+}
+
+.input-icon-container .input-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.2em;
+  pointer-events: none;
+  color: #FF9900;
+}
+
+.input-icon-container input {
+  font-size: 1em;
+  padding: 0.5em 1em 0.5em 2.2em; /* extra left padding for icon */
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+  width: 100%;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Header and Branding */
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  padding: 1em;
+}
+
+.logo-link {
+  flex-shrink: 0;
+}
+
+.logo {
+  height: 64px;
+  width: auto;
+  background: none;
+}
+
+.identity-text {
+  flex-grow: 1;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  padding: 1em;
+  background-color: #FF9900; /* Bitcoin orange */
+  border-bottom: 2px solid #000; /* optional for strong contrast */
+}
+
+.site-title {
+  margin: 0;
+  font-size: 1.8em;
+  color: #fff; /* white text on orange */
+}
+
+.tagline {
+  margin: 0.2em 0 0;
+  font-size: 1em;
+  color: #fefefe; /* slightly off-white for readability */
+}
+
+
+.main-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1em;
+  flex-wrap: wrap;
+}
+
+.nav-menu {
+  list-style: none;
+  display: flex;
+  gap: 1em;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-menu li {
+  display: flex;
+  align-items: center;
+}
+
+.nav-icon {
+  margin-right: 0.3em;
+}
+
+.login-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  flex-wrap: wrap;
+}
+
+.input-icon-container {
+  position: relative;
+  width: 240px;
+}
+
+.input-icon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  font-size: 1.2em;
+  color: #FF9900;
+  pointer-events: none;
+}
+
+#lnaddress {
+  width: 100%;
+  padding: 0.5em 1em 0.5em 2.2em;
+  font-size: 1em;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+}
+
+#login-btn {
+  font-size: 1em;
+  padding: 0.5em 1.2em;
+  background: linear-gradient(135deg, #FF9900, #ffcc00);
+  color: #111;
+  font-weight: bold;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  transition: all 0.2s ease-in-out;
+}
+
+#login-btn:hover {
+  transform: scale(1.03);
+  background: linear-gradient(135deg, #ffd700, #FF9900);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+@media (max-width: 600px) {
+  .main-nav {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .nav-menu {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .login-form {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .input-icon-container {
+    width: 100%;
+  }
+
+  #login-btn {
+    width: 100%;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+/** footer **/
+.footer {
+  background: #f5f5f5;
+  padding: 2em 1em;
+  text-align: center;
+  font-size: 0.95em;
+  color: #333;
+  border-top: 1px solid #e0e0e0;
+  margin-top: 3em;
+}
+
+.footer-message h2 {
+  font-size: 1.3em;
+  margin-bottom: 0.5em;
+  color: #FF9900;
+  font-weight: bold;
+}
+
+.centered-message {
+  font-size: 1.1em;
+  color: #444;
+  line-height: 1.6;
+  max-width: 600px;
+  margin: 0 auto 1.5em;
+}
+
+.footer .meta {
+  font-size: 0.9em;
+  color: #666;
+}
+
+.footer .meta a {
+  color: #FF9900;
+  text-decoration: none;
+  margin: 0 0.5em;
+}
+
+.footer .meta a:hover {
+  text-decoration: underline;
+}
+
+/** end footer **/
+.button-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin: 1em 0;
+}
+
+.button-grid button {
+  background: #fefefe;
+  border: 1px solid #FF9900;
+  padding: 0.5em 1em;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  color: #333;
+  transition: all 0.2s;
+}
+
+.button-grid button:hover {
+  background: #FF9900;
+  color: white;
+}
+#theme-button{
+position:fixed;top:1rem;right:1rem;font-size:1.5rem;background:none;border:none;cursor:pointer;
+margin:10px;
+}
+  .recent-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1em;
+    font-size: 0.95em;
+    background-color: #f9f9f9;
+  }
+
+  .recent-table thead {
+    background-color: #444;
+    color: white;
+  }
+
+  .recent-table th, .recent-table td {
+    border: 1px solid #ddd;
+    padding: 0.6em;
+    text-align: left;
+  }
+
+  .recent-table tbody tr:nth-child(even) {
+    background-color: #f0f0f0;
+  }
+
+  .recent-table tbody tr:hover {
+    background-color: #e0f7fa;
+  }
+  .recent-table img {
+    display: block;
+    margin: auto;
+  }
+  .qr-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2em;
+  }
+
+  .qr-btn:hover {
+    color: #007bff;
+  }
+
+  .qr-container {
+    text-align: center;
+  }

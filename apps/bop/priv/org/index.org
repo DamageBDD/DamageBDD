@@ -1,0 +1,43 @@
+#+TITLE: Welcome to the Bitcoin Only Party (BoP)
+#+AUTHOR: BoP Founding Council
+#+DATE: 2025-04-30
+#+OPTIONS: toc:nil num:nil 
+#+LANGUAGE: en
+
+* 🧱 About BoP
+
+The *Bitcoin Only Party* (BoP) is a new political movement founded on incorruptible verification, financial sovereignty, and radical transparency
+
+We believe Australians deserve a political party that cannot be bought, corrupted, or censored — because it's built on Bitcoin.
+
+* 📜 Read Our Constitution
+
+To understand how we operate, who governs us, and what we stand for, read our full Party Constitution:
+
+[[file:constitution.org][🔗 BoP Constitution]]
+
+* 📌 Party Roadmap
+Stay updated with our latest actions and next moves as we prepare for federal registration and mobilize the Bitcoin-sound political base of Australia.
+
+- [[file:next-steps.org][🗺️ Next Steps: Federal Election Registration & Funding]]
+
+
+* ⚡ Join or Support Us with Lightning
+
+The best way to support BoP is through *Lightning Network* micro-payments. This proves your alignment, instantly and anonymously.
+
+** To Support:
+1. Open any Lightning wallet (Phoenix, Breez, Muun, Zeus, etc.)
+2. Either scan the QR or let your mobile wallet launch automatically.
+
+[[file:next-steps.org][🔗 Support Registration with Lightning]]
+
+** Anonymous & Compliant
+
+Under Australian electoral law:
+
+- ✔️ *No KYC is required* for funding under $15,200 AUD [[https://www.aec.gov.au/Parties_and_Representatives/public_funding/threshold.htm][source]]
+- ✔️ *Anonymous funding under $100 AUD* are permitted
+- ⚠️ BoP enforces a strict cap on total anonymous funds to stay within AEC limits
+- ❌ Foreign anonymous funding is not accepted
+

@@ -1,0 +1,127 @@
+#+TITLE: Bitcoin Only Party: Next Steps for Federal Election Registration
+#+AUTHOR: BoP Coordination Cell
+#+OPTIONS: toc:nil
+#+PROPERTY: header-args :tangle yes
+
+* 🎯 Objective
+Register the Bitcoin Only Party (BoP) for the upcoming Australian federal election and raise the necessary funding to meet all requirements with a Lightning-first, verification-based approach.
+
+* 🗓️ Timeline
+| Step                            | Deadline       | Status   |
+|--------------------------------|----------------|----------|
+| Prepare official party constitution | ASAP           | TODO     |
+| Gather 1,500 members (min)          | Within 60 days | TODO     |
+| Nominate party agent                | ASAP           | TODO     |
+| Apply for AEC registration         | Before close of roll | TODO     |
+| Submit all forms + constitution    | With application | TODO     |
+
+* 🧾 AEC Requirements
+- ✅ *Constitution* stating BoP's principles and purpose
+- ✅ *1,500 members* enrolled to vote (not members of another registered party)
+- ✅ *Party agent* with an ABN
+- ✅ $500 application fee (subject to confirmation)
+
+Reference: [[https://www.aec.gov.au/Parties_and_Representatives/Party_Registration/][AEC Party Registration Guide]]
+
+* ⚡ Funding Targets (via Bitcoin/Lightning)
+| Purpose                   | Amount (AUD) | Status |
+|---------------------------|--------------|--------|
+| Application Fee           | $500         | TODO   |
+| Legal Review of Constitution | $1,500     | TODO   |
+| Website and Campaign Collateral | $2,000 | TODO   |
+| Outreach/Recruitment Tools     | $1,000 | TODO   |
+
+* 🔗 Funding Methods
+- ✅ BoP Lightning Node (inbound liquidity preferred)
+- ✅ LNURL campaign page with QR code
+- ✅ Nostr + GitHub verified funding messages
+- ✅ All transactions logged via DamageBDD for immutable traceability
+
+* 📢 Member Onboarding Plan
+1. Launch *Join Us* portal on [[https://bitcoinonly.party][bitcoinonly.party]]
+2. Capture verifiable intent via LN payment or nostr pubkey
+3. Record public membership list on IPFS + Bitcoin timestamp
+4. Enable dispute resolution and re-verification via DamageBDD test cases
+
+* ✅ DONE
+- [ ] Setup Lightning payment gateway
+- [ ] Create verified funding request on Nostr
+- [ ] Tangle Constitution Draft (`constitution.org`)
+- [ ] Launch public membership tracker
+
+* ⚖️ Legal Notes
+- Ensure compliance with AEC privacy and data handling rules
+- Use multisig Bitcoin address for all major expenses
+- Offer refunds if registration not achieved (optional)
+
+* 📌 Notes
+We do not seek permission from legacy systems — we seek *compliance for disruption*. All actions are final once published on-chain. The AEC shall witness that which cannot be denied.
+
+* ⚡ Stack the Registration
+
+Here is the current stack of sats for registration. Every sat adds to the chain of sovereignty.
+
+Click below to stack sats for the party registration:
+
+
+#+BEGIN_EXPORT html
+<section id="registration-stack">
+  <h3 style="margin-top:2em;">📜 Registered Contributions</h3>
+
+  <table border="1">
+    <thead>
+      <tr>
+        <th>Total Raised (AUD)</th>
+        <th>Total Raised (Satoshis)</th>
+        <th>Goal (AUD)</th>
+        <th>Goal (Satoshis)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td id="total_funded_aud">$0.00</td>
+        <td id="total_funded_sats">0</td>
+        <td id="fund_goal_aud">$500.00</td>
+        <td id="fund_goal_sats">0</td>
+      </tr>
+    </tbody>
+  </table>
+
+<table id="registration-stack-recents" class="recent-table">
+  <thead>
+    <tr>
+      <th>Hash</th>
+      <th>Time</th>
+      <th>Sats</th>
+      <th>AUD</th>
+      <th>🔍</th> <!-- QR Code Column -->
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="5">Loading recent sats…</td></tr>
+  </tbody>
+</table>
+
+
+  <h3 style="margin-top:2em;">⚡ Make a Contribution</h3>
+  <label for="aud-amount">Enter amount in AUD:</label>
+  <input type="number" id="aud-amount" placeholder="e.g., 10" min="1" max="100" />
+
+  <div id="preset-buttons" class="button-grid">
+    <!-- Buttons will be inserted here -->
+  </div>
+
+  <p id="btc-equivalent">Equivalent BTC: <span id="btc-value">0.00000000</span></p>
+  <div id="stack-invoice"></div>
+  <button id="stack-btn">Send ⚡ Sats</button>
+</section>
+
+
+
+<section id="output">
+</section>
+<script type="module" src="/assets/js/bop-lightning-ws.js" defer></script>
+
+
+
+    #+END_EXPORT

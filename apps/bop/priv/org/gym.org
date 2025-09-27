@@ -1,0 +1,16 @@
+#+TITLE: Gym Tracker
+#+HTML_HEAD_EXTRA:  <link rel="stylesheet" type="text/css" href='/assets/css/gym.css'>
+* Gym Set Tracker
+
+#+BEGIN_EXPORT html
+<label for="workout-select">Select Day</label>
+<select id="workout-select" >
+<option value="Day 1">Day 1</option>
+<option value="Day 2">Day 2</option>
+<option value="Day 3">Day 3</option>
+</select>
+
+<div id="sets-container"></div>
+
+<script type='module' src='/assets/js/gym.js' defer></script>
+#+END_EXPORT

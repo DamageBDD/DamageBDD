@@ -1,0 +1,128 @@
+#+TITLE: Bitcoin Only Party – Core Roles (Constitutional Alignment)
+#+AUTHOR: Bitcoin Only Party
+#+DATE: 2025-06-09
+#+OPTIONS: toc:nil num:nil html-postamble:nil
+#+LANGUAGE: en
+
+* 🏛️ Core Roles of the Bitcoin Only Party (BoP)
+
+This document defines the core operational roles within BoP in accordance with the Constitution (Sections 5 and 8). These roles are designed for sovereignty, decentralization, and immutable accountability.
+
+** Finality. Integrity. Verification. **
+
+---
+
+* 🧭 1. Coordinator – Ops & Comms Commander  
+**Status:** [[https://njump.me/nprofile1qqvacantcoordinator][VACANT – Apply via Nostr]]  
+**Mandated by:** Constitution Article 5.2
+
+- Oversees internal communications and national coordination  
+- Manages public-facing media (website, Nostr, Matrix, IPFS, bulletins)  
+- Authenticates Node identities (PGP, LNURL, Lightning proofs)  
+- Publishes verified updates and ensures protocol discipline  
+
+---
+
+* 🧮 2. Treasurer – Key Guardian & Flow Auditor  
+**Status:** [[https://njump.me/nprofile1qqvacanttreasurer][VACANT – Apply via Nostr]]  
+**Mandated by:** Constitution Articles 5.2 & 8
+
+- Manages multisig wallets (2-of-3 or 3-of-5)  
+- Oversees Lightning channels and balance coordination  
+- Publishes treasury reports to Nostr or IPFS  
+- Signs PSBTs and verifies all expenditures publicly  
+
+---
+
+* 📜 3. Policy Verifier – The Constitutional Oraclizer  
+**Status:** [[https://njump.me/nprofile1qqvacantpolicy][VACANT – Apply via Nostr]]  
+**Mandated by:** Constitution Article 5.2
+
+- Validates policies and proposals via BDD or smart contract logic  
+- Commits test coverage and milestone verification hashes  
+- Rejects unverifiable claims or off-chain promises  
+- Publishes proofs to public append-only logs  
+
+---
+
+* ⚙️ 4. Tech Steward – Infrastructure and InfoSec Custodian  
+**Status:** [[https://njump.me/nprofile1qqvacanttech][VACANT – Apply via Nostr]]  
+**Mandated by:** Constitution Article 5.2
+
+- Maintains BoP infrastructure: website, Git, Matrix, Nostr, Core nodes  
+- Enforces Tor routing, reproducibility, and public key auth  
+- Deploys and maintains decentralized voting infra  
+- Coordinates updates to IPFS and self-hosted services  
+
+---
+
+* 🕸 5. Council Node Delegate – Local Chapter Representative  
+**Status:** [[https://njump.me/nprofile1qqvacantnode][VACANT – Filled per region]]  
+**Mandated by:** Constitution Article 5.1
+
+- Represents a geographic node in the BoP Council  
+- Participates in multisig governance and PSBT quorum  
+- Casts public-signed votes and verifies regional membership  
+- Maintains uptime and presence in Node operations  
+
+---
+
+* 🎓 6. Candidate Vetting Committee – Voter Integrity Watch  
+**Status:**  
+- [[https://njump.me/nprofile1qqvacantvet1][VACANT – Member 1]]  
+- [[https://njump.me/nprofile1qqvacantvet2][VACANT – Member 2]]  
+- [[https://njump.me/nprofile1qqvacantvet3][VACANT – Member 3]]  
+**Mandated by:** Constitution Article 7
+
+- Verifies alignment with BoP preamble  
+- Audits campaign finances in satoshis  
+- Ensures milestone-based promises are cryptographically committed  
+- Issues endorsements via Nostr signature quorum  
+
+---
+
+* 🔍 7. Verification Officer – Audit & Constitutional Integrity  
+**Status:** [[https://njump.me/nprofile1qqvacantaudit][VACANT – Apply via Nostr]]  
+**Mandated by:** Constitution Article 11
+
+- Maintains SHA-256 hash proofs of all constitutional changes  
+- Tracks GPG signatures for Node roles and amendments  
+- Commits state hashes to Git/IPFS  
+- Publishes proofs of verifiability for all BoP decisions  
+
+---
+
+* 🪙 Treasury Policy Snapshot (Article 8)
+
+- All treasury funds in 3-of-5 Bitcoin multisig wallets  
+- No fiat accounts permitted  
+- Lightning payouts require proof-of-work receipts  
+- Transactions published via Nostr/IPFS for auditability  
+
+---
+
+* 🗳 Election Procedure (Article 5.3)
+
+- Annual elections using Bitcoin-signed or PGP ballots  
+- Term limits: 2 years per role  
+- Results published with cryptographic proof  
+- Resignations must be signed and timestamped on public record  
+
+---
+
+* 🛡 Operational Integrity
+
+All BoP core members must:
+
+- Avoid all fiat infrastructure  
+- Operate via Lightning or on-chain Bitcoin proofs  
+- Uphold verification-first governance  
+- Publish decisions with public, verifiable, and timestamped transparency  
+
+---
+
+* ⚖️ Quote
+
+#+begin_quote  
+"We’re not here to debate monetary policy. We’re here to verify the exit."  
+#+end_quote

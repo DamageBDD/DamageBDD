@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- 2025-08-14 Thu 14:22 -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bitcoin Only Party – Core Roles (Constitutional Alignment)</title>
+<meta name="author" content="Bitcoin Only Party" />
+<meta name="generator" content="Org Mode" />
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<link rel='icon' type="image/x-icon" href="/assets/img/favicon.ico">
+
+<link rel="stylesheet" href="/assets/css/bop.css" >
+<link rel="stylesheet" href="/assets/css/bop-dark.css">
+<link rel="stylesheet" type="text/css" href='/assets/css/bop-lightning-ui.css'>
+<link rel="stylesheet" type="text/css" href='/assets/css/nostr-scroll.css'>
+
+<script  src='/assets/js/theme.js' defer></script>
+<script type='module' src='/assets/js/bop.js' defer></script>
+<script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+</head>
+<body>
+<div id="preamble" class="status">
+<div class='preamble'>
+
+  <!-- Site Header -->
+  <header class='site-header'>
+    <a href='/' class='logo-link'>
+      <img src='/assets/img/bop-logo-alpha.png' class='logo' alt='BoP Logo' />
+    </a>
+    <div class='identity-text'>
+      <h1 class='site-title'>Bitcoin Only Party</h1>
+      <p class='tagline'>Sovereignty, Sound Money, and Verified Governance for Australia.</p>
+    </div>
+    <button onclick="toggleTheme()" title="Toggle Light/Dark" id="theme-button">🌓</button>
+  </header>
+
+  <!-- Main Navigation -->
+  <nav class='main-nav'>
+    <ul class='nav-menu'>
+      <li><a href='/'><span class='nav-icon'>🏛️</span> Home</a></li>
+      <li><a href='/constitution'><span class='nav-icon'>📜</span> Constitution</a></li>
+      <li><a href="/socials"><span class="nav-icon">🌐</span> Socials</a></li>
+    </ul>
+
+    <!-- Lightning Login -->
+    <form id='login-form' onsubmit="startAuth(); return false;" class='login-form'>
+      <button type='submit' id='login-btn'>⚡Lightning Login ⚡</button>
+    </form>
+  </nav>
+
+  <div id='status'></div>
+  <section id="invoice">
+  </section>
+  <section id="bop-wallet">
+  </section>
+
+  <!-- JS -->
+  <script type='module' defer>
+    import { LightningAuth } from '/assets/js/bop.js';
+    import { showLightningQR, hideLightningQR, renderConfirmation } from './assets/js/bop-lightning-ui.js';
+
+    let auth;
+
+    function updateStatus(msg) {
+      console.log(msg);
+      //document.getElementById("status").innerText = `[Status] ${JSON.stringify(msg)}`;
+      if (typeof msg === "object" && msg.status === "unregistered") {
+        hideLightningQR("invoice");
+      
+        renderConfirmation({
+          message: "You're not registered. Would you like to register for the Bitcoin Only Party?",
+          onConfirm: () => {
+            window.location.href = "/register";
+          },
+          onCancel: () => {
+            updateStatus("User declined registration.");
+          }
+        });
+      }
+
+    }
+
+    function renderInvoiceQR(invoice) {
+      showLightningQR({containerId : "invoice",
+      paymentRequest:  invoice,
+      title: "Login With Lightning Wallet",
+      instructions:  `
+    🛡️ Scan the QR code with your Lightning wallet to login.<br>
+  `});
+    }
+
+    window.startAuth = function () {
+
+      const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+      const wsUrl = protocol + window.location.host + "/ws/auth";
+
+      auth = new LightningAuth(wsUrl, {
+        onInvoice: renderInvoiceQR,
+        onVerified: () => updateStatus("✅ Authenticated!"),
+        onError: (err) => updateStatus("❌ Error: " + err),
+        onStatusUpdate: updateStatus
+      });
+
+      auth.connect();
+    }
+  </script>
+
+</div>
+</div>
+<div id="content" class="content">
+<header>
+<h1 class="title">Bitcoin Only Party – Core Roles (Constitutional Alignment)</h1>
+</header><div id="outline-container-org32272af" class="outline-2">
+<h2 id="org32272af">🏛️ Core Roles of the Bitcoin Only Party (BoP)</h2>
+<div class="outline-text-2" id="text-org32272af">
+<p>
+This document defines the core operational roles within BoP in accordance with the Constitution (Sections 5 and 8). These roles are designed for sovereignty, decentralization, and immutable accountability.
+</p>
+</div>
+<div id="outline-container-orga6af4e4" class="outline-3">
+<h3 id="orga6af4e4">Finality. Integrity. Verification. **</h3>
+<div class="outline-text-3" id="text-orga6af4e4">
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orga2ee970" class="outline-2">
+<h2 id="orga2ee970">🧭 1. Coordinator – Ops &amp; Comms Commander</h2>
+<div class="outline-text-2" id="text-orga2ee970">
+<p>
+<b><b>Status:</b></b> <a href="https://njump.me/nprofile1qqvacantcoordinator">VACANT – Apply via Nostr</a>  
+<b><b>Mandated by:</b></b> Constitution Article 5.2
+</p>
+
+<ul class="org-ul">
+<li>Oversees internal communications and national coordination</li>
+<li>Manages public-facing media (website, Nostr, Matrix, IPFS, bulletins)</li>
+<li>Authenticates Node identities (PGP, LNURL, Lightning proofs)</li>
+<li>Publishes verified updates and ensures protocol discipline</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-orgdf8fb5f" class="outline-2">
+<h2 id="orgdf8fb5f">🧮 2. Treasurer – Key Guardian &amp; Flow Auditor</h2>
+<div class="outline-text-2" id="text-orgdf8fb5f">
+<p>
+<b><b>Status:</b></b> <a href="https://njump.me/nprofile1qqvacanttreasurer">VACANT – Apply via Nostr</a>  
+<b><b>Mandated by:</b></b> Constitution Articles 5.2 &amp; 8
+</p>
+
+<ul class="org-ul">
+<li>Manages multisig wallets (2-of-3 or 3-of-5)</li>
+<li>Oversees Lightning channels and balance coordination</li>
+<li>Publishes treasury reports to Nostr or IPFS</li>
+<li>Signs PSBTs and verifies all expenditures publicly</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-org5e64ae1" class="outline-2">
+<h2 id="org5e64ae1">📜 3. Policy Verifier – The Constitutional Oraclizer</h2>
+<div class="outline-text-2" id="text-org5e64ae1">
+<p>
+<b><b>Status:</b></b> <a href="https://njump.me/nprofile1qqvacantpolicy">VACANT – Apply via Nostr</a>  
+<b><b>Mandated by:</b></b> Constitution Article 5.2
+</p>
+
+<ul class="org-ul">
+<li>Validates policies and proposals via BDD or smart contract logic</li>
+<li>Commits test coverage and milestone verification hashes</li>
+<li>Rejects unverifiable claims or off-chain promises</li>
+<li>Publishes proofs to public append-only logs</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-orgaa9151b" class="outline-2">
+<h2 id="orgaa9151b">⚙️ 4. Tech Steward – Infrastructure and InfoSec Custodian</h2>
+<div class="outline-text-2" id="text-orgaa9151b">
+<p>
+<b><b>Status:</b></b> <a href="https://njump.me/nprofile1qqvacanttech">VACANT – Apply via Nostr</a>  
+<b><b>Mandated by:</b></b> Constitution Article 5.2
+</p>
+
+<ul class="org-ul">
+<li>Maintains BoP infrastructure: website, Git, Matrix, Nostr, Core nodes</li>
+<li>Enforces Tor routing, reproducibility, and public key auth</li>
+<li>Deploys and maintains decentralized voting infra</li>
+<li>Coordinates updates to IPFS and self-hosted services</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-org069b91f" class="outline-2">
+<h2 id="org069b91f">🕸 5. Council Node Delegate – Local Chapter Representative</h2>
+<div class="outline-text-2" id="text-org069b91f">
+<p>
+<b><b>Status:</b></b> <a href="https://njump.me/nprofile1qqvacantnode">VACANT – Filled per region</a>  
+<b><b>Mandated by:</b></b> Constitution Article 5.1
+</p>
+
+<ul class="org-ul">
+<li>Represents a geographic node in the BoP Council</li>
+<li>Participates in multisig governance and PSBT quorum</li>
+<li>Casts public-signed votes and verifies regional membership</li>
+<li>Maintains uptime and presence in Node operations</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-org6fec8b1" class="outline-2">
+<h2 id="org6fec8b1">🎓 6. Candidate Vetting Committee – Voter Integrity Watch</h2>
+<div class="outline-text-2" id="text-org6fec8b1">
+<p>
+<b><b>Status:</b></b>  
+</p>
+<ul class="org-ul">
+<li><a href="https://njump.me/nprofile1qqvacantvet1">VACANT – Member 1</a></li>
+<li><a href="https://njump.me/nprofile1qqvacantvet2">VACANT – Member 2</a></li>
+<li><a href="https://njump.me/nprofile1qqvacantvet3">VACANT – Member 3</a></li>
+</ul>
+<p>
+<b><b>Mandated by:</b></b> Constitution Article 7
+</p>
+
+<ul class="org-ul">
+<li>Verifies alignment with BoP preamble</li>
+<li>Audits campaign finances in satoshis</li>
+<li>Ensures milestone-based promises are cryptographically committed</li>
+<li>Issues endorsements via Nostr signature quorum</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-org5d05d08" class="outline-2">
+<h2 id="org5d05d08">🔍 7. Verification Officer – Audit &amp; Constitutional Integrity</h2>
+<div class="outline-text-2" id="text-org5d05d08">
+<p>
+<b><b>Status:</b></b> <a href="https://njump.me/nprofile1qqvacantaudit">VACANT – Apply via Nostr</a>  
+<b><b>Mandated by:</b></b> Constitution Article 11
+</p>
+
+<ul class="org-ul">
+<li>Maintains SHA-256 hash proofs of all constitutional changes</li>
+<li>Tracks GPG signatures for Node roles and amendments</li>
+<li>Commits state hashes to Git/IPFS</li>
+<li>Publishes proofs of verifiability for all BoP decisions</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-orgf1e515d" class="outline-2">
+<h2 id="orgf1e515d">🪙 Treasury Policy Snapshot (Article 8)</h2>
+<div class="outline-text-2" id="text-orgf1e515d">
+<ul class="org-ul">
+<li>All treasury funds in 3-of-5 Bitcoin multisig wallets</li>
+<li>No fiat accounts permitted</li>
+<li>Lightning payouts require proof-of-work receipts</li>
+<li>Transactions published via Nostr/IPFS for auditability</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-orgf54d330" class="outline-2">
+<h2 id="orgf54d330">🗳 Election Procedure (Article 5.3)</h2>
+<div class="outline-text-2" id="text-orgf54d330">
+<ul class="org-ul">
+<li>Annual elections using Bitcoin-signed or PGP ballots</li>
+<li>Term limits: 2 years per role</li>
+<li>Results published with cryptographic proof</li>
+<li>Resignations must be signed and timestamped on public record</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-orgc811cee" class="outline-2">
+<h2 id="orgc811cee">🛡 Operational Integrity</h2>
+<div class="outline-text-2" id="text-orgc811cee">
+<p>
+All BoP core members must:
+</p>
+
+<ul class="org-ul">
+<li>Avoid all fiat infrastructure</li>
+<li>Operate via Lightning or on-chain Bitcoin proofs</li>
+<li>Uphold verification-first governance</li>
+<li>Publish decisions with public, verifiable, and timestamped transparency</li>
+</ul>
+
+<p>
+&#x2014;
+</p>
+</div>
+</div>
+<div id="outline-container-org69bc22f" class="outline-2">
+<h2 id="org69bc22f">⚖️ Quote</h2>
+<div class="outline-text-2" id="text-org69bc22f">
+<blockquote>
+<p>
+"We’re not here to debate monetary policy. We’re here to verify the exit."  
+</p>
+</blockquote>
+</div>
+</div>
+</div>
+</body>
+</html>

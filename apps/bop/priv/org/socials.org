@@ -1,0 +1,29 @@
+#+TITLE: Social Media - BoP
+
+* Read more articles about BoP on Nostr.
+
+These articles are fetched live from the *[[https://nostr.org][Nostr]]* network — an open protocol for decentralized publishing.
+
+You can follow or interact with the author using any Nostr-compatible client:
+
+- 🧠 Author: =npub16a2r3p8d7syd46ypygva0fqw6pfpgdxv5mm4gd8vqra4wr9scj5sx42y5t=
+- - 🏷️ Hashtags: =#BoP=, =#bitcoin=, =#BitcoinOnlyParty=
+- 🔗 Open in Nostr clients:
+  - [[https://coracle.social/people/nprofile1qyg8wumn8ghj7mn0wd68ytnddakj7qgawaehxw309ahx7um5wghxy6t5vdhkjmn9wgh8xmmrd9skctcppemhxue69uhkummn9ekx7mp0qqsdw4pcsnklgzx6azqjyxwh5s8dq5s5xnx2da65xnkqp76hpjcvf2gdl3flw][View on Coracle.social]]
+  - [[https://iris.to/npub16a2r3p8d7syd46ypygva0fqw6pfpgdxv5mm4gd8vqra4wr9scj5sx42y5t][View on iris.to]]
+  - [[https://primal.net/p/nprofile1qqsdw4pcsnklgzx6azqjyxwh5s8dq5s5xnx2da65xnkqp76hpjcvf2gffa7np][View on Primal]]
+
+#+BEGIN_EXPORT html
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<div id="nostr-feed"></div>
+
+<script type="module">
+    import { initNostrScroll } from '/assets/js/nostr-scroll.js';
+
+    initNostrScroll({
+      containerId: "nostr-feed",
+      pubkey: ["d7543884edf408dae8812219d7a40ed0521434cca6f75434ec00fb570cb0c4a9"], // your hex pubkey
+      limit: 30
+    });
+</script>
+#+END_EXPORT

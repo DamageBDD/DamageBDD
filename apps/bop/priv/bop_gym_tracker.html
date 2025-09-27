@@ -1,0 +1,91 @@
+<html><head><title>BoP | Proof-of-Reps</title><meta content="width=device-width, initial-scale=1.0" name="viewport"/><style>
+body {
+  font-family: monospace;
+  padding: 12px;
+  margin: 0;
+  background-color: #1c1c1c;
+  color: #f2a900;
+}
+h1 {
+  font-size: 26px;
+  color: #f2a900;
+}
+select, input[type="number"] {
+  background: #111;
+  color: #f2a900;
+  font-size: 18px;
+  padding: 12px;
+  margin: 6px 0;
+  width: 100%;
+  border: 1px solid #f2a900;
+  border-radius: 4px;
+}
+.set-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.set-row input {
+  flex: 1;
+}
+label {
+  font-weight: bold;
+  display: block;
+  margin-top: 12px;
+}
+button {
+  font-size: 18px;
+  padding: 14px;
+  width: 100%;
+  margin-top: 20px;
+  background-color: #f2a900;
+  color: #111;
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+}
+@media (max-width: 600px) {
+  select, input {
+    font-size: 16px;
+  }
+  button {
+    font-size: 16px;
+    padding: 12px;
+  }
+}
+</style><script>
+const workouts = {
+  "Day 1": ["High Bar Squat", "Bench Press", "GHD"],
+  "Day 2": ["Low Bar Squat", "Deadlift", "DB Press"],
+  "Day 3": ["Goblet Squat", "Pushups", "Lunges"]
+};
+
+function loadWorkout() {
+  const select = document.getElementById("workout-select");
+  const container = document.getElementById("sets-container");
+  container.innerHTML = "";
+  const exercises = workouts[select.value] || [];
+  exercises.forEach(ex => {
+    const label = document.createElement("label");
+    label.textContent = ex;
+    container.appendChild(label);
+    for (let i = 1; i <= 3; i++) {
+      const row = document.createElement("div");
+      row.className = "set-row";
+      ["Load", "Reps", "RPE"].forEach(field => {
+        const input = document.createElement("input");
+        input.placeholder = `${field} Set ${i}`;
+        input.type = "number";
+        input.dataset.exercise = ex;
+        input.dataset.set = i;
+        input.dataset.field = field;
+        const key = `${ex}-set${i}-${field}`;
+        input.value = localStorage.getItem(key) || "";
+        input.oninput = () => localStorage.setItem(key, input.value);
+        row.appendChild(input);
+      });
+      container.appendChild(row);
+    }
+  });
+}
+</script></head><body><h1>BoP | Proof-of-Reps 🏋️‍♂️⚡</h1><label for="workout-select">Select Sovereign Workout</label><select id="workout-select" onchange="loadWorkout()"><option value="Day 1">Day 1</option><option value="Day 2">Day 2</option><option value="Day 3">Day 3</option></select><div id="sets-container"></div></body></html>

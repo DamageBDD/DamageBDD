@@ -1,0 +1,59 @@
+<footer class="footer">
+  <div class="footer-message">
+    <h2>🔐 Finality. Integrity. Verification.</h2>
+    <p class="centered-message">
+      We’re not here to <em>debate</em> monetary policy.<br>
+      We’re here to <strong>verify</strong> the exit.
+    </p>
+    <button onclick="verifySignature()">🔍 Verify Signature</button>
+    <p id="verification-result" class="centered-message"></p>
+  </div>
+
+  <p class="meta">
+    Last updated %C · (%v HTML)<br>
+    <a href="/sitemap.html">Sitemap</a>
+  </p>
+</footer>
+
+<script src="https://unpkg.com/openpgp@latest/dist/openpgp.min.js"></script>
+<script>
+async function verifySignature() {
+  try {
+    const ipfsGateway = '/ipfs/';
+    const pubkeyCID = 'QmXKCx8ey3f933HgEKonPNPAKcovnNrujukUCb6XuAioZ7'; // ipfs hash of bop coordinator gpg public key
+      
+
+    const path = window.location.pathname;
+    const baseFile = path.endsWith('.html') ? path : path.endsWith('/') ? path + 'index.html' : path + '.html';
+    const htmlURL = baseFile;
+    const sigURL = baseFile + '.asc';
+
+
+    const [pubkeyText, sigText, htmlText] = await Promise.all([
+      fetch(ipfsGateway + pubkeyCID).then(r => r.text()),
+      fetch(sigURL).then(r => r.text()),
+      fetch(htmlURL).then(r => r.text())
+    ]);
+
+    const pubkey = await openpgp.readKey({ armoredKey: pubkeyText });
+    const signature = await openpgp.readSignature({ armoredSignature: sigText });
+    const message = await openpgp.createMessage({ text: htmlText });
+
+    const verificationResult = await openpgp.verify({
+      message,
+      signature,
+      verificationKeys: pubkey
+    });
+
+    const { verified, keyID } = verificationResult.signatures[0];
+    await verified;
+
+    document.getElementById('verification-result').textContent =
+          `✅ Verified by Coordinator gpg key:${keyID.toHex().toUpperCase()}\n Coordinator gpg pubkey hash: ${pubkeyCID}`;
+  } catch (err) {
+      console.error(err);
+    document.getElementById('verification-result').textContent =
+      `❌ BoP page signature invalid: ${err.message}`;
+  }
+}
+</script>
