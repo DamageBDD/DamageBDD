@@ -7,7 +7,7 @@ These articles are fetched live from the *[[https://nostr.org][Nostr]]* network 
 You can follow or interact with the author using any Nostr-compatible client:
 
 - 🧠 Author: =npub16a2r3p8d7syd46ypygva0fqw6pfpgdxv5mm4gd8vqra4wr9scj5sx42y5t=
-- - 🏷️ Hashtags: =#BoP=, =#bitcoin=, =#BitcoinOnlyParty=
+- - 🏷️ Hashtags: =#BoP #bitcoin #BitcoinOnlyParty=
 - 🔗 Open in Nostr clients:
   - [[https://coracle.social/people/nprofile1qyg8wumn8ghj7mn0wd68ytnddakj7qgawaehxw309ahx7um5wghxy6t5vdhkjmn9wgh8xmmrd9skctcppemhxue69uhkummn9ekx7mp0qqsdw4pcsnklgzx6azqjyxwh5s8dq5s5xnx2da65xnkqp76hpjcvf2gdl3flw][View on Coracle.social]]
   - [[https://iris.to/npub16a2r3p8d7syd46ypygva0fqw6pfpgdxv5mm4gd8vqra4wr9scj5sx42y5t][View on iris.to]]

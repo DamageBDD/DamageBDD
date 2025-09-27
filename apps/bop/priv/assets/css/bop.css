@@ -464,3 +464,50 @@ margin:10px;
   .qr-container {
     text-align: center;
   }
+/* Base code container */
+pre code, code {
+  position: relative;
+  display: block;       /* block for multi-line, safe for inline too */
+  padding: 0.5em 3em 0.5em 0.5em; /* leave space on the right */
+  overflow-x: auto;
+  white-space: pre-wrap; /* wrap long lines nicely */
+  word-break: break-word;
+}
+
+/* Copy button: subtle, translucent, doesn't break line */
+.copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0, 122, 204, 0.6); /* translucent blue */
+  color: #fff;
+  border: none;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.6;
+  z-index: 10;
+  line-height: 1;        /* avoid altering code block line height */
+  transition: opacity 0.2s, background 0.2s, transform 0.2s;
+}
+
+/* Hover/active feedback */
+.copy-btn:hover,
+.copy-btn:active,
+.copy-btn:focus {
+  background: rgba(0, 122, 204, 0.9);
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+/* Mobile: slightly bigger hit area, but still subtle */
+@media (max-width: 768px) {
+  .copy-btn {
+    padding: 6px 10px;
+    font-size: 13px;
+    border-radius: 6px;
+  }
+}
+

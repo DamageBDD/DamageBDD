@@ -68,3 +68,31 @@ export class LightningAuth {
 //   onStatusUpdate: (status) => console.log("Status:", status)
 // });
 // auth.connect();
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll("pre code, code").forEach(codeBlock => {
+    // Avoid duplicate buttons
+    if (codeBlock.querySelector(".copy-btn")) return;
+
+    // Create the button
+    const button = document.createElement("button");
+    button.className = "copy-btn";
+    button.textContent = "Copy";
+
+    // Copy handler
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(codeBlock.textContent.trim());
+        button.textContent = "✓ Copied";
+        setTimeout(() => (button.textContent = "Copy"), 2000);
+      } catch (err) {
+        console.error("Copy failed", err);
+        button.textContent = "Error";
+        setTimeout(() => (button.textContent = "Copy"), 2000);
+      }
+    });
+
+    // Attach button
+    codeBlock.style.position = "relative";
+    codeBlock.appendChild(button);
+  });
+});

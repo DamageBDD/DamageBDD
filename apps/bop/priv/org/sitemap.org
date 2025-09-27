@@ -1,6 +1,6 @@
 #+TITLE: Bitcoin Only Party - Finality. Integrity. Verification.
 
-- {{{timestamp(2025-06-09)}}} [[file:socials.org][Social Media - BoP]]
+- {{{timestamp(2025-09-27)}}} [[file:socials.org][Social Media - BoP]]
 - {{{timestamp(2025-06-09)}}} [[file:core-roles.org][Bitcoin Only Party – Core Roles (Constitutional Alignment)]]
 - {{{timestamp(2025-05-16)}}} [[file:candidates.org][Bitcoin Only Party – Founding Member List for AEC Registration]]
 - {{{timestamp(2025-05-14)}}} [[file:next-steps.org][Bitcoin Only Party: Next Steps for Federal Election Registration]]

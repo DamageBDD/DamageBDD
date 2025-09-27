@@ -123,15 +123,19 @@
     (message "🌐 Starting local server at http://localhost:8081")
     (httpd-start)))
 (defun bop-rsync-deploy (node)
-  "Interactively select a NODE and deploy the 'public/' directory via rsync over SSH."
+  "Interactively select a NODE and deploy the 'public/' directory via rsync over SSH.
+The project root is resolved relative to this file, not the current buffer."
   (interactive
    (list (read-string "Enter user@node (e.g., root@node0): " "root@node0")))
   (setq my-gpg-signing-key "coordinator@bitcoinonly.party")
   (bop-publish)
-  (let ((default-directory (expand-file-name "~/BitcoinOnlyParty")))
+  (let* ((script-dir (file-name-directory (or load-file-name (symbol-file 'bop-rsync-deploy))))
+         (project-root (expand-file-name ".." script-dir))
+         (default-directory project-root))
     (async-shell-command
-     (format "rsync -avz --delete -e ssh public/ %s:/var/www/bitcoinonlyparty/" node)
+     (format "rsync -avz --delete -e ssh public/ %s:/var/www/bitcoinonly.party/" node)
      "*BoP Deploy*")))
+
 
 (message "🛠️ Bitcoin Only Party publish.el loaded.")
 
