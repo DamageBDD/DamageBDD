@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>DamageBDD — Windows Installation Guide</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#121823; --muted:#8aa0b5; --text:#e7eef5; --accent:#5cc8ff; --accent2:#87ffa1; --warn:#ffd166;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Noto Sans","Helvetica Neue",Arial;
+    background:linear-gradient(180deg,#0b0f14 0%, #0d1117 100%); color:var(--text);
+  }
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 64px}
+  .hero{
+    display:flex;gap:18px;align-items:center;margin-bottom:24px;flex-wrap:wrap
+  }
+  .logo{
+    width:56px;height:56px;border-radius:14px;background:radial-gradient(80% 80% at 30% 30%, #5cc8ff 0%, #3a78ff 70%, #1b2440 100%);
+    box-shadow:0 6px 22px rgba(92,200,255,.35), inset 0 0 10px rgba(255,255,255,.15)
+  }
+  h1{font-size:1.8rem;line-height:1.2;margin:0}
+  .subtitle{color:var(--muted);margin-top:6px}
+  .panel{
+    background:var(--panel); border:1px solid #233041; border-radius:16px; padding:18px 18px;
+    box-shadow:0 8px 30px rgba(0,0,0,.35); margin:16px 0;
+  }
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:820px){.grid{grid-template-columns:1fr}}
+  .btn{
+    display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:#002033;font-weight:700;
+    background:var(--accent);border:0;border-radius:12px;padding:12px 16px;box-shadow:0 6px 20px rgba(92,200,255,.35);
+    transition:transform .06s ease, box-shadow .2s ease;
+  }
+  .btn.secondary{background:#9bd6ff}
+  .btn:active{transform:translateY(1px)}
+  .btn:focus{outline:2px solid #bfe9ff;outline-offset:2px}
+  .btn small{font-weight:600;opacity:.85}
+  ol.steps{margin:0;padding-left:18px}
+  ol.steps li{margin:12px 0;padding-left:6px}
+  code,kbd{background:#0c1420;border:1px solid #243247;border-radius:6px;padding:0 6px}
+  .note{font-size:.95rem;color:var(--muted)}
+  .callout{
+    border-left:4px solid var(--accent); background:#0d1522; padding:12px 14px; border-radius:10px; margin:12px 0;
+  }
+  .success{border-left-color:var(--accent2); background:#0e1d14}
+  .warn{border-left-color:var(--warn); background:#1a1a0d}
+  details{background:#0f1724;border:1px solid #233041;border-radius:12px;padding:10px 12px;margin:10px 0}
+  summary{cursor:pointer;font-weight:700}
+  .footer{margin-top:28px;color:var(--muted);font-size:.9rem}
+  .kbd{padding:2px 5px;border-radius:5px;border:1px solid #3a4a63;background:#0e1623;color:#d9e7ff}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <h1>DamageBDD — Windows Installation</h1>
+        <div class="subtitle">One-click setup with custom port & encrypted wallet init</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Download</h2>
+      <p class="note">Download <strong>both</strong> files to the <em>same folder</em> (e.g. your Desktop). Then double-click the batch file.</p>
+
+      <div class="grid" aria-label="Download buttons">
+        <a class="btn" href="https://run.dev.damagebdd.com/static/Run-Installer.bat">
+          ⬇️ <span>Download <strong>Run-Installer.bat</strong><br><small>One-click launcher</small></span>
+        </a>
+        <a class="btn secondary" href="https://run.dev.damagebdd.com/static/Install-DamageBDD.ps1">
+          ⬇️ <span>Download <strong>Install-DamageBDD.ps1</strong><br><small>PowerShell core (v2)</small></span>
+        </a>
+      </div>
+
+      <div class="callout warn">
+        <strong>Why two files?</strong> The <code>.bat</code> elevates and runs the <code>.ps1</code> with the right permissions/options.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Install (Beginner-Friendly)</h2>
+      <ol class="steps">
+        <li>Create a folder (e.g. <code>C:\Users\<em>You</em>\Desktop\DamageInstaller</code>).</li>
+        <li>Save <strong>both</strong> downloads into that folder:
+          <ul>
+            <li><code>Run-Installer.bat</code></li>
+            <li><code>Install-DamageBDD.ps1</code></li>
+          </ul>
+        </li>
+        <li>Double-click <strong>Run-Installer.bat</strong> &rarr; approve the UAC prompt.</li>
+        <li>Follow prompts:
+          <ul>
+            <li><strong>Port:</strong> choose an HTTP listen port (auto-suggests a free one if in use).</li>
+            <li><strong>Wallet password:</strong> secure Windows prompt to initialize the encrypted key store.</li>
+          </ul>
+        </li>
+        <li>The installer will then:
+          <ul>
+            <li>Install <strong>Erlang/OTP 28.1</strong> (if needed)</li>
+            <li>Download <strong>DamageBDD</strong> (latest <code>develop</code>)</li>
+            <li>Download <strong>rebar3</strong></li>
+            <li>Write <code>config/sys.config</code> with your port & settings</li>
+            <li>Initialize the encrypted wallet keystore</li>
+            <li>Build a <strong>release</strong></li>
+          </ul>
+        </li>
+      </ol>
+      <div class="callout success">
+        When you see <strong>“✅ Done! DamageBDD set up at: …”</strong>, installation is complete.
+      </div>
+      <div class="note">
+        <strong>Install location:</strong> a folder named <code>DamageBDD</code> beside where you saved the installer files.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Run &amp; Service (One-Click)</h2>
+      <div class="grid" aria-label="Run & Service">
+        <a class="btn" href="https://run.dev.damagebdd.com/static/damagebdd-run.bat">
+          ▶️ <span><strong>damagebdd-run.bat</strong><br><small>Start / Stop / Console / Logs</small></span>
+        </a>
+        <a class="btn secondary" href="https://run.dev.damagebdd.com/static/damagebdd-service.bat">
+          🛠️ <span><strong>damagebdd-service.bat</strong><br><small>Install / Start / Stop / Uninstall</small></span>
+        </a>
+      </div>
+
+      <div class="callout" style="margin-top:12px">
+        Place these files in the <code>same folder</code> that contains your <code>DamageBDD</code> directory.
+      </div>
+
+      <details>
+        <summary>What does <code>damagebdd-run.bat</code> do?</summary>
+        <div class="callout">
+          Builds a release if missing, then lets you: <strong>Start</strong> (daemon), <strong>Stop</strong>, <strong>Console</strong> (interactive), or open <strong>Logs</strong>.
+        </div>
+      </details>
+
+      <details>
+        <summary>What does <code>damagebdd-service.bat</code> do?</summary>
+        <div class="callout">
+          Installs a Windows Service (<em>Automatic</em> startup), and can <strong>Start</strong>/<strong>Stop</strong>/<strong>Uninstall</strong>. Optionally stores a service-scoped
+          <code>DAMAGE_SECRET_KEY</code> so the service can unlock the wallet non-interactively (skip to keep the password out of the service config).
+        </div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Changing Settings Later</h2>
+      <details>
+        <summary>Change the HTTP port</summary>
+        <div class="callout">
+          Edit <code>DamageBDD\config\sys.config</code> → update <code>{port, &lt;number&gt;}</code> → run <code>damagebdd-run.bat</code> and choose <em>Start</em>.
+        </div>
+      </details>
+      <details>
+        <summary>Rotate/reset wallet password</summary>
+        <div class="callout">
+          Stop the app, back up your key file if applicable, then re-initialize using your project’s wallet/secret management flow.
+          If running as a service, remove any stored <code>DAMAGE_SECRET_KEY</code> via <code>damagebdd-service.bat</code> → <em>Uninstall</em> then <em>Install</em> (skip the password step).
+        </div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">FAQ</h2>
+
+      <details>
+        <summary>Do I need to install anything first?</summary>
+        <div class="callout"><strong>No.</strong> The installer fetches Erlang/OTP, DamageBDD, and rebar3 automatically.</div>
+      </details>
+
+      <details>
+        <summary>Is it safe to accept the Windows permission prompt?</summary>
+        <div class="callout">Yes. It’s the standard UAC prompt to allow the Erlang installer to run.</div>
+      </details>
+
+      <details>
+        <summary>Port is already in use</summary>
+        <div class="callout">The installer auto-suggests a free port. You can also change it later in <code>config/sys.config</code>.</div>
+      </details>
+
+      <details>
+        <summary>Where does it install DamageBDD?</summary>
+        <div class="callout">In a folder named <code>DamageBDD</code> next to where you saved the installer files.</div>
+      </details>
+
+      <details>
+        <summary>The <code>.ps1</code> does nothing when double-clicked</summary>
+        <div class="callout">Always start with <strong>Run-Installer.bat</strong>—it launches PowerShell correctly with the right permissions.</div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Troubleshooting</h2>
+      <details>
+        <summary>Windows SmartScreen blocked the file</summary>
+        <div class="callout">Click <strong>More info</strong> → <strong>Run anyway</strong>. Files are hosted at the official DamageBDD URL above.</div>
+      </details>
+
+      <details>
+        <summary>Installer can’t find <code>escript.exe</code></summary>
+        <div class="callout">Close the window, then re-run <strong>Run-Installer.bat</strong>. If it persists, check that Erlang/OTP 28.1 is installed.</div>
+      </details>
+
+      <details>
+        <summary>Corporate antivirus blocked downloads</summary>
+        <div class="callout">Try a non-corporate network or ask IT to whitelist: <code>github.com</code>, <code>s3.amazonaws.com</code>, <code>run.dev.damagebdd.com</code>.</div>
+      </details>
+    </div>
+
+    <p class="footer">
+      © <span id="y"></span> DamageBDD. Built for deterministically verified development.
+    </p>
+  </div>
+
+<script>
+  document.getElementById('y').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
+

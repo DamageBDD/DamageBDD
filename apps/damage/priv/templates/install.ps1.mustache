@@ -1,20 +1,81 @@
 #requires -RunAsAdministrator
-Write-Host "Enabling WSL + VM Platform" -ForegroundColor Cyan
+# Auto-switch WSL default version based on firmware virtualization availability.
+# - If virtualization is ON  -> WSL2
+# - If virtualization is OFF -> WSL1 (no BIOS changes needed)
+
+Write-Host "Configuring Windows Subsystem for Linux..." -ForegroundColor Cyan
+
+function Test-VirtOn {
+    # Prefer Get-ComputerInfo when available; fall back to parsing systeminfo
+    try {
+        $c = Get-ComputerInfo -ErrorAction Stop
+        return ($c.HyperVRequirementVirtualizationFirmwareEnabled -eq "True")
+    } catch {
+        $txt = systeminfo.exe | Out-String
+        return ($txt -match "Virtualization Enabled In Firmware:\s+Yes")
+    }
+}
+
+# Always enable core WSL bits; enabling VMPlatform upfront lets us use WSL2 when available.
+Write-Host "Enabling WSL feature..." -ForegroundColor Cyan
 dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
+
+Write-Host "Enabling Virtual Machine Platform (for WSL2)..." -ForegroundColor Cyan
 dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
 
+# Decide the default WSL version based on firmware virtualization
+if (Test-VirtOn) {
+  Write-Host "Firmware virtualization is ON → setting default to WSL2" -ForegroundColor Green
+  wsl --set-default-version 2
+} else {
+  Write-Host "Firmware virtualization is OFF → setting default to WSL1" -ForegroundColor Yellow
+  wsl --set-default-version 1
+}
+
+# ---- Distro install / ensure Ubuntu present ----
 if (-not (wsl -l -q | Select-String -Pattern "^Ubuntu$")) {
   Write-Host "Installing Ubuntu..." -ForegroundColor Cyan
+  # Using the 20.04 alias to match original template; change if you prefer a different release.
   Invoke-WebRequest https://aka.ms/wslubuntu2004 -OutFile ubuntu.appx -UseBasicParsing
   Add-AppxPackage .\ubuntu.appx
   Remove-Item .\ubuntu.appx
+} else {
+  Write-Host "Ubuntu already installed." -ForegroundColor Cyan
 }
 
+# Ensure the installed Ubuntu matches the chosen default (handles pre-existing installs)
+$default = ([int]((wsl --status | Select-String 'Default Version: (\d)').Matches.Groups[1].Value))
+$line = (wsl -l -v | Select-String '^\s*Ubuntu\s+')
+if ($line) {
+  $m = ($line -replace '\s{2,}', ' ').Trim().Split(' ')
+  # Expected format: Name State Version; tolerate minor variations
+  $current = 1
+  try {
+    $current = [int]$m[-1]
+  } catch { $current = 1 }
+
+  if ($current -ne $default) {
+    Write-Host "Converting Ubuntu to WSL$default ..." -ForegroundColor Cyan
+    try {
+      wsl --set-version Ubuntu $default
+    } catch {
+      Write-Warning "Conversion to WSL$default failed. This can happen if virtualization is OFF when targeting WSL2. Ubuntu will remain on WSL$current."
+    }
+  }
+}
+
+# Prime the Ubuntu instance
 wsl -d Ubuntu -- echo "WSL Ubuntu ready."
+
+# ---- App bootstrap within Ubuntu ----
 $domain = "{{domain}}"
 $email  = "{{email}}"
 
 $cmd = @"
 bash -lc 'sudo apt update && sudo apt install -y curl && curl -fsSL https://{{domain}}/install.sh?domain={{domain}}&email={{email}} | bash'
 "@
+
 wsl -d Ubuntu sh -c $cmd
+
+Write-Host "All done. If Windows prompted for a reboot during feature enablement, reboot once and re-run this script." -ForegroundColor Green
+

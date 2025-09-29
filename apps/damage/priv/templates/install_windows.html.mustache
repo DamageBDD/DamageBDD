@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>DamageBDD — Windows Installation Guide</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#121823; --muted:#8aa0b5; --text:#e7eef5; --accent:#5cc8ff; --accent2:#87ffa1; --warn:#ffd166;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Noto Sans","Helvetica Neue",Arial;
+    background:linear-gradient(180deg,#0b0f14 0%, #0d1117 100%); color:var(--text);
+  }
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 64px}
+  .hero{
+    display:flex;gap:18px;align-items:center;margin-bottom:24px;flex-wrap:wrap
+  }
+  .logo{
+    width:56px;height:56px;border-radius:14px;background:radial-gradient(80% 80% at 30% 30%, #5cc8ff 0%, #3a78ff 70%, #1b2440 100%);
+    box-shadow:0 6px 22px rgba(92,200,255,.35), inset 0 0 10px rgba(255,255,255,.15)
+  }
+  h1{font-size:1.8rem;line-height:1.2;margin:0}
+  .subtitle{color:var(--muted);margin-top:6px}
+  .panel{
+    background:var(--panel); border:1px solid #233041; border-radius:16px; padding:18px 18px;
+    box-shadow:0 8px 30px rgba(0,0,0,.35); margin:16px 0;
+  }
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:820px){.grid{grid-template-columns:1fr}}
+  .btn{
+    display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:#002033;font-weight:700;
+    background:var(--accent);border:0;border-radius:12px;padding:12px 16px;box-shadow:0 6px 20px rgba(92,200,255,.35);
+    transition:transform .06s ease, box-shadow .2s ease;
+  }
+  .btn.secondary{background:#9bd6ff}
+  .btn:active{transform:translateY(1px)}
+  .btn:focus{outline:2px solid #bfe9ff;outline-offset:2px}
+  .btn small{font-weight:600;opacity:.85}
+  ol.steps{margin:0;padding-left:18px}
+  ol.steps li{margin:12px 0;padding-left:6px}
+  code,kbd{background:#0c1420;border:1px solid #243247;border-radius:6px;padding:0 6px}
+  .note{font-size:.95rem;color:var(--muted)}
+  .callout{
+    border-left:4px solid var(--accent); background:#0d1522; padding:12px 14px; border-radius:10px; margin:12px 0;
+  }
+  .success{border-left-color:var(--accent2); background:#0e1d14}
+  .warn{border-left-color:var(--warn); background:#1a1a0d}
+  details{background:#0f1724;border:1px solid #233041;border-radius:12px;padding:10px 12px;margin:10px 0}
+  summary{cursor:pointer;font-weight:700}
+  .footer{margin-top:28px;color:var(--muted);font-size:.9rem}
+  .kbd{padding:2px 5px;border-radius:5px;border:1px solid #3a4a63;background:#0e1623;color:#d9e7ff}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <h1>DamageBDD — Windows Installation</h1>
+        <div class="subtitle">One-click setup for Erlang/OTP, DamageBDD (develop), and rebar3</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Download</h2>
+      <p class="note">Download <strong>both</strong> files to the <em>same folder</em> (e.g. your Desktop). Then double-click the batch file.</p>
+      <div class="grid" aria-label="Download buttons">
+        <a class="btn" href="http://run.dev.damagebdd.com/static/Run-Installer.bat">
+          ⬇️ <span>Download <strong>Run-Installer.bat</strong><br><small>One-click launcher</small></span>
+        </a>
+        <a class="btn secondary" href="http://run.dev.damagebdd.com/static/Install-DamageBDD.ps1">
+          ⬇️ <span>Download <strong>Install-DamageBDD.ps1</strong><br><small>PowerShell script</small></span>
+        </a>
+      </div>
+      <div class="callout warn">
+        <strong>Why two files?</strong> The <code>.bat</code> file elevates and runs the <code>.ps1</code> script safely with the right options.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Install (Beginner-Friendly)</h2>
+      <ol class="steps">
+        <li>Create a folder (e.g. <code>C:\Users\<em>You</em>\Desktop\DamageInstaller</code>).</li>
+        <li>Save <strong>both</strong> downloads into that folder:
+          <ul>
+            <li><code>Run-Installer.bat</code></li>
+            <li><code>Install-DamageBDD.ps1</code></li>
+          </ul>
+        </li>
+        <li>Double-click <strong>Run-Installer.bat</strong>.</li>
+        <li>When Windows asks for permission, click <strong>Yes</strong> (this installs Erlang).</li>
+        <li>Wait a few minutes. Text will scroll while it:
+          <ul>
+            <li>Installs <strong>Erlang/OTP 28.1</strong> silently</li>
+            <li>Downloads <strong>DamageBDD</strong> (latest <code>develop</code>)</li>
+            <li>Downloads <strong>rebar3</strong></li>
+            <li>Runs <strong>rebar3 compile</strong></li>
+          </ul>
+        </li>
+      </ol>
+      <div class="callout success">
+        When you see <strong>“✅ Done! DamageBDD set up at: …”</strong>, installation is complete.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Use Later (Rebuild)</h2>
+      <p>Open <strong>PowerShell</strong> and run:</p>
+      <pre><code>cd "C:\path\to\DamageBDD"
+escript .\rebar3 compile</code></pre>
+      <p class="note">Replace the path with the folder where the installer created <code>DamageBDD</code>.</p>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">FAQ</h2>
+
+      <details>
+        <summary>Do I need to install anything before running this?</summary>
+        <div class="callout">
+          <strong>No.</strong> The installer fetches Erlang/OTP, DamageBDD, and rebar3 automatically.
+        </div>
+      </details>
+
+      <details>
+        <summary>Is it safe to accept the Windows permission prompt?</summary>
+        <div class="callout">
+          Yes. It’s the standard UAC prompt to allow the Erlang installer to run.
+        </div>
+      </details>
+
+      <details>
+        <summary>Where does it install DamageBDD?</summary>
+        <div class="callout">
+          In a folder named <code>DamageBDD</code> next to where you saved the installer files.
+        </div>
+      </details>
+
+      <details>
+        <summary>I double-clicked the <code>.ps1</code> and nothing happened</summary>
+        <div class="callout">
+          Always start by double-clicking <strong>Run-Installer.bat</strong>. It launches PowerShell correctly with required permissions.
+        </div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0">Troubleshooting</h2>
+      <details>
+        <summary>Windows SmartScreen blocked the file</summary>
+        <div class="callout">
+          Click <strong>More info</strong> → <strong>Run anyway</strong>. Files are hosted at the official DamageBDD URL above.
+        </div>
+      </details>
+
+      <details>
+        <summary>Installer says it can’t find <code>escript.exe</code></summary>
+        <div class="callout">
+          Close the window, then re-run <strong>Run-Installer.bat</strong>. If it persists, open “Add or remove programs” and confirm Erlang/OTP 28.1 is installed.
+        </div>
+      </details>
+
+      <details>
+        <summary>Corporate antivirus blocked downloads</summary>
+        <div class="callout">
+          Try from a non-corporate network or ask your admin to whitelist:<br>
+          <code>github.com</code>, <code>s3.amazonaws.com</code>, and your domain <code>run.dev.damagebdd.com</code>.
+        </div>
+      </details>
+    </div>
+
+    <p class="footer">
+      © <span id="y"></span> DamageBDD. Built for deterministically verified development.
+    </p>
+  </div>
+
+<script>
+  document.getElementById('y').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
