@@ -363,6 +363,30 @@ step(
             )
     end;
 step(
+    Config,
+    Context,
+    <<"When">>,
+    _N,
+    ["I make a form POST request to", Path],
+    Data
+) ->
+    %% Base headers for a normal form POST
+    Headers0 = [
+        {<<"accept">>, "application/json"},
+        {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
+        {<<"Referer">>, Path},
+        {<<"X-Requested-With">>, <<"XMLHttpRequest">>}
+    ],
+
+    %% Perform the POST directly without CSRF/session negotiation
+    gun_post(
+        Config,
+        Context,
+        string:concat(maps:get(base_url, Context, ""), Path),
+        Headers0,
+        Data
+    );
+step(
     _Config,
     Context,
     <<"Then">>,

@@ -117,19 +117,30 @@ step(_Cfg, Context, <<"When">>, _N, ["I prefer maximum performance on the GPU"],
         Context, run(Context, "nvidia-settings -a [gpu:0]/GPUPowerMizerMode=1"), "nvidia powermizer"
     );
 %% Then the NVIDIA PowerMizer mode should be 1
-step(_Cfg, Context0, <<"Then">>, _N,
-     ["the NVIDIA PowerMizer mode should be", WantStr0], _Meta) ->
+step(
+    _Cfg,
+    Context0,
+    <<"Then">>,
+    _N,
+    ["the NVIDIA PowerMizer mode should be", WantStr0],
+    _Meta
+) ->
     case run(Context0, "nvidia-settings -q [gpu:0]/GPUPowerMizerMode -t") of
         {ok, #{stdout := Out}} ->
-            OutTrim  = string:trim(Out),
+            OutTrim = string:trim(Out),
             WantTrim = string:trim(WantStr0),
             case OutTrim =:= WantTrim of
-                true  -> Context0;
+                true ->
+                    Context0;
                 false ->
-                    maps:put(fail,
-                             io_lib:format("PowerMizer mismatch: want ~s got ~s",
-                                           [WantTrim, OutTrim]),
-                             Context0)
+                    maps:put(
+                        fail,
+                        io_lib:format(
+                            "PowerMizer mismatch: want ~s got ~s",
+                            [WantTrim, OutTrim]
+                        ),
+                        Context0
+                    )
             end;
         Err ->
             ok_or_fail(Context0, Err, "query powermizer")
