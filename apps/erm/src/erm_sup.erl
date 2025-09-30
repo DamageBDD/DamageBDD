@@ -45,22 +45,55 @@ init([]) ->
             end,
             Pools
         ),
+
+    %% tray options
+    IconPath = filename:join(code:priv_dir(erm), "icons/erm.png"),
+    TrayOpts = [
+        {icon, IconPath},
+        {tooltip, "erm node – ready"},
+        {on_menu, fun tray_handle/1},
+        {menu, [
+            {open_dashboard, "Open Dashboard"},
+            sep,
+            {restart, "Restart"},
+            {quit, "Quit"}
+        ]}
+    ],
+
     PoolSpecs0 =
         [
-            %#{
-            %    % mandatory
-            %    id => secrets,
-            %    % mandatory
-            %    start => {secrets, start_link, []},
-            %    % optional
-            %    restart => permanent,
-            %    % optional
-            %    shutdown => 60,
-            %    % optional
-            %    type => worker,
-            %    modules => []
-            %},
+            #{
+                id => hlwm_events,
+                start => {hlwm_events, start_link, [#{}]},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [hlwm_events]
+            },
+            #{
+                id => erm_tray,
+                start => {erm_tray, start_link, [TrayOpts]},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [erm_tray]
+            }
         ] ++
             PoolSpecs,
+
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
+
+%%--------------------------------------------------------------------
+%% Tray menu handler
+%%--------------------------------------------------------------------
+tray_handle({menu, open_dashboard}) ->
+    erm_tray:open("http://localhost:8080");
+tray_handle({menu, restart}) ->
+    application:stop(erm),
+    application:start(erm);
+tray_handle({menu, quit}) ->
+    init:stop();
+tray_handle({menu, Other}) ->
+    ?LOG_INFO("Unhandled tray menu ~p", [Other]),
+    ok.

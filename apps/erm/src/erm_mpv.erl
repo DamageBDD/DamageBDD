@@ -255,7 +255,9 @@ code_change(_V, S, _Extra) -> {ok, S}.
 
 %% Helpers
 add_folder(S = #state{list = List}) ->
-    Dlg = wxDirDialog:new(S#state.frame, [{title, "Pick media folder"}, {style, ?wxDD_DIR_MUST_EXIST}]),
+    Dlg = wxDirDialog:new(S#state.frame, [
+        {title, "Pick media folder"}, {style, ?wxDD_DIR_MUST_EXIST}
+    ]),
     case wxDirDialog:showModal(Dlg) of
         ?wxID_OK ->
             Dir = wxDirDialog:getPath(Dlg),

@@ -30,7 +30,8 @@
     by_class = #{},
     % #{<<"Emacs — foo.erl">> => Seconds, ...}
     by_title = #{},
-    by_qual = #{},           % #{<<"Class|Title">> => Seconds}
+    % #{<<"Class|Title">> => Seconds}
+    by_qual = #{},
     % #{<<"code">> => [<<"Code">>, <<"codium">>], ...}
     aliases = #{}
 }).
@@ -71,10 +72,18 @@ init([]) ->
     process_flag(trap_exit, true),
     gproc:reg(?NAME),
     {ok, #state{last_ts = now()}}.
-handle_call({summary, _Since}, _From, S=#state{by_class=BC, by_title=BT, by_qual=BQ, aliases=Aliases}) ->
-    {reply, #{by_class => expand_aliases(BC, Aliases),
-              by_title => BT,
-              by_qual  => BQ}, S};
+handle_call(
+    {summary, _Since},
+    _From,
+    S = #state{by_class = BC, by_title = BT, by_qual = BQ, aliases = Aliases}
+) ->
+    {reply,
+        #{
+            by_class => expand_aliases(BC, Aliases),
+            by_title => BT,
+            by_qual => BQ
+        },
+        S};
 handle_call({summary, _Since}, _From, S = #state{by_class = BC, by_title = BT, aliases = Aliases}) ->
     {reply, #{by_class => expand_aliases(BC, Aliases), by_title => BT}, S};
 handle_call(reset, _From, S) ->
@@ -128,16 +137,24 @@ code_change(_V, S, _E) -> {ok, S}.
 
 %%% ========= Internals =========
 
-maybe_roll_time(S=#state{current=undefined}) -> S;
-maybe_roll_time(S=#state{current=#{class := C, title := T}, last_ts=Last,
-                         by_class=BC0, by_title=BT0, by_qual=BQ0}) ->
+maybe_roll_time(S = #state{current = undefined}) ->
+    S;
+maybe_roll_time(
+    S = #state{
+        current = #{class := C, title := T},
+        last_ts = Last,
+        by_class = BC0,
+        by_title = BT0,
+        by_qual = BQ0
+    }
+) ->
     Now = now(),
     Delta = max(0, Now - Last),
-    BC = maps:update_with(C, fun(V)->V+Delta end, Delta, BC0),
-    BT = maps:update_with(T, fun(V)->V+Delta end, Delta, BT0),
-    K  = <<C/binary, "|", T/binary>>,
-    BQ = maps:update_with(K, fun(V)->V+Delta end, Delta, BQ0),
-    S#state{by_class=BC, by_title=BT, by_qual=BQ, last_ts=Now}.
+    BC = maps:update_with(C, fun(V) -> V + Delta end, Delta, BC0),
+    BT = maps:update_with(T, fun(V) -> V + Delta end, Delta, BT0),
+    K = <<C/binary, "|", T/binary>>,
+    BQ = maps:update_with(K, fun(V) -> V + Delta end, Delta, BQ0),
+    S#state{by_class = BC, by_title = BT, by_qual = BQ, last_ts = Now}.
 
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> list_to_binary(L);
