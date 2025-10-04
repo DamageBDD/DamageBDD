@@ -36,6 +36,8 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 init([]) ->
     {ok, Pools} = application:get_env(damage, pools),
     ?LOG_DEBUG("Starting workers ~p~n", [Pools]),
+    {ok, AbducoWorkers} = application:get_env(damage, abduco_workers),
+    ?LOG_DEBUG("Starting workers ~p~n", [Pools]),
     SupFlags = {one_for_one, 10, 10},
     PoolSpecs =
         lists:map(
@@ -63,18 +65,7 @@ init([]) ->
             #{
                 id => abduco_services,
                 start =>
-                    {abduco_sup, start_link, [
-                        [
-                            #{
-                                name => "lightningd",
-                                cmd =>
-                                    "/usr/sbin/lightningd --bitcoin-rpcpassword=\"{{bitcoin_rpc_password}}\""
-                            },
-                            #{name => "lightpanda", cmd => "bin/lightpanda-x86_64-linux --verbose"},
-                            #{name => "chromedriver", cmd => "chromedriver --port=9515"},
-                            #{name => "redshift", cmd => "/usr/bin/redshift"}
-                        ]
-                    ]},
+                    {abduco_sup, start_link, [AbducoWorkers]},
                 restart => permanent,
                 shutdown => 10000,
                 type => supervisor,
@@ -173,7 +164,8 @@ init([]) ->
                 shutdown => 60,
                 type => worker,
                 modules => []
-            }
+            },
+            damage_ssh_listener:child_spec()
         ] ++ PoolSpecs,
     PoolSpecs1 =
         case application:get_env(damage, market_rules) of
@@ -191,7 +183,7 @@ init([]) ->
                         }
                     ];
             Other ->
-                ?LOG_DEBUG("Damage market making disabled ~p~n", [Other]),
+                ?LOG_INFO("Damage market making disabled ~p~n", [Other]),
                 PoolSpecs0
         end,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs1]),

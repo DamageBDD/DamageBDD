@@ -155,6 +155,18 @@
                     }
                 ]
             },
+            {abduco_workers, [
+                #{
+                    name => "lightningd",
+                    cmd =>
+                        "/usr/sbin/lightningd"
+                },
+
+                #{name => "lightpanda", cmd => "bin/lightpanda-x86_64-linux --verbose"},
+                #{name => "chromedriver", cmd => "chromedriver --port=9515"},
+                #{name => "ipfs", cmd => "ipfs daemon"},
+                #{name => "epmd", cmd => "epmd"}
+            ]},
             {market_rules, #{
                 <<"DAMAGEUSDT">> => #{price_precision => 4, min_qty => 100.0}
             }}
