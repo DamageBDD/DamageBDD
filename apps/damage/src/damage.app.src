@@ -10,7 +10,7 @@
         {mod, {damage_app, []}},
         {
             applications,
-            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, bech32]
+            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, bech32, erlexec]
         },
         {env, []},
         {modules, []},
