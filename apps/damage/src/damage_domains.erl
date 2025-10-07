@@ -90,7 +90,7 @@ from_json(Req, #{public_key := AeAccount, public_key := AeAccount} = State) ->
     {Status, Resp0} =
         case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
             {'EXIT', {badarg, Trace}} ->
-                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+                ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};
             #{domain := Domain} ->
                 DomainToken = list_to_binary(uuid:to_string(uuid:uuid4())),

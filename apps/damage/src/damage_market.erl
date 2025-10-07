@@ -118,15 +118,15 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 to_html(Req, State) ->
-    logger:error("to text ipfs hash ~p ", [Req]),
+    ?LOG_ERROR("to text ipfs hash ~p ", [Req]),
     to_text(Req, State).
 
-%logger:error("to text ipfs hash ~p ", [Req]),
+%?LOG_ERROR("to text ipfs hash ~p ", [Req]),
 %Body = damage_utils:load_template("report.mustache", [{body, <<"Test">>}]),
 %logger:info("get ipfs hash ~p ", [Body]),
 %{Body, Req, State}.
 to_json(Req, State) ->
-    logger:error("to text ipfs hash ~p ", [Req]),
+    ?LOG_ERROR("to text ipfs hash ~p ", [Req]),
     to_text(Req, State).
 
 to_text(Req, #{public_key := AeAccount} = State) ->
@@ -137,7 +137,7 @@ to_text(Req, #{public_key := AeAccount} = State) ->
 from_yaml(Req, #{action := Action} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status0, Response0} =
-        case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
+        case damage_utils:safe_yaml(Data) of
             {ok, [#{feature := _FeatureData, concurrency := _Concurrency} = Data0]} ->
                 do_action(Action, Data0, State);
             {error, Message} ->
@@ -148,7 +148,7 @@ from_yaml(Req, #{action := Action} = State) ->
         stop,
         cowboy_req:reply(
             Status0,
-            cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+            cowboy_req:set_resp_body(damage_utils:yaml_encode(Response0), Req)
         ),
         State
     }.
@@ -160,7 +160,7 @@ from_json(Req, #{action := Action} = State) ->
             #{feature := _FeatureData, concurrency := _Concurrency} = FeatureJson ->
                 do_action(Action, FeatureJson, State);
             Err ->
-                logger:error("json decoding failed ~p.", [Data]),
+                ?LOG_ERROR("json decoding failed ~p.", [Data]),
                 {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
         end,
     Resp = cowboy_req:set_resp_body(Resp0, Req),

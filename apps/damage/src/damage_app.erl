@@ -15,7 +15,10 @@
 
 -export([start/2, stop/1]).
 -export([start_phase/3]).
--export([get_trails/0]).
+-export([
+    get_trails/0,
+    setup_vanillae_deps/0
+]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -102,7 +105,7 @@ start_phase(start_vanillae, _StartType, []) ->
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Damage."),
     {ok, _} = application:ensure_all_started(gun),
-    {ok, _} = application:ensure_all_started(fast_yaml),
+    {ok, _} = application:ensure_all_started(yamerl),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
     {ok, _} = application:ensure_all_started(cowboy_telemetry),
     {ok, _} = application:ensure_all_started(throttle),

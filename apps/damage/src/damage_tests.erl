@@ -120,7 +120,7 @@ from_json(Req, State) ->
 
 from_yaml(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
-    {ok, [Body]} = fast_yaml:decode(Data),
-    YamlResult = fast_yaml:encode(Body),
+    {ok, [Body]} = damage_utils:yaml_decode(Data),
+    YamlResult = damage_utils:yaml_encode(Body),
     Resp = cowboy_req:set_resp_body(YamlResult, Req),
     {stop, cowboy_req:reply(201, Resp), State}.

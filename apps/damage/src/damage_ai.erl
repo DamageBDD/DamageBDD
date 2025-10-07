@@ -95,15 +95,26 @@ read_stream(ConnPid, StreamRef) ->
             Default
     end.
 
+%% Decode YAML file, converting plain scalars into atoms (⚠️ unsafe if YAML is untrusted)
+safe_yaml_from_file(File) ->
+    Opts = [
+        str_node_as_binary,
+        {node_mods, [
+            {yamerl_node_str, fun(Scalar, _Tag, _Props) ->
+                list_to_atom(binary_to_list(Scalar))
+            end}
+        ]}
+    ],
+    yamerl_constr:file(File, Opts).
 handle_call({generate_bdd, UserPrompt, _AeAccount, _Req}, _From, State) ->
     ?LOG_DEBUG("handle_call execute/1 : ~p", [UserPrompt]),
     {ok, MessagesYaml} = application:get_env(damage, openai_bdd_messages_yaml),
     ?LOG_DEBUG("Loading messages from file ~p.", [MessagesYaml]),
     {ok, [_Messages]} =
-        fast_yaml:decode_from_file(MessagesYaml, [{plain_as_atom, true}]),
+        safe_yaml_from_file(MessagesYaml),
     {ok, FunctionsYaml} = application:get_env(damage, openai_bdd_functions_yaml),
     {ok, [_Functions]} =
-        fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
+        safe_yaml_from_file(FunctionsYaml),
     {ok, Model} = application:get_env(damage, openai_bdd_model),
     Prompt0 = <<"generate bdd for this usecase, respond in structured json. ">>,
     %Prompt0 = <<Prompt/binary, UserPrompt/binary>>,
@@ -132,7 +143,7 @@ handle_call(
     try
         case egherkin:parse_file(FeatureFilename) of
             {failed, LineNo, Message} ->
-                logger:error(
+                ?LOG_ERROR(
                     "FAIL ~p +~p ~n     ~p.",
                     [FeatureFilename, LineNo, Message]
                 );
@@ -141,11 +152,11 @@ handle_call(
                 {openai_messages_yaml, MessagesYaml} =
                     lists:keyfind(openai_messages_yaml, 1, Config),
                 {ok, [Messages]} =
-                    fast_yaml:decode_from_file(MessagesYaml, [{plain_as_atom, true}]),
+                    safe_yaml_from_file(MessagesYaml, [{plain_as_atom, true}]),
                 {openai_functions_yaml, FunctionsYaml} =
                     lists:keyfind(openai_functions_yaml, 1, Config),
                 {ok, [Functions]} =
-                    fast_yaml:decode_from_file(FunctionsYaml, [{plain_as_atom, true}]),
+                    safe_yaml_from_file(FunctionsYaml, [{plain_as_atom, true}]),
                 {openai_model, Model} = lists:keyfind(openai_model, 1, Config),
                 ?LOG_DEBUG(
                     "Loaded messages from file ~p. Data: ~p",
@@ -225,7 +236,7 @@ handle_call(
         end
     catch
         {error, enont} ->
-            logger:error("Feature file ~p not found.", [FeatureFilename])
+            ?LOG_ERROR("Feature file ~p not found.", [FeatureFilename])
     end,
     {reply, ok, State}.
 
@@ -254,7 +265,7 @@ handle_cast({run_python_server, Config, Context, Code}, State) ->
                     maps:put(server_os_pid, OsPid, maps:put(server_pid, Pid, Context));
                 Err ->
                     ?debugFmt("Got unexpected error ~p.", [Err]),
-                    logger:error("Error writing code to file ~p. ~p", [CodeFile, Err])
+                    ?LOG_ERROR("Error writing code to file ~p. ~p", [CodeFile, Err])
             end;
         Err ->
             ?debugFmt("Got unexpected error ~p.", [Err]),
@@ -361,19 +372,19 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 
 to_html(Req, State) ->
-    logger:error("to text ipfs hash ~p ", [Req]),
+    ?LOG_ERROR("to text ipfs hash ~p ", [Req]),
     to_text(Req, State).
 
-%logger:error("to text ipfs hash ~p ", [Req]),
+%?LOG_ERROR("to text ipfs hash ~p ", [Req]),
 %Body = damage_utils:load_template("report.mustache", [{body, <<"Test">>}]),
 %?LOG_INFO("get ipfs hash ~p ", [Body]),
 %{Body, Req, State}.
 to_json(Req, State) ->
-    logger:error("to text ipfs hash ~p ", [Req]),
+    ?LOG_ERROR("to text ipfs hash ~p ", [Req]),
     to_text(Req, State).
 
 to_text(Req, State) ->
-    logger:error("to text ipfs hash ~p ", [Req]),
+    ?LOG_ERROR("to text ipfs hash ~p ", [Req]),
     {<<"ok">>, Req, State}.
 
 from_json(Req, State) ->
@@ -383,7 +394,7 @@ from_json(Req, State) ->
             #{user_prompt := UserPrompt} = _FeatureJson ->
                 check_generate_bdd(UserPrompt, State, Req);
             Err ->
-                logger:error("json decoding failed ~p.", [Data]),
+                ?LOG_ERROR("json decoding failed ~p.", [Data]),
                 {400, jsx:encode(#{status => <<"notok">>, result => [Err]})}
         end,
     Resp = cowboy_req:set_resp_body(Resp0, Req),

@@ -393,7 +393,7 @@ ls(Hash) ->
         ok,
         [#{<<"Objects">> := [#{<<"Hash">> := Hash, <<"Links">> := Links} | _Rest]}]
     } = damage_ipfs:ls(Hash),
-    logger:info("get ipfs hash ~p ", [Hash]),
+    ?LOG_INFO("get ipfs hash ~p ", [Hash]),
     [maps:get(<<"Name">>, M) || M <- Links].
 
 cat(Hash, Path) ->
@@ -401,11 +401,11 @@ cat(Hash, Path) ->
         damage_ipfs:cat(
             list_to_binary(string:join([binary_to_list(Hash), Path], "/"))
         ),
-    logger:info("get ipfs hash ~p ", [Hash]),
+    ?LOG_INFO("get ipfs hash ~p ", [Hash]),
     Data.
 test() ->
     {
         ok,
         [#{<<"Objects">> := [#{<<"Hash">> := Hash, <<"Links">> := Links} | Rest]}]
     } = damage_ipfs:test(),
-    logger:info("list ipfs directory ~p ~p ~p", [Hash, Links, Rest]).
+    ?LOG_INFO("list ipfs directory ~p ~p ~p", [Hash, Links, Rest]).

@@ -1,4 +1,9 @@
 -module(damage_ipfs).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
 
 -behaviour(gen_server).
 -behaviour(poolboy_worker).
@@ -111,7 +116,7 @@ handle_call({ls, Hash}, _From, #{connection := Connection} = State) ->
     ?LOG_INFO("get data from ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call(Request, _From, State) ->
-    logger:error("unknown_request ~p", [Request]),
+    ?LOG_ERROR("unknown_request ~p", [Request]),
     {reply, {error, unknown_request}, State}.
 
 handle_cast(_Msg, State) -> {noreply, State}.

@@ -26,7 +26,8 @@
         get_ip/1,
         test_send_email/0,
         idhash_keys/1,
-        safe_json/1,
+        json_decode/1,
+        yaml_decode/1,
         is_valid_email/1,
         add_log_filter/1,
         ensure_dir/1,
@@ -43,6 +44,7 @@
         run/2
     ]
 ).
+-export([yaml_encode/1, yaml_encode_to_file/2]).
 -export([max_by/2]).
 -export([normalize_email/1, denormalize_email/1]).
 
@@ -122,7 +124,6 @@ binary_to_atom_keys(Map) ->
 load_template(Template, Context) ->
     PrivDir = code:priv_dir(damage),
     FilePath = filename:join([PrivDir, "templates", Template]),
-    logger:info("Loading template from ~p", [FilePath]),
     {ok, TemplateBin} = file:read_file(FilePath),
     bbmustache:render(TemplateBin, normalize_context(Context)).
 
@@ -296,15 +297,62 @@ idhash_keys(List) ->
         #{padding => false, mode => urlsafe}
     ).
 
-safe_json(BinaryStr) when is_binary(BinaryStr) ->
-    safe_json(binary_to_list(BinaryStr));
-safe_json(String) ->
+json_decode(BinaryStr) when is_binary(BinaryStr) ->
+    json_decode(binary_to_list(BinaryStr));
+json_decode(String) ->
     %% First, we decode the binary string into a list of integers
     lists:foldl(
         fun(Str, Acc) -> lists:concat(string:replace(Acc, Str, "", all)) end,
         String,
         ["\"", ":", "\\/", "\\\\", "\\\"", "\\\""]
     ).
+yaml_decode(BinaryStr) when is_binary(BinaryStr) ->
+    yaml_decode(binary_to_list(BinaryStr));
+yaml_decode(String) when is_list(String) ->
+    try
+        %% Parse YAML into Erlang terms
+        Parsed = yamerl_constr:string(String),
+
+        %% Sanitize the parsed structure
+        {ok, [sanitize_yaml(Doc) || Doc <- Parsed]}
+    catch
+        _:Reason ->
+            {error, Reason}
+    end.
+
+%% @doc Encode an Erlang term as a single-document YAML string (UTF-8 binary).
+-spec yaml_encode(term()) -> binary().
+yaml_encode(Data) ->
+    %% yamerl returns an iolist; wrap Data in a list to emit one YAML document.
+    BinIolist = yamerl:encode([Data]),
+    iolist_to_binary(BinIolist).
+
+%% @doc Encode and write YAML to a file. Returns ok | {error, Reason}.
+-spec yaml_encode_to_file(file:filename(), term()) -> ok | {error, term()}.
+yaml_encode_to_file(File, Data) ->
+    Bin = yaml_encode(Data),
+    file:write_file(File, Bin).
+
+%% Recursive sanitization - remove unwanted keys or values
+sanitize_yaml({Key, Value}) ->
+    {sanitize_yaml(Key), sanitize_yaml(Value)};
+sanitize_yaml([H | T]) ->
+    [sanitize_yaml(H) | sanitize_yaml(T)];
+sanitize_yaml(Map) when is_map(Map) ->
+    maps:map(fun(_K, V) -> sanitize_yaml(V) end, Map);
+sanitize_yaml(Tuple) when is_tuple(Tuple) ->
+    list_to_tuple([sanitize_yaml(E) || E <- tuple_to_list(Tuple)]);
+sanitize_yaml(Value) ->
+    case is_dangerous(Value) of
+        true -> undefined;
+        false -> Value
+    end.
+
+%% Define what you consider "dangerous" here
+is_dangerous(Value) when is_list(Value) ->
+    lists:any(fun(Needle) -> lists:member(Needle, Value) end, ["rm -rf", ":(){", "`", "$(", "eval"]);
+is_dangerous(_) ->
+    false.
 
 % Finds the maximum element in List using CompareFun as the comparison function
 max_by([H | T], CompareFun) ->

@@ -1,4 +1,5 @@
 -module(damage_static).
+-include_lib("kernel/include/logger.hrl").
 
 -export([init/2, terminate/3]).
 -export([content_types_provided/2]).
@@ -10,7 +11,7 @@
 trails() -> [{"/help", damage_static, {priv_dir, damage, "help"}}].
 
 init(Req, Opts) ->
-    logger:info("Got init ~p ~p.", [Req, Opts]),
+    ?LOG_INFO("Got init ~p ~p.", [Req, Opts]),
     {cowboy_rest, Req, Opts}.
 
 content_types_provided(Req, State) ->
@@ -38,7 +39,7 @@ to_text(Req, {priv_dir, damage, File}) -> serve_file(Req, File, ".txt").
 serve_file(Req, File, Mime) ->
     PrivDir = code:priv_dir(damage),
     FilePath = filename:join([PrivDir, "static", File ++ Mime]),
-    logger:info("serviing path ~p", [FilePath]),
+    ?LOG_INFO("serviing path ~p", [FilePath]),
     case file:read_file(FilePath) of
         {ok, Data} ->
             Uri = cowboy_req:uri(Req, #{path => undefined, qs => undefined}),

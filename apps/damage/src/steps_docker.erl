@@ -19,7 +19,7 @@ step(
     _Meta
 ) ->
     {ok, ISODate} = relative_string_to_date(Relative),
-    logger:notice("Checking for Docker resources older than ~s", [ISODate]),
+    ?LOG_NOTICE("Checking for Docker resources older than ~s", [ISODate]),
     Context#{since => ISODate};
 step(
     _Config,
@@ -32,7 +32,7 @@ step(
     {ok, ISODate} = relative_string_to_date(Relative),
     Command = "docker system prune -a --force --filter \"until=" ++ ISODate ++ "\"",
     Output = os:cmd(Command),
-    logger:notice("Docker cleanup output: ~s", [Output]),
+    ?LOG_NOTICE("Docker cleanup output: ~s", [Output]),
     maps:merge(Context, #{cleanup_output => Output, since => ISODate});
 step(
     _Config,

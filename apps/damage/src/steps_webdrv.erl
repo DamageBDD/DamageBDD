@@ -68,7 +68,7 @@ step(Config, Context, <<"And">>, _N, ["I open the url", Url], _) ->
         Reason ->
             Msg =
                 damage_utils:strf("Failed to open url ~p Reason ~p ", [Url, Reason]),
-            ?LOG_ERROR(Msg),
+            ?LOG_ERROR("Webdriver open url failed ~p, ~p", [Msg, Url]),
             maps:put(fail, Msg, Context)
     end;
 step(Config, Context, <<"Then">>, _N, ["I expect that the url is", Url], _Args) ->

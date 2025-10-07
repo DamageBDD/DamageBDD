@@ -425,7 +425,7 @@ step(
     Expected = list_to_binary(Expected0),
     case maps:get(response, Context) of
         [{status_code, _}, _Headers, {body, Body}] ->
-            {ok, [Data]} = fast_yaml:decode(Body, [maps]),
+            {ok, [Data]} = damage_utils:yaml_decode(Body),
             ejsonpath_match(Path, Data, Expected, Context);
         Dict when is_map(Dict) ->
             ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);

@@ -145,7 +145,7 @@ from_json(Req, #{action := Action} = State) ->
 from_yaml(Req, #{action := Action} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     Result = do_post_action(Action, Data),
-    YamlResult = fast_yaml:encode(Result),
+    YamlResult = damage_utils:safe_yaml(Result),
     Resp = cowboy_req:set_resp_body(YamlResult, Req),
     {stop, cowboy_req:reply(201, Resp), State}.
 
@@ -231,7 +231,7 @@ handle_ssh_msg({ssh_cm, CM, {data, ChannelId, 0, Data}}, #state{n = N} = State) 
             {stop, ChannelId, State}
     end;
 handle_ssh_msg({ssh_cm, _ConnectionManager, {data, _ChannelId, 1, Data}}, State) ->
-    ?LOG_DEBUG(" ~p~n", [binary_to_list(Data)]),
+    ?LOG_DEBUG("ssh_cm ~p~n", [binary_to_list(Data)]),
     {ok, State};
 handle_ssh_msg({ssh_cm, _ConnectionManager, {eof, _ChannelId}}, State) ->
     {ok, State};

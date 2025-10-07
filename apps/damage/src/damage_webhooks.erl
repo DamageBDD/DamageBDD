@@ -7,6 +7,7 @@
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
 
 -license("Apache-2.0").
+-include_lib("kernel/include/logger.hrl").
 
 -export([init/2]).
 -export([content_types_accepted/2]).
@@ -115,7 +116,7 @@ from_json(Req, State) ->
     #{result := #{returnType := <<"ok">>}} =
         case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
             {'EXIT', {badarg, Trace}} ->
-                logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
+                ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};
             #{name := _WebhookName, url := _WebhookUrl} = Webhook ->
                 create_webhook(Webhook, Req, State)
@@ -181,10 +182,10 @@ trigger_webhook(Url, #{content := Content} = Context) ->
         end,
     {ok, ConnPid} =
         gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
-    TemplateContext = maps:put(content, damage_utils:safe_json(Content), Context),
+    TemplateContext = maps:put(content, damage_utils:json_decode(Content), Context),
     Body =
         case re:run(Url, "https://discord.com.*") of
-            nomatch -> damage_utils:safe_json(TemplateContext);
+            nomatch -> damage_utils:json_decode(TemplateContext);
             {match, _} -> damage_utils:load_template("webhooks/discord.mustache", TemplateContext)
         end,
     %?LOG_DEBUG("webhook post ~p ~p.", [Body, TemplateContext]),

@@ -28,7 +28,7 @@ get_trails() ->
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Ecai."),
     {ok, _} = application:ensure_all_started(gun),
-    {ok, _} = application:ensure_all_started(fast_yaml),
+    {ok, _} = application:ensure_all_started(yamlerl),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
     {ok, _} = application:ensure_all_started(cowboy_telemetry),
     {ok, _} = application:ensure_all_started(erlexec),

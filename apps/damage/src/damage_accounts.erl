@@ -692,7 +692,7 @@ from_json(Req, #{action := Action} = State) ->
 from_yaml(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status0, Response0} =
-        case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
+        case damage_utils:yaml_decode(Data, [maps, {plain_as_atom, true}]) of
             {ok, [Data0]} ->
                 case damage_oauth:reset_password(Data0) of
                     {ok, Message} -> {200, #{status => <<"ok">>, message => Message}};
@@ -706,14 +706,14 @@ from_yaml(Req, #{action := reset_password} = State) ->
         stop,
         cowboy_req:reply(
             Status0,
-            cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+            cowboy_req:set_resp_body(damage_utils:yaml_encode(Response0), Req)
         ),
         State
     };
 from_yaml(Req, #{action := Action} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status0, Response0} =
-        case fast_yaml:decode(Data, [maps, {plain_as_atom, true}]) of
+        case damage_utils:yaml_decode(Data) of
             {ok, [Data0]} -> do_post_action(Action, Data0);
             {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
         end,
@@ -722,7 +722,7 @@ from_yaml(Req, #{action := Action} = State) ->
         stop,
         cowboy_req:reply(
             Status0,
-            cowboy_req:set_resp_body(fast_yaml:encode(Response0), Req)
+            cowboy_req:set_resp_body(damage_utils:yaml_encode(Response0), Req)
         ),
         State
     }.
@@ -761,7 +761,9 @@ delete_resource(Req, #{action := invoices} = State) ->
             }
     end.
 
-balance(AeAccount) -> #{amount => damage_ae:balance(AeAccount)}.
+balance(AeAccount) ->
+    #{id := AeAccount, balance := BalanceAettos} = damage_ae:get_ae_balance(AeAccount),
+    #{amount => damage_ae:balance(AeAccount), ae_amount => BalanceAettos}.
 
 delete_account(Email) ->
     case damage_ae:delete_account(Email) of
