@@ -152,11 +152,11 @@ handle_call(
                 {openai_messages_yaml, MessagesYaml} =
                     lists:keyfind(openai_messages_yaml, 1, Config),
                 {ok, [Messages]} =
-                    safe_yaml_from_file(MessagesYaml, [{plain_as_atom, true}]),
+                    safe_yaml_from_file(MessagesYaml),
                 {openai_functions_yaml, FunctionsYaml} =
                     lists:keyfind(openai_functions_yaml, 1, Config),
                 {ok, [Functions]} =
-                    safe_yaml_from_file(FunctionsYaml, [{plain_as_atom, true}]),
+                    safe_yaml_from_file(FunctionsYaml),
                 {openai_model, Model} = lists:keyfind(openai_model, 1, Config),
                 ?LOG_DEBUG(
                     "Loaded messages from file ~p. Data: ~p",
