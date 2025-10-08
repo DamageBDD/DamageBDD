@@ -31,7 +31,11 @@
 -define(DAMAGE_DECIMALS, 8).
 -define(AE_DECIMALS, 18).
 
--record(damage_state, {formatters = [], test_state = []}).
+-record(damage_state, {
+    formatters = [] :: [term()],
+    test_state = [] :: term()
+}).
+-type damage_state() :: #damage_state{}.
 
 -define(AE_TIMEOUT, 136000).
 -define(AI_TIMEOUT, 36000).
