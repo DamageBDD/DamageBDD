@@ -50,7 +50,8 @@
     get_wallet_proc/1,
     get_events/3,
     is_custodial/1,
-    set_private_key/2
+    set_private_key/2,
+    get_ae_balance/1
 ]).
 -export([
     contract_call/5,
@@ -321,11 +322,14 @@ handle_call({reports, AeAccount}, _From, Cache) ->
             %TODO use events
             Path =
                 PathPrefix ++
-                    "v3/transactions/?direction=backward&type=contract_call&contract=" ++
-                    ?DAMAGE_TOKEN_CONTRACT ++
-                    "&account=" ++
+                    "v3/accounts/" ++
                     binary_to_list(AeAccount) ++
+                    "/activities?" ++
+                    "direction=backward" ++
+                    "&type=aex9" ++
                     "&limit=10",
+            %?DAMAGE_TOKEN_CONTRACT ++
+            ?LOG_DEBUG("Path ~p", [Path]),
             StreamRef = gun:get(ConnPid, Path),
             {reply, read_stream(ConnPid, StreamRef), Cache};
         Err ->
