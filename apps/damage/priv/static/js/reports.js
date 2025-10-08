@@ -284,13 +284,16 @@
     rows.filter(Boolean).forEach(row => {
       const li = el("li", { style: "padding:10px 0; border-bottom:1px solid #f3f4f6;" });
       const timeHtml = `<span style="color:#6b7280;">${fmtDate(row.time)}</span>`;
+      const featureTxt = row.featureCid
+			? ` <a href="/features/${encodeURIComponent(row.featureCid)}" target="_blank" rel="noopener" style="text-decoration:underline;">${row.firstLine}</a>`
+        : "";
       const reportHtml = row.reportCid
         ? ` <a href="/reports/${encodeURIComponent(row.reportCid)}" target="_blank" rel="noopener" style="text-decoration:underline;">report</a>`
         : "";
       const txHtml = row.txHash
         ? ` <a href="${aescanTxUrl(row.txHash)}" target="_blank" rel="noopener">aescan</a>`
         : "";
-      li.innerHTML = `${timeHtml} — ${row.firstLine}${reportHtml ? " — " + reportHtml : ""}${txHtml ? " — " + txHtml : ""}`;
+      li.innerHTML = `${timeHtml} — ${featureTxt}${reportHtml ? " — " + reportHtml : ""}${txHtml ? " — " + txHtml : ""}`;
       ul.appendChild(li);
     });
   }

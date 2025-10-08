@@ -72,7 +72,7 @@ export async function connectWalletSmart(successURL, cancelURL) {
         connectWallet(successURL, cancelURL);
     } else {
         // Use Sidekick browser wallet connection
-        await connectButton();
+        return await connectButton();
     }
 }
 export function signMessageSmart(message, successURL, cancelURL) {
@@ -197,5 +197,125 @@ async function connectButton() {
     logged_in = true;
 	document.getElementById("connect-button").disabled = true;
 	document.getElementById("connect-button").style.display = 'none';
+	return maybe_address;
     //fetchWalletBalance(address);
 }
+/* wallet.js — unified connector with console-friendly debugging */
+(function (g) {
+  'use strict';
+  const W = g.wallet || (g.wallet = {});
+  const isFn = (x) => typeof x === 'function';
+
+  // Keep the last errors so you can inspect from DevTools
+  W._lastErrors = [];
+
+  // Extract an address from many possible shapes
+  function extractAddress(res) {
+    if (!res) return null;
+    if (typeof res === 'string') return res;
+    if (typeof res.address === 'string') return res.address;
+    if (typeof res.addr === 'string') return res.addr;
+    if (res.account && typeof res.account.address === 'string') return res.account.address;
+    if (Array.isArray(res.accounts)) {
+      const a0 = res.accounts[0];
+      if (typeof a0 === 'string') return a0;
+      if (a0 && typeof a0.address === 'string') return a0.address;
+    }
+    if (res.payload && typeof res.payload.address === 'string') return res.payload.address;
+    return null;
+  }
+
+	async function tryStep(name, fn, opts) {
+		// Call style adapts to the connector's arity:
+		//  - 2+ params: (prompt, opts)
+		//  - 1 param:   (opts)
+		//  - 0 param:   ()
+		const arity = typeof fn === 'function' ? fn.length : 0;
+		let raw;
+		if (arity >= 2)      raw = await fn(opts.prompt, opts);
+		else if (arity === 1) raw = await fn(opts);
+		else                  raw = await fn();
+
+		const address = extractAddress(raw);
+		if (!address) throw new Error(`${name} returned no address`);
+		return { ok: true, address, provider: name, raw };
+	}
+
+
+  /**
+   * wallet.connectUnified(opts)
+   *  - prompt: boolean (default true)   allow wallet UI prompts
+   *  - prefer: array|string             order to try: 'smart' | 'browser' | 'getter'
+   *  - debug:  boolean (default true)   log to console for easy testing
+   * Returns: { ok, address?, provider?, error?, raw? }
+   */
+  W.connectUnified = async function connectUnified(opts = {}) {
+    const { prompt = true, prefer = ['smart','browser','getter'], debug = true } = opts;
+    const order = Array.isArray(prefer) ? prefer : [prefer];
+
+    const steps = [];
+    if (order.includes('smart') && isFn(connectWalletSmart)) {
+      steps.push(() => tryStep('connectWalletSmart', connectWalletSmart, opts));
+    }
+    if (order.includes('browser')) {
+      if (isFn(g.connectBrowserWallet)) {
+        steps.push(() => tryStep('connectBrowserWallet', g.connectBrowserWallet, opts));
+      }
+      if (W && isFn(W.connect)) { // if you already expose wallet.connect somewhere
+        steps.push(() => tryStep('wallet.connect', W.connect.bind(W), opts));
+      }
+      if (isFn(g.requestWalletConnection)) {
+        steps.push(() => tryStep('requestWalletConnection', g.requestWalletConnection, opts));
+      }
+      if (isFn(g.aeConnect)) {
+        steps.push(() => tryStep('aeConnect', g.aeConnect, opts));
+      }
+    }
+    if (order.includes('getter') && isFn(g.getBrowserWalletAddress)) {
+      steps.push(async () => {
+        const addr = await g.getBrowserWalletAddress(!!prompt);
+        if (!addr) throw new Error('getBrowserWalletAddress returned no address');
+        return { ok: true, address: addr, provider: 'getBrowserWalletAddress', raw: addr };
+      });
+    }
+
+    if (debug) console.log('[wallet] connectUnified start', { prompt, prefer: order });
+
+    const errors = [];
+    for (const step of steps) {
+      try {
+        const r = await step();
+        if (debug) console.log('[wallet] connected via', r.provider, '→', r.address);
+        return r;
+      } catch (e) {
+        const msg = e?.message || String(e);
+        errors.push({ provider: (await step).name || 'step', error: msg }); // name best-effort
+        if (debug) console.warn('[wallet] step failed:', msg);
+      }
+    }
+
+    const reason = errors.map(e => (e.provider ? e.provider + ': ' : '') + e.error).join('; ');
+    W._lastErrors = errors;
+    if (debug) console.error('[wallet] connectUnified failed:', reason || 'No connector available');
+
+    return { ok: false, error: reason || 'No wallet connector available' };
+  };
+
+  // Handy console helpers (so you can test quickly)
+  W.debug = {
+    connect: (o={}) => W.connectUnified({ debug: true, ...o }),
+    getAddr: (prompt=true) =>
+      isFn(g.getBrowserWalletAddress) ? g.getBrowserWalletAddress(prompt) : 'no getBrowserWalletAddress()',
+    lastErrors: () => (W._lastErrors || []).slice(),
+    extractAddress // expose for quick manual parsing in console
+  };
+
+  // Optional global alias to keep older callers working
+  g.connectWalletUnified = (...a) => W.connectUnified(...a);
+
+})(typeof globalThis !== 'undefined' ? globalThis
+   : typeof window !== 'undefined' ? window
+   : typeof self !== 'undefined' ? self
+   : this);
+
+

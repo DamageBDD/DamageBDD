@@ -1,6 +1,9 @@
 import * as wallet from "/static/js/wallet.js";
 import { initDamageBDDPicker } from '/static/js/featurePicker.js';
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
+
+
+
 function showConnectStatus(message, type = 'info') {
 	const statusDiv = document.getElementById('connect-status');
 	statusDiv.textContent = message;
@@ -76,10 +79,8 @@ function generateDamageQR(address){
 			MicroModal.show("login-modal");
 		});
 		document.getElementById("loginSubmitBtn").addEventListener("click", submitLoginForm);
-		document.getElementById("connect-button").addEventListener("click",(event) => {
-			connectWalletSmart1();
-			event.preventDefault();
-		});
+
+
 		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
 			event.preventDefault();
 		});
@@ -140,41 +141,17 @@ function generateDamageQR(address){
 
 		showHideLoginButton();
 		if(localStorage.getItem("access_token") != undefined){
-			updateBalance();
+			//updateBalance();
 		}
 		MicroModal.init({
 			onShow: modal => {
 				console.info(`${modal.id} is shown`);
 
-				if (modal.id === 'install-modal') {
-					// Re/initialize the Wizard *after* the modal is visible
-					if (typeof window.Wizard !== 'undefined') {
-						try {
-							const args = {
-								wz_class: ".wizard",
-								wz_nav_style: "dots",
-								wz_button_style: ".styled-btn",
-								wz_ori: "horizontal",
-								buttons: true,
-								navigation: "buttons",
-								finish: "Close"
-							};
-
-							if (!window._installWizard) {
-								window._installWizard = new window.Wizard(args);
-								window._installWizard.init();
-								// Close modal on Finish
-								document.querySelector('.wizard')?.addEventListener('wz.end', () => {
-									MicroModal.close('install-modal');
-								});
-							} else {
-								window._installWizard.reset();
-							}
-						} catch (e) { console.warn('Wizard init failed:', e); }
-					}
-
-					// Prepare/refresh the form defaults and handlers on every open
 					if (typeof window.initInstallForm === 'function') window.initInstallForm();
+
+				if(modal.id == 'invoice-modal'){
+					var address = localStorage.getItem("address");
+					generateDamageQR(address);
 				}
 			}
 		});
@@ -197,10 +174,6 @@ function generateDamageQR(address){
 			console.log("switch tab");
 			console.log(event);
 		}, false);
-		document.getElementById("damageForm").addEventListener("submit", async function(event) {
-			event.preventDefault();
-			await submitDamageForm();
-		});
 
 		document.getElementById("damageTextArea").addEventListener("keydown", async function(event) {
 			if (event.ctrlKey && event.key === "Enter") {
@@ -208,10 +181,6 @@ function generateDamageQR(address){
 				await submitDamageForm();
 			}
 		});
-		var address = localStorage.getItem("address");
-		if(address){
-			document.getElementById("damage-address").value = address;
-		}
 		fetchVersion();
 
 
@@ -227,9 +196,6 @@ function generateDamageQR(address){
                 }
             });
         });
-		if(isAuthenticated()){
-			generateDamageQR(address);
-		}
 		var tabs =Tabby('[data-tabs]');
 		tabs.toggle('execution');
 		const hashes = [
@@ -540,9 +506,11 @@ function generateDamageQR(address){
 					localStorage.setItem("access_token", data.access_token);
 					localStorage.setItem("address", data.address);
 					localStorage.setItem("email_auth", username);
-					updateBalance();
+					//updateBalance();
 					showConnectStatus("Login Success!", "success");
 					showHideLoginButton();
+					window.__damage_onCustodialLoginSuccess(data.access_token);
+
 				} else {
 					showConnectStatus("Login Failed!", "failed");
 				}
@@ -642,25 +610,57 @@ function generateDamageQR(address){
 		xhr.setRequestHeader('Authorization', 'Bearer ' + localStorage.access_token);
 		xhr.withCredentials = true;
 
-		xhr.onload = function() {
+		xhr.onload = function () {
 			if (xhr.status === 401) {
 				localStorage.removeItem("access_token");
 				localStorage.removeItem("address");
+				return;
 			}
 			if (xhr.status === 200) {
-				var balanceData = JSON.parse(xhr.responseText);
-				var balanceDiv = document.getElementById('balanceDiv');
-				var balanceText = '💀 DAMAGE TOKENS: ' + Math.round(balanceData.amount/100000000) + '🩸';
-				balanceDiv.innerText = balanceText;
+				try {
+					var balanceData = JSON.parse(xhr.responseText) || {};
+
+					// DAMAGE (raw has 8 decimals)
+					var rawDamage = Number(balanceData.amount || 0);
+					var damage = rawDamage / 1e8;
+					var damageText = damage.toLocaleString(undefined, {
+						minimumFractionDigits: 2,
+						maximumFractionDigits: 2
+					});
+
+					// AE: accept either 'ae_amount' or try to derive if not present
+					var rawAe = balanceData.ae_amount != null ? Number(balanceData.ae_amount) : null;
+					if (rawAe == null && typeof balanceData.ae === 'number') rawAe = Number(balanceData.ae);
+
+					function formatAE(v) {
+						if (v == null || isNaN(v)) return '—';
+						return v.toLocaleString(undefined, {
+							minimumFractionDigits: 6,
+							maximumFractionDigits: 6
+						});
+					}
+
+					var ae = rawAe / 1e8; // assume aetto → AE
+					var aeText = 'AE: ' + formatAE(ae);
+
+					// Update DOM
+					var balanceAmountEl = document.getElementById('balanceAmount');
+					var aeBalanceEl = document.getElementById('aeBalance');
+					balanceAmountEl.textContent = damageText;
+					aeBalanceEl.textContent = aeText;
+				} catch (e) {
+					console.error('Balance parse error', e);
+				}
 			}
 		};
-		
-		xhr.onerror = function() {
-			console.error('Error making the request.');
-		};
 
+		xhr.onerror = function () {
+			console.error('Balance request failed');
+		};
 		xhr.send();
 	}
+
+
 
 
 	function generateInvoice() {
@@ -743,69 +743,6 @@ function copyAddressToClipboard(){
 	copyIcon.style.color = 'green'; // Change color to green
 }
 
-async function connectWalletSmart1() {
-	const status = document.getElementById('connect-status');
-	status.textContent = "Connecting...";
-	status.className = "info";
-	const origin = window.location.origin;
-
-	try {
-		await wallet.connectWalletSmart(
-			origin, origin
-		);
-		var address = await wallet.getAddress();
-		localStorage.setItem("address", address);
-		localStorage.setItem("wallet_connected", address);
-
-		const sessionMeta = JSON.stringify({
-			token: address, // or another identifier
-			timestamp: new Date().toISOString()
-		});
-
-		const signed = await wallet.signMessageSmart(
-			sessionMeta, origin, origin
-		);
-		var signature = false;
-		if(signed.ok){
-			signature = signed.result.signature;
-		}
-
-		// ✅ Submit to server for login verification
-		const loginResponse = await fetch(`${origin}/accounts/auth`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"Authorization": `Wallet ${signature}`
-			},
-			body: JSON.stringify({
-				address: address,
-				meta: sessionMeta,
-				signature: signature
-			})
-		});
-
-		const result = await loginResponse.json();
-
-		if (loginResponse.ok && result.access_token) {
-			status.textContent = "Wallet connected and authenticated.";
-			status.className = "success";
-
-			// Store token in localStorage or cookie if needed
-			localStorage.setItem("access_token", result.access_token);
-
-			// Redirect or update UI
-			window.location.href = "/"; // adjust as needed
-		} else {
-			status.textContent = result.message || "Wallet login failed.";
-			status.className = "error";
-		}
-
-	} catch (err) {
-		console.error(err);
-		status.textContent = "Error during wallet connection.";
-		status.className = "error";
-	}
-}
 function copyToClipboard(elementId) {
 	const el = document.getElementById(elementId);
 	if (!el) return;
@@ -863,3 +800,57 @@ function copyToClipboard(elementId) {
 
 // ⬅️ Make it accessible from HTML inline
 window.copyToClipboard = copyToClipboard;
+// main.js — wire login page "Connect" to wallet.connectUnified
+(() => {
+  'use strict';
+
+  const CONNECT_BTN_SELECTOR = [
+    '#connect-button',
+    '#connectWalletBtn',
+    '[data-connect-wallet]',
+    '#loginBtn.connect-wallet'
+  ].join(',');
+
+  async function connectViaUnified(btn) {
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Connecting…';
+
+    try {
+      const res = await window.connectUnified({ prompt: true, prefer: ['smart','browser','getter'] });
+      if (res.ok) {
+        const sel = document.getElementById('walletSelector');
+        if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+        if (window.TokenManager?.setMode) TokenManager.setMode('noncustodial');
+        if (typeof updateWalletSummary === 'function') await updateWalletSummary();
+        document.dispatchEvent(new CustomEvent('wallet:connected', { detail: res }));
+        if (window.MicroModal) try { MicroModal.close('connect-wallet-modal'); } catch {}
+      } else {
+        console.error('Wallet connect failed:', res.error);
+        btn.textContent = 'Retry Connect';
+        return;
+      }
+    } catch (e) {
+      console.error('Wallet connect threw:', e);
+      btn.textContent = 'Retry Connect';
+      return;
+    } finally {
+      btn.disabled = false;
+      if (btn.textContent !== 'Retry Connect') btn.textContent = prev;
+    }
+  }
+
+  function bindLoginConnectButton(root = document) {
+    const nodes = Array.from(root.querySelectorAll(CONNECT_BTN_SELECTOR))
+      .filter(el => !el.dataset.wcBound);
+    nodes.forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        connectViaUnified(btn);
+      });
+      btn.dataset.wcBound = '1';
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => bindLoginConnectButton());
+  document.addEventListener('wallet:ui:bind', () => bindLoginConnectButton());
+})();
