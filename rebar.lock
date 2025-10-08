@@ -32,7 +32,7 @@
   0},
  {<<"cowboy">>,
   {git,"https://github.com/ninenines/cowboy.git",
-       {ref,"beb11be7ff07bb9d9902ecc2a69312d8fc11bbbc"}},
+       {ref,"758484740e1142b26c15c404c34a0318b72f9037"}},
   0},
  {<<"cowboy_swagger">>,{pkg,<<"cowboy_swagger">>,<<"2.7.0">>},0},
  {<<"cowboy_telemetry">>,{pkg,<<"cowboy_telemetry">>,<<"0.4.0">>},1},
@@ -67,7 +67,7 @@
  {<<"gproc">>,{pkg,<<"gproc">>,<<"1.0.0">>},0},
  {<<"gun">>,
   {git,"https://github.com/ninenines/gun.git",
-       {ref,"beb11be7ff07bb9d9902ecc2a69312d8fc11bbbc"}},
+       {ref,"758484740e1142b26c15c404c34a0318b72f9037"}},
   0},
  {<<"ipfs">>,
   {git,"https://github.com/asyncmind0/ipfs.git",
@@ -142,8 +142,7 @@
   {git,"https://github.com/asyncmind0/webdrv.git",
        {ref,"7b8289890813f0f6fd761037355f671af706ab67"}},
   0},
- {<<"worker_pool">>,{pkg,<<"worker_pool">>,<<"5.1.0">>},1},
- {<<"yamerl">>,{pkg,<<"yamerl">>,<<"0.10.0">>},0}]}.
+ {<<"worker_pool">>,{pkg,<<"worker_pool">>,<<"5.1.0">>},1}]}.
 [
 {pkg_hash,[
  {<<"accept">>, <<"AD44AC7D704BF70EF8FB2E313EF5B978F9D1330BDDAC64509E93AFDA13281215">>},
@@ -177,8 +176,7 @@
  {<<"telemetry">>, <<"FEDEBBAE410D715CF8E7062C96A1EF32EC22E764197F70CDA73D82778D61E7A2">>},
  {<<"thoas">>, <<"19A25F31177A17E74004D4840F66D791D4298C5738790FA2CC73731EB911F195">>},
  {<<"trails">>, <<"BB940CD0D5187A8FB0BB05F3DB575B5A1CAC20A980EDACE092CA2033AACD0BAB">>},
- {<<"worker_pool">>, <<"61BA970F856AF8B2D85232ADC8E4B990FA1719F396FCDAD954702946395ADD80">>},
- {<<"yamerl">>, <<"4FF81FEE2F1F6A46F1700C0D880B24D193DDB74BD14EF42CB0BCF46E81EF2F8E">>}]},
+ {<<"worker_pool">>, <<"61BA970F856AF8B2D85232ADC8E4B990FA1719F396FCDAD954702946395ADD80">>}]},
 {pkg_hash_ext,[
  {<<"accept">>, <<"A5167FA1AE90315C3F1DD189446312F8A55D00EFA357E9C569BDA47736B874C3">>},
  {<<"base64url">>, <<"F9B3ADD4731A02A9B0410398B475B33E7566A695365237A6BDEE1BB447719F5C">>},
@@ -211,6 +209,5 @@
  {<<"telemetry">>, <<"7015FC8919DBE63764F4B4B87A95B7C0996BD539E0D499BE6EC9D7F3875B79E6">>},
  {<<"thoas">>, <<"E38697EDFFD6E91BD12CEA41B155115282630075C2A727E7A6B2947F5408B86A">>},
  {<<"trails">>, <<"1006E38E09BA095AE77DD9A50BB3E8EBDB8DC31ECBC5BF276C3D848C15D7079B">>},
- {<<"worker_pool">>, <<"59A975728E5C2B69A23D1C5EBC3B63251EC4ACBF4E9D25F1C619E3AD4B550813">>},
- {<<"yamerl">>, <<"346ADB2963F1051DC837A2364E4ACF6EB7D80097C0F53CBDC3046EC8EC4B4E6E">>}]}
+ {<<"worker_pool">>, <<"59A975728E5C2B69A23D1C5EBC3B63251EC4ACBF4E9D25F1C619E3AD4B550813">>}]}
 ].
