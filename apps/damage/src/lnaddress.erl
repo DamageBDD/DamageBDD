@@ -119,6 +119,25 @@ default_pay_user(User) ->
             )
     }.
 
+%% Refactored: Zap request handler
+handle_zap_request(#{nostr := ZapJsonBin, amount := AmountMsat}) ->
+    ?LOG_DEBUG("Zap request payload: ~p", [ZapJsonBin]),
+    try
+        ZapMap = jsx:decode(ZapJsonBin, [return_maps]),
+        Tags = maps:get(<<"tags">>, ZapMap, []),
+        EventId = extract_tag(<<"e">>, Tags),
+        PubKey = extract_tag(<<"p">>, Tags),
+        Memo = maps:get(<<"content">>, ZapMap, <<"Zap! ⚡">>),
+        Amount = AmountMsat div 1000,
+        Label = <<"zap:", EventId/binary, ":", PubKey/binary>>,
+        #{bolt11 := Bolt11} = cln:create_invoice(Amount, Memo, 3600, Label),
+        {201, #{pr => Bolt11, routes => []}}
+    catch
+        _:Error ->
+            ?LOG_WARNING("Invalid zap request format: ~p", [Error]),
+            {400, #{error => <<"Invalid zap request">>}}
+    end.
+
 to_json(Req, #{action := lnurlp} = State) ->
     case cowboy_req:binding(user, Req) of
         undefined ->
@@ -131,6 +150,18 @@ to_json(Req, #{action := nip05} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     ?LOG_INFO("Nip05 request data ~p", [Data]),
     {jsx:encode(damage_nostr:get_nostr_json()), Req, State};
+to_json(Req, #{action := nip57} = State) ->
+    {ok, Data, _Req2} = cowboy_req:read_body(Req),
+    ?LOG_INFO("Nip05 request data ~p", [Data]),
+    {Status, Response} = handle_zap_request(Data),
+    {
+        stop,
+        cowboy_req:reply(
+            Status,
+            cowboy_req:set_resp_body(Response)
+        ),
+        State
+    };
 to_json(Req, #{action := invoice} = State) ->
     case lookup_user_npub(cowboy_req:binding(user, Req)) of
         undefined ->
@@ -211,34 +242,8 @@ extract_tag(Key, Tags) ->
         [[_, Value | _] | _] -> Value;
         _ -> <<>>
     end.
-
-do_post_action(
-    zap,
-    #{nostr := ZapJsonBin, amount := AmountMsat} = _Data,
-    _Req,
-    _State
-) ->
-    ?LOG_DEBUG("Received zap request: ~p", [ZapJsonBin]),
-    try
-        ZapMap = jsx:decode(ZapJsonBin, [return_maps]),
-        Tags = maps:get(<<"tags">>, ZapMap, []),
-        EventId = extract_tag(<<"e">>, Tags),
-        PubKey = extract_tag(<<"p">>, Tags),
-        Memo = maps:get(<<"content">>, ZapMap, <<"Zap! ⚡">>),
-        %% convert msat to sat
-        Amount = AmountMsat div 1000,
-
-        Label = <<"zap:", EventId/binary, ":", PubKey/binary>>,
-        Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
-        #{
-            bolt11 := Bolt11
-        } = Invoice,
-        {201, #{pr => Bolt11, routes => []}}
-    catch
-        _:Error ->
-            ?LOG_WARNING("Invalid zap request format ~p", [Error]),
-            {400, #{error => <<"Invalid zap request">>}}
-    end;
+do_post_action(nip57, #{nostr := _, amount := _} = Data, _Req, _State) ->
+    handle_zap_request(Data);
 do_post_action(
     invoice,
     #{amount := 0} = Data,

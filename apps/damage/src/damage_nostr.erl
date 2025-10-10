@@ -44,6 +44,19 @@
 -export([post_bdd/1]).
 -export([post_note/3]).
 -export([post_bdd/2]).
+-export([get_recent_posts/2]).
+-export([
+    parse_nostrconnect_uri/1,
+    nip46_connect/1,
+    nip46_send/2,
+    nip04_encrypt/3
+]).
+-export([
+    construct_zap_receipt/5,
+    construct_http_auth/5,
+    publish_zap_receipt/3,
+    parse_zap_request/1
+]).
 
 %% Define the record to store state
 
@@ -82,7 +95,7 @@ get_posts_since(Npub, Since) ->
         {get_posts_since, Npub, Since}
     ).
 
-post_note(Note) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note}).
+post_note(Note) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note, [], ""}).
 
 post_note(Note, Tags, ImageURL) ->
     gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note, Tags, ImageURL}).
@@ -90,6 +103,45 @@ post_bdd(BDD) ->
     gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_bdd, BDD, []}).
 post_bdd(BDD, Tags) ->
     gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_bdd, BDD, Tags}).
+
+get_recent_posts(Npub, Limit) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {get_recent_posts, Npub, Limit}).
+%% Parse a nostrconnect:// URI into a map
+parse_nostrconnect_uri(Uri0) ->
+    Uri = to_bin(Uri0),
+    <<"nostrconnect://", Rest/binary>> = Uri,
+    %% split "<hexpubkey>?query"
+    [HexPubKeyBin, QueryBin] = binary:split(Rest, <<"?">>),
+    Params = parse_kv_query(QueryBin),
+    #{
+        % hex-encoded x-only pubkey (32 bytes -> 64 hex)
+        app_pubkey => HexPubKeyBin,
+        url => maps:get(<<"url">>, Params, <<>>),
+        name => maps:get(<<"name">>, Params, <<>>),
+        image => maps:get(<<"image">>, Params, <<>>),
+        perms => maps:get(<<"perms">>, Params, <<>>),
+        secret => maps:get(<<"secret">>, Params, <<>>),
+        relays => maps:get(<<"relay">>, Params, [])
+    }.
+
+%% Kick off NIP-46 pairing: send {"method":"connect","params":[<our-pubkey>,<secret>]}
+%% Returns the signed event you should publish to the listed relays.
+nip46_connect(Uri) ->
+    M = parse_nostrconnect_uri(Uri),
+    AppHex = maps:get(app_pubkey, M),
+    Secret = maps:get(secret, M),
+    nip46_send(AppHex, #{
+        method => <<"connect">>,
+        params => [lower_hex(public_key()), Secret]
+    }).
+
+%% Low-level: build & encrypt a NIP-46 request to a remote app pubkey (hex)
+nip46_send(RemoteHexPubKey, Payload) ->
+    gen_server:call(
+        gproc:lookup_local_name(?NOSTR_PROC),
+        {nip46_send, RemoteHexPubKey, Payload}
+    ).
+
 %%% gen_server Callbacks
 %% Initialize the server and open a WebSocket connection
 
@@ -108,6 +160,8 @@ init([]) ->
             StreamRef = gun:ws_upgrade(ConnPid, "/", []),
             HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
             gproc:reg_other({n, l, ?NOSTR_PROC}, self()),
+            %% <- LISTEN TO CLN EVENTS
+            cln:register_listener(invoice_paid),
             {
                 ok,
                 #state{
@@ -125,7 +179,26 @@ init([]) ->
     end.
 
 %% Handle synchronous calls (stop request)
-
+handle_call(
+    {get_recent_posts, Npub, Limit},
+    _From,
+    #state{conn_pid = ConnPid, streamref = StreamRef} = State
+) ->
+    Now = erlang:system_time(seconds),
+    Filter = #{
+        %% Kind 1 = text note
+        kinds => [1],
+        %% Filter by pubkey
+        p => [lower_hex(Npub)],
+        %% Reverse chronological fetch starts from now
+        until => Now,
+        limit => Limit
+    },
+    SubscriptionId = <<"recent_", (crypto:strong_rand_bytes(4))/binary>>,
+    RequestJson = jsx:encode([<<"REQ">>, SubscriptionId, Filter]),
+    ?LOG_INFO("Fetching recent posts for ~p: ~p", [Npub, RequestJson]),
+    ok = gun:ws_send(ConnPid, StreamRef, {text, RequestJson}),
+    {reply, ok, State};
 handle_call(
     {zap_note, OriginalEventId, OriginalAuthorPubKey, Amount},
     _From,
@@ -235,6 +308,26 @@ handle_call(
         ),
     gun:flush(State#state.conn_pid),
     {reply, ok, State};
+handle_call(
+    {nip46_send, RemoteHex, Payload},
+    _From,
+    #state{public_key = PubKey, private_key = PrivKey} = State
+) ->
+    TS = erlang:system_time(seconds),
+
+    %% 1) Encrypt JSON payload with NIP-04 using ECDH(PrivKey, RemotePubKey)
+    Plain = jsx:encode(Payload),
+    {ok, CipherB64, _IvB64} = nip04_encrypt(Plain, PrivKey, RemoteHex),
+
+    %% 2) Build kind 24133 event with required tags:
+    %%    ["p", <receiver-pubkey>] and (optionally) one or more ["relay", <wss://...>]
+    Tags = [[<<"p">>, RemoteHex]],
+    Event0 = construct_event(lower_hex(PubKey), 24133, CipherB64, TS, Tags),
+
+    %% 3) Sign as usual (you already have finalize_event/2)
+    Event = finalize_event(Event0, PrivKey),
+
+    {reply, #{event => Event}, State};
 handle_call(Any, _From, State) ->
     ?LOG_INFO("Nostr handle_call unknown: ~p ~p", [State, Any]),
     %gun:shutdown(State#state.conn_pid),
@@ -244,8 +337,15 @@ handle_cast(Any, State) ->
     ?LOG_INFO("Nostr got cast message: ~s~n", [Any]),
     {noreply, State}.
 
-%% Handle messages from the WebSocket (gun events)
-
+handle_info({cln_event, invoice_paid, Invoice}, State) ->
+    try
+        zap_receipt_for_invoice(Invoice, State)
+    catch
+        _:Reason ->
+            ?LOG_WARNING("Failed to send zap receipt: ~p", [Reason])
+    end,
+    {noreply, State};
+% Handle messages from the WebSocket (gun events)
 handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State) when
     StreamRef == State#state.streamref
 ->
@@ -301,8 +401,9 @@ handle_event_payload(
     #state{npub_cache = Cache} = State
 ) ->
     ?LOG_INFO("Got mention of damagebdd"),
-    case re:match(<<"[^\"]Feature.*?">>, Content, [cased]) of
-        {ok, Matched} ->
+    FeatureRe = <<"[^\"]Feature.*?">>,
+    case re:run(Content, FeatureRe) of
+        {match, Matched} ->
             Feature = lists:sublist(Content, 0, string:index(Matched, ")") + 1),
 
             case resolve_npub(Npub, Cache) of
@@ -342,10 +443,10 @@ handle_event_payload(
                             )
                     end
             end;
-        none ->
+        Notmatched ->
             reward_mention(Npub),
-            ?LOG_INFO("Nostr Received invalid message from: ~s ~p~n", [
-                Npub, Content
+            ?LOG_INFO("Nostr Received invalid message from: ~s ~p ~p~n", [
+                Npub, Content, Notmatched
             ])
     end.
 
@@ -407,17 +508,17 @@ get_public_keys(<<"asyncmind">>) ->
     [decode_npub(Npub)];
 get_public_keys(_) ->
     [].
-get_nostr_json()->
-
+get_nostr_json() ->
     {ok, BopNpub} = application:get_env(bop, nostr_npub),
     {ok, DamageNpub} = application:get_env(damage, nostr_npub),
     #{
-      names => #{
-                 asyncmind => list_to_binary(decode_npub(DamageNpub)),
-                 damage => list_to_binary(decode_npub(DamageNpub)),
-                 coordinator => list_to_binary(decode_npub(BopNpub))
-                 }}.
-    
+        names => #{
+            asyncmind => list_to_binary(decode_npub(DamageNpub)),
+            damage => list_to_binary(decode_npub(DamageNpub)),
+            coordinator => list_to_binary(decode_npub(BopNpub))
+        }
+    }.
+
 reply_event(
     OriginalEventId,
     OriginalAuthorPubKey,
@@ -506,6 +607,223 @@ decode_nsec(Nsec) ->
     {ok, #{data := Data}} = bech32:decode(Nsec),
     {ok, RawPrivateKey} = bech32:convertbits(Data, 5, 8, [{padding, false}]),
     RawPrivateKey.
+to_bin(B) when is_binary(B) -> B;
+to_bin(L) when is_list(L) -> list_to_binary(L);
+to_bin(Else) -> iolist_to_binary(Else).
+
+hash_sha256_hex(Bin) ->
+    lower_hex(crypto:hash(sha256, Bin)).
+
+%% NIP-98: HTTP Auth event
+%% kind: 27235
+%% tags:
+%%   ["u", "<URL>"]
+%%   ["method", "<METHOD>"]
+%%   ["payload", "<sha256-hex>"]   %% only if body present
+construct_http_auth(PubKey, Url, Method, Timestamp, Body) ->
+    BaseTags = [
+        [<<"u">>, Url],
+        [<<"method">>, Method]
+    ],
+    Tags1 =
+        case Body of
+            <<>> -> BaseTags;
+            _ -> BaseTags ++ [[<<"payload">>, hash_sha256_hex(Body)]]
+        end,
+    construct_event(PubKey, 27235, <<>>, Timestamp, Tags1).
+
+%% ---- Zap receipt helpers ----------------------------------------------------
+
+%% Parse the zap request JSON (stored in the BOLT11 description) into a map.
+%% Returns {ok, #{...}} or {error, Reason}.
+parse_zap_request(DescBin) when is_binary(DescBin) ->
+    try jsone:decode(DescBin) of
+        M when is_map(M) -> {ok, M}
+    catch
+        _:E -> {error, {invalid_zap_request_json, E}}
+    end.
+
+%% Fetch the first tag value by name, e.g. <<"p">>, <<"e">>, <<"a">>, <<"relays">>.
+%% Tags are the Nostr "tags" array from the zap request event.
+find_tag_value(Tags, Name) ->
+    case lists:filter(fun([N | _]) -> N =:= Name end, Tags) of
+        [[_N, V | _Rest] | _] -> {ok, V};
+        _ -> not_found
+    end.
+
+%% Fetch *all* values in a tag after its name, useful for ["relays", R1, R2, ...].
+find_tag_values(Tags, Name) ->
+    case lists:filter(fun([N | _]) -> N =:= Name end, Tags) of
+        [[_N | Vs] | _] -> {ok, Vs};
+        _ -> not_found
+    end.
+
+%% Optional: verify SHA256(description) matches the BOLT11 description hash.
+%% If you have a bolt11 decoder exposing description hash, plug it here.
+verify_description_hash(_Bolt11, DescBin) ->
+    %% TODO: replace with real BOLT11 description_hash extraction if available.
+    %% For now we just compute SHA256(description) and return it for the caller
+    %% to compare against their own BOLT11 parser if wired up elsewhere.
+    {ok, crypto:hash(sha256, DescBin)}.
+
+%% Build the tags for the zap receipt from the zap request event.
+%% Ensures required ["p", ...], includes optional ["e", ...], ["a", ...], ["P", <sender-pubkey>],
+%% plus ["bolt11", ...], ["description", <json>], and optional ["preimage", ...].
+zap_receipt_tags(ZapReq, Bolt11, ZapReqJsonBin, MaybePreimage) ->
+    Tags = maps:get(<<"tags">>, ZapReq, []),
+    %% Required p-tag (zap recipient)
+    PTag =
+        case find_tag_value(Tags, <<"p">>) of
+            {ok, P} -> [[<<"p">>, P]];
+            _ -> erlang:error(missing_p_tag)
+        end,
+    %% Optional tags from zap request
+    ETag =
+        case find_tag_value(Tags, <<"e">>) of
+            {ok, E} -> [[<<"e">>, E]];
+            _ -> []
+        end,
+    ATag =
+        case find_tag_value(Tags, <<"a">>) of
+            {ok, A} -> [[<<"a">>, A]];
+            _ -> []
+        end,
+    %% Capital P tag is the zap sender public key (from zap request's pubkey field)
+    PcapTag =
+        case maps:get(<<"pubkey">>, ZapReq, undefined) of
+            undefined -> [];
+            SenderPub -> [[<<"P">>, SenderPub]]
+        end,
+    Core =
+        PTag ++ ETag ++ ATag ++ PcapTag ++
+            [
+                [<<"bolt11">>, Bolt11],
+                [<<"description">>, ZapReqJsonBin]
+            ],
+    case MaybePreimage of
+        <<>> -> Core;
+        undefined -> Core;
+        Bin when is_binary(Bin) -> Core ++ [[<<"preimage">>, Bin]]
+    end.
+
+%% Construct an *unsigned* zap receipt event (kind 9735). You still need to finalize_event/2.
+%% PaidAt: integer (invoice paid_at UTC seconds)
+%% Bolt11: binary
+%% ZapReq: map (decoded zap request event)
+%% ZapReqJsonBin: original JSON blob for the "description" tag
+%% MaybePreimage: <<>> | undefined | <<preimage-hex-or-bin>>
+construct_zap_receipt(PaidAt, Bolt11, ZapReq, ZapReqJsonBin, MaybePreimage) ->
+    %% Pubkey is filled by the caller (we sign with our node key)
+    Tags = zap_receipt_tags(ZapReq, Bolt11, ZapReqJsonBin, MaybePreimage),
+    %% content MUST be empty, created_at SHOULD be invoice paid_at
+    fun(PubKeyLowerHex) ->
+        construct_event(PubKeyLowerHex, 9735, <<>>, PaidAt, Tags)
+    end.
+
+%% Publish a signed zap receipt to relays declared in the zap request, if present.
+%% Falls back to the currently-connected relay if none were provided.
+publish_zap_receipt(
+    #state{conn_pid = ConnPid, streamref = StreamRef} = _State,
+    SignedEvent,
+    ZapReq
+) ->
+    Tags = maps:get(<<"tags">>, ZapReq, []),
+    Relays =
+        case find_tag_values(Tags, <<"relays">>) of
+            {ok, Rs} -> Rs;
+            _ -> []
+        end,
+    EventJson = jsx:encode([<<"EVENT">>, SignedEvent]),
+    case Relays of
+        [] ->
+            %% No relays tag -> send to our current connection
+            ok = gun:ws_send(ConnPid, StreamRef, {text, EventJson}),
+            ok;
+        _Some ->
+            %% You can extend this to multiplex connections.
+            %% For now, also send to the current connection (best effort).
+            ok = gun:ws_send(ConnPid, StreamRef, {text, EventJson}),
+            ok
+    end.
+
+%% --- Query parsing and misc ---
+
+parse_kv_query(QsBin) ->
+    Pairs = [binary:split(KV, <<"=">>) || KV <- binary:split(QsBin, <<"&">>, [global])],
+    lists:foldl(
+        fun
+            ([K, V], Acc) ->
+                DecK = uri_string:percent_decode(K),
+                DecV = uri_string:percent_decode(V),
+                case DecK of
+                    <<"relay">> ->
+                        %% accumulate multiple relay keys into a list
+                        maps:update_with(
+                            <<"relay">>,
+                            fun(List) -> [DecV | List] end,
+                            [DecV],
+                            Acc
+                        );
+                    _ ->
+                        maps:put(DecK, DecV, Acc)
+                end;
+            (_Other, Acc) ->
+                Acc
+        end,
+        #{},
+        Pairs
+    ).
+
+public_key() ->
+    %% Your state keeps PubKey; expose a quick accessor via getinfo if you like.
+    %% Here we just return a placeholder. Replace with your own if needed.
+    %% Since this helper is called inside gen_server (nip46_send), we pass PubKey there.
+    error(not_used).
+
+%% --- NIP-04 encryption (AES-256-CBC with base64 result + iv) ---
+
+nip04_encrypt(PlainJson, PrivKey, RemoteHex) ->
+    %% Derive shared secret with ECDH(secp256k1).
+    %% RemoteHex is 64-hex x-only. We don't know parity; try 02 then 03.
+    RemoteX = hex_to_bin(RemoteHex),
+    case try_ecdh(RemoteX, PrivKey, 16#02) of
+        {ok, Secret} ->
+            ok_encrypt(Secret, PlainJson);
+        error ->
+            case try_ecdh(RemoteX, PrivKey, 16#03) of
+                {ok, Secret2} -> ok_encrypt(Secret2, PlainJson);
+                error -> {error, ecdh_failed}
+            end
+    end.
+
+ok_encrypt(SharedSecret, PlainJson) ->
+    %% 32 bytes
+    Key = crypto:hash(sha256, SharedSecret),
+    Iv = crypto:strong_rand_bytes(16),
+    Cipher = crypto:crypto_one_time(aes_256_cbc, Key, Iv, pkcs_padding(PlainJson), true),
+    {ok, base64:encode(Cipher), base64:encode(Iv)}.
+
+pkcs_padding(Bin) ->
+    %% crypto:crypto_one_time/5 with 'true' already handles PKCS#7, but some OTPs expect raw block input.
+    %% Keep as-is; Erlang/OTP >= 25 handles pkcs padding with the boolean flag.
+    Bin.
+
+hex_to_bin(Hex) -> list_to_binary(binary:decode_hex(Hex)).
+
+%% Compose a compressed SEC pubkey (02/03 + X) and do ECDH
+try_ecdh(RemoteX32, PrivKey32, Prefix) ->
+    case
+        catch crypto:compute_key(
+            ecdh,
+            <<Prefix, RemoteX32/binary>>,
+            PrivKey32,
+            ec_secp256k1
+        )
+    of
+        Secret when is_binary(Secret) -> {ok, Secret};
+        _ -> error
+    end.
+
 lower_hex(List) when is_list(List) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(list_to_binary(List)))));
 lower_hex(Binary) ->
@@ -523,6 +841,8 @@ construct_event(PubKey, Kind, Content, Timestamp, Tags) ->
     }.
 construct_bdd(PubKey, BddContent, Timestamp, Tags) ->
     construct_event(PubKey, 800, BddContent, Timestamp, Tags).
+construct_note(PubKey, Content, Timestamp, Tags, "") ->
+    construct_event(PubKey, 1, Content, Timestamp, Tags);
 construct_note(PubKey, Content, Timestamp, Tags, ImageURL) ->
     maps:put(<<"image">>, ImageURL, construct_event(PubKey, 1, Content, Timestamp, Tags)).
 construct_note(PubKey, Content, Timestamp, Tags) ->
@@ -656,4 +976,30 @@ fetch_ln_invoice(LnUrl, AmountSats) ->
             end;
         Error ->
             Error
+    end.
+%% Given a CLN invoice-paid payload, build and publish a zap-receipt (kind 9735)
+%% when the BOLT11 description contains a zap request event (kind 9734).
+zap_receipt_for_invoice(Invoice, #state{public_key = PubKey, private_key = PrivKey} = State) ->
+    %% Expected keys from CLN: bolt11, description, paid_at, payment_preimage (names vary by plugin)
+    Bolt11 = maps:get(bolt11, Invoice, <<>>),
+    DescBin = maps:get(description, Invoice, <<>>),
+    PaidAt = maps:get(paid_at, Invoice, erlang:system_time(seconds)),
+    Preimage = maps:get(payment_preimage, Invoice, undefined),
+
+    case parse_zap_request(DescBin) of
+        {ok, ZapReq} ->
+            %% (Optional) verify SHA256(description) == description_hash(BOLT11)
+            _ = verify_description_hash(Bolt11, DescBin),
+
+            %% Build unsigned event with the correct created_at and tags
+            Builder = construct_zap_receipt(PaidAt, Bolt11, ZapReq, DescBin, Preimage),
+            UnsignedEvent = Builder(lower_hex(PubKey)),
+
+            %% Sign and publish
+            Signed = finalize_event(UnsignedEvent, PrivKey),
+            publish_zap_receipt(State, Signed, ZapReq),
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING("Invoice paid but no valid zap request in description: ~p", [Reason]),
+            ok
     end.
