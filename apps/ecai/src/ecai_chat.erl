@@ -148,4 +148,4 @@ test() ->
     ecai_chat:store_message(sessionid, userid, "hello blah", "Hi hi"),
     spell_correct("helo crul wlrd"),
     "Hi" = ecai_chat:get_reply(sessionid, userid, "hello ecai"),
-    "Hi ecai" = ecai_chat:get_reply(sessionid, userid, "test", "hello steve jose").
+    "Hi ecai" = ecai_chat:get_reply(sessionid, userid, "hello steve jose").

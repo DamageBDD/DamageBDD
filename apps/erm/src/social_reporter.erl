@@ -74,7 +74,7 @@ allowed(Title, #cfg{include_kw = [], exclude_kw = Exc}) ->
 allowed(Title, #cfg{include_kw = Inc, exclude_kw = Exc}) ->
     has_any(Title, Inc) andalso not has_any(Title, Exc).
 
-has_any(Title, []) ->
+has_any(_Title, []) ->
     false;
 has_any(Title, [K | Ks]) ->
     case string:find(string:lowercase(Title), string:lowercase(K)) of
@@ -89,7 +89,7 @@ split_env(Name) ->
         Str -> [string:trim(S) || S <- string:tokens(Str, ",")]
     end.
 
-maybe_discord(Text, Track, #cfg{discord_webhook = undefined}) ->
+maybe_discord(_Text, _Track, #cfg{discord_webhook = undefined}) ->
     ok;
 maybe_discord(Text, Track, #cfg{discord_webhook = Url}) ->
     %% Compose embed with optional IPFS link

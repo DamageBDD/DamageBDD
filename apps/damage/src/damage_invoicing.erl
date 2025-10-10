@@ -156,7 +156,7 @@ from_json(Req, #{username := Username, public_key := AeAccount} = State) ->
                 State
             }
     end;
-from_json(Req, #{public_key := AeAccount} = State) ->
+from_json(Req, #{public_key := _AeAccount} = State) ->
     from_json(Req, maps:put(username, <<"Anon">>, State)).
 
 delete_resource(Req, #{public_key := _AeAccount} = State) ->

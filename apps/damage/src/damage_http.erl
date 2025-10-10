@@ -323,7 +323,7 @@ check_execute_bdd(
     Config
 ) ->
     Context = maps:merge(Context0, State),
-    Concurrency = damage_utils:get_concurrency_level(Concurrency0),
+    _Concurrency = damage_utils:get_concurrency_level(Concurrency0),
     IP = damage_utils:get_ip(Req0),
     case throttle:check(damage_api_rate, IP) of
         {limit_exceeded, _, _} ->

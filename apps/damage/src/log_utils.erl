@@ -84,9 +84,6 @@ pread_all(Fd, Pos, Len) ->
 split_lines(<<>>) -> [];
 split_lines(Bin) -> [binary_to_list(L) || L <- binary:split(Bin, <<"\n">>, [global])].
 
-min(A, B) when A =< B -> A;
-min(_A, B) -> B.
-
 %% -------------------------
 %% Journald query (cursor)
 %% Selector example: "SYSLOG_IDENTIFIER=lightningd" or "UNIT=lightningd.service"
@@ -124,7 +121,7 @@ split_cursor(OutStr) when is_list(OutStr) ->
 %% Matching
 %% -------------------------
 
-match_lines(Lines, []) -> [];
+match_lines(_Lines, []) -> [];
 match_lines(Lines, Pats) -> [L || L <- Lines, any_match(L, Pats)].
 
 any_match(Line, [{regex, MP} | Rest]) ->

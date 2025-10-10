@@ -1,6 +1,5 @@
 %% BDD step bindings for file tailing & journald querying (step/6 interface)
 -module(steps_logscan).
--behaviour(steps).
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 -include_lib("kernel/include/logger.hrl").

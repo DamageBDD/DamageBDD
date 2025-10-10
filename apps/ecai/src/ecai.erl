@@ -48,7 +48,7 @@ hash_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 curve_add(_X1, _Y1, _X2, _Y2) -> erlang:nif_error(nif_library_not_loaded).
 
 mint_knowledge(
-    #{public_key := AeAccount, private_key := PrivateKey} = KeyPair,
+    #{public_key := AeAccount, private_key := _PrivateKey} = KeyPair,
     #{
         subject := _Subject,
         predicate := _Predicate,

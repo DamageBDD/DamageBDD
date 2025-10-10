@@ -66,7 +66,6 @@ ask_password(Title) ->
             ask_password(Title)
     end.
 askpass(Title) ->
-    wx:new(),
     Frame = wxFrame:new(wx:null(), ?wxID_ANY, Title, [{size, {300, 150}}, {pos, {300, 300}}]),
     Panel = wxPanel:new(Frame),
     Sizer = wxBoxSizer:new(?wxVERTICAL),

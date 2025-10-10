@@ -683,13 +683,13 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
     %?LOG_DEBUG("cln handle_info gun_ws ~p", [Message]),
     handle_event(ConnPid, StreamRef, Message),
     {noreply, State};
-handle_info({gun_ws, _, _, close} = Info, State) ->
+handle_info({gun_ws, _, _, close} = _Info, State) ->
     %?LOG_DEBUG("cln handle_info got close on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
-handle_info({gun_down, _, ws, normal, _} = Info, State) ->
+handle_info({gun_down, _, ws, normal, _} = _Info, State) ->
     %?LOG_DEBUG("cln handle_info got gun_down on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
-handle_info(Info, State) ->
+handle_info(_Info, State) ->
     %?LOG_DEBUG("cln handle_info got unknown on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State}.
 handle_event(

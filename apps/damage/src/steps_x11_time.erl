@@ -18,6 +18,9 @@
     terminate/2,
     code_change/3
 ]).
+-export([
+    hook/1
+]).
 
 -define(NAME, {n, l, {?MODULE, monitor}}).
 
@@ -198,11 +201,6 @@ match_class_title(Class, Key, RE) when is_binary(Key) ->
         _ ->
             false
     end.
-
-x_title(_, _) -> false.
-
-%% reuse existing helper
-parse_limit(Str) -> parse_dur(Str).
 
 pretty(Map) ->
     lists:sort(

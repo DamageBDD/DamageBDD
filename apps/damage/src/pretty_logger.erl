@@ -25,7 +25,12 @@ format(LogEvent, Cfg) ->
             %% Last-ditch, never crash: emit a tiny fallback line
             Fallback = io_lib:format(
                 "~s | ~p:~p (~p)~n",
-                [timestamp_iso(maps:get(meta, LogEvent, #{})), Class, Reason, element(1, erlang:process_info(self(), current_function))]
+                [
+                    timestamp_iso(maps:get(meta, LogEvent, #{})),
+                    Class,
+                    Reason,
+                    element(1, erlang:process_info(self(), current_function))
+                ]
             ),
             unicode:characters_to_binary(Fallback)
     end.
@@ -33,25 +38,23 @@ format(LogEvent, Cfg) ->
 %% ========= Original logic, refactored to return UTF-8 binary =========
 build(#{level := Level, msg := {string, Msg}} = LogEvent, Cfg) ->
     Meta = maps:get(meta, LogEvent, #{}),
-    Src  = format_source(Meta),
-    H    = header(Level, Src, Meta, Cfg),
-    B    = body_text(Msg),
+    Src = format_source(Meta),
+    H = header(Level, Src, Meta, Cfg),
+    B = body_text(Msg),
     finalize([H, $\n, B, tail_meta(Meta, Cfg)]);
-
 build(#{level := Level, msg := {report, Report}} = LogEvent, Cfg) ->
     Meta = maps:get(meta, LogEvent, #{}),
-    Src  = format_source(Meta),
-    H    = header(Level, Src, Meta, Cfg),
-    R    = format_report(Report, Meta),
-    B    = indent_iolist(R, 1),
+    Src = format_source(Meta),
+    H = header(Level, Src, Meta, Cfg),
+    R = format_report(Report, Meta),
+    B = indent_iolist(R, 1),
     finalize([H, $\n, B, tail_meta(Meta, Cfg)]);
-
 build(#{level := Level} = LogEvent, Cfg) ->
     Meta = maps:get(meta, LogEvent, #{}),
-    Src  = format_source(Meta),
-    H    = header(Level, Src, Meta, Cfg),
+    Src = format_source(Meta),
+    H = header(Level, Src, Meta, Cfg),
     Msg0 = maps:get(msg, LogEvent, <<"">>),
-    B    = body_term(Msg0),
+    B = body_term(Msg0),
     finalize([H, $\n, B, tail_meta(Meta, Cfg)]).
 
 finalize(IoData) ->
@@ -61,8 +64,12 @@ finalize(IoData) ->
 %% ========= Styling (unchanged except: ensure binaries) =========
 header(Level, Src, Meta, Cfg) ->
     {Tag, Icon0, Color} = level_style(Level, maps:get(icons, Cfg, emoji)),
-    Icon = case Icon0 of <<>> -> <<>>; _ -> [Icon0, " "] end,
-    Pid  = maps:get(pid, Meta, undefined),
+    Icon =
+        case Icon0 of
+            <<>> -> <<>>;
+            _ -> [Icon0, " "]
+        end,
+    Pid = maps:get(pid, Meta, undefined),
     Node = node_name(Meta),
     TimeS = timestamp_iso(Meta),
     Ln = io_lib:format("~ts~ts | ~ts | pid=~p | node=~p | ~ts", [Icon, Tag, Src, Pid, Node, TimeS]),
@@ -71,25 +78,27 @@ header(Level, Src, Meta, Cfg) ->
 tail_meta(Meta, Cfg) ->
     Crumbs0 = compact_crumbs(Meta),
     case Crumbs0 of
-        [] -> <<>>;
-        _  ->
+        [] ->
+            <<>>;
+        _ ->
             Ln = io_lib:format("~n└─ ~ts~n", [Crumbs0]),
             ansi(dim, Ln, Cfg)
     end.
 
-body_text(Msg) when is_list(Msg)   -> prefix_block(Msg);
+body_text(Msg) when is_list(Msg) -> prefix_block(Msg);
 body_text(Msg) when is_binary(Msg) -> prefix_block(Msg);
 body_text({Fmt, P}) when is_tuple(Fmt) -> prefix_block(io_lib:format(Fmt, P));
 body_text(Other) -> prefix_block(io_lib:format("~p", [Other])).
 
 body_term(Msg0) ->
     prefix_block(
-      case Msg0 of
-        B when is_binary(B) -> B;
-        L when is_list(L)   -> L;
-        {F, P}=T when is_tuple(T) -> io_lib:format(F, P);
-        T -> io_lib:format("~p", [T])
-      end).
+        case Msg0 of
+            B when is_binary(B) -> B;
+            L when is_list(L) -> L;
+            {F, P} = T when is_tuple(T) -> io_lib:format(F, P);
+            T -> io_lib:format("~p", [T])
+        end
+    ).
 
 %% ========= Source & Meta helpers (same as your version) =========
 %% (keep your existing implementations for: format_source/1, basefile/1, fmt/2,
@@ -99,7 +108,7 @@ body_term(Msg0) ->
 %% ========= Utility =========
 indent_iolist(Io, Levels) ->
     Prefix = lists:duplicate(Levels, $\s) ++ "│ ",
-    Lines  = to_lines(Io),
+    Lines = to_lines(Io),
     lists:join($\n, [[Prefix, L] || L <- Lines]).
 
 prefix_block(Io) ->
@@ -122,7 +131,6 @@ ansi(_, Str, #{color := off}) -> lists:flatten(Str);
 ansi(Color, Str, #{color := on}) -> colorize(Color, Str);
 ansi(Color, Str, #{color := auto}) -> colorize(Color, Str);
 ansi(Color, Str, _Cfg) -> colorize(Color, Str).
-
 
 %% ===================== SOURCE & META =====================
 
@@ -258,7 +266,6 @@ format_report(Report, Meta) ->
 
 %% ===================== UTIL (color & text) =====================
 
-
 %% Icons & colors
 
 level_style(error, ascii) ->
@@ -300,7 +307,6 @@ level_style(_, emoji) ->
 level_style(Level, off) ->
     {Tag, _I, C} = level_style(Level, ascii),
     {Tag, <<>>, C}.
-
 
 colorize(Color, Str) ->
     Code =

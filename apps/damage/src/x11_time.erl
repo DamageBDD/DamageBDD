@@ -6,7 +6,7 @@
 -behaviour(gen_server).
 
 -export([start_link/1, get_or_start/1, stop/0]).
--export([summary/0, summary/1, reset/0, now/0]).
+-export([summary/0, summary/1, reset/0, now_seconds/0]).
 -export([add_alias/2, clear_alias/1]).
 
 -export([
@@ -64,19 +64,19 @@ add_alias(Alias, Classes) when is_list(Classes) ->
     gen_server:call(?MODULE, {add_alias, to_bin(Alias), [to_bin(C) || C <- Classes]}).
 clear_alias(Alias) -> gen_server:call(?MODULE, {clear_alias, to_bin(Alias)}).
 
-now() -> erlang:monotonic_time(second).
+now_seconds() -> erlang:monotonic_time(second).
 
 %%% ========= gen_server =========
 
 init([]) ->
     process_flag(trap_exit, true),
     gproc:reg(?NAME),
-    {ok, #state{last_ts = now()}}.
+    {ok, #state{last_ts = now_seconds()}}.
 handle_call(
     {summary, _Since},
     _From,
     S = #state{by_class = BC, by_title = BT, by_qual = BQ, aliases = Aliases}
-) ->
+) when BQ /= undefined ->
     {reply,
         #{
             by_class => expand_aliases(BC, Aliases),
@@ -87,7 +87,7 @@ handle_call(
 handle_call({summary, _Since}, _From, S = #state{by_class = BC, by_title = BT, aliases = Aliases}) ->
     {reply, #{by_class => expand_aliases(BC, Aliases), by_title => BT}, S};
 handle_call(reset, _From, S) ->
-    {reply, ok, S#state{by_class = #{}, by_title = #{}, last_ts = now()}};
+    {reply, ok, S#state{by_class = #{}, by_title = #{}, last_ts = now_seconds()}};
 handle_call({add_alias, A, Cs}, _F, S = #state{aliases = Al}) ->
     {reply, ok, S#state{aliases = Al#{A => Cs}}};
 handle_call({clear_alias, A}, _F, S = #state{aliases = Al}) ->
@@ -104,19 +104,19 @@ handle_cast({hlwm_event, Evt}, S0) ->
                     current = #{
                         class => Class, title => Title, winid => maps:get(winid, Evt, <<>>)
                     },
-                    last_ts = now()
+                    last_ts = now_seconds()
                 };
             #{type := <<"focus_changed">>, title := Title} ->
                 %% Fall back if class missing
                 S1#state{
                     current = #{class => <<"unknown">>, title => Title, winid => <<>>},
-                    last_ts = now()
+                    last_ts = now_seconds()
                 };
             #{type := <<"window_title_changed">>, title := Title} ->
                 %% Update title for current window without changing class
                 case S1#state.current of
-                    #{class := C} = Cur ->
-                        S1#state{current = Cur#{title := Title}, last_ts = now()};
+                    #{class := _C} = Cur ->
+                        S1#state{current = Cur#{title := Title}, last_ts = now_seconds()};
                     _ ->
                         S1
                 end;
@@ -148,7 +148,7 @@ maybe_roll_time(
         by_qual = BQ0
     }
 ) ->
-    Now = now(),
+    Now = now_seconds(),
     Delta = max(0, Now - Last),
     BC = maps:update_with(C, fun(V) -> V + Delta end, Delta, BC0),
     BT = maps:update_with(T, fun(V) -> V + Delta end, Delta, BT0),

@@ -1,6 +1,6 @@
 %%% scosc.erl -- Erlang → SuperCollider OSC client
 -module(scosc).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -define(SC_HOST, {127, 0, 0, 1}).
 -define(SC_PORT, 57110).

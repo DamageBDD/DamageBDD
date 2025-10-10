@@ -46,7 +46,7 @@ add(inf, Q) ->
     Q;
 add(Pt, inf) ->
     Pt;
-add({X1, Y1} = P1, {X2, Y2} = P2) ->
+add({X1, Y1} = P1, {X2, Y2} = _P2) ->
     case {X1 =:= X2, modp(Y1 + Y2) =:= 0} of
         %% P + (-P) = inf
         {true, true} ->

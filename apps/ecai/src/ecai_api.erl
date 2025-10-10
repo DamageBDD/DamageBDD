@@ -32,22 +32,28 @@ trails() ->
                         description => "Get an AI-generated response",
                         parameters => [
                             #{
-                                name => <<"session_id">>,
+                                name => <<"subject">>,
                                 type => <<"string">>,
                                 required => true,
-                                description => "Unique chat session ID"
+                                description => "Subject"
                             },
                             #{
-                                name => <<"user_id">>,
+                                name => <<"predicate">>,
                                 type => <<"string">>,
                                 required => true,
-                                description => "User Identifier"
+                                description => "Perdicate"
                             },
                             #{
-                                name => <<"message">>,
+                                name => <<"object">>,
                                 type => <<"string">>,
                                 required => true,
-                                description => "User message input"
+                                description => "Object"
+                            },
+                            #{
+                                name => <<"context">>,
+                                type => <<"string">>,
+                                required => true,
+                                description => "Context"
                             }
                         ],
                         responses =>
