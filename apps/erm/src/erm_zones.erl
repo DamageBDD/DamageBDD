@@ -212,7 +212,7 @@ fit_columns(List) ->
     wxListCtrl:setColumnWidth(List, 3, -2),
     ok.
 
-update_times(State = #state{list = List, zones_view = Zones}) ->
+update_times(_State = #state{list = List, zones_view = Zones}) ->
     Epoch = erlang:system_time(second),
     lists:foldl(
         fun(Zone, Row) ->

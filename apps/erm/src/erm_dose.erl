@@ -10,56 +10,63 @@
 
 -behaviour(wx_object).
 
--export(
-    [
-        start/1,
-        init/1,
-        terminate/2,
-        code_change/3,
-        handle_info/2,
-        handle_call/3,
-        handle_cast/2,
-        handle_event/2
-    ]
-).
+-export([
+    start/0, start/1,
+    start_link/0, start_link/1,
+    init/1,
+    terminate/2,
+    code_change/3,
+    handle_info/2,
+    handle_call/3,
+    handle_cast/2,
+    handle_event/2
+]).
 -export([show/0]).
 -export([close/0]).
 -export([update_font/2]).
 
 -record(state, {parent, config, panel, font, status, text, slider, dirty, strain_select}).
 
+%% 1 second update interval
 -define(TIMER_INTERVAL, 1000).
 -define(FONT_SIZE, 24).
 
-%% 1 second update interval
-
-start(Config) -> wx_object:start_link(?MODULE, Config, []).
+start() ->
+    start([]).
+start_link() ->
+    start_link([]).
+start(Debug) ->
+    wx_object:start(?MODULE, Debug, []).
+start_link(Debug) ->
+    wx_object:start_link(?MODULE, Debug, []).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init(Config) ->
-    wx:new(),
+    process_flag(trap_exit, true),
     wx:batch(fun() -> do_init(Config) end).
 
-set_window_size_and_position(Frame) ->
-    % Get screen size
-    % Create a wxDisplay object for the primary display
-    Display = wxDisplay:new(),
-    % Get screen size from wxDisplay object
-    ScreenSize = wxDisplay:getGeometry(Display),
-    % Print the screen size
-    ?LOG_DEBUG("Screen size: ~p~n", [ScreenSize]),
-    % Calculate window dimensions
-    {_, _, ScreenWidth, ScreenHeight} = ScreenSize,
-    WindowWidth = round(ScreenWidth * 0.5),
-    % 20% of screen height
-    WindowHeight = round(ScreenHeight * 0.5),
-    % Set window size and position
-    wxFrame:setSize(Frame, {0, ScreenHeight - WindowHeight, WindowWidth, WindowHeight}),
-    wxFrame:center(Frame),
-    ok.
+%set_window_size_and_position(Frame) ->
+%    % Get screen size
+%    % Create a wxDisplay object for the primary display
+%    Display = wxDisplay:new(),
+%    % Get screen size from wxDisplay object
+%    ScreenSize = wxDisplay:getGeometry(Display),
+%    % Print the screen size
+%    ?LOG_DEBUG("Screen size: ~p~n", [ScreenSize]),
+%    % Calculate window dimensions
+%    {_, _, ScreenWidth, ScreenHeight} = ScreenSize,
+%    WindowWidth = round(ScreenWidth * 0.5),
+%    % 20% of screen height
+%    WindowHeight = round(ScreenHeight * 0.5),
+%    % Set window size and position
+%    wxFrame:setSize(Frame, {0, ScreenHeight - WindowHeight, WindowWidth, WindowHeight}),
+%    wxFrame:center(Frame),
+%    ok.
 
 do_init(Config) ->
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     Frame =
         wxFrame:new(
             wx:null(),
@@ -70,7 +77,7 @@ do_init(Config) ->
             ]
         ),
     Panel = wxPanel:new(Frame, []),
-    wxWindow:connect(Panel, paint, []),
+    %wxWindow:connect(Panel, paint, []),
     wxWindow:connect(Panel, activate, []),
     ButtonStyle = {style, ?wxEXPAND},
     DoseButton = wxButton:new(Panel, ?wxID_ANY, [{label, "Dose"}, ButtonStyle]),
@@ -119,11 +126,11 @@ do_init(Config) ->
     wxButton:setFont(IncButton, ButtonFont),
     wxButton:setFont(DecButton, ButtonFont),
     wxTextCtrl:connect(Dose, command_text_updated, []),
-    wxTextCtrl:connect(Dose, command_text_enter, []),
+    %wxTextCtrl:connect(Dose, command_text_enter, []),
     wxTextCtrl:connect(Dose, text_maxlen, []),
     SzFlags = [{proportion, 1}, {flag, ?wxEXPAND}, {border, 5}],
     %wxPanel:setBackgroundColour(Frame, ?wxRED),
-    Sizer = wxFlexGridSizer:new(4, 1, 5, 5),
+    Sizer = wxFlexGridSizer:new(0, 1, 5, 5),
     StrainSizer = wxBoxSizer:new(?wxHORIZONTAL),
     wxSizer:add(StrainSizer, StrainLabel, [{proportion, 0}, {flag, ?wxALL}, {border, 5}]),
     wxSizer:add(StrainSizer, StrainChoice, [{proportion, 1}, {flag, ?wxALL}, {border, 5}]),
@@ -144,7 +151,11 @@ do_init(Config) ->
     wxFlexGridSizer:addGrowableCol(Sizer, 0),
     wxFlexGridSizer:addGrowableRow(Sizer, 1),
     %wxFlexGridSizer:setFlexibleDirection(Sizer, ?wxBOTH),
-    wxFrame:setSizerAndFit(Panel, Sizer),
+    wxPanel:setSizer(Panel, Sizer),
+    wxSizer:setSizeHints(Sizer, Frame),
+    wxFrame:fit(Frame),
+    wxFrame:layout(Frame),
+
     wxTextCtrl:connect(Dose, key_up, []),
     wxButton:connect(Slider, key_up, []),
     wxSlider:connect(Slider, command_slider_updated, [{skip, false}]),
@@ -157,10 +168,10 @@ do_init(Config) ->
     wxPanel:connect(Panel, key_up, []),
     wxFrame:connect(Frame, key_up, []),
     wxSizer:setSizeHints(Sizer, Frame),
-    set_window_size_and_position(Frame),
+    %set_window_size_and_position(Frame),
     wxFrame:show(Frame),
     %wxFrame:connect(Frame, close_window),
-    ?LOG_DEBUG("Frame ~p", [Frame]),
+    ?LOG_DEBUG("erm_dose Frame Ready ~p", [Frame]),
     gproc:reg_other({n, l, {?MODULE, erm_dose}}, self()),
     State =
         #state{
@@ -176,6 +187,7 @@ do_init(Config) ->
     wxSlider:setFocus(Slider),
     wxTextCtrl:setSelection(Dose, 0, 0),
     %wxWindow:connect(Panel, size, [{userData, Dose}]),
+    ?LOG_DEBUG("dose initialized  ~p~n", [State]),
     {Frame, State}.
 
 close() ->
@@ -264,7 +276,7 @@ handle_info(Msg, State) ->
 handle_call(get_value, _From, State = #state{slider = Slider}) ->
     {reply, wxSlider:getValue(Slider), State};
 handle_call(show, From, State = #state{parent = Frame}) ->
-    ?LOG_DEBUG("closing ~p ~p", [From, State]),
+    ?LOG_DEBUG("show ~p ~p", [From, State]),
     wxFrame:show(Frame),
     {reply, ok, State};
 handle_call(close, From, State = #state{parent = Frame}) ->
@@ -282,8 +294,7 @@ handle_cast(Msg, State) ->
 code_change(_, _, State) -> {stop, ignore, State}.
 
 terminate(_Reason, _State = #state{parent = Frame}) ->
-    wxFrame:destroy(Frame),
-    wx:destroy().
+    wxFrame:destroy(Frame).
 
 update_panel(State) -> ?LOG_DEBUG("update panel ~p", [State]).
 

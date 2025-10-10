@@ -53,12 +53,12 @@ open(Target) -> gen_server:cast(?MODULE, {open, Target}).
 %%% gen_server
 %%%===================================================================
 
-init(Opts) ->
+init(Config) ->
     process_flag(trap_exit, true),
-    %% erlexec
-    _ = application:ensure_all_started(exec),
-
-    Wx = wx:new(),
+    wx:batch(fun() -> do_init(Config) end).
+do_init(Opts) ->
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     %% Use CreatePopupMenu callback – right click is handled by wx
     TBI = wxTaskBarIcon:new([{createPopupMenu, fun create_popup/0}]),
 
@@ -68,7 +68,7 @@ init(Opts) ->
 
     Tooltip = proplists:get_value(tooltip, Opts, "erm"),
     IconPath = proplists:get_value(icon, Opts, undefined),
-    OnMenu = proplists:get_value(on_menu, Opts, undefined),
+    OnMenu = proplists:get_value(on_menu, Opts, fun tray_handle/1),
 
     ensure_id_table(),
 
@@ -102,7 +102,6 @@ init(Opts) ->
     put(menu_spec, Menu0),
 
     {ok, #state{
-        wx = Wx,
         tbi = TBI,
         icon = Icon,
         tooltip = Tooltip,
@@ -150,10 +149,9 @@ handle_info(Other, S) ->
     ?LOG_DEBUG("erm_tray: other event ~p", [Other]),
     {noreply, S}.
 
-terminate(_Why, #state{tbi = TBI, wx = Wx}) ->
+terminate(_Why, #state{tbi = TBI}) ->
     catch wxTaskBarIcon:removeIcon(TBI),
     catch wxTaskBarIcon:destroy(TBI),
-    catch wx:destroy(Wx),
     ok.
 
 code_change(_Old, S, _Extra) -> {ok, S}.
@@ -426,3 +424,17 @@ ensure_log_file(Path) ->
         true -> ok;
         false -> file:write_file(Path, <<>>)
     end.
+
+%%--------------------------------------------------------------------
+%% Tray menu handler
+%%--------------------------------------------------------------------
+tray_handle({menu, open_dashboard}) ->
+    erm_tray:open("http://localhost:8080");
+tray_handle({menu, restart}) ->
+    application:stop(erm),
+    application:start(erm);
+tray_handle({menu, quit}) ->
+    init:stop();
+tray_handle({menu, Other}) ->
+    ?LOG_INFO("Unhandled tray menu ~p", [Other]),
+    ok.

@@ -69,7 +69,9 @@ start(Config) -> wx_object:start_link(?MODULE, Config, []).
 start_link() -> wx_object:start_link(?MODULE, [], []).
 
 init([]) ->
-    wx:new(),
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
+
     mpv_ipc:ensure_started(),
     media_scan:ensure_started(),
     ipfs_client:ensure_started(?IPFS_API),
@@ -254,7 +256,7 @@ terminate(_Reason, _S) -> ok.
 code_change(_V, S, _Extra) -> {ok, S}.
 
 %% Helpers
-add_folder(S = #state{list = List}) ->
+add_folder(S = #state{list = _List}) ->
     Dlg = wxDirDialog:new(S#state.frame, [
         {title, "Pick media folder"}, {style, ?wxDD_DIR_MUST_EXIST}
     ]),
@@ -296,7 +298,7 @@ share_current(S) ->
             ok
     end.
 
-refresh_playlist(S = #state{list = List}) ->
+refresh_playlist(_S = #state{list = List}) ->
     wxListCtrl:deleteAllItems(List),
     Tracks = playlist:all(),
     lists:foreach(
@@ -324,7 +326,7 @@ refresh_playlist(S = #state{list = List}) ->
         Tracks
     ).
 
-update_status(S = #state{status_text = Txt}, Str) when is_list(Str) ->
+update_status(_S = #state{status_text = Txt}, Str) when is_list(Str) ->
     wxStaticText:setLabel(Txt, lists:flatten(Str));
 update_status(S, T = #track{}) ->
     wxStaticText:setLabel(S#state.status_text, io_lib:format("Now: ~s", [display_title(T)])).

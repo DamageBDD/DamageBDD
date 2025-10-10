@@ -74,7 +74,8 @@ close() ->
 
 init(Config) ->
     register(?MODULE, self()),
-    wx:new(),
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     wx:batch(fun() -> do_init(Config) end).
 
 %% ------------------------------------------------------------------
@@ -200,13 +201,13 @@ handle_event(#wx{id = CbId, event = #wxCommand{type = command_checkbox_clicked}}
         _ ->
             {noreply, State}
     end;
+handle_event(#wx{event = #wxClose{}}, State) ->
+    {stop, normal, cleanup(State)};
 handle_event(Wx = #wx{}, State) ->
     case wxEvent:getEventType(Wx) of
         timer -> {noreply, maybe_tail(State)};
         _ -> {noreply, State}
     end;
-handle_event(#wx{event = #wxClose{}}, State) ->
-    {stop, normal, cleanup(State)};
 handle_event(Ev, State) ->
     ?LOG_DEBUG("Unhandled event ~p", [Ev]),
     {noreply, State}.
@@ -342,7 +343,7 @@ read_delta(Fh, Off, Len) ->
         _ -> <<>>
     end.
 
-append_if_any(TextCtrl, <<>>) ->
+append_if_any(_TextCtrl, <<>>) ->
     ok;
 append_if_any(TextCtrl, Bin) ->
     Str = unicode:characters_to_list(Bin),

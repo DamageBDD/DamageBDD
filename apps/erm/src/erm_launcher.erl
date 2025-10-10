@@ -51,11 +51,11 @@ get_apps() ->
     ].
 
 init(Config) ->
-    wx:new(),
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     wx:batch(fun() -> do_init(Config) end).
 
 do_init(Config) ->
-    wx:new(),
     Resolution =
         case os:getenv("RESOLUTION") of
             false ->

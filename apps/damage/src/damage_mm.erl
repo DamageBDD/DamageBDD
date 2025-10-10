@@ -18,10 +18,10 @@
     place_order/3,
     fetch_order_book/1,
     start_ws_ticker/0,
-    print_orderbook/0,
+    print_orderbook/1,
     round_up/2
 ]).
--export([setup_ladders/0]).
+-export([setup_ladders/1]).
 -export([get_all_tickers/0]).
 
 -define(HOST, "api.coinstore.com").
@@ -33,23 +33,13 @@
 
 %% ---- params you can tune ----------------------------------
 
-%% exchange price tick
+%% -----------------------------------------------------------
 -define(TICK, 0.0001).
 %% exchange min order size (adjust!)
 -define(MIN_QTY, 100).
-%% levels each side
--define(LEVELS, 10).
-%% 40 bps (=0.40%) between levels
--define(STEP_BP, 40).
-%% size of 1st level
+%% the following are now dynamic via ecai_params
+%% size of 1st level (still static; slope/levels/step now dynamic via ecai_params)
 -define(BASE_QTY, 200).
-%% grows by 12% each level out
--define(QTY_SLOPE, 1.12).
-%% max notional per refresh (buy+sells)
--define(USDT_BUDGET, 1500.0).
-%% rebalance every 60s
--define(REFRESH_MS, 60_000).
-%% -----------------------------------------------------------
 
 -record(state, {
     gun_pid,
@@ -91,15 +81,21 @@ handle_info(rebalance, State) ->
     case get_mid_price(Symbol, Rules) of
         {ok, Mid0} when Mid0 > 0 ->
             Mid = round_tick(Mid0),
-            BuyL = gen_ladder(buy, Mid),
-            SellL = gen_ladder(sell, Mid),
 
+            %% dynamic ECAI parameters
+            StepBP = mm_params:get_intraday_param("STEP_BP", Symbol, 30),
+            Levels = mm_params:get_intraday_param("LEVELS", Symbol, 8),
+            QtySlope = mm_params:get_intraday_param("QTY_SLOPE", Symbol, 1.12),
+            Budget = mm_params:get_intraday_param("BUDGET", Symbol, 500.0),
+
+            BuyL = gen_ladder(buy, Mid, StepBP, Levels, QtySlope),
+            SellL = gen_ladder(sell, Mid, StepBP, Levels, QtySlope),
             %% (optional) add a tiny guard so we never cross the book
             SafeBuy = [{min(P, Mid * 0.999), Q} || {P, Q} <- BuyL],
             SafeSell = [{max(P, Mid * 1.001), Q} || {P, Q} <- SellL],
 
-            {PlacedB, CostB} = place_capped(buy, SafeBuy, ?USDT_BUDGET / 2),
-            {PlacedS, CostS} = place_capped(sell, SafeSell, ?USDT_BUDGET / 2),
+            {PlacedB, CostB} = place_capped(buy, SafeBuy, Budget / 2),
+            {PlacedS, CostS} = place_capped(sell, SafeSell, Budget / 2),
             ?LOG_INFO(
                 "Rebalanced @ ~p; buys ~p (~p USDT), sells ~p (~p USDT)",
                 [Mid, length(PlacedB), CostB, length(PlacedS), CostS]
@@ -107,7 +103,9 @@ handle_info(rebalance, State) ->
         Other ->
             ?LOG_INFO("Skip rebalance, no mid: ~p", [Other])
     end,
-    erlang:send_after(?REFRESH_MS, self(), rebalance),
+    %% dynamic refresh cadence from ECAI
+    RefreshMs = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
+    erlang:send_after(RefreshMs, self(), rebalance),
     {noreply, State};
 handle_info(run_strategy, #state{market_rules = Rules} = State) ->
     Symbol = "DAMAGEUSDT",
@@ -344,8 +342,8 @@ loop_ws_ticker(ConnPid, StreamRef) ->
             io:format("WS Event: ~p~n", [Other]),
             loop_ws_ticker(ConnPid, StreamRef)
     end.
-print_orderbook() ->
-    case fetch_order_book("DAMAGEUSDT") of
+print_orderbook(Symbol) ->
+    case fetch_order_book(Symbol) of
         #{
             <<"code">> := 0,
             <<"data">> := Orders
@@ -355,11 +353,12 @@ print_orderbook() ->
             ?LOG_INFO("Orderbook error: ~p", [Error]),
             Error
     end.
-setup_ladders() ->
+setup_ladders(Symbol) ->
     %% kick off periodic rebalancing
     {ok, {damage_mm, Pid, worker, []}} = supervisor:which_child(damage_sup, damage_mm),
     Pid ! rebalance,
-    erlang:send_after(?REFRESH_MS, self(), rebalance),
+    RefreshMs = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
+    erlang:send_after(RefreshMs, self(), rebalance),
     ok.
 
 get_all_tickers() ->
@@ -379,7 +378,7 @@ get_all_tickers() ->
     Response.
 %% ------- ladder generation --------------------------------
 
-gen_ladder(Side, Mid) ->
+gen_ladder(Side, Mid, StepBP, Levels, QtySlope) ->
     Sign =
         case Side of
             buy -> -1;
@@ -387,19 +386,17 @@ gen_ladder(Side, Mid) ->
         end,
     lists:map(
         fun(K) ->
-            %% price step in bps from mid
-            P0 = Mid * (1.0 + Sign * (?STEP_BP * K) / 10000.0),
+            P0 = Mid * (1.0 + Sign * (StepBP * K) / 10000.0),
             P =
-                (case Side of
-                    %% be conservative on buys
+                case Side of
                     buy -> floor_tick(P0);
                     sell -> ceil_tick(P0)
-                end),
-            Qty0 = ?BASE_QTY * math:pow(?QTY_SLOPE, K - 1),
+                end,
+            Qty0 = ?BASE_QTY * math:pow(QtySlope, K - 1),
             Qty = max(?MIN_QTY, round(Qty0)),
             {P, Qty}
         end,
-        lists:seq(1, ?LEVELS)
+        lists:seq(1, Levels)
     ).
 
 place_capped(Side, Levels, BudgetUSDT) ->

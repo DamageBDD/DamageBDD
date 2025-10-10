@@ -34,6 +34,11 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
+    wx:new(),
+    Env = wx:get_env(),
+    %wx:set_env(Env),
+    persistent_term:put(erm_wx_env, Env),
+
     {ok, Pools} = application:get_env(erm, pools),
     ?LOG_DEBUG("Starting erm workers ~p~n", [Pools]),
     SupFlags = {one_for_one, 10, 10},
@@ -46,20 +51,6 @@ init([]) ->
             Pools
         ),
 
-    %% tray options
-    IconPath = filename:join(code:priv_dir(erm), "icons/erm.png"),
-    TrayOpts = [
-        {icon, IconPath},
-        {tooltip, "erm node – ready"},
-        {on_menu, fun tray_handle/1},
-        {menu, [
-            {open_dashboard, "Open Dashboard"},
-            sep,
-            {restart, "Restart"},
-            {quit, "Quit"}
-        ]}
-    ],
-
     PoolSpecs0 =
         [
             #{
@@ -69,31 +60,17 @@ init([]) ->
                 shutdown => 5000,
                 type => worker,
                 modules => [hlwm_events]
-            },
-            #{
-                id => erm_tray,
-                start => {erm_tray, start_link, [TrayOpts]},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [erm_tray]
+                %},
+                %#{
+                %    id => erm_tray,
+                %    start => {erm_tray, start_link, []},
+                %    restart => permanent,
+                %    shutdown => 5000,
+                %    type => worker,
+                %    modules => [erm_tray]
             }
         ] ++
             PoolSpecs,
 
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
-
-%%--------------------------------------------------------------------
-%% Tray menu handler
-%%--------------------------------------------------------------------
-tray_handle({menu, open_dashboard}) ->
-    erm_tray:open("http://localhost:8080");
-tray_handle({menu, restart}) ->
-    application:stop(erm),
-    application:start(erm);
-tray_handle({menu, quit}) ->
-    init:stop();
-tray_handle({menu, Other}) ->
-    ?LOG_INFO("Unhandled tray menu ~p", [Other]),
-    ok.

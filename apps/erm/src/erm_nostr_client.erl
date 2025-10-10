@@ -5,13 +5,15 @@
 -include_lib("kernel/include/logger.hrl").
 -export([start/1, handle_event/2]).
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
--export([post_note/1]).
+-export([
+    post_note/1,
+    post_note/2
+]).
 
 -record(state, {
     frame,
     config,
     listbox,
-    input,
     relay = "wss://relay.damus.io",
     panel,
     editor,
@@ -19,7 +21,9 @@
     btn_cancel,
     btn_media,
     btn_emoji,
-    btn_gif
+    btn_gif,
+    %% new
+    account_selector
 }).
 -export([show/0]).
 -export([close/0]).
@@ -27,16 +31,27 @@
 
 start(Config) -> wx_object:start_link(?MODULE, Config, []).
 init(Config) ->
-    wx:new(),
     wx:batch(fun() -> do_init(Config) end).
 
 do_init(Config) ->
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     %% --- Frame & Panel ---
     Frame = wxFrame:new(wx:null(), -1, "NostrMini", [{size, {820, 640}}]),
     Panel = wxPanel:new(Frame, []),
 
     %% --- Root layout ---
     Root = wxBoxSizer:new(?wxVERTICAL),
+    %% --- ACCOUNT SELECTOR ---
+    Accounts = ["Account 1", "Account 2", "Account 3"],
+    AccountSelector = wxChoice:new(Panel, ?wxID_ANY, [{choices, Accounts}]),
+    %% default selection
+    wxChoice:setSelection(AccountSelector, 0),
+    wxSizer:add(
+        Root,
+        AccountSelector,
+        [{flag, ?wxLEFT bor ?wxRIGHT bor ?wxTOP bor ?wxEXPAND}, {border, 8}]
+    ),
 
     %% --- HEADER: avatar + title ---
     Header = wxBoxSizer:new(?wxHORIZONTAL),
@@ -149,6 +164,7 @@ do_init(Config) ->
     wxWindow:connect(BtnEmoji, command_button_clicked),
     wxWindow:connect(BtnGIF, command_button_clicked),
     wxWindow:connect(BtnGrid, command_button_clicked),
+    wxWindow:connect(AccountSelector, command_choice_selected),
 
     %% Kick off any initial fetch you had
     self() ! fetch,
@@ -164,7 +180,8 @@ do_init(Config) ->
         btn_cancel = BtnCancel,
         btn_media = BtnMedia,
         btn_emoji = BtnEmoji,
-        btn_gif = BtnGIF
+        btn_gif = BtnGIF,
+        account_selector = AccountSelector
     },
 
     %% Global key routing (optional)
@@ -192,17 +209,29 @@ update_font(Frame, TextCtrl) ->
     wxTextCtrl:setFont(TextCtrl, Font),
     %% Clean up the font object
     wxFont:destroy(Font).
+handle_event(#wx{event = #wxCommand{type = command_text_enter}}, State) ->
+    Text = wxTextCtrl:getValue(State#state.editor),
+    Account = wxChoice:getStringSelection(State#state.account_selector),
+    post_note(Account, Text),
+    wxTextCtrl:clear(State#state.editor),
+    {noreply, State};
+handle_event(
+    #wx{
+        event = #wxCommand{
+            type = command_choice_selected,
+            cmdString = Sel
+        }
+    },
+    State
+) ->
+    ?LOG_INFO("Account switched to: ~s", [Sel]),
+    {noreply, State};
 handle_event(#wx{event = #wxClose{}}, State) ->
     wxFrame:destroy(State#state.frame),
     {stop, normal, State};
 handle_event(_Ev = #wx{event = #wxKey{keyCode = 27}}, State = #state{frame = Frame}) ->
     ?LOG_DEBUG("Got Escape Key ~n", []),
     wxWindow:hide(Frame),
-    {noreply, State};
-handle_event(#wx{event = #wxCommand{type = command_text_enter}}, State = #state{input = Input}) ->
-    Text = wxTextCtrl:getValue(Input),
-    post_note(Text),
-    wxTextCtrl:clear(Input),
     {noreply, State};
 handle_event(_, State) ->
     {noreply, State}.
@@ -228,4 +257,6 @@ terminate(_, _State) -> ok.
 code_change(_, State, _) -> {ok, State}.
 
 post_note(_Text) ->
+    ok.
+post_note(_Account, _Text) ->
     ok.

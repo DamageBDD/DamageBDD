@@ -50,4 +50,5 @@ start_phase(start_trails_http, _StartType, []) ->
 stop(_State) ->
     ok = cowboy:stop_listener(http_erm),
     application:stop(gun),
+    catch wx:destroy(),
     ok.
