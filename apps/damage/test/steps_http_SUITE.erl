@@ -3,8 +3,8 @@
 -compile([export_all, nowarn_export_all]).
 
 %-export([all/0, suite/0, step_get_request/1]).
--import(ct_helper, [config/2]).
--import(ct_helper, [doc/1]).
+%-import(ct_helper, [config/2]).
+%-import(ct_helper, [doc/1]).
 
 all() -> [{group, http}, {group, https}].
 
