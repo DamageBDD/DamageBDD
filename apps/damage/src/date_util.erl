@@ -23,7 +23,8 @@
         add/2,
         subtract/2,
         max/2,
-        days_to_seconds/1
+        days_to_seconds/1,
+        unix_timestamp_hours_ago/1
     ]
 ).
 
