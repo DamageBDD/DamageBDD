@@ -16,11 +16,7 @@ docker run --rm -it \
     rm -f rebar.lock
     rm -rf _build
 
-    # Use the right profile; if you don’t have one, drop "as prod"
-    rebar3 release
-
-    # or, if you have a prod profile defined in rebar.config:
-    # rebar3 as prod release
+    rebar3 as prod release
 
     # package with your plugin
     rebar3 pkg gen -t deb

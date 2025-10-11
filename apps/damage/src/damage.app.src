@@ -6,7 +6,7 @@
     [
         {description, "An OTP application to run bdd tests."},
         {maintainer, <<"steven@stevenjoseph.in">>},
-        {vsn, "0.1.0"},
+        {vsn, git},
         {registered, []},
         {mod, {damage_app, []}},
         {
