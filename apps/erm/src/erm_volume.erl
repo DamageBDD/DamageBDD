@@ -73,7 +73,8 @@ close() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init(Config) ->
-    wx:new(),
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     register(erm_volume, self()),
 
     Frame = wxFrame:new(

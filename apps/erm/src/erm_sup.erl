@@ -34,43 +34,48 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
-    wx:new(),
-    Env = wx:get_env(),
-    %wx:set_env(Env),
-    persistent_term:put(erm_wx_env, Env),
-
-    {ok, Pools} = application:get_env(erm, pools),
-    ?LOG_DEBUG("Starting erm workers ~p~n", [Pools]),
     SupFlags = {one_for_one, 10, 10},
-    PoolSpecs =
-        lists:map(
-            fun({Name, SizeArgs, WorkerArgs}) ->
-                PoolArgs = [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
-                poolboy:child_spec(Name, PoolArgs, WorkerArgs)
-            end,
-            Pools
-        ),
+    case catch wx:new() of
+        {undef, Error} ->
+            ?LOG_WARNING("Wx initialization failed  ~p~n", [Error]),
+            {ok, {SupFlags, []}};
+        _ ->
+            Env = wx:get_env(),
+            %wx:set_env(Env),
+            persistent_term:put(erm_wx_env, Env),
 
-    PoolSpecs0 =
-        [
-            #{
-                id => hlwm_events,
-                start => {hlwm_events, start_link, [#{}]},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [hlwm_events]
-                %},
-                %#{
-                %    id => erm_tray,
-                %    start => {erm_tray, start_link, []},
-                %    restart => permanent,
-                %    shutdown => 5000,
-                %    type => worker,
-                %    modules => [erm_tray]
-            }
-        ] ++
-            PoolSpecs,
+            {ok, Pools} = application:get_env(erm, pools),
+            ?LOG_DEBUG("Starting erm workers ~p~n", [Pools]),
+            PoolSpecs =
+                lists:map(
+                    fun({Name, SizeArgs, WorkerArgs}) ->
+                        PoolArgs = [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
+                        poolboy:child_spec(Name, PoolArgs, WorkerArgs)
+                    end,
+                    Pools
+                ),
 
-    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
-    {ok, {SupFlags, PoolSpecs0}}.
+            PoolSpecs0 =
+                [
+                    #{
+                        id => hlwm_events,
+                        start => {hlwm_events, start_link, [#{}]},
+                        restart => permanent,
+                        shutdown => 5000,
+                        type => worker,
+                        modules => [hlwm_events]
+                        %},
+                        %#{
+                        %    id => erm_tray,
+                        %    start => {erm_tray, start_link, []},
+                        %    restart => permanent,
+                        %    shutdown => 5000,
+                        %    type => worker,
+                        %    modules => [erm_tray]
+                    }
+                ] ++
+                    PoolSpecs,
+
+            ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
+            {ok, {SupFlags, PoolSpecs0}}
+    end.

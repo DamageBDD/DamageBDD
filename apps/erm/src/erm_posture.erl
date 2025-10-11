@@ -78,7 +78,8 @@ snooze(Minutes) when is_integer(Minutes), Minutes > 0 ->
 %%% ==================================================================
 
 init(Config0) ->
-    wx:new(),
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     gproc:reg_other({n, l, {?MODULE, toast}}, self()),
 
     %% Merge defaults

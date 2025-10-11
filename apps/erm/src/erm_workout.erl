@@ -42,7 +42,8 @@ close() ->
     end.
 
 init(_Config) ->
-    wx:new(),
+    Env = persistent_term:get(erm_wx_env),
+    wx:set_env(Env),
     Frame = wxFrame:new(wx:null(), ?wxID_ANY, "erm_workout", [
         {style, ?wxDEFAULT_FRAME_STYLE bor ?wxWANTS_CHARS}
     ]),
