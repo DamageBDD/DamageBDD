@@ -13,12 +13,10 @@
     public_key,
     ssl,
     %% Third‑party/AE libs this library uses (ensure they are available as deps)
-    erl_base58,
     ec_utils,
     aebytecode,
     aesophia,
     aeserialization,
-    zj,
     eblake2,
     getopt
    ]},
