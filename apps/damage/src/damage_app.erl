@@ -16,8 +16,7 @@
 -export([start/2, stop/1]).
 -export([start_phase/3]).
 -export([
-    get_trails/0,
-    setup_vanillae_deps/0
+    get_trails/0
 ]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -66,32 +65,11 @@ get_trails() ->
     trails:store(Trails),
     trails:single_host_compile(Trails).
 
-setup_vanillae_deps() ->
-    %true = code:add_path("_checkouts/vanillae/ebin"),
-    %true = code:add_path("_checkouts/vw/ebin"),
-    ZxBin = filename:join(os:getenv("HOME"), "zomp/zx"),
-    Vanillae =
-        "otpr-vanillae-" ++ lists:droplast(os:cmd(ZxBin ++ " latest otpr-vanillae")),
-    Deps = string:lexemes(os:cmd(ZxBin ++ " list deps " ++ Vanillae), "\n"),
-    ZX =
-        "otpr-zx-" ++
-            lists:nth(2, string:lexemes(lists:droplast(os:cmd(ZxBin ++ " --version")), " ")),
-    Packages = [ZX, Vanillae | Deps],
-    ZompLib = filename:join(os:getenv("HOME"), "zomp/lib"),
-    ?LOG_DEBUG("Packages paths ~p", [Packages]),
-    Converted =
-        [string:join(string:lexemes(Package, "-"), "/") || Package <- Packages],
-    PackagePaths =
-        [filename:join([ZompLib, PackagePath, "ebin"]) || PackagePath <- Converted],
-    ?LOG_DEBUG("Code paths ~p", [PackagePaths]),
-    ok = code:add_paths(PackagePaths).
-
 -spec start_phase(atom(), application:start_type(), []) -> ok.
 start_phase(start_vanillae, _StartType, []) ->
     ?LOG_INFO("Starting vanilla."),
     %Version = "0.13.9",
     %true = os:putenv("zx_include", filename:join([os:getenv("HOME"), "/zomp/lib/otpr/zx/",Version,"include"])),
-    setup_vanillae_deps(),
     application:ensure_started(vanillae),
     {ok, NetworkId} = application:get_env(damage, ae_network_id),
     vanillae:network_id(NetworkId),
