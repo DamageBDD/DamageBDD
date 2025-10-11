@@ -165,7 +165,7 @@ init([]) ->
                 type => worker,
                 modules => []
             },
-            damage_ssh_listener:child_spec()
+            git_ssh_listener:child_spec()
         ] ++ PoolSpecs,
     PoolSpecs1 =
         case application:get_env(damage, market_rules) of
