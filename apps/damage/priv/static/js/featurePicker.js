@@ -29,8 +29,10 @@ export async function initDamageBDDPicker(opts) {
   const $editor = typeof editor === 'string' ? document.querySelector(editor) : editor;
   if (!$root) throw new Error(`initDamageBDDPicker: mount "${mount}" not found`);
   if (!$editor) throw new Error(`initDamageBDDPicker: editor "${editor}" not found`);
-    $opener.onclick = () => {
+    $opener.onclick = (event) => {
 		MicroModal.show('feature-picker-modal');
+		event.preventDefault(); // Prevent default form submission
+
     };
 
   injectStylesOnce();
@@ -157,6 +159,7 @@ export async function initDamageBDDPicker(opts) {
 
     $detail.querySelector('.dbdd-insert').onclick = () => {
       insertIntoEditor($editor, text);
+		MicroModal.close('feature-picker-modal');
       toast(`Inserted feature from ${shortCid(cid)} into editor`, $toast);
     };
     $detail.querySelector('.dbdd-copy').onclick = async () => {
