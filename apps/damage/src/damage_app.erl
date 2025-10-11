@@ -146,8 +146,12 @@ start_phase(register_node, _StartType, []) ->
     ?LOG_INFO("registering node."),
     {ok, Hostname} = inet:gethostname(),
     NodeName = list_to_atom("damage@" ++ Hostname),
-    {ok, _Pid} = net_kernel:start([NodeName, longnames]),
-    ok;
+    case net_kernel:start([NodeName, longnames]) of
+        {ok, _Pid} ->
+            ok;
+        {error, {already_started, _}} ->
+            ok
+    end;
 start_phase(start_sync, _StartType, []) ->
     ?LOG_INFO("Starting sync."),
     case init:get_plain_arguments() of
