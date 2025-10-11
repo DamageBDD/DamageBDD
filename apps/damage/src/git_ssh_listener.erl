@@ -41,9 +41,9 @@ init([]) ->
     %% App env (provide sane defaults)
     {ok, ListenAddr} = app_env(listen_addr, {0, 0, 0, 0}),
     {ok, Port} = app_env(port, 2222),
-    {ok, SystemDir} = app_env(system_dir, "/etc/damage/ssh/system"),
-    {ok, UserDir} = app_env(user_dir, "/etc/damage/ssh/user"),
-    {ok, Repos} = app_env(repos_root, "/srv/git"),
+    {ok, SystemDir} = app_env(system_dir, "/var/lib/damage/ssh/system"),
+    {ok, UserDir} = app_env(user_dir, "/var/lib/damage/ssh/user"),
+    {ok, Repos} = app_env(repos_root, "/var/lib/damage/git"),
     {ok, AllowPush} = application:get_env(damage_ssh, allow_push),
 
     ensure_dirs([SystemDir, UserDir, Repos]),

@@ -1,10 +1,6 @@
 %%% -*- mode: erlang; erlang-indent-level: 2; -*-
 
 [
-    {sasl, [{sasl_error_logger, false}, {errlog_type, error}]},
-    %{error_logger, [
-    %    {report_module, [gen_smtp_client]}
-    %]},
     {
         kernel,
         [
@@ -21,10 +17,14 @@
                                 [
                                     {
                                         default,
-                                        {fun logger_filters:domain/2, {stop, super, [otp, sasl]}}
+                                        {
+                                            fun logger_filters:domain/2,
+                                            {stop, super, [otp, sasl, tls]}
+                                        }
                                     },
                                     {debug, {fun logger_filters:level/2, {log, gt, debug}}}
-                                ]
+                                ],
+                            formatter => {pretty_logger, #{}}
                         }
                     },
                     {
@@ -33,7 +33,16 @@
                         logger_std_h,
                         #{
                             filters =>
-                                [{debug, {fun logger_filters:level/2, {stop, neq, debug}}}],
+                                [
+                                    {
+                                        default,
+                                        {
+                                            fun logger_filters:domain/2,
+                                            {stop, super, [otp, sasl, tls]}
+                                        }
+                                    },
+                                    {debug, {fun logger_filters:level/2, {stop, neq, debug}}}
+                                ],
                             config => #{file => "logs/debug.log"}
                         }
                     },
@@ -45,19 +54,20 @@
                             single_line => false,
                             filters =>
                                 [{error, {fun logger_filters:level/2, {stop, neq, error}}}],
-                            config => #{file => "logs/error.log"}
-                        }
-                    },
-                    {
-                        handler,
-                        info,
-                        logger_std_h,
-                        #{
-                            filters =>
-                                [{info, {fun logger_filters:level/2, {stop, neq, info}}}],
-                            config => #{file => "logs/info.log"}
+                            config => #{file => "logs/error.log"},
+                            formatter => {pretty_logger, #{}}
                         }
                     }
+                    %        {
+                    %            handler,
+                    %            info,
+                    %            logger_std_h,
+                    %            #{
+                    %                filters =>
+                    %                    [{info, {fun logger_filters:level/2, {stop, neq, info}}}],
+                    %                config => #{file => "logs/info.log"}
+                    %            }
+                    %        }
                 ]
             }
         ]
@@ -74,36 +84,66 @@
             }
         ]
     },
+    {
+        ecai, [
+            {port, 9003},
+            {pools, []}
+        ]
+    },
+    {
+        erm, [
+            {port, 9000},
+            {pools, []}
+        ]
+    },
+    {
+        nosternity, [
+            {port, 9001},
+            {pools, []}
+        ]
+    },
+    {
+        bop, [
+            {port, 9002},
+            {
+                pools,
+                [
+                    {bop, [{size, 10}, {max_overflow, 100}], []}
+                ]
+            },
+            {nostr_npub, "npub16a2r3p8d7syd46ypygva0fqw6pfpgdxv5mm4gd8vqra4wr9scj5sx42y5t"}
+        ]
+    },
     {mustache, [{templates_dir, "priv/templates"}]},
     {erlexec, [{user, "damage"}, {limit_users, ["damage"]}]},
     {
         damage,
         [
-            {api_url, "https://run.staging.damagebdd.com"},
+            {run_user, "damage"},
+            {api_url, "http://localhost:8080"},
             {allowance, 1000},
-            {lnpay_host, "https://asyncmind.xyz"},
+            {lnpay_host, "https://example.xyz"},
             {token_contract, "ct_2taq2WPRer6pkVV7JjiYrkTNr8vr61nLAHQFWbJ3jpX6iyCeBi"},
             {account_contract, "ct_aBXwRhTXYXyD6Gqz7Vk7Nq3U1QhMsZuxFyZ2GvoiroKavxW6B"},
             {identity_contract, "ct_aBXwRhTXYXyD6Gqz7Vk7Nq3U1QhMsZuxFyZ2GvoiroKavxW6B"},
             {
                 node_admins,
                 [
-                    "ak_2eu6yAH46eu9T88WN7MDnyr1QzW6GLWAc667Z93U44wLewuhLN",
-                    "ak_2E6i569eKpWuRYP9CsAUgDthWG8C9VVMrs8UrzAem5AMQ3RXkk"
+                    %"ak_...",
                 ]
             },
             {port, 8080},
-            {smtp_host, "smtp.sendgrid.net"},
-            {smtp_hostname, "damagebdd.com"},
-            {smtp_from, {"DamageBDD Staging", "staging@damagebdd.com"}},
+            {smtp_host, "smtp.example.net"},
+            {smtp_hostname, "example.com"},
+            {smtp_from, {"DamageBDD Node", "node@example.com"}},
             {smtp_user, "apikey"},
             {smtp_port, 587},
             {nostr_relay, "nos.lol"},
-            {data_dir, "/var/lib/damagebdd/"},
+            {nostr_npub, "npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8"},
+            {data_dir, "/var/lib/damage/"},
             {bitcoin_rpc_port, 8332},
-            %{bitcoin_rpc_user, "damagebdd_prod"},
-            {bitcoin_rpc_user, "asyncmind"},
-            {bitcoin_wallet, "damagebdd_prod"},
+            {bitcoin_rpc_user, "damage"},
+            {bitcoin_wallet, "damage"},
             {lnd_host, "localhost"},
             {lnd_port, 8011},
             {lnd_wspath, "/v1/invoices/subscribe?method=GET"},
@@ -116,23 +156,27 @@
             {cln_certfile, "~/.lightning/bitcoin/client.pem"},
             {cln_keyfile, "~/.lightning/bitcoin/client-key.pem"},
             {ae_network_id, "ae_mainnet"},
+            {ae_tls, true},
             {
                 ae_nodes,
                 [
-                    {"localhost", 3013, "/"}
+                    %{"localhost", 3013, "/"}
                     %{"testnet.aeternity.io", 443, "/"}
-                    %{"mainnet.aeternity.io", 443, ""}
+                    {"mainnet.aeternity.io", 443, ""}
                 ]
             },
             {
                 ae_mdw_nodes,
                 [
-                    {"localhost", 4000, "/"}
+                    %{"localhost", 4000, "/"}
                     %{"testnet.aeternity.io", 443, "/mdw/"}
-                    %{"mainnet.aeternity.io", 443, "/mdw/"}
+                    {"mainnet.aeternity.io", 443, "/mdw/"}
                 ]
             },
-            {ae_mdw_ws_nodes, [{"localhost", 4002, "/"}]},
+            {ae_mdw_ws_nodes, [
+                    %{"localhost", 4002, "/"}
+                    {"mainnet.aeternity.io", 4002, "/"}
+                ]},
             {cmd_allowed, ["zx list deps"]},
             {chromedriver, "http://localhost:9515/"},
             {
@@ -149,9 +193,7 @@
                         damage_ipfs,
                         [{size, 2}, {max_overflow, 5}],
                         [
-                            {"ipfs0.lan", 5001},
-                            {"ipfs1.lan", 5001},
-                            {"ipfs2.lan", 5001}
+                            {"localhost", 5001}
                         ]
                     }
                 ]
@@ -176,16 +218,22 @@
     {
         damage_ssh,
         [
-            {user_dir, "/var/lib/damagebdd/sshtest_user/.ssh"},
-            {system_dir, "/var/lib/damagebdd/ssh_daemon/"}
+            {user_dir, "/var/lib/damage/sshtest_user/.ssh"},
+            {system_dir, "/var/lib/damage/ssh_daemon/"},
+            {repos_root, "/var/lib/damage/repos/"},
+            {allow_push, true}
         ]
     },
     {
         damage_systemd,
         [
+         % per service admins
             {
                 nginx,
-                {admins, ["ak_2eu6yAH46eu9T88WN7MDnyr1QzW6GLWAc667Z93U44wLewuhLN"]}
+                {
+                 admins, [
+                          %"ak_..."
+                         ]}
             }
         ]
     },
