@@ -76,10 +76,24 @@ fetch_btc_aud_price() ->
         {response, nofin, Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
             ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
-            Map = jsx:decode(Body, [return_maps]),
-            PriceStr = maps:get(<<"amount">>, maps:get(<<"data">>, Map)),
-            {ok, binary_to_float(PriceStr)};
-        Default ->
-            ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
-            {error, Default}
+            case catch jsx:decode(Body, [return_maps]) of
+                [
+                    <<"data">>,
+                    #{
+                        <<"code">> := 5,
+                        <<"error">> :=
+                            _Error,
+                        <<"message">> :=
+                            Message
+                    }
+                ] ->
+                    ?LOG_DEBUG("Got unexpected response ~p.", [Message]),
+                    {error, Message};
+                Map when is_map(Map) ->
+                    PriceStr = maps:get(<<"amount">>, maps:get(<<"data">>, Map)),
+                    {ok, binary_to_float(PriceStr)};
+                Other ->
+                    ?LOG_DEBUG("Got unexpected response ~p.", [Other]),
+                    {error, Other}
+            end
     end.
