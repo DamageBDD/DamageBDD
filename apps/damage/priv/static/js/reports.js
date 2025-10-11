@@ -271,12 +271,13 @@
     const rows = await pMap(details.map((d,i)=>({ d, i })), async ({ d, i }) => {
       if (!d) return null;
       const firstLine = await getFeatureFirstLine(d.featureCid);
-      return {
-        time: items[i]?.payload?.micro_time ?? d.micro_time,
-        firstLine,
-        reportCid: d.reportCid,
-        txHash: d.tx_hash
-      };
+		return {
+			time: items[i]?.payload?.micro_time ?? d.micro_time,
+			firstLine: firstLine,
+			reportCid: d.reportCid,
+			featureCid: d.featureCid,
+			txHash: d.tx_hash
+		};
     }, { concurrency: 3 });
 
     // 4) render

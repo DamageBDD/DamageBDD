@@ -161,6 +161,7 @@ function generateDamageQR(address){
 			var tab = event.target;
 			var content = event.detail.content;
 			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
+				const address = localStorage.getItem("address");
 				Reports.renderRunReports(address, { limit: 10 });
 			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
 				if(localStorage.getItem("access_token") != undefined){

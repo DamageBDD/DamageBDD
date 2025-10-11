@@ -280,7 +280,63 @@ document.addEventListener('DOMContentLoaded', () => {
 		}
 		return null;
 	}
+	function validateEmail(email) {
+		const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+		return regex.test(email);
+	}
 	// Example: connect button inside wallet-switcher.js
+	document.getElementById('email-login-submit-btn')?.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+		const btn = ev.currentTarget;
+		const prev = btn.textContent;
+		const usernameEl = document.getElementById("email-login-username");
+		const passwordEl = document.getElementById("email-password");
+		const username = usernameEl.value;
+		const password = passwordEl.value;
+		usernameEl.value = "";
+		passwordEl.value = "";
+
+		if (!validateEmail(username)) {
+			showNotification({
+				title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
+			return;
+		}
+
+		const signupData = {
+			grant_type: "password",
+			scope: "basic",
+			username: username,
+			password: password
+		};
+
+		const headers = new Headers();
+		headers.append("Content-Type", "application/json");
+
+		fetch("/accounts/auth/", {
+			method: "POST",
+			headers: headers,
+			body: JSON.stringify(signupData)
+		})
+			.then(response => {
+				return response.json();
+			})
+			.then(data => {
+				if (data.access_token) {
+					localStorage.setItem("access_token", data.access_token);
+					localStorage.setItem("address", data.address);
+					localStorage.setItem("email_auth", username);
+					window.__damage_onCustodialLoginSuccess(data.access_token);
+
+				} else {
+					showConnectStatus("Login Failed!", "failed");
+				}
+			})
+			.catch(error => {
+				console.error("Error:", error);
+			});
+		event.preventDefault();
+		return;
+	});
 	document.getElementById('connect-wallet-now')?.addEventListener('click', async (ev) => {
         ev.preventDefault();
 		const btn = ev.currentTarget;
@@ -290,13 +346,15 @@ document.addEventListener('DOMContentLoaded', () => {
 		const r = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
 		if (r.ok) {
 			const sel = document.getElementById('walletSelector');
-			if (sel) { sel.value = 'extension';
-
-					   TokenManager.setMode(sel.value);
-					   sel.dispatchEvent(new Event('change', { bubbles: true })); }
+			if (sel) {
+				sel.value = 'extension';
+				TokenManager.setMode(sel.value);
+				sel.dispatchEvent(new Event('change', { bubbles: true }));
+			}
 			if (typeof updateWalletSummary === 'function') await updateWalletSummary();
 			if (window.MicroModal) try { MicroModal.close('connect-wallet-modal'); } catch {}
 			document.dispatchEvent(new CustomEvent('wallet:connected', { detail: r }));
+			window.__damage_onExtensionAuthSuccess(sel.value);
 		} else {
 			console.error('Wallet connect failed:', r.error);
 			btn.textContent = 'Retry Connect';
