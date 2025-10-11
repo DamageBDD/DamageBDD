@@ -75,6 +75,7 @@
         ]
     },
     {mustache, [{templates_dir, "priv/templates"}]},
+    {erlexec, [root, {user, "damage"}, {limit_users, ["damage"]}]},
     {
         damage,
         [

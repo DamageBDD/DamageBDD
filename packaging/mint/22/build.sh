@@ -23,4 +23,5 @@ docker run --rm -it \
 
     # copy debs to host
     cp -a _build/pkg/deb/*.deb /out/
+    rm -f rebar.lock
   '
