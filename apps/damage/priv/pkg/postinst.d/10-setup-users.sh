@@ -2,23 +2,23 @@
 set -e
 # postinst for damage — relx release with include_erts=true
 
-PKG_NAME="{{app}}"
+#PKG_NAME="{{app}}"
 
 # Paths produced by your package layout
-PREFIX="{{install_prefix}}"
-BIN="${PREFIX}/bin/{{app}}"
-LINK="/usr/bin/{{app}}"
-
-ETC_DIR="{{etc_dir}}"
-VAR_DIR="{{var_dir}}"
-LOG_DIR="{{log_dir}}"
-
-# Service/user knobs (string flags so we can test in shell)
-CREATE_USER="{{create_user}}"        # "true" or "false"
-USER="{{user}}"
-GROUP="{{group}}"
-SERVICE_NAME="{{service_name}}"
-AUTO_START="{{auto_start}}"          # "true" or "false"
+#PREFIX="{{install_prefix}}"
+#BIN="${PREFIX}/bin/{{app}}"
+#LINK="/usr/bin/{{app}}"
+#
+#ETC_DIR="{{etc_dir}}"
+#VAR_DIR="{{var_dir}}"
+#LOG_DIR="{{log_dir}}"
+#
+## Service/user knobs (string flags so we can test in shell)
+#CREATE_USER="{{create_user}}"        # "true" or "false"
+#USER="{{user}}"
+#GROUP="{{group}}"
+#SERVICE_NAME="{{service_name}}"
+#AUTO_START="{{auto_start}}"          # "true" or "false"
 
 log() { printf '%s\n' ">>> $*"; }
 
