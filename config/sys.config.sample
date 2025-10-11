@@ -160,7 +160,7 @@
                 [
                     %{"localhost", 3013, "/"}
                     %{"testnet.aeternity.io", 443, "/"}
-                    {"mainnet.aeternity.io", 443, ""}
+                    {"mainnet.aeternity.io", 443, "/"}
                 ]
             },
             {
