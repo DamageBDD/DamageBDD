@@ -42,6 +42,8 @@ ENV PATH="/opt/erlang/${OTP_VERSION}/bin:/usr/local/bin:${PATH}"
 
 # Working dir where you'll mount your project
 WORKDIR /opt/workspace
+
+RUN ls
 RUN git clone https://github.com/DamageBDD/DamageBDD.git .
 
 # Helpful default cmd (does nothing by itself).
