@@ -1,0 +1,89 @@
+#!/bin/sh
+set -e
+# postinst for damage — relx release with include_erts=true
+
+PKG_NAME="{{app}}"
+
+# Paths produced by your package layout
+PREFIX="{{install_prefix}}"
+BIN="${PREFIX}/bin/{{app}}"
+LINK="/usr/bin/{{app}}"
+
+ETC_DIR="{{etc_dir}}"
+VAR_DIR="{{var_dir}}"
+LOG_DIR="{{log_dir}}"
+
+# Service/user knobs (string flags so we can test in shell)
+CREATE_USER="{{create_user}}"        # "true" or "false"
+USER="{{user}}"
+GROUP="{{group}}"
+SERVICE_NAME="{{service_name}}"
+AUTO_START="{{auto_start}}"          # "true" or "false"
+
+log() { printf '%s\n' ">>> $*"; }
+
+ensure_group() {
+  if ! getent group "$GROUP" >/dev/null 2>&1; then
+    log "Creating group: $GROUP"
+    addgroup --system "$GROUP" >/dev/null
+  fi
+}
+
+ensure_user() {
+  if ! id -u "$USER" >/dev/null 2>&1; then
+    log "Creating user: $USER"
+    adduser --system --ingroup "$GROUP" --home "$PREFIX" --no-create-home \
+            --shell /usr/sbin/nologin "$USER" >/dev/null
+  fi
+}
+
+case "$1" in
+  configure)
+    # Optional service account
+    if [ "$CREATE_USER" = "true" ] && [ -n "$USER" ] && [ -n "$GROUP" ]; then
+      ensure_group
+      ensure_user
+    fi
+
+    # Ensure runtime/config dirs
+    install -d -m 0755 "$ETC_DIR" "$VAR_DIR" "$LOG_DIR"
+
+    # Ownership (only if we created a user)
+    if [ "$CREATE_USER" = "true" ] && [ -n "$USER" ] && [ -n "$GROUP" ]; then
+      chown -R "$USER:$GROUP" "$VAR_DIR" "$LOG_DIR" || true
+    fi
+
+    # Make sure the release script is executable
+    if [ -f "$BIN" ]; then
+      chmod 0755 "$BIN" || true
+    fi
+
+    # Symlink into PATH
+    if [ -x "$BIN" ]; then
+      if [ -L "$LINK" ] && [ "$(readlink -f "$LINK")" = "$BIN" ]; then
+        : # correct link already present
+      else
+        log "Linking $LINK -> $BIN"
+        ln -sf "$BIN" "$LINK"
+      fi
+    fi
+
+    # If a systemd unit was installed, reload + (optional) enable/start
+    if command -v systemctl >/dev/null 2>&1; then
+      if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ] || \
+         [ -f "/lib/systemd/system/${SERVICE_NAME}.service" ]; then
+        systemctl daemon-reload || true
+        if [ "$AUTO_START" = "true" ]; then
+          systemctl enable "${SERVICE_NAME}.service" || true
+          systemctl start  "${SERVICE_NAME}.service" || true
+        fi
+      fi
+    fi
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    # Nothing to do
+    ;;
+esac
+
+exit 0
