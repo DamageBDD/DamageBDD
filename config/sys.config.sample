@@ -114,8 +114,6 @@
             {nostr_npub, "npub16a2r3p8d7syd46ypygva0fqw6pfpgdxv5mm4gd8vqra4wr9scj5sx42y5t"}
         ]
     },
-    {mustache, [{templates_dir, "priv/templates"}]},
-    {erlexec, [{user, "damage"}, {limit_users, ["damage"]}]},
     {
         damage,
         [
@@ -212,28 +210,23 @@
             ]},
             {market_rules, #{
                 <<"DAMAGEUSDT">> => #{price_precision => 4, min_qty => 100.0}
-            }}
-        ]
-    },
-    {
-        damage_ssh,
-        [
-            {user_dir, "/var/lib/damage/sshtest_user/.ssh"},
-            {system_dir, "/var/lib/damage/ssh_daemon/"},
-            {repos_root, "/var/lib/damage/repos/"},
-            {allow_push, true}
-        ]
-    },
-    {
-        damage_systemd,
-        [
-         % per service admins
+            }},
             {
-                nginx,
-                {
-                 admins, [
-                          %"ak_..."
-                         ]}
+                ssh, [
+                    {user_dir, "/var/lib/damage/sshtest_user/.ssh"},
+                    {system_dir, "/var/lib/damage/ssh_daemon/"},
+                    {allow_push, true},
+                    {root, "/var/lib/damage/repos/"}
+                ]
+            },
+            {
+                systemd,
+                [
+                    {
+                        nginx,
+                        {admins, ["ak_2eu6yAH46eu9T88WN7MDnyr1QzW6GLWAc667Z93U44wLewuhLN"]}
+                    }
+                ]
             }
         ]
     },
@@ -260,6 +253,8 @@
             }
         ]
     },
+    {mustache, [{templates_dir, "priv/templates"}]},
+    {erlexec, [{user, "damage"}, {limit_users, ["damage"]}]},
     {bcrypt, [{mechanism, "port"}]},
     {sync, [{src_dirs, {replace, [{"./src"}]}}]}
 ].

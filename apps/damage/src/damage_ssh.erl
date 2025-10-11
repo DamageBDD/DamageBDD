@@ -148,10 +148,36 @@ from_yaml(Req, #{action := Action} = State) ->
     YamlResult = damage_utils:safe_yaml(Result),
     Resp = cowboy_req:set_resp_body(YamlResult, Req),
     {stop, cowboy_req:reply(201, Resp), State}.
+app_env(Key, Default) ->
+    case application:get_env(damage, ssh) of
+        {ok, SSHConfig} ->
+            {ok, proplists:get_value(Key, SSHConfig, Default)};
+        undefined ->
+            {ok, Default}
+    end.
+ensure_dirs(Dirs) ->
+    lists:foreach(fun ensure_dir/1, Dirs).
+
+ensure_dir(D) ->
+    %% ensure_dir expects a *file* path; we append "x" to create the directory tree for D
+    case filelib:ensure_dir(filename:join(D, "x")) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR(
+                "Cannot create directory ~s (~p). Set damage system_dir/user_dir/repos_root to writable paths or pre-create them.",
+                [D, Reason]
+            ),
+            %% don't crash; let ssh:daemon fail visibly if paths are still unusable
+            ok
+    end.
 
 start_link() ->
-    {ok, UserDir} = application:get_env(damage_ssh, user_dir),
-    {ok, SystemDir} = application:get_env(damage_ssh, system_dir),
+    {ok, Repos} = app_env(repos_root, "/var/lib/damage/git"),
+    {ok, SystemDir} = app_env(system_dir, "/var/lib/damage/ssh/system"),
+    {ok, UserDir} = app_env(user_dir, "/var/lib/damage/ssh/user"),
+    damage_utils:ensure_dir(UserDir),
+    ensure_dirs([SystemDir, UserDir, Repos]),
 
     {ok, SSHPid} =
         ssh:daemon(

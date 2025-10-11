@@ -55,8 +55,9 @@ step(
     ["I am a", Service, "Admin"],
     _
 ) ->
-    {ok, {admins, ServiceAdmins}} =
-        application:get_env(damage_systemd, list_to_atom(Service)),
+    {ok, Services} =
+        application:get_env(damage, systemd),
+    ServiceAdmins = proplists:get_value(Service, Services, []),
     case lists:member(AeAccount, ServiceAdmins) of
         true -> Context;
         Other -> maps:put(fail, Other, Context)

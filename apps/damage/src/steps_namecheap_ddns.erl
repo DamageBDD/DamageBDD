@@ -51,12 +51,12 @@ get_nc_password(Context) ->
 -spec compose_update_path(map(), binary(), binary() | undefined) -> string().
 compose_update_path(#{domain := Domain, host := Host}, Password, IP) ->
     QBase = io_lib:format(
-              "/update?host=~s&domain=~s&password=~s",
-              [binary_to_list(Host), binary_to_list(Domain), binary_to_list(Password)]
-            ),
+        "/update?host=~s&domain=~s&password=~s",
+        [binary_to_list(Host), binary_to_list(Domain), binary_to_list(Password)]
+    ),
     case IP of
         undefined -> lists:flatten(QBase);
-        _         -> lists:flatten([QBase, "&ip=", binary_to_list(IP)])
+        _ -> lists:flatten([QBase, "&ip=", binary_to_list(IP)])
     end.
 
 -spec text_body(map()) -> binary().
@@ -78,7 +78,7 @@ contains(Haystack, Needle) ->
 detect_public_ip(Config, Context0) ->
     C1 = maps:put(base_url, "https://api.ipify.org", Context0),
     C2 = maps:put(host, "api.ipify.org", C1),
-    C  = maps:put(port, 443, C2),
+    C = maps:put(port, 443, C2),
     Headers = ?DEFAULT_HEADERS,
     CResp = steps_http:gun_get(Config, C, "/", Headers),
     Body = text_body(CResp),
@@ -92,31 +92,57 @@ detect_public_ip(Config, Context0) ->
 %% ======================
 
 %% Configure domain + host (password is fetched from secrets)
-step(_Config, Context, <<"Given">>, _N,
-     ["I configure Namecheap DDNS for domain", Domain, "host", Host], _Body) ->
+step(
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["I configure Namecheap DDNS for domain", Domain, "host", Host],
+    _Body
+) ->
     set_nc_cfg(Context, list_to_binary(Domain), list_to_binary(Host));
-
 %% Optional: override the secret name/key (default: namecheap_ddns_password)
-step(_Config, Context, <<"Given">>, _N,
-     ["I set Namecheap DDNS secret key to", SecretName], _Body) ->
+step(
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["I set Namecheap DDNS secret key to", SecretName],
+    _Body
+) ->
     maps:put(nc_secret_key, list_to_atom(SecretName), Context);
-
 %% Individual setters
-step(_Config, Context, <<"Given">>, _N,
-     ["I set Namecheap DDNS domain to", Domain], _Body) ->
+step(
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["I set Namecheap DDNS domain to", Domain],
+    _Body
+) ->
     NC0 = maps:get(namecheap_ddns, Context, #{}),
-    NC  = NC0#{domain => list_to_binary(Domain)},
+    NC = NC0#{domain => list_to_binary(Domain)},
     maps:put(namecheap_ddns, NC, Context);
-
-step(_Config, Context, <<"Given">>, _N,
-     ["I set Namecheap DDNS host to", Host], _Body) ->
+step(
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["I set Namecheap DDNS host to", Host],
+    _Body
+) ->
     NC0 = maps:get(namecheap_ddns, Context, #{}),
-    NC  = NC0#{host => list_to_binary(Host)},
+    NC = NC0#{host => list_to_binary(Host)},
     maps:put(namecheap_ddns, NC, Context);
-
 %% Update with explicit IP (uses password from secrets)
-step(Config, Context0, <<"When">>, _N,
-     ["I update Namecheap DDNS with IP", IP], _Body) ->
+step(
+    Config,
+    Context0,
+    <<"When">>,
+    _N,
+    ["I update Namecheap DDNS with IP", IP],
+    _Body
+) ->
     Context = ensure_nc_base(Context0),
     case {maps:get(namecheap_ddns, Context, undefined), get_nc_password(Context)} of
         {undefined, _} ->
@@ -128,10 +154,15 @@ step(Config, Context0, <<"When">>, _N,
             Headers = ?DEFAULT_HEADERS,
             steps_http:gun_get(Config, Context, Path, Headers)
     end;
-
 %% Update with detected public IP (uses password from secrets)
-step(Config, Context0, <<"When">>, _N,
-     ["I update Namecheap DDNS with detected IP"], _Body) ->
+step(
+    Config,
+    Context0,
+    <<"When">>,
+    _N,
+    ["I update Namecheap DDNS with detected IP"],
+    _Body
+) ->
     Context = ensure_nc_base(Context0),
     case {maps:get(namecheap_ddns, Context, undefined), get_nc_password(Context)} of
         {undefined, _} ->
@@ -145,34 +176,52 @@ step(Config, Context0, <<"When">>, _N,
                     Headers = ?DEFAULT_HEADERS,
                     steps_http:gun_get(Config, Context, Path, Headers);
                 {error, Reason} ->
-                    maps:put(fail, io_lib:format("Failed to detect public IP: ~p", [Reason]), Context)
+                    maps:put(
+                        fail, io_lib:format("Failed to detect public IP: ~p", [Reason]), Context
+                    )
             end
     end;
-
 %% Assert success
-step(_Config, Context, <<"Then">>, _N,
-     ["the Namecheap DDNS update should succeed"], _Body) ->
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the Namecheap DDNS update should succeed"],
+    _Body
+) ->
     Body = text_body(Context),
     case contains(Body, <<"<ErrCount>0</ErrCount>">>) of
-        true  -> Context;
+        true ->
+            Context;
         false ->
             ?LOG_INFO("Namecheap DDNS response (unexpected): ~s", [Body]),
             maps:put(fail, <<"Namecheap DDNS update did not report success">>, Context)
     end;
-
 %% Assert echoed IP
-step(_Config, Context, <<"Then">>, _N,
-     ["the Namecheap response IP must be", ExpectIP], _Body) ->
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the Namecheap response IP must be", ExpectIP],
+    _Body
+) ->
     Body = text_body(Context),
     Expect = list_to_binary(ExpectIP),
     case contains(Body, <<"<IP>", Expect/binary, "</IP>">>) of
-        true  -> Context;
+        true -> Context;
         false -> maps:put(fail, <<"Expected IP not found in Namecheap response">>, Context)
     end;
-
 %% Store echoed IP
-step(_Config, Context, <<"Then">>, _N,
-     ["I store the Namecheap response IP in", VarName], _Body) ->
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["I store the Namecheap response IP in", VarName],
+    _Body
+) ->
     Body = text_body(Context),
     case re:run(Body, "<IP>([^<]+)</IP>", [{capture, [1], binary}]) of
         {match, [IP]} ->
@@ -181,4 +230,3 @@ step(_Config, Context, <<"Then">>, _N,
         nomatch ->
             maps:put(fail, <<"Could not extract <IP> from Namecheap response">>, Context)
     end.
-

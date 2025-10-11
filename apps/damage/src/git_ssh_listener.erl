@@ -44,7 +44,7 @@ init([]) ->
     {ok, SystemDir} = app_env(system_dir, "/var/lib/damage/ssh/system"),
     {ok, UserDir} = app_env(user_dir, "/var/lib/damage/ssh/user"),
     {ok, Repos} = app_env(repos_root, "/var/lib/damage/git"),
-    {ok, AllowPush} = application:get_env(damage_ssh, allow_push),
+    {ok, AllowPush} = app_env(allow_push, false),
 
     ensure_dirs([SystemDir, UserDir, Repos]),
 
@@ -109,9 +109,11 @@ exec(CM, Ch, Command) ->
 %%% ---------- Helpers
 
 app_env(Key, Default) ->
-    case application:get_env(damage_ssh, Key) of
-        {ok, V} -> {ok, V};
-        undefined -> {ok, Default}
+    case application:get_env(damage, ssh) of
+        {ok, SSHConfig} ->
+            {ok, proplists:get_value(Key, SSHConfig, Default)};
+        undefined ->
+            {ok, Default}
     end.
 
 ensure_dirs(Dirs) ->
