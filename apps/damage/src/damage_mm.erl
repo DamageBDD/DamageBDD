@@ -1,10 +1,9 @@
 -module(damage_mm).
 -behaviour(gen_server).
 -include_lib("kernel/include/logger.hrl").
-
+-export([where/1, stop/1]).
 -export([
     start/0,
-    start_link/0,
     start_link/1,
     init/1,
     handle_call/3,
@@ -29,7 +28,6 @@
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
 -define(COIN_WS, "ws.coinstore.com").
 -define(COIN_PATH, "/s/ws").
--define(SYMBOL, <<"BTCUSDT">>).
 
 %% ---- params you can tune ----------------------------------
 
@@ -42,42 +40,55 @@
 -define(BASE_QTY, 200).
 
 -record(state, {
+    symbol :: string(),
+    rules :: [{atom(), term()}],
     gun_pid,
     stream_ref,
-    %% float
-    damage_rate_usdt,
-    market_rules
+    damage_rate_usdt
 }).
+start_link(Args) ->
+    gen_server:start_link({local, reg_name(Args)}, ?MODULE, Args, []).
+
+reg_name(Args) ->
+    Sym = proplists:get_value(symbol, Args, "DAMAGEUSDT"),
+    {damage_mm, Sym}.
+
+where(Symbol) when is_list(Symbol) ->
+    gproc:whereis_name({n, l, {damage_mm, Symbol}}).
+
+stop(Symbol) when is_list(Symbol) ->
+    mm_sup:del(Symbol).
 
 start() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-start_link(Args) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
-
-init(Rules) ->
-    io:format("Starting DAMAGE market maker...~n"),
+init(Args) ->
+    Symbol = proplists:get_value(symbol, Args, "DAMAGEUSDT"),
+    Rules = proplists:get_value(rules, Args, [{price_precision, 4}, {min_qty, 100.0}]),
     %self() ! run_strategy,
+    ok = gproc:reg({n, l, {damage_mm, Symbol}}),
+    ?LOG_INFO("Starting DAMAGE MM for ~s with rules ~p", [Symbol, Rules]),
     {ok, ConnPid} = gun:open(?COIN_WS, 443, #{transport => tls, tls_opts => [{verify, verify_none}]}),
     {ok, _Protocols} = gun:await_up(ConnPid),
     Stream = gun:ws_upgrade(ConnPid, ?COIN_PATH, []),
     ?LOG_DEBUG("damage_mm websocket upgrade successfull ~p", [Stream]),
     %% Subscribe JSON; check Coinstore docs for exact format
     SubscribeMsg = jsx:encode(#{
-        op => <<"subscribe">>, args => [#{channel => <<"ticker">>, symbol => ?SYMBOL}]
+        op => <<"subscribe">>, args => [#{channel => <<"ticker">>, symbol => Symbol}]
     }),
     gun:ws_send(ConnPid, Stream, {text, SubscribeMsg}),
+    erlang:send_after(10_000, self(), rebalance),
     State = #state{
-        gun_pid = ConnPid, stream_ref = Stream, damage_rate_usdt = 0.0, market_rules = Rules
+        gun_pid = ConnPid,
+        stream_ref = Stream,
+        damage_rate_usdt = 0.0,
+        symbol = Symbol,
+        rules = Rules
     },
     {ok, State}.
 
-handle_info(rebalance, State) ->
+handle_info(rebalance, #state{symbol = Symbol, rules = Rules} = State) ->
     ?LOG_DEBUG("damage_mm got rebalance ~p", [State]),
-    Symbol = "DAMAGEUSDT",
-    Rules = get_rules(Symbol),
     case get_mid_price(Symbol, Rules) of
         {ok, Mid0} when Mid0 > 0 ->
             Mid = round_tick(Mid0),
@@ -107,9 +118,7 @@ handle_info(rebalance, State) ->
     RefreshMs = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
     erlang:send_after(RefreshMs, self(), rebalance),
     {noreply, State};
-handle_info(run_strategy, #state{market_rules = Rules} = State) ->
-    Symbol = "DAMAGEUSDT",
-    Rules = get_rules(Symbol),
+handle_info(run_strategy, #state{symbol = Symbol, rules = Rules} = State) ->
     case get_mid_price(Symbol, Rules) of
         {ok, Mid} ->
             Qty = 1000,
@@ -196,20 +205,6 @@ get_mid_price(Symbol, #{price_precision := PricePrecision, min_qty := MinQty}) -
             end;
         Error ->
             Error
-    end.
-
-%% ---------- helpers ----------
-
-get_rules(Symbol) ->
-    case application:get_env(damage, market_rules) of
-        {ok, Rules} ->
-            MR = maps:get(list_to_binary(Symbol), Rules, #{}),
-            Prec = maps:get(price_precision, MR, 4),
-            MinQ = maps:get(min_qty, MR, 1.0),
-            {Prec, MinQ};
-        _ ->
-            %% sane defaults; override via app env
-            {4, 100.0}
     end.
 
 to_num(N) when is_integer(N) -> N * 1.0;

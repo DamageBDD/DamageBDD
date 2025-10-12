@@ -165,29 +165,19 @@ init([]) ->
                 type => worker,
                 modules => []
             },
+            #{
+                id => damage_mm_sup,
+                start => {damage_mm_sup, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => supervisor,
+                modules => [damage_mm_sup]
+            },
+
             git_ssh_listener:child_spec()
         ] ++ PoolSpecs,
-    PoolSpecs1 =
-        case application:get_env(damage, market_rules) of
-            {ok, Rules} ->
-                ?LOG_INFO("Damage market making enabled with rules: ~p~n", [Rules]),
-                PoolSpecs0 ++
-                    [
-                        #{
-                            id => damage_mm,
-                            start => {damage_mm, start_link, [Rules]},
-                            restart => permanent,
-                            shutdown => 60,
-                            type => worker,
-                            modules => []
-                        }
-                    ];
-            Other ->
-                ?LOG_INFO("Damage market making disabled ~p~n", [Other]),
-                PoolSpecs0
-        end,
-    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs1]),
-    {ok, {SupFlags, PoolSpecs1}}.
+    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
+    {ok, {SupFlags, PoolSpecs0}}.
 
 %%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
 %%ChildSpecs =
