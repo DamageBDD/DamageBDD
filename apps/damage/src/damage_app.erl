@@ -177,7 +177,6 @@ start_phase(os_tune, _StartType, []) ->
     ok = damage_sys_tune:tune(),
     ok.
 
-
 stop(_State) ->
     ok = cowboy:stop_listener(http),
     application:stop(gun),

@@ -22,9 +22,11 @@ sudo_ui(Cmd) when is_list(Cmd) ->
 permission_denied(Out) when is_binary(Out) -> permission_denied(binary_to_list(Out));
 permission_denied(Out) when is_list(Out) ->
     Lower = string:lowercase(Out),
-    lists:any(fun(P) -> lists:member(P, Lower) end,
-              ["permission denied", "operation not permitted", "not permitted", "eprem"])
-    orelse false.
+    lists:any(
+        fun(P) -> lists:member(P, Lower) end,
+        ["permission denied", "operation not permitted", "not permitted", "eprem"]
+    ) orelse
+        false.
 
 %% ---- Linux ---------------------------------------------------------
 
@@ -54,30 +56,38 @@ find_askpass() ->
             case os:find_executable("zenity") of
                 false ->
                     case os:find_executable("kdialog") of
-                        false -> build_inline_askpass();  %% last resort tiny script
-                        KDia  -> make_wrapper(fun(Prompt) ->
-                                   KDia ++ " --password \"" ++ Prompt ++ "\""
-                                 end)
+                        %% last resort tiny script
+                        false ->
+                            build_inline_askpass();
+                        KDia ->
+                            make_wrapper(fun(Prompt) ->
+                                KDia ++ " --password \"" ++ Prompt ++ "\""
+                            end)
                     end;
-                Zen  -> make_wrapper(fun(Prompt) ->
-                           Zen ++ " --password --title=\"Authentication Required\" --text=\"" ++ Prompt ++ "\""
-                         end)
+                Zen ->
+                    make_wrapper(fun(Prompt) ->
+                        Zen ++ " --password --title=\"Authentication Required\" --text=\"" ++ Prompt ++
+                            "\""
+                    end)
             end;
-        Ask -> Ask
+        Ask ->
+            Ask
     end.
 
 %% Build a tiny askpass script backed by /usr/bin/tty + read -s (console prompt).
 build_inline_askpass() ->
     case os:find_executable("mktemp") of
-        false -> undefined;
+        false ->
+            undefined;
         _ ->
             {ok, Tmp} = make_temp_script(
-              "#!/bin/sh\n" ++
-              "prompt=\"$1\"; export LC_ALL=C\n" ++
-              "if command -v zenity >/dev/null 2>&1; then zenity --password --title=\"Authentication Required\" --text=\"$prompt\"; exit $?; fi\n" ++
-              "if command -v kdialog >/dev/null 2>&1; then kdialog --password \"$prompt\"; exit $?; fi\n" ++
-              "if [ -t 0 ]; then printf \"%s\" \"$prompt\" 1>&2; stty -echo; read pass; stty echo; echo \"$pass\"; exit 0; fi\n" ++
-              "exit 1\n"),
+                "#!/bin/sh\n" ++
+                    "prompt=\"$1\"; export LC_ALL=C\n" ++
+                    "if command -v zenity >/dev/null 2>&1; then zenity --password --title=\"Authentication Required\" --text=\"$prompt\"; exit $?; fi\n" ++
+                    "if command -v kdialog >/dev/null 2>&1; then kdialog --password \"$prompt\"; exit $?; fi\n" ++
+                    "if [ -t 0 ]; then printf \"%s\" \"$prompt\" 1>&2; stty -echo; read pass; stty echo; echo \"$pass\"; exit 0; fi\n" ++
+                    "exit 1\n"
+            ),
             Tmp
     end.
 
@@ -86,7 +96,9 @@ make_wrapper(Build) ->
     make_temp_script("#!/bin/sh\n" ++ PromptCmd ++ "\n").
 
 make_temp_script(Body) ->
-    Tmp = filename:join("/tmp", "damage-askpass-" ++ integer_to_list(erlang:phash2(self())) ++ ".sh"),
+    Tmp = filename:join(
+        "/tmp", "damage-askpass-" ++ integer_to_list(erlang:phash2(self())) ++ ".sh"
+    ),
     ok = file:write_file(Tmp, Body),
     ok = file:change_mode(Tmp, 8#700),
     {ok, Tmp}.
@@ -99,9 +111,11 @@ escape_single_quotes(S) ->
 
 macos_elevate(Cmd) ->
     case os:find_executable("osascript") of
-        false -> {error, no_osascript};
+        false ->
+            {error, no_osascript};
         _Osa ->
-            Apple = "osascript -e 'do shell script " ++
+            Apple =
+                "osascript -e 'do shell script " ++
                     "\"" ++ escape_applescript(Cmd) ++ "\"" ++
                     " with administrator privileges'",
             exec:run(Apple, [sync, stdout, stderr])
