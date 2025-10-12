@@ -155,6 +155,7 @@
             {cln_cacertfile, "~/.lightning/bitcoin/ca.pem"},
             {cln_certfile, "~/.lightning/bitcoin/client.pem"},
             {cln_keyfile, "~/.lightning/bitcoin/client-key.pem"},
+            {ipfs, [{"Addresses.Gateway", "/ip4/127.0.0.1/tcp/8082"}]},
             {ae_network_id, "ae_mainnet"},
             {ae_tls, true},
             {

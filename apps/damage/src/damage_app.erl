@@ -21,7 +21,10 @@
 
 -include_lib("kernel/include/logger.hrl").
 
-start(_StartType, _StartArgs) -> damage_sup:start_link().
+start(_StartType, _StartArgs) ->
+    Cwd = application:get_env(damage, app_dir, "/opt/damage"),
+    ok = file:set_cwd(Cwd),
+    damage_sup:start_link().
 
 get_trails() ->
     Handlers =
@@ -164,6 +167,7 @@ start_phase(setup_essentials, _StartType, []) ->
     ok = damage_utils:ensure_dir("/var/lib/damage/ssh_daemon/"),
     ok = damage_utils:ensure_ssh_host_key("/var/lib/damage/ssh_daemon/ssh_host_rsa_key"),
 
+    {ok, _} = ipfs_util:ensure_ipfs_repo(),
     ok = damage_ipfs:ensure_ipfs_asset(
         "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
         "bin/lightpanda-x86_64-linux"
