@@ -36,8 +36,6 @@
     test/0,
     migrate/0,
     import_secret_key/2,
-    ask_password/1,
-    ask_password/2,
     list_secrets/0,
     interpolate_template/1
 ]).
@@ -74,7 +72,7 @@ get_node_password_cached(State) ->
         undefined ->
             case os:getenv("DAMAGE_SECRET_KEY") of
                 false ->
-                    case ask_password(Prompt) of
+                    case erm:ask_password(Prompt) of
                         undefined ->
                             throw(error);
                         NodePassword ->
@@ -345,7 +343,7 @@ import_secret_key(PublicKey, PrivateKeyHex) ->
     PrivateKey = binary:decode_hex(PrivateKeyHex),
     Keypair = #{private_key => PrivateKey, public_key => PublicKey},
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case ask_password(Prompt) of
+    case erm:ask_password(Prompt) of
         undefined ->
             ?LOG_WARNING("Failed to get node_password", []),
             error;
@@ -374,7 +372,7 @@ migrate() ->
     Path = application:get_env(damage, keystore, "damage.key"),
     Keypair = binary_to_term(Data),
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case ask_password(Prompt) of
+    case erm:ask_password(Prompt) of
         undefined ->
             ?LOG_WARNING("Failed to get node_password", []),
             error;
@@ -387,17 +385,6 @@ migrate() ->
             Keypair
     end.
 
-ask_password(Prompt, [nogui]) ->
-    {ok, Term} = io:get_password(Prompt, "~s"),
-    ?LOG_DEBUG("read password ~p", [Term]),
-    lists:flatten(Term).
-ask_password(Prompt) ->
-    case os:getenv("DISPLAY") of
-        false ->
-            ask_password(Prompt, [nogui]);
-        _ ->
-            erm:ask_password(Prompt)
-    end.
 
 list_secrets() ->
     case dets:open_file(?DETS_FILE, ?DETS_ARGS) of

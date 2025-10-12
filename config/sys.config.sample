@@ -205,6 +205,7 @@
 
                 #{name => "lightpanda", cmd => "bin/lightpanda-x86_64-linux --verbose"},
                 #{name => "chromedriver", cmd => "chromedriver --port=9515"},
+                #{name => "bitcoind", cmd => "/usr/local/bin/bitcoind"},
                 #{name => "ipfs", cmd => "/usr/local/bin/ipfs daemon"}
             ]},
             {market_rules, [
