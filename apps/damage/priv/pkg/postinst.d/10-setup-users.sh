@@ -7,7 +7,7 @@ set -x
 
 # Paths produced by your package layout
 #PREFIX="{{install_prefix}}"
-#BIN="${PREFIX}/bin/{{app}}"
+#BIN="${PREFIX}/{{app}}/bin/{{app}}"
 #LINK="/usr/bin/{{app}}"
 #
 #ETC_DIR="{{etc_dir}}"

@@ -44,7 +44,7 @@
 -export([has_node_password/0, set_node_password/1]).
 
 -define(ASKPASS_TIMEOUT, 60000).
--define(DETS_FILE, "damage.dets").
+-define(DETS_FILE, "/var/lib/damage/damage.dets").
 -define(DETS_ARGS, [{auto_save, 5000}]).
 %% Initialize dets database
 init_db() ->
@@ -216,7 +216,7 @@ keypair(Path) ->
             end
     end.
 node_keypair() ->
-    Path = application:get_env(damage, keystore, "damage.key"),
+    Path = application:get_env(damage, keystore, "/var/lib/damage.key"),
     keypair(Path).
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
