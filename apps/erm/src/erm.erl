@@ -7,4 +7,3 @@
 
 -include_lib("wx/include/wx.hrl").
 -include_lib("kernel/include/logger.hrl").
-

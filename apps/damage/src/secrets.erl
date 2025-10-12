@@ -385,7 +385,6 @@ migrate() ->
             Keypair
     end.
 
-
 list_secrets() ->
     case dets:open_file(?DETS_FILE, ?DETS_ARGS) of
         {ok, _} ->

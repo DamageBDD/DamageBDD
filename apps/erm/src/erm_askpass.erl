@@ -18,10 +18,12 @@
 ask_password(Prompt) when is_list(Prompt) ->
     try
         case maybe_gui_password(Prompt) of
-            {ok, Pw} -> Pw;
+            {ok, Pw} ->
+                Pw;
             _ ->
                 case maybe_devtty_password(Prompt) of
-                    {ok, Pw2} -> Pw2;
+                    {ok, Pw2} ->
+                        Pw2;
                     _ ->
                         case maybe_stdio_password(Prompt) of
                             {ok, Pw3} -> Pw3;
@@ -31,7 +33,7 @@ ask_password(Prompt) when is_list(Prompt) ->
         end
     catch
         throw:cancel -> error({user_cancelled, password});
-        Class:Reason  -> erlang:error({ask_password_failed, Class, Reason})
+        Class:Reason -> erlang:error({ask_password_failed, Class, Reason})
     end.
 
 %% ask_text("Enter value:")
@@ -39,10 +41,12 @@ ask_password(Prompt) when is_list(Prompt) ->
 ask_text(Prompt) when is_list(Prompt) ->
     try
         case maybe_gui_text(Prompt) of
-            {ok, S} -> S;
+            {ok, S} ->
+                S;
             _ ->
                 case maybe_devtty_text(Prompt) of
-                    {ok, S2} -> S2;
+                    {ok, S2} ->
+                        S2;
                     _ ->
                         case maybe_stdio_text(Prompt) of
                             {ok, S3} -> S3;
@@ -52,7 +56,7 @@ ask_text(Prompt) when is_list(Prompt) ->
         end
     catch
         throw:cancel -> error({user_cancelled, text});
-        Class:Reason  -> erlang:error({ask_text_failed, Class, Reason})
+        Class:Reason -> erlang:error({ask_text_failed, Class, Reason})
     end.
 
 %% =========================
@@ -61,13 +65,13 @@ ask_text(Prompt) when is_list(Prompt) ->
 
 maybe_gui_password(Prompt) ->
     case is_gui_available() of
-        true  -> gui_password_dialog("Authentication", Prompt);
+        true -> gui_password_dialog("Authentication", Prompt);
         false -> {error, no_gui}
     end.
 
 maybe_gui_text(Prompt) ->
     case is_gui_available() of
-        true  -> gui_text_dialog("Input Required", Prompt);
+        true -> gui_text_dialog("Input Required", Prompt);
         false -> {error, no_gui}
     end.
 
@@ -86,10 +90,13 @@ gui_text_dialog(Title, Prompt) ->
 %% Core dialog builder/runner
 show_dialog(Title, Prompt, Mode) ->
     case get(askpass) of
-        undefined -> put(askpass, self());
+        undefined ->
+            put(askpass, self());
         Pid when is_pid(Pid) ->
             %% Prevent parallel dialogs; wait for the other to close.
-            receive after 1 -> ok end,
+            receive
+            after 1 -> ok
+            end,
             erase(askpass),
             put(askpass, self())
     end,
@@ -99,23 +106,32 @@ show_dialog(Title, Prompt, Mode) ->
         Sizer = wxBoxSizer:new(?wxVERTICAL),
 
         TitlePrompt = wxStaticText:new(Panel, ?wxID_ANY, Title, [{style, ?wxALIGN_CENTER}]),
-        wxSizer:add(Sizer, TitlePrompt, [{proportion, 0}, {flag, ?wxALL bor ?wxALIGN_CENTER}, {border, 8}]),
+        wxSizer:add(Sizer, TitlePrompt, [
+            {proportion, 0}, {flag, ?wxALL bor ?wxALIGN_CENTER}, {border, 8}
+        ]),
 
         PromptLbl = wxStaticText:new(Panel, ?wxID_ANY, Prompt, [{style, ?wxALIGN_CENTER}]),
-        wxSizer:add(Sizer, PromptLbl, [{proportion, 0}, {flag, ?wxALL bor ?wxALIGN_CENTER}, {border, 6}]),
+        wxSizer:add(Sizer, PromptLbl, [
+            {proportion, 0}, {flag, ?wxALL bor ?wxALIGN_CENTER}, {border, 6}
+        ]),
 
-        Style = case Mode of
-                    password -> ?wxTE_PASSWORD;
-                    text     -> 0
-                end,
+        Style =
+            case Mode of
+                password -> ?wxTE_PASSWORD;
+                text -> 0
+            end,
         Input = wxTextCtrl:new(Panel, ?wxID_ANY, [{style, Style}]),
-        wxSizer:add(Sizer, Input, [{proportion, 0}, {flag, ?wxEXPAND bor ?wxLEFT bor ?wxRIGHT}, {border, 12}]),
+        wxSizer:add(Sizer, Input, [
+            {proportion, 0}, {flag, ?wxEXPAND bor ?wxLEFT bor ?wxRIGHT}, {border, 12}
+        ]),
 
         BtnSizer = wxBoxSizer:new(?wxHORIZONTAL),
         OkBtn = wxButton:new(Panel, ?wxID_OK, [{label, "OK"}]),
         CancelBtn = wxButton:new(Panel, ?wxID_CANCEL, [{label, "Cancel"}]),
         wxSizer:add(BtnSizer, OkBtn, [{proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 6}]),
-        wxSizer:add(BtnSizer, CancelBtn, [{proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 6}]),
+        wxSizer:add(BtnSizer, CancelBtn, [
+            {proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 6}
+        ]),
         wxSizer:add(Sizer, BtnSizer, [{proportion, 0}, {flag, ?wxEXPAND bor ?wxALL}, {border, 6}]),
 
         wxFrame:setSizerAndFit(Panel, Sizer),
@@ -128,8 +144,8 @@ show_dialog(Title, Prompt, Mode) ->
         Result = dialog_loop(Frame, Input, CancelBtn, OkBtn, Mode),
         case Result of
             undefined -> throw(cancel);
-            ""        -> {error, empty};
-            Value     -> {ok, Value}
+            "" -> {error, empty};
+            Value -> {ok, Value}
         end
     after
         erase(askpass)
@@ -139,8 +155,11 @@ dialog_loop(Frame, Input, CancelBtn, OkBtn, Mode) ->
     receive
         {wx, _, OkBtn, [], {wxCommand, command_button_clicked, [], 0, 0}} ->
             case get_input(Input) of
-                "" -> dialog_loop(Frame, Input, CancelBtn, OkBtn, Mode);
-                V  -> close_frame(Frame), V
+                "" ->
+                    dialog_loop(Frame, Input, CancelBtn, OkBtn, Mode);
+                V ->
+                    close_frame(Frame),
+                    V
             end;
         {wx, _, CancelBtn, [], {wxCommand, command_button_clicked, [], 0, 0}} ->
             close_frame(Frame),
@@ -148,8 +167,11 @@ dialog_loop(Frame, Input, CancelBtn, OkBtn, Mode) ->
         {wx, _, Input, _, {wxKey, key_up, _, _, 13, _, _, _, _, 13, _, _}} ->
             %% Enter
             case get_input(Input) of
-                "" -> dialog_loop(Frame, Input, CancelBtn, OkBtn, Mode);
-                V  -> close_frame(Frame), V
+                "" ->
+                    dialog_loop(Frame, Input, CancelBtn, OkBtn, Mode);
+                V ->
+                    close_frame(Frame),
+                    V
             end;
         {wx, _, _Obj, [], {wxKey, key_up, _, _, 27, _, _, _, _, 27, _, _}} ->
             %% Esc
@@ -169,19 +191,30 @@ close_frame(Frame) ->
 with_wx(Fun) ->
     %% Ensure wx is available and a display/wayland session exists
     case is_gui_available() of
-        false -> {error, no_gui};
-        true  ->
+        false ->
+            {error, no_gui};
+        true ->
             WX = wx:new(),
-            try Fun()
-            after catch wx:destroy(WX) end
+            try
+                Fun()
+            after
+                catch wx:destroy(WX)
+            end
     end.
 
 is_gui_available() ->
-    Has = fun(Var) -> case os:getenv(Var) of false -> false; _ -> true end end,
+    Has = fun(Var) ->
+        case os:getenv(Var) of
+            false -> false;
+            _ -> true
+        end
+    end,
     Has("WAYLAND_DISPLAY") orelse Has("DISPLAY") orelse
-    case os:getenv("XDG_SESSION_TYPE") of
-        "wayland" -> true; "x11" -> true; _ -> false
-    end.
+        case os:getenv("XDG_SESSION_TYPE") of
+            "wayland" -> true;
+            "x11" -> true;
+            _ -> false
+        end.
 
 %% =========================
 %% /dev/tty and stdio paths
@@ -194,13 +227,17 @@ maybe_devtty_password(Prompt) ->
                 Pw = io:get_password(Dev, Prompt),
                 case Pw of
                     "" -> {error, empty};
-                    _  -> {ok, flatten(Pw)}
+                    _ -> {ok, flatten(Pw)}
                 end
             catch
                 _:E -> {error, {tty_password_failed, E}}
-            after catch file:close(Dev) end;
-        {error, enoent} -> {error, no_tty};
-        Err -> Err
+            after
+                catch file:close(Dev)
+            end;
+        {error, enoent} ->
+            {error, no_tty};
+        Err ->
+            Err
     end.
 
 maybe_devtty_text(Prompt) ->
@@ -209,16 +246,24 @@ maybe_devtty_text(Prompt) ->
             try
                 ok = io:format(Dev, "~s", [Prompt]),
                 case io:get_line(Dev, "") of
-                    eof -> {error, eof};
+                    eof ->
+                        {error, eof};
                     Line ->
                         Val = strip_newline(Line),
-                        case Val of "" -> {error, empty}; _ -> {ok, Val} end
+                        case Val of
+                            "" -> {error, empty};
+                            _ -> {ok, Val}
+                        end
                 end
             catch
                 _:E -> {error, {tty_text_failed, E}}
-            after catch file:close(Dev) end;
-        {error, enoent} -> {error, no_tty};
-        Err -> Err
+            after
+                catch file:close(Dev)
+            end;
+        {error, enoent} ->
+            {error, no_tty};
+        Err ->
+            Err
     end.
 
 maybe_stdio_password(Prompt) ->
@@ -228,12 +273,13 @@ maybe_stdio_password(Prompt) ->
                 Pw = io:get_password(Prompt, "~s"),
                 case Pw of
                     "" -> {error, empty};
-                    _  -> {ok, flatten(Pw)}
+                    _ -> {ok, flatten(Pw)}
                 end
             catch
                 _:E -> {error, {stdio_password_failed, E}}
             end;
-        false -> {error, stdio_not_tty}
+        false ->
+            {error, stdio_not_tty}
     end.
 
 maybe_stdio_text(Prompt) ->
@@ -242,15 +288,20 @@ maybe_stdio_text(Prompt) ->
             try
                 ok = io:format("~s", [Prompt]),
                 case io:get_line("") of
-                    eof -> {error, eof};
+                    eof ->
+                        {error, eof};
                     Line ->
                         Val = strip_newline(Line),
-                        case Val of "" -> {error, empty}; _ -> {ok, Val} end
+                        case Val of
+                            "" -> {error, empty};
+                            _ -> {ok, Val}
+                        end
                 end
             catch
                 _:E -> {error, {stdio_text_failed, E}}
             end;
-        false -> {error, stdio_not_tty}
+        false ->
+            {error, stdio_not_tty}
     end.
 
 stdio_is_tty() ->
@@ -265,9 +316,8 @@ strip_newline(B) when is_binary(B) ->
 
 strip_nl_rev([$\n | T]) -> strip_nl_rev(T);
 strip_nl_rev([$\r | T]) -> strip_nl_rev(T);
-strip_nl_rev(L)         -> L.
+strip_nl_rev(L) -> L.
 
 flatten(S) when is_binary(S) -> unicode:characters_to_list(S);
-flatten(S) when is_list(S)   -> lists:flatten(S);
-flatten(Other)               -> lists:flatten(io_lib:format("~ts", [Other])).
-
+flatten(S) when is_list(S) -> lists:flatten(S);
+flatten(Other) -> lists:flatten(io_lib:format("~ts", [Other])).

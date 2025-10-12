@@ -30,16 +30,24 @@ allowed_methods(Req, State) -> {[<<"GET">>], Req, State}.
 content_types_provided(Req, State) -> {[{{<<"text">>, <<"html">>, '*'}, to_html}], Req, State}.
 
 to_html(Req, #{action := index} = State) ->
-    %% ?component=login_modal (atoms are fine)
-    #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
     Ctx0 = base_context(Req),
-    case Comp0 of
-        undefined ->
-            {render_full_page(Ctx0), Req, State};
-        _ ->
-            Comp = binary_to_atom(Comp0, utf8),
-            {render_component(Comp, Ctx0), Req, State}
-    end.
+    case catch secrets:get_node_password() of
+        error ->
+            {render_tpl(?TPL("admin_password.mustache"), Ctx0), Req, State};
+        _Password ->
+            %% ?component=login_modal (atoms are fine)
+            #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
+            case Comp0 of
+                undefined ->
+                    {render_full_page(Ctx0), Req, State};
+                _ ->
+                    Comp = binary_to_atom(Comp0, utf8),
+                    {render_component(Comp, Ctx0), Req, State}
+            end
+    end;
+to_html(Req, #{action := install_windows} = State) ->
+    Ctx0 = base_context(Req),
+    {render_windows_install(Ctx0), Req, State}.
 
 %% -------------------------- Context --------------------------
 base_context(Req) ->
