@@ -23,20 +23,26 @@
 
 %% @doc Convenience: compute + apply recommended limits
 tune() ->
-    %% Allow override via env if user insists
-    case os:getenv("DAMAGE_NOFILE") of
+    case should_skip() of
+        true ->
+            ?LOG_INFO("SysTune: skipping OS tuning (container/skip flag detected)."),
+            ok;
         false ->
-            Limits = recommended_limits(),
-            ?LOG_INFO("Auto OS tuning: ~p", [Limits]),
-            apply_limits(Limits);
-        _ ->
-            %% Keep backwards compat: if env is present, use explicit numeric
-            Desired = get_env_int("DAMAGE_NOFILE", 100000),
-            ?LOG_INFO("OS tuning (env override). Target nofile=~p", [Desired]),
-            apply_limits(#{nofile => Desired,
-                           somaxconn => min(max(4096, Desired div 4), 65535),
-                           file_max => Desired * 2})
+            case os:getenv("DAMAGE_NOFILE") of
+                false ->
+                    Limits = recommended_limits(),
+                    ?LOG_INFO("SysTune: auto OS tuning plan ~p", [Limits]),
+                    apply_limits(Limits);
+                _ ->
+                    Desired = get_env_int("DAMAGE_NOFILE", 100000),
+                    Plan = #{nofile => Desired,
+                             somaxconn => min(max(4096, Desired div 4), 65535),
+                             file_max => Desired * 2},
+                    ?LOG_INFO("SysTune: env override plan ~p", [Plan]),
+                    apply_limits(Plan)
+            end
     end.
+
 
 %% @doc Direct call with explicit nofile target (rarely needed)
 tune(DesiredNOFILE) when is_integer(DesiredNOFILE), DesiredNOFILE > 0 ->
@@ -113,7 +119,7 @@ maybe_sysctl(Key, Val) ->
                 {ok, _} ->
                     ?LOG_INFO("sysctl set ~s=~s", [Key, Val]),
                     ok;
-                {error, {_Status, Out}} ->
+                {error, [{exit_status ,_Status}, {stderr, Out}]} ->
                     case catch damage_priv:permission_denied(Out) of
                         true ->
                             ?LOG_WARNING("sysctl ~s=~s permission denied; attempting elevation…",
@@ -178,43 +184,73 @@ get_env_int(Key, Default) ->
     end.
 
 %% ========== Platform facts ==========
+%% --- SAFE CORE/ RAM DETECTION -------------------------------------
 
+%% Prefer BEAM’s own view; fall back to /proc/stat; then env; then 4.
 get_cpu_cores() ->
-    case os:type() of
-        {unix, linux} ->
-            case file:read_file("/proc/cpuinfo") of
-                {ok, Bin} ->
-                    length([L || L <- string:split(binary_to_list(Bin), "\n", all),
-                                 string:prefix(L, "processor")]);
-                _ -> getenv_int_default("NUMBER_OF_PROCESSORS", 4)
-            end;
-        {unix, darwin} ->
-            run_int_or_default("sysctl -n hw.logicalcpu", 4);
-        {win32, _} ->
-            getenv_int_default("NUMBER_OF_PROCESSORS", 4);
-        _ -> 4
+    case catch erlang:system_info(logical_processors_available) of
+        I when is_integer(I), I > 0 ->
+            I;
+        _ ->
+            cpu_cores_from_procstat()
     end.
 
+cpu_cores_from_procstat() ->
+    case file:read_file("/proc/stat") of
+        {ok, Bin} ->
+            %% Count lines starting with "cpuN" (cpu0, cpu1, …)
+            Lines = string:split(binary_to_list(Bin), "\n", all),
+            C = length([ok || L <- Lines, is_cpuN(L)]),
+            case C > 0 of true -> C; false -> getenv_int_default("NUMBER_OF_PROCESSORS", 4) end;
+        _ ->
+            getenv_int_default("NUMBER_OF_PROCESSORS", 4)
+    end.
+
+is_cpuN(Line0) ->
+    Line = string:trim(Line0),
+    case re:run(Line, "^cpu[0-9]+\\b", []) of
+        nomatch -> false;
+        _ -> true
+    end.
+
+%% Robust MemTotal (MB). Never throws; defaults to 4096 MB.
 get_total_mem_mb() ->
     case os:type() of
         {unix, linux} ->
             case file:read_file("/proc/meminfo") of
                 {ok, Bin} ->
-                    %% MemTotal: <kB>
-                    case re:run(Bin, "MemTotal:\\s+([0-9]+)\\s+kB",
-                                [{capture, [1], list}]) of
-                        {match, [NumStr]} -> list_to_integer(NumStr) div 1024;
+                    case re:run(Bin, "^[[:space:]]*MemTotal:[[:space:]]*([0-9]+)[[:space:]]*kB",
+                                [multiline, {capture, [1], list}]) of
+                        {match, [NumStr]} ->
+                            safe_int(NumStr) div 1024;
                         _ -> 4096
                     end;
                 _ -> 4096
             end;
         {unix, darwin} ->
+            %% sysctl returns bytes
             run_int_or_default("sysctl -n hw.memsize", 4*1024*1024*1024) div (1024*1024);
         {win32, _} ->
-            %% Not typical for your deployment; safe default
             4096;
         _ -> 4096
     end.
+
+safe_int(S) ->
+    case catch list_to_integer(string:trim(S)) of
+        I when is_integer(I) -> I;
+        _ -> 0
+    end.
+
+getenv_int_default(Key, Default) ->
+    case os:getenv(Key) of
+        false -> Default;
+        V ->
+            case catch list_to_integer(string:trim(V)) of
+        I when is_integer(I) -> I;
+        _ -> Default
+            end
+    end.
+
 
 run_int_or_default(Cmd, Default) ->
     case exec:run(Cmd, [sync, stdout]) of
@@ -227,13 +263,36 @@ run_int_or_default(Cmd, Default) ->
         _ -> Default
     end.
 
-getenv_int_default(Key, Default) ->
+
+%% --- Skip logic fully internal ------------------------------------
+
+should_skip() ->
+    %% Skip if explicitly asked, or if in container and not explicitly allowed.
+    SkipFlag     = getenv_true("DAMAGE_SKIP_TUNE"),
+    InContainer  = is_container(),
+    AllowInCtr   = getenv_true("DAMAGE_TUNE_IN_CONTAINER"),
+    SkipFlag orelse (InContainer andalso not AllowInCtr).
+
+getenv_true(Key) ->
     case os:getenv(Key) of
-        false -> Default;
-        V ->
-            case catch list_to_integer(V) of
-                I when is_integer(I) -> I;
-                _ -> Default
-            end
+        false -> false;
+        Val0  ->
+            Val = string:lowercase(string:trim(Val0)),
+            Val =:= "1" orelse Val =:= "true" orelse Val =:= "yes" orelse Val =:= "on"
     end.
 
+is_container() ->
+    filelib:is_file("/.dockerenv")
+    orelse has_cgroup_markers()
+    orelse (os:getenv("container") =/= false).
+
+has_cgroup_markers() ->
+    case file:read_file("/proc/1/cgroup") of
+        {ok, Bin} ->
+            L = string:lowercase(binary_to_list(Bin)),
+            (string:find(L, "docker") =/= nomatch) orelse
+            (string:find(L, "containerd") =/= nomatch) orelse
+            (string:find(L, "kubepods") =/= nomatch) orelse
+            (string:find(L, "lxc") =/= nomatch);
+        _ -> false
+    end.
