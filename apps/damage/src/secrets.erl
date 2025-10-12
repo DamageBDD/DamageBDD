@@ -41,6 +41,7 @@
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
+-export([has_node_password/0, set_node_password/1]).
 
 -define(ASKPASS_TIMEOUT, 60000).
 -define(DETS_FILE, "damage.dets").
@@ -84,7 +85,42 @@ get_node_password_cached(State) ->
         NodePassword ->
             {NodePassword, State}
     end.
-
+has_node_password() ->
+    case os:getenv("DAMAGE_SECRET_KEY") of
+        false ->
+            Pid = gproc:lookup_local_name({?MODULE, secrets}),
+            gen_server:call(Pid, has_node_password, ?ASKPASS_TIMEOUT);
+        _ ->
+            true
+    end.
+set_node_password(Pw0) when is_list(Pw0); is_binary(Pw0) ->
+    case has_node_password() of
+        true ->
+            {error, already_set};
+        false ->
+            Pw =
+                case Pw0 of
+                    B when is_binary(B) -> unicode:characters_to_list(B);
+                    L when is_list(L) -> L
+                end,
+            case length(Pw) >= 8 of
+                false ->
+                    {error, too_short};
+                true ->
+                    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+                    gen_server:call(Pid, {set_node_password, Pw}, ?ASKPASS_TIMEOUT)
+            end
+    end.
+handle_call(has_node_password, _From, State) ->
+    Has = maps:get(node_password, State, undefined) =/= undefined,
+    {reply, Has, State};
+handle_call({set_node_password, Pw}, _From, State0) ->
+    case maps:get(node_password, State0, undefined) of
+        undefined ->
+            {reply, ok, maps:put(node_password, Pw, State0)};
+        _Existing ->
+            {reply, {error, already_set}, State0}
+    end;
 handle_call(clear_cache, _From, State) ->
     {reply, ok, maps:remove(node_password, State)};
 handle_call(get_node_password, _From, State0) ->

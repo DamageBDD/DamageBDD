@@ -31,10 +31,10 @@ content_types_provided(Req, State) -> {[{{<<"text">>, <<"html">>, '*'}, to_html}
 
 to_html(Req, #{action := index} = State) ->
     Ctx0 = base_context(Req),
-    case catch secrets:get_node_password() of
-        error ->
+    case secrets:has_node_password() of
+        false ->
             {render_tpl(?TPL("admin_password.mustache"), Ctx0), Req, State};
-        _Password ->
+        true ->
             %% ?component=login_modal (atoms are fine)
             #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
             case Comp0 of
