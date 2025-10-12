@@ -33,7 +33,7 @@ ensure_group() {
 ensure_user() {
     if ! id -u "$USER" >/dev/null 2>&1; then
         log "Creating user: $USER"
-        adduser --system --ingroup "$GROUP" --home "$PREFIX" --no-create-home \
+        adduser --system --ingroup "$GROUP" --home "${PREFIX}/${APP}/" --no-create-home \
                 --shell /usr/sbin/nologin "$USER" >/dev/null
     fi
 }
