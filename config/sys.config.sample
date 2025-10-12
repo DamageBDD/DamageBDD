@@ -43,7 +43,7 @@
                                     },
                                     {debug, {fun logger_filters:level/2, {stop, neq, debug}}}
                                 ],
-                            config => #{file => "logs/debug.log"}
+                            config => #{file => "/var/log/damage/debug.log"}
                         }
                     },
                     {
@@ -54,20 +54,22 @@
                             single_line => false,
                             filters =>
                                 [{error, {fun logger_filters:level/2, {stop, neq, error}}}],
-                            config => #{file => "logs/error.log"},
+                            config => #{file => "/var/log/damage/error.log"},
+                            formatter => {pretty_logger, #{}}
+                        }
+                    },
+                    {
+                        handler,
+                        info,
+                        logger_std_h,
+                        #{
+                            single_line => false,
+                            filters =>
+                                [{error, {fun logger_filters:level/2, {stop, neq, info}}}],
+                            config => #{file => "/var/log/damage/info.log"},
                             formatter => {pretty_logger, #{}}
                         }
                     }
-                    %        {
-                    %            handler,
-                    %            info,
-                    %            logger_std_h,
-                    %            #{
-                    %                filters =>
-                    %                    [{info, {fun logger_filters:level/2, {stop, neq, info}}}],
-                    %                config => #{file => "logs/info.log"}
-                    %            }
-                    %        }
                 ]
             }
         ]
