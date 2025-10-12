@@ -205,12 +205,12 @@
 
                 #{name => "lightpanda", cmd => "bin/lightpanda-x86_64-linux --verbose"},
                 #{name => "chromedriver", cmd => "chromedriver --port=9515"},
-                #{name => "ipfs", cmd => "ipfs daemon"},
-                #{name => "epmd", cmd => "epmd"}
+                #{name => "ipfs", cmd => "/usr/local/bin/ipfs daemon"}
             ]},
-            {market_rules, #{
-                <<"DAMAGEUSDT">> => #{price_precision => 4, min_qty => 100.0}
-            }},
+            {market_rules, [
+                {"DAMAGEUSDT", [{price_precision, 4}, {min_qty, 100.0}]},
+                {"BTCUSDT", [{price_precision, 4}, {min_qty, 100.0}]}
+            ]},
             {
                 ssh, [
                     {user_dir, "/var/lib/damage/sshtest_user/.ssh"},
