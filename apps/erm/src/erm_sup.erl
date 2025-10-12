@@ -36,10 +36,7 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 init([]) ->
     SupFlags = {one_for_one, 10, 10},
     case catch wx:new() of
-        {undef, Error} ->
-            ?LOG_WARNING("Wx initialization failed  ~p~n", [Error]),
-            {ok, {SupFlags, []}};
-        _ ->
+        {wx_ref, _, wx, _} ->
             Env = wx:get_env(),
             %wx:set_env(Env),
             persistent_term:put(erm_wx_env, Env),
@@ -77,5 +74,8 @@ init([]) ->
                     PoolSpecs,
 
             ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
-            {ok, {SupFlags, PoolSpecs0}}
+            {ok, {SupFlags, PoolSpecs0}};
+        Error ->
+            ?LOG_WARNING("Wx initialization failed  ~p~n", [Error]),
+            {ok, {SupFlags, []}}
     end.
