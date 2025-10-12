@@ -100,7 +100,7 @@ escape_single_quotes(S) ->
 macos_elevate(Cmd) ->
     case os:find_executable("osascript") of
         false -> {error, no_osascript};
-        Osa ->
+        _Osa ->
             Apple = "osascript -e 'do shell script " ++
                     "\"" ++ escape_applescript(Cmd) ++ "\"" ++
                     " with administrator privileges'",
