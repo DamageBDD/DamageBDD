@@ -11,7 +11,28 @@
         {mod, {damage_app, []}},
         {
             applications,
-            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, bech32, erlexec]
+            [
+                kernel,
+                stdlib,
+                jsx,
+                poolboy,
+                crypto,
+                cowlib,
+                cowboy,
+                trails,
+                cowboy_swagger,
+                gproc,
+                bech32,
+                erlexec,
+                erlcron,
+                gun,
+                vanillae,
+                % ssh deps
+                crypto,
+                public_key,
+                asn1,
+                ssh
+            ]
         },
         {env, []},
         {modules, []},

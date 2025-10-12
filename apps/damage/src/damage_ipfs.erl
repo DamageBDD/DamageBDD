@@ -54,7 +54,7 @@ select_server(Servers, Length) ->
                 {ok, _VersionInfo} ->
                     Pid;
                 Err ->
-                    ?LOG_INFO(
+                    ?LOG_ERROR(
                         "Error connecting to ipfs node ~p, index ~p",
                         [Err, RandomIndex]
                     ),
@@ -63,7 +63,7 @@ select_server(Servers, Length) ->
                     select_server(RemainingServers, Length - 1)
             end;
         Err ->
-            ?LOG_INFO(
+            ?LOG_ERROR(
                 "Error connecting to ipfs node ~p, index ~p",
                 [Err, RandomIndex]
             ),
@@ -84,15 +84,12 @@ handle_call(
     #{connection := Connection} = State
 ) ->
     Resp = ipfs:add(Connection, {data, Data, FileName}, ?DEFAULT_IPFS_TIMEOUT),
-    ?LOG_INFO("added data to ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({pin, Hashes}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:pin(Connection, Hashes, ?DEFAULT_IPFS_TIMEOUT),
-    ?LOG_INFO("added data to ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({add, {file, File}}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:add(Connection, {file, File}, ?DEFAULT_IPFS_TIMEOUT),
-    ?LOG_INFO("added data to ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call(
     {add, {directory, DirectoryPath}},
@@ -105,15 +102,12 @@ handle_call(
     {reply, Resp, State};
 handle_call({get, Hash, FileName}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:get(Connection, Hash, FileName, ?DEFAULT_IPFS_TIMEOUT),
-    ?LOG_INFO("get data from ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({cat, Hash}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:cat(Connection, Hash, ?DEFAULT_IPFS_TIMEOUT),
-    ?LOG_INFO("cat data from ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call({ls, Hash}, _From, #{connection := Connection} = State) ->
     Resp = ipfs:ls(Connection, Hash, ?DEFAULT_IPFS_TIMEOUT),
-    ?LOG_INFO("get data from ipfs node ~p", [Resp]),
     {reply, Resp, State};
 handle_call(Request, _From, State) ->
     ?LOG_ERROR("unknown_request ~p", [Request]),

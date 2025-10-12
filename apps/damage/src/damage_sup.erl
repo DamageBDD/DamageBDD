@@ -5,6 +5,7 @@
 %%%-------------------------------------------------------------------
 
 -module(damage_sup).
+-behaviour(supervisor).
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
@@ -12,158 +13,131 @@
 
 -license("Apache-2.0").
 
--behaviour(supervisor).
-
 -include_lib("kernel/include/logger.hrl").
 
--export([start_link/0]).
--export([init/1]).
+-export([start_link/0, init/1]).
 
--define(SERVER, ?MODULE).
-
-start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
-
-%% sup_flags() = #{strategy => strategy(),         % optional
-%%                 intensity => non_neg_integer(), % optional
-%%                 period => pos_integer()}        % optional
-%% child_spec() = #{id => child_id(),       % mandatory
-%%                  start => mfargs(),      % mandatory
-%%                  restart => restart(),   % optional
-%%                  shutdown => shutdown(), % optional
-%%                  type => worker(),       % optional
-%%                  modules => modules()}   % optional
+start_link() ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, Pools} = application:get_env(damage, pools),
-    ?LOG_DEBUG("Starting workers ~p~n", [Pools]),
-    {ok, AbducoWorkers} = application:get_env(damage, abduco_workers),
-    ?LOG_DEBUG("Starting workers ~p~n", [Pools]),
-    SupFlags = {one_for_one, 10, 10},
+    %% Read configured pools (fallback to [])
+    Pools =
+        case application:get_env(damage, pools) of
+            {ok, V} when is_list(V) -> V;
+            _ -> []
+        end,
+    ?LOG_DEBUG("Configured pools: ~p", [Pools]),
+
+    AbducoWorkers =
+        case application:get_env(damage, abduco_workers) of
+            {ok, V0} when is_list(V0) -> V0;
+            _ -> []
+        end,
+
+    %% Build poolboy child specs *but do not start them until the end*
     PoolSpecs =
-        lists:map(
-            fun({Name, SizeArgs, WorkerArgs}) ->
-                PoolArgs = [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
-                poolboy:child_spec(Name, PoolArgs, WorkerArgs)
-            end,
-            Pools
-        ),
-    PoolSpecs0 =
         [
+            poolboy:child_spec(
+                Name,
+                [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
+                WorkerArgs
+            )
+         || {Name, SizeArgs, WorkerArgs} <- Pools
+        ],
+
+    %% Start order matters: put providers before consumers.
+    %% Strategy rest_for_one: if an early child dies, later (dependent) ones restart.
+    SupFlags = #{strategy => rest_for_one, intensity => 10, period => 10},
+
+    Core =
+        [
+            %% 1) prerequisites & caches
             #{
-                % mandatory
                 id => secrets,
-                % mandatory
                 start => {secrets, start_link, []},
-                % optional
                 restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
+                shutdown => 60000,
                 type => worker,
-                modules => []
+                modules => [secrets]
             },
             #{
-                id => abduco_services,
-                start =>
-                    {abduco_sup, start_link, [AbducoWorkers]},
-                restart => permanent,
-                shutdown => 10000,
-                type => supervisor,
-                modules => [abduco_sup]
-            },
-            #{
-                % mandatory
-                id => damage_ae,
-                % mandatory
-                start => {damage_ae, start_link, []},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => [damage_ae]
-            },
-            #{
-                % mandatory
-                id => damage_aemdw,
-                % mandatory
-                start => {damage_ae, start_link, []},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => [damage_aemdw]
-            },
-            #{
-                % mandatory
-                id => damage_ssh,
-                % mandatory
-                start => {damage_ssh, start_link, []},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => [damage_ssh]
-            },
-            #{
-                % mandatory
-                id => damage_nostr,
-                % mandatory
-                start => {damage_nostr, start_link, []},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => [damage_nostr]
-            },
-            #{
-                % mandatory
-                id => cln_websocket,
-                % mandatory
-                start => {cln, start_link, [[ws]]},
-                % optional
-                restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
-                type => worker,
-                modules => []
-            },
-            #{
-                % mandatory
                 id => identity_server,
-                % mandatory
                 start => {identity_server, start_link, []},
-                % optional
                 restart => permanent,
-                % optional
-                shutdown => 60,
-                % optional
+                shutdown => 60000,
                 type => worker,
-                modules => []
+                modules => [identity_server]
             },
             #{
                 id => lightning_auth_cache,
                 start => {lightning_auth_cache, start_link, []},
                 restart => permanent,
-                shutdown => 60,
+                shutdown => 60000,
                 type => worker,
-                modules => []
+                modules => [lightning_auth_cache]
             },
+
+            %% 2) services that others call during boot (MUST precede pools)
             #{
                 id => price_feed,
                 start => {price_feed, start_link, []},
                 restart => permanent,
-                shutdown => 60,
+                shutdown => 60000,
                 type => worker,
-                modules => []
+                modules => [price_feed]
+            },
+
+            %% 3) the rest of your workers that don't depend on pools
+            #{
+                id => cln_websocket,
+                start => {cln, start_link, [[ws]]},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [cln]
+            },
+            #{
+                id => damage_ssh,
+                start => {damage_ssh, start_link, []},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_ssh]
+            },
+            #{
+                id => damage_nostr,
+                start => {damage_nostr, start_link, []},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_nostr]
+            },
+            #{
+                id => damage_ae,
+                start => {damage_ae, start_link, []},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_ae]
+            },
+            #{
+                id => damage_aemdw,
+                start => {damage_aemdw, start_link, []},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_aemdw]
+            },
+
+            %% 4) supervisors that may create pools/workers relying on the above
+            #{
+                id => abduco_services,
+                start => {abduco_sup, start_link, [AbducoWorkers]},
+                restart => permanent,
+                shutdown => 10000,
+                type => supervisor,
+                modules => [abduco_sup]
             },
             #{
                 id => damage_mm_sup,
@@ -174,28 +148,12 @@ init([]) ->
                 modules => [damage_mm_sup]
             },
 
+            %% 5) listeners
             git_ssh_listener:child_spec()
-        ] ++ PoolSpecs,
-    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
-    {ok, {SupFlags, PoolSpecs0}}.
+        ],
 
-%%SupFlags = #{strategy => one_for_one, intensity => 0, period => 1},
-%%ChildSpecs =
-%%  [
-%%    % optional
-%%    #{
-%%      % mandatory
-%%      id => default,
-%%      % mandatory
-%%      start => {damage_app, execute, []},
-%%      % optional
-%%      restart => temporary,
-%%      % optional
-%%      shutdown => 60,
-%%      % optional
-%%      type => worker,
-%%      modules => [damage_app]
-%%    }
-%%  ],
-%%{ok, {SupFlags, ChildSpecs}}.
-%% internal functions
+    %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
+    AllChildren = Core ++ PoolSpecs,
+    ?LOG_DEBUG("Child specs (ordered): ~p", [AllChildren]),
+
+    {ok, {SupFlags, AllChildren}}.
