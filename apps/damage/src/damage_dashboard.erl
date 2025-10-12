@@ -44,10 +44,7 @@ to_html(Req, #{action := index} = State) ->
                     Comp = binary_to_atom(Comp0, utf8),
                     {render_component(Comp, Ctx0), Req, State}
             end
-    end;
-to_html(Req, #{action := install_windows} = State) ->
-    Ctx0 = base_context(Req),
-    {render_windows_install(Ctx0), Req, State}.
+    end.
 
 %% -------------------------- Context --------------------------
 base_context(Req) ->
