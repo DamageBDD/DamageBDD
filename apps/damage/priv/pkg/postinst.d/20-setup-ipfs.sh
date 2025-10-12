@@ -34,7 +34,7 @@ sudo bash install.sh
 
 # verify installation
 log "Installed version: $(ipfs --version)"
-ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8082
+/usr/local/bin/ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8082
 
 # cleanup
 cd ..
