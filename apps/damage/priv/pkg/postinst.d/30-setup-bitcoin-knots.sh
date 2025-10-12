@@ -2,12 +2,12 @@
 # postinst — install Bitcoin Knots from upstream tarball (aarch64)
 # This script avoids apt/dpkg calls and is safe inside dpkg maintainer context.
 set -eu
+ARCH="$(uname -m)"
 
 log(){ printf '[postinst:knots] %s\n' "$*"; }
 
 # ------- Config -------
-URL="https://bitcoinknots.org/files/29.x/29.2.knots20251010/bitcoin-29.2.knots20251010-aarch64-linux-gnu.tar.gz"
-ARCH_EXPECT="aarch64"
+URL="https://bitcoinknots.org/files/29.x/29.2.knots20251010/bitcoin-29.2.knots20251010-${ARCH}-linux-gnu.tar.gz"
 INSTALL_DIR="/usr/local/bin"
 # Optional checksum (export BITCOIN_KNOTS_SHA256=... before dpkg -i to enforce)
 SHA256_EXPECT="${BITCOIN_KNOTS_SHA256:-}"
@@ -44,14 +44,6 @@ need_cmd() { command -v "$1" >/dev/null 2>&1 || { log "ERROR: missing required: 
 need_cmd tar
 need_cmd uname
 
-ARCH="$(uname -m)"
-case "$ARCH" in
-  aarch64|arm64) : ;;
-  *)
-    log "WARNING: host arch '$ARCH' != expected '$ARCH_EXPECT'. Skipping Knots install."
-    exit 0
-    ;;
-esac
 
 # If the right version is already installed, bail out cleanly
 if command -v "${INSTALL_DIR}/bitcoind" >/dev/null 2>&1; then
