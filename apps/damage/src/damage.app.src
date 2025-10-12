@@ -28,7 +28,6 @@
                 gun,
                 vanillae,
                 % ssh deps
-                crypto,
                 public_key,
                 asn1,
                 ssh
