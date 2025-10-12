@@ -172,15 +172,11 @@ start_phase(setup_essentials, _StartType, []) ->
     ?LOG_INFO("setup_essentials: done."),
     ok;
 start_phase(os_tune, _StartType, []) ->
-    ?LOG_INFO("Tuning os."),
-    Ulimit = 100000,
-    case exec:run("ulimit -n " ++ integer_to_list(Ulimit), [sync]) of
-        {ok, _} ->
-            ?LOG_INFO("OS tuned ulimit to ~p", [Ulimit]);
-        Other ->
-            ?LOG_ERROR("OS tune failed ulimit to ~p ~p", [Ulimit, Other])
-    end,
+    ?LOG_INFO("Tuning OS."),
+    %% Uses DAMAGE_NOFILE env or defaults to 100000
+    ok = damage_sys_tune:tune(),
     ok.
+
 
 stop(_State) ->
     ok = cowboy:stop_listener(http),
