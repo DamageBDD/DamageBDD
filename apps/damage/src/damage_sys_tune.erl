@@ -106,7 +106,7 @@ raise_nofile(DesiredNOFILE) ->
                 {ok, _Out} ->
                     ?LOG_INFO("Raised RLIMIT_NOFILE for pid ~s to ~p.", [PidStr, DesiredNOFILE]),
                     ok;
-                {error, {_Status, Out}} ->
+                {error, [{exit_status, _Status}, {stderr, Out}]} ->
                     ?LOG_ERROR("Failed to raise RLIMIT_NOFILE via prlimit: ~s", [Out]),
                     {error, prlimit_failed}
             end
