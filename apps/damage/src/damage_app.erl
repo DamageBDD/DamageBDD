@@ -158,11 +158,11 @@ start_phase(setup_essentials, _StartType, []) ->
     ok = damage_utils:ensure_group("damage"),
     ok = damage_utils:ensure_user("damage", "damage"),
 
-    ok = damage_utils:ensure_dir("/var/lib/damagebdd/sshtest_user/.ssh/"),
-    ok = damage_utils:chown_r("/var/lib/damagebdd/", "damage:damage"),
+    ok = damage_utils:ensure_dir("/var/lib/damage/sshtest_user/.ssh/"),
+    ok = damage_utils:chown_r("/var/lib/damage/", "damage:damage"),
 
-    ok = damage_utils:ensure_dir("/var/lib/damagebdd/ssh_daemon/"),
-    ok = damage_utils:ensure_ssh_host_key("/var/lib/damagebdd/ssh_daemon/ssh_host_rsa_key"),
+    ok = damage_utils:ensure_dir("/var/lib/damage/ssh_daemon/"),
+    ok = damage_utils:ensure_ssh_host_key("/var/lib/damage/ssh_daemon/ssh_host_rsa_key"),
 
     ok = damage_ipfs:ensure_ipfs_asset(
         "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",

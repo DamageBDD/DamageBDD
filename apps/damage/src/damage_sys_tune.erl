@@ -108,6 +108,9 @@ raise_nofile(DesiredNOFILE) ->
                     ok;
                 {error, [{exit_status, _Status}, {stderr, Out}]} ->
                     ?LOG_ERROR("Failed to raise RLIMIT_NOFILE via prlimit: ~s", [Out]),
+                    {error, prlimit_failed};
+                {error, [{exit_status, _Status}, {stdout, Out}]} ->
+                    ?LOG_ERROR("Failed to raise RLIMIT_NOFILE via prlimit: ~s", [Out]),
                     {error, prlimit_failed}
             end
     end.
@@ -126,6 +129,25 @@ maybe_sysctl(Key, Val) ->
                     ?LOG_INFO("sysctl set ~s=~s", [Key, Val]),
                     ok;
                 {error, [{exit_status, _Status}, {stderr, Out}]} ->
+                    case catch damage_priv:permission_denied(Out) of
+                        true ->
+                            ?LOG_WARNING(
+                                "sysctl ~s=~s permission denied; attempting elevation…",
+                                [Key, Val]
+                            ),
+                            case damage_priv:sudo_ui(Flat) of
+                                {ok, _} ->
+                                    ?LOG_INFO("sysctl (elevated) set ~s=~s", [Key, Val]),
+                                    ok;
+                                Err ->
+                                    ?LOG_WARNING("Elevated sysctl failed: ~p", [Err]),
+                                    {error, sysctl_failed}
+                            end;
+                        _ ->
+                            ?LOG_WARNING("sysctl ~s=~s failed: ~s", [Key, Val, Out]),
+                            {error, sysctl_failed}
+                    end;
+                {error, [{exit_status, _Status}, {stdout, Out}]} ->
                     case catch damage_priv:permission_denied(Out) of
                         true ->
                             ?LOG_WARNING(
