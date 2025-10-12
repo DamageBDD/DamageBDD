@@ -63,11 +63,16 @@ stop(Name) ->
 init(#{name := Name, cmd := Cmd0} = Args) ->
     Env0 = maps:get(env, Args, #{}),
     Env = interpolate_env(Env0),
-    Cmd = Cmd0,
-    {ExecPid, OsPid} = start_child(Cmd, Env),
-    gproc:reg_other({n, l, {?MODULE, Name}}, self()),
     process_flag(trap_exit, true),
-    {ok, #state{name = Name, cmd = Cmd, env = Env, exec_pid = ExecPid, os_pid = OsPid}}.
+    Cmd = Cmd0,
+    case start_child(Cmd, Env) of
+        {undefined, undefined} ->
+            %% starts but marks dead
+            {ok, #state{name = Name, cmd = Cmd, env = Env}};
+        {ExecPid, OsPid} ->
+            gproc:reg_other({n, l, {?MODULE, Name}}, self()),
+            {ok, #state{name = Name, cmd = Cmd, env = Env, exec_pid = ExecPid, os_pid = OsPid}}
+    end.
 
 handle_call(ping, _From, S) ->
     {reply, pong, S};
@@ -146,13 +151,15 @@ get_run_user() ->
 start_child(Cmd, Env) ->
     RunUser = get_run_user(),
     Opts = [{user, RunUser}, link, monitor, {env, env_list(Env)}, {kill_timeout, 5}],
+
     case exec:run_link(Cmd, Opts) of
         {ok, ExecPid, OsPid} ->
             ?LOG_INFO("started ~p as user=~s os_pid=~p", [Cmd, RunUser, OsPid]),
             {ExecPid, OsPid};
         {error, Reason} ->
             ?LOG_ERROR("failed starting ~p as user=~s => ~p", [Cmd, RunUser, Reason]),
-            exit({spawn_failed, Reason})
+            %% don't crash the worker
+            {undefined, undefined}
     end.
 
 is_pid_alive(undefined) -> false;

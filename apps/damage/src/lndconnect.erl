@@ -189,9 +189,14 @@ handle_event(
     ok.
 
 terminate(Reason, State) ->
-    gun:shutdown(State#state.conn_pid),
+    maybe_close_gun(State#state.conn_pid),
     erlang:cancel_timer(State#state.heartbeat_timer),
     ?LOG_ERROR("Terminating lndconnect ~p", [Reason]),
+    ok.
+maybe_close_gun(Conn) when is_pid(Conn) ->
+    catch gun:close(Conn),
+    ok;
+maybe_close_gun(_) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.

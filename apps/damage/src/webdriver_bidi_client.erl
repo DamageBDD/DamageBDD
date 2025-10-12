@@ -99,7 +99,12 @@ handle_info(_Info, State) ->
 
 terminate(_Reason, #state{conn = Conn}) ->
     %% Close the Gun connection
-    gun:close(Conn),
+    maybe_close_gun(Conn),
+    ok.
+maybe_close_gun(Conn) when is_pid(Conn) ->
+    catch gun:close(Conn),
+    ok;
+maybe_close_gun(_) ->
     ok.
 
 %% Handle code changes (not needed for now)

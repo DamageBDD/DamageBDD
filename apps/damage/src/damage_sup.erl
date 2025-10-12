@@ -48,10 +48,19 @@ init([]) ->
 
     %% Start order matters: put providers before consumers.
     %% Strategy rest_for_one: if an early child dies, later (dependent) ones restart.
-    SupFlags = #{strategy => rest_for_one, intensity => 10, period => 10},
+    SupFlags = {one_for_one, 10, 10},
+    %SupFlags = #{strategy => rest_for_one, intensity => 10, period => 10},
 
     Core =
         [
+            #{
+                id => abduco_services,
+                start => {abduco_sup, start_link, [AbducoWorkers]},
+                restart => permanent,
+                shutdown => 10000,
+                type => supervisor,
+                modules => [abduco_sup]
+            },
             %% 1) prerequisites & caches
             #{
                 id => secrets,
@@ -131,14 +140,6 @@ init([]) ->
             },
 
             %% 4) supervisors that may create pools/workers relying on the above
-            #{
-                id => abduco_services,
-                start => {abduco_sup, start_link, [AbducoWorkers]},
-                restart => permanent,
-                shutdown => 10000,
-                type => supervisor,
-                modules => [abduco_sup]
-            },
             #{
                 id => damage_mm_sup,
                 start => {damage_mm_sup, start_link, []},

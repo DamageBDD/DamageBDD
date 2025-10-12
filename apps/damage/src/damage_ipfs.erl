@@ -74,6 +74,7 @@ select_server(Servers, Length) ->
 
 init(Members) ->
     ?LOG_INFO("initializing ipfs cluster ~p", [Members]),
+    {ok, _} = application:ensure_all_started(gun),
     Connection =
         select_server([#{ip => Host, port => Port} || {Host, Port} <- Members]),
     {ok, #{connection => Connection}}.

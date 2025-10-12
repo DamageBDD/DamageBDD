@@ -384,7 +384,12 @@ handle_info(Any, State) ->
 
 terminate(Reason, State) ->
     ?LOG_INFO("Nostr WebSocket connection terminating~p", [Reason]),
-    gun:shutdown(State#state.conn_pid),
+    maybe_close_gun(State#state.conn_pid),
+    ok.
+maybe_close_gun(Conn) when is_pid(Conn) ->
+    catch gun:close(Conn),
+    ok;
+maybe_close_gun(_) ->
     ok.
 
 %% No code changes expected in this example
