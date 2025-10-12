@@ -307,12 +307,12 @@ encrypt_store(Name, Secret) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
     store_secret(Name, encrypt_secret(Secret, PrivateKey)).
 retrieve_decrypt(Name) ->
-    case secrets:node_keypair() of
+    case catch secrets:node_keypair() of
         #{public_key := _AeAccount, private_key := PrivateKey} ->
-            case retrieve_secret(Name) of
+            case catch retrieve_secret(Name) of
                 [{Name, {IV, CipherText, Tag}}] ->
                     {ok, decrypt_secret({IV, CipherText, Tag}, PrivateKey)};
-                [] ->
+                _ ->
                     error
             end;
         _ ->
