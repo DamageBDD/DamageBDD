@@ -202,13 +202,13 @@
                 #{
                     name => "lightningd",
                     cmd =>
-                        "/usr/sbin/lightningd"
+                        ["/usr/sbin/lightningd"]
                 },
 
-                #{name => "lightpanda", cmd => "bin/lightpanda-x86_64-linux --verbose"},
-                #{name => "chromedriver", cmd => "chromedriver --port=9515"},
-                #{name => "bitcoind", cmd => "/usr/local/bin/bitcoind"},
-                #{name => "ipfs", cmd => "/usr/local/bin/ipfs daemon"}
+                #{name => "lightpanda", cmd => ["bin/lightpanda-x86_64-linux", "--verbose"]},
+                #{name => "chromedriver", cmd => ["chromedriver", "--port=9515"]},
+                #{name => "bitcoind", cmd => ["/usr/local/bin/bitcoind"]},
+                #{name => "ipfs", cmd => ["/usr/local/bin/ipfs", "daemon"]}
             ]},
             {market_rules, [
                 {"DAMAGEUSDT", [{price_precision, 4}, {min_qty, 100.0}]},

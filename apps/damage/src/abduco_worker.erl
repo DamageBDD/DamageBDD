@@ -60,11 +60,10 @@ stop(Name) ->
 %%% gen_server
 %%% =========================
 
-init(#{name := Name, cmd := Cmd0} = Args) ->
+init(#{name := Name, cmd := Cmd} = Args) ->
     Env0 = maps:get(env, Args, #{}),
     Env = interpolate_env(Env0),
     process_flag(trap_exit, true),
-    Cmd = Cmd0,
     case start_child(Cmd, Env) of
         {undefined, undefined} ->
             %% starts but marks dead
