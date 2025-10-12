@@ -216,7 +216,7 @@ keypair(Path) ->
             end
     end.
 node_keypair() ->
-    Path = application:get_env(damage, keystore, "/var/lib/damage.key"),
+    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     ?LOG_INFO("Damage key path ~p",[Path]),
     keypair(Path).
 %% Generates a random salt
