@@ -230,8 +230,8 @@ first_defined([H | _]) -> H.
 
 node_name(Meta) ->
     case maps:get(node, Meta, undefined) of
-        N when is_atom(N) -> N;
-        _ -> node()
+        undefined -> node();
+        N when is_atom(N) -> N
     end.
 
 short_id(undefined) ->
