@@ -264,18 +264,28 @@ load_context(AeAccount) ->
 
 get_global_template_context(Context) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
-    #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
-    maps:merge(
+
+    Context0 = maps:merge(
         #{
             api_url => DamageApi,
             formatter_state => #damage_state{},
             headers => [],
             token_contract => list_to_binary(?DAMAGE_TOKEN_CONTRACT),
-            node_public_key => list_to_binary(NodePublicKey),
             timestamp => date_util:now_to_seconds_hires(os:timestamp())
         },
         Context
-    ).
+    ),
+    case secrets:node_keypair() of
+        #{public_key := NodePublicKey, private_key := _PrivateKey} ->
+            maps:merge(
+                #{
+                    node_public_key => list_to_binary(NodePublicKey)
+                },
+                Context0
+            );
+        _ ->
+            Context0
+    end.
 
 get_context(AeAccount) ->
     Pid = get_context_proc(AeAccount),

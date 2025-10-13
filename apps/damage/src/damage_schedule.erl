@@ -291,30 +291,35 @@ load_all_schedules() ->
     ].
 
 list_all_schedules() ->
-    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
-    case
-        catch damage_ae:contract_call(
-            KeyPair,
-            ?SCHEDULES_CONTRACT,
-            "contracts/schedules.aes",
-            "get_all_schedules",
-            []
-        )
-    of
-        {ok, <<"ONLY_OWNER_CALL_ALLOWED">>} ->
-            ?LOG_ERROR("!!! schedules loading failed ~p Reason: ONLY_OWNER_CALL_ALLOWED", [
-                ?SCHEDULES_CONTRACT
-            ]),
-            [];
-        #{decodedResult := Results} ->
-            Decrypted = decrypt_schedules(Results),
-            ?LOG_DEBUG("schedules ~p", [Decrypted]),
-            Decrypted;
-        #{status := <<"fail">>} ->
-            ?LOG_ERROR("schedules loading failed ~p", [?SCHEDULES_CONTRACT]),
-            [];
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair ->
+            case
+                catch damage_ae:contract_call(
+                    KeyPair,
+                    ?SCHEDULES_CONTRACT,
+                    "contracts/schedules.aes",
+                    "get_all_schedules",
+                    []
+                )
+            of
+                {ok, <<"ONLY_OWNER_CALL_ALLOWED">>} ->
+                    ?LOG_ERROR("!!! schedules loading failed ~p Reason: ONLY_OWNER_CALL_ALLOWED", [
+                        ?SCHEDULES_CONTRACT
+                    ]),
+                    [];
+                #{decodedResult := Results} ->
+                    Decrypted = decrypt_schedules(Results),
+                    ?LOG_DEBUG("schedules ~p", [Decrypted]),
+                    Decrypted;
+                #{status := <<"fail">>} ->
+                    ?LOG_ERROR("schedules loading failed ~p", [?SCHEDULES_CONTRACT]),
+                    [];
+                Error ->
+                    ?LOG_ERROR("schedules loading failed ~p", [Error]),
+                    []
+            end;
         Error ->
-            ?LOG_ERROR("schedules loading failed ~p", [Error]),
+            ?LOG_WARNING("Node keypair not set or node password not set.",[Error]),
             []
     end.
 
