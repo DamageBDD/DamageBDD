@@ -73,9 +73,9 @@ get_node_password_cached(State) ->
         undefined ->
             case os:getenv("DAMAGE_SECRET_KEY") of
                 false ->
-                    case erm:ask_password(Prompt) of
+                    case erm_askpass:ask_password(Prompt) of
                         undefined ->
-                            throw(error);
+                            error;
                         NodePassword ->
                             {NodePassword, maps:put(node_password, NodePassword, State)}
                     end;
@@ -183,8 +183,9 @@ keypair(Path) ->
             case get_node_password() of
                 undefined ->
                     ?LOG_WARNING("Failed get password for encrypting keypair ~p", [Path]),
-                    clear_cache(),
-                    keypair(Path);
+                    %clear_cache(),
+                    %keypair(Path);
+                    error;
                 Password ->
                     EncData = secrets:encrypt(
                         Password,
@@ -380,7 +381,7 @@ import_secret_key(PublicKey, PrivateKeyHex) ->
     PrivateKey = binary:decode_hex(PrivateKeyHex),
     Keypair = #{private_key => PrivateKey, public_key => PublicKey},
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case erm:ask_password(Prompt) of
+    case erm_askpass:ask_password(Prompt) of
         undefined ->
             ?LOG_WARNING("Failed to get node_password", []),
             error;
@@ -409,7 +410,7 @@ migrate() ->
     Path = application:get_env(damage, keystore, "damage.key"),
     Keypair = binary_to_term(Data),
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case erm:ask_password(Prompt) of
+    case erm_askpass:ask_password(Prompt) of
         undefined ->
             ?LOG_WARNING("Failed to get node_password", []),
             error;
