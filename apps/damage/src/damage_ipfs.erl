@@ -23,6 +23,7 @@
         get/2,
         cat/1,
         ls/1,
+        fetch_to/2,
         ensure_ipfs_asset/2
     ]
 ).
@@ -179,6 +180,9 @@ cat(Hash) ->
         fun(Worker) -> gen_server:call(Worker, {cat, Hash}, ?DEFAULT_IPFS_TIMEOUT) end
     ).
 
+fetch_to(Hash, OutPath) ->
+    ok = damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
+    get(Hash, OutPath).
 test() ->
     ?LOG_INFO("ipfs add directory", []),
     {ok, HashList} = damage_ipfs:add({directory, "features"}),

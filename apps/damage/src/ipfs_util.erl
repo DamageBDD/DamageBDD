@@ -6,6 +6,11 @@
 %%   set_gateway_local_8082/0,1
 
 -module(ipfs_util).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -62,7 +67,7 @@ ensure_ipfs_repo(Opts0) when is_map(Opts0) ->
 %% @doc Set an IPFS config key (string value).
 set_config() ->
     {ok, IpfsConfig} = application:get_env(damage, ipfs),
-    [set_config(K, V)||{K, V} <- IpfsConfig].
+    [set_config(K, V) || {K, V} <- IpfsConfig].
 set_config(Key0, Val0) ->
     set_config(Key0, Val0, #{}).
 
@@ -79,13 +84,12 @@ set_config(Key0, Val0, Opts0) when is_map(Opts0) ->
         {_, false} ->
             {error, ipfs_repo_missing};
         {true, true} ->
-            Cmd = [IPFS, "config", Key,Val],
+            Cmd = [IPFS, "config", Key, Val],
             case run_env(Path, Cmd) of
                 {ok, _Out} -> {ok, set};
                 {error, Reason} -> {error, {nonzero_exit, Reason}}
             end
     end.
-
 
 %% -----------------------------
 %% Internals
@@ -141,4 +145,3 @@ run_env(Path, Cmd) ->
 to_list(B) when is_binary(B) -> binary_to_list(B);
 to_list(A) when is_atom(A) -> atom_to_list(A);
 to_list(L) when is_list(L) -> L.
-
