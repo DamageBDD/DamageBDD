@@ -127,32 +127,44 @@ handle_call({set_node_password, Pw}, _From, State0) ->
 handle_call(clear_cache, _From, State) ->
     {reply, ok, maps:remove(node_password, State)};
 handle_call(get_node_password, _From, State0) ->
-    {NodePassword, State} = get_node_password_cached(State0),
-    {reply, NodePassword, State};
+    case get_node_password_cached(State0) of
+        error ->
+            {reply, error, State0};
+        {NodePassword, State} ->
+            {reply, NodePassword, State}
+    end;
 handle_call({encrypt, Key, Data}, _From, State0) ->
-    {NodePassword, State} = get_node_password_cached(State0),
-    case maps:get(Key, State, undefined) of
-        undefined ->
-            EncData = secrets:encrypt(
-                list_to_binary(NodePassword), term_to_binary(Data)
-            ),
-            {reply, {ok, term_to_binary(EncData)}, maps:put(Key, Data, State)};
-        Password ->
-            Password
+    case get_node_password_cached(State0) of
+        error ->
+            {reply, error, State0};
+        {NodePassword, State} ->
+            case maps:get(Key, State, undefined) of
+                undefined ->
+                    EncData = secrets:encrypt(
+                        list_to_binary(NodePassword), term_to_binary(Data)
+                    ),
+                    {reply, {ok, term_to_binary(EncData)}, maps:put(Key, Data, State)};
+                Password ->
+                    Password
+            end
     end;
 handle_call({decrypt, Key, EncData}, _From, State0) ->
-    {NodePassword, State} = get_node_password_cached(State0),
-    case maps:get(Key, State, undefined) of
-        undefined ->
-            case secrets:decrypt(list_to_binary(NodePassword), binary_to_term(EncData)) of
-                Data when is_binary(Data) ->
-                    DecryptedData = binary_to_term(Data),
-                    {reply, DecryptedData, maps:put(Key, DecryptedData, State)};
-                _ ->
-                    {reply, error, State}
-            end;
-        Pass ->
-            Pass
+    case get_node_password_cached(State0) of
+        error ->
+            {reply, error, State0};
+        {NodePassword, State} ->
+            case maps:get(Key, State, undefined) of
+                undefined ->
+                    case secrets:decrypt(list_to_binary(NodePassword), binary_to_term(EncData)) of
+                        Data when is_binary(Data) ->
+                            DecryptedData = binary_to_term(Data),
+                            {reply, DecryptedData, maps:put(Key, DecryptedData, State)};
+                        _ ->
+                            {reply, error, State}
+                    end;
+                Pass ->
+                    Pass
+            end
     end;
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
@@ -184,26 +196,20 @@ keypair(Path) ->
             ?LOG_INFO(Path ++ " not found ... creating.", []),
             Data = make_keypair(),
             case get_node_password() of
-                undefined ->
-                    ?LOG_WARNING("Failed get password for encrypting keypair ~p", [Path]),
-                    %clear_cache(),
-                    %keypair(Path);
-                    error;
-                Password ->
+                Password when is_binary(Password) ->
                     EncData = secrets:encrypt(
                         Password,
                         term_to_binary(Data)
                     ),
                     ok = file:write_file(Path, term_to_binary(EncData)),
-                    Data
+                    Data;
+                _ ->
+                    ?LOG_WARNING("Failed get password for encrypting keypair ~p", [Path]),
+                    error
             end;
         {ok, EncDataBin} ->
             case get_node_password() of
-                undefined ->
-                    ?LOG_WARNING("Failed get password for decrypting keypair ~p", [Path]),
-                    clear_cache(),
-                    keypair(Path);
-                Password ->
+                Password when is_binary(Password) ->
                     case
                         secrets:decrypt(
                             Password,
@@ -216,7 +222,10 @@ keypair(Path) ->
                             keypair(Path);
                         Data ->
                             binary_to_term(Data)
-                    end
+                    end;
+                _ ->
+                    ?LOG_WARNING("Failed get password for decrypting keypair ~p", [Path]),
+                    error
             end
     end.
 node_keypair() ->
