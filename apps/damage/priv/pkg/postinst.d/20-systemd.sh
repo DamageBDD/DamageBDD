@@ -59,6 +59,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=damage
+Environment=SHELL=sh
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=${INSTALL_DIR}/bin/damage foreground
 Restart=on-failure
