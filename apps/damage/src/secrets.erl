@@ -73,11 +73,14 @@ get_node_password_cached(State) ->
         undefined ->
             case os:getenv("DAMAGE_SECRET_KEY") of
                 false ->
-                    case erm_askpass:ask_password(Prompt) of
-                        undefined ->
-                            error;
-                        NodePassword ->
-                            {NodePassword, maps:put(node_password, NodePassword, State)}
+                    case catch erm_askpass:ask_password(Prompt) of
+                        NodePassword when is_binary(NodePassword) ->
+                            {NodePassword, maps:put(node_password, NodePassword, State)};
+                        {ask_password_failed, Class, Reason} ->
+                            ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [
+                                Class, Reason
+                            ]),
+                            error
                     end;
                 NodePassword ->
                     {NodePassword, State}
@@ -381,17 +384,17 @@ import_secret_key(PublicKey, PrivateKeyHex) ->
     PrivateKey = binary:decode_hex(PrivateKeyHex),
     Keypair = #{private_key => PrivateKey, public_key => PublicKey},
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case erm_askpass:ask_password(Prompt) of
-        undefined ->
-            ?LOG_WARNING("Failed to get node_password", []),
-            error;
-        Password ->
+    case catch erm_askpass:ask_password(Prompt) of
+        Password when is_binary(Password) ->
             EncData = secrets:encrypt(
                 Password,
                 term_to_binary(Keypair)
             ),
             ok = file:write_file(Path, term_to_binary(EncData)),
-            Keypair
+            Keypair;
+        {ask_password_failed, Class, Reason} ->
+            ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
+            error
     end.
 
 test() ->
@@ -410,17 +413,17 @@ migrate() ->
     Path = application:get_env(damage, keystore, "damage.key"),
     Keypair = binary_to_term(Data),
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case erm_askpass:ask_password(Prompt) of
-        undefined ->
-            ?LOG_WARNING("Failed to get node_password", []),
-            error;
-        Password ->
+    case catch erm_askpass:ask_password(Prompt) of
+        Password when is_binary(Password) ->
             EncData = secrets:encrypt(
                 Password,
                 term_to_binary(Keypair)
             ),
             ok = file:write_file(Path, term_to_binary(EncData)),
-            Keypair
+            Keypair;
+        {ask_password_failed, Class, Reason} ->
+            ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
+            error
     end.
 
 list_secrets() ->
