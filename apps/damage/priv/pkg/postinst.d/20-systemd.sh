@@ -2,11 +2,11 @@
 set -e
 set -x
 
-SERVICE_NAME="$PKG_NAME"
-INSTALL_DIR="${PREFIX}/{{app}}/"
+SERVICE_NAME="${APP}"
+INSTALL_DIR="${PREFIX}/${APP}/"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-echo "[postinst] Installing systemd service for $SERVICE_NAME..."
+echo "[postinst] Installing systemd service for $SERVICE_NAME."
 
 # Create the service unit file
 cat > "$SERVICE_FILE" <<EOF
