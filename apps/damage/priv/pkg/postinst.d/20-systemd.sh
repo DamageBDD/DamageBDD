@@ -17,6 +17,7 @@ After=network.target
 [Service]
 Type=simple
 User=damage
+Environment=SHELL=/usr/bin/sh
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=${INSTALL_DIR}/bin/damage foreground
 Restart=on-failure
