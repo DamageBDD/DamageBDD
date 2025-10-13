@@ -16,11 +16,13 @@
     % #{repo_dir := "...", profile => "prod"|"dev"|..., rebar3 => "/path/to/rebar3"}
     create_release/1,
     % creates and ipfs-adds; returns #{tar_path := Path, cid := Cid}
+    create_release_and_publish/0,
     create_release_and_publish/1,
 
     %% --- Existing upgrade API ---
     upgrade_from_ipfs/1,
-    upgrade_from_ipfs/2
+    upgrade_from_ipfs/2,
+    release_version/1
 ]).
 
 %%%==================================================================
@@ -60,10 +62,18 @@ create_release(Opts0) ->
     end.
 
 %% Create and publish to IPFS. Returns both tar path and CID.
+create_release_and_publish() ->
+    Repo = application:get_env(damage, app_dir, "/opt/workspace/"),
+    create_release_and_publish(#{
+        % required
+        repo_dir => Repo,
+        % default "prod"
+        profile => "prod"
+    }).
 create_release_and_publish(Opts0) ->
     case create_release(Opts0) of
         {ok, Tar} ->
-            case publish_to_ipfs(Tar) of
+            case damage_ipfs:add({file, list_to_binary(Tar)}) of
                 {ok, Cid} ->
                     ?LOG_INFO("Published to IPFS CID=~s", [Cid]),
                     {ok, #{tar_path => Tar, cid => Cid}};
@@ -101,35 +111,22 @@ find_rebar3() ->
         Path -> Path
     end.
 
+%% @doc Get the release version from _build/<Profile>/rel/<App>/releases/RELEASES
+-spec release_version(
+    Profile :: string() | atom()
+) ->
+    {ok, string()} | {error, term()}.
+release_version(Profile0) ->
+    Profile = to_list(Profile0),
+    File = filename:join(["_build", Profile, "rel", "damage", "releases", "RELEASES"]),
+    case file:consult(File) of
+        {ok, [[{release, "damage", Version, _Erts, _Deps, permanent}]]} ->
+            "damage-" ++ Version ++ ".tar.gz";
+        Error ->
+            Error
+    end.
 find_tarball(Profile, RepoDir) ->
-    RelRoot = filename:join([RepoDir, "_build", Profile, "rel"]),
-    %% find */*.tar.gz under rel root and pick newest
-    Dirs =
-        case file:list_dir(RelRoot) of
-            {ok, L} -> [filename:join(RelRoot, D) || D <- L];
-            _ -> []
-        end,
-    TarPaths = lists:flatten([find_tars_in_dir(D) || D <- Dirs]),
-    case TarPaths of
-        [] -> error({tar_not_found, RelRoot});
-        _ -> latest_by_mtime(TarPaths)
-    end.
-
-find_tars_in_dir(Dir) ->
-    case file:list_dir(Dir) of
-        {ok, Files} ->
-            [
-                filename:join(Dir, F)
-             || F <- Files, lists:suffix(".tar.gz", F)
-            ];
-        _ ->
-            []
-    end.
-
-latest_by_mtime(Paths) ->
-    {Path, _Time} =
-        lists:max([{P, filelib:last_modified(P)} || P <- Paths]),
-    Path.
+    filename:join([RepoDir, "_build", Profile, "rel", "damage", release_version(Profile)]).
 
 %%%==================================================================
 %%% INTERNALS: IPFS FETCH/PUBLISH
@@ -151,10 +148,6 @@ ensure_tar_present(CID0, #{out_name := OutPath}) ->
         false ->
             damage_ipfs:ensure_ipfs_asset(CID, OutPath)
     end.
-
-publish_to_ipfs(TarPath) ->
-    %% Prefer damage_ipfs first; fallback to `ipfs add -Q`
-    damage_ipfs:add_file(TarPath).
 
 %%%==================================================================
 %%% INTERNALS: VERIFY & UPGRADE
@@ -179,7 +172,9 @@ maybe_verify(Path, ShaHex) ->
             error({checksum_read_failed, Err})
     end.
 
-do_upgrade(TarPath) ->
+do_upgrade(TarPath0) ->
+    [TarPath, _] = string:split(TarPath0, "."),
+    ?LOG_INFO("Tarpath ~p", [TarPath]),
     case release_handler:unpack_release(TarPath) of
         {ok, Vsn} ->
             case release_handler:install_release(Vsn) of
