@@ -76,7 +76,7 @@ get_node_password_cached(State) ->
                     case catch erm_askpass:ask_password(Prompt) of
                         NodePassword when is_binary(NodePassword) ->
                             {NodePassword, maps:put(node_password, NodePassword, State)};
-                        {ask_password_failed, Class, Reason} ->
+                        {'EXIT',{ask_password_failed, Class, Reason}} ->
                             ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [
                                 Class, Reason
                             ]),
@@ -392,7 +392,7 @@ import_secret_key(PublicKey, PrivateKeyHex) ->
             ),
             ok = file:write_file(Path, term_to_binary(EncData)),
             Keypair;
-        {ask_password_failed, Class, Reason} ->
+        {'EXIT',{ask_password_failed, Class, Reason}} ->
             ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
             error
     end.
@@ -421,7 +421,7 @@ migrate() ->
             ),
             ok = file:write_file(Path, term_to_binary(EncData)),
             Keypair;
-        {ask_password_failed, Class, Reason} ->
+        {'EXIT',{ask_password_failed, Class, Reason}} ->
             ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
             error
     end.
