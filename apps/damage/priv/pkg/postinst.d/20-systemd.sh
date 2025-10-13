@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+set -x
 
 SERVICE_NAME="$PKG_NAME"
 INSTALL_DIR="${PREFIX}/{{app}}/"

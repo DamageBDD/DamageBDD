@@ -84,16 +84,5 @@ if [ -x "$BIN" ]; then
 fi
 
 
-# If a systemd unit was installed, reload + (optional) enable/start
-if command -v systemctl >/dev/null 2>&1; then
-    if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ] || \
-           [ -f "/lib/systemd/system/${SERVICE_NAME}.service" ]; then
-        systemctl daemon-reload || true
-        if [ "$AUTO_START" = "true" ]; then
-            systemctl enable "${SERVICE_NAME}.service" || true
-            systemctl start  "${SERVICE_NAME}.service" || true
-        fi
-    fi
-fi
 
 exit 0
