@@ -28,7 +28,7 @@
 %%%==================================================================
 
 create_release() ->
-    Repo = application:get_env(damage, app_dir, "/opt/workspace/DamageBDD"),
+    Repo = application:get_env(damage, app_dir, "/opt/workspace/"),
 
     create_release(#{
         % required
