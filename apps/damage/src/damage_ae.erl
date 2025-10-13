@@ -1268,7 +1268,7 @@ node_balance() ->
 
 node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
-    Balance = balance(AeAccount),
+    Balance = balance(list_to_binary(AeAccount)),
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
 
 deploy_account_registry(AccountKeypair) ->
