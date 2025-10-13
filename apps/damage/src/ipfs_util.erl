@@ -68,7 +68,7 @@ set_config(Key0, Val0) ->
 
 %% Opts same as ensure_ipfs_repo/1 (path/ipfs_cmd).
 set_config(Key0, Val0, Opts0) when is_map(Opts0) ->
-    IPFS = maps:get(ipfs_cmd, Opts0, "ipfs"),
+    IPFS = maps:get(ipfs_cmd, Opts0, os:find_executable("ipfs")),
     Path = resolve_path(maps:get(path, Opts0, undefined)),
     Key = to_list(Key0),
     Val = to_list(Val0),
@@ -79,7 +79,7 @@ set_config(Key0, Val0, Opts0) when is_map(Opts0) ->
         {_, false} ->
             {error, ipfs_repo_missing};
         {true, true} ->
-            Cmd = [IPFS, " config ", sh_quote(Key), " ", sh_quote(Val)],
+            Cmd = [IPFS, "config", Key,Val],
             case run_env(Path, Cmd) of
                 {ok, _Out} -> {ok, set};
                 {error, Reason} -> {error, {nonzero_exit, Reason}}
@@ -119,21 +119,18 @@ ipfs_repo_exists(Path) ->
     filelib:is_file(filename:join(Path, "config")) andalso
         filelib:is_dir(filename:join(Path, "blocks")).
 
-%% Build `ipfs init` with profiles (no shell quoting; args are plain).
+%% Build `ipfs init` with profiles
 build_init_cmd(IPFS, Profiles) ->
     %% "ipfs init --profile p1 --profile p2"
-    ProfilesArg =
-        case Profiles of
-            [] ->
-                "";
-            Ps when is_list(Ps) ->
-                lists:flatten([lists:concat([" --profile ", sh_quote(to_list(P))]) || P <- Ps])
-        end,
-    [IPFS, " init", ProfilesArg].
+    case Profiles of
+        [] ->
+            [IPFS, "init"];
+        Ps when is_list(Ps) ->
+            [IPFS, "init", lists:flatten([lists:concat(["--profile", to_list(P)]) || P <- Ps])]
+    end.
 
 %% Run a command with IPFS_PATH in env using erlexec; capture exit + output.
-run_env(Path, CmdParts) ->
-    Cmd = iolist_to_binary(CmdParts),
+run_env(Path, Cmd) ->
     Env = [{"IPFS_PATH", Path}],
     case exec:run(Cmd, [sync, stdout, stderr, {env, Env}]) of
         {ok, _Pid, Out} -> {ok, Out};
@@ -145,18 +142,3 @@ to_list(B) when is_binary(B) -> binary_to_list(B);
 to_list(A) when is_atom(A) -> atom_to_list(A);
 to_list(L) when is_list(L) -> L.
 
-%% Simple shell-safe quoting for keys/values
-sh_quote(S) when is_list(S) ->
-    [
-        $',
-        lists:map(
-            fun
-                ($') -> [$\\, $'];
-                (C) -> C
-            end,
-            S
-        ),
-        $'
-    ];
-sh_quote(B) when is_binary(B) ->
-    sh_quote(binary_to_list(B)).
