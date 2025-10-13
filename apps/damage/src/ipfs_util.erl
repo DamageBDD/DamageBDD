@@ -29,7 +29,7 @@ ensure_ipfs_repo() ->
 %%     ipfs_cmd => "ipfs",
 %%     profiles => ["server"] }.
 ensure_ipfs_repo(Opts0) when is_map(Opts0) ->
-    IPFS = maps:get(ipfs_cmd, Opts0, "ipfs"),
+    IPFS = maps:get(ipfs_cmd, Opts0, os:find_executable("ipfs")),
     Path = resolve_path(maps:get(path, Opts0, undefined)),
 
     %% Check binary availability via your helper
