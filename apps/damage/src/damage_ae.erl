@@ -64,7 +64,8 @@
     contract_call_payfor_user/5,
     contract_call_payfor_tx/1,
     contract_call_prepare_tx/5,
-    deploy_account_registry/1
+    deploy_account_registry/1,
+    deploy_node_registry/0
 ]).
 -export([
     balance/1,
@@ -1272,6 +1273,12 @@ node_damage_balance() ->
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
 
 deploy_account_registry(AccountKeypair) ->
+    #{"contract_id" := ContractId} = contract_deploy_for(
+        AccountKeypair, "contracts/AccountRegistry.aes", []
+    ),
+    ContractId.
+deploy_node_registry() ->
+    AccountKeypair = secrets:node_keypair(),
     #{"contract_id" := ContractId} = contract_deploy_for(
         AccountKeypair, "contracts/AccountRegistry.aes", []
     ),
