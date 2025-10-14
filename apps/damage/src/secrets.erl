@@ -41,7 +41,7 @@
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
--export([has_node_password/0, set_node_password/1]).
+-export([has_node_password/0, set_node_password/1, has_node_keypair/0]).
 
 -define(ASKPASS_TIMEOUT, 60000).
 -define(DETS_FILE, "/var/lib/damage/damage.dets").
@@ -68,20 +68,21 @@ get_node_password() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, get_node_password, ?ASKPASS_TIMEOUT).
 get_node_password_cached(State) ->
-    Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
     case maps:get(node_password, State, undefined) of
         undefined ->
             case os:getenv("DAMAGE_SECRET_KEY") of
                 false ->
-                    case catch erm_askpass:ask_password(Prompt) of
-                        NodePassword when is_binary(NodePassword) ->
-                            {NodePassword, maps:put(node_password, NodePassword, State)};
-                        {'EXIT', {{ask_password_failed, Class, Reason}, _Stack}} ->
-                            ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [
-                                Class, Reason
-                            ]),
-                            error
-                    end;
+                    undefined;
+                        %Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
+                    %case catch erm_askpass:ask_password(Prompt) of
+                    %    NodePassword when is_binary(NodePassword) ->
+                    %        {NodePassword, maps:put(node_password, NodePassword, State)};
+                    %    {'EXIT', {{ask_password_failed, Class, Reason}, _Stack}} ->
+                    %        ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [
+                    %            Class, Reason
+                    %        ]),
+                    %        error
+                    %end;
                 NodePassword ->
                     {NodePassword, State}
             end;
@@ -128,10 +129,10 @@ handle_call(clear_cache, _From, State) ->
     {reply, ok, maps:remove(node_password, State)};
 handle_call(get_node_password, _From, State0) ->
     case get_node_password_cached(State0) of
-        error ->
-            {reply, error, State0};
         {NodePassword, State} ->
-            {reply, NodePassword, State}
+            {reply, NodePassword, State};
+        Other ->
+            {reply, Other, State0}
     end;
 handle_call({encrypt, Key, Data}, _From, State0) ->
     case get_node_password_cached(State0) of
@@ -232,6 +233,15 @@ node_keypair() ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     ?LOG_INFO("Damage key path ~p", [Path]),
     keypair(Path).
+has_node_keypair() ->
+    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+    ?LOG_INFO("Damage key path ~p", [Path]),
+    case file:read_file(Path) of
+        {error, enoent} ->
+            false;
+        {ok, EncDataBin} ->
+            true
+end.
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
 

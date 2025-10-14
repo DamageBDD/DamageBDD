@@ -20,6 +20,7 @@
 ]).
 
 -define(DEFAULT_IPFS_DIR, ".ipfs").
+-define(DEFAULT_IPFS_HOME, "/var/lib/damage/").
 
 %% -----------------------------
 %% Public API
@@ -99,8 +100,8 @@ resolve_path(undefined) ->
     case os:getenv("IPFS_PATH") of
         false ->
             case os:getenv("HOME") of
-                false -> filename:join("/", "root") ++ "/" ++ ?DEFAULT_IPFS_DIR;
-                Home -> filename:join(Home, ?DEFAULT_IPFS_DIR)
+                false -> filename:join([?DEFAULT_IPFS_HOME, ?DEFAULT_IPFS_DIR]);
+                Home -> filename:join([Home, ?DEFAULT_IPFS_DIR])
             end;
         P ->
             expand_tilde(P)
@@ -112,16 +113,16 @@ expand_tilde(Path) when is_list(Path) ->
     case Path of
         [$~, $/ | Rest] ->
             case os:getenv("HOME") of
-                false -> filename:join("/", "root") ++ "/" ++ Rest;
-                Home -> filename:join(Home, Rest)
+                false -> filename:join([?DEFAULT_IPFS_HOME, Rest]);
+                Home -> filename:join([Home, Rest])
             end;
         _ ->
             Path
     end.
 
 ipfs_repo_exists(Path) ->
-    filelib:is_file(filename:join(Path, "config")) andalso
-        filelib:is_dir(filename:join(Path, "blocks")).
+    filelib:is_file(filename:join([Path, "config"])) andalso
+        filelib:is_dir(filename:join([Path, "blocks"])).
 
 %% Build `ipfs init` with profiles
 build_init_cmd(IPFS, Profiles) ->
