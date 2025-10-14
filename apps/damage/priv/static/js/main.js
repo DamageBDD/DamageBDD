@@ -817,7 +817,7 @@ window.copyToClipboard = copyToClipboard;
     btn.disabled = true; btn.textContent = 'Connecting…';
 
     try {
-      const res = await window.connectUnified({ prompt: true, prefer: ['smart','browser','getter'] });
+      const res = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
       if (res.ok) {
         const sel = document.getElementById('walletSelector');
         if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
