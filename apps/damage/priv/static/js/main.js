@@ -135,42 +135,14 @@ function generateDamageQR(address){
 			tabs.toggle('history');
 			event.preventDefault();
 		});
+		document.getElementById("node-unlock-password").addEventListener("keydown", async function(event) {
+			if (event.ctrlKey && event.key === "Enter") {
+				await nodeUnlock();
+				event.preventDefault();
+			}});
 		document.getElementById("node-unlock-password-submit-btn").addEventListener("click", async (event) => {
 			event.preventDefault();
-
-			const form = document.getElementById("node-unlock-password-form");
-			const passwordInput = document.getElementById("node-unlock-password");
-			const password = passwordInput.value.trim();
-
-			if (!password) {
-				alert("Please enter your node password.");
-				return;
-			}
-
-			try {
-				const resp = await fetch("/secrets/unlock", {
-					method: "POST",
-					headers: {
-						"Content-Type": "application/x-www-form-urlencoded"
-					},
-					body: new URLSearchParams({ password })
-				});
-
-				const data = await resp.json();
-
-				if (data.status === "ok") {
-					alert("✅ Node unlocked successfully!");
-					if (window.MicroModal) {
-						MicroModal.close("node-unlock-modal");
-					}
-					passwordInput.value = "";
-				} else {
-					alert(`❌ Unlock failed: ${data.message || "Unknown error"}`);
-				}
-			} catch (err) {
-				console.error("Unlock error:", err);
-				alert("⚠️ Error unlocking node. Check console for details.");
-			}
+			await nodeUnlock();
 		});
 
 		showHideLoginButton();
@@ -265,6 +237,43 @@ function generateDamageQR(address){
 	}
 
 
+	async function nodeUnlock(){
+			const form = document.getElementById("node-unlock-password-form");
+			const passwordInput = document.getElementById("node-unlock-password");
+			const password = passwordInput.value.trim();
+
+			if (!password) {
+				alert("Please enter your node password.");
+				return;
+			}
+
+			try {
+				const resp = await fetch("/secrets/unlock", {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						password: password
+					})
+				});
+
+				const data = await resp.json();
+
+				if (data.status === "ok") {
+					alert("✅ Node unlocked successfully!");
+					if (window.MicroModal) {
+						MicroModal.close("node-unlock-modal");
+					}
+					passwordInput.value = "";
+				} else {
+					alert(`❌ Unlock failed: ${data.message || "Unknown error"}`);
+				}
+			} catch (err) {
+				console.error("Unlock error:", err);
+				alert("⚠️ Error unlocking node. Check console for details.");
+			}
+	}
 	function showLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");

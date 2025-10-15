@@ -89,27 +89,29 @@ content_types_accepted(Req, State) ->
 %%--------------------------------------------------------------------
 %% Returns {ok, Req} if client is 127.0.0.1 / ::1, else {forbidden, Req}
 %%--------------------------------------------------------------------
-ensure_localhost(Req) ->
-    case cowboy_req:peer(Req) of
-        {{127, 0, 0, 1}, _Port} ->
-            {ok, Req};
-        {{0, 0, 0, 0, 0, 0, 0, 1}, _Port} ->
-            {ok, Req};
-        {PeerAddr, _Port} ->
-            ?LOG_WARNING("Blocked non-localhost request from ~p", [PeerAddr]),
-            {forbidden, Req}
-    end.
-
-is_authorized(Req0, State) ->
-    case ensure_localhost(Req0) of
-        {ok, Req} ->
-            {true, Req, State};
-        {forbidden, Req} ->
-            Body = jsx:encode(#{status => <<"forbidden">>, message => <<"localhost only">>}),
-            Req2 = cowboy_req:set_resp_body(Body, Req),
-            Req3 = cowboy_req:reply(403, Req2),
-            {stop, Req3, State}
-    end.
+%ensure_localhost(Req) ->
+%    case cowboy_req:peer(Req) of
+%        {{127, 0, 0, 1}, _Port} ->
+%            {ok, Req};
+%        {{0, 0, 0, 0, 0, 0, 0, 1}, _Port} ->
+%            {ok, Req};
+%        {PeerAddr, _Port} ->
+%            ?LOG_WARNING("Blocked non-localhost request from ~p", [PeerAddr]),
+%            {forbidden, Req}
+%    end.
+%
+%is_authorized(Req0, State) ->
+%    case ensure_localhost(Req0) of
+%        {ok, Req} ->
+%            {true, Req, State};
+%        {forbidden, Req} ->
+%            Body = jsx:encode(#{status => <<"forbidden">>, message => <<"localhost only">>}),
+%            Req2 = cowboy_req:set_resp_body(Body, Req),
+%            Req3 = cowboy_req:reply(403, Req2),
+%            {stop, Req3, State}
+%    end.
+is_authorized(Req, State) ->
+            {true, Req, State}.
 
 %% Render HTML page depending on whether a password is present/cached
 to_html(Req, State) ->
@@ -171,5 +173,6 @@ from_json(Req0, #{action := unlock} = State) ->
                 jsx:encode(Response),
                 Req
             ),
+            cowboy_req:reply(200, Reply),
             {stop, Reply, State}
     end.

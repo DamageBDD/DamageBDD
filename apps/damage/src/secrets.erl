@@ -67,7 +67,6 @@ clear_cache() ->
 
 get_node_password() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
-    ?LOG_INFO("secrets process look up ~p", [Pid]),
     gen_server:call(Pid, get_node_password, ?ASKPASS_TIMEOUT).
 
 get_node_password_cached(State) ->
@@ -184,7 +183,7 @@ keypair(Path) ->
                         Path, Error
                     ]),
                     {error, keypair_not_initialized};
-                Password  ->
+                Password ->
                     EncData = secrets:encrypt(
                         Password,
                         term_to_binary(Data)
