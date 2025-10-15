@@ -64,6 +64,7 @@ async function updateSchedulesTable() {
 				 }
 	};
 
+	debugger;
 	const response = await fetch("/schedules/", request);
 	var data = {};
 	if (response.status === 200) {

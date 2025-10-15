@@ -211,7 +211,7 @@ const TIMEOUT_DEF_DETECT_MS = 7 * SEC;
 /**
  * 1 second (instaneous in practice)
  */
-const TIMEOUT_DEF_CONNECT_MS = 1 * SEC;
+const TIMEOUT_DEF_CONNECT_MS = 5 * SEC;
 /**
  * In the general case, this pops up the modal that requires the user to
  * manually confirm, so is set to 5 minutes. This is where you as the developer

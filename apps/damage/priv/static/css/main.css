@@ -82,7 +82,7 @@ select{
   color: blue;
   display: inline-block;
 }
-// CSS for modal-container
+/*
 .modal-container {
   display: none;
   position: fixed;
@@ -91,9 +91,8 @@ select{
   width: 100%;
   height: 100%;
   background-color: rgba(0, 0, 0, 0.5);
-}
+}*/
 
-// CSS for qrcode
 #qrcode {
   position: absolute;
   top: 50%;
@@ -241,7 +240,7 @@ html, body {
 
 
 
-
+/*
 .modal__header img {
   max-width: 120px;
   height: auto;
@@ -253,6 +252,7 @@ html, body {
   padding: 2rem 1rem 0 1rem;
 }
 
+*/
 
 .styled-btn {
   background: linear-gradient(to right, #0052cc, #007bff);
@@ -482,14 +482,16 @@ textarea#lightning-invoice-input {
 
 
 /* Close (X) button styling */
-/*.modal__close {
+.modal__close {
   background: none;
   border: none;
   font-size: 1.5rem;
   color: #aaa;
+  /*
   position: absolute;
   top: 1.25rem;
   right: 1.25rem;
+*/
   cursor: pointer;
   transition: color 0.2s ease-in-out;
 }
@@ -497,12 +499,12 @@ textarea#lightning-invoice-input {
 .modal__close:hover {
   color: #fff;
 }
-*/
+
 /* Input field dark styling */
 .modal__content {
   background-color: #1c1c2b;
   color: #f5f5f5;
-  border: 1px solid #444;
+  /*
   border-radius: 6px;
   padding: 0.6rem 0.75rem;
   width: 90%;
@@ -511,6 +513,7 @@ textarea#lightning-invoice-input {
   margin-left: 0.5rem;
   margin-right: 0.5rem;
   font-size: 0.95rem;
+*/
 }
 
 /* Tabs container */
@@ -816,5 +819,4 @@ ul[data-tabs] li a:hover {
 }
 
 /* 1) Stop leaking z-index to everything */
-- .is-open { z-index: 99999; }
-+ .modal.is-open { z-index: 100000; }
+.modal.is-open { z-index: 100000; }

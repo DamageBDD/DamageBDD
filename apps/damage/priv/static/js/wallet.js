@@ -267,7 +267,9 @@ async function connectButton() {
 		else                  raw = await fn();
 
 		const address = extractAddress(raw);
-		if (!address) throw new Error(`${name} returned no address`);
+		if (!address) {
+			throw new Error(`${name} returned no address`);
+		}
 		return { ok: true, address, provider: name, raw };
 	}
 

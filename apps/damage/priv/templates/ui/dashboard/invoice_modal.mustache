@@ -8,6 +8,12 @@
       </header>
       <main class="modal__content" id="modal-1-content">
         <div id="purchase-damage-tabs">
+          <div id="walletSelectorWrap">
+            <select id="walletSelector" aria-label="Select Wallet">
+              <option value="custodial">Custodial (email)</option>
+              <option value="extension">Browser Wallet (extension)\n ak_test</option>
+            </select>
+          </div>
           <ul data-token-tabs>
             <li><a data-tabby-default href="#damage-transfers-tab">Transfer Damage</a></li>
             <li><a href="#lightning-invoice-tab">Purchase Damage.</a></li>

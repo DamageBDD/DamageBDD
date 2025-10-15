@@ -7,13 +7,15 @@ const AUTH_KEYS = {
 	activeToken: 'access_token',                    // <-- the key your app already uses
 	custToken:  'access_token_custodial',
 	extToken:   'access_token_extension',
-	email:      'damage_email',                     // optional convenience
-	extAddr:    'damage_ext_addr'                   // optional convenience
+	custAddress:  'custodial_address',
+	extAddress:   'extension_address',
+	email:      'damage_email'                     // optional convenience
 };
 
 const TokenManager = {
 	getMode() { return localStorage.getItem(AUTH_KEYS.activeMode) || 'custodial'; },
 	setMode(mode) { localStorage.setItem(AUTH_KEYS.activeMode, mode); },
+	setEmail(email) { localStorage.setItem(AUTH_KEYS.email, email); },
 	setModeAddress(mode, address) {
 		localStorage.setItem(AUTH_KEYS.activeMode, mode);
 		localStorage.setItem(mode+"_address", address);
@@ -42,14 +44,30 @@ const TokenManager = {
 		localStorage.setItem(AUTH_KEYS.activeToken, t);     // <-- swap the active access_token
 		return t;
 	},
+	on_custodial_login(address, email, access_token){
+					var mode = "custodial";
+					this.activate(mode);
+					this.setAddress(address, mode);
+					this.setToken(mode, access_token);
+					this.setEmail(email);
+	},
 
 
 	logout(mode) {
-		if (!mode || mode === 'custodial') localStorage.removeItem(AUTH_KEYS.custToken);
-		if (!mode || mode === 'extension') localStorage.removeItem(AUTH_KEYS.extToken);
+		if (!mode || mode === 'custodial') {
+			localStorage.removeItem(AUTH_KEYS.custToken);
+			localStorage.removeItem(AUTH_KEYS.custAddress);
+			localStorage.removeItem(AUTH_KEYS.email);
+		}
+		if (!mode || mode === 'extension') {
+			localStorage.removeItem(AUTH_KEYS.extToken);
+			localStorage.removeItem(AUTH_KEYS.extAddress);
+		}
+
 		if (!mode) localStorage.removeItem(AUTH_KEYS.activeToken);
 	}
 };
+window.TokenManager = TokenManager;
 // ----------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -66,6 +84,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
 	initWalletSelector().then(updateWalletSummary);
 
+	const CONNECT_BTN_SELECTOR = [
+		'#connect-button',
+		'#connectWalletBtn',
+		'[data-connect-wallet]',
+		'#loginBtn.connect-wallet'
+	].join(',');
+
+	async function connectViaUnified(btn) {
+		const prev = btn.textContent;
+		btn.disabled = true; btn.textContent = 'Connecting…';
+
+		try {
+			const res = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
+			if (res.ok) {
+				const sel = document.getElementById('walletSelector');
+				if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+				TokenManager.setModeAddress("extension", res.address);
+
+				document.dispatchEvent(new CustomEvent('wallet:connected', { detail: res }));
+				MicroModal.close('connect-wallet-modal'); 
+				MicroModal.close('login-modal');
+				const content = document.getElementById("content");
+				content.style.display = "block";
+				await updateWalletSummary();
+				window.showHideLoginButton();
+			} else {
+				console.error('Wallet connect failed:', res.error);
+				btn.textContent = 'Retry Connect';
+				return;
+			}
+		} catch (e) {
+			console.error('Wallet connect threw:', e);
+			btn.textContent = 'Retry Connect';
+			return;
+		} finally {
+			btn.disabled = false;
+			if (btn.textContent !== 'Retry Connect') btn.textContent = prev;
+		}
+	}
+
+	function bindLoginConnectButton(root = document) {
+		const nodes = Array.from(root.querySelectorAll(CONNECT_BTN_SELECTOR))
+			  .filter(el => !el.dataset.wcBound);
+		nodes.forEach(btn => {
+			btn.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				connectViaUnified(btn);
+			});
+			btn.dataset.wcBound = '1';
+		});
+	}
 
 	async function ensureExtensionToken() {
 		// Non-custodial (browser wallet)
@@ -126,15 +195,6 @@ document.addEventListener('DOMContentLoaded', () => {
 	// Example: await updateWalletSummary();
 
 	async function updateWalletSummary() {
-		var address = TokenManager.getAddress();
-		if(!address && TokenManager.getMode()=="extension"){
-			address = await ensureExtensionToken();
-		}
-		if(!address){
-			debugger;
-			return;
-		}
-		console.log("updateWalletSummary ", address);
 		var balanceAmountId = 'balanceAmount';
 		var aeBalanceId = 'aeBalance';
 		var addressId = 'balanceAddress';
@@ -142,39 +202,30 @@ document.addEventListener('DOMContentLoaded', () => {
 		const balanceAmountEl = document.getElementById(balanceAmountId);
 		const aeBalanceEl = document.getElementById(aeBalanceId);
 		const addressEl = document.getElementById(addressId);
+		var address = TokenManager.getAddress();
+		if(!address && TokenManager.getMode()=="extension"){
+			address = await ensureExtensionToken();
+		}
+		if(!address){
+			balanceAmountEl.textContent = '…';
+			aeBalanceEl.textContent = '…';
+			return;
+		}
+		console.log("updateWalletSummary ", address);
 
-		if (!balanceAmountEl) return;
-
-		// helpers (local fallbacks if your globals aren’t loaded yet)
-		const _shortAddr = (typeof shortAddr === 'function')
-			  ? shortAddr
-			  : (a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '');
-
-		const formatDamage = (raw = 0) =>
-			  (Number(raw) / 1e8).toLocaleString(undefined, {
-				  minimumFractionDigits: 2,
-				  maximumFractionDigits: 2
-			  });
-
-
-		const setAE = (valText) => {
-			if (aeBalanceEl) aeBalanceEl.textContent = 'AE: ' + valText;
-		};
-
-		balanceAmountEl.textContent = '…';
-		setAE('—');
 		const damageBalance = await window.fetchAeAndAex9Balances(address);
 		console.log("damage balances", damageBalance);
-		balanceAmountEl.textContent = damageBalance.ae.ae; 
-		setAE(damageBalance.ae.ae);
-		debugger;
+		balanceAmountEl.textContent = damageBalance.damage.damage; 
+		aeBalanceEl.textContent = damageBalance.ae.ae; 
 		addressEl.textContent = address;
 		return;
 	}
 
 
 	// --- wallet helpers (same as before, trimmed for brevity) ---
-	async function initWalletSelector(){ /* detect wallet, label options, etc. */ }
+	async function initWalletSelector(){
+		/* detect wallet, label options, etc. */
+	}
 
 	function shortAddr(a){ return a ? (a.length>12 ? a.slice(0,6)+'…'+a.slice(-4) : a) : '—'; }
 	function formatAmount(x){ if (x==null) return '—'; if (typeof x==='number') return x.toLocaleString(); if (/^\d+$/.test(String(x))) return Number(String(x)).toLocaleString(); return String(x); }
@@ -221,11 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
 			})
 			.then(data => {
 				if (data.access_token) {
-					localStorage.setItem("access_token", data.access_token);
-					localStorage.setItem("address", data.address);
-					localStorage.setItem("email_auth", username);
-					window.__damage_onCustodialLoginSuccess(data.access_token);
-					TokenManager.setModeAddress("custodial", data.address);
+					TokenManager.on_custodial_login(data.address, data.email, data.access_token);
 					MicroModal.close("email-login-modal");
 
 				} else {
@@ -263,6 +310,7 @@ document.addEventListener('DOMContentLoaded', () => {
 		if (btn.textContent !== 'Retry Connect') btn.textContent = prev;
 	});
 
+	bindLoginConnectButton();
 
 
 });

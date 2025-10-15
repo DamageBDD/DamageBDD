@@ -66,7 +66,7 @@ const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk
 
     // j.balance is a string when int-as-string=true
     const aettos = toBigIntString(j.balance || '0');
-    const ae = formatUnitsString(aettos, 8); // AE uses 18 decimals
+    const ae = formatUnitsString(aettos, 18); // AE uses 18 decimals
     return {
       ok: true,
       aettos,
@@ -87,7 +87,7 @@ const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk
 		const j = await r.json();
 
 		const hits = toBigIntString(j.amount || '0');
-    const damage = formatUnitsString(aettos, 8); // AE uses 18 decimals
+    const damage = formatUnitsString(hits, 8); // AE uses 18 decimals
 		return {
 			ok: true,
 			raw:j.amount,
@@ -105,7 +105,23 @@ const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk
       fetchAex9Balances(pubkey, opts)
     ]);
 
-    return { ok: true, ae: aeRes, aex9: aex9Res, errors: [] };
+    const out = { ok: true, ae: null, damage: null, errors: [] };
+
+    if (aeRes.status === 'fulfilled') {
+      out.ae = aeRes.value;
+    } else {
+      out.ok = false;
+      out.errors.push('ae:' + (aeRes.reason?.message || String(aeRes.reason)));
+    }
+
+    if (aex9Res.status === 'fulfilled') {
+		out.damage = aex9Res.value;
+    } else {
+      out.ok = false;
+      out.errors.push('aex9:' + (aex9Res.reason?.message || String(aex9Res.reason)));
+    }
+
+    return out;
 
   }
 

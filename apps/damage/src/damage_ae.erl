@@ -801,8 +801,12 @@ contract_call_payfor_tx(
     PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
 
-    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(PayingSignedTX),
-    wait_tx(ContractCallTxHash).
+    case vanillae:post_tx(PayingSignedTX) of
+        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+            wait_tx(ContractCallTxHash);
+        Error ->
+            Error
+    end.
 
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
@@ -843,8 +847,12 @@ contract_call_payfor_user(
     PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
 
-    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(PayingSignedTX),
-    wait_tx(ContractCallTxHash);
+    case vanillae:post_tx(PayingSignedTX) of
+        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+            wait_tx(ContractCallTxHash);
+        Error ->
+            Error
+    end;
 contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(
@@ -919,8 +927,12 @@ contract_call(
     Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
     SignedTX = attach_signature_base58(ContractCall, Signature),
 
-    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTX),
-    wait_tx(ContractCallTxHash).
+    case vanillae:post_tx(SignedTX) of
+        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+            wait_tx(ContractCallTxHash);
+        Error ->
+            Error
+    end.
 
 contract_call_dry(
     #{public_key := AeAccount, private_key := _PrivateKey},
@@ -971,8 +983,12 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
     ),
     SignedContract0 = sign_transaction_base58(PrivateKey, ContractData0),
 
-    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedContract0),
-    wait_tx(ContractCallTxHash).
+    case vanillae:post_tx(SignedContract0) of
+        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+            wait_tx(ContractCallTxHash);
+        Error ->
+            Error
+    end.
 %{ok, #{
 %    "results" :=
 %        [Result | _],
@@ -1025,8 +1041,12 @@ contract_deploy_for(
     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
 
     ?LOG_INFO("Paying for ~p", [PayingSignedTX]),
-    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(PayingSignedTX),
-    wait_tx(ContractCallTxHash).
+    case vanillae:post_tx(PayingSignedTX) of
+        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+            wait_tx(ContractCallTxHash);
+        Error ->
+            Error
+    end.
 
 contract_balance(Account) ->
     #{public_key := NodeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),

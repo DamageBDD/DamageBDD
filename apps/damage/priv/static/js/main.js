@@ -111,12 +111,9 @@ function generateDamageQR(address){
 			MicroModal.show("login-modal");
 		});
 		document.getElementById("logoutSubmitBtn").addEventListener("click", (event) => {
-			localStorage.removeItem("access_token");
-			localStorage.removeItem("address");
-			localStorage.removeItem("wallet_connected");
-			localStorage.removeItem("email_auth");
+			window.TokenManager.logout(window.TokenManager.getMode());
 			MicroModal.close('logout-modal');
-			showHideLoginButton();
+			showLoginButton();
 
 		});
 		document.getElementById("generate-invoice-btn").addEventListener("click", (event) => {
@@ -198,7 +195,7 @@ function generateDamageQR(address){
 				const address = localStorage.getItem("address");
 				Reports.renderRunReports(address, { limit: 10 });
 			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
-				if(localStorage.getItem("access_token") != undefined){
+				if(window.TokenManager.getToken() != undefined){
 					updateSchedulesTable();}
 			}
 		}, false);
@@ -214,7 +211,11 @@ function generateDamageQR(address){
 			if (event.ctrlKey && event.key === "Enter") {
 				event.preventDefault();
 				await submitDamageForm();
-			}
+			}});
+			
+		document.getElementById("execute-feature-btn").addEventListener("click", async function(event) {
+				event.preventDefault();
+				await submitDamageForm();
 		});
 		fetchVersion();
 
@@ -258,11 +259,24 @@ function generateDamageQR(address){
 	}); // end DOMContentLoaded 
 
 
-
 	function isAuthenticated() {
-		return (localStorage.access_token == null) ? false : true;
+		if(window.TokenManager.getMode() == "extension") return true;
+		return (localStorage.access_token == null || localStorage.access_token == "") ? false : true;
 	}
 
+
+	function showLoginButton(){
+		const content = document.getElementById("content");
+		const background = document.getElementById("background");
+		const loginButton = document.getElementById("loginBtn");
+		const logoutButton = document.getElementById("logoutBtn");
+			logoutButton.style.display = "none";
+
+			loginButton.style.display = "inline-block";
+			content.style.display = "none";
+			background.style.display = "block";
+			MicroModal.show('login-modal');
+	}
 	function showHideLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
@@ -284,6 +298,7 @@ function generateDamageQR(address){
 			MicroModal.show('login-modal');
 		}
 	}
+	window.showHideLoginButton = showHideLoginButton;
 
 	function upperCaseStream() {
 		return new TransformStream({
@@ -378,15 +393,13 @@ function generateDamageQR(address){
 		const headers = new Headers();
 		headers.append("Content-Type", "application/json");
 
-		if (localStorage.access_token) {
-			headers.append("Authorization", "Bearer " + localStorage.access_token);
-		}
+		headers.append("Authorization", "Bearer " + TokenManager.getToken());
 
 
 		const reportElement = addReport();
-        const username = localStorage.getItem("email_auth");
-        const walletConnected = localStorage.getItem("wallet_connected");
-		if(username){
+		const mode = window.TokenManager.getMode();
+		if(mode == "custodial"){
+			const username = localStorage.getItem("email_auth");
 			const request = {
 				method: 'POST',
 				credentials: 'include',
@@ -408,14 +421,15 @@ function generateDamageQR(address){
 				reportElement.innerText = "Error: " + errText;
 			}
 		}
-		else if(walletConnected){
+		else {
+			const address = window.TokenManager.getAddress();
 			const request = {
 				method: 'POST',
 				credentials: 'include',
 				headers: headers,
 				body: JSON.stringify({
 					feature: inputText,
-					address: localStorage.getItem("address"),
+					address: address,
 					concurrency: concurrencyText
 				})
 			};
@@ -424,13 +438,7 @@ function generateDamageQR(address){
 			const data = await response.json();
 			const message = data.tx;
 
-			//await wallet.connectWalletSmart(
-			//	origin, origin
-			//);
-			await wallet.connectWalletSmart(
-				window.location.origin,
-				window.location.origin
-			);
+			await wallet.connectWalletUnified();
 			const signature = await wallet.signTransactionSmart(
 				message,
 				"ae_mainnet",
@@ -445,7 +453,7 @@ function generateDamageQR(address){
 					headers: headers,
 					body: JSON.stringify({
 						feature: inputText,
-						address: localStorage.getItem("address"),
+						address: address,
 						concurrency: concurrencyText,
 						signed_tx: signature.result.signature
 					})
@@ -539,13 +547,10 @@ function generateDamageQR(address){
 			})
 			.then(data => {
 				if (data.access_token) {
-					localStorage.setItem("access_token", data.access_token);
-					localStorage.setItem("address", data.address);
-					localStorage.setItem("email_auth", username);
-					//updateBalance();
+
+					window.TokenManager.on_custodial_login(data.address, data.email, data.access_token);
 					showConnectStatus("Login Success!", "success");
 					showHideLoginButton();
-					window.__damage_onCustodialLoginSuccess(data.access_token);
 
 				} else {
 					showConnectStatus("Login Failed!", "failed");
@@ -650,63 +655,6 @@ function generateDamageQR(address){
 		xhr.send();
 	}
 
-
-	function updateBalance() {
-		var xhr = new XMLHttpRequest();
-		xhr.open('GET', '/accounts/balance', true);
-		xhr.setRequestHeader('Content-Type', 'application/json');
-		xhr.setRequestHeader('Authorization', 'Bearer ' + localStorage.access_token);
-		xhr.withCredentials = true;
-
-		xhr.onload = function () {
-			if (xhr.status === 401) {
-				localStorage.removeItem("access_token");
-				localStorage.removeItem("address");
-				return;
-			}
-			if (xhr.status === 200) {
-				try {
-					var balanceData = JSON.parse(xhr.responseText) || {};
-
-					// DAMAGE (raw has 8 decimals)
-					var rawDamage = Number(balanceData.amount || 0);
-					var damage = rawDamage / 1e8;
-					var damageText = damage.toLocaleString(undefined, {
-						minimumFractionDigits: 2,
-						maximumFractionDigits: 2
-					});
-
-					// AE: accept either 'ae_amount' or try to derive if not present
-					var rawAe = balanceData.ae_amount != null ? Number(balanceData.ae_amount) : null;
-					if (rawAe == null && typeof balanceData.ae === 'number') rawAe = Number(balanceData.ae);
-
-					function formatAE(v) {
-						if (v == null || isNaN(v)) return '—';
-						return v.toLocaleString(undefined, {
-							minimumFractionDigits: 6,
-							maximumFractionDigits: 6
-						});
-					}
-
-					var ae = rawAe / 1e8; // assume aetto → AE
-					var aeText = 'AE: ' + formatAE(ae);
-
-					// Update DOM
-					var balanceAmountEl = document.getElementById('balanceAmount');
-					var aeBalanceEl = document.getElementById('aeBalance');
-					balanceAmountEl.textContent = damageText;
-					aeBalanceEl.textContent = aeText;
-				} catch (e) {
-					console.error('Balance parse error', e);
-				}
-			}
-		};
-
-		xhr.onerror = function () {
-			console.error('Balance request failed');
-		};
-		xhr.send();
-	}
 
 
 
@@ -848,60 +796,3 @@ function copyToClipboard(elementId) {
 
 // ⬅️ Make it accessible from HTML inline
 window.copyToClipboard = copyToClipboard;
-// main.js — wire login page "Connect" to wallet.connectUnified
-(() => {
-	'use strict';
-
-	const CONNECT_BTN_SELECTOR = [
-		'#connect-button',
-		'#connectWalletBtn',
-		'[data-connect-wallet]',
-		'#loginBtn.connect-wallet'
-	].join(',');
-
-	async function connectViaUnified(btn) {
-		const prev = btn.textContent;
-		btn.disabled = true; btn.textContent = 'Connecting…';
-
-		try {
-			const res = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
-			if (res.ok) {
-				const sel = document.getElementById('walletSelector');
-				if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
-				if (window.TokenManager?.setMode) TokenManager.setMode('noncustodial');
-				if (typeof updateWalletSummary === 'function') await updateWalletSummary();
-				document.dispatchEvent(new CustomEvent('wallet:connected', { detail: res }));
-				if (window.MicroModal) try { MicroModal.close('connect-wallet-modal'); } catch {}
-				MicroModal.close('login-modal');
-				const content = document.getElementById("content");
-				content.style.display = "block";
-			} else {
-				console.error('Wallet connect failed:', res.error);
-				btn.textContent = 'Retry Connect';
-				return;
-			}
-		} catch (e) {
-			console.error('Wallet connect threw:', e);
-			btn.textContent = 'Retry Connect';
-			return;
-		} finally {
-			btn.disabled = false;
-			if (btn.textContent !== 'Retry Connect') btn.textContent = prev;
-		}
-	}
-
-	function bindLoginConnectButton(root = document) {
-		const nodes = Array.from(root.querySelectorAll(CONNECT_BTN_SELECTOR))
-			  .filter(el => !el.dataset.wcBound);
-		nodes.forEach(btn => {
-			btn.addEventListener('click', (ev) => {
-				ev.preventDefault();
-				connectViaUnified(btn);
-			});
-			btn.dataset.wcBound = '1';
-		});
-	}
-
-	document.addEventListener('DOMContentLoaded', () => bindLoginConnectButton());
-	document.addEventListener('wallet:ui:bind', () => bindLoginConnectButton());
-})();

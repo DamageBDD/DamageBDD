@@ -86,9 +86,6 @@ export function initDamageScheduler(config = {}) {
     fetchSchedules();
   };
 
-	if(localStorage.getItem("access_token") != undefined){
-  fetchSchedules();
-	}
 }
 
 // auto-init if loaded directly as a <script type="module">
