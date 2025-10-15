@@ -609,16 +609,30 @@ to_html(Req, State) ->
 
 to_json(Req, #{action := version} = State) ->
     {ok, CommitHash} = file:read_file("commit_hash.txt"),
-    NodeBalance = damage_ae:node_balance(),
-    {ok, Version} = file:read_file("VERSION"),
-    #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
+    {ok, Version} = application:get_key(damage, vsn),
+    Resp = #{
+        ok => true,
+        commit_hash => CommitHash,
+        version => list_to_binary(Version)
+    },
+    Resp0 =
+        case damage_ae:node_ae_balance() of
+            {error, Error} ->
+                #{ok => false, error => Error};
+            NodeBalance when is_float(NodeBalance) ->
+                #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
+                #{
+                    public_key => list_to_binary(PubKey),
+                    node_balance => NodeBalance
+                }
+        end,
     {
-        jsx:encode(#{
-            commit_hash => CommitHash,
-            version => Version,
-            public_key => list_to_binary(PubKey),
-            node_balance => NodeBalance
-        }),
+        jsx:encode(
+            maps:merge(
+                Resp,
+                Resp0
+            )
+        ),
         Req,
         State
     };
