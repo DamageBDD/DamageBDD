@@ -40,15 +40,24 @@
 
 trails() ->
     [
-     trails:trail(
-       "/secrets/unlock",
-       damage_http_unlock,
-       #{action => unlock},
-       #{
-         get => #{ produces => ["text/html"] },
-         post => #{ produces => ["application/json","text/html"] }
-        }
-      )
+        trails:trail(
+            "/secrets/unlock",
+            damage_http_unlock,
+            #{action => unlock},
+            #{
+                get => #{produces => ["text/html"]},
+                post => #{produces => ["application/json", "text/html"]}
+            }
+        ),
+        trails:trail(
+            "/secrets/set_password",
+            damage_http_unlock,
+            #{action => set_password},
+            #{
+                get => #{produces => ["text/html"]},
+                post => #{produces => ["application/json", "text/html"]}
+            }
+        )
     ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
@@ -82,9 +91,9 @@ content_types_accepted(Req, State) ->
 %%--------------------------------------------------------------------
 ensure_localhost(Req) ->
     case cowboy_req:peer(Req) of
-        {{127,0,0,1}, _Port} ->
+        {{127, 0, 0, 1}, _Port} ->
             {ok, Req};
-        {{0,0,0,0,0,0,0,1}, _Port} ->
+        {{0, 0, 0, 0, 0, 0, 0, 1}, _Port} ->
             {ok, Req};
         {PeerAddr, _Port} ->
             ?LOG_WARNING("Blocked non-localhost request from ~p", [PeerAddr]),
@@ -101,7 +110,6 @@ is_authorized(Req0, State) ->
             Req3 = cowboy_req:reply(403, Req2),
             {stop, Req3, State}
     end.
-
 
 %% Render HTML page depending on whether a password is present/cached
 to_html(Req, State) ->
@@ -120,181 +128,48 @@ to_json(Req, State) ->
     %% Simple status endpoint
     Has = secrets:has_node_password(),
     {jsx:encode(#{status => <<"ok">>, has_node_password => Has}), Req, State}.
+unlock_node(Password) ->
+    secrets:set_node_password(Password),
+    ?LOG_INFO("Node pass ~p", [Password]),
+    case secrets:node_keypair() of
+        #{public_key := _PubKey, private_key := _NodePrivateKey} ->
+            %% set flow: require confirmation and validate password strength
+            #{status => <<"ok">>, message => <<"node unlocked">>};
+        {error, decrypt_keypair} ->
+            #{status => <<"failed">>, message => <<"decrypt node wallet failed">>}
+    end.
 
 %% Accept form submits (browser)
-from_html(Req0, State) ->
+from_html(Req0, #{action := unlock} = State) ->
     {ok, BodyBin, Req} = cowboy_req:read_body(Req0),
     Form = cow_qs:parse_qs(BodyBin),
     %% expected fields:
     %% - password
     %% - password_confirm (optional, for set flow)
     Password = proplists:get_value(<<"password">>, Form, <<>>),
-    PasswordConfirm = proplists:get_value(<<"password_confirm">>, Form, <<>>),
-
-    case secrets:has_node_password() of
-        false ->
-            %% set flow: require confirmation and validate password strength
-            case {Password, PasswordConfirm} of
-                {<<>>, _} ->
-                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password required">>}), Req),
-                    cowboy_req:reply(400, Reply),
-                    {stop, Reply, State};
-                {_, <<>>} ->
-                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password confirmation required">>}), Req),
-                    cowboy_req:reply(400, Reply),
-                    {stop, Reply, State};
-                {P, PC} when P =/= PC ->
-                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"passwords do not match">>}), Req),
-                    cowboy_req:reply(400, Reply),
-                    {stop, Reply, State};
-                {P, P} ->
-                    %% validate strength using existing helper
-                    case damage_accounts:validate_password(binary_to_list(P)) of
-                        true ->
-                            case secrets:set_node_password(binary_to_list(P)) of
-                                ok ->
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
-                                    cowboy_req:reply(200, Reply),
-                                    {stop, Reply, State};
-                                {error, already_set} ->
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"node password already set in process">>}), Req),
-                                    cowboy_req:reply(400, Reply),
-                                    {stop, Reply, State};
-                                {error, too_short} ->
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password too short">>}), Req),
-                                    cowboy_req:reply(400, Reply),
-                                    {stop, Reply, State};
-                                Other ->
-                                    ?LOG_ERROR("set_node_password unexpected result: ~p", [Other]),
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"internal error">>}), Req),
-                                    cowboy_req:reply(500, Reply),
-                                    {stop, Reply, State}
-                            end;
-                        false ->
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password does not meet complexity requirements">>}), Req),
-                            cowboy_req:reply(400, Reply),
-                            {stop, Reply, State}
-                    end
-            end;
-        true ->
-            %% unlock flow: single password submit - we attempt to set the password in the secrets gen_server cache
-            case Password of
-                <<>> ->
-                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password required">>}), Req),
-                    cowboy_req:reply(400, Reply),
-                    {stop, Reply, State};
-                P ->
-                    case secrets:set_node_password(binary_to_list(P)) of
-                        ok ->
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>, message => <<"unlocked">>}), Req),
-                            cowboy_req:reply(200, Reply),
-                            {stop, Reply, State};
-                        {error, already_set} ->
-                            %% If the secrets gen_server already has node_password, we treat it as success
-                            %% (already unlocked in process). But if the provided password is wrong (we can't verify easily),
-                            %% return a friendly message asking to clear cache and try again.
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"already unlocked in this process or invalid password">>}), Req),
-                            cowboy_req:reply(400, Reply),
-                            {stop, Reply, State};
-                        {error, too_short} ->
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password too short">>}), Req),
-                            cowboy_req:reply(400, Reply),
-                            {stop, Reply, State};
-                        Other ->
-                            ?LOG_ERROR("unlock unexpected result: ~p", [Other]),
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"internal error">>}), Req),
-                            cowboy_req:reply(500, Reply),
-                            {stop, Reply, State}
-                    end
-            end
-    end.
+    Response = unlock_node(Password),
+    Reply = cowboy_req:set_resp_body(
+        jsx:encode(Response),
+        Req
+    ),
+    {stop, Reply, State}.
 
 %% Accept JSON posts too (API)
-from_json(Req0, State) ->
+from_json(Req0, #{action := unlock} = State) ->
     {ok, DataBin, Req} = cowboy_req:read_body(Req0),
     case catch jsx:decode(DataBin, [return_maps, {labels, atom}]) of
         {'EXIT', _} ->
-            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"json decode error">>}), Req),
+            Reply = cowboy_req:set_resp_body(
+                jsx:encode(#{status => <<"failed">>, message => <<"json decode error">>}), Req
+            ),
             cowboy_req:reply(400, Reply),
             {stop, Reply, State};
         Decoded when is_map(Decoded) ->
             Password = maps:get(password, Decoded, undefined),
-            PasswordConfirm = maps:get(password_confirm, Decoded, undefined),
-            case secrets:has_node_password() of
-                false ->
-                    %% set flow
-                    case {Password, PasswordConfirm} of
-                        {undefined, _} ->
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password required">>}), Req),
-                            cowboy_req:reply(400, Reply),
-                            {stop, Reply, State};
-                        {_P, undefined} ->
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password_confirm required">>}), Req),
-                            cowboy_req:reply(400, Reply),
-                            {stop, Reply, State};
-                        {P, PC} when P =/= PC ->
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"passwords do not match">>}), Req),
-                            cowboy_req:reply(400, Reply),
-                            {stop, Reply, State};
-                        {P, P} ->
-                            case damage_accounts:validate_password(binary_to_list(P)) of
-                                true ->
-                                    case secrets:set_node_password(binary_to_list(P)) of
-                                        ok ->
-                                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
-                                            cowboy_req:reply(200, Reply),
-                                            {stop, Reply, State};
-                                        {error, already_set} ->
-                                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"already_set">>}), Req),
-                                            cowboy_req:reply(400, Reply),
-                                            {stop, Reply, State};
-                                        {error, too_short} ->
-                                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"too_short">>}), Req),
-                                            cowboy_req:reply(400, Reply),
-                                            {stop, Reply, State};
-                                        Other ->
-                                            ?LOG_ERROR("set_node_password json unexpected: ~p", [Other]),
-                                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"internal error">>}), Req),
-                                            cowboy_req:reply(500, Reply),
-                                            {stop, Reply, State}
-                                    end;
-                                false ->
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password requirements not met">>}), Req),
-                                    cowboy_req:reply(400, Reply),
-                                    {stop, Reply, State}
-                            end
-                    end;
-                true ->
-                    %% unlock flow
-                    case Password of
-                        undefined ->
-                            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"password required">>}), Req),
-                            cowboy_req:reply(400, Reply),
-                            {stop, Reply, State};
-                        P ->
-                            case secrets:set_node_password(binary_to_list(P)) of
-                                ok ->
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>, message => <<"unlocked">>}), Req),
-                                    cowboy_req:reply(200, Reply),
-                                    {stop, Reply, State};
-                                {error, already_set} ->
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"already_unlocked_or_invalid">>}), Req),
-                                    cowboy_req:reply(400, Reply),
-                                    {stop, Reply, State};
-                                {error, too_short} ->
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"too_short">>}), Req),
-                                    cowboy_req:reply(400, Reply),
-                                    {stop, Reply, State};
-                                Other ->
-                                    ?LOG_ERROR("unlock json unexpected: ~p", [Other]),
-                                    Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"internal error">>}), Req),
-                                    cowboy_req:reply(500, Reply),
-                                    {stop, Reply, State}
-                            end
-                    end
-            end;
-        _ ->
-            Reply = cowboy_req:set_resp_body(jsx:encode(#{status => <<"failed">>, message => <<"bad request">>}), Req),
-            cowboy_req:reply(400, Reply),
+            Response = unlock_node(Password),
+            Reply = cowboy_req:set_resp_body(
+                jsx:encode(Response),
+                Req
+            ),
             {stop, Reply, State}
     end.

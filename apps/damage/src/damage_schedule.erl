@@ -319,7 +319,7 @@ list_all_schedules() ->
                     []
             end;
         Error ->
-            ?LOG_WARNING("Node keypair not set or node password not set.",[Error]),
+            ?LOG_WARNING("Node keypair not set or node password not set.", [Error]),
             []
     end.
 
