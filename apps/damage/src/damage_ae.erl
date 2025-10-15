@@ -38,7 +38,7 @@
     revoke_domain_token/2,
     get_ae_mdw_node/0,
     get_ae_mdw_ws_node/0,
-    node_balance/0,
+    node_ae_balance/0,
     node_damage_balance/0,
     account_keypair/1,
     wait_tx/1,
@@ -54,6 +54,7 @@
     get_ae_balance/1
 ]).
 -export([
+    contract_call/4,
     contract_call/5,
     contract_call/6,
     contract_call_dry/5,
@@ -853,6 +854,18 @@ contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
     ).
 
 contract_call(
+    ContractAddress,
+    Contract,
+    Func,
+    Args
+) ->
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := _PrivateKey} = Keypair ->
+            contract_call(Keypair, ContractAddress, Contract, Func, Args);
+        Error ->
+            Error
+    end.
+contract_call(
     #{public_key := _AeAccount, private_key := _PrivateKey} = Keypair,
     ContractAddress,
     Contract,
@@ -1253,19 +1266,23 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
 wait_tx(ConId) ->
     poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 55000).
 
-node_balance() ->
-    #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
-    #{
-        id :=
-            _,
-        balance := Balance,
-        nonce := _,
-        kind := <<"basic">>,
-        payable := true
-    } =
-        get_ae_balance(AeAccount),
-    ?LOG_DEBUG("balance ~p", [Balance]),
-    Balance / math:pow(10, ?AE_DECIMALS).
+node_ae_balance() ->
+    case secrets:node_keypair() of
+        #{public_key := AeAccount, private_key := _PrivateKey} ->
+            #{
+                id :=
+                    _,
+                balance := Balance,
+                nonce := _,
+                kind := <<"basic">>,
+                payable := true
+            } =
+                get_ae_balance(AeAccount),
+            ?LOG_DEBUG("balance ~p", [Balance]),
+            Balance / math:pow(10, ?AE_DECIMALS);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),

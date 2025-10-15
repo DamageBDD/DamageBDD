@@ -87,10 +87,8 @@ handle_call({get_account, PublicKey}, _From, #{ets_table := Table} = State) ->
         [{PublicKey, Account}] ->
             {reply, Account, State};
         [] ->
-            KeyPair = secrets:node_keypair(),
             case
                 damage_ae:contract_call(
-                    KeyPair,
                     ?EMAIL_REGISTRY_CONTRACT,
                     "contracts/email_registry.aes",
                     "get_email",
