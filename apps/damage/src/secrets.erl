@@ -41,7 +41,7 @@
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
--export([has_node_password/0, set_node_password/1, has_node_keypair/0]).
+-export([has_node_password/0, set_node_password/1, has_node_keypair/0, get_node_password/0]).
 
 -define(ASKPASS_TIMEOUT, 60000).
 -define(DETS_FILE, "/var/lib/damage/damage.dets").
@@ -64,31 +64,31 @@ init([]) ->
 clear_cache() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, clear_cache, ?ASKPASS_TIMEOUT).
+
 get_node_password() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    ?LOG_INFO("secrets process look up ~p", [Pid]),
     gen_server:call(Pid, get_node_password, ?ASKPASS_TIMEOUT).
+
 get_node_password_cached(State) ->
     case maps:get(node_password, State, undefined) of
         undefined ->
             case os:getenv("DAMAGE_SECRET_KEY") of
                 false ->
-                    undefined;
-                        %Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-                    %case catch erm_askpass:ask_password(Prompt) of
-                    %    NodePassword when is_binary(NodePassword) ->
-                    %        {NodePassword, maps:put(node_password, NodePassword, State)};
-                    %    {'EXIT', {{ask_password_failed, Class, Reason}, _Stack}} ->
-                    %        ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [
-                    %            Class, Reason
-                    %        ]),
-                    %        error
-                    %end;
+                    {error, undefined};
                 NodePassword ->
                     {NodePassword, State}
             end;
         NodePassword ->
             {NodePassword, State}
     end.
+cache_node_password(undefined, State) ->
+    maps:remove(node_password, State);
+cache_node_password(Password, State) when is_binary(Password) ->
+    cache_node_password(binary_to_list(Password), State);
+cache_node_password(Password, State) ->
+    maps:put(node_password, Password, State).
+
 has_node_password() ->
     case os:getenv("DAMAGE_SECRET_KEY") of
         false ->
@@ -97,47 +97,29 @@ has_node_password() ->
         _ ->
             true
     end.
-set_node_password(Pw0) when is_list(Pw0); is_binary(Pw0) ->
-    case has_node_password() of
-        true ->
-            {error, already_set};
-        false ->
-            Pw =
-                case Pw0 of
-                    B when is_binary(B) -> unicode:characters_to_list(B);
-                    L when is_list(L) -> L
-                end,
-            case length(Pw) >= 8 of
-                false ->
-                    {error, too_short};
-                true ->
-                    Pid = gproc:lookup_local_name({?MODULE, secrets}),
-                    gen_server:call(Pid, {set_node_password, Pw}, ?ASKPASS_TIMEOUT)
-            end
-    end.
+
+set_node_password(Pw0) ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, {set_node_password, Pw0}, ?ASKPASS_TIMEOUT).
+
 handle_call(has_node_password, _From, State) ->
     Has = maps:get(node_password, State, undefined) =/= undefined,
     {reply, Has, State};
-handle_call({set_node_password, Pw}, _From, State0) ->
-    case maps:get(node_password, State0, undefined) of
-        undefined ->
-            {reply, ok, maps:put(node_password, Pw, State0)};
-        _Existing ->
-            {reply, {error, already_set}, State0}
-    end;
+handle_call({set_node_password, Pw}, _From, State) ->
+    {reply, ok, cache_node_password(Pw, State)};
 handle_call(clear_cache, _From, State) ->
     {reply, ok, maps:remove(node_password, State)};
 handle_call(get_node_password, _From, State0) ->
     case get_node_password_cached(State0) of
+        {error, _} = Error ->
+            {reply, Error, State0};
         {NodePassword, State} ->
-            {reply, NodePassword, State};
-        Other ->
-            {reply, Other, State0}
+            {reply, NodePassword, State}
     end;
 handle_call({encrypt, Key, Data}, _From, State0) ->
     case get_node_password_cached(State0) of
-        error ->
-            {reply, error, State0};
+        {error, _} = Error ->
+            {reply, Error, State0};
         {NodePassword, State} ->
             case maps:get(Key, State, undefined) of
                 undefined ->
@@ -197,20 +179,25 @@ keypair(Path) ->
             ?LOG_INFO(Path ++ " not found ... creating.", []),
             Data = make_keypair(),
             case get_node_password() of
-                Password when is_binary(Password) ->
+                {error, Error} ->
+                    ?LOG_WARNING("Failed get password for encrypting keypair ~p Error: ", [
+                        Path, Error
+                    ]),
+                    {error, keypair_not_initialized};
+                Password  ->
                     EncData = secrets:encrypt(
                         Password,
                         term_to_binary(Data)
                     ),
                     ok = file:write_file(Path, term_to_binary(EncData)),
-                    Data;
-                _ ->
-                    ?LOG_WARNING("Failed get password for encrypting keypair ~p", [Path]),
-                    error
+                    Data
             end;
         {ok, EncDataBin} ->
             case get_node_password() of
-                Password when is_binary(Password) ->
+                {error, Error} ->
+                    ?LOG_WARNING("Failed get password for decrypting keypair ~p ~p", [Path, Error]),
+                    {error, decrypt_keypair};
+                Password ->
                     case
                         secrets:decrypt(
                             Password,
@@ -223,10 +210,7 @@ keypair(Path) ->
                             keypair(Path);
                         Data ->
                             binary_to_term(Data)
-                    end;
-                _ ->
-                    ?LOG_WARNING("Failed get password for decrypting keypair ~p", [Path]),
-                    error
+                    end
             end
     end.
 node_keypair() ->
@@ -239,9 +223,9 @@ has_node_keypair() ->
     case file:read_file(Path) of
         {error, enoent} ->
             false;
-        {ok, EncDataBin} ->
+        {ok, _EncDataBin} ->
             true
-end.
+    end.
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
 
