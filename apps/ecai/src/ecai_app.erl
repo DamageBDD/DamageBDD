@@ -16,10 +16,13 @@
 start(_StartType, _StartArgs) -> ecai_sup:start_link().
 get_trails() ->
     Handlers =
-        [ecai_api],
+        [
+            ecai_api,
+            ecai_dashboard
+        ],
     Trails =
         [
-            {"/", cowboy_static, {priv_file, ecai, "static/ecai.html"}}
+            {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}}
             | trails:trails(Handlers)
         ],
     trails:store(Trails),
@@ -28,7 +31,7 @@ get_trails() ->
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Ecai."),
     {ok, _} = application:ensure_all_started(gun),
-    {ok, _} = application:ensure_all_started(yamlerl),
+    {ok, _} = application:ensure_all_started(yamerl),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
     {ok, _} = application:ensure_all_started(cowboy_telemetry),
     {ok, _} = application:ensure_all_started(erlexec),
@@ -39,7 +42,6 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} =
         cowboy:start_clear(
             http_ecai,
-            %[{ip, {0, 0, 0, 0}}, {port, WsPort}],
             [{port, WsPort}],
             #{
                 env => #{dispatch => Dispatch},
@@ -49,11 +51,7 @@ start_phase(start_trails_http, _StartType, []) ->
             }
         ),
     metrics:init(),
-    ?LOG_INFO("Started ECAI cowboy.");
-start_phase(os_tune, _StartType, []) ->
-    ?LOG_INFO("Tuning os."),
-    {ok, _} = exec:run("ulimit -n 1000000", [sync]),
-    ok.
+    ?LOG_INFO("Started ECAI cowboy.").
 
 stop(_State) ->
     ok = cowboy:stop_listener(http),

@@ -17,7 +17,9 @@
         {licenses, ["Apache 2.0"]},
         {
             start_phases,
-            []
+            [
+                {start_trails_http, []}
+            ]
         },
         {links, []}
     ]
