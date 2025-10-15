@@ -22,7 +22,8 @@ get_trails() ->
         ],
     Trails =
         [
-            {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}}
+            {"/terms", cowboy_static, {priv_file, ecai, "static/terms.html"}},
+            {"/static/[...]", cowboy_static, {priv_dir, ecai, "static/"}}
             | trails:trails(Handlers)
         ],
     trails:store(Trails),

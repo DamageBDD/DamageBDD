@@ -1,0 +1,32 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="login-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1">
+    <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+      <header class="modal__header">
+        <img src="/static/img/logo.png" />
+        <h2 class="modal__title" id="modal-1-title">DamageBDD Login</h2>
+      </header>
+      <main class="modal__content" id="modal-1-content">
+        <form id="loginSignupForm" class='panel' onsubmit="submitLoginForm(event)">
+          <input type="email" id="login-username" autocomplete="username" required placeholder="Email Address"><br>
+          <div class="password-wrapper">
+            <input type="password" name="password" id="password" autocomplete="current-password" required placeholder="Password">
+            <button type="button" class="toggle-password" data-target="password">👁️</button>
+          </div>
+          <button id="loginSubmitBtn" class="modal__btn modal__btn-primary styled-btn" aria-label="Login with email and password" title="Login Submit">Login</button><br>
+          <p>Or</p>
+          <button id="connect-button" class="modal__btn modal__btn-primary styled-btn" aria-label="Connect wallet." title="Wallet Connect">Connect Wallet</button><br>
+          <div id="connect-status"></div>
+          <p>Don’t have a wallet? <a href="https://www.superherowallet.com" target="_blank">Install Superhero Wallet</a></p>
+        </form>
+      </main>
+      <footer class="modal__footer">
+        <div class="login-links">
+          <button id="signupDialogBtn" class="buttonlink" aria-label="Signup Form." title="Create an Account">Sign Up</button>
+          <button id="loginResetPasswdBtn" class="buttonlink" aria-label="Forgot Password" title="Reset Password">Forgot Password</button>
+        </div>
+        <div class="terms">By logging in, you accept the <a href="/terms">Terms and Conditions</a>.</div>
+      </footer>
+    </div>
+  </div>
+</div>

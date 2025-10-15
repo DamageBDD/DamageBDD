@@ -1,0 +1,255 @@
+#loginSignupForm {
+  margin-top: 1rem;
+  padding: 2rem 1.5rem;
+  border-radius: 16px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+  background-color: #fff;
+}
+#loginSignupForm button[type="submit"]:hover {
+  background: #0056b3;
+}
+
+/* Flex container for alignment */
+.login-links {
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+@media (max-width: 600px) {
+  .buttonlink {
+    padding: 10px 16px;
+    font-size: 16px;
+  }
+  .login-links {
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+/* Reset basic form styling */
+#loginSignupForm {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 2rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  /*width: 100%;*/
+  max-width: 400px;
+  font-family: 'Segoe UI', sans-serif;
+}
+#loginSignupForm p{
+    margin-top: 0.75rem; font-size: 0.85rem; text-align: center; color: #555;
+}
+.panel {
+    margin-left:0.5rem;
+  padding: 1rem;
+  border-radius: 6px;
+  color: #ccc;
+  font-family: monospace;
+}
+
+/* Input Fields */
+#login-form input {
+  padding: 12px 16px;
+  font-size: 15px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  transition: border 0.2s;
+}
+
+#login-form input:focus {
+  border-color: #007bff;
+  outline: none;
+}
+/* Input Fields */
+#loginSignupForm input {
+  padding: 12px 16px;
+  font-size: 15px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  transition: border 0.2s;
+}
+
+#loginSignupForm input:focus {
+  border-color: #007bff;
+  outline: none;
+}
+
+/* Login button */
+#loginSignupForm button[type="submit"] {
+  background: #007bff;
+  color: #fff;
+  border: none;
+  padding: 12px;
+  font-size: 16px;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+/* Container styling */
+#signupForm {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 2rem 1.5rem;
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+  background-color: #ffffff;
+  /*width: 100%;*/
+  max-width: 400px;
+  font-family: 'Segoe UI', sans-serif;
+  margin: 0 auto;
+}
+
+/* Headline */
+#signupForm h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #004aad;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+/* Input Field */
+#signupForm input[type="email"],
+#signupForm input[type="text"],
+#signupForm input[type="password"] {
+  padding: 12px 16px;
+  font-size: 15px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+
+#signupForm input:focus {
+  border-color: #007bff;
+  outline: none;
+}
+
+/* Submit Button */
+#signupForm button[type="submit"] {
+  background-color: #004aad;
+  color: white;
+  border: none;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+#signupForm button[type="submit"]:hover {
+  background-color: #003380;
+}
+
+input[type="password"] + button,
+input[type="text"] + button {
+  margin-left: 10px;
+  font-size: 0.8em;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.password-wrapper input {
+  flex: 1;
+  padding-right: 2.5rem;
+}
+
+.toggle-password {
+  position: absolute;
+  right: 20px;
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #555;
+}
+#connect-button.success {
+  color: green;
+}
+
+#connect-button.error {
+  color: crimson;
+}
+
+#connect-button.info {
+  color: #0052cc;
+}
+#resetPasswdForm{
+    width: 30em;
+}
+#resetPasswdForm {
+  /*display: flex;
+  flex-wrap: wrap;*/
+}
+
+/*
+.password-wrapper input[type="text"],input[type="password"], input[type="email"] {
+    margin: 8px;
+  width: 250px;
+  margin-right: 20px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+ */
+
+#resetPasswdBtn{
+    margin: 8px;
+  width: 250px;
+  margin-right: 20px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+/* Terms section */
+.terms {
+  font-size: 12px;
+  color: #666;
+  margin-top: -0.5rem;
+  text-align: center;
+}
+
+.terms a {
+  color: #007bff;
+  text-decoration: underline;
+}
+#connect-status{
+    margin-top: 0.5rem; font-size: 0.9rem; text-align: center;
+}
+
+/* Style the Sign Up and Forgot Password buttons */
+#signupDialogBtn,
+#loginResetPasswdBtn {
+  background-color: transparent;
+  color: #00bfff;
+  border: 1px solid transparent;
+  font-size: 0.95rem;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  margin: 0.5rem 0.5rem 0 0;
+  border-radius: 6px;
+  transition: all 0.2s ease-in-out;
+}
+
+#signupDialogBtn:hover,
+#loginResetPasswdBtn:hover {
+  background-color: rgba(0, 191, 255, 0.1);
+  color: #fff;
+  border-color: #00bfff;
+  cursor: pointer;
+  transform: scale(1.03);
+}
+
