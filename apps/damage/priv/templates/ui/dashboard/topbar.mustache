@@ -1,3 +1,4 @@
+<!-- -*- mode: html -*- -->
 <div class="topbar">
   <div class="site-header">
     <img class="logo" src="/static/img/logo.png" alt="DamageBDD Logo" />
@@ -14,16 +15,21 @@
       </select>
     </div>
 
-    <div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal" title="Open token modal">
-      <div class="balance-row">
-        <span id="balanceLabel">DAMAGE:</span>
-        <span id="balanceAmount" class="damage-amount">—</span>
-      </div>
-      <div id="aeBalance" class="ae-sub">AE: —</div>
+<div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal">
+  <div class="balance-column">
+    <span id="balanceAddress" title="Wallet Address">
+      ak_...
+    </span>
+    <div class="balance-row">
+      <span id="balanceLabel">DAMAGE:</span>
+      <span id="balanceAmount" class="damage-amount">5.99941095</span>
+      <span id="aeBalance" class="ae-sub">AE: —</span>
     </div>
+  </div>
+</div>
 
 
-    <div id="loginBtn" data-micromodal-trigger="login-modal">Login</div>
+    <div id="loginBtn" data-micromodal-trigger="login-modal" >Login</div>
     <div id="installBtn" class="install-btn" data-micromodal-trigger="install-modal">Install Node</div>
     <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">Logout</div>
   </div>

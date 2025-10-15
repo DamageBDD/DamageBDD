@@ -138,16 +138,50 @@ function generateDamageQR(address){
 			tabs.toggle('history');
 			event.preventDefault();
 		});
+		document.getElementById("node-unlock-password-submit-btn").addEventListener("click", async (event) => {
+			event.preventDefault();
+
+			const form = document.getElementById("node-unlock-password-form");
+			const passwordInput = document.getElementById("node-unlock-password");
+			const password = passwordInput.value.trim();
+
+			if (!password) {
+				alert("Please enter your node password.");
+				return;
+			}
+
+			try {
+				const resp = await fetch("/secrets/unlock", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/x-www-form-urlencoded"
+					},
+					body: new URLSearchParams({ password })
+				});
+
+				const data = await resp.json();
+
+				if (data.status === "ok") {
+					alert("✅ Node unlocked successfully!");
+					if (window.MicroModal) {
+						MicroModal.close("node-unlock-modal");
+					}
+					passwordInput.value = "";
+				} else {
+					alert(`❌ Unlock failed: ${data.message || "Unknown error"}`);
+				}
+			} catch (err) {
+				console.error("Unlock error:", err);
+				alert("⚠️ Error unlocking node. Check console for details.");
+			}
+		});
 
 		showHideLoginButton();
-		if(localStorage.getItem("access_token") != undefined){
-			//updateBalance();
-		}
 		MicroModal.init({
 			onShow: modal => {
 				console.info(`${modal.id} is shown`);
 
-					if (typeof window.initInstallForm === 'function') window.initInstallForm();
+				if (typeof window.initInstallForm === 'function') window.initInstallForm();
 
 				if(modal.id == 'invoice-modal'){
 					var address = localStorage.getItem("address");
@@ -243,6 +277,7 @@ function generateDamageQR(address){
 			}catch(e){}
 		} else {
 			logoutButton.style.display = "none";
+
 			loginButton.style.display = "inline-block";
 			content.style.display = "none";
 			background.style.display = "block";
@@ -576,23 +611,35 @@ function generateDamageQR(address){
 		xhr.setRequestHeader('Content-Type', 'application/json');
 
 		xhr.onload = function() {
+			var versionDom= document.getElementById('node-version');
 			if (xhr.status === 200) {
 				var versionData = JSON.parse(xhr.responseText);
-				var versionDom= document.getElementById('node-version');
-				versionDom.innerText = 'node version: ' + versionData.version + '\n node balance: ' + versionData.node_balance;
-				console.log("version: ");
-				console.log( versionData);
-				var nodePublicKeyDom= document.getElementById('node-public-key');
-				nodePublicKeyDom.innerText = 'node public key: ' + versionData.public_key;
-				document.getElementById("node-public-key").addEventListener("click",(event) => {
-					event.preventDefault();
-					MicroModal.show("node-public-key-modal");
-				});
-				document.getElementById("node-qrcode").innerText = "";
-				var qrcode = new QRCode(
-					document.getElementById("node-qrcode"),
-					versionData.public_key
-				);
+				if(versionData.ok == true){
+					versionDom.innerText = 'node version: ' + versionData.version
+						+ '\n node balance: ' + versionData.node_balance
+						+ '\n node ae balance: ' + versionData.node_ae_balance;
+					console.log("version: ");
+					console.log( versionData);
+					var nodePublicKeyDom= document.getElementById('node-public-key');
+					nodePublicKeyDom.innerText = 'node public key: ' + versionData.public_key;
+					document.getElementById("node-public-key").addEventListener("click",(event) => {
+						event.preventDefault();
+						MicroModal.show("node-public-key-modal");
+					});
+					document.getElementById("node-qrcode").innerText = "";
+					var qrcode = new QRCode(
+						document.getElementById("node-qrcode"),
+						versionData.public_key
+					);
+				}else{
+					versionDom.innerText = 'node not initialized: ' + versionData.error;
+					MicroModal.close("login-modal");
+					if(versionData.error == "decrypt_keypair"){
+						MicroModal.show("node-unlock-modal");
+					}else if (versionData.error == "keypair_not_initialized"){
+						MicroModal.show("node-set-password-modal");
+					}
+				}
 			}
 		};
 		
@@ -803,55 +850,58 @@ function copyToClipboard(elementId) {
 window.copyToClipboard = copyToClipboard;
 // main.js — wire login page "Connect" to wallet.connectUnified
 (() => {
-  'use strict';
+	'use strict';
 
-  const CONNECT_BTN_SELECTOR = [
-    '#connect-button',
-    '#connectWalletBtn',
-    '[data-connect-wallet]',
-    '#loginBtn.connect-wallet'
-  ].join(',');
+	const CONNECT_BTN_SELECTOR = [
+		'#connect-button',
+		'#connectWalletBtn',
+		'[data-connect-wallet]',
+		'#loginBtn.connect-wallet'
+	].join(',');
 
-  async function connectViaUnified(btn) {
-    const prev = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Connecting…';
+	async function connectViaUnified(btn) {
+		const prev = btn.textContent;
+		btn.disabled = true; btn.textContent = 'Connecting…';
 
-    try {
-      const res = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
-      if (res.ok) {
-        const sel = document.getElementById('walletSelector');
-        if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
-        if (window.TokenManager?.setMode) TokenManager.setMode('noncustodial');
-        if (typeof updateWalletSummary === 'function') await updateWalletSummary();
-        document.dispatchEvent(new CustomEvent('wallet:connected', { detail: res }));
-        if (window.MicroModal) try { MicroModal.close('connect-wallet-modal'); } catch {}
-      } else {
-        console.error('Wallet connect failed:', res.error);
-        btn.textContent = 'Retry Connect';
-        return;
-      }
-    } catch (e) {
-      console.error('Wallet connect threw:', e);
-      btn.textContent = 'Retry Connect';
-      return;
-    } finally {
-      btn.disabled = false;
-      if (btn.textContent !== 'Retry Connect') btn.textContent = prev;
-    }
-  }
+		try {
+			const res = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
+			if (res.ok) {
+				const sel = document.getElementById('walletSelector');
+				if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+				if (window.TokenManager?.setMode) TokenManager.setMode('noncustodial');
+				if (typeof updateWalletSummary === 'function') await updateWalletSummary();
+				document.dispatchEvent(new CustomEvent('wallet:connected', { detail: res }));
+				if (window.MicroModal) try { MicroModal.close('connect-wallet-modal'); } catch {}
+				MicroModal.close('login-modal');
+				const content = document.getElementById("content");
+				content.style.display = "block";
+			} else {
+				console.error('Wallet connect failed:', res.error);
+				btn.textContent = 'Retry Connect';
+				return;
+			}
+		} catch (e) {
+			console.error('Wallet connect threw:', e);
+			btn.textContent = 'Retry Connect';
+			return;
+		} finally {
+			btn.disabled = false;
+			if (btn.textContent !== 'Retry Connect') btn.textContent = prev;
+		}
+	}
 
-  function bindLoginConnectButton(root = document) {
-    const nodes = Array.from(root.querySelectorAll(CONNECT_BTN_SELECTOR))
-      .filter(el => !el.dataset.wcBound);
-    nodes.forEach(btn => {
-      btn.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        connectViaUnified(btn);
-      });
-      btn.dataset.wcBound = '1';
-    });
-  }
+	function bindLoginConnectButton(root = document) {
+		const nodes = Array.from(root.querySelectorAll(CONNECT_BTN_SELECTOR))
+			  .filter(el => !el.dataset.wcBound);
+		nodes.forEach(btn => {
+			btn.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				connectViaUnified(btn);
+			});
+			btn.dataset.wcBound = '1';
+		});
+	}
 
-  document.addEventListener('DOMContentLoaded', () => bindLoginConnectButton());
-  document.addEventListener('wallet:ui:bind', () => bindLoginConnectButton());
+	document.addEventListener('DOMContentLoaded', () => bindLoginConnectButton());
+	document.addEventListener('wallet:ui:bind', () => bindLoginConnectButton());
 })();
