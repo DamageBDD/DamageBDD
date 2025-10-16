@@ -40,7 +40,7 @@ handle_cast({invoke_formatters, _Args}, State) -> {noreply, State}.
 handle_info(_Info, State) -> {noreply, State}.
 
 invoke_formatters(Config, Keyword, Data) ->
-  {formatters, Formatters} = lists:keyfind(formatters, 1, Config),
+   Formatters = proplists:get_value(formatters,  Config, []),
   lists:foreach(
     fun
       ({Formatter, FormatterConfig}) ->
