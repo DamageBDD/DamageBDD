@@ -22,6 +22,8 @@
 -include_lib("kernel/include/logger.hrl").
 
 start(_StartType, _StartArgs) ->
+    io:setopts(standard_io, [{encoding, utf8}]),
+    io:setopts(standard_error, [{encoding, utf8}]),
     Cwd = application:get_env(damage, app_dir, "/opt/damage"),
     ok = file:set_cwd(Cwd),
     damage_sup:start_link().
@@ -118,7 +120,6 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} =
         cowboy:start_clear(
             http,
-            %[{ip, {0, 0, 0, 0}}, {port, WsPort}],
             [{port, WsPort}],
             #{
                 env => #{dispatch => Dispatch},
