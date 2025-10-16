@@ -2,6 +2,13 @@
 %%% File: test/ecai_search_tests.erl
 %%%-------------------------------------------------------------------
 -module(ecai_search_tests).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% assumes ecai_search.erl and ecai_context_demo.erl are in code path

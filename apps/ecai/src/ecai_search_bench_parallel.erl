@@ -6,6 +6,13 @@
 %%%   C = ecai_search_bench_parallel:load_parallel(100000, 8).
 %%%-------------------------------------------------------------------
 -module(ecai_search_bench_parallel).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
 -export([load_parallel/2]).
 
 -define(CITIES, [<<"Sydney">>, <<"Melbourne">>, <<"Brisbane">>, <<"Perth">>, <<"Adelaide">>]).

@@ -2,6 +2,11 @@
 %%% ecai_search.erl  — ECAI directory index (exact+prefix) with proofs
 %%%-------------------------------------------------------------------
 -module(ecai_search).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
 -compile(warn_export_all).
 
 -include_lib("kernel/include/logger.hrl").
