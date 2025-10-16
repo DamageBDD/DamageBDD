@@ -445,27 +445,27 @@ fetch_range(Tab, Key, TermBin, Acc) ->
     end.
 
 %% Prefix range: use the fact keys are ordered; start at <<"pfx:ns:prefix">>
-postings_prefix(Ctx, PfxKey) ->
-    Start = {PfxKey, -1 bsl 62},
-    fetch_pfx(Ctx#ctx.post_tab, Start, PfxKey, []).
-
-fetch_pfx(Tab, Key, PfxKey, Acc) ->
-    case ets:next(Tab, Key) of
-        '$end_of_table' ->
-            lists:reverse(Acc);
-        {KTerm, DocInt} = K ->
-            case has_prefix(KTerm, PfxKey) of
-                true -> fetch_pfx(Tab, K, PfxKey, [DocInt | Acc]);
-                false -> lists:reverse(Acc)
-            end
-    end.
-
-has_prefix(Bin, Pfx) ->
-    Sz = byte_size(Pfx),
-    case Bin of
-        <<Pfx:Sz/binary, _/binary>> -> true;
-        _ -> false
-    end.
+%postings_prefix(Ctx, PfxKey) ->
+%    Start = {PfxKey, -1 bsl 62},
+%    fetch_pfx(Ctx#ctx.post_tab, Start, PfxKey, []).
+%
+%fetch_pfx(Tab, Key, PfxKey, Acc) ->
+%    case ets:next(Tab, Key) of
+%        '$end_of_table' ->
+%            lists:reverse(Acc);
+%        {KTerm, DocInt} = K ->
+%            case has_prefix(KTerm, PfxKey) of
+%                true -> fetch_pfx(Tab, K, PfxKey, [DocInt | Acc]);
+%                false -> lists:reverse(Acc)
+%            end
+%    end.
+%
+%has_prefix(Bin, Pfx) ->
+%    Sz = byte_size(Pfx),
+%    case Bin of
+%        <<Pfx:Sz/binary, _/binary>> -> true;
+%        _ -> false
+%    end.
 
 %%%===================================================================
 %%% Scoring and results

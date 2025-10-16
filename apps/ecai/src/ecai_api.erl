@@ -118,6 +118,34 @@ trails() ->
                         }
                 }
             }
+        }),
+        %% /ecai/search – free-text search endpoint
+        trails:trail("/ecai/search", ecai_api, #{action => search}, #{
+            description => "Free-text ECAI search",
+            methods => #{
+                post => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Search documents",
+                    parameters => [
+                        #{
+                            name => <<"q">>,
+                            type => <<"string">>,
+                            required => true,
+                            description => "Query string"
+                        },
+                        #{
+                            name => <<"limit">>,
+                            type => <<"integer">>,
+                            required => false,
+                            description => "Max results (default 10)"
+                        }
+                    ],
+                    responses => #{
+                        <<"200">> => #{description => "OK"},
+                        <<"400">> => #{description => "Bad request"}
+                    }
+                }
+            }
         })
     ].
 
@@ -159,6 +187,49 @@ to_json(Req, #{ae_account := _AeAccount, action := get_knowledge} = State) ->
             {<<"Invalid hash.">>, Req, State}
     end.
 
+from_json(Req, #{action := search} = State) ->
+    {ok, Body, Req1} = cowboy_req:read_body(Req),
+    case catch jsx:decode(Body, [return_maps]) of
+        #{<<"q">> := Q} = M ->
+            Limit =
+                case maps:get(<<"limit">>, M, 10) of
+                    L when is_integer(L), L > 0 -> L;
+                    _ -> 10
+                end,
+            Ctx = persistent_term:get(ecai_ctx),
+            %% Free-text → search all fields with prefix matching
+            {Results, Proofs} =
+                ecai_search:search(
+                    Ctx,
+                    #{
+                        name => Q,
+                        category => Q,
+                        city => Q,
+                        tags => [Q],
+                        phone => Q,
+                        prefix => true
+                    },
+                    Limit
+                ),
+            Resp = #{
+                <<"ok">> => true,
+                <<"results">> => [
+                    #{<<"doc_id">> => Doc, <<"score">> => Score}
+                 || {Doc, Score} <- Results
+                ],
+                <<"proofs">> => Proofs
+            },
+            {ok,
+                cowboy_req:reply(
+                    200,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(Resp),
+                    Req1
+                ),
+                State};
+        _ ->
+            {ok, cowboy_req:reply(400, Req), State}
+    end;
 from_json(Req, #{ae_account := AeAccount, action := encode} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
