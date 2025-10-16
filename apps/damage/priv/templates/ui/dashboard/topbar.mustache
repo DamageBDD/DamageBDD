@@ -9,19 +9,28 @@
   </div>
   <div class="toolbar-items">
 
-<div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal">
-  <div class="balance-column">
-    <span id="balanceAddress" title="Wallet Address">
-      ak_...
-    </span>
-    <div class="balance-row">
-      <span id="balanceLabel">DAMAGE:</span>
-      <span id="balanceAmount" class="damage-amount"></span>
-      <span id="aeBalanceLabel" class="ae-sub">AE:</span>
-      <span id="aeBalance" class="ae-sub"></span>
+    <div id="balanceDiv" class="token-cta" data-micromodal-trigger="invoice-modal">
+      <div class="balance-column">
+        <span id="balanceAddress" title="Wallet Address">
+          ak_...
+        </span>
+        <div class="balance-row">
+          <span id="balanceLabel">DAMAGE:</span>
+          <span id="balanceAmount" class="damage-amount"></span>
+          <span id="aeBalanceLabel" class="ae-sub">AE:</span>
+          <span id="aeBalance" class="ae-sub"></span>
+
+          <button id="balanceRefreshBtn"
+                  type="button"
+                  class="icon-btn"
+                  title="Refresh balance"
+                  aria-label="Refresh balance">
+            ⟳
+          </button>
+        </div>
+      </div>
+
     </div>
-  </div>
-</div>
 
 
     <div id="loginBtn" data-micromodal-trigger="login-modal" >Login</div>
@@ -62,8 +71,12 @@
             <input type="password" name="password" id="email-password" autocomplete="current-password" required placeholder="Password">
             <button type="button" class="toggle-password" data-target="password">👁️</button>
           </div>
-          <button id="email-login-submit-btn" class="modal__btn modal__btn-primary styled-btn" aria-label="Login with email and password" title="Login Submit">Login</button><br>
+        </form>
       </main>
+      <footer class="modal__footer">
+        <div class="login-links">
+          <button id="email-login-submit-btn" class="modal__btn modal__btn-primary styled-btn" aria-label="Login with email and password" title="Login Submit">Login</button><br>
+      </footer>
+      </div>
     </div>
   </div>
-</div>

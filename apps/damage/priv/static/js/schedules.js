@@ -60,7 +60,7 @@ async function updateSchedulesTable() {
 		method: 'GET',
 		credentials: 'include',
 		headers: { 'Content-Type': 'application/json',
-				   'Authorization': 'Bearer ' + localStorage.access_token
+				   'Authorization': 'Bearer ' + window.TokenManager.getToken()
 				 }
 	};
 

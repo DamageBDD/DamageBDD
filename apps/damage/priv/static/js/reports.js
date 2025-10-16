@@ -312,7 +312,7 @@
 
   // Auto-mount using the stored address, if present
   document.addEventListener("DOMContentLoaded", () => {
-    const acct = localStorage.getItem("address");
+      const acct = TokenManager.getAddress();
     if (acct) renderRunReports(acct, { limit: 10, bypassCache: true });
   });
 })();

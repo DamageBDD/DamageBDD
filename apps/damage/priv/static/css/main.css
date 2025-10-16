@@ -760,11 +760,50 @@ ul[data-tabs] li a:hover {
   display: inline-flex;
   flex-direction: column;
   gap: 2px;
+ position: relative;
 }
 #balanceDiv:hover { background-color: rgba(0, 123, 255, 0.2); }
 
 .balance-row { display: inline-flex; align-items: baseline; gap: .5rem; }
 #balanceLabel { color:#9fc9ff; font-weight:600; font-size:.95rem; }
+/* balance refresh button */
+#balanceRefreshBtn {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 22px; height: 22px;
+  border-radius: 9999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  opacity: .8; cursor: pointer; margin-left: .25rem;
+}
+#balanceRefreshBtn:hover { opacity: 1; }
+#balanceRefreshBtn[aria-busy="true"] { animation: balance-spin .9s linear infinite; }
+
+@keyframes balance-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+/* keep rows tidy when the button is appended */
+#balanceDiv .balance-row { align-items: center; gap: .45rem; }
+
+#balanceTopupBtn {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  opacity: .8;
+  cursor: pointer;
+  margin-left: .25rem;
+}
+#balanceTopupBtn:hover { opacity: 1; }
+
+
+
 .damage-amount { font-weight:800; font-family:monospace; font-size:1.05rem; letter-spacing:.3px; }
 
 .ae-sub {

@@ -180,19 +180,6 @@ document.addEventListener('DOMContentLoaded', () => {
 		await updateWalletSummary();
 	}
 
-	// Call these from your existing login/connect flows:
-	window.__damage_onCustodialLoginSuccess = function(token) {
-		TokenManager.setToken('custodial', token);
-		TokenManager.activate('custodial');
-	};
-
-	window.__damage_onExtensionAuthSuccess = function(token) {
-		TokenManager.setToken('extension', token);
-		TokenManager.activate('extension');
-	};
-
-	// Use this from wallet-switcher.js
-	// Example: await updateWalletSummary();
 
 	async function updateWalletSummary() {
 		var balanceAmountId = 'balanceAmount';
@@ -312,6 +299,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
 	bindLoginConnectButton();
 
+	const div = document.getElementById('balanceDiv');
+
+	let btn = document.getElementById('balanceRefreshBtn');
+
+	async function refresh(ev) {
+        ev.preventDefault();
+		btn.setAttribute('aria-busy', 'true');
+		try {
+			 await updateWalletSummary();
+			// also emit a simple event some modules may listen for
+			document.dispatchEvent(new Event('balance:refresh'));
+		} catch (e) {
+			console.error('[balance] refresh failed:', e);
+		} finally {
+			btn.removeAttribute('aria-busy');
+		}
+	}
+
+	btn.addEventListener('click', refresh);
+
+	// If your balances.js fires this when done, spinner will also stop immediately.
+	document.addEventListener('balance:updated', () => {
+		btn && btn.removeAttribute('aria-busy');
+	});
 
 });
 

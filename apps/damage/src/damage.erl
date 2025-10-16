@@ -133,7 +133,15 @@ execute(Config, Context, FeatureName) ->
         FeatureDirs
     ).
 
-init_logging(RunId, RunDir) ->
+init_logging(Config) ->
+    {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+    Cfg =
+        case proplists:get_value(dry_run, Config, false) of
+            true -> #{};
+            false -> #{file => filename:join(RunDir, "run.log")}
+        end,
+
     PidToLog = self(),
     PidFilter =
         fun
@@ -145,11 +153,13 @@ init_logging(RunId, RunDir) ->
         logger_std_h,
         #{
             filters => [{PidFilter, []}],
-            config => #{file => filename:join(RunDir, "run.log")}
+            config => Cfg
         }
     ).
 
-deinit_logging(ScheduleId) -> logger:remove_handler(ScheduleId).
+deinit_logging(Config) ->
+    {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+    logger:remove_handler(RunId).
 
 parse_file(Filename) ->
     %?LOG_DEBUG("parse context: ~p", [Context]),
@@ -171,7 +181,7 @@ execute_data(Config, Context, FeatureData) ->
 
 execute_file(Config, Context, Filename) when is_map(Context) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-    {concurrency, Concurrency} = lists:keyfind(concurrency, 1, Config),
+    Concurrency = proplists:get_value(concurrency, Config, 1),
     StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
     case catch parse_file(Filename) of
         {failed, LineNo, Message} ->
@@ -212,7 +222,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                 end,
             EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
             {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-            {api_url, DamageApi} = lists:keyfind(api_url, 1, Config),
+            {ok, DamageApi} = application:get_env(damage, api_url),
             ?LOG_DEBUG("RunDir ~p", [RunDir]),
             {ok, HashList} = damage_ipfs:add({directory, RunDir}),
             [#{<<"Hash">> := ReportHash}] =
@@ -335,9 +345,7 @@ execute_feature(
     BackGround,
     Scenarios
 ) ->
-    {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-    init_logging(RunId, RunDir),
+    init_logging(Config),
     formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
     FinalContext =
         lists:foldl(
@@ -347,7 +355,7 @@ execute_feature(
             FeatureContext,
             Scenarios
         ),
-    deinit_logging(RunId),
+    deinit_logging(Config),
     FinalContext.
 
 execute_scenario(Config, Context, undefined, Scenario) ->
@@ -593,7 +601,6 @@ get_default_config(AeAccount, Concurrency, Formatters) ->
     {ok, DataDir} = application:get_env(damage, data_dir),
     {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
     {ok, ChromeDriver} = application:get_env(damage, chromedriver),
-    {ok, DamageApi} = application:get_env(damage, api_url),
     AccountDir = filename:join(DataDir, AeAccount),
     RunDir = filename:join(AccountDir, RunId),
     ReportDir = filename:join([RunDir, "reports"]),
@@ -616,8 +623,7 @@ get_default_config(AeAccount, Concurrency, Formatters) ->
         {chromedriver, ChromeDriver},
         {concurrency, Concurrency},
         {run_id, RunId},
-        {run_dir, RunDir},
-        {api_url, DamageApi}
+        {run_dir, RunDir}
     ].
 
 sats_to_damage(Sats) ->

@@ -53,6 +53,19 @@
 }
 
 /* Input Fields */
+#login-form input {
+  padding: 12px 16px;
+  font-size: 15px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  transition: border 0.2s;
+}
+
+#login-form input:focus {
+  border-color: #007bff;
+  outline: none;
+}
+/* Input Fields */
 #loginSignupForm input {
   padding: 12px 16px;
   font-size: 15px;

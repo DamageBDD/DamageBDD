@@ -164,7 +164,7 @@ function generateDamageQR(address){
 			var tab = event.target;
 			var content = event.detail.content;
 			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
-				const address = localStorage.getItem("address");
+				const address = TokenManager.getAddress();
 				Reports.renderRunReports(address, { limit: 10 });
 			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
 				if(window.TokenManager.getToken() != undefined){
@@ -447,7 +447,7 @@ function generateDamageQR(address){
 			const data = await response.json();
 			const message = data.tx;
 
-			await wallet.connectWalletUnified();
+			await window.connectWalletUnified();
 			const signature = await wallet.signTransactionSmart(
 				message,
 				"ae_mainnet",
@@ -464,7 +464,7 @@ function generateDamageQR(address){
 						feature: inputText,
 						address: address,
 						concurrency: concurrencyText,
-						signed_tx: signature.result.signature
+						signed_tx: signature.result.signedTransaction
 					})
 				};
 
