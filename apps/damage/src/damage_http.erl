@@ -439,11 +439,11 @@ do_action_tx_throttled(Json, State, Req) ->
     end.
 do_action_tx(
     #{
-        feature := _FeatureData,
+        feature := FeatureData,
         signed_tx := SignedTx,
-        concurrency := _Concurrency,
-        address := _AeAccount
-    } = Json,
+        concurrency := Concurrency,
+        address := AeAccount
+    } = _Json,
     State,
     Req
 ) ->
@@ -454,16 +454,58 @@ do_action_tx(
         "caller_nonce" := _,
         "contract_id" := _,
         "gas_price" := _GasPrice,
-        "gas_used" := GasUsed,
-        "height" := Height,
+        "gas_used" := _GasUsed,
+        "height" := _Height,
         "log" := _Log,
         "return_type" := "ok",
         "return_value" := {}
     } = damage_ae:wait_tx(ContractCallTxHash),
-    {
-        200,
-        #{gas_used => GasUsed, height => Height, status => <<"ok">>}
-    };
+    case
+        check_execute_bdd(
+            #{
+                feature => FeatureData,
+                color_formatter => false,
+                concurrency => Concurrency,
+                stream => maybe_stream
+            },
+            maps:put(public_key, AeAccount, State),
+            Req
+        )
+    of
+        {200, Response} ->
+            ?LOG_INFO(
+                "ok execute_feature from_json tx ~p concurrency ~p",
+                [Response, Concurrency]
+            ),
+            {
+                stop,
+                case Concurrency of
+                    1 ->
+                        Req;
+                    C when is_integer(C) ->
+                        cowboy_req:reply(200, Req),
+                        cowboy_req:set_resp_body(jsx:encode(Response), Req)
+                end,
+                State
+            };
+        {Status, Response} ->
+            ?LOG_INFO("~p execute_feature from_json tx ~p", [Status, Response]),
+            {
+                stop,
+                cowboy_req:reply(
+                    Status,
+                    cowboy_req:set_resp_body(jsx:encode(Response), Req)
+                ),
+                State
+            };
+        Error ->
+            ?LOG_ERROR("execute_feature from_json tx error ~p", [Error]),
+            {
+                stop,
+                cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Error), Req)),
+                State
+            }
+    end;
 do_action_tx(
     #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} = Json, State, Req
 ) ->
@@ -495,7 +537,7 @@ do_action_tx(
         {Status, Response} ->
             {Status, Response}
     end;
-do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = Json, State, Req) ->
+do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, _State, _Req) ->
     case vanillae:verify_signature(Sig, Message, PubKey) of
         {ok, _Result} ->
             case catch jsx:decode(Message, [{labels, atom}, return_maps]) of

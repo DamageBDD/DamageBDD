@@ -762,12 +762,16 @@ calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
     GasPerByte = 20,
     SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
     BaseGas + (SizeDiff * GasPerByte).
+min_fee() ->
+    vanillae:min_fee() * 2. %TODO some fine tuning
+min_gas() ->
+    vanillae:min_gas() * 2. %TODO some fine tuning
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
-    Gas = vanillae:min_gas(),
+    Fee = min_fee(),
+    Gas = min_gas(),
     Amount = 0,
     GasPrice = vanillae:min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
