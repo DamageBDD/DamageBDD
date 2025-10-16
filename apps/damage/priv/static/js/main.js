@@ -74,10 +74,6 @@ function generateDamageQR(address){
 				submitLoginForm(event);
 			}
 		});
-		document.getElementById("loginBtn").addEventListener("click",(event) => {
-			event.preventDefault();
-			MicroModal.show("login-modal");
-		});
 		document.getElementById("loginSubmitBtn").addEventListener("click", submitLoginForm);
 
 
@@ -121,8 +117,8 @@ function generateDamageQR(address){
 			generateInvoice();
 		});
 		document.getElementById("logoutBtn").addEventListener("click",(event) => {
-			MicroModal.show("logout-modal");
 			event.preventDefault();
+			MicroModal.show("logout-modal");
 		});
 		const balanceDiv = document.getElementById("balanceDiv");
 		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
@@ -130,15 +126,15 @@ function generateDamageQR(address){
 			event.preventDefault();
 		});
 		document.getElementById("historylink").addEventListener("click",(event) => {
+			event.preventDefault();
 			console.log("historytab");
 			var tabs =Tabby('[data-tabs]');
 			tabs.toggle('history');
-			event.preventDefault();
 		});
 		document.getElementById("node-unlock-password").addEventListener("keydown", async function(event) {
 			if (event.ctrlKey && event.key === "Enter") {
-				await nodeUnlock();
 				event.preventDefault();
+				await nodeUnlock();
 			}});
 		document.getElementById("node-unlock-password-submit-btn").addEventListener("click", async (event) => {
 			event.preventDefault();
@@ -232,8 +228,7 @@ function generateDamageQR(address){
 
 
 	function isAuthenticated() {
-		if(window.TokenManager.getMode() == "extension") return true;
-		return (localStorage.access_token == null || localStorage.access_token == "") ? false : true;
+		if(window.TokenManager.getToken()) return true;
 	}
 
 
@@ -277,11 +272,7 @@ function generateDamageQR(address){
 	function showLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
-		const loginButton = document.getElementById("loginBtn");
-		const logoutButton = document.getElementById("logoutBtn");
-			logoutButton.style.display = "none";
 
-			loginButton.style.display = "inline-block";
 			content.style.display = "none";
 			background.style.display = "block";
 			MicroModal.show('login-modal');
@@ -289,19 +280,13 @@ function generateDamageQR(address){
 	function showHideLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
-		const loginButton = document.getElementById("loginBtn");
-		const logoutButton = document.getElementById("logoutBtn");
 		if (isAuthenticated()) {
-			loginButton.style.display = "none";
-			content.style.display = "block";
-			logoutButton.style.display = "inline-block";
 			try{
 				MicroModal.close('login-modal');
-			}catch(e){}
+			}catch(e){};
+			content.style.display = "block";
 		} else {
-			logoutButton.style.display = "none";
 
-			loginButton.style.display = "inline-block";
 			content.style.display = "none";
 			background.style.display = "block";
 			MicroModal.show('login-modal');

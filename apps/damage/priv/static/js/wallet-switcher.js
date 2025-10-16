@@ -93,7 +93,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 	async function connectViaUnified(btn) {
 		const prev = btn.textContent;
-		btn.disabled = true; btn.textContent = 'Connecting…';
+		btn.disabled = true;
+		btn.textContent = 'Connecting…';
 
 		try {
 			const res = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
@@ -101,6 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
 				const sel = document.getElementById('walletSelector');
 				if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
 				TokenManager.setModeAddress("extension", res.address);
+				TokenManager.setToken("extension", res.address);
 
 				document.dispatchEvent(new CustomEvent('wallet:connected', { detail: res }));
 				MicroModal.close('connect-wallet-modal'); 
@@ -108,7 +110,6 @@ document.addEventListener('DOMContentLoaded', () => {
 				const content = document.getElementById("content");
 				content.style.display = "block";
 				await updateWalletSummary();
-				window.showHideLoginButton();
 			} else {
 				console.error('Wallet connect failed:', res.error);
 				btn.textContent = 'Retry Connect';
@@ -143,6 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
 			MicroModal.show('connect-wallet-modal');
 			return undefined;
 		}
+		TokenManager.setToken('extension',r.address);
 		return r.address;
 	}
 

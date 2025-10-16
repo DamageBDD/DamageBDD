@@ -225,8 +225,6 @@ async function connectButton() {
 
     address = maybe_address;
     logged_in = true;
-	document.getElementById("connect-button").disabled = true;
-	document.getElementById("connect-button").style.display = 'none';
 	return maybe_address;
     //fetchWalletBalance(address);
 }
