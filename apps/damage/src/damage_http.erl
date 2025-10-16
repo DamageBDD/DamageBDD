@@ -138,6 +138,8 @@ get_access_token(Req) ->
 
 is_authorized(Req, #{action := version} = State) ->
     {true, Req, State};
+is_authorized(Req, #{action := tx} = State) ->
+    {true, Req, State};
 is_authorized(Req, State0) ->
     State =
         maps:put(
@@ -317,6 +319,41 @@ check_execute_bdd(
     ).
 
 check_execute_bdd(
+    #{feature := FeatureData, address := AeAccount} = Context,
+    _State,
+    Req0,
+    [{dry_run, true}]
+) ->
+    IP = damage_utils:get_ip(Req0),
+    case throttle:check(damage_api_rate, IP) of
+        {limit_exceeded, _, _} ->
+            ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
+            {429, <<"throttled">>};
+        _ ->
+            GlobalContext = damage_context:get_global_template_context(Context),
+            AccountContext = damage_context:get_context(AeAccount),
+            ContextIn =
+                maps:put(
+                    account_context,
+                    AccountContext,
+                    GlobalContext
+                ),
+            {ok, DataDir} = application:get_env(damage, data_dir),
+            {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
+            AccountDir = filename:join(DataDir, AeAccount),
+            RunDir = filename:join(AccountDir, RunId),
+            ok = filelib:ensure_path(RunDir),
+            execute_bdd(
+                [
+                    {dry_run, true},
+                    {run_id, RunId},
+                    {run_dir, RunDir}
+                ],
+                maps:put(public_key, AeAccount, ContextIn),
+                FeatureData
+            )
+    end;
+check_execute_bdd(
     #{concurrency := Concurrency0, feature := FeatureData} = Context0,
     #{public_key := AeAccount} = State,
     Req0,
@@ -390,104 +427,121 @@ check_execute_bdd(
                     Other
             end
     end.
-do_action_tx(Json, State, Req) ->
+
+do_action_tx_throttled(Json, State, Req) ->
     IP = damage_utils:get_ip(Req),
     case throttle:check(damage_api_rate, IP) of
         {limit_exceeded, _, _} ->
             ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
             {429, <<"throttled">>};
         _ ->
-            case Json of
-                #{
-                    feature := _FeatureData,
-                    signed_tx := SignedTx,
-                    concurrency := _Concurrency,
-                    address := _AeAccount
-                } ->
-                    ?LOG_DEBUG("signed tx received ~p", [SignedTx]),
-                    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTx),
-                    Result = damage_ae:wait_tx(ContractCallTxHash),
+            do_action_tx(Json, State, Req)
+    end.
+do_action_tx(
+    #{
+        feature := _FeatureData,
+        signed_tx := SignedTx,
+        concurrency := _Concurrency,
+        address := _AeAccount
+    } = Json,
+    State,
+    Req
+) ->
+    ?LOG_DEBUG("signed tx received ~p", [SignedTx]),
+    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTx),
+    #{
+        "caller_id" := _,
+        "caller_nonce" := _,
+        "contract_id" := _,
+        "gas_price" := _GasPrice,
+        "gas_used" := GasUsed,
+        "height" := Height,
+        "log" := _Log,
+        "return_type" := "ok",
+        "return_value" := {}
+    } = damage_ae:wait_tx(ContractCallTxHash),
+    {
+        200,
+        #{gas_used => GasUsed, height => Height, status => <<"ok">>}
+    };
+do_action_tx(
+    #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} = Json, State, Req
+) ->
+    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+
+    case
+        check_execute_bdd(
+            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
+        )
+    of
+        {200, DryRunRecord} ->
+            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
+                DryRunRecord,
+            Args = [
+                NodeAeAccount,
+                integer_to_list(round(Cost)),
+                binary_to_list(FeatureHash),
+                binary_to_list(ReportHash)
+            ],
+            ?LOG_DEBUG("creating execute tx ~p", [Args]),
+            Tx = damage_ae:contract_call_prepare_tx(
+                #{public_key => AeAccount},
+                ?DAMAGE_TOKEN_CONTRACT,
+                "contracts/token.aes",
+                "spend",
+                Args
+            ),
+            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+        {Status, Response} ->
+            {Status, Response}
+    end;
+do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = Json, State, Req) ->
+    case vanillae:verify_signature(Sig, Message, PubKey) of
+        {ok, _Result} ->
+            case catch jsx:decode(Message, [{labels, atom}, return_maps]) of
+                #{amount := Amount} ->
+                    Description = <<"Pay amount for amount of DAMAGE">>,
+                    {ok, Timestamp} = datestring:format(
+                        "YmdHMS", erlang:localtime()
+                    ),
+                    Label0 = list_to_binary("buy:" ++ Timestamp ++ ":"),
+                    Label = <<Label0/binary, PubKey/binary>>,
+
+                    #{
+                        payment_hash := _PaymentHash,
+                        expires_at := _Expiry,
+                        bolt11 := Bolt11,
+                        payment_secret := _PaymentSecret,
+                        created_index := _CreatedIndex
+                    } =
+                        Invoice = cln:create_invoice(
+                            Amount * 1000, Description, 3600, Label
+                        ),
+                    ?LOG_INFO("invoice ~p", [Invoice]),
                     {
                         200,
-                        Result
+                        #{payment_request => Bolt11}
                     };
-                #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} ->
-                    #{public_key := NodeAeAccount} = secrets:node_keypair(),
-
-                    case
-                        check_execute_bdd(
-                            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
-                        )
-                    of
-                        {200, DryRunRecord} ->
-                            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
-                                DryRunRecord,
-                            Tx = damage_ae:contract_call_prepare_tx(
-                                #{public_key => AeAccount},
-                                ?DAMAGE_TOKEN_CONTRACT,
-                                "contracts/token.aes",
-                                "spend",
-                                [
-                                    NodeAeAccount,
-                                    integer_to_list(round(Cost)),
-                                    FeatureHash,
-                                    ReportHash
-                                ]
-                            ),
-                            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
-                        {Status, Response} ->
-                            {Status, Response}
-                    end;
-                #{signature := Sig, message := Message, pubkey := PubKey} ->
-                    case vanillae:verify_signature(Sig, Message, PubKey) of
-                        {ok, _Result} ->
-                            case catch jsx:decode(Message, [{labels, atom}, return_maps]) of
-                                #{amount := Amount} ->
-                                    Description = <<"Pay amount for amount of DAMAGE">>,
-                                    {ok, Timestamp} = datestring:format(
-                                        "YmdHMS", erlang:localtime()
-                                    ),
-                                    Label0 = list_to_binary("buy:" ++ Timestamp ++ ":"),
-                                    Label = <<Label0/binary, PubKey/binary>>,
-
-                                    #{
-                                        payment_hash := _PaymentHash,
-                                        expires_at := _Expiry,
-                                        bolt11 := Bolt11,
-                                        payment_secret := _PaymentSecret,
-                                        created_index := _CreatedIndex
-                                    } =
-                                        Invoice = cln:create_invoice(
-                                            Amount * 1000, Description, 3600, Label
-                                        ),
-                                    ?LOG_INFO("invoice ~p", [Invoice]),
-                                    {
-                                        200,
-                                        #{payment_request => Bolt11}
-                                    };
-                                Reason ->
-                                    {
-                                        400,
-                                        #{
-                                            message =>
-                                                Reason
-                                        }
-                                    }
-                            end;
-                        {error, Reason} ->
-                            {
-                                400,
-                                #{
-                                    message =>
-                                        Reason
-                                }
-                            }
-                    end
-            end
+                Reason ->
+                    {
+                        400,
+                        #{
+                            message =>
+                                Reason
+                        }
+                    }
+            end;
+        {error, Reason} ->
+            {
+                400,
+                #{
+                    message =>
+                        Reason
+                }
+            }
     end.
 from_json(Req, #{action := tx} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
-    ?LOG_DEBUG("from_json tx ~p.", [Req]),
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
         {'EXIT', {badarg, Trace}} ->
             ?LOG_ERROR("Json decoding failed ~p", [Trace]),
@@ -500,7 +554,7 @@ from_json(Req, #{action := tx} = State) ->
                 State
             };
         #{feature := _FeatureData, concurrency := _Concurrency} = Json ->
-            {Status0, Response0} = do_action_tx(Json, State, Req),
+            {Status0, Response0} = do_action_tx_throttled(Json, State, Req),
             {
                 stop,
                 cowboy_req:reply(
@@ -512,7 +566,6 @@ from_json(Req, #{action := tx} = State) ->
     end;
 from_json(Req, State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
-    ?LOG_DEBUG("from_json ~p.", [Req]),
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
         {'EXIT', {badarg, Trace}} ->
             ?LOG_ERROR("Json decoding failed ~p", [Trace]),
