@@ -275,13 +275,19 @@ validate(Gherkin) ->
     end.
 
 list_schedules(AeAccount) ->
-    Results =
+    case
         contract_call(
             AeAccount,
             "get_schedules",
             []
-        ),
-    load_account_schedules(AeAccount, Results).
+        )
+    of
+        {error, Error} ->
+            ?LOG_ERROR("Failed to load schedules ~p ~p", [AeAccount, Error]),
+            [];
+        Results ->
+            load_account_schedules(AeAccount, Results)
+    end.
 
 load_all_schedules() ->
     ?LOG_INFO("Loading all schedules ..."),
@@ -552,25 +558,10 @@ test_list_schedule() ->
     Decrypted.
 
 contract_call(AeAccount, Func, Args) ->
-    #{
-        decodedResult := [],
-        result :=
-            #{
-                log := [],
-                gasPrice := GasPrice,
-                callerId := AeAccount,
-                gasUsed := GasUsed,
-                returnType := <<"ok">>
-            }
-    } =
-        damage_ae:contract_call(
-            AeAccount,
-            ?SCHEDULES_CONTRACT,
-            "contracts/schedules.aes",
-            Func,
-            Args
-        ),
-    ?LOG_DEBUG(
-        "call AE contract ~p gasprice ~p gasused ~p",
-        [AeAccount, GasPrice, GasUsed]
+    damage_ae:contract_call(
+        AeAccount,
+        ?SCHEDULES_CONTRACT,
+        "contracts/schedules.aes",
+        Func,
+        Args
     ).

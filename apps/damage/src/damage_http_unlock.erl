@@ -111,7 +111,7 @@ content_types_accepted(Req, State) ->
 %            {stop, Req3, State}
 %    end.
 is_authorized(Req, State) ->
-            {true, Req, State}.
+    {true, Req, State}.
 
 %% Render HTML page depending on whether a password is present/cached
 to_html(Req, State) ->
