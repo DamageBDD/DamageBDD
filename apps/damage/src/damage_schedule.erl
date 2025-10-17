@@ -181,7 +181,9 @@ execute_bdd(
     MinBalance = Concurrency * math:pow(10, ?DAMAGE_DECIMALS),
     case damage_ae:balance(AeAccount) of
         Balance when Balance >= MinBalance ->
-            Config = damage:get_default_config(AeAccount, Concurrency, []),
+            Config = damage_config:get_default_config([
+                {public_key, AeAccount}, {concurrency, Concurrency}
+            ]),
             Context =
                 damage_context:get_account_context(
                     damage_context:get_global_template_context(Schedule)

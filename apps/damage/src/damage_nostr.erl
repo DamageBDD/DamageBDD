@@ -422,7 +422,9 @@ handle_event_payload(
                             ?LOG_INFO("Nostr Received feature from: ~s ~s~n", [Npub, Content]),
                             Context = #{npub => Npub, public_key => AeAccount},
                             AeAccount = resolve_npub(Npub, Cache),
-                            Config = damage:get_default_config(AeAccount, 1, []),
+                            Config = damage_config:get_default_config([
+                                {public_key, AeAccount}, {concurrency, 1}
+                            ]),
                             jsx:encode(
                                 execute_bdd(
                                     Config,

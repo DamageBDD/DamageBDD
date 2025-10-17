@@ -27,7 +27,6 @@
 -export(
     [execute_data/3, execute_file/3, execute/3, execute/2, execute_feature/8]
 ).
--export([get_default_config/3]).
 -export([sats_to_damage/1]).
 -export([check_setup/0]).
 
@@ -92,9 +91,15 @@ terminate(Reason, _State) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
+get_feature_dir(Config) ->
+    {feature_dirs, FeatureDirs} =
+        case lists:keyfind(feature_dirs, 1, Config) of
+            false -> application:get_env(damgage, feature_dirs, ["./features/"]);
+            Val0 -> Val0
+        end,
+    FeatureDirs.
 
 execute(Config, Context) ->
-    {feature_dirs, FeatureDirs} = lists:keyfind(feature_dirs, 1, Config),
     {feature_include, FeatureInclude} = lists:keyfind(feature_include, 1, Config),
     lists:map(
         fun(FeatureDir) ->
@@ -103,15 +108,10 @@ execute(Config, Context) ->
                 filelib:wildcard(filename:join(FeatureDir, FeatureInclude))
             )
         end,
-        FeatureDirs
+        get_feature_dir(Config)
     ).
 
 execute(Config, Context, FeatureName) ->
-    {feature_dirs, FeatureDirs} =
-        case lists:keyfind(feature_dirs, 1, Config) of
-            false -> {feature_dirs, ["../../../../features/", "../features/"]};
-            Val0 -> Val0
-        end,
     {feature_suffix, FeatureSuffix} =
         case lists:keyfind(feature_suffix, 1, Config) of
             false -> {feature_suffix, ".feature"};
@@ -130,7 +130,7 @@ execute(Config, Context, FeatureName) ->
                 )
             )
         end,
-        FeatureDirs
+        get_feature_dir(Config)
     ).
 
 init_logging(Config) ->
@@ -162,10 +162,22 @@ deinit_logging(Config) ->
     logger:remove_handler(RunId).
 
 parse_file(Filename) ->
-    %?LOG_DEBUG("parse context: ~p", [Context]),
     case file:read_file(Filename) of
-        {ok, Source0} -> egherkin:parse(Source0);
-        Else -> Else
+        {ok, SourceBin} ->
+            case egherkin:parse(SourceBin) of
+                {ok, AST} ->
+                    {ok, AST};
+                {failed, Line, Message} ->
+                    %% Build a pretty, humanized error (iolist) and log it.
+                    Pretty = egherkin_pretty:format_failure(Filename, SourceBin, Line, Message),
+                    %% Return the original failure plus a pretty blob for UIs/CLIs.
+                    {failed, Line, Message, Pretty};
+                Else ->
+                    Else
+            end;
+        {error, Reason} ->
+            ?LOG_ERROR("Could not read ~s: ~p", [Filename, Reason]),
+            {error, {file_read_failed, Reason}}
     end.
 
 execute_data(Config, Context, FeatureData) ->
@@ -184,13 +196,10 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
     Concurrency = proplists:get_value(concurrency, Config, 1),
     StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
     case catch parse_file(Filename) of
-        {failed, LineNo, Message} ->
-            ?LOG_ERROR(
-                "Parsing Failed ~p +~p ~n     ~p.",
-                [Filename, LineNo, Message]
-            ),
-            formatter:format(Config, error, {LineNo, Message}),
-            {parse_error, LineNo, Message};
+        {failed, LineNo, _Message, MessagePretty} ->
+            ?LOG_ERROR("parse file ~p", [Config]),
+            formatter:format(Config, error, {LineNo, MessagePretty}),
+            {parse_error, LineNo, MessagePretty};
         {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
             FinalContext0 =
                 case Concurrency of
@@ -596,35 +605,6 @@ execute_step(Config, Step, Context) ->
                     maps:put(failing_step, Step, Context)
             end
     end.
-
-get_default_config(AeAccount, Concurrency, Formatters) ->
-    {ok, DataDir} = application:get_env(damage, data_dir),
-    {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
-    {ok, ChromeDriver} = application:get_env(damage, chromedriver),
-    AccountDir = filename:join(DataDir, AeAccount),
-    RunDir = filename:join(AccountDir, RunId),
-    ReportDir = filename:join([RunDir, "reports"]),
-    TextReport = filename:join([ReportDir, "{{process_id}}.plain.txt"]),
-    TextReportColor = filename:join([ReportDir, "{{process_id}}.color.txt"]),
-    HtmlReport = filename:join([ReportDir, "{{process_id}}.html"]),
-    ok = filelib:ensure_path(RunDir),
-    ok = filelib:ensure_path(ReportDir),
-    [
-        {
-            formatters,
-            [
-                {text, #{output => TextReportColor, color => true}},
-                {text, #{output => TextReport, color => false}},
-                {html, #{output => HtmlReport}}
-                | Formatters
-            ]
-        },
-        {feature_dirs, ["../../../../features/", "../features/"]},
-        {chromedriver, ChromeDriver},
-        {concurrency, Concurrency},
-        {run_id, RunId},
-        {run_dir, RunDir}
-    ].
 
 sats_to_damage(Sats) ->
     %TODO get prices from coinstore
