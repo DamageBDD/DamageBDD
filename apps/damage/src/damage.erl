@@ -382,13 +382,13 @@ execute_step_function(
     case proplists:get_value(dry_run, Config) of
         true ->
             apply(
-                list_to_atom(StepModule),
+                StepModule,
                 step_dry,
                 [Config, Context, StepKeyWord, LineNo, Body, Args]
             );
         _ ->
             apply(
-                list_to_atom(StepModule),
+                StepModule,
                 step,
                 [Config, Context, StepKeyWord, LineNo, Body, Args]
             )
