@@ -199,27 +199,21 @@ do_action(publish_feature, Data, State) -> check_publish_bdd(Data, State).
 
 check_bid_feature(
     #{feature := FeatureHash} = _FeaturePayload,
-    #{public_key := AeAccount, ip := IP} = State
+    #{public_key := AeAccount} = State
 ) ->
-    case throttle:check(damage_api_rate, IP) of
-        {limit_exceeded, _, _} ->
-            lager:warning("IP ~p exceeded api limit", [IP]),
-            {error, 429, "Rate limited"};
-        _ ->
-            case damage_ae:balance(AeAccount) of
-                Balance when Balance > 0 ->
-                    case bid_feature(FeatureHash, State) of
-                        {Status, Response} -> {Status, Response}
-                    end;
-                Other ->
-                    {
-                        400,
-                        <<
-                            "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
-                            Other/binary
-                        >>
-                    }
-            end
+    case damage_ae:balance(AeAccount) of
+        Balance when Balance > 0 ->
+            case bid_feature(FeatureHash, State) of
+                {Status, Response} -> {Status, Response}
+            end;
+        Other ->
+            {
+                400,
+                <<
+                    "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+                    Other/binary
+                >>
+            }
     end.
 
 check_publish_bdd(#{concurrency := Concurrency} = FeaturePayload, State) when
@@ -236,28 +230,22 @@ check_publish_bdd(#{fee := Fee} = FeaturePayload, State) when is_binary(Fee) ->
     );
 check_publish_bdd(
     #{concurrency := Concurrency0} = FeaturePayload,
-    #{public_key := AeAccount, ip := IP} = State
+    #{public_key := AeAccount} = State
 ) ->
     Concurrency = damage_utils:get_concurrency_level(Concurrency0),
-    case throttle:check(damage_api_rate, IP) of
-        {limit_exceeded, _, _} ->
-            lager:warning("IP ~p exceeded api limit", [IP]),
-            {error, 429, "Rate limited"};
-        _ ->
-            case damage_ae:balance(AeAccount) of
-                Balance when Balance >= Concurrency ->
-                    case publish_bdd(FeaturePayload, State) of
-                        {Status, Response} -> {Status, Response}
-                    end;
-                Other ->
-                    {
-                        400,
-                        <<
-                            "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
-                            Other/binary
-                        >>
-                    }
-            end
+    case damage_ae:balance(AeAccount) of
+        Balance when Balance >= Concurrency ->
+            case publish_bdd(FeaturePayload, State) of
+                {Status, Response} -> {Status, Response}
+            end;
+        Other ->
+            {
+                400,
+                <<
+                    "Insufficient balance, please top up balance at `/api/accounts/topup` balance:",
+                    Other/binary
+                >>
+            }
     end.
 
 publish_data(RunDir, Username, AeAccount, FeatureData, Fee, Concurrency) ->
@@ -297,7 +285,7 @@ publish_bdd(
         _FeaturePayload,
     #{public_key := AeAccount, username := Username} = _State
 ) ->
-    Config = damage:get_default_config(AeAccount, Concurrency),
+    Config = damage_config:get_default_config([{public_key, AeAccount}, {concurrency, Concurrency}]),
     {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
     case publish_data(RunDir, Username, AeAccount, FeatureData, Fee, Concurrency) of
         [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->

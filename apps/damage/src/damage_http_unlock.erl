@@ -132,7 +132,6 @@ to_json(Req, State) ->
     {jsx:encode(#{status => <<"ok">>, has_node_password => Has}), Req, State}.
 unlock_node(Password) ->
     secrets:set_node_password(Password),
-    ?LOG_INFO("Node pass ~p", [Password]),
     case secrets:node_keypair() of
         #{public_key := _PubKey, private_key := _NodePrivateKey} ->
             %% set flow: require confirmation and validate password strength

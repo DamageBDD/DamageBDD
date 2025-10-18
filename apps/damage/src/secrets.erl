@@ -214,11 +214,9 @@ keypair(Path) ->
     end.
 node_keypair() ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
-    ?LOG_INFO("Damage key path ~p", [Path]),
     keypair(Path).
 has_node_keypair() ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
-    ?LOG_INFO("Damage key path ~p", [Path]),
     case file:read_file(Path) of
         {error, enoent} ->
             false;

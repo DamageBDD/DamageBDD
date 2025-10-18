@@ -74,18 +74,21 @@
             }
         ]
     },
-    {
-        throttle,
-        [
-            {
-                rates,
-                [
-                    {damage_global_scope, 10, per_second},
-                    {damage_api_rate, 10, per_minute}
-                ]
-            }
-        ]
-    },
+    {throttle, [
+        %{driver, throttle_ets},  %% or throttle_mnesia for cluster-wide limits
+        {rates, [
+            %%                Scope                     Limit      Period
+            {public_read, 60, per_minute},
+            {auth_read, 120, per_minute},
+            {write_light, 30, per_minute},
+            {heavy_query, 10, per_minute},
+            {file_upload, 6, per_minute},
+            {login_per_identity, 5, per_minute},
+            {login_per_ip, 20, per_hour},
+            {password_reset_per_identity, 3, per_hour},
+            {signup_per_ip, 3, per_day}
+        ]}
+    ]},
     {
         ecai, [
             {port, 9003},
@@ -119,6 +122,7 @@
     {
         damage,
         [
+            {feature_dirs, ["~/DamageBDD/features/"]},
             {run_user, "damage"},
             {api_url, "http://localhost:8080"},
             {allowance, 1000},

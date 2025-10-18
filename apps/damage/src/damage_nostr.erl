@@ -473,16 +473,11 @@ handle_event(
     State
 ) ->
     ?LOG_INFO("Got event ~p", [Event]),
-    case throttle:check(damage_nostr_rate, Npub) of
-        {limit_exceeded, _, _} ->
-            ?LOG_WARNING("Npub ~p exceeded api limit", [Npub]);
-        _ ->
-            handle_event_payload(
-                string:str(string:to_lower(binary_to_list(Content)), "damagebdd"),
-                Event,
-                State
-            )
-    end.
+    handle_event_payload(
+        string:str(string:to_lower(binary_to_list(Content)), "damagebdd"),
+        Event,
+        State
+    ).
 
 execute_bdd(Config, Context, #{feature := FeatureData}) ->
     case damage:execute_data(Config, Context, FeatureData) of
@@ -945,7 +940,7 @@ reward_mention(Npub) ->
     case throttle:check(damage_nostr_mention_reward, Npub) of
         {limit_exceeded, _, _} ->
             ?LOG_WARNING("Npub ~p exceeded reward limit", [Npub]),
-            {429, <<"throttled">>};
+            {429, <<"Reward Claim Limit Exceeded">>};
         _ ->
             get_ln_invoice(Npub, AmountSats)
     end.
