@@ -30,7 +30,53 @@
 %% META  :: map() of any extra doc (e.g., #{summary => <<"…">>, since => "1.0.0"})
 %% BODY  :: the function body (expression(s)) that returns the new Context
 
+%% ===== Parts Macros ==========================================================
+%% WHEN
+-define(STEP_HTTP_GET_WITH_PARAMS, ["I send a GET request to ", Path, " with parameters"]).
 -define(STEP_HTTP_GET_PATH, ["I make a GET request to", Path]).
+-define(STEP_HTTP_POST_PATH, ["I make a POST request to", Path]).
+-define(STEP_HTTP_PATCH_PATH, ["I make a PATCH request to", Path]).
+-define(STEP_HTTP_PUT_PATH, ["I make a PUT request to", Path]).
+-define(STEP_HTTP_OPTIONS_PATH, ["I make a OPTIONS request to", Path]).
+-define(STEP_HTTP_DELETE_PATH, ["I make a DELETE request to", Path]).
+-define(STEP_HTTP_TRACE_PATH, ["I make a TRACE request to", Path]).
+-define(STEP_HTTP_FORM_POST_PATH, ["I make a form POST request to", Path]).
+-define(STEP_HTTP_CSRF_POST_PATH, ["I make a CSRF POST request to", Path]).
+-define(STEP_HEAD_PATH, ["I make a HEAD request to", Path]).
+-define(STEP_POLL_UNTIL_EQ, [
+    "I keep sending GET requests to",
+    UrlPathSegment,
+    "until JSON at path",
+    JsonPath,
+    "is"
+]).
+
+%% THEN
+-define(STEP_THEN_CONTAINS, ["the response must contain text", Contains]).
+-define(STEP_THEN_STATUS_EQ, ["the response status must be", Status]).
+-define(STEP_THEN_STATUS_ONEOF, ["the response status must be one of", Statuses]).
+-define(STEP_THEN_YAML_MUST, ["the yaml at path", Path, "must be", Expected0]).
+-define(STEP_THEN_JSON_MUST, ["the json at path", Path, "must be", Expected0]).
+-define(STEP_THEN_HEADER_IS, ["the", Var, "header should be", Value]).
+-define(STEP_THEN_PRINT_JSON_PATH, ["I print the json at path", Path]).
+-define(STEP_THEN_PRINT_BODY, ["I print the response body"]).
+-define(STEP_THEN_PRINT_RESP, ["I print the response"]).
+-define(STEP_THEN_STORE_JSON, ["I store the JSON at path", Path, "in", Variable]).
+-define(STEP_JSON_SHOULD_BE, ["the JSON should be"]).
+-define(STEP_VAR_EQ_JSON_LIT, ["the variable", Variable, "should be equal to JSON", Value]).
+-define(STEP_JSON_SHOULD_ALIAS, ["the JSON at path", JsonPath, "should be"]).
+
+%% GIVEN / ANY
+-define(STEP_GIVEN_USING_SERVER, ["I am using server", Server]).
+-define(STEP_SET_BASE_URL, ["I set base URL to", Server]).
+-define(STEP_STORE_COOKIES, ["I store cookies"]).
+-define(STEP_SET_HEADER, ["I set", Header, "header to", Value]).
+-define(STEP_SET_VAR, ["I set the variable", Variable, "to", Value]).
+-define(STEP_NO_VERIFY_SSL, ["I do not want to verify server certificate"]).
+-define(STEP_GIVEN_BASIC_AUTH, ["I set BasicAuth username to ", User, "and password to", Password]).
+-define(STEP_GIVEN_OAUTH_QUERY, ["I use query OAuth with key=", Key, "and secret=", Secret]).
+-define(STEP_GIVEN_OAUTH_HEADER, ["I use header OAuth with key=", Key, "and secret=", Secret]).
+
 %%------------------------------------------------------------------------------
 %% @doc
 %%  Unified Gherkin step handler.
@@ -79,7 +125,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ["the response must contain text", Contains],
+    ?STEP_THEN_CONTAINS,
     _
 ) ->
     %% Extract raw body (expects [{...},{...},{body, Body}] shape)
@@ -101,12 +147,15 @@ step(
 %% Parts: ["I send a GET request to ", Path, " with parameters"]
 %% Body:  key=value lines parsed into a map
 %%------------------------------------------------------------------------------
+step(_Config, _Context, documentation, _N, ?STEP_HTTP_GET_WITH_PARAMS, _) ->
+    _ = Path,
+    "WHEN: GET with query parameters provided in the step body (form-like)";
 step(
     Config,
     Context,
     <<"When">>,
     _N,
-    ["I send a GET request to ", Path, " with parameters"],
+    ?STEP_HTTP_GET_WITH_PARAMS,
     Body
 ) ->
     Params = steps_utils:parse_step_body(Body),
@@ -131,28 +180,28 @@ step(Config, Context, <<"When">>, _N, ?STEP_HTTP_GET_PATH, _) ->
 %%------------------------------------------------------------------------------
 %% WHEN: POST to a path with request body as-is (IODATA)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_POST_PATH, Data) ->
     Url = build_url(Path, maps:get(base_url, Context, "")),
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     gun_post(Config, Context, Url, Headers, Data);
 %%------------------------------------------------------------------------------
 %% WHEN: PATCH to a path with body
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_PATCH_PATH, Data) ->
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     Url = build_url(Path, maps:get(base_url, Context, "")),
     gun_patch(Config, Context, Url, Headers, Data);
 %%------------------------------------------------------------------------------
 %% WHEN: PUT to a path with body
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ["I make a PUT request to", Path], Data) ->
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_PUT_PATH, Data) ->
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     Url = build_url(Path, maps:get(base_url, Context, "")),
     gun_put(Config, Context, Url, Headers, Data);
 %%------------------------------------------------------------------------------
 %% WHEN: OPTIONS request
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ["I make a OPTIONS request to", Path], _Data) ->
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_OPTIONS_PATH, _Data) ->
     gun_options(
         Config,
         Context,
@@ -162,7 +211,7 @@ step(Config, Context, <<"When">>, _N, ["I make a OPTIONS request to", Path], _Da
 %%------------------------------------------------------------------------------
 %% WHEN: DELETE request
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ["I make a DELETE request to", Path], _Data) ->
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_DELETE_PATH, _Data) ->
     gun_delete(
         Config,
         Context,
@@ -172,14 +221,15 @@ step(Config, Context, <<"When">>, _N, ["I make a DELETE request to", Path], _Dat
 %%------------------------------------------------------------------------------
 %% WHEN: TRACE not implemented (explicit failure marker)
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"When">>, _N, ["I make a TRACE request to", _Path], _Data) ->
+step(_Config, Context, <<"When">>, _N, ?STEP_HTTP_TRACE_PATH, _Data) ->
+    ?LOG_DEBUG("TRACE path ~p", [Path]),
     maps:put(fail, <<"Step not implemented">>, Context);
 %%------------------------------------------------------------------------------
 %% WHEN: CSRF POST:
 %%   1) GET path to fetch CSRF/session headers
 %%   2) POST with CSRF + Session headers added
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ["I make a CSRF POST request to", Path], Data) ->
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_CSRF_POST_PATH, Data) ->
     Headers0 = lists:append(
         [
             {<<"accept">>, "application/json"},
@@ -213,7 +263,7 @@ step(Config, Context, <<"When">>, _N, ["I make a CSRF POST request to", Path], D
 %%------------------------------------------------------------------------------
 %% WHEN: Form POST without CSRF preflight (explicit form headers)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ["I make a form POST request to", Path], Data) ->
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_FORM_POST_PATH, Data) ->
     Headers0 = [
         {<<"accept">>, "application/json"},
         {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
@@ -230,7 +280,7 @@ step(Config, Context, <<"When">>, _N, ["I make a form POST request to", Path], D
 %%------------------------------------------------------------------------------
 %% THEN: Exact response status match (single status)
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"Then">>, _N, ["the response status must be", Status], _) ->
+step(_Config, Context, <<"Then">>, _N, ?STEP_THEN_STATUS_EQ, _) ->
     Status0 = list_to_integer(Status),
     case maps:get(response, Context, undefined) of
         [{status_code, Status0}, _, _] ->
@@ -256,7 +306,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ["the yaml at path", Path, "must be", Expected0],
+    ?STEP_THEN_YAML_MUST,
     _
 ) ->
     Expected = list_to_binary(Expected0),
@@ -279,7 +329,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ["the json at path", Path, "must be", Expected0],
+    ?STEP_THEN_JSON_MUST,
     _
 ) ->
     Expected = list_to_binary(Expected0),
@@ -307,7 +357,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ["the response status must be one of", Statuses],
+    ?STEP_THEN_STATUS_ONEOF,
     _
 ) ->
     ?LOG_DEBUG("the response status must be one of ~p.", [Statuses]),
@@ -339,7 +389,7 @@ step(
 %%------------------------------------------------------------------------------
 %% THEN: Specific header should equal an expected value
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"Then">>, _N, ["the", Var, "header should be", Value], _) ->
+step(_Config, Context, <<"Then">>, _N, ?STEP_THEN_HEADER_IS, _) ->
     case maps:get(response, Context) of
         {_, Headers, _} ->
             case lists:keyfind(Var, 1, Headers) of
@@ -366,7 +416,7 @@ step(_Config, Context, <<"Then">>, _N, ["the", Var, "header should be", Value], 
 %%------------------------------------------------------------------------------
 %% THEN: Print JSON at JSONPath (for debugging/visibility in formatter)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ["I print the json at path", Path], _) ->
+step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_JSON_PATH, _) ->
     [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
         maps:get(response, Context),
     case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
@@ -388,7 +438,7 @@ step(Config, Context, <<"Then">>, N, ["I print the json at path", Path], _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print raw response body
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ["I print the response body"], _) ->
+step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_BODY, _) ->
     [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
         maps:get(response, Context),
     formatter:format(
@@ -401,7 +451,7 @@ step(Config, Context, <<"Then">>, N, ["I print the response body"], _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print the entire response structure (as JSON)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
+step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_RESP, _) ->
     Response = maps:get(response, Context, <<"">>),
     formatter:format(
         Config,
@@ -412,7 +462,7 @@ step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
 %%------------------------------------------------------------------------------
 %% (Given/And/Then): Set/override a request header in context
 %%------------------------------------------------------------------------------
-step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
+step(_Config, Context, _Keyword, _N, ?STEP_SET_HEADER, _) ->
     Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
     Headers = maps:to_list(
         maps:put(list_to_binary(string:to_lower(Header)), Value, Headers0)
@@ -421,7 +471,7 @@ step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) -
 %%------------------------------------------------------------------------------
 %% GIVEN: Store cookies from response (extract 'set-cookie' headers)
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"Given">>, _N, ["I store cookies"], _) ->
+step(_Config, Context, <<"Given">>, _N, ?STEP_STORE_COOKIES, _) ->
     [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
     ?LOG_DEBUG("Response Headers:  ~p", [Headers]),
     Cookies =
@@ -443,7 +493,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ["I store the JSON at path", Path, "in", Variable],
+    ?STEP_THEN_STORE_JSON,
     _
 ) ->
     case maps:get(response, Context) of
@@ -471,7 +521,7 @@ step(
 %%------------------------------------------------------------------------------
 %% GIVEN: Set base server and derive host/port from URI
 %%------------------------------------------------------------------------------
-step(_Config, Context0, <<"Given">>, _N, ["I am using server", Server], _) when
+step(_Config, Context0, <<"Given">>, _N, ?STEP_GIVEN_USING_SERVER, _) when
     is_map(Context0)
 ->
     Context = maps:put(base_url, Server, Context0),
@@ -488,11 +538,11 @@ step(_Config, Context0, <<"Given">>, _N, ["I am using server", Server], _) when
 %%------------------------------------------------------------------------------
 %% GIVEN: Alias for setting base URL (chains into "I am using server")
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Given">>, _N, ["I set base URL to", URL], Body) ->
+step(Config, Context, <<"Given">>, _N, ?STEP_SET_BASE_URL, Body) ->
     maps:put(
         base_url,
-        URL,
-        step(Config, Context, <<"Given">>, _N, ["I am using server", URL], Body)
+        Server,
+        step(Config, Context, <<"Given">>, _N, ?STEP_GIVEN_USING_SERVER, Body)
     );
 %%------------------------------------------------------------------------------
 %% GIVEN: Set BasicAuth credentials
@@ -502,7 +552,7 @@ step(
     Context,
     <<"Given">>,
     _N,
-    ["I set BasicAuth username to ", User, "and password to", Password],
+    ?STEP_GIVEN_BASIC_AUTH,
     _
 ) ->
     maps:put(basic_auth, {User, Password}, Context);
@@ -514,7 +564,7 @@ step(
     Context,
     <<"Given">>,
     _N,
-    ["I use query OAuth with key=", Key, "and secret=", Secret],
+    ?STEP_GIVEN_OAUTH_QUERY,
     _
 ) ->
     maps:put(oauth_query_auth, {Key, Secret}, Context);
@@ -526,19 +576,19 @@ step(
     Context,
     <<"Given">>,
     _N,
-    ["I use header OAuth with key=", Key, "and secret=", Secret],
+    ?STEP_GIVEN_OAUTH_HEADER,
     _
 ) ->
     maps:put(oauth_header_auth, {Key, Secret}, Context);
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Set an arbitrary variable in context
 %%------------------------------------------------------------------------------
-step(_Config, Context, _, _N, ["I set the variable", Variable, "to", Value], _) ->
+step(_Config, Context, _, _N, ?STEP_SET_VAR, _) ->
     maps:put(Variable, Value, Context);
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Disable TLS certificate verification for subsequent requests
 %%------------------------------------------------------------------------------
-step(_Config, Context, _, _N, ["I do not want to verify server certificate"], _) ->
+step(_Config, Context, _, _N, ?STEP_NO_VERIFY_SSL, _) ->
     maps:put(verify_ssl, false, Context);
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Poll a GET endpoint until JSONPath equals Args
@@ -548,13 +598,7 @@ step(
     Context,
     _,
     _N,
-    [
-        "I keep sending GET requests to",
-        UrlPathSegment,
-        "until JSON at path",
-        JsonPath,
-        "is"
-    ],
+    ?STEP_POLL_UNTIL_EQ,
     Args
 ) ->
     NAttempts = maps:get(n_attempts, Context, ?DEFAULT_NUM_ATTEMPTS),
@@ -572,7 +616,7 @@ step(
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): HEAD request
 %%------------------------------------------------------------------------------
-step(Config, Context, _, _N, ["I make a HEAD request to", Path], _) ->
+step(Config, Context, _, _N, ?STEP_HEAD_PATH, _) ->
     gun_head(
         Config,
         Context,
@@ -582,7 +626,7 @@ step(Config, Context, _, _N, ["I make a HEAD request to", Path], _) ->
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Assert entire JSON body equals Args (exact match)
 %%------------------------------------------------------------------------------
-step(_Config, Context, _, _N, ["the JSON should be"], Args) ->
+step(_Config, Context, _, _N, ?STEP_JSON_SHOULD_BE, Args) ->
     case maps:get(response, Context) of
         {_Status, _Headers, Args} ->
             Context;
@@ -596,13 +640,8 @@ step(_Config, Context, _, _N, ["the JSON should be"], Args) ->
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Assert context variable equals literal JSON value
 %%------------------------------------------------------------------------------
-step(_Config, Context, _, _N, ["the variable", Variable, "should be equal to JSON", Value], _) ->
+step(_Config, Context, _, _N, ?STEP_VAR_EQ_JSON_LIT, _) ->
     Value = maps:get(Variable, Context, none);
-%%------------------------------------------------------------------------------
-%% (Given/When/Then/And): Assert context variable equals provided JSON (docstring)
-%%------------------------------------------------------------------------------
-step(_Config, Context, _, _N, ["the variable", Variable, "should be equal to JSON"], Args) ->
-    Args = maps:get(Variable, Context, none);
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Alias for "json at path ... must be ..."
 %%------------------------------------------------------------------------------
@@ -611,7 +650,7 @@ step(
     Context,
     KeyWord,
     LineNo,
-    ["the JSON at path", JsonPath, "should be"],
+    ?STEP_JSON_SHOULD_ALIAS,
     Args
 ) ->
     step(
