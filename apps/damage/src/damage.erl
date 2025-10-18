@@ -232,31 +232,23 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
             EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
             {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
             {ok, DamageApi} = application:get_env(damage, api_url),
-            ?LOG_DEBUG("RunDir ~p", [RunDir]),
             {ok, HashList} = damage_ipfs:add({directory, RunDir}),
             [#{<<"Hash">> := ReportHash}] =
                 lists:filter(
                     fun(I) ->
                         #{<<"Hash">> := _Hash, <<"Name">> := Dir} = I,
-                        string:equal(<<"/", Dir/binary>>, RunDir)
+                        string:equal(filename:join(["/", Dir]), RunDir)
                     end,
                     HashList
                 ),
-            FeatureFile = list_to_binary(string:join([RunId, ".feature"], "")),
             [#{<<"Hash">> := FeatureHash}] =
                 lists:filter(
                     fun(I) ->
                         #{<<"Hash">> := _Hash, <<"Name">> := Dir} = I,
-                        %?LOG_DEBUG(
-                        %  "Files ~p ~p",
-                        %  [
-                        %    <<RunDir/binary, "/", FeatureFile/binary>>,
-                        %    <<"/", Dir/binary>>
-                        %  ]
-                        %),
+                        FeatureFile = filename:join([RunDir, RunId ++ ".feature"]),
+                        RunDir0 = filename:join(["/", Dir]),
                         string:equal(
-                            <<RunDir/binary, "/", FeatureFile/binary>>,
-                            <<"/", Dir/binary>>
+                            FeatureFile, RunDir0
                         )
                     end,
                     HashList
@@ -266,7 +258,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                 summary,
                 #{
                     report_dir =>
-                        string:join([DamageApi, "reports", binary_to_list(ReportHash)], "/"),
+                        string:join([DamageApi, "reports", ReportHash], "/"),
                     run_id => RunId,
                     feature_hash => FeatureHash
                 }
@@ -294,7 +286,6 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                                 integer_to_list(round(date_util:now_to_seconds(os:timestamp())))
                         )
                 end,
-            ?LOG_DEBUG("Result status index ~p", [ResultStatus]),
             Result =
                 case maps:get(fail, FinalContext, none) of
                     none -> "success";
@@ -396,7 +387,6 @@ execute_step_function(
                 [Config, Context, StepKeyWord, LineNo, Body, Args]
             );
         _ ->
-            %?LOG_DEBUG("execute_step_function ~p ~p", [Context, StepModule]),
             apply(
                 list_to_atom(StepModule),
                 step,
@@ -439,8 +429,13 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
-        % case for dry_run
-        {'EXIT', {undef, _Err0}} ->
+        {'EXIT', {undef, [{_Module, step_dry, _, []} | _]}} ->
+            maps:put(
+                step_found,
+                false,
+                ContextIn
+            );
+        {'EXIT', {undef, [{_Module, step, _, []} | _]}} ->
             maps:put(
                 step_found,
                 false,
@@ -489,16 +484,32 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
+        {Error, Reason, Stacktrace} ->
+            Reason = damage_utils:strf(<<"invalid context from ~p ~p ~p">>, [
+                StepModule, Step, Error
+            ]),
+            metrics:update(fail, AeAccount),
+            ?LOG_ERROR("Step execution failed! unhandled ~p ~p", [Error, Stacktrace]),
+            formatter:format(
+                Config,
+                step,
+                {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, <<"Unhandled Error">>}}
+            ),
+            maps:put(
+                step_found,
+                true,
+                maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
+            );
         Other ->
             Reason = damage_utils:strf(<<"invalid context from ~p ~p ~p">>, [
                 StepModule, Step, Other
             ]),
             metrics:update(fail, AeAccount),
-            ?LOG_ERROR("Step execution failed! unhandled ~p", [Reason]),
+            ?LOG_ERROR("Step execution failed! unhandled other ~p", [Other]),
             formatter:format(
                 Config,
                 step,
-                {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, <<"Unhandled">>}}
+                {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, <<"Unhandled Exception">>}}
             ),
             maps:put(
                 step_found,
@@ -565,10 +576,15 @@ execute_step(Config, Step, Context) ->
                                 #{step_found := false} = Context1 ->
                                     Context1;
                                 #{step_found := true} = Context1 ->
+                                    Success =
+                                        case proplists:get_value(dry_run, Config) of
+                                            true -> dry;
+                                            _ -> success
+                                        end,
                                     formatter:format(
                                         Config,
                                         step,
-                                        {StepKeyWord, LineNo, Body1, Args1, Context1, success}
+                                        {StepKeyWord, LineNo, Body1, Args1, Context1, Success}
                                     ),
                                     Context1
                             end;
@@ -583,7 +599,7 @@ execute_step(Config, Step, Context) ->
                     Context0 = step_spend(Context2),
                     case maps:get(step_found, Context0) of
                         false ->
-                            %?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
+                            ?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
                             formatter:format(
                                 Config,
                                 step,

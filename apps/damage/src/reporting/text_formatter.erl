@@ -30,6 +30,7 @@ get_status_text(#{color := true}, {fail, Reason}) ->
 get_status_text(#{color := false}, {fail, Reason}) ->
   damage_utils:strf("fail:~p", [Reason]);
 
+get_status_text(#{color := true}, dry) -> color:magenta("dry");
 get_status_text(#{color := true}, error) -> color:red("error");
 get_status_text(#{color := true}, success) -> color:green("success");
 get_status_text(#{color := true}, skip) -> color:yellow("skip");
@@ -44,7 +45,7 @@ write_file(#{output := Req}, FormatStr, Args) when is_map(Req) ->
   ),
   ok;
 
-write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) ->
+write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) or is_list(Output)->
   [_, PidStr, _] =  string:split(pid_to_list(self()), ".", all),
   OutputFile =
     damage_utils:render(

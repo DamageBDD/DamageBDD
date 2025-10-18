@@ -380,12 +380,14 @@ handle_call(
         confirm_spend,
         #{
             public_key := AeAccount,
+            feature_hash := FeatureHash,
             dry_run := true
         } = Context
     },
     _From,
     #{public_key := AeAccount} = Cache
 ) ->
+    ?LOG_DEBUG("confirm spend on dryrun ~p ~p", [AeAccount, FeatureHash]),
     AccountCache = maps:get(AeAccount, Cache, #{}),
     case maps:get(spent_balance, AccountCache, {0, 0}) of
         {_, Amount} when Amount > 0 ->
@@ -440,7 +442,7 @@ handle_cast(
     AccountCache = maps:get(AeAccount, Cache, #{}),
     case maps:get(spent_balance, AccountCache, {0, 0}) of
         {_, Amount} when Amount > 0 ->
-            ?LOG_DEBUG("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
+            ?LOG_INFO("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
             case
                 contract_call_payfor_user(
                     KeyPair,
@@ -763,9 +765,11 @@ calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
     SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
     BaseGas + (SizeDiff * GasPerByte).
 min_fee() ->
-    vanillae:min_fee() * 2. %TODO some fine tuning
+    %TODO some fine tuning
+    vanillae:min_fee() * 2.
 min_gas() ->
-    vanillae:min_gas() * 2. %TODO some fine tuning
+    %TODO some fine tuning
+    vanillae:min_gas() * 2.
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->

@@ -18,7 +18,9 @@
         lists_concat/2,
         strf/2,
         get_context_value/3,
+        get_context_value/4,
         load_template/2,
+        load_template/3,
         send_email/4,
         atom_to_binary_keys/1,
         binary_to_atom_keys/1,
@@ -47,6 +49,7 @@
 -export([yaml_encode/1, yaml_encode_to_file/2]).
 -export([max_by/2]).
 -export([normalize_email/1, denormalize_email/1]).
+-export([map_strings_to_binary/1]).
 
 tokenize(Step) when is_binary(Step) -> tokenize(binary_to_list(Step));
 tokenize(Step) ->
@@ -98,6 +101,12 @@ get_context_value(Key, Context, Config) ->
         {_, Default} -> maps:get(Key, Context, Default);
         false -> maps:get(Key, Context)
     end.
+-spec get_context_value(atom(), map(), list(), list()) -> any().
+get_context_value(Key, Context, Config, Default) ->
+    case lists:keyfind(key, 1, Config) of
+        {_, Default} -> maps:get(Key, Context, Default);
+        false -> maps:get(Key, Context, Default)
+    end.
 
 atom_to_binary_keys(Map) ->
     maps:from_list(
@@ -121,6 +130,11 @@ binary_to_atom_keys(Map) ->
         )
     ).
 
+load_template(App, Template, Context) ->
+    PrivDir = code:priv_dir(App),
+    FilePath = filename:join([PrivDir, "templates", Template]),
+    {ok, TemplateBin} = file:read_file(FilePath),
+    bbmustache:render(TemplateBin, normalize_context(Context)).
 load_template(Template, Context) ->
     PrivDir = code:priv_dir(damage),
     FilePath = filename:join([PrivDir, "templates", Template]),
@@ -147,7 +161,31 @@ key_to_string(K) ->
     %% fallback to string
     io_lib:format("~p", [K]).
 
-render(Template, Context) ->
+map_strings_to_binary(Map) when is_map(Map) ->
+    maps:from_list(
+        [{convert_value(K), convert_value(V)} || {K, V} <- maps:to_list(Map)]
+    ).
+
+%% Helper to convert values recursively
+convert_value(V) when is_map(V) ->
+    map_strings_to_binary(V);
+convert_value(V) when is_list(V) ->
+    case is_string_list(V) of
+        true -> list_to_binary(V);
+        false -> [convert_value(E) || E <- V]
+    end;
+convert_value(Else) ->
+    Else.
+
+%% Simple string detection
+is_string_list([]) ->
+    true;
+is_string_list(L) when is_list(L) ->
+    lists:all(fun(C) -> is_integer(C) end, L).
+
+render(Template, Context) when is_list(Template) ->
+    render(list_to_binary(Template), Context);
+render(Template, Context) when is_binary(Template) ->
     bbmustache:render(Template, normalize_context(Context)).
 
 send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
@@ -324,7 +362,7 @@ yaml_decode(String) when is_list(String) ->
 -spec yaml_encode(term()) -> binary().
 yaml_encode(Data) ->
     %% yamerl returns an iolist; wrap Data in a list to emit one YAML document.
-    BinIolist = yamerl:encode([Data]),
+    BinIolist = yaml_simple:encode(Data),
     iolist_to_binary(BinIolist).
 
 %% @doc Encode and write YAML to a file. Returns ok | {error, Reason}.

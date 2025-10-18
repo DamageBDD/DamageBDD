@@ -34,15 +34,15 @@ get_default_config(ConfigIn0) ->
     RunId = maps:get(run_id, C0, gen_run_id()),
     AccountDir = filename:join(DataDir, AeAccount),
     RunDir = maps:get(run_dir, C0, filename:join(AccountDir, RunId)),
-    ReportDir = filename:join([RunDir, "reports"]),
-    ArtifactsDir = filename:join([RunDir, "artifacts"]),
+    ReportDir = filename:join([RunDir, <<"reports">>]),
+    ArtifactsDir = filename:join([RunDir, <<"artifacts">>]),
     ok = damage_utils:ensure_dir(ReportDir),
     ok = damage_utils:ensure_dir(ArtifactsDir),
 
     %% --- built-in reports (durable on-disk) -------------------------------
-    TextReport = filename:join([ReportDir, "{{process_id}}.plain.txt"]),
-    TextReportColor = filename:join([ReportDir, "{{process_id}}.color.txt"]),
-    HtmlReport = filename:join([ReportDir, "{{process_id}}.html"]),
+    TextReport = filename:join([ReportDir, <<"{{process_id}}.plain.txt">>]),
+    TextReportColor = filename:join([ReportDir, <<"{{process_id}}.color.txt">>]),
+    HtmlReport = filename:join([ReportDir, <<"{{process_id}}.html">>]),
     DefaultInFormatters =
         [
             {text, #{output => TextReportColor, color => true}},
@@ -98,7 +98,7 @@ must_get(Key, Map) ->
         error -> erlang:error({missing_required_key, Key})
     end.
 gen_run_id() ->
-    {ok, B} = datestring:format("YmdHMS", erlang:localtime()),
+    {ok, B} = datestring:format(<<"YmdHMS">>, erlang:localtime()),
     to_str(B).
 
 to_str(B) when is_binary(B) -> binary_to_list(B);

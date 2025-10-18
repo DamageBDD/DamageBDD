@@ -19,11 +19,609 @@
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
 -define(DEFAULT_HTTP_TIMEOUT, 30000).
+-define(DEFAULT_HTTP_PORT, 80).
 -define(DEFAULT_HEADERS, [
     {<<"accept">>, "application/json,text/html"},
     {<<"user-agent">>, "damagebdd/1.0"},
     {<<"content-type">>, "application/json"}
 ]).
+%% KW    :: <<"Given">> | <<"When">> | <<"Then">> | <<"And">> | <<"But">>
+%% PARTS :: [string() | binary() | var()]  (var() = an unbound variable name you use in the pattern)
+%% META  :: map() of any extra doc (e.g., #{summary => <<"…">>, since => "1.0.0"})
+%% BODY  :: the function body (expression(s)) that returns the new Context
+
+-define(STEP_HTTP_GET_PATH, ["I make a GET request to", Path]).
+%%------------------------------------------------------------------------------
+%% @doc
+%%  Unified Gherkin step handler.
+%%
+%%  Each clause matches a specific (Keyword, Parts) pattern and performs an
+%%  action (HTTP request) or an assertion against the HTTP response stored in
+%%  `Context`. The `Config` is passed through to HTTP helpers (gun_*).
+%%
+%%  Expected `Context` shapes (as used by different clauses below):
+%%    - Most HTTP-result-bearing clauses expect:
+%%        maps:get(response, Context) =>
+%%          [{status_code, integer()}, {headers, Headers :: list()}, {body, Body :: binary()}]
+%%      but a few older clauses match `[_, _Headers, {body, Body}]` or even `{_, Headers, _}`.
+%%      Keep this consistent across producers/consumers to avoid brittle matches.
+%%
+%%  Common helpers referenced (assumed exported elsewhere in the module):
+%%    - gun_get/4, gun_post/5, gun_put/5, gun_patch/5, gun_delete/4, gun_options/4, gun_head/4
+%%    - get_headers/2, build_url/2
+%%    - ejsonpath_match/4, retry_get_ejsonmatch/9
+%%    - steps_utils:parse_step_body/1
+%%    - formatter:format/3
+%%
+%%  NOTE: `uri_string:compose_query/1` in one clause is likely a typo;
+%%        it should be `uri_string:compose_query/1`.
+%%------------------------------------------------------------------------------
+-spec step(
+    %% Config is a proplist
+    proplists:proplist(),
+    %% Context
+    map(),
+    %% Keyword <<"Given">>|<<"When">>|<<"Then">>|<<"And">>|<<"But">>
+    binary(),
+    %% Line number (N) for reporting
+    integer(),
+    %% Tokenized step text (Parts)
+    [string() | binary()],
+    %% Raw docstring/datatable/body (if any)
+    iodata()
+) -> map().
+
+%%------------------------------------------------------------------------------
+%% THEN: the response must contain a specific substring (plain-text search)
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the response must contain text", Contains],
+    _
+) ->
+    %% Extract raw body (expects [{...},{...},{body, Body}] shape)
+    [_, _Headers, {body, Body}] = maps:get(response, Context),
+    %% string:str/2 works on lists; convert body to list but keep `Contains` as-is.
+    %% If `Contains` is a binary, ensure upstream passes a list, or convert here.
+    case string:str(binary_to_list(Body), Contains) of
+        0 ->
+            maps:put(
+                fail,
+                damage_utils:strf("Response ~p does not contain ~p", [Body, Contains]),
+                Context
+            );
+        _ ->
+            Context
+    end;
+%%------------------------------------------------------------------------------
+%% WHEN: GET with query parameters provided in the step body (form-like)
+%% Parts: ["I send a GET request to ", Path, " with parameters"]
+%% Body:  key=value lines parsed into a map
+%%------------------------------------------------------------------------------
+step(
+    Config,
+    Context,
+    <<"When">>,
+    _N,
+    ["I send a GET request to ", Path, " with parameters"],
+    Body
+) ->
+    Params = steps_utils:parse_step_body(Body),
+    %% NOTE: likely typo; prefer uri_string:compose_query/1
+    Query = uri_string:compose_query(maps:to_list(Params)),
+    gun_get(
+        Config,
+        Context,
+        string:concat(maps:get(base_url, Context, ""), string:concat(Path, Query)),
+        get_headers(Context, ?DEFAULT_HEADERS)
+    );
+step(_Config, _Context, documentation, _N, ?STEP_HTTP_GET_PATH, _) ->
+    _ = Path,
+    "WHEN: Simple GET to a path (base_url is read from Context)";
+step(Config, Context, <<"When">>, _N, ?STEP_HTTP_GET_PATH, _) ->
+    gun_get(
+        Config,
+        Context,
+        string:concat(maps:get(base_url, Context, ""), Path),
+        get_headers(Context, ?DEFAULT_HEADERS)
+    );
+%%------------------------------------------------------------------------------
+%% WHEN: POST to a path with request body as-is (IODATA)
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
+    Url = build_url(Path, maps:get(base_url, Context, "")),
+    Headers = get_headers(Context, ?DEFAULT_HEADERS),
+    gun_post(Config, Context, Url, Headers, Data);
+%%------------------------------------------------------------------------------
+%% WHEN: PATCH to a path with body
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
+    Headers = get_headers(Context, ?DEFAULT_HEADERS),
+    Url = build_url(Path, maps:get(base_url, Context, "")),
+    gun_patch(Config, Context, Url, Headers, Data);
+%%------------------------------------------------------------------------------
+%% WHEN: PUT to a path with body
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"When">>, _N, ["I make a PUT request to", Path], Data) ->
+    Headers = get_headers(Context, ?DEFAULT_HEADERS),
+    Url = build_url(Path, maps:get(base_url, Context, "")),
+    gun_put(Config, Context, Url, Headers, Data);
+%%------------------------------------------------------------------------------
+%% WHEN: OPTIONS request
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"When">>, _N, ["I make a OPTIONS request to", Path], _Data) ->
+    gun_options(
+        Config,
+        Context,
+        build_url(Path, maps:get(base_url, Context, "")),
+        get_headers(Context, ?DEFAULT_HEADERS)
+    );
+%%------------------------------------------------------------------------------
+%% WHEN: DELETE request
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"When">>, _N, ["I make a DELETE request to", Path], _Data) ->
+    gun_delete(
+        Config,
+        Context,
+        build_url(Path, maps:get(base_url, Context, "")),
+        get_headers(Context, ?DEFAULT_HEADERS)
+    );
+%%------------------------------------------------------------------------------
+%% WHEN: TRACE not implemented (explicit failure marker)
+%%------------------------------------------------------------------------------
+step(_Config, Context, <<"When">>, _N, ["I make a TRACE request to", _Path], _Data) ->
+    maps:put(fail, <<"Step not implemented">>, Context);
+%%------------------------------------------------------------------------------
+%% WHEN: CSRF POST:
+%%   1) GET path to fetch CSRF/session headers
+%%   2) POST with CSRF + Session headers added
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"When">>, _N, ["I make a CSRF POST request to", Path], Data) ->
+    Headers0 = lists:append(
+        [
+            {<<"accept">>, "application/json"},
+            {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
+            {<<"Referer">>, Path},
+            {<<"X-Requested-with">>, <<"XMLHttpRequest">>}
+        ],
+        maps:get(headers, Context)
+    ),
+    Context0 = gun_get(Config, Context, Path, Headers0),
+    case maps:get(response, Context0) of
+        [StatusCode, {headers, Headers}, Body] ->
+            %% Extract CSRF and session IDs from response headers
+            {_, CSRFToken} = lists:keyfind(<<"x-csrftoken">>, 1, Headers),
+            {_, SessionId} = lists:keyfind(<<"x-sessionid">>, 1, Headers),
+            ?LOG_DEBUG(
+                "POSTResponse: ~p:~p:~p:~p:~p",
+                [StatusCode, Headers, Body, CSRFToken, SessionId]
+            ),
+            gun_post(
+                Config,
+                Context,
+                string:concat(maps:get(base_url, Context, ""), Path),
+                lists:append(
+                    Headers0,
+                    [{<<"X-CSRFToken">>, CSRFToken}, {<<"X-SessionID">>, SessionId}]
+                ),
+                Data
+            )
+    end;
+%%------------------------------------------------------------------------------
+%% WHEN: Form POST without CSRF preflight (explicit form headers)
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"When">>, _N, ["I make a form POST request to", Path], Data) ->
+    Headers0 = [
+        {<<"accept">>, "application/json"},
+        {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
+        {<<"Referer">>, Path},
+        {<<"X-Requested-With">>, <<"XMLHttpRequest">>}
+    ],
+    gun_post(
+        Config,
+        Context,
+        string:concat(maps:get(base_url, Context, ""), Path),
+        Headers0,
+        Data
+    );
+%%------------------------------------------------------------------------------
+%% THEN: Exact response status match (single status)
+%%------------------------------------------------------------------------------
+step(_Config, Context, <<"Then">>, _N, ["the response status must be", Status], _) ->
+    Status0 = list_to_integer(Status),
+    case maps:get(response, Context, undefined) of
+        [{status_code, Status0}, _, _] ->
+            Context;
+        [{status_code, Status1}, _, _] ->
+            maps:put(
+                fail,
+                damage_utils:strf("Response status is not ~p, got ~p", [Status0, Status1]),
+                Context
+            );
+        Any ->
+            maps:put(
+                fail,
+                damage_utils:strf("Response status is not ~p, got ~p", [Status0, Any]),
+                Context
+            )
+    end;
+%%------------------------------------------------------------------------------
+%% THEN: YAML at JSONPath equals expected (body may be YAML or a map already)
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the yaml at path", Path, "must be", Expected0],
+    _
+) ->
+    Expected = list_to_binary(Expected0),
+    case maps:get(response, Context, undefined) of
+        [{status_code, _}, _Headers, {body, Body}] ->
+            {ok, [Data]} = damage_utils:yaml_decode(Body),
+            ejsonpath_match(
+                Path, damage_utils:map_strings_to_binary(maps:from_list(Data)), Expected, Context
+            );
+        Dict when is_map(Dict) ->
+            ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);
+        UnExpected ->
+            maps:put(fail, damage_utils:strf("Unexpected response ~p", [UnExpected]), Context)
+    end;
+%%------------------------------------------------------------------------------
+%% THEN: JSON at JSONPath equals expected (with JSON decoding safety)
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the json at path", Path, "must be", Expected0],
+    _
+) ->
+    Expected = list_to_binary(Expected0),
+    case maps:get(response, Context) of
+        [{status_code, _}, _Headers, {body, Body}] ->
+            case catch jsx:decode(Body, [return_maps]) of
+                {'EXIT', Msg} ->
+                    ?LOG_ERROR("Unexpected ~p ~p", [Body, Msg]),
+                    maps:put(fail, damage_utils:strf("invalid json: ~p", [Body]), Context);
+                Json ->
+                    ejsonpath_match(Path, Json, Expected, Context)
+            end;
+        Dict when is_map(Dict) ->
+            ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);
+        UnExpected ->
+            Msg = damage_utils:strf("Unexpected response ~p", [UnExpected]),
+            ?LOG_ERROR("Unexpected ~p", [Msg]),
+            maps:put(fail, Msg, Context)
+    end;
+%%------------------------------------------------------------------------------
+%% THEN: Response status must be among a comma-separated list
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the response status must be one of", Statuses],
+    _
+) ->
+    ?LOG_DEBUG("the response status must be one of ~p.", [Statuses]),
+    case maps:get(response, Context, undefined) of
+        [_, {status_code, StatusCode}, _Headers, _Body] ->
+            case
+                lists:member(
+                    StatusCode,
+                    lists:map(fun erlang:list_to_integer/1, string:split(Statuses, ","))
+                )
+            of
+                true ->
+                    Context;
+                _ ->
+                    ?LOG_DEBUG("the response status must be one of ~p.", [StatusCode]),
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "Response status ~p is not one of ~p",
+                            [StatusCode, Statuses]
+                        ),
+                        Context
+                    )
+            end;
+        UnExpected ->
+            ?LOG_ERROR("unexpected response in context ~p.", [UnExpected]),
+            maps:put(fail, damage_utils:strf("Unexpected response ~p", [UnExpected]), Context)
+    end;
+%%------------------------------------------------------------------------------
+%% THEN: Specific header should equal an expected value
+%%------------------------------------------------------------------------------
+step(_Config, Context, <<"Then">>, _N, ["the", Var, "header should be", Value], _) ->
+    case maps:get(response, Context) of
+        {_, Headers, _} ->
+            case lists:keyfind(Var, 1, Headers) of
+                {Var, Value} ->
+                    Context;
+                Unexpected ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "the ~p header is not ~p, it is ~p",
+                            [Var, Value, Unexpected]
+                        )
+                    )
+            end;
+        Unexpected ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "the ~p header is not ~p, request failed ~p",
+                    [Var, Value, Unexpected]
+                )
+            )
+    end;
+%%------------------------------------------------------------------------------
+%% THEN: Print JSON at JSONPath (for debugging/visibility in formatter)
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"Then">>, N, ["I print the json at path", Path], _) ->
+    [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
+        maps:get(response, Context),
+    case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
+        {[Value | _], _} ->
+            formatter:format(
+                Config,
+                print,
+                {<<"Then">>, N, ["Response Json at: \"", Path, "\""],
+                    list_to_binary(damage_utils:strf("~s", [jsx:encode(Value)])), Context, success}
+            ),
+            Context;
+        UnExpected ->
+            maps:put(
+                fail,
+                damage_utils:strf("the json at path ~p it is ~p.", [Path, UnExpected]),
+                Context
+            )
+    end;
+%%------------------------------------------------------------------------------
+%% THEN: Print raw response body
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"Then">>, N, ["I print the response body"], _) ->
+    [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
+        maps:get(response, Context),
+    formatter:format(
+        Config,
+        print,
+        {<<"Then">>, N, ["Response Body:"], list_to_binary(damage_utils:strf("~s", [Body])),
+            Context, success}
+    ),
+    Context;
+%%------------------------------------------------------------------------------
+%% THEN: Print the entire response structure (as JSON)
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
+    Response = maps:get(response, Context, <<"">>),
+    formatter:format(
+        Config,
+        print,
+        {<<"Then">>, N, ["Response:"], jsx:encode(Response), Context, success}
+    ),
+    Context;
+%%------------------------------------------------------------------------------
+%% (Given/And/Then): Set/override a request header in context
+%%------------------------------------------------------------------------------
+step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
+    Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
+    Headers = maps:to_list(
+        maps:put(list_to_binary(string:to_lower(Header)), Value, Headers0)
+    ),
+    maps:put(headers, Headers, Context);
+%%------------------------------------------------------------------------------
+%% GIVEN: Store cookies from response (extract 'set-cookie' headers)
+%%------------------------------------------------------------------------------
+step(_Config, Context, <<"Given">>, _N, ["I store cookies"], _) ->
+    [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
+    ?LOG_DEBUG("Response Headers:  ~p", [Headers]),
+    Cookies =
+        lists:foldl(
+            fun
+                ({<<"set-cookie">>, Header}, Acc) -> [Acc | Header];
+                (_Other, Acc) -> Acc
+            end,
+            [],
+            Headers
+        ),
+    ?LOG_DEBUG("Response:  ~p", [Headers, Cookies]),
+    maps:put(cookies, Cookies, Context);
+%%------------------------------------------------------------------------------
+%% THEN: Extract JSON at path and store it into a variable in context
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _N,
+    ["I store the JSON at path", Path, "in", Variable],
+    _
+) ->
+    case maps:get(response, Context) of
+        [{status_code, _}, _Headers, {body, Body}] ->
+            Variable0 = list_to_atom(Variable),
+            case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
+                {[Json0 | _], _} ->
+                    Json = binary_to_list(Json0),
+                    ?LOG_DEBUG("storing json at path ~p json ~p", [Path, Json]),
+                    maps:put(Variable0, Json, Context);
+                UnExpected ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "the json at path ~p is not ~p, it is ~p.",
+                            [Path, Variable, UnExpected]
+                        ),
+                        Context
+                    )
+            end;
+        UnExpected ->
+            ?LOG_DEBUG("failed to store json at path ~p error ~p", [Path, UnExpected]),
+            maps:put(fail, damage_utils:strf("Unexpected response ~p", [UnExpected]), Context)
+    end;
+%%------------------------------------------------------------------------------
+%% GIVEN: Set base server and derive host/port from URI
+%%------------------------------------------------------------------------------
+step(_Config, Context0, <<"Given">>, _N, ["I am using server", Server], _) when
+    is_map(Context0)
+->
+    Context = maps:put(base_url, Server, Context0),
+    case uri_string:parse(Server) of
+        #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->
+            maps:put(port, Port, maps:put(host, Host, Context));
+        #{scheme := "https", host := Host, path := _Path} ->
+            maps:put(port, 443, maps:put(host, Host, Context));
+        #{scheme := "http", host := Host, path := _Path} ->
+            maps:put(port, 80, maps:put(host, Host, Context));
+        #{path := Host} ->
+            maps:put(host, Host, Context)
+    end;
+%%------------------------------------------------------------------------------
+%% GIVEN: Alias for setting base URL (chains into "I am using server")
+%%------------------------------------------------------------------------------
+step(Config, Context, <<"Given">>, _N, ["I set base URL to", URL], Body) ->
+    maps:put(
+        base_url,
+        URL,
+        step(Config, Context, <<"Given">>, _N, ["I am using server", URL], Body)
+    );
+%%------------------------------------------------------------------------------
+%% GIVEN: Set BasicAuth credentials
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["I set BasicAuth username to ", User, "and password to", Password],
+    _
+) ->
+    maps:put(basic_auth, {User, Password}, Context);
+%%------------------------------------------------------------------------------
+%% GIVEN: Set OAuth (query) credentials
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["I use query OAuth with key=", Key, "and secret=", Secret],
+    _
+) ->
+    maps:put(oauth_query_auth, {Key, Secret}, Context);
+%%------------------------------------------------------------------------------
+%% GIVEN: Set OAuth (header) credentials
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    <<"Given">>,
+    _N,
+    ["I use header OAuth with key=", Key, "and secret=", Secret],
+    _
+) ->
+    maps:put(oauth_header_auth, {Key, Secret}, Context);
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Set an arbitrary variable in context
+%%------------------------------------------------------------------------------
+step(_Config, Context, _, _N, ["I set the variable", Variable, "to", Value], _) ->
+    maps:put(Variable, Value, Context);
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Disable TLS certificate verification for subsequent requests
+%%------------------------------------------------------------------------------
+step(_Config, Context, _, _N, ["I do not want to verify server certificate"], _) ->
+    maps:put(verify_ssl, false, Context);
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Poll a GET endpoint until JSONPath equals Args
+%%------------------------------------------------------------------------------
+step(
+    Config,
+    Context,
+    _,
+    _N,
+    [
+        "I keep sending GET requests to",
+        UrlPathSegment,
+        "until JSON at path",
+        JsonPath,
+        "is"
+    ],
+    Args
+) ->
+    NAttempts = maps:get(n_attempts, Context, ?DEFAULT_NUM_ATTEMPTS),
+    retry_get_ejsonmatch(
+        Config,
+        Context,
+        JsonPath,
+        Args,
+        UrlPathSegment,
+        [],
+        NAttempts,
+        ?DEFAULT_WAIT_SECONDS,
+        0
+    );
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): HEAD request
+%%------------------------------------------------------------------------------
+step(Config, Context, _, _N, ["I make a HEAD request to", Path], _) ->
+    gun_head(
+        Config,
+        Context,
+        string:concat(maps:get(base_url, Context, ""), Path),
+        get_headers(Context, ?DEFAULT_HEADERS)
+    );
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Assert entire JSON body equals Args (exact match)
+%%------------------------------------------------------------------------------
+step(_Config, Context, _, _N, ["the JSON should be"], Args) ->
+    case maps:get(response, Context) of
+        {_Status, _Headers, Args} ->
+            Context;
+        Unexpected ->
+            maps:put(
+                fail,
+                damage_utils:strf("The JSON is ~p not ~p", [Unexpected, Args]),
+                Context
+            )
+    end;
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Assert context variable equals literal JSON value
+%%------------------------------------------------------------------------------
+step(_Config, Context, _, _N, ["the variable", Variable, "should be equal to JSON", Value], _) ->
+    Value = maps:get(Variable, Context, none);
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Assert context variable equals provided JSON (docstring)
+%%------------------------------------------------------------------------------
+step(_Config, Context, _, _N, ["the variable", Variable, "should be equal to JSON"], Args) ->
+    Args = maps:get(Variable, Context, none);
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Alias for "json at path ... must be ..."
+%%------------------------------------------------------------------------------
+step(
+    Config,
+    Context,
+    KeyWord,
+    LineNo,
+    ["the JSON at path", JsonPath, "should be"],
+    Args
+) ->
+    step(
+        Config,
+        Context,
+        KeyWord,
+        LineNo,
+        ["the json at path", JsonPath, "must be", Args],
+        <<>>
+    ).
 
 get_headers(Context, DefaultHeaders) ->
     maps:to_list(
@@ -38,7 +636,7 @@ response_to_list({StatusCode, Headers, Body}) ->
 
 get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
     Host = damage_utils:get_context_value(host, Context, Config0),
-    Port = damage_utils:get_context_value(port, Context, Config0),
+    Port = damage_utils:get_context_value(port, Context, Config0, ?DEFAULT_HTTP_PORT),
     ?LOG_DEBUG("Host ~p port ~p", [Host, Port]),
     Config =
         case Port of
@@ -239,528 +837,6 @@ build_url(PathOrUrl, DefaultBaseUrl) ->
             % Otherwise, prepend the base URL to form the complete URL
             DefaultBaseUrl ++ "/" ++ string:trim(PathOrUrl, both, "/")
     end.
-
-step(
-    _Config,
-    Context,
-    <<"Then">>,
-    _N,
-    ["the response must contain text", Contains],
-    _
-) ->
-    [_, _Headers, {body, Body}] = maps:get(response, Context),
-    case string:str(binary_to_list(Body), Contains) of
-        0 ->
-            maps:put(
-                fail,
-                damage_utils:strf("Response ~p does not contain ~p", [Body, Contains]),
-                Context
-            );
-        _ ->
-            Context
-    end;
-step(Config, Context, <<"When">>, _N, ["I send a GET request to ", Path, " with parameters"], Body) ->
-    Params = steps_utils:parse_step_body(Body),
-    Query = uri_sring:compose_query(maps:to_list(Params)),
-    gun_get(
-        Config,
-        Context,
-        string:concat(maps:get(base_url, Context, ""), string:concat(Path, Query)),
-        get_headers(Context, ?DEFAULT_HEADERS)
-    );
-step(Config, Context, <<"When">>, _N, ["I make a GET request to", Path], _) ->
-    gun_get(
-        Config,
-        Context,
-        string:concat(maps:get(base_url, Context, ""), Path),
-        get_headers(Context, ?DEFAULT_HEADERS)
-    );
-step(Config, Context, <<"When">>, _N, ["I make a POST request to", Path], Data) ->
-    Url = build_url(Path, maps:get(base_url, Context, "")),
-    Headers = get_headers(Context, ?DEFAULT_HEADERS),
-    gun_post(Config, Context, Url, Headers, Data);
-step(Config, Context, <<"When">>, _N, ["I make a PATCH request to", Path], Data) ->
-    Headers = get_headers(Context, ?DEFAULT_HEADERS),
-    Url = build_url(Path, maps:get(base_url, Context, "")),
-    gun_patch(Config, Context, Url, Headers, Data);
-step(Config, Context, <<"When">>, _N, ["I make a PUT request to", Path], Data) ->
-    Headers = get_headers(Context, ?DEFAULT_HEADERS),
-    Url = build_url(Path, maps:get(base_url, Context, "")),
-    gun_put(Config, Context, Url, Headers, Data);
-step(
-    Config,
-    Context,
-    <<"When">>,
-    _N,
-    ["I make a OPTIONS request to", Path],
-    _Data
-) ->
-    gun_options(
-        Config,
-        Context,
-        build_url(Path, maps:get(base_url, Context, "")),
-        get_headers(Context, ?DEFAULT_HEADERS)
-    );
-step(
-    Config,
-    Context,
-    <<"When">>,
-    _N,
-    ["I make a DELETE request to", Path],
-    _Data
-) ->
-    gun_delete(
-        Config,
-        Context,
-        build_url(Path, maps:get(base_url, Context, "")),
-        get_headers(Context, ?DEFAULT_HEADERS)
-    );
-step(
-    _Config,
-    Context,
-    <<"When">>,
-    _N,
-    ["I make a TRACE request to", _Path],
-    _Data
-) ->
-    maps:put(fail, <<"Step not implemented">>, Context);
-step(
-    Config,
-    Context,
-    <<"When">>,
-    _N,
-    ["I make a CSRF POST request to", Path],
-    Data
-) ->
-    Headers0 =
-        lists:append(
-            [
-                {<<"accept">>, "application/json"},
-                {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
-                {<<"Referer">>, Path},
-                {<<"X-Requested-with">>, <<"XMLHttpRequest">>}
-            ],
-            maps:get(headers, Context)
-        ),
-    Context0 = gun_get(Config, Context, Path, Headers0),
-    case maps:get(response, Context0) of
-        [StatusCode, {headers, Headers}, Body] ->
-            {_, CSRFToken} = lists:keyfind(<<"x-csrftoken">>, 1, Headers),
-            {_, SessionId} = lists:keyfind(<<"x-sessionid">>, 1, Headers),
-            ?LOG_DEBUG(
-                "POSTResponse: ~p:~p:~p:~p:~p",
-                [StatusCode, Headers, Body, CSRFToken, SessionId]
-            ),
-            gun_post(
-                Config,
-                Context,
-                string:concat(maps:get(base_url, Context, ""), Path),
-                lists:append(
-                    Headers0,
-                    [{<<"X-CSRFToken">>, CSRFToken}, {<<"X-SessionID">>, SessionId}]
-                ),
-                Data
-            )
-    end;
-step(
-    Config,
-    Context,
-    <<"When">>,
-    _N,
-    ["I make a form POST request to", Path],
-    Data
-) ->
-    %% Base headers for a normal form POST
-    Headers0 = [
-        {<<"accept">>, "application/json"},
-        {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
-        {<<"Referer">>, Path},
-        {<<"X-Requested-With">>, <<"XMLHttpRequest">>}
-    ],
-
-    %% Perform the POST directly without CSRF/session negotiation
-    gun_post(
-        Config,
-        Context,
-        string:concat(maps:get(base_url, Context, ""), Path),
-        Headers0,
-        Data
-    );
-step(
-    _Config,
-    Context,
-    <<"Then">>,
-    _N,
-    ["the response status must be", Status],
-    _
-) ->
-    Status0 = list_to_integer(Status),
-    case maps:get(response, Context) of
-        [{status_code, Status0}, _, _] ->
-            Context;
-        [{status_code, Status1}, _, _] ->
-            maps:put(
-                fail,
-                damage_utils:strf(
-                    "Response status is not ~p, got ~p",
-                    [Status0, Status1]
-                ),
-                Context
-            );
-        Any ->
-            maps:put(
-                fail,
-                damage_utils:strf("Response status is not ~p, got ~p", [Status0, Any]),
-                Context
-            )
-    end;
-step(
-    _Config,
-    Context,
-    <<"Then">>,
-    _N,
-    ["the yaml at path", Path, "must be", Expected0],
-    _
-) ->
-    Expected = list_to_binary(Expected0),
-    case maps:get(response, Context) of
-        [{status_code, _}, _Headers, {body, Body}] ->
-            {ok, [Data]} = damage_utils:yaml_decode(Body),
-            ejsonpath_match(Path, Data, Expected, Context);
-        Dict when is_map(Dict) ->
-            ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);
-        UnExpected ->
-            maps:put(
-                fail,
-                damage_utils:strf("Unexpected response ~p", [UnExpected]),
-                Context
-            )
-    end;
-step(
-    _Config,
-    Context,
-    <<"Then">>,
-    _N,
-    ["the json at path", Path, "must be", Expected0],
-    _
-) ->
-    Expected = list_to_binary(Expected0),
-    case maps:get(response, Context) of
-        [{status_code, _}, _Headers, {body, Body}] ->
-            case catch jsx:decode(Body, [return_maps]) of
-                {'EXIT', Msg} ->
-                    ?LOG_ERROR("Unexpected ~p ~p", [Body, Msg]),
-                    maps:put(fail, damage_utils:strf("invalid json: ~p", [Body]), Context);
-                Json ->
-                    ejsonpath_match(Path, Json, Expected, Context)
-            end;
-        Dict when is_map(Dict) ->
-            ejsonpath_match(Path, jsx:decode(jsx:encode(Dict)), Expected, Context);
-        UnExpected ->
-            Msg = damage_utils:strf("Unexpected response ~p", [UnExpected]),
-            ?LOG_ERROR("Unexpected ~p", [Msg]),
-            maps:put(fail, Msg, Context)
-    end;
-step(
-    _Config,
-    Context,
-    <<"Then">>,
-    _N,
-    ["the response status must be one of", Statuses],
-    _
-) ->
-    ?LOG_DEBUG("the response status must be one of ~p.", [Statuses]),
-    case maps:get(response, Context) of
-        [_, {status_code, StatusCode}, _Headers, _Body] ->
-            case
-                lists:member(
-                    StatusCode,
-                    lists:map(fun erlang:list_to_integer/1, string:split(Statuses, ","))
-                )
-            of
-                true ->
-                    Context;
-                _ ->
-                    ?LOG_DEBUG("the response status must be one of ~p.", [StatusCode]),
-                    maps:put(
-                        fail,
-                        damage_utils:strf(
-                            "Response status ~p is not one of ~p",
-                            [StatusCode, Statuses]
-                        ),
-                        Context
-                    )
-            end;
-        UnExpected ->
-            ?LOG_ERROR("unexpected response in context ~p.", [UnExpected]),
-            maps:put(
-                fail,
-                damage_utils:strf("Unexpected response ~p", [UnExpected]),
-                Context
-            )
-    end;
-step(
-    _Config,
-    Context,
-    <<"Then">>,
-    _N,
-    ["the", Var, "header should be", Value],
-    _
-) ->
-    case maps:get(response, Context) of
-        {_, Headers, _} ->
-            case lists:keyfind(Var, 1, Headers) of
-                {Var, Value} ->
-                    Context;
-                Unexpected ->
-                    maps:put(
-                        fail,
-                        damage_utils:strf(
-                            "the ~p header is not ~p, it is ~p",
-                            [Var, Value, Unexpected]
-                        )
-                    )
-            end;
-        Unexpected ->
-            maps:put(
-                fail,
-                damage_utils:strf(
-                    "the ~p header is not ~p, request failed ~p",
-                    [Var, Value, Unexpected]
-                )
-            )
-    end;
-step(Config, Context, <<"Then">>, N, ["I print the json at path", Path], _) ->
-    [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
-        maps:get(response, Context),
-    case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
-        {[Value | _], _} ->
-            formatter:format(
-                Config,
-                print,
-                {
-                    <<"Then">>,
-                    N,
-                    ["Response Json at: \"", Path, "\""],
-                    list_to_binary(damage_utils:strf("~s", [jsx:encode(Value)])),
-                    Context,
-                    success
-                }
-            ),
-            Context;
-        UnExpected ->
-            maps:put(
-                fail,
-                damage_utils:strf("the json at path ~p it is ~p.", [Path, UnExpected]),
-                Context
-            )
-    end;
-step(Config, Context, <<"Then">>, N, ["I print the response body"], _) ->
-    [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
-        maps:get(response, Context),
-    formatter:format(
-        Config,
-        print,
-        {
-            <<"Then">>,
-            N,
-            ["Response Body:"],
-            list_to_binary(damage_utils:strf("~s", [Body])),
-            Context,
-            success
-        }
-    ),
-    Context;
-step(Config, Context, <<"Then">>, N, ["I print the response"], _) ->
-    Response = maps:get(response, Context, <<"">>),
-    formatter:format(
-        Config,
-        print,
-        {<<"Then">>, N, ["Response:"], jsx:encode(Response), Context, success}
-    ),
-    Context;
-step(_Config, Context, _Keyword, _N, ["I set", Header, "header to", Value], _) ->
-    Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
-    Headers =
-        maps:to_list(
-            maps:put(list_to_binary(string:to_lower(Header)), Value, Headers0)
-        ),
-    maps:put(headers, Headers, Context);
-step(_Config, Context, <<"Given">>, _N, ["I store cookies"], _) ->
-    [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
-    ?LOG_DEBUG("Response Headers:  ~p", [Headers]),
-    Cookies =
-        lists:foldl(
-            fun
-                ({<<"set-cookie">>, Header}, Acc) -> [Acc | Header];
-                (_Other, Acc) -> Acc
-            end,
-            [],
-            Headers
-        ),
-    ?LOG_DEBUG("Response:  ~p", [Headers, Cookies]),
-    maps:put(cookies, Cookies, Context);
-step(
-    _Config,
-    Context,
-    <<"Then">>,
-    _N,
-    ["I store the JSON at path", Path, "in", Variable],
-    _
-) ->
-    case maps:get(response, Context) of
-        [{status_code, _}, _Headers, {body, Body}] ->
-            Variable0 = list_to_atom(Variable),
-            case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
-                {[Json0 | _], _} ->
-                    Json = binary_to_list(Json0),
-                    ?LOG_DEBUG("storing json at path ~p json ~p", [Path, Json]),
-                    maps:put(Variable0, Json, Context);
-                UnExpected ->
-                    maps:put(
-                        fail,
-                        damage_utils:strf(
-                            "the json at path ~p is not ~p, it is ~p.",
-                            [Path, Variable, UnExpected]
-                        ),
-                        Context
-                    )
-            end;
-        UnExpected ->
-            ?LOG_DEBUG("failed to store json at path ~p error ~p", [Path, UnExpected]),
-            maps:put(
-                fail,
-                damage_utils:strf("Unexpected response ~p", [UnExpected]),
-                Context
-            )
-    end;
-step(_Config, Context0, <<"Given">>, _N, ["I am using server", Server], _) when is_map(Context0) ->
-    Context = maps:put(base_url, Server, Context0),
-    case uri_string:parse(Server) of
-        #{port := Port, scheme := _Scheme, path := _Path, host := Host} ->
-            maps:put(port, Port, maps:put(host, Host, Context));
-        #{scheme := "https", host := Host, path := _Path} ->
-            maps:put(port, 443, maps:put(host, Host, Context));
-        #{scheme := "http", host := Host, path := _Path} ->
-            maps:put(port, 80, maps:put(host, Host, Context));
-        #{path := Host} ->
-            maps:put(host, Host, Context)
-    end;
-step(Config, Context, <<"Given">>, _N, ["I set base URL to", URL], Body) ->
-    maps:put(
-        base_url,
-        URL,
-        step(Config, Context, <<"Given">>, _N, ["I am using server", URL], Body)
-    );
-step(
-    _Config,
-    Context,
-    <<"Given">>,
-    _N,
-    ["I set BasicAuth username to ", User, "and password to", Password],
-    _
-) ->
-    maps:put(basic_auth, {User, Password}, Context);
-step(
-    _Config,
-    Context,
-    <<"Given">>,
-    _N,
-    ["I use query OAuth with key=", Key, "and secret=", Secret],
-    _
-) ->
-    maps:put(oauth_query_auth, {Key, Secret}, Context);
-step(
-    _Config,
-    Context,
-    <<"Given">>,
-    _N,
-    ["I use header OAuth with key=", Key, "and secret=", Secret],
-    _
-) ->
-    maps:put(oauth_header_auth, {Key, Secret}, Context);
-step(_Config, Context, _, _N, ["I set the variable", Variable, "to", Value], _) ->
-    maps:put(Variable, Value, Context);
-step(_Config, Context, _, _N, ["I do not want to verify server certificate"], _) ->
-    maps:put(verify_ssl, false, Context);
-step(
-    Config,
-    Context,
-    _,
-    _N,
-    [
-        "I keep sending GET requests to",
-        UrlPathSegment,
-        "until JSON at path",
-        JsonPath,
-        "is"
-    ],
-    Args
-) ->
-    NAttempts = maps:get(n_attempts, Context, ?DEFAULT_NUM_ATTEMPTS),
-    retry_get_ejsonmatch(
-        Config,
-        Context,
-        JsonPath,
-        Args,
-        UrlPathSegment,
-        [],
-        NAttempts,
-        ?DEFAULT_WAIT_SECONDS,
-        0
-    );
-step(Config, Context, _, _N, ["I make a HEAD request to", Path], _) ->
-    gun_head(
-        Config,
-        Context,
-        string:concat(maps:get(base_url, Context, ""), Path),
-        get_headers(Context, ?DEFAULT_HEADERS)
-    );
-step(_Config, Context, _, _N, ["the JSON should be"], Args) ->
-    case maps:get(response, Context) of
-        {_Status, _Headers, Args} ->
-            Context;
-        Unexpected ->
-            maps:put(
-                fail,
-                damage_utils:strf("The JSON is ~p not ~p", [Unexpected, Args]),
-                Context
-            )
-    end;
-step(
-    _Config,
-    Context,
-    _,
-    _N,
-    ["the variable", Variable, "should be equal to JSON", Value],
-    _
-) ->
-    Value = maps:get(Variable, Context, none);
-step(
-    _Config,
-    Context,
-    _,
-    _N,
-    ["the variable", Variable, "should be equal to JSON"],
-    Args
-) ->
-    Args = maps:get(Variable, Context, none);
-step(
-    Config,
-    Context,
-    KeyWord,
-    LineNo,
-    ["the JSON at path", JsonPath, "should be"],
-    Args
-) ->
-    step(
-        Config,
-        Context,
-        KeyWord,
-        LineNo,
-        ["the json at path", JsonPath, "must be", Args],
-        <<>>
-    ).
 
 test_get_headers() ->
     Context =

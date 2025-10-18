@@ -222,42 +222,61 @@ content_types_accepted(Req, State) ->
         State
     }.
 
-allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
+allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>, <<"PUT">>], Req, State}.
 
-get_config(
-    #{public_key := AeAccount, concurrency := Concurrency0} = Context,
-    Req0
-) ->
-    Concurrency = damage_utils:get_concurrency_level(Concurrency0),
-    Formatters =
-        case Concurrency of
-            1 ->
-                case maps:get(stream, Context, maybe_stream) of
-                    nostream ->
-                        [];
-                    _ ->
-                        Req =
-                            cowboy_req:stream_reply(
-                                200,
-                                #{<<"content-type">> => <<"text/plain">>},
-                                Req0
-                            ),
-                        ?LOG_INFO("get_config req streaming ~p", [Req]),
-                        [
-                            {
-                                text,
-                                #{
-                                    output => Req,
-                                    color => maps:get(color_formatter, Context, false)
-                                }
-                            }
-                        ]
-                end;
-            _ ->
-                ?LOG_DEBUG("get_config concurrenc ~p", [Concurrency]),
-                []
+stream_mode(Req, Concurrency0) ->
+    Concurrency =
+        case Concurrency0 of
+            undefined ->
+                %% allow override from header too
+                binary_to_integer(
+                    cowboy_req:header(<<"x-damage-concurrency">>, Req, <<"1">>)
+                );
+            C ->
+                C
         end,
-    damage:get_default_config(AeAccount, Concurrency, Formatters).
+    case Concurrency of
+        1 -> maybe_stream;
+        _ -> nostream
+    end.
+
+get_config(Config, Context, Req0) ->
+    Concurrency = maps:get(concurrency, Context, 1),
+    StreamFlag = maps:get(stream, Context, nostream),
+    case {Concurrency, StreamFlag} of
+        {1, maybe_stream} ->
+            %% stream logs via text formatter to cowboy stream
+            Req = cowboy_req:stream_reply(
+                200, #{<<"content-type">> => <<"text/plain">>}, Req0
+            ),
+            Formatters = [
+                {text, #{
+                    output => Req,
+                    color => maps:get(color_formatter, Context, false)
+                }}
+            ],
+            AeAccount = maps:get(public_key, Context, undefined),
+            Config0 = damage_config:get_default_config(
+                [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
+            ),
+            ?LOG_INFO("get_config streaming ~p", [Config0]),
+            Config0;
+        _ ->
+            %% non-stream path; keep formatters as supplied (or none)
+            AeAccount = maps:get(public_key, Context, undefined),
+            Concurrency1 = damage_utils:get_concurrency_level(Concurrency),
+            damage_config:get_default_config(
+                [{public_key, AeAccount}, {concurrency, Concurrency1} | Config]
+            )
+    end.
+
+%get_config(
+%    Config,
+%    #{public_key := AeAccount, concurrency := Concurrency0},
+%    _Req0
+%) ->
+%    Concurrency = damage_utils:get_concurrency_level(Concurrency0),
+%    damage_config:get_default_config([{public_key, AeAccount}, {concurrency, Concurrency} | Config]).
 
 execute_bdd(Config, Context, FeatureData) ->
     case damage:execute_data(Config, Context, FeatureData) of
@@ -269,28 +288,23 @@ execute_bdd(Config, Context, FeatureData) ->
                     line => Line
                 },
             {400, Response};
-        {parse_error, LineNo, Message} ->
-            ?LOG_DEBUG("execute_bdd failure parse_error ~p.", [Message]),
+        {parse_error, LineNo, MessagePretty} ->
+            ?LOG_DEBUG("execute_bdd failure parse_error ~p.", [MessagePretty]),
+            formatter:format(Config, error, {LineNo, MessagePretty}),
             {
                 400,
-                jsx:encode(
-                    #{
-                        status => <<"notok">>,
-                        message => list_to_binary(Message),
-                        line => LineNo,
-                        hint =>
-                            <<
-                                "Make sure post data is in binary eg: curl --data-binary @features/test.feature ..."
-                            >>
-                    }
-                )
+                #{
+                    status => <<"notok">>,
+                    message => MessagePretty,
+                    line => LineNo
+                }
             };
         #{report_hash := _} = Result ->
             {200, maps:merge(Result, #{status => <<"ok">>})};
         #{dry_run := true, report_hash := _, cost := Cost} = Result ->
             {200, maps:merge(Result, #{status => <<"ok">>, cost => Cost})};
         Error ->
-            ?LOG_DEBUG("execute_bdd failure ~p.", [Error]),
+            ?LOG_ERROR("execute_bdd general failure ~p.", [Error]),
             {
                 400,
                 jsx:encode(
@@ -324,35 +338,22 @@ check_execute_bdd(
     Req0,
     [{dry_run, true}]
 ) ->
-    IP = damage_utils:get_ip(Req0),
-    case throttle:check(damage_api_rate, IP) of
-        {limit_exceeded, _, _} ->
-            ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
-            {429, <<"throttled">>};
-        _ ->
-            GlobalContext = damage_context:get_global_template_context(Context),
-            AccountContext = damage_context:get_context(AeAccount),
-            ContextIn =
-                maps:put(
-                    account_context,
-                    AccountContext,
-                    GlobalContext
-                ),
-            {ok, DataDir} = application:get_env(damage, data_dir),
-            {ok, RunId} = datestring:format("YmdHMS", erlang:localtime()),
-            AccountDir = filename:join(DataDir, AeAccount),
-            RunDir = filename:join(AccountDir, RunId),
-            ok = filelib:ensure_path(RunDir),
-            execute_bdd(
-                [
-                    {dry_run, true},
-                    {run_id, RunId},
-                    {run_dir, RunDir}
-                ],
-                maps:put(public_key, AeAccount, ContextIn),
-                FeatureData
-            )
-    end;
+    GlobalContext = damage_context:get_global_template_context(Context),
+    AccountContext = damage_context:get_context(AeAccount),
+    Merged = maps:merge(GlobalContext, Context),
+    ContextIn = maps:put(account_context, AccountContext, Merged),
+
+    execute_bdd(
+        get_config(
+            [
+                {dry_run, true}
+            ],
+            Context,
+            Req0
+        ),
+        maps:put(public_key, AeAccount, ContextIn),
+        FeatureData
+    );
 check_execute_bdd(
     #{concurrency := Concurrency0, feature := FeatureData} = Context0,
     #{public_key := AeAccount} = State,
@@ -361,71 +362,51 @@ check_execute_bdd(
 ) ->
     Context = maps:merge(Context0, State),
     _Concurrency = damage_utils:get_concurrency_level(Concurrency0),
-    IP = damage_utils:get_ip(Req0),
-    case throttle:check(damage_api_rate, IP) of
-        {limit_exceeded, _, _} ->
-            ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
-            {429, <<"throttled">>};
-        _ ->
-            GlobalContext = damage_context:get_global_template_context(Context),
-            AccountContext = damage_context:get_context(AeAccount),
-            ContextIn =
-                maps:put(
-                    account_context,
-                    AccountContext,
-                    GlobalContext
-                ),
-            DryContextIn =
-                maps:put(
-                    stream,
-                    nostream,
-                    ContextIn
-                ),
-            DryConfig =
-                lists:flatten([
-                    [{dry_run, true} | Config]
-                    | get_config(
-                        DryContextIn,
-                        Req0
-                    )
-                ]),
-
-            ?LOG_INFO("Dry run config ~p ~p", [DryConfig, DryContextIn]),
-            case
-                execute_bdd(
-                    DryConfig,
-                    ContextIn,
-                    FeatureData
-                )
-            of
-                {200,
-                    #{cost := Cost, feature_hash := _FeatureHash, report_hash := _ReportHash} =
-                        DryRunRecord} ->
-                    ?LOG_INFO("Dry run record ~p", [DryRunRecord]),
-                    case damage_ae:balance(AeAccount) of
-                        Balance when Balance >= Cost ->
-                            ?LOG_INFO("run cost ~p ~p", [Cost, Balance]),
-                            Config0 =
-                                lists:flatten([Config | get_config(Context, Req0)]),
-                            execute_bdd(
-                                Config0,
-                                ContextIn,
-                                FeatureData
-                            );
-                        Other ->
-                            ?LOG_INFO("run denied cost ~p ~p", [Cost, Other]),
-                            {
-                                400,
-                                #{
-                                    message =>
-                                        <<"Insufficient balance, please top up balance at `/api/accounts/topup`">>,
-                                    balance => Other
-                                }
-                            }
-                    end;
+    GlobalContext = damage_context:get_global_template_context(Context),
+    AccountContext = damage_context:get_context(AeAccount),
+    Merged = maps:merge(GlobalContext, Context),
+    ContextIn = maps:put(account_context, AccountContext, Merged),
+    case
+        execute_bdd(
+            get_config(
+                [
+                    {dry_run, true}
+                ],
+                maps:put(stream, nostream, ContextIn),
+                Req0
+            ),
+            ContextIn,
+            FeatureData
+        )
+    of
+        {200,
+            #{cost := Cost, feature_hash := _FeatureHash, report_hash := _ReportHash} =
+                DryRunRecord} ->
+            ?LOG_INFO("Dry run record ~p", [DryRunRecord]),
+            case damage_ae:balance(AeAccount) of
+                Balance when Balance >= Cost ->
+                    Config0 =
+                        get_config(Config, ContextIn, Req0),
+                    ?LOG_INFO("Cost run cost ~p ~p", [Cost, Balance]),
+                    execute_bdd(
+                        Config0,
+                        ContextIn,
+                        FeatureData
+                    );
                 Other ->
-                    Other
-            end
+                    ?LOG_ERROR("run denied cost ~p ~p", [Cost, Other]),
+                    {
+                        400,
+                        #{
+                            message =>
+                                <<"Insufficient balance, please top up balance at `/api/accounts/topup`">>,
+                            balance => Other
+                        }
+                    }
+            end;
+        Other ->
+            ?LOG_INFO("Dry run failed ~p", [Other]),
+            Other
     end.
 
 do_action_tx_throttled(Json, State, Req) ->
@@ -496,13 +477,6 @@ do_action_tx(
                     Status,
                     cowboy_req:set_resp_body(jsx:encode(Response), Req)
                 ),
-                State
-            };
-        Error ->
-            ?LOG_ERROR("execute_feature from_json tx error ~p", [Error]),
-            {
-                stop,
-                cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Error), Req)),
                 State
             }
     end;
@@ -620,16 +594,9 @@ from_json(Req, State) ->
                 State
             };
         #{feature := _FeatureData, stream := true} = Json ->
-            case check_execute_bdd(Json, State, Req) of
-                {400, Response} ->
-                    ?LOG_INFO("From_json resposne ~p", [Response]),
-                    {stop,
-                        cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Response), Req)),
-                        State};
-                {_Status, Response} ->
-                    ?LOG_INFO("From_json resposne ~p", [Response]),
-                    {stop, Response, State}
-            end;
+            {Status, Response} = check_execute_bdd(Json, State, Req),
+
+            {stop, cowboy_req:reply(Status, cowboy_req:set_resp_body(Response)), State};
         #{feature := _FeatureData, concurrency := Concurrency} = Json when Concurrency > 1 ->
             {Status, Response} = check_execute_bdd(Json, State, Req),
             {stop, cowboy_req:reply(Status, cowboy_req:set_resp_body(jsx:encode(Response), Req)),
@@ -648,13 +615,14 @@ from_html(Req0, State) ->
             #{color := <<"true">>} -> true;
             _Other -> false
         end,
+    MaybeStream = stream_mode(Req0, Concurrency),
     case
         check_execute_bdd(
             #{
                 feature => Body,
                 color_formatter => ColorFormatter,
                 concurrency => Concurrency,
-                stream => maybe_stream
+                stream => MaybeStream
             },
             State,
             Req0
@@ -667,13 +635,12 @@ from_html(Req0, State) ->
             ),
             {
                 stop,
-                case Concurrency of
-                    1 ->
-                        Req0;
-                    C ->
-                        ?LOG_DEBUG("got concurrency of ~p", [C]),
+                case MaybeStream of
+                    false ->
                         cowboy_req:reply(200, Req0),
-                        cowboy_req:set_resp_body(jsx:encode(Response), Req0)
+                        cowboy_req:set_resp_body(jsx:encode(Response), Req0);
+                    _ ->
+                        Req0
                 end,
                 State
             };
@@ -681,17 +648,13 @@ from_html(Req0, State) ->
             ?LOG_INFO("~p execute_feature from_html ~p", [Status, Response]),
             {
                 stop,
-                cowboy_req:reply(
-                    Status,
-                    cowboy_req:set_resp_body(jsx:encode(Response), Req0)
-                ),
-                State
-            };
-        Error ->
-            ?LOG_ERROR("execute_feature from_html error ~p", [Error]),
-            {
-                stop,
-                cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Error), Req0)),
+                case MaybeStream of
+                    false ->
+                        cowboy_req:reply(200, Req0),
+                        cowboy_req:set_resp_body(jsx:encode(Response), Req0);
+                    _ ->
+                        Req0
+                end,
                 State
             }
     end.
