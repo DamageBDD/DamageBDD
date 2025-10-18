@@ -4,6 +4,16 @@
 %% Dependencies: gun (HTTP/WS), jsx (JSON)
 
 -module(cdp_client).
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
+-include_lib("damage.hrl").
 -behaviour(gen_server).
 
 -include_lib("kernel/include/logger.hrl").
@@ -15,7 +25,7 @@
 -export([sh_smoke/0,
          sh_attach/0, sh_attach/2,
          sh_go_click/2, sh_go_click/3]).
--define(DEFAULT_HTTP_TIMEOUT, 30000).
+
 -define(DEFAULT_WS_TIMEOUT, 30000).
 
 -record(state, {

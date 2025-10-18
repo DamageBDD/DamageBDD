@@ -3,6 +3,11 @@
 %% Context is a map; we store cdp_pid and last CDP result as in steps_cdp.
 
 -module(steps_cdp_web).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
 -include_lib("kernel/include/logger.hrl").
 -export([step/6, test/0]).
 
