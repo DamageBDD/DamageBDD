@@ -314,7 +314,4 @@ step(Cfg, Context, <<"Then">>, N, ["I print the response"], _) ->
     formatter:format(
         Cfg, print, {<<"Then">>, N, ["Response:"], jsx:encode(Resp), Context, success}
     ),
-    Context;
-%% fall-through (unhandled)
-step(_Cfg, Context, _Kw, _N, _Body, _Data) ->
     Context.

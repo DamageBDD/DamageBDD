@@ -336,8 +336,5 @@ step(_Config, Context, <<"Then">>, _N, ["the last choco exit status must be", St
         false -> put_fail(Context, "Expected exit ~p, got ~p", [Want, Code])
     end;
 %% Compatibility no-op
-step(_Config, _Context, <<"Given">>, _N, ["I am the node named", _Node], _) ->
-    ok;
-%% Fallback
-step(_Config, Context, _Tense, _N, _Words, _Meta) ->
-    Context.
+step(_Config, Context, <<"Given">>, _N, ["I am the node named", _Node], _) ->
+    put_fail(Context, "Not implemented", []).

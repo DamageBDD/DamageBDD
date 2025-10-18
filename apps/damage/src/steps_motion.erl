@@ -72,10 +72,7 @@ step(_Cfg, Ctx, <<"Then">>, _N, ["the last motion rssi must be >=", RssiStr], _)
             Ctx;
         #{rssi := Rssi} ->
             fail(Ctx, damage_utils:strf("Expected RSSI >= ~p but got ~p", [RssiMin, Rssi]))
-    end;
-%% Fallback (unhandled)
-step(_Cfg, Ctx, _Phase, _N, _Tokens, _Line) ->
-    Ctx.
+    end.
 
 %% ------------- Helpers -------------
 

@@ -11,20 +11,10 @@
 %% ===== Records (must be defined before use) =======================
 -record(p, {pid :: integer(), user :: string(), comm :: string(), ctx :: string()}).
 
-%% ===== Public entry ===============================================
-step(Config, Ctx, K, N, Args, Extra) ->
-    try
-        do_step(Config, Ctx, K, N, Args, Extra)
-    catch
-        C:E:St ->
-            ?LOG_ERROR("steps_selinux crash ~p:~p ~p", [C, E, St]),
-            maps:put(fail, io_lib:format("SELinux step error: ~p:~p", [C, E]), Ctx)
-    end.
-
 %% ===== Steps =======================================================
 
 %% When I query selinux status
-do_step(_Config, Ctx, <<"When">>, _N, [<<"I query selinux status">>], _Extra) ->
+step(_Config, Ctx, <<"When">>, _N, [<<"I query selinux status">>], _Extra) ->
     case run_bin("getenforce", []) of
         {ok, Out, Err} ->
             put_last(Ctx, ["getenforce"], Out, Err),
@@ -39,7 +29,7 @@ do_step(_Config, Ctx, <<"When">>, _N, [<<"I query selinux status">>], _Extra) ->
             end
     end;
 %% Then selinux status must be "Enforcing"
-do_step(_Config, Ctx, <<"Then">>, _N, [<<"selinux status must be">>, Expected], _Extra) ->
+step(_Config, Ctx, <<"Then">>, _N, [<<"selinux status must be">>, Expected], _Extra) ->
     StatusRaw =
         case maps:get(selinux_status_raw, Ctx, undefined) of
             undefined ->
@@ -62,7 +52,7 @@ do_step(_Config, Ctx, <<"Then">>, _N, [<<"selinux status must be">>, Expected], 
             maps:put(fail, io_lib:format("Expected ~s, got ~s", [Exp, Status]), Ctx)
     end;
 %% When I collect process selinux labels
-do_step(_Config, Ctx, <<"When">>, _N, [<<"I collect process selinux labels">>], _Extra) ->
+step(_Config, Ctx, <<"When">>, _N, [<<"I collect process selinux labels">>], _Extra) ->
     case run_bin("ps", ["-eZ", "-o", "pid=,user=,comm="]) of
         {ok, Out, Err} ->
             put_last(Ctx, ["ps", "-eZ", "-o", "pid=,user=,comm="], Out, Err),
@@ -72,7 +62,7 @@ do_step(_Config, Ctx, <<"When">>, _N, [<<"I collect process selinux labels">>], 
             maps:put(fail, io_lib:format("Failed ps -eZ: ~p", [R]), Ctx)
     end;
 %% Then processes of user "alice" must be in selinux domain containing "something_t"
-do_step(
+step(
     _Config,
     Ctx,
     <<"Then">>,
@@ -99,7 +89,7 @@ do_step(
             maps:put(selinux_user_domain_matches, Matches, Ctx)
     end;
 %% When I write a selinux policy template for "name" to "/tmp/name.te"
-do_step(
+step(
     _Config,
     Ctx,
     <<"When">>,
@@ -114,7 +104,7 @@ do_step(
         Err -> maps:put(fail, io_lib:format("Write TE failed: ~p", [Err]), Ctx)
     end;
 %% When I build selinux module from te at "/tmp/name.te"
-do_step(_Config, Ctx, <<"When">>, _N, [<<"I build selinux module from te at">>, TePath], _Extra) ->
+step(_Config, Ctx, <<"When">>, _N, [<<"I build selinux module from te at">>, TePath], _Extra) ->
     Base = filename:basename(to_list(TePath), ".te"),
     ModF = filename:join("/tmp", Base ++ ".mod"),
     PpF = filename:join("/tmp", Base ++ ".pp"),
@@ -132,7 +122,7 @@ do_step(_Config, Ctx, <<"When">>, _N, [<<"I build selinux module from te at">>, 
             maps:put(fail, io_lib:format("checkmodule failed: ~p", [E1]), Ctx)
     end;
 %% Then user "alice" must have a process in domain "damage_t"
-do_step(
+step(
     _Config,
     Ctx,
     <<"Then">>,
@@ -158,7 +148,7 @@ do_step(
             )
     end;
 %% Then the last selinux stdout must contain "text"
-do_step(_Config, Ctx, <<"Then">>, _N, [<<"the last selinux stdout must contain">>, Sub], _Extra) ->
+step(_Config, Ctx, <<"Then">>, _N, [<<"the last selinux stdout must contain">>, Sub], _Extra) ->
     case maps:get(selinux_last_run, Ctx, undefined) of
         #{stdout := Out} ->
             case string:find(string:to_lower(Out), string:to_lower(to_list(Sub))) of
@@ -167,10 +157,7 @@ do_step(_Config, Ctx, <<"Then">>, _N, [<<"the last selinux stdout must contain">
             end;
         _ ->
             maps:put(fail, <<"No previous SELinux command captured">>, Ctx)
-    end;
-%% Fallback
-do_step(_Config, Ctx, _K, _N, _A, _E) ->
-    Ctx.
+    end.
 
 %% ===== Helpers =====================================================
 
