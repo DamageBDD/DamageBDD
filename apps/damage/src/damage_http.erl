@@ -259,7 +259,6 @@ get_config(Config, Context, Req0) ->
             Config0 = damage_config:get_default_config(
                 [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
             ),
-            ?LOG_INFO("get_config streaming ~p", [Config0]),
             Config0;
         _ ->
             %% non-stream path; keep formatters as supplied (or none)
