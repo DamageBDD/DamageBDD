@@ -180,10 +180,9 @@ function generateDamageQR(address){
 				event.preventDefault();
 				await submitDamageForm();
 			}});
-			
 		document.getElementById("execute-feature-btn").addEventListener("click", async function(event) {
-				event.preventDefault();
-				await submitDamageForm();
+			event.preventDefault();
+			await submitDamageForm();
 		});
 		fetchVersion();
 
@@ -233,49 +232,49 @@ function generateDamageQR(address){
 
 
 	async function nodeUnlock(){
-			const form = document.getElementById("node-unlock-password-form");
-			const passwordInput = document.getElementById("node-unlock-password");
-			const password = passwordInput.value.trim();
+		const form = document.getElementById("node-unlock-password-form");
+		const passwordInput = document.getElementById("node-unlock-password");
+		const password = passwordInput.value.trim();
 
-			if (!password) {
-				alert("Please enter your node password.");
-				return;
-			}
+		if (!password) {
+			alert("Please enter your node password.");
+			return;
+		}
 
-			try {
-				const resp = await fetch("/secrets/unlock", {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						password: password
-					})
-				});
+		try {
+			const resp = await fetch("/secrets/unlock", {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					password: password
+				})
+			});
 
-				const data = await resp.json();
+			const data = await resp.json();
 
-				if (data.status === "ok") {
-					alert("✅ Node unlocked successfully!");
-					if (window.MicroModal) {
-						MicroModal.close("node-unlock-modal");
-					}
-					passwordInput.value = "";
-				} else {
-					alert(`❌ Unlock failed: ${data.message || "Unknown error"}`);
+			if (data.status === "ok") {
+				alert("✅ Node unlocked successfully!");
+				if (window.MicroModal) {
+					MicroModal.close("node-unlock-modal");
 				}
-			} catch (err) {
-				console.error("Unlock error:", err);
-				alert("⚠️ Error unlocking node. Check console for details.");
+				passwordInput.value = "";
+			} else {
+				alert(`❌ Unlock failed: ${data.message || "Unknown error"}`);
 			}
+		} catch (err) {
+			console.error("Unlock error:", err);
+			alert("⚠️ Error unlocking node. Check console for details.");
+		}
 	}
 	function showLoginButton(){
 		const content = document.getElementById("content");
 		const background = document.getElementById("background");
 
-			content.style.display = "none";
-			background.style.display = "block";
-			MicroModal.show('login-modal');
+		content.style.display = "none";
+		background.style.display = "block";
+		MicroModal.show('login-modal');
 	}
 	function showHideLoginButton(){
 		const content = document.getElementById("content");
@@ -406,13 +405,10 @@ function generateDamageQR(address){
 			};
 			const response = await fetch("/execute_feature/", request);
 
-			if (response.status === 200) {
-				await streamResponseToDOM(response, reportElement);
-			} else if (response.status === 401) {
+			if (response.status === 401) {
 				MicroModal.show("login-modal");
 			} else {
-				const errText = await response.text();
-				reportElement.innerText = "Error: " + errText;
+				await streamResponseToDOM(response, reportElement);
 			}
 		}
 		else {
@@ -430,39 +426,41 @@ function generateDamageQR(address){
 			const response = await fetch("/tx/", request);
 			// Optional: handle server asking for a signature
 			const data = await response.json();
-			const message = data.tx;
+			if(data.ok){
+				const message = data.tx;
+				await window.connectWalletUnified();
+				const signature = await wallet.signTransactionSmart(
+					message,
+					"ae_mainnet",
+					window.location.origin,
+					window.location.origin
+				);
+				if(signature.ok) {
 
-			await window.connectWalletUnified();
-			const signature = await wallet.signTransactionSmart(
-				message,
-				"ae_mainnet",
-				window.location.origin,
-				window.location.origin
-			);
-			if(signature.ok) {
+					const signedRequest = {
+						method: 'POST',
+						credentials: 'include',
+						headers: headers,
+						body: JSON.stringify({
+							feature: inputText,
+							address: address,
+							concurrency: concurrencyText,
+							signed_tx: signature.result.signedTransaction
+						})
+					};
 
-				const signedRequest = {
-					method: 'POST',
-					credentials: 'include',
-					headers: headers,
-					body: JSON.stringify({
-						feature: inputText,
-						address: address,
-						concurrency: concurrencyText,
-						signed_tx: signature.result.signedTransaction
-					})
-				};
-
-				const signedResponse = await fetch("/tx/", signedRequest);
-
-				if (signedResponse.status === 200) {
-					await streamResponseToDOM(signedResponse, reportElement);
+					const signedResponse = await fetch("/tx/", signedRequest);
+					if (signedResponse.status === 200) {
+						await streamResponseToDOM(signedResponse, reportElement);
+					} else {
+						const errText = await signedResponse.text();
+						reportElement.innerText = "Error after signing: " + errText;
+					}
 				} else {
-					const errText = await signedResponse.text();
-					reportElement.innerText = "Error after signing: " + errText;
+					reportElement.innerText = "Failed to sign: " + signature.error.message;
 				}
 			} else {
-				reportElement.innerText = "Failed to sign: " + signature.error.message;
+					reportElement.innerText = "Failed to prepare transaction: " + data.message;
 			}
 		}
 	}
