@@ -34,6 +34,10 @@
     term_root/2,
     term_tag/2,
     term_df/2,
+    set_opts/2,
+    get_opts/1,
+    % rebuild all roots (for bulk loads)
+    finalize/1,
 
     % diagnostics
     size/1,
@@ -58,7 +62,23 @@
     % ETS set: DocIdBin -> DocIdInt
     doc2id_tab,
     % ETS set: <<"seq">> -> NextInt
-    next_id_tab
+    next_id_tab,
+    opts = #{
+        % enable prefix terms
+        prefix => true,
+        % enable suffix terms (reversed)
+        suffix => false,
+        % 0=off, else 2 or 3 is typical
+        infix_n => 0,
+        % enable per-field expansion
+        fields => #{
+            name => #{prefix => true, suffix => true, infix => true},
+            city => #{prefix => true, suffix => false, infix => false},
+            cat => #{prefix => false, suffix => false, infix => false},
+            tag => #{prefix => false, suffix => false, infix => false},
+            phone => #{prefix => true, suffix => false, infix => false}
+        }
+    }
 }).
 
 -define(TNAME(T), list_to_atom(T)).
@@ -73,6 +93,11 @@
 
 -define(P_MIN, 2).
 -define(P_MAX, 8).
+
+set_opts(Ctx = #ctx{}, OptsMap) when is_map(OptsMap) ->
+    Ctx#ctx{opts = maps:merge(Ctx#ctx.opts, OptsMap)}.
+
+get_opts(#ctx{opts = O}) -> O.
 
 %%%===================================================================
 %%% Init / Tables
@@ -106,12 +131,15 @@ new() ->
 %%% Public mutators
 %%%===================================================================
 
-add_record(Ctx, DocId, Map) ->
-    case ets:lookup(Ctx#ctx.doc2id_tab, DocId) of
-        [] -> do_add(Ctx, DocId, Map);
-        _ -> error({exists, DocId})
-    end,
-    ok.
+add_record(Ctx = #ctx{doc2id_tab = DocT}, DocId, Rec) ->
+    case ets:insert_new(DocT, {DocId, Rec}) of
+        true ->
+            do_add(Ctx, DocId, Rec),
+            ok;
+        false ->
+            %% already present – do NOT crash
+            {error, exists}
+    end.
 
 upsert_record(Ctx, DocId, Map) ->
     case ets:lookup(Ctx#ctx.doc2id_tab, DocId) of
@@ -145,16 +173,94 @@ remove_record(Ctx, DocId) ->
 %%  #{name => <<"acme">>, category => <<"plumber">>, city => <<"sydney">>,
 %%    tags => [<<"24x7">>, <<"emergency">>],
 %%    phone => <<"0291">>, prefix => true}
-search(Ctx, Q, Limit) when is_map(Q) ->
-    Prefix = maps:get(prefix, Q, true),
-    Terms = terms_from_query(Q, Prefix),
-    %% Collect candidates per term (doc-int lists)
+%search(Ctx, Q, Limit) when is_map(Q) ->
+%    Prefix = maps:get(prefix, Q, true),
+%    Terms = terms_from_query(Q, Prefix),
+%    %% Collect candidates per term (doc-int lists)
+%    TermDocs = [{T, postings(Ctx, T)} || T <- Terms],
+%    %% Simple weighted score: +W per term hit
+%    Scores0 = score_candidates(Ctx, TermDocs),
+%    Scores = boost_multi_term_field(TermDocs, Scores0),
+%    Top = take_top(Scores, Limit),
+%    Proofs = proof_headers(Ctx, Terms),
+%    {[{docid(Ctx, I), Score} || {I, Score} <- Top], Proofs}.
+
+%% ================================================================
+%% Search: build terms -> gather postings -> score -> enrich results
+%% Returns {Results, ProofHeaders}
+%%   Results = [#{doc_id=>binary(), score=>float(), record=>map(), preview=>binary()}]
+%% ================================================================
+search(Ctx = #ctx{}, QueryMap, Limit0) ->
+    Limit =
+        case Limit0 of
+            I when is_integer(I), I > 0 -> I;
+            _ -> 10
+        end,
+
+    %% 1) expand the structured query into index terms
+    Terms = terms_from_query(QueryMap, true),
+
+    %% 2) fetch postings per term
     TermDocs = [{T, postings(Ctx, T)} || T <- Terms],
-    %% Simple weighted score: +W per term hit
-    Scores = score_candidates(Ctx, TermDocs),
-    Top = take_top(Scores, Limit),
+
+    %% 3) score & rank
+    Scores0 = score_candidates(Ctx, TermDocs),
+    Scores1 = boost_multi_term_field(TermDocs, Scores0),
+    TopInts = take_top(Scores1, Limit),
+
+    %% 4) enrich each doc with its stored record and a human preview
+    Results = [enrich_int(Ctx, DocInt, Score) || {DocInt, Score} <- TopInts],
+    ?LOG_DEBUG("Results  ~p", [Results]),
+
+    %% 5) light proof headers for the terms used (df + postings root + tag)
     Proofs = proof_headers(Ctx, Terms),
-    {[{docid(Ctx, I), Score} || {I, Score} <- Top], Proofs}.
+
+    {Results, Proofs}.
+
+%% Convert internal doc-int -> {doc_id, record, preview}
+enrich_int(Ctx, DocInt, Score) ->
+    DocId = docid(Ctx, DocInt),
+    Rec = lookup_record(Ctx, DocId),
+    %?LOG_DEBUG("Rec  ~tp", [Rec]),
+    #{
+        doc_id => DocId,
+        score => Score,
+        record => Rec,
+        preview => preview_text(Rec)
+    }.
+
+lookup_record(Ctx, DocId) ->
+    case ets:lookup(Ctx#ctx.rec_tab, DocId) of
+        %% you store #{int=>DocInt, data=>Map, terms=>Terms}
+        [{_, #{data := Data}}] ->
+            Data;
+        [{_, M}] when is_map(M) ->
+            %% backward/experimental shapes
+            maps:get(data, M, M);
+        [] ->
+            #{}
+    end.
+
+%% Replace your current preview_text/1 with this:
+preview_text(RecMap) when is_map(RecMap) ->
+    N = maps:get(name, RecMap, <<>>),
+    C = maps:get(city, RecMap, <<>>),
+    K = maps:get(category, RecMap, <<>>),
+
+    iolist_to_binary(
+        case {N =/= <<>>, C =/= <<>>, K =/= <<>>} of
+            {true, false, false} -> [N];
+            {true, true, false} -> [N, <<" — ">>, C];
+            {true, true, true} -> [N, <<" — ">>, C, <<" (">>, K, <<")">>];
+            {true, false, true} -> [N, <<" (">>, K, <<")">>];
+            {false, true, true} -> [C, <<" (">>, K, <<")">>];
+            {false, true, false} -> [C];
+            {false, false, true} -> [K];
+            _ -> <<>>
+        end
+    );
+preview_text(_) ->
+    <<>>.
 
 info_term(Ctx, Term) ->
     #{
@@ -202,9 +308,9 @@ term_tag(Ctx, Term) ->
         [] ->
             Tag = h2c_tag(Term),
             ets:insert(Ctx#ctx.tag_tab, {Term, Tag}),
-            Tag;
+            tuple_to_list(Tag);
         [{_, T}] ->
-            T
+            tuple_to_list(T)
     end.
 
 term_df(Ctx, Term) ->
@@ -300,13 +406,12 @@ bump_df(Ctx, Term, Delta) ->
 
 recompute_roots(Ctx, Terms) ->
     [
-        begin
+        spawn(fun() ->
             Docs = postings(Ctx, T),
             Root = compute_root_intlist(Docs),
             ets:insert(Ctx#ctx.root_tab, {T, Root}),
-            % ensure tag cached
             _ = term_tag(Ctx, T)
-        end
+        end)
      || T <- lists:usort(Terms)
     ],
     ok.
@@ -321,28 +426,41 @@ next_id(Ctx) ->
 %%%===================================================================
 
 terms_from_record(Map) ->
+    %% normalize fields
     Name = ecai_tokenizer:normalize(maps:get(name, Map, <<>>)),
     City = ecai_tokenizer:normalize(maps:get(city, Map, <<>>)),
-    %% binary
     Cat = ecai_tokenizer:lower_ascii(maps:get(category, Map, <<>>)),
-    %% binaries
     Tags = [ecai_tokenizer:lower_ascii(T) || T <- maps:get(tags, Map, [])],
-    %% binary
     Phone = ecai_tokenizer:digits_only(maps:get(phone, Map, <<>>)),
 
+    %% tokenize to lowercase binaries
     NameTokens = ecai_tokenizer:tokens(Name),
     CityTokens = ecai_tokenizer:tokens(City),
 
+    %% read opts once
+    %% (we don't have Ctx here; we assume default full features for popular fields)
+    %% -> if you want strict runtime toggles, move this function to accept Ctx.
+    PMin = ?P_MIN,
+    PMax = ?P_MAX,
+    % default off (record-only version); query path also handles ng
+    NGN = 0,
+    %% name
     TermName = [term_key(<<"name">>, T) || T <- NameTokens],
-    PfxName = [term_pfx(<<"name">>, P) || P <- prefixes_many(NameTokens, ?P_MIN, ?P_MAX)],
+    PfxName = [term_pfx(<<"name">>, P) || P <- prefixes_many(NameTokens, PMin, PMax)],
+    SfxName = [term_sfx(<<"name">>, reverse_bin(S)) || S <- suffixes_many(NameTokens, PMin, PMax)],
+    NGName = [term_ng(<<"name">>, Ng) || Ng <- ngrams_many(NameTokens, NGN)],
+    %% category
     TermCat =
         if
             Cat =:= <<>> -> [];
             true -> [term_key(<<"cat">>, Cat)]
         end,
+    %% city
     TermCity = [term_key(<<"city">>, T) || T <- CityTokens],
-    PfxCity = [term_pfx(<<"city">>, P) || P <- prefixes_many(CityTokens, ?P_MIN, 6)],
+    PfxCity = [term_pfx(<<"city">>, P) || P <- prefixes_many(CityTokens, PMin, 6)],
+    %% tags
     TermTags = [term_key(<<"tag">>, T) || T <- Tags],
+    %% phone (exact + prefix)
     TermPhone =
         if
             Phone =:= <<>> ->
@@ -352,64 +470,133 @@ terms_from_record(Map) ->
                     [term_pfx(<<"phone">>, P) || P <- pfx1(Phone, 3, 8)]
         end,
 
-    lists:usort(TermName ++ PfxName ++ TermCat ++ TermCity ++ PfxCity ++ TermTags ++ TermPhone).
+    lists:usort(
+        TermName ++ PfxName ++ SfxName ++ NGName ++
+            TermCat ++ TermCity ++ PfxCity ++ TermTags ++ TermPhone
+    ).
 
-terms_from_query(Q, Prefix) ->
-    Acc0 = [],
-    Acc1 =
+%% helpers to fan out across word lists
+suffixes_many(Toks, Min, Max) ->
+    lists:usort(lists:append([suffixes(T, Min, Max) || T <- Toks])).
+
+ngrams_many(_Toks, 0) -> [];
+ngrams_many(Toks, N) -> lists:usort(lists:append([ngrams(T, N) || T <- Toks])).
+
+terms_from_query(Q, PrefixDefault) ->
+    Prefix = maps:get(prefix, Q, PrefixDefault),
+    Suffix = maps:get(suffix, Q, false),
+    InfixN = maps:get(infix_n, Q, 0),
+
+    %% NAME
+    AccName =
         case maps:get(name, Q, undefined) of
             undefined ->
-                Acc0;
+                [];
             N ->
                 Ns = ecai_tokenizer:tokens(ecai_tokenizer:normalize(N)),
-                ([term_key(<<"name">>, T) || T <- Ns] ++
-                    (case Prefix of
+                Exact = [term_key(<<"name">>, T) || T <- Ns],
+                Pfx =
+                    case Prefix of
                         true -> [term_pfx(<<"name">>, P) || P <- prefixes_many(Ns, ?P_MIN, ?P_MAX)];
                         _ -> []
-                    end)) ++ Acc0
+                    end,
+                Sfx =
+                    case Suffix of
+                        true ->
+                            [
+                                term_sfx(<<"name">>, reverse_bin(S))
+                             || S <- suffixes_many(Ns, ?P_MIN, ?P_MAX)
+                            ];
+                        _ ->
+                            []
+                    end,
+                NG =
+                    case InfixN of
+                        0 -> [];
+                        Nn -> [term_ng(<<"name">>, Ng) || Ng <- ngrams_many(Ns, Nn)]
+                    end,
+                Exact ++ Pfx ++ Sfx ++ NG
         end,
-    Acc2 =
+
+    %% CATEGORY
+    AccCat =
         case maps:get(category, Q, undefined) of
-            undefined -> Acc1;
-            C -> [term_key(<<"cat">>, ecai_tokenizer:lower_ascii(C)) | Acc1]
+            undefined -> [];
+            C -> [term_key(<<"cat">>, ecai_tokenizer:lower_ascii(C))]
         end,
-    Acc3 =
+
+    %% CITY
+    AccCity =
         case maps:get(city, Q, undefined) of
             undefined ->
-                Acc2;
+                [];
             Cty ->
                 Cs = ecai_tokenizer:tokens(ecai_tokenizer:normalize(Cty)),
-                ([term_key(<<"city">>, T) || T <- Cs] ++
-                    (case Prefix of
+                Exact0 = [term_key(<<"city">>, T) || T <- Cs],
+                Pfx0 =
+                    case Prefix of
                         true -> [term_pfx(<<"city">>, P) || P <- prefixes_many(Cs, ?P_MIN, 6)];
                         _ -> []
-                    end)) ++ Acc2
+                    end,
+                Exact0 ++ Pfx0
         end,
-    Acc4 =
+
+    %% TAGS
+    AccTags =
         case maps:get(tags, Q, undefined) of
-            undefined ->
-                Acc3;
-            L when is_list(L) ->
-                [term_key(<<"tag">>, ecai_tokenizer:lower_ascii(T)) || T <- L] ++ Acc3
+            undefined -> [];
+            L when is_list(L) -> [term_key(<<"tag">>, ecai_tokenizer:lower_ascii(T)) || T <- L]
         end,
-    Acc5 =
+
+    %% PHONE
+    AccPhone =
         case maps:get(phone, Q, undefined) of
             undefined ->
-                Acc4;
+                [];
             P ->
-                D = ecai_tokenizer:digits_only(P),
-                ([term_key(<<"phone">>, D)] ++
-                    (case Prefix of
-                        true -> [term_pfx(<<"phone">>, Pfx) || Pfx <- pfx1(D, 3, 8)];
-                        _ -> []
-                    end)) ++ Acc4
+                case ecai_tokenizer:digits_only(P) of
+                    <<>> ->
+                        [];
+                    D ->
+                        Exact1 = [term_key(<<"phone">>, D)],
+                        ?LOG_DEBUG("pfx phone ~p", [D]),
+                        Pfx1 =
+                            case Prefix of
+                                true ->
+                                    [term_pfx(<<"phone">>, Pfx) || Pfx <- pfx1(D, 3, 8)];
+                                _ ->
+                                    []
+                            end,
+                        Exact1 ++ Pfx1
+                end
         end,
-    lists:usort(Acc5).
+
+    lists:usort(AccName ++ AccCat ++ AccCity ++ AccTags ++ AccPhone).
 
 term_key(Namespace, Token) ->
     <<Namespace/binary, $:, Token/binary>>.
 term_pfx(Namespace, Prefix) ->
     <<"pfx:", Namespace/binary, $:, Prefix/binary>>.
+term_sfx(Field, Suffix) ->
+    <<"sfx:", Field/binary, $:, Suffix/binary>>.
+
+term_ng(Field, Ng) ->
+    <<"ng:", Field/binary, $:, Ng/binary>>.
+
+reverse_bin(B) ->
+    <<<<C>> || C <- lists:reverse(binary:bin_to_list(B))>>.
+
+suffixes(Bin, Min, Max) ->
+    Len = byte_size(Bin),
+    From = min(Len, Max),
+    [binary:part(Bin, Len - N, N) || N <- lists:seq(Min, From)].
+
+ngrams(Bin, N) when N >= 1 ->
+    L = byte_size(Bin),
+    if
+        L < N -> [];
+        true -> [binary:part(Bin, I, N) || I <- lists:seq(0, L - N)]
+    end.
 
 prefixes_many(Tokens, Min, Max) ->
     lists:usort(lists:append([pfx1(T, Min, Max) || T <- Tokens])).
@@ -471,22 +658,67 @@ fetch_range(Tab, Key, TermBin, Acc) ->
 %%% Scoring and results
 %%%===================================================================
 
-score_candidates(_Ctx, TermDocs) ->
-    %% Weight by namespace; namespace is before ':'
-    FoldTerm = fun({Term, Docs}, Acc0) ->
-        {NS, _Tok} = split_ns(Term),
-        W = maps:get(NS, ?WEIGHTS, 1),
-        lists:foldl(fun(DI, A) -> maps:update_with(DI, fun(V) -> V + W end, W, A) end, Acc0, Docs)
-    end,
-    lists:foldl(FoldTerm, #{}, TermDocs).
+%% -------------------------------------------------------------------
+%% BM25-lite + field-aware de-dup
+%%  - Adds IDF: log((N - df + 0.5)/(df + 0.5))
+%%  - Counts at most ONCE per {Doc, Field} for an entire query
+%%  - Kind weights: exact=1.00, prefix=0.85, suffix=0.85, ngram=0.70
+%% -------------------------------------------------------------------
+score_candidates(Ctx, TermDocs) ->
+    N = doc_count(Ctx),
+    FieldW = ?WEIGHTS,
+    {Scores, _Seen} =
+        lists:foldl(
+            fun({Term, Docs}, {ScoreAcc, SeenAcc}) ->
+                {Kind, Field} = kind_field(Term),
+                KF = kind_weight(Kind),
+                FW = maps:get(Field, FieldW, 1),
+                DF = term_df(Ctx, Term),
+                IDF = idf(N, DF),
+                lists:foldl(
+                    fun(DocInt, {SA, SM}) ->
+                        %% only count once per {Doc,Field} per query
+                        SeenFields = maps:get(DocInt, SM, #{}),
+                        case maps:is_key(Field, SeenFields) of
+                            true ->
+                                {SA, SM};
+                            false ->
+                                Add = FW * KF * IDF,
+                                SA1 = maps:update_with(DocInt, fun(V) -> V + Add end, Add, SA),
+                                SM1 = maps:put(DocInt, maps:put(Field, true, SeenFields), SM),
+                                {SA1, SM1}
+                        end
+                    end,
+                    {ScoreAcc, SeenAcc},
+                    Docs
+                )
+            end,
+            {#{}, #{}},
+            TermDocs
+        ),
+    Scores.
 
-split_ns(Term) ->
-    %% Term is <<"ns:token">> or <<"pfx:ns:token">>
+doc_count(Ctx) ->
+    ets:info(Ctx#ctx.rec_tab, size).
+
+idf(N, DF) ->
+    %% natural log; tiny stabilizer to avoid log(0)
+    math:log(((float(N) - float(DF) + 0.5) / (float(DF) + 0.5)) + 1.0e-12).
+
+kind_field(Term) ->
     case binary:split(Term, <<":">>, [global]) of
-        [NS, _Tok] -> {NS, <<>>};
-        [PFX, NS, _Tok] when PFX =:= <<"pfx">> -> {NS, <<>>};
-        _ -> {<<"">>, <<>>}
+        [F, _Tok] -> {exact, F};
+        [<<"pfx">>, F, _Tok] -> {pfx, F};
+        [<<"sfx">>, F, _Tok] -> {sfx, F};
+        [<<"ng">>, F, _Tok] -> {ng, F};
+        _ -> {exact, <<"">>}
     end.
+
+kind_weight(exact) -> 1.00;
+kind_weight(pfx) -> 0.85;
+kind_weight(sfx) -> 0.85;
+kind_weight(ng) -> 0.70;
+kind_weight(_) -> 0.80.
 
 take_top(ScoreMap, K) ->
     lists:sublist(
@@ -507,6 +739,36 @@ docid(Ctx, Int) ->
         [] -> <<>>;
         [{_, D}] -> D
     end.
+
+boost_multi_term_field(TermDocs, Scores0) ->
+    %% Build Doc -> #{Field => true}
+    Hit = lists:foldl(
+        fun({Term, Docs}, Acc) ->
+            {_Kind, Field} = kind_field(Term),
+            lists:foldl(
+                fun(DI, A2) ->
+                    FSet = maps:get(DI, A2, #{}),
+                    maps:put(DI, maps:put(Field, true, FSet), A2)
+                end,
+                Acc,
+                Docs
+            )
+        end,
+        #{},
+        TermDocs
+    ),
+    Boost = 0.05,
+    maps:map(
+        fun(DI, Score) ->
+            Fields = maps:get(DI, Hit, #{}),
+            Extra = max(0, maps:size(Fields) - 1) * Boost,
+            Score + Extra
+        end,
+        Scores0
+    ).
+
+max(A, B) when A >= B -> A;
+max(_, B) -> B.
 
 %%%===================================================================
 %%% Merkle (int leaves) + proofs
@@ -603,3 +865,17 @@ hash_to_curve(Arg) when is_binary(Arg) -> hash_to_curve(binary_to_list(Arg));
 hash_to_curve(Arg) -> ecai:hash_to_curve(Arg).
 h2c_tag(TermBin) ->
     hash_to_curve(TermBin).
+
+finalize(Ctx = #ctx{}) ->
+    Terms = [T || {T, _} <- ets:tab2list(Ctx#ctx.df_tab)],
+    %% rebuild roots (can parallelize trivially)
+    [
+        begin
+            Docs = postings(Ctx, T),
+            Root = compute_root_intlist(Docs),
+            ets:insert(Ctx#ctx.root_tab, {T, Root}),
+            _ = term_tag(Ctx, T)
+        end
+     || T <- Terms
+    ],
+    Ctx.

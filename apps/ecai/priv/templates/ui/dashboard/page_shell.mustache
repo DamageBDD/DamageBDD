@@ -1,86 +1,39 @@
 <!-- -*- mode: html -*- -->
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
   <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
-    <title>DamageBDD Execute Feature</title>
-
-    <script src="/static/js/three.min.js"></script>
-    <script src="/static/js/qrcode.min.js"></script>
-    <script src="/static/js/micromodal.min.js"></script>
-    <script src="/static/js/tabby.polyfills.min.js"></script>
-
-    <script type='module' src='/static/js/sidekick.js'></script>
-
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css"
-          integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls"
-          crossorigin="anonymous">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/base-min.css">
-
-    <link rel="stylesheet" type="text/css" href='/static/css/micromodal.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/damage-lightning-ui.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/feature-picker.css' />
-    <link rel="stylesheet" type="text/css" href="/static/css/tango-steven-theme.css" />
-    <link rel="stylesheet" type="text/css" href='/static/css/prism.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/main.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/auth.css' />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ECAI Search</title>
+    <link rel="stylesheet" type="text/css" href='/static/css/ecai.css' />
   </head>
-<body>
-  {{{invoice_modal}}}
-  {{{login_modal}}}
-  {{{signup_modal}}}
-  {{{logout_modal}}}
-  {{{schedule_modal}}}
-  {{{install_modal}}}
-  {{{feature_picker_modal}}}
-  {{{notification_modal}}}
-  {{{node_set_password_modal}}}
-  {{{node_unlock_modal}}}
-  {{{node_public_key_modal}}}
-  <div id="background"></div>
-  <div id="content">
-    {{{topbar}}}
-    {{{tabs_bar}}}
+  <body>
+    <div class="wrap">
+      <div class="brand">ECAI Search</div>
 
-    <div id="execution-tab" class="execute-container">
-      {{{execution_tab}}}
-    </div>
-    <div id="history-tab">
-      {{{history_tab}}}
-    </div>
-    <div id="analytics-tab">
-      {{{analytics_tab}}}
-    </div>
-    <div id="schedules-tab">
-      {{{schedules_tab}}}
-    </div>
-    <div id="settings-tab">
-      {{{settings_tab}}}
-    </div>
-  </div>
+      <div class="row">
+        <div class="searchbox" style="width:100%;">
+          <input id="q" type="text" placeholder='Search businesses… (quotes for exact phrase, "-" to exclude)' autofocus />
+          <!-- floating clear button -->
+          <button id="clear" class="clear-btn" title="Clear query" aria-label="Clear">×</button>
+          <button id="go" class="btn btn-primary">Search</button>
+        </div>
+        <button id="connect" class="btn btn-ghost" title="Connect wallet for personalized search">Connect</button>
+      </div>
 
-  {{{footer}}}
-      <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
-      <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+      <div id="who" class="sub">Not connected</div>
+      <div id="status" class="status">Type and press Enter, or click Search.</div>
+      <div id="count" class="sub"></div>   <!-- NEW: docs indexed -->
 
-      <script src="/static/js/reports.js"></script>
-      <script src="/static/js/schedules.js"></script>
-      <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
-      <script type="module" src="/static/js/damage-scheduler-ui.js"></script>
-      <script type='module' src="/static/js/installer.js" defer></script>
-      <script type='module' src="/static/js/balances.js" defer></script>
+
+
+      <div id="results" class="results"></div>
+    </div>
+
+    <!-- Your wallet helpers (paths can be adjusted to your hosting setup) -->
+    <script type='module' src='/static/js/sidekick.js'></script>
       <script type='module' src="/static/js/wallet.js" defer></script>
-      <script type='module' src="/static/js/wallet-switcher.js" defer></script>
-      <script type='module' src="/static/js/main.js" defer></script>
-</body>
+      <script type='module' src="/static/js/ecai.js" defer></script>
+  </body>
 </html>
 

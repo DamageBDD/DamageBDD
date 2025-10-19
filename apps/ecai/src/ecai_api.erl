@@ -151,6 +151,8 @@ trails() ->
 
 %% Handle incoming requests
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+is_authorized(Req, #{action := search} = State) ->
+    {true, Req, State};
 is_authorized(Req, State) ->
     damage_http:is_authorized(Req, State).
 
@@ -196,7 +198,8 @@ from_json(Req, #{action := search} = State) ->
                     L when is_integer(L), L > 0 -> L;
                     _ -> 10
                 end,
-            Ctx = persistent_term:get(ecai_ctx),
+            Ctx =
+                ecai_search_server:get_ctx(),
             %% Free-text → search all fields with prefix matching
             {Results, Proofs} =
                 ecai_search:search(
@@ -213,13 +216,11 @@ from_json(Req, #{action := search} = State) ->
                 ),
             Resp = #{
                 <<"ok">> => true,
-                <<"results">> => [
-                    #{<<"doc_id">> => Doc, <<"score">> => Score}
-                 || {Doc, Score} <- Results
-                ],
+                <<"results">> => Results,
                 <<"proofs">> => Proofs
             },
-            {ok,
+            ?LOG_DEBUG("ecai response ~p", [Resp]),
+            {stop,
                 cowboy_req:reply(
                     200,
                     #{<<"content-type">> => <<"application/json">>},
@@ -228,7 +229,7 @@ from_json(Req, #{action := search} = State) ->
                 ),
                 State};
         _ ->
-            {ok, cowboy_req:reply(400, Req), State}
+            {stop, cowboy_req:reply(400, Req), State}
     end;
 from_json(Req, #{ae_account := AeAccount, action := encode} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),

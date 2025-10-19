@@ -10,6 +10,7 @@
 
 -export([start/2, stop/1]).
 -export([start_phase/3]).
+-export([reload_router/0]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -18,6 +19,7 @@ get_trails() ->
     Handlers =
         [
             ecai_api,
+            ecai_yelp_admin,
             ecai_dashboard
         ],
     Trails =
@@ -38,14 +40,13 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(erlexec),
     {ok, _} = application:ensure_all_started(throttle),
     {ok, _} = application:ensure_all_started(gproc),
-    Dispatch = get_trails(),
     {ok, WsPort} = application:get_env(ecai, port),
     {ok, _} =
         cowboy:start_clear(
             http_ecai,
             [{port, WsPort}],
             #{
-                env => #{dispatch => Dispatch},
+                env => #{dispatch => get_trails()},
                 metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
                 stream_handlers =>
                     [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h]
@@ -60,3 +61,12 @@ stop(_State) ->
     ok.
 
 %% internal functions
+reload_router() ->
+    %% 1) rebuild trails and compile
+    Dispatch = get_trails(),
+    [{'_', [], Trails}] = Dispatch,
+
+    %% 2) apply to running listener (default name 'http')
+    ok = cowboy:set_env(http_ecai, dispatch, Dispatch),
+    io:format("~n[+] Cowboy router reloaded (~p routes)~n", [length(Trails)]),
+    ok.

@@ -132,4 +132,4 @@ render_component(_, _) ->
 %% ---------------------- Rendering helper ---------------------
 render_tpl(TemplateRelPath, Context) ->
     %% priv/templates/<TemplateRelPath> :contentReference[oaicite:1]{index=1}
-    damage_utils:load_template(TemplateRelPath, Context).
+    damage_utils:load_template(ecai, TemplateRelPath, Context).
