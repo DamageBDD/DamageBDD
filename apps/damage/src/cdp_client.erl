@@ -21,10 +21,12 @@
 -export([start_link/1, stop/1, call/3, enable_console/1, ws_url/1, discover_ws/1, proto_index/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
-    %% shell helpers
--export([sh_smoke/0,
-         sh_attach/0, sh_attach/2,
-         sh_go_click/2, sh_go_click/3]).
+%% shell helpers
+-export([
+    sh_smoke/0,
+    sh_attach/0, sh_attach/2,
+    sh_go_click/2, sh_go_click/3
+]).
 
 -define(DEFAULT_WS_TIMEOUT, 30000).
 
@@ -105,7 +107,9 @@ init(Opts) ->
         {error, Why} ->
             {stop, Why}
     end.
-load_protocol_dynamic(#state{host=Host, port=Port}) when Host =/= undefined, Port =/= undefined ->
+load_protocol_dynamic(#state{host = Host, port = Port}) when
+    Host =/= undefined, Port =/= undefined
+->
     case cdp_http_get(Host, Port, "/json/protocol") of
         {200, Bin} ->
             case catch jiffy:decode(Bin, [return_maps]) of
@@ -123,7 +127,6 @@ load_protocol_dynamic(#state{host=Host, port=Port}) when Host =/= undefined, Por
     end;
 load_protocol_dynamic(_) ->
     load_protocol_from_files().
-
 
 load_protocol_from_files() ->
     Files = app_priv_protocol_files() ++ dev_fallback_files(),
@@ -220,12 +223,13 @@ init_connect(S, #{ws_url := WS0}) ->
     WS = to_bin(WS0),
     %% derive host/port for dynamic protocol loading
     U = uri_string:parse(WS),
-    Host = case maps:get(host, U) of
-              H when is_binary(H) -> binary_to_list(H);
-              H when is_list(H)   -> H
-           end,
+    Host =
+        case maps:get(host, U) of
+            H when is_binary(H) -> binary_to_list(H);
+            H when is_list(H) -> H
+        end,
     Port = maps:get(port, U),
-    connect_ws(S#state{ws_url=WS, host=Host, port=Port});
+    connect_ws(S#state{ws_url = WS, host = Host, port = Port});
 init_connect(S, #{host := Host, port := Port} = Opts) ->
     Type = maps:get(type, Opts, <<"page">>),
     case discover_ws(#{host => Host, port => Port, type => Type}) of
@@ -333,11 +337,14 @@ http_get_retry(Url, N) ->
         {ok, {{_Vsn, Status, _Reason}, _Hdrs, Body}} ->
             {Status, iolist_to_binary(Body)};
         {error, socket_closed_remotely} ->
-            timer:sleep(150), http_get_retry(Url, N-1);
+            timer:sleep(150),
+            http_get_retry(Url, N - 1);
         {error, {failed_connect, _}} ->
-            timer:sleep(150), http_get_retry(Url, N-1);
-        {error, _}  ->
-            timer:sleep(150), http_get_retry(Url, N-1);
+            timer:sleep(150),
+            http_get_retry(Url, N - 1);
+        {error, _} ->
+            timer:sleep(150),
+            http_get_retry(Url, N - 1);
         Other ->
             {error, Other}
     end.
@@ -348,10 +355,9 @@ ensure_inets() ->
         {error, {already_started, _}} -> ok
     end.
 
-host_to_list(H) when is_list(H)   -> H;
+host_to_list(H) when is_list(H) -> H;
 host_to_list(H) when is_binary(H) -> binary_to_list(H);
-host_to_list({_,_,_,_}=IP)        -> inet_parse:ntoa(IP).
-
+host_to_list({_, _, _, _} = IP) -> inet_parse:ntoa(IP).
 
 %%% ───────── Protocol index + validation ─────────
 load_protocol() ->
@@ -410,20 +416,22 @@ validate_method(Method, Params, Index) when is_map(Index) ->
                     ?LOG_WARNING("CDP method ~p not in index; allowing", [Method]),
                     {ok, Params};
                 #{params := ParamSpecs} ->
-                    Required = [maps:get(<<"name">>, P) || P <- ParamSpecs,
-                                                  not maps:get(<<"optional">>, P, false)],
+                    Required = [
+                        maps:get(<<"name">>, P)
+                     || P <- ParamSpecs,
+                        not maps:get(<<"optional">>, P, false)
+                    ],
                     Provided = maps:keys(Params),
-                    Missing  = [R || R <- Required, not lists:member(R, Provided)],
+                    Missing = [R || R <- Required, not lists:member(R, Provided)],
                     case Missing of
                         [] ->
                             Allowed = [maps:get(<<"name">>, P) || P <- ParamSpecs],
                             {ok, maps:with(Allowed, Params)};
-                        _  ->
+                        _ ->
                             {error, {missing_required, Missing}}
                     end
             end
     end.
-
 
 %%% ───────── Utils ─────────
 to_bin(B) when is_binary(B) -> B;
@@ -440,23 +448,29 @@ sh_smoke() ->
             case start_link(#{ws_url => WS, host => Host, port => Port}) of
                 {ok, Pid} ->
                     ok = enable_console(Pid),
-                    Res = call(Pid, <<"Runtime.evaluate">>,
-                               #{<<"expression">> => <<"40+2">>,
-                                 <<"returnByValue">> => true}),
+                    Res = call(
+                        Pid,
+                        <<"Runtime.evaluate">>,
+                        #{
+                            <<"expression">> => <<"40+2">>,
+                            <<"returnByValue">> => true
+                        }
+                    ),
                     _ = stop(Pid),
-                    Val = case Res of
-                              #{<<"result">> := #{<<"result">> := #{<<"value">> := V}}} -> V;
-                              #{<<"result">> := #{<<"value">> := V}} -> V;
-                              _ -> undefined
-                          end,
+                    Val =
+                        case Res of
+                            #{<<"result">> := #{<<"result">> := #{<<"value">> := V}}} -> V;
+                            #{<<"result">> := #{<<"value">> := V}} -> V;
+                            _ -> undefined
+                        end,
                     {ok, Val, Res};
-                Error -> Error
+                Error ->
+                    Error
             end;
         Error ->
             %% don’t crash the shell on discovery errors
             {error, {discover_failed, Host, Port, Error}}
     end.
-
 
 %% Attach to a running browser and return the client pid (so you can poke it).
 sh_attach() ->
@@ -467,7 +481,8 @@ sh_attach(Host, Port) when is_list(Host), is_integer(Port) ->
     case discover_ws(#{host => Host, port => Port, type => <<"page">>}) of
         {ok, WS} ->
             start_link(#{ws_url => WS, host => Host, port => Port});
-        Err -> Err
+        Err ->
+            Err
     end.
 
 %% Navigate to URL and click a button whose visible text/value equals Text.
@@ -477,18 +492,24 @@ sh_go_click(URL, Text, Host) ->
     {_, Port} = sh_hostport(),
     {ok, Pid} = sh_attach(Host, Port),
     ok = enable_console(Pid),
-    _  = call(Pid, <<"Page.enable">>, #{}),
-    _  = call(Pid, <<"Runtime.enable">>, #{}),
+    _ = call(Pid, <<"Page.enable">>, #{}),
+    _ = call(Pid, <<"Runtime.enable">>, #{}),
 
     %% navigate
     _Nav = call(Pid, <<"Page.navigate">>, #{<<"url">> => to_bin(URL)}),
 
     %% wait for load (or readyState 'complete')
-    _ = call(Pid, <<"Runtime.evaluate">>,
-             #{<<"expression">> => <<
-                 "new Promise(r=>{if(document.readyState==='complete')r(1);"
-                 "else addEventListener('load',()=>r(1),{once:true});})">>,
-               <<"awaitPromise">> => true}),
+    _ = call(
+        Pid,
+        <<"Runtime.evaluate">>,
+        #{
+            <<"expression">> => <<
+                "new Promise(r=>{if(document.readyState==='complete')r(1);"
+                "else addEventListener('load',()=>r(1),{once:true});})"
+            >>,
+            <<"awaitPromise">> => true
+        }
+    ),
 
     %% click the first button/input whose visible text/value === Text
     Expr = iolist_to_binary([
@@ -499,10 +520,15 @@ sh_go_click(URL, Text, Host) ->
         "if(!btn) return {ok:false, msg:'button not found: '+t};",
         "btn.click(); return {ok:true};})()"
     ]),
-    Res = call(Pid, <<"Runtime.evaluate">>,
-               #{<<"expression">>  => Expr,
-                 <<"returnByValue">> => true,
-                 <<"userGesture">>   => true}),
+    Res = call(
+        Pid,
+        <<"Runtime.evaluate">>,
+        #{
+            <<"expression">> => Expr,
+            <<"returnByValue">> => true,
+            <<"userGesture">> => true
+        }
+    ),
     %% Return simplified result
     case Res of
         #{<<"result">> := #{<<"result">> := #{<<"value">> := #{<<"ok">> := true}}}} -> ok;
@@ -512,6 +538,14 @@ sh_go_click(URL, Text, Host) ->
 
 %% --- small helper for host/port from env or default
 sh_hostport() ->
-    Host = case os:getenv("CDP_HOST") of false -> "127.0.0.1"; H -> H end,
-    Port = case os:getenv("CDP_PORT") of false -> 9223; P -> list_to_integer(P) end,
+    Host =
+        case os:getenv("CDP_HOST") of
+            false -> "127.0.0.1";
+            H -> H
+        end,
+    Port =
+        case os:getenv("CDP_PORT") of
+            false -> 9223;
+            P -> list_to_integer(P)
+        end,
     {Host, Port}.
