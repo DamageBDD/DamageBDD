@@ -80,10 +80,12 @@ config(Config, Key) ->
     Value.
 
 loaded_steps() ->
-    [M || {M,_} <- code:all_loaded(),
-          lists:prefix("steps_", atom_to_list(M)),
-          not lists:suffix("_SUITE", atom_to_list(M))].
-
+    [
+        M
+     || {M, _} <- code:all_loaded(),
+        lists:prefix("steps_", atom_to_list(M)),
+        not lists:suffix("_SUITE", atom_to_list(M))
+    ].
 
 strf(String, Args) -> lists:flatten(io_lib:format(String, Args)).
 
