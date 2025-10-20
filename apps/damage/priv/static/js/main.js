@@ -202,16 +202,13 @@ function generateDamageQR(address){
 		var tabs =Tabby('[data-tabs]');
 		tabs.toggle('execution');
 		const hashes = [
-			{ cid: 'Qmb4MG3F6W8P7Xe64snfpmfgTCURoq6ZjSMRLvFxW1W9DP', label: 'Echo Test' },
-			'QmYv9TtWt38aXY4AGiqM4H4myF8UCp6TE8SWtDVK7PoA4i',
-			'QmcN6mqiVCdp5ZGarWVXwKT3UPwbFgzRoGgjaNcP9vXB1a',
+			{ cid: 'QmSaePitmi9NaZmZ2DmbtC7sSMSQBBsz113qVvpY2Wd9K3', label: 'CDP Demo' },
+			'QmcN6mqQmcHWkfKNkQCSP4xsrNrP8GZm2BTiYKj1RQcDbXk4zXai3',
 			'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
 			'QmS1RRvJ2Y6SyvDUZNELsvBSefov4SisUQG97xH2vybxqu',
-			'QmdvmxqusyjGDPDXni2nMAAthBxrXUuoJmR2whsRmVo8CL',
+			'QmXAwxg4Hnb4uEYr55XFrAv6e7GEJfG2y16RaSyVgAcTxG',
 			'QmcLedvbu4jXNcyJSDXNKPrhmK6iM4Ff2SwVkXi2AX3prP',
-			'QmeTPPWN5c5ZBq6mteX6k6inZhVTm9kf27KkTPVbsYPFGb',
 			'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
-			'QmWy67JWeujue9jLhnPJe9xHUSjjrSB41KtSGepR2K77R8',
 			'QmYJF7LbpHvuUXVpjWAksht3ypGvzPbViCo16gFmiCUa1D'
 		];
 
