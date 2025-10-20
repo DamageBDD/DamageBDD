@@ -1,189 +1,53 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
+DEB_IPFS_HASH=QmUMYUsNdtKw34V3dUbe9PVqZCjRePoQkzzcuWpteUqCNi
+DEB_URL="https://ipfs.damagebdd.com/ipfs/${DEB_IPFS_HASH}"
+DEB_PATH="${DEB_PATH:-/tmp/damage.deb}"
 
-DOMAIN='{{domain}}'
-EMAIL='{{email}}'
-REPO='{{repo}}'
-BRANCH='{{branch}}'
-PORT='{{port}}'
+ARCH_IPFS_HASH=QmUMYUsNdtKw34V3dUbe9PVqZCjRePoQkzzcuWpteUqCNi
+ARCH_URL="https://ipfs.damagebdd.com/ipfs/${ARCH_IPFS_HASH}"
+ARCH_PATH="${ARCH_PATH:-/tmp/damage.pkg.tar.zst}"
 
-echo ">>> DamageBDD one-click install"
-echo "    Domain : $DOMAIN"
-echo "    Email  : $EMAIL"
+FEDORA_IPFS_HASH=QmUMYUsNdtKw34V3dUbe9PVqZCjRePoQkzzcuWpteUqCNi
+FEDORA_URL="https://ipfs.damagebdd.com/ipfs/${FEDORA_IPFS_HASH}"
+FEDORA_PATH="${ARCH_PATH:-/tmp/damage.rpm}"
+log() { printf '[install] %s\n' "$*" >&2; }
+die() { printf '[install][ERROR] %s\n' "$*" >&2; exit 1; }
+log("=== DamageBDD Install Script ===")
 
-detect_os() {
-  if [[ "$OSTYPE" == darwin* ]]; then echo macos; return; fi
-  if [[ -f /etc/os-release ]]; then . /etc/os-release; case "$ID" in
-    ubuntu|debian) echo debian;;
-    fedora) echo fedora;;
-    rhel|centos|rocky|almalinux) echo rhel;;
-    arch|manjaro) echo arch;;
-    *) echo unknown;; esac; return; fi
-  echo unknown
-}
+# Detect distro
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DISTRO=$ID
+else
+    die "Cannot detect Linux distribution."
+fi
+# use sudo if not root
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
 
-OS="$(detect_os)"
+case "$DISTRO" in
+    ubuntu|debian|linuxmint)
+        log "[*] Installing DamageBDD Debian deb."
+        $SUDO apt-get update
+        curl -fsSL "$DEB_URL" -o "$DEB_PATH" || die "Download failed"
+        $SUDO apt-get install -y "$DEB_PATH" || die "apt-get install failed"
+        ;;
+    arch)
+        log "[*] Installing DamageBDD Arch package ..."
+        curl -fsSL "$ARCH_URL" -o "$ARCH_PATH" || die "ARCH Pkg Download failed"
+        $SUDO pacman -Uy --noconfirm "$ARCH_PATH" || die "pacman -Uy failed"
+        ;;
+    fedora)
+        log "[*] Installing DamageBDD from Fedora rpm ..."
+        curl -fsSL "$RPM_URL" -o "$RPM_PATH" || die "RPM Download failed"
+        $SUDO dnf install -y  "$RPM_PATH" || die "dnf install y failed"
+        ;;
+    *)
+        log "Distro not recognized. Please install DamageBDD manually."
+        exit 1
+        ;;
+esac
 
-install_prereqs() {
-  case "$OS" in
-    debian) sudo apt update && sudo apt install -y git curl build-essential erlang-base erlang-dev erlang-tools erlang-parsetools rebar3 nginx python3-certbot-nginx ;;
-    fedora|rhel) sudo dnf -y install git curl @development-tools erlang rebar3 nginx certbot python3-certbot-nginx || true ;;
-    arch) sudo pacman -Syu --noconfirm && sudo pacman -S --noconfirm git base-devel erlang-nox erlang-tools rebar3 nginx certbot ;;
-    macos) command -v brew >/dev/null || { echo "Install Homebrew: https://brew.sh"; exit 1; }; brew update && brew install erlang rebar3 nginx ;;
-    *) echo "Unsupported OS"; exit 1 ;;
-  esac
-}
 
-setup_dirs() {
-  id damagebdd >/dev/null 2>&1 || sudo useradd --system --home /var/lib/damagebdd --shell /usr/sbin/nologin damagebdd 2>/dev/null || true
-  sudo mkdir -p /var/lib/damagebdd /var/log/damagebdd /opt/damagebdd /etc/damagebdd
-  sudo chown -R damagebdd:damagebdd /var/lib/damagebdd /var/log/damagebdd /opt/damagebdd || true
-}
+log "=== Installation Complete ==="
 
-build_release() {
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  git clone --branch "$BRANCH" --depth 1 "$REPO" "$tmp/repo"
-  (cd "$tmp/repo" && rebar3 as prod release)
-  sudo rsync -a "$tmp/repo/_build/prod/rel/damagebdd/" /opt/damagebdd/
-  sudo chown -R damagebdd:damagebdd /opt/damagebdd
-}
-
-write_env() {
-  sudo tee /etc/damagebdd/env >/dev/null <<EOF
-PORT=${PORT}
-BIND_ADDR=127.0.0.1
-CONFIG=/etc/damagebdd/sys.config
-LOG_DIR=/var/log/damagebdd
-DATA_DIR=/var/lib/damagebdd
-EOF
-}
-
-write_sysconfig() {
-  sudo tee /etc/damagebdd/sys.config >/dev/null <<'EOF'
-[
-  {damagebdd, [
-    {port, 8080},
-    {bind_addr, "127.0.0.1"},
-    {log_dir, "/var/log/damagebdd"},
-    {data_dir, "/var/lib/damagebdd"},
-    {upstreams, ["http://127.0.0.1:8080"]},
-    {secrets_backend, encrypted_store}
-  ]}
-].
-EOF
-}
-
-install_service_linux() {
-  sudo tee /etc/systemd/system/damagebdd.service >/dev/null <<'EOF'
-[Unit]
-Description=DamageBDD Verification Node
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=damagebdd
-EnvironmentFile=/etc/damagebdd/env
-WorkingDirectory=/opt/damagebdd
-ExecStart=/opt/damagebdd/bin/damagebdd foreground -config /etc/damagebdd/sys.config
-Restart=on-failure
-RestartSec=5
-StandardOutput=append:/var/log/damagebdd/stdout.log
-StandardError=append:/var/log/damagebdd/stderr.log
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now damagebdd
-}
-
-install_launchd_macos() {
-  sudo tee /Library/LaunchDaemons/com.damagebdd.node.plist >/dev/null <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.damagebdd.node</string>
-  <key>ProgramArguments</key><array>
-    <string>/opt/damagebdd/bin/damagebdd</string>
-    <string>foreground</string>
-    <string>-config</string>
-    <string>/etc/damagebdd/sys.config</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/var/log/damagebdd/stdout.log</string>
-  <key>StandardErrorPath</key><string>/var/log/damagebdd/stderr.log</string>
-</dict></plist>
-EOF
-  sudo launchctl load -w /Library/LaunchDaemons/com.damagebdd.node.plist
-}
-
-install_nginx() {
-  site=/etc/nginx/sites-available/damagebdd.conf
-  if [[ "$OS" == macos ]]; then site=/usr/local/etc/nginx/servers/damagebdd.conf; mkdir -p "$(dirname "$site")"; fi
-
-  sudo tee "$site" >/dev/null <<EOF
-server {
-  listen 80;
-  server_name ${DOMAIN};
-  location /.well-known/acme-challenge/ { root /var/www/damagebdd_acme; }
-  location / {
-    proxy_pass http://127.0.0.1:${PORT};
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-  }
-}
-EOF
-
-  sudo mkdir -p /var/www/damagebdd_acme
-  if command -v systemctl >/dev/null 2>&1; then
-    [[ "$OS" != macos ]] && { sudo mkdir -p /etc/nginx/sites-enabled; sudo ln -sf "$site" /etc/nginx/sites-enabled/damagebdd.conf; }
-    sudo nginx -t && sudo systemctl reload nginx || sudo systemctl restart nginx
-  else
-    sudo nginx -t && sudo nginx -s reload || true
-  fi
-}
-
-obtain_tls() {
-  if [[ "$OS" == macos ]]; then echo "Skipping certbot on macOS (use CDN/manual)"; return; fi
-  sudo certbot certonly --webroot -w /var/www/damagebdd_acme -d "${DOMAIN}" --non-interactive --agree-tos -m "${EMAIL}" || { echo "Certbot failed (DNS?)"; exit 1; }
-  sudo tee /etc/nginx/sites-available/damagebdd.conf >/dev/null <<EOF
-server {
-  listen 443 ssl http2;
-  server_name ${DOMAIN};
-  ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-  location / {
-    proxy_pass http://127.0.0.1:${PORT};
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-  }
-}
-server {
-  listen 80;
-  server_name ${DOMAIN};
-  location /.well-known/acme-challenge/ { root /var/www/damagebdd_acme; }
-  return 301 https://\$host\$request_uri;
-}
-EOF
-  sudo nginx -t && sudo systemctl reload nginx || true
-}
-
-main() {
-  install_prereqs
-  setup_dirs
-  build_release
-  write_env
-  write_sysconfig
-  if [[ "$OSTYPE" == darwin* ]]; then install_launchd_macos; else install_service_linux; fi
-  install_nginx
-  obtain_tls
-  echo "Done → https://${DOMAIN}/"
-}
-
-main "$@"
