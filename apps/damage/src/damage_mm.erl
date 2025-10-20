@@ -151,7 +151,7 @@ handle_info({gun_down, _Stream, http2, normal, []}, State) ->
     %% Could trigger reconnect logic here
     {noreply, State};
 handle_info(Info, State) ->
-    ?LOG_DEBUG("unhandled handle_info ~p ~p", [Info, State]),
+    ?LOG_DEBUG("damage_mm unhandled handle_info ~p ~p", [Info, State]),
     {noreply, State}.
 
 handle_call({convert, Sats}, _From, State = #state{damage_rate_usdt = Rate}) ->

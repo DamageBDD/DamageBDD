@@ -27,7 +27,6 @@ init([]) ->
             {ok, V} when is_list(V) -> V;
             _ -> []
         end,
-    ?LOG_DEBUG("Configured pools: ~p", [Pools]),
 
     AbducoWorkers =
         case application:get_env(damage, abduco_workers) of

@@ -467,7 +467,7 @@ handle_event(
     [
         <<"EVENT">>,
         <<"damagebdd">>,
-        #{id := _OriginalEventId, tags := _Tags, content := Content, pubkey := Npub} =
+        #{id := _OriginalEventId, tags := _Tags, content := Content, pubkey := _Npub} =
             Event
     ],
     State

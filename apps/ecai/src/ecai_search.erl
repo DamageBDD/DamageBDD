@@ -767,8 +767,6 @@ boost_multi_term_field(TermDocs, Scores0) ->
         Scores0
     ).
 
-max(A, B) when A >= B -> A;
-max(_, B) -> B.
 
 %%%===================================================================
 %%% Merkle (int leaves) + proofs

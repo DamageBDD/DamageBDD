@@ -103,7 +103,7 @@ handle_info({gun_ws, _, _, {text, Message0}} = Info, State) ->
     ok = handle_event(Message),
     {noreply, State};
 handle_info(Info, State) ->
-    ?LOG_DEBUG("got unknown on gun websocket Info ~p, State ~p", [Info, State]),
+    ?LOG_DEBUG("damage_aemdw got unknown on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State}.
 
 terminate(Reason, State) ->
