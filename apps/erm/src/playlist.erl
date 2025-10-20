@@ -1,125 +1,114 @@
 %%%-------------------------------------------------------------------
-%%% playlist.erl — ETS-backed playlist with CID/like
+%%% playlist.erl — simple playlist manager (gen_server)
+%%%-------------------------------------------------------------------
+%%% API used by erm_mpv:
+%%% start_link/0
+%%% all/0 -> [{Idx, #track{}}]
+%%% get_by_index/1 -> {ok, #track{}} | error
+%%% set_current/1
+%%% current/0 -> {ok, #track{}} | error
+%%% prev/0 | next/0
+%%% toggle_like_current/0
+%%% clear/0
+%%% update_cid/2
+%%% rescan_all/0
+%%% add_files/1 | add_files/2
 %%%-------------------------------------------------------------------
 -module(playlist).
 -behaviour(gen_server).
+-include("erm_playlist.hrl").
+-include_lib("kernel/include/logger.hrl").
+
+-export([start_link/0]).
 -export([
-    start_link/0,
-    add_file/1,
-    add/2,
     all/0,
     get_by_index/1,
-    current/0,
     set_current/1,
-    next/0,
+    current/0,
     prev/0,
+    next/0,
+    toggle_like_current/0,
     clear/0,
     update_cid/2,
-    toggle_like_current/0,
-    rescan_all/0
+    rescan_all/0,
+    add_files/1, add_files/2
 ]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--record(track, {id, path, cid = undefined, liked = false}).
--define(TAB, playlist_tab).
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
+
+-define(TAB, ?MODULE).
+
+-record(st, {
+    order = [] :: [integer()],
+    cur = undefined :: undefined | integer(),
+    src_dirs = [] :: [file:filename_all()]
+}).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+%% ——— Public API ———
+all() -> gen_server:call(?MODULE, all).
+get_by_index(I) when is_integer(I) -> gen_server:call(?MODULE, {get_by_index, I}).
+set_current(Id) -> gen_server:cast(?MODULE, {set_current, Id}).
+current() -> gen_server:call(?MODULE, current).
+prev() -> gen_server:call(?MODULE, prev).
+next() -> gen_server:call(?MODULE, next).
+toggle_like_current() -> gen_server:call(?MODULE, toggle_like_current).
+clear() -> gen_server:call(?MODULE, clear).
+update_cid(Id, Cid) -> gen_server:cast(?MODULE, {update_cid, Id, Cid}).
+rescan_all() -> gen_server:cast(?MODULE, rescan_all).
+add_files(Paths) when is_list(Paths) -> gen_server:cast(?MODULE, {add_files, Paths}).
+add_files(Dir, Recurse) when is_list(Dir) ->
+    Files = media_scan:collect_files(Dir, Recurse),
+    add_files(Files).
+step(_, _, _) ->
+    ok.
+
+%% ——— gen_server ———
 init([]) ->
-    process_flag(trap_exit, true),
-    ets:new(?TAB, [ordered_set, public, named_table]),
-    put(current, undefined),
-    {ok, #{}}.
+    ets:new(?TAB, [named_table, ordered_set, public, {keypos, #track.id}]),
+    {ok, #st{}}.
 
-add_file(Path) -> add(Path, undefined).
-add(Path, Cid) ->
-    Id = erlang:phash2(Path),
-    T = #track{id = Id, path = Path, cid = Cid},
-    ets:insert(?TAB, {Id, T}),
-    ok.
+handle_call(all, _From, S = #st{order = Order}) ->
+    Tracks = [
+        {Idx, ets:lookup_element(?TAB, Id, 2)}
+     || {Idx, Id} <- lists:zip(lists:seq(0, length(Order) - 1), Order)
+    ],
+    {reply, Tracks, S};
+handle_call({get_by_index, I}, _From, S = #st{order = Order}) ->
+    case lists:nthtail(I, Order) of
+        [Id | _] -> {reply, {ok, ets:lookup_element(?TAB, Id, 2)}, S};
+        _ -> {reply, error, S}
+    end;
+handle_call(current, _From, S = #st{cur = undefined}) ->
+    {reply, error, S};
+handle_call(current, _From, S = #st{cur = Id}) ->
+    {reply, {ok, ets:lookup_element(?TAB, Id, 2)}, S};
+handle_call(prev, _From, S = #st{order = Order, cur = Cur}) ->
+    NewId = step(-1, Cur, Order),
+    {reply, ok, S#st{cur = NewId}};
+handle_call(next, _From, S = #st{order = Order, cur = Cur}) ->
+    NewId = step(+1, Cur, Order),
+    {reply, ok, S#st{cur = NewId}};
+handle_call(toggle_like_current, _From, S = #st{cur = undefined}) ->
+    {reply, ok, S};
+handle_call(toggle_like_current, _From, S = #st{cur = Id}) ->
+    [T0] = ets:lookup(?TAB, Id),
+    T = T0#track{liked = not T0#track.liked},
+    ets:insert(?TAB, T),
+    {reply, ok, S};
+handle_call(clear, _From, S) ->
+    {reply, ok, S}.
+handle_cast(_Msg, S) -> {noreply, S}.
+handle_info(_Msg, S) ->
+    {noreply, S}.
 
-all() ->
-    Ts = ets:tab2list(?TAB),
-    lists:zip(lists:seq(0, length(Ts) - 1), [T || {_, T} <- Ts]).
-
-get_by_index(Idx) ->
-    Ts = [T || {_, T} <- ets:tab2list(?TAB)],
-    case lists:nthtail(Idx, Ts) of
-        [T | _] -> {ok, T};
-        _ -> error
-    end.
-
-current() ->
-    case get(current) of
-        undefined -> error;
-        Id -> {ok, element(2, hd(ets:lookup(?TAB, Id)))}
-    end.
-set_current(Id) ->
-    put(current, Id),
-    case ets:lookup(?TAB, Id) of
-        [{_, T}] -> social_reporter:now_playing(T);
-        _ -> ok
-    end,
-    ok.
-
-next() ->
-    case current() of
-        {ok, T} ->
-            Ts = [X || {_, X} <- ets:tab2list(?TAB)],
-            case lists:dropwhile(fun(X) -> X#track.id =/= T#track.id end, Ts) of
-                [_Cur, Nxt | _] ->
-                    mpv_ipc:load_file(Nxt#track.path),
-                    set_current(Nxt#track.id);
-                _ ->
-                    ok
-            end;
-        error ->
-            ok
-    end.
-
-prev() ->
-    case current() of
-        {ok, T} ->
-            Ts = [X || {_, X} <- ets:tab2list(?TAB)],
-            Rev = lists:reverse(Ts),
-            case lists:dropwhile(fun(X) -> X#track.id =/= T#track.id end, Rev) of
-                [_Cur, Prev | _] ->
-                    mpv_ipc:load_file(Prev#track.path),
-                    set_current(Prev#track.id);
-                _ ->
-                    ok
-            end;
-        error ->
-            ok
-    end.
-
-clear() ->
-    ets:delete_all_objects(?TAB),
-    put(current, undefined),
-    ok.
-
-update_cid(Id, Cid) ->
-    case ets:lookup(?TAB, Id) of
-        [{_, T}] ->
-            ets:insert(?TAB, {Id, T#track{cid = Cid}}),
-            ok;
-        _ ->
-            ok
-    end.
-
-toggle_like_current() ->
-    case current() of
-        {ok, T = #track{id = Id, liked = L}} ->
-            ets:insert(?TAB, {Id, T#track{liked = not L}}),
-            ok;
-        error ->
-            ok
-    end.
-
-rescan_all() -> ok.
-
-handle_call(_C, _F, S) -> {reply, ok, S}.
-handle_cast(_M, S) -> {noreply, S}.
-handle_info(_I, S) -> {noreply, S}.
-terminate(_, _) -> ok.
-code_change(_, S, _) -> {ok, S}.
+terminate(_Reason, _S) -> ok.
+code_change(_V, S, _Extra) -> {ok, S}.
