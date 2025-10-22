@@ -121,8 +121,12 @@ allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 to_json(Req, #{action := price} = State) ->
-    Price = price_feed:get_price(),
-    {jsx:encode(#{btc => #{aud => Price}}), Req, State};
+    case catch price_feed:get_price() of
+        Price when is_float(Price) ->
+            {jsx:encode(#{btc => #{aud => Price}, ok => true}), Req, State};
+        _ ->
+            {jsx:encode(#{btc => #{aud => null}, ok => false}), Req, State}
+    end;
 to_json(Req, #{action := get_invoice} = State) ->
     case cowboy_req:binding(payment_request, Req) of
         undefined ->

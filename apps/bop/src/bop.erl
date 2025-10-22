@@ -32,9 +32,9 @@ start_link([]) -> gen_server:start_link(?MODULE, [], []).
 init([]) ->
     process_flag(trap_exit, true),
     cln:register_listener(invoice_paid),
-    Rate = case price_feed:get_price() of
+    Rate = case catch price_feed:get_price() of
                {ok, Rate0} -> Rate0;
-               _ -> 161539
+               _ -> 0
            end,
 case ets:info(bop_goal_cache) of
     undefined ->

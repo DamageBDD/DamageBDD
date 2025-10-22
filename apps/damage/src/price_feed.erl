@@ -66,13 +66,17 @@ code_change(_OldVsn, State, _Extra) ->
 -spec fetch_btc_aud_price() -> {ok, float()} | {error, term()}.
 fetch_btc_aud_price() ->
     % TODO: use oracles instead
-    {ok, ConnPid} = gun:open("api.coinbase.com", 443, #{
+    PriceHost = "api.coinbase.com",
+    {ok, ConnPid} = gun:open(PriceHost, 443, #{
         transport => tls, tls_opts => [{verify, verify_none}]
     }),
     StreamRef = gun:get(ConnPid, "/v2/prices/BTC-AUD/spot", [
         {<<"accept">>, <<"application/json">>}
     ]),
     case gun:await(ConnPid, StreamRef, 600000) of
+        {error, Error} ->
+            ?LOG_WARNING("Error fetching price from ~p ~p", [PriceHost, Error]),
+            {error, Error};
         {response, nofin, Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
             ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
