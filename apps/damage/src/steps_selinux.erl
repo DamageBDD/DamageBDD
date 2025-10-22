@@ -14,7 +14,15 @@
 %% ===== Steps =======================================================
 
 %% When I query selinux status
-step(_Config, Ctx, <<"When">>, _N, [<<"I query selinux status">>], _Extra) ->
+step(
+    _Config,
+    #{public_key := AeAccount} = Ctx,
+    <<"When">>,
+    _N,
+    [<<"I query selinux status">>],
+    _Extra
+) ->
+    true = steps_utils:is_admin(AeAccount),
     case run_bin("getenforce", []) of
         {ok, Out, Err} ->
             put_last(Ctx, ["getenforce"], Out, Err),
@@ -29,7 +37,15 @@ step(_Config, Ctx, <<"When">>, _N, [<<"I query selinux status">>], _Extra) ->
             end
     end;
 %% Then selinux status must be "Enforcing"
-step(_Config, Ctx, <<"Then">>, _N, [<<"selinux status must be">>, Expected], _Extra) ->
+step(
+    _Config,
+    #{public_key := AeAccount} = Ctx,
+    <<"Then">>,
+    _N,
+    [<<"selinux status must be">>, Expected],
+    _Extra
+) ->
+    true = steps_utils:is_admin(AeAccount),
     StatusRaw =
         case maps:get(selinux_status_raw, Ctx, undefined) of
             undefined ->
@@ -52,7 +68,15 @@ step(_Config, Ctx, <<"Then">>, _N, [<<"selinux status must be">>, Expected], _Ex
             maps:put(fail, io_lib:format("Expected ~s, got ~s", [Exp, Status]), Ctx)
     end;
 %% When I collect process selinux labels
-step(_Config, Ctx, <<"When">>, _N, [<<"I collect process selinux labels">>], _Extra) ->
+step(
+    _Config,
+    #{public_key := AeAccount} = Ctx,
+    <<"When">>,
+    _N,
+    [<<"I collect process selinux labels">>],
+    _Extra
+) ->
+    true = steps_utils:is_admin(AeAccount),
     case run_bin("ps", ["-eZ", "-o", "pid=,user=,comm="]) of
         {ok, Out, Err} ->
             put_last(Ctx, ["ps", "-eZ", "-o", "pid=,user=,comm="], Out, Err),
@@ -64,12 +88,13 @@ step(_Config, Ctx, <<"When">>, _N, [<<"I collect process selinux labels">>], _Ex
 %% Then processes of user "alice" must be in selinux domain containing "something_t"
 step(
     _Config,
-    Ctx,
+    #{public_key := AeAccount} = Ctx,
     <<"Then">>,
     _N,
     [<<"processes of user">>, User, <<"must be in selinux domain containing">>, Token],
     _Extra
 ) ->
+    true = steps_utils:is_admin(AeAccount),
     Procs = ensure_procs(Ctx),
     LowerToken = string:to_lower(to_list(Token)),
     Matches = [
@@ -91,12 +116,13 @@ step(
 %% When I write a selinux policy template for "name" to "/tmp/name.te"
 step(
     _Config,
-    Ctx,
+    #{public_key := AeAccount} = Ctx,
     <<"When">>,
     _N,
     [<<"I write a selinux policy template for">>, Name, <<"to">>, Path],
     _Extra
 ) ->
+    true = steps_utils:is_admin(AeAccount),
     Mod = sanitize_name(Name),
     Te = build_te(Mod),
     case file:write_file(to_list(Path), Te) of
@@ -105,6 +131,7 @@ step(
     end;
 %% When I build selinux module from te at "/tmp/name.te"
 step(_Config, Ctx, <<"When">>, _N, [<<"I build selinux module from te at">>, TePath], _Extra) ->
+    true = steps_utils:is_admin(Ctx),
     Base = filename:basename(to_list(TePath), ".te"),
     ModF = filename:join("/tmp", Base ++ ".mod"),
     PpF = filename:join("/tmp", Base ++ ".pp"),
@@ -130,6 +157,7 @@ step(
     [<<"user">>, User, <<"must have a process in domain">>, ExactDom],
     _Extra
 ) ->
+    true = steps_utils:is_admin(Ctx),
     Procs = ensure_procs(Ctx),
     Expected = string:to_lower(to_list(ExactDom)),
     HasAny = lists:any(
@@ -149,6 +177,7 @@ step(
     end;
 %% Then the last selinux stdout must contain "text"
 step(_Config, Ctx, <<"Then">>, _N, [<<"the last selinux stdout must contain">>, Sub], _Extra) ->
+    true = steps_utils:is_admin(Ctx),
     case maps:get(selinux_last_run, Ctx, undefined) of
         #{stdout := Out} ->
             case string:find(string:to_lower(Out), string:to_lower(to_list(Sub))) of

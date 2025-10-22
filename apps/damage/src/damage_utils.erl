@@ -38,7 +38,6 @@
         chown_r/2,
         ensure_ssh_host_key/1,
         exists_cmd/1,
-        fail/2,
         ctx/1,
         run_ok/2,
         render/2,
@@ -582,7 +581,3 @@ run(_Context = #{exec_ctx := #ctx{sudo = Sudo}}, Cmd) when is_list(Cmd) ->
             ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Full]),
             {error, Reason}
     end.
-
-fail(Context, Reason) ->
-    ?LOG_ERROR("step failed ~p", [Reason]),
-    maps:put(fail, Reason, Context).

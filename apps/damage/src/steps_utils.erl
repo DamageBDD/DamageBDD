@@ -12,6 +12,7 @@
 -export([step/6]).
 -export([step_dry/6]).
 -export([is_admin/1]).
+-export([set_fail/2, set_fail/3]).
 -export([parse_table/1]).
 -export([parse_step_body/1]).
 
@@ -143,10 +144,12 @@ step(
         true ->
             case damage_utils:is_exec(Path) of
                 true -> Context;
-                false -> damage_utils:fail(Context, {not_executable, Path})
+                false -> set_fail(Context, {not_executable, Path})
             end
     end.
 
+is_admin(Context) when is_map(Context) ->
+    is_admin(maps:get(public_key, Context, undefined));
 is_admin(AeAccount) when is_binary(AeAccount) ->
     is_admin(binary_to_list(AeAccount));
 is_admin(AeAccount) ->
@@ -187,3 +190,9 @@ parse_line(Line) ->
         _ ->
             false
     end.
+
+set_fail(Context, Reason) ->
+    maps:put(fail, Reason, Context).
+
+set_fail(Ctx, Fmt, Args) ->
+    maps:put(fail, damage_utils:strf(Fmt, Args), Ctx).

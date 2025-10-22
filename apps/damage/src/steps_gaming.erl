@@ -43,10 +43,12 @@ write_file(Context, Path, Data) ->
 %% Given I change directory to /path (delegated to steps_cmd normally)
 %% We still support it here if needed.
 step(_Cfg, Context, <<"Given">>, _N, ["I change directory to", Path], _Meta) ->
+    true = steps_utils:is_admin(Context),
     maps:put(cmd_cwd, Path, Context);
 %% Packages -----------------------------------------------------------
 %% When I install core gaming packages
 step(_Cfg, Context0, <<"When">>, _N, ["I install core gaming packages"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     Context1 = ok_or_fail(Context0, run(Context0, "sudo pacman -Syu --noconfirm"), "system update"),
     case maps:is_key(fail, Context1) of
         true ->
@@ -77,6 +79,7 @@ step(_Cfg, Context0, <<"When">>, _N, ["I install core gaming packages"], _Meta) 
 %% Services -----------------------------------------------------------
 %% When I enable gaming services
 step(_Cfg, Context0, <<"When">>, _N, ["I enable gaming services"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     Context1 = ok_or_fail(
         Context0, run(Context0, "sudo systemctl enable --now gamemoded.service"), "enable gamemoded"
     ),
@@ -93,6 +96,7 @@ step(_Cfg, Context0, <<"When">>, _N, ["I enable gaming services"], _Meta) ->
 %% CPU governor -------------------------------------------------------
 %% When I set CPU governor to performance
 step(_Cfg, Context0, <<"When">>, _N, ["I set CPU governor to", "performance"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     Context1 = ok_or_fail(
         Context0, run(Context0, "sudo systemctl enable --now cpupower.service"), "enable cpupower"
     ),
@@ -109,9 +113,11 @@ step(_Cfg, Context0, <<"When">>, _N, ["I set CPU governor to", "performance"], _
 %% NVIDIA power & clocks ---------------------------------------------
 %% When I set NVIDIA persistence mode on
 step(_Cfg, Context, <<"When">>, _N, ["I set NVIDIA persistence mode on"], _Meta) ->
+    true = steps_utils:is_admin(Context),
     ok_or_fail(Context, run(Context, "sudo nvidia-smi -pm 1"), "nvidia persistence");
 %% When I prefer maximum performance on the GPU
 step(_Cfg, Context, <<"When">>, _N, ["I prefer maximum performance on the GPU"], _Meta) ->
+    true = steps_utils:is_admin(Context),
     %% PowerMizerMode=1 => Prefer Maximum Performance
     ok_or_fail(
         Context, run(Context, "nvidia-settings -a [gpu:0]/GPUPowerMizerMode=1"), "nvidia powermizer"
@@ -125,6 +131,7 @@ step(
     ["the NVIDIA PowerMizer mode should be", WantStr0],
     _Meta
 ) ->
+    true = steps_utils:is_admin(Context0),
     case run(Context0, "nvidia-settings -q [gpu:0]/GPUPowerMizerMode -t") of
         {ok, #{stdout := Out}} ->
             OutTrim = string:trim(Out),
@@ -148,6 +155,7 @@ step(
 %% GameMode -----------------------------------------------------------
 %% When I configure GameMode defaults
 step(_Cfg, Context0, <<"When">>, _N, ["I configure GameMode defaults"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     Home = os:getenv("HOME", "/root"),
     IniPath = filename:join([Home, ".config", "gamemode.ini"]),
     Data =
@@ -162,6 +170,7 @@ step(_Cfg, Context0, <<"When">>, _N, ["I configure GameMode defaults"], _Meta) -
 %% MangoHUD -----------------------------------------------------------
 %% When I configure MangoHUD frametime view
 step(_Cfg, Context0, <<"When">>, _N, ["I configure MangoHUD frametime view"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     Home = os:getenv("HOME", "/root"),
     Dir = filename:join([Home, ".config", "MangoHud"]),
     Cfg = filename:join(Dir, "MangoHud.conf"),
@@ -184,6 +193,7 @@ step(_Cfg, Context0, <<"When">>, _N, ["I configure MangoHUD frametime view"], _M
 %% KDE compositor toggle ---------------------------------------------
 %% When I disable the compositor while gaming (KDE)
 step(_Cfg, Context0, <<"When">>, _N, ["I disable the compositor while gaming (KDE)"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     Context1 = ok_or_fail(
         Context0,
         run(
@@ -203,6 +213,7 @@ step(_Cfg, Context0, <<"When">>, _N, ["I disable the compositor while gaming (KD
 %% User limits bump ---------------------------------------------------
 %% When I raise user limits for gaming tools
 step(_Cfg, Context0, <<"When">>, _N, ["I raise user limits for gaming tools"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     Home = os:getenv("HOME", "/root"),
     UserConf = filename:join([Home, ".config", "systemd", "user.conf"]),
     Data = "[Manager]\nDefaultLimitNOFILE=1048576\nDefaultLimitNPROC=131072\n",
@@ -210,6 +221,7 @@ step(_Cfg, Context0, <<"When">>, _N, ["I raise user limits for gaming tools"], _
 %% Launch game --------------------------------------------------------
 %% When I launch Insurgency Sandstorm with overlays
 step(_Cfg, Context, <<"When">>, _N, ["I launch Insurgency Sandstorm with overlays"], _Meta) ->
+    true = steps_utils:is_admin(Context),
     %% Steam appid 581320; Steam client will handle it if running.
     ok_or_fail(
         Context, run(Context, "gamemoderun mangohud steam -applaunch 581320"), "launch sandstorm"
@@ -217,6 +229,7 @@ step(_Cfg, Context, <<"When">>, _N, ["I launch Insurgency Sandstorm with overlay
 %% Generic Then for service status checks -----------------------------
 %% Then service gamemoded.service should be active
 step(_Cfg, Context0, <<"Then">>, _N, ["service", Service, "should be", "active"], _Meta) ->
+    true = steps_utils:is_admin(Context0),
     case run(Context0, io_lib:format("systemctl is-active ~s", [Service])) of
         {ok, #{stdout := Out}} ->
             case string:trim(Out) of

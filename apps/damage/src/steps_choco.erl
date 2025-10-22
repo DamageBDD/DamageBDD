@@ -192,6 +192,7 @@ allowed(Context) ->
     maps:get(choco_allowed, Context, []).
 
 is_allowed(Pkg0, Context) ->
+    true = steps_utils:is_admin(Context),
     Pkg = unquote(Pkg0),
     lists:member(Pkg, allowed(Context)).
 

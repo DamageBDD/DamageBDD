@@ -6,10 +6,14 @@
 %% License: Apache-2.0
 
 -module(steps_namecheap_ddns).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+-license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
 
 -export([step/6]).
+-import(steps_utils, [is_admin/1, set_fail/2, set_fail/3]).
 
 -define(NC_HOST, "dynamicdns.park-your-domain.com").
 -define(NC_BASE_URL, "https://" ++ ?NC_HOST).
@@ -100,18 +104,12 @@ step(
     ["I configure Namecheap DDNS for domain", Domain, "host", Host],
     _Body
 ) ->
-    set_nc_cfg(Context, list_to_binary(Domain), list_to_binary(Host));
-%% Optional: override the secret name/key (default: namecheap_ddns_password)
-step(
-    _Config,
-    Context,
-    <<"Given">>,
-    _N,
-    ["I set Namecheap DDNS secret key to", SecretName],
-    _Body
-) ->
-    maps:put(nc_secret_key, list_to_atom(SecretName), Context);
-%% Individual setters
+    case is_admin(Context) of
+        ok ->
+            set_nc_cfg(Context, list_to_binary(Domain), list_to_binary(Host));
+        _ ->
+            set_fail(Context, "Admin privileges required")
+    end;
 step(
     _Config,
     Context,
@@ -120,9 +118,14 @@ step(
     ["I set Namecheap DDNS domain to", Domain],
     _Body
 ) ->
-    NC0 = maps:get(namecheap_ddns, Context, #{}),
-    NC = NC0#{domain => list_to_binary(Domain)},
-    maps:put(namecheap_ddns, NC, Context);
+    case is_admin(Context) of
+        ok ->
+            NC0 = maps:get(namecheap_ddns, Context, #{}),
+            NC = NC0#{domain => list_to_binary(Domain)},
+            maps:put(namecheap_ddns, NC, Context);
+        _ ->
+            set_fail(Context, "Admin privileges required")
+    end;
 step(
     _Config,
     Context,
@@ -131,9 +134,14 @@ step(
     ["I set Namecheap DDNS host to", Host],
     _Body
 ) ->
-    NC0 = maps:get(namecheap_ddns, Context, #{}),
-    NC = NC0#{host => list_to_binary(Host)},
-    maps:put(namecheap_ddns, NC, Context);
+    case is_admin(Context) of
+        ok ->
+            NC0 = maps:get(namecheap_ddns, Context, #{}),
+            NC = NC0#{host => list_to_binary(Host)},
+            maps:put(namecheap_ddns, NC, Context);
+        _ ->
+            set_fail(Context, "Admin privileges required")
+    end;
 %% Update with explicit IP (uses password from secrets)
 step(
     Config,
@@ -143,16 +151,21 @@ step(
     ["I update Namecheap DDNS with IP", IP],
     _Body
 ) ->
-    Context = ensure_nc_base(Context0),
-    case {maps:get(namecheap_ddns, Context, undefined), get_nc_password(Context)} of
-        {undefined, _} ->
-            maps:put(fail, <<"Namecheap DDNS not configured">>, Context);
-        {_, {error, missing_secret}} ->
-            maps:put(fail, <<"Missing or locked secret for Namecheap DDNS">>, Context);
-        {NC, {ok, Password}} ->
-            Path = compose_update_path(NC, Password, list_to_binary(IP)),
-            Headers = ?DEFAULT_HEADERS,
-            steps_http:gun_get(Config, Context, Path, Headers)
+    case is_admin(Context0) of
+        ok ->
+            Context = ensure_nc_base(Context0),
+            case {maps:get(namecheap_ddns, Context, undefined), get_nc_password(Context)} of
+                {undefined, _} ->
+                    set_fail(Context, <<"Namecheap DDNS not configured">>);
+                {_, {error, missing_secret}} ->
+                    maps:put(fail, <<"Missing or locked secret for Namecheap DDNS">>, Context);
+                {NC, {ok, Password}} ->
+                    Path = compose_update_path(NC, Password, list_to_binary(IP)),
+                    Headers = ?DEFAULT_HEADERS,
+                    steps_http:gun_get(Config, Context, Path, Headers)
+            end;
+        _ ->
+            set_fail(Context0, "Admin privileges required")
     end;
 %% Update with detected public IP (uses password from secrets)
 step(
@@ -163,23 +176,30 @@ step(
     ["I update Namecheap DDNS with detected IP"],
     _Body
 ) ->
-    Context = ensure_nc_base(Context0),
-    case {maps:get(namecheap_ddns, Context, undefined), get_nc_password(Context)} of
-        {undefined, _} ->
-            maps:put(fail, <<"Namecheap DDNS not configured">>, Context);
-        {_, {error, missing_secret}} ->
-            maps:put(fail, <<"Missing or locked secret for Namecheap DDNS">>, Context);
-        {NC, {ok, Password}} ->
-            case detect_public_ip(Config, Context) of
-                {ok, IP} ->
-                    Path = compose_update_path(NC, Password, IP),
-                    Headers = ?DEFAULT_HEADERS,
-                    steps_http:gun_get(Config, Context, Path, Headers);
-                {error, Reason} ->
-                    maps:put(
-                        fail, io_lib:format("Failed to detect public IP: ~p", [Reason]), Context
-                    )
-            end
+    case is_admin(Context0) of
+        ok ->
+            Context = ensure_nc_base(Context0),
+            case {maps:get(namecheap_ddns, Context, undefined), get_nc_password(Context)} of
+                {undefined, _} ->
+                    maps:put(fail, <<"Namecheap DDNS not configured">>, Context);
+                {_, {error, missing_secret}} ->
+                    maps:put(fail, <<"Missing or locked secret for Namecheap DDNS">>, Context);
+                {NC, {ok, Password}} ->
+                    case detect_public_ip(Config, Context) of
+                        {ok, IP} ->
+                            Path = compose_update_path(NC, Password, IP),
+                            Headers = ?DEFAULT_HEADERS,
+                            steps_http:gun_get(Config, Context, Path, Headers);
+                        {error, Reason} ->
+                            maps:put(
+                                fail,
+                                io_lib:format("Failed to detect public IP: ~p", [Reason]),
+                                Context
+                            )
+                    end
+            end;
+        _ ->
+            set_fail(Context0, "Admin privileges required")
     end;
 %% Assert success
 step(

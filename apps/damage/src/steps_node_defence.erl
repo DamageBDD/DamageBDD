@@ -2,12 +2,13 @@
 %%% DamageBDD - Node Defence Steps
 %%% Firewall (iptables/nft), sysctl, sshd, ports, fail2ban — assert + [MUTATE]
 %%%-------------------------------------------------------------------
--module(step_node_defence).
+-module(steps_node_defence).
 -author("Steven Joseph <steven@stevenjoseph.in>").
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
 -license("Apache-2.0").
 
 -export([step/6]).
+-import(steps_utils, [set_fail/3]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -29,9 +30,6 @@ ensure_admin(#{public_key := AeAccount}) ->
     end;
 ensure_admin(_) ->
     {error, not_admin}.
-
-set_fail(Ctx, Fmt, Args) ->
-    maps:put(fail, damage_utils:strf(Fmt, Args), Ctx).
 
 trim(S) when is_binary(S) -> string:trim(S);
 trim(S) when is_list(S) -> string:trim(S);
