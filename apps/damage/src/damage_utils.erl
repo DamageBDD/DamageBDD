@@ -38,11 +38,8 @@
         chown_r/2,
         ensure_ssh_host_key/1,
         exists_cmd/1,
-        ctx/1,
-        run_ok/2,
         render/2,
-        normalize_context/1,
-        run/2
+        normalize_context/1
     ]
 ).
 -export([yaml_encode/1, yaml_encode_to_file/2]).
@@ -500,17 +497,6 @@ run(Cmd) ->
             {error, Reason}
     end.
 
--record(ctx, {sudo = ""}).
-
-ctx(Context) ->
-    Sudo =
-        case string:trim(os:cmd("id -u")) of
-            "0" -> "";
-            _ -> "sudo "
-        end,
-    Context#{
-        exec_ctx => #ctx{sudo = Sudo}
-    }.
 
 ensure_dir(Dir) ->
     ok = filelib:ensure_dir(filename:join(Dir, ".keep")),
@@ -559,25 +545,4 @@ ensure_ssh_host_key(KeyPath) ->
             ok = ensure_dir(filename:dirname(KeyPath) ++ "/"),
             run(damage_utils:strf("ssh-keygen -t rsa -f ~s -N '' -q", [KeyPath]))
     end.
-run_ok(Context, CmdIolist) ->
-    case run(Context, CmdIolist) of
-        ok -> Context;
-        {error, R} -> fail(Context, R)
-    end.
 
-run(Context, CmdIolist) when is_list(CmdIolist) ->
-    run(Context, lists:flatten(CmdIolist));
-run(Context, Cmd) when is_binary(Cmd) ->
-    run(Context, binary_to_list(Cmd));
-run(_Context = #{exec_ctx := #ctx{sudo = Sudo}}, Cmd) when is_list(Cmd) ->
-    Full = Sudo ++ Cmd,
-    ?LOG_INFO("exec: ~s", [Full]),
-    case exec:run(Full, [sync, stdout, stderr]) of
-        {ok, _Pid, _Out} ->
-            ok;
-        {ok, _Out} ->
-            ok;
-        {error, Reason} ->
-            ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Full]),
-            {error, Reason}
-    end.

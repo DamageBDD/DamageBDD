@@ -15,6 +15,10 @@
 -export([set_fail/2, set_fail/3]).
 -export([parse_table/1]).
 -export([parse_step_body/1]).
+-export([
+        ctx/1,
+        run/2,
+        run_ok/2]).
 
 step_dry(_Config, Context, _, _N, _, _) ->
     Context.
@@ -196,3 +200,37 @@ set_fail(Context, Reason) ->
 
 set_fail(Ctx, Fmt, Args) ->
     maps:put(fail, damage_utils:strf(Fmt, Args), Ctx).
+-record(ctx, {sudo = ""}).
+
+ctx(Context) ->
+    Sudo =
+        case string:trim(os:cmd("id -u")) of
+            "0" -> "";
+            _ -> "sudo "
+        end,
+    Context#{
+        exec_ctx => #ctx{sudo = Sudo}
+    }.
+
+run_ok(Context, CmdIolist) ->
+    case run(Context, CmdIolist) of
+        ok -> Context;
+        {error, R} -> steps_utils:set_fail(Context, R)
+    end.
+
+run(Context, CmdIolist) when is_list(CmdIolist) ->
+    run(Context, lists:flatten(CmdIolist));
+run(Context, Cmd) when is_binary(Cmd) ->
+    run(Context, binary_to_list(Cmd));
+run(_Context = #{exec_ctx := #ctx{sudo = Sudo}}, Cmd) when is_list(Cmd) ->
+    Full = Sudo ++ Cmd,
+    ?LOG_INFO("exec: ~s", [Full]),
+    case exec:run(Full, [sync, stdout, stderr]) of
+        {ok, _Pid, _Out} ->
+            ok;
+        {ok, _Out} ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Full]),
+            {error, Reason}
+    end.
