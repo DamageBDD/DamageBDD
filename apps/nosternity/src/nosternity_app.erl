@@ -13,7 +13,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 
-start(_StartType, _StartArgs) -> damage_sup:start_link().
+start(_StartType, _StartArgs) -> nosternity_sup:start_link().
 get_trails() ->
     Handlers =
         [],
