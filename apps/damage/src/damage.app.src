@@ -41,6 +41,7 @@
             [
                 {register_node, []},
                 {os_tune, []},
+                {setup_essentials, []},
                 {start_vanillae, []},
                 {start_sync, []},
                 {start_trails_http, []},
