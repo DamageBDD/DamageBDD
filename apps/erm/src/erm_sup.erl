@@ -75,6 +75,9 @@ init([]) ->
 
             ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
             {ok, {SupFlags, PoolSpecs0}};
+        {'EXIT', {undef, _}} ->
+            ?LOG_WARNING("Wx not available.", []),
+            {ok, {SupFlags, []}};
         Error ->
             ?LOG_WARNING("Wx initialization failed  ~p~n", [Error]),
             {ok, {SupFlags, []}}

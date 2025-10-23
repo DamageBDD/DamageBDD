@@ -39,7 +39,7 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, WsPort} = application:get_env(nosternity, port),
     {ok, _} =
         cowboy:start_clear(
-            http,
+            http_nosternity,
             %[{ip, {0, 0, 0, 0}}, {port, WsPort}],
             [{port, WsPort}],
             #{
