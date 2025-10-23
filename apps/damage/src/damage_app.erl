@@ -165,7 +165,7 @@ start_phase(setup_essentials, _StartType, []) ->
     DataDir = application:get_env(damage, app_dir, "/var/lib/damage"),
     ok = damage_ipfs:ensure_ipfs_asset(
         "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
-        filename:join([DataDir,"bin", "lightpanda-x86_64-linux"])
+        filename:join([DataDir, "bin", "lightpanda-x86_64-linux"])
     ),
 
     ?LOG_INFO("setup_essentials: done."),

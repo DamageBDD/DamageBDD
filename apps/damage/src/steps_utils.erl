@@ -16,9 +16,10 @@
 -export([parse_table/1]).
 -export([parse_step_body/1]).
 -export([
-        ctx/1,
-        run/2,
-        run_ok/2]).
+    ctx/1,
+    run/2,
+    run_ok/2
+]).
 
 step_dry(_Config, Context, _, _N, _, _) ->
     Context.

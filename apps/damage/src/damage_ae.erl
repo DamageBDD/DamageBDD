@@ -51,7 +51,8 @@
     get_events/3,
     is_custodial/1,
     set_private_key/2,
-    get_ae_balance/1
+    get_ae_balance/1,
+    contract_path/1
 ]).
 -export([
     contract_call/4,
@@ -698,6 +699,7 @@ transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [Result]),
     Result.
+
 %% Generic base function
 -spec calculate_gas(non_neg_integer(), binary()) -> non_neg_integer().
 calculate_gas(BaseMultiplier, TxBin) ->
@@ -713,6 +715,21 @@ gas_for_contract_create_fate(TxBin) ->
 -spec gas_for_contract_call_fate(binary()) -> non_neg_integer().
 gas_for_contract_call_fate(TxBin) ->
     calculate_gas(12, TxBin).
+contract_path(Contract0) ->
+    PrivDir = code:priv_dir(damage),
+    %% Strip "contracts/" prefix if present
+    Contract1 =
+        case string:prefix(Contract0, "contracts/") of
+            true -> string:replace(Contract0, "contracts/", "", [{global, false}]);
+            false -> Contract0
+        end,
+    %% Ensure it ends with ".aes"
+    Contract2 =
+        case filename:extension(Contract1) of
+            ".aes" -> Contract1;
+            _ -> Contract1 ++ ".aes"
+        end,
+    filename:join([PrivDir, "contracts", Contract2]).
 
 %paying_for(PayerId, Tx) ->
 %    {ok, Nonce} = vanillae:next_nonce(PayerId),
@@ -778,7 +795,7 @@ contract_call_prepare_tx(
     Gas = min_gas(),
     Amount = 0,
     GasPrice = vanillae:min_gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(ContractSource),
+    {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
@@ -825,7 +842,7 @@ contract_call_payfor_user(
     Gas = vanillae:min_gas(),
     Amount = 0,
     GasPrice = vanillae:min_gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(ContractSource),
+    {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
@@ -911,7 +928,7 @@ contract_call(
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
     GasPrice = vanillae:min_gas_price(),
 
-    {ok, AACI} = vanillae:prepare_contract(Contract),
+    {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
 
     %% First build raw tx with dummy values to estimate gas
     DummyGas = vanillae:min_gas(),
