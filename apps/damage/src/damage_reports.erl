@@ -227,7 +227,12 @@ to_json(Req, #{action := features} = State) ->
             {<<"Path required">>, Req, State};
         Hash0 ->
             Hash = binary_to_list(Hash0),
-            {cat(list_to_binary(Hash), <<"">>), Req, State}
+            case catch cat(list_to_binary(Hash), <<"">>) of
+                Response when is_binary(Response) ->
+                    {Response, Req, State};
+                _ ->
+                    {<<"Invalid Path">>, Req, State}
+            end
     end;
 to_json(Req, #{public_key := AeAccount} = State) ->
     Reports =
