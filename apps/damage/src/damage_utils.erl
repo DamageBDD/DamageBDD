@@ -497,7 +497,6 @@ run(Cmd) ->
             {error, Reason}
     end.
 
-
 ensure_dir(Dir) ->
     ok = filelib:ensure_dir(filename:join(Dir, ".keep")),
     ok.
@@ -545,4 +544,3 @@ ensure_ssh_host_key(KeyPath) ->
             ok = ensure_dir(filename:dirname(KeyPath) ++ "/"),
             run(damage_utils:strf("ssh-keygen -t rsa -f ~s -N '' -q", [KeyPath]))
     end.
-
