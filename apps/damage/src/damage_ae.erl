@@ -720,8 +720,8 @@ contract_path(Contract0) ->
     %% Strip "contracts/" prefix if present
     Contract1 =
         case string:prefix(Contract0, "contracts/") of
-            true -> string:replace(Contract0, "contracts/", "", [{global, false}]);
-            false -> Contract0
+            undefined -> Contract0;
+            Name -> Name
         end,
     %% Ensure it ends with ".aes"
     Contract2 =
