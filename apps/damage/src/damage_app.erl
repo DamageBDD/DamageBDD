@@ -168,11 +168,6 @@ start_phase(setup_essentials, _StartType, []) ->
     ),
 
     ?LOG_INFO("setup_essentials: done."),
-    ok;
-start_phase(os_tune, _StartType, []) ->
-    ?LOG_INFO("Tuning OS."),
-    %% Uses DAMAGE_NOFILE env or defaults to 100000
-    ok = damage_sys_tune:tune(),
     ok.
 
 stop(_State) ->
