@@ -20,7 +20,7 @@ function generateDamageQR(address){
 	//showLightningQR({containerId:"qrcode-damage", address: address});
 	document.getElementById("qrcode-damage").innerText = "";
 	var qrcode = new QRCode(document.getElementById("qrcode-damage"), {
-		text: localStorage.getItem("address"),
+		text: window.TokenManager.getAddress(),
 		colorDark : "#000000",
 		colorLight : "#ffffff",
 		correctLevel : QRCode.CorrectLevel.H
@@ -149,8 +149,10 @@ function generateDamageQR(address){
 				if (typeof window.initInstallForm === 'function') window.initInstallForm();
 
 				if(modal.id == 'invoice-modal'){
-					var address = localStorage.getItem("address");
+					var address = window.TokenManager.getAddress();
 					generateDamageQR(address);
+					var damageAddr = document.getElementById("damage-address");
+						damageAddr.value = address;
 				}
 			}
 		});
@@ -389,7 +391,7 @@ function generateDamageQR(address){
 		const reportElement = addReport();
 		const mode = window.TokenManager.getMode();
 		if(mode == "custodial"){
-			const username = localStorage.getItem("email_auth");
+			const username = window.TokenManager.getEmail();
 			const request = {
 				method: 'POST',
 				credentials: 'include',
@@ -562,7 +564,7 @@ function generateDamageQR(address){
 
 		const headers = new Headers();
 		headers.append("Content-Type", "application/json");
-		headers.append("Authorization", "Bearer "+ localStorage.access_token);
+		headers.append("Authorization", "Bearer "+ window.TokenManager.getToken());
 
 		fetch("/accounts/reset_password/", {
 			method: "POST",
@@ -654,7 +656,7 @@ function generateDamageQR(address){
 			method: 'POST',
 			credentials: 'include',
 			headers: { 'Content-Type': 'application/json',
-					   'Authorization': 'Bearer ' + localStorage.access_token
+					   'Authorization': 'Bearer ' + window.TokenManager.getToken()
 					 },
 			body: JSON.stringify({
 				amount_sats: parseInt(amount)
@@ -675,7 +677,7 @@ function generateDamageQR(address){
 					document.getElementById("lightning-invoice-input").value = "lightning:" + data.invoice.payment_request;
 					showLightningQR({containerId : "qrcode-lightning",
 									 paymentRequest:  data.invoice.payment_request,
-									 address: localStorage.getItem("address"),
+									 address: window.TokenManager.getAddress(),
 									 logo: "/static/img/logo.png"
 									});
 				} else {

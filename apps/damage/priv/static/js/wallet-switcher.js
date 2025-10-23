@@ -14,6 +14,7 @@ const AUTH_KEYS = {
 
 const TokenManager = {
 	getMode() { return localStorage.getItem(AUTH_KEYS.activeMode) || 'custodial'; },
+	getEmail() { return localStorage.getItem(AUTH_KEYS.email) ; },
 	setMode(mode) { localStorage.setItem(AUTH_KEYS.activeMode, mode); },
 	setEmail(email) { localStorage.setItem(AUTH_KEYS.email, email); },
 	setModeAddress(mode, address) {
