@@ -42,9 +42,22 @@
     % diagnostics
     size/1,
     % drop all ETS tables
-    wipe/1
+    wipe/1,
+    % (Ctx, FilePath) -> ok | {error, Reason}
+    save/2,
+    save/1,
+    % (FilePath) -> {ok, Ctx} | {error, Reason}
+    load/1
 ]).
 
+-export([
+    % (Ctx, YelpReviewMap|#{}) -> ok
+    add_review/2,
+    % (Ctx, DocIdBin) -> #{count:=..., avg:=..., useful:=..., funny:=..., cool:=...}
+    get_review_stats/2,
+    add_review_stats/6,
+    index_text/5
+]).
 %% ----- Context holds ETS tables (opaque to callers) -----
 -record(ctx, {
     % ETS ordered_set: {{TermBin, DocIdInt}} -> true
@@ -164,7 +177,117 @@ remove_record(Ctx, DocId) ->
             ets:delete(Ctx#ctx.id2doc_tab, DocInt),
             ok
     end.
+-spec add_review(#ctx{}, map()) -> ok.
+%% Yelp review JSON → update doc aggregates + index review text
+%% Expected keys: <<"business_id">>, <<"stars">>, <<"useful">>, <<"funny">>, <<"cool">>, <<"text">>
+add_review(Ctx, R) when is_map(R) ->
+    BID = maps:get(<<"business_id">>, R, undefined),
+    case BID of
+        % ignore malformed
+        undefined ->
+            ok;
+        _ ->
+            case ets:lookup(Ctx#ctx.doc2id_tab, BID) of
+                % review for a business we didn't index (skip)
+                [] ->
+                    ok;
+                [{_, DocInt}] ->
+                    %% 1) merge aggregates
+                    Stars = to_float(maps:get(<<"stars">>, R, 0)),
+                    Useful = to_int(maps:get(<<"useful">>, R, 0)),
+                    Funny = to_int(maps:get(<<"funny">>, R, 0)),
+                    Cool = to_int(maps:get(<<"cool">>, R, 0)),
+                    Text = maps:get(<<"text">>, R, <<>>),
+                    ok = update_review_stats(Ctx, BID, Stars, Useful, Funny, Cool),
+                    %% 2) index review text tokens under field <<"rev">>
+                    Toks = ecai_tokenizer:tokens(Text),
+                    %% keep it tight to avoid bloat; cap #terms per review
+                    ToksCap = lists:sublist(Toks, 40),
+                    RevTerms = [term_key(<<"rev">>, T) || T <- ToksCap],
+                    Touched = add_terms(Ctx, RevTerms, DocInt),
+                    recompute_roots(Ctx, Touched),
+                    ok
+            end
+    end.
 
+update_review_stats(Ctx, DocId, Stars, Useful, Funny, Cool) ->
+    case ets:lookup(Ctx#ctx.rec_tab, DocId) of
+        [] ->
+            ok;
+        [{DocId, Rec}] ->
+            RS0 = maps:get(reviews, Rec, #{
+                count => 0, sum_stars => 0.0, useful => 0, funny => 0, cool => 0
+            }),
+            RS1 = RS0#{
+                count := maps:get(count, RS0, 0) + 1,
+                sum_stars := maps:get(sum_stars, RS0, 0.0) + Stars,
+                useful := maps:get(useful, RS0, 0) + Useful,
+                funny := maps:get(funny, RS0, 0) + Funny,
+                cool := maps:get(cool, RS0, 0) + Cool
+            },
+            ets:insert(Ctx#ctx.rec_tab, {DocId, Rec#{reviews => RS1}}),
+            ok
+    end.
+
+get_review_stats(Ctx, DocId) ->
+    case ets:lookup(Ctx#ctx.rec_tab, DocId) of
+        [] ->
+            #{count => 0, avg => 0.0, useful => 0, funny => 0, cool => 0};
+        [{_, Rec}] ->
+            RS = maps:get(reviews, Rec, #{
+                count => 0, sum_stars => 0.0, useful => 0, funny => 0, cool => 0
+            }),
+            C = maps:get(count, RS, 0),
+            Avg =
+                case C of
+                    0 -> 0.0;
+                    _ -> maps:get(sum_stars, RS, 0.0) / C
+                end,
+            #{
+                count => C,
+                avg => Avg,
+                useful => maps:get(useful, RS, 0),
+                funny => maps:get(funny, RS, 0),
+                cool => maps:get(cool, RS, 0)
+            }
+    end.
+
+to_int(I) when is_integer(I) -> I;
+to_int(B) when is_binary(B) ->
+    case catch erlang:binary_to_integer(B) of
+        V when is_integer(V) -> V;
+        _ -> 0
+    end;
+to_int(_) ->
+    0.
+
+to_float(F) when is_float(F) -> F;
+to_float(I) when is_integer(I) -> float(I);
+to_float(B) when is_binary(B) ->
+    case string:to_float(binary_to_list(B)) of
+        {V, _} -> V;
+        _ -> 0.0
+    end;
+to_float(_) ->
+    0.0.
+
+%% business_id may equal DocId; use whatever you indexed with add_record/3
+add_review_stats(Ctx, DocIdBin, StarsF, UsefulI, FunnyI, CoolI) ->
+    %% update ETS aggregate (same as earlier, but without Yelp parsing)
+    update_review_stats(Ctx, DocIdBin, StarsF, UsefulI, FunnyI, CoolI).
+
+%% index free text into a named field, with token cap
+index_text(Ctx, DocIdBin, FieldBin, TextBin, CapN) ->
+    case ets:lookup(Ctx#ctx.doc2id_tab, DocIdBin) of
+        [] ->
+            ok;
+        [{_, DocInt}] ->
+            Toks = lists:sublist(ecai_tokenizer:tokens(TextBin), CapN),
+            Terms = [term_key(FieldBin, T) || T <- Toks],
+            Touched = add_terms(Ctx, Terms, DocInt),
+            recompute_roots(Ctx, Touched),
+            ok
+    end.
 %%%===================================================================
 %%% Search
 %%%===================================================================
@@ -206,7 +329,8 @@ search(Ctx = #ctx{}, QueryMap, Limit0) ->
     %% 3) score & rank
     Scores0 = score_candidates(Ctx, TermDocs),
     Scores1 = boost_multi_term_field(TermDocs, Scores0),
-    TopInts = take_top(Scores1, Limit),
+    Scores = apply_review_signals(Ctx, Scores1),
+    TopInts = take_top(Scores, Limit),
 
     %% 4) enrich each doc with its stored record and a human preview
     Results = [enrich_int(Ctx, DocInt, Score) || {DocInt, Score} <- TopInts],
@@ -279,6 +403,23 @@ export_onchain_headers(Ctx) ->
             }
         end,
         ets:tab2list(Ctx#ctx.root_tab)
+    ).
+%% Add a tiny, explainable boost from reviews (doesn't dominate text relevance)
+apply_review_signals(Ctx, ScoreMap) ->
+    %% weight for average star (centered at 3.5)
+    A = 0.15,
+    %% weight for log review count
+    B = 0.10,
+    maps:map(
+        fun(DocInt, S0) ->
+            DocId = docid(Ctx, DocInt),
+            RS = get_review_stats(Ctx, DocId),
+            Avg = maps:get(avg, RS, 0.0),
+            Cnt = maps:get(count, RS, 0),
+            Boost = A * (Avg - 3.5) + B * math:log(1 + Cnt),
+            S0 + Boost
+        end,
+        ScoreMap
     ).
 
 %%%===================================================================
@@ -356,7 +497,16 @@ do_add(Ctx, DocId, Map) ->
     ets:insert(Ctx#ctx.id2doc_tab, {DocInt, DocId}),
     Terms = terms_from_record(Map),
     Touched = add_terms(Ctx, Terms, DocInt),
-    ets:insert(Ctx#ctx.rec_tab, {DocId, #{int => DocInt, data => Map, terms => Terms}}),
+    ets:insert(
+        Ctx#ctx.rec_tab,
+        {DocId, #{
+            int => DocInt,
+            data => Map,
+            terms => Terms,
+            reviews => #{count => 0, sum_stars => 0.0, useful => 0, funny => 0, cool => 0}
+        }}
+    ),
+
     recompute_roots(Ctx, Touched),
     ok.
 
@@ -767,7 +917,6 @@ boost_multi_term_field(TermDocs, Scores0) ->
         Scores0
     ).
 
-
 %%%===================================================================
 %%% Merkle (int leaves) + proofs
 %%%===================================================================
@@ -877,3 +1026,68 @@ finalize(Ctx = #ctx{}) ->
      || T <- Terms
     ],
     Ctx.
+%% ---------------------------------------------------------------
+%% Snapshot the entire index to disk (single compressed term)
+%% ---------------------------------------------------------------
+save(File) ->
+    save(ecai_search_server:get_ctx(), File).
+save(Ctx = #ctx{}, File) ->
+    try
+        %% Optional: for very large tables you can fixtable (omitted for simplicity)
+        Data = #{
+            version => 1,
+            opts => Ctx#ctx.opts,
+            %% {{TermBin, DocInt}} -> true
+            postings => ets:tab2list(Ctx#ctx.post_tab),
+            %% TermBin -> DF
+            df => ets:tab2list(Ctx#ctx.df_tab),
+            %% TermBin -> TermTag(any())
+            tag => ets:tab2list(Ctx#ctx.tag_tab),
+            %% TermBin -> RootBin
+            root => ets:tab2list(Ctx#ctx.root_tab),
+            %% DocIdBin -> #{int,data,terms,reviews}
+            rec => ets:tab2list(Ctx#ctx.rec_tab),
+            %% DocInt -> DocIdBin
+            i2d => ets:tab2list(Ctx#ctx.id2doc_tab),
+            %% DocIdBin -> DocInt
+            d2i => ets:tab2list(Ctx#ctx.doc2id_tab),
+            seq =>
+                case ets:lookup(Ctx#ctx.next_id_tab, seq) of
+                    [{seq, N}] -> N;
+                    _ -> 1
+                end
+        },
+        Bin = term_to_binary(Data, [compressed]),
+        file:write_file(File, Bin)
+    catch
+        C:R:Stk -> {error, {C, R, Stk}}
+    end.
+
+%% ---------------------------------------------------------------
+%% Load a snapshot from disk and rehydrate ETS + options
+%% ---------------------------------------------------------------
+load(File) ->
+    case file:read_file(File) of
+        {ok, Bin} ->
+            try
+                Map = binary_to_term(Bin),
+                %% Construct fresh context (new ETS tables)
+                Ctx0 = new(),
+                %% Restore opts first
+                Ctx1 = Ctx0#ctx{opts = maps:get(opts, Map, Ctx0#ctx.opts)},
+                %% Bulk insert into ETS
+                ets:insert(Ctx1#ctx.post_tab, maps:get(postings, Map, [])),
+                ets:insert(Ctx1#ctx.df_tab, maps:get(df, Map, [])),
+                ets:insert(Ctx1#ctx.tag_tab, maps:get(tag, Map, [])),
+                ets:insert(Ctx1#ctx.root_tab, maps:get(root, Map, [])),
+                ets:insert(Ctx1#ctx.rec_tab, maps:get(rec, Map, [])),
+                ets:insert(Ctx1#ctx.id2doc_tab, maps:get(i2d, Map, [])),
+                ets:insert(Ctx1#ctx.doc2id_tab, maps:get(d2i, Map, [])),
+                ets:insert(Ctx1#ctx.next_id_tab, {seq, maps:get(seq, Map, 1)}),
+                {ok, Ctx1}
+            catch
+                C:R:Stk -> {error, {C, R, Stk}}
+            end;
+        Error ->
+            Error
+    end.

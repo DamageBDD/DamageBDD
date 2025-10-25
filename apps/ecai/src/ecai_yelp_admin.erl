@@ -12,6 +12,7 @@
 
 -export([init/2]).
 -export([trails/0]).
+-export([get_k_chunks/0]).
 -define(JSON, <<"application/json">>).
 
 -include_lib("kernel/include/logger.hrl").
@@ -28,10 +29,26 @@
 %% # 0) status (empty)
 %% curl -s http://127.0.0.1:8080/yelp/status | jq
 %%
-%% # 1) chunk NDJSON (streaming-safe)
+%% # start (async) — either route works if you kept both
 %% curl -s -XPOST http://127.0.0.1:8080/yelp/chunk \
 %%   -H 'content-type: application/json' \
-%%   -d '{"in":"yelp_academic_dataset_business.json","out_dir":"chunks","chunk_size":5000}' | jq
+%%   -d '{"in":"yelp_academic_dataset_business.json","out_dir":"chunks","chunk_size":5000}'
+%%
+%% # or explicitly:
+%% curl -s -XPOST http://127.0.0.1:8080/yelp/chunk_async \
+%%   -H 'content-type: application/json' \
+%%   -d '{"in":"yelp_academic_dataset_business.json","out_dir":"chunks","chunk_size":5000}'
+%%
+%% # poll
+%% curl -s http://127.0.0.1:8080/yelp/chunk_job | jq
+%%
+%% # cancel if needed
+%% curl -s -XPOST http://127.0.0.1:8080/yelp/chunk_cancel | jq
+%%
+%% # continue your existing flow:
+%% curl -s -XPOST http://127.0.0.1:8080/yelp/ipfs     | jq
+%% curl -s -XPOST http://127.0.0.1:8080/yelp/assign   -d '{"cluster_id":0,"cluster_size":4}' -H 'content-type: application/json' | jq
+%% curl -s -XPOST http://127.0.0.1:8080/yelp/index_async | jq
 %%
 %% # 2) pin chunks to IPFS (CIDv1)
 %% curl -s -XPOST http://127.0.0.1:8080/yelp/ipfs | jq
@@ -223,6 +240,32 @@ trails() ->
                     tags => ["ECAI Yelp"], responses => #{<<"200">> => #{description => "Canceled"}}
                 }
             }
+        }),
+        trails:trail("/yelp/chunk_async", ecai_yelp_admin, #{action => chunk_async}, #{
+            description => "Start async Yelp chunking job",
+            methods => #{
+                post => #{
+                    tags => ["ECAI Yelp"],
+                    responses => #{<<"202">> => #{description => "Started or busy"}}
+                }
+            }
+        }),
+        trails:trail("/yelp/chunk_job", ecai_yelp_admin, #{action => chunk_job}, #{
+            description => "Get current Yelp chunk job status",
+            methods => #{
+                get => #{
+                    tags => ["ECAI Yelp"], responses => #{<<"200">> => #{description => "Status"}}
+                }
+            }
+        }),
+        trails:trail("/yelp/chunk_cancel", ecai_yelp_admin, #{action => chunk_cancel}, #{
+            description => "Cancel Yelp chunk job",
+            methods => #{
+                post => #{
+                    tags => ["ECAI Yelp"],
+                    responses => #{<<"200">> => #{description => "Canceled/Not running"}}
+                }
+            }
         })
     ].
 init(Req, #{action := Action} = State) ->
@@ -238,28 +281,51 @@ init(Req, #{action := Action} = State) ->
         {<<"POST">>, index_async} -> handle_index_async(Req, State);
         {<<"GET">>, index_job} -> handle_index_job(Req, State);
         {<<"POST">>, index_cancel} -> handle_index_cancel(Req, State);
+        {<<"POST">>, chunk_async} -> handle_chunk_async(Req, State);
+        {<<"GET">>, chunk_job} -> handle_chunk_job(Req, State);
+        {<<"POST">>, chunk_cancel} -> handle_chunk_cancel(Req, State);
         _ -> reply_json(Req, 404, #{ok => false, error => <<"not_found">>}, State)
     end.
 
 %%%-------------------------------------------------------------------
 %%% /yelp/chunk  POST  { "in": "...ndjson", "out_dir": "chunks", "chunk_size": 5000 }
+%%% Now: starts an async job and returns 202 + job_id
 %%%-------------------------------------------------------------------
 handle_chunk(Req, State) ->
-    with_json(Req, fun(
-        #{
-            <<"in">> := In,
-            <<"out_dir">> := Out,
-            <<"chunk_size">> := K
-        }
-    ) ->
-        Paths = ecai_yelp_loader:make_chunks_ndjson(
-            filename:join([?ECAI_YELP_DATA_DIR, "in", In]),
-            filename:join([?ECAI_YELP_DATA_DIR, "out", Out]),
-            K
-        ),
-        persistent_term:put(?K_CHUNKS, Paths),
-        reply_json(Req, 200, #{ok => true, chunks => Paths, count => length(Paths)}, State)
+    with_json(Req, fun(#{<<"in">> := In, <<"out_dir">> := Out, <<"chunk_size">> := K}) ->
+        InAbs = filename:join([?ECAI_YELP_DATA_DIR, "in", In]),
+        OutAbs = filename:join([?ECAI_YELP_DATA_DIR, "out", Out]),
+        case ecai_chunker:start(InAbs, OutAbs, K) of
+            {ok, JobId} ->
+                Body = jsx:encode(#{ok => true, job_id => JobId, status => running}),
+                {ok, cowboy_req:reply(202, #{<<"content-type">> => ?JSON}, Body, Req), State};
+            {error, busy} ->
+                %% If a chunk job is already running, return its status
+                S = ecai_chunker:status(),
+                reply_json(Req, 200, maps:merge(#{ok => true}, S), State)
+        end
     end).
+handle_chunk_async(Req, State) ->
+    with_json(Req, fun(#{<<"in">> := In, <<"out_dir">> := Out, <<"chunk_size">> := K}) ->
+        InAbs = filename:join([?ECAI_YELP_DATA_DIR, "in", In]),
+        OutAbs = filename:join([?ECAI_YELP_DATA_DIR, "out", Out]),
+        case ecai_chunker:start(InAbs, OutAbs, K) of
+            {ok, JobId} ->
+                Body = jsx:encode(#{ok => true, job_id => JobId, status => running}),
+                {ok, cowboy_req:reply(202, #{<<"content-type">> => ?JSON}, Body, Req), State};
+            {error, busy} ->
+                S = ecai_chunker:status(),
+                reply_json(Req, 200, maps:merge(#{ok => true}, S), State)
+        end
+    end).
+
+handle_chunk_job(Req, State) ->
+    S = ecai_chunker:status(),
+    reply_json(Req, 200, maps:merge(#{ok => true}, S), State).
+
+handle_chunk_cancel(Req, State) ->
+    R = ecai_chunker:cancel(),
+    reply_json(Req, 200, maps:merge(#{ok => true}, R), State).
 
 %%%-------------------------------------------------------------------
 %%% /yelp/ipfs  POST {}
@@ -431,3 +497,5 @@ reply_json(Req, Code, Map, State) ->
 
 to_hex(Bin) when is_binary(Bin) ->
     lists:flatten([io_lib:format("~2.16.0B", [X]) || <<X:8>> <= Bin]).
+
+get_k_chunks() -> ?K_CHUNKS.

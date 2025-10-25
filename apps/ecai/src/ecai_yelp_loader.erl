@@ -44,7 +44,7 @@ make_chunks_ndjson(InPath, OutDir, ChunkSize) when ChunkSize > 0 ->
     {ok, Fd} = file:open(InPath, [read, raw, binary]),
     Paths = chunk_loop(Fd, OutDir, ChunkSize, 1, 0, []),
     ok = file:close(Fd),
-    io:format("Wrote ~p chunks to ~ts~n", [length(Paths), OutDir]),
+    ?LOG_INFO("Wrote ~p chunks to ~ts~n", [length(Paths), OutDir]),
     Paths.
 
 chunk_loop(Fd, OutDir, K, ChunkIdx, CountInChunk, AccPaths) ->
@@ -132,7 +132,7 @@ index_one(Ctx, Path, Limit) ->
             infinity -> infinity;
             N when is_integer(N), N > 0 -> N
         end,
-    io:format("Indexing ~ts (~p limit)~n", [Path, Lim]),
+    ?LOG_INFO("Indexing ~ts (~p limit)~n", [Path, Lim]),
     ok = index_lines(Ctx, Fd, Lim, 0),
     ok = file:close(Fd),
     ok.
@@ -149,12 +149,29 @@ index_lines(Ctx, Fd, N, Cnt) ->
                     case yelp_to_record(Map) of
                         skip ->
                             ok;
-                        {DocId, Rec} ->
+                        {business, DocId, Rec} ->
                             case ecai_search:add_record(Ctx, DocId, Rec) of
                                 ok -> ok;
                                 %% idempotent
                                 {error, exists} -> ok
-                            end
+                            end;
+                        {review, DocId,
+                            #{
+                                stars := Stars,
+                                useful := Useful,
+                                funny := Funny,
+                                cool := Cool,
+                                text := Text
+                            } = _Rec} ->
+                            ecai_search:add_review_stats(
+                                Ctx,
+                                DocId,
+                                to_float(Stars),
+                                to_int(Useful),
+                                to_int(Funny),
+                                to_int(Cool)
+                            ),
+                            ecai_search:index_text(Ctx, DocId, <<"rev">>, Text, 40)
                     end;
                 _ ->
                     ok
@@ -177,49 +194,60 @@ safe_decode(Bin) ->
 %% Expected Yelp fields in each JSON line:
 %%  business_id, name, city, state, postal_code, categories (CSV), phone
 -spec yelp_to_record(map()) -> skip | {binary(), map()}.
-yelp_to_record(B) ->
-    BID = maps:get(<<"business_id">>, B, undefined),
-    case BID of
-        undefined ->
-            skip;
-        _ ->
-            Name = maps:get(<<"name">>, B, <<>>),
-            City = maps:get(<<"city">>, B, <<>>),
-            Cats = maps:get(<<"categories">>, B, <<>>),
-            Post = maps:get(<<"postal_code">>, B, <<>>),
-            Phone = maps:get(<<"phone">>, B, <<>>),
+yelp_to_record(#{<<"business_id">> := undefined} = _B) ->
+    skip;
+yelp_to_record(#{<<"review_id">> := RevId, <<"business_id">> := DocId} = R) ->
+    Stars = maps:get(<<"stars">>, R, 0.0),
+    Useful = maps:get(<<"useful">>, R, 0),
+    Funny = maps:get(<<"funny">>, R, 0),
+    Cool = maps:get(<<"cool">>, R, 0),
+    Text = maps:get(<<"text">>, R, <<>>),
+    {review, DocId, #{
+        business_id => DocId,
+        review_id => RevId,
+        stars => Stars,
+        useful => Useful,
+        funny => Funny,
+        cool => Cool,
+        text => Text
+    }};
+yelp_to_record(#{<<"business_id">> := BID} = B) ->
+    Name = maps:get(<<"name">>, B, <<>>),
+    City = maps:get(<<"city">>, B, <<>>),
+    Cats = maps:get(<<"categories">>, B, <<>>),
+    Post = maps:get(<<"postal_code">>, B, <<>>),
+    Phone = maps:get(<<"phone">>, B, <<>>),
 
-            %% Use tokenizer for normalization
-            %?LOG_DEBUG("yelp_to_record ~p", [Name]),
-            NameBin = ecai_tokenizer:lower_ascii(Name),
-            CityBin = ecai_tokenizer:lower_ascii(City),
-            %% categories: CSV split -> lower_ascii per item
-            CatItems = cat_items(Cats),
-            CatMain =
-                case CatItems of
-                    [] -> <<>>;
-                    [H | _] -> H
-                end,
-            %% tags: all categories + postcode (as tag) if present
-            PostTag =
-                case ecai_tokenizer:digits_only(Post) of
-                    <<>> -> [];
-                    D -> [D]
-                end,
-            TagsBin = CatItems ++ PostTag,
-            PhoneNorm = ecai_tokenizer:digits_only(Phone),
+    %% Use tokenizer for normalization
+    %?LOG_DEBUG("yelp_to_record ~p", [Name]),
+    NameBin = ecai_tokenizer:lower_ascii(Name),
+    CityBin = ecai_tokenizer:lower_ascii(City),
+    %% categories: CSV split -> lower_ascii per item
+    CatItems = cat_items(Cats),
+    CatMain =
+        case CatItems of
+            [] -> <<>>;
+            [H | _] -> H
+        end,
+    %% tags: all categories + postcode (as tag) if present
+    PostTag =
+        case ecai_tokenizer:digits_only(Post) of
+            <<>> -> [];
+            D -> [D]
+        end,
+    TagsBin = CatItems ++ PostTag,
+    PhoneNorm = ecai_tokenizer:digits_only(Phone),
 
-            %% keep Yelp business_id as the doc key
-            DocId = BID,
+    %% keep Yelp business_id as the doc key
+    DocId = BID,
 
-            {DocId, #{
-                name => NameBin,
-                category => CatMain,
-                city => CityBin,
-                tags => TagsBin,
-                phone => PhoneNorm
-            }}
-    end.
+    {business, DocId, #{
+        name => NameBin,
+        category => CatMain,
+        city => CityBin,
+        tags => TagsBin,
+        phone => PhoneNorm
+    }}.
 
 cat_items(null) ->
     [];
@@ -227,6 +255,25 @@ cat_items(Cats) ->
     %% split on commas; trim spaces; lower; to binary via tokenizer
     Cs = binary:split(to_bin(Cats), <<$,>>, [global]),
     [ecai_tokenizer:lower_ascii(string:trim(C)) || C <- Cs, C =/= <<>>].
+
+to_int(I) when is_integer(I) -> I;
+to_int(B) when is_binary(B) ->
+    case catch erlang:binary_to_integer(B) of
+        V when is_integer(V) -> V;
+        _ -> 0
+    end;
+to_int(_) ->
+    0.
+
+to_float(F) when is_float(F) -> F;
+to_float(I) when is_integer(I) -> float(I);
+to_float(B) when is_binary(B) ->
+    case string:to_float(binary_to_list(B)) of
+        {V, _} -> V;
+        _ -> 0.0
+    end;
+to_float(_) ->
+    0.0.
 
 %%%===================================================================
 %%% 6) HEADERS + MANIFEST (Merkle over CIDs)
