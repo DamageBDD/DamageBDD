@@ -143,7 +143,6 @@ from_yaml(Req, #{action := Action} = State) ->
             {error, Message} ->
                 {400, #{status => <<"failed">>, message => Message}}
         end,
-    ?LOG_DEBUG("post action ~p resp ~p", [Data, Response0]),
     {
         stop,
         cowboy_req:reply(

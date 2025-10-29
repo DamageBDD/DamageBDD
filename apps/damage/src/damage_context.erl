@@ -119,7 +119,6 @@ from_html(Req, State) -> from_json(Req, State).
 
 from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    ?LOG_DEBUG("post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
         #{key := Key, value := Value, masked := Masked} ->
             Result = contract_add_context(AeAccount, Key, Value, #{masked => Masked}),

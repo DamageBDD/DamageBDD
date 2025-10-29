@@ -651,7 +651,6 @@ from_html(Req, #{action := Action} = State) ->
 
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    ?LOG_DEBUG("post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
         badarg ->
             Response =
@@ -701,7 +700,6 @@ from_yaml(Req, #{action := reset_password} = State) ->
             {error, Message} ->
                 {400, #{status => <<"failed">>, message => Message}}
         end,
-    ?LOG_DEBUG("post action ~p resp ~p", [Data, Response0]),
     {
         stop,
         cowboy_req:reply(
@@ -717,7 +715,6 @@ from_yaml(Req, #{action := Action} = State) ->
             {ok, [Data0]} -> do_post_action(Action, Data0);
             {error, Message} -> {400, #{status => <<"failed">>, message => Message}}
         end,
-    ?LOG_DEBUG("post action ~p resp ~p", [Data, Response0]),
     {
         stop,
         cowboy_req:reply(
