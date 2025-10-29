@@ -43,7 +43,7 @@
                                     },
                                     {debug, {fun logger_filters:level/2, {stop, neq, debug}}}
                                 ],
-                            config => #{file => "/var/log/damage/debug.log"}
+                            config => #{file => "/var/log/damage/debug.log", max_no_bytes => 1048576, max_no_files => 10}
                         }
                     },
                     {
@@ -54,7 +54,7 @@
                             single_line => false,
                             filters =>
                                 [{error, {fun logger_filters:level/2, {stop, neq, error}}}],
-                            config => #{file => "/var/log/damage/error.log"},
+                            config => #{file => "/var/log/damage/error.log", max_no_bytes => 1048576, max_no_files => 10}
                             formatter => {pretty_logger, #{}}
                         }
                     },
@@ -66,7 +66,7 @@
                             single_line => false,
                             filters =>
                                 [{error, {fun logger_filters:level/2, {stop, neq, info}}}],
-                            config => #{file => "/var/log/damage/info.log"},
+                            config => #{file => "/var/log/damage/info.log", max_no_bytes => 1048576, max_no_files => 10}
                             formatter => {pretty_logger, #{}}
                         }
                     }
