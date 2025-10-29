@@ -19,6 +19,12 @@ trails() ->
             ?MODULE,
             #{action => index},
             #{get => #{tags => ["UI", "HTML"], produces => ["text/html"]}}
+        ),
+        trails:trail(
+            "/chat",
+            ?MODULE,
+            #{action => chat},
+            #{get => #{tags => ["UI", "HTML"], produces => ["text/html"]}}
         )
     ].
 
@@ -63,7 +69,8 @@ render_full_page(Ctx) ->
         %    node_set_password_modal => NodeSetPasswordM,
         %    node_public_key_modal => NpkM
     },
-    render_tpl(?TPL("page_shell.mustache"), PageCtx).
+    %render_tpl(?TPL("page_shell.mustache"), PageCtx).
+    render_tpl(?TPL("ecai_chat.mustache"), PageCtx).
 
 %% ---------------------- Component switch ---------------------
 render_component(page, Ctx) ->
