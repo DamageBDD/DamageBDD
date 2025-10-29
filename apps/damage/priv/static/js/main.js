@@ -425,7 +425,7 @@ function generateDamageQR(address){
 			const response = await fetch("/tx/", request);
 			// Optional: handle server asking for a signature
 			const data = await response.json();
-			if(data.ok){
+			if (data.status === "ok") {
 				const message = data.tx;
 				await window.connectWalletUnified();
 				const signature = await wallet.signTransactionSmart(
