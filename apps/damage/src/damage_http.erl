@@ -395,7 +395,7 @@ effective_context(Context0, State) ->
         end,
     GlobalCtx = damage_context:get_global_template_context(Ctx1),
     AccountCtx = damage_context:get_context(AeAccount),
-    maps:put(account_context, AccountCtx, maps:merge(GlobalCtx, Ctx1)).
+    maps:put(public_key, AeAccount, maps:put(account_context, AccountCtx, maps:merge(GlobalCtx, Ctx1))).
 
 %% Helper: true iff overrides explicitly request dry-run only
 -spec dry_run_only(proplists:proplist()) -> boolean().
