@@ -272,7 +272,6 @@ do_post_action(_Action, Data, _Req, _State) ->
 
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    ?LOG_DEBUG("lnaddress post action ~p ", [Data]),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
         badarg ->
             Response =
@@ -297,7 +296,6 @@ from_json(Req, #{action := Action} = State) ->
             ?LOG_DEBUG("post response 400 ~p ", [Response]),
             {stop, Response, State};
         Data0 ->
-            ?LOG_DEBUG("post action  ~p ", [Data0]),
             case do_post_action(Action, Data0, Req0, State) of
                 {204, <<"">>} ->
                     Response = cowboy_req:reply(204, Req0),
