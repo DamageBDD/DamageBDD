@@ -9,7 +9,8 @@
 	let detectedOsEl, dlAuto, dlAutoNote, dlDeb, dlDebNote;
 
 	const IPFS_GATEWAY = "https://ipfs.damagebdd.com/ipfs/";
-	const ipfsHash = "QmUMYUsNdtKw34V3dUbe9PVqZCjRePoQkzzcuWpteUqCNi";
+	const ipfsHash = "QmWAUEqcH5JNVr9jCa44qdHLzEqvcsiP5DHcYLgGgM5nTv";
+	const debUrl = `${IPFS_GATEWAY}${ipfsHash}.deb`;
 
 	// Very light client-side guess (good enough to show the Debian button first).
 	function guessLinuxDistroFromUA() {
@@ -26,7 +27,6 @@
 
 	// Build a direct .deb download command if we know the IPFS hash
 	function buildDebInstallCmd({ ipfsHash }) {
-		const debUrl = `${IPFS_GATEWAY}${ipfsHash}`;
 		// Download + install locally (apt handles local files)
 		return [
 			`set -e`,
