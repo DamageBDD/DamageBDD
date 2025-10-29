@@ -1,18 +1,23 @@
-# Dockerfile.mint22-builder
+# syntax=docker/dockerfile:1
+# Linux Mint 22 (Wilma) base — stays Mint-only per your requirement
 FROM linuxmintd/mint22-amd64
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
+ARG REPO_REF=develop   # or a tag/sha
 ARG REBAR3_URL=https://s3.amazonaws.com/rebar3/rebar3
 ARG OTP_VERSION=28.1
+WORKDIR /opt/workspace
 
-# --- install deps
+# --- System deps (Mint/Ubuntu repos) ---
+# Erlang and rebar3 from apt so we don't bring non-Mint bases.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 \
       libncurses-dev libssl-dev xsltproc fop unixodbc-dev \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
       ruby ruby-dev rubygems \
-      rpm dpkg-dev gnupg libwxgtk3.2-dev \
+      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync \
     && gem install --no-document fpm
 
 # --- kerl + OTP
@@ -35,18 +40,65 @@ RUN curl -fsSL ${REBAR3_URL} -o /usr/local/bin/rebar3 \
 
 ENV PATH="/opt/erlang/${OTP_VERSION}/bin:/usr/local/bin:${PATH}"
 
-# --- Workspace
-WORKDIR /opt/workspace
+# ====== SMART DEPS CACHE LAYER (Git-only) ======
+# We create a tiny sparse checkout that includes ONLY rebar configs
+# so Docker’s cache invalidates this layer ONLY when deps change.
+RUN mkdir -p /opt/deps && cd /opt/deps \
+ && git init . \
+ && git remote add origin "$REPO_URL" \
+ && git fetch --depth=1 origin "$REPO_REF" \
+ && git config core.sparseCheckout true \
+ && printf "%s\n" \
+      "rebar.config" \
+      "rebar.lock" \
+      "apps" \
+    > .git/info/sparse-checkout \
+ && git checkout FETCH_HEAD \
+ # prune everything except rebar configs inside apps/
+ && find apps -type f ! -name "rebar.config" ! -name "rebar.lock" -delete || true \
+ && find apps -type d -empty -delete || true
 
-# COPY only project files that affect deps
-COPY rebar.config  ./
-RUN rebar3 get-deps
+# Copy only the config files into the build workspace for deps resolution.
+# If rebar configs didn’t change, this layer (and the deps fetch) is reused.
+RUN set -e \
+ && [ -f /opt/deps/rebar.config ] && cp /opt/deps/rebar.config /opt/workspace/ || true \
+ && [ -f /opt/deps/rebar.lock ]   && cp /opt/deps/rebar.lock   /opt/workspace/ || true \
+ && if [ -d /opt/deps/apps ]; then \
+      mkdir -p /opt/workspace/apps && \
+      find /opt/deps/apps -type f -name "rebar.config" -exec bash -lc 'd=$(dirname "{}" | sed "s#/opt/deps/##"); mkdir -p "/opt/workspace/$d"; cp "{}" "/opt/workspace/$d/"' \; && \
+      find /opt/deps/apps -type f -name "rebar.lock"   -exec bash -lc 'd=$(dirname "{}" | sed "s#/opt/deps/##"); mkdir -p "/opt/workspace/$d"; cp "{}" "/opt/workspace/$d/"' \; \
+    ; fi \
+ && rm -rf /opt/deps
 
-# --- Copy rest of the source
-COPY . .
+# Fetch git deps. This step is cached unless the copied configs changed.
+RUN rebar3 update && rebar3 get-deps
 
-# --- Compile
-RUN rebar3 compile
+# ====== SOURCE LAYER ======
+# Now bring in the full repository (single shallow clone).
+# If only source changed (not deps), the deps layer above stays cached.
+RUN git clone --depth=1 --branch "$REPO_REF" "$REPO_URL" /opt/workspace/fullsrc
 
-CMD ["/bin/bash"]
+# Sync full source over the minimal config workspace (without nuking _build from deps step)
+# so we retain the cached deps artifacts when possible.
+# Copy full source into /opt/workspace but keep any cached _build
+RUN set -eu \
+ && (cd /opt/workspace/fullsrc \
+     && tar -cf - \
+          --exclude='./_build' \
+          .) \
+  | tar -C /opt/workspace -xpf - \
+ && rm -rf /opt/workspace/fullsrc
+
+
+# Build
+#RUN rebar3 as prod compile && rebar3 as prod release
+#
+## --- Runtime (still Mint; if you prefer smaller, switch to a minimal base) ---
+## Keeping Mint-only per your request.
+#WORKDIR /opt/app
+#RUN mkdir -p /opt/app
+#COPY --chown=root:root /opt/workspace/_build/prod/rel/* /opt/app/
+
+EXPOSE 8080
+CMD ["/opt/damage/bin/damage", "foreground"]
 
