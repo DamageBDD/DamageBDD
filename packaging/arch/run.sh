@@ -8,6 +8,7 @@ IMAGE_NAME="${1:-arch-build:latest}"
 CACHE_ROOT="${HOME}/.archcache"
 
 
+
 docker run --rm -it \
        --hostname archbuild \
        --user $(id -u):$(id -g) \
@@ -36,7 +37,7 @@ docker run --rm -it \
     makepkg 
 
     # copy debs to host
-    cp -a _build/pkg/arch/*.zst /out/
+    cp -a *.zst /out/
     rm -f rebar.lock
 
   '
