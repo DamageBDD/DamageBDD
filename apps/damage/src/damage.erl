@@ -599,7 +599,6 @@ execute_step(Config, Step, Context) ->
                     Context0 = step_spend(Context2),
                     case maps:get(step_found, Context0) of
                         false ->
-                            ?LOG_ERROR("step not found:~p ~p", [StepKeyWord, Body1]),
                             formatter:format(
                                 Config,
                                 step,

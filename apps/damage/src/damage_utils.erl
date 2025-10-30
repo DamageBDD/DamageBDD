@@ -76,12 +76,30 @@ config(Config, Key) ->
     Value.
 
 loaded_steps() ->
-    [
-        M
-     || {M, _} <- code:all_loaded(),
-        lists:prefix("steps_", atom_to_list(M)),
-        not lists:suffix("_SUITE", atom_to_list(M))
-    ].
+    case discover_step_modules_on_path() of
+        [] ->
+            throw({error, steps_notfound});
+        Mods ->
+            [
+                begin
+                    code:ensure_loaded(M),
+                    M
+                end
+             || M <- Mods
+            ]
+    end.
+
+discover_step_modules_on_path() ->
+    Beams =
+        lists:append(
+            [
+                filelib:wildcard(filename:join(Dir, "steps_*.beam"))
+             || Dir <- code:get_path()
+            ]
+        ),
+    Mods0 = [list_to_atom(filename:basename(F, ".beam")) || F <- Beams],
+    Mods = [M || M <- Mods0, not lists:suffix("_SUITE", atom_to_list(M))],
+    lists:usort(Mods).
 
 strf(String, Args) -> lists:flatten(io_lib:format(String, Args)).
 
