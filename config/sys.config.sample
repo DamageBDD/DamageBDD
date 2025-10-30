@@ -78,9 +78,9 @@
         %{driver, throttle_ets},  %% or throttle_mnesia for cluster-wide limits
         {rates, [
             %%                Scope                     Limit      Period
-            {public_read, 60, per_minute},
+            {public_read, 200, per_minute},
             {auth_read, 120, per_minute},
-            {write_light, 30, per_minute},
+            {write_light, 130, per_minute},
             {heavy_query, 10, per_minute},
             {file_upload, 6, per_minute},
             {login_per_identity, 5, per_minute},
@@ -180,7 +180,7 @@
             },
             {ae_mdw_ws_nodes, [
                     %{"localhost", 4002, "/"}
-                    {"mainnet.aeternity.io", 4002, "/"}
+                    {"mainnet.aeternity.io", 443, "/mdw/v3/websocket"}
                 ]},
             {cmd_allowed, ["zx list deps"]},
             {chromedriver, "http://localhost:9515/"},
