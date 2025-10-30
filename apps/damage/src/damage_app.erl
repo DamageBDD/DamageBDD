@@ -49,6 +49,7 @@ get_trails() ->
             lnaddress,
             cowboy_swagger_handler,
             lightning_auth,
+            damage_doc,
             damage_dashboard
         ],
     Trails =
@@ -65,7 +66,8 @@ get_trails() ->
             {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},
             {"/steps.yaml", cowboy_static, {priv_file, damage, "static/steps.yaml"}},
             {"/metrics/[:registry]", prometheus_cowboy2_handler, #{}},
-            {"/ws/auth", lightning_auth_ws, #{}}
+            {"/ws/auth", lightning_auth_ws, #{}},
+            {"/proc_bw/[...]", proc_bw_http, #{}}
             | trails:trails(Handlers)
         ],
     trails:store(Trails),
@@ -73,7 +75,7 @@ get_trails() ->
 
 -spec start_phase(atom(), application:start_type(), []) -> ok.
 start_phase(start_vanillae, _StartType, []) ->
-    ?LOG_INFO("Starting vanilla."),
+    ?LOG_INFO("Starting vanillae."),
     %Version = "0.13.9",
     %true = os:putenv("zx_include", filename:join([os:getenv("HOME"), "/zomp/lib/otpr/zx/",Version,"include"])),
 
@@ -93,7 +95,7 @@ start_phase(start_vanillae, _StartType, []) ->
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
     vanillae:tls(AeTls),
     ok = vanillae:ae_nodes(Nodes),
-    ?LOG_INFO("Started vanilla."),
+    ?LOG_INFO("Started vanillae."),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Damage."),
