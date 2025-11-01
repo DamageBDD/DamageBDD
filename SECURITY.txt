@@ -1,0 +1,45 @@
+# SECURITY.txt — DamageBDD Node Operators
+
+Operating a DamageBDD node comes with security responsibilities. This document outlines risks and best practices.
+
+---
+
+## Key Risks
+
+1. **Exposure of Secrets**
+   - Bitcoin RPC passwords, Lightning macaroons, SMTP creds, and Nostr keys must remain encrypted.
+   - Always use `secrets:encrypt_store/2` for sensitive values.
+
+2. **Network Exposure**
+   - Verification node should bind to localhost and be proxied only via Nginx.
+   - Never expose raw Erlang distribution ports (EPMD, 4369, etc.) publicly.
+
+3. **TLS Management**
+   - Use Let’s Encrypt or equivalent for HTTPS.
+   - Ensure auto‑renewal and test regularly.
+
+4. **Denial of Service**
+   - Apply rate limiting and `fail2ban` for Nginx to prevent brute force.
+   - Consider systemd unit limits (CPU, memory).
+
+5. **Filesystem Security**
+   - Run as dedicated `damagebdd` user.
+   - Lock down `/opt/damagebdd`, `/var/lib/damagebdd`, `/var/log/damagebdd` permissions.
+
+6. **Regular Patching**
+   - Update Erlang/OTP, Nginx, IPFS, and the OS regularly.
+
+---
+
+## Operator Best Practices
+
+- Monitor logs (`journalctl -u damagebdd`, `/var/log/nginx/error.log`).
+- Use firewalls (open only 80/443).
+- Consider intrusion detection (e.g., auditd).
+- Backup data and configs (`sys.config`, secrets store).
+- Rotate and revoke credentials promptly if compromise is suspected.
+
+---
+
+**Contact:** security@damagebdd.com  
+**Policy:** Vulnerabilities should be disclosed responsibly. GPG keys for secure reporting are available at [https://damagebdd.com/security](https://damagebdd.com/security).
