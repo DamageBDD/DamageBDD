@@ -611,8 +611,8 @@ function generateDamageQR(address){
 				var versionData = JSON.parse(xhr.responseText);
 				if(versionData.ok == true){
 					versionDom.innerText = 'node version: ' + versionData.version
-						+ '\n node balance: ' + versionData.node_balance
-						+ '\n node ae balance: ' + versionData.node_ae_balance;
+						+ '\n node $DAMAGE balance: ' + versionData.damage_balance
+						+ '\n node $AE balance: ' + versionData.ae_balance;
 					console.log("version: ");
 					console.log( versionData);
 					var nodePublicKeyDom= document.getElementById('node-public-key');

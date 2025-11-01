@@ -345,7 +345,8 @@ handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
         {Balance, Expiry} when is_integer(Balance), Now < Expiry ->
             {reply, Balance, Cache};
         _ ->
-            case contract_balance(AeAccount) of
+            %case contract_balance(AeAccount) of
+            case middleware_balance(AeAccount) of
                 ContractBalance when is_integer(ContractBalance) ->
                     ExpiryTime = Now + ?CACHE_TTL_SECONDS,
                     NewCache = maps:put({balance, AeAccount}, {ContractBalance, ExpiryTime}, Cache),
@@ -615,6 +616,7 @@ start_batch_spend_timer() ->
 
 confirm_spend(Config, #{public_key := AeAccount} = Context) ->
     DamageAEPid = get_wallet_proc(AeAccount),
+    ?LOG_INFO("confirm_spend ~p", [proplists:get_value(dry_run, Config, none)]),
     case proplists:get_value(dry_run, Config, none) of
         true ->
             gen_server:call(DamageAEPid, {confirm_spend, maps:put(dry_run, true, Context)});
@@ -1073,6 +1075,20 @@ contract_deploy_for(
             Error
     end.
 
+middleware_balance(Account) when is_binary(Account) ->
+    middleware_balance(binary_to_list(Account));
+middleware_balance(Account) ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path = PathPrefix ++ "v3/aex9/" ++ ?DAMAGE_TOKEN_CONTRACT ++ "/balances/" ++ Account,
+            ?LOG_INFO("Path ~p", [Path]),
+            StreamRef = gun:get(ConnPid, Path),
+            #{amount := Amount} = read_stream(ConnPid, StreamRef),
+            Amount;
+        Error ->
+            ?LOG_ERROR("Failed to find block timestamp ~p", [Error]),
+            0
+    end.
 contract_balance(Account) ->
     #{public_key := NodeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     #{
