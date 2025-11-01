@@ -23,8 +23,8 @@ Operating a DamageBDD node comes with security responsibilities. This document o
    - Consider systemd unit limits (CPU, memory).
 
 5. **Filesystem Security**
-   - Run as dedicated `damagebdd` user.
-   - Lock down `/opt/damagebdd`, `/var/lib/damagebdd`, `/var/log/damagebdd` permissions.
+   - Run as dedicated `damage` user.
+   - Lock down `/opt/damage`, `/var/lib/damage`, `/var/log/damage` permissions.
 
 6. **Regular Patching**
    - Update Erlang/OTP, Nginx, IPFS, and the OS regularly.
@@ -33,7 +33,7 @@ Operating a DamageBDD node comes with security responsibilities. This document o
 
 ## Operator Best Practices
 
-- Monitor logs (`journalctl -u damagebdd`, `/var/log/nginx/error.log`).
+- Monitor logs (`journalctl -u damage`, `/var/log/nginx/error.log`).
 - Use firewalls (open only 80/443).
 - Consider intrusion detection (e.g., auditd).
 - Backup data and configs (`sys.config`, secrets store).
