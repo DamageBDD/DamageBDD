@@ -36,12 +36,12 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(throttle),
     {ok, _} = application:ensure_all_started(gproc),
     Dispatch = get_trails(),
-    {ok, WsPort} = application:get_env(nosternity, port),
+    WsPort = application:get_env(nosternity, port, 9001),
+    WsIp = application:get_env(nosternity, ip, {127, 0, 0, 1}),
     {ok, _} =
         cowboy:start_clear(
             http_nosternity,
-            %[{ip, {0, 0, 0, 0}}, {port, WsPort}],
-            [{port, WsPort}],
+            [{ip, WsIp}, {port, WsPort}],
             #{
                 env => #{dispatch => Dispatch},
                 metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,

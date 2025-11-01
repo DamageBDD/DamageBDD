@@ -40,11 +40,12 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(erlexec),
     {ok, _} = application:ensure_all_started(throttle),
     {ok, _} = application:ensure_all_started(gproc),
-    {ok, WsPort} = application:get_env(ecai, port),
+    WsPort = application:get_env(ecai, port, 9003),
+    WsIp = application:get_env(ecai, ip, {127, 0, 0, 1}),
     {ok, _} =
         cowboy:start_clear(
             http_ecai,
-            [{port, WsPort}],
+            [{ip, WsIp}, {port, WsPort}],
             #{
                 env => #{dispatch => get_trails()},
                 metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,

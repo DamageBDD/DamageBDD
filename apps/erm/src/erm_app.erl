@@ -35,12 +35,12 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(gproc),
     {ok, _} = application:ensure_all_started(erlexec),
     Dispatch = get_trails(),
-    {ok, WsPort} = application:get_env(erm, port),
+    WsPort = application:get_env(erm, port, 9000),
+    WsIp = application:get_env(erm, ip, {127, 0, 0, 1}),
     {ok, _} =
         cowboy:start_clear(
             http_erm,
-            %[{ip, {0, 0, 0, 0}}, {port, WsPort}],
-            [{port, WsPort}],
+            [{ip, WsIp}, {port, WsPort}],
             #{
                 env => #{dispatch => Dispatch}
             }

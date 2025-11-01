@@ -42,12 +42,12 @@ start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting BoP."),
     {ok, _} = application:ensure_all_started(gun),
     Dispatch = get_trails(),
-    {ok, WsPort} = application:get_env(bop, port),
+    WsPort = application:get_env(bop, port, 9002),
+    WsIp = application:get_env(bop, ip, {127, 0, 0, 1}),
     {ok, _} =
         cowboy:start_clear(
             http_bop,
-            %[{ip, {0, 0, 0, 0}}, {port, WsPort}],
-            [{port, WsPort}],
+            [{ip, WsIp}, {port, WsPort}],
             #{
                 env => #{dispatch => Dispatch},
                 metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
