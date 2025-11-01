@@ -9,7 +9,7 @@
 	let detectedOsEl, dlAuto, dlAutoNote, dlDeb, dlDebNote;
 
 	const IPFS_GATEWAY = "https://ipfs.damagebdd.com/ipfs/";
-	const ipfsHash = "QmWAUEqcH5JNVr9jCa44qdHLzEqvcsiP5DHcYLgGgM5nTv";
+	const ipfsHash = "QmTFfCjKTRLETAYs2AkmrG6bS1EpBPCWJ6iVi4W3d47Fqd";
 	const debUrl = `${IPFS_GATEWAY}${ipfsHash}.deb`;
 
 	// Very light client-side guess (good enough to show the Debian button first).

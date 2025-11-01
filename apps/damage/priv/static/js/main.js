@@ -207,7 +207,6 @@ function generateDamageQR(address){
 			{ cid: 'QmSaePitmi9NaZmZ2DmbtC7sSMSQBBsz113qVvpY2Wd9K3', label: 'CDP Demo' },
 			'QmcN6mqQmcHWkfKNkQCSP4xsrNrP8GZm2BTiYKj1RQcDbXk4zXai3',
 			'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
-			'QmS1RRvJ2Y6SyvDUZNELsvBSefov4SisUQG97xH2vybxqu',
 			'QmXAwxg4Hnb4uEYr55XFrAv6e7GEJfG2y16RaSyVgAcTxG',
 			'QmcLedvbu4jXNcyJSDXNKPrhmK6iM4Ff2SwVkXi2AX3prP',
 			'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
