@@ -562,7 +562,7 @@ from_json(Req, #{action := tx} = State) ->
                 Req,
                 State
             };
-        #{feature := _FeatureData, concurrency := _Concurrency} = Json ->
+        Json when is_map(Json) ->
             {Status0, Response0} = do_action_tx_throttled(Json, State, Req),
             {
                 stop,
@@ -587,19 +587,10 @@ from_json(Req0, State) ->
             {stop, Req2, State};
         Json when is_map(Json) ->
             %% choose streaming or not without guard functions
-            Stream = maps:get(stream, Json, false),
-            case check_execute_bdd(Json, State, Req1) of
-                {Status, Response} when Stream =:= true ->
-                    %% stream JSON payload
-                    Req2 = cowboy_req:stream_reply(
-                        Status,
-                        #{<<"content-type">> => <<"application/json">>},
-                        Req1
-                    ),
-                    Req3 = cowboy_req:stream_body(
-                        maps:get(message, Response, jsx:encode(Response)), fin, Req2
-                    ),
-                    {stop, Req3, State};
+            Stream = stream_mode(Req1, maps:get(concurrency, Json, 1)),
+            case check_execute_bdd(maps:put(stream, Stream, Json), State, Req1) of
+                {_Status, _Response} when Stream =:= maybe_stream ->
+                    {stop, Req1, State};
                 {Status, Response} ->
                     %% normal JSON reply
                     Req2 = cowboy_req:reply(
@@ -719,17 +710,15 @@ to_json(Req, #{action := version} = State) ->
         commit_hash => CommitHash,
         version => list_to_binary(Version)
     },
+    NodeDamageBalance = damage_ae:node_damage_balance(),
+    NodeAeBalance = damage_ae:node_ae_balance(),
+    #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
     Resp0 =
-        case damage_ae:node_ae_balance() of
-            {error, Error} ->
-                #{ok => false, error => Error};
-            NodeBalance when is_float(NodeBalance) ->
-                #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
-                #{
-                    public_key => list_to_binary(PubKey),
-                    node_balance => NodeBalance
-                }
-        end,
+        #{
+            public_key => list_to_binary(PubKey),
+            damage_balance => NodeDamageBalance,
+            ae_balance => NodeAeBalance
+        },
     {
         jsx:encode(
             maps:merge(
