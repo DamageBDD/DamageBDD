@@ -12,6 +12,7 @@
         handle_call/3,
         handle_cast/2,
         handle_info/2,
+        handle_continue/2,
         terminate/2,
         code_change/3
     ]
@@ -26,8 +27,7 @@ set_ctx(Ctx) ->
     gen_server:call(?MODULE, {set_ctx, Ctx}).
 
 init([]) ->
-    Ctx = ecai_search:new(),
-    {ok, Ctx}.
+    {ok, ecai_search:new(), {continue, load_ctx}}.
 
 handle_call(get_ctx, _From, Ctx) ->
     {reply, Ctx, Ctx};
@@ -40,6 +40,23 @@ handle_cast(Any, State) ->
 handle_info(Any, State) ->
     ?LOG_DEBUG("ECAI Search server got cast message: ~s~n", [Any]),
     {noreply, State}.
+handle_continue(load_ctx, Ctx0) ->
+    NewCtx =
+        case application:get_env(ecai, search_context_file) of
+            {ok, File} ->
+                case ecai_search:load(File) of
+                    {ok, L} ->
+                        ?LOG_INFO("ECAI context loaded from ~p", [File]),
+                        L;
+                    {error, R} ->
+                        ?LOG_WARNING("Failed to load context ~p (~p). Keeping fresh ctx.", [File, R]),
+                        Ctx0
+                end;
+            _ ->
+                Ctx0
+        end,
+    {noreply, NewCtx}.
+
 terminate(Reason, _State) ->
     ?LOG_DEBUG("ECAI Search server terminating~p", [Reason]),
     ok.

@@ -34,15 +34,24 @@ content_types_provided(Req, State) -> {[{{<<"text">>, <<"html">>, '*'}, to_html}
 
 to_html(Req, #{action := index} = State) ->
     Ctx0 = base_context(Req),
-    %% ?component=login_modal (atoms are fine)
     #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
+    Host = cowboy_req:host(Req),
+    %% pick template based on hostname
+    Template =
+        case Host of
+            <<"ecai.damagebdd.com">> -> "ecai_search.mustache";
+            <<"ecai.chat">> -> "ecai_chat.mustache";
+            _ -> application:get_env(ecai, default_page, "ecai_search.mustache")
+        end,
+    PageCtx = Ctx0,
     case Comp0 of
         undefined ->
-            {render_full_page(Ctx0), Req, State};
+            {render_tpl(?TPL(Template), PageCtx), Req, State};
         _ ->
             Comp = binary_to_atom(Comp0, utf8),
-            {render_component(Comp, Ctx0), Req, State}
+            {render_component(Comp, PageCtx), Req, State}
     end.
+
 
 %% -------------------------- Context --------------------------
 base_context(Req) ->
@@ -52,29 +61,6 @@ base_context(Req) ->
         node_version => <<"v0.1">>
     }.
 
-%% -------------------------- Page -----------------------------
-render_full_page(Ctx) ->
-    %% Assemble from mustache fragments so you can also SSR each piece independently
-    %% page_shell.mustache should call {{{topbar}}}, {{{tabs_bar}}}, etc. (triple-stache = HTML safe)
-    %Top = render_tpl(?TPL("topbar.mustache"), Ctx),
-    %Foot = render_tpl(?TPL("footer.mustache"), Ctx),
-    %NpkM = render_tpl(?TPL("node_details_modal.mustache"), Ctx),
-    %NodeSetPasswordM = render_tpl(?TPL("node_set_password_modal.mustache"), Ctx),
-    %NodeUnlockM = render_tpl(?TPL("node_unlock_modal.mustache"), Ctx),
-    %% pass the assembled parts into the shell
-    PageCtx = Ctx#{
-        %    topbar => Top,
-        %    footer => Foot,
-        %    node_unlock_modal => NodeUnlockM,
-        %    node_set_password_modal => NodeSetPasswordM,
-        %    node_public_key_modal => NpkM
-    },
-    render_tpl(?TPL("ecai_search.mustache"), PageCtx).
-    %render_tpl(?TPL("ecai_chat.mustache"), PageCtx).
-
-%% ---------------------- Component switch ---------------------
-render_component(page, Ctx) ->
-    render_full_page(Ctx);
 render_component(topbar, Ctx) ->
     render_tpl(?TPL("topbar.mustache"), Ctx);
 render_component(footer, Ctx) ->
