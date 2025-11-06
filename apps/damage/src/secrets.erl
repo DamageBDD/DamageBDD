@@ -333,12 +333,12 @@ decrypt_secret({IV, CipherText, Tag}, PrivateKey) ->
         Tag,
         false
     ).
-%% Store encrypted secret in SQLite
+%% Store encrypted secret in dets
 store_secret(Name, {IV, CipherText, Tag}) ->
     {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
     dets:insert(?DETS_FILE, {Name, {IV, CipherText, Tag}}).
 
-%% Retrieve encrypted secret from SQLite
+%% Retrieve encrypted secret from dets
 retrieve_secret(Name) ->
     dets:open_file(?DETS_FILE, ?DETS_ARGS),
     dets:lookup(?DETS_FILE, Name).
