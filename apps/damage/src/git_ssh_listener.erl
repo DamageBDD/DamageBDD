@@ -39,7 +39,7 @@ child_spec() ->
 
 init([]) ->
     %% App env (provide sane defaults)
-    {ok, ListenAddr} = app_env(listen_addr, {0, 0, 0, 0}),
+    {ok, ListenAddr} = app_env(listen_addr, {127, 0, 0, 1}),
     {ok, Port} = app_env(port, 2222),
     {ok, SystemDir} = app_env(system_dir, "/var/lib/damage/ssh/system"),
     {ok, UserDir} = app_env(user_dir, "/var/lib/damage/ssh/user"),

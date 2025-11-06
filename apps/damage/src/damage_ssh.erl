@@ -224,7 +224,7 @@ find_free_port_helper([]) ->
 
 handle_msg({ssh_channel_up, ChannelId, ConnectionRef}, State) ->
     ?LOG_DEBUG("starting tunnel ~p ~p", [ConnectionRef, State]),
-    StartPort = 8080,
+    StartPort = 8888,
     EndPort = 9000,
     ListenPort =
         case find_free_port(StartPort, EndPort) of
@@ -240,7 +240,7 @@ handle_msg({ssh_channel_up, ChannelId, ConnectionRef}, State) ->
             "localhost",
             ListenPort,
             "localhost",
-            8080
+            8888
         ),
     {ok, State#state{id = ChannelId, cm = ConnectionRef}}.
 
