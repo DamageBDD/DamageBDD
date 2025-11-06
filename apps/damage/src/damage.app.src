@@ -26,6 +26,8 @@
                 erlexec,
                 erlcron,
                 gun,
+                zx,
+                zj,
                 vanillae,
                 % ssh deps
                 public_key,

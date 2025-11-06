@@ -1,0 +1,17 @@
+{a_email,"zxq9@zxq9.com"}.
+{author,"Craig Everett"}.
+{c_email,"zxq9@zxq9.com"}.
+{copyright,"Craig Everett"}.
+{deps,[]}.
+{desc,"A tiny JSON encoder/decoder in pure Erlang."}.
+{file_exts,[]}.
+{key_name,none}.
+{license,"MIT"}.
+{modules,[]}.
+{name,"zj"}.
+{package_id,{"otpr","zj",{1,1,2}}}.
+{prefix,[]}.
+{repo_url,"https://gitlab.com/zxq9/zj"}.
+{tags,["json","json encoder","json decoder"]}.
+{type,lib}.
+{ws_url,"https://zxq9.com/projects/zj/docs/"}.

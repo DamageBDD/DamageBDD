@@ -1,0 +1,44 @@
+#! /usr/bin/env escript
+
+-mode(compile).
+
+main(Args) ->
+    true = code:add_patha("ebin"),
+    case make:all() of
+        up_to_date ->
+            lists:foreach(fun dispatch/1, Args),
+            halt(0);
+        error -> 
+            ok = io:format("Build error. Halting.~n"),
+            halt(1)
+    end.
+
+
+dispatch("edoc") ->
+    ok = edoc();
+dispatch("dialyze") ->
+    ok = dialyze();
+dispatch("test") ->
+    ok = test();
+dispatch(Unknown) ->
+    ok = io:format("make_zx: Unknown directive: ~tp~n", [Unknown]),
+    halt(1).
+
+
+edoc() ->
+    ok = io:format("EDOC: Writing docs...~n"),
+    edoc:application(zx, ".", []).
+
+
+dialyze() ->
+    case dialyzer:run([{from, src_code}, {files_rec, ["./src"]}]) of
+        [] ->
+            io:format("Dialyzer found no errors and returned no warnings! Yay!~n");
+        Warnings ->
+            Messages = [dialyzer:format_warning(W) || W <- Warnings],
+            lists:foreach(fun io:format/1, Messages)
+    end.
+
+
+test() ->
+    io:format("TEST: If I only had a brain.~n").

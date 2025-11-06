@@ -1,0 +1,17 @@
+{name,"zx"}.
+{type,app}.
+{modules,[]}.
+{prefix,"zx_"}.
+{author,"Craig Everett"}.
+{desc,"An Erlang development tool and Zomp user client"}.
+{package_id,{"otpr","zx",{0,14,0}}}.
+{deps,[]}.
+{key_name,none}.
+{a_email,"zxq9@zxq9.com"}.
+{c_email,"zxq9@zxq9.com"}.
+{copyright,"Craig Everett"}.
+{file_exts,[]}.
+{license,"MIT"}.
+{repo_url,"https://gitlab.com/zxq9/zx"}.
+{tags,["tools","package manager","erlang"]}.
+{ws_url,"https://zxq9.com/projects/zomp/"}.

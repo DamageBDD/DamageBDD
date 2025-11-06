@@ -1,0 +1,17 @@
+#! /usr/bin/env escript
+
+%%% 〘*PROJECT NAME*〙
+
+-mode(compile).
+
+〘*SCRIPT*〙
+〘*AUTHOR*〙
+〘*COPYRIGHT*〙
+〘*LICENSE*〙
+
+-spec main(Args :: [term()]) -> no_return().
+
+main(Args) ->
+    ok = io:setopts([{encoding, unicode}]),
+    ok = io:format("Hello, world!~n"),
+    io:format("I received the args: ~tp~n", [Args]).
