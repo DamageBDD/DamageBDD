@@ -102,7 +102,10 @@
     {
         ecai, [
             {port, 9003},
-            {pools, []}
+            {search_context_file, "/var/lib/damage/ecai/yelp.ctx"},
+            {pools, [
+                {ecai_chat, [{size, 1}, {max_overflow, 0}], []}
+            ]}
         ]
     },
     {
@@ -146,6 +149,8 @@
                     %"ak_...",
                 ]
             },
+            {ip, {127, 0, 0, 1}},
+            %{ip, {0, 0, 0, 0}},
             {port, 8080},
             {smtp_host, "smtp.example.net"},
             {smtp_hostname, "example.com"},
@@ -202,7 +207,6 @@
                     {formatter, [{size, 3}, {max_overflow, 500}], []},
                     {lnd, [{size, 1}, {max_overflow, 0}], []},
                     {cln, [{size, 1}, {max_overflow, 0}], []},
-                    {ecai_chat, [{size, 1}, {max_overflow, 0}], []},
                     %{damage_ssh, [{size, 1}, {max_overflow, 0}], []},
                     {
                         damage_ipfs,
@@ -234,6 +238,7 @@
                     {user_dir, "/var/lib/damage/sshtest_user/.ssh"},
                     {system_dir, "/var/lib/damage/ssh_daemon/"},
                     {allow_push, true},
+                    {port, 2223},
                     {root, "/var/lib/damage/repos/"}
                 ]
             },
