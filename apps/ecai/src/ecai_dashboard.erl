@@ -52,7 +52,6 @@ to_html(Req, #{action := index} = State) ->
             {render_component(Comp, PageCtx), Req, State}
     end.
 
-
 %% -------------------------- Context --------------------------
 base_context(Req) ->
     %% Add anything you want available to all templates (user, feature list, etc.)
