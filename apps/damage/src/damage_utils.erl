@@ -27,6 +27,7 @@
         get_concurrency_level/1,
         get_ip/1,
         test_send_email/0,
+        test_send_email/1,
         idhash_keys/1,
         json_decode/1,
         yaml_decode/1,
@@ -457,6 +458,9 @@ reverse_replace_char(Char) ->
 
 test_send_email() ->
     {ok, TestUserEmail} = application:get_env(damage, test_user),
+    test_send_email(TestUserEmail).
+
+test_send_email(TestUserEmail) ->
     ToEmail = {<<"DamageBdd Test">>, list_to_binary(TestUserEmail)},
     Context =
         #{

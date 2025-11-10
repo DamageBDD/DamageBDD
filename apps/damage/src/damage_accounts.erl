@@ -376,19 +376,22 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     Data = maps:put(allowance, Allowance, maps:put(password, AuthTokenEncrypted, Meta)),
     Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
     ?LOG_DEBUG("AuthToken sent ~p", [Query]),
-    Ctxt =
+    Context =
         maps:put(
             <<"password_reset_url">>,
             <<ApiUrl0/binary, "/accounts/confirm?", Query/binary>>,
             Data
         ),
+    ToEmail = {maps:get(full_name, Meta, <<"">>), Email},
+    TextBody = damage_utils:load_template("signup_email.txt.mustache", Context),
+    HtmlBody = damage_utils:load_template("signup_email.html.mustache", Context),
     Result = damage_utils:send_email(
-        {maps:get(full_name, Meta, <<"">>), Email},
+        ToEmail,
         <<"DamageBDD Account SignUp">>,
-        damage_utils:load_template("signup_email.txt.mustache", Ctxt),
-        damage_utils:load_template("signup_email.html.mustache", Ctxt)
+        TextBody,
+        HtmlBody
     ),
-    ?LOG_DEBUG("Email sent ~p", [Result]),
+    ?LOG_DEBUG("Email sent ~p ~p", [ToEmail, Result]),
     {
         ok,
         <<
