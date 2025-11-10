@@ -85,6 +85,7 @@
     },
     {throttle, [
         %{driver, throttle_ets},  %% or throttle_mnesia for cluster-wide limits
+        {ip_whitelist, [{127,0,0,1}, {192,168,1,197}]},
         {rates, [
             %%                Scope                     Limit      Period
             {public_read, 200, per_minute},
