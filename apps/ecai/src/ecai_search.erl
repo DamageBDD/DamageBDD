@@ -94,8 +94,6 @@
     }
 }).
 
--define(TNAME(T), list_to_atom(T)).
-
 -define(WEIGHTS, #{
     <<"name">> => 3,
     <<"cat">> => 2,
@@ -118,26 +116,76 @@ get_opts(#ctx{opts = O}) -> O.
 
 new() ->
     application:ensure_all_started(crypto),
-    Post = ets:new(?TNAME("ecai_postings"), [
-        ordered_set, public, {read_concurrency, true}, {write_concurrency, true}
+    DataDir = application:get_env(ecai, data_dir, "/var/lib/damage/ecai/index/"),
+
+    PostTab = ets:new(ecai_post_tab, [
+        bag,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "post_tab"])}
     ]),
-    Df = ets:new(?TNAME("ecai_df"), [set, public]),
-    Tag = ets:new(?TNAME("ecai_tag"), [set, public]),
-    Root = ets:new(?TNAME("ecai_root"), [set, public]),
-    Rec = ets:new(?TNAME("ecai_rec"), [set, public]),
-    I2D = ets:new(?TNAME("ecai_i2d"), [set, public]),
-    D2I = ets:new(?TNAME("ecai_d2i"), [set, public]),
-    Seq = ets:new(?TNAME("ecai_seq"), [set, public]),
-    ets:insert(Seq, {seq, 1}),
+    RootTab = ets:new(ecai_root_tab, [
+        set,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "root_tab"])}
+    ]),
+    RecTab = ets:new(ecai_rec_tab, [
+        set,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "rec_tab"])}
+    ]),
+    DfTab = ets:new(ecai_df_tab, [
+        set,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "df_tab"])}
+    ]),
+    TagTab = ets:new(ecai_tag_tab, [
+        set,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "tag_tab"])}
+    ]),
+    I2DTab = ets:new(ecai_i2d_tab, [
+        set,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "i2d_tab"])}
+    ]),
+    D2ITab = ets:new(ecai_d2i_tab, [
+        set,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "d2i_tab"])}
+    ]),
+    SeqTab = ets:new(ecai_seq_tab, [
+        set,
+        named_table,
+        public,
+        {write_concurrency, true},
+        {persistent, filename:join([DataDir, "seq_tab"])}
+    ]),
+
+    ets:insert(SeqTab, {seq, 1}),
+
     #ctx{
-        post_tab = Post,
-        df_tab = Df,
-        tag_tab = Tag,
-        root_tab = Root,
-        rec_tab = Rec,
-        id2doc_tab = I2D,
-        doc2id_tab = D2I,
-        next_id_tab = Seq
+        post_tab = PostTab,
+        df_tab = DfTab,
+        tag_tab = TagTab,
+        root_tab = RootTab,
+        rec_tab = RecTab,
+        id2doc_tab = I2DTab,
+        doc2id_tab = D2ITab,
+        next_id_tab = SeqTab
     }.
 
 %%%===================================================================
@@ -555,16 +603,16 @@ bump_df(Ctx, Term, Delta) ->
     end.
 
 recompute_roots(Ctx, Terms) ->
-    [
-        spawn(fun() ->
-            Docs = postings(Ctx, T),
-            Root = compute_root_intlist(Docs),
-            ets:insert(Ctx#ctx.root_tab, {T, Root}),
-            _ = term_tag(Ctx, T)
-        end)
-     || T <- lists:usort(Terms)
-    ],
+    [recompute_root(Ctx, T) || T <- lists:usort(lists:sublist(Terms, 500))],
     ok.
+
+recompute_root(Ctx, T) ->
+    spawn(fun() ->
+        Docs = postings(Ctx, T),
+        Root = compute_root_intlist(Docs),
+        ets:insert(Ctx#ctx.root_tab, {T, Root}),
+        _ = term_tag(Ctx, T)
+    end).
 
 next_id(Ctx) ->
     [{seq, N}] = ets:lookup(Ctx#ctx.next_id_tab, seq),
@@ -722,15 +770,17 @@ terms_from_query(Q, PrefixDefault) ->
         end,
 
     lists:usort(AccName ++ AccCat ++ AccCity ++ AccTags ++ AccPhone).
-
-term_key(Namespace, Token) ->
+term_key(Namespace, Token0) ->
+    Token = binary:copy(Token0),
     <<Namespace/binary, $:, Token/binary>>.
-term_pfx(Namespace, Prefix) ->
+term_pfx(Namespace, Prefix0) ->
+    Prefix = binary:copy(Prefix0),
     <<"pfx:", Namespace/binary, $:, Prefix/binary>>.
-term_sfx(Field, Suffix) ->
+term_sfx(Field, Suffix0) ->
+    Suffix = binary:copy(Suffix0),
     <<"sfx:", Field/binary, $:, Suffix/binary>>.
-
-term_ng(Field, Ng) ->
+term_ng(Field, Ng0) ->
+    Ng = binary:copy(Ng0),
     <<"ng:", Field/binary, $:, Ng/binary>>.
 
 reverse_bin(B) ->

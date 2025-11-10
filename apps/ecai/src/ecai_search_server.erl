@@ -55,10 +55,30 @@ handle_continue(load_ctx, Ctx0) ->
             _ ->
                 Ctx0
         end,
+
+    %% snapshot path & interval configurable
+    SnapPath = application:get_env(
+        ecai, index_snapshot_path, "/var/lib/damage/ecai/state/ecai_index.snap"
+    ),
+    Interval = application:get_env(ecai, index_snapshot_ms, 60000),
+
+    %% create parent dirs
+    ok = filelib:ensure_dir(SnapPath),
+
+    case ecai_index_snapshot:start_link(fun ecai_search_server:get_ctx/0, SnapPath, Interval) of
+        {ok, _Pid} ->
+            ?LOG_INFO("Index snapshotter started (~p ms -> ~s)", [Interval, SnapPath]);
+        {error, {already_started, _Pid}} ->
+            ?LOG_INFO("Index snapshotter already running; reusing.");
+        Other ->
+            ?LOG_WARNING("Snapshotter start failed: ~p", [Other])
+    end,
+
     {noreply, NewCtx}.
 
 terminate(Reason, _State) ->
-    ?LOG_DEBUG("ECAI Search server terminating~p", [Reason]),
+    catch ecai_index_snapshot:force(),
+    ?LOG_DEBUG("ECAI Search server terminating ~p", [Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.

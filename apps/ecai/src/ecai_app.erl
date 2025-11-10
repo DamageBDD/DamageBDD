@@ -54,6 +54,7 @@ start_phase(start_trails_http, _StartType, []) ->
             }
         ),
     metrics:init(),
+    persistent_terms:put('$persistent_ets_flush_interval', 30000),
     ?LOG_INFO("Started ECAI cowboy.").
 
 stop(_State) ->
