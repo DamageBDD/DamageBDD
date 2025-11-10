@@ -330,7 +330,8 @@ to_html(Req, #{action := confirm} = State) ->
             {<<"Invalid confirmation link. Please try again.">>, Req, State}
     end.
 
-authenticate_user(Email, Password) ->
+authenticate_user(Email, Password0) ->
+    Password = secrets:salted_hash(Password0),
     case identity_server:get_account_by_email(Email) of
         {Account, Password, _PrivateKey} ->
             Expiry = date_util:now_to_seconds(os:timestamp()) + ?TOKEN_TIMEOUT,

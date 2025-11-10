@@ -131,7 +131,7 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
             ?DAMAGE_TOKEN_CONTRACT,
             binary_to_list(secrets:salted_hash(Email)),
             PublicKey,
-            binary_to_list(secrets:encrypt(Password)),
+            binary_to_list(secrets:encrypt(secrets:salted_hash(Password))),
             binary_to_list(secrets:encrypt(PrivateKey)),
             ?DAMAGE_INITIAL_HITS,
             ?AE_INITIAL_AETTOS
