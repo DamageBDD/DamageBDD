@@ -116,63 +116,54 @@ get_opts(#ctx{opts = O}) -> O.
 
 new() ->
     application:ensure_all_started(crypto),
-    DataDir = application:get_env(ecai, data_dir, "/var/lib/damage/ecai/index/"),
 
     PostTab = ets:new(ecai_post_tab, [
         bag,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "post_tab"])}
+        {write_concurrency, true}
     ]),
     RootTab = ets:new(ecai_root_tab, [
         set,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "root_tab"])}
+        {write_concurrency, true}
     ]),
     RecTab = ets:new(ecai_rec_tab, [
         set,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "rec_tab"])}
+        {write_concurrency, true}
     ]),
     DfTab = ets:new(ecai_df_tab, [
         set,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "df_tab"])}
+        {write_concurrency, true}
     ]),
     TagTab = ets:new(ecai_tag_tab, [
         set,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "tag_tab"])}
+        {write_concurrency, true}
     ]),
     I2DTab = ets:new(ecai_i2d_tab, [
         set,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "i2d_tab"])}
+        {write_concurrency, true}
     ]),
     D2ITab = ets:new(ecai_d2i_tab, [
         set,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "d2i_tab"])}
+        {write_concurrency, true}
     ]),
     SeqTab = ets:new(ecai_seq_tab, [
         set,
         named_table,
         public,
-        {write_concurrency, true},
-        {persistent, filename:join([DataDir, "seq_tab"])}
+        {write_concurrency, true}
     ]),
 
     ets:insert(SeqTab, {seq, 1}),
