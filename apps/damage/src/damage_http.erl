@@ -395,7 +395,9 @@ effective_context(Context0, State) ->
         end,
     GlobalCtx = damage_context:get_global_template_context(Ctx1),
     AccountCtx = damage_context:get_context(AeAccount),
-    maps:put(public_key, AeAccount, maps:put(account_context, AccountCtx, maps:merge(GlobalCtx, Ctx1))).
+    maps:put(
+        public_key, AeAccount, maps:put(account_context, AccountCtx, maps:merge(GlobalCtx, Ctx1))
+    ).
 
 %% Helper: true iff overrides explicitly request dry-run only
 -spec dry_run_only(proplists:proplist()) -> boolean().
@@ -703,11 +705,9 @@ to_html(Req, State) ->
     {Body, Req, State}.
 
 to_json(Req, #{action := version} = State) ->
-    {ok, CommitHash} = file:read_file("commit_hash.txt"),
     {ok, Version} = application:get_key(damage, vsn),
     Resp = #{
         ok => true,
-        commit_hash => CommitHash,
         version => list_to_binary(Version)
     },
     NodeDamageBalance = damage_ae:node_damage_balance(),
