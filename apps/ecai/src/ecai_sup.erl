@@ -45,8 +45,24 @@ init([]) ->
             end,
             Pools
         ),
+    %% snapshot path & interval configurable
+    SnapPath = application:get_env(
+        ecai, index_snapshot_path, "/var/lib/damage/ecai/state/ecai_index.snap"
+    ),
+    Interval = application:get_env(ecai, index_snapshot_ms, 60000),
     PoolSpecs0 =
         [
+            #{
+                id => ecai_index_snapshot,
+                start =>
+                    {ecai_index_snapshot, start_link, [
+                        fun ecai_search_server:get_ctx/0, SnapPath, Interval
+                    ]},
+                restart => permanent,
+                shutdown => 60,
+                type => worker,
+                modules => []
+            },
             #{
                 id => ecai_search_server,
                 start => {ecai_search_server, start_link, []},

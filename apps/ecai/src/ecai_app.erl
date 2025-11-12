@@ -40,6 +40,12 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(erlexec),
     {ok, _} = application:ensure_all_started(throttle),
     {ok, _} = application:ensure_all_started(gproc),
+    {ok, _} = application:ensure_all_started(os_mon),
+    %% Set to 90%
+    memsup:set_sysmem_high_watermark(0.90),
+    %% Set to 10%
+    memsup:set_procmem_high_watermark(0.10),
+
     WsPort = application:get_env(ecai, port, 9003),
     WsIp = application:get_env(ecai, ip, {127, 0, 0, 1}),
     {ok, _} =

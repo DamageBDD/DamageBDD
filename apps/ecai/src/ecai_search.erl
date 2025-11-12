@@ -58,6 +58,7 @@
     add_review_stats/6,
     index_text/5
 ]).
+-import(ecai_utils, [hex/1]).
 %% ----- Context holds ETS tables (opaque to callers) -----
 -record(ctx, {
     % ETS ordered_set: {{TermBin, DocIdInt}} -> true
@@ -117,49 +118,49 @@ get_opts(#ctx{opts = O}) -> O.
 new() ->
     application:ensure_all_started(crypto),
 
-    PostTab = ets:new(ecai_post_tab, [
-        bag,
-        named_table,
+    PostTab = ets:new(ecai_postings, [
+        ordered_set,
         public,
+        {read_concurrency, true},
         {write_concurrency, true}
     ]),
-    RootTab = ets:new(ecai_root_tab, [
+    RootTab = ets:new(ecai_root, [
+        set,
+        public,
+        {read_concurrency, true},
+        {write_concurrency, true}
+    ]),
+    RecTab = ets:new(ecai_rec, [
         set,
         named_table,
         public,
         {write_concurrency, true}
     ]),
-    RecTab = ets:new(ecai_rec_tab, [
+    DfTab = ets:new(ecai_df, [
         set,
         named_table,
         public,
         {write_concurrency, true}
     ]),
-    DfTab = ets:new(ecai_df_tab, [
+    TagTab = ets:new(ecai_tag, [
         set,
         named_table,
         public,
         {write_concurrency, true}
     ]),
-    TagTab = ets:new(ecai_tag_tab, [
+    I2DTab = ets:new(ecai_i2d, [
         set,
         named_table,
         public,
         {write_concurrency, true}
     ]),
-    I2DTab = ets:new(ecai_i2d_tab, [
+    D2ITab = ets:new(ecai_d2i, [
         set,
         named_table,
         public,
         {write_concurrency, true}
     ]),
-    D2ITab = ets:new(ecai_d2i_tab, [
-        set,
-        named_table,
-        public,
-        {write_concurrency, true}
-    ]),
-    SeqTab = ets:new(ecai_seq_tab, [
+    SeqTab = ets:new(ecai_seq, [
         set,
         named_table,
         public,
@@ -1042,9 +1043,6 @@ proof_headers(Ctx, Terms) ->
         ]
     ).
 
-hex(Bin) when is_binary(Bin) ->
-    lists:flatten([io_lib:format("~2.16.0B", [X]) || <<X:8>> <= Bin]).
-
 %%%===================================================================
 %%% ECAI TermTag
 %%%===================================================================
@@ -1108,12 +1106,14 @@ save(Ctx = #ctx{}, File) ->
 %% Load a snapshot from disk and rehydrate ETS + options
 %% ---------------------------------------------------------------
 load(File) ->
+    %% Construct fresh context (new ETS tables)
+    load(new(), File).
+
+load(Ctx0, File) ->
     case file:read_file(File) of
         {ok, Bin} ->
             try
                 Map = binary_to_term(Bin),
-                %% Construct fresh context (new ETS tables)
-                Ctx0 = new(),
                 %% Restore opts first
                 Ctx1 = Ctx0#ctx{opts = maps:get(opts, Map, Ctx0#ctx.opts)},
                 %% Bulk insert into ETS
