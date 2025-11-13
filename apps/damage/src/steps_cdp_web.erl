@@ -75,8 +75,25 @@ with_client(Ctx0, Fun) when is_map(Ctx0), is_function(Fun, 1) ->
                 {ok, CtxOrVal} when is_map(CtxOrVal) -> CtxOrVal;
                 {ok, _Val} ->
                     C1;
-                {error, Why} ->
-                    maps:put(fail, to_bin(io_lib:format("CDP op failed: ~p", [Why])), C1);
+                {error, #{
+                    <<"id">> := _,
+                    <<"result">> :=
+                        #{
+                            <<"result">> :=
+                                #{
+                                    <<"type">> := _,
+                                    <<"value">> :=
+                                        #{
+                                            <<"msg">> := Why,
+                                            <<"ok">> := false
+                                        }
+                                }
+                        }
+                }} ->
+                    maps:put(fail, Why, C1);
+                {error, Unknown} ->
+                    ?LOG_ERROR("Unknown CDP step error ~p", [Unknown]),
+                    maps:put(fail, <<"unknown error">>, C1);
                 Other ->
                     maps:put(cdp_last, Other, C1)
             end;
@@ -205,7 +222,7 @@ click_selector(Pid, Sel) ->
         "(function(){const s=",
         jsx:encode(Sel),
         ";",
-        "const el=document.querySelector(s); if(!el) return {ok:false};",
+        "const el=document.querySelector(s); if(!el) return {ok:false, msg: `not found: ${s}`};",
         "el.scrollIntoView({block:'center'}); el.click(); return {ok:true};})()"
     ]),
     case
@@ -226,7 +243,7 @@ type_into(Pid, Sel, Text) ->
         ", v=",
         jsx:encode(Text),
         ";",
-        "const el=document.querySelector(s); if(!el) return {ok:false};",
+        "const el=document.querySelector(s); if(!el) return {ok:false, msg: `not found: ${s}`};",
         "el.focus(); el.value=''; el.dispatchEvent(new Event('input',{bubbles:true}));",
         "el.value=v; el.dispatchEvent(new Event('input',{bubbles:true})); return {ok:true};})()"
     ]),
@@ -283,36 +300,73 @@ start_client_with_chrome(C0) ->
     Port = pick_free_high_port(),
     UDir = tmp_profile_dir(),
     ChromeBin = chrome_bin(),
-    Cmd = io_lib:format(
-        "~s --headless=new --remote-debugging-address=127.0.0.1 "
-        "--remote-debugging-port=~p --user-data-dir=~s "
-        "--no-first-run --no-default-browser-check --disable-gpu about:blank",
-        [ChromeBin, Port, UDir]
-    ),
-    ChromePort = open_port({spawn, lists:flatten(Cmd)}, [exit_status, hide]),
-    case wait_devtools_ready(Host, Port, 8000) of
-        ok ->
-            case cdp_client:discover_ws(#{host => Host, port => Port, type => <<"page">>}) of
-                {ok, WS} ->
-                    case cdp_client:start_link(#{ws_url => WS, host => Host, port => Port}) of
-                        {ok, Pid} ->
-                            ok = cdp_client:enable_console(Pid),
-                            {ok, C0#{
-                                cdp_pid => Pid,
-                                cdp_endpoint => #{host => Host, port => Port},
-                                chrome_os_port => ChromePort,
-                                chrome_user_data_dir => UDir
-                            }};
+
+    %% Decide run_dir & log file (tie this to your run_id if you have one)
+
+    % or however you track per-run dir
+    RunDir = maps:get(run_dir, C0, "/tmp"),
+    LogFile = filename:join(RunDir, "chrome.log"),
+
+    ChromeArgs = [
+        "--headless=new",
+        "--remote-debugging-address=127.0.0.1",
+        io_lib:format("--remote-debugging-port=~p", [Port]),
+        io_lib:format("--user-data-dir=~s", [UDir]),
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-gpu",
+        "about:blank"
+    ],
+
+    %% Spawn Chrome via erlexec
+    ExecOpts = [
+        % get exit_status messages
+        monitor,
+        % kill all children on shutdown
+        {kill_group, true},
+        % write logs in run dir
+        {cd, RunDir},
+        {stdout, {file, LogFile}},
+        {stderr, {file, LogFile}}
+    ],
+
+    case exec:run_link(ChromeBin, [{args, ChromeArgs} | ExecOpts]) of
+        {ok, OsPid, _Ref} ->
+            %% Wait for DevTools HTTP to be ready just like before
+            case wait_devtools_ready(Host, Port, 8000) of
+                ok ->
+                    case
+                        cdp_client:discover_ws(#{host => Host, port => Port, type => <<"page">>})
+                    of
+                        {ok, WS} ->
+                            case
+                                cdp_client:start_link(#{ws_url => WS, host => Host, port => Port})
+                            of
+                                {ok, Pid} ->
+                                    ok = cdp_client:enable_console(Pid),
+                                    {ok, C0#{
+                                        cdp_pid => Pid,
+                                        cdp_endpoint => #{host => Host, port => Port},
+                                        % keep OS pid if needed
+                                        chrome_os_pid => OsPid,
+                                        chrome_user_data_dir => UDir,
+                                        chrome_log => LogFile
+                                    }};
+                                E ->
+                                    {error, E}
+                            end;
                         E ->
                             {error, E}
                     end;
-                E ->
-                    {error, E}
+                {error, Why} ->
+                    %% ensure it’s torn down: erlexec will kill the tree
+                    exec:kill(OsPid),
+                    {error, {chrome_not_ready, Why}}
             end;
-        {error, Why} ->
-            catch port_close(ChromePort),
-            {error, {chrome_not_ready, Why}}
+        Error ->
+            Error
     end.
+
 %% ───────────────── Registry & constants ─────────────────
 -define(CDP_REG, cdp_browser_registry).
 

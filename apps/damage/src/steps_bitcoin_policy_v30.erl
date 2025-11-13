@@ -10,6 +10,8 @@
 
 -export([step/6]).
 
+%% erlfmt:ignore-begin
+
 %% ===== Phrase Macros (KW-independent lists of tokens) ========================
 -define(GIVEN_RESTART_WITH_PROFILE,        ["I (re)start bitcoind with profile", ProfileStr]).
 -define(WHEN_CRAFT_OPRETURN_BYTES,         ["I craft an OP_RETURN transaction of", BytesStr, "bytes"]).
@@ -22,14 +24,15 @@
 -define(WHEN_SANITIZER_PROCESSES,          ["the sanitizer processes the payload"]).
 -define(THEN_RENDER_MUST_NOT_CONTAIN_RAW,  ["the rendered output must NOT contain the raw payload"]).
 -define(AND_RENDER_MUST_CONTAIN_REDACTED,  ["the rendered output must contain", <<"[redacted-op_return]">>]).
+%% erlfmt:ignore-end
 
 %% ===== Entry point ===========================================================
--spec step(proplists:proplist(), map(), binary(), integer(), [string() | binary()], iodata()) -> map() | no_return().
+-spec step(proplists:proplist(), map(), binary(), integer(), [string() | binary()], iodata()) ->
+    map() | no_return().
 
 %% Given: restart node with profile
 step(Config, Context, <<"Given">>, _N, ?GIVEN_RESTART_WITH_PROFILE, _Raw) ->
     restart_node(Config, Context, ProfileStr);
-
 %% When: craft OP_RETURN tx of N bytes
 step(Config, Context, <<"When">>, _N, ?WHEN_CRAFT_OPRETURN_BYTES, _Raw) ->
     {Bytes, _} = string:to_integer(BytesStr),
