@@ -205,7 +205,6 @@ function generateDamageQR(address){
 		tabs.toggle('execution');
 		const hashes = [
 			{ cid: 'QmSaePitmi9NaZmZ2DmbtC7sSMSQBBsz113qVvpY2Wd9K3', label: 'CDP Demo' },
-			'QmcN6mqQmcHWkfKNkQCSP4xsrNrP8GZm2BTiYKj1RQcDbXk4zXai3',
 			'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
 			'QmXAwxg4Hnb4uEYr55XFrAv6e7GEJfG2y16RaSyVgAcTxG',
 			'QmcLedvbu4jXNcyJSDXNKPrhmK6iM4Ff2SwVkXi2AX3prP',
@@ -357,7 +356,9 @@ function generateDamageQR(address){
 		const html = el.innerHTML
 			  .replace(/line:(\d+)/g, '<span class="gherkin-line">line:$1</span>')
 			  .replace(/\bsuccess\b/g, '<span class="gherkin-success">success</span>')
-			  .replace(/\bfail:([^\s]+)/g, '<span class="gherkin-fail">fail:$1</span>');
+			  .replace(/\bfail:(.+)\b/g, '<span class="gherkin-fail">fail:$1</span>')
+			  .replace(/\bskip\b/g, '<span class="gherkin-skip">skip</span>')
+		;
 
 		el.innerHTML = html;
 	}

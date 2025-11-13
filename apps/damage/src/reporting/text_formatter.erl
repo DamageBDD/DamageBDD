@@ -80,7 +80,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
   ok =
     write_file(
       Config,
-      "~s ~s line:~p tags: [~p], desc: ~s",
+      "~s ~s line:~p tags: [~s], desc: ~s",
       [
         get_keyword(Config, feature_keyword),
         FeatureName,
@@ -102,7 +102,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
   ok =
     write_file(
       Config,
-      "  ~s ~s line:~p tags: [~p]",
+      "  ~s ~s line:~p tags: [~s]",
       [
         get_keyword(Config, <<"Scenario:">>),
         ScenarioName,

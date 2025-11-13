@@ -21,6 +21,10 @@ pre code.language-gherkin.report {
   color: #ff5555;
   font-weight: bold;
 }
+.gherkin-skip {
+  color: #ffff55;
+  font-weight: bold;
+}
 /*  html report table */
 .report-table {
   width: 100%;
