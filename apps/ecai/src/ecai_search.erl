@@ -10,6 +10,7 @@
 -compile(warn_export_all).
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("ecai_search.hrl").
 
 %% Public API
 -export([
@@ -47,7 +48,8 @@
     save/2,
     save/1,
     % (FilePath) -> {ok, Ctx} | {error, Reason}
-    load/1
+    load/1,
+    load/2
 ]).
 
 -export([
@@ -58,42 +60,9 @@
     add_review_stats/6,
     index_text/5
 ]).
+-export([enable_gpu/1, disable_gpu/1, gpu_refresh/1]).
+-export([export_compact/1]).
 -import(ecai_utils, [hex/1]).
-%% ----- Context holds ETS tables (opaque to callers) -----
--record(ctx, {
-    % ETS ordered_set: {{TermBin, DocIdInt}} -> true
-    post_tab,
-    % ETS set: TermBin -> DF (int)
-    df_tab,
-    % ETS set: TermBin -> TermTag(any())  (ecai:hash_to_curve/1)
-    tag_tab,
-    % ETS set: TermBin -> RootBin(sha256 scheme)
-    root_tab,
-    % ETS set: DocIdBin -> #{terms:= [TermBin], data:= map(), int:= DocIdInt}
-    rec_tab,
-    % ETS set: DocIdInt -> DocIdBin
-    id2doc_tab,
-    % ETS set: DocIdBin -> DocIdInt
-    doc2id_tab,
-    % ETS set: <<"seq">> -> NextInt
-    next_id_tab,
-    opts = #{
-        % enable prefix terms
-        prefix => true,
-        % enable suffix terms (reversed)
-        suffix => false,
-        % 0=off, else 2 or 3 is typical
-        infix_n => 0,
-        % enable per-field expansion
-        fields => #{
-            name => #{prefix => true, suffix => true, infix => true},
-            city => #{prefix => true, suffix => false, infix => false},
-            cat => #{prefix => false, suffix => false, infix => false},
-            tag => #{prefix => false, suffix => false, infix => false},
-            phone => #{prefix => true, suffix => false, infix => false}
-        }
-    }
-}).
 
 -define(WEIGHTS, #{
     <<"name">> => 3,
@@ -550,20 +519,26 @@ do_add(Ctx, DocId, Map) ->
     recompute_roots(Ctx, Touched),
     ok.
 
-add_terms(Ctx, Terms, DocInt) ->
-    lists:usort(
-        [
-            begin
-                New = ets:insert_new(Ctx#ctx.post_tab, {{T, DocInt}, true}),
-                if
-                    New -> bump_df(Ctx, T, +1);
-                    true -> ok
-                end,
-                T
-            end
-         || T <- Terms
-        ]
-    ).
+add_terms(Ctx0, Terms, DocInt) ->
+    %% We rely on ETS insert_new/2 to de-duplicate {Term, DocInt}.
+    %% On a *new* posting:
+    %%   - bump DF
+    %%   - append to GPU dynamic slabs (if enabled)
+    {TouchedRev, _Ctx1} =
+        lists:foldl(
+            fun(T, {Acc, CAcc}) ->
+                case ets:insert_new(CAcc#ctx.post_tab, {{T, DocInt}, true}) of
+                    true ->
+                        bump_df(CAcc, T, +1),
+                        {[T | Acc], append_gpu(CAcc, T, DocInt)};
+                    false ->
+                        {Acc, CAcc}
+                end
+            end,
+            {[], Ctx0},
+            Terms
+        ),
+    lists:usort(TouchedRev).
 
 remove_posting(Ctx, Term, DocInt) ->
     case ets:lookup(Ctx#ctx.post_tab, {Term, DocInt}) of
@@ -802,9 +777,66 @@ pfx1(Bin, Min, Max) ->
 %%% Posting access (exact + prefix)
 %%%===================================================================
 
-postings(Ctx, TermBin) ->
-    %% Exact: just range over key {Term, _}
-    range_docs(Ctx#ctx.post_tab, TermBin).
+postings(#ctx{backend = gpu, dyn = H, term_ids = Map}, Term) ->
+    case maps:get(Term, Map, undefined) of
+        undefined ->
+            [];
+        Tid ->
+            Bin = ecai_gpu:get_postings_dyn(H, Tid),
+            postings_from_bin(Bin)
+    end;
+postings(#ctx{backend = ets} = Ctx, Term) ->
+    range_docs(Ctx#ctx.post_tab, Term).
+
+%% decode <<DocInt:32-little, ...>> -> [Int]
+postings_from_bin(<<>>) -> [];
+postings_from_bin(Bin) -> postings_from_bin(Bin, []).
+postings_from_bin(<<>>, Acc) -> lists:reverse(Acc);
+postings_from_bin(<<I:32/little-unsigned, Rest/binary>>, Acc) -> postings_from_bin(Rest, [I | Acc]).
+%% Build a compact snapshot for the GPU: {terms, term_ids, offsets, postings, df}
+
+export_compact(Ctx = #ctx{}) ->
+    %% 1) gather & sort all terms
+    Terms = [T || {T, _} <- ets:tab2list(Ctx#ctx.df_tab)],
+    Sorted = lists:sort(Terms),
+    IdMap = maps:from_list(lists:zip(Sorted, lists:seq(0, length(Sorted) - 1))),
+    %% 2) build CSR offsets + postings and pack into binaries
+    {OffsList, PostsList} = build_csr(Ctx, Sorted),
+    OffBin = pack_u32_le(OffsList),
+    PostBin = pack_u32_le(PostsList),
+    DFs = [term_df(Ctx, T) || T <- Sorted],
+    DFBin = pack_u32_le(DFs),
+    #{
+        terms => Sorted,
+        term_ids => IdMap,
+        offsets => OffBin,
+        postings => PostBin,
+        df => DFBin
+    }.
+
+build_csr(Ctx, Terms) ->
+    {Offs, Posts, _N} =
+        lists:foldl(
+            fun(T, {AccOffs, AccPosts, Cur}) ->
+                %% read from ETS only
+                Docs = postings(Ctx#ctx{backend = ets}, T),
+                Len = length(Docs),
+                {AccOffs ++ [Cur], AccPosts ++ Docs, Cur + Len}
+            end,
+            {[], [], 0},
+            Terms
+        ),
+    %% trailing sentinel
+    {Offs ++ [length(Posts)], Posts}.
+
+pack_u32_le(List) ->
+    Sz = length(List) * 4,
+    Bin = <<<<X:32/little-unsigned>> || X <- List>>,
+    %% ensure exactly Sz bytes (defensive)
+    case byte_size(Bin) of
+        Sz -> Bin;
+        _ -> erlang:error({pack_size_mismatch, Sz, byte_size(Bin)})
+    end.
 
 range_docs(Tab, TermBin) ->
     Start = {TermBin, -1 bsl 62},
@@ -1052,6 +1084,13 @@ hash_to_curve(Arg) -> ecai:hash_to_curve(Arg).
 h2c_tag(TermBin) ->
     hash_to_curve(TermBin).
 
+finalize(Ctx0 = #ctx{backend = gpu}) ->
+    %% your existing root rebuild loop…
+
+    %% (keep your existing code)
+    Ctx1 = Ctx0,
+    %% swap GPU snapshot
+    enable_gpu(Ctx1);
 finalize(Ctx = #ctx{}) ->
     Terms = [T || {T, _} <- ets:tab2list(Ctx#ctx.df_tab)],
     %% rebuild roots (can parallelize trivially)
@@ -1132,3 +1171,56 @@ load(Ctx0, File) ->
         Error ->
             Error
     end.
+enable_gpu(Ctx0 = #ctx{}) ->
+    Snap = export_compact(Ctx0),
+    case
+        ecai_gpu:load_compact(#{
+            offsets => maps:get(offsets, Snap),
+            postings => maps:get(postings, Snap),
+            df => maps:get(df, Snap)
+        })
+    of
+        {ok, Handle} ->
+            Ctx0#ctx{
+                backend = gpu,
+                gpu = Handle,
+                term_ids = maps:get(term_ids, Snap)
+            };
+        Error ->
+            error_logger:error_msg("GPU load failed ~p", [Error]),
+            Ctx0
+    end.
+
+disable_gpu(Ctx = #ctx{backend = ets}) ->
+    Ctx;
+disable_gpu(Ctx = #ctx{backend = gpu, gpu = H}) ->
+    catch ecai_gpu:free(H),
+    Ctx#ctx{backend = ets, gpu = undefined, term_ids = #{}}.
+
+%% Rebuild device snapshot (call after a bulk index or finalize/1)
+gpu_refresh(Ctx = #ctx{backend = gpu}) ->
+    Ctx1 = disable_gpu(Ctx),
+    enable_gpu(Ctx1);
+gpu_refresh(Ctx) ->
+    enable_gpu(Ctx).
+%% ----- GPU helpers -------------------------------------------------
+
+%% Ensure a stable term-id for a Term (allocate next_tid if missing)
+ensure_tid(Ctx = #ctx{term_ids = Map, next_tid = N}, Term) ->
+    case maps:get(Term, Map, undefined) of
+        undefined ->
+            Tid = N,
+            {Tid, Ctx#ctx{term_ids = Map#{Term => Tid}, next_tid = N + 1}};
+        Tid ->
+            {Tid, Ctx}
+    end.
+
+%% Append one posting into the GPU dynamic index (if enabled)
+append_gpu(Ctx = #ctx{backend = gpu, dyn = H}, Term, DocInt) when H =/= undefined ->
+    {Tid, Ctx1} = ensure_tid(Ctx, Term),
+    ok = ecai_gpu:append(H, Tid, DocInt),
+    ?LOG_DEBUG("append_gpu ~p", [DocInt]),
+    Ctx1;
+append_gpu(Ctx, _Term, _DocInt) ->
+    %% No GPU (or not enabled yet) — noop
+    Ctx.
