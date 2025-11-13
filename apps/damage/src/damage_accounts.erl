@@ -445,7 +445,11 @@ do_post_action(
                             Message = <<"Reset password token expired.">>,
                             {400, #{status => <<"failed">>, message => Message}};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
-                            case identity_server:set_email_password(Email, NewPassword) of
+                            case
+                                identity_server:set_email_password(
+                                    Email, secrets:salted_hash(NewPassword)
+                                )
+                            of
                                 {ok, _Message} ->
                                     %mark_token_used(Token, Expiry),
                                     {200, #{
