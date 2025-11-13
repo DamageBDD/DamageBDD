@@ -196,6 +196,17 @@ test() ->
         ),
     ?LOG_INFO("ipfs add directory hash ~p", [Hash]),
     damage_ipfs:ls(Hash),
+    {ok, [
+        #{
+            <<"Hash">> := FileHash,
+            <<"Name">> := _Name,
+            <<"Size">> := Size
+        }
+    ]} = damage_ipfs:add({file, <<"features/damage_http.feature">>}),
+    ?LOG_INFO("ipfs add file hash ~p", [FileHash]),
+    Content = damage_ipfs:cat(FileHash),
+    ?LOG_INFO("ipfs cat file Content ~p", [Content]),
+
     test_publish_git_repo().
 
 test_publish_git_repo() ->

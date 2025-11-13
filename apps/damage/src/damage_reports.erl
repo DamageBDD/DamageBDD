@@ -401,10 +401,12 @@ ls(Hash) ->
     ?LOG_INFO("get ipfs hash ~p ", [Hash]),
     [maps:get(<<"Name">>, M) || M <- Links].
 
+cat(Hash, <<"/">>) ->
+    cat(Hash, <<"">>);
 cat(Hash, Path) ->
     {ok, Data} =
         damage_ipfs:cat(
-            list_to_binary(string:join([binary_to_list(Hash), Path], "/"))
+            filename:join([Hash, Path])
         ),
     ?LOG_INFO("get ipfs hash ~p ", [Hash]),
     Data.
