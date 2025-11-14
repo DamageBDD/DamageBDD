@@ -403,12 +403,19 @@ function generateDamageQR(address){
 				})
 			};
 			const response = await fetch("/execute_feature/", request);
-
 			if (response.status === 401) {
 				MicroModal.show("login-modal");
-			} else {
-				await streamResponseToDOM(response, reportElement);
+				return;
 			}
+
+			if (!response.ok) {
+				// Read the (possibly streamed) error text once
+				const errText = await response.text();
+				reportElement.innerText = "Error executing feature:\n" + errText;
+				return;
+			}
+
+			await streamResponseToDOM(response, reportElement);
 		}
 		else {
 			const address = window.TokenManager.getAddress();

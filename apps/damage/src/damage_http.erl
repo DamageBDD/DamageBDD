@@ -270,13 +270,13 @@ get_config(Config, Context, Req0) ->
     end.
 
 %%--------------------------------------------------------------------
-%% Execute a feature: normalized result
+%% Low-level: execute a single feature run against Config/Context.
 %%  - Always returns {StatusCode, Map}.
 %%  - Map always carries 'status' => <<"ok">> | <<"notok">>.
 %%--------------------------------------------------------------------
--spec execute_bdd(proplists:proplist(), map(), binary()) ->
+-spec execute_bdd_once(proplists:proplist(), map(), binary()) ->
     {200 | 400 | 500, map()}.
-execute_bdd(Config, Context, FeatureData) ->
+execute_bdd_once(Config, Context, FeatureData) ->
     case damage:execute_data(Config, Context, FeatureData) of
         %% Failing step (runner-level assertion failure)
         [
@@ -289,7 +289,8 @@ execute_bdd(Config, Context, FeatureData) ->
             {400, #{
                 status => <<"notok">>,
                 line => Line,
-                failing_step => list_to_binary(damage_utils:lists_concat(Step, " ")),
+                failing_step =>
+                    list_to_binary(damage_utils:lists_concat(Step, " ")),
                 reason => FailReason
             }};
         %% Parser/lexer error with pretty message
@@ -322,20 +323,22 @@ execute_bdd(Config, Context, FeatureData) ->
 
 %%--------------------------------------------------------------------
 %% Public orchestration: dry-run, then (optionally) paid run
-%% - check_execute_bdd(Context, State, Req0) -> … uses [] as Config overrides
-%% - check_execute_bdd(Context, State, Req0, ConfigOverrides) -> …
-%%   If ConfigOverrides includes {dry_run,true}, returns dry-run result only.
+%%
+%%  - execute_bdd(Context, State, Req0) -> … uses [] as Config overrides
+%%  - execute_bdd(Context, State, Req0, ConfigOverrides) -> …
+%%
+%%  If ConfigOverrides includes {dry_run,true}, returns dry-run result only.
 %%--------------------------------------------------------------------
-%% API: default (no overrides)
--spec check_execute_bdd(map(), map(), cowboy_req:req()) ->
+
+-spec execute_bdd(map(), map(), cowboy_req:req()) ->
     {integer(), map()} | {error, map()}.
-check_execute_bdd(Context, State, Req0) ->
-    check_execute_bdd(Context, State, Req0, []).
+execute_bdd(Context, State, Req0) ->
+    execute_bdd(Context, State, Req0, []).
 
 %% API: with overrides (e.g., [{dry_run,true}])
--spec check_execute_bdd(map(), map(), cowboy_req:req(), proplists:proplist()) ->
+-spec execute_bdd(map(), map(), cowboy_req:req(), proplists:proplist()) ->
     {integer(), map()} | {error, map()}.
-check_execute_bdd(Context0, State, Req0, ConfigOverrides) ->
+execute_bdd(Context0, State, Req0, ConfigOverrides) ->
     %% Build effective context once (no guards used here)
     ContextIn = effective_context(Context0, State),
     FeatureData = maps:get(feature, Context0),
@@ -343,18 +346,24 @@ check_execute_bdd(Context0, State, Req0, ConfigOverrides) ->
     %% --- 1) DRY RUN (force nostream) ----------------------------------------
     DryOverrides = [{dry_run, true} | ConfigOverrides],
     DryContext = maps:put(stream, nostream, ContextIn),
-    {DryCode, DryRes} =
-        execute_bdd(get_config(DryOverrides, DryContext, Req0), DryContext, FeatureData),
 
-    %% If caller wanted only dry-run, return immediately on success/failure
-    case dry_run_only(ConfigOverrides) of
-        true ->
-            {DryCode, DryRes};
-        false ->
-            case DryCode of
-                200 ->
+    case
+        execute_bdd_once(
+            get_config(DryOverrides, DryContext, Req0),
+            DryContext,
+            FeatureData
+        )
+    of
+        %% Dry run OK
+        {200, DryRes} ->
+            %% If caller wanted only dry-run, return immediately
+            case dry_run_only(ConfigOverrides) of
+                true ->
+                    {200, DryRes};
+                false ->
                     %% Must have a cost in dry-run success
                     Cost = maps:get(cost, DryRes, 0),
+
                     %% Find account id (support public_key or address)
                     AeAccount =
                         case ContextIn of
@@ -362,25 +371,26 @@ check_execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                             #{address := PK} -> PK;
                             _ -> undefined
                         end,
+
                     Balance = damage_ae:balance(AeAccount),
-                    %% Guard-safe comparison (>= is allowed in guards; or do it here plainly)
+
                     case Balance >= Cost of
                         true ->
                             %% --- 2) COSTED RUN --------------------------------
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
-                            execute_bdd(RunConfig, ContextIn, FeatureData);
+                            execute_bdd_once(RunConfig, ContextIn, FeatureData);
                         false ->
-                            {400, #{
+                            {200, #{
                                 status => <<"notok">>,
                                 message =>
                                     <<"Insufficient balance, please top up at `/api/accounts/topup`">>,
                                 balance => Balance
                             }}
-                    end;
-                _Other ->
-                    %% Dry run failed; bubble it up
-                    {DryCode, DryRes}
-            end
+                    end
+            end;
+        %% Dry run failed; bubble it up as-is
+        {DryCode, DryRes} ->
+            {DryCode, DryRes}
     end.
 
 %% Helper: merge global+account into caller context (no guards)
@@ -437,7 +447,7 @@ do_action_tx(
         "return_value" := {}
     } = damage_ae:wait_tx(ContractCallTxHash),
     case
-        check_execute_bdd(
+        execute_bdd(
             #{
                 feature => FeatureData,
                 color_formatter => false,
@@ -481,7 +491,7 @@ do_action_tx(
     #{public_key := NodeAeAccount} = secrets:node_keypair(),
 
     case
-        check_execute_bdd(
+        execute_bdd(
             maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
         )
     of
@@ -589,29 +599,34 @@ from_json(Req0, State) ->
             {stop, Req2, State};
         Json when is_map(Json) ->
             %% choose streaming or not without guard functions
-            Stream = stream_mode(Req1, maps:get(concurrency, Json, 1)),
-            case check_execute_bdd(maps:put(stream, Stream, Json), State, Req1) of
-                {_Status, _Response} when Stream =:= maybe_stream ->
-                    {stop, Req1, State};
-                {Status, Response} ->
-                    %% normal JSON reply
-                    Req2 = cowboy_req:reply(
+            Concurrency = maps:get(concurrency, Json, 1),
+            Stream = maps:get(stream, Json, false),
+            case execute_bdd(Json, State, Req1) of
+                {Status, Response} when Stream =:= true ->
+                    %% stream single JSON payload
+                    Req2 = cowboy_req:stream_reply(
                         Status,
                         #{<<"content-type">> => <<"application/json">>},
-                        jsx:encode(Response),
+                        Req1
+                    ),
+                    Req3 = cowboy_req:stream_body(
+                        maps:get(message, Response, jsx:encode(Response)), fin, Req2
+                    ),
+                    {stop, Req3, State};
+                {Status, Response} ->
+                    %% normal JSON reply
+                    JsonBin = jsx:encode(Response),
+                    Req2 = cowboy_req:reply(
+                        Status,
+                        #{
+                            <<"content-type">> => <<"application/json">>,
+                            <<"cache-control">> => <<"no-cache">>
+                        },
+                        JsonBin,
                         Req1
                     ),
                     {stop, Req2, State}
-            end;
-        _Other ->
-            %% not a map / missing 'feature' etc.
-            Req2 = cowboy_req:reply(
-                400,
-                #{<<"content-type">> => <<"text/plain">>},
-                <<"Missing or invalid 'feature' payload.">>,
-                Req1
-            ),
-            {stop, Req2, State}
+            end
     end.
 
 from_html(Req0, State) ->
@@ -626,31 +641,29 @@ from_html(Req0, State) ->
             #{color := <<"true">>} -> true;
             _ -> false
         end,
-    MaybeStream = stream_mode(Req1, Concurrency),
+    Stream = stream_mode(Req1, Concurrency),
 
-    case
-        check_execute_bdd(
-            #{
-                feature => Body,
-                color_formatter => ColorFormatter,
-                concurrency => Concurrency,
-                stream => MaybeStream
-            },
-            State,
-            Req1
-        )
-    of
+    Context = #{
+        feature => Body,
+        concurrency => Concurrency,
+        stream => Stream,
+        color_formatter => ColorFormatter
+    },
+    case execute_bdd(Context, State, Req1) of
+        {_Status, _Resp} when Stream =:= maybe_stream ->
+            %% all output has already gone via formatter+stream_reply
+            {stop, Req1, State};
         %% -------------------- OK (send JSON) --------------------
         {200, Response} ->
             ?LOG_INFO(
                 "ok execute_feature from_html ~p concurrency ~p",
                 [Response, Concurrency]
             ),
-            case MaybeStream of
+            case Stream of
                 false ->
                     Req2 = cowboy_req:reply(
                         200,
-                        #{<<"content-type">> => <<"application/json">>},
+                        #{<<"content-type">> => <<"text/plain">>},
                         jsx:encode(Response),
                         Req1
                     ),
@@ -659,7 +672,7 @@ from_html(Req0, State) ->
                     %% If you really want to stream success, do it here:
                     Req2 = cowboy_req:stream_reply(
                         200,
-                        #{<<"content-type">> => <<"application/json">>},
+                        #{<<"content-type">> => <<"text/plain">>},
                         Req1
                     ),
                     Req3 = cowboy_req:stream_body(jsx:encode(Response), fin, Req2),
@@ -668,12 +681,12 @@ from_html(Req0, State) ->
         %% -------------------- Error (stream the dry-run error) --------------------
         {Status, Response} ->
             ?LOG_INFO("~p execute_feature from_html ~p", [Status, Response]),
-            case MaybeStream of
+            case Stream of
                 false ->
                     %% Non-streaming error JSON
                     Req2 = cowboy_req:reply(
-                        Status,
-                        #{<<"content-type">> => <<"application/json">>},
+                        200,
+                        #{<<"content-type">> => <<"text/plain">>},
                         jsx:encode(Response),
                         Req1
                     ),
@@ -681,7 +694,7 @@ from_html(Req0, State) ->
                 _ ->
                     %% Streaming error text (or JSON – your call)
                     Req2 = cowboy_req:stream_reply(
-                        Status,
+                        200,
                         #{<<"content-type">> => <<"text/plain">>},
                         Req1
                     ),

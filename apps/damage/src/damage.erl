@@ -197,7 +197,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
     StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
     case catch parse_file(Filename) of
         {failed, LineNo, _Message, MessagePretty} ->
-            ?LOG_ERROR("parse file ~p", [Config]),
+            ?LOG_DEBUG("parse file ~p", [Config]),
             formatter:format(Config, error, {LineNo, MessagePretty}),
             {parse_error, LineNo, MessagePretty};
         {LineNo, Tags, Feature, Description, BackGround, Scenarios} ->
