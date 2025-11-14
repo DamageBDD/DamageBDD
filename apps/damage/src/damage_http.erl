@@ -599,7 +599,7 @@ from_json(Req0, State) ->
             {stop, Req2, State};
         Json when is_map(Json) ->
             %% choose streaming or not without guard functions
-            Concurrency = maps:get(concurrency, Json, 1),
+            %Concurrency = maps:get(concurrency, Json, 1),
             Stream = maps:get(stream, Json, false),
             case execute_bdd(Json, State, Req1) of
                 {Status, Response} when Stream =:= true ->

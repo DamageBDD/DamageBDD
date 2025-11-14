@@ -203,10 +203,9 @@ test() ->
             <<"Size">> := Size
         }
     ]} = damage_ipfs:add({file, <<"features/damage_http.feature">>}),
-    ?LOG_INFO("ipfs add file hash ~p", [FileHash]),
+    ?LOG_INFO("ipfs add file hash ~p size ~p", [FileHash, Size]),
     Content = damage_ipfs:cat(FileHash),
     ?LOG_INFO("ipfs cat file Content ~p", [Content]),
-
     test_publish_git_repo().
 
 test_publish_git_repo() ->

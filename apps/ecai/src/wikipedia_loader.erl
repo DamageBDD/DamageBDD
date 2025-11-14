@@ -130,9 +130,9 @@ safe_decode(Line) ->
             end
     end.
 
-trim_nl(<<$\r, T/binary>>) -> trim_nl(T);
-trim_nl(<<$\n, T/binary>>) -> trim_nl(T);
-trim_nl(B) -> B.
+%trim_nl(<<$\r, T/binary>>) -> trim_nl(T);
+%trim_nl(<<$\n, T/binary>>) -> trim_nl(T);
+%trim_nl(B) -> B.
 ensure_dir(Dir) ->
     case filelib:is_dir(Dir) of
         true ->
