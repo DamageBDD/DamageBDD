@@ -91,25 +91,30 @@ handle_info(rebalance, #state{symbol = Symbol, rules = Rules} = State) ->
     ?LOG_DEBUG("damage_mm got rebalance ~p", [State]),
     case get_mid_price(Symbol, Rules) of
         {ok, Mid0} when Mid0 > 0 ->
-            Mid = round_tick(Mid0),
+            %% --- pull macro liquidity signal (safe) ----------------------
+            LTR = ltr_from_server(),
+            Mid1 = apply_ltr_bias(Mid0, LTR),
+            Mid = round_tick(Mid1),
 
             %% dynamic ECAI parameters
             StepBP = mm_params:get_intraday_param("STEP_BP", Symbol, 30),
             Levels = mm_params:get_intraday_param("LEVELS", Symbol, 8),
             QtySlope = mm_params:get_intraday_param("QTY_SLOPE", Symbol, 1.12),
-            Budget = mm_params:get_intraday_param("BUDGET", Symbol, 500.0),
+            Budget0 = mm_params:get_intraday_param("BUDGET", Symbol, 500.0),
+            Budget = budget_from_ltr(Budget0, LTR),
 
             BuyL = gen_ladder(buy, Mid, StepBP, Levels, QtySlope),
             SellL = gen_ladder(sell, Mid, StepBP, Levels, QtySlope),
-            %% (optional) add a tiny guard so we never cross the book
+
+            %% guard so we don't cross the book
             SafeBuy = [{min(P, Mid * 0.999), Q} || {P, Q} <- BuyL],
             SafeSell = [{max(P, Mid * 1.001), Q} || {P, Q} <- SellL],
 
             {PlacedB, CostB} = place_capped(buy, SafeBuy, Budget / 2),
             {PlacedS, CostS} = place_capped(sell, SafeSell, Budget / 2),
             ?LOG_INFO(
-                "Rebalanced @ ~p; buys ~p (~p USDT), sells ~p (~p USDT)",
-                [Mid, length(PlacedB), CostB, length(PlacedS), CostS]
+                "Rebalanced @ ~p (LTR=~p); buys ~p (~p USDT), sells ~p (~p USDT), budget ~p",
+                [Mid, LTR, length(PlacedB), CostB, length(PlacedS), CostS, Budget]
             );
         Other ->
             ?LOG_INFO("Skip rebalance, no mid: ~p", [Other])
@@ -417,4 +422,49 @@ ceil_tick(X) ->
     case X / ?TICK of
         V when V =:= trunc(V) -> float(V * ?TICK);
         V -> float((trunc(V) + 1) * ?TICK)
+    end.
+%% ------- Liquidity Tightness helpers (FRED-based) -----------------
+
+%% Safely read LTR from liquidity_ltr_server.
+%% Returns undefined if the server is not running or errors.
+ltr_from_server() ->
+    try
+        liquidity_ltr_server:get_ltr()
+    catch
+        _:_ -> undefined
+    end.
+
+%% Bias the mid price based on LTR.
+%% Lower LTR (loose USD) -> DAMAGE stronger (higher mid)
+%% Higher LTR (tight USD) -> DAMAGE weaker (lower mid)
+apply_ltr_bias(Mid0, undefined) ->
+    Mid0;
+apply_ltr_bias(Mid0, LTR) when is_number(LTR) ->
+    Mult =
+        case LTR of
+            % very loose -> push price up
+            V when V < 30 -> 1.08;
+            % loose
+            V when V < 50 -> 1.04;
+            % neutral
+            V when V < 70 -> 1.00;
+            % somewhat tight
+            V when V < 85 -> 0.97;
+            % very tight -> pull price down
+            _ -> 0.94
+        end,
+    Mid0 * Mult.
+
+%% Scale MM budget with liquidity regime:
+%% loose USD -> deploy more capital
+%% tight USD -> be conservative
+budget_from_ltr(BaseBudget, undefined) ->
+    BaseBudget;
+budget_from_ltr(BaseBudget, LTR) when is_number(LTR) ->
+    case LTR of
+        V when V < 30 -> BaseBudget * 1.30;
+        V when V < 50 -> BaseBudget * 1.15;
+        V when V < 70 -> BaseBudget;
+        V when V < 85 -> BaseBudget * 0.80;
+        _ -> BaseBudget * 0.60
     end.

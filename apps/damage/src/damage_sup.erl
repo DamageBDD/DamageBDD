@@ -140,6 +140,14 @@ init([]) ->
 
             %% 4) supervisors that may create pools/workers relying on the above
             #{
+                id => liquidity_ltr_server,
+                start => {liquidity_ltr_server, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [liquidity_ltr_server]
+            },
+            #{
                 id => damage_mm_sup,
                 start => {damage_mm_sup, start_link, []},
                 restart => permanent,
