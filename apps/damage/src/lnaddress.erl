@@ -169,45 +169,64 @@ to_json(Req, #{action := invoice} = State) ->
         _User ->
             {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
             Label = list_to_binary("zap:" ++ Timestamp),
-            case cowboy_req:match_qs([{comment, [], none}, {amount, [], none}], Req) of
-                #{amount := <<"0">>, comment := Memo} ->
-                    Amount = 1000,
-                    #{
-                        payment_hash := _PaymentHash,
-                        expires_at := _Expiry,
-                        bolt11 := Bolt11,
-                        payment_secret := _PaymentSecret,
-                        created_index := _CreatedIndex
-                    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
-                    ?LOG_INFO("invoice ~p", [Invoice]),
-                    {jsx:encode(#{pr => Bolt11}), Req, State};
-                #{amount := none, comment := Memo} ->
-                    Amount = 1000,
-                    #{
-                        payment_hash := _PaymentHash,
-                        expires_at := _Expiry,
-                        bolt11 := Bolt11,
-                        payment_secret := _PaymentSecret,
-                        created_index := _CreatedIndex
-                    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
-                    ?LOG_INFO("invoice ~p", [Invoice]),
-                    {jsx:encode(#{pr => Bolt11}), Req, State};
-                #{amount := AmountBin, comment := Memo} ->
-                    Amount = binary_to_integer(AmountBin),
-                    #{
-                        payment_hash := _PaymentHash,
-                        expires_at := _Expiry,
-                        bolt11 := Bolt11,
-                        payment_secret := _PaymentSecret,
-                        created_index := _CreatedIndex
-                    } = Invoice = cln:create_invoice(Amount, Memo, 3600, Label),
-                    ?LOG_INFO("invoice ~p", [Invoice]),
-                    {jsx:encode(#{pr => Bolt11}), Req, State};
-                Unexpected ->
-                    ?LOG_INFO("invalid invoice request ~p", [Unexpected]),
-                    {jsx:encode(#{names => []}), Req, State}
-            end
+
+            ?LOG_DEBUG("got request ~p", [Req]),
+
+            %% NOTE: key is *nostr* (not `nost`), default <<>>.
+            Qs = cowboy_req:match_qs(
+                    [{comment, [], <<>>},
+                     {amount,  [], <<"0">>},
+                     {nostr,  [], <<>>}],
+                    Req
+                 ),
+            ?LOG_DEBUG("invoice qs ~p", [Qs]),
+
+            %% Amount: lnurl is msat
+            AmountBin = maps:get(amount, Qs, <<"0">>),
+            Amount =
+                case AmountBin of
+                    <<"0">> -> 1000; % fallback min
+                    _       -> binary_to_integer(AmountBin)
+                end,
+
+            Comment  = maps:get(comment, Qs, <<>>),
+            NostrBin = maps:get(nostr,   Qs, <<>>),
+
+            %% NIP-57: if nostr is present and valid, the *description*
+            %% MUST be exactly the zap request JSON – nothing else.
+            Description =
+                case NostrBin of
+                    <<>> ->
+                        Comment;
+                    _ ->
+                        case damage_nostr:parse_zap_request(NostrBin) of
+                            {ok, ZapReq} ->
+                                ?LOG_INFO(
+                                  "valid zap request for invoice: ~p",
+                                  [ZapReq]
+                                ),
+                                NostrBin;
+                            {error, Reason} ->
+                                ?LOG_WARNING(
+                                  "invalid zap request in `nostr` param (~p), falling back to comment",
+                                  [Reason]
+                                ),
+                                Comment
+                        end
+                end,
+
+            #{
+                payment_hash  := _PaymentHash,
+                expires_at    := _Expiry,
+                bolt11        := Bolt11,
+                payment_secret:= _PaymentSecret,
+                created_index := _CreatedIndex
+            } = Invoice = cln:create_invoice(Amount, Description, 3600, Label),
+
+            ?LOG_INFO("invoice ~p", [Invoice]),
+            {jsx:encode(#{pr => Bolt11}), Req, State}
     end.
+
 
 from_html(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),

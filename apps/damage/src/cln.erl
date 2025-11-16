@@ -523,15 +523,31 @@ handle_call(
     %% Construct the API request URL
     Path = "/v1/invoice",
     %% Construct the request body
-    ReqJson =
-        jsx:encode(
-            #{
-                amount_msat => AmountMsats,
-                label => Label,
-                description => Description,
-                expiry => Expiry
-            }
-        ),
+    %% Base request
+    BaseReq = #{
+        amount_msat => AmountMsats,
+        label       => Label,
+        description => Description,
+        expiry      => Expiry
+    },
+
+    %% BOLT11 description is limited to 640 bytes.
+    %% If the zap request JSON is longer, ask CLN to only
+    %% put the *hash* in the BOLT11 (deschashonly=true),
+    %% but still store the full description in the DB.
+    ReqMap =
+        case byte_size(Description) > 640 of
+            true  ->
+                ?LOG_DEBUG(
+                  "create_invoice: description ~p bytes, enabling deschashonly",
+                  [byte_size(Description)]
+                ),
+                BaseReq#{deschashonly => true};
+            false ->
+                BaseReq
+        end,
+    ReqJson = jsx:encode(ReqMap),
+
     ?LOG_DEBUG("sending req head ~p ~p", [Headers, ReqJson]),
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
