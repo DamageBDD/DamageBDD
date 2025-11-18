@@ -13,6 +13,7 @@ RUN sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf   
     base-devel git fakeroot which curl wget ca-certificates     \
     tar gzip unzip xz zstd patch pkgconf cmake ninja            \
     erlang jq pacman-contrib ccache git rebar3 make             \
+    gcc libsodium base-devel kubo pass cuda \
     && mkdir -p "$CCACHE_DIR"  /root/.cache      && pacman -Scc --noconfirm
 
 WORKDIR /src
@@ -32,32 +33,24 @@ WORKDIR /src
 # Record exact commit to make downstream layers cache-stable when source hasn't changed
 RUN git rev-parse HEAD > /commit.sha
 
-############################################
-# Build stage (language/tool-agnostic heuristics)
-############################################
-FROM base AS build
-ARG REPO_URL
-ARG REPO_REF
-COPY --from=fetch /src /src
+#############################################
+## Build stage (language/tool-agnostic heuristics)
+#############################################
+#FROM base AS build
+#ARG REPO_URL
+#ARG REPO_REF
+#COPY --from=fetch /src /src
+#
+#
+#############################################
+## Runtime image (slim; contains built artifacts)
+#############################################
+#FROM archlinux:latest AS runtime
+#ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+#RUN pacman -Syu --noconfirm      && pacman -S --noconfirm --needed ca-certificates bash      && pacman -Scc --noconfirm
+#
+#WORKDIR /app
+#COPY --from=build /src /app
 
-
-############################################
-# Runtime image (slim; contains built artifacts)
-############################################
-FROM archlinux:latest AS runtime
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-RUN pacman -Syu --noconfirm      && pacman -S --noconfirm --needed ca-certificates bash      && pacman -Scc --noconfirm
-
-WORKDIR /app
-COPY --from=build /src /app
-
-RUN pacman -S --noconfirm git
-RUN pacman -S --noconfirm rebar3
-RUN pacman -S --noconfirm make
-RUN pacman -S --noconfirm gcc
-RUN pacman -S --noconfirm libsodium
-RUN pacman -S --noconfirm base-devel
-RUN pacman -S --noconfirm kubo
-RUN pacman -S --noconfirm pass
 # Default to a shell so you can explore artifacts or run your binary/script.
 CMD ["bash"]

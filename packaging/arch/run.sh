@@ -7,6 +7,8 @@ IMAGE_NAME="${1:-arch-build:latest}"
 # HOME is set to /workspace so tools that write to $HOME behave sanely.
 CACHE_ROOT="${HOME}/.archcache"
 
+unset http_proxy
+unset https_proxy
 
 
 docker run --rm -it \
@@ -16,7 +18,7 @@ docker run --rm -it \
        -v "$(pwd)/zst:/out" \
        -v "$(pwd)/DamageBDD:/opt/workspace" \
        -w /opt/workspace \
-  -v "$CACHE_ROOT/ccache:/ccache" \
+        -v "$CACHE_ROOT/ccache:/ccache" \
        "$IMAGE_NAME" \
        bash -lc '
     set -e

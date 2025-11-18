@@ -18,7 +18,10 @@ echo "    BuildKit cache dir: $BK_CACHE_DIR"
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
-docker build --pull \
+unset http_proxy
+unset https_proxy
+docker build \
+       --pull \
        --build-arg "REPO_URL=${REPO_URL_DEFAULT}" \
        --build-arg "REPO_REF=${REPO_REF_DEFAULT}" \
        -t "$IMAGE_NAME" -f Dockerfile .
