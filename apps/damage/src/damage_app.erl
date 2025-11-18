@@ -56,6 +56,7 @@ get_trails() ->
         [
             %{"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
             {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}},
+            {"/x", x_redirect_h, #{}},
             {"/.well-known/security.txt", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt"}},
             {"/.well-known/security.txt.asc", cowboy_static,
