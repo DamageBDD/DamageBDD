@@ -59,27 +59,42 @@
                 <li><a  href="#lightning-invoice-tab">Purchase Damage.</a></li>
               </ul>
               <div id="damage-transfers-tab">
-                <p>
+                <p class="section-description">
                   If you already have some DAMAGE tokens use this address to transfer them to your account address.
                 </p>
-                <p>
-                  Wallet Address: 
+                
+                <section class="token-section">
+                  <h3 class="section-heading">Wallet Address</h3>
                   <div class="click-copy">
                     <input type="text" id="damage-address" readonly>
                     <span class="copy-icon" onclick="copyToClipboard('damage-address')">📝</span>
                   </div>
+                </section>
 
-                </p>
-                <div id="qrcode-damage">
-                </div>
-                <div id="damage-transfer">
+                <section class="token-section">
+                  <h3 class="section-heading">QR Code</h3>
+                  <div id="qrcode-damage"></div>
+                </section>
+
+                <section class="token-section">
+                  <h3 class="section-heading">Transfer DAMAGE Tokens</h3>
+                  <p class="section-subtitle">Transfer DAMAGE tokens out to address</p>
                   <form id="transfer-out-form">
-                    <label for="totalAmt">Transfer DAMAGE tokens out to address.</label>
-                    <input type="text"  id="damage-transfer-out-address">
-                    <input type="number" step="1" id="damage-transfer-out-amount">
-                    <button id="damage-transfer-out-btn">Transfer Out!</button>
+                    <div class="form-group">
+                      <label for="damage-transfer-out-address">Recipient Address</label>
+                      <input type="text" id="damage-transfer-out-address" 
+                             placeholder="Enter recipient address">
+                    </div>
+                    <div class="form-group">
+                      <label for="damage-transfer-out-amount">Amount</label>
+                      <input type="number" step="1" id="damage-transfer-out-amount" 
+                             placeholder="Enter amount">
+                    </div>
+                    <button type="button" id="damage-transfer-out-btn" class="btn-primary">
+                      Transfer Out
+                    </button>
                   </form>
-                </div>
+                </section>
               </div>
               <div id="lightning-invoice-tab">
                 <p>
@@ -266,13 +281,24 @@
           </header>
           <main class="modal__content" id="modal-1-content">
             <form id="scheduleForm" onsubmit="submitScheduleForm(event)">
-              <!--<label for="username">Username (Email):</label>-->
-              <input type="input" id="featurehash"  required placeholder="Feature">
-              <br>
-              <!--<label for="password" >Password:</label>-->
-              <input type="password" id="password" autocomplete="current-password" required placeholder="Password">
-              <br>
-              <button id="addScheduleBtn" aria-label="Add Schedule">Add Schedule.</button>
+              <div class="form-group">
+                <label for="featurehash">Feature Hash or IPFS CID</label>
+                <input type="text" id="featurehash" name="featurehash" required 
+                       placeholder="Enter feature hash or IPFS CID (e.g., Qm...)">
+              </div>
+              
+              <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" 
+                       autocomplete="current-password" required 
+                       placeholder="Enter your password">
+              </div>
+              
+              <div class="form-actions">
+                <button type="button" id="addScheduleBtn" class="btn-primary" aria-label="Add Schedule">
+                  Add Schedule
+                </button>
+              </div>
             </form>
           </main>
           <footer class="modal__footer">

@@ -253,3 +253,163 @@ input[type="text"] + button {
   transform: scale(1.03);
 }
 
+body {
+  background: linear-gradient(to bottom right, #1e1e2f, #2a2a3d);
+  color: #fff;
+  min-height: 100vh;
+  padding: 2rem;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+body h2 {
+  color: #fff;
+  font-size: 2rem;
+  font-weight: 600;
+  margin-bottom: 2rem;
+  text-align: center;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #007bff;
+}
+
+/* Reset Password Form Container */
+#resetPasswdForm {
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 2rem;
+  background: #2a2a3d;
+  border-radius: 12px;
+  border: 1px solid #3a3a4d;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* Password Wrapper Improvements */
+#resetPasswdForm .password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  background: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  padding: 0.5rem;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+#resetPasswdForm .password-wrapper:focus-within {
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+#resetPasswdForm .password-wrapper input {
+  flex: 1;
+  padding: 0.875rem 1rem;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+}
+
+#resetPasswdForm .password-wrapper input::placeholder {
+  color: #666;
+}
+
+#resetPasswdForm .toggle-password {
+  position: absolute;
+  right: 1rem;
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: #aaa;
+  padding: 0.5rem;
+  transition: color 0.2s;
+  z-index: 1;
+}
+
+#resetPasswdForm .toggle-password:hover {
+  color: #fff;
+}
+
+/* Submit Button */
+#resetPasswdForm .submit-button,
+#resetPasswdForm #resetPasswdBtn {
+  width: 100%;
+  padding: 0.875rem 2rem;
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin: 1.5rem 0 0 0;
+}
+
+#resetPasswdForm .submit-button:hover,
+#resetPasswdForm #resetPasswdBtn:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+}
+
+#resetPasswdForm .submit-button:active,
+#resetPasswdForm #resetPasswdBtn:active {
+  transform: translateY(0);
+}
+
+/* Password Requirements Section */
+#resetPasswdForm h3 {
+  color: #ccc;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 2rem 0 1rem 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid #3a3a4d;
+}
+
+#resetPasswdForm ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+}
+
+#resetPasswdForm ul li {
+  color: #aaa;
+  font-size: 0.95rem;
+  padding: 0.5rem 0;
+  padding-left: 1.5rem;
+  position: relative;
+  line-height: 1.6;
+}
+
+#resetPasswdForm ul li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: #007bff;
+  font-weight: bold;
+}
+
+/* Fix nested ul */
+#resetPasswdForm ul ul {
+  margin-top: 0.5rem;
+  margin-left: 1rem;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  body {
+    padding: 1rem;
+  }
+  
+  #resetPasswdForm {
+    padding: 1.5rem;
+  }
+  
+  body h2 {
+    font-size: 1.5rem;
+  }
+}
+

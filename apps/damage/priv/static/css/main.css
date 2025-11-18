@@ -390,7 +390,7 @@ html, body {
 }
 
 
-* === Form Buttons === */
+/* === Form Buttons === */
 #damage-transfer-out-btn,
 #generate-invoice-btn,
 .modal__btn {
@@ -570,6 +570,217 @@ ul[data-tabs] li a:hover {
   padding: 1.5rem;
   margin-bottom: 2rem;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+/* Form Styling */
+#settings-tab form {
+  margin-bottom: 2.5rem;
+}
+
+/* Fieldset Styling - Card-like appearance */
+#settings-tab fieldset {
+  background: #2a2a3d;
+  border: 1px solid #3a3a4d;
+  border-radius: 12px;
+  padding: 1.5rem 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+/* Legend Styling - Modern card header */
+#settings-tab legend {
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: 600;
+  padding: 0 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid #3a3a4d;
+  padding-bottom: 0.75rem;
+  width: 100%;
+  display: block;
+}
+
+/* Label Styling */
+#settings-tab label {
+  display: inline-block;
+  color: #ccc;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  margin-top: 1rem;
+  font-size: 0.95rem;
+  min-width: 120px;
+}
+
+/* Input Styling */
+#settings-tab input[type="text"],
+#settings-tab input[type="url"] {
+  padding: 0.75rem 1rem;
+  background-color: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  width: 100%;
+  max-width: 400px;
+  margin-left: 0.5rem;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-sizing: border-box;
+}
+
+#settings-tab input[type="text"]:focus,
+#settings-tab input[type="url"]:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+#settings-tab input[type="text"]::placeholder,
+#settings-tab input[type="url"]::placeholder {
+  color: #666;
+}
+
+/* Select Styling */
+#settings-tab select {
+  padding: 0.75rem 1rem;
+  background-color: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  width: 100%;
+  max-width: 400px;
+  margin-left: 0.5rem;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23fff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2.5rem;
+}
+
+#settings-tab select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+/* Button Styling */
+#settings-tab button[type="button"] {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 1rem;
+  margin-right: 0.5rem;
+  transition: all 0.25s ease-in-out;
+}
+
+#settings-tab button[type="button"]:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: scale(1.02);
+}
+
+#settings-tab button[type="button"]:active {
+  transform: translateY(0);
+}
+
+/* Submit Button Styling */
+#settings-tab input[type="submit"] {
+  padding: 0.875rem 2rem;
+  background: linear-gradient(to right, #28a745, #218838);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 1.5rem;
+  width: 100%;
+  max-width: 200px;
+  transition: all 0.25s ease-in-out;
+}
+
+#settings-tab input[type="submit"]:hover {
+  background: linear-gradient(to right, #218838, #1e7e34);
+  transform: scale(1.02);
+}
+
+#settings-tab input[type="submit"]:active {
+  transform: translateY(0);
+}
+
+/* Generated Token Display */
+#settings-tab #generatedToken {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  color: #fff;
+  font-family: monospace;
+  word-break: break-all;
+  min-height: 3rem;
+  font-size: 0.9rem;
+}
+
+/* Context Variables Display */
+#settings-tab #contextVariables {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #1e1e2f;
+  border-radius: 6px;
+  min-height: 100px;
+  border: 1px dashed #3a3a4d;
+}
+
+#settings-tab #contextVariables:empty::before {
+  content: "No items added yet";
+  color: #666;
+  font-style: italic;
+  display: block;
+}
+
+/* Line Break Spacing */
+#settings-tab br {
+  margin-bottom: 0.5rem;
+}
+
+/* Form Group Layout - Better spacing */
+#settings-tab fieldset > * {
+  margin-bottom: 0.75rem;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  #settings-tab {
+    padding: 1rem;
+  }
+  
+  #settings-tab input[type="text"],
+  #settings-tab input[type="url"],
+  #settings-tab select {
+    max-width: 100%;
+    margin-left: 0;
+    margin-top: 0.5rem;
+    display: block;
+  }
+  
+  #settings-tab label {
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+  
+  #settings-tab input[type="submit"] {
+    max-width: 100%;
+  }
 }
 
 #run-reports-panel {
@@ -859,3 +1070,341 @@ ul[data-tabs] li a:hover {
 
 /* 1) Stop leaking z-index to everything */
 .modal.is-open { z-index: 100000; }
+
+/* Schedule a Feature Run - New Fields */
+.damage-scheduler label {
+  display: block;
+  color: #ccc;
+  font-weight: 500;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.damage-scheduler input[type="text"],
+.damage-scheduler input[type="date"],
+.damage-scheduler input[type="time"],
+.damage-scheduler input[type="number"],
+.damage-scheduler select {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background-color: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  margin-top: 0.5rem;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-sizing: border-box;
+}
+
+.damage-scheduler input:focus,
+.damage-scheduler select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.damage-scheduler input[type="date"]::-webkit-calendar-picker-indicator,
+.damage-scheduler input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  cursor: pointer;
+}
+
+.damage-scheduler #datetimeFields,
+.damage-scheduler #weeklyFields,
+.damage-scheduler #monthlyFields {
+  margin-top: 0.5rem;
+  padding: 1rem;
+  background: rgba(30, 30, 47, 0.3);
+  border-radius: 6px;
+  border: 1px solid #3a3a4d;
+}
+
+/* Schedule Modal Improvements */
+#schedule-modal .modal__content {
+  padding: 1.5rem 2rem;
+}
+
+#schedule-modal .form-group {
+  margin-bottom: 1.5rem;
+}
+
+#schedule-modal .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+#schedule-modal label {
+  display: block;
+  color: #fff;
+  font-weight: 500;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
+#schedule-modal label::after {
+  content: ":";
+  margin-left: 2px;
+}
+
+#schedule-modal input[type="text"],
+#schedule-modal input[type="password"] {
+  width: 100%;
+  padding: 0.875rem 1rem;
+  background-color: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+#schedule-modal input[type="text"]:focus,
+#schedule-modal input[type="password"]:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+#schedule-modal input[type="text"]::placeholder,
+#schedule-modal input[type="password"]::placeholder {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+#schedule-modal .form-actions {
+  padding-top: 1.5rem;
+  border-top: 1px solid #3a3a4d;
+}
+
+#schedule-modal #addScheduleBtn {
+  padding: 0.875rem 2rem;
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  width: 100%;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+#schedule-modal #addScheduleBtn:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: scale(1.02);
+}
+
+#schedule-modal #addScheduleBtn:active {
+  transform: translateY(0);
+}
+
+/* Remove br tags spacing */
+#schedule-modal form br {
+  display: none;
+}
+
+/* Consistent spacing for form elements */
+#schedule-modal form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Manage Damage Tokens - Section Improvements */
+#damage-transfers-tab {
+  padding: 1rem 0;
+}
+
+#damage-transfers-tab .section-description {
+  color: #ccc;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin-bottom: 2rem;
+  padding: 1rem;
+  background: rgba(30, 30, 47, 0.3);
+  border-radius: 6px;
+  border-left: 3px solid #007bff;
+}
+
+/* Token Section Styling */
+#damage-transfers-tab .token-section {
+  margin-bottom: 2.5rem;
+  padding: 1.5rem;
+  background: #2a2a3d;
+  border-radius: 8px;
+  border: 1px solid #3a3a4d;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+#damage-transfers-tab .token-section:last-child {
+  margin-bottom: 0;
+}
+
+/* Section Headings */
+#damage-transfers-tab .section-heading {
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 1rem 0;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #007bff;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#damage-transfers-tab .section-heading::before {
+  content: "▸";
+  color: #007bff;
+  font-size: 1rem;
+}
+
+/* Section Subtitle */
+#damage-transfers-tab .section-subtitle {
+  color: #aaa;
+  font-size: 0.9rem;
+  margin: -0.5rem 0 1rem 0;
+  font-style: italic;
+}
+
+/* Wallet Address Section */
+#damage-transfers-tab .click-copy {
+  margin-top: 1rem;
+}
+
+/* QR Code Section */
+#damage-transfers-tab #qrcode-damage {
+  margin-top: 1rem;
+  text-align: center;
+  background-color: #1e1e2f;
+  padding: 1.5rem;
+  border-radius: 6px;
+  border: 1px dashed #3a3a4d;
+  min-height: 200px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#damage-transfers-tab #qrcode-damage:empty::before {
+  content: "QR code will appear here";
+  color: #666;
+  font-style: italic;
+}
+
+#damage-transfers-tab #qrcode-damage img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+/* Transfer Form Styling */
+#damage-transfers-tab #transfer-out-form {
+  margin-top: 1rem;
+}
+
+#damage-transfers-tab #transfer-out-form .form-group {
+  margin-bottom: 1.25rem;
+}
+
+#damage-transfers-tab #transfer-out-form .form-group:last-of-type {
+  margin-bottom: 1.5rem;
+}
+
+#damage-transfers-tab #transfer-out-form label {
+  display: block;
+  color: #ccc;
+  font-weight: 500;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+#damage-transfers-tab #transfer-out-form input[type="text"],
+#damage-transfers-tab #transfer-out-form input[type="number"] {
+  width: 100%;
+  padding: 0.875rem 1rem;
+  background-color: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  box-sizing: border-box;
+}
+
+#damage-transfers-tab #transfer-out-form input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+#damage-transfers-tab #transfer-out-form input::placeholder {
+  color: #666;
+}
+
+#damage-transfers-tab #damage-transfer-out-btn {
+  width: 100%;
+  padding: 0.875rem 2rem;
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+#damage-transfers-tab #damage-transfer-out-btn:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+}
+
+#damage-transfers-tab #damage-transfer-out-btn:active {
+  transform: translateY(0);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  #damage-transfers-tab .token-section {
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  #damage-transfers-tab .section-heading {
+    font-size: 1.1rem;
+  }
+}
+
+#logout-modal .modal__header {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  padding-right: 2.5rem;
+}
+
+#logout-modal .modal__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin-left: 0;
+}
+
+#logout-modal .modal__footer .modal__btn:not(.modal__btn-primary) {
+  background: #3a3a4d;
+  color: #fff;
+  border: 1px solid #4a4a5d;
+}
+
+#logout-modal .modal__footer .modal__btn:not(.modal__btn-primary):hover {
+  background: #4a4a5d;
+  border-color: #5a5a6d;
+}
