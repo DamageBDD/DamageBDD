@@ -24,7 +24,9 @@
     test_truncate_long_post/0,
     test_gun_connection/0,
     get_user_access_token/0,
-handle_oauth_redirect/2
+    get_app_bearer_token/0,
+    get_public_tweets/1,
+    handle_oauth_redirect/2
 ]).
 
 -import(damage_utils, [to_bin/1]).
@@ -46,10 +48,12 @@ post_to_twitter_from_event(#{id := IdBin, content := ContentBin}, _State) ->
         {ok, AccessToken} ->
             %% Build Nostr URL + truncated tweet text
             ViewerBase = application:get_env(
-                           damage, nostr_viewer,
-                           "https://nostr.ae/e/"),
+                damage,
+                nostr_viewer,
+                "https://nostr.ae/e/"
+            ),
             NostrURL = iolist_to_binary([ViewerBase, IdBin]),
-            TextBin  = build_tweet(ContentBin, NostrURL),
+            TextBin = build_tweet(ContentBin, NostrURL),
 
             %% Minimal TweetCreateRequest body: { "text": "..." }
             BodyJson = jsx:encode(#{<<"text">> => TextBin}),
@@ -76,22 +80,24 @@ post_to_twitter_from_event(#{id := IdBin, content := ContentBin}, _State) ->
 %%   x_client_id
 %%   x_redirect_uri
 auth_url() ->
-    {ok, ClientId}    = secrets:retrieve_decrypt(x_client_id),
+    {ok, ClientId} = secrets:retrieve_decrypt(x_client_id),
 
     Scopes = <<"tweet.read tweet.write users.read offline.access">>,
     {Verifier, Challenge} = pkce_pair(),
     State = base64url(crypto:strong_rand_bytes(16)),
 
     Qs = io_lib:format(
-           "response_type=code&client_id=~s&redirect_uri=~s"
-           "&scope=~s&state=~s&code_challenge=~s"
-           "&code_challenge_method=S256",
-           [ urlenc(ClientId)
-           , urlenc(?X_REDIRECT_URL)
-           , urlenc(Scopes)
-           , urlenc(State)
-           , urlenc(Challenge)
-           ]),
+        "response_type=code&client_id=~s&redirect_uri=~s"
+        "&scope=~s&state=~s&code_challenge=~s"
+        "&code_challenge_method=S256",
+        [
+            urlenc(ClientId),
+            urlenc(?X_REDIRECT_URL),
+            urlenc(Scopes),
+            urlenc(State),
+            urlenc(Challenge)
+        ]
+    ),
     %% Auth URL still goes via twitter.com/i/oauth2/authorize per docs
     Url = "https://twitter.com/i/oauth2/authorize?" ++ lists:flatten(Qs),
     {Url, Verifier, State}.
@@ -105,7 +111,7 @@ auth_url() ->
 %%   x_client_secret
 %%   x_redirect_uri
 exchange_code(CodeBin, VerifierBin) ->
-    {ok, ClientId}     = secrets:retrieve_decrypt(x_client_id),
+    {ok, ClientId} = secrets:retrieve_decrypt(x_client_id),
     {ok, ClientSecret} = secrets:retrieve_decrypt(x_client_secret),
 
     HostBin = ?X_API_HOST,
@@ -113,14 +119,17 @@ exchange_code(CodeBin, VerifierBin) ->
 
     BodyStr = io_lib:format(
         "grant_type=authorization_code&code=~s&redirect_uri=~s&code_verifier=~s",
-        [ urlenc(CodeBin)
-        , urlenc(?X_REDIRECT_URL)
-        , urlenc(VerifierBin)
-        ]),
+        [
+            urlenc(CodeBin),
+            urlenc(?X_REDIRECT_URL),
+            urlenc(VerifierBin)
+        ]
+    ),
     BodyBin = list_to_binary(BodyStr),
 
     BasicCreds = base64:encode(
-                    <<ClientId/binary, ":", ClientSecret/binary>>),
+        <<ClientId/binary, ":", ClientSecret/binary>>
+    ),
 
     Headers = [
         {<<"authorization">>, <<"Basic ", BasicCreds/binary>>},
@@ -132,7 +141,7 @@ exchange_code(CodeBin, VerifierBin) ->
 %% Refresh token flow
 %%  - RefreshTokenBin: <<"refresh_token">> from previous response
 refresh_access_token(RefreshTokenBin) ->
-    {ok, ClientId}     = secrets:retrieve_decrypt(x_client_id),
+    {ok, ClientId} = secrets:retrieve_decrypt(x_client_id),
     {ok, ClientSecret} = secrets:retrieve_decrypt(x_client_secret),
 
     HostBin = ?X_API_HOST,
@@ -140,11 +149,13 @@ refresh_access_token(RefreshTokenBin) ->
 
     BodyStr = io_lib:format(
         "grant_type=refresh_token&refresh_token=~s",
-        [urlenc(RefreshTokenBin)]),
+        [urlenc(RefreshTokenBin)]
+    ),
     BodyBin = list_to_binary(BodyStr),
 
     BasicCreds = base64:encode(
-                    <<ClientId/binary, ":", ClientSecret/binary>>),
+        <<ClientId/binary, ":", ClientSecret/binary>>
+    ),
 
     Headers = [
         {<<"authorization">>, <<"Basic ", BasicCreds/binary>>},
@@ -175,10 +186,9 @@ get_user_access_token() ->
             {error, no_user_access_token}
     end.
 
-
 %% PKCE verifier/challenge pair
 pkce_pair() ->
-    Verifier  = base64url(crypto:strong_rand_bytes(32)),
+    Verifier = base64url(crypto:strong_rand_bytes(32)),
     Challenge = base64url(crypto:hash(sha256, Verifier)),
     {Verifier, Challenge}.
 
@@ -208,46 +218,52 @@ enc_char(C) ->
     ["%", io_lib:format("~2.16.0B", [C])].
 
 %% Max 280 characters, UTF-8 safe, with nostr link
-build_tweet(ContentBin, NostrUrlBin)
-  when is_binary(ContentBin), is_binary(NostrUrlBin) ->
+build_tweet(ContentBin, NostrUrlBin) when
+    is_binary(ContentBin), is_binary(NostrUrlBin)
+->
     MaxChars = 280,
     ?LOG_DEBUG("content bin ~p", [ContentBin]),
     ContentChars = binary_to_list(ContentBin),
     ?LOG_DEBUG("content char ~p", [ContentChars]),
-    LenContent   = length(ContentChars),
+    LenContent = length(ContentChars),
     case LenContent =< MaxChars of
         true ->
             ContentBin;
         false ->
-            SepChars      = " ",
-            LinkChars     = unicode:characters_to_list(NostrUrlBin),
-            EllipsisChars = [16#2026], %% “…”
-            Reserve = length(EllipsisChars) +
-                      length(SepChars) +
-                      length(LinkChars),
+            SepChars = " ",
+            LinkChars = unicode:characters_to_list(NostrUrlBin),
+            %% “…”
+            EllipsisChars = [16#2026],
+            Reserve =
+                length(EllipsisChars) +
+                    length(SepChars) +
+                    length(LinkChars),
             AllowedContentLen0 = MaxChars - Reserve,
             AllowedContentLen =
                 case AllowedContentLen0 < 0 of
-                    true  -> 0;
+                    true -> 0;
                     false -> AllowedContentLen0
                 end,
             {PrefixChars, _} =
                 lists:split(AllowedContentLen, ContentChars),
             unicode:characters_to_binary(
-              PrefixChars ++ EllipsisChars ++ SepChars ++ LinkChars
+                PrefixChars ++ EllipsisChars ++ SepChars ++ LinkChars
             )
     end.
 
 %% Generic gun POST helper (TLS) – binary host & path
-do_gun_post(HostBin, Port, PathBin, Headers, BodyBin)
-  when is_binary(HostBin), is_binary(PathBin) ->
+do_gun_post(HostBin, Port, PathBin, Headers, BodyBin) when
+    is_binary(HostBin), is_binary(PathBin)
+->
     Host = binary_to_list(HostBin),
     case gun:open(Host, Port, #{transport => tls}) of
         {ok, Conn} ->
             try
                 {ok, _} = gun:await_up(Conn),
-                ?LOG_DEBUG("POST https://~s~s ~p ~p",
-                           [Host, binary_to_list(PathBin), Headers, BodyBin]),
+                ?LOG_DEBUG(
+                    "POST https://~s~s ~p ~p",
+                    [Host, binary_to_list(PathBin), Headers, BodyBin]
+                ),
                 Ref = gun:request(Conn, <<"POST">>, PathBin, Headers, BodyBin),
                 case gun:await(Conn, Ref) of
                     {response, fin, Status, RespHeaders} ->
@@ -273,8 +289,11 @@ do_gun_get(Host, Port, Path, Headers) ->
             try
                 {ok, _} = gun:await_up(Conn),
                 Ref = gun:request(
-                        Conn, <<"GET">>,
-                        to_bin(Path), Headers),
+                    Conn,
+                    <<"GET">>,
+                    to_bin(Path),
+                    Headers
+                ),
                 case gun:await(Conn, Ref) of
                     {response, fin, Status, RespHeaders} ->
                         handle_status(Status, RespHeaders, <<>>);
@@ -300,7 +319,8 @@ handle_status(Code, _Hdrs, Body) ->
     {error, {http_error, Code, Body}}.
 
 safe_decode_json(<<>>) ->
-    {ok, #{}};  %% nothing interesting
+    %% nothing interesting
+    {ok, #{}};
 safe_decode_json(Bin) ->
     try
         {ok, jsx:decode(Bin, [return_maps])}
@@ -355,7 +375,7 @@ test_gun_connection() ->
 get_app_bearer_token() ->
     case secrets:retrieve_decrypt(x_app_bearer_token) of
         {ok, T} when is_binary(T) -> {ok, T};
-        {ok, T} when is_list(T)   -> {ok, list_to_binary(T)};
+        {ok, T} when is_list(T) -> {ok, list_to_binary(T)};
         _ ->
             ?LOG_WARNING("x_app_bearer_token (app-only) not configured"),
             {error, no_app_bearer_token}
@@ -387,7 +407,6 @@ auth_url_open() ->
             spawn(fun() -> os:cmd(Command) end),
             ?LOG_INFO("Opened browser for X OAuth2 login: ~s", [Url]),
             {ok, Url, Verifier, State};
-
         Error ->
             Error
     end.
@@ -398,7 +417,7 @@ build_auth_url() ->
     %% Load secrets
     case secrets:retrieve_decrypt(x_client_id) of
         {ok, ClientId0} ->
-            ClientId  = to_bin(ClientId0),
+            ClientId = to_bin(ClientId0),
 
             %% PKCE (code_verifier + code_challenge)
             {Verifier, Challenge} = pkce_generate(),
@@ -410,16 +429,19 @@ build_auth_url() ->
             Url = iolist_to_binary([
                 "https://x.com/i/oauth2/authorize?",
                 "response_type=code",
-                "&client_id=", ClientId,
-                "&redirect_uri=", uri_string:quote(?X_REDIRECT_URL),
-                "&code_challenge=", Challenge,
+                "&client_id=",
+                ClientId,
+                "&redirect_uri=",
+                uri_string:quote(?X_REDIRECT_URL),
+                "&code_challenge=",
+                Challenge,
                 "&code_challenge_method=S256",
                 "&scope=tweet.read%20tweet.write%20users.read%20offline.access",
-                "&state=", State
+                "&state=",
+                State
             ]),
 
             {ok, Url, Verifier, State};
-
         _ ->
             ?LOG_ERROR("Missing secrets for OAuth2 PKCE (x_client_id or x_redirect_uri)"),
             {error, missing_config}
@@ -444,11 +466,11 @@ pkce_challenge(Verifier) ->
     SHA256 = crypto:hash(sha256, Verifier),
     base64url(SHA256).
 
-remove_padding(Bin) ->
-    case binary:last(Bin) of
-        $= -> remove_padding(binary:part(Bin, 0, byte_size(Bin)-1));
-        _  -> Bin
-    end.
+%remove_padding(Bin) ->
+%    case binary:last(Bin) of
+%        $= -> remove_padding(binary:part(Bin, 0, byte_size(Bin)-1));
+%        _  -> Bin
+%    end.
 %%--------------------------------------------------------------------
 %% Handle OAuth redirect from X:
 %%   - Validates state
@@ -460,24 +482,29 @@ handle_oauth_redirect(StateIn, CodeIn) ->
         undefined ->
             ?LOG_WARNING("No stored OAuth state; cannot validate redirect"),
             {error, no_stored_state};
-
         #{state := ExpectedState, verifier := Verifier} ->
             case StateIn =:= ExpectedState of
                 false ->
-                    ?LOG_WARNING("State mismatch in X OAuth redirect (~p /= ~p)",
-                                 [StateIn, ExpectedState]),
+                    ?LOG_WARNING(
+                        "State mismatch in X OAuth redirect (~p /= ~p)",
+                        [StateIn, ExpectedState]
+                    ),
                     {error, state_mismatch};
                 true ->
                     %% Exchange code for tokens
                     case exchange_code(CodeIn, Verifier) of
                         {ok, Map} ->
                             case Map of
-                                #{<<"access_token">> := Access,
-                                  <<"refresh_token">> := Refresh} ->
+                                #{
+                                    <<"access_token">> := Access,
+                                    <<"refresh_token">> := Refresh
+                                } ->
                                     ok = secrets:store_encrypt(
-                                           x_user_access_token, Access),
+                                        x_user_access_token, Access
+                                    ),
                                     ok = secrets:store_encrypt(
-                                           x_user_refresh_token, Refresh),
+                                        x_user_refresh_token, Refresh
+                                    ),
                                     ?LOG_INFO("Stored X OAuth2 access + refresh tokens"),
                                     ok;
                                 _ ->

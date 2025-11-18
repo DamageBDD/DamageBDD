@@ -526,9 +526,9 @@ handle_call(
     %% Base request
     BaseReq = #{
         amount_msat => AmountMsats,
-        label       => Label,
+        label => Label,
         description => Description,
-        expiry      => Expiry
+        expiry => Expiry
     },
 
     %% BOLT11 description is limited to 640 bytes.
@@ -537,10 +537,10 @@ handle_call(
     %% but still store the full description in the DB.
     ReqMap =
         case byte_size(Description) > 640 of
-            true  ->
+            true ->
                 ?LOG_DEBUG(
-                  "create_invoice: description ~p bytes, enabling deschashonly",
-                  [byte_size(Description)]
+                    "create_invoice: description ~p bytes, enabling deschashonly",
+                    [byte_size(Description)]
                 ),
                 BaseReq#{deschashonly => true};
             false ->
