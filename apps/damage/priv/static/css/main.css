@@ -238,8 +238,6 @@ html, body {
   outline: none;
 }
 
-
-
 /*
 .modal__header img {
   max-width: 120px;
@@ -251,7 +249,6 @@ html, body {
   text-align: center;
   padding: 2rem 1rem 0 1rem;
 }
-
 */
 
 .styled-btn {
@@ -570,6 +567,23 @@ ul[data-tabs] li a:hover {
   padding: 1.5rem;
   margin-bottom: 2rem;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+#schedules-tab button[type="button"] {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(to right, #28a745, #218838);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+#schedules-tab button[type="button"]:hover {
+  background: linear-gradient(to right, #218838, #1e7e34);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(33, 136, 56, 0.3);
 }
 
 /* Form Styling */
@@ -1119,6 +1133,34 @@ ul[data-tabs] li a:hover {
   background: rgba(30, 30, 47, 0.3);
   border-radius: 6px;
   border: 1px solid #3a3a4d;
+}
+
+.damage-scheduler button,
+.damage-scheduler #dryRunBtn,
+.damage-scheduler #approveBtn {
+  width: 100%;
+  padding: 0.85rem 1.5rem;
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 1rem;
+}
+
+.damage-scheduler button:disabled {
+  background: #3a3a4d;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.damage-scheduler button:hover:not(:disabled) {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
 }
 
 /* Schedule Modal Improvements */
