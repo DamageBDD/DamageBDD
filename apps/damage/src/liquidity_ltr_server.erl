@@ -132,7 +132,8 @@ compute_liquidity_tightness() ->
                 C3Base = [math:log(1 + max(R, 0.0)) || R <- Rrp1],
                 C4Base =
                     case sum_abs(Repo1) of
-                        0.0 -> lists:duplicate(length(Repo1), 0.0);
+                        -0.0 -> lists:duplicate(length(Repo1), 0.0);
+                        +0.0 -> lists:duplicate(length(Repo1), 0.0);
                         _ -> Repo1
                     end,
                 %% Z-scores
@@ -143,15 +144,26 @@ compute_liquidity_tightness() ->
                 C3 = zscore_neg(C3Base),
                 C4 = zscore(C4Base),
                 %% Raw LTR per index
+
+                % [{a,1},{b,2},{c,3}]
+                Zipped12 = lists:zip(C1, C2),
+                % [{x,p},{y,q},{z,r}]
+                Zipped34 = lists:zip(C3, C4),
+
+                %% Then, zip the resulting lists of 2-tuples into a list of 4-tuples:
+                ZipList = lists:zipwith(
+                    fun({A, B}, {C, D}) -> {A, B, C, D} end, Zipped12, Zipped34
+                ),
                 LTRRawList =
                     lists:zipwith(
-                        fun({C1v, C2v, C3v, C4v}, Acc) ->
+                        fun({C1v, C2v, C3v, C4v}, _Acc) ->
                             (0.40 * C1v + 0.25 * C2v + 0.25 * C3v + 0.10 * C4v)
                         end,
-                        lists:zip4(C1, C2, C3, C4),
+                        ZipList,
                         %% dummy, not used; zipwith arity hack
                         C1
                     ),
+                ?LOG_DEBUG("LTRRaw ~p", [length(LTRRawList)]),
                 LTRRaw = lists:last(LTRRawList),
                 LTR0 = 50 + 15 * LTRRaw,
                 LTR = clamp(LTR0, 0.0, 100.0),
@@ -187,7 +199,7 @@ compute_liquidity_tightness() ->
 fred_api_key() ->
     case secrets:retrieve_decrypt(fred_api_key) of
         false -> undefined;
-        Key -> Key
+        {ok, Key} -> Key
     end.
 
 -spec fetch_series(binary() | list(), string()) ->
@@ -233,16 +245,10 @@ decode_series(Body) when is_binary(Body) ->
     %% Keep only numeric values; drop ".", ""
     Values =
         [
-            to_float(V)
-         || Obs <- Observations,
-            V0 = maps:get(<<"value">>, Obs, <<"">>),
-            V = ensure_binary(V0),
-            is_float(to_float(V))
+            to_float(maps:get(<<"value">>, Obs, <<"">>))
+         || Obs <- Observations
         ],
     {ok, Values}.
-
-ensure_binary(B) when is_binary(B) -> B;
-ensure_binary(L) when is_list(L) -> list_to_binary(L).
 
 to_float(Bin) when is_binary(Bin) ->
     try
@@ -268,7 +274,7 @@ drop_left(N, L) -> lists:nthtail(N, L).
 
 zscore(List) ->
     {Mu, Sd} = mean_std(List),
-    case Sd =:= 0.0 orelse Sd =:= undefined of
+    case Sd == 0.0 orelse Sd =:= undefined of
         true -> [0.0 || _ <- List];
         false -> [(X - Mu) / Sd || X <- List]
     end.
@@ -295,6 +301,6 @@ variance(List, Mu, N) ->
 sum_abs(List) ->
     lists:sum([abs(X) || X <- List]).
 
-clamp(X, Min, Max) when X < Min -> Min;
-clamp(X, Min, Max) when X > Max -> Max;
+clamp(X, Min, _Max) when X < Min -> Min;
+clamp(X, _Min, Max) when X > Max -> Max;
 clamp(X, _Min, _Max) -> X.
