@@ -314,7 +314,7 @@ function injectStylesOnce() {
   .dbdd-search{background:var(--card);border:1px solid var(--border);color:inherit;border-radius:10px;padding:8px 10px;min-width:220px;outline:none}
   .dbdd-refresh{background:var(--card);border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:8px 10px;cursor:pointer}
   .dbdd-body{display:grid;grid-template-columns: 1fr minmax(280px, 42%); gap:12px;}
-  .dbdd-list{display:grid;grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:10px; align-content:start; max-height:420px; overflow:auto; padding-right:2px}
+  .dbdd-list{display:grid;grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:10px; align-content:start; max-height:420px; padding-right:2px}
   .dbdd-card{display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:12px;padding:10px;text-align:left;color:inherit;cursor:pointer;transition:transform .06s ease,border-color .15s ease}
   .dbdd-card:hover{transform:translateY(-1px);border-color:#3b4a66}
   .dbdd-card.selected{outline:2px solid var(--brand);outline-offset:2px}
