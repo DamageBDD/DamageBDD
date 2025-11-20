@@ -57,6 +57,7 @@
     publish_zap_receipt/3,
     parse_zap_request/1
 ]).
+-import(damage_utils, [to_bin/1]).
 
 %% Define the record to store state
 
@@ -609,9 +610,6 @@ decode_nsec(Nsec) ->
     {ok, #{data := Data}} = bech32:decode(Nsec),
     {ok, RawPrivateKey} = bech32:convertbits(Data, 5, 8, [{padding, false}]),
     RawPrivateKey.
-to_bin(B) when is_binary(B) -> B;
-to_bin(L) when is_list(L) -> list_to_binary(L);
-to_bin(Else) -> iolist_to_binary(Else).
 
 hash_sha256_hex(Bin) ->
     lower_hex(crypto:hash(sha256, Bin)).
@@ -639,7 +637,7 @@ construct_http_auth(PubKey, Url, Method, Timestamp, Body) ->
 %% Parse the zap request JSON (stored in the BOLT11 description) into a map.
 %% Returns {ok, #{...}} or {error, Reason}.
 parse_zap_request(DescBin) when is_binary(DescBin) ->
-    try jsone:decode(DescBin) of
+    try jsx:decode(DescBin) of
         M when is_map(M) -> {ok, M}
     catch
         _:E -> {error, {invalid_zap_request_json, E}}
