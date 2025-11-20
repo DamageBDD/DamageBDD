@@ -238,8 +238,6 @@ html, body {
   outline: none;
 }
 
-
-
 /*
 .modal__header img {
   max-width: 120px;
@@ -251,7 +249,6 @@ html, body {
   text-align: center;
   padding: 2rem 1rem 0 1rem;
 }
-
 */
 
 .styled-btn {
@@ -570,6 +567,23 @@ ul[data-tabs] li a:hover {
   padding: 1.5rem;
   margin-bottom: 2rem;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+#schedules-tab button[type="button"] {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(to right, #28a745, #218838);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+#schedules-tab button[type="button"]:hover {
+  background: linear-gradient(to right, #218838, #1e7e34);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(33, 136, 56, 0.3);
 }
 
 /* Form Styling */
@@ -931,6 +945,7 @@ ul[data-tabs] li a:hover {
   padding: 10px;
   border-radius: 6px;
   margin-top: 6px;
+  box-sizing: border-box;
 }
 #installRequestForm label {
   display: block;
@@ -1118,6 +1133,34 @@ ul[data-tabs] li a:hover {
   background: rgba(30, 30, 47, 0.3);
   border-radius: 6px;
   border: 1px solid #3a3a4d;
+}
+
+.damage-scheduler button,
+.damage-scheduler #dryRunBtn,
+.damage-scheduler #approveBtn {
+  width: 100%;
+  padding: 0.85rem 1.5rem;
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 1rem;
+}
+
+.damage-scheduler button:disabled {
+  background: #3a3a4d;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.damage-scheduler button:hover:not(:disabled) {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
 }
 
 /* Schedule Modal Improvements */
@@ -1407,4 +1450,143 @@ ul[data-tabs] li a:hover {
 #logout-modal .modal__footer .modal__btn:not(.modal__btn-primary):hover {
   background: #4a4a5d;
   border-color: #5a5a6d;
+}
+
+/* Reset Password Page */
+body.reset-password-page {
+  background: linear-gradient(to bottom right, #1e1e2f, #2a2a3d);
+  color: #fff;
+  min-height: 100vh;
+  padding: 2rem;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+body.reset-password-page h2 {
+  color: #fff;
+  font-size: 2rem;
+  font-weight: 600;
+  margin-bottom: 2rem;
+  text-align: center;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #007bff;
+}
+
+body.reset-password-page #resetPasswdForm {
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 2rem;
+  background: #2a2a3d;
+  border-radius: 12px;
+  border: 1px solid #3a3a4d;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+body.reset-password-page #resetPasswdForm .password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  background: #1e1e2f;
+  border: 1px solid #3a3a4d;
+  border-radius: 6px;
+  padding: 0.5rem;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+body.reset-password-page #resetPasswdForm .password-wrapper:focus-within {
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+body.reset-password-page #resetPasswdForm .password-wrapper input {
+  flex: 1;
+  padding: 0.875rem 1rem;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+}
+
+body.reset-password-page #resetPasswdForm .toggle-password {
+  position: absolute;
+  right: 1rem;
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: #aaa;
+  padding: 0.5rem;
+  transition: color 0.2s;
+}
+
+body.reset-password-page #resetPasswdForm .toggle-password:hover {
+  color: #fff;
+}
+
+body.reset-password-page #resetPasswdForm .submit-button,
+body.reset-password-page #resetPasswdForm #resetPasswdBtn {
+  width: 100%;
+  padding: 0.875rem 2rem;
+  background: linear-gradient(to right, #0052cc, #007bff);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 1.5rem;
+}
+
+body.reset-password-page #resetPasswdForm .submit-button:hover,
+body.reset-password-page #resetPasswdForm #resetPasswdBtn:hover {
+  background: linear-gradient(to right, #003fa6, #005ec4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+}
+
+body.reset-password-page #resetPasswdForm h3 {
+  color: #ccc;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 2rem 0 1rem 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid #3a3a4d;
+}
+
+body.reset-password-page #resetPasswdForm ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+}
+
+body.reset-password-page #resetPasswdForm ul li {
+  color: #aaa;
+  font-size: 0.95rem;
+  padding: 0.5rem 0 0.5rem 1.5rem;
+  position: relative;
+  line-height: 1.6;
+}
+
+body.reset-password-page #resetPasswdForm ul li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: #007bff;
+  font-weight: bold;
+}
+
+@media (max-width: 600px) {
+  body.reset-password-page {
+    padding: 1rem;
+  }
+  
+  body.reset-password-page #resetPasswdForm {
+    padding: 1.5rem;
+  }
+  
+  body.reset-password-page h2 {
+    font-size: 1.5rem;
+  }
 }

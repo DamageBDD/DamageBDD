@@ -8,9 +8,17 @@
       </header>
       <main class="modal__content" id="modal-1-content">
         <form id="scheduleForm" onsubmit="submitScheduleForm(event)">
-          <input type="input" id="featurehash" required placeholder="Feature"><br>
-          <input type="password" id="password" autocomplete="current-password" required placeholder="Password"><br>
-          <button id="addScheduleBtn" aria-label="Add Schedule">Add Schedule.</button>
+          <div class="form-group">
+            <label for="featurehash">Feature Hash / CID</label>
+            <input type="text" id="featurehash" name="featurehash" required placeholder="Enter feature hash or IPFS CID">
+          </div>
+          <div class="form-group">
+            <label for="schedule-password">Node Password</label>
+            <input type="password" id="schedule-password" name="password" autocomplete="current-password" required placeholder="Enter node password">
+          </div>
+          <div class="form-actions">
+            <button type="button" id="addScheduleBtn" class="btn-primary" aria-label="Add Schedule">Add Schedule</button>
+          </div>
         </form>
       </main>
       <footer class="modal__footer">
