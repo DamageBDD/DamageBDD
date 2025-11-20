@@ -41,7 +41,6 @@
     node_ae_balance/0,
     node_damage_balance/0,
     account_keypair/1,
-    wait_tx/1,
     ae_to_aetto/1,
     delete_account/1,
     revoke_token/2,
@@ -64,10 +63,13 @@
     contract_balance/1,
     contract_deploy_for/3,
     contract_call_payfor_user/5,
-    contract_call_payfor_tx/1,
+    payfor_tx/1,
     contract_call_prepare_tx/5,
     deploy_account_registry/1,
-    deploy_node_registry/0
+    deploy_node_registry/0,
+    make_transaction_signature_base58/2,
+    attach_signature_base58/2,
+    wait_tx/1
 ]).
 -export([
     balance/1,
@@ -84,6 +86,8 @@
     test_paying_for_tx/0,
     test_contract_deploy_for/0
 ]).
+-export([build_channel_create_tx/8]).
+-export([finalize_channel_create/3, expected_signers/1, actual_signers/1, post_signed_or_payfor/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -207,7 +211,80 @@ extract_feature_hash(Data) ->
     Arguments = maps:get(arguments, Tx),
     %% Find the map in the "arguments" that contains the key "feature_hash"
     extract_arguments(Arguments).
+%% Encode FATE calldata for off-chain contract call using the compiled AACI
+-spec encode_call_data(term(), term(), list()) -> {ok, binary()} | {error, term()}.
+encode_call_data(Contract, Fun, Args) ->
+    try
+        {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
+        %% aeb_aaci / aeb_fate_abi are part of ae SDK; adjust if your project uses a wrapper
+        {ok, Calldata} = aeb_fate_abi:encode_call_data(AACI, Fun, Args),
+        {ok, Calldata}
+    catch
+        C:R:S ->
+            {error, {calldata_encode_failed, {C, R, S}}}
+    end.
 
+handle_call(
+    {channel_contract_call, CtId, Contract, Fun, Args, Gas, Amount, Meta},
+    _From,
+    #{
+        public_key := _AeAccount,
+        private_key := _PrivateKey,
+        initiator := Initiator,
+        responder := Responder,
+        round := Round,
+        state_hash := StateHash
+    } = State
+) ->
+    GasPrice = vanillae:min_gas_price(),
+    case encode_call_data(Contract, Fun, Args) of
+        {ok, Calldata} ->
+            %% Build the off-chain update payload
+            Update = #{
+                type => contract_call,
+                %% <<"ct_...">>
+                ct_id => CtId,
+                "fun" => Fun,
+                %% calldata (FATE)
+                args_cd => Calldata,
+                gas => Gas,
+                gas_price => GasPrice,
+                %% aetto to send
+                amount => Amount,
+                %% initiator pays by default
+                from => Initiator,
+                %% responder executes
+                to => Responder,
+                meta => Meta,
+                round => Round + 1
+            },
+
+            %% TODO: wire to the real channel FSM: send 'update', await 'update_ack'
+            Round1 = Round + 1,
+            Root1 = crypto:hash(sha256, term_to_binary({Update, Round1, StateHash})),
+
+            Ch1 = #{
+                round => Round1,
+                state_hash => Root1,
+                last_payload => Update,
+                pending_updates => []
+            },
+
+            Receipt = #{
+                kind => contract_call,
+                ct_id => CtId,
+                "fun" => Fun,
+                round => Round1,
+                state_hash => Root1,
+                gas => Gas,
+                gas_price => GasPrice,
+                amount => Amount,
+                meta => Meta
+            },
+            {reply, {ok, Receipt}, maps:merge(Ch1, State)};
+        {error, Reason} ->
+            {reply, {error, Reason}, State}
+    end;
 handle_call(
     {contract_call_payfor_user, Contract, ContractSource, Func, Args},
     _From,
@@ -802,17 +879,19 @@ contract_call_prepare_tx(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
     ContractCall.
-contract_call_payfor_tx(
+payfor_tx(
     SignedTX
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    Fee = vanillae:min_fee(),
+    Fee = min_fee(),
     %Gas = vanillae:min_gas(),
     %Amount = 0,
     GasPrice = vanillae:min_gas_price(),
 
     {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
+    ?LOG_DEBUG("payfor_tx ~p", [InnerTxBin]),
+    %{ok,_} = vanillae:dry_run(InnerTxBin),
 
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
     {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, Fee, InnerTxBin),
@@ -1349,7 +1428,173 @@ node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
     Balance = balance(list_to_binary(AeAccount)),
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
+%%--------------------------------------------------------------------
+%% Build *unsigned* channel_create_tx (v2) for the initiator to sign.
+%% Returns {ok, #{tx := EncodedUnsignedTx, tx_hash := TxHash}}.
+%%--------------------------------------------------------------------
 
+build_channel_create_tx(
+    InitiatorPubKey,
+    ResponderPubKey,
+    IniAmt0,
+    ResAmt0,
+    Reserve0,
+    Lock0,
+    TTL0,
+    _Fee0
+) ->
+    try
+        IniAmt = to_int(IniAmt0),
+        ResAmt = to_int(ResAmt0),
+        Reserve = to_int(Reserve0),
+        Lock = to_int(Lock0),
+        TTL = to_int(TTL0),
+        %Fee     = to_int(Fee0),
+        Fee = min_fee(),
+        %Gas = min_gas(),
+
+        (IniAmt >= 0) orelse error(bad_initiator_amount),
+        (ResAmt >= 0) orelse error(bad_responder_amount),
+        (Reserve >= 0) orelse error(bad_reserve),
+        (Lock >= 0) orelse error(bad_lock),
+        (TTL >= 0) orelse error(bad_ttl),
+        (Fee >= 0) orelse error(bad_fee),
+
+        %% Nonce must be the *initiator* account nonce
+        {ok, Nonce} = vanillae:next_nonce(InitiatorPubKey),
+
+        %% Optional: empty delegates; fresh state hash (can be 32 zeroes)
+        InitStateHash = <<0:256>>,
+        InitDelegates = [],
+
+        %% --- Fields/Template for channel_create_tx v2 (Iris) ---
+        Type = channel_create_tx,
+        Version = 2,
+        {account_pubkey, InitiatorId} = aeser_api_encoder:decode(InitiatorPubKey),
+        {account_pubkey, ResponderId} = aeser_api_encoder:decode(ResponderPubKey),
+
+        Fields = [
+            {initiator_id, aeser_id:create(account, InitiatorId)},
+            {initiator_amount, IniAmt},
+            {responder_id, aeser_id:create(account, ResponderId)},
+            {responder_amount, ResAmt},
+            {channel_reserve, Reserve},
+            {lock_period, Lock},
+            {ttl, TTL},
+            {fee, Fee},
+            {initiator_delegate_ids, InitDelegates},
+            {responder_delegate_ids, InitDelegates},
+            {state_hash, InitStateHash},
+            {nonce, Nonce}
+        ],
+
+        Template = [
+            {initiator_id, id},
+            {initiator_amount, int},
+            {responder_id, id},
+            {responder_amount, int},
+            {channel_reserve, int},
+            {lock_period, int},
+            {ttl, int},
+            {fee, int},
+            {initiator_delegate_ids, [id]},
+            {responder_delegate_ids, [id]},
+            {state_hash, binary},
+            {nonce, int}
+        ],
+
+        ?LOG_DEBUG("build_channel_create_tx fields ~p ~p", [Fields, Template]),
+        %% --- Serialize (unsigned) and encode ---
+        TxBin = aeser_chain_objects:serialize(Type, Version, Template, Fields),
+        EncTx = aeser_api_encoder:encode(transaction, TxBin),
+        TxHash = aeser_api_encoder:encode(tx_hash, TxBin),
+        ?LOG_DEBUG("build_channel_create_tx ~p ~p", [TxBin, EncTx]),
+        {ok, _} = vanillae:dry_run(EncTx),
+        {ok, #{
+            tx => EncTx,
+            tx_hash => TxHash,
+            initiator => InitiatorId,
+            responder => ResponderId
+        }}
+    catch
+        C:R:S ->
+            ?LOG_ERROR("build_channel_create_tx failed: ~p:~p~n~p", [C, R, S]),
+            {error, {C, R}}
+    end.
+
+%% Verify that the signed tx was signed by the *expected* account (initiator),
+%% then post directly or wrap in paying_for so node pays fee.
+-spec finalize_channel_create(binary(), binary(), boolean()) ->
+    {ok, map()} | {error, term()}.
+finalize_channel_create(UnsignedTx, SignedTx, _UsePayFor) ->
+    #{public_key := _NodeAeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    {transaction, TX} = aeser_api_encoder:decode(UnsignedTx),
+    Sig = make_transaction_signature(PrivateKey, TX),
+    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
+    ?LOG_INFO("Signed Tx client ~p", [SignedTx]),
+    {transaction, SignedBin} = aeser_api_encoder:decode(SignedTx),
+    ?LOG_INFO("Signed Tx client ~p", [SignedBin]),
+    {_Type, _Vsn, [[SigClient], _Tx]} = aeser_chain_objects:deserialize_type_and_vsn(SignedBin),
+
+    Fields = [{signatures, [Sig, SigClient]}, {transaction, TX}],
+    SignedTxNode = aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields),
+    SignedTxFinal = aeser_api_encoder:encode(transaction, SignedTxNode),
+    case vanillae:post_tx(SignedTxFinal) of
+        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+            wait_tx(ContractCallTxHash);
+        Error ->
+            Error
+    end.
+
+%% Determine who MUST sign an *unsigned* tx
+-spec expected_signers(binary()) -> {ok, [binary()]} | {error, term()}.
+expected_signers(EncUnsignedTx) ->
+    try
+        ?LOG_INFO("expected_signers ~p", [EncUnsignedTx]),
+        {transaction, TxBin} = aeser_api_encoder:decode(EncUnsignedTx),
+        Tx = aetx:deserialize_from_binary(TxBin),
+        ?LOG_INFO("expected_signers ~p", [Tx]),
+        Pks = aetx:signers(Tx),
+        {ok, [aeser_api_encoder:encode(account_pubkey, PK) || PK <- Pks]}
+    catch
+        C:R:_ -> {error, {C, R}}
+    end.
+
+%% Extract who DID sign a *signed* tx
+-spec actual_signers(binary()) -> {ok, [binary()]} | {error, term()}.
+actual_signers(EncSignedTx) ->
+    try
+        {tx, SignedBin} = aeser_api_encoder:decode(EncSignedTx),
+        Signed = aetx_sign:deserialize_from_binary(SignedBin),
+        Pks = aetx_sign:signers(Signed),
+        {ok, [aeser_api_encoder:encode(account_pubkey, PK) || PK <- Pks]}
+    catch
+        C:R:_ -> {error, {C, R}}
+    end.
+
+%% Post the already-signed tx, with optional paying_for wrapper
+%-spec post_signed_or_payfor(binary(), boolean()) -> {ok, map()} | {error, term()}.
+%post_signed_or_payfor(SignedTx, true) ->
+%    %% Node pays the fee; inner must be signed by initiator.
+%
+%    %% your existing helper that wraps+posts
+%    payfor_tx(SignedTx);
+%post_signed_or_payfor(SignedTx, false) ->
+%    vanillae:post_tx(SignedTx).
+
+to_int(V) when is_integer(V) -> V;
+to_int(V) when is_binary(V) -> list_to_integer(binary_to_list(V));
+to_int(V) when is_list(V) -> list_to_integer(V).
+
+%% Post already-signed tx, or wrap in paying_for if you prefer node-paid fees
+post_signed_or_payfor(SignedTx) ->
+    %% Option A: direct post (tx must be signed by initiator)
+    %% vanillae:post_tx(SignedTx).
+
+    %% Option B: node pays fee, inner must be signed by initiator:
+
+    %% your existing helper; returns {ok, #{ "tx_hash" := ...}} or {error, ...}
+    payfor_tx(SignedTx).
 deploy_account_registry(AccountKeypair) ->
     #{"contract_id" := ContractId} = contract_deploy_for(
         AccountKeypair, "contracts/AccountRegistry.aes", []

@@ -422,6 +422,70 @@ do_action_tx_throttled(Json, State, Req) ->
         _ ->
             do_action_tx(Json, State, Req)
     end.
+get_bin(Key, M) ->
+    V = maps:get(Key, M),
+    case V of
+        B when is_binary(B) -> B;
+        L when is_list(L) -> list_to_binary(L)
+    end.
+
+get_int(Key, M) ->
+    V = maps:get(Key, M),
+    case V of
+        I when is_integer(I) -> I;
+        B when is_binary(B) -> list_to_integer(binary_to_list(B));
+        L when is_list(L) -> list_to_integer(L)
+    end.
+
+%% action = "prepare_create_channel"
+%% ------------------------------------------------------------
+%% PREPARE: build final unsigned channel_create_tx (node = responder)
+%% ------------------------------------------------------------
+do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
+    Ini = get_bin(initiator_id, J),
+    IniAmt = get_int(initiator_amount, J),
+    ResAmt = get_int(responder_amount, J),
+    Reserve = get_int(channel_reserve, J),
+    Lock = get_int(lock_period, J),
+    TTL = get_int(ttl, J),
+    Fee = get_int(fee, J),
+
+    #{public_key := NodePub} = secrets:node_keypair(),
+    Responder = list_to_binary(NodePub),
+
+    case
+        damage_ae:build_channel_create_tx(Ini, Responder, IniAmt, ResAmt, Reserve, Lock, TTL, Fee)
+    of
+        {ok, #{tx := Unsigned, tx_hash := TxHash}} ->
+            Reply = #{
+                status => <<"ok">>, tx => Unsigned, tx_hash => TxHash, responder => Responder
+            },
+            {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
+        {error, Reason} ->
+            Reply = #{status => <<"notok">>, error => Reason},
+            {stop, cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State}
+    end;
+%% ------------------------------------------------------------
+%% FINALIZE: verify initiator signer; optionally wrap in paying_for; post
+%% ------------------------------------------------------------
+do_action_tx(
+    #{
+        action := <<"finalize_create_channel">>,
+        unsigned_tx := Unsigned,
+        signed_tx := Signed
+    } = J,
+    State,
+    Req
+) ->
+    PayFor = maps:get(payfor, J, true),
+    case damage_ae:finalize_channel_create(Unsigned, Signed, PayFor) of
+        {ok, #{<<"tx_hash">> := _TxHash} = R} ->
+            Reply = R#{status => <<"ok">>},
+            {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
+        {error, Reason} ->
+            Reply = #{status => <<"notok">>, error => list_to_binary(Reason)},
+            {stop, cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State}
+    end;
 do_action_tx(
     #{
         feature := FeatureData,
