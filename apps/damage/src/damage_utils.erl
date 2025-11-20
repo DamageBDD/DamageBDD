@@ -62,10 +62,14 @@ get_all_memory_stats() ->
     % erlang:memory(all) returns a list of {Key, Bytes} tuples
     StatsBytes = erlang:memory(),
     % Convert all byte values to MB for easier reading
-    lists:foldl(fun({Key, Bytes}, Acc) ->
-        MB = float(Bytes) / (1024 * 1024),
-        [{Key, MB} | Acc]
-    end, [], StatsBytes).
+    lists:foldl(
+        fun({Key, Bytes}, Acc) ->
+            MB = float(Bytes) / (1024 * 1024),
+            [{Key, MB} | Acc]
+        end,
+        [],
+        StatsBytes
+    ).
 
 tokenize(Step) when is_binary(Step) -> tokenize(binary_to_list(Step));
 tokenize(Step) ->

@@ -244,7 +244,7 @@ get_config(Config, Context, Req0) ->
     Concurrency = maps:get(concurrency, Context, 1),
     StreamFlag = maps:get(stream, Context, nostream),
     case {Concurrency, StreamFlag} of
-        {1, maybe_stream} ->
+        {1, true} ->
             %% stream logs via text formatter to cowboy stream
             Req = cowboy_req:stream_reply(
                 200, #{<<"content-type">> => <<"text/plain">>}, Req0
@@ -286,7 +286,7 @@ execute_bdd_once(Config, Context, FeatureData) ->
             }
             | _
         ] ->
-            {400, #{
+            {200, #{
                 status => <<"notok">>,
                 line => Line,
                 failing_step =>
@@ -601,17 +601,8 @@ from_json(Req0, State) ->
             %Concurrency = maps:get(concurrency, Json, 1),
             Stream = maps:get(stream, Json, false),
             case execute_bdd(Json, State, Req1) of
-                {Status, Response} when Stream =:= true ->
-                    %% stream single JSON payload
-                    Req2 = cowboy_req:stream_reply(
-                        Status,
-                        #{<<"content-type">> => <<"application/json">>},
-                        Req1
-                    ),
-                    Req3 = cowboy_req:stream_body(
-                        maps:get(message, Response, jsx:encode(Response)), fin, Req2
-                    ),
-                    {stop, Req3, State};
+                {_Status, _Response} when Stream == true ->
+                    {stop, Req1, State};
                 {Status, Response} ->
                     %% normal JSON reply
                     JsonBin = jsx:encode(Response),
