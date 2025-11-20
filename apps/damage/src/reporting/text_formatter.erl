@@ -107,7 +107,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
         get_keyword(Config, <<"Scenario:">>),
         ScenarioName,
         LineNo,
-        damage_utils:binarystr_join([X || {_Line, X} <- Tags], ",")
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>)
       ]
     );
 

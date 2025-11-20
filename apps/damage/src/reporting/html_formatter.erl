@@ -44,7 +44,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
       "<tr>\n<td>\nFeature\n</td>\n <td>~s</td> <td>tags: ~p</td> <td>~p</td> <td>~p</td></tr>",
       [
         FeatureName,
-        lists:flatten(string:join([[X] || X <- Tags], ",")),
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>),
         LineNo,
         Description
       ]
@@ -57,7 +57,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
       "<tr><td>Scenario</td> <td>~s</td> <td>tags: [~p]</td> <td>~p </td> <td>~p</td></tr>",
       [
         ScenarioName,
-        lists:flatten(string:join([[X] || X <- Tags], ",")),
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>),
         LineNo,
         ""
       ]
