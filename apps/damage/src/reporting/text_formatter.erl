@@ -85,7 +85,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
         get_keyword(Config, feature_keyword),
         FeatureName,
         LineNo,
-        damage_utils:binarystr_join([X || {_Line, X} <- Tags], ","),
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>),
         Description
       ]
     );
