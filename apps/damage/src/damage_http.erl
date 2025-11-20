@@ -295,9 +295,8 @@ execute_bdd_once(Config, Context, FeatureData) ->
             }};
         %% Parser/lexer error with pretty message
         {parse_error, LineNo, MessagePretty} ->
-            ?LOG_DEBUG("execute_bdd parse_error ~p.", [MessagePretty]),
             formatter:format(Config, error, {LineNo, MessagePretty}),
-            {400, #{
+            {200, #{
                 status => <<"notok">>,
                 message => MessagePretty,
                 line => LineNo
