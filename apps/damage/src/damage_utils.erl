@@ -40,13 +40,32 @@
         ensure_ssh_host_key/1,
         exists_cmd/1,
         render/2,
-        normalize_context/1
+        normalize_context/1,
+        to_bin/1
     ]
 ).
 -export([yaml_encode/1, yaml_encode_to_file/2]).
 -export([max_by/2]).
 -export([normalize_email/1, denormalize_email/1]).
 -export([map_strings_to_binary/1]).
+-export([memory_usage_mb/0]).
+-export([get_all_memory_stats/0]).
+
+memory_usage_mb() ->
+    TotalBytes = erlang:memory(total),
+    % 1 Megabyte = 1024 * 1024 bytes (1,048,576 bytes)
+    % Use float/1 for floating-point division to get a precise result
+    TotalMB = (float(TotalBytes) / (1024 * 1024)),
+    {ok, TotalMB}.
+
+get_all_memory_stats() ->
+    % erlang:memory(all) returns a list of {Key, Bytes} tuples
+    StatsBytes = erlang:memory(),
+    % Convert all byte values to MB for easier reading
+    lists:foldl(fun({Key, Bytes}, Acc) ->
+        MB = float(Bytes) / (1024 * 1024),
+        [{Key, MB} | Acc]
+    end, [], StatsBytes).
 
 tokenize(Step) when is_binary(Step) -> tokenize(binary_to_list(Step));
 tokenize(Step) ->
@@ -566,3 +585,7 @@ ensure_ssh_host_key(KeyPath) ->
             ok = ensure_dir(filename:dirname(KeyPath) ++ "/"),
             run(damage_utils:strf("ssh-keygen -t rsa -f ~s -N '' -q", [KeyPath]))
     end.
+
+to_bin(B) when is_binary(B) -> B;
+to_bin(L) when is_list(L) -> list_to_binary(L);
+to_bin(Else) -> iolist_to_binary(Else).

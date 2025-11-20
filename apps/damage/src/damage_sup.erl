@@ -162,6 +162,6 @@ init([]) ->
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
     AllChildren = Core ++ PoolSpecs,
-    ?LOG_DEBUG("Child specs (ordered): ~p", [AllChildren]),
+    %?LOG_DEBUG("Child specs (ordered): ~p", [AllChildren]),
 
     {ok, {SupFlags, AllChildren}}.
