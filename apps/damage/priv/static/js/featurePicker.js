@@ -141,7 +141,7 @@ export async function initDamageBDDPicker(opts) {
     const preview = meta.headSnippet || text.slice(0, 1500);
     $detail.innerHTML = `
       <div class="dbdd-detail-head">
-        <div>
+        <div class="dbdd-detail-left">
           <div class="dbdd-detail-title">${escapeHtml(meta.title || '(Untitled Feature)')}</div>
           <div class="dbdd-detail-sub">${escapeHtml(meta.description || '')}</div>
         </div>
@@ -331,6 +331,7 @@ function injectStylesOnce() {
   .dbdd-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
   .dbdd-detail-title{font-size:15px;font-weight:700}
   .dbdd-detail-sub{white-space:pre-wrap;color:var(--muted)}
+  .dbdd-detail-left{width: 50%; white-space: normal; word-wrap: break-word; overflow-wrap: break-word;}
   .dbdd-detail-right{display:flex;gap:10px;align-items:center}
   .dbdd-detail-cid{font-family:ui-monospace,Consolas,Menlo,monospace;font-size:12px;color:var(--muted)}
   .dbdd-link{font-size:12px;color:var(--brand);text-decoration:none;border-bottom:1px dotted var(--brand)}
