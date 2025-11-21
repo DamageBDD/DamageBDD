@@ -91,38 +91,59 @@ handle_info(rebalance, #state{symbol = Symbol, rules = Rules} = State) ->
     ?LOG_DEBUG("damage_mm got rebalance ~p", [State]),
     case get_mid_price(Symbol, Rules) of
         {ok, Mid0} when Mid0 > 0 ->
-            %% --- pull macro liquidity signal (safe) ----------------------
-            LTR = ltr_from_server(),
+            %% --- 1) Pull macro liquidity signal (LTR) -------------------
+            LTR  = ltr_from_server(),
             Mid1 = apply_ltr_bias(Mid0, LTR),
-            Mid = round_tick(Mid1),
+            Mid  = round_tick(Mid1),
 
-            %% dynamic ECAI parameters
-            StepBP = mm_params:get_intraday_param("STEP_BP", Symbol, 30),
-            Levels = mm_params:get_intraday_param("LEVELS", Symbol, 8),
-            QtySlope = mm_params:get_intraday_param("QTY_SLOPE", Symbol, 1.12),
-            Budget0 = mm_params:get_intraday_param("BUDGET", Symbol, 500.0),
-            Budget = budget_from_ltr(Budget0, LTR),
+            %% --- 2) Dynamic ECAI parameters -----------------------------
+            StepBP     = mm_params:get_intraday_param("STEP_BP",   Symbol, 30),
+            Levels0    = mm_params:get_intraday_param("LEVELS",    Symbol, 8),
+            QtySlope0  = mm_params:get_intraday_param("QTY_SLOPE", Symbol, 1.12),
+            Budget0    = mm_params:get_intraday_param("BUDGET",    Symbol, 500.0),
+            RefreshMs0 = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
 
-            BuyL = gen_ladder(buy, Mid, StepBP, Levels, QtySlope),
-            SellL = gen_ladder(sell, Mid, StepBP, Levels, QtySlope),
+            %% --- 3) LTR-aware tuning (push vs defend) -------------------
+            {LevelsBuy, LevelsSell,
+             QtySlopeBuy, QtySlopeSell,
+             BudgetBuy, BudgetSell,
+             RefreshMs} =
+                ltr_mm_profile(LTR, Levels0, QtySlope0, Budget0, RefreshMs0),
+
+            %% --- 4) Clean up our existing ladders before re-placing -----
+            ok = cancel_own_ladders(Symbol),
+
+            %% --- 5) Build new ladders around biased mid -----------------
+            BuyL0  = gen_ladder(buy,  Mid, StepBP, LevelsBuy,  QtySlopeBuy),
+            SellL0 = gen_ladder(sell, Mid, StepBP, LevelsSell, QtySlopeSell),
 
             %% guard so we don't cross the book
-            SafeBuy = [{min(P, Mid * 0.999), Q} || {P, Q} <- BuyL],
-            SafeSell = [{max(P, Mid * 1.001), Q} || {P, Q} <- SellL],
+            SafeBuy  = [{min(P, Mid * 0.999), Q} || {P, Q} <- BuyL0],
+            SafeSell = [{max(P, Mid * 1.001), Q} || {P, Q} <- SellL0],
 
-            {PlacedB, CostB} = place_capped(buy, SafeBuy, Budget / 2),
-            {PlacedS, CostS} = place_capped(sell, SafeSell, Budget / 2),
+            %% --- 6) Place orders under LTR-scaled budgets --------------
+            {PlacedB, CostB} = place_capped(buy,  SafeBuy,  BudgetBuy),
+            {PlacedS, CostS} = place_capped(sell, SafeSell, BudgetSell),
+
             ?LOG_INFO(
-                "Rebalanced @ ~p (LTR=~p); buys ~p (~p USDT), sells ~p (~p USDT), budget ~p",
-                [Mid, LTR, length(PlacedB), CostB, length(PlacedS), CostS, Budget]
-            );
+                "Rebalanced @ ~p (LTR=~p); buys ~p (~p USDT), sells ~p (~p USDT), "
+                "budget {buy=~p,sell=~p}, refresh=~p ms",
+                [Mid, LTR,
+                 length(PlacedB), CostB,
+                 length(PlacedS), CostS,
+                 BudgetBuy, BudgetSell,
+                 RefreshMs]
+            ),
+            erlang:send_after(RefreshMs, self(), rebalance),
+            {noreply, State};
+
         Other ->
-            ?LOG_INFO("Skip rebalance, no mid: ~p", [Other])
-    end,
-    %% dynamic refresh cadence from ECAI
-    RefreshMs = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
-    erlang:send_after(RefreshMs, self(), rebalance),
-    {noreply, State};
+            ?LOG_INFO("Skip rebalance, no mid: ~p", [Other]),
+            RefreshMs = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
+            erlang:send_after(RefreshMs, self(), rebalance),
+            {noreply, State}
+    end;
+
 handle_info(run_strategy, #state{symbol = Symbol, rules = Rules} = State) ->
     case get_mid_price(Symbol, Rules) of
         {ok, Mid} ->
@@ -455,16 +476,103 @@ apply_ltr_bias(Mid0, LTR) when is_number(LTR) ->
         end,
     Mid0 * Mult.
 
-%% Scale MM budget with liquidity regime:
-%% loose USD -> deploy more capital
-%% tight USD -> be conservative
-budget_from_ltr(BaseBudget, undefined) ->
-    BaseBudget;
-budget_from_ltr(BaseBudget, LTR) when is_number(LTR) ->
+%% ------------------------------------------------------------------
+%% LTR-aware MM profile:
+%%  - Loose USD (low LTR)     -> push DAMAGE up:
+%%      more buy levels, steeper buy slope, larger buy budget,
+%%      smaller sell stack (just enough to provide liquidity).
+%%  - Tight USD (high LTR)    -> defend / let price drift down:
+%%      more sell levels, steeper sell slope, larger sell budget.
+%%  - Neutral                 -> symmetric.
+%% ------------------------------------------------------------------
+ltr_mm_profile(undefined, Levels0, QtySlope0, Budget0, Refresh0) ->
+    %% No macro signal -> symmetric, vanilla
+    {
+        Levels0, Levels0,
+        QtySlope0, QtySlope0,
+        Budget0 / 2, Budget0 / 2,
+        Refresh0
+    };
+ltr_mm_profile(LTR, Levels0, QtySlope0, Budget0, Refresh0) when is_number(LTR) ->
     case LTR of
-        V when V < 30 -> BaseBudget * 1.30;
-        V when V < 50 -> BaseBudget * 1.15;
-        V when V < 70 -> BaseBudget;
-        V when V < 85 -> BaseBudget * 0.80;
-        _ -> BaseBudget * 0.60
+        %% Very loose -> aggressive push up
+        V when V < 30 ->
+            {
+                trunc(Levels0 * 1.3), trunc(Levels0 * 0.7),
+                QtySlope0 * 1.10,     max(1.0, QtySlope0 * 0.95),
+                Budget0 * 0.70,       Budget0 * 0.30,
+                max(2_000, Refresh0 div 2)
+            };
+        %% Loose -> moderate push up
+        V when V < 50 ->
+            {
+                trunc(Levels0 * 1.15), trunc(Levels0 * 0.9),
+                QtySlope0 * 1.05,      QtySlope0,
+                Budget0 * 0.60,        Budget0 * 0.40,
+                max(3_000, Refresh0 * 3 div 4)
+            };
+        %% Neutral
+        V when V < 70 ->
+            {
+                Levels0, Levels0,
+                QtySlope0, QtySlope0,
+                Budget0 / 2, Budget0 / 2,
+                Refresh0
+            };
+        %% Somewhat tight -> defensive
+        V when V < 85 ->
+            {
+                trunc(Levels0 * 0.9),  trunc(Levels0 * 1.15),
+                QtySlope0,             QtySlope0 * 1.05,
+                Budget0 * 0.40,        Budget0 * 0.60,
+                Refresh0
+            };
+        %% Very tight -> strongly defensive
+        _ ->
+            {
+                trunc(Levels0 * 0.7),  trunc(Levels0 * 1.3),
+                max(1.0, QtySlope0 * 0.95), QtySlope0 * 1.10,
+                Budget0 * 0.30,        Budget0 * 0.70,
+                Refresh0
+            }
     end.
+%% ------------------------------------------------------------------
+%% Cancel all active DAMAGEUSDT orders owned by this API key.
+%% NOTE: Coinstore's cancelBatch wants orderIds + symbol.
+%% ------------------------------------------------------------------
+cancel_own_ladders(Symbol) ->
+    case fetch_order_book(Symbol) of
+        {ok, Orders} when is_list(Orders) ->
+            %% For now: cancel *all* active orders on this symbol.
+            OrderIds = [maps:get(<<"ordId">>, O) || O <- Orders],
+            cancel_orders_batch(Symbol, OrderIds);
+        _ ->
+            ok
+    end.
+
+cancel_orders_batch(_Symbol, []) ->
+    ok;
+cancel_orders_batch(Symbol, OrderIds) ->
+    BodyMap = #{
+        <<"symbol">>   => list_to_binary(Symbol),
+        <<"orderIds">> => OrderIds
+    },
+    BodyJSON = jsx:encode(BodyMap),
+    {_Expires, _SignatureHex, Headers} = get_sign(BodyMap),
+    {ok, ConnPid} = gun:open(?HOST, ?PORT, #{tls_opts => [{verify, verify_none}]}),
+    {ok, _Protocol} = gun:await_up(ConnPid),
+    Path = "/api/trade/order/cancelBatch",
+    ?LOG_INFO("Cancel batch orders for ~s: ~p", [Symbol, OrderIds]),
+    StreamRef = gun:post(ConnPid, Path, Headers, BodyJSON),
+    _Resp =
+        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+            {response, nofin, _Status, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            {response, fin, _Status, _RespHeaders} ->
+                no_data;
+            Other ->
+                ?LOG_WARNING("Unexpected cancelBatch response: ~p", [Other]),
+                no_data
+        end,
+    gun:close(ConnPid),
+    ok.
