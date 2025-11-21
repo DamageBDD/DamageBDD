@@ -491,8 +491,10 @@
               </div>
                 <p> Edit Feature in the textarea below.
                 </p>
-                  <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted" placeholder="Enter test case here ..." rows=20>
-                  </textarea>
+                <div class="damage-editor">
+                  <div id="damageLineNumbers" aria-hidden="true"></div>
+                  <textarea id="damageTextArea"  language="gherkin" template="syntax-highlighted" placeholder="Enter test case here ..." rows=20></textarea>
+                </div>
                 <div id="runsettings">
                   <!--<label for="difficulty">Concurrency:</label>
                   <select id="difficulty">
@@ -608,6 +610,7 @@
       <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
       <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
       <script src="https://cdn.jsdelivr.net/gh/AdrianVillamayor/Wizard-JS@2.0.3/dist/index.js"></script>
+      <script src="js/lineNumbers.js"></script>
 
       <script src="/static/js/toasts.js"></script>
       <script src="/static/js/reports.js"></script>
