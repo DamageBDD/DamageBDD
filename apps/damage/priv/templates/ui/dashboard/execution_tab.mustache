@@ -7,7 +7,10 @@
         <button id="picker-dialog-btn" class="styled-btn" aria-label="Select Feature." title="Select a Feature to begin">Select Feature To Begin</button>
       </div>
       <p>Edit Feature in the textarea below.</p>
-      <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted" placeholder="Enter test case here ..." rows="20"></textarea>
+      <div class="damage-editor">
+        <div id="damageLineNumbers" aria-hidden="true"></div>
+        <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted" placeholder="Enter test case here ..." rows="20"></textarea>
+      </div>
       <div>
         <button type="submit" class="styled-btn" id="execute-feature-btn">Execute Feature</button>
       </div>
