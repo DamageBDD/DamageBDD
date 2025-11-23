@@ -31,51 +31,52 @@
 %% BODY  :: the function body (expression(s)) that returns the new Context
 
 %% ===== Parts Macros ==========================================================
+%% erlfmt:ignore-begin
 %% WHEN
 -define(STEP_HTTP_GET_WITH_PARAMS, ["I send a GET request to ", Path, " with parameters"]).
--define(STEP_HTTP_GET_PATH, ["I make a GET request to", Path]).
--define(STEP_HTTP_POST_PATH, ["I make a POST request to", Path]).
--define(STEP_HTTP_PATCH_PATH, ["I make a PATCH request to", Path]).
--define(STEP_HTTP_PUT_PATH, ["I make a PUT request to", Path]).
--define(STEP_HTTP_OPTIONS_PATH, ["I make a OPTIONS request to", Path]).
--define(STEP_HTTP_DELETE_PATH, ["I make a DELETE request to", Path]).
--define(STEP_HTTP_TRACE_PATH, ["I make a TRACE request to", Path]).
--define(STEP_HTTP_FORM_POST_PATH, ["I make a form POST request to", Path]).
--define(STEP_HTTP_CSRF_POST_PATH, ["I make a CSRF POST request to", Path]).
--define(STEP_HEAD_PATH, ["I make a HEAD request to", Path]).
--define(STEP_POLL_UNTIL_EQ, [
-    "I keep sending GET requests to",
-    UrlPathSegment,
-    "until JSON at path",
-    JsonPath,
-    "is"
-]).
+-define(STEP_HTTP_GET_PATH,        ["I make a GET request to", Path]).
+-define(STEP_HTTP_POST_PATH,       ["I make a POST request to", Path]).
+-define(STEP_HTTP_PATCH_PATH,      ["I make a PATCH request to", Path]).
+-define(STEP_HTTP_PUT_PATH,        ["I make a PUT request to", Path]).
+-define(STEP_HTTP_OPTIONS_PATH,    ["I make a OPTIONS request to", Path]).
+-define(STEP_HTTP_DELETE_PATH,     ["I make a DELETE request to", Path]).
+-define(STEP_HTTP_TRACE_PATH,      ["I make a TRACE request to", Path]).
+-define(STEP_HTTP_FORM_POST_PATH,  ["I make a form POST request to", Path]).
+-define(STEP_HTTP_CSRF_POST_PATH,  ["I make a CSRF POST request to", Path]).
+-define(STEP_HEAD_PATH,            ["I make a HEAD request to", Path]).
+-define(STEP_POLL_UNTIL_EQ,        ["I keep sending GET requests to",
+                                    UrlPathSegment,
+                                    "until JSON at path",
+                                    JsonPath,
+                                    "is"
+                                   ]).
 
 %% THEN
--define(STEP_THEN_CONTAINS, ["the response must contain text", Contains]).
--define(STEP_THEN_STATUS_EQ, ["the response status must be", Status]).
--define(STEP_THEN_STATUS_ONEOF, ["the response status must be one of", Statuses]).
--define(STEP_THEN_YAML_MUST, ["the yaml at path", Path, "must be", Expected0]).
--define(STEP_THEN_JSON_MUST, ["the json at path", Path, "must be", Expected0]).
--define(STEP_THEN_HEADER_IS, ["the", Var, "header should be", Value]).
--define(STEP_THEN_PRINT_JSON_PATH, ["I print the json at path", Path]).
--define(STEP_THEN_PRINT_BODY, ["I print the response body"]).
--define(STEP_THEN_PRINT_RESP, ["I print the response"]).
--define(STEP_THEN_STORE_JSON, ["I store the JSON at path", Path, "in", Variable]).
--define(STEP_JSON_SHOULD_BE, ["the JSON should be"]).
--define(STEP_VAR_EQ_JSON_LIT, ["the variable", Variable, "should be equal to JSON", Value]).
--define(STEP_JSON_SHOULD_ALIAS, ["the JSON at path", JsonPath, "should be"]).
+-define(STEP_THEN_CONTAINS,       ["the response must contain text", Contains]).
+-define(STEP_THEN_STATUS_EQ,      ["the response status must be", Status]).
+-define(STEP_THEN_STATUS_ONEOF,   ["the response status must be one of", Statuses]).
+-define(STEP_THEN_YAML_MUST,      ["the yaml at path", Path, "must be", Expected0]).
+-define(STEP_THEN_JSON_MUST,      ["the json at path", Path, "must be", Expected0]).
+-define(STEP_THEN_HEADER_IS,      ["the", Var, "header should be", Value]).
+-define(STEP_THEN_PRINT_JSON_PATH,["I print the json at path", Path]).
+-define(STEP_THEN_PRINT_BODY,     ["I print the response body"]).
+-define(STEP_THEN_PRINT_RESP,     ["I print the response"]).
+-define(STEP_THEN_STORE_JSON,     ["I store the JSON at path", Path, "in", Variable]).
+-define(STEP_JSON_SHOULD_BE,      ["the JSON should be"]).
+-define(STEP_VAR_EQ_JSON_LIT,     ["the variable", Variable, "should be equal to JSON", Value]).
+-define(STEP_JSON_SHOULD_ALIAS,   ["the JSON at path", JsonPath, "should be"]).
 
 %% GIVEN / ANY
--define(STEP_GIVEN_USING_SERVER, ["I am using server", Server]).
--define(STEP_SET_BASE_URL, ["I set base URL to", Server]).
--define(STEP_STORE_COOKIES, ["I store cookies"]).
--define(STEP_SET_HEADER, ["I set", Header, "header to", Value]).
--define(STEP_SET_VAR, ["I set the variable", Variable, "to", Value]).
--define(STEP_NO_VERIFY_SSL, ["I do not want to verify server certificate"]).
--define(STEP_GIVEN_BASIC_AUTH, ["I set BasicAuth username to ", User, "and password to", Password]).
--define(STEP_GIVEN_OAUTH_QUERY, ["I use query OAuth with key=", Key, "and secret=", Secret]).
--define(STEP_GIVEN_OAUTH_HEADER, ["I use header OAuth with key=", Key, "and secret=", Secret]).
+-define(STEP_GIVEN_USING_SERVER,  ["I am using server", Server]).
+-define(STEP_SET_BASE_URL,        ["I set base URL to", Server]).
+-define(STEP_STORE_COOKIES,       ["I store cookies"]).
+-define(STEP_SET_HEADER,          ["I set", Header, "header to", Value]).
+-define(STEP_SET_VAR,             ["I set the variable", Variable, "to", Value]).
+-define(STEP_NO_VERIFY_SSL,       ["I do not want to verify server certificate"]).
+-define(STEP_GIVEN_BASIC_AUTH,    ["I set BasicAuth username to ", User, "and password to", Password]).
+-define(STEP_GIVEN_OAUTH_QUERY,   ["I use query OAuth with key=", Key, "and secret=", Secret]).
+-define(STEP_GIVEN_OAUTH_HEADER,  ["I use header OAuth with key=", Key, "and secret=", Secret]).
+%% erlfmt:ignore-end
 
 %%------------------------------------------------------------------------------
 %% @doc
