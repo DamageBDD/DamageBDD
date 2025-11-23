@@ -22,6 +22,7 @@ docker run --rm -it \
        "$IMAGE_NAME" \
        bash -lc '
     set -e
+    set -x
     git reset --hard
     # optional, only if this is actually a git clone:
     if [ -d .git ]; then git pull --ff-only || true; fi
@@ -29,12 +30,12 @@ docker run --rm -it \
     rm -f rebar.lock
     rm -rf _build
 
-    #bash
-    DEBUG=1
-    rebar3 as prod release
+    bash
+    DEBUG=1 rebar3 as prod release
 
     # package with your plugin
-    rebar3 pkg gen -t arch
+    export CUDA_LIB64=/opt/cuda/lib64/
+    DEBUG=1 rebar3 pkg gen -t arch
     cd _build/pkg/arch/damage/
     makepkg 
 

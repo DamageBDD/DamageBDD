@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
       ruby ruby-dev rubygems \
-      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync \
+      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync nvidia-cuda-dev\
     && gem install --no-document fpm
 
 # --- kerl + OTP
