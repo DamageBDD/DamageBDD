@@ -12,7 +12,7 @@ Feature: Customer account management for DamageBDD
     """
     Then the response status must be "201"
     Then the yaml at path "$.status" must be "ok"
-    Then "john.doe@damagebdd.com" must have received a email in "1 minute" with content
+    Then smtp inbox at "john.doe@damagebdd.com" must have received a email in "1 minute" with content
     """
 Hello
     """
