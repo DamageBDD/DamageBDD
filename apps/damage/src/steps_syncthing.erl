@@ -12,6 +12,7 @@
 %% -------------------------------------------------------------------
 %% Step patterns
 %% -------------------------------------------------------------------
+%% erlfmt:ignore-begin
 
 -define(STEP_SYN_BASE_URL,        ["I am using syncthing at", Url]).
 -define(STEP_SYN_API_KEY,         ["I set syncthing api key to", ApiKey]).
@@ -19,6 +20,7 @@
 -define(STEP_SYN_SHARE_FOLDER,    ["I share folder", FolderId, "at path", FolderPath, "named", Label, "with device", DeviceId]).
 -define(STEP_SYN_ADD_DEV_TO_FOLD, ["I add device", DeviceId, "to syncthing folder", FolderId]).
 -define(STEP_SYN_STATUS,          ["the syncthing response status must be", Status]).
+%% erlfmt:ignore-end
 
 %% -------------------------------------------------------------------
 %% Public BDD step entry point
@@ -36,18 +38,16 @@
 %% Base URL
 step(_Config, Context, _Keyword, _Line, ?STEP_SYN_BASE_URL, _Args) ->
     {ok, set_syncthing_base_url(Context, Url)};
-
 %% API key
 step(_Config, Context, _Keyword, _Line, ?STEP_SYN_API_KEY, _Args) ->
     {ok, set_syncthing_api_key(Context, ApiKey)};
-
 %% Add/update a device in Syncthing config
 step(Config, Context, _Keyword, _Line, ?STEP_SYN_ADD_DEVICE, _Args) ->
     DeviceIdBin = to_bin(DeviceId),
-    NameBin     = to_bin(Name),
+    NameBin = to_bin(Name),
     Body = #{
         <<"deviceID">> => DeviceIdBin,
-        <<"name">>     => NameBin
+        <<"name">> => NameBin
     },
     Path = "/rest/config/devices",
     case syncthing_request(Config, Context, post, Path, Body) of
@@ -57,19 +57,18 @@ step(Config, Context, _Keyword, _Line, ?STEP_SYN_ADD_DEVICE, _Args) ->
             ?LOG_ERROR("Syncthing add device failed: ~p", [Error]),
             Error
     end;
-
 %% Create/share a folder with a device (POST /rest/config/folders)
 step(Config, Context, _Keyword, _Line, ?STEP_SYN_SHARE_FOLDER, _Args) ->
-    FolderIdBin   = to_bin(FolderId),
+    FolderIdBin = to_bin(FolderId),
     FolderPathBin = to_bin(FolderPath),
-    LabelBin      = to_bin(Label),
-    DeviceIdBin   = to_bin(DeviceId),
+    LabelBin = to_bin(Label),
+    DeviceIdBin = to_bin(DeviceId),
 
     Body = #{
-        <<"id">>      => FolderIdBin,
-        <<"label">>   => LabelBin,
-        <<"path">>    => FolderPathBin,
-        <<"type">>    => <<"sendreceive">>,
+        <<"id">> => FolderIdBin,
+        <<"label">> => LabelBin,
+        <<"path">> => FolderPathBin,
+        <<"type">> => <<"sendreceive">>,
         <<"devices">> => [#{<<"deviceID">> => DeviceIdBin}]
     },
 
@@ -81,7 +80,6 @@ step(Config, Context, _Keyword, _Line, ?STEP_SYN_SHARE_FOLDER, _Args) ->
             ?LOG_ERROR("Syncthing share folder failed: ~p", [Error]),
             Error
     end;
-
 %% Add a device to an existing folder (PATCH /rest/config/folders/<id>)
 step(Config, Context, _Keyword, _Line, ?STEP_SYN_ADD_DEV_TO_FOLD, _Args) ->
     FolderIdBin = to_bin(FolderId),
@@ -117,7 +115,6 @@ step(Config, Context, _Keyword, _Line, ?STEP_SYN_ADD_DEV_TO_FOLD, _Args) ->
             ?LOG_ERROR("Syncthing GET folder failed: ~p", [Error]),
             Error
     end;
-
 %% Assert last response status code
 step(_Config, Context, _Keyword, _Line, ?STEP_SYN_STATUS, _Args) ->
     case maps:get(last_syncthing_response, Context, undefined) of
@@ -131,11 +128,7 @@ step(_Config, Context, _Keyword, _Line, ?STEP_SYN_STATUS, _Args) ->
             end;
         undefined ->
             {error, no_syncthing_response}
-    end;
-
-%% If the step does not match anything in this module, let another module try.
-step(_Config, _Context, _Keyword, _Line, _Step, _Args) ->
-    undefined.
+    end.
 
 %% -------------------------------------------------------------------
 %% Helpers
@@ -152,18 +145,18 @@ set_syncthing_api_key(Context, ApiKeyBin) when is_binary(ApiKeyBin) ->
     Context#{syncthing_api_key => binary_to_list(ApiKeyBin)}.
 
 to_bin(B) when is_binary(B) -> B;
-to_bin(L) when is_list(L)   -> list_to_binary(L).
+to_bin(L) when is_list(L) -> list_to_binary(L).
 
-default_port(<<"http">>)  -> 8384;
+default_port(<<"http">>) -> 8384;
 default_port(<<"https">>) -> 8384;
-default_port(_)           -> 8384.
+default_port(_) -> 8384.
 
 get_syncthing_base(Context) ->
     maps:get(syncthing_base_url, Context, "http://127.0.0.1:8384").
 
 get_syncthing_headers(Context) ->
     ApiKey = maps:get(syncthing_api_key, Context, undefined),
-    Base   = [{<<"Accept">>, <<"application/json">>}],
+    Base = [{<<"Accept">>, <<"application/json">>}],
     case ApiKey of
         undefined ->
             Base;
@@ -179,13 +172,14 @@ add_ct_json(Headers) ->
 ensure_device_in_list(DeviceIdBin, Devices0) ->
     Already =
         lists:any(
-          fun(#{<<"deviceID">> := D}) -> D =:= DeviceIdBin;
-             (_)                      -> false
-          end,
-          Devices0
+            fun
+                (#{<<"deviceID">> := D}) -> D =:= DeviceIdBin;
+                (_) -> false
+            end,
+            Devices0
         ),
     case Already of
-        true  -> Devices0;
+        true -> Devices0;
         false -> Devices0 ++ [#{<<"deviceID">> => DeviceIdBin}]
     end.
 
@@ -201,21 +195,26 @@ ensure_device_in_list(DeviceIdBin, Devices0) ->
     syn_method(),
     string(),
     map() | undefined
-) -> {ok, #{status := integer(), headers := list(), body := binary()}}
-   | {error, term()}.
+) ->
+    {ok, #{status := integer(), headers := list(), body := binary()}}
+    | {error, term()}.
 syncthing_request(_Config, Context, Method, Path, Body) ->
-    Base  = get_syncthing_base(Context),
+    Base = get_syncthing_base(Context),
     %% uri_string:parse/1 accepts list or binary
     {ok, Parsed} = uri_string:parse(Base),
     HostBin = maps:get(host, Parsed, <<"127.0.0.1">>),
-    Host    = binary_to_list(HostBin),
-    Scheme  = maps:get(scheme, Parsed, <<"http">>),
-    Port0   = maps:get(port, Parsed, undefined),
-    Port    = case Port0 of undefined -> default_port(Scheme); P -> P end,
+    Host = binary_to_list(HostBin),
+    Scheme = maps:get(scheme, Parsed, <<"http">>),
+    Port0 = maps:get(port, Parsed, undefined),
+    Port =
+        case Port0 of
+            undefined -> default_port(Scheme);
+            P -> P
+        end,
     Transport =
         case Scheme of
             <<"https">> -> tls;
-            _           -> tcp
+            _ -> tcp
         end,
 
     ConnOpts = #{transport => Transport, protocols => [http]},
