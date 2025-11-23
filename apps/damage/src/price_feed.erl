@@ -77,7 +77,7 @@ fetch_btc_aud_price() ->
         {error, Error} ->
             ?LOG_WARNING("Error fetching price from ~p ~p", [PriceHost, Error]),
             {error, Error};
-        {response, nofin, Status, _Headers0} ->
+        {response, nofin, _Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
             case catch jsx:decode(Body, [return_maps]) of
                 [
