@@ -1,3 +1,4 @@
+@smoke @sev1
 Feature: Http test feature
   Scenario: Test post yaml
     Given I am using server "http://localhost:8080"
