@@ -25,7 +25,6 @@
 ]).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("ecai.hrl").
 
 %% Defaults (tune for your box; values are bytes)
 

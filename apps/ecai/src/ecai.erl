@@ -22,7 +22,6 @@
     hash_to_curve/1,
     curve_add/4
 ]).
--include("ecai.hrl").
 
 -include_lib("kernel/include/logger.hrl").
 
