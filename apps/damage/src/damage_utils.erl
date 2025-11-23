@@ -543,8 +543,13 @@ run(Cmd) ->
     end.
 
 ensure_dir(Dir) ->
-    ok = filelib:ensure_dir(filename:join(Dir, ".keep")),
-    ok.
+    case filelib:is_dir(Dir) of
+        true ->
+            ok;
+        false ->
+            ok = filelib:ensure_dir(filename:join(Dir, ".keep")),
+            ok
+    end.
 
 exists_cmd(Cmd) ->
     case os:find_executable(Cmd) of

@@ -23,6 +23,7 @@
     load/1,
     get_wikipedia_job/1
 ]).
+-import(damage_utils,[ensure_dir/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -194,17 +195,6 @@ safe_decode(Line) ->
             end
     end.
 
-%trim_nl(<<$\r, T/binary>>) -> trim_nl(T);
-%trim_nl(<<$\n, T/binary>>) -> trim_nl(T);
-%trim_nl(B) -> B.
-ensure_dir(Dir) ->
-    case filelib:is_dir(Dir) of
-        true ->
-            ok;
-        false ->
-            filelib:ensure_dir(filename:join(Dir, "x")),
-            ok
-    end.
 
 checkpoint_path(Dir, FilePath) ->
     %% content-address the *path* to avoid clashes
