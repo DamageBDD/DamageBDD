@@ -1,9 +1,15 @@
 -record(rec, {
-  key,                 % binary()
-  host = "127.0.0.1",
-  port,                % integer()
-  os_pid,              % OS pid int (from erlexec)
-  exec_pid,            % erlang pid linked/monitored by erlexec
-  user_data_dir,       % temp profile dir
-  log_file             % chrome log
+    % binary()
+    key,
+    host = "127.0.0.1",
+    % integer()
+    port,
+    % OS pid int (from erlexec)
+    os_pid,
+    % erlang pid linked/monitored by erlexec
+    exec_pid,
+    % temp profile dir
+    user_data_dir,
+    % chrome log
+    log_file
 }).

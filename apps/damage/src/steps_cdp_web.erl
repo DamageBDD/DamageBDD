@@ -10,7 +10,7 @@
 -license("Apache-2.0").
 -include_lib("kernel/include/logger.hrl").
 -export([step/6, test/0]).
--import(damage_utils,[to_bin/1]).
+-import(damage_utils, [to_bin/1]).
 
 %% ========== Step dispatcher ==========
 
@@ -61,10 +61,9 @@ step(_Cfg, Ctx, <<"When">>, _N, ["I save text of", Sel, "as", Name], _Body) ->
 %% ========== Public helpers for other step modules ==========
 attach(Ctx0) ->
     case steps_cdp:ensure_client(Ctx0) of
-        {ok, C1}    -> C1;
-        {error, Why}-> maps:put(fail, to_bin(io_lib:format("CDP attach failed: ~p",[Why])), Ctx0)
+        {ok, C1} -> C1;
+        {error, Why} -> maps:put(fail, to_bin(io_lib:format("CDP attach failed: ~p", [Why])), Ctx0)
     end.
-
 
 with_client(Ctx0, Fun) when is_map(Ctx0), is_function(Fun, 1) ->
     case steps_cdp:ensure_client(Ctx0) of
@@ -296,10 +295,8 @@ get_text(Pid, Sel) ->
         _ -> {error, not_found}
     end.
 
-
 %% Record we keep in ETS: {KeyBin, #{host,port,chrome_pid,chrome_os_port,user_data_dir,cdp_pid}}
 %% Note: chrome_pid is optional (we primarily health-check via /json/version).
-
 
 test() ->
     C0 = #{cdp_endpoint => #{host => "127.0.0.1", port => 9222}},

@@ -65,15 +65,21 @@ step(_Cfg, Context, <<"Then">>, _N, ["the CDP result at", Path, "must be", Expec
 ensure_client(Context0) ->
     Pid0 = maps:get(cdp_pid, Context0, undefined),
     case is_pid(Pid0) andalso erlang:is_process_alive(Pid0) of
-        true  -> {ok, Context0};
+        true ->
+            {ok, Context0};
         false ->
             case browser_mgr:ensure_session(Context0) of
                 {ok, Rec} ->
-                    Host = Rec#rec.host,  %% or maps:get(host, Rec) if you prefer maps
+                    %% or maps:get(host, Rec) if you prefer maps
+                    Host = Rec#rec.host,
                     Port = Rec#rec.port,
-                    case cdp_client:discover_ws(#{host => Host, port => Port, type => <<"page">>}) of
+                    case
+                        cdp_client:discover_ws(#{host => Host, port => Port, type => <<"page">>})
+                    of
                         {ok, WS} ->
-                            case cdp_client:start_link(#{ws_url => WS, host => Host, port => Port}) of
+                            case
+                                cdp_client:start_link(#{ws_url => WS, host => Host, port => Port})
+                            of
                                 {ok, Pid} ->
                                     ok = cdp_client:enable_console(Pid),
                                     {ok, Context0#{
@@ -82,14 +88,16 @@ ensure_client(Context0) ->
                                         chrome_user_data_dir => Rec#rec.user_data_dir,
                                         chrome_log => Rec#rec.log_file
                                     }};
-                                Error -> {error, Error}
+                                Error ->
+                                    {error, Error}
                             end;
-                        Error -> {error, Error}
+                        Error ->
+                            {error, Error}
                     end;
-                {error, Why} -> {error, Why}
+                {error, Why} ->
+                    {error, Why}
             end
     end.
-
 
 do_call(Context0, Method, Params) ->
     case ensure_client(Context0) of
@@ -100,7 +108,6 @@ do_call(Context0, Method, Params) ->
         Error ->
             Error
     end.
-
 
 %% Minimal JSONPath: "$.a.b.c" (keys only)
 json_path_simple(Map, Path) when is_map(Map) ->

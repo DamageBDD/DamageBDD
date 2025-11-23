@@ -92,58 +92,59 @@ handle_info(rebalance, #state{symbol = Symbol, rules = Rules} = State) ->
     case get_mid_price(Symbol, Rules) of
         {ok, Mid0} when Mid0 > 0 ->
             %% --- 1) Pull macro liquidity signal (LTR) -------------------
-            LTR  = ltr_from_server(),
+            LTR = ltr_from_server(),
             Mid1 = apply_ltr_bias(Mid0, LTR),
-            Mid  = round_tick(Mid1),
+            Mid = round_tick(Mid1),
 
             %% --- 2) Dynamic ECAI parameters -----------------------------
-            StepBP     = mm_params:get_intraday_param("STEP_BP",   Symbol, 30),
-            Levels0    = mm_params:get_intraday_param("LEVELS",    Symbol, 8),
-            QtySlope0  = mm_params:get_intraday_param("QTY_SLOPE", Symbol, 1.12),
-            Budget0    = mm_params:get_intraday_param("BUDGET",    Symbol, 500.0),
+            StepBP = mm_params:get_intraday_param("STEP_BP", Symbol, 30),
+            Levels0 = mm_params:get_intraday_param("LEVELS", Symbol, 8),
+            QtySlope0 = mm_params:get_intraday_param("QTY_SLOPE", Symbol, 1.12),
+            Budget0 = mm_params:get_intraday_param("BUDGET", Symbol, 500.0),
             RefreshMs0 = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
 
             %% --- 3) LTR-aware tuning (push vs defend) -------------------
-            {LevelsBuy, LevelsSell,
-             QtySlopeBuy, QtySlopeSell,
-             BudgetBuy, BudgetSell,
-             RefreshMs} =
+            {LevelsBuy, LevelsSell, QtySlopeBuy, QtySlopeSell, BudgetBuy, BudgetSell, RefreshMs} =
                 ltr_mm_profile(LTR, Levels0, QtySlope0, Budget0, RefreshMs0),
 
             %% --- 4) Clean up our existing ladders before re-placing -----
             ok = cancel_own_ladders(Symbol),
 
             %% --- 5) Build new ladders around biased mid -----------------
-            BuyL0  = gen_ladder(buy,  Mid, StepBP, LevelsBuy,  QtySlopeBuy),
+            BuyL0 = gen_ladder(buy, Mid, StepBP, LevelsBuy, QtySlopeBuy),
             SellL0 = gen_ladder(sell, Mid, StepBP, LevelsSell, QtySlopeSell),
 
             %% guard so we don't cross the book
-            SafeBuy  = [{min(P, Mid * 0.999), Q} || {P, Q} <- BuyL0],
+            SafeBuy = [{min(P, Mid * 0.999), Q} || {P, Q} <- BuyL0],
             SafeSell = [{max(P, Mid * 1.001), Q} || {P, Q} <- SellL0],
 
             %% --- 6) Place orders under LTR-scaled budgets --------------
-            {PlacedB, CostB} = place_capped(buy,  SafeBuy,  BudgetBuy),
+            {PlacedB, CostB} = place_capped(buy, SafeBuy, BudgetBuy),
             {PlacedS, CostS} = place_capped(sell, SafeSell, BudgetSell),
 
             ?LOG_INFO(
                 "Rebalanced @ ~p (LTR=~p); buys ~p (~p USDT), sells ~p (~p USDT), "
                 "budget {buy=~p,sell=~p}, refresh=~p ms",
-                [Mid, LTR,
-                 length(PlacedB), CostB,
-                 length(PlacedS), CostS,
-                 BudgetBuy, BudgetSell,
-                 RefreshMs]
+                [
+                    Mid,
+                    LTR,
+                    length(PlacedB),
+                    CostB,
+                    length(PlacedS),
+                    CostS,
+                    BudgetBuy,
+                    BudgetSell,
+                    RefreshMs
+                ]
             ),
             erlang:send_after(RefreshMs, self(), rebalance),
             {noreply, State};
-
         Other ->
             ?LOG_INFO("Skip rebalance, no mid: ~p", [Other]),
             RefreshMs = mm_params:get_intraday_param("REFRESH_MS", Symbol, 10_000),
             erlang:send_after(RefreshMs, self(), rebalance),
             {noreply, State}
     end;
-
 handle_info(run_strategy, #state{symbol = Symbol, rules = Rules} = State) ->
     case get_mid_price(Symbol, Rules) of
         {ok, Mid} ->
@@ -488,9 +489,12 @@ apply_ltr_bias(Mid0, LTR) when is_number(LTR) ->
 ltr_mm_profile(undefined, Levels0, QtySlope0, Budget0, Refresh0) ->
     %% No macro signal -> symmetric, vanilla
     {
-        Levels0, Levels0,
-        QtySlope0, QtySlope0,
-        Budget0 / 2, Budget0 / 2,
+        Levels0,
+        Levels0,
+        QtySlope0,
+        QtySlope0,
+        Budget0 / 2,
+        Budget0 / 2,
         Refresh0
     };
 ltr_mm_profile(LTR, Levels0, QtySlope0, Budget0, Refresh0) when is_number(LTR) ->
@@ -498,41 +502,56 @@ ltr_mm_profile(LTR, Levels0, QtySlope0, Budget0, Refresh0) when is_number(LTR) -
         %% Very loose -> aggressive push up
         V when V < 30 ->
             {
-                trunc(Levels0 * 1.3), trunc(Levels0 * 0.7),
-                QtySlope0 * 1.10,     max(1.0, QtySlope0 * 0.95),
-                Budget0 * 0.70,       Budget0 * 0.30,
+                trunc(Levels0 * 1.3),
+                trunc(Levels0 * 0.7),
+                QtySlope0 * 1.10,
+                max(1.0, QtySlope0 * 0.95),
+                Budget0 * 0.70,
+                Budget0 * 0.30,
                 max(2_000, Refresh0 div 2)
             };
         %% Loose -> moderate push up
         V when V < 50 ->
             {
-                trunc(Levels0 * 1.15), trunc(Levels0 * 0.9),
-                QtySlope0 * 1.05,      QtySlope0,
-                Budget0 * 0.60,        Budget0 * 0.40,
+                trunc(Levels0 * 1.15),
+                trunc(Levels0 * 0.9),
+                QtySlope0 * 1.05,
+                QtySlope0,
+                Budget0 * 0.60,
+                Budget0 * 0.40,
                 max(3_000, Refresh0 * 3 div 4)
             };
         %% Neutral
         V when V < 70 ->
             {
-                Levels0, Levels0,
-                QtySlope0, QtySlope0,
-                Budget0 / 2, Budget0 / 2,
+                Levels0,
+                Levels0,
+                QtySlope0,
+                QtySlope0,
+                Budget0 / 2,
+                Budget0 / 2,
                 Refresh0
             };
         %% Somewhat tight -> defensive
         V when V < 85 ->
             {
-                trunc(Levels0 * 0.9),  trunc(Levels0 * 1.15),
-                QtySlope0,             QtySlope0 * 1.05,
-                Budget0 * 0.40,        Budget0 * 0.60,
+                trunc(Levels0 * 0.9),
+                trunc(Levels0 * 1.15),
+                QtySlope0,
+                QtySlope0 * 1.05,
+                Budget0 * 0.40,
+                Budget0 * 0.60,
                 Refresh0
             };
         %% Very tight -> strongly defensive
         _ ->
             {
-                trunc(Levels0 * 0.7),  trunc(Levels0 * 1.3),
-                max(1.0, QtySlope0 * 0.95), QtySlope0 * 1.10,
-                Budget0 * 0.30,        Budget0 * 0.70,
+                trunc(Levels0 * 0.7),
+                trunc(Levels0 * 1.3),
+                max(1.0, QtySlope0 * 0.95),
+                QtySlope0 * 1.10,
+                Budget0 * 0.30,
+                Budget0 * 0.70,
                 Refresh0
             }
     end.
@@ -554,7 +573,7 @@ cancel_orders_batch(_Symbol, []) ->
     ok;
 cancel_orders_batch(Symbol, OrderIds) ->
     BodyMap = #{
-        <<"symbol">>   => list_to_binary(Symbol),
+        <<"symbol">> => list_to_binary(Symbol),
         <<"orderIds">> => OrderIds
     },
     BodyJSON = jsx:encode(BodyMap),
