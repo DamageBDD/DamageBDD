@@ -37,6 +37,18 @@
 start() ->
     io:format("Elliptical AI initialized. Ready for computation.~n").
 
+%% Pull the contract id from Opts or application env
+-spec ct_id(map()) -> binary().
+ct_id(Opts) ->
+    case maps:get(ct, Opts, undefined) of
+        <<"ct_", _/binary>> = Ct ->
+            Ct;
+        _ ->
+            case application:get_env(ecai, knowledge_registry_ct) of
+                {ok, <<"ct_", _/binary>> = C} -> C;
+                _ -> error({missing_contract_id, knowledge_registry_ct})
+            end
+    end.
 init() ->
     PrivDir = code:priv_dir(ecai),
     NifPath = filename:join([PrivDir, "ecai"]),
@@ -62,7 +74,7 @@ mint_knowledge(
 
     damage_ae:contract_call(
         KeyPair,
-        ?ECAI_KNOWLEDGE_NFT_CONTRACT,
+        ct_id(#{}),
         "contracts/knowledge_nft.aes",
         "mint",
         [AeAccount, MetaData, Knowledge]

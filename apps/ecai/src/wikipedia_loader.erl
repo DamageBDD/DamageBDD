@@ -74,13 +74,25 @@ get_wikipedia_job(#{public_key := AeAccount, metadata := MetaData, knowledge := 
     KeyPair = #{public_key := _NodePub, private_key := _NodePriv} = secrets:node_keypair(),
     damage_ae:contract_call(
         KeyPair,
-        ?ECAI_INDEXER_CONTRACT,
+        ct_id(#{}),
         "contracts/knowledge_nft.aes",
         "mint",
         [AeAccount, MetaData, Knowledge]
     ).
 
 %% ---------------- Public API ----------------
+%% Pull the contract id from Opts or application env
+-spec ct_id(map()) -> binary().
+ct_id(Opts) ->
+    case maps:get(ct, Opts, undefined) of
+        <<"ct_", _/binary>> = Ct ->
+            Ct;
+        _ ->
+            case application:get_env(ecai, index_registry_ct) of
+                {ok, <<"ct_", _/binary>> = C} -> C;
+                _ -> error({missing_contract_id, index_registry_ct})
+            end
+    end.
 
 load(FilePath) ->
     %% defaults: pause if total > 8GiB OR binaries > 1GiB; resume below 6GiB
