@@ -422,22 +422,28 @@ handle_manifest(Req, State) ->
 %%% /yelp/status  GET
 %%%-------------------------------------------------------------------
 handle_status(Req, State) ->
-    Ctx =
-        ecai_search_server:get_ctx(),
-    Sz =
-        case Ctx of
-            undefined -> #{docs => 0, terms => 0, postings => 0};
-            _ -> ecai_search:size(Ctx)
+    Resp =
+        case catch ecai_search_server:get_ctx() of
+            undefined ->
+                #{docs => 0, terms => 0, postings => 0};
+            {'EXIT', _Error} ->
+                #{
+                    ok => false,
+                    message => <<"index not ready">>
+                };
+            Ctx ->
+                Sz =
+                    ecai_search:size(Ctx),
+                #{
+                    ok => true,
+                    chunks => length(get_pt(?K_CHUNKS, [])),
+                    pinned => length(get_pt(?K_CHUNK_CID, [])),
+                    assigned => length(get_pt(?K_ASSIGN, [])),
+                    headers => length(get_pt(?K_HEADERS, [])),
+                    have_ctx => Ctx =/= undefined,
+                    index_size => Sz
+                }
         end,
-    Resp = #{
-        ok => true,
-        chunks => length(get_pt(?K_CHUNKS, [])),
-        pinned => length(get_pt(?K_CHUNK_CID, [])),
-        assigned => length(get_pt(?K_ASSIGN, [])),
-        headers => length(get_pt(?K_HEADERS, [])),
-        have_ctx => Ctx =/= undefined,
-        index_size => Sz
-    },
     reply_json(Req, 200, Resp, State).
 
 handle_index_async(Req, State) ->

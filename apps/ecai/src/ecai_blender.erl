@@ -66,7 +66,6 @@
 %% Public test function
 -export([test/0]).
 
-
 %%%===================================================================
 %%% Public API
 %%%===================================================================
@@ -113,16 +112,14 @@ init(Opts) ->
     {ok, #state{blender_cmd = BlenderCmd0}}.
 
 handle_call({render_blend, BlendFile, OutputPattern, Opts}, _From, State) ->
-    Cmd  = State#state.blender_cmd,
+    Cmd = State#state.blender_cmd,
     Args = build_blend_args(BlendFile, OutputPattern, Opts),
     Result = run_blender(Cmd, Args),
     {reply, Result, State};
-
 handle_call({render_script, OutputPath, PyBody, Opts}, _From, State) ->
     Cmd = State#state.blender_cmd,
     Result = run_script_render(Cmd, OutputPath, PyBody, Opts),
     {reply, Result, State};
-
 handle_call(_Other, _From, State) ->
     {reply, {error, unknown_call}, State}.
 
@@ -149,17 +146,21 @@ code_change(_OldVsn, State, _Extra) ->
 %%   - format :: binary() | string() (default: "PNG")
 %%   - extras :: [string()] extra Blender args
 build_blend_args(BlendFile, OutputPattern, Opts) ->
-    Frame   = maps:get(frame, Opts, 1),
+    Frame = maps:get(frame, Opts, 1),
     Format0 = maps:get(format, Opts, <<"PNG">>),
-    Extras  = maps:get(extras, Opts, []),
+    Extras = maps:get(extras, Opts, []),
 
     Format = to_string(Format0),
 
     [
-        "-b", BlendFile,
-        "-o", OutputPattern,
-        "-F", Format,
-        "-f", integer_to_list(Frame)
+        "-b",
+        BlendFile,
+        "-o",
+        OutputPattern,
+        "-F",
+        Format,
+        "-f",
+        integer_to_list(Frame)
     ] ++ Extras.
 
 %%%===================================================================
@@ -174,7 +175,8 @@ run_script_render(Cmd, OutputPath, PyBody, Opts) ->
         ok ->
             Args = [
                 "-b",
-                "-P", ScriptPath,
+                "-P",
+                ScriptPath,
                 "--",
                 OutputPath
             ],
@@ -191,10 +193,10 @@ run_script_render(Cmd, OutputPath, PyBody, Opts) ->
 %% - Uses sys.argv[-1] as output_path
 %% - Renders a still frame
 build_render_script(PyBody, Opts) ->
-    Format  = to_string(maps:get(format, Opts, <<"PNG">>)),
-    ResX    = maps:get(res_x, Opts, 1024),
-    ResY    = maps:get(res_y, Opts, 1024),
-    Frame   = maps:get(frame, Opts, 1),
+    Format = to_string(maps:get(format, Opts, <<"PNG">>)),
+    ResX = maps:get(res_x, Opts, 1024),
+    ResY = maps:get(res_y, Opts, 1024),
+    Frame = maps:get(frame, Opts, 1),
 
     [
         "import bpy\n",
@@ -203,23 +205,33 @@ build_render_script(PyBody, Opts) ->
         "# Reset to empty scene\n",
         "bpy.ops.wm.read_homefile(use_empty=True)\n\n",
         "# --- User scene body start ---\n",
-        PyBody, "\n",
+        PyBody,
+        "\n",
         "# --- User scene body end ---\n\n",
         "scene = bpy.context.scene\n",
-        "scene.frame_set(", integer_to_list(Frame), ")\n",
-        "scene.render.image_settings.file_format = '", Format, "'\n",
+        "scene.frame_set(",
+        integer_to_list(Frame),
+        ")\n",
+        "scene.render.image_settings.file_format = '",
+        Format,
+        "'\n",
         "scene.render.filepath = output_path\n",
-        "scene.render.resolution_x = ", integer_to_list(ResX), "\n",
-        "scene.render.resolution_y = ", integer_to_list(ResY), "\n",
+        "scene.render.resolution_x = ",
+        integer_to_list(ResX),
+        "\n",
+        "scene.render.resolution_y = ",
+        integer_to_list(ResY),
+        "\n",
         "scene.render.resolution_percentage = 100\n\n",
         "bpy.ops.render.render(write_still=True)\n"
     ].
 
 temp_script_path() ->
-    TmpDir = case os:getenv("TMPDIR") of
-                 false -> "/tmp";
-                 Dir   -> Dir
-             end,
+    TmpDir =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            Dir -> Dir
+        end,
     Name = "ecai_blender_" ++ integer_to_list(erlang:unique_integer()) ++ ".py",
     filename:join(TmpDir, Name).
 
@@ -228,12 +240,16 @@ temp_script_path() ->
 %%%===================================================================
 
 run_blender(Cmd, Args) ->
-    Port = open_port({spawn_executable, Cmd},
-                     [exit_status,
-                      use_stdio,
-                      stderr_to_stdout,
-                      hide,
-                      {args, Args}]),
+    Port = open_port(
+        {spawn_executable, Cmd},
+        [
+            exit_status,
+            use_stdio,
+            stderr_to_stdout,
+            hide,
+            {args, Args}
+        ]
+    ),
     collect_output(Port, []).
 
 collect_output(Port, Acc) ->
@@ -243,8 +259,8 @@ collect_output(Port, Acc) ->
         {Port, {exit_status, Status}} ->
             {ok, Status, iolist_to_binary(Acc)}
     after 600000 ->
-            port_close(Port),
-            {error, timeout}
+        port_close(Port),
+        {error, timeout}
     end.
 
 to_string(Bin) when is_binary(Bin) ->
@@ -261,52 +277,50 @@ to_string(List) when is_list(List) ->
 test() ->
     Output = "/tmp/ecai_test.png",
 
-    PyBody = "
-import math
-
-# Camera
-bpy.ops.object.camera_add(location=(0, -6, 2))
-cam = bpy.context.object
-cam.data.lens = 35
-cam.rotation_euler = (math.radians(75), 0, 0)
-
-# Light
-bpy.ops.object.light_add(type='AREA', location=(4, -4, 6))
-light = bpy.context.object
-light.data.energy = 1200
-
-# Suzanne monkey
-bpy.ops.mesh.primitive_monkey_add(location=(0,0,0))
-obj = bpy.context.object
-obj.rotation_euler[2] = math.radians(35)
-obj.scale = (1.2, 1.2, 1.2)
-
-# Material
-mat = bpy.data.materials.new(name='MonkeyMat')
-mat.use_nodes = True
-bsdf = mat.node_tree.nodes['Principled BSDF']
-bsdf.inputs['Base Color'].default_value = (0.2, 0.5, 1.0, 1.0)
-obj.data.materials.append(mat)
-
-bpy.context.scene.camera = cam
-",
+    PyBody =
+        "\n"
+        "import math\n"
+        "\n"
+        "# Camera\n"
+        "bpy.ops.object.camera_add(location=(0, -6, 2))\n"
+        "cam = bpy.context.object\n"
+        "cam.data.lens = 35\n"
+        "cam.rotation_euler = (math.radians(75), 0, 0)\n"
+        "\n"
+        "# Light\n"
+        "bpy.ops.object.light_add(type='AREA', location=(4, -4, 6))\n"
+        "light = bpy.context.object\n"
+        "light.data.energy = 1200\n"
+        "\n"
+        "# Suzanne monkey\n"
+        "bpy.ops.mesh.primitive_monkey_add(location=(0,0,0))\n"
+        "obj = bpy.context.object\n"
+        "obj.rotation_euler[2] = math.radians(35)\n"
+        "obj.scale = (1.2, 1.2, 1.2)\n"
+        "\n"
+        "# Material\n"
+        "mat = bpy.data.materials.new(name='MonkeyMat')\n"
+        "mat.use_nodes = True\n"
+        "bsdf = mat.node_tree.nodes['Principled BSDF']\n"
+        "bsdf.inputs['Base Color'].default_value = (0.2, 0.5, 1.0, 1.0)\n"
+        "obj.data.materials.append(mat)\n"
+        "\n"
+        "bpy.context.scene.camera = cam\n",
 
     Opts = #{
         format => <<"PNG">>,
-        res_x  => 800,
-        res_y  => 800,
-        frame  => 1
+        res_x => 800,
+        res_y => 800,
+        frame => 1
     },
 
     case render_script(Output, PyBody, Opts) of
         {ok, 0, _BlenderOutput} ->
             io:format("Render complete: ~s~n", [Output]),
             {ok, Output};
-
         {ok, Status, Log} ->
             io:format("Blender exit status ~p~nLog: ~s~n", [Status, Log]),
             {error, {blender_exit_status, Status}};
-
         Error ->
             io:format("Render error: ~p~n", [Error]),
             Error

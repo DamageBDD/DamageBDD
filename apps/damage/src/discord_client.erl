@@ -49,12 +49,12 @@
 -define(DEFAULT_TIMEOUT, 30000).
 
 -record(state, {
-    host           :: string(),
-    port           :: non_neg_integer(),
-    token          :: binary(),
+    host :: string(),
+    port :: non_neg_integer(),
+    token :: binary(),
     default_channel :: binary() | undefined,
-    conn_pid       :: pid() | undefined,
-    conn_ref       :: reference() | undefined
+    conn_pid :: pid() | undefined,
+    conn_ref :: reference() | undefined
 }).
 
 %%%===================================================================
@@ -108,12 +108,14 @@ init(Opts0) ->
         case maps:get(token, Opts0, undefined) of
             undefined ->
                 case application:get_env(damage, discord_bot_token) of
-                    {ok, T} -> T;
+                    {ok, T} ->
+                        T;
                     _ ->
                         ?LOG_ERROR("Discord bot token not configured.", []),
                         erlang:error(missing_discord_bot_token)
                 end;
-            T -> T
+            T ->
+                T
         end,
     Token = to_bin(Token0),
 
@@ -124,7 +126,8 @@ init(Opts0) ->
                     {ok, C} -> C;
                     _ -> undefined
                 end;
-            C -> C
+            C ->
+                C
         end,
     DefaultChannel =
         case DefaultChannel0 of
@@ -153,7 +156,7 @@ handle_call({send_default, Content0}, _From, State0) ->
     end;
 handle_call({send, ChannelId0, Content0}, _From, State0) ->
     ChannelId = to_bin(ChannelId0),
-    Content  = to_bin(Content0),
+    Content = to_bin(Content0),
     case ensure_connection(State0) of
         {ok, State1} ->
             case do_post_message(State1, ChannelId, Content) of
@@ -165,7 +168,6 @@ handle_call({send, ChannelId0, Content0}, _From, State0) ->
         {error, Reason, State1} ->
             {reply, {error, Reason}, State1}
     end;
-
 handle_call(_Req, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
@@ -179,7 +181,7 @@ handle_cast({send_default, Content0}, State0) ->
     end;
 handle_cast({send, ChannelId0, Content0}, State0) ->
     ChannelId = to_bin(ChannelId0),
-    Content  = to_bin(Content0),
+    Content = to_bin(Content0),
     case ensure_connection(State0) of
         {ok, State1} ->
             _ = do_post_message(State1, ChannelId, Content),
@@ -191,8 +193,10 @@ handle_cast({send, ChannelId0, Content0}, State0) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', Ref, process, Pid, Reason},
-           #state{conn_pid = Pid, conn_ref = Ref} = State) ->
+handle_info(
+    {'DOWN', Ref, process, Pid, Reason},
+    #state{conn_pid = Pid, conn_ref = Ref} = State
+) ->
     ?LOG_WARNING("Discord connection down: ~p", [Reason]),
     %% Clear conn and try reconnect lazily on next send
     {noreply, State#state{conn_pid = undefined, conn_ref = undefined}};
@@ -211,13 +215,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 to_bin(B) when is_binary(B) -> B;
-to_bin(L) when is_list(L)   -> list_to_binary(L);
-to_bin(A) when is_atom(A)   -> atom_to_binary(A, utf8).
+to_bin(L) when is_list(L) -> list_to_binary(L);
+to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8).
 
 -spec ensure_connection(#state{}) -> {ok, #state{}} | {error, term(), #state{}}.
 ensure_connection(#state{conn_pid = Pid} = State) when is_pid(Pid) ->
     case is_process_alive(Pid) of
-        true  -> {ok, State};
+        true -> {ok, State};
         false -> open_connection(State#state{conn_pid = undefined, conn_ref = undefined})
     end;
 ensure_connection(State) ->
@@ -238,13 +242,15 @@ open_connection(#state{host = Host, port = Port} = State) ->
 %% Core POST /api/v10/channels/{channel_id}/messages
 -spec do_post_message(#state{}, binary(), binary()) ->
     {ok, map(), #state{}} | {error, term(), #state{}}.
-do_post_message(#state{
-                    conn_pid = ConnPid,
-                    token = Token,
-                    host = Host
-                } = State,
-                ChannelId,
-                Content) when is_pid(ConnPid) ->
+do_post_message(
+    #state{
+        conn_pid = ConnPid,
+        token = Token,
+        host = Host
+    } = State,
+    ChannelId,
+    Content
+) when is_pid(ConnPid) ->
     Path = ["/api/v10/channels/", ChannelId, "/messages"],
     Headers =
         [
@@ -269,13 +275,15 @@ do_post_message(#state{
                     RespMap =
                         case catch jsx:decode(RespBody, [{labels, atom}, return_maps]) of
                             {'EXIT', _} -> #{raw => RespBody};
-                            Decoded     -> Decoded
+                            Decoded -> Decoded
                         end,
                     ?LOG_DEBUG("Discord response ~p", [Status]),
-                    {ok, RespMap#{
-                        status => Status,
-                        headers => RespHeaders
-                    }, State};
+                    {ok,
+                        RespMap#{
+                            status => Status,
+                            headers => RespHeaders
+                        },
+                        State};
                 BodyError ->
                     {error, {body_error, BodyError}, State}
             end;
