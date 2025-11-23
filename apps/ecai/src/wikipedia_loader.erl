@@ -7,9 +7,25 @@
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
 
 -license("Apache-2.0").
--export([load/1]).
+-export(
+    [
+        start_link/0,
+        init/1,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        handle_continue/2,
+        terminate/2,
+        code_change/3
+    ]
+).
+-export([
+    load/1,
+    get_wikipedia_job/1
+]).
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("ecai.hrl").
 
 %% Defaults (tune for your box; values are bytes)
 
@@ -26,6 +42,43 @@
 %% Defaults (tweak as you like)
 -define(CHK_DIR, "/var/lib/damage/ecai/state/wiki_checkpoints").
 -define(CHK_EVERY, 1000).
+
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+init([]) ->
+    {ok, #{}, {continue, start_indexing}}.
+
+handle_call(get_ctx, _From, Ctx) ->
+    {reply, Ctx, Ctx};
+handle_call(get_ctx_size, _From, Ctx) ->
+    {reply, tuple_size(Ctx), Ctx};
+handle_call({set_ctx, NewCtx}, _From, _Ctx) ->
+    {reply, ok, NewCtx}.
+
+handle_cast(Any, State) ->
+    ?LOG_DEBUG("ECAI Search server got cast message: ~s~n", [Any]),
+    {noreply, State}.
+handle_info(Any, State) ->
+    ?LOG_DEBUG("ECAI Search server got cast message: ~s~n", [Any]),
+    {noreply, State}.
+handle_continue(start_indexing, Ctx) ->
+    %Chunk = get_wikipedia_job(Ctx),
+    %load(Chunk),
+    {noreply, Ctx}.
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ok.
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+get_wikipedia_job(#{public_key := AeAccount, metadata := MetaData, knowledge := Knowledge}) ->
+    KeyPair = #{public_key := _NodePub, private_key := _NodePriv} = secrets:node_keypair(),
+    damage_ae:contract_call(
+        KeyPair,
+        ?ECAI_INDEXER_CONTRACT,
+        "contracts/knowledge_nft.aes",
+        "mint",
+        [AeAccount, MetaData, Knowledge]
+    ).
 
 %% ---------------- Public API ----------------
 

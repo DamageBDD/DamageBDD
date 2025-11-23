@@ -78,6 +78,14 @@ init([]) ->
                 shutdown => 60,
                 type => worker,
                 modules => []
+            },
+            #{
+                id => wikipedia_loader,
+                start => {wikipedia_loader, start_link, []},
+                restart => permanent,
+                shutdown => 60,
+                type => worker,
+                modules => []
             }
         ] ++
             PoolSpecs,
