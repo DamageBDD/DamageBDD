@@ -40,6 +40,7 @@ docker run --rm -it \
     makepkg 
 
     # copy debs to host
+    rm -f /out/*.zst
     cp -a *.zst /out/
     rm -f rebar.lock
 

@@ -199,6 +199,7 @@ compute_liquidity_tightness() ->
 fred_api_key() ->
     case secrets:retrieve_decrypt(fred_api_key) of
         false -> undefined;
+        error -> undefined;
         {ok, Key} -> Key
     end.
 
