@@ -139,7 +139,51 @@ unlock_node(Password) ->
         {error, decrypt_keypair} ->
             #{status => <<"failed">>, message => <<"decrypt node wallet failed">>}
     end.
+%% Validate and set node password (set_password flow)
+set_password(PasswordBin, ConfirmBin) ->
+    case PasswordBin of
+        <<>> ->
+            #{status => <<"failed">>, message => <<"password required">>};
+        _ ->
+            case PasswordBin =:= ConfirmBin of
+                false ->
+                    #{status => <<"failed">>, message => <<"passwords do not match">>};
+                true ->
+                    %% Validate strength via accounts module
+                    case damage_accounts:validate_password(PasswordBin) of
+                        ok ->
+                            %% Reuse unlock_node/1 to:
+                            %%  - cache password in secrets
+                            %%  - create/decrypt node keypair
+                            unlock_node(PasswordBin);
+                        {error, Reason} ->
+                            #{status => <<"failed">>,
+                              message => <<"invalid password">>,
+                              reason  => Reason};
+                        Other ->
+                            #{status => <<"failed">>,
+                              message => <<"invalid password">>,
+                              reason  => Other}
+                    end
+            end
+    end.
 
+%% Accept form submits (browser) - set password
+from_html(Req0, #{action := set_password} = State) ->
+    {ok, BodyBin, Req} = cowboy_req:read_body(Req0),
+    Form = cow_qs:parse_qs(BodyBin),
+    %% expected fields:
+    %% - password
+    %% - password_confirm
+    Password = proplists:get_value(<<"password">>, Form, <<>>),
+    Confirm  = proplists:get_value(<<"password_confirm">>, Form, <<>>),
+    Response = set_password(Password, Confirm),
+    Reply = cowboy_req:set_resp_body(
+        jsx:encode(Response),
+        Req
+    ),
+    %% Let cowboy_rest finish with this response
+    {stop, Reply, State};
 %% Accept form submits (browser)
 from_html(Req0, #{action := unlock} = State) ->
     {ok, BodyBin, Req} = cowboy_req:read_body(Req0),
@@ -155,6 +199,33 @@ from_html(Req0, #{action := unlock} = State) ->
     ),
     {stop, Reply, State}.
 
+%% Accept JSON posts too (API) - set password
+from_json(Req0, #{action := set_password} = State) ->
+    {ok, DataBin, Req} = cowboy_req:read_body(Req0),
+    case catch jsx:decode(DataBin, [return_maps, {labels, atom}]) of
+        {'EXIT', _} ->
+            Reply0 = cowboy_req:set_resp_body(
+                jsx:encode(#{status => <<"failed">>, message => <<"json decode error">>}),
+                Req
+            ),
+            cowboy_req:reply(400, Reply0),
+            {stop, Reply0, State};
+        Decoded when is_map(Decoded) ->
+            Password = maps:get(password, Decoded, undefined),
+            Confirm  = maps:get(password_confirm, Decoded, undefined),
+            Response = set_password(Password, Confirm),
+            StatusCode =
+                case Response of
+                    #{status := <<"ok">>} -> 200;
+                    _ -> 400
+                end,
+            Reply1 = cowboy_req:set_resp_body(
+                jsx:encode(Response),
+                Req
+            ),
+            cowboy_req:reply(StatusCode, Reply1),
+            {stop, Reply1, State}
+    end;
 %% Accept JSON posts too (API)
 from_json(Req0, #{action := unlock} = State) ->
     {ok, DataBin, Req} = cowboy_req:read_body(Req0),
