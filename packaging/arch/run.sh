@@ -30,7 +30,6 @@ docker run --rm -it \
     rm -f rebar.lock
     rm -rf _build
 
-    bash
     DEBUG=1 rebar3 as prod release
 
     # package with your plugin

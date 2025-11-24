@@ -21,7 +21,6 @@ docker run --rm -it \
     rm -f rebar.lock
     rm -rf _build
 
-    #bash
     DEBUG=1
     rebar3 as prod release
 
@@ -29,6 +28,7 @@ docker run --rm -it \
     rebar3 pkg gen -t deb
 
     # copy debs to host
+    rm -f /out/*.deb
     cp -a _build/pkg/deb/*.deb /out/
     rm -f rebar.lock
 
