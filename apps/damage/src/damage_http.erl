@@ -777,25 +777,42 @@ to_json(Req, #{action := version} = State) ->
         ok => true,
         version => list_to_binary(Version)
     },
-    NodeDamageBalance = damage_ae:node_damage_balance(),
-    NodeAeBalance = damage_ae:node_ae_balance(),
-    #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
-    Resp0 =
-        #{
-            public_key => list_to_binary(PubKey),
-            damage_balance => NodeDamageBalance,
-            ae_balance => NodeAeBalance
-        },
-    {
-        jsx:encode(
-            maps:merge(
-                Resp,
-                Resp0
-            )
-        ),
-        Req,
-        State
-    };
+    case secrets:node_keypair() of
+        #{public_key := PubKey, private_key := _NodePrivateKey} ->
+            NodeDamageBalance = damage_ae:node_damage_balance(),
+            NodeAeBalance = damage_ae:node_ae_balance(),
+            Resp0 =
+                #{
+                    public_key => list_to_binary(PubKey),
+                    damage_balance => NodeDamageBalance,
+                    ae_balance => NodeAeBalance
+                },
+            {
+                jsx:encode(
+                    maps:merge(
+                        Resp,
+                        Resp0
+                    )
+                ),
+                Req,
+                State
+            };
+        {error, keypair_not_initialized} ->
+            Resp0 =
+                #{
+                    error => <<"node not initialized.">>
+                },
+            {
+                jsx:encode(
+                    maps:merge(
+                        Resp,
+                        Resp0
+                    )
+                ),
+                Req,
+                State
+            }
+    end;
 to_json(Req0, State) ->
     Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,
     %Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
