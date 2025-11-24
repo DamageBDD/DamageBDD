@@ -23,7 +23,7 @@
     load/1,
     get_wikipedia_job/1
 ]).
--import(damage_utils,[ensure_dir/1]).
+-import(damage_utils, [ensure_dir/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -194,7 +194,6 @@ safe_decode(Line) ->
                 _:_ -> skip
             end
     end.
-
 
 checkpoint_path(Dir, FilePath) ->
     %% content-address the *path* to avoid clashes

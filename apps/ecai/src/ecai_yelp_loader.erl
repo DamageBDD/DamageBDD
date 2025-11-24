@@ -32,7 +32,7 @@
     % ([CIDBin]) -> <<32 bytes>>
     manifest_root/1
 ]).
--import(damage_utils,[ensure_dir/1]).
+-import(damage_utils, [ensure_dir/1]).
 
 %%%===================================================================
 %%% 1) CHUNK NDJSON (streaming, memory-safe)
@@ -83,7 +83,6 @@ finalize_open_chunk(_OutDir, _Idx, _N, AccPaths) ->
 
 chunk_path(OutDir, Idx) ->
     filename:join(OutDir, iolist_to_binary(io_lib:format("chunk_~6..0B.ndjson", [Idx]))).
-
 
 %%%===================================================================
 %%% 2) IPFS: add chunks → CIDs
