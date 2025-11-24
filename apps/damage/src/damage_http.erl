@@ -774,7 +774,6 @@ to_html(Req, State) ->
 to_json(Req, #{action := version} = State) ->
     {ok, Version} = application:get_key(damage, vsn),
     Resp = #{
-        ok => true,
         version => list_to_binary(Version)
     },
     case secrets:node_keypair() of
@@ -783,6 +782,7 @@ to_json(Req, #{action := version} = State) ->
             NodeAeBalance = damage_ae:node_ae_balance(),
             Resp0 =
                 #{
+                    ok => true,
                     public_key => list_to_binary(PubKey),
                     damage_balance => NodeDamageBalance,
                     ae_balance => NodeAeBalance
@@ -797,10 +797,11 @@ to_json(Req, #{action := version} = State) ->
                 Req,
                 State
             };
-        {error, keypair_not_initialized} ->
+        {error, Error} ->
             Resp0 =
                 #{
-                    error => <<"node not initialized.">>
+                    ok => false,
+                    error => atom_to_binary(Error)
                 },
             {
                 jsx:encode(
