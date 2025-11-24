@@ -13,42 +13,58 @@ log() {
     echo "[postinst] $1"
 }
 
-log "Installing Kubo $KUBO_VERSION ..."
+log "Postinst starting..."
 
-# Create system user
+# ----------------------------------------------------------------------
+# 1. Create system user (always needed)
+# ----------------------------------------------------------------------
 if ! id -u $IPFS_USER >/dev/null 2>&1; then
     log "Creating system user: $IPFS_USER"
     adduser --system --group --home $IPFS_HOME $IPFS_USER
 fi
 
-# Create download directory
-TMPDIR=$(mktemp -d)
-cd "$TMPDIR"
+# ----------------------------------------------------------------------
+# 2. Install IPFS ONLY IF NOT PRESENT
+# ----------------------------------------------------------------------
+if command -v ipfs >/dev/null 2>&1; then
+    log "ipfs binary already present – skipping Kubo install."
+else
+    log "ipfs not found – installing Kubo $KUBO_VERSION ..."
 
-log "Downloading kubo from $KUBO_URL"
-wget -q "$KUBO_URL"
+    TMPDIR=$(mktemp -d)
+    cd "$TMPDIR"
 
-log "Extracting $KUBO_TARBALL"
-tar -xzf "$KUBO_TARBALL"
+    log "Downloading kubo from $KUBO_URL"
+    wget -q "$KUBO_URL"
 
-cd kubo
+    log "Extracting $KUBO_TARBALL"
+    tar -xzf "$KUBO_TARBALL"
+    cd kubo
 
-log "Running kubo install.sh"
-bash install.sh
+    log "Running kubo install.sh"
+    bash install.sh
 
-log "Ensuring /usr/local/bin/ipfs is executable"
-chmod 755 /usr/local/bin/ipfs
+    log "Ensuring /usr/local/bin/ipfs is executable"
+    chmod 755 /usr/local/bin/ipfs
 
-# Initialize IPFS repo if first install
+    log "Cleaning up temporary files"
+    rm -rf "$TMPDIR"
+fi
+
+# ----------------------------------------------------------------------
+# 3. Initialize repo if needed
+# ----------------------------------------------------------------------
 if [ ! -d "$IPFS_HOME/.ipfs" ]; then
     log "Initializing IPFS repo in $IPFS_HOME"
     su -s /bin/sh -c "/usr/local/bin/ipfs init --profile=server" $IPFS_USER
 fi
 
-# Set permissions
+# Ensure permissions
 chown -R $IPFS_USER:$IPFS_USER $IPFS_HOME
 
-# Install systemd service
+# ----------------------------------------------------------------------
+# 4. Install systemd service (always refresh to ensure correct config)
+# ----------------------------------------------------------------------
 log "Installing systemd service"
 cat <<EOF >/etc/systemd/system/ipfs.service
 [Unit]
@@ -70,9 +86,6 @@ EOF
 systemctl daemon-reload
 systemctl enable ipfs.service
 
-log "Cleaning up"
-rm -rf "$TMPDIR"
-
-log "Kubo installation complete."
-
+log "Kubo setup complete."
 exit 0
+
