@@ -625,6 +625,7 @@ function generateDamageQR(address){
 					console.log( versionData);
 					var nodePublicKeyDom= document.getElementById('node-public-key');
 					nodePublicKeyDom.innerText = 'node public key: ' + versionData.public_key;
+					window.nodePublicKey = versionData.public_key;
 					document.getElementById("node-public-key").addEventListener("click",(event) => {
 						event.preventDefault();
 						MicroModal.show("node-public-key-modal");

@@ -58,13 +58,6 @@ const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk
 
 	// ---- AE (node) -----------------------------------------------------------
 
-	const safe = (fn) => async (...args) => {
-		try {
-			return { ok: true, value: await fn(...args) };
-		} catch (err) {
-			return { ok: false, error: normalizeError(err) };
-		}
-	};
 	// ---- Common Normalized Errors ----------------------------------------------
 
 	function normalizeError(err) {
