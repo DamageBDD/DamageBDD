@@ -46,7 +46,7 @@ code_change(_, S, _) -> {ok, S}.
 
 atomic_save(Ctx, Path) ->
     Tmp = Path ++ ".tmp",
-    ensure_dir(Path),
+    ensure_dir(filename:dirname(Path)),
     case ecai_search:save(Ctx, Tmp) of
         ok ->
             file:rename(Tmp, Path),
