@@ -141,29 +141,42 @@ unlock_node(Password) ->
     end.
 %% Validate and set node password (set_password flow)
 set_password(PasswordBin, ConfirmBin) ->
-    case PasswordBin of
-        <<>> ->
-            #{status => <<"failed">>, message => <<"password required">>};
-        _ ->
-            case PasswordBin =:= ConfirmBin of
-                false ->
-                    #{status => <<"failed">>, message => <<"passwords do not match">>};
-                true ->
-                    %% Validate strength via accounts module
-                    case damage_accounts:validate_password(PasswordBin) of
-                        ok ->
-                            %% Reuse unlock_node/1 to:
-                            %%  - cache password in secrets
-                            %%  - create/decrypt node keypair
-                            unlock_node(PasswordBin);
-                        {error, Reason} ->
-                            #{status => <<"failed">>,
-                              message => <<"invalid password">>,
-                              reason  => Reason};
-                        Other ->
-                            #{status => <<"failed">>,
-                              message => <<"invalid password">>,
-                              reason  => Other}
+    case secrets:node_keypair() of
+        #{public_key := _PubKey, private_key := _NodePrivateKey} ->
+            %% set flow: require confirmation and validate password strength
+            #{status => <<"error">>, message => <<"node keypair already initialized">>};
+        {error, keypair_not_initialized} ->
+            case PasswordBin of
+                <<>> ->
+                    #{status => <<"failed">>, message => <<"password required">>};
+                _ ->
+                    case PasswordBin =:= ConfirmBin of
+                        false ->
+                            #{status => <<"failed">>, message => <<"passwords do not match">>};
+                        true ->
+                            %% Validate strength via accounts module
+                            case damage_accounts:validate_password(PasswordBin) of
+                                ok ->
+                                    %% Reuse unlock_node/1 to:
+                                    %%  - cache password in secrets
+                                    %%  - create/decrypt node keypair
+                                    secrets:set_node_password(PasswordBin),
+
+                                    #{public_key := _PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
+                                    #{status => <<"ok">>, message => <<"node password set">>};
+                                {error, Reason} ->
+                                    #{
+                                        status => <<"failed">>,
+                                        message => <<"invalid password">>,
+                                        reason => Reason
+                                    };
+                                Other ->
+                                    #{
+                                        status => <<"failed">>,
+                                        message => <<"invalid password">>,
+                                        reason => Other
+                                    }
+                            end
                     end
             end
     end.
@@ -176,7 +189,7 @@ from_html(Req0, #{action := set_password} = State) ->
     %% - password
     %% - password_confirm
     Password = proplists:get_value(<<"password">>, Form, <<>>),
-    Confirm  = proplists:get_value(<<"password_confirm">>, Form, <<>>),
+    Confirm = proplists:get_value(<<"password_confirm">>, Form, <<>>),
     Response = set_password(Password, Confirm),
     Reply = cowboy_req:set_resp_body(
         jsx:encode(Response),
@@ -212,7 +225,7 @@ from_json(Req0, #{action := set_password} = State) ->
             {stop, Reply0, State};
         Decoded when is_map(Decoded) ->
             Password = maps:get(password, Decoded, undefined),
-            Confirm  = maps:get(password_confirm, Decoded, undefined),
+            Confirm = maps:get(password_confirm, Decoded, undefined),
             Response = set_password(Password, Confirm),
             StatusCode =
                 case Response of
