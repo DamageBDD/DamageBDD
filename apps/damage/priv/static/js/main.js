@@ -140,6 +140,15 @@ function generateDamageQR(address){
 			event.preventDefault();
 			await nodeUnlock();
 		});
+		document.getElementById("node-password-confirm").addEventListener("keydown", async function(event) {
+			if (event.ctrlKey && event.key === "Enter") {
+				event.preventDefault();
+				await nodeSetPassword();
+			}});
+		document.getElementById("node-set-password-submit-btn").addEventListener("click", async (event) => {
+			event.preventDefault();
+			await nodeSetPassword();
+		});
 
 		showHideLoginButton();
 		MicroModal.init({
@@ -225,6 +234,58 @@ function generateDamageQR(address){
 
 	function isAuthenticated() {
 		if(window.TokenManager.getToken()) return true;
+		return false;
+	}
+	async function nodeSetPassword() {
+		const passwordInput = document.getElementById("node-password");
+		const confirmInput  = document.getElementById("node-password-confirm");
+
+		const password = passwordInput.value.trim();
+		const confirm  = confirmInput.value.trim();
+
+		if (!password || !confirm) {
+			alert("Please enter and confirm your node password.");
+			return;
+		}
+
+		if (password !== confirm) {
+			alert("Passwords do not match.");
+			return;
+		}
+
+		try {
+			const resp = await fetch("/secrets/set_password", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json"
+				},
+				body: JSON.stringify({
+					password: password,
+					password_confirm: confirm
+				})
+			});
+
+			const data = await resp.json();
+
+			if (data.status === "ok") {
+				alert("✅ Node password set successfully!");
+
+				// Close modal if present
+				if (window.MicroModal) {
+					MicroModal.close("node-set-password-modal");
+				}
+
+				passwordInput.value = "";
+				confirmInput.value  = "";
+
+			} else {
+				alert(`❌ Failed to set password: ${data.message || "Unknown error"}`);
+			}
+
+		} catch (err) {
+			console.error("Set password error:", err);
+			alert("⚠️ Error setting password. Check console for details.");
+		}
 	}
 
 
