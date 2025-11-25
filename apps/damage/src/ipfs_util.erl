@@ -105,7 +105,7 @@ ensure_peers() ->
 
 ensure_peers(Opts0) when is_map(Opts0) ->
     IPFS = maps:get(ipfs_cmd, Opts0, os:find_executable("ipfs")),
-    Path = resolve_path(maps:get(path, Opts0, undefined)),
+    Path = resolve_path(maps:get(path, Opts0, os:getenv("IPFS_PATH", "/var/lib/damage/.ipfs/"))),
     Peers = maps:get(peers, Opts0, peers_from_env()),
 
     case {damage_utils:exists_cmd(IPFS), ipfs_repo_exists(Path)} of
