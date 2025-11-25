@@ -5,6 +5,7 @@ set -x
 SERVICE_NAME="${APP}"
 INSTALL_DIR="${PREFIX}/${APP}/"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+CONFIG_FILE="/etc/systemd/${APP}.config"
 
 
 log() { printf '%s\n' "[postinst] $*"; }
@@ -47,6 +48,35 @@ systemd_running() {
   systemctl daemon-reload >/dev/null 2>&1 || return 1
   return 0
 }
+
+write_default_config() {
+    umask 022
+
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "[postinst] config exists, not overwriting: $CONFIG_FILE"
+        return 0
+    fi
+
+    echo "[postinst] creating default config: $CONFIG_FILE"
+
+    cat > "$CONFIG_FILE" <<'EOF'
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+
+[
+    {
+        damage,
+        [
+            %{ip, {0, 0, 0, 0}},
+            {ip, {127, 0, 0, 1}},
+            {port, 8080}
+        ]
+    }
+].
+EOF
+
+    chmod 0644 "$CONFIG_FILE"
+}
+
 
 write_unit() {
   umask 022
@@ -103,6 +133,7 @@ case "${1:-configure}" in
 
     log "Writing systemd unit to ${SERVICE_FILE}"
     write_unit
+    write_default_config
 
     log "Reloading systemd daemon"
     systemctl daemon-reload
