@@ -30,6 +30,7 @@
 %%%
 %%%-------------------------------------------------------------------
 -module(ecai_blender).
+-include_lib("kernel/include/logger.hrl").
 
 -behaviour(gen_server).
 
@@ -45,7 +46,10 @@
     %% script-based render
     render_script/2,
     render_script/3,
-    render_script/4
+    render_script/4,
+    %% high-level isogeny renders
+    render_isogeny/3,
+    render_isogeny/4
 ]).
 
 %% gen_server callbacks
@@ -59,6 +63,8 @@
 ]).
 
 -define(DEFAULT_BLENDER_CMD, "blender").
+-define(BLENDER_SCRIPT_TEMPLATE, "blender_render_script.py.mustache").
+-define(SPHERICAL_ISOGENY_TEMPLATE, "isogeny_spherical.py.mustache").
 
 -record(state, {
     blender_cmd = ?DEFAULT_BLENDER_CMD :: file:filename_all()
@@ -171,6 +177,7 @@ build_blend_args(BlendFile, OutputPattern, Opts) ->
 run_script_render(Cmd, OutputPath, PyBody, Opts) ->
     Script = build_render_script(PyBody, Opts),
     ScriptPath = temp_script_path(),
+    ?LOG_DEBUG("run_script_render ~p ", [ScriptPath]),
     case file:write_file(ScriptPath, Script) of
         ok ->
             Args = [
@@ -185,46 +192,40 @@ run_script_render(Cmd, OutputPath, PyBody, Opts) ->
             {error, {write_script_failed, Reason}}
     end.
 
-%% Build Python script:
+%% Build Python script from Mustache template via damage_utils.
 %%
-%% - Reads clean startup file
-%% - Runs user PyBody
-%% - Applies render settings from Opts
-%% - Uses sys.argv[-1] as output_path
-%% - Renders a still frame
+%% Template: ?BLENDER_SCRIPT_TEMPLATE
+%% Context keys:
+%%   - py_body : the user scene body (string/binary)
+%%   - format  : file format string, e.g. "PNG"
+%%   - res_x   : integer resolution X
+%%   - res_y   : integer resolution Y
+%%   - frame   : integer frame index
 build_render_script(PyBody, Opts) ->
-    Format = to_string(maps:get(format, Opts, <<"PNG">>)),
+    Format0 = maps:get(format, Opts, <<"PNG">>),
     ResX = maps:get(res_x, Opts, 1024),
     ResY = maps:get(res_y, Opts, 1024),
     Frame = maps:get(frame, Opts, 1),
+    AudioPath = maps:get(audio_path, Opts, <<"">>),
 
-    [
-        "import bpy\n",
-        "import sys\n\n",
-        "output_path = sys.argv[-1]\n\n",
-        "# Reset to empty scene\n",
-        "bpy.ops.wm.read_homefile(use_empty=True)\n\n",
-        "# --- User scene body start ---\n",
-        PyBody,
-        "\n",
-        "# --- User scene body end ---\n\n",
-        "scene = bpy.context.scene\n",
-        "scene.frame_set(",
-        integer_to_list(Frame),
-        ")\n",
-        "scene.render.image_settings.file_format = '",
-        Format,
-        "'\n",
-        "scene.render.filepath = output_path\n",
-        "scene.render.resolution_x = ",
-        integer_to_list(ResX),
-        "\n",
-        "scene.render.resolution_y = ",
-        integer_to_list(ResY),
-        "\n",
-        "scene.render.resolution_percentage = 100\n\n",
-        "bpy.ops.render.render(write_still=True)\n"
-    ].
+    Format = to_string(Format0),
+    %% or <<"ecai_navy">>, <<"ecai_teal">>, etc.
+    Theme = <<"bitcoin_war">>,
+    %Theme = <<"ecai_teal">>,
+
+    Context = #{
+        py_body => damage_utils:to_bin(PyBody),
+        format => Format,
+        res_x => ResX,
+        res_y => ResY,
+        frame => Frame,
+        theme => binary_to_list(Theme),
+        audio_path => AudioPath
+    },
+    ?LOG_INFO("Render Blender ~p", [Context]),
+
+    %% Assumes templates live under ecai:priv/templates/
+    damage_utils:load_template(ecai, ?BLENDER_SCRIPT_TEMPLATE, Context).
 
 temp_script_path() ->
     TmpDir =
@@ -232,7 +233,7 @@ temp_script_path() ->
             false -> "/tmp";
             Dir -> Dir
         end,
-    Name = "ecai_blender_" ++ integer_to_list(erlang:unique_integer()) ++ ".py",
+    Name = "ecai_blender_" ++ integer_to_list(abs(erlang:unique_integer())) ++ ".py",
     filename:join(TmpDir, Name).
 
 %%%===================================================================
@@ -267,6 +268,59 @@ to_string(Bin) when is_binary(Bin) ->
     binary_to_list(Bin);
 to_string(List) when is_list(List) ->
     List.
+
+%%--------------------------------------------------------------------
+%% High-level: render_isogeny/3,4
+%%
+%% Renders an "isogeny scene" (currently: spherical isogeny – sphere +
+%% wobbling hoops + kernel collapse + title text) directly via a
+%% generated Blender Python body.
+%%
+%%   Kind:
+%%      - spherical  (default canonical spherical isogeny)
+%%      - You can add more patterns later (e.g. 'spherical_basic',
+%%        'kernel_only', etc.) inside build_isogeny_pybody/2.
+%%
+%%   OutputPath: "/tmp/spherical_isogeny.png"
+%%   Opts: same shape as render_script/3 Opts (format, res_x, res_y, frame)
+%%--------------------------------------------------------------------
+-spec render_isogeny(
+    OutputPath :: file:filename_all(),
+    Kind :: atom(),
+    Opts :: map()
+) ->
+    {ok, non_neg_integer(), binary()} | {error, term()}.
+
+render_isogeny(OutputPath, Kind, Opts) ->
+    PyBody = build_isogeny_pybody(Kind, Opts),
+    render_script(OutputPath, PyBody, Opts).
+
+-spec render_isogeny(
+    Pid :: pid(),
+    OutputPath :: file:filename_all(),
+    Kind :: atom(),
+    Opts :: map()
+) ->
+    {ok, non_neg_integer(), binary()} | {error, term()}.
+
+render_isogeny(Pid, OutputPath, Kind, Opts) ->
+    PyBody = build_isogeny_pybody(Kind, Opts),
+
+    render_script(Pid, OutputPath, PyBody, Opts).
+%%%===================================================================
+%%% Internal: isogeny scene builders
+%%%===================================================================
+
+%% build_isogeny_pybody(Kind, Opts) -> Python source as iolist()
+%%
+%% Kind atoms are for future variants; currently we only implement
+%% 'spherical', and any unknown Kind falls back to that.
+build_isogeny_pybody(_Kind, _Opts) ->
+    spherical_isogeny_pybody().
+
+spherical_isogeny_pybody() ->
+    %% Template is pure scene-body Python (no read_homefile(), no render settings).
+    damage_utils:load_template(ecai, ?SPHERICAL_ISOGENY_TEMPLATE, #{}).
 
 %%%===================================================================
 %%% Public Test
@@ -314,14 +368,61 @@ test() ->
         frame => 1
     },
 
-    case render_script(Output, PyBody, Opts) of
-        {ok, 0, _BlenderOutput} ->
-            io:format("Render complete: ~s~n", [Output]),
-            {ok, Output};
-        {ok, Status, Log} ->
-            io:format("Blender exit status ~p~nLog: ~s~n", [Status, Log]),
-            {error, {blender_exit_status, Status}};
-        Error ->
-            io:format("Render error: ~p~n", [Error]),
-            Error
+    _Res =
+        case render_script(Output, PyBody, Opts) of
+            {ok, 0, _BlenderOutput} ->
+                io:format("Render complete: ~s~n", [Output]),
+                {ok, Output};
+            {ok, Status, Log} ->
+                io:format("Blender exit status ~p~nLog: ~s~n", [Status, Log]),
+                {error, {blender_exit_status, Status}};
+            Error ->
+                io:format("Render error: ~p~n", [Error]),
+                Error
+        end,
+    %% Start
+    %{ok, _Pid} = ecai_blender:start_link(#{blender_cmd => "/usr/bin/blender"}).
+
+    %% Render one spherical isogeny frame
+    Output0 = "/tmp/spherical_isogeny.png",
+    Opts0 = #{
+        format => <<"PNG">>,
+        res_x => 1080,
+        res_y => 1080,
+        %% pick a nice mid-collapse frame
+        frame => 180
+    },
+
+    case ecai_blender:render_isogeny(Output0, spherical, Opts0) of
+        {ok, 0, BlenderOutput0} ->
+            io:format("Render complete: ~s ~p~n", [Output0, BlenderOutput0]),
+            {ok, Output0};
+        {ok, Status0, Log0} ->
+            io:format("Blender exit status ~p~nLog: ~s~n", [Status0, Log0]),
+            {error, {blender_exit_status, Status0}};
+        Error0 ->
+            io:format("Render error: ~p~n", [Error0]),
+            Error0
+    end,
+
+    Output1 = "/tmp/spherical_isogeny.mp4",
+    Opts1 = #{
+        format => <<"PNG">>,
+        res_x => 800,
+        res_y => 800,
+        audio_path => <<"/tmp/ecai_bitcoiner_iconic.wav">>,
+        %% pick a nice mid-collapse frame
+        frame => 1
+    },
+
+    case ecai_blender:render_isogeny(Output1, spherical, Opts1) of
+        {ok, 0, BlenderOutput1} ->
+            io:format("Render complete: ~s ~p~n", [Output1, BlenderOutput1]),
+            {ok, Output1};
+        {ok, Status1, Log1} ->
+            io:format("Blender exit status ~p~nLog: ~s~n", [Status1, Log1]),
+            {error, {blender_exit_status, Status1}};
+        Error1 ->
+            io:format("Render error: ~p~n", [Error1]),
+            Error1
     end.

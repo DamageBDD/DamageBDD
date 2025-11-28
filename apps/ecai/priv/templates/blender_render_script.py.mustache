@@ -1,0 +1,115 @@
+# -*- mode: python -*-
+import bpy
+import sys
+import os
+import subprocess
+import tempfile
+import wave
+import struct
+import math
+
+import bpy
+import sys
+import os
+
+output_path = sys.argv[-1]
+
+# Reset to empty scene
+bpy.ops.wm.read_homefile(use_empty=True)
+scene = bpy.context.scene
+
+# --- Color management tuned for poster-style emission ---
+scene.display_settings.display_device = 'sRGB'
+
+vs = scene.view_settings
+
+# Hard-set to a known view transform on your build
+# ('Standard', 'Khronos PBR Neutral', 'AgX', 'Filmic', 'Filmic Log', 'False Color', 'Raw')
+try:
+    vs.view_transform = 'Raw'
+except Exception as e:
+    print("ECAI/Blender: could not set view_transform to Standard:", e)
+    print("ECAI/Blender: keeping", vs.view_transform)
+
+# Try to neutralise "Look"
+#for cand in ("None", "Default", "Medium High Contrast"):
+#    try:
+#        vs.look = cand
+#        break
+#    except Exception:
+#        continue
+
+vs.exposure = 0.0
+vs.gamma = 1.0
+vs.use_curve_mapping = False
+vs.use_white_balance = False
+
+print("ECAI/Blender view settings:",
+      "view_transform =", vs.view_transform,
+      "look =", vs.look,
+      "exposure =", vs.exposure,
+      "gamma =", vs.gamma)
+
+
+
+
+# --- User scene body start ---
+{{{py_body}}}
+# --- User scene body end ---
+
+scene = bpy.context.scene
+
+# Common resolution settings
+scene.render.resolution_x = {{res_x}}
+scene.render.resolution_y = {{res_y}}
+scene.render.resolution_percentage = 100
+
+
+root, ext = os.path.splitext(output_path)
+ext = ext.lower()
+
+video_exts = {'.mp4', '.mkv', '.mov', '.avi', '.webm'}
+
+audio_path = "{{audio_path}}".strip()
+
+if ext in video_exts:
+    # ---- VIDEO: render PNG frames, then ffmpeg; audio provided by Erlang ----
+    tmp_dir = tempfile.mkdtemp(prefix="ecai_frames_")
+
+    scene.render.image_settings.file_format = 'PNG'
+
+    for f in range(scene.frame_start, scene.frame_end + 1):
+        scene.frame_set(f)
+        scene.render.filepath = os.path.join(tmp_dir, f"f_%04d" % f)
+        bpy.ops.render.render(write_still=True)
+
+    fps = scene.render.fps if scene.render.fps > 0 else 24
+    pattern = os.path.join(tmp_dir, "f_%04d.png")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-framerate", str(fps),
+        "-i", pattern,
+    ]
+
+    if audio_path and os.path.exists(audio_path):
+        cmd += ["-i", audio_path, "-shortest", "-c:a", "aac", "-b:a", "192k"]
+    else:
+        print("ECAI/Blender: no audio_path provided or file missing, rendering silent video")
+        print(audio_path)
+        exit(1)
+
+
+    cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p", output_path]
+
+    try:
+        subprocess.run(cmd, check=True)
+    except Exception as e:
+        print("FFmpeg failed:", e)
+else:
+    # ---- STILL IMAGE ----
+    scene.frame_set({{frame}})
+    scene.render.image_settings.file_format = '{{format}}'
+    scene.render.filepath = output_path
+    bpy.ops.render.render(write_still=True)
