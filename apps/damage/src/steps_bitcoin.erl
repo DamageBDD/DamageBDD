@@ -43,6 +43,7 @@ step(
     ["I have created a bitcoin wallet at path", WalletPath0],
     _
 ) ->
+    true = steps_utils:is_admin(Context),
     BitcoinWallets = maps:get(bitcoin_wallets, Context, #{}),
     WalletPath = list_to_binary(WalletPath0),
     {ok, BtcWallet} = bitcoin:createwallet(WalletPath),
@@ -59,6 +60,7 @@ step(
     ["I have loaded a bitcoin wallet from path", WalletPath0],
     _
 ) ->
+    true = steps_utils:is_admin(Context),
     BitcoinWallets = maps:get(bitcoin_wallets, Context, #{}),
     WalletPath = list_to_binary(WalletPath0),
     case bitcoin:loadwallet(WalletPath) of
@@ -85,6 +87,7 @@ step(
     ["I create a new receive address", ReceiveAddress, "with label", Label],
     _
 ) ->
+    true = steps_utils:is_admin(Context),
     ?debugFmt(
         "I create a new receive address \"~p\" with label ~p",
         [ReceiveAddress, Label]
@@ -98,6 +101,7 @@ step(
     ["I transfer", Amount, "BTC from", FromWallet, "to", ToWallet],
     _
 ) ->
+    true = steps_utils:is_admin(Context),
     ?debugFmt("I transfer ~p BTC from ~p to ~p", [Amount, FromWallet, ToWallet]),
     Result = bitcoin:sendtoaddress(FromWallet, Amount, ToWallet),
     ?debugFmt(
@@ -113,6 +117,7 @@ step(
     ["the balance must be greater than", ExpectedBalance],
     _
 ) ->
+    true = steps_utils:is_admin(Context),
     ?debugFmt("the balance must be greater than ~p", [ExpectedBalance]),
     Result = bitcoin:getbalance(),
     ?debugFmt("Result ~p", [Result]),
