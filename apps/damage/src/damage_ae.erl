@@ -1076,7 +1076,14 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
     DummyFee = vanillae:min_fee(),
 
     {ok, ContractData} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, DummyGas, GasPrice, DummyFee, Contract, Args
+        AeAccount,
+        AeAccountNonce,
+        Amount,
+        DummyGas,
+        GasPrice,
+        DummyFee,
+        contract_path(Contract),
+        Args
     ),
 
     SignedContract = sign_transaction_base58(PrivateKey, ContractData),
@@ -1085,7 +1092,14 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
     CorrectFee = CorrectGas * GasPrice,
     ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
     {ok, ContractData0} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, CorrectGas, GasPrice, CorrectFee, Contract, Args
+        AeAccount,
+        AeAccountNonce,
+        Amount,
+        CorrectGas,
+        GasPrice,
+        CorrectFee,
+        contract_path(Contract),
+        Args
     ),
     SignedContract0 = sign_transaction_base58(PrivateKey, ContractData0),
 

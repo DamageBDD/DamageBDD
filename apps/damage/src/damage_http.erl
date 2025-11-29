@@ -527,55 +527,124 @@ do_action_tx(
                 [Response, Concurrency]
             ),
             {
-                stop,
-                case Concurrency of
-                    1 ->
-                        Req;
-                    C when is_integer(C) ->
-                        cowboy_req:reply(200, Req),
-                        cowboy_req:set_resp_body(jsx:encode(Response), Req)
-                end,
-                State
+                200, Response
             };
         {Status, Response} ->
             ?LOG_INFO("~p execute_feature from_json tx ~p", [Status, Response]),
             {
-                stop,
-                cowboy_req:reply(
-                    Status,
-                    cowboy_req:set_resp_body(jsx:encode(Response), Req)
-                ),
-                State
+                200, Response
             }
     end;
+%do_action_tx(
+%    #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} = Json, State, Req
+%) ->
+%    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+%
+%    case
+%        execute_bdd(
+%            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
+%        )
+%    of
+%        {200, DryRunRecord} ->
+%            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
+%                DryRunRecord,
+%            Args = [
+%                NodeAeAccount,
+%                integer_to_list(round(Cost)),
+%                binary_to_list(FeatureHash),
+%                binary_to_list(ReportHash)
+%            ],
+%            ?LOG_DEBUG("creating execute tx ~p", [Args]),
+%            Tx = damage_ae:contract_call_prepare_tx(
+%                #{public_key => AeAccount},
+%                ?DAMAGE_TOKEN_CONTRACT,
+%                "contracts/token.aes",
+%                "spend",
+%                Args
+%            ),
+%            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+%        {Status, Response} ->
+%            {Status, Response}
+%    end;
+%% Initialise a job in the channel and snapshot after execution
 do_action_tx(
-    #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} = Json, State, Req
+    #{
+        feature := _FeatureData,
+        concurrency := _Concurrency,
+        address := AeAccount,
+        channel_id := ChannelId
+    } = Json,
+    State,
+    Req
 ) ->
+    %% Node’s AE account (responder in the channel)
     #{public_key := NodeAeAccount} = secrets:node_keypair(),
 
-    case
-        execute_bdd(
-            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
-        )
-    of
+    %% 1) Dry-run to get cost + hashes (no side effects)
+    case execute_bdd(maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]) of
         {200, DryRunRecord} ->
-            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
-                DryRunRecord,
-            Args = [
-                NodeAeAccount,
-                integer_to_list(round(Cost)),
-                binary_to_list(FeatureHash),
-                binary_to_list(ReportHash)
-            ],
-            ?LOG_DEBUG("creating execute tx ~p", [Args]),
-            Tx = damage_ae:contract_call_prepare_tx(
-                #{public_key => AeAccount},
-                ?DAMAGE_TOKEN_CONTRACT,
-                "contracts/token.aes",
-                "spend",
-                Args
-            ),
-            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+            #{
+                cost := Cost,
+                feature_hash := FeatureHash,
+                report_hash := ReportHash
+            } = DryRunRecord,
+
+            %% 2) Initialise the job inside the channel (JobRegistry via channel contract call)
+            %%    damage_channels:init_job/3 should:
+            %%      - ensure/reuse an AE state-channel between AeAccount and NodeAeAccount
+            %%      - call JobRegistry (off-chain) to register the job
+            %%      - return job_id and the channel pid/info
+            case
+                damage_channels:init_job(
+                    ChannelId,
+                    #{
+                        cost => Cost,
+                        feature_hash => FeatureHash,
+                        report_hash_dry_run => ReportHash
+                    }
+                )
+            of
+                {ok, #{job_id := JobId, channel_pid := ChanPid} = InitInfo} ->
+                    %% 3) Execute the BDD for real, charging via the channel
+                    %%    execute_bdd/5 can use job_id + channel_pid to:
+                    %%      - call damage_jobs:record_step/6 via the channel
+                    %%      - update JobRegistry off-chain per step
+                    ExecOpts = [
+                        {dry_run, false},
+                        {job_id, JobId},
+                        {channel_pid, ChanPid}
+                    ],
+                    ExecResult = execute_bdd(
+                        Json,
+                        %maps:put(stream, nostream, Json),
+                        State,
+                        Req,
+                        ExecOpts
+                    ),
+
+                    %% 4) Finalise by snapshotting latest channel state on-chain
+                    %%    damage_channels:finalize_snapshot/2 should:
+                    %%      - fetch {channel_id, round, state_hash} from ChanPid
+                    %%      - build & post channel_snapshot_solo_tx (or force_progress if needed)
+                    SnapRes = damage_channels:finalize_snapshot(
+                        ChanPid,
+                        #{from_id => AeAccount}
+                    ),
+
+                    Reply = #{
+                        status => <<"ok">>,
+                        job_id => JobId,
+                        dry_run => DryRunRecord,
+                        init => InitInfo,
+                        exec => ExecResult,
+                        snapshot => SnapRes
+                    },
+                    ?LOG_DEBUG("execute_bdd wallet channel success ~p", [Reply]),
+                    {200, Reply};
+                {error, Reason} ->
+                    ?LOG_ERROR("execute_bdd wallet channel success ~p", [Reason]),
+                    {500, #{status => <<"notok">>, error => Reason}}
+            end;
         {Status, Response} ->
             {Status, Response}
     end;
@@ -639,6 +708,7 @@ from_json(Req, #{action := tx} = State) ->
             };
         Json when is_map(Json) ->
             {Status0, Response0} = do_action_tx_throttled(Json, State, Req),
+            ?LOG_DEBUG("response ~p",[Response0]),
             {
                 stop,
                 cowboy_req:reply(

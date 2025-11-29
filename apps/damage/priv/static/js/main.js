@@ -1,7 +1,10 @@
 import * as wallet from "/static/js/wallet.js";
 import { initDamageBDDPicker } from '/static/js/featurePicker.js';
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
+import { ensureChannel } from '/static/js/ensureChannel.js';
 
+const MDW_BASE = "https://mainnet.aeternity.io/mdw";
+const NODE_BASE = "https://mainnet.aeternity.io";
 
 
 function showConnectStatus(message, type = 'info') {
@@ -161,7 +164,7 @@ function generateDamageQR(address){
 					var address = window.TokenManager.getAddress();
 					generateDamageQR(address);
 					var damageAddr = document.getElementById("damage-address");
-						damageAddr.value = address;
+					damageAddr.value = address;
 				}
 			}
 		});
@@ -440,97 +443,273 @@ function generateDamageQR(address){
 	}
 
 	async function submitDamageForm() {
-		const inputText = document.getElementById("damageTextArea").value;
-		const concurrencyText = 1;
-
-		const headers = new Headers();
-		headers.append("Content-Type", "application/json");
-
-		headers.append("Authorization", "Bearer " + TokenManager.getToken());
-
-
+		const inputText = document.getElementById("damageTextArea").value.trim();
+		const concurrency = 1;
 		const reportElement = addReport();
 		const mode = window.TokenManager.getMode();
-		if(mode == "custodial"){
-			const username = window.TokenManager.getEmail();
-			const request = {
-				method: 'POST',
-				credentials: 'include',
-				headers: headers,
-				body: JSON.stringify({
-					feature: inputText,
-					concurrency: concurrencyText,
-					stream: true
-				})
-			};
-			const response = await fetch("/execute_feature/", request);
-			if (response.status === 401) {
-				MicroModal.show("login-modal");
-				return;
-			}
 
-			if (!response.ok) {
-				// Read the (possibly streamed) error text once
-				const errText = await response.text();
-				reportElement.innerText = "Error executing feature:\n" + errText;
-				return;
-			}
-
-			await streamResponseToDOM(response, reportElement);
+		if (!inputText) {
+			reportElement.innerText = "Please enter a feature before executing.";
+			return;
 		}
-		else {
-			const address = window.TokenManager.getAddress();
-			const request = {
-				method: 'POST',
-				credentials: 'include',
-				headers: headers,
-				body: JSON.stringify({
-					feature: inputText,
-					address: address,
-					concurrency: concurrencyText
-				})
-			};
-			const response = await fetch("/tx/", request);
-			// Optional: handle server asking for a signature
-			const data = await response.json();
-			if (data.status === "ok") {
-				const message = data.tx;
-				await window.connectWalletUnified();
-				const signature = await wallet.signTransactionSmart(
-					message,
-					"ae_mainnet",
-					window.location.origin,
-					window.location.origin
-				);
-				if(signature.ok) {
 
-					const signedRequest = {
-						method: 'POST',
-						credentials: 'include',
-						headers: headers,
-						body: JSON.stringify({
-							feature: inputText,
-							address: address,
-							concurrency: concurrencyText,
-							signed_tx: signature.result.signedTransaction
-						})
-					};
+		try {
+			const token = TokenManager.getToken();
+			const headers = buildJsonAuthHeaders(token);
 
-					const signedResponse = await fetch("/tx/", signedRequest);
-					if (signedResponse.status === 200) {
-						await streamResponseToDOM(signedResponse, reportElement);
-					} else {
-						const errText = await signedResponse.text();
-						reportElement.innerText = "Error after signing: " + errText;
-					}
-				} else {
-					reportElement.innerText = "Failed to sign: " + signature.error.message;
-				}
-			} else {
-					reportElement.innerText = "Failed to prepare transaction: " + data.message;
+			if (!token && mode === "custodial") {
+				// No token in custodial mode => force login
+				MicroModal.show("login-modal");
+				reportElement.innerText = "You need to log in to execute tests.";
+				return;
 			}
+
+			if (mode === "custodial") {
+				await handleCustodialExecution({ inputText, concurrency, headers, reportElement });
+			} else if (mode === "noncustodial" || mode === "onchain" || mode === "channel" || mode === "extension" ||!mode) {
+				await handleNonCustodialExecution({ inputText, concurrency, headers, reportElement });
+			} else {
+				reportElement.innerText = `Unknown execution mode: ${mode}`;
+			}
+		} catch (err) {
+			console.error("submitDamageForm unexpected error:", err);
+			reportElement.innerText =
+				"Unexpected error executing feature: " + (err && err.message ? err.message : String(err));
 		}
 	}
+
+	/**
+	 * Build JSON headers with optional Bearer token.
+	 */
+	function buildJsonAuthHeaders(token) {
+		const headers = new Headers();
+		headers.set("Content-Type", "application/json");
+		if (token) {
+			headers.set("Authorization", "Bearer " + token);
+		}
+		return headers;
+	}
+
+	/**
+	 * Try to parse an error response as JSON, falling back to plain text.
+	 */
+	async function extractErrorMessage(response) {
+		try {
+			const contentType = response.headers.get("Content-Type") || "";
+			if (contentType.includes("application/json")) {
+				const j = await response.json();
+				if (j && (j.message || j.error)) {
+					return j.message || j.error;
+				}
+				return JSON.stringify(j);
+			}
+		} catch (e) {
+			// ignore and fall back to text
+		}
+
+		try {
+			return await response.text();
+		} catch (e) {
+			return `HTTP ${response.status} ${response.statusText}`;
+		}
+	}
+
+	/**
+	 * Custodial / wallet-account path: POST to /execute_feature/
+	 * and stream response.
+	 */
+	async function handleCustodialExecution({ inputText, concurrency, headers, reportElement }) {
+		const request = {
+			method: "POST",
+			credentials: "include",
+			headers,
+			body: JSON.stringify({
+				feature: inputText,
+				concurrency,
+				stream: true
+			})
+		};
+
+		let response;
+		try {
+			response = await fetch("/execute_feature/", request);
+		} catch (err) {
+			console.error("Network error calling /execute_feature/:", err);
+			reportElement.innerText =
+				"Network error while executing feature: " + (err.message || String(err));
+			return;
+		}
+
+		if (response.status === 401) {
+			MicroModal.show("login-modal");
+			reportElement.innerText = "You are not authorized. Please log in.";
+			return;
+		}
+
+		if (!response.ok) {
+			const errText = await extractErrorMessage(response);
+			reportElement.innerText = "Error executing feature:\n" + errText;
+			return;
+		}
+
+		try {
+			await streamResponseToDOM(response, reportElement);
+		} catch (err) {
+			console.error("Error streaming response to DOM:", err);
+			reportElement.innerText =
+				"Error while streaming execution output: " + (err.message || String(err));
+		}
+	}
+
+	/**
+	 * Non-custodial / on-chain path:
+	 *  1. ensureChannel(...)
+	 *  2. POST /tx to prepare unsigned tx
+	 *  3. connect wallet and sign
+	 *  4. POST /tx with signed_tx and stream result
+	 */
+	async function handleNonCustodialExecution({ inputText, concurrency, headers, reportElement }) {
+		const address = window.TokenManager.getAddress();
+		if (!address) {
+			reportElement.innerText = "No wallet address found. Please connect your wallet.";
+			return;
+		}
+
+		var channel;
+		try {
+			channel = await ensureChannel({
+				nodeUrl: NODE_BASE,
+				mdwUrl: NODE_BASE,
+				responderId: window.nodePublicKey,
+				initiatorId: address
+			});
+		} catch (err) {
+			console.error("ensureChannel failed:", err);
+			reportElement.innerText =
+				"Failed to ensure payment channel: " + (err.message || String(err));
+			return;
+		}
+
+		const prepareReq = {
+			method: "POST",
+			credentials: "include",
+			headers,
+			body: JSON.stringify({
+				feature: inputText,
+				address,
+				concurrency,
+				channel_id: channel.channel.id
+			})
+		};
+
+		let txPrepareResp;
+		try {
+			txPrepareResp = await fetch("/tx/", prepareReq);
+		} catch (err) {
+			console.error("Network error calling /tx/ (prepare):", err);
+			reportElement.innerText =
+				"Network error while preparing transaction: " + (err.message || String(err));
+			return;
+		}
+
+		if (!txPrepareResp.ok) {
+			const msg = await extractErrorMessage(txPrepareResp);
+			reportElement.innerText = "Failed to prepare transaction: " + msg;
+			return;
+		}
+
+		let data;
+		try {
+			data = await txPrepareResp.json();
+		} catch (err) {
+			console.error("JSON parse error for /tx/ (prepare):", err);
+			reportElement.innerText = "Invalid JSON from server while preparing transaction.";
+			return;
+		}
+
+		if (data.status !== "ok" || !data.tx) {
+			reportElement.innerText =
+				"Failed to prepare transaction: " + (data.message || "Unknown error");
+			return;
+		}
+
+		const message = data.tx;
+
+		try {
+			await window.connectWalletUnified();
+		} catch (err) {
+			console.error("connectWalletUnified failed:", err);
+			reportElement.innerText =
+				"Failed to connect wallet: " + (err.message || String(err));
+			return;
+		}
+
+		let signature;
+		try {
+			signature = await wallet.signTransactionSmart(
+				message,
+				"ae_mainnet",
+				window.location.origin,
+				window.location.origin
+			);
+		} catch (err) {
+			console.error("signTransactionSmart threw error:", err);
+			reportElement.innerText =
+				"Failed to sign transaction: " + (err.message || String(err));
+			return;
+		}
+
+		if (!signature || !signature.ok) {
+			const errorMsg =
+				  (signature && signature.error && signature.error.message) ||
+				  "Unknown signing error";
+			reportElement.innerText = "Failed to sign: " + errorMsg;
+			return;
+		}
+
+		const signedTx = signature.result && signature.result.signedTransaction;
+		if (!signedTx) {
+			reportElement.innerText = "Wallet did not return a signed transaction.";
+			return;
+		}
+
+		const signedRequest = {
+			method: "POST",
+			credentials: "include",
+			headers,
+			body: JSON.stringify({
+				feature: inputText,
+				address,
+				concurrency,
+				signed_tx: signedTx
+			})
+		};
+
+		let signedResponse;
+		try {
+			signedResponse = await fetch("/tx/", signedRequest);
+		} catch (err) {
+			console.error("Network error calling /tx/ (signed):", err);
+			reportElement.innerText =
+				"Network error after signing transaction: " + (err.message || String(err));
+			return;
+		}
+
+		if (!signedResponse.ok) {
+			const errText = await extractErrorMessage(signedResponse);
+			reportElement.innerText = "Error after signing: " + errText;
+			return;
+		}
+
+		try {
+			await streamResponseToDOM(signedResponse, reportElement);
+		} catch (err) {
+			console.error("Error streaming signed response to DOM:", err);
+			reportElement.innerText =
+				"Error while streaming execution output: " + (err.message || String(err));
+		}
+	}
+
 
 
 
