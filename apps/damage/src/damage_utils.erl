@@ -547,8 +547,11 @@ ensure_dir(Dir) ->
         true ->
             ok;
         false ->
-            ok = filelib:ensure_dir(filename:join(Dir, ".keep")),
-            ok
+            case filelib:ensure_dir(filename:join(Dir, ".keep")) of
+                ok -> ok;
+                {error, exists} -> ok;
+                {error, eexists} -> ok
+            end
     end.
 
 exists_cmd(Cmd) ->

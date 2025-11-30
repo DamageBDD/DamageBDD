@@ -30,6 +30,7 @@
 %%-----------------------------------------------------------------------------
 %% Step patterns
 %%-----------------------------------------------------------------------------
+%% erlfmt:ignore-begin
 
 %% GIVEN
 -define(STEP_GITHUB_OAUTH, ["I use github oauth token", Token]).
@@ -48,31 +49,37 @@
     "the github combined status for ref", Ref, "should be", ExpectedStatus
 ]).
 
+%% erlfmt:ignore-end
 %%-----------------------------------------------------------------------------
 %% Documentation variants
 %%-----------------------------------------------------------------------------
 
 step(_Config, _Context, documentation, _N, ?STEP_GITHUB_OAUTH, _) ->
+    _ = Token,
     "GIVEN: Configure GitHub OAuth token for subsequent GitHub steps";
-
 step(_Config, _Context, documentation, _N, ?STEP_GITHUB_BASIC_AUTH, _) ->
+    _ = User,
+    _ = Password,
     "GIVEN: Configure GitHub basic authentication (username & password)";
-
 step(_Config, _Context, documentation, _N, ?STEP_GITHUB_REPO, _) ->
+    _ = Repo,
     "GIVEN: Select the GitHub repository in \"owner/repo\" format";
-
 step(_Config, _Context, documentation, _N, ?STEP_GITHUB_LOAD_ISSUE, _) ->
+    _ = IssueStr,
     "WHEN: Load a GitHub issue by number and store it in the Context";
-
 step(_Config, _Context, documentation, _N, ?STEP_GITHUB_SET_STATUS, _) ->
+    _ = Sha,
+    _ = State,
+    _ = Desc,
+    _ = Ctx,
     "WHEN: Create a GitHub commit/PR status for the given SHA";
-
 step(_Config, _Context, documentation, _N, ?STEP_GITHUB_ISSUE_STATE, _) ->
+    _ = ExpectedState,
     "THEN: Assert that the previously loaded GitHub issue has the expected state (open/closed)";
-
 step(_Config, _Context, documentation, _N, ?STEP_GITHUB_COMBINED_STATUS, _) ->
+    _ = Ref,
+    _ = ExpectedStatus,
     "THEN: Assert the combined GitHub status for a ref / SHA (success, failure, etc.)";
-
 %%-----------------------------------------------------------------------------
 %% GIVEN: OAuth credentials
 %%-----------------------------------------------------------------------------
@@ -81,8 +88,7 @@ step(_Config, Context, <<"Given">>, _N, ?STEP_GITHUB_OAUTH, _) ->
     ensure_egithub_started(),
     Token1 = string:trim(Token),
     Cred = egithub:oauth(list_to_binary(Token1)),
-    maps:put(github_credentials, Cred ,Context);
-
+    maps:put(github_credentials, Cred, Context);
 %%-----------------------------------------------------------------------------
 %% GIVEN: Basic auth credentials
 %%-----------------------------------------------------------------------------
@@ -92,17 +98,14 @@ step(_Config, Context, <<"Given">>, _N, ?STEP_GITHUB_BASIC_AUTH, _) ->
     User1 = string:trim(User),
     Pass1 = string:trim(Password),
     Cred = egithub:basic_auth(User1, Pass1),
-    maps:put(github_credentials, Cred ,Context);
-
-
+    maps:put(github_credentials, Cred, Context);
 %%-----------------------------------------------------------------------------
 %% GIVEN: Repository selection
 %%-----------------------------------------------------------------------------
 
 step(_Config, Context, <<"Given">>, _N, ?STEP_GITHUB_REPO, _) ->
     Repo1 = string:trim(Repo),
-    maps:put(github_repo, Repo1,Context);
-
+    maps:put(github_repo, Repo1, Context);
 %%-----------------------------------------------------------------------------
 %% WHEN: Load GitHub issue (GET issue)
 %%-----------------------------------------------------------------------------
@@ -117,7 +120,8 @@ step(_Config, Context, <<"When">>, N, ?STEP_GITHUB_LOAD_ISSUE, _) ->
             case safe_list_to_integer(string:trim(IssueStr)) of
                 {error, bad_integer} ->
                     Msg = io_lib:format(
-                            "Invalid GitHub issue number: ~p", [IssueStr]),
+                        "Invalid GitHub issue number: ~p", [IssueStr]
+                    ),
                     ?LOG_ERROR("~s", [Msg]),
                     maps:put(fail, lists:flatten(Msg), Ctx1);
                 {ok, IssueNo} ->
@@ -126,15 +130,14 @@ step(_Config, Context, <<"When">>, N, ?STEP_GITHUB_LOAD_ISSUE, _) ->
                             maps:put(github_issue, IssueJson, Ctx1);
                         Error ->
                             Msg = io_lib:format(
-                                    "Error loading GitHub issue ~p in ~s: ~p",
-                                    [IssueNo, Repo1, Error]),
+                                "Error loading GitHub issue ~p in ~s: ~p",
+                                [IssueNo, Repo1, Error]
+                            ),
                             ?LOG_ERROR("~s", [Msg]),
                             maps:put(fail, lists:flatten(Msg), Ctx1)
                     end
             end
     end;
-
-
 %%-----------------------------------------------------------------------------
 %% WHEN: Set commit / PR status (GitHub Status API)
 %%
@@ -149,22 +152,22 @@ step(_Config, Context, <<"When">>, N, ?STEP_GITHUB_SET_STATUS, _) ->
             ?LOG_ERROR("GitHub set status failed (line ~p): ~s", [N, Msg]),
             maps:put(fail, Msg, Ctx1);
         {ok, Cred, Repo1, Ctx1} ->
-            Sha1   = string:trim(Sha),
+            Sha1 = string:trim(Sha),
             State1 = string:trim(State),
-            Desc1  = string:trim(Desc),
+            Desc1 = string:trim(Desc),
             CtxStr = string:trim(Ctx),
             case egithub:create_status(Cred, Repo1, Sha1, State1, Desc1, CtxStr) of
                 {ok, StatusJson} ->
                     maps:put(github_status, StatusJson, Ctx1);
                 Error ->
                     Msg = io_lib:format(
-                            "Error creating GitHub status for ~s@~s: ~p",
-                            [Repo1, Sha1, Error]),
+                        "Error creating GitHub status for ~s@~s: ~p",
+                        [Repo1, Sha1, Error]
+                    ),
                     ?LOG_ERROR("~s", [Msg]),
                     maps:put(fail, lists:flatten(Msg), Ctx1)
             end
     end;
-
 %%-----------------------------------------------------------------------------
 %% THEN: Assert issue state (open / closed)
 %%
@@ -178,19 +181,19 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_GITHUB_ISSUE_STATE, _) ->
             maps:put(fail, Msg, Context);
         IssueJson ->
             Expected1 = string:lowercase(string:trim(ExpectedState)),
-            Actual0   = github_get_state(IssueJson),
-            Actual1   = string:lowercase(Actual0),
+            Actual0 = github_get_state(IssueJson),
+            Actual1 = string:lowercase(Actual0),
             case Actual1 of
                 Expected1 ->
                     Context;
                 _ ->
                     Msg = io_lib:format(
-                            "GitHub issue state mismatch. Expected ~s, got ~s",
-                            [Expected1, Actual1]),
+                        "GitHub issue state mismatch. Expected ~s, got ~s",
+                        [Expected1, Actual1]
+                    ),
                     maps:put(fail, lists:flatten(Msg), Context)
             end
     end;
-
 %%-----------------------------------------------------------------------------
 %% THEN: Assert combined status for a ref / SHA
 %%
@@ -213,18 +216,20 @@ step(_Config, Context, <<"Then">>, N, ?STEP_GITHUB_COMBINED_STATUS, _) ->
                     case Actual1 of
                         Expected1 ->
                             %% Also stash last combined_status for later inspection
-                            maps:put(github_combined_status,StatusJson, Ctx1);
+                            maps:put(github_combined_status, StatusJson, Ctx1);
                         _ ->
                             Msg = io_lib:format(
-                                    "GitHub combined status mismatch for ~s@~s. "
-                                    "Expected ~s, got ~s",
-                                    [Repo1, Ref1, Expected1, Actual1]),
+                                "GitHub combined status mismatch for ~s@~s. "
+                                "Expected ~s, got ~s",
+                                [Repo1, Ref1, Expected1, Actual1]
+                            ),
                             maps:put(fail, lists:flatten(Msg), Ctx1)
                     end;
                 Error ->
                     Msg = io_lib:format(
-                            "Error fetching GitHub combined status for ~s@~s: ~p",
-                            [Repo1, Ref1, Error]),
+                        "Error fetching GitHub combined status for ~s@~s: ~p",
+                        [Repo1, Ref1, Error]
+                    ),
                     ?LOG_ERROR("~s", [Msg]),
                     maps:put(fail, lists:flatten(Msg), Ctx1)
             end
