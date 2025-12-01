@@ -395,11 +395,9 @@ test() ->
 
     case ecai_blender:render_isogeny(Output0, spherical, Opts0) of
         {ok, 0, BlenderOutput0} ->
-            io:format("Render complete: ~s ~p~n", [Output0, BlenderOutput0]),
-            {ok, Output0};
+            io:format("Render complete: ~s ~p~n", [Output0, BlenderOutput0]);
         {ok, Status0, Log0} ->
-            io:format("Blender exit status ~p~nLog: ~s~n", [Status0, Log0]),
-            {error, {blender_exit_status, Status0}};
+            io:format("Blender exit status ~p~nLog: ~s~n", [Status0, Log0]);
         Error0 ->
             io:format("Render error: ~p~n", [Error0]),
             Error0

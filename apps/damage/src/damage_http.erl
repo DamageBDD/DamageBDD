@@ -578,7 +578,7 @@ do_action_tx(
     Req
 ) ->
     %% Node’s AE account (responder in the channel)
-    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+    %#{public_key := NodeAeAccount} = secrets:node_keypair(),
 
     %% 1) Dry-run to get cost + hashes (no side effects)
     case execute_bdd(maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]) of
