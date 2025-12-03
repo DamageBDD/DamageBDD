@@ -18,6 +18,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
+-define(AEMDW_WEBSOCKET_HEARTBEAT, 60000).
 
 %% API Functions
 
@@ -32,7 +33,7 @@ init([]) ->
             gproc:reg_other({n, l, {?MODULE, aemdw}}, self()),
             StreamRef = gun:ws_upgrade(ConnPid, PathPrefix, []),
             ?LOG_DEBUG("aemdw websocket upgrade successfull ~p", [ConnPid]),
-            HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+            HeartbeatTimer = erlang:send_after(?AEMDW_WEBSOCKET_HEARTBEAT, self(), heartbeat),
             {
                 ok,
                 #state{
@@ -51,7 +52,10 @@ handle_call(
     _From,
     #state{conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
-    ok = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode(#{ok => <<"ping">>})}),
+    case gun:ws_send(ConnPid, StreamRef, {text, jsx:encode(#{ok => <<"ping">>})}) of
+        ok -> ok;
+        Error -> ?LOG_DEBUG("AE middleware socket failed", [Error])
+    end,
     {reply, ok, State};
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
