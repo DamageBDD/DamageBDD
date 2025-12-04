@@ -236,7 +236,7 @@ handle_call(
         state_hash := StateHash
     } = State
 ) ->
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
     case encode_call_data(Contract, Fun, Args) of
         {ok, Calldata} ->
             %% Build the off-chain update payload
@@ -793,7 +793,7 @@ gas_for_contract_create_fate(TxBin) ->
 %% Contract call (FATE) gas
 -spec gas_for_contract_call_fate(binary()) -> non_neg_integer().
 gas_for_contract_call_fate(TxBin) ->
-    calculate_gas(12, TxBin).
+    calculate_gas(24, TxBin).
 contract_path(Contract0) ->
     PrivDir = code:priv_dir(damage),
     %% Strip "contracts/" prefix if present
@@ -856,10 +856,12 @@ paying_for(PK, Nonce, Fee, Tx) ->
     end.
 -spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
 calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
-    BaseGas = 26000,
+    BaseGas = 46000,
     GasPerByte = 20,
     SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
     BaseGas + (SizeDiff * GasPerByte).
+min_gas_price() ->
+    1000000000.
 min_fee() ->
     %TODO some fine tuning
     vanillae:min_fee() * 2.
@@ -873,7 +875,7 @@ contract_call_prepare_tx(
     Fee = min_fee(),
     Gas = min_gas(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
@@ -887,7 +889,7 @@ payfor_tx(
     Fee = min_fee(),
     %Gas = vanillae:min_gas(),
     %Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
 
     {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
     ?LOG_DEBUG("payfor_tx ~p", [InnerTxBin]),
@@ -919,10 +921,10 @@ contract_call_payfor_user(
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
-    Gas = vanillae:min_gas(),
+    Fee = min_fee(),
+    Gas = min_gas(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
@@ -1007,13 +1009,13 @@ contract_call(
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
 
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
 
     {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
 
     %% First build raw tx with dummy values to estimate gas
-    DummyGas = vanillae:min_gas(),
-    DummyFee = vanillae:min_fee(),
+    DummyGas = min_gas(),
+    DummyFee = min_fee(),
 
     {ok, ContractCall0} = vanillae:contract_call(
         AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args
@@ -1049,10 +1051,10 @@ contract_call_dry(
 ) ->
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
-    Gas = 100000,
-    GasPrice = vanillae:min_gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(Contract),
+    Fee = min_fee(),
+    Gas = min_gas(),
+    GasPrice = min_gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, Nonce, Gas, GasPrice, Fee, 0, AACI, ContractAddress, Func, Args
     ),
@@ -1070,9 +1072,9 @@ contract_deploy(Contract, Args) ->
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price() * 2,
+    GasPrice = min_gas_price(),
     %% First build raw tx with dummy values to estimate gas
-    DummyGas = vanillae:min_gas(),
+    DummyGas = min_gas(),
     DummyFee = vanillae:min_fee(),
 
     {ok, ContractData} = vanillae:contract_create(
@@ -1122,10 +1124,10 @@ contract_deploy_for(
     Args
 ) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    DummyGas = vanillae:min_gas(),
-    DummyFee = vanillae:min_fee(),
+    DummyGas = min_gas(),
+    DummyFee = min_fee(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price() * 4,
+    GasPrice = min_gas_price() * 2,
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
 
