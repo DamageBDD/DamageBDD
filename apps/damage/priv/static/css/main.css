@@ -556,6 +556,10 @@ ul[data-tabs] {
   background-color: #1e1e2f;
   padding-left: 1rem;
   padding-top:0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  list-style: none;
 }
 
 /* Tab links */
@@ -939,6 +943,10 @@ ul[data-tabs] li a:hover {
   border-bottom: 1px solid #333;
   border-radius: 0 0 8px 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  width: 100%;
+  box-sizing: border-box;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 /* Move existing .site-header into left section */
@@ -1455,7 +1463,7 @@ ul[data-tabs] li a:hover {
 }
 
 /* Responsive */
-@media (max-width: 768px) {
+@media screen and (max-width: 768px) {
   #damage-transfers-tab .token-section {
     padding: 1rem;
     margin-bottom: 1.5rem;
@@ -1618,7 +1626,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
   font-weight: bold;
 }
 
-@media (max-width: 600px) {
+@media screen and (max-width: 600px) {
   body.reset-password-page {
     padding: 1rem;
   }
@@ -1632,18 +1640,22 @@ body.reset-password-page #resetPasswdForm ul li::before {
   }
 }
 
-@media (max-width: 768px) {
+@media screen and (max-width: 768px) {
   /* Topbar - Stack vertically on mobile */
   .topbar {
     flex-direction: column;
     align-items: stretch;
     padding: 0.75rem;
     gap: 0.75rem;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .topbar .site-header {
     justify-content: center;
     padding: 0.5rem;
+    width: 100%;
+    flex-shrink: 0;
   }
 
   .topbar .toolbar-items {
@@ -1651,10 +1663,17 @@ body.reset-password-page #resetPasswdForm ul li::before {
     justify-content: center;
     gap: 0.5rem;
     font-size: 0.9rem;
+    width: 100%;
   }
 
   .topbar .toolbar-items div {
     padding: 0.5rem 0.75rem;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(0, 123, 255, 0.3);
   }
 
   .brand-text .title {
@@ -1667,6 +1686,13 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
   .logo {
     width: 48px;
+    flex-shrink: 0;
+  }
+
+  .install-btn {
+    min-height: 44px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(40, 167, 69, 0.3);
   }
 
   /* Tabs - Make scrollable on mobile */
@@ -1675,19 +1701,46 @@ body.reset-password-page #resetPasswdForm ul li::before {
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
+    scrollbar-color: #444 #1e1e2f;
     padding-left: 0.5rem;
     padding-right: 0.5rem;
     white-space: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+    position: relative;
+  }
+
+  ul[data-tabs]::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  ul[data-tabs]::-webkit-scrollbar-track {
+    background: #1e1e2f;
+  }
+
+  ul[data-tabs]::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 2px;
+  }
+
+  ul[data-tabs]::-webkit-scrollbar-thumb:hover {
+    background: #555;
   }
 
   ul[data-tabs] li {
     display: inline-block;
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   ul[data-tabs] li a {
     padding: 0.6rem 1rem;
     font-size: 0.9rem;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(0, 123, 255, 0.3);
   }
 
   /* Execution Tab - Stack columns on mobile */
@@ -1926,6 +1979,15 @@ body.reset-password-page #resetPasswdForm ul li::before {
     font-size: 0.85rem;
   }
 
+  #node-public-key {
+    word-wrap: break-word;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    max-width: 100%;
+    font-family: monospace;
+  }
+
   /* Android/Mobile specific improvements */
   body {
     -webkit-text-size-adjust: 100%;
@@ -1966,7 +2028,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
   }
 }
 
-@media (min-width: 769px) and (max-width: 1024px) {
+@media screen and (min-width: 769px) and (max-width: 1024px) {
   .topbar {
     padding: 0.5rem 1rem;
   }
@@ -1989,9 +2051,21 @@ body.reset-password-page #resetPasswdForm ul li::before {
 }
 
 /* Small mobile: up to 480px */
-@media (max-width: 480px) {
+@media screen and (max-width: 480px) {
   .topbar {
     padding: 0.5rem;
+    gap: 0.5rem;
+  }
+
+  .topbar .site-header {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.5rem;
+  }
+
+  .brand-text {
+    align-items: center;
   }
 
   .brand-text .title {
@@ -2006,10 +2080,45 @@ body.reset-password-page #resetPasswdForm ul li::before {
     width: 40px;
   }
 
+  .topbar .toolbar-items {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .topbar .toolbar-items div {
+    width: 100%;
+    justify-content: center;
+    font-size: 0.85rem;
+    padding: 0.6rem;
+  }
+
+  .install-btn {
+    width: 100%;
+    font-size: 0.8rem;
+    padding: 0.75rem;
+  }
+
+  ul[data-tabs] {
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
+  }
+
   ul[data-tabs] li a {
     padding: 0.5rem 0.75rem;
     font-size: 0.8rem;
-    min-height: 40px;
+    min-height: 44px;
+  }
+
+  /* Balance display adjustments */
+  #balanceDiv {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+    padding: 0.5rem;
+  }
+
+  .balance-row {
+    justify-content: center;
   }
 
   .modal__container {
@@ -2122,6 +2231,23 @@ body.reset-password-page #resetPasswdForm ul li::before {
   .topbar {
     flex-direction: row;
     justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .topbar .site-header {
+    flex-direction: row;
+    justify-content: flex-start;
+  }
+
+  .topbar .toolbar-items {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  ul[data-tabs] li a {
+    padding: 0.5rem 0.85rem;
+    font-size: 0.85rem;
   }
 
   #settings-tab fieldset {
@@ -2148,13 +2274,19 @@ body.reset-password-page #resetPasswdForm ul li::before {
   /* Mobile touch devices */
   button:hover,
   .buttonlink:hover,
-  .styled-btn:hover {
+  .styled-btn:hover,
+  .topbar .toolbar-items div:hover,
+  ul[data-tabs] li a:hover,
+  .install-btn:hover {
     transform: none; /* Disable hover effects on touch */
   }
 
   button:active,
   .buttonlink:active,
-  .styled-btn:active {
+  .styled-btn:active,
+  .topbar .toolbar-items div:active,
+  ul[data-tabs] li a:active,
+  .install-btn:active {
     transform: scale(0.98);
     opacity: 0.8;
   }
@@ -2167,6 +2299,19 @@ body.reset-password-page #resetPasswdForm ul li::before {
   /* Larger touch targets */
   a, button, input, select, textarea {
     min-height: 44px;
+  }
+
+  /* Topbar touch optimizations */
+  .topbar .toolbar-items div,
+  .install-btn {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(0, 123, 255, 0.3);
+  }
+
+  /* Tabs touch optimizations */
+  ul[data-tabs] li a {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(0, 123, 255, 0.3);
   }
 
   /* Settings form improvements for touch */
@@ -2184,11 +2329,17 @@ body.reset-password-page #resetPasswdForm ul li::before {
 }
 
 /* Very small screens (Android phones in portrait) */
-@media (max-width: 360px) {
+@media screen and (max-width: 360px) {
+  .topbar {
+    padding: 0.4rem;
+    gap: 0.4rem;
+  }
+
   .topbar .site-header {
     flex-direction: column;
     align-items: center;
     text-align: center;
+    padding: 0.4rem;
   }
 
   .brand-text {
@@ -2203,6 +2354,25 @@ body.reset-password-page #resetPasswdForm ul li::before {
     font-size: 0.7rem;
   }
 
+  .logo {
+    width: 36px;
+  }
+
+  .topbar .toolbar-items {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .topbar .toolbar-items div {
+    font-size: 0.75rem;
+    padding: 0.5rem;
+  }
+
+  .install-btn {
+    font-size: 0.75rem;
+    padding: 0.6rem;
+  }
+
   ul[data-tabs] {
     padding-left: 0.25rem;
     padding-right: 0.25rem;
@@ -2211,6 +2381,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
   ul[data-tabs] li a {
     padding: 0.4rem 0.6rem;
     font-size: 0.75rem;
+    min-height: 44px;
   }
 
   #settings-tab legend {
