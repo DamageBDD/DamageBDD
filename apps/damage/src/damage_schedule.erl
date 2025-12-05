@@ -29,6 +29,7 @@
 -export([delete_resource/2]).
 -export([cancel_all_schedules/0]).
 -export([get_schedules/1]).
+-export([deploy_schedules_contract/0]).
 -export(
     [
         restart_schedules_proc/1,
@@ -299,35 +300,28 @@ load_all_schedules() ->
     ].
 
 list_all_schedules() ->
-    case secrets:node_keypair() of
-        #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair ->
-            case
-                catch damage_ae:contract_call(
-                    KeyPair,
-                    ?SCHEDULES_CONTRACT,
-                    "contracts/schedules.aes",
-                    "get_all_schedules",
-                    []
-                )
-            of
-                {ok, <<"ONLY_OWNER_CALL_ALLOWED">>} ->
-                    ?LOG_ERROR("!!! schedules loading failed ~p Reason: ONLY_OWNER_CALL_ALLOWED", [
-                        ?SCHEDULES_CONTRACT
-                    ]),
-                    [];
-                #{decodedResult := Results} ->
-                    Decrypted = decrypt_schedules(Results),
-                    ?LOG_DEBUG("schedules ~p", [Decrypted]),
-                    Decrypted;
-                #{status := <<"fail">>} ->
-                    ?LOG_ERROR("schedules loading failed ~p", [?SCHEDULES_CONTRACT]),
-                    [];
-                Error ->
-                    ?LOG_ERROR("schedules loading failed ~p", [Error]),
-                    []
-            end;
+    case
+        catch damage_ae:contract_call(
+            ?SCHEDULES_CONTRACT,
+            "contracts/schedules.aes",
+            "get_all_schedules",
+            []
+        )
+    of
+        {ok, <<"ONLY_OWNER_CALL_ALLOWED">>} ->
+            ?LOG_ERROR("!!! schedules loading failed ~p Reason: ONLY_OWNER_CALL_ALLOWED", [
+                ?SCHEDULES_CONTRACT
+            ]),
+            [];
+        #{decodedResult := Results} ->
+            Decrypted = decrypt_schedules(Results),
+            ?LOG_DEBUG("schedules ~p", [Decrypted]),
+            Decrypted;
+        #{status := <<"fail">>} ->
+            ?LOG_ERROR("schedules loading failed ~p", [?SCHEDULES_CONTRACT]),
+            [];
         Error ->
-            ?LOG_WARNING("Node keypair not set or node password not set.", [Error]),
+            ?LOG_ERROR("schedules loading failed ~p", [Error]),
             []
     end.
 
@@ -370,9 +364,9 @@ add_schedule(AeAccount, Name, FeatureHash, Cron) ->
             AeAccount,
             "add_schedule",
             [
-                secrets:salted_hash(Name),
-                secrets:encrypt(FeatureHash),
-                secrets:encrypt(jsx:encode(Cron))
+                binary_to_list(secrets:salted_hash(Name)),
+                binary_to_list(secrets:encrypt(FeatureHash)),
+                binary_to_list(secrets:encrypt(jsx:encode(Cron)))
             ]
         ),
     ?LOG_DEBUG(
@@ -529,11 +523,14 @@ restart_schedules_proc(AeAccount) ->
     end.
 
 test_schedule() ->
-    #{public_key := PubKey, private_key := _PrivateKey} = secrets:make_keypair(),
+    {ok, TestUserEmail} = application:get_env(damage, test_user),
+    {PubKey, _Password, PrivateKey} = identity_server:get_account_by_email(
+        list_to_binary(TestUserEmail)
+    ),
     Name = <<"test schedule">>,
     ok =
         add_schedule(
-            PubKey,
+            #{public_key => PubKey, private_key => PrivateKey},
             Name,
             <<"QmVHFpuoHCiTHYcLYgkhdXqQ94EoBT6VdWtocVgurXVnRU">>,
             [<<"daily">>, <<"every">>, <<"60">>, <<"seconds">>]
@@ -560,10 +557,15 @@ test_list_schedule() ->
     Decrypted.
 
 contract_call(AeAccount, Func, Args) ->
-    damage_ae:contract_call(
+    damage_ae:contract_call_payfor_user(
         AeAccount,
         ?SCHEDULES_CONTRACT,
         "contracts/schedules.aes",
         Func,
         Args
+    ).
+
+deploy_schedules_contract() ->
+    damage_ae:contract_deploy(
+        "contracts/schedules.aes", []
     ).
