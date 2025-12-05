@@ -41,7 +41,9 @@
         exists_cmd/1,
         render/2,
         normalize_context/1,
-        to_bin/1
+        to_bin/1,
+        ct_id/2,
+        float_to_full_integer/1
     ]
 ).
 -export([yaml_encode/1, yaml_encode_to_file/2]).
@@ -601,3 +603,13 @@ ensure_ssh_host_key(KeyPath) ->
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> list_to_binary(L);
 to_bin(Else) -> iolist_to_binary(Else).
+
+ct_id(Key, ContractId) ->
+    case application:get_env(damage, Key) of
+        {ok, C} -> C;
+        _ -> ContractId
+    end.
+
+-spec float_to_full_integer(float()) -> integer().
+float_to_full_integer(F) when is_float(F) ->
+    round(F).

@@ -88,6 +88,7 @@
 ]).
 -export([build_channel_create_tx/8]).
 -export([finalize_channel_create/3, expected_signers/1, actual_signers/1, post_signed_or_payfor/1]).
+-import(damage_utils, [float_to_full_integer/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -485,10 +486,6 @@ handle_call(
 handle_call({transaction, Data}, _From, State) ->
     ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
     {reply, ok, State}.
-
--spec float_to_full_integer(float()) -> integer().
-float_to_full_integer(F) when is_float(F) ->
-    round(F).
 
 handle_cast(
     {

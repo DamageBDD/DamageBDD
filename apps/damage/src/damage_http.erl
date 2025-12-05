@@ -16,6 +16,7 @@
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
 -export([trails/0]).
+-import(damage_utils, [float_to_full_integer/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -239,30 +240,33 @@ stream_mode(Req, Concurrency0) ->
         1 -> maybe_stream;
         _ -> nostream
     end.
-
+get_stream_config(Config, Context, Req0) ->
+    %% stream logs via text formatter to cowboy stream
+    Req = cowboy_req:stream_reply(
+        200, #{<<"content-type">> => <<"text/plain">>}, Req0
+    ),
+    Formatters = [
+        {text, #{
+            output => Req,
+            color => maps:get(color_formatter, Context, false)
+        }}
+    ],
+    AeAccount = maps:get(public_key, Context, undefined),
+    Config0 = damage_config:get_default_config(
+        [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
+    ),
+    Config0.
 get_config(Config, Context, Req0) ->
     Concurrency = maps:get(concurrency, Context, 1),
     StreamFlag = maps:get(stream, Context, nostream),
     case {Concurrency, StreamFlag} of
+        {1, maybe_stream} ->
+            get_stream_config(Config, Context, Req0);
         {1, true} ->
-            %% stream logs via text formatter to cowboy stream
-            Req = cowboy_req:stream_reply(
-                200, #{<<"content-type">> => <<"text/plain">>}, Req0
-            ),
-            Formatters = [
-                {text, #{
-                    output => Req,
-                    color => maps:get(color_formatter, Context, false)
-                }}
-            ],
-            AeAccount = maps:get(public_key, Context, undefined),
-            Config0 = damage_config:get_default_config(
-                [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
-            ),
-            Config0;
+            get_stream_config(Config, Context, Req0);
         _ ->
             %% non-stream path; keep formatters as supplied (or none)
-            AeAccount = maps:get(public_key, Context, undefined),
+            AeAccount = maps:get(public_key, Context, maps:get(address, Context)),
             Concurrency1 = damage_utils:get_concurrency_level(Concurrency),
             damage_config:get_default_config(
                 [{public_key, AeAccount}, {concurrency, Concurrency1} | Config]
@@ -377,7 +381,10 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                         true ->
                             %% --- 2) COSTED RUN --------------------------------
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
-                            execute_bdd_once(RunConfig, ContextIn, FeatureData);
+                            ?LOG_INFO("starting real execution ~p", [RunConfig]),
+                            {200, Result} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
+                            damage_ae:confirm_spend(RunConfig, Result),
+                            {200, Result};
                         false ->
                             {200, #{
                                 status => <<"notok">>,
@@ -573,7 +580,7 @@ do_action_tx(
         concurrency := _Concurrency,
         address := AeAccount,
         channel_id := ChannelId
-    } = Json,
+    } = ContextIn0,
     State,
     Req
 ) ->
@@ -581,7 +588,18 @@ do_action_tx(
     %#{public_key := NodeAeAccount} = secrets:node_keypair(),
 
     %% 1) Dry-run to get cost + hashes (no side effects)
-    case execute_bdd(maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]) of
+    ContextIn = effective_context(ContextIn0, State),
+    DryOverrides = [{dry_run, true}],
+    DryContext = maps:put(stream, nostream, ContextIn),
+    FeatureData = maps:get(feature, ContextIn),
+
+    case
+        execute_bdd_once(
+            get_config(DryOverrides, DryContext, Req),
+            DryContext,
+            FeatureData
+        )
+    of
         {200, DryRunRecord} ->
             #{
                 cost := Cost,
@@ -614,22 +632,38 @@ do_action_tx(
                         {job_id, JobId},
                         {channel_pid, ChanPid}
                     ],
-                    ExecResult = execute_bdd(
-                        Json,
-                        %maps:put(stream, nostream, Json),
-                        State,
-                        Req,
-                        ExecOpts
-                    ),
+                    {200, ExecResult} =
+                        execute_bdd_once(
+                            get_stream_config(ExecOpts, ContextIn, Req), ContextIn, FeatureData
+                        ),
+                    %#{
+                    %%  public_key := AeAccount,
+                    %%  feature_hash := FeatureHash,
+                    %%  report_hash := ReportHash,
+                    %  node_public_key := NodePublicKey
+                    % } = ExecResult,
+                    %Spend = maps:get(step_spend, ExecResult, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
+                    %ok = damage_channels:channel_contract_call(
+                    %?DAMAGE_TOKEN_CONTRACT,
+                    %"contracts/token.aes",
+                    %"spend",
+                    %[
+                    %    binary_to_list(NodePublicKey),
+                    %    integer_to_list(float_to_full_integer(Spend)),
+                    %    FeatureHash,
+                    %    ReportHash
+                    %]),
 
                     %% 4) Finalise by snapshotting latest channel state on-chain
                     %%    damage_channels:finalize_snapshot/2 should:
                     %%      - fetch {channel_id, round, state_hash} from ChanPid
                     %%      - build & post channel_snapshot_solo_tx (or force_progress if needed)
+                    ?LOG_INFO("Execition compl;ete finalizing ~p", [ExecResult]),
                     SnapRes = damage_channels:finalize_snapshot(
                         ChanPid,
                         #{from_id => AeAccount}
                     ),
+                    ?LOG_INFO("Execution compl;ete finalized ~p", [SnapRes]),
 
                     Reply = #{
                         status => <<"ok">>,
@@ -708,7 +742,7 @@ from_json(Req, #{action := tx} = State) ->
             };
         Json when is_map(Json) ->
             {Status0, Response0} = do_action_tx_throttled(Json, State, Req),
-            ?LOG_DEBUG("response ~p",[Response0]),
+            ?LOG_DEBUG("response ~p", [Response0]),
             {
                 stop,
                 cowboy_req:reply(
@@ -773,6 +807,10 @@ from_html(Req0, State) ->
         stream => Stream,
         color_formatter => ColorFormatter
     },
+    ?LOG_INFO(
+        "ok execute_feature from_html ~p ",
+        [Req1]
+    ),
     case execute_bdd(Context, State, Req1) of
         {_Status, _Resp} when Stream =:= maybe_stream ->
             %% all output has already gone via formatter+stream_reply

@@ -310,10 +310,13 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     public_key => maps:get(public_key, Context),
                     result_status => ResultStatus,
                     token_contract => maps:get(token_contract, FinalContext),
-                    node_public_key => maps:get(node_public_key, FinalContext)
+                    node_public_key => maps:get(node_public_key, FinalContext),
+                    dry_run => maps:get(dry_run, FinalContext, false),
+                    cost => maps:get(cost, FinalContext, 0),
+                    spend => maps:get(step_spend, FinalContext, 0)
                 },
             damage_webhooks:trigger_webhooks(FinalContext),
-            damage_ae:confirm_spend(Config, RunRecord);
+            RunRecord;
         {error, enont} = Err ->
             ?LOG_ERROR("Feature file ~p not found.", [Filename]),
             Err;

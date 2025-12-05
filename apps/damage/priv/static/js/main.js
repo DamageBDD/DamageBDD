@@ -603,14 +603,23 @@ function generateDamageQR(address){
 		};
 
 		let txPrepareResp;
+
 		try {
 			txPrepareResp = await fetch("/tx/", prepareReq);
+			try {
+				await streamResponseToDOM(txPrepareResp, reportElement);
+			} catch (err) {
+				console.error("Error streaming signed response to DOM:", err);
+				reportElement.innerText =
+					"Error while streaming execution output: " + (err.message || String(err));
+			}
 		} catch (err) {
 			console.error("Network error calling /tx/ (prepare):", err);
 			reportElement.innerText =
 				"Network error while preparing transaction: " + (err.message || String(err));
 			return;
 		}
+		return;
 
 		if (!txPrepareResp.ok) {
 			const msg = await extractErrorMessage(txPrepareResp);

@@ -59,7 +59,10 @@
 %        channel/1,
          peer_pubkey/0,
          status/0,
-         status_chainends/0]).
+         status_chainends/0,
+         channel_snapshot_solo/6
+
+]).
 
 % AE contract call and serialization interface functions
 -export([read_aci/1,
@@ -74,6 +77,7 @@
          contract_call/6,
          contract_call/10,
          decode_bytearray_fate/1, decode_bytearray/2,
+         encode_call_data/3,
          verify_signature/3]).
 
 
@@ -829,6 +833,30 @@ status() ->
 
 status_chainends() ->
     request("/v3/status/chain-ends").
+-spec channel_snapshot_solo(ChannelId, FromId, Payload, TTL, Fee, Nonce) ->
+          {ok, Tx} | {error, Reason}
+    when ChannelId :: unicode:chardata(),   % "ch_..."
+         FromId    :: unicode:chardata(),   % "ak_..."
+         Payload   :: unicode:chardata(),   % state hash / off-chain payload
+         TTL       :: non_neg_integer(),
+         Fee       :: non_neg_integer(),
+         Nonce     :: pos_integer(),
+         Tx        :: binary(),             % "tx_..." (Base64Check)
+         Reason    :: term().
+
+channel_snapshot_solo(ChannelId, FromId, Payload, TTL, Fee, Nonce) ->
+    ChanB    = to_binary(ChannelId),
+    FromB    = to_binary(FromId),
+    PayloadB = to_binary(Payload),
+    Body = #{
+        channel_id => ChanB,
+        from_id    => FromB,
+        payload    => PayloadB,
+        ttl        => TTL,
+        fee        => Fee,
+        nonce      => Nonce
+    },
+    zj:binary_encode(Body).
 
 
 request(Path) ->

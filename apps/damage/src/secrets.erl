@@ -179,9 +179,12 @@ keypair(Path) ->
             Data = make_keypair(),
             case get_node_password() of
                 {error, Error} ->
-                    ?LOG_WARNING("Failed get password for encrypting keypair ~p Error: ", [
-                        Path, Error
-                    ]),
+                    ?LOG_INFO(
+                        "Failed get password for encrypting new keypair ~p ~nSet password through web interface or usint `set_node_password/1` ~nError: ",
+                        [
+                            Path, Error
+                        ]
+                    ),
                     {error, keypair_not_initialized};
                 Password ->
                     EncData = secrets:encrypt(

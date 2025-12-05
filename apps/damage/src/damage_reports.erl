@@ -398,7 +398,6 @@ ls(Hash) ->
         ok,
         [#{<<"Objects">> := [#{<<"Hash">> := Hash, <<"Links">> := Links} | _Rest]}]
     } = damage_ipfs:ls(Hash),
-    ?LOG_INFO("get ipfs hash ~p ", [Hash]),
     [maps:get(<<"Name">>, M) || M <- Links].
 
 cat(Hash, <<"/">>) ->
@@ -408,7 +407,6 @@ cat(Hash, Path) ->
         damage_ipfs:cat(
             filename:join([Hash, Path])
         ),
-    ?LOG_INFO("get ipfs hash ~p ", [Hash]),
     Data.
 test() ->
     {

@@ -66,11 +66,14 @@
 
 -define(SCHEDULES_CONTRACT,
     % schedules "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
-    "ct_AaxgGT42E2mxVpcmYoUDx49kCNYcoGvVNACzEY9GnHiTakm1G"
+    "ct_G9RWbygCGihwbwbdVtMSYsLzrg7wWnVoqUTv5ffxKoHSkMjGU"
 ).
 
 -define(MARKETS_CONTRACT,
     "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
+).
+-define(JOB_REGISTRY_CONTRACT,
+    "ct_JJGKrTpqtivJCfMGJZo9iWrmKTFyD47ipCiNLtdiqxtnQ3PKQ"
 ).
 
 -define(AUTH_HEADER, <<"authorization">>).
