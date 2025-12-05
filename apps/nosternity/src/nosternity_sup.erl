@@ -47,7 +47,24 @@ init([]) ->
         ),
 
     PoolSpecs0 =
-        [] ++
+        [
+            #{
+                id => damage_nostr,
+                start => {damage_nostr, start_link, [nosternity_nostr_nsec]},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_nostr]
+            },
+            #{
+                id => damage_nostr,
+                start => {damage_nostr, start_link, [inglorious_nostr_nsec]},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_nostr]
+            }
+        ] ++
             PoolSpecs,
 
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
