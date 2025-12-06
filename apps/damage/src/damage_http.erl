@@ -266,7 +266,7 @@ get_config(Config, Context, Req0) ->
             get_stream_config(Config, Context, Req0);
         _ ->
             %% non-stream path; keep formatters as supplied (or none)
-            AeAccount = maps:get(public_key, Context, maps:get(address, Context)),
+            AeAccount = maps:get(public_key, Context, maps:get(address, Context, undefined)),
             Concurrency1 = damage_utils:get_concurrency_level(Concurrency),
             damage_config:get_default_config(
                 [{public_key, AeAccount}, {concurrency, Concurrency1} | Config]

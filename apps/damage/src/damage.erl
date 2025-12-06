@@ -253,24 +253,18 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     end,
                     HashList
                 ),
-            formatter:format(
-                Config,
-                summary,
-                #{
-                    report_dir =>
-                        string:join([DamageApi, "reports", ReportHash], "/"),
-                    run_id => RunId,
-                    feature_hash => FeatureHash
-                }
-            ),
             FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
             FinalContext =
                 maps:merge(
                     FinalContext0,
                     #{
+                        run_id => list_to_binary(RunId),
                         feature_hash => FeatureHash,
                         report_hash => ReportHash,
-                        feature_title => FeatureTitle
+                        feature_title => FeatureTitle,
+                        public_key => maps:get(public_key, Context),
+                        report_dir =>
+                            string:join([DamageApi, "reports", ReportHash], "/")
                     }
                 ),
             ResultStatus =
@@ -316,6 +310,11 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     spend => maps:get(step_spend, FinalContext, 0)
                 },
             damage_webhooks:trigger_webhooks(FinalContext),
+            formatter:format(
+                Config,
+                summary,
+                FinalContext
+            ),
             RunRecord;
         {error, enont} = Err ->
             ?LOG_ERROR("Feature file ~p not found.", [Filename]),
@@ -497,6 +496,21 @@ execute_step_module(
                 Config,
                 step,
                 {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, <<"Unhandled Error">>}}
+            ),
+            maps:put(
+                step_found,
+                true,
+                maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
+            );
+        unauthorized ->
+            Reason = damage_utils:strf(<<"Unauthorized to execute step ~p ~p.">>, [
+                StepModule, Step
+            ]),
+            metrics:update(fail, AeAccount),
+            formatter:format(
+                Config,
+                step,
+                {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, <<"Unauthorized">>}}
             ),
             maps:put(
                 step_found,
