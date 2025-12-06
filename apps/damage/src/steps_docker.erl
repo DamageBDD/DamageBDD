@@ -58,7 +58,7 @@
 %%   Given the system has unused Docker containers or resources since "3 days ago"
 %% ---------------------------------------------------------------------------
 step(_Config, Context, <<"Given">>, _N, ?GIVEN_UNUSED_SINCE, _Raw) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     {ok, ISODate} = relative_string_to_date(Relative),
     ?LOG_NOTICE("Checking for Docker resources older than ~s", [ISODate]),
     Context#{since => ISODate};
@@ -68,7 +68,7 @@ step(_Config, Context, <<"Given">>, _N, ?GIVEN_UNUSED_SINCE, _Raw) ->
 %%   since "3 days ago"
 %% ---------------------------------------------------------------------------
 step(_Config, Context, <<"When">>, _N, ?WHEN_CLEANUP_UNUSED_SINCE, _Raw) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     {ok, ISODate} = relative_string_to_date(Relative),
     CmdIO =
         io_lib:format(
@@ -84,7 +84,7 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_CLEANUP_UNUSED_SINCE, _Raw) ->
 %%   Then the Docker system should have no unused resources older than "3 days ago"
 %% ---------------------------------------------------------------------------
 step(_Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     {ok, ISODate} = relative_string_to_date(Relative),
     CmdIO =
         io_lib:format(
@@ -112,7 +112,7 @@ step(_Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
 %%   When I build the mint22 builder Docker image
 %% ---------------------------------------------------------------------------
 step(_Config, Context, <<"When">>, _N, ?WHEN_BUILD_MINT22_BUILDER_IMAGE, _Raw) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     Command =
         "DOCKER_BUILDKIT=1 docker build "
         "--build-arg CACHEBUST=$(date +%s) "
@@ -124,7 +124,7 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_BUILD_MINT22_BUILDER_IMAGE, _Raw) -
 %%   When I build Debian packages using the mint22 builder container
 %% ---------------------------------------------------------------------------
 step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_BUILDER_TO_BUILD_DEBS, _Raw) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     %% This replicates the bash -lc '...' block from build.sh as closely as
     %% possible, but wrapped in a single docker run. :contentReference[oaicite:5]{index=5}
     InnerScript =
@@ -153,7 +153,7 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_BUILDER_TO_BUILD_DEBS, _
 %%   When I run a mint22 test container installing the built Debian package
 %% ---------------------------------------------------------------------------
 step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     %% Directly mirrors run.sh behaviour. :contentReference[oaicite:6]{index=6}
     InnerScript =
         "set -e\n"
@@ -181,7 +181,7 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
 %%   """
 %% ---------------------------------------------------------------------------
 step(_Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_INLINE_DOCKERFILE, Raw) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     build_image_from_inline_dockerfile(Image, Raw, Context).
 
 %% ===== Helpers ===============================================================
