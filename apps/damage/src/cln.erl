@@ -44,6 +44,7 @@
 ).
 -export([register_listener/1]).
 -export([broadcast/2]).
+-export([existing_peers/1]).
 -export([test/0]).
 % 5 minutes in ms
 -define(CACHE_TTL, 300000).
@@ -382,7 +383,6 @@ handle_call(
     State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
 ) ->
     Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
-    %{reply, #{id := SourceNodeId}, _} = handle_call(getinfo, From, State),
 
     ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
 
@@ -470,10 +470,16 @@ handle_call(
     {reply, BalanceSats, State};
 handle_call(
     open_channels_with_best_peers,
-    _From,
+    From,
     State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
 ) ->
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+
+    {reply, #{id := SourceNodeId}, _} = handle_call(getinfo, From, State),
+    SelfChannels0 = fetch_channel_list(Host, Port, Options, Headers, #{source => SourceNodeId}),
+    SelfChannels1 = fetch_channel_list(Host, Port, Options, Headers, #{destination => SourceNodeId}),
+    SelfChannels = SelfChannels0 ++ SelfChannels1,
+    ?LOG_INFO("Self channels ~p", [SelfChannels]),
 
     %% 1. Node balance (all spendable funds)
     BalanceSats = get_node_balance(Host, Port, Options, Rune),
@@ -499,7 +505,8 @@ handle_call(
 
             %% 3. Build candidate list with inbound capacity
             %% build set of nodes we already have channels with
-            ExistingPeers = existing_peers(ChannelList),
+            ExistingPeers = existing_peers(SelfChannels),
+            ?LOG_DEBUG("ExistingPeers ~p  ", [ExistingPeers]),
 
             Candidates =
                 [
@@ -569,19 +576,25 @@ handle_call(
                             {reply, {error, no_peer_with_capacity, AmountPerPeer}, State};
                         _ ->
                             %% 5. Open channels (fundchannel) for each suitable peer
-                            ?LOG_INFO("Opening channel with peers ~p", [SuitablePeers]),
-                            Results = [],
-                            [
-                                open_channel_with_peer(
-                                    Host,
-                                    Port,
-                                    Options,
-                                    Rune,
-                                    NodeId,
-                                    AmountPerPeer
-                                )
-                             || {NodeId, _Inbound} <- SuitablePeers
-                            ],
+                            Aliases =
+                                [
+                                    {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId)}
+                                 || {NodeId, _Inbound} <- SuitablePeers
+                                ],
+                            ?LOG_INFO("Opening channel with peers ~p", [SuitablePeers, Aliases]),
+                            %SourceAlias = maps:get(Source, Aliases, <<"unknown">>),
+                            Results =
+                                [
+                                    open_channel_with_peer(
+                                        Host,
+                                        Port,
+                                        Options,
+                                        Rune,
+                                        NodeId,
+                                        AmountPerPeer
+                                    )
+                                 || {NodeId, _Inbound} <- SuitablePeers
+                                ],
 
                             Reply = #{
                                 balance_sats => BalanceSats,
@@ -590,6 +603,7 @@ handle_call(
                                 channel_count => length(SuitablePeers),
                                 intended_peers => N,
                                 peers => [NodeId || {NodeId, _} <- SuitablePeers],
+                                aliases => Aliases,
                                 results => Results
                             },
                             {reply, Reply, State}
@@ -646,7 +660,6 @@ handle_call(
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
         State
 ) ->
-    ?LOG_ERROR("got getinfo on gun websocket  State ~p", [State]),
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
     {ok, ConnPid} = gun:open(Host, Port, Options),
     %% Construct the API request URL
@@ -1110,33 +1123,43 @@ score_peers_for_opening(ChannelList, MinSats) ->
     Now = erlang:system_time(second),
 
     lists:foldl(
-        fun(
-            #{
-                source := Src,
-                destination := Dst,
-                amount_msat := AmountMsat,
-                base_fee_millisatoshi := BaseFee,
-                fee_per_millionth := FeeRate,
-                last_update := LU
-            },
-            Acc
-        ) ->
-            %% channel capacity in sats
-            Sats = AmountMsat div 1000,
-            PeerNodes = [Src, Dst],
-            lists:foldl(
-                fun(NodeId, InnerAcc) ->
-                    case Sats >= MinSats of
-                        true ->
-                            Score = compute_score(Sats, BaseFee, FeeRate, LU, Now),
-                            update_score(NodeId, Score, InnerAcc);
-                        false ->
-                            InnerAcc
-                    end
-                end,
-                Acc,
-                PeerNodes
-            )
+        fun
+            (
+                #{
+                    source := Src,
+                    destination := Dst,
+                    amount_msat := AmountMsat,
+                    base_fee_millisatoshi := BaseFee,
+                    fee_per_millionth := FeeRate,
+                    last_update := LU,
+                    active := true
+                },
+                Acc
+            ) ->
+                %% channel capacity in sats
+                Sats = AmountMsat div 1000,
+                PeerNodes = [Src, Dst],
+                lists:foldl(
+                    fun(NodeId, InnerAcc) ->
+                        case Sats >= MinSats of
+                            true ->
+                                Score = compute_score(Sats, BaseFee, FeeRate, LU, Now),
+                                update_score(NodeId, Score, InnerAcc);
+                            false ->
+                                InnerAcc
+                        end
+                    end,
+                    Acc,
+                    PeerNodes
+                );
+            (
+                #{
+                    % ignore inactive nodes
+                    active := false
+                },
+                Acc
+            ) ->
+                Acc
         end,
         #{},
         ChannelList
@@ -1182,10 +1205,15 @@ test_listchannels() ->
 %% Shared global cache for listchannels
 get_cached_channel_list(Host, Port, Options, Headers, ReqMap) ->
     Now = erlang:monotonic_time(second),
-    TTL = 60,
     case ets:lookup(cln_channel_cache, listchannels) of
-        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < TTL ->
+        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < ?CACHE_TTL ->
             ?LOG_DEBUG("Using cached listchannels", []),
+            Channels;
+        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp > ?CACHE_TTL ->
+            ?LOG_INFO("Cache age ~p", [Now - Timestamp]),
+            ?LOG_DEBUG("Fetching listchannels from CLN", []),
+            Channels = fetch_channel_list(Host, Port, Options, Headers, ReqMap),
+            ets:insert(cln_channel_cache, {listchannels, {Now, Channels}}),
             Channels;
         _ ->
             ?LOG_DEBUG("Fetching listchannels from CLN", []),
@@ -1342,7 +1370,26 @@ open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
         amount => AmountSats
     }),
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
-    Body = get_json_body(ConnPid, StreamRef),
+    Body =
+        case catch get_json_body(ConnPid, StreamRef) of
+            #{
+                code := _,
+                data :=
+                    #{
+                        id :=
+                            NodeId,
+                        method := Method
+                    },
+                message :=
+                    Message
+            } ->
+                ?LOG_INFO("Failed to open channel with ~p method ~p reason ~p", [
+                    NodeId, Method, Message
+                ]),
+                Message;
+            Body0 ->
+                Body0
+        end,
     gun:close(ConnPid),
     Body.
 
