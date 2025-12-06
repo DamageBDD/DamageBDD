@@ -101,7 +101,7 @@
     ]},
     {
         ecai, [
-            {port, 9003},
+            {port, 7314},
             {search_context_file, "/var/lib/damage/ecai/yelp.ctx"},
             {pools, [
                 {ecai_chat, [{size, 1}, {max_overflow, 0}], []}
@@ -110,7 +110,7 @@
     },
     {
         erm, [
-            {port, 9000},
+            {port, 7711},
             {pools, []}
         ]
     },
@@ -151,7 +151,7 @@
             },
             {ip, {127, 0, 0, 1}},
             %{ip, {0, 0, 0, 0}},
-            {port, 8080},
+            {port, 4888},
             {smtp_host, "smtp.example.net"},
             {smtp_hostname, "example.com"},
             {smtp_from, {"DamageBDD Node", "node@example.com"}},
