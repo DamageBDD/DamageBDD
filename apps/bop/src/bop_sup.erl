@@ -48,7 +48,7 @@ init([]) ->
     PoolSpecs0 =
         [
             #{
-                id => damage_nostr,
+                id => bop_nostr,
                 start => {damage_nostr, start_link, [bop_nostr_nsec]},
                 restart => permanent,
                 shutdown => 60000,
