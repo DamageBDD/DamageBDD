@@ -8,12 +8,28 @@
       </header>
       <main class="modal__content" id="modal-1-content">
         <form id="loginSignupForm" class='panel' onsubmit="submitLoginForm(event)">
-          <input type="email" id="login-username" autocomplete="username" required placeholder="Email Address"><br>
+          <input type="email"
+                 id="login-username"
+                 autocomplete="username"
+                 required
+                 placeholder="Email Address">
+          <br>
           <div class="password-wrapper">
-            <input type="password" name="password" id="password" autocomplete="current-password" required placeholder="Password">
+            <input type="password"
+                   name="password"
+                   id="password"
+                   autocomplete="current-password"
+                   required
+                   placeholder="Password">
             <button type="button" class="toggle-password" data-target="password">👁️</button>
           </div>
-          <button id="loginSubmitBtn" class="modal__btn modal__btn-primary styled-btn" aria-label="Login with email and password" title="Login Submit">Login</button><br>
+          <button id="loginSubmitBtn"
+                  class="modal__btn modal__btn-primary styled-btn"
+                  aria-label="Login with email and password"
+                  title="Login Submit">
+            Login
+          </button>
+          <br>
           <p>Or</p>
           <button id="connect-button" class="modal__btn modal__btn-primary styled-btn" aria-label="Connect wallet." title="Wallet Connect">Connect Wallet</button><br>
           <div id="connect-status"></div>

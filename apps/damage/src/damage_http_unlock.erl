@@ -156,7 +156,7 @@ set_password(PasswordBin, ConfirmBin) ->
                         true ->
                             %% Validate strength via accounts module
                             case damage_accounts:validate_password(PasswordBin) of
-                                ok ->
+                                true ->
                                     %% Reuse unlock_node/1 to:
                                     %%  - cache password in secrets
                                     %%  - create/decrypt node keypair
