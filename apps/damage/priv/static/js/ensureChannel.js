@@ -83,7 +83,7 @@ async function postTx(nodeUrl, signedTx) {
 		const r2 = await fetch("/tx/", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "submit_signed_tx", signed_tx: signedTx })
+			body: JSON.stringify({ action: "finalize_create_channel", signed_tx: signedTx })
 		});
 		const j2 = await r2.json();
 		if (j2.status !== "ok") throw j2;

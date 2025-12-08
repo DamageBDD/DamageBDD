@@ -461,7 +461,9 @@ do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
     Responder = list_to_binary(NodePub),
 
     case
-        damage_channels:build_channel_create_tx(Ini, Responder, IniAmt, ResAmt, Reserve, Lock, TTL, Fee)
+        damage_channels:build_channel_create_tx(
+            Ini, Responder, IniAmt, ResAmt, Reserve, Lock, TTL, Fee
+        )
     of
         {ok, #{tx := Unsigned, tx_hash := TxHash}} ->
             Reply = #{
@@ -485,7 +487,7 @@ do_action_tx(
     Req
 ) ->
     PayFor = maps:get(payfor, J, true),
-    case damage_ae:finalize_channel_create(Unsigned, Signed, PayFor) of
+    case damage_channels:finalize_channel_create(Unsigned, Signed, PayFor) of
         {ok, #{<<"tx_hash">> := _TxHash} = R} ->
             Reply = R#{status => <<"ok">>},
             {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};

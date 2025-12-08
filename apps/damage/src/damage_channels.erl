@@ -21,8 +21,10 @@
 -export([channel_contract_call/8]).
 -export([init_job/2, finalize_snapshot/2]).
 -export([build_channel_create_tx/8]).
+-export([finalize_channel_create/3, expected_signers/1, actual_signers/1]).
 
 -export([test/0]).
+-export([get_existing_channel/1]).
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
@@ -46,7 +48,7 @@
 -export([snapshot_solo/2]).
 -export([force_progress_contract_call/2]).
 -import(damage_ae, [contract_path/1]).
--import(damage_utils, [ct_id/2]).
+-import(damage_utils, [ct_id/2, to_bin/1, to_int/1]).
 
 %%===================================================================
 %% Types & Records
@@ -198,14 +200,15 @@ init_job(ChannelId, _Meta) ->
 finalize_snapshot(ChanPid, Opts = #{from_id := FromId}) ->
     %% read current channel state
     ?LOG_INFO("Chan snap ~p", [ChanPid]),
-    #{id := ChId, round := Round, state_hash := StateHash} =
+    State =
         damage_channels:state(ChanPid),
+    Ch = State#state.ch,
 
     SnapOpts = #{
-        channel_id => ChId,
+        channel_id => Ch#ch.id,
         from_id => FromId,
-        round => Round,
-        state_hash => StateHash,
+        round => Ch#ch.round,
+        state_hash => Ch#ch.state_hash,
         ttl => maps:get(ttl, Opts, 0),
         fee => maps:get(fee, Opts, 20000000000000)
     },
@@ -247,6 +250,7 @@ get_channel(ChannelId) ->
 
             %% In-memory “open” mirrors the js options; we default a few
             _ = damage_channels:open(Pid, #{
+                channel_id => ChannelId,
                 initiator_pubkey => InitiatorId,
                 responder_pubkey => ResponderId,
                 lock_period => maps:get(<<"lock_period">>, ChMap, 144),
@@ -266,22 +270,39 @@ get_channel(ChannelId) ->
             {error, Reason}
     end.
 
-%% -------------------------------------------------------------------
-%% Private: mirror JS findExistingChannel(nodeUrl, mdwUrl, accountId, peerId, limit)
-%%  1) GET /mdw/v3/accounts/<accountId>/activities?limit=...&type=transactions&owned_only=true
-%%  2) Filter ChannelCreateTx and collect channel_id
-%%  3) For each channel_id, GET /v3/channels/<id> and find a participant match
-%% -------------------------------------------------------------------
-%% -------------------------------------------------------------------
+get_mdw_transaction(TxId) ->
+    case damage_ae:get_ae_mdw_node() of
+        {ok, ConnPid, Prefix} ->
+            PathBin =
+                Prefix ++
+                    "v3/transactions/" ++
+                    TxId,
+            Headers = [{<<"accept">>, <<"application/json">>}],
+            StreamRef = gun:get(ConnPid, PathBin, Headers),
+            case gun:await(ConnPid, StreamRef, 50000) of
+                {response, _Fin, 200, _RespHeaders} ->
+                    {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                    ?LOG_DEBUG("chanel Data ~p", [Body]),
+                    case jsx:decode(Body, [{labels, atom}, return_maps]) of
+                        Acts when is_map(Acts) ->
+                            {ok, Acts};
+                        _ ->
+                            {error, ae_invalid_reply}
+                    end;
+                Other ->
+                    ?LOG_DEBUG("chanel path ~s", [PathBin]),
+                    {error, {ae_http_error, Other}}
+            end;
+        Error ->
+            Error
+    end.
 get_existing_channel(ChannelId) ->
     case damage_ae:get_ae_mdw_node() of
         {ok, ConnPid, Prefix} ->
             PathBin =
-                iolist_to_binary([
-                    Prefix,
-                    <<"v3/channels/">>,
-                    ChannelId
-                ]),
+                Prefix ++
+                    "v3/channels/" ++
+                    ChannelId,
             Headers = [{<<"accept">>, <<"application/json">>}],
             StreamRef = gun:get(ConnPid, PathBin, Headers),
             case gun:await(ConnPid, StreamRef, 50000) of
@@ -292,10 +313,11 @@ get_existing_channel(ChannelId) ->
                         Acts when is_map(Acts) ->
                             {ok, Acts};
                         _ ->
-                            {error, invalid_mdw_reply}
+                            {error, ae_invalid_reply}
                     end;
                 Other ->
-                    {error, {mdw_http_error, Other}}
+                    ?LOG_DEBUG("chanel path ~s", [PathBin]),
+                    {error, {ae_http_error, Other}}
             end;
         Error ->
             Error
@@ -332,7 +354,6 @@ channel_contract_call(Pid, CtId, Source, Fun, Args, Gas, Amount, Meta) ->
         Pid, {channel_contract_call, CtId, Source, Fun, Args, Gas, Amount, Meta}, 60000
     ).
 
-
 %%===================================================================
 %% gen_server
 %%===================================================================
@@ -351,7 +372,7 @@ handle_call({open, Opts0}, _From, S0) ->
     Lock = maps:get(lock_period, Opts0, ?DEFAULT_LOCK_PERIOD),
     MinDepth = maps:get(minimum_depth, Opts0, ?DEFAULT_MIN_DEPTH),
     Reserve = maps:get(channel_reserve, Opts0, 0),
-    TmpId = crypto:strong_rand_bytes(32),
+    ChannelId = maps:get(channel_id, Opts0),
     Ch1 = Ch0#ch{
         initiator = Initiator,
         responder = Responder,
@@ -360,8 +381,10 @@ handle_call({open, Opts0}, _From, S0) ->
         reserve = Reserve
     },
     %% TODO: call node FSM to send channel_open/funding_created/funding_locked; set real channel_id
-    Ch2 = Ch1#ch{id = TmpId},
-    {reply, {ok, TmpId}, S0#state{ch = Ch2}};
+    Ch2 = Ch1#ch{id = ChannelId},
+    {reply, {ok, ChannelId}, S0#state{ch = Ch2}};
+handle_call(state, _From, S0) ->
+    {reply, S0, S0};
 handle_call({accept, Opts0}, _From, S0) ->
     %% Symmetric to open/2; here we accept and set parameters
     Lock = maps:get(lock_period, Opts0, ?DEFAULT_LOCK_PERIOD),
@@ -404,23 +427,30 @@ handle_call({update_error, Reason}, _From, S0 = #state{ch = Ch0}) ->
 %% ---------------- On‑chain safety valves ----------------
 
 handle_call({snapshot_solo, Opts}, _From, S = #state{}) ->
-    ChId = maps:get(channel_id, Opts),
+    Ch = S#state.ch,
+    ChId = Ch#ch.id,
     FromId = maps:get(from_id, Opts),
-    Round = maps:get(round, Opts),
+    {ok, _Nonce} = vanillae:next_nonce(FromId),
+    %Round = maps:get(round, Opts),
     StateHash = maps:get(state_hash, Opts),
     TTL = maps:get(ttl, Opts, 0),
     Fee = maps:get(fee, Opts, 2_000_000_000_0000),
+    #{public_key := _PublicKey, private_key := PrivateKey} = S#state.keypair,
 
     %% Build unsigned snapshot tx; wallet of FromId must sign
-    ?LOG_INFO("Snapshotting ~p", [ChId]),
-    {ok, Unsigned} = vanillae:channel_snapshot_solo(
-        ChId, FromId, Round, StateHash, TTL, Fee
+    ?LOG_INFO("Snapshotting ~p", [Ch]),
+    {ok, Tx} = build_channel_snapshot_solo_tx(
+        ChId,
+        FromId,
+        StateHash,
+        TTL,
+        Fee
     ),
-    %% Send Unsigned to the wallet (if external) or sign here if you hold the key
-    {ok, Signed} = signer:sign_tx(FromId, Unsigned),
-    %% Optionally: paying_for wrapper if node pays fee
+    Sig = damage_ae:make_transaction_signature_base58(PrivateKey, Tx),
+    SignedTx = damage_ae:attach_signature_base58(Tx, Sig),
+    ?LOG_INFO("Snapshotting unsigned ~p", [Tx]),
     Res =
-        case vanillae:post_tx(Signed) of
+        case vanillae:post_tx(SignedTx) of
             {ok, #{"tx_hash" := ContractCallTxHash}} ->
                 damage_ae:wait_tx(ContractCallTxHash);
             Error ->
@@ -547,9 +577,6 @@ code_change(_V, S, _E) -> {ok, S}.
 %% Build *unsigned* channel_create_tx (v2) for the initiator to sign.
 %% Returns {ok, #{tx := EncodedUnsignedTx, tx_hash := TxHash}}.
 %%--------------------------------------------------------------------
-to_int(V) when is_integer(V) -> V;
-to_int(V) when is_binary(V) -> list_to_integer(binary_to_list(V));
-to_int(V) when is_list(V) -> list_to_integer(V).
 
 build_channel_create_tx(
     InitiatorPubKey,
@@ -559,7 +586,7 @@ build_channel_create_tx(
     Reserve0,
     Lock0,
     TTL0,
-    _Fee0
+    Fee0
 ) ->
     try
         IniAmt = to_int(IniAmt0),
@@ -567,8 +594,7 @@ build_channel_create_tx(
         Reserve = to_int(Reserve0),
         Lock = to_int(Lock0),
         TTL = to_int(TTL0),
-        %Fee     = to_int(Fee0),
-        Fee = damage_ae:min_fee(),
+        Fee = to_int(Fee0),
         %Gas = min_gas(),
 
         (IniAmt >= 0) orelse error(bad_initiator_amount),
@@ -627,7 +653,7 @@ build_channel_create_tx(
         EncTx = aeser_api_encoder:encode(transaction, TxBin),
         TxHash = aeser_api_encoder:encode(tx_hash, TxBin),
         ?LOG_DEBUG("build_channel_create_tx ~p ~p", [TxBin, EncTx]),
-        {ok, _} = vanillae:dry_run(EncTx),
+        %{ok, _} = vanillae:dry_run(EncTx),
         {ok, #{
             tx => EncTx,
             tx_hash => TxHash,
@@ -638,6 +664,174 @@ build_channel_create_tx(
         C:R:S ->
             ?LOG_ERROR("build_channel_create_tx failed: ~p:~p~n~p", [C, R, S]),
             {error, {C, R}}
+    end.
+%%--------------------------------------------------------------------
+%% @doc
+%%  Build an unsigned channel_snapshot_solo_tx ready for signing & post.
+%%
+%%  Args:
+%%    ChannelId0   - <<"ch_...">> encoded channel id
+%%    FromPubKey   - <<"ak_...">> account that pays fee / posts the tx
+%%    Payload0     - signed off-chain tx (binary, non-empty)
+%%    TTL0         - block height ttl / relative ttl (int-ish)
+%%    Fee0         - fee in aetto (int-ish)
+%%
+%%  Returns:
+%%    {ok, #{tx := EncTx, tx_hash := TxHash,
+%%           channel_id := ChannelIdBin,
+%%           from_id    := FromIdBin}}
+%%    | {error, {Class, Reason}}
+%%--------------------------------------------------------------------
+build_channel_snapshot_solo_tx(
+    ChannelId0,
+    FromPubKey,
+    Payload0,
+    TTL0,
+    Fee0
+) ->
+    try
+        TTL = to_int(TTL0),
+        Fee = to_int(Fee0),
+
+        (TTL >= 0) orelse error(bad_ttl),
+        (Fee >= 0) orelse error(bad_fee),
+
+        %% Payload must be a non-empty binary
+        (is_binary(Payload0)) orelse error(bad_payload_type),
+        (byte_size(Payload0) > 0) orelse error(empty_payload),
+
+        %% Nonce must be the *from* account nonce
+        {ok, Nonce} = vanillae:next_nonce(FromPubKey),
+
+        %% --- Fields / Template for channel_snapshot_solo_tx ---
+        Type = channel_snapshot_solo_tx,
+        Version = 1,
+
+        {channel, ChannelId} = aeser_api_encoder:decode(ChannelId0),
+        {account_pubkey, FromId} = aeser_api_encoder:decode(FromPubKey),
+
+        Fields = [
+            {channel_id, aeser_id:create(channel, ChannelId)},
+            {from_id, aeser_id:create(account, FromId)},
+            {payload, Payload0},
+            {ttl, TTL},
+            {fee, Fee},
+            {nonce, Nonce}
+        ],
+
+        Template = [
+            {channel_id, id},
+            {from_id, id},
+            {payload, binary},
+            {ttl, int},
+            {fee, int},
+            {nonce, int}
+        ],
+
+        ?LOG_DEBUG("build_channel_snapshot_solo_tx fields ~p ~p", [Fields, Template]),
+
+        TxBin = aeser_chain_objects:serialize(Type, Version, Template, Fields),
+        EncTx = aeser_api_encoder:encode(transaction, TxBin),
+        TxHash = aeser_api_encoder:encode(tx_hash, TxBin),
+
+        ?LOG_DEBUG("build_channel_snapshot_solo_tx ~p ~p", [TxBin, EncTx]),
+
+        {ok, #{
+            tx => EncTx,
+            tx_hash => TxHash,
+            channel_id => ChannelId,
+            from_id => FromId
+        }}
+    catch
+        C:R:S ->
+            ?LOG_ERROR("build_channel_snapshot_solo_tx failed: ~p:~p~n~p", [C, R, S]),
+            {error, {C, R}}
+    end.
+
+poll_channel(Fun, Args, Interval, Timeout) ->
+    poll_channel(Fun, Args, Interval, Timeout, erlang:monotonic_time(millisecond)).
+
+poll_channel(Fun, Args, Interval, Timeout, StartTime) ->
+    case apply(Fun, Args) of
+        {error, {ae_http_error, _}} ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartTime,
+            if
+                Elapsed >= Timeout ->
+                    exit({timeout_error, {polling_failed, failed, Fun, Args}});
+                true ->
+                    timer:sleep(Interval),
+                    poll_channel(Fun, Args, Interval, Timeout, StartTime)
+            end;
+        {ok, #{block_height := -1} = Result} ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartTime,
+            if
+                Elapsed >= Timeout ->
+                    exit({timeout_error, {polling_failed, Result, Fun, Args}});
+                true ->
+                    timer:sleep(Interval),
+                    poll_channel(Fun, Args, Interval, Timeout, StartTime)
+            end;
+        {ok,
+            #{
+                block_hash :=
+                    _BlockHash,
+                block_height := BlockHeight,
+                tx := #{channel_id := _ChannelId} = Tx
+            } = Result} when BlockHeight > 0 ->
+            ?LOG_DEBUG("poll tx got value ~p ", [Result]),
+            {ok, Tx}
+    end.
+
+wait_channel(ConId) ->
+    poll_channel(fun get_mdw_transaction/1, [ConId], 2000, 55000).
+%% Verify that the signed tx was signed by the *expected* account (initiator),
+%% then post directly or wrap in paying_for so node pays fee.
+-spec finalize_channel_create(binary(), binary(), boolean()) ->
+    {ok, map()} | {error, term()}.
+finalize_channel_create(UnsignedTx, SignedTx, _UsePayFor) ->
+    #{public_key := _NodeAeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    {transaction, TX} = aeser_api_encoder:decode(UnsignedTx),
+    Sig = damage_ae:make_transaction_signature(PrivateKey, TX),
+    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
+    ?LOG_INFO("Signed Tx client ~p", [SignedTx]),
+    {transaction, SignedBin} = aeser_api_encoder:decode(SignedTx),
+    ?LOG_INFO("Signed Tx client ~p", [SignedBin]),
+    {_Type, _Vsn, [[SigClient], _Tx]} = aeser_chain_objects:deserialize_type_and_vsn(SignedBin),
+
+    Fields = [{signatures, [Sig, SigClient]}, {transaction, TX}],
+    SignedTxNode = aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields),
+    SignedTxFinal = aeser_api_encoder:encode(transaction, SignedTxNode),
+    case vanillae:post_tx(SignedTxFinal) of
+        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+            wait_channel(ContractCallTxHash);
+        Error ->
+            Error
+    end.
+
+%% Determine who MUST sign an *unsigned* tx
+-spec expected_signers(binary()) -> {ok, [binary()]} | {error, term()}.
+expected_signers(EncUnsignedTx) ->
+    try
+        ?LOG_INFO("expected_signers ~p", [EncUnsignedTx]),
+        {transaction, TxBin} = aeser_api_encoder:decode(EncUnsignedTx),
+        Tx = aetx:deserialize_from_binary(TxBin),
+        ?LOG_INFO("expected_signers ~p", [Tx]),
+        Pks = aetx:signers(Tx),
+        {ok, [aeser_api_encoder:encode(account_pubkey, PK) || PK <- Pks]}
+    catch
+        C:R:_ -> {error, {C, R}}
+    end.
+
+%% Extract who DID sign a *signed* tx
+-spec actual_signers(binary()) -> {ok, [binary()]} | {error, term()}.
+actual_signers(EncSignedTx) ->
+    try
+        {tx, SignedBin} = aeser_api_encoder:decode(EncSignedTx),
+        Signed = aetx_sign:deserialize_from_binary(SignedBin),
+        Pks = aetx_sign:signers(Signed),
+        {ok, [aeser_api_encoder:encode(account_pubkey, PK) || PK <- Pks]}
+    catch
+        C:R:_ -> {error, {C, R}}
     end.
 %%====================================================================
 %% Create and post a ChannelCreate transaction
@@ -729,22 +923,79 @@ channel_create_tx(
 
 test() ->
     {ok, TestUserEmail} = application:get_env(damage, test_user),
-    {TestPubKey, _Password, _PrivateKey} = identity_server:get_account_by_email(
+    {TestPubKey, _Password, UserPrivateKey} = identity_server:get_account_by_email(
         list_to_binary(TestUserEmail)
     ),
-    #{public_key := NodePublicKey, private_key := _NodePrivateKey} =
-        KeyPair = secrets:node_keypair(),
+    Balance = damage_ae:balance(TestPubKey),
+    %to_int((Balance /100)*80),
+    InitiatorAmt = 100,
+    ?LOG_INFO("Test account balance ~p ~p ~p", [TestPubKey, Balance, InitiatorAmt]),
+    #{public_key := NodePublicKey, private_key := NodePrivateKey} =
+        _KeyPair = secrets:node_keypair(),
 
-    {ok, Pid} = start_link(KeyPair, #{client_public_key => TestPubKey}),
+    {ok, #{
+        tx :=
+            Tx,
+        tx_hash :=
+            _TxHash,
+        initiator :=
+            _Initiator,
+        responder := _Responder
+    }} =
+        damage_channels:build_channel_create_tx(
+            to_bin(NodePublicKey),
+            to_bin(TestPubKey),
+            InitiatorAmt,
+            11,
+            10,
+            144,
+            0,
+            damage_ae:min_fee()
+        ),
+    ?LOG_INFO("Channel opening privkey ~p ", [UserPrivateKey]),
+    Sig = damage_ae:make_transaction_signature_base58(UserPrivateKey, Tx),
+    SignedTx = damage_ae:attach_signature_base58(Tx, Sig),
+    ?LOG_INFO("Channel opening ~p ~p", [SignedTx]),
+    {ok, #{channel_id := ChannelId}} = finalize_channel_create(Tx, SignedTx, <<>>),
+    ?LOG_INFO("Channel opend ~p", [ChannelId]),
 
-    %% Open minimal channel 
-    {ok, ChanId} = open(Pid, #{
-        initiator_pubkey => TestPubKey, responder_pubkey => NodePublicKey
-    }),
+    {ok,
+        #{
+            job_id := JobId,
+            channel_pid := ChannelPid,
+            init_receipt := _Receipt
+        } = Receipt} = init_job(ChannelId, #{}),
+    ?LOG_INFO("Channel receipt ~p", [Receipt]),
 
     %% Propose off-chain contract call and ack it
-    {ok, Update} = update_contract(Pid, <<"ct_job_registry">>, <<"run_step">>, [<<"arg">>], 100000),
-    {ok, #{round := _R, state_hash := _H}} = update_ack(Pid, Update),
+    {ok, Update} = update_contract(
+        ChannelPid, <<"ct_job_registry">>, <<"run_step">>, [<<"arg">>], 100000
+    ),
+    {ok, #{round := _R, state_hash := StateHash} = _Ack} = update_ack(ChannelPid, Update),
+
+    {ok, Tx} = build_channel_snapshot_solo_tx(
+        ChannelId,
+        NodePublicKey,
+        StateHash,
+        0,
+        damage_ae:min_fee()
+    ),
+    Sig = damage_ae:make_transaction_signature_base58(NodePrivateKey, Tx),
+    SignedTx = damage_ae:attach_signature_base58(Tx, Sig),
+    ?LOG_INFO("Snapshotting unsigned ~p", [SignedTx]),
+    Res =
+        case vanillae:post_tx(SignedTx) of
+            {ok, #{"tx_hash" := ContractCallTxHash}} ->
+                damage_ae:wait_tx(ContractCallTxHash);
+            Error ->
+                Error
+        end,
+    ?LOG_INFO("Snapshotting res ~p", [Res]),
+
+    {ok, Res} = finalize_snapshot(ChannelPid, #{
+        from_id => to_bin(NodePublicKey), fee => damage_ae:min_fee()
+    }),
+    ?LOG_INFO("Channel snapshot_solo ~p", [Res]),
 
     %% Batch-settle in test mode (no chain call)
     JobId = crypto:strong_rand_bytes(32),
@@ -752,7 +1003,7 @@ test() ->
     Count = 3,
     Sigs = [<<"1">>, <<"2">>],
     {ok, #{mock := true}} = damage_jobs:settle_batch(
-        Pid,
+        ChannelPid,
         JobId,
         StepsRoot,
         Count,

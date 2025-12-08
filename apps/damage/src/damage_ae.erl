@@ -36,6 +36,7 @@
     get_domain_token/2,
     add_domain_token/3,
     revoke_domain_token/2,
+    get_ae_node/0,
     get_ae_mdw_node/0,
     get_ae_mdw_ws_node/0,
     node_ae_balance/0,
@@ -68,7 +69,10 @@
     deploy_account_registry/1,
     deploy_node_registry/0,
     make_transaction_signature_base58/2,
+    make_transaction_signature/2,
     attach_signature_base58/2,
+    post_signed_or_payfor/1,
+    min_fee/0,
     wait_tx/1
 ]).
 -export([
@@ -86,7 +90,6 @@
     test_paying_for_tx/0,
     test_contract_deploy_for/0
 ]).
--export([finalize_channel_create/3, expected_signers/1, actual_signers/1, post_signed_or_payfor/1]).
 -import(damage_utils, [float_to_full_integer/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
@@ -1441,56 +1444,6 @@ node_damage_balance() ->
     Balance = balance(list_to_binary(AeAccount)),
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
 
-%% Verify that the signed tx was signed by the *expected* account (initiator),
-%% then post directly or wrap in paying_for so node pays fee.
--spec finalize_channel_create(binary(), binary(), boolean()) ->
-    {ok, map()} | {error, term()}.
-finalize_channel_create(UnsignedTx, SignedTx, _UsePayFor) ->
-    #{public_key := _NodeAeAccount, private_key := PrivateKey} = secrets:node_keypair(),
-    {transaction, TX} = aeser_api_encoder:decode(UnsignedTx),
-    Sig = make_transaction_signature(PrivateKey, TX),
-    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
-    ?LOG_INFO("Signed Tx client ~p", [SignedTx]),
-    {transaction, SignedBin} = aeser_api_encoder:decode(SignedTx),
-    ?LOG_INFO("Signed Tx client ~p", [SignedBin]),
-    {_Type, _Vsn, [[SigClient], _Tx]} = aeser_chain_objects:deserialize_type_and_vsn(SignedBin),
-
-    Fields = [{signatures, [Sig, SigClient]}, {transaction, TX}],
-    SignedTxNode = aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields),
-    SignedTxFinal = aeser_api_encoder:encode(transaction, SignedTxNode),
-    case vanillae:post_tx(SignedTxFinal) of
-        {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
-        Error ->
-            Error
-    end.
-
-%% Determine who MUST sign an *unsigned* tx
--spec expected_signers(binary()) -> {ok, [binary()]} | {error, term()}.
-expected_signers(EncUnsignedTx) ->
-    try
-        ?LOG_INFO("expected_signers ~p", [EncUnsignedTx]),
-        {transaction, TxBin} = aeser_api_encoder:decode(EncUnsignedTx),
-        Tx = aetx:deserialize_from_binary(TxBin),
-        ?LOG_INFO("expected_signers ~p", [Tx]),
-        Pks = aetx:signers(Tx),
-        {ok, [aeser_api_encoder:encode(account_pubkey, PK) || PK <- Pks]}
-    catch
-        C:R:_ -> {error, {C, R}}
-    end.
-
-%% Extract who DID sign a *signed* tx
--spec actual_signers(binary()) -> {ok, [binary()]} | {error, term()}.
-actual_signers(EncSignedTx) ->
-    try
-        {tx, SignedBin} = aeser_api_encoder:decode(EncSignedTx),
-        Signed = aetx_sign:deserialize_from_binary(SignedBin),
-        Pks = aetx_sign:signers(Signed),
-        {ok, [aeser_api_encoder:encode(account_pubkey, PK) || PK <- Pks]}
-    catch
-        C:R:_ -> {error, {C, R}}
-    end.
-
 %% Post the already-signed tx, with optional paying_for wrapper
 %-spec post_signed_or_payfor(binary(), boolean()) -> {ok, map()} | {error, term()}.
 %post_signed_or_payfor(SignedTx, true) ->
@@ -1500,7 +1453,6 @@ actual_signers(EncSignedTx) ->
 %    payfor_tx(SignedTx);
 %post_signed_or_payfor(SignedTx, false) ->
 %    vanillae:post_tx(SignedTx).
-
 
 %% Post already-signed tx, or wrap in paying_for if you prefer node-paid fees
 post_signed_or_payfor(SignedTx) ->
