@@ -58,6 +58,15 @@ write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) or is_li
       lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
       [append]
     ).
+%% Stream raw docker output chunks
+format(#{output := _} = Config, stdout, Bin) when is_binary(Bin); is_list(Bin) ->
+  ok = write_file(Config, "stdout> ~s", [Bin]);
+format(#{output := _} = Config, stderr, Bin) when is_binary(Bin); is_list(Bin) ->
+  ok = write_file(Config, "stderr> ~s", [Bin]);
+
+%% Non-streaming / non-HTTP runs: ignore docker chunks
+format(_Config, raw, _Bin) ->
+  ok;
 
 
 format(Config, error, {LineNo, Message}) ->

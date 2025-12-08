@@ -67,7 +67,7 @@ step(_Config, Context, <<"Given">>, _N, ?GIVEN_UNUSED_SINCE, _Raw) ->
 %%   When I clean up all unused Docker containers, images, volumes and networks
 %%   since "3 days ago"
 %% ---------------------------------------------------------------------------
-step(_Config, Context, <<"When">>, _N, ?WHEN_CLEANUP_UNUSED_SINCE, _Raw) ->
+step(Config, Context, <<"When">>, _N, ?WHEN_CLEANUP_UNUSED_SINCE, _Raw) ->
     steps_utils:ensure_admin(Context),
     {ok, ISODate} = relative_string_to_date(Relative),
     CmdIO =
@@ -76,14 +76,14 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_CLEANUP_UNUSED_SINCE, _Raw) ->
             [ISODate]
         ),
     Command = lists:flatten(CmdIO),
-    Ctx1 = run_cmd(Command, Context),
+    Ctx1 = run_cmd(Config, Command, Context),
     ?LOG_NOTICE("Docker cleanup command executed: ~s", [Command]),
     Ctx1#{since => ISODate};
 %% ---------------------------------------------------------------------------
 %% Then: assert that no unused resources older than relative time remain
 %%   Then the Docker system should have no unused resources older than "3 days ago"
 %% ---------------------------------------------------------------------------
-step(_Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
+step(Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
     steps_utils:ensure_admin(Context),
     {ok, ISODate} = relative_string_to_date(Relative),
     CmdIO =
@@ -93,7 +93,7 @@ step(_Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
             [ISODate]
         ),
     Command = lists:flatten(CmdIO),
-    Ctx1 = run_cmd(Command, Context),
+    Ctx1 = run_cmd(Config, Command, Context),
     case cmd_stdout(Ctx1) of
         <<>> ->
             Ctx1;
@@ -111,19 +111,20 @@ step(_Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
 %% When: build the mint22 builder image (first half of build.sh)
 %%   When I build the mint22 builder Docker image
 %% ---------------------------------------------------------------------------
-step(_Config, Context, <<"When">>, _N, ?WHEN_BUILD_MINT22_BUILDER_IMAGE, _Raw) ->
+step(Config, Context, <<"When">>, _N, ?WHEN_BUILD_MINT22_BUILDER_IMAGE, _Raw) ->
     steps_utils:ensure_admin(Context),
     Command =
         "DOCKER_BUILDKIT=1 docker build "
         "--build-arg CACHEBUST=$(date +%s) "
         "-t damagebdd/mint22-builder:latest .",
     ?LOG_INFO("Building mint22 builder image with command: ~s", [Command]),
-    run_cmd(Command, Context);
+    %stream_chunk(Config, <<"Building mint22 builder image with command: ~s">>),
+    run_cmd(Config, Command, Context);
 %% ---------------------------------------------------------------------------
 %% When: run the builder container to produce .deb packages (rest of build.sh)
 %%   When I build Debian packages using the mint22 builder container
 %% ---------------------------------------------------------------------------
-step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_BUILDER_TO_BUILD_DEBS, _Raw) ->
+step(Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_BUILDER_TO_BUILD_DEBS, _Raw) ->
     steps_utils:ensure_admin(Context),
     %% This replicates the bash -lc '...' block from build.sh as closely as
     %% possible, but wrapped in a single docker run. :contentReference[oaicite:5]{index=5}
@@ -147,12 +148,12 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_BUILDER_TO_BUILD_DEBS, _
         "bash -lc " ++ "\"" ++
             escape_for_double_quotes(InnerScript) ++ "\"",
     ?LOG_INFO("Running mint22 builder container with command: ~s", [Command]),
-    run_cmd(Command, Context);
+    run_cmd(Config, Command, Context);
 %% ---------------------------------------------------------------------------
 %% When: run a mint22 test container to install and run the built deb
 %%   When I run a mint22 test container installing the built Debian package
 %% ---------------------------------------------------------------------------
-step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
+step(Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
     steps_utils:ensure_admin(Context),
     %% Directly mirrors run.sh behaviour. :contentReference[oaicite:6]{index=6}
     InnerScript =
@@ -170,7 +171,7 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
         "bash -xlc " ++ "\"" ++
             escape_for_double_quotes(InnerScript) ++ "\"",
     ?LOG_INFO("Running mint22 test container with command: ~s", [Command]),
-    run_cmd(Command, Context);
+    run_cmd(Config, Command, Context);
 %% ---------------------------------------------------------------------------
 %% When: build a docker image from an inline Dockerfile body
 %%   When I build docker image "damagebdd/mint22-inline:latest" from this Dockerfile
@@ -180,9 +181,9 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
 %%   CMD ["bash"]
 %%   """
 %% ---------------------------------------------------------------------------
-step(_Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_INLINE_DOCKERFILE, Raw) ->
+step(Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_INLINE_DOCKERFILE, Raw) ->
     steps_utils:ensure_admin(Context),
-    build_image_from_inline_dockerfile(Image, Raw, Context).
+    build_image_from_inline_dockerfile(Config, Image, Raw, Context).
 
 %% ===== Helpers ===============================================================
 
@@ -197,15 +198,34 @@ step(_Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_INLINE_DOCKERFILE,
 %%   * keep a result under 'cmd_result' compatible with the old shape
 %%     so existing "Then the exit status must be" and stdout match steps
 %%     continue to work.
-run_cmd(Command, Context) ->
+%% Run a shell command via erlexec, but:
+%%   * stream stdout/stderr via text_formatter when in HTTP mode
+%%   * keep a result under 'cmd_result' compatible with old shape
+run_cmd(Config, Command, Context) ->
     CWD = filename:absname(maps:get(cmd_cwd, Context, ".")),
     Opts = [stdout, stderr, monitor, {cd, CWD}],
     ?LOG_INFO("steps_docker running command in ~s: ~s", [CWD, Command]),
-    case exec:run_link(Command, Opts) of
-        {ok, ExecPid, _OsPid} ->
-            Result = loop_stream(ExecPid, []),
-            ?LOG_DEBUG("steps_docker exec result ~p", [Result]),
-            maps:put(cmd_result, Result, Context);
+
+    Parent = self(),
+    Watcher =
+        spawn_link(fun() ->
+            docker_watcher(Config, Parent)
+        end),
+
+    case exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, CWD}]) of
+        {ok, ExecPid, OsPid} ->
+            %% Tell watcher which PIDs to care about
+            Watcher ! {attach, ExecPid, OsPid},
+            %% Block until watcher finishes and sends result
+            receive
+                {docker_done, Result} ->
+                    ?LOG_DEBUG("steps_docker exec result ~p", [Result]),
+                    maps:put(cmd_result, Result, Context)
+            after 600000 ->
+                %% Very defensive timeout
+                ?LOG_ERROR("steps_docker: watcher timeout for command ~p", [Command]),
+                maps:put(cmd_result, {error, [{stderr, [<<"watcher timeout">>]}]}, Context)
+            end;
         {error, Reason} ->
             ?LOG_ERROR("steps_docker failed to start command ~p: ~p", [Command, Reason]),
             ErrorBin =
@@ -215,49 +235,79 @@ run_cmd(Command, Context) ->
             Result = {error, [{stderr, [ErrorBin]}]},
             maps:put(cmd_result, Result, Context)
     end.
-
-%% Receive loop that:
-%%   * logs / prints each chunk as it arrives (so it hits the streaming
-%%     logger handler),
-%%   * aggregates output into a result shaped like:
-%%       {ok,   [{stdout, [StdoutBin]}]}
-%%       {error,[{stderr, [StderrBin]}]}
-loop_stream(Pid, Acc) ->
+docker_watcher(Config, Parent) ->
     receive
-        {stdout, Pid, Data} ->
+        {attach, ExecPid, OsPid} ->
+            docker_loop(Config, Parent, ExecPid, OsPid, [])
+    end.
+
+docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
+    receive
+        %% stdout from OS process
+        {stdout, OsPid, Data} ->
             ?LOG_INFO("docker stdout: ~s", [Data]),
-            io:put_chars(Data),
-            loop_stream(Pid, [{stdout, Data} | Acc]);
-        {stderr, Pid, Data} ->
+            formatter:format(
+                Config,
+                stdout,
+                Data
+            ),
+            docker_loop(Config, Parent, ExecPid, OsPid, [{stdout, Data} | Acc]);
+
+        %% stderr from OS process
+        {stderr, OsPid, Data} ->
             ?LOG_WARNING("docker stderr: ~s", [Data]),
-            io:put_chars(Data),
-            loop_stream(Pid, [{stderr, Data} | Acc]);
-        {exit_status, Pid, Status} ->
-            %% Finalise buffers
+            formatter:format(
+                Config,
+                stderr,
+                Data
+            ),
+            docker_loop(Config, Parent, ExecPid, OsPid, [{stderr, Data} | Acc]);
+
+        %% monitor message from erlexec
+        {'DOWN', OsPid, process, ExecPid, ExitStatus} ->
+            ?LOG_WARNING("docker down: ~p", [ExitStatus]),
             Rev = lists:reverse(Acc),
             Stdouts = [D || {stdout, D} <- Rev],
             Stderrs = [D || {stderr, D} <- Rev],
             StdoutBin = iolist_to_binary(Stdouts),
             StderrBin = iolist_to_binary(Stderrs),
-            case Status of
-                0 ->
-                    {ok, [{stdout, [StdoutBin]}]};
-                _ ->
-                    %% Prefer stderr; if empty, fall back to stdout
-                    ErrBin =
-                        case StderrBin of
-                            <<>> -> StdoutBin;
-                            _ -> StderrBin
-                        end,
-                    {error, [{stderr, [ErrBin]}]}
-            end
+
+            Result =
+                case ExitStatus of
+                    normal ->
+                        {ok, [{stdout, [StdoutBin]}]};
+                    {exit_status, 0} ->
+                        {ok, [{stdout, [StdoutBin]}]};
+                    Other ->
+                        ErrBin =
+                            case StderrBin of
+                                <<>> -> StdoutBin;
+                                _ -> StderrBin
+                            end,
+                        {error, [{stderr, [ErrBin]}, {exit_status, Other}]}
+                end,
+
+            Parent ! {docker_done, Result};
+        Other ->
+            ?LOG_WARNING("docker_watcher got unexpected message: ~p", [Other]),
+            docker_loop(Config, Parent, ExecPid, OsPid, Acc)
     after 600000 ->
-        Timeout = <<"docker command timed out after 600s">>,
-        ?LOG_ERROR("steps_docker timeout waiting for command output"),
-        {error, [{stderr, [Timeout]}]}
+        Timeout = <<"docker command timed out in watcher after 600s">>,
+        ?LOG_ERROR("docker_watcher timeout"),
+            formatter:format(
+                Config,
+                error,
+                {-1,Timeout}
+            ),
+        Parent ! {docker_done, {error, [{stderr, [Timeout]}]}}
     end.
+
+
+
+
+
 %% Build a docker image from an inline Dockerfile contained in Raw.
-build_image_from_inline_dockerfile(Image, Raw, Context) ->
+build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
     %% Raw is iodata() from the feature body
     BodyBin = iolist_to_binary(Raw),
     Trimmed = binary:trim(BodyBin, both, " \t\r\n"),
@@ -288,7 +338,7 @@ build_image_from_inline_dockerfile(Image, Raw, Context) ->
                         "Building docker image ~s from inline Dockerfile at ~s (context ~s)",
                         [Image, DockerfilePath, BuildDir]
                     ),
-                    run_cmd(Command, Context);
+                    run_cmd(Config, Command, Context);
                 {error, Reason} ->
                     erlang:error({dockerfile_write_failed, DockerfilePath, Reason})
             end
