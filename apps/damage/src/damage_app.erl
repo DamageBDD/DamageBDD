@@ -164,9 +164,6 @@ start_phase(start_sync, _StartType, []) ->
 %% --- Essentials setup phase (parity with setup.sh) --------------------------
 start_phase(setup_essentials, _StartType, []) ->
     ?LOG_INFO("setup_essentials: starting."),
-
-    {ok, _} = ipfs_util:ensure_ipfs_repo(),
-    {ok, _} = ipfs_util:ensure_peers(),
     DataDir = application:get_env(damage, app_dir, "/var/lib/damage"),
     ok = damage_ipfs:ensure_ipfs_asset(
         "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",

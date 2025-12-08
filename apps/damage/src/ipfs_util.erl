@@ -23,7 +23,7 @@
 -export([group_peers/3, ensure_group_peers/4]).
 
 -define(DEFAULT_IPFS_DIR, ".ipfs").
--define(DEFAULT_IPFS_HOME, "/var/lib/damage/").
+-define(DEFAULT_IPFS_HOME, "/var/lib/ipfs/").
 
 %% -----------------------------
 %% Public API
