@@ -86,7 +86,6 @@
     test_paying_for_tx/0,
     test_contract_deploy_for/0
 ]).
--export([build_channel_create_tx/8]).
 -export([finalize_channel_create/3, expected_signers/1, actual_signers/1, post_signed_or_payfor/1]).
 -import(damage_utils, [float_to_full_integer/1]).
 
@@ -1441,99 +1440,6 @@ node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
     Balance = balance(list_to_binary(AeAccount)),
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
-%%--------------------------------------------------------------------
-%% Build *unsigned* channel_create_tx (v2) for the initiator to sign.
-%% Returns {ok, #{tx := EncodedUnsignedTx, tx_hash := TxHash}}.
-%%--------------------------------------------------------------------
-
-build_channel_create_tx(
-    InitiatorPubKey,
-    ResponderPubKey,
-    IniAmt0,
-    ResAmt0,
-    Reserve0,
-    Lock0,
-    TTL0,
-    _Fee0
-) ->
-    try
-        IniAmt = to_int(IniAmt0),
-        ResAmt = to_int(ResAmt0),
-        Reserve = to_int(Reserve0),
-        Lock = to_int(Lock0),
-        TTL = to_int(TTL0),
-        %Fee     = to_int(Fee0),
-        Fee = min_fee(),
-        %Gas = min_gas(),
-
-        (IniAmt >= 0) orelse error(bad_initiator_amount),
-        (ResAmt >= 0) orelse error(bad_responder_amount),
-        (Reserve >= 0) orelse error(bad_reserve),
-        (Lock >= 0) orelse error(bad_lock),
-        (TTL >= 0) orelse error(bad_ttl),
-        (Fee >= 0) orelse error(bad_fee),
-
-        %% Nonce must be the *initiator* account nonce
-        {ok, Nonce} = vanillae:next_nonce(InitiatorPubKey),
-
-        %% Optional: empty delegates; fresh state hash (can be 32 zeroes)
-        InitStateHash = <<0:256>>,
-        InitDelegates = [],
-
-        %% --- Fields/Template for channel_create_tx v2 (Iris) ---
-        Type = channel_create_tx,
-        Version = 2,
-        {account_pubkey, InitiatorId} = aeser_api_encoder:decode(InitiatorPubKey),
-        {account_pubkey, ResponderId} = aeser_api_encoder:decode(ResponderPubKey),
-
-        Fields = [
-            {initiator_id, aeser_id:create(account, InitiatorId)},
-            {initiator_amount, IniAmt},
-            {responder_id, aeser_id:create(account, ResponderId)},
-            {responder_amount, ResAmt},
-            {channel_reserve, Reserve},
-            {lock_period, Lock},
-            {ttl, TTL},
-            {fee, Fee},
-            {initiator_delegate_ids, InitDelegates},
-            {responder_delegate_ids, InitDelegates},
-            {state_hash, InitStateHash},
-            {nonce, Nonce}
-        ],
-
-        Template = [
-            {initiator_id, id},
-            {initiator_amount, int},
-            {responder_id, id},
-            {responder_amount, int},
-            {channel_reserve, int},
-            {lock_period, int},
-            {ttl, int},
-            {fee, int},
-            {initiator_delegate_ids, [id]},
-            {responder_delegate_ids, [id]},
-            {state_hash, binary},
-            {nonce, int}
-        ],
-
-        ?LOG_DEBUG("build_channel_create_tx fields ~p ~p", [Fields, Template]),
-        %% --- Serialize (unsigned) and encode ---
-        TxBin = aeser_chain_objects:serialize(Type, Version, Template, Fields),
-        EncTx = aeser_api_encoder:encode(transaction, TxBin),
-        TxHash = aeser_api_encoder:encode(tx_hash, TxBin),
-        ?LOG_DEBUG("build_channel_create_tx ~p ~p", [TxBin, EncTx]),
-        {ok, _} = vanillae:dry_run(EncTx),
-        {ok, #{
-            tx => EncTx,
-            tx_hash => TxHash,
-            initiator => InitiatorId,
-            responder => ResponderId
-        }}
-    catch
-        C:R:S ->
-            ?LOG_ERROR("build_channel_create_tx failed: ~p:~p~n~p", [C, R, S]),
-            {error, {C, R}}
-    end.
 
 %% Verify that the signed tx was signed by the *expected* account (initiator),
 %% then post directly or wrap in paying_for so node pays fee.
@@ -1595,9 +1501,6 @@ actual_signers(EncSignedTx) ->
 %post_signed_or_payfor(SignedTx, false) ->
 %    vanillae:post_tx(SignedTx).
 
-to_int(V) when is_integer(V) -> V;
-to_int(V) when is_binary(V) -> list_to_integer(binary_to_list(V));
-to_int(V) when is_list(V) -> list_to_integer(V).
 
 %% Post already-signed tx, or wrap in paying_for if you prefer node-paid fees
 post_signed_or_payfor(SignedTx) ->

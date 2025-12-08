@@ -461,7 +461,7 @@ do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
     Responder = list_to_binary(NodePub),
 
     case
-        damage_ae:build_channel_create_tx(Ini, Responder, IniAmt, ResAmt, Reserve, Lock, TTL, Fee)
+        damage_channels:build_channel_create_tx(Ini, Responder, IniAmt, ResAmt, Reserve, Lock, TTL, Fee)
     of
         {ok, #{tx := Unsigned, tx_hash := TxHash}} ->
             Reply = #{
