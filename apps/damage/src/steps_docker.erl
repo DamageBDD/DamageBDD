@@ -203,7 +203,7 @@ step(Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_INLINE_DOCKERFILE, 
 %%   * keep a result under 'cmd_result' compatible with old shape
 run_cmd(Config, Command, Context) ->
     CWD = filename:absname(maps:get(cmd_cwd, Context, ".")),
-    Opts = [stdout, stderr, monitor, {cd, CWD}],
+    %Opts = [stdout, stderr, monitor, {cd, CWD}],
     ?LOG_INFO("steps_docker running command in ~s: ~s", [CWD, Command]),
 
     Parent = self(),
