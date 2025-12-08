@@ -121,8 +121,13 @@ code_change(_Old, State, _Extra) -> {ok, State}.
 
 ensure_started() ->
     case whereis(?MODULE) of
-        undefined -> start_link();
-        _ -> ok
+        undefined ->
+            case start_link() of
+                {ok, _Pid} -> ok;
+                {error, Reason} -> exit({start_failed, Reason})
+            end;
+        _ ->
+            ok
     end.
 
 state_to_map(#state{

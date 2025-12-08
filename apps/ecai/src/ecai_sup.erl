@@ -81,7 +81,7 @@ init([]) ->
             },
             #{
                 id => wikipedia_loader,
-                start => {wikipedia_loader, start_link, []},
+                start => {ecai_wikipedia_loader, start_link, []},
                 restart => permanent,
                 shutdown => 60,
                 type => worker,

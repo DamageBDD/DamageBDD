@@ -1,7 +1,7 @@
 %% =====================================================================
 %% wikipedia_loader.erl  --  Minimal Wikipedia JSONL loader
 %% =====================================================================
--module(wikipedia_loader).
+-module(ecai_wikipedia_loader).
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
