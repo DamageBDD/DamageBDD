@@ -21,24 +21,36 @@
 
 -spec make_chunks_ndjson(binary() | list(), binary() | list(), pos_integer()) ->
     [map()].
-make_chunks_ndjson(InPath0, OutDir0, K)
-  when (is_binary(InPath0) orelse is_list(InPath0)),
-       (is_binary(OutDir0) orelse is_list(OutDir0)),
-       is_integer(K),
-       K > 0 ->
+make_chunks_ndjson(InPath0, OutDir0, K) when
+    (is_binary(InPath0) orelse is_list(InPath0)),
+    (is_binary(OutDir0) orelse is_list(OutDir0)),
+    is_integer(K),
+    K > 0
+->
     InPath = to_list(InPath0),
     OutDir = to_list(OutDir0),
     ok = ensure_dir(OutDir),
     case file:open(InPath, [read]) of
         {ok, InIo} ->
             try
-                loop_split(InIo, InPath, OutDir, K,
-                           1,          %% global line number
-                           0,          %% lines in current chunk
-                           undefined,  %% current chunk file IoDevice or undefined
-                           undefined,  %% current chunk index or undefined
-                           [],         %% accumulator of chunk maps
-                           0)          %% next chunk index to allocate
+                loop_split(
+                    InIo,
+                    InPath,
+                    OutDir,
+                    K,
+                    %% global line number
+                    1,
+                    %% lines in current chunk
+                    0,
+                    %% current chunk file IoDevice or undefined
+                    undefined,
+                    %% current chunk index or undefined
+                    undefined,
+                    %% accumulator of chunk maps
+                    [],
+                    %% next chunk index to allocate
+                    0
+                )
             after
                 file:close(InIo)
             end;
@@ -51,8 +63,18 @@ make_chunks_ndjson(InPath0, OutDir0, K)
 %%% Internal
 %%%-------------------------------------------------------------------
 
-loop_split(InIo, SrcPath, OutDir, K,
-           LineNo, CurCount, CurIo, CurIdx, Acc, NextIdx) ->
+loop_split(
+    InIo,
+    SrcPath,
+    OutDir,
+    K,
+    LineNo,
+    CurCount,
+    CurIo,
+    CurIdx,
+    Acc,
+    NextIdx
+) ->
     case io:get_line(InIo, '') of
         eof ->
             %% finalize last chunk if there was one
@@ -62,39 +84,69 @@ loop_split(InIo, SrcPath, OutDir, K,
                         Acc;
                     _ ->
                         ok = file:close(CurIo),
-                        Chunk = make_chunk_meta(SrcPath, OutDir, CurIdx,
-                                                LineNo - CurCount, CurCount),
+                        Chunk = make_chunk_meta(
+                            SrcPath,
+                            OutDir,
+                            CurIdx,
+                            LineNo - CurCount,
+                            CurCount
+                        ),
                         [Chunk | Acc]
                 end,
             lists:reverse(Acc1);
-
         {error, Reason} ->
             ?LOG_ERROR("ecai_wiki_chunker: read error ~p", [Reason]),
             erlang:error({read_error, Reason});
-
         Line ->
             {CurIo1, CurIdx1, NextIdx1, StartLine, CurCount1, Acc1} =
-                maybe_start_chunk(CurIo, CurIdx, NextIdx,
-                                  SrcPath, OutDir, LineNo, CurCount, Acc),
+                maybe_start_chunk(
+                    CurIo,
+                    CurIdx,
+                    NextIdx,
+                    SrcPath,
+                    OutDir,
+                    LineNo,
+                    CurCount,
+                    Acc
+                ),
             ok = file:write(CurIo1, Line),
             CurCount2 = CurCount1 + 1,
-            LineNo1   = LineNo + 1,
+            LineNo1 = LineNo + 1,
             %% if we hit K, close chunk and record metadata
             case CurCount2 >= K of
                 true ->
                     ok = file:close(CurIo1),
-                    Chunk = make_chunk_meta(SrcPath, OutDir, CurIdx1,
-                                            StartLine, CurCount2),
+                    Chunk = make_chunk_meta(
+                        SrcPath,
+                        OutDir,
+                        CurIdx1,
+                        StartLine,
+                        CurCount2
+                    ),
                     loop_split(
-                      InIo, SrcPath, OutDir, K,
-                      LineNo1, 0, undefined, undefined,
-                      [Chunk | Acc1], NextIdx1
+                        InIo,
+                        SrcPath,
+                        OutDir,
+                        K,
+                        LineNo1,
+                        0,
+                        undefined,
+                        undefined,
+                        [Chunk | Acc1],
+                        NextIdx1
                     );
                 false ->
                     loop_split(
-                      InIo, SrcPath, OutDir, K,
-                      LineNo1, CurCount2, CurIo1, CurIdx1,
-                      Acc1, NextIdx1
+                        InIo,
+                        SrcPath,
+                        OutDir,
+                        K,
+                        LineNo1,
+                        CurCount2,
+                        CurIo1,
+                        CurIdx1,
+                        Acc1,
+                        NextIdx1
                     )
             end
     end.
@@ -133,6 +185,5 @@ chunk_id(SrcPath, StartLine, LineCount) ->
     Bin = term_to_binary({SrcPath, StartLine, LineCount}),
     crypto:hash(sha256, Bin).
 
-
 to_list(B) when is_binary(B) -> binary_to_list(B);
-to_list(L) when is_list(L)   -> L.
+to_list(L) when is_list(L) -> L.

@@ -7,10 +7,100 @@
     add_track/3,
     test/0
 ]).
+-export([
+    maxwell_soundscape/3,
+    maxwell_test/0
+]).
 
 -define(DEFAULT_SR, 44100).
 
 -include_lib("kernel/include/logger.hrl").
+%% ecai_synth.erl (excerpt)
+
+-record(mx_state, {
+    e = {0.1, 0.0, 0.0},
+    b = {0.0, 0.1, 0.0},
+    rho = 0.0,
+    j = {0.0, 0.0, 0.0},
+    v = {0.0, 0.0, 0.0}
+}).
+
+%% API: deterministic soundscape from prompt
+maxwell_soundscape(Prompt, Seconds, SampleRate) ->
+    SeedPoints = init_maxwell_points(Prompt),
+    State0 = init_maxwell_state(Prompt),
+    N = trunc(Seconds * SampleRate),
+    loop_samples(0, N, SampleRate, State0, SeedPoints, []).
+
+%% ---- init: hash -> curve points per equation ----
+init_maxwell_points(Prompt) ->
+    Tags = ["GaussE", "GaussB", "Faraday", "Ampere", "Continuity", "Lorentz"],
+    [ecai:hash_to_curve(Prompt ++ Tag) || Tag <- Tags].
+
+init_maxwell_state(_Prompt) ->
+    #mx_state{}.
+
+%% ---- main loop ----
+loop_samples(N, N, _Fs, _St, _Pts, Acc) ->
+    lists:reverse(Acc);
+loop_samples(I, N, Fs, St0, Pts, Acc) ->
+    Dt = 1.0 / Fs,
+    St1 = mx_step(Dt, St0),
+    Params = mx_isogeny_params(St1, Pts),
+    Sample = ecai_voice_mix(Params),
+    loop_samples(I + 1, N, Fs, St1, Pts, [Sample | Acc]).
+
+%% ---- Maxwell step (very simple discrete update) ----
+mx_step(Dt, #mx_state{e = E0, b = B0, rho = R0, j = J0, v = V0} = St) ->
+    CurlE = fake_curl(E0),
+    CurlB = fake_curl(B0),
+    DivJ = fake_div(J0),
+
+    E1 = vec_add(E0, vec_scale(Dt, vec_sub(CurlB, vec_scale(4 * math:pi(), J0)))),
+    B1 = vec_add(B0, vec_scale(-Dt, CurlE)),
+    R1 = R0 - Dt * DivJ,
+    V1 = lorentz_step(Dt, E1, B1, V0),
+
+    St#mx_state{e = E1, b = B1, rho = R1, v = V1}.
+
+%% ---- derive multipliers & curve points ----
+mx_isogeny_params(#mx_state{e = E, b = B, rho = _R, j = J, v = V}, Points) ->
+    Ue = vec_norm2(E),
+    Ub = vec_norm2(B),
+    U = Ue + Ub,
+    S = vec_norm(vec_cross(E, B)),
+    Jm = vec_norm(J),
+    Vm = vec_norm(V),
+
+    [P0, P1, P2, P3, P4, P5] = Points,
+
+    [
+        point_to_voice(ecai_curve:mul(round(alpha(0) * Ue), P0)),
+        point_to_voice(ecai_curve:mul(round(alpha(1) * Ub), P1)),
+        point_to_voice(ecai_curve:mul(round(alpha(2) * S), P2)),
+        point_to_voice(ecai_curve:mul(round(alpha(3) * U), P3)),
+        point_to_voice(ecai_curve:mul(round(alpha(4) * Jm), P4)),
+        point_to_voice(ecai_curve:mul(round(alpha(5) * Vm), P5))
+    ].
+
+alpha(0) -> 10.0;
+alpha(1) -> 12.0;
+alpha(2) -> 8.0;
+alpha(3) -> 5.0;
+alpha(4) -> 20.0;
+alpha(5) -> 15.0.
+
+%% Convert point -> oscillator params
+point_to_voice({X, Y}) ->
+    Freq = ecai_pitch:from_x(X),
+    Amp = ecai_amp:from_y(Y),
+    Pan = ecai_pan:from_x(X),
+    #{freq => Freq, amp => Amp, pan => Pan}.
+
+%% Mix all 6 voices for one sample
+ecai_voice_mix(Voices) ->
+    lists:sum([ecai_osc:sample(V) || V <- Voices]).
+
 %% LoopSpec map:
 %%  #{
 %%      bpm => 120,
@@ -415,6 +505,63 @@ write_wav(Path, SR, Channels, BitsPerSample, PCM) ->
     file:write_file(Path, [Header, PCM]).
 
 %% -------------------------------------------------------------------
+%% Vector utilities + fake Maxwell helpers
+%% -------------------------------------------------------------------
+
+%% --- Basic vector operations --------------------------------------
+
+vec_add({Ax, Ay, Az}, {Bx, By, Bz}) ->
+    {Ax + Bx, Ay + By, Az + Bz}.
+
+vec_sub({Ax, Ay, Az}, {Bx, By, Bz}) ->
+    {Ax - Bx, Ay - By, Az - Bz}.
+
+vec_scale(S, {Ax, Ay, Az}) ->
+    {S * Ax, S * Ay, S * Az}.
+
+vec_norm2({Ax, Ay, Az}) ->
+    Ax * Ax + Ay * Ay + Az * Az.
+
+vec_norm(V) ->
+    math:sqrt(vec_norm2(V)).
+
+%% --- Cross product -------------------------------------------------
+
+vec_cross({Ax, Ay, Az}, {Bx, By, Bz}) ->
+    {
+        Ay * Bz - Az * By,
+        Az * Bx - Ax * Bz,
+        Ax * By - Ay * Bx
+    }.
+
+%% -------------------------------------------------------------------
+%% Fake curl and divergence for 1-cell EM simulation
+%% -------------------------------------------------------------------
+
+%% A deterministic "pseudo-curl" that generates stable dynamics
+fake_curl({X, Y, Z}) ->
+    {
+        0.0 * X + 0.3 * Y - 0.2 * Z,
+        -0.3 * X + 0.0 * Y + 0.4 * Z,
+        0.2 * X - 0.4 * Y + 0.0 * Z
+    }.
+
+%% Very simple divergence estimate (linear map)
+fake_div({X, Y, Z}) ->
+    0.35 * X + 0.2 * Y - 0.15 * Z.
+
+%% -------------------------------------------------------------------
+%% Lorentz force integrator (velocity update)
+%% dv/dt = (q/m)( E + v × B )
+%% Here q/m is set to 1 for stability
+%% -------------------------------------------------------------------
+
+lorentz_step(Dt, E, B, V0) ->
+    Vcross = vec_cross(V0, B),
+    A = vec_add(E, Vcross),
+    vec_add(V0, vec_scale(Dt, A)).
+
+%% -------------------------------------------------------------------
 %% Quick test – still uses the Bitcoiner specs & composition
 %% -------------------------------------------------------------------
 test() ->
@@ -427,45 +574,76 @@ test() ->
         amp => 0.55
     },
     {ok, AudioPath} = ecai_synth:render_loop("/tmp/ecai_isogeny.wav", LoopSpec),
-    ?LOG_DEBUG("Ecai isogeny loop ~p", [AudioPath]).
+    ?LOG_DEBUG("Ecai isogeny loop ~p", [AudioPath]),
+    BitcoinerIconic = #{
+        bpm => 126,
+        seconds => 21.0,
+        notes => [146.83, 174.61, 220.0, 261.63],
+        lfo_hz => 0.21,
+        voices => [1.0, 2.0, 0.5],
+        amp => 0.6,
+        sample_rate => 44100
+    },
 
-%BitcoinerIconic = #{
-    %    bpm => 126,
-    %    seconds => 21.0,
-    %    notes => [146.83, 174.61, 220.0, 261.63],
-    %    lfo_hz => 0.21,
-    %    voices => [1.0, 2.0, 0.5],
-    %    amp => 0.6,
-    %    sample_rate => 44100
-    %},
+    BitcoinerCathedral = #{
+        bpm => 105,
+        seconds => 21.0,
+        % D3
+        drone_note => 146.83,
+        drone_partials => [1.0, 1.5, 2.0, 2.5, 3.0],
+        shimmer_notes => [587.33, 880.0],
+        detune => 0.07,
+        noise_amp => 0.03,
+        noise_lfo_hz => 0.13,
+        lfo_hz => 0.18,
+        amp => 0.45,
+        sample_rate => 44100
+    },
 
-    %BitcoinerCathedral = #{
-    %    bpm => 105,
-    %    seconds => 21.0,
-    %    drone_note => 146.83,   % D3
-    %    drone_partials => [1.0, 1.5, 2.0, 2.5, 3.0],
-    %    shimmer_notes => [587.33, 880.0],
-    %    detune => 0.07,
-    %    noise_amp => 0.03,
-    %    noise_lfo_hz => 0.13,
-    %    lfo_hz => 0.18,
-    %    amp => 0.45,
-    %    sample_rate => 44100
-    %},
+    %% 1. Main track
+    {ok, BassPath} =
+        ecai_synth:render_loop(
+            "/tmp/ecai_isogeny_bass.wav",
+            BitcoinerIconic
+        ),
 
-    %%% 1. Main track
-    %{ok, BassPath} =
-    %    ecai_synth:render_loop("/tmp/ecai_isogeny_bass.wav",
-    %                           BitcoinerIconic),
+    %% 2. Wobble pad
+    {ok, PadPath} =
+        ecai_synth:render_wobble(
+            "/tmp/ecai_isogeny_pad.wav",
+            BitcoinerCathedral
+        ),
 
-    %%% 2. Wobble pad
-    %{ok, PadPath} =
-    %    ecai_synth:render_wobble("/tmp/ecai_isogeny_pad.wav",
-    %                             BitcoinerCathedral),
+    %% 3. Compose into a single mix
+    {ok, MixPath} =
+        ecai_synth:mix_wavs(
+            "/tmp/ecai_isogeny_mix.wav",
+            [BassPath, PadPath]
+        ),
 
-    %%% 3. Compose into a single mix
-    %{ok, MixPath} =
-    %    ecai_synth:mix_wavs("/tmp/ecai_isogeny_mix.wav",
-    %                        [BassPath, PadPath]),
+    {ok, MixPath}.
+%% -------------------------------------------------------------------
+%% Maxwell soundscape test
+%% -------------------------------------------------------------------
+maxwell_test() ->
+    Prompt = "Rachmaninoff + Maxwell + ECAI",
+    Seconds = 12.0,
+    SR = 44100,
 
-    %{ok, MixPath}.
+    %% 1. Generate raw float samples from the Maxwell engine
+    Samples = maxwell_soundscape(Prompt, Seconds, SR),
+
+    %% 2. Peak-normalise to avoid clipping
+    MaxAbs = lists:max([math:abs(S) || S <- Samples] ++ [1.0]),
+    Factor = 0.95 / MaxAbs,
+    Scaled = [S * Factor || S <- Samples],
+
+    %% 3. Convert to 16-bit PCM
+    Int16Samples =
+        [trunc(clamp(S, -1.0, 1.0) * 32767.0) || S <- Scaled],
+    PCM = samples_to_pcm(Int16Samples),
+
+    %% 4. Write WAV file
+    Path = "/tmp/ecai_maxwell.wav",
+    ok = write_wav(Path, SR, 1, 16, PCM),
+    {ok, Path}.
