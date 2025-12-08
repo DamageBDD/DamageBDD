@@ -252,7 +252,6 @@ docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
                 Data
             ),
             docker_loop(Config, Parent, ExecPid, OsPid, [{stdout, Data} | Acc]);
-
         %% stderr from OS process
         {stderr, OsPid, Data} ->
             ?LOG_WARNING("docker stderr: ~s", [Data]),
@@ -262,7 +261,6 @@ docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
                 Data
             ),
             docker_loop(Config, Parent, ExecPid, OsPid, [{stderr, Data} | Acc]);
-
         %% monitor message from erlexec
         {'DOWN', OsPid, process, ExecPid, ExitStatus} ->
             ?LOG_WARNING("docker down: ~p", [ExitStatus]),
@@ -294,17 +292,13 @@ docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
     after 600000 ->
         Timeout = <<"docker command timed out in watcher after 600s">>,
         ?LOG_ERROR("docker_watcher timeout"),
-            formatter:format(
-                Config,
-                error,
-                {-1,Timeout}
-            ),
+        formatter:format(
+            Config,
+            error,
+            {-1, Timeout}
+        ),
         Parent ! {docker_done, {error, [{stderr, [Timeout]}]}}
     end.
-
-
-
-
 
 %% Build a docker image from an inline Dockerfile contained in Raw.
 build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->

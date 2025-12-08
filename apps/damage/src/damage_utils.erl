@@ -42,6 +42,7 @@
         render/2,
         normalize_context/1,
         to_bin/1,
+        to_int/1,
         ct_id/2,
         float_to_full_integer/1
     ]
@@ -600,7 +601,6 @@ ensure_ssh_host_key(KeyPath) ->
             run(damage_utils:strf("ssh-keygen -t rsa -f ~s -N '' -q", [KeyPath]))
     end.
 
-
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> list_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
@@ -615,3 +615,8 @@ ct_id(Key, ContractId) ->
 -spec float_to_full_integer(float()) -> integer().
 float_to_full_integer(F) when is_float(F) ->
     round(F).
+
+to_int(V) when is_integer(V) -> V;
+to_int(V) when is_float(V) -> float_to_full_integer(V);
+to_int(V) when is_binary(V) -> list_to_integer(binary_to_list(V));
+to_int(V) when is_list(V) -> list_to_integer(V).
