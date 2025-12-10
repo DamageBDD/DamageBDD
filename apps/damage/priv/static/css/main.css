@@ -298,10 +298,8 @@ html, body {
 }
 #balanceDiv {
   cursor: pointer;
-  border: 1px solid #555;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
-  background-color: rgba(0, 123, 255, 0.1);
   transition: all 0.2s ease-in-out;
 }
 
@@ -1015,17 +1013,19 @@ ul[data-tabs] li a:hover {
 /* Emphasize DAMAGE, add subtle AE subtext */
 #balanceDiv {
   cursor: pointer;
-  border: 1px solid #555;
   padding: 0.35rem 0.6rem;
   border-radius: 6px;
-  background-color: rgba(0, 123, 255, 0.1);
   transition: all 0.2s ease-in-out;
   display: inline-flex;
   flex-direction: column;
   gap: 2px;
- position: relative;
+  position: relative;
 }
-#balanceDiv:hover { background-color: rgba(0, 123, 255, 0.2); }
+
+#balanceDiv:hover { 
+  border: 1px solid #555; 
+  background-color: rgba(0, 123, 255, 0.2); 
+}
 
 .balance-row { display: inline-flex; align-items: baseline; gap: .5rem; }
 #balanceLabel { color:#9fc9ff; font-weight:600; font-size:.95rem; }
@@ -1034,6 +1034,7 @@ ul[data-tabs] li a:hover {
   appearance: none;
   border: 0;
   background: none;
+  color: white;
   width: 22px; height: 22px;
   border-radius: 9999px;
   display: inline-flex; align-items: center; justify-content: center;

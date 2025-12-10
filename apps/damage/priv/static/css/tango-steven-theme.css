@@ -69,12 +69,9 @@ a:hover {
 
 /* Token CTA Button */
 .token-cta {
-  background: linear-gradient(to right, #44494d, #5c6165);
   color: var(--fg);
   padding: 10px 15px;
-  border: 1px solid var(--input-border);
   border-radius: 6px;
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.05);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
