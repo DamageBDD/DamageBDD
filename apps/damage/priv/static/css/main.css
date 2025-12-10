@@ -924,10 +924,8 @@ ul[data-tabs] li a:hover {
   margin-top: 0.2rem;
 }
 .site-header {
-  background: linear-gradient(to right, #1f2a3a, #141e30);
   padding: 0.5rem 1.7rem;
   border-radius: 8px;
-  box-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
 }
 /* Combine site-header and toolbar into a single topbar container */
 .topbar {
@@ -938,7 +936,6 @@ ul[data-tabs] li a:hover {
   padding: 0.45rem 0.7rem;
   border-bottom: 1px solid #333;
   border-radius: 0 0 8px 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 /* Move existing .site-header into left section */
