@@ -86,31 +86,8 @@ a:hover {
 
 
 
-/* Logout Button */
-.logout-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--modal-bg);
-  color: var(--error);
-  padding: 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.logout-btn:hover {
-  background-color: var(--error);
-  color: var(--bg);
-}
 
 
-@media(max-width: 900px) {
-  .logout-btn {
-    margin-top: initail;
-  }
-}
 
 /* Inputs & Textareas */
 input[type="text"],

@@ -963,6 +963,7 @@ ul[data-tabs] li a:hover {
   display: flex;
   flex-direction: row;
   max-width: 500px;
+  min-height: 76px;
 }
 
 .toolbar-items div {
@@ -974,6 +975,7 @@ ul[data-tabs] li a:hover {
 .toolbar-items div:hover {
   color: #fff;
 }
+
 /* Make the topbar Install button look obviously clickable */
 .install-btn {
   display: flex;
@@ -981,7 +983,6 @@ ul[data-tabs] li a:hover {
   justify-content: center;
   background: linear-gradient(to right, #28a745, #218838);
   color: #fff;
-  padding: 10px 16px;
   border: none;
   border-radius: 6px;
   font-size: 13px;
@@ -989,9 +990,31 @@ ul[data-tabs] li a:hover {
   cursor: pointer;
   transition: all .2s ease-in-out;
   user-select: none;
+  line-height: 1.7;
+  min-height: 44px;
 }
 .install-btn:hover { transform: scale(1.03); }
 
+
+/* Logout Button */
+.logout-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--modal-bg);
+  color: var(--error);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  line-height: 1.7;
+  min-height: 44px;
+}
+
+.logout-btn:hover {
+  background-color: var(--error);
+  color: var(--bg);
+}
 
 
 @media(min-width: 901px) {
@@ -1003,6 +1026,7 @@ ul[data-tabs] li a:hover {
     flex-direction: column;
     gap: .5rem;
   }
+
 }
 
 @media(max-width: 900px) {
@@ -1705,16 +1729,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
 }
 
 @media (max-width: 768px) {
-  .topbar .site-header {
-    justify-content: center;
-    padding: 0.5rem;
-  }
-
-  .topbar .toolbar-items {
-    flex-wrap: wrap;
-    justify-content: center;
-    font-size: 0.9rem;
-  }
 
   .brand-text .title {
     font-size: 1.3rem;
@@ -1825,7 +1839,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
   /* Buttons */
   .styled-btn {
-    padding: 0.65rem 0.85rem;
+    /* padding: 0.65rem 0.85rem; */
     font-size: 0.9rem;
   }
 
@@ -1842,11 +1856,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
     font-size: 0.95rem;
   }
 
-  /* Install button */
-  .install-btn {
-    padding: 8px 12px;
-    font-size: 0.85rem;
-  }
 
   /* Settings tab responsive (enhance existing) */
   #settings-tab {
@@ -1994,7 +2003,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
   button, 
   .buttonlink,
   .styled-btn,
-  .install-btn,
   .toolbar-items div,
   ul[data-tabs] li a {
     min-height: 44px;
@@ -2026,9 +2034,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
 @media (min-width: 769px) and (max-width: 1024px) {
 
-  .topbar .toolbar-items {
-    gap: 0.75rem;
-  }
+
 
   #execution-tab {
     padding: 1.25rem;
@@ -2148,7 +2154,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
   .install-btn {
     font-size: 0.8rem;
-    padding: 0.5rem 0.75rem;
   }
 }
 
@@ -2173,10 +2178,10 @@ body.reset-password-page #resetPasswdForm ul li::before {
     height: 25vh;
   }
 
-  .topbar {
+  /* .topbar {
     flex-direction: row;
     justify-content: space-between;
-  }
+  } */
 
   #settings-tab fieldset {
     padding: 2.5rem 0.75rem 1rem !important;
