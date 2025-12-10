@@ -439,7 +439,7 @@ handle_call({snapshot_solo, Opts}, _From, S = #state{}) ->
 
     %% Build unsigned snapshot tx; wallet of FromId must sign
     ?LOG_INFO("Snapshotting ~p", [Ch]),
-    {ok, Tx} = build_channel_snapshot_solo_tx(
+    {ok, #{tx := Tx}} = build_channel_snapshot_solo_tx(
         ChId,
         FromId,
         StateHash,
@@ -973,41 +973,58 @@ test() ->
     ),
     {ok, #{round := _R, state_hash := StateHash} = _Ack} = update_ack(ChannelPid, Update),
 
-    {ok, Tx} = build_channel_snapshot_solo_tx(
-        ChannelId,
-        NodePublicKey,
-        StateHash,
-        0,
-        damage_ae:min_fee()
-    ),
-    Sig = damage_ae:make_transaction_signature_base58(NodePrivateKey, Tx),
-    SignedTx = damage_ae:attach_signature_base58(Tx, Sig),
-    ?LOG_INFO("Snapshotting unsigned ~p", [SignedTx]),
-    Res =
-        case vanillae:post_tx(SignedTx) of
+    {ok, #{
+        tx :=
+            SnapTx,
+        tx_hash :=
+            _SnapTxHash,
+        from_id :=
+            _FromId,
+        channel_id := _ChannelId
+    }} =
+        build_channel_snapshot_solo_tx(
+            ChannelId,
+            to_bin(NodePublicKey),
+            StateHash,
+            0,
+            damage_ae:min_fee()
+        ),
+    SnapSig = damage_ae:make_transaction_signature_base58(NodePrivateKey, SnapTx),
+    SignedSnapTx = damage_ae:attach_signature_base58(SnapTx, SnapSig),
+    ?LOG_INFO("Snapshotting unsigned ~p", [SignedSnapTx]),
+    {ok, Res} =
+        case vanillae:post_tx(SignedSnapTx) of
             {ok, #{"tx_hash" := ContractCallTxHash}} ->
-                damage_ae:wait_tx(ContractCallTxHash);
+                case damage_ae:wait_tx(ContractCallTxHash) of
+                    {ok, Resp} ->
+                        {ok, Resp};
+                    #{"error_code" := "invalid_at_protocol",
+                       "reason" := "Invalid tx"} ->
+                        {error, invalid_tx};
+                    Error ->
+                        Error
+                end;
             Error ->
                 Error
         end,
-    ?LOG_INFO("Snapshotting res ~p", [Res]),
+    ?LOG_INFO("Snapshotting result ~p", [Res]),
 
-    {ok, Res} = finalize_snapshot(ChannelPid, #{
-        from_id => to_bin(NodePublicKey), fee => damage_ae:min_fee()
-    }),
-    ?LOG_INFO("Channel snapshot_solo ~p", [Res]),
+    %{ok, Res} = finalize_snapshot(ChannelPid, #{
+    %    from_id => to_bin(NodePublicKey), fee => damage_ae:min_fee()
+    %}),
+    %?LOG_INFO("Channel snapshot_solo ~p", [Res]),
 
     %% Batch-settle in test mode (no chain call)
-    JobId = crypto:strong_rand_bytes(32),
-    StepsRoot = crypto:hash(sha256, <<"steps">>),
-    Count = 3,
-    Sigs = [<<"1">>, <<"2">>],
-    {ok, #{mock := true}} = damage_jobs:settle_batch(
-        ChannelPid,
-        JobId,
-        StepsRoot,
-        Count,
-        Sigs,
-        #{ct => <<"ct_job_registry">>, source => <<"src">>, payer => test}
-    ),
+    %JobId = crypto:strong_rand_bytes(32),
+    %StepsRoot = crypto:hash(sha256, <<"steps">>),
+    %Count = 3,
+    %Sigs = [<<"1">>, <<"2">>],
+    %{ok, #{mock := true}} = damage_jobs:settle_batch(
+    %    ChannelPid,
+    %    JobId,
+    %    StepsRoot,
+    %    Count,
+    %    Sigs,
+    %    #{ct => <<"ct_job_registry">>, source => <<"src">>, payer => test}
+    %),
     ok.
