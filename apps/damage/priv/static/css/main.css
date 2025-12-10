@@ -908,7 +908,6 @@ ul[data-tabs] li a:hover {
 /* Logo image */
 .logo {
   width: 58px;
-  /*height: 48px;*/
   object-fit: contain;
   filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.4));
 }
@@ -1017,6 +1016,10 @@ ul[data-tabs] li a:hover {
 
 
 @media(min-width: 901px) {
+  .site-header {
+    padding-left: 0;
+  }
+
   .topbar {
     padding: 1rem;
   }
@@ -1039,6 +1042,10 @@ ul[data-tabs] li a:hover {
 }
 
 @media(max-width: 900px) {
+  .site-header {
+    padding-bottom: 1rem;
+  }
+
   .topbar {
     flex-direction: column;
     align-items: initial;
@@ -1075,7 +1082,6 @@ ul[data-tabs] li a:hover {
     flex-direction: column;
     gap: .5rem;
   }
-
 
 }
 
@@ -2073,7 +2079,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
   }
 
   .logo {
-    width: 40px;
+    width: 3rem;
   }
 
   ul[data-tabs] li a {
@@ -2257,6 +2263,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
     flex-direction: column;
     align-items: center;
     text-align: center;
+    gap: 0;
   }
 
   .brand-text {
