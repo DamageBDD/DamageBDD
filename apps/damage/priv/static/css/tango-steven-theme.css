@@ -98,7 +98,6 @@ a:hover {
   font-size: 12px;
   cursor: pointer;
   transition: background 0.2s ease;
-  margin-top: .5rem;
 }
 
 .logout-btn:hover {

@@ -14,6 +14,18 @@ h1, h2, h3 {
 
 
 h1, h2, h3, h4 { font-family: 'Rubik', sans-serif; }
+
+
+@media (max-width: 600px) {
+  body {
+    padding: .5rem;
+  }
+  
+  body h2 {
+    font-size: 1.5rem;
+  }
+}
+
 .dark-mode { background: linear-gradient(to bottom right, #2d2d2d, #1a1a1a); color: #e0e0e0; }
 .dark-mode table { background-color: #2b2b2b; }
 .circle-bg {
@@ -298,7 +310,6 @@ html, body {
 }
 #balanceDiv {
   cursor: pointer;
-  padding: 0.25rem 0.5rem;
   border-radius: 4px;
   transition: all 0.2s ease-in-out;
 }
@@ -892,7 +903,6 @@ ul[data-tabs] li a:hover {
 .site-header {
   display: flex;
   align-items: center;
-  gap: 1rem;
 }
 
 /* Logo image */
@@ -922,7 +932,6 @@ ul[data-tabs] li a:hover {
   margin-top: 0.2rem;
 }
 .site-header {
-  padding: 0.5rem 1.7rem;
   border-radius: 8px;
 }
 
@@ -932,7 +941,6 @@ ul[data-tabs] li a:hover {
   justify-content: space-between;
   align-items: center;
   background: linear-gradient(to right, #1f2a3a, #141e30);
-  padding: 0.45rem 0.7rem;
   border-bottom: 1px solid #333;
   border-radius: 0 0 8px 8px;
 }
@@ -949,6 +957,12 @@ ul[data-tabs] li a:hover {
   display: flex;
   align-items: center;
   gap: 1rem;
+}
+
+.topbar .toolbar-items #toolbar-btns {
+  display: flex;
+  flex-direction: row;
+  max-width: 500px;
 }
 
 .toolbar-items div {
@@ -980,6 +994,17 @@ ul[data-tabs] li a:hover {
 
 
 
+@media(min-width: 901px) {
+  .topbar {
+    padding: 1rem;
+  }
+
+  .topbar .toolbar-items #toolbar-btns {
+    flex-direction: column;
+    gap: .5rem;
+  }
+}
+
 @media(max-width: 900px) {
   .topbar {
     flex-direction: column;
@@ -991,13 +1016,34 @@ ul[data-tabs] li a:hover {
     flex-direction: column;
     align-items: initial;
     gap: 1rem;
-    background-color: red;
 
+  }
+
+  .topbar .toolbar-items #toolbar-btns  {
+    gap: 1rem;
+  }
+
+
+  .topbar .toolbar-items #toolbar-btns .install-btn {
+    flex: 1;
+  }
+
+  .topbar .toolbar-items #toolbar-btns .logout-btn {
+    flex: 1;
+  }
+}
+
+@media(max-width: 450px) {
+  .topbar .toolbar-items {
+    gap: .5rem;
   }
 
   .topbar .toolbar-items #toolbar-btns {
-    background-color: blue;
+    flex-direction: column;
+    gap: .5rem;
   }
+
+
 }
 
 
@@ -1040,7 +1086,6 @@ ul[data-tabs] li a:hover {
 /* Emphasize DAMAGE, add subtle AE subtext */
 #balanceDiv {
   cursor: pointer;
-  padding: 0.35rem 0.6rem;
   border-radius: 6px;
   transition: all 0.2s ease-in-out;
   display: inline-flex;
@@ -1048,6 +1093,7 @@ ul[data-tabs] li a:hover {
   gap: 2px;
   position: relative;
   background-color: gold;
+  max-width: 500px;
 }
 
 #balanceDiv:hover { 
@@ -1785,7 +1831,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
   /* Balance display */
   #balanceDiv {
-    padding: 0.25rem 0.4rem;
     font-size: 0.85rem;
   }
 
@@ -1980,9 +2025,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
 }
 
 @media (min-width: 769px) and (max-width: 1024px) {
-  .topbar {
-    padding: 0.5rem 1rem;
-  }
 
   .topbar .toolbar-items {
     gap: 0.75rem;
