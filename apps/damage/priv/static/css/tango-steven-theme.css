@@ -84,8 +84,13 @@ a:hover {
   box-shadow: 0 0 10px rgba(114, 159, 207, 0.3);
 }
 
+
+
 /* Logout Button */
 .logout-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background-color: var(--modal-bg);
   color: var(--error);
   padding: 10px;
@@ -93,10 +98,19 @@ a:hover {
   font-size: 12px;
   cursor: pointer;
   transition: background 0.2s ease;
+  margin-top: .5rem;
 }
+
 .logout-btn:hover {
   background-color: var(--error);
   color: var(--bg);
+}
+
+
+@media(max-width: 900px) {
+  .logout-btn {
+    margin-top: initail;
+  }
 }
 
 /* Inputs & Textareas */

@@ -925,6 +925,7 @@ ul[data-tabs] li a:hover {
   padding: 0.5rem 1.7rem;
   border-radius: 8px;
 }
+
 /* Combine site-header and toolbar into a single topbar container */
 .topbar {
   display: flex;
@@ -961,6 +962,9 @@ ul[data-tabs] li a:hover {
 }
 /* Make the topbar Install button look obviously clickable */
 .install-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(to right, #28a745, #218838);
   color: #fff;
   padding: 10px 16px;
@@ -973,6 +977,29 @@ ul[data-tabs] li a:hover {
   user-select: none;
 }
 .install-btn:hover { transform: scale(1.03); }
+
+
+
+@media(max-width: 900px) {
+  .topbar {
+    flex-direction: column;
+    align-items: initial;
+    padding: 1rem;
+  }
+
+  .topbar .toolbar-items {
+    flex-direction: column;
+    align-items: initial;
+    gap: 1rem;
+    background-color: red;
+
+  }
+
+  .topbar .toolbar-items #toolbar-btns {
+    background-color: blue;
+  }
+}
+
 
 /* Uniform inputs/selects inside the install wizard */
 #install-modal input, #install-modal select, #install-modal textarea {
@@ -1020,6 +1047,7 @@ ul[data-tabs] li a:hover {
   flex-direction: column;
   gap: 2px;
   position: relative;
+  background-color: gold;
 }
 
 #balanceDiv:hover { 
@@ -1631,14 +1659,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
 }
 
 @media (max-width: 768px) {
-  /* Topbar - Stack vertically on mobile */
-  .topbar {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 0.75rem;
-    gap: 0.75rem;
-  }
-
   .topbar .site-header {
     justify-content: center;
     padding: 0.5rem;
@@ -1647,12 +1667,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
   .topbar .toolbar-items {
     flex-wrap: wrap;
     justify-content: center;
-    gap: 0.5rem;
     font-size: 0.9rem;
-  }
-
-  .topbar .toolbar-items div {
-    padding: 0.5rem 0.75rem;
   }
 
   .brand-text .title {
@@ -2087,7 +2102,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
   .toolbar-items div {
     font-size: 0.8rem;
-    padding: 0.5rem 0.75rem;
   }
 
   .install-btn {
