@@ -1,0 +1,168 @@
+// LightningSwapOption.aes
+// Registry for DAMAGE ↔ Lightning SAT swap options.
+// On-chain we only track intent + state; the SATs are locked in a CLN
+// hold invoice off-chain and the orchestrator (damage_swap_option)
+// calls `mark_exercised` once the invoice is paid.
+
+contract LightningSwapOption =
+
+  // Option lifecycle
+  datatype option_state =
+    Open
+    | Exercised
+    | Expired
+    | Cancelled
+
+  // Core option record
+  record option =
+    { id              : int
+    , buyer           : address      // receives DAMAGE
+    , seller          : address      // provides DAMAGE liquidity
+    , damage_amount   : int          // in smallest DAMAGE unit (10^-? decimals)
+    , sats_amount     : int          // sats locked in the Lightning hold invoice
+    , premium         : int          // optional, in sats or DAMAGE (off-chain convention)
+    , created_at      : int          // Chain.timestamp at creation
+    , expiry          : int          // unix timestamp; option invalid after this
+    , ln_payment_hash : hash         // CLN hold invoice payment_hash
+    , state           : option_state
+    }
+
+  // Global contract state
+  record state =
+    { next_id : int
+    , options : map(int, option)
+    , admin   : address   // Damage node that orchestrates swaps
+    }
+
+  // ------------------------------------------------------------
+  // Init
+  // ------------------------------------------------------------
+
+  stateful entrypoint init(admin' : address) : state =
+    { next_id = 0
+    , options = {}
+    , admin   = admin'
+    }
+
+  // ------------------------------------------------------------
+  // Internal helpers
+  // ------------------------------------------------------------
+
+  function require_admin() =
+    require(Call.caller == state.admin, "ONLY_ADMIN")
+
+  // Fetch an option or fail
+  function get_option_unsafe(id : int) : option =
+    switch(Map.lookup(id, state.options))
+      None    => abort("OPTION_NOT_FOUND")
+      Some(o) => o
+
+  // Save updated option back into state
+  function put_option(o : option) =
+    put(state{ options[id = o.id] = o })
+
+  // ------------------------------------------------------------
+  // Public read-only entrypoints
+  // ------------------------------------------------------------
+
+  entrypoint get_option(id : int) : option =
+    get_option_unsafe(id)
+
+  // cheap enumerable view for UI (not efficient for huge maps,
+  // but fine for low option counts)
+  entrypoint list_ids() : list(int) =
+    Map.keys(state.options)
+
+  entrypoint get_admin() : address = state.admin
+
+  // ------------------------------------------------------------
+  // Mutation entrypoints
+  // ------------------------------------------------------------
+
+  // Called when we *create* a Lightning hold invoice and want to
+  // register the option intent on-chain.
+  //
+  // Only the seller or admin can create options. You can enforce more
+  // complex rules off-chain in the gen_server.
+  //
+  // Returns: id of newly created option.
+  stateful entrypoint create_option(
+      buyer           : address,
+      seller          : address,
+      damage_amount   : int,
+      sats_amount     : int,
+      premium         : int,
+      expiry          : int,   // unix timestamp
+      ln_payment_hash : hash
+    ) : int =
+    let now = Chain.timestamp
+    require(expiry > now, "EXPIRY_IN_PAST")
+    require(damage_amount > 0, "DAMAGE_ZERO")
+    require(sats_amount > 0, "SATS_ZERO")
+
+    // Only seller or admin can propose
+    require(
+      (Call.caller == seller) || (Call.caller == state.admin),
+      "UNAUTHORISED_CREATOR"
+    )
+
+    let id = state.next_id
+
+    let o : option =
+      { id              = id
+      , buyer           = buyer
+      , seller          = seller
+      , damage_amount   = damage_amount
+      , sats_amount     = sats_amount
+      , premium         = premium
+      , created_at      = now
+      , expiry          = expiry
+      , ln_payment_hash = ln_payment_hash
+      , state           = Open
+      }
+
+    put(
+      state{
+        next_id = id + 1,
+        options[id] = o
+      }
+    )
+
+    id
+
+  // Mark the option as exercised after the Lightning hold invoice
+  // is irrevocably paid. Only admin should do this (the gen_server
+  // will check the payment on CLN).
+  stateful entrypoint mark_exercised(id : int, payment_hash : hash) : unit =
+    require_admin()
+    let o = get_option_unsafe(id)
+
+    require(o.state == Open, "NOT_OPEN")
+    require(Chain.timestamp <= o.expiry, "EXPIRED")
+    require(payment_hash == o.ln_payment_hash, "HASH_MISMATCH")
+
+    put_option(o{ state = Exercised })
+
+  // Mark option as expired (after expiry). Anyone can call this to
+  // make state consistent; no economic effect beyond the flag.
+  stateful entrypoint mark_expired(id : int) : unit =
+    let o = get_option_unsafe(id)
+    require(o.state == Open, "NOT_OPEN")
+    require(Chain.timestamp > o.expiry, "NOT_YET_EXPIRED")
+
+    put_option(o{ state = Expired })
+
+  // Allow seller or admin to cancel before expiry, *as long as* the
+  // option hasn’t already been exercised.
+  // You can enforce “no cancel after LN invoice issued” in the
+  // orchestrator if you want stricter semantics.
+  stateful entrypoint cancel(id : int) : unit =
+    let o = get_option_unsafe(id)
+
+    require(o.state == Open, "NOT_OPEN")
+    require(
+      (Call.caller == o.seller) || (Call.caller == state.admin),
+      "UNAUTHORISED_CANCEL"
+    )
+
+    put_option(o{ state = Cancelled })
