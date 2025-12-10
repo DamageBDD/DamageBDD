@@ -312,6 +312,7 @@ html, body {
   cursor: pointer;
   border-radius: 4px;
   transition: all 0.2s ease-in-out;
+  background: linear-gradient(to right, #0052cc, #007bff);
 }
 
 #balanceDiv:hover {
@@ -332,7 +333,7 @@ html, body {
   white-space: nowrap;
   font: 600 .85rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   color: #e6eefc;
-  background: rgba(0,123,255,.12);
+background: linear-gradient(to right, #1f2a3a, #141e30);
   border: 1px solid rgba(0,123,255,.35);
   border-radius: 6px;
   padding: .25rem .5rem;
@@ -1130,14 +1131,15 @@ ul[data-tabs] li a:hover {
   display: inline-flex;
   flex-direction: column;
   gap: 2px;
-  position: relative;
-  background-color: gold;
-  max-width: 500px;
+  max-width: 470px;
+  background-color: linear-gradient(to left, #1f2a3a, #44494d);
+  transform: scale(1);
 }
 
 #balanceDiv:hover { 
-  border: 1px solid #555; 
-  background-color: rgba(0, 123, 255, 0.2); 
+  border: 1px solid white;
+  will-change: transform; 
+  transform: scale(1.025);
 }
 
 .balance-row { display: inline-flex; align-items: baseline; gap: .5rem; }
@@ -1186,9 +1188,18 @@ ul[data-tabs] li a:hover {
 .ae-sub {
   font-size: .78rem;
   line-height: 1.2;
-  color: #a9b3c7;
+  color: #9fc9ff;;
   opacity: .9;
 }
+
+.ae-balance {
+  font-size: .78rem;
+  line-height: 1.2;
+  color: white;
+  opacity: .9;
+}
+
+
 /* Fix the invalid comment so the rest of CSS parses */
  /* === Form Buttons === */
 
