@@ -955,7 +955,6 @@ ul[data-tabs] li a:hover {
 /* Move existing #toolbar items into right section */
 .topbar .toolbar-items {
   display: flex;
-  align-items: center;
   gap: 1rem;
 }
 
@@ -1025,6 +1024,16 @@ ul[data-tabs] li a:hover {
   .topbar .toolbar-items #toolbar-btns {
     flex-direction: column;
     gap: .5rem;
+  }
+
+  .topbar .toolbar-items #toolbar-btns .install-btn {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .topbar .toolbar-items #toolbar-btns .logout-btn {
+    padding-left: 1rem;
+    padding-right: 1rem;
   }
 
 }
