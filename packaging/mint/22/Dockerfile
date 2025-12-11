@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://raw.githubusercontent.com/kerl/kerl/master/kerl -o /usr/local/bin/kerl \
  && chmod +x /usr/local/bin/kerl
 
-ENV KERL_BUILD_BACKEND=tarball \
+ENV KERL_BUILD_BACKEND=git \
     KERL_DOWNLOAD_DIR=/root/.kerl/archives \
     KERL_BUILD_DIR=/root/.kerl/builds \
     KERL_CONFIGURE_OPTIONS="--disable-debug --without-javac"

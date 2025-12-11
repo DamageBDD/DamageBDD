@@ -18,14 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
       ruby ruby-dev rubygems \
-      rpm dpkg-dev gnupg \
+      rpm dpkg-dev gnupg rsync nvidia-cuda-toolkit \
     && gem install --no-document fpm
 
 # --- kerl + OTP
 RUN curl -fsSL https://raw.githubusercontent.com/kerl/kerl/master/kerl -o /usr/local/bin/kerl \
  && chmod +x /usr/local/bin/kerl
 
-ENV KERL_BUILD_BACKEND=tarball \
+ENV KERL_BUILD_BACKEND=git \
     KERL_DOWNLOAD_DIR=/root/.kerl/archives \
     KERL_BUILD_DIR=/root/.kerl/builds \
     KERL_CONFIGURE_OPTIONS="--disable-debug --without-javac"
@@ -100,7 +100,7 @@ RUN set -eu \
 #WORKDIR /opt/app
 #RUN mkdir -p /opt/app
 #COPY --chown=root:root /opt/workspace/_build/prod/rel/* /opt/app/
-
+RUN apt-get install -y --no-install-recommends \
 EXPOSE 8080
 CMD ["/opt/damage/bin/damage", "foreground"]
 
