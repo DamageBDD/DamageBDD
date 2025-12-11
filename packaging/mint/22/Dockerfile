@@ -76,7 +76,7 @@ RUN rebar3 update && rebar3 get-deps
 # ====== SOURCE LAYER ======
 # Now bring in the full repository (single shallow clone).
 # If only source changed (not deps), the deps layer above stays cached.
-RUN git clone --depth=1 --branch "$REPO_REF" "$REPO_URL" /opt/workspace/fullsrc
+RUN git clone --depth=100 --branch "$REPO_REF" "$REPO_URL" /opt/workspace/fullsrc
 
 # Sync full source over the minimal config workspace (without nuking _build from deps step)
 # so we retain the cached deps artifacts when possible.
