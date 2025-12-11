@@ -969,7 +969,7 @@ test() ->
 
     %% Propose off-chain contract call and ack it
     {ok, Update} = update_contract(
-        ChannelPid, <<"ct_job_registry">>, <<"run_step">>, [<<"arg">>], 100000
+        ChannelPid, ?JOB_REGISTRY_CONTRACT, <<"fund_job">>, [JobId, 1], 100000
     ),
     {ok, #{round := _R, state_hash := StateHash} = _Ack} = update_ack(ChannelPid, Update),
 
