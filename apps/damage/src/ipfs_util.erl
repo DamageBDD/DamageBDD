@@ -16,11 +16,14 @@
 
 -export([
     ensure_ipfs_repo/0, ensure_ipfs_repo/1,
-    set_config/0, set_config/2, set_config/3
+    set_config/0, set_config/2, set_config/3,
+    ensure_peers/0, ensure_peers/1
 ]).
 
+-export([group_peers/3, ensure_group_peers/4]).
+
 -define(DEFAULT_IPFS_DIR, ".ipfs").
--define(DEFAULT_IPFS_HOME, "/var/lib/damage/").
+-define(DEFAULT_IPFS_HOME, "/var/lib/ipfs/").
 
 %% -----------------------------
 %% Public API
@@ -93,6 +96,26 @@ set_config(Key0, Val0, Opts0) when is_map(Opts0) ->
                 {error, Reason} -> {error, {nonzero_exit, Reason}}
             end
     end.
+%% @doc Ensure IPFS peers are connected. Uses ipfs swarm connect.
+%% Peers can come from:
+%%  - Opts: #{ peers => [MultiAddrStringOrBinary, ...] }
+%%  - application env: {damage, ipfs_peers} => [MultiAddr...]
+ensure_peers() ->
+    ensure_peers(#{}).
+
+ensure_peers(Opts0) when is_map(Opts0) ->
+    IPFS = maps:get(ipfs_cmd, Opts0, os:find_executable("ipfs")),
+    Path = resolve_path(maps:get(path, Opts0, os:getenv("IPFS_PATH", "/var/lib/damage/.ipfs/"))),
+    Peers = maps:get(peers, Opts0, peers_from_env()),
+
+    case {damage_utils:exists_cmd(IPFS), ipfs_repo_exists(Path)} of
+        {false, _} ->
+            {error, ipfs_not_found};
+        {_, false} ->
+            {error, ipfs_repo_missing};
+        {true, true} ->
+            connect_peers(IPFS, Path, Peers)
+    end.
 
 %% -----------------------------
 %% Internals
@@ -148,3 +171,53 @@ run_env(Path, Cmd) ->
 to_list(B) when is_binary(B) -> binary_to_list(B);
 to_list(A) when is_atom(A) -> atom_to_list(A);
 to_list(L) when is_list(L) -> L.
+%% Fetch peer list from application env: ipfs_peers = [Multiaddr, ...]
+peers_from_env() ->
+    case application:get_env(damage, ipfs_peers) of
+        {ok, Peers} when is_list(Peers) -> Peers;
+        _ -> []
+    end.
+
+connect_peers(_IPFS, _Path, []) ->
+    {ok, []};
+connect_peers(IPFS, Path, Peers) ->
+    Results =
+        [connect_peer(IPFS, Path, Peer) || Peer <- Peers],
+    {ok, Results}.
+
+connect_peer(IPFS, Path, Peer0) ->
+    Peer = to_list(Peer0),
+    Cmd = [IPFS, "swarm", "connect", Peer],
+    case run_env(Path, Cmd) of
+        {ok, Out} ->
+            ?LOG_INFO("ipfs swarm connect ~s: ~p", [Peer, Out]),
+            {ok, Peer};
+        {error, Reason} ->
+            ?LOG_ERROR("ipfs swarm connect failed ~s: ~p", [Peer, Reason]),
+            {error, {Peer, Reason}}
+    end.
+
+%% group_peers(ContractId, GroupName, Aci) -> {ok, Peers} | {error, _}
+group_peers(ContractId, GroupName, Aci) ->
+    %% Replace `contract_call_read/4` with your actual read / dry-run function.
+    case
+        damage_ae:contract_call_read(
+            ContractId,
+            <<"get_group">>,
+            [GroupName],
+            Aci
+        )
+    of
+        {ok, Peers} ->
+            {ok, Peers};
+        Error ->
+            {error, Error}
+    end.
+ensure_group_peers(ContractId, GroupName, Aci, Opts0) ->
+    case group_peers(ContractId, GroupName, Aci) of
+        {ok, Peers} ->
+            Opts = Opts0#{peers => Peers},
+            ipfs_util:ensure_peers(Opts);
+        {error, Reason} ->
+            {error, Reason}
+    end.

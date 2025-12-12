@@ -203,12 +203,47 @@ document.addEventListener('DOMContentLoaded', () => {
 		}
 		console.log("updateWalletSummary ", address);
 
-		const damageBalance = await window.fetchAeAndAex9Balances(address);
-		console.log("damage balances", damageBalance);
-		balanceAmountEl.textContent = damageBalance.damage.damage; 
-		aeBalanceEl.textContent = damageBalance.ae.ae; 
-		addressEl.textContent = address;
-		return;
+		try {
+			const res = await window.fetchAeAndAex9Balances(address);
+			console.log("damage balances (raw)", res);
+
+			// --- Validate structure ---
+			const ok =
+				  res &&
+				  typeof res === "object" &&
+				  res.damage &&
+				  typeof res.damage.damage !== "undefined" &&
+				  res.ae &&
+				  typeof res.ae.ae !== "undefined";
+
+			if (!ok) {
+				console.warn("Invalid balance result", res);
+
+				balanceAmountEl.textContent = "—";
+				aeBalanceEl.textContent = "—";
+				addressEl.textContent = address + " (no data)";
+				return;
+			}
+
+			// --- Set balances safely ---
+			const dmg = String(res.damage.damage ?? "0");
+			const ae  = String(res.ae.ae ?? "0");
+
+			balanceAmountEl.textContent = dmg;
+			aeBalanceEl.textContent     = ae;
+			addressEl.textContent       = address;
+
+			return;
+
+		} catch (err) {
+			console.error("Failed to load balances", err);
+
+			balanceAmountEl.textContent = "ERR";
+			aeBalanceEl.textContent     = "ERR";
+			addressEl.textContent       = address + " (error)";
+			return;
+		}
+
 	}
 
 

@@ -38,7 +38,7 @@ handle_info(fetch, State) ->
     NewState =
         case fetch_btc_aud_price() of
             {ok, Price} ->
-                ?LOG_DEBUG("Fetched BTC/AUD price: ~p", [Price]),
+                %?LOG_DEBUG("Fetched BTC/AUD price: ~p", [Price]),
                 State#state{price = Price};
             {error, Reason} ->
                 ?LOG_WARNING("Failed to fetch BTC/AUD price: ~p", [Reason]),
@@ -77,20 +77,14 @@ fetch_btc_aud_price() ->
         {error, Error} ->
             ?LOG_WARNING("Error fetching price from ~p ~p", [PriceHost, Error]),
             {error, Error};
-        {response, nofin, Status, _Headers0} ->
+        {response, nofin, _Status, _Headers0} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            ?LOG_DEBUG("read_stream Status ~p Response: ~p", [Status, Body]),
             case catch jsx:decode(Body, [return_maps]) of
-                [
-                    <<"data">>,
-                    #{
-                        <<"code">> := 5,
-                        <<"error">> :=
-                            _Error,
-                        <<"message">> :=
-                            Message
-                    }
-                ] ->
+                #{
+                    <<"code">> := 5,
+                    <<"error">> := <<"rate found but was stale">>,
+                    <<"message">> := Message
+                } ->
                     ?LOG_DEBUG("Got unexpected response ~p.", [Message]),
                     {error, Message};
                 Map when is_map(Map) ->

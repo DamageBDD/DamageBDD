@@ -3,131 +3,168 @@
 const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk';
 
 (function (g) {
-  'use strict';
+	'use strict';
 
-  const DEFAULTS = {
-    nodeBase: 'https://mainnet.aeternity.io',
-    mdwBase:  'https://mainnet.aeternity.io/mdw',
-    timeoutMs: 12000
-  };
+	const DEFAULTS = {
+		nodeBase: 'https://mainnet.aeternity.io',
+		mdwBase:  'https://mainnet.aeternity.io/mdw',
+		timeoutMs: 12000
+	};
 
-  // ---- utils ---------------------------------------------------------------
+	// ---- utils ---------------------------------------------------------------
 
-  // fetch with timeout
-  async function fetchT(url, init = {}, timeoutMs = DEFAULTS.timeoutMs) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const r = await fetch(url, { ...init, signal: ctrl.signal });
-      if (!r.ok) {
-        const msg = `${r.status} ${r.statusText}`;
-        throw new Error(`${url} → ${msg}`);
-      }
-      return r;
-    } finally {
-      clearTimeout(t);
-    }
-  }
+	// fetch with timeout
+	async function fetchT(url, init = {}, timeoutMs = DEFAULTS.timeoutMs) {
+		const ctrl = new AbortController();
+		const t = setTimeout(() => ctrl.abort(), timeoutMs);
+		try {
+			const r = await fetch(url, { ...init, signal: ctrl.signal });
+			if (!r.ok) {
+				const msg = `${r.status} ${r.statusText}`;
+				throw new Error(`${url} → ${msg}`);
+			}
+			return r;
+		} finally {
+			clearTimeout(t);
+		}
+	}
 
-  // Convert big-int string to decimal string with 'decimals'
-  function formatUnitsString(bnStr, decimals) {
-    if (bnStr == null) return '0';
-    const neg = bnStr[0] === '-';
-    let s = neg ? bnStr.slice(1) : bnStr;
-    if (!/^\d+$/.test(s)) s = String(s || '0').replace(/\D/g, '') || '0';
+	// Convert big-int string to decimal string with 'decimals'
+	function formatUnitsString(bnStr, decimals) {
+		if (bnStr == null) return '0';
+		const neg = bnStr[0] === '-';
+		let s = neg ? bnStr.slice(1) : bnStr;
+		if (!/^\d+$/.test(s)) s = String(s || '0').replace(/\D/g, '') || '0';
 
-    const d = Math.max(0, Number(decimals || 0));
-    if (d === 0) return (neg ? '-' : '') + s;
+		const d = Math.max(0, Number(decimals || 0));
+		if (d === 0) return (neg ? '-' : '') + s;
 
-    // pad left with zeros to at least d+1 length
-    if (s.length <= d) s = '0'.repeat(d - s.length + 1) + s;
+		// pad left with zeros to at least d+1 length
+		if (s.length <= d) s = '0'.repeat(d - s.length + 1) + s;
 
-    const i = s.slice(0, s.length - d);
-    let f = s.slice(s.length - d);
-    f = f.replace(/0+$/, ''); // trim trailing zeros
-    return (neg ? '-' : '') + (f ? i + '.' + f : i);
-  }
+		const i = s.slice(0, s.length - d);
+		let f = s.slice(s.length - d);
+		f = f.replace(/0+$/, ''); // trim trailing zeros
+		return (neg ? '-' : '') + (f ? i + '.' + f : i);
+	}
 
-  function toBigIntString(x) {
-    // Accept number | string | bigint
-    if (typeof x === 'bigint') return x.toString(10);
-    if (typeof x === 'number')  return BigInt(Math.trunc(x)).toString(10);
-    if (typeof x === 'string')  return x;
-    return '0';
-  }
+	function toBigIntString(x) {
+		// Accept number | string | bigint
+		if (typeof x === 'bigint') return x.toString(10);
+		if (typeof x === 'number')  return BigInt(Math.trunc(x)).toString(10);
+		if (typeof x === 'string')  return x;
+		return '0';
+	}
 
-  // ---- AE (node) -----------------------------------------------------------
+	// ---- AE (node) -----------------------------------------------------------
 
-  async function fetchAeBalance(pubkey, opts = {}) {
-    const { nodeBase = DEFAULTS.nodeBase, timeoutMs = DEFAULTS.timeoutMs } = opts;
-    const url = `${nodeBase.replace(/\/$/, '')}/v3/accounts/${encodeURIComponent(pubkey)}?int-as-string=true`;
-    const r = await fetchT(url, { headers: { 'Accept': 'application/json' }, credentials: 'omit' }, timeoutMs);
-    const j = await r.json();
+	// ---- Common Normalized Errors ----------------------------------------------
 
-    // j.balance is a string when int-as-string=true
-    const aettos = toBigIntString(j.balance || '0');
-    const ae = formatUnitsString(aettos, 18); // AE uses 18 decimals
-    return {
-      ok: true,
-      aettos,
-      ae,
-      nonce: j.nonce,
-      raw: j
-    };
-  }
+	function normalizeError(err) {
+		if (!err) return { type: 'unknown', message: 'Unknown error' };
 
-  // ---- AEX9 (MDW) ----------------------------------------------------------
+		if (typeof err === 'string') {
+			return { type: 'string-error', message: err };
+		}
 
-	async function fetchAex9Balances(pubkey, opts = {}) {
-		const { mdwBase = DEFAULTS.mdwBase, timeoutMs = DEFAULTS.timeoutMs } = opts;
-		const base = mdwBase.replace(/\/$/, '');
-		const url  = `${base}/v3/aex9/${DAMAGE_CONTRACT_ID}/balances/${encodeURIComponent(pubkey)}`;
-		//https://mainnet.aeternity.io/mdw/v3/aex9/ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk/balances/ak_ag9FGrk8okPzGJZzWL7UuK21NYckM6Tsbtaapmv3iFM4Hn8dW
-		const r = await fetchT(url, { headers: { 'Accept': 'application/json' }, credentials: 'omit' }, timeoutMs);
-		const j = await r.json();
+		if (err.name === 'AbortError') {
+			return { type: 'timeout', message: 'Request timed out' };
+		}
 
-		const hits = toBigIntString(j.amount || '0');
-    const damage = formatUnitsString(hits, 8); // AE uses 18 decimals
 		return {
-			ok: true,
-			raw:j.amount,
-			damage,
-			hits
+			type: err.type || 'exception',
+			message: err.message || String(err),
+			stack: err.stack
 		};
 	}
 
+	// Wrap any async function in safe container
+	const safe = (fn) => async (...args) => {
+		try {
+			return { ok: true, value: await fn(...args) };
+		} catch (err) {
+			return { ok: false, error: normalizeError(err) };
+		}
+	};
+	const _fetchAeBalance = async (pubkey, opts = {}) => {
+		const { nodeBase = DEFAULTS.nodeBase, timeoutMs = DEFAULTS.timeoutMs } = opts;
+		const url = `${nodeBase.replace(/\/$/, '')}/v3/accounts/${encodeURIComponent(pubkey)}?int-as-string=true`;
 
-  // ---- Combined ------------------------------------------------------------
+		const r = await fetchT(url, {
+			headers: { 'Accept': 'application/json' },
+			credentials: 'omit'
+		}, timeoutMs);
 
-  async function fetchAeAndAex9Balances(pubkey, opts = {}) {
-    const [aeRes, aex9Res] = await Promise.allSettled([
-      fetchAeBalance(pubkey, opts),
-      fetchAex9Balances(pubkey, opts)
-    ]);
+		if (!r.ok) {
+			throw new Error(`HTTP ${r.status} ${r.statusText}`);
+		}
 
-    const out = { ok: true, ae: null, damage: null, errors: [] };
+		const j = await r.json();
 
-    if (aeRes.status === 'fulfilled') {
-      out.ae = aeRes.value;
-    } else {
-      out.ok = false;
-      out.errors.push('ae:' + (aeRes.reason?.message || String(aeRes.reason)));
-    }
+		const aettos = toBigIntString(j.balance || '0');
+		const ae = formatUnitsString(aettos, 18);
 
-    if (aex9Res.status === 'fulfilled') {
-		out.damage = aex9Res.value;
-    } else {
-      out.ok = false;
-      out.errors.push('aex9:' + (aex9Res.reason?.message || String(aex9Res.reason)));
-    }
+		return {
+			ok: true,
+			aettos,
+			ae,
+			nonce: j.nonce,
+			raw: j
+		};
+	};
 
-    return out;
+	const fetchAeBalance = safe(_fetchAeBalance);
+	const _fetchAex9Balances = async (pubkey, opts = {}) => {
+		const { mdwBase = DEFAULTS.mdwBase, timeoutMs = DEFAULTS.timeoutMs } = opts;
+		const base = mdwBase.replace(/\/$/, '');
+		const url = `${base}/v3/aex9/${DAMAGE_CONTRACT_ID}/balances/${encodeURIComponent(pubkey)}`;
 
-  }
+		const r = await fetchT(url, {
+			headers: { 'Accept': 'application/json' },
+			credentials: 'omit'
+		}, timeoutMs);
 
-  // expose for easy use + console testing
-  g.fetchAeBalance = fetchAeBalance;
-  g.fetchAex9Balances = fetchAex9Balances;
-  g.fetchAeAndAex9Balances = fetchAeAndAex9Balances;
+		if (!r.ok) {
+			throw new Error(`HTTP ${r.status} ${r.statusText}`);
+		}
+
+		const j = await r.json();
+
+		const hits = toBigIntString(j.amount || '0');
+		const damage = formatUnitsString(hits, 8);
+
+		return {
+			ok: true,
+			raw: j.amount,
+			damage,
+			hits
+		};
+	};
+
+	const fetchAex9Balances = safe(_fetchAex9Balances);
+
+	async function fetchAeAndAex9Balances(pubkey, opts = {}) {
+		const [ae, dgt] = await Promise.all([
+			fetchAeBalance(pubkey, opts),
+			fetchAex9Balances(pubkey, opts)
+		]);
+
+		const out = {
+			ok: ae.ok && dgt.ok,
+			ae: ae.ok ? ae.value : null,
+			damage: dgt.ok ? dgt.value : null,
+			errors: []
+		};
+
+		if (!ae.ok) out.errors.push({ which: 'ae', ...ae.error });
+		if (!dgt.ok) out.errors.push({ which: 'aex9', ...dgt.error });
+
+		return out;
+	}
+
+	// expose for easy use + console testing
+	g.fetchAeBalance = fetchAeBalance;
+	g.fetchAex9Balances = fetchAex9Balances;
+	g.fetchAeAndAex9Balances = fetchAeAndAex9Balances;
 
 })(typeof globalThis !== 'undefined' ? globalThis : window);

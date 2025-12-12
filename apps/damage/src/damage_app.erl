@@ -56,6 +56,7 @@ get_trails() ->
         [
             %{"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
             {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}},
+            {"/x", x_redirect_h, #{}},
             {"/.well-known/security.txt", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt"}},
             {"/.well-known/security.txt.asc", cowboy_static,
@@ -163,8 +164,6 @@ start_phase(start_sync, _StartType, []) ->
 %% --- Essentials setup phase (parity with setup.sh) --------------------------
 start_phase(setup_essentials, _StartType, []) ->
     ?LOG_INFO("setup_essentials: starting."),
-
-    {ok, _} = ipfs_util:ensure_ipfs_repo(),
     DataDir = application:get_env(damage, app_dir, "/var/lib/damage"),
     ok = damage_ipfs:ensure_ipfs_asset(
         "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",

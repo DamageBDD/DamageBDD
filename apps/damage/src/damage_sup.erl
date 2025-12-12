@@ -114,14 +114,6 @@ init([]) ->
                 modules => [damage_ssh]
             },
             #{
-                id => damage_nostr,
-                start => {damage_nostr, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [damage_nostr]
-            },
-            #{
                 id => damage_ae,
                 start => {damage_ae, start_link, []},
                 restart => permanent,
@@ -140,6 +132,14 @@ init([]) ->
 
             %% 4) supervisors that may create pools/workers relying on the above
             #{
+                id => liquidity_ltr_server,
+                start => {liquidity_ltr_server, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [liquidity_ltr_server]
+            },
+            #{
                 id => damage_mm_sup,
                 start => {damage_mm_sup, start_link, []},
                 restart => permanent,
@@ -147,13 +147,20 @@ init([]) ->
                 type => supervisor,
                 modules => [damage_mm_sup]
             },
-
+            #{
+                id => damage_nostr,
+                start => {damage_nostr, start_link, [damage_nostr_nsec]},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_nostr]
+            },
             %% 5) listeners
             git_ssh_listener:child_spec()
         ],
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
     AllChildren = Core ++ PoolSpecs,
-    ?LOG_DEBUG("Child specs (ordered): ~p", [AllChildren]),
+    %?LOG_DEBUG("Child specs (ordered): ~p", [AllChildren]),
 
     {ok, {SupFlags, AllChildren}}.

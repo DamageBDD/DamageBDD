@@ -12,6 +12,7 @@
 -export([step/6]).
 -export([step_dry/6]).
 -export([is_admin/1]).
+-export([ensure_admin/1]).
 -export([set_fail/2, set_fail/3]).
 -export([parse_table/1]).
 -export([parse_step_body/1]).
@@ -164,6 +165,13 @@ is_admin(AeAccount) ->
         Other ->
             ?LOG_ERROR("not node admin ~p <> ~p", [Other, AeAccount]),
             false
+    end.
+ensure_admin(Context) ->
+    case is_admin(Context) of
+        true ->
+            ok;
+        false ->
+            throw(unauthorized)
     end.
 
 parse_step_body(Text) ->

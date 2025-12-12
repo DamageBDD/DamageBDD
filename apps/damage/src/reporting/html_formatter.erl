@@ -44,7 +44,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
       "<tr>\n<td>\nFeature\n</td>\n <td>~s</td> <td>tags: ~p</td> <td>~p</td> <td>~p</td></tr>",
       [
         FeatureName,
-        lists:flatten(string:join([[X] || X <- Tags], ",")),
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>),
         LineNo,
         Description
       ]
@@ -57,7 +57,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
       "<tr><td>Scenario</td> <td>~s</td> <td>tags: [~p]</td> <td>~p </td> <td>~p</td></tr>",
       [
         ScenarioName,
-        lists:flatten(string:join([[X] || X <- Tags], ",")),
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>),
         LineNo,
         ""
       ]
@@ -84,8 +84,8 @@ format(
 ) ->
   ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]);
 
-format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash}) ->
-  ok = write_file(Config, "<h2>Summary</h2> <br> Feature: ~s<br>Report ~s<br>RunId: ~p<br>", [FeatureHash, ReportDir, RunId]).
+format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address}) ->
+  ok = write_file(Config, "<h2>Summary</h2> <br> Feature: ~s<br>Report ~s<br>RunId: ~s<br><br>Address: ~s<br>", [FeatureHash, ReportDir, RunId, Address]).
 
 format_args([]) -> <<"\n">>;
 format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p<br>">>, [Reason]);

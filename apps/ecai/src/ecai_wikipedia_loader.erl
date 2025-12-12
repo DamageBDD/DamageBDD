@@ -1,13 +1,29 @@
 %% =====================================================================
 %% wikipedia_loader.erl  --  Minimal Wikipedia JSONL loader
 %% =====================================================================
--module(wikipedia_loader).
+-module(ecai_wikipedia_loader).
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
 
 -license("Apache-2.0").
--export([load/1]).
+-export(
+    [
+        start_link/0,
+        init/1,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        handle_continue/2,
+        terminate/2,
+        code_change/3
+    ]
+).
+-export([
+    load/1,
+    get_wikipedia_job/1
+]).
+-import(damage_utils, [ensure_dir/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -27,7 +43,56 @@
 -define(CHK_DIR, "/var/lib/damage/ecai/state/wiki_checkpoints").
 -define(CHK_EVERY, 1000).
 
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+init([]) ->
+    {ok, #{}, {continue, start_indexing}}.
+
+handle_call(get_ctx, _From, Ctx) ->
+    {reply, Ctx, Ctx};
+handle_call(get_ctx_size, _From, Ctx) ->
+    {reply, tuple_size(Ctx), Ctx};
+handle_call({set_ctx, NewCtx}, _From, _Ctx) ->
+    {reply, ok, NewCtx}.
+
+handle_cast(Any, State) ->
+    ?LOG_DEBUG("ECAI Search server got cast message: ~s~n", [Any]),
+    {noreply, State}.
+handle_info(Any, State) ->
+    ?LOG_DEBUG("ECAI Search server got cast message: ~s~n", [Any]),
+    {noreply, State}.
+handle_continue(start_indexing, Ctx) ->
+    %Chunk = get_wikipedia_job(Ctx),
+    %load(Chunk),
+    {noreply, Ctx}.
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ok.
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+get_wikipedia_job(#{public_key := AeAccount, metadata := MetaData, knowledge := Knowledge}) ->
+    KeyPair = #{public_key := _NodePub, private_key := _NodePriv} = secrets:node_keypair(),
+    damage_ae:contract_call(
+        KeyPair,
+        ct_id(#{}),
+        "contracts/knowledge_nft.aes",
+        "mint",
+        [AeAccount, MetaData, Knowledge]
+    ).
+
 %% ---------------- Public API ----------------
+%% Pull the contract id from Opts or application env
+-spec ct_id(map()) -> binary().
+ct_id(Opts) ->
+    case maps:get(ct, Opts, undefined) of
+        <<"ct_", _/binary>> = Ct ->
+            Ct;
+        _ ->
+            case application:get_env(ecai, index_registry_ct) of
+                {ok, <<"ct_", _/binary>> = C} -> C;
+                _ -> error({missing_contract_id, index_registry_ct})
+            end
+    end.
 
 load(FilePath) ->
     %% defaults: pause if total > 8GiB OR binaries > 1GiB; resume below 6GiB
@@ -128,18 +193,6 @@ safe_decode(Line) ->
             catch
                 _:_ -> skip
             end
-    end.
-
-trim_nl(<<$\r, T/binary>>) -> trim_nl(T);
-trim_nl(<<$\n, T/binary>>) -> trim_nl(T);
-trim_nl(B) -> B.
-ensure_dir(Dir) ->
-    case filelib:is_dir(Dir) of
-        true ->
-            ok;
-        false ->
-            filelib:ensure_dir(filename:join(Dir, "x")),
-            ok
     end.
 
 checkpoint_path(Dir, FilePath) ->

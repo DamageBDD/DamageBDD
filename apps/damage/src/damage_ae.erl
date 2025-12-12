@@ -36,12 +36,12 @@
     get_domain_token/2,
     add_domain_token/3,
     revoke_domain_token/2,
+    get_ae_node/0,
     get_ae_mdw_node/0,
     get_ae_mdw_ws_node/0,
     node_ae_balance/0,
     node_damage_balance/0,
     account_keypair/1,
-    wait_tx/1,
     ae_to_aetto/1,
     delete_account/1,
     revoke_token/2,
@@ -64,10 +64,16 @@
     contract_balance/1,
     contract_deploy_for/3,
     contract_call_payfor_user/5,
-    contract_call_payfor_tx/1,
+    payfor_tx/1,
     contract_call_prepare_tx/5,
     deploy_account_registry/1,
-    deploy_node_registry/0
+    deploy_node_registry/0,
+    make_transaction_signature_base58/2,
+    make_transaction_signature/2,
+    attach_signature_base58/2,
+    post_signed_or_payfor/1,
+    min_fee/0,
+    wait_tx/1
 ]).
 -export([
     balance/1,
@@ -84,6 +90,7 @@
     test_paying_for_tx/0,
     test_contract_deploy_for/0
 ]).
+-import(damage_utils, [float_to_full_integer/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -207,7 +214,80 @@ extract_feature_hash(Data) ->
     Arguments = maps:get(arguments, Tx),
     %% Find the map in the "arguments" that contains the key "feature_hash"
     extract_arguments(Arguments).
+%% Encode FATE calldata for off-chain contract call using the compiled AACI
+-spec encode_call_data(term(), term(), list()) -> {ok, binary()} | {error, term()}.
+encode_call_data(Contract, Fun, Args) ->
+    try
+        {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
+        %% aeb_aaci / aeb_fate_abi are part of ae SDK; adjust if your project uses a wrapper
+        {ok, Calldata} = aeb_fate_abi:encode_call_data(AACI, Fun, Args),
+        {ok, Calldata}
+    catch
+        C:R:S ->
+            {error, {calldata_encode_failed, {C, R, S}}}
+    end.
 
+handle_call(
+    {channel_contract_call, CtId, Contract, Fun, Args, Gas, Amount, Meta},
+    _From,
+    #{
+        public_key := _AeAccount,
+        private_key := _PrivateKey,
+        initiator := Initiator,
+        responder := Responder,
+        round := Round,
+        state_hash := StateHash
+    } = State
+) ->
+    GasPrice = min_gas_price(),
+    case encode_call_data(Contract, Fun, Args) of
+        {ok, Calldata} ->
+            %% Build the off-chain update payload
+            Update = #{
+                type => contract_call,
+                %% <<"ct_...">>
+                ct_id => CtId,
+                "fun" => Fun,
+                %% calldata (FATE)
+                args_cd => Calldata,
+                gas => Gas,
+                gas_price => GasPrice,
+                %% aetto to send
+                amount => Amount,
+                %% initiator pays by default
+                from => Initiator,
+                %% responder executes
+                to => Responder,
+                meta => Meta,
+                round => Round + 1
+            },
+
+            %% TODO: wire to the real channel FSM: send 'update', await 'update_ack'
+            Round1 = Round + 1,
+            Root1 = crypto:hash(sha256, term_to_binary({Update, Round1, StateHash})),
+
+            Ch1 = #{
+                round => Round1,
+                state_hash => Root1,
+                last_payload => Update,
+                pending_updates => []
+            },
+
+            Receipt = #{
+                kind => contract_call,
+                ct_id => CtId,
+                "fun" => Fun,
+                round => Round1,
+                state_hash => Root1,
+                gas => Gas,
+                gas_price => GasPrice,
+                amount => Amount,
+                meta => Meta
+            },
+            {reply, {ok, Receipt}, maps:merge(Ch1, State)};
+        {error, Reason} ->
+            {reply, {error, Reason}, State}
+    end;
 handle_call(
     {contract_call_payfor_user, Contract, ContractSource, Func, Args},
     _From,
@@ -408,10 +488,6 @@ handle_call(
 handle_call({transaction, Data}, _From, State) ->
     ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
     {reply, ok, State}.
-
--spec float_to_full_integer(float()) -> integer().
-float_to_full_integer(F) when is_float(F) ->
-    round(F).
 
 handle_cast(
     {
@@ -716,7 +792,7 @@ gas_for_contract_create_fate(TxBin) ->
 %% Contract call (FATE) gas
 -spec gas_for_contract_call_fate(binary()) -> non_neg_integer().
 gas_for_contract_call_fate(TxBin) ->
-    calculate_gas(12, TxBin).
+    calculate_gas(24, TxBin).
 contract_path(Contract0) ->
     PrivDir = code:priv_dir(damage),
     %% Strip "contracts/" prefix if present
@@ -779,10 +855,12 @@ paying_for(PK, Nonce, Fee, Tx) ->
     end.
 -spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
 calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
-    BaseGas = 26000,
+    BaseGas = 46000,
     GasPerByte = 20,
     SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
     BaseGas + (SizeDiff * GasPerByte).
+min_gas_price() ->
+    1000000000.
 min_fee() ->
     %TODO some fine tuning
     vanillae:min_fee() * 2.
@@ -796,23 +874,25 @@ contract_call_prepare_tx(
     Fee = min_fee(),
     Gas = min_gas(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
     ContractCall.
-contract_call_payfor_tx(
+payfor_tx(
     SignedTX
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    Fee = vanillae:min_fee(),
+    Fee = min_fee(),
     %Gas = vanillae:min_gas(),
     %Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
 
     {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
+    ?LOG_DEBUG("payfor_tx ~p", [InnerTxBin]),
+    %{ok,_} = vanillae:dry_run(InnerTxBin),
 
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
     {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, Fee, InnerTxBin),
@@ -840,10 +920,10 @@ contract_call_payfor_user(
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
-    Gas = vanillae:min_gas(),
+    Fee = min_fee(),
+    Gas = min_gas(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
     {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
@@ -928,13 +1008,13 @@ contract_call(
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
 
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = min_gas_price(),
 
     {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
 
     %% First build raw tx with dummy values to estimate gas
-    DummyGas = vanillae:min_gas(),
-    DummyFee = vanillae:min_fee(),
+    DummyGas = min_gas(),
+    DummyFee = min_fee(),
 
     {ok, ContractCall0} = vanillae:contract_call(
         AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args
@@ -970,10 +1050,10 @@ contract_call_dry(
 ) ->
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
-    Gas = 100000,
-    GasPrice = vanillae:min_gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(Contract),
+    Fee = min_fee(),
+    Gas = min_gas(),
+    GasPrice = min_gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, Nonce, Gas, GasPrice, Fee, 0, AACI, ContractAddress, Func, Args
     ),
@@ -991,13 +1071,20 @@ contract_deploy(Contract, Args) ->
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price() * 2,
+    GasPrice = min_gas_price(),
     %% First build raw tx with dummy values to estimate gas
-    DummyGas = vanillae:min_gas(),
+    DummyGas = min_gas(),
     DummyFee = vanillae:min_fee(),
 
     {ok, ContractData} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, DummyGas, GasPrice, DummyFee, Contract, Args
+        AeAccount,
+        AeAccountNonce,
+        Amount,
+        DummyGas,
+        GasPrice,
+        DummyFee,
+        contract_path(Contract),
+        Args
     ),
 
     SignedContract = sign_transaction_base58(PrivateKey, ContractData),
@@ -1006,7 +1093,14 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
     CorrectFee = CorrectGas * GasPrice,
     ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
     {ok, ContractData0} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, CorrectGas, GasPrice, CorrectFee, Contract, Args
+        AeAccount,
+        AeAccountNonce,
+        Amount,
+        CorrectGas,
+        GasPrice,
+        CorrectFee,
+        contract_path(Contract),
+        Args
     ),
     SignedContract0 = sign_transaction_base58(PrivateKey, ContractData0),
 
@@ -1029,10 +1123,10 @@ contract_deploy_for(
     Args
 ) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    DummyGas = vanillae:min_gas(),
-    DummyFee = vanillae:min_fee(),
+    DummyGas = min_gas(),
+    DummyFee = min_fee(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price() * 4,
+    GasPrice = min_gas_price() * 2,
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
 
@@ -1350,6 +1444,25 @@ node_damage_balance() ->
     Balance = balance(list_to_binary(AeAccount)),
     Balance / math:pow(10, ?DAMAGE_DECIMALS).
 
+%% Post the already-signed tx, with optional paying_for wrapper
+%-spec post_signed_or_payfor(binary(), boolean()) -> {ok, map()} | {error, term()}.
+%post_signed_or_payfor(SignedTx, true) ->
+%    %% Node pays the fee; inner must be signed by initiator.
+%
+%    %% your existing helper that wraps+posts
+%    payfor_tx(SignedTx);
+%post_signed_or_payfor(SignedTx, false) ->
+%    vanillae:post_tx(SignedTx).
+
+%% Post already-signed tx, or wrap in paying_for if you prefer node-paid fees
+post_signed_or_payfor(SignedTx) ->
+    %% Option A: direct post (tx must be signed by initiator)
+    %% vanillae:post_tx(SignedTx).
+
+    %% Option B: node pays fee, inner must be signed by initiator:
+
+    %% your existing helper; returns {ok, #{ "tx_hash" := ...}} or {error, ...}
+    payfor_tx(SignedTx).
 deploy_account_registry(AccountKeypair) ->
     #{"contract_id" := ContractId} = contract_deploy_for(
         AccountKeypair, "contracts/AccountRegistry.aes", []

@@ -29,9 +29,13 @@
         list_invoices_by_payment_hash/1,
         channel_id_to_scid/1,
         list_channels/0,
+        list_all_channels/0,
         find_best_peer_to_open/0,
+        find_best_peer_to_open/1,
         score_peers_for_opening/1,
         top_five_nodes/1,
+        get_node_balance/0,
+        open_channels_with_best_peers/0,
         inbound_capacity/2,
         verify_peer/1,
         estimate_routing_fee/2,
@@ -40,6 +44,7 @@
 ).
 -export([register_listener/1]).
 -export([broadcast/2]).
+-export([existing_peers/1]).
 -export([test/0]).
 % 5 minutes in ms
 -define(CACHE_TTL, 300000).
@@ -200,7 +205,7 @@ get_channel_balances(Host, Port, Options, Rune) ->
             ReqJson = jsx:encode(#{}),
             StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
             Result =
-                case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+                case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
                     {response, fin, _Status, _} ->
                         #{};
                     {response, nofin, _Status, _} ->
@@ -245,7 +250,7 @@ get_node_alias(Host, Port, Options, Rune, NodeId) ->
             StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
 
             Alias =
-                case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+                case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
                     {response, nofin, _Status, _} ->
                         {ok, Body} = gun:await_body(ConnPid, StreamRef),
                         case jsx:decode(Body, [return_maps, {labels, atom}]) of
@@ -280,6 +285,15 @@ get_node_alias(Host, Port, Options, Rune, NodeId) ->
             gun:close(ConnPid),
             Alias
     end.
+get_node_balance() ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, get_node_balance, ?CLN_HTTP_TIMEOUT)
+    end).
+
+open_channels_with_best_peers() ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, open_channels_with_best_peers, ?CLN_HTTP_TIMEOUT)
+    end).
 
 handle_call(
     subscribe,
@@ -309,7 +323,7 @@ handle_call(
     ReqJson = jsx:encode(#{}),
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Body} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, nofin, _, _} -> gun:await_body(ConnPid, StreamRef);
             _ -> <<"[]">>
         end,
@@ -343,7 +357,7 @@ handle_call(
     ReqJson = jsx:encode(#{}),
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Body} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, nofin, _, _} -> gun:await_body(ConnPid, StreamRef);
             _ -> <<"[]">>
         end,
@@ -365,13 +379,12 @@ handle_call(
     {reply, SCID, State};
 handle_call(
     list_channels,
-    From,
+    _From,
     State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
 ) ->
     Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
-    {reply, #{id := SourceNodeId}, _} = handle_call(getinfo, From, State),
 
-    ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{source => SourceNodeId}),
+    ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
 
     NodeIds = lists:usort(
         lists:flatten([[maps:get(source, Chan), maps:get(destination, Chan)] || Chan <- ChannelList])
@@ -381,7 +394,15 @@ handle_call(
     ChannelBalances = get_channel_balances(Host, Port, Options, Rune),
 
     lists:foreach(
-        fun(#{short_channel_id := ShortChannelId, source := Source, destination := Destination}) ->
+        fun(
+            #{
+                active := Active,
+                public := Public,
+                short_channel_id := ShortChannelId,
+                source := Source,
+                destination := Destination
+            }
+        ) ->
             SourceAlias = maps:get(Source, Aliases, <<"unknown">>),
             DestAlias = maps:get(Destination, Aliases, <<"unknown">>),
             ChannelId = scid_to_channel_id(ShortChannelId),
@@ -400,8 +421,18 @@ handle_call(
                     true -> ""
                 end,
             io:format(
-                "~s (~s) <--> ~s (~s): Ours: ~p msat, Theirs: ~p msat~s~n",
-                [SourceAlias, Source, DestAlias, Destination, OurMsat, TheirMsat, RebalanceFlag]
+                "Active ~p Public ~p ~s (~s) <--> ~s (~s): Ours: ~p msat, Theirs: ~p msat~s~n",
+                [
+                    Active,
+                    Public,
+                    SourceAlias,
+                    Source,
+                    DestAlias,
+                    Destination,
+                    OurMsat,
+                    TheirMsat,
+                    RebalanceFlag
+                ]
             )
         end,
         ChannelList
@@ -409,31 +440,176 @@ handle_call(
 
     {reply, ChannelList, State};
 handle_call(
-    find_best_peer_to_open,
+    list_all_channels,
     _From,
     State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
 ) ->
     Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
-    ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
+    ChannelList = fetch_channel_list(Host, Port, Options, Headers, #{}),
+    ?LOG_DEBUG("ChannelList ~p", [ChannelList]),
+    {reply, ChannelList, State};
+handle_call(
+    find_best_peer_to_open,
+    _From,
+    State
+) ->
+    %% Default to 100k sats if no amount is specified
+    do_find_best_peer_to_open(100000, State);
+handle_call(
+    {find_best_peer_to_open, AmountSats},
+    _From,
+    State
+) ->
+    do_find_best_peer_to_open(AmountSats, State);
+handle_call(
+    get_node_balance,
+    _From,
+    State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
+) ->
+    BalanceSats = get_node_balance(Host, Port, Options, Rune),
+    {reply, BalanceSats, State};
+handle_call(
+    open_channels_with_best_peers,
+    From,
+    State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
+) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
 
-    NodeCount = lists:foldl(
-        fun(#{source := Src, destination := Dst}, Acc) ->
-            Acc1 = maps:update_with(Src, fun(N) -> N + 1 end, 1, Acc),
-            maps:update_with(Dst, fun(N) -> N + 1 end, 1, Acc1)
-        end,
-        #{},
-        ChannelList
-    ),
+    {reply, #{id := SourceNodeId}, _} = handle_call(getinfo, From, State),
+    SelfChannels0 = fetch_channel_list(Host, Port, Options, Headers, #{source => SourceNodeId}),
+    SelfChannels1 = fetch_channel_list(Host, Port, Options, Headers, #{destination => SourceNodeId}),
+    SelfChannels = SelfChannels0 ++ SelfChannels1,
+    ?LOG_INFO("Self channels ~p", [SelfChannels]),
 
-    Sorted = lists:sort(fun({_, A}, {_, B}) -> A > B end, maps:to_list(NodeCount)),
-    Top = lists:sublist(Sorted, 5),
-    Aliases = lists:map(
-        fun({NodeId, Count}) ->
-            {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId), Count}
+    %% 1. Node balance (all spendable funds)
+    BalanceSats = get_node_balance(Host, Port, Options, Rune),
+
+    %% keep a small reserve so we don't strand the wallet
+    Reserve = 10000,
+    Spendable =
+        case BalanceSats - Reserve of
+            N when N =< 0 -> 0;
+            N -> N
         end,
-        Top
-    ),
-    {reply, Aliases, State};
+
+    case Spendable =< 0 of
+        true ->
+            {reply, {error, insufficient_funds, BalanceSats}, State};
+        false ->
+            %% 2. Network view
+            ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
+
+            %% score peers (existing scoring)
+            ScoreMap = score_peers_for_opening(ChannelList),
+            ScoreList = maps:to_list(ScoreMap),
+
+            %% 3. Build candidate list with inbound capacity
+            %% build set of nodes we already have channels with
+            ExistingPeers = existing_peers(SelfChannels),
+            ?LOG_DEBUG("ExistingPeers ~p  ", [ExistingPeers]),
+
+            Candidates =
+                [
+                    begin
+                        Inbound = inbound_capacity(NodeId, ChannelList),
+                        {NodeId, Score, Inbound}
+                    end
+                 || {NodeId, Score} <- ScoreList,
+                    not sets:is_element(NodeId, ExistingPeers)
+                ],
+
+            %% sort by score, then inbound capacity
+            Sorted =
+                lists:sort(
+                    fun({_, ScoreA, InboundA}, {_, ScoreB, InboundB}) ->
+                        (ScoreA > ScoreB) orelse
+                            (ScoreA =:= ScoreB andalso InboundA > InboundB)
+                    end,
+                    Candidates
+                ),
+
+            %% sizing parameters
+            MaxPeers = 5,
+            %% "ideal" channel size (sats)
+            Target = 200000,
+            %% don't bother with tiny channels
+            MinPerChannel = 100000,
+
+            TopCandidates = lists:sublist(Sorted, MaxPeers),
+
+            case TopCandidates of
+                [] ->
+                    {reply, {error, no_suitable_peers}, State};
+                _ ->
+                    CandidateCount = length(TopCandidates),
+
+                    %% how many channels can our balance support at Target size?
+                    MaxNByBalance =
+                        case Spendable div Target of
+                            0 -> 1;
+                            N0 -> N0
+                        end,
+
+                    RawN = erlang:min(MaxNByBalance, CandidateCount),
+
+                    AmountPerPeer0 = Spendable div RawN,
+
+                    %% if that makes channels too small, fall back to one big one
+                    {_N1, AmountPerPeer, ChosenCandidates} =
+                        case AmountPerPeer0 < MinPerChannel of
+                            true ->
+                                {1, Spendable, lists:sublist(TopCandidates, 1)};
+                            false ->
+                                {RawN, AmountPerPeer0, lists:sublist(TopCandidates, RawN)}
+                        end,
+
+                    %% 4. Filter peers where inbound capacity is at least our target
+                    SuitablePeers =
+                        [
+                            {NodeId, Inbound}
+                         || {NodeId, _Score, Inbound} <- ChosenCandidates,
+                            Inbound >= AmountPerPeer
+                        ],
+
+                    case SuitablePeers of
+                        [] ->
+                            {reply, {error, no_peer_with_capacity, AmountPerPeer}, State};
+                        _ ->
+                            %% 5. Open channels (fundchannel) for each suitable peer
+                            Aliases =
+                                [
+                                    {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId)}
+                                 || {NodeId, _Inbound} <- SuitablePeers
+                                ],
+                            ?LOG_INFO("Opening channel with peers ~p", [SuitablePeers, Aliases]),
+                            %SourceAlias = maps:get(Source, Aliases, <<"unknown">>),
+                            Results =
+                                [
+                                    open_channel_with_peer(
+                                        Host,
+                                        Port,
+                                        Options,
+                                        Rune,
+                                        NodeId,
+                                        AmountPerPeer
+                                    )
+                                 || {NodeId, _Inbound} <- SuitablePeers
+                                ],
+
+                            Reply = #{
+                                balance_sats => BalanceSats,
+                                spendable_sats => Spendable,
+                                per_peer_sats => AmountPerPeer,
+                                channel_count => length(SuitablePeers),
+                                intended_peers => N,
+                                peers => [NodeId || {NodeId, _} <- SuitablePeers],
+                                aliases => Aliases,
+                                results => Results
+                            },
+                            {reply, Reply, State}
+                    end
+            end
+    end;
 handle_call(
     {verify_peer, NodeId},
     _From,
@@ -461,7 +637,7 @@ handle_call(
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, fin, Status, _RespHeaders} ->
                 ?LOG_DEBUG("Got fin ~p", [Status]),
                 no_data;
@@ -484,7 +660,6 @@ handle_call(
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} =
         State
 ) ->
-    ?LOG_ERROR("got getinfo on gun websocket  State ~p", [State]),
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
     {ok, ConnPid} = gun:open(Host, Port, Options),
     %% Construct the API request URL
@@ -494,7 +669,7 @@ handle_call(
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, fin, Status, _RespHeaders} ->
                 ?LOG_DEBUG("Got fin ~p", [Status]),
                 no_data;
@@ -523,20 +698,36 @@ handle_call(
     %% Construct the API request URL
     Path = "/v1/invoice",
     %% Construct the request body
-    ReqJson =
-        jsx:encode(
-            #{
-                amount_msat => AmountMsats,
-                label => Label,
-                description => Description,
-                expiry => Expiry
-            }
-        ),
+    %% Base request
+    BaseReq = #{
+        amount_msat => AmountMsats,
+        label => Label,
+        description => Description,
+        expiry => Expiry
+    },
+
+    %% BOLT11 description is limited to 640 bytes.
+    %% If the zap request JSON is longer, ask CLN to only
+    %% put the *hash* in the BOLT11 (deschashonly=true),
+    %% but still store the full description in the DB.
+    ReqMap =
+        case byte_size(Description) > 640 of
+            true ->
+                ?LOG_DEBUG(
+                    "create_invoice: description ~p bytes, enabling deschashonly",
+                    [byte_size(Description)]
+                ),
+                BaseReq#{deschashonly => true};
+            false ->
+                BaseReq
+        end,
+    ReqJson = jsx:encode(ReqMap),
+
     ?LOG_DEBUG("sending req head ~p ~p", [Headers, ReqJson]),
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, fin, Status, _RespHeaders} ->
                 ?LOG_DEBUG("Got fin ~p", [Status]),
                 no_data;
@@ -580,7 +771,7 @@ handle_call(
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, fin, _Status, _RespHeaders} -> no_data;
             {response, nofin, _Status, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
             {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
@@ -609,7 +800,7 @@ handle_call(
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, fin, _Status, _RespHeaders} -> no_data;
             {response, nofin, _Status, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
             {response, nofin, _RespHeaders} -> gun:await_body(ConnPid, StreamRef);
@@ -880,7 +1071,12 @@ hold_invoice_cancel(PaymentHash) ->
 list_channels() ->
     poolboy:transaction(
         ?MODULE,
-        fun(Worker) -> gen_server:call(Worker, list_channels) end
+        fun(Worker) -> gen_server:call(Worker, list_channels, ?CLN_HTTP_TIMEOUT) end
+    ).
+list_all_channels() ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) -> gen_server:call(Worker, list_all_channels, ?CLN_HTTP_TIMEOUT) end
     ).
 decode_payload(Payload) ->
     jsx:decode(Payload, [return_maps, {labels, atom}]).
@@ -912,46 +1108,67 @@ find_best_peer_to_open() ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, find_best_peer_to_open, ?CLN_HTTP_TIMEOUT)
     end).
--spec score_peers_for_opening([map()]) -> [{binary(), float()}].
+
+find_best_peer_to_open(AmountSats) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {find_best_peer_to_open, AmountSats}, ?CLN_HTTP_TIMEOUT)
+    end).
+-spec score_peers_for_opening([map()]) -> map().
 score_peers_for_opening(ChannelList) ->
-    %% 100k sats = $100 AUD
-    MinSats = 100000,
+    %% default scoring baseline (100k sats)
+    score_peers_for_opening(ChannelList, 100000).
+
+-spec score_peers_for_opening([map()], integer()) -> map().
+score_peers_for_opening(ChannelList, MinSats) ->
     Now = erlang:system_time(second),
 
     lists:foldl(
-        fun(
-            #{
-                source := Src,
-                destination := Dst,
-                satoshis := Sats,
-                base_fee_millisatoshi := BaseFee,
-                fee_per_millionth := FeeRate,
-                last_update := LU
-            },
-            Acc
-        ) ->
-            PeerPairs = [Src, Dst],
-            lists:foldl(
-                fun(NodeId, InnerAcc) ->
-                    case Sats >= MinSats of
-                        true ->
-                            Score = compute_score(Sats, BaseFee, FeeRate, LU, Now),
-                            update_score(NodeId, Score, InnerAcc);
-                        false ->
-                            InnerAcc
-                    end
-                end,
-                Acc,
-                PeerPairs
-            )
+        fun
+            (
+                #{
+                    source := Src,
+                    destination := Dst,
+                    amount_msat := AmountMsat,
+                    base_fee_millisatoshi := BaseFee,
+                    fee_per_millionth := FeeRate,
+                    last_update := LU,
+                    active := true
+                },
+                Acc
+            ) ->
+                %% channel capacity in sats
+                Sats = AmountMsat div 1000,
+                PeerNodes = [Src, Dst],
+                lists:foldl(
+                    fun(NodeId, InnerAcc) ->
+                        case Sats >= MinSats of
+                            true ->
+                                Score = compute_score(Sats, BaseFee, FeeRate, LU, Now),
+                                update_score(NodeId, Score, InnerAcc);
+                            false ->
+                                InnerAcc
+                        end
+                    end,
+                    Acc,
+                    PeerNodes
+                );
+            (
+                #{
+                    % ignore inactive nodes
+                    active := false
+                },
+                Acc
+            ) ->
+                Acc
         end,
         #{},
         ChannelList
     ).
+
 top_five_nodes(ChannelList) ->
-    {ok, ScoreMap} = score_peers_for_opening(ChannelList),
+    ScoreMap = score_peers_for_opening(ChannelList),
     Sorted = lists:sort(fun({_, A}, {_, B}) -> A > B end, maps:to_list(ScoreMap)),
-    _Top5 = lists:sublist(Sorted, 5).
+    lists:sublist(Sorted, 5).
 
 compute_score(Sats, _BaseFee, FeeRate, LastUpdate, Now) ->
     %% Higher sats = better; lower fee = better; recent = better
@@ -968,14 +1185,17 @@ update_score(NodeId, Score, Map) ->
 inbound_capacity(NodeId, Channels) ->
     lists:foldl(
         fun
-            (#{destination := NodeId1, satoshis := Sats}, Acc) when NodeId1 =:= NodeId ->
-                Acc + Sats;
+            (#{destination := NodeId1, amount_msat := AmountMsat}, Acc) when
+                NodeId1 =:= NodeId
+            ->
+                Acc + (AmountMsat div 1000);
             (_, Acc) ->
                 Acc
         end,
         0,
         Channels
     ).
+
 test() ->
     test_listchannels().
 
@@ -985,10 +1205,15 @@ test_listchannels() ->
 %% Shared global cache for listchannels
 get_cached_channel_list(Host, Port, Options, Headers, ReqMap) ->
     Now = erlang:monotonic_time(second),
-    TTL = 60,
     case ets:lookup(cln_channel_cache, listchannels) of
-        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < TTL ->
+        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < ?CACHE_TTL ->
             ?LOG_DEBUG("Using cached listchannels", []),
+            Channels;
+        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp > ?CACHE_TTL ->
+            ?LOG_INFO("Cache age ~p", [Now - Timestamp]),
+            ?LOG_DEBUG("Fetching listchannels from CLN", []),
+            Channels = fetch_channel_list(Host, Port, Options, Headers, ReqMap),
+            ets:insert(cln_channel_cache, {listchannels, {Now, Channels}}),
             Channels;
         _ ->
             ?LOG_DEBUG("Fetching listchannels from CLN", []),
@@ -1004,7 +1229,7 @@ fetch_channel_list(Host, Port, Options, Headers, ReqMap) ->
     ReqJson = jsx:encode(ReqMap),
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Body} =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
             {response, nofin, _, _} -> gun:await_body(ConnPid, StreamRef);
             _ -> <<"{}">>
         end,
@@ -1047,7 +1272,7 @@ list_channel_policies(NodeId, Host, Port, Options, Rune) ->
     maps:get(channels, Body, []).
 
 get_json_body(ConnPid, StreamRef) ->
-    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+    case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
         {response, nofin, _, _} ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
             jsx:decode(Body, [return_maps, {labels, atom}]);
@@ -1065,3 +1290,131 @@ estimate_routing_fee(Channel, AmountMsat) ->
     FeePPM = maps:get(fee_per_millionth, Channel, 0),
     Fee = BaseFee + ((AmountMsat * FeePPM) div 1000000),
     Fee.
+do_find_best_peer_to_open(
+    AmountSats,
+    State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
+) ->
+    Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
+    ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
+
+    %% Score peers based on capacity/fees/recency for the given amount
+    ScoreMap = score_peers_for_opening(ChannelList, AmountSats),
+
+    %% Only consider nodes we actually scored
+    NodeIds = maps:keys(ScoreMap),
+
+    %% Resolve aliases for the candidate nodes
+    AliasesMap = resolve_aliases(NodeIds, Host, Port, Options, Rune),
+
+    %% Build inbound capacity map: how much liquidity peers already have
+    InboundMap =
+        lists:foldl(
+            fun
+                (#{destination := Dst, satoshis := Sats}, Acc) ->
+                    maps:update_with(Dst, fun(V) -> V + Sats end, Sats, Acc);
+                (_, Acc) ->
+                    Acc
+            end,
+            #{},
+            ChannelList
+        ),
+
+    %% Build {NodeId, Alias, Score, InboundCapacity} tuples
+    Candidates =
+        [
+            begin
+                Alias = maps:get(NodeId, AliasesMap, <<"unknown">>),
+                Inbound = maps:get(NodeId, InboundMap, 0),
+                {NodeId, Alias, Score, Inbound}
+            end
+         || {NodeId, Score} <- maps:to_list(ScoreMap)
+        ],
+
+    %% Filter out nodes whose inbound capacity is clearly too small for the amount
+    Suitable =
+        [
+            C
+         || C = {_NodeId, _Alias, _Score, Inbound} <- Candidates,
+            Inbound >= AmountSats
+        ],
+
+    %% Sort primarily by score, secondary by inbound capacity
+    Sorted =
+        lists:sort(
+            fun({_, _, ScoreA, InboundA}, {_, _, ScoreB, InboundB}) ->
+                (ScoreA > ScoreB) orelse
+                    (ScoreA =:= ScoreB andalso InboundA > InboundB)
+            end,
+            Suitable
+        ),
+
+    Top5 = lists:sublist(Sorted, 5),
+    {reply, Top5, State}.
+-spec existing_peers([map()]) -> sets:set().
+existing_peers(ChannelList) ->
+    lists:foldl(
+        fun(#{source := Src, destination := Dst}, Acc) ->
+            Acc1 = sets:add_element(Src, Acc),
+            sets:add_element(Dst, Acc1)
+        end,
+        sets:new(),
+        ChannelList
+    ).
+
+open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/fundchannel",
+    ReqJson = jsx:encode(#{
+        id => NodeId,
+        amount => AmountSats
+    }),
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    Body =
+        case catch get_json_body(ConnPid, StreamRef) of
+            #{
+                code := _,
+                data :=
+                    #{
+                        id :=
+                            NodeId,
+                        method := Method
+                    },
+                message :=
+                    Message
+            } ->
+                ?LOG_INFO("Failed to open channel with ~p method ~p reason ~p", [
+                    NodeId, Method, Message
+                ]),
+                Message;
+            Body0 ->
+                Body0
+        end,
+    gun:close(ConnPid),
+    Body.
+
+get_node_balance(Host, Port, Options, Rune) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/listfunds",
+    ReqJson = jsx:encode(#{}),
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    Body = get_json_body(ConnPid, StreamRef),
+    gun:close(ConnPid),
+
+    Outputs = maps:get(outputs, Body, []),
+
+    TotalMsat =
+        lists:foldl(
+            fun
+                (#{amount_msat := Msat}, Acc) when is_integer(Msat) ->
+                    Acc + Msat;
+                (_, Acc) ->
+                    Acc
+            end,
+            0,
+            Outputs
+        ),
+
+    %% sats
+    TotalMsat div 1000.

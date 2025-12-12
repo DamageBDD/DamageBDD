@@ -90,12 +90,14 @@ new() ->
     PostTab = ets:new(ecai_postings, [
         ordered_set,
         public,
+        compressed,
         {read_concurrency, true},
         {write_concurrency, true}
     ]),
     RootTab = ets:new(ecai_root, [
         set,
         public,
+        compressed,
         {read_concurrency, true},
         {write_concurrency, true}
     ]),
@@ -103,36 +105,42 @@ new() ->
         set,
         named_table,
         public,
+        compressed,
         {write_concurrency, true}
     ]),
     DfTab = ets:new(ecai_df, [
         set,
         named_table,
         public,
+        compressed,
         {write_concurrency, true}
     ]),
     TagTab = ets:new(ecai_tag, [
         set,
         named_table,
         public,
+        compressed,
         {write_concurrency, true}
     ]),
     I2DTab = ets:new(ecai_i2d, [
         set,
         named_table,
         public,
+        compressed,
         {write_concurrency, true}
     ]),
     D2ITab = ets:new(ecai_d2i, [
         set,
         named_table,
         public,
+        compressed,
         {write_concurrency, true}
     ]),
     SeqTab = ets:new(ecai_seq, [
         set,
         named_table,
         public,
+        compressed,
         {write_concurrency, true}
     ]),
 

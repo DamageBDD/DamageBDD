@@ -29,8 +29,8 @@ init() ->
         ok ->
             ok;
         % allow running without GPU NIF present
-        {error, _} ->
-            ?LOG_WARNING("GPU acceleration for ecai indexing not enabled. ~p", [NifPath]),
+        {error, Err} ->
+            ?LOG_WARNING("GPU acceleration for ecai indexing not enabled. ~p ~n~p", [NifPath, Err]),
             ok
     end.
 

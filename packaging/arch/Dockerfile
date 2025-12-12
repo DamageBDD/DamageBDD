@@ -13,6 +13,7 @@ RUN sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf   
     base-devel git fakeroot which curl wget ca-certificates     \
     tar gzip unzip xz zstd patch pkgconf cmake ninja            \
     erlang jq pacman-contrib ccache git rebar3 make             \
+    gcc libsodium base-devel kubo pass cuda vim                 \
     && mkdir -p "$CCACHE_DIR"  /root/.cache      && pacman -Scc --noconfirm
 
 WORKDIR /src
@@ -25,39 +26,38 @@ ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
 ARG REPO_REF=develop   # or a tag/sha
 
 # Do a shallow clone if the ref is a branch or tag; fall back to full + checkout for SHA
-# Note: Changing REPO_REF invalidates cache for this layer.
-RUN git clone --depth=1 --branch "$REPO_REF" "$REPO_URL" /src || ( git clone "$REPO_URL" /src && cd /src && git checkout "$REPO_REF" )
+RUN git clone --depth 1 "${REPO_URL}" /src \
+    && cd /src \
+    && git fetch --depth 1 origin "${REPO_REF}" || true \
+    && git checkout "${REPO_REF}"
 
+############################################
+# Build image (compiles / artifacts)
+############################################
+#FROM fetch AS build
+
+# Example: rebar3 compile / release
 WORKDIR /src
-# Record exact commit to make downstream layers cache-stable when source hasn't changed
-RUN git rev-parse HEAD > /commit.sha
+#RUN rebar3 compile
 
-############################################
-# Build stage (language/tool-agnostic heuristics)
-############################################
-FROM base AS build
-ARG REPO_URL
-ARG REPO_REF
-COPY --from=fetch /src /src
-
-
-############################################
+#############################################
 # Runtime image (slim; contains built artifacts)
-############################################
-FROM archlinux:latest AS runtime
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-RUN pacman -Syu --noconfirm      && pacman -S --noconfirm --needed ca-certificates bash      && pacman -Scc --noconfirm
+#############################################
+#FROM archlinux:latest AS runtime
+#ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+#RUN pacman -Syu --noconfirm      && pacman -S --noconfirm --needed ca-certificates bash      && pacman -Scc --noconfirm
+#
+#WORKDIR /app
+#COPY --from=build /src /app
 
-WORKDIR /app
-COPY --from=build /src /app
-
-RUN pacman -S --noconfirm git
-RUN pacman -S --noconfirm rebar3
-RUN pacman -S --noconfirm make
-RUN pacman -S --noconfirm gcc
-RUN pacman -S --noconfirm libsodium
-RUN pacman -S --noconfirm base-devel
-RUN pacman -S --noconfirm kubo
-RUN pacman -S --noconfirm pass
 # Default to a shell so you can explore artifacts or run your binary/script.
+
+# Create non-root user and group for running Damage/Build tools
+RUN groupadd -r damage && \
+    useradd -r -g damage -d /home/damage -m -s /bin/bash damage
+
+USER damage
+WORKDIR /home/damage
+
 CMD ["bash"]
+

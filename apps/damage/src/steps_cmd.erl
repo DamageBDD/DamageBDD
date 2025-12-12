@@ -57,6 +57,27 @@ step(_Config, Context, <<"Then">>, _N, ["the exit status must be", Status], _) -
                 Context
             )
     end;
+step(_Cfg, Ctx, <<"Then">>, _N, ["stdout should contain", SubStr], _) ->
+    case maps:get(cmd_result, Ctx, undefined) of
+        {ok, [{stdout, [Bin]}]} ->
+            case binary:match(Bin, list_to_binary(SubStr)) of
+                nomatch -> maps:put(fail, {stdout_no_match, SubStr}, Ctx);
+                _ -> Ctx
+            end;
+        Other ->
+            maps:put(fail, {no_stdout, Other}, Ctx)
+    end;
+step(_Cfg, Ctx, <<"Then">>, _N, ["stdout should match ~", RegexStr], _) ->
+    {ok, MP} = re:compile(RegexStr, [unicode]),
+    case maps:get(cmd_result, Ctx, undefined) of
+        {ok, [{stdout, [Bin]}]} ->
+            case re:run(Bin, MP) of
+                nomatch -> maps:put(fail, {stdout_no_regex_match, RegexStr}, Ctx);
+                _ -> Ctx
+            end;
+        Other ->
+            maps:put(fail, {no_stdout, Other}, Ctx)
+    end;
 step(_Config, Context, <<"Given">>, _N, ["I change directory to", Path], _) ->
     maps:put(cmd_cwd, Path, Context);
 step(_Config, _Context, <<"Given">>, _N, ["I am the node named", _Node], _) ->

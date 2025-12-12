@@ -16,6 +16,7 @@
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
 -export([trails/0]).
+-import(damage_utils, [float_to_full_integer/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -239,30 +240,33 @@ stream_mode(Req, Concurrency0) ->
         1 -> maybe_stream;
         _ -> nostream
     end.
-
+get_stream_config(Config, Context, Req0) ->
+    %% stream logs via text formatter to cowboy stream
+    Req = cowboy_req:stream_reply(
+        200, #{<<"content-type">> => <<"text/plain">>}, Req0
+    ),
+    Formatters = [
+        {text, #{
+            output => Req,
+            color => maps:get(color_formatter, Context, false)
+        }}
+    ],
+    AeAccount = maps:get(public_key, Context, undefined),
+    Config0 = damage_config:get_default_config(
+        [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
+    ),
+    Config0.
 get_config(Config, Context, Req0) ->
     Concurrency = maps:get(concurrency, Context, 1),
     StreamFlag = maps:get(stream, Context, nostream),
     case {Concurrency, StreamFlag} of
         {1, maybe_stream} ->
-            %% stream logs via text formatter to cowboy stream
-            Req = cowboy_req:stream_reply(
-                200, #{<<"content-type">> => <<"text/plain">>}, Req0
-            ),
-            Formatters = [
-                {text, #{
-                    output => Req,
-                    color => maps:get(color_formatter, Context, false)
-                }}
-            ],
-            AeAccount = maps:get(public_key, Context, undefined),
-            Config0 = damage_config:get_default_config(
-                [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
-            ),
-            Config0;
+            get_stream_config(Config, Context, Req0);
+        {1, true} ->
+            get_stream_config(Config, Context, Req0);
         _ ->
             %% non-stream path; keep formatters as supplied (or none)
-            AeAccount = maps:get(public_key, Context, undefined),
+            AeAccount = maps:get(public_key, Context, maps:get(address, Context, undefined)),
             Concurrency1 = damage_utils:get_concurrency_level(Concurrency),
             damage_config:get_default_config(
                 [{public_key, AeAccount}, {concurrency, Concurrency1} | Config]
@@ -270,13 +274,13 @@ get_config(Config, Context, Req0) ->
     end.
 
 %%--------------------------------------------------------------------
-%% Execute a feature: normalized result
+%% Low-level: execute a single feature run against Config/Context.
 %%  - Always returns {StatusCode, Map}.
 %%  - Map always carries 'status' => <<"ok">> | <<"notok">>.
 %%--------------------------------------------------------------------
--spec execute_bdd(proplists:proplist(), map(), binary()) ->
+-spec execute_bdd_once(proplists:proplist(), map(), binary()) ->
     {200 | 400 | 500, map()}.
-execute_bdd(Config, Context, FeatureData) ->
+execute_bdd_once(Config, Context, FeatureData) ->
     case damage:execute_data(Config, Context, FeatureData) of
         %% Failing step (runner-level assertion failure)
         [
@@ -286,17 +290,17 @@ execute_bdd(Config, Context, FeatureData) ->
             }
             | _
         ] ->
-            {400, #{
+            {200, #{
                 status => <<"notok">>,
                 line => Line,
-                failing_step => list_to_binary(damage_utils:lists_concat(Step, " ")),
+                failing_step =>
+                    list_to_binary(damage_utils:lists_concat(Step, " ")),
                 reason => FailReason
             }};
         %% Parser/lexer error with pretty message
         {parse_error, LineNo, MessagePretty} ->
-            ?LOG_DEBUG("execute_bdd parse_error ~p.", [MessagePretty]),
             formatter:format(Config, error, {LineNo, MessagePretty}),
-            {400, #{
+            {200, #{
                 status => <<"notok">>,
                 message => MessagePretty,
                 line => LineNo
@@ -322,20 +326,22 @@ execute_bdd(Config, Context, FeatureData) ->
 
 %%--------------------------------------------------------------------
 %% Public orchestration: dry-run, then (optionally) paid run
-%% - check_execute_bdd(Context, State, Req0) -> … uses [] as Config overrides
-%% - check_execute_bdd(Context, State, Req0, ConfigOverrides) -> …
-%%   If ConfigOverrides includes {dry_run,true}, returns dry-run result only.
+%%
+%%  - execute_bdd(Context, State, Req0) -> … uses [] as Config overrides
+%%  - execute_bdd(Context, State, Req0, ConfigOverrides) -> …
+%%
+%%  If ConfigOverrides includes {dry_run,true}, returns dry-run result only.
 %%--------------------------------------------------------------------
-%% API: default (no overrides)
--spec check_execute_bdd(map(), map(), cowboy_req:req()) ->
+
+-spec execute_bdd(map(), map(), cowboy_req:req()) ->
     {integer(), map()} | {error, map()}.
-check_execute_bdd(Context, State, Req0) ->
-    check_execute_bdd(Context, State, Req0, []).
+execute_bdd(Context, State, Req0) ->
+    execute_bdd(Context, State, Req0, []).
 
 %% API: with overrides (e.g., [{dry_run,true}])
--spec check_execute_bdd(map(), map(), cowboy_req:req(), proplists:proplist()) ->
+-spec execute_bdd(map(), map(), cowboy_req:req(), proplists:proplist()) ->
     {integer(), map()} | {error, map()}.
-check_execute_bdd(Context0, State, Req0, ConfigOverrides) ->
+execute_bdd(Context0, State, Req0, ConfigOverrides) ->
     %% Build effective context once (no guards used here)
     ContextIn = effective_context(Context0, State),
     FeatureData = maps:get(feature, Context0),
@@ -343,18 +349,24 @@ check_execute_bdd(Context0, State, Req0, ConfigOverrides) ->
     %% --- 1) DRY RUN (force nostream) ----------------------------------------
     DryOverrides = [{dry_run, true} | ConfigOverrides],
     DryContext = maps:put(stream, nostream, ContextIn),
-    {DryCode, DryRes} =
-        execute_bdd(get_config(DryOverrides, DryContext, Req0), DryContext, FeatureData),
 
-    %% If caller wanted only dry-run, return immediately on success/failure
-    case dry_run_only(ConfigOverrides) of
-        true ->
-            {DryCode, DryRes};
-        false ->
-            case DryCode of
-                200 ->
+    case
+        execute_bdd_once(
+            get_config(DryOverrides, DryContext, Req0),
+            DryContext,
+            FeatureData
+        )
+    of
+        %% Dry run OK
+        {200, DryRes} ->
+            %% If caller wanted only dry-run, return immediately
+            case dry_run_only(ConfigOverrides) of
+                true ->
+                    {200, DryRes};
+                false ->
                     %% Must have a cost in dry-run success
                     Cost = maps:get(cost, DryRes, 0),
+
                     %% Find account id (support public_key or address)
                     AeAccount =
                         case ContextIn of
@@ -362,25 +374,29 @@ check_execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                             #{address := PK} -> PK;
                             _ -> undefined
                         end,
+
                     Balance = damage_ae:balance(AeAccount),
-                    %% Guard-safe comparison (>= is allowed in guards; or do it here plainly)
+
                     case Balance >= Cost of
                         true ->
                             %% --- 2) COSTED RUN --------------------------------
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
-                            execute_bdd(RunConfig, ContextIn, FeatureData);
+                            ?LOG_INFO("starting real execution ~p", [RunConfig]),
+                            {200, Result} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
+                            damage_ae:confirm_spend(RunConfig, Result),
+                            {200, Result};
                         false ->
-                            {400, #{
+                            {200, #{
                                 status => <<"notok">>,
                                 message =>
                                     <<"Insufficient balance, please top up at `/api/accounts/topup`">>,
                                 balance => Balance
                             }}
-                    end;
-                _Other ->
-                    %% Dry run failed; bubble it up
-                    {DryCode, DryRes}
-            end
+                    end
+            end;
+        %% Dry run failed; bubble it up as-is
+        {DryCode, DryRes} ->
+            {DryCode, DryRes}
     end.
 
 %% Helper: merge global+account into caller context (no guards)
@@ -413,6 +429,72 @@ do_action_tx_throttled(Json, State, Req) ->
         _ ->
             do_action_tx(Json, State, Req)
     end.
+get_bin(Key, M) ->
+    V = maps:get(Key, M),
+    case V of
+        B when is_binary(B) -> B;
+        L when is_list(L) -> list_to_binary(L)
+    end.
+
+get_int(Key, M) ->
+    V = maps:get(Key, M),
+    case V of
+        I when is_integer(I) -> I;
+        B when is_binary(B) -> list_to_integer(binary_to_list(B));
+        L when is_list(L) -> list_to_integer(L)
+    end.
+
+%% action = "prepare_create_channel"
+%% ------------------------------------------------------------
+%% PREPARE: build final unsigned channel_create_tx (node = responder)
+%% ------------------------------------------------------------
+do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
+    Ini = get_bin(initiator_id, J),
+    IniAmt = get_int(initiator_amount, J),
+    ResAmt = get_int(responder_amount, J),
+    Reserve = get_int(channel_reserve, J),
+    Lock = get_int(lock_period, J),
+    TTL = get_int(ttl, J),
+    Fee = get_int(fee, J),
+
+    #{public_key := NodePub} = secrets:node_keypair(),
+    Responder = list_to_binary(NodePub),
+
+    case
+        damage_channels:build_channel_create_tx(
+            Ini, Responder, IniAmt, ResAmt, Reserve, Lock, TTL, Fee
+        )
+    of
+        {ok, #{tx := Unsigned, tx_hash := TxHash}} ->
+            Reply = #{
+                status => <<"ok">>, tx => Unsigned, tx_hash => TxHash, responder => Responder
+            },
+            {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
+        {error, Reason} ->
+            Reply = #{status => <<"notok">>, error => Reason},
+            {stop, cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State}
+    end;
+%% ------------------------------------------------------------
+%% FINALIZE: verify initiator signer; optionally wrap in paying_for; post
+%% ------------------------------------------------------------
+do_action_tx(
+    #{
+        action := <<"finalize_create_channel">>,
+        unsigned_tx := Unsigned,
+        signed_tx := Signed
+    } = J,
+    State,
+    Req
+) ->
+    PayFor = maps:get(payfor, J, true),
+    case damage_channels:finalize_channel_create(Unsigned, Signed, PayFor) of
+        {ok, #{<<"tx_hash">> := _TxHash} = R} ->
+            Reply = R#{status => <<"ok">>},
+            {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
+        {error, Reason} ->
+            Reply = #{status => <<"notok">>, error => list_to_binary(Reason)},
+            {stop, cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State}
+    end;
 do_action_tx(
     #{
         feature := FeatureData,
@@ -437,7 +519,7 @@ do_action_tx(
         "return_value" := {}
     } = damage_ae:wait_tx(ContractCallTxHash),
     case
-        check_execute_bdd(
+        execute_bdd(
             #{
                 feature => FeatureData,
                 color_formatter => false,
@@ -454,55 +536,151 @@ do_action_tx(
                 [Response, Concurrency]
             ),
             {
-                stop,
-                case Concurrency of
-                    1 ->
-                        Req;
-                    C when is_integer(C) ->
-                        cowboy_req:reply(200, Req),
-                        cowboy_req:set_resp_body(jsx:encode(Response), Req)
-                end,
-                State
+                200, Response
             };
         {Status, Response} ->
             ?LOG_INFO("~p execute_feature from_json tx ~p", [Status, Response]),
             {
-                stop,
-                cowboy_req:reply(
-                    Status,
-                    cowboy_req:set_resp_body(jsx:encode(Response), Req)
-                ),
-                State
+                200, Response
             }
     end;
+%do_action_tx(
+%    #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} = Json, State, Req
+%) ->
+%    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+%
+%    case
+%        execute_bdd(
+%            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
+%        )
+%    of
+%        {200, DryRunRecord} ->
+%            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
+%                DryRunRecord,
+%            Args = [
+%                NodeAeAccount,
+%                integer_to_list(round(Cost)),
+%                binary_to_list(FeatureHash),
+%                binary_to_list(ReportHash)
+%            ],
+%            ?LOG_DEBUG("creating execute tx ~p", [Args]),
+%            Tx = damage_ae:contract_call_prepare_tx(
+%                #{public_key => AeAccount},
+%                ?DAMAGE_TOKEN_CONTRACT,
+%                "contracts/token.aes",
+%                "spend",
+%                Args
+%            ),
+%            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+%        {Status, Response} ->
+%            {Status, Response}
+%    end;
+%% Initialise a job in the channel and snapshot after execution
 do_action_tx(
-    #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} = Json, State, Req
+    #{
+        feature := _FeatureData,
+        concurrency := _Concurrency,
+        address := AeAccount,
+        channel_id := ChannelId
+    } = ContextIn0,
+    State,
+    Req
 ) ->
-    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+    %% Node’s AE account (responder in the channel)
+    %#{public_key := NodeAeAccount} = secrets:node_keypair(),
+
+    %% 1) Dry-run to get cost + hashes (no side effects)
+    ContextIn = effective_context(ContextIn0, State),
+    DryOverrides = [{dry_run, true}],
+    DryContext = maps:put(stream, nostream, ContextIn),
+    FeatureData = maps:get(feature, ContextIn),
 
     case
-        check_execute_bdd(
-            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
+        execute_bdd_once(
+            get_config(DryOverrides, DryContext, Req),
+            DryContext,
+            FeatureData
         )
     of
         {200, DryRunRecord} ->
-            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
-                DryRunRecord,
-            Args = [
-                NodeAeAccount,
-                integer_to_list(round(Cost)),
-                binary_to_list(FeatureHash),
-                binary_to_list(ReportHash)
-            ],
-            ?LOG_DEBUG("creating execute tx ~p", [Args]),
-            Tx = damage_ae:contract_call_prepare_tx(
-                #{public_key => AeAccount},
-                ?DAMAGE_TOKEN_CONTRACT,
-                "contracts/token.aes",
-                "spend",
-                Args
-            ),
-            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+            #{
+                cost := Cost,
+                feature_hash := FeatureHash,
+                report_hash := ReportHash
+            } = DryRunRecord,
+
+            %% 2) Initialise the job inside the channel (JobRegistry via channel contract call)
+            %%    damage_channels:init_job/3 should:
+            %%      - ensure/reuse an AE state-channel between AeAccount and NodeAeAccount
+            %%      - call JobRegistry (off-chain) to register the job
+            %%      - return job_id and the channel pid/info
+            case
+                damage_channels:init_job(
+                    ChannelId,
+                    #{
+                        cost => Cost,
+                        feature_hash => FeatureHash,
+                        report_hash_dry_run => ReportHash
+                    }
+                )
+            of
+                {ok, #{job_id := JobId, channel_pid := ChanPid} = InitInfo} ->
+                    %% 3) Execute the BDD for real, charging via the channel
+                    %%    execute_bdd/5 can use job_id + channel_pid to:
+                    %%      - call damage_jobs:record_step/6 via the channel
+                    %%      - update JobRegistry off-chain per step
+                    ExecOpts = [
+                        {dry_run, false},
+                        {job_id, JobId},
+                        {channel_pid, ChanPid}
+                    ],
+                    {200, ExecResult} =
+                        execute_bdd_once(
+                            get_stream_config(ExecOpts, ContextIn, Req), ContextIn, FeatureData
+                        ),
+                    %#{
+                    %%  public_key := AeAccount,
+                    %%  feature_hash := FeatureHash,
+                    %%  report_hash := ReportHash,
+                    %  node_public_key := NodePublicKey
+                    % } = ExecResult,
+                    %Spend = maps:get(step_spend, ExecResult, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
+                    %ok = damage_channels:channel_contract_call(
+                    %?DAMAGE_TOKEN_CONTRACT,
+                    %"contracts/token.aes",
+                    %"spend",
+                    %[
+                    %    binary_to_list(NodePublicKey),
+                    %    integer_to_list(float_to_full_integer(Spend)),
+                    %    FeatureHash,
+                    %    ReportHash
+                    %]),
+
+                    %% 4) Finalise by snapshotting latest channel state on-chain
+                    %%    damage_channels:finalize_snapshot/2 should:
+                    %%      - fetch {channel_id, round, state_hash} from ChanPid
+                    %%      - build & post channel_snapshot_solo_tx (or force_progress if needed)
+                    ?LOG_INFO("Execition compl;ete finalizing ~p", [ExecResult]),
+                    SnapRes = damage_channels:finalize_snapshot(
+                        ChanPid,
+                        #{from_id => AeAccount}
+                    ),
+                    ?LOG_INFO("Execution compl;ete finalized ~p", [SnapRes]),
+
+                    Reply = #{
+                        status => <<"ok">>,
+                        job_id => JobId,
+                        dry_run => DryRunRecord,
+                        init => InitInfo,
+                        exec => ExecResult,
+                        snapshot => SnapRes
+                    },
+                    ?LOG_DEBUG("execute_bdd wallet channel success ~p", [Reply]),
+                    {200, Reply};
+                {error, Reason} ->
+                    ?LOG_ERROR("execute_bdd wallet channel success ~p", [Reason]),
+                    {500, #{status => <<"notok">>, error => Reason}}
+            end;
         {Status, Response} ->
             {Status, Response}
     end;
@@ -566,6 +744,7 @@ from_json(Req, #{action := tx} = State) ->
             };
         Json when is_map(Json) ->
             {Status0, Response0} = do_action_tx_throttled(Json, State, Req),
+            ?LOG_DEBUG("response ~p", [Response0]),
             {
                 stop,
                 cowboy_req:reply(
@@ -589,29 +768,25 @@ from_json(Req0, State) ->
             {stop, Req2, State};
         Json when is_map(Json) ->
             %% choose streaming or not without guard functions
-            Stream = stream_mode(Req1, maps:get(concurrency, Json, 1)),
-            case check_execute_bdd(maps:put(stream, Stream, Json), State, Req1) of
-                {_Status, _Response} when Stream =:= maybe_stream ->
+            %Concurrency = maps:get(concurrency, Json, 1),
+            Stream = maps:get(stream, Json, false),
+            case execute_bdd(Json, State, Req1) of
+                {_Status, _Response} when Stream == true ->
                     {stop, Req1, State};
                 {Status, Response} ->
                     %% normal JSON reply
+                    JsonBin = jsx:encode(Response),
                     Req2 = cowboy_req:reply(
                         Status,
-                        #{<<"content-type">> => <<"application/json">>},
-                        jsx:encode(Response),
+                        #{
+                            <<"content-type">> => <<"application/json">>,
+                            <<"cache-control">> => <<"no-cache">>
+                        },
+                        JsonBin,
                         Req1
                     ),
                     {stop, Req2, State}
-            end;
-        _Other ->
-            %% not a map / missing 'feature' etc.
-            Req2 = cowboy_req:reply(
-                400,
-                #{<<"content-type">> => <<"text/plain">>},
-                <<"Missing or invalid 'feature' payload.">>,
-                Req1
-            ),
-            {stop, Req2, State}
+            end
     end.
 
 from_html(Req0, State) ->
@@ -626,31 +801,33 @@ from_html(Req0, State) ->
             #{color := <<"true">>} -> true;
             _ -> false
         end,
-    MaybeStream = stream_mode(Req1, Concurrency),
+    Stream = stream_mode(Req1, Concurrency),
 
-    case
-        check_execute_bdd(
-            #{
-                feature => Body,
-                color_formatter => ColorFormatter,
-                concurrency => Concurrency,
-                stream => MaybeStream
-            },
-            State,
-            Req1
-        )
-    of
+    Context = #{
+        feature => Body,
+        concurrency => Concurrency,
+        stream => Stream,
+        color_formatter => ColorFormatter
+    },
+    ?LOG_INFO(
+        "ok execute_feature from_html ~p ",
+        [Req1]
+    ),
+    case execute_bdd(Context, State, Req1) of
+        {_Status, _Resp} when Stream =:= maybe_stream ->
+            %% all output has already gone via formatter+stream_reply
+            {stop, Req1, State};
         %% -------------------- OK (send JSON) --------------------
         {200, Response} ->
             ?LOG_INFO(
                 "ok execute_feature from_html ~p concurrency ~p",
                 [Response, Concurrency]
             ),
-            case MaybeStream of
+            case Stream of
                 false ->
                     Req2 = cowboy_req:reply(
                         200,
-                        #{<<"content-type">> => <<"application/json">>},
+                        #{<<"content-type">> => <<"text/plain">>},
                         jsx:encode(Response),
                         Req1
                     ),
@@ -659,7 +836,7 @@ from_html(Req0, State) ->
                     %% If you really want to stream success, do it here:
                     Req2 = cowboy_req:stream_reply(
                         200,
-                        #{<<"content-type">> => <<"application/json">>},
+                        #{<<"content-type">> => <<"text/plain">>},
                         Req1
                     ),
                     Req3 = cowboy_req:stream_body(jsx:encode(Response), fin, Req2),
@@ -668,12 +845,12 @@ from_html(Req0, State) ->
         %% -------------------- Error (stream the dry-run error) --------------------
         {Status, Response} ->
             ?LOG_INFO("~p execute_feature from_html ~p", [Status, Response]),
-            case MaybeStream of
+            case Stream of
                 false ->
                     %% Non-streaming error JSON
                     Req2 = cowboy_req:reply(
-                        Status,
-                        #{<<"content-type">> => <<"application/json">>},
+                        200,
+                        #{<<"content-type">> => <<"text/plain">>},
                         jsx:encode(Response),
                         Req1
                     ),
@@ -681,7 +858,7 @@ from_html(Req0, State) ->
                 _ ->
                     %% Streaming error text (or JSON – your call)
                     Req2 = cowboy_req:stream_reply(
-                        Status,
+                        200,
                         #{<<"content-type">> => <<"text/plain">>},
                         Req1
                     ),
@@ -707,28 +884,46 @@ to_html(Req, State) ->
 to_json(Req, #{action := version} = State) ->
     {ok, Version} = application:get_key(damage, vsn),
     Resp = #{
-        ok => true,
         version => list_to_binary(Version)
     },
-    NodeDamageBalance = damage_ae:node_damage_balance(),
-    NodeAeBalance = damage_ae:node_ae_balance(),
-    #{public_key := PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
-    Resp0 =
-        #{
-            public_key => list_to_binary(PubKey),
-            damage_balance => NodeDamageBalance,
-            ae_balance => NodeAeBalance
-        },
-    {
-        jsx:encode(
-            maps:merge(
-                Resp,
-                Resp0
-            )
-        ),
-        Req,
-        State
-    };
+    case secrets:node_keypair() of
+        #{public_key := PubKey, private_key := _NodePrivateKey} ->
+            NodeDamageBalance = damage_ae:node_damage_balance(),
+            NodeAeBalance = damage_ae:node_ae_balance(),
+            Resp0 =
+                #{
+                    ok => true,
+                    public_key => list_to_binary(PubKey),
+                    damage_balance => NodeDamageBalance,
+                    ae_balance => NodeAeBalance
+                },
+            {
+                jsx:encode(
+                    maps:merge(
+                        Resp,
+                        Resp0
+                    )
+                ),
+                Req,
+                State
+            };
+        {error, Error} ->
+            Resp0 =
+                #{
+                    ok => false,
+                    error => atom_to_binary(Error)
+                },
+            {
+                jsx:encode(
+                    maps:merge(
+                        Resp,
+                        Resp0
+                    )
+                ),
+                Req,
+                State
+            }
+    end;
 to_json(Req0, State) ->
     Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,
     %Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),

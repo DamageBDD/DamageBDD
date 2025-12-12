@@ -43,7 +43,7 @@ step(
     ["I wait for funds in escrow", PaymentHash],
     _
 ) ->
-    ?LOG_INFO("I release funds in escrow ~p", [PaymentHash]),
+    ?LOG_INFO("I wait for funds in escrow ~p", [PaymentHash]),
     Context;
 step(
     _Config,
@@ -53,5 +53,6 @@ step(
     ["I release funds in escrow", PaymentHash],
     _
 ) ->
+    true = steps_utils:is_admin(Context),
     ?LOG_INFO("I release funds in escrow ~p", [PaymentHash]),
     Context.

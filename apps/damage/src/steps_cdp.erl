@@ -11,6 +11,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("browser_mgr.hrl").
 
 -export([step/6, test/0]).
 
@@ -67,20 +68,29 @@ ensure_client(Context0) ->
         true ->
             {ok, Context0};
         false ->
-            case resolve_account_cdp(Context0) of
-                {ws, WSUrl} ->
-                    case cdp_client:start_link(#{ws_url => WSUrl}) of
-                        {ok, Pid} ->
-                            ok = cdp_client:enable_console(Pid),
-                            {ok, maps:put(cdp_pid, Pid, Context0)};
-                        Error ->
-                            {error, Error}
-                    end;
-                {hostport, Host, Port} ->
-                    case cdp_client:start_link(#{host => Host, port => Port, type => <<"page">>}) of
-                        {ok, Pid} ->
-                            ok = cdp_client:enable_console(Pid),
-                            {ok, maps:put(cdp_pid, Pid, Context0)};
+            case browser_mgr:ensure_session(Context0) of
+                {ok, Rec} ->
+                    %% or maps:get(host, Rec) if you prefer maps
+                    Host = Rec#rec.host,
+                    Port = Rec#rec.port,
+                    case
+                        cdp_client:discover_ws(#{host => Host, port => Port, type => <<"page">>})
+                    of
+                        {ok, WS} ->
+                            case
+                                cdp_client:start_link(#{ws_url => WS, host => Host, port => Port})
+                            of
+                                {ok, Pid} ->
+                                    ok = cdp_client:enable_console(Pid),
+                                    {ok, Context0#{
+                                        cdp_pid => Pid,
+                                        cdp_endpoint => #{host => Host, port => Port},
+                                        chrome_user_data_dir => Rec#rec.user_data_dir,
+                                        chrome_log => Rec#rec.log_file
+                                    }};
+                                Error ->
+                                    {error, Error}
+                            end;
                         Error ->
                             {error, Error}
                     end;
@@ -98,75 +108,6 @@ do_call(Context0, Method, Params) ->
         Error ->
             Error
     end.
-
-%% Best-effort resolver of current account's CDP endpoint.
-%% Supported shapes in Context:
-%%   - cdp_ws_url :: binary()
-%%   - cdp_endpoint :: #{host => "127.0.0.1", port => 9222}
-%%   - account / current_account / accounts_current :: #{cdp => #{ws_url|host|port|debug_port}}
-resolve_account_cdp(Context) ->
-    case maps:get(cdp_ws_url, Context, undefined) of
-        B when is_binary(B) -> {ws, B};
-        _ ->
-            case maps:get(cdp_endpoint, Context, undefined) of
-                #{host := Host, port := Port} -> {hostport, Host, Port};
-                _ -> from_account_maps(Context)
-            end
-    end.
-
-from_account_maps(Context) ->
-    Candidates = [
-        maps:get(account, Context, undefined),
-        maps:get(current_account, Context, undefined),
-        maps:get(accounts_current, Context, undefined)
-    ],
-    Acct = lists:keyfind(true, 1, [{is_map(C), C} || C <- Candidates]),
-    case Acct of
-        false -> default_local();
-        {true, A} -> from_account(A)
-    end.
-
-from_account(A) when is_map(A) ->
-    CDP =
-        case maps:get(cdp, A, undefined) of
-            M when is_map(M) -> M;
-            _ -> A
-        end,
-    case maps:get(ws_url, CDP, undefined) of
-        B when is_binary(B) -> {ws, B};
-        _ ->
-            Host = pick_host(CDP),
-            Port = pick_port(CDP),
-            case {Host, Port} of
-                {undefined, _} -> default_local();
-                {_, undefined} -> default_local();
-                {H, P} -> {hostport, H, P}
-            end
-    end.
-
-pick_host(M) ->
-    case {maps:get(host, M, undefined), maps:get(<<"host">>, M, undefined)} of
-        {H, _} when is_list(H) -> H;
-        {undefined, HB} when is_binary(HB) -> binary_to_list(HB);
-        _ -> "127.0.0.1"
-    end.
-pick_port(M) ->
-    case
-        {
-            maps:get(port, M, undefined),
-            maps:get(debug_port, M, undefined),
-            maps:get(<<"port">>, M, undefined),
-            maps:get(<<"debug_port">>, M, undefined)
-        }
-    of
-        {P, _, _, _} when is_integer(P) -> P;
-        {_, P, _, _} when is_integer(P) -> P;
-        {_, _, PB, _} when is_integer(PB) -> PB;
-        {_, _, _, PB} when is_integer(PB) -> PB;
-        _ -> 9222
-    end.
-
-default_local() -> {hostport, "127.0.0.1", 9222}.
 
 %% Minimal JSONPath: "$.a.b.c" (keys only)
 json_path_simple(Map, Path) when is_map(Map) ->

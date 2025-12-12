@@ -58,6 +58,15 @@ write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) or is_li
       lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
       [append]
     ).
+%% Stream raw docker output chunks
+format(#{output := _} = Config, stdout, Bin) when is_binary(Bin); is_list(Bin) ->
+  ok = write_file(Config, "stdout> ~s", [Bin]);
+format(#{output := _} = Config, stderr, Bin) when is_binary(Bin); is_list(Bin) ->
+  ok = write_file(Config, "stderr> ~s", [Bin]);
+
+%% Non-streaming / non-HTTP runs: ignore docker chunks
+format(_Config, raw, _Bin) ->
+  ok;
 
 
 format(Config, error, {LineNo, Message}) ->
@@ -85,7 +94,7 @@ format(Config, feature, {FeatureName, LineNo, Tags, Description}) ->
         get_keyword(Config, feature_keyword),
         FeatureName,
         LineNo,
-        damage_utils:binarystr_join([X || {_Line, X} <- Tags], ","),
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>),
         Description
       ]
     );
@@ -107,7 +116,7 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
         get_keyword(Config, <<"Scenario:">>),
         ScenarioName,
         LineNo,
-        damage_utils:binarystr_join([X || {_Line, X} <- Tags], ",")
+        damage_utils:binarystr_join([X || {_Line, X} <- Tags], <<",">>)
       ]
     );
 
@@ -146,8 +155,8 @@ format(
 ) ->
   ok = write_file(Config, "\n~s \n\n~s\n", [StepStatement, Args]);
 
-format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash}) ->
-  ok = write_file(Config, "\nSummary: \n Feature: ~s\nReport ~s\nRunId: ~p\n", [FeatureHash, ReportDir, RunId]).
+format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address}) ->
+  ok = write_file(Config, "\nSummary: \n Feature: ~s\nReport ~s\nRunId: ~s\nAccount: ~s", [FeatureHash, ReportDir, RunId, Address]).
 
 
 format_args([]) -> <<"\n">>;

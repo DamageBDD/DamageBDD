@@ -22,7 +22,6 @@
     hash_to_curve/1,
     curve_add/4
 ]).
--include("ecai.hrl").
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -37,6 +36,18 @@
 start() ->
     io:format("Elliptical AI initialized. Ready for computation.~n").
 
+%% Pull the contract id from Opts or application env
+-spec ct_id(map()) -> binary().
+ct_id(Opts) ->
+    case maps:get(ct, Opts, undefined) of
+        <<"ct_", _/binary>> = Ct ->
+            Ct;
+        _ ->
+            case application:get_env(ecai, knowledge_registry_ct) of
+                {ok, <<"ct_", _/binary>> = C} -> C;
+                _ -> error({missing_contract_id, knowledge_registry_ct})
+            end
+    end.
 init() ->
     PrivDir = code:priv_dir(ecai),
     NifPath = filename:join([PrivDir, "ecai"]),
@@ -46,6 +57,12 @@ init() ->
 hash_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 
 curve_add(_X1, _Y1, _X2, _Y2) -> erlang:nif_error(nif_library_not_loaded).
+-spec point_to_filename_hash({integer(), integer()}) -> binary().
+point_to_filename_hash({X, Y}) ->
+    Bin = term_to_binary({X, Y}),
+    Hash = crypto:hash(sha256, Bin),
+    Slug = base32:encode(binary:part(Hash, 0, 20)),
+    <<"ecai_", Slug/binary, ".wav">>.
 
 mint_knowledge(
     #{public_key := AeAccount, private_key := _PrivateKey} = KeyPair,
@@ -57,15 +74,16 @@ mint_knowledge(
     } = Knowledge
 ) ->
     EncodedKnowledge = encode(Knowledge),
-    Point = {_X, _Y} = ecai:hash_to_curve(EncodedKnowledge),
-    MetaData = #{Point => ecai:hash_to_curve(EncodedKnowledge)},
+    Point = ecai:hash_to_curve(EncodedKnowledge),
+    {ok, Hash} = ipfs:add({data, EncodedKnowledge, point_to_filename_hash(Point)}),
+    MetaData = #{point => Point, ipfs_hash => Hash},
 
     damage_ae:contract_call(
         KeyPair,
-        ?ECAI_KNOWLEDGE_NFT_CONTRACT,
+        ct_id(#{}),
         "contracts/knowledge_nft.aes",
         "mint",
-        [AeAccount, MetaData, Knowledge]
+        [AeAccount, MetaData, Hash]
     ).
 
 encode(#{subject := Subject, predicate := Predicate, object := Object, context := Context}) ->

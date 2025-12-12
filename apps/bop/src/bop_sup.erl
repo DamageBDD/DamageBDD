@@ -35,7 +35,7 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 init([]) ->
     {ok, Pools} = application:get_env(bop, pools),
-    ?LOG_DEBUG("Starting workers ~p~n", [Pools]),
+    ?LOG_DEBUG("Starting BoP workers ~p~n", [Pools]),
     SupFlags = {one_for_one, 10, 10},
     PoolSpecs =
         lists:map(
@@ -47,6 +47,14 @@ init([]) ->
         ),
     PoolSpecs0 =
         [
+            #{
+                id => bop_nostr,
+                start => {damage_nostr, start_link, [bop_nostr_nsec]},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_nostr]
+            }
             %#{
             %    % mandatory
             %    id => bop,
@@ -62,5 +70,5 @@ init([]) ->
             %}
         ] ++
             PoolSpecs,
-    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
+    %?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.

@@ -5,6 +5,7 @@ set -x
 SERVICE_NAME="${APP}"
 INSTALL_DIR="${PREFIX}/${APP}/"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+CONFIG_FILE="/etc/${APP}/${APP}.config"
 
 
 log() { printf '%s\n' "[postinst] $*"; }
@@ -48,6 +49,58 @@ systemd_running() {
   return 0
 }
 
+write_default_config() {
+    umask 022
+
+    CONFIG_DIR="$(dirname "$CONFIG_FILE")"
+
+    # ✅ Ensure config directory exists
+    if [ ! -d "$CONFIG_DIR" ]; then
+        echo "[postinst] creating config directory: $CONFIG_DIR"
+        mkdir -p "$CONFIG_DIR" || {
+            echo "[postinst][ERROR] failed to create config directory"
+            return 1
+        }
+        chmod 0755 "$CONFIG_DIR"
+    fi
+
+    # ✅ Do not overwrite existing config
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "[postinst] config exists, not overwriting: $CONFIG_FILE"
+        return 0
+    fi
+
+    echo "[postinst] creating default config: $CONFIG_FILE"
+
+    cat > "$CONFIG_FILE" <<'EOF'
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+
+[
+    {
+        damage,
+        [
+            %{ip, {0, 0, 0, 0}},
+            {ip, {127, 0, 0, 1}},
+            {port, 4888},
+
+            {
+                node_admins,
+                [
+                    % add any node admin wallets,
+                    % WARNING: only add trusted wallets
+                    % this exposes admin access to your node
+                ]
+            }
+        ]
+    }
+].
+EOF
+
+    chmod 0644 "$CONFIG_FILE"
+}
+
+
+
 write_unit() {
   umask 022
   cat > "$SERVICE_FILE" <<EOF
@@ -61,7 +114,7 @@ Type=simple
 User=damage
 Environment=SHELL=sh
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${INSTALL_DIR}/bin/damage foreground
+ExecStart=${INSTALL_DIR}/bin/damage foreground -config ${CONFIG_FILE}
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=65536
@@ -103,6 +156,7 @@ case "${1:-configure}" in
 
     log "Writing systemd unit to ${SERVICE_FILE}"
     write_unit
+    write_default_config
 
     log "Reloading systemd daemon"
     systemctl daemon-reload

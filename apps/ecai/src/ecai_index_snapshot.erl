@@ -10,6 +10,7 @@
     force/0
 ]).
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
+-import(damage_utils, [ensure_dir/1]).
 
 -include_lib("kernel/include/logger.hrl").
 %% ecai_index_snapshot.erl
@@ -45,6 +46,7 @@ code_change(_, S, _) -> {ok, S}.
 
 atomic_save(Ctx, Path) ->
     Tmp = Path ++ ".tmp",
+    ensure_dir(filename:dirname(Path)),
     case ecai_search:save(Ctx, Tmp) of
         ok ->
             file:rename(Tmp, Path),

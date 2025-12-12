@@ -13,8 +13,8 @@
 
 %% API
 
--export([start_link/0, stop/0]).
--export([subscribe/0, getinfo/0, reply_event/4]).
+-export([start_link/1, stop/1]).
+-export([subscribe/1, getinfo/1, reply_event/4]).
 
 %% gen_server callbacks
 
@@ -33,22 +33,22 @@
         test_nip800/0
     ]
 ).
--export([get_posts_since/2]).
+-export([get_posts_since/3]).
 -export([get_public_keys/1]).
 -export([get_nostr_json/0]).
--export([get_metadata/1]).
+-export([get_metadata/2]).
 -export([decode_npub/1]).
 -export([decode_nsec/1]).
--export([xclip_post/1]).
--export([post_note/1]).
+-export([xclip_post/2]).
+-export([post_note/2]).
 -export([post_bdd/1]).
--export([post_note/3]).
+-export([post_note/4]).
 -export([post_bdd/2]).
 -export([get_recent_posts/2]).
 -export([
     parse_nostrconnect_uri/1,
-    nip46_connect/1,
-    nip46_send/2,
+    nip46_connect/2,
+    nip46_send/3,
     nip04_encrypt/3
 ]).
 -export([
@@ -57,6 +57,7 @@
     publish_zap_receipt/3,
     parse_zap_request/1
 ]).
+-import(damage_utils, [to_bin/1]).
 
 %% Define the record to store state
 
@@ -69,43 +70,47 @@
     npub_cache
 }).
 
--define(NOSTR_PROC, {?MODULE, nostr}).
+-define(NOSTR_PROC(Nsec), {?MODULE, Nsec}).
 
 %%% API Functions
 %% Start the gen_server
 
-start_link() -> gen_server:start_link(?MODULE, [], []).
+start_link(NsecKey) -> gen_server:start_link(?MODULE, [NsecKey], []).
 
 %% Stop the gen_server
 
-stop() ->
-    {ok, Pid} = gproc:lookup_local_name(?NOSTR_PROC),
+stop(NsecKey) ->
+    {ok, Pid} = gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
     gen_server:call(Pid, stop).
 
 %% Subscribe to the relay
 
-subscribe() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), subscribe).
+subscribe(NsecKey) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), subscribe).
 
-getinfo() -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), getinfo).
-get_metadata(Npub) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {get_metadata, Npub}).
+getinfo(NsecKey) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), getinfo).
+get_metadata(NsecKey, Npub) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {get_metadata, Npub}).
 
-get_posts_since(Npub, Since) ->
+get_posts_since(NsecKey, Npub, Since) ->
     gen_server:call(
-        gproc:lookup_local_name(?NOSTR_PROC),
+        gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
         {get_posts_since, Npub, Since}
     ).
 
-post_note(Note) -> gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note, [], ""}).
+post_note(NsecKey, Note) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {post_note, Note, [], ""}).
 
-post_note(Note, Tags, ImageURL) ->
-    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_note, Note, Tags, ImageURL}).
+post_note(NsecKey, Note, Tags, ImageURL) ->
+    gen_server:call(
+        gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {post_note, Note, Tags, ImageURL}
+    ).
 post_bdd(BDD) ->
-    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_bdd, BDD, []}).
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(damage_nostr_nsec)), {post_bdd, BDD, []}).
 post_bdd(BDD, Tags) ->
-    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {post_bdd, BDD, Tags}).
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(damage_nostr_nsec)), {post_bdd, BDD, Tags}).
 
-get_recent_posts(Npub, Limit) ->
-    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC), {get_recent_posts, Npub, Limit}).
+get_recent_posts(NsecKey, Limit) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {get_recent_posts, Limit}).
 %% Parse a nostrconnect:// URI into a map
 parse_nostrconnect_uri(Uri0) ->
     Uri = to_bin(Uri0),
@@ -126,28 +131,28 @@ parse_nostrconnect_uri(Uri0) ->
 
 %% Kick off NIP-46 pairing: send {"method":"connect","params":[<our-pubkey>,<secret>]}
 %% Returns the signed event you should publish to the listed relays.
-nip46_connect(Uri) ->
+nip46_connect(NsecKey, Uri) ->
     M = parse_nostrconnect_uri(Uri),
     AppHex = maps:get(app_pubkey, M),
     Secret = maps:get(secret, M),
-    nip46_send(AppHex, #{
+    nip46_send(NsecKey, AppHex, #{
         method => <<"connect">>,
         params => [lower_hex(public_key()), Secret]
     }).
 
 %% Low-level: build & encrypt a NIP-46 request to a remote app pubkey (hex)
-nip46_send(RemoteHexPubKey, Payload) ->
+nip46_send(NsecKey, RemoteHexPubKey, Payload) ->
     gen_server:call(
-        gproc:lookup_local_name(?NOSTR_PROC),
+        gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
         {nip46_send, RemoteHexPubKey, Payload}
     ).
 
 %%% gen_server Callbacks
 %% Initialize the server and open a WebSocket connection
 
-init([]) ->
+init([NsecKey]) ->
     {ok, Host} = application:get_env(damage, nostr_relay),
-    case secrets:retrieve_decrypt(nostr_nsec) of
+    case secrets:retrieve_decrypt(NsecKey) of
         {ok, Nsec} ->
             PrivateKey = list_to_binary(decode_nsec(Nsec)),
             {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
@@ -159,7 +164,7 @@ init([]) ->
                 ),
             StreamRef = gun:ws_upgrade(ConnPid, "/", []),
             HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-            gproc:reg_other({n, l, ?NOSTR_PROC}, self()),
+            gproc:reg_other({n, l, ?NOSTR_PROC(NsecKey)}, self()),
             %% <- LISTEN TO CLN EVENTS
             cln:register_listener(invoice_paid),
             {
@@ -609,9 +614,6 @@ decode_nsec(Nsec) ->
     {ok, #{data := Data}} = bech32:decode(Nsec),
     {ok, RawPrivateKey} = bech32:convertbits(Data, 5, 8, [{padding, false}]),
     RawPrivateKey.
-to_bin(B) when is_binary(B) -> B;
-to_bin(L) when is_list(L) -> list_to_binary(L);
-to_bin(Else) -> iolist_to_binary(Else).
 
 hash_sha256_hex(Bin) ->
     lower_hex(crypto:hash(sha256, Bin)).
@@ -639,7 +641,7 @@ construct_http_auth(PubKey, Url, Method, Timestamp, Body) ->
 %% Parse the zap request JSON (stored in the BOLT11 description) into a map.
 %% Returns {ok, #{...}} or {error, Reason}.
 parse_zap_request(DescBin) when is_binary(DescBin) ->
-    try jsone:decode(DescBin) of
+    try jsx:decode(DescBin) of
         M when is_map(M) -> {ok, M}
     catch
         _:E -> {error, {invalid_zap_request_json, E}}
@@ -875,7 +877,7 @@ finalize_event(Event, PrivateKey) ->
     Event#{<<"id">> => lower_hex(Hash), <<"sig">> => Sig}.
 
 test() ->
-    post_note(<<"Hello from Erlang!">>).
+    post_note(damage_nostr_nsec, <<"Hello from Erlang!">>).
 test_nip800() ->
     post_bdd(file:read_file("features/jsontest.feature")).
 
@@ -901,7 +903,7 @@ test_nip05() ->
         ).
 
 test_generate_pdf() -> _DataJson = file:open("test/nostr_pdftest.json").
-xclip_post(AltText) ->
+xclip_post(NsecKey, AltText) ->
     {ok, [{stdout, Stdout}]} = exec:run("xclip -o -selection clipboard \n", [stdout, sync]),
     {ok, [{stdout, ImageFile}]} = exec:run(
         "rofi -show filebrowser -filebrowser-command 'echo' -modes filebrowser \n", [stdout, sync]
@@ -933,7 +935,7 @@ xclip_post(AltText) ->
             <<"fallback ", Fallback2/binary>>
         ]
     ],
-    post_note(Content, Tags, ImageURL).
+    post_note(NsecKey, Content, Tags, ImageURL).
 
 reward_mention(Npub) ->
     AmountSats = 100,
@@ -954,7 +956,8 @@ get_ln_invoice(Npub, AmountSats) ->
 
 %% Query a relay for the npub's metadata and extract LNURL
 get_lnurl_from_npub(Npub) ->
-    extract_lnurl(get_metadata(Npub)).
+    Metadata = self() ! {get_metadata, Npub},
+    extract_lnurl(Metadata).
 
 %% Extract LNURL from metadata
 extract_lnurl(Content) ->
