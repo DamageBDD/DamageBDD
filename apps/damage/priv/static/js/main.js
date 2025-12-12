@@ -1,7 +1,10 @@
 import * as wallet from "/static/js/wallet.js";
 import { initDamageBDDPicker } from '/static/js/featurePicker.js';
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
+import { ensureChannel } from '/static/js/ensureChannel.js';
 
+const MDW_BASE = "https://mainnet.aeternity.io/mdw";
+const NODE_BASE = "https://mainnet.aeternity.io";
 
 
 function showConnectStatus(message, type = 'info') {
@@ -140,6 +143,52 @@ function generateDamageQR(address){
 			event.preventDefault();
 			await nodeUnlock();
 		});
+		document.getElementById("node-password-confirm").addEventListener("keydown", async function(event) {
+			if (event.ctrlKey && event.key === "Enter") {
+				event.preventDefault();
+				await nodeSetPassword();
+			}});
+		document.getElementById("node-set-password-submit-btn").addEventListener("click", async (event) => {
+			event.preventDefault();
+			await nodeSetPassword();
+		});
+
+		// Sweep wallet button handler
+		const sweepWalletBtn = document.getElementById("sweep-wallet-btn");
+		if (sweepWalletBtn) {
+			sweepWalletBtn.addEventListener("click", async (event) => {
+				event.preventDefault();
+				await sweepWallet();
+			});
+		}
+
+		// Skip sweep button handler
+		const skipSweepBtn = document.getElementById("skip-sweep-btn");
+		if (skipSweepBtn) {
+			skipSweepBtn.addEventListener("click", (event) => {
+				event.preventDefault();
+				MicroModal.close("node-set-password-modal");
+			});
+		}
+
+		// Initialize tabs for node setup
+		if (typeof Tabby !== 'undefined') {
+			const nodeSetupTabs = Tabby('[data-node-setup-tabs]');
+			
+			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
+			document.addEventListener('tabby', function(event) {
+				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
+					// Check if seed phrase was already set
+					const revealBtn = document.getElementById("reveal-seed-phrase-btn");
+					if (revealBtn && revealBtn.dataset.seedPhrase) {
+						// Seed phrase already loaded, nothing to do
+					}
+				}
+				if (event.detail && event.detail.content && event.detail.content.id === 'sweep-wallet-tab') {
+					loadWalletBalance();
+				}
+			}, false);
+		}
 
 		showHideLoginButton();
 		MicroModal.init({
@@ -152,7 +201,7 @@ function generateDamageQR(address){
 					var address = window.TokenManager.getAddress();
 					generateDamageQR(address);
 					var damageAddr = document.getElementById("damage-address");
-						damageAddr.value = address;
+					damageAddr.value = address;
 				}
 			}
 		});
@@ -225,6 +274,282 @@ function generateDamageQR(address){
 
 	function isAuthenticated() {
 		if(window.TokenManager.getToken()) return true;
+		return false;
+	}
+	async function nodeSetPassword() {
+		const passwordInput = document.getElementById("node-password");
+		const confirmInput  = document.getElementById("node-password-confirm");
+
+		const password = passwordInput.value.trim();
+		const confirm  = confirmInput.value.trim();
+
+		if (!password || !confirm) {
+			alert("Please enter and confirm your node password.");
+			return;
+		}
+
+		if (password !== confirm) {
+			alert("Passwords do not match.");
+			return;
+		}
+
+		if (password.length < 8) {
+			alert("Password must be at least 8 characters long.");
+			return;
+		}
+
+		try {
+			const resp = await fetch("/secrets/set_password", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json"
+				},
+				body: JSON.stringify({
+					password: password,
+					password_confirm: confirm
+				})
+			});
+
+			const data = await resp.json();
+
+			if (data.status === "ok") {
+				// Show seed phrase backup tab
+				const seedPhraseTabLink = document.getElementById("seed-phrase-tab-link");
+				const sweepWalletTabLink = document.getElementById("sweep-wallet-tab-link");
+				
+				if (seedPhraseTabLink) seedPhraseTabLink.style.display = "";
+				if (sweepWalletTabLink) sweepWalletTabLink.style.display = "";
+
+				// Initialize tabs if not already done
+				if (typeof Tabby !== 'undefined') {
+					// Wait a bit for DOM to update
+					setTimeout(() => {
+						const tabs = Tabby('[data-node-setup-tabs]');
+						
+						// Switch to seed phrase backup tab
+						if (data.seed_phrase || data.mnemonic) {
+							const seedPhrase = data.seed_phrase || data.mnemonic;
+							showSeedPhraseBackup(seedPhrase);
+						} else {
+							// Try to fetch seed phrase from server
+							fetchSeedPhrase().then(seedPhrase => {
+								if (seedPhrase) {
+									showSeedPhraseBackup(seedPhrase);
+								} else {
+									// If no seed phrase available, go to sweep wallet tab
+									tabs.toggle('sweep-wallet-tab');
+									loadWalletBalance();
+								}
+							});
+						}
+					}, 100);
+				}
+
+			} else {
+				alert(`Failed to set password: ${data.message || "Unknown error"}`);
+			}
+
+		} catch (err) {
+			console.error("Set password error:", err);
+			alert("Error setting password. Check console for details.");
+		}
+	}
+
+	async function fetchSeedPhrase() {
+		try {
+			const resp = await fetch("/secrets/get_seed_phrase", {
+				method: "GET",
+				headers: { "Content-Type": "application/json" }
+			});
+			const data = await resp.json();
+			if (data.status === "ok" && (data.seed_phrase || data.mnemonic)) {
+				return data.seed_phrase || data.mnemonic;
+			}
+			return null;
+		} catch (err) {
+			console.error("Fetch seed phrase error:", err);
+			return null;
+		}
+	}
+
+	function showSeedPhraseBackup(seedPhrase) {
+		const tabs = Tabby('[data-node-setup-tabs]');
+		const seedPhraseTabLink = document.getElementById("seed-phrase-tab-link");
+		const placeholder = document.getElementById("seed-phrase-placeholder");
+		const display = document.getElementById("seed-phrase-display");
+		const wordsDiv = document.getElementById("seed-phrase-words");
+		const revealBtn = document.getElementById("reveal-seed-phrase-btn");
+		const copyBtn = document.getElementById("copy-seed-phrase-btn");
+		const confirmation = document.getElementById("seed-phrase-confirmation");
+		const okBtn = document.getElementById("seed-phrase-ok-btn");
+		const confirmedCheckbox = document.getElementById("seed-phrase-confirmed");
+		
+		// Switch to seed phrase tab
+		if (seedPhraseTabLink) {
+			seedPhraseTabLink.style.display = "";
+			tabs.toggle('seed-phrase-backup-tab');
+		}
+		
+		// Store seed phrase for reveal
+		if (revealBtn && !revealBtn.dataset.seedPhrase) {
+			revealBtn.dataset.seedPhrase = seedPhrase;
+			
+			revealBtn.onclick = () => {
+				if (wordsDiv && seedPhrase) {
+					// Split seed phrase into words and display nicely
+					const words = seedPhrase.trim().split(/\s+/);
+					wordsDiv.innerHTML = words.map((word, idx) => 
+						`<span class="seed-word"><span class="seed-word-number">${idx + 1}</span>${word}</span>`
+					).join('');
+					
+					if (placeholder) placeholder.style.display = "none";
+					if (display) display.style.display = "block";
+					if (copyBtn) copyBtn.style.display = "block";
+					if (confirmation) confirmation.style.display = "block";
+					revealBtn.style.display = "none";
+				}
+			};
+		}
+		
+		// Copy to clipboard
+		if (copyBtn) {
+			copyBtn.onclick = () => {
+				if (seedPhrase) {
+					navigator.clipboard.writeText(seedPhrase).then(() => {
+						copyBtn.textContent = "Copied!";
+						setTimeout(() => {
+							copyBtn.textContent = "Copy to Clipboard";
+						}, 2000);
+					}).catch(err => {
+						console.error("Copy failed:", err);
+						alert("Failed to copy. Please select and copy manually.");
+					});
+				}
+			};
+		}
+		
+		// Enable OK button when checkbox is checked
+		if (confirmedCheckbox && okBtn) {
+			confirmedCheckbox.onchange = () => {
+				okBtn.disabled = !confirmedCheckbox.checked;
+			};
+			
+			okBtn.onclick = () => {
+				if (confirmedCheckbox.checked) {
+					// Move to sweep wallet tab or close modal
+					const sweepWalletTabLink = document.getElementById("sweep-wallet-tab-link");
+					if (sweepWalletTabLink && sweepWalletTabLink.style.display !== "none") {
+						tabs.toggle('sweep-wallet-tab');
+						loadWalletBalance();
+					} else {
+						MicroModal.close("node-set-password-modal");
+					}
+				}
+			};
+		}
+	}
+
+	async function loadWalletBalance() {
+		const balanceDisplay = document.getElementById("wallet-balance-display");
+		if (!balanceDisplay) return;
+		
+		try {
+			// Try to get node public key/address
+			const resp = await fetch("/node/public_key", {
+				method: "GET",
+				headers: { "Content-Type": "application/json" }
+			});
+			const data = await resp.json();
+			
+			if (data.status === "ok" && data.public_key) {
+				// Fetch balance using existing wallet balance function if available
+				if (typeof fetchWalletBalance === 'function') {
+					await fetchWalletBalance(data.public_key);
+					const balanceDiv = document.getElementById('wallet-balance');
+					if (balanceDiv && balanceDiv.innerHTML) {
+						balanceDisplay.innerHTML = balanceDiv.innerHTML;
+					} else {
+						balanceDisplay.innerHTML = `<p>Wallet Address: <code>${data.public_key}</code></p>`;
+					}
+				} else {
+					balanceDisplay.innerHTML = `<p>Wallet Address: <code>${data.public_key}</code></p>`;
+				}
+			} else {
+				balanceDisplay.innerHTML = `<p class="warning-text">Unable to load wallet balance. You can still sweep funds if you know the address.</p>`;
+			}
+		} catch (err) {
+			console.error("Load wallet balance error:", err);
+			balanceDisplay.innerHTML = `<p class="warning-text">Unable to load wallet balance. You can still sweep funds if you know the address.</p>`;
+		}
+	}
+
+	async function sweepWallet() {
+		const addressInput = document.getElementById("sweep-wallet-address");
+		const passwordInput = document.getElementById("sweep-wallet-password");
+		
+		if (!addressInput || !passwordInput) {
+			alert("Form elements not found.");
+			return;
+		}
+		
+		const address = addressInput.value.trim();
+		const password = passwordInput.value.trim();
+		
+		if (!address) {
+			alert("Please enter a recipient address.");
+			return;
+		}
+		
+		if (!password) {
+			alert("Please enter your node password.");
+			return;
+		}
+		
+		// Validate address format (basic check for ak_ prefix)
+		if (!address.startsWith('ak_')) {
+			if (!confirm("The address doesn't start with 'ak_'. Are you sure this is correct?")) {
+				return;
+			}
+		}
+		
+		if (!confirm("Are you sure you want to sweep ALL funds from this wallet? This action cannot be undone.")) {
+			return;
+		}
+		
+		try {
+			const btn = document.getElementById("sweep-wallet-btn");
+			if (btn) {
+				btn.disabled = true;
+				btn.textContent = "Sweeping...";
+			}
+			
+			const resp = await fetch("/wallet/sweep", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					recipient_address: address,
+					password: password
+				})
+			});
+			
+			const data = await resp.json();
+			
+			if (data.status === "ok") {
+				alert("Funds swept successfully! Transaction: " + (data.tx_hash || "pending"));
+				MicroModal.close("node-set-password-modal");
+			} else {
+				alert(`Failed to sweep funds: ${data.message || "Unknown error"}`);
+			}
+		} catch (err) {
+			console.error("Sweep wallet error:", err);
+			alert("Error sweeping wallet. Check console for details.");
+		} finally {
+			const btn = document.getElementById("sweep-wallet-btn");
+			if (btn) {
+				btn.disabled = false;
+				btn.textContent = "Sweep All Funds";
+			}
+		}
 	}
 
 
@@ -252,17 +577,17 @@ function generateDamageQR(address){
 			const data = await resp.json();
 
 			if (data.status === "ok") {
-				alert("✅ Node unlocked successfully!");
+				alert("Node unlocked successfully!");
 				if (window.MicroModal) {
 					MicroModal.close("node-unlock-modal");
 				}
 				passwordInput.value = "";
 			} else {
-				alert(`❌ Unlock failed: ${data.message || "Unknown error"}`);
+				alert(`Unlock failed: ${data.message || "Unknown error"}`);
 			}
 		} catch (err) {
 			console.error("Unlock error:", err);
-			alert("⚠️ Error unlocking node. Check console for details.");
+			alert("Error unlocking node. Check console for details.");
 		}
 	}
 	function showLoginButton(){
@@ -379,90 +704,265 @@ function generateDamageQR(address){
 	}
 
 	async function submitDamageForm() {
-		const inputText = document.getElementById("damageTextArea").value;
-		const concurrencyText = 1;
-
-		const headers = new Headers();
-		headers.append("Content-Type", "application/json");
-
-		headers.append("Authorization", "Bearer " + TokenManager.getToken());
-
-
+		const inputText = document.getElementById("damageTextArea").value.trim();
+		const concurrency = 1;
 		const reportElement = addReport();
 		const mode = window.TokenManager.getMode();
-		if(mode == "custodial"){
-			const username = window.TokenManager.getEmail();
-			const request = {
-				method: 'POST',
-				credentials: 'include',
-				headers: headers,
-				body: JSON.stringify({
-					feature: inputText,
-					concurrency: concurrencyText,
-					stream: true
-				})
-			};
-			const response = await fetch("/execute_feature/", request);
 
-			if (response.status === 401) {
-				MicroModal.show("login-modal");
-			} else {
-				await streamResponseToDOM(response, reportElement);
-			}
+		if (!inputText) {
+			reportElement.innerText = "Please enter a feature before executing.";
+			return;
 		}
-		else {
-			const address = window.TokenManager.getAddress();
-			const request = {
-				method: 'POST',
-				credentials: 'include',
-				headers: headers,
-				body: JSON.stringify({
-					feature: inputText,
-					address: address,
-					concurrency: concurrencyText
-				})
-			};
-			const response = await fetch("/tx/", request);
-			// Optional: handle server asking for a signature
-			const data = await response.json();
-			if (data.status === "ok") {
-				const message = data.tx;
-				await window.connectWalletUnified();
-				const signature = await wallet.signTransactionSmart(
-					message,
-					"ae_mainnet",
-					window.location.origin,
-					window.location.origin
-				);
-				if(signature.ok) {
 
-					const signedRequest = {
-						method: 'POST',
-						credentials: 'include',
-						headers: headers,
-						body: JSON.stringify({
-							feature: inputText,
-							address: address,
-							concurrency: concurrencyText,
-							signed_tx: signature.result.signedTransaction
-						})
-					};
+		try {
+			const token = TokenManager.getToken();
+			const headers = buildJsonAuthHeaders(token);
 
-					const signedResponse = await fetch("/tx/", signedRequest);
-					if (signedResponse.status === 200) {
-						await streamResponseToDOM(signedResponse, reportElement);
-					} else {
-						const errText = await signedResponse.text();
-						reportElement.innerText = "Error after signing: " + errText;
-					}
-				} else {
-					reportElement.innerText = "Failed to sign: " + signature.error.message;
-				}
-			} else {
-					reportElement.innerText = "Failed to prepare transaction: " + data.message;
+			if (!token && mode === "custodial") {
+				// No token in custodial mode => force login
+				MicroModal.show("login-modal");
+				reportElement.innerText = "You need to log in to execute tests.";
+				return;
 			}
+
+			if (mode === "custodial") {
+				await handleCustodialExecution({ inputText, concurrency, headers, reportElement });
+			} else if (mode === "noncustodial" || mode === "onchain" || mode === "channel" || mode === "extension" ||!mode) {
+				await handleNonCustodialExecution({ inputText, concurrency, headers, reportElement });
+			} else {
+				reportElement.innerText = `Unknown execution mode: ${mode}`;
+			}
+		} catch (err) {
+			console.error("submitDamageForm unexpected error:", err);
+			reportElement.innerText =
+				"Unexpected error executing feature: " + (err && err.message ? err.message : String(err));
 		}
 	}
+	
+	function buildJsonAuthHeaders(token) {
+		const headers = new Headers();
+		headers.set("Content-Type", "application/json");
+		if (token) {
+			headers.set("Authorization", "Bearer " + token);
+		}
+		return headers;
+	}
+
+	async function extractErrorMessage(response) {
+		try {
+			const contentType = response.headers.get("Content-Type") || "";
+			if (contentType.includes("application/json")) {
+				const j = await response.json();
+				if (j && (j.message || j.error)) {
+					return j.message || j.error;
+				}
+				return JSON.stringify(j);
+			}
+		} catch (e) {
+			// ignore and fall back to text
+		}
+
+		try {
+			return await response.text();
+		} catch (e) {
+			return `HTTP ${response.status} ${response.statusText}`;
+		}
+	}
+
+	async function handleCustodialExecution({ inputText, concurrency, headers, reportElement }) {
+		const request = {
+			method: "POST",
+			credentials: "include",
+			headers,
+			body: JSON.stringify({
+				feature: inputText,
+				concurrency,
+				stream: true
+			})
+		};
+
+		let response;
+		try {
+			response = await fetch("/execute_feature/", request);
+		} catch (err) {
+			console.error("Network error calling /execute_feature/:", err);
+			reportElement.innerText =
+				"Network error while executing feature: " + (err.message || String(err));
+			return;
+		}
+
+		if (response.status === 401) {
+			MicroModal.show("login-modal");
+			reportElement.innerText = "You are not authorized. Please log in.";
+			return;
+		}
+
+		if (!response.ok) {
+			const errText = await extractErrorMessage(response);
+			reportElement.innerText = "Error executing feature:\n" + errText;
+			return;
+		}
+
+		try {
+			await streamResponseToDOM(response, reportElement);
+		} catch (err) {
+			console.error("Error streaming response to DOM:", err);
+			reportElement.innerText =
+				"Error while streaming execution output: " + (err.message || String(err));
+		}
+	}
+
+	async function handleNonCustodialExecution({ inputText, concurrency, headers, reportElement }) {
+		const address = window.TokenManager.getAddress();
+		if (!address) {
+			reportElement.innerText = "No wallet address found. Please connect your wallet.";
+			return;
+		}
+
+		var channel;
+		try {
+			channel = await ensureChannel({
+				nodeUrl: NODE_BASE,
+				mdwUrl: NODE_BASE,
+				responderId: window.nodePublicKey,
+				initiatorId: address
+			});
+		} catch (err) {
+			console.error("ensureChannel failed:", err);
+			reportElement.innerText =
+				"Failed to ensure payment channel: " + (err.message || String(err));
+			return;
+		}
+
+		const prepareReq = {
+			method: "POST",
+			credentials: "include",
+			headers,
+			body: JSON.stringify({
+				feature: inputText,
+				address,
+				concurrency,
+				channel_id: channel.channel.id
+			})
+		};
+
+		let txPrepareResp;
+
+		try {
+			txPrepareResp = await fetch("/tx/", prepareReq);
+			try {
+				await streamResponseToDOM(txPrepareResp, reportElement);
+			} catch (err) {
+				console.error("Error streaming signed response to DOM:", err);
+				reportElement.innerText =
+					"Error while streaming execution output: " + (err.message || String(err));
+			}
+		} catch (err) {
+			console.error("Network error calling /tx/ (prepare):", err);
+			reportElement.innerText =
+				"Network error while preparing transaction: " + (err.message || String(err));
+			return;
+		}
+		return;
+
+		if (!txPrepareResp.ok) {
+			const msg = await extractErrorMessage(txPrepareResp);
+			reportElement.innerText = "Failed to prepare transaction: " + msg;
+			return;
+		}
+
+		let data;
+		try {
+			data = await txPrepareResp.json();
+		} catch (err) {
+			console.error("JSON parse error for /tx/ (prepare):", err);
+			reportElement.innerText = "Invalid JSON from server while preparing transaction.";
+			return;
+		}
+
+		if (data.status !== "ok" || !data.tx) {
+			reportElement.innerText =
+				"Failed to prepare transaction: " + (data.message || "Unknown error");
+			return;
+		}
+
+		const message = data.tx;
+
+		try {
+			await window.connectWalletUnified();
+		} catch (err) {
+			console.error("connectWalletUnified failed:", err);
+			reportElement.innerText =
+				"Failed to connect wallet: " + (err.message || String(err));
+			return;
+		}
+
+		let signature;
+		try {
+			signature = await wallet.signTransactionSmart(
+				message,
+				"ae_mainnet",
+				window.location.origin,
+				window.location.origin
+			);
+		} catch (err) {
+			console.error("signTransactionSmart threw error:", err);
+			reportElement.innerText =
+				"Failed to sign transaction: " + (err.message || String(err));
+			return;
+		}
+
+		if (!signature || !signature.ok) {
+			const errorMsg =
+				  (signature && signature.error && signature.error.message) ||
+				  "Unknown signing error";
+			reportElement.innerText = "Failed to sign: " + errorMsg;
+			return;
+		}
+
+		const signedTx = signature.result && signature.result.signedTransaction;
+		if (!signedTx) {
+			reportElement.innerText = "Wallet did not return a signed transaction.";
+			return;
+		}
+
+		const signedRequest = {
+			method: "POST",
+			credentials: "include",
+			headers,
+			body: JSON.stringify({
+				feature: inputText,
+				address,
+				concurrency,
+				signed_tx: signedTx
+			})
+		};
+
+		let signedResponse;
+		try {
+			signedResponse = await fetch("/tx/", signedRequest);
+		} catch (err) {
+			console.error("Network error calling /tx/ (signed):", err);
+			reportElement.innerText =
+				"Network error after signing transaction: " + (err.message || String(err));
+			return;
+		}
+
+		if (!signedResponse.ok) {
+			const errText = await extractErrorMessage(signedResponse);
+			reportElement.innerText = "Error after signing: " + errText;
+			return;
+		}
+
+		try {
+			await streamResponseToDOM(signedResponse, reportElement);
+		} catch (err) {
+			console.error("Error streaming signed response to DOM:", err);
+			reportElement.innerText =
+				"Error while streaming execution output: " + (err.message || String(err));
+		}
+	}
+
 
 
 
@@ -618,6 +1118,7 @@ function generateDamageQR(address){
 					console.log( versionData);
 					var nodePublicKeyDom= document.getElementById('node-public-key');
 					nodePublicKeyDom.innerText = 'node public key: ' + versionData.public_key;
+					window.nodePublicKey = versionData.public_key;
 					document.getElementById("node-public-key").addEventListener("click",(event) => {
 						event.preventDefault();
 						MicroModal.show("node-public-key-modal");
