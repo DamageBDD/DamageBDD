@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
 # Linux Mint 22 (Wilma) base — stays Mint-only per your requirement
-FROM linuxmintd/mint22-amd64
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+#FROM ubuntu:22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
 ARG REPO_REF=develop   # or a tag/sha
 ARG REBAR3_URL=https://s3.amazonaws.com/rebar3/rebar3
-ARG OTP_VERSION=28.1
+ARG OTP_VERSION=28.3
 WORKDIR /opt/workspace
 
 # --- System deps (Mint/Ubuntu repos) ---
@@ -17,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
       ruby ruby-dev rubygems \
-      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync nvidia-cuda-toolkit \
+      rpm dpkg-dev gnupg rsync nvidia-cuda-toolkit \
     && gem install --no-document fpm
 
 # --- kerl + OTP
@@ -29,10 +30,11 @@ ENV KERL_BUILD_BACKEND=git \
     KERL_BUILD_DIR=/root/.kerl/builds \
     KERL_CONFIGURE_OPTIONS="--disable-debug --without-javac"
 
-RUN kerl update releases \
- && kerl build ${OTP_VERSION} ${OTP_VERSION} \
- && mkdir -p /opt/erlang/${OTP_VERSION} \
- && kerl install ${OTP_VERSION} /opt/erlang/${OTP_VERSION}
+RUN kerl update releases 
+RUN kerl list releases 
+RUN kerl build ${OTP_VERSION} ${OTP_VERSION} 
+RUN mkdir -p /opt/erlang/${OTP_VERSION} 
+RUN kerl install ${OTP_VERSION} /opt/erlang/${OTP_VERSION}
 
 # --- rebar3
 RUN curl -fsSL ${REBAR3_URL} -o /usr/local/bin/rebar3 \
@@ -98,7 +100,6 @@ RUN set -eu \
 #WORKDIR /opt/app
 #RUN mkdir -p /opt/app
 #COPY --chown=root:root /opt/workspace/_build/prod/rel/* /opt/app/
-
 EXPOSE 8080
 CMD ["/opt/damage/bin/damage", "foreground"]
 

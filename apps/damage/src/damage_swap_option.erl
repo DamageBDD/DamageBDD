@@ -51,6 +51,8 @@
     code_change/3
 ]).
 
+-export([
+         test/0]).
 %%%===================================================================
 %%% Public API
 %%%===================================================================
@@ -197,7 +199,7 @@ handle_info(
             undefined ->
                 %% Not ours
                 {noreply, State};
-            Opt = #option{id = OptionId} ->
+            _Opt = #option{id = OptionId} ->
                 ?LOG_INFO("Invoice for swap option ~p paid; exercising", [OptionId]),
                 _ =
                   damage_ae:contract_call(
