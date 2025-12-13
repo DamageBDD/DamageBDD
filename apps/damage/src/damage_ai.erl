@@ -37,6 +37,8 @@
 -export([trails/0]).
 -export([test_generate_bdd/0]).
 -export([test_create_bddmodel/0]).
+-export([generate_text/3]).
+-import(damage_utils, [to_bin/1]).
 
 -define(TRAILS_TAG, ["AI functions."]).
 
@@ -110,6 +112,44 @@ safe_yaml_from_file(File) ->
         ]}
     ],
     yamerl_constr:file(File, Opts).
+
+generate_text(UserPrompt, AeAccount, Req) ->
+    Pid = get_ai_proc(AeAccount),
+    gen_server:call(Pid, {generate_text, UserPrompt, AeAccount, Req}, ?AI_TIMEOUT).
+
+handle_call({generate_text, UserPrompt, _AeAccount, _Req}, _From, #{api_key := ApiKey0} = State) ->
+    ?LOG_DEBUG("damage_ai generate_text prompt: ~p", [UserPrompt]),
+
+    {ok, Host} = application:get_env(damage, openai_bdd_api_host),
+    {ok, Path} = application:get_env(damage, openai_bdd_api_path),
+    {ok, Port} = application:get_env(damage, openai_bdd_api_port),
+    {ok, Model} = application:get_env(damage, openai_bdd_model),
+
+    %% Use the key in State if present, otherwise fall back to env (keeps your current behavior alive)
+    ApiKey =
+        case ApiKey0 of
+            undefined -> os:getenv("OPENAI_API_KEY");
+            _ -> ApiKey0
+        end,
+
+    Headers =
+        [
+            {<<"Authorization">>, list_to_binary("Bearer " ++ ApiKey)},
+            {<<"content-type">>, <<"application/json">>}
+        ],
+
+    %% Minimal chat-style payload. Your upstream /api path can adapt, but this keeps it structured.
+    PostData =
+        jsx:encode(#{
+            model => list_to_binary(Model),
+            messages => [[{role, <<"user">>}, {content, to_bin(UserPrompt)}]],
+            temperature => 0.2
+        }),
+
+    {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+    StreamRef = gun:post(ConnPid, Path, Headers, PostData),
+    Resp = read_stream(ConnPid, StreamRef),
+    {reply, Resp, State};
 handle_call({generate_bdd, UserPrompt, _AeAccount, _Req}, _From, State) ->
     ?LOG_DEBUG("handle_call execute/1 : ~p", [UserPrompt]),
     {ok, MessagesYaml} = application:get_env(damage, openai_bdd_messages_yaml),
