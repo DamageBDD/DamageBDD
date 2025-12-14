@@ -388,6 +388,12 @@ html, body {
   margin-bottom: 1.5rem;
 }
 
+.login_modal_header {
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .modal__title {
   font-size: 1.5rem;
   font-weight: 700;
@@ -448,7 +454,7 @@ html, body {
 #copyAddressIcon,
 #copyInvoiceIcon {
   color: #ffcc00;
-  margin-left: 0.5rem;
+  margin-left: 0rem;
 }
 
 #copyAddressIcon:hover,
@@ -1616,6 +1622,10 @@ body.reset-password-page #resetPasswdForm ul li::before {
   left: 0;
   color: #007bff;
   font-weight: bold;
+}
+
+#login_footer {
+  padding-top: 0;
 }
 
 @media (max-width: 600px) {
