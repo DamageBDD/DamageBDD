@@ -69,12 +69,9 @@ a:hover {
 
 /* Token CTA Button */
 .token-cta {
-  background: linear-gradient(to right, #44494d, #5c6165);
   color: var(--fg);
   padding: 10px 15px;
-  border: 1px solid var(--input-border);
   border-radius: 6px;
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.05);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -87,21 +84,10 @@ a:hover {
   box-shadow: 0 0 10px rgba(114, 159, 207, 0.3);
 }
 
-/* Logout Button */
-.logout-btn {
-  background-color: var(--modal-bg);
-  color: var(--error);
-  padding: 10px;
-  border: 1px solid var(--error);
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-.logout-btn:hover {
-  background-color: var(--error);
-  color: var(--bg);
-}
+
+
+
+
 
 /* Inputs & Textareas */
 input[type="text"],
