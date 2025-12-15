@@ -998,8 +998,10 @@ test() ->
                 case damage_ae:wait_tx(ContractCallTxHash) of
                     {ok, Resp} ->
                         {ok, Resp};
-                    #{"error_code" := "invalid_at_protocol",
-                       "reason" := "Invalid tx"} ->
+                    #{
+                        "error_code" := "invalid_at_protocol",
+                        "reason" := "Invalid tx"
+                    } ->
                         {error, invalid_tx};
                     Error ->
                         Error
