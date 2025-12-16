@@ -153,6 +153,43 @@ function generateDamageQR(address){
 			await nodeSetPassword();
 		});
 
+		// Sweep wallet button handler
+		const sweepWalletBtn = document.getElementById("sweep-wallet-btn");
+		if (sweepWalletBtn) {
+			sweepWalletBtn.addEventListener("click", async (event) => {
+				event.preventDefault();
+				await sweepWallet();
+			});
+		}
+
+		// Skip sweep button handler
+		const skipSweepBtn = document.getElementById("skip-sweep-btn");
+		if (skipSweepBtn) {
+			skipSweepBtn.addEventListener("click", (event) => {
+				event.preventDefault();
+				MicroModal.close("node-set-password-modal");
+			});
+		}
+
+		// Initialize tabs for node setup
+		if (typeof Tabby !== 'undefined') {
+			const nodeSetupTabs = Tabby('[data-node-setup-tabs]');
+			
+			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
+			document.addEventListener('tabby', function(event) {
+				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
+					// Check if seed phrase was already set
+					const revealBtn = document.getElementById("reveal-seed-phrase-btn");
+					if (revealBtn && revealBtn.dataset.seedPhrase) {
+						// Seed phrase already loaded, nothing to do
+					}
+				}
+				if (event.detail && event.detail.content && event.detail.content.id === 'sweep-wallet-tab') {
+					loadWalletBalance();
+				}
+			}, false);
+		}
+
 		showHideLoginButton();
 		MicroModal.init({
 			onShow: modal => {
@@ -256,6 +293,11 @@ function generateDamageQR(address){
 			return;
 		}
 
+		if (password.length < 8) {
+			alert("Password must be at least 8 characters long.");
+			return;
+		}
+
 		try {
 			const resp = await fetch("/secrets/set_password", {
 				method: "POST",
@@ -271,23 +313,242 @@ function generateDamageQR(address){
 			const data = await resp.json();
 
 			if (data.status === "ok") {
-				alert("✅ Node password set successfully!");
+				// Show seed phrase backup tab
+				const seedPhraseTabLink = document.getElementById("seed-phrase-tab-link");
+				const sweepWalletTabLink = document.getElementById("sweep-wallet-tab-link");
+				
+				if (seedPhraseTabLink) seedPhraseTabLink.style.display = "";
+				if (sweepWalletTabLink) sweepWalletTabLink.style.display = "";
 
-				// Close modal if present
-				if (window.MicroModal) {
-					MicroModal.close("node-set-password-modal");
+				// Initialize tabs if not already done
+				if (typeof Tabby !== 'undefined') {
+					// Wait a bit for DOM to update
+					setTimeout(() => {
+						const tabs = Tabby('[data-node-setup-tabs]');
+						
+						// Switch to seed phrase backup tab
+						if (data.seed_phrase || data.mnemonic) {
+							const seedPhrase = data.seed_phrase || data.mnemonic;
+							showSeedPhraseBackup(seedPhrase);
+						} else {
+							// Try to fetch seed phrase from server
+							fetchSeedPhrase().then(seedPhrase => {
+								if (seedPhrase) {
+									showSeedPhraseBackup(seedPhrase);
+								} else {
+									// If no seed phrase available, go to sweep wallet tab
+									tabs.toggle('sweep-wallet-tab');
+									loadWalletBalance();
+								}
+							});
+						}
+					}, 100);
 				}
 
-				passwordInput.value = "";
-				confirmInput.value  = "";
-
 			} else {
-				alert(`❌ Failed to set password: ${data.message || "Unknown error"}`);
+				alert(`Failed to set password: ${data.message || "Unknown error"}`);
 			}
 
 		} catch (err) {
 			console.error("Set password error:", err);
-			alert("⚠️ Error setting password. Check console for details.");
+			alert("Error setting password. Check console for details.");
+		}
+	}
+
+	async function fetchSeedPhrase() {
+		try {
+			const resp = await fetch("/secrets/get_seed_phrase", {
+				method: "GET",
+				headers: { "Content-Type": "application/json" }
+			});
+			const data = await resp.json();
+			if (data.status === "ok" && (data.seed_phrase || data.mnemonic)) {
+				return data.seed_phrase || data.mnemonic;
+			}
+			return null;
+		} catch (err) {
+			console.error("Fetch seed phrase error:", err);
+			return null;
+		}
+	}
+
+	function showSeedPhraseBackup(seedPhrase) {
+		const tabs = Tabby('[data-node-setup-tabs]');
+		const seedPhraseTabLink = document.getElementById("seed-phrase-tab-link");
+		const placeholder = document.getElementById("seed-phrase-placeholder");
+		const display = document.getElementById("seed-phrase-display");
+		const wordsDiv = document.getElementById("seed-phrase-words");
+		const revealBtn = document.getElementById("reveal-seed-phrase-btn");
+		const copyBtn = document.getElementById("copy-seed-phrase-btn");
+		const confirmation = document.getElementById("seed-phrase-confirmation");
+		const okBtn = document.getElementById("seed-phrase-ok-btn");
+		const confirmedCheckbox = document.getElementById("seed-phrase-confirmed");
+		
+		// Switch to seed phrase tab
+		if (seedPhraseTabLink) {
+			seedPhraseTabLink.style.display = "";
+			tabs.toggle('seed-phrase-backup-tab');
+		}
+		
+		// Store seed phrase for reveal
+		if (revealBtn && !revealBtn.dataset.seedPhrase) {
+			revealBtn.dataset.seedPhrase = seedPhrase;
+			
+			revealBtn.onclick = () => {
+				if (wordsDiv && seedPhrase) {
+					// Split seed phrase into words and display nicely
+					const words = seedPhrase.trim().split(/\s+/);
+					wordsDiv.innerHTML = words.map((word, idx) => 
+						`<span class="seed-word"><span class="seed-word-number">${idx + 1}</span>${word}</span>`
+					).join('');
+					
+					if (placeholder) placeholder.style.display = "none";
+					if (display) display.style.display = "block";
+					if (copyBtn) copyBtn.style.display = "block";
+					if (confirmation) confirmation.style.display = "block";
+					revealBtn.style.display = "none";
+				}
+			};
+		}
+		
+		// Copy to clipboard
+		if (copyBtn) {
+			copyBtn.onclick = () => {
+				if (seedPhrase) {
+					navigator.clipboard.writeText(seedPhrase).then(() => {
+						copyBtn.textContent = "Copied!";
+						setTimeout(() => {
+							copyBtn.textContent = "Copy to Clipboard";
+						}, 2000);
+					}).catch(err => {
+						console.error("Copy failed:", err);
+						alert("Failed to copy. Please select and copy manually.");
+					});
+				}
+			};
+		}
+		
+		// Enable OK button when checkbox is checked
+		if (confirmedCheckbox && okBtn) {
+			confirmedCheckbox.onchange = () => {
+				okBtn.disabled = !confirmedCheckbox.checked;
+			};
+			
+			okBtn.onclick = () => {
+				if (confirmedCheckbox.checked) {
+					// Move to sweep wallet tab or close modal
+					const sweepWalletTabLink = document.getElementById("sweep-wallet-tab-link");
+					if (sweepWalletTabLink && sweepWalletTabLink.style.display !== "none") {
+						tabs.toggle('sweep-wallet-tab');
+						loadWalletBalance();
+					} else {
+						MicroModal.close("node-set-password-modal");
+					}
+				}
+			};
+		}
+	}
+
+	async function loadWalletBalance() {
+		const balanceDisplay = document.getElementById("wallet-balance-display");
+		if (!balanceDisplay) return;
+		
+		try {
+			// Try to get node public key/address
+			const resp = await fetch("/node/public_key", {
+				method: "GET",
+				headers: { "Content-Type": "application/json" }
+			});
+			const data = await resp.json();
+			
+			if (data.status === "ok" && data.public_key) {
+				// Fetch balance using existing wallet balance function if available
+				if (typeof fetchWalletBalance === 'function') {
+					await fetchWalletBalance(data.public_key);
+					const balanceDiv = document.getElementById('wallet-balance');
+					if (balanceDiv && balanceDiv.innerHTML) {
+						balanceDisplay.innerHTML = balanceDiv.innerHTML;
+					} else {
+						balanceDisplay.innerHTML = `<p>Wallet Address: <code>${data.public_key}</code></p>`;
+					}
+				} else {
+					balanceDisplay.innerHTML = `<p>Wallet Address: <code>${data.public_key}</code></p>`;
+				}
+			} else {
+				balanceDisplay.innerHTML = `<p class="warning-text">Unable to load wallet balance. You can still sweep funds if you know the address.</p>`;
+			}
+		} catch (err) {
+			console.error("Load wallet balance error:", err);
+			balanceDisplay.innerHTML = `<p class="warning-text">Unable to load wallet balance. You can still sweep funds if you know the address.</p>`;
+		}
+	}
+
+	async function sweepWallet() {
+		const addressInput = document.getElementById("sweep-wallet-address");
+		const passwordInput = document.getElementById("sweep-wallet-password");
+		
+		if (!addressInput || !passwordInput) {
+			alert("Form elements not found.");
+			return;
+		}
+		
+		const address = addressInput.value.trim();
+		const password = passwordInput.value.trim();
+		
+		if (!address) {
+			alert("Please enter a recipient address.");
+			return;
+		}
+		
+		if (!password) {
+			alert("Please enter your node password.");
+			return;
+		}
+		
+		// Validate address format (basic check for ak_ prefix)
+		if (!address.startsWith('ak_')) {
+			if (!confirm("The address doesn't start with 'ak_'. Are you sure this is correct?")) {
+				return;
+			}
+		}
+		
+		if (!confirm("Are you sure you want to sweep ALL funds from this wallet? This action cannot be undone.")) {
+			return;
+		}
+		
+		try {
+			const btn = document.getElementById("sweep-wallet-btn");
+			if (btn) {
+				btn.disabled = true;
+				btn.textContent = "Sweeping...";
+			}
+			
+			const resp = await fetch("/wallet/sweep", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					recipient_address: address,
+					password: password
+				})
+			});
+			
+			const data = await resp.json();
+			
+			if (data.status === "ok") {
+				alert("Funds swept successfully! Transaction: " + (data.tx_hash || "pending"));
+				MicroModal.close("node-set-password-modal");
+			} else {
+				alert(`Failed to sweep funds: ${data.message || "Unknown error"}`);
+			}
+		} catch (err) {
+			console.error("Sweep wallet error:", err);
+			alert("Error sweeping wallet. Check console for details.");
+		} finally {
+			const btn = document.getElementById("sweep-wallet-btn");
+			if (btn) {
+				btn.disabled = false;
+				btn.textContent = "Sweep All Funds";
+			}
 		}
 	}
 
@@ -316,17 +577,17 @@ function generateDamageQR(address){
 			const data = await resp.json();
 
 			if (data.status === "ok") {
-				alert("✅ Node unlocked successfully!");
+				alert("Node unlocked successfully!");
 				if (window.MicroModal) {
 					MicroModal.close("node-unlock-modal");
 				}
 				passwordInput.value = "";
 			} else {
-				alert(`❌ Unlock failed: ${data.message || "Unknown error"}`);
+				alert(`Unlock failed: ${data.message || "Unknown error"}`);
 			}
 		} catch (err) {
 			console.error("Unlock error:", err);
-			alert("⚠️ Error unlocking node. Check console for details.");
+			alert("Error unlocking node. Check console for details.");
 		}
 	}
 	function showLoginButton(){
@@ -477,10 +738,7 @@ function generateDamageQR(address){
 				"Unexpected error executing feature: " + (err && err.message ? err.message : String(err));
 		}
 	}
-
-	/**
-	 * Build JSON headers with optional Bearer token.
-	 */
+	
 	function buildJsonAuthHeaders(token) {
 		const headers = new Headers();
 		headers.set("Content-Type", "application/json");
@@ -490,9 +748,6 @@ function generateDamageQR(address){
 		return headers;
 	}
 
-	/**
-	 * Try to parse an error response as JSON, falling back to plain text.
-	 */
 	async function extractErrorMessage(response) {
 		try {
 			const contentType = response.headers.get("Content-Type") || "";
@@ -514,10 +769,6 @@ function generateDamageQR(address){
 		}
 	}
 
-	/**
-	 * Custodial / wallet-account path: POST to /execute_feature/
-	 * and stream response.
-	 */
 	async function handleCustodialExecution({ inputText, concurrency, headers, reportElement }) {
 		const request = {
 			method: "POST",
@@ -561,13 +812,6 @@ function generateDamageQR(address){
 		}
 	}
 
-	/**
-	 * Non-custodial / on-chain path:
-	 *  1. ensureChannel(...)
-	 *  2. POST /tx to prepare unsigned tx
-	 *  3. connect wallet and sign
-	 *  4. POST /tx with signed_tx and stream result
-	 */
 	async function handleNonCustodialExecution({ inputText, concurrency, headers, reportElement }) {
 		const address = window.TokenManager.getAddress();
 		if (!address) {
