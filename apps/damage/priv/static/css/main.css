@@ -14,6 +14,18 @@ font-family: 'Rubik', sans-serif;
 
 
 h1, h2, h3, h4 { font-family: 'Rubik', sans-serif; }
+
+
+@media (max-width: 600px) {
+  body {
+    padding: .5rem;
+  }
+  
+  body h2 {
+    font-size: 1.5rem;
+  }
+}
+
 .dark-mode { background: linear-gradient(to bottom right, #2d2d2d, #1a1a1a); color: #e0e0e0; }
 .dark-mode table { background-color: #2b2b2b; }
 .circle-bg {
@@ -382,6 +394,12 @@ box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
 .modal__header {
 text-align: center;
 margin-bottom: 1.5rem;
+}
+
+.login_modal_header {
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .modal__title {
@@ -893,6 +911,13 @@ align-items: center;
 gap: 1rem;
 }
 
+.topbar .toolbar-items #toolbar-btns {
+  display: flex;
+  flex-direction: row;
+  max-width: 500px;
+  min-height: 76px;
+}
+
 .toolbar-items div {
 color: #ccc;
 font-weight: 500;
@@ -964,7 +989,6 @@ flex-direction: column;
 gap: 2px;
 position: relative;
 }
-#balanceDiv:hover { background-color: rgba(0, 123, 255, 0.2); }
 
 .balance-row { display: inline-flex; align-items: baseline; gap: .5rem; }
 #balanceLabel { color:#9fc9ff; font-weight:600; font-size:.95rem; }
@@ -1525,6 +1549,10 @@ color: #007bff;
 font-weight: bold;
 }
 
+#login_footer {
+  padding-top: 0;
+}
+
 @media (max-width: 600px) {
 body.reset-password-page {
   padding: 1rem;
@@ -1765,12 +1793,11 @@ body.reset-password-page h2 {
   }
 
   .styled-btn {
-    padding: 0.65rem 0.85rem;
+    /* padding: 0.65rem 0.85rem; */
     font-size: 0.9rem;
   }
 
   #balanceDiv {
-    padding: 0.25rem 0.4rem;
     font-size: 0.85rem;
   }
 
@@ -1850,7 +1877,6 @@ body.reset-password-page h2 {
   button, 
   .buttonlink,
   .styled-btn,
-  .install-btn,
   .toolbar-items div,
   ul[data-tabs] li a {
     min-height: 44px;

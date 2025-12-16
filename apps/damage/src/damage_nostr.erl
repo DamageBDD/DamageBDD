@@ -55,7 +55,9 @@
     construct_zap_receipt/5,
     construct_http_auth/5,
     publish_zap_receipt/3,
-    parse_zap_request/1
+    parse_zap_request/1,
+    construct_nip56_report/6,
+    post_report/6
 ]).
 -import(damage_utils, [to_bin/1]).
 
@@ -184,6 +186,28 @@ init([NsecKey]) ->
     end.
 
 %% Handle synchronous calls (stop request)
+handle_call(
+    {post_report, ReportedPubKey, MaybeEventId, ReportType, Content, Opts},
+    _From,
+    #state{
+        conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey
+    } = State
+) ->
+    Unsigned =
+        construct_nip56_report(
+            lower_hex(PublicKey),
+            ReportedPubKey,
+            MaybeEventId,
+            ReportType,
+            Content,
+            Opts
+        ),
+    Signed = finalize_event(Unsigned, PrivateKey),
+    EventJson = jsx:encode([<<"EVENT">>, Signed]),
+    ?LOG_INFO("Nostr Sending NIP-56 report: ~p", [EventJson]),
+    ok = gun:ws_send(ConnPid, StreamRef, {text, EventJson}),
+    {ws, {text, Response}} = gun:await(ConnPid, StreamRef),
+    {reply, Response, State};
 handle_call(
     {get_recent_posts, Npub, Limit},
     _From,
@@ -1008,3 +1032,121 @@ zap_receipt_for_invoice(Invoice, #state{public_key = PubKey, private_key = PrivK
             ?LOG_WARNING("Invoice paid but no valid zap request in description: ~p", [Reason]),
             ok
     end.
+%% -------------------------------------------------------------------
+%% NIP-56 Reporting (kind 1984)
+%% -------------------------------------------------------------------
+
+%% Allowed report types per NIP-56 (mirror you pasted)
+valid_report_type(<<"nudity">>) -> true;
+valid_report_type(<<"malware">>) -> true;
+valid_report_type(<<"profanity">>) -> true;
+valid_report_type(<<"illegal">>) -> true;
+valid_report_type(<<"spam">>) -> true;
+valid_report_type(<<"impersonation">>) -> true;
+valid_report_type(<<"other">>) -> true;
+valid_report_type("nudity") -> true;
+valid_report_type("malware") -> true;
+valid_report_type("profanity") -> true;
+valid_report_type("illegal") -> true;
+valid_report_type("spam") -> true;
+valid_report_type("impersonation") -> true;
+valid_report_type("other") -> true;
+valid_report_type(_) -> false.
+
+%% construct_nip56_report/6
+%% Builds an *unsigned* kind=1984 report event map.
+%%
+%% Params:
+%% - ReporterPubKeyLowerHex : binary() (our pubkey as lower-hex)
+%% - ReportedPubKeyHex      : binary() | list() (pubkey being reported, hex or npub)
+%% - MaybeEventIdHex        : <<>> | binary() | list() (optional event id being reported)
+%% - ReportType             : "spam"|"illegal"|... (string or binary)
+%% - Content                : binary() (optional extra info)
+%% - Opts                   : map() with optional extras:
+%%     #{l => <<"NS-nud">>, L => <<"social.nos.ontology">>}
+%%
+construct_nip56_report(
+    ReporterPubKeyLowerHex, ReportedPubKey0, MaybeEventId0, ReportType0, Content0, Opts
+) ->
+    ReportType = to_bin(ReportType0),
+    valid_report_type(ReportType) orelse erlang:error({invalid_report_type, ReportType}),
+
+    %% normalize pubkey(s)
+    ReportedPubKeyHex =
+        case ReportedPubKey0 of
+            Bin when is_binary(Bin) ->
+                %% accept npub or hex
+                try
+                    list_to_binary(decode_npub(binary_to_list(Bin)))
+                catch
+                    _:_ ->
+                        Bin
+                end;
+            List when is_list(List) ->
+                try
+                    list_to_binary(decode_npub(List))
+                catch
+                    _:_ ->
+                        list_to_binary(List)
+                end
+        end,
+
+    MaybeEventId =
+        case MaybeEventId0 of
+            undefined -> <<>>;
+            <<>> -> <<>>;
+            Bin2 when is_binary(Bin2) -> Bin2;
+            L2 when is_list(L2) -> list_to_binary(L2);
+            _ -> <<>>
+        end,
+
+    %% Required p-tag. NIP-56 wants report-type as 3rd entry on the tag being reported.
+    PTag = [<<"p">>, ReportedPubKeyHex, ReportType],
+
+    %% Optional e-tag if reporting a note
+    ETag =
+        case MaybeEventId of
+            <<>> -> [];
+            _ -> [[<<"e">>, MaybeEventId, ReportType]]
+        end,
+
+    %% Optional ontology qualification tags (NIP-32 style)
+    ExtraTags =
+        case Opts of
+            M when is_map(M) ->
+                LT =
+                    case maps:get('L', M, maps:get(<<"L">>, M, undefined)) of
+                        undefined -> [];
+                        V -> [[<<"L">>, to_bin(V)]]
+                    end,
+                lT =
+                    case maps:get(l, M, maps:get(<<"l">>, M, undefined)) of
+                        undefined ->
+                            [];
+                        V2 ->
+                            [
+                                [
+                                    <<"l">>,
+                                    to_bin(V2),
+                                    to_bin(maps:get('L', M, maps:get(<<"L">>, M, <<"">>)))
+                                ]
+                            ]
+                    end,
+                LT ++ lT;
+            _ ->
+                []
+        end,
+
+    Tags = [PTag] ++ ETag ++ ExtraTags,
+    TS = erlang:system_time(seconds),
+    construct_event(ReporterPubKeyLowerHex, 1984, to_bin(Content0), TS, Tags).
+
+%% post_report/6
+%% Signs + publishes a kind 1984 report, using the existing websocket connection.
+%%
+%% post_report(NsecKey, ReportedPubKey, MaybeEventId, ReportType, Content, Opts) -> relay response
+post_report(NsecKey, ReportedPubKey, MaybeEventId, ReportType, Content, Opts) ->
+    gen_server:call(
+        gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
+        {post_report, ReportedPubKey, MaybeEventId, ReportType, Content, Opts}
+    ).

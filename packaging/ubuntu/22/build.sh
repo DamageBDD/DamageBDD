@@ -17,7 +17,7 @@ docker run --rm -it \
     set -e
     git reset --hard
     # optional, only if this is actually a git clone:
-    if [ -d .git ]; then git pull --ff-only || true; fi
+    if [ -d .git ]; then git pull --ff-only --tags || true; fi
 
     rm -f rebar.lock
     rm -rf _build
@@ -27,7 +27,7 @@ docker run --rm -it \
 
     # package with your plugin
 
-    rebar3 pkg gen -t deb
+    rebar3 as prod pkg gen -t deb
     bash
 
     # copy debs to host
