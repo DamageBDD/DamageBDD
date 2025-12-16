@@ -27,6 +27,13 @@ contract LightningSwapOption =
     , state           : option_state
     }
 
+  datatype event =
+    OptionCreated(indexed int, indexed address, indexed address)
+    | OptionExercised(indexed int, indexed address, indexed address)
+    | OptionCancelled(indexed int, indexed address, indexed address)
+    | OptionExpired(indexed int, indexed address, indexed address)
+
+
   // Global contract state
   record state =
     { next_id : int
@@ -127,7 +134,7 @@ contract LightningSwapOption =
         options[id] = o
       }
     )
-
+    Chain.event(OptionCreated(id, buyer, seller))
     id
 
   // Mark the option as exercised after the Lightning hold invoice
@@ -140,6 +147,7 @@ contract LightningSwapOption =
     require(o.state == Open, "NOT_OPEN")
     require(Chain.timestamp <= o.expiry, "EXPIRED")
     require(payment_hash == o.ln_payment_hash, "HASH_MISMATCH")
+    Chain.event(OptionExercised(id, buyer, seller))
 
     put_option(o{ state = Exercised })
 
@@ -150,6 +158,7 @@ contract LightningSwapOption =
     require(o.state == Open, "NOT_OPEN")
     require(Chain.timestamp > o.expiry, "NOT_YET_EXPIRED")
 
+    Chain.event(OptionExpired(id, buyer, seller))
     put_option(o{ state = Expired })
 
   // Allow seller or admin to cancel before expiry, *as long as* the
@@ -165,4 +174,5 @@ contract LightningSwapOption =
       "UNAUTHORISED_CANCEL"
     )
 
+    Chain.event(OptionCancelled(id, buyer, seller))
     put_option(o{ state = Cancelled })

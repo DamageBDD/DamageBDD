@@ -72,6 +72,7 @@ render_full_page(Ctx) ->
     NpkM = render_tpl(?TPL("node_details_modal.mustache"), Ctx),
     NodeSetPasswordM = render_tpl(?TPL("node_set_password_modal.mustache"), Ctx),
     NodeUnlockM = render_tpl(?TPL("node_unlock_modal.mustache"), Ctx),
+    SwapOptions = render_tpl(?TPL("swap_options_tab.mustache"), Ctx),
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
         topbar => Top,
@@ -92,7 +93,8 @@ render_full_page(Ctx) ->
         footer => Foot,
         node_unlock_modal => NodeUnlockM,
         node_set_password_modal => NodeSetPasswordM,
-        node_public_key_modal => NpkM
+        node_public_key_modal => NpkM,
+        swap_options_tab => SwapOptions
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 
