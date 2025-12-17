@@ -281,7 +281,7 @@ level_style(warning, ascii) ->
 level_style(notice, ascii) ->
     {<<"NOTE">>, <<"[+]">>, cyan};
 level_style(info, ascii) ->
-    {<<"INFO">>, <<"[i]">>, cyan};
+    {<<"INFO">>, <<"[i]">>, green};
 level_style(debug, ascii) ->
     {<<"DEBUG">>, <<"[?]">>, magenta};
 level_style(_, ascii) ->
@@ -299,7 +299,7 @@ level_style(warning, emoji) ->
 level_style(notice, emoji) ->
     {<<"NOTE">>, <<"✨">>, cyan};
 level_style(info, emoji) ->
-    {<<"INFO">>, <<"💎">>, cyan};
+    {<<"INFO">>, <<"💎">>, green};
 level_style(debug, emoji) ->
     {<<"DEBUG">>, <<"🧪">>, magenta};
 level_style(_, emoji) ->
@@ -313,6 +313,7 @@ colorize(Color, Str) ->
         case Color of
             red -> "31";
             yellow -> "33";
+            green -> "32";
             cyan -> "36";
             magenta -> "35";
             white -> "37";

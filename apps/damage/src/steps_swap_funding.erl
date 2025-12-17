@@ -22,45 +22,82 @@
 documentation() ->
     [
         {"I fund the tracked issue with a Lightning swap option",
-         "Creates a Lightning hold invoice for the issue price and links it to JobRegistry."},
+            "Creates a Lightning hold invoice for the issue price and links it to JobRegistry."},
 
         {"the Lightning swap option should be open for the tracked issue",
-         "Asserts the option job exists and is in open state."},
+            "Asserts the option job exists and is in open state."},
 
         {"the Lightning invoice should be paid",
-         "Polls CLN or internal memory until invoice is marked paid."},
+            "Polls CLN or internal memory until invoice is marked paid."},
 
         {"the funder should receive DAMAGE rewards",
-         "Asserts funder’s DAMAGE balance increased by payout amount."},
+            "Asserts funder’s DAMAGE balance increased by payout amount."},
 
         {"the contractor should be paid for the tracked issue",
-         "Asserts job is completed + contractor receives BTC/DAMAGE payout."}
+            "Asserts job is completed + contractor receives BTC/DAMAGE payout."}
     ].
 
 %%%===================================================================
 %%% Step Dispatch
 %%%===================================================================
 
-step(_Cfg, Ctx, <<"When">>, _Line,
-     ["I","fund","the","tracked","issue","with","a","Lightning","swap","option"], _Body) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"When">>,
+    _Line,
+    ["I", "fund", "the", "tracked", "issue", "with", "a", "Lightning", "swap", "option"],
+    _Body
+) ->
     do_fund_issue(Ctx);
-
-step(_Cfg, Ctx, <<"Then">>, _Line,
-     ["the","Lightning","swap","option","should","be","open","for","the","tracked","issue"], _B) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _Line,
+    [
+        "the",
+        "Lightning",
+        "swap",
+        "option",
+        "should",
+        "be",
+        "open",
+        "for",
+        "the",
+        "tracked",
+        "issue"
+    ],
+    _B
+) ->
     assert_swap_open(Ctx);
-
-step(_Cfg, Ctx, <<"Then">>, _Line,
-     ["the","Lightning","invoice","should","be","paid"], _B) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _Line,
+    ["the", "Lightning", "invoice", "should", "be", "paid"],
+    _B
+) ->
     assert_invoice_paid(Ctx);
-
-step(_Cfg, Ctx, <<"Then">>, _Line,
-     ["the","funder","should","receive","DAMAGE","rewards"], _B) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _Line,
+    ["the", "funder", "should", "receive", "DAMAGE", "rewards"],
+    _B
+) ->
     assert_funder_rewards(Ctx);
-
-step(_Cfg, Ctx, <<"Then">>, _Line,
-     ["the","contractor","should","be","paid","for","the","tracked","issue"], _B) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _Line,
+    ["the", "contractor", "should", "be", "paid", "for", "the", "tracked", "issue"],
+    _B
+) ->
     assert_contractor_paid(Ctx);
-
 step(_, Ctx, _, _, _, _) ->
     %% allow other modules to match
     {undefined, Ctx}.
@@ -75,18 +112,18 @@ step(_, Ctx, _, _, _, _) ->
 do_fund_issue(Ctx0) ->
     Issue = maps:get(github_issue, Ctx0),
     IssueNo = maps:get(<<"number">>, Issue),
-    Title   = maps:get(<<"title">>, Issue),
+    Title = maps:get(<<"title">>, Issue),
 
     %% Values inserted via Given steps
-    SatsStr    = maps:get(<<"lock_sats">>, Ctx0),
-    DamageStr  = maps:get(<<"payout_damage">>, Ctx0),
-    ExpStr     = maps:get(<<"expiry_seconds">>, Ctx0),
-    ChannelId  = maps:get(<<"swap_channel_id">>, Ctx0),
-    FunderAk   = maps:get(<<"funder_ae_account">>, Ctx0),
+    SatsStr = maps:get(<<"lock_sats">>, Ctx0),
+    DamageStr = maps:get(<<"payout_damage">>, Ctx0),
+    ExpStr = maps:get(<<"expiry_seconds">>, Ctx0),
+    ChannelId = maps:get(<<"swap_channel_id">>, Ctx0),
+    FunderAk = maps:get(<<"funder_ae_account">>, Ctx0),
 
-    {Sats,_}    = string:to_integer(SatsStr),
-    {Damage,_}  = string:to_integer(DamageStr),
-    {Expiry,_}  = string:to_integer(ExpStr),
+    {Sats, _} = string:to_integer(SatsStr),
+    {Damage, _} = string:to_integer(DamageStr),
+    {Expiry, _} = string:to_integer(ExpStr),
 
     %% Extract contractor AE account from issue body
     ContractorAk = extract_ae_account(maps:get(<<"body">>, Issue, <<"">>)),
@@ -148,9 +185,9 @@ assert_invoice_paid(Ctx) ->
     PH = maps:get(swap_payment_hash, Ctx),
     %% query swap orchestrator directly
     case damage_swap_option:lookup_by_payment_hash(PH) of
-        not_found -> {ok, Ctx};  %% removed from state → invoice paid
-        _ ->
-            {fail, "Invoice not yet paid.", Ctx}
+        %% removed from state → invoice paid
+        not_found -> {ok, Ctx};
+        _ -> {fail, "Invoice not yet paid.", Ctx}
     end.
 
 %% ------------------------------------------------------------------
@@ -162,8 +199,8 @@ assert_funder_rewards(Ctx) ->
 
     Bal = damage_ae:balance(Funder),
     case Bal >= Expected of
-        true  -> {ok, Ctx};
-        false -> {fail, io_lib:format("Funder ~p did not receive DAMAGE",[Funder]), Ctx}
+        true -> {ok, Ctx};
+        false -> {fail, io_lib:format("Funder ~p did not receive DAMAGE", [Funder]), Ctx}
     end.
 
 %% ------------------------------------------------------------------
@@ -187,7 +224,7 @@ assert_contractor_paid(Ctx) ->
 
 extract_ae_account(Body) when is_binary(Body) ->
     case binary:match(Body, <<"ak_">>) of
-        {Pos,_} ->
+        {Pos, _} ->
             <<_:Pos/binary, Tail/binary>> = Body,
             [Acc | _] = binary:split(Tail, <<" ">>),
             Acc;

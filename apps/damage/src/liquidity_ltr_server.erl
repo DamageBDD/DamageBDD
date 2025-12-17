@@ -88,7 +88,7 @@ code_change(_OldVsn, State, _Extra) ->
 do_refresh(State) ->
     case compute_liquidity_tightness() of
         {ok, Map = #{ltr := LTR}} ->
-            ?LOG_INFO("Updated Liquidity Tightness Rating to ~p", [LTR]),
+            ?LOG_DEBUG("Updated Liquidity Tightness Rating to ~p", [LTR]),
             erlang:send_after(?REFRESH_MS, self(), refresh),
             State#state{
                 ltr = LTR,

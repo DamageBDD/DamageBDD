@@ -356,7 +356,6 @@ gun_download_to_file(Url, DestPath) ->
             {error, {bad_response, Other}}
     end.
 
-
 stream_body(Conn, Ref, Io) ->
     case gun:await_body(Conn, Ref) of
         {ok, Bin} ->
