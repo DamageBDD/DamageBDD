@@ -351,7 +351,6 @@ search(Ctx = #ctx{}, QueryMap, Limit0) ->
 
     %% 4) enrich each doc with its stored record and a human preview
     Results = [enrich_int(Ctx, DocInt, Score) || {DocInt, Score} <- TopInts],
-    ?LOG_DEBUG("Results  ~p", [Results]),
 
     %% 5) light proof headers for the terms used (df + postings root + tag)
     Proofs = proof_headers(Ctx, Terms),

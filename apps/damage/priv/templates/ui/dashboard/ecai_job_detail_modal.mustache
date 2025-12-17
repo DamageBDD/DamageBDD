@@ -1,0 +1,54 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="ecai-job-details-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1">
+    <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="ecai-job-modal-title">
+      <header class="modal__header">
+        <h2 class="modal__title" id="ecai-job-modal-title">ECAI Job Details</h2>
+      </header>
+
+      <main class="modal__content" id="ecai-job-modal-content">
+        <!-- Filled by JS from /ecai/jobs/:id -->
+        <div class="job-detail">
+          <div class="job-row"><label>ID</label><span id="job-id">—</span></div>
+          <div class="job-row"><label>Status</label><span id="job-status">—</span></div>
+          <div class="job-row"><label>Reward</label><strong id="job-reward">—</strong></div>
+          <div class="job-row"><label>Owner</label><code class="mono" id="job-owner">—</code></div>
+          <div class="job-row"><label>Miner</label><code class="mono" id="job-miner">—</code></div>
+
+          <hr/>
+
+          <div class="job-row">
+            <label>Chunk Hash</label>
+            <code class="mono block" id="job-chunk-hash">—</code>
+          </div>
+
+          <div class="job-row">
+            <label>Chunk Ref</label>
+            <code class="mono block" id="job-chunk-ref">—</code>
+          </div>
+
+          <div class="job-row">
+            <label>Attestation</label>
+            <code class="mono block" id="job-attestation">—</code>
+          </div>
+
+          <div class="job-row">
+            <label>Evidence</label>
+            <a href="#" target="_blank" id="job-evidence-link" style="display:none"></a>
+            <span id="job-evidence-empty">—</span>
+          </div>
+        </div>
+      </main>
+
+      <footer class="modal__footer">
+        <!-- Optional action buttons: wire to your POST endpoints -->
+        <button class="modal__btn" id="job-claim-btn" style="display:none">Claim</button>
+        <button class="modal__btn" id="job-submit-btn" style="display:none">Submit</button>
+        <button class="modal__btn" id="job-pay-btn" style="display:none">Pay</button>
+
+        <button class="modal__btn" data-micromodal-close aria-label="Close this dialog window">Cancel</button>
+      </footer>
+    </div>
+  </div>
+</div>
+

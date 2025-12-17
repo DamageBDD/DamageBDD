@@ -269,6 +269,12 @@ function generateDamageQR(address){
 			gateway: window.location.origin + '/features/', // swap for your private gateway if needed
 			title: 'Pick a DamageBDD Feature',
 		});
+		document.addEventListener("click", (e) => {
+			const btn = e.target.closest("[data-micromodal-trigger='ecai-job-details-modal']");
+			if (!btn) return;
+			const jobId = btn.getAttribute("data-job-id");
+			if (jobId) loadJobIntoModal(jobId);
+		});
 	}); // end DOMContentLoaded 
 
 
@@ -767,6 +773,49 @@ function generateDamageQR(address){
 		} catch (e) {
 			return `HTTP ${response.status} ${response.statusText}`;
 		}
+	}
+
+	async function loadJobIntoModal(jobId) {
+		const res = await fetch(`/ecai/jobs/${jobId}`);
+		const data = await res.json();
+		const job = data.job || {};
+
+		const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = (val ?? "—"); };
+
+		set("job-id", job.id);
+		set("job-status", job.status);
+		set("job-reward", job.reward_damage != null ? `${job.reward_damage} DAMAGE` : "—");
+		set("job-owner", job.owner_ak);
+		set("job-miner", job.miner_ak);
+		set("job-chunk-hash", job.chunk_hash);
+		set("job-chunk-ref", job.chunk_path || job.chunk_ref);
+		set("job-attestation", job.attestation);
+
+		const link = document.getElementById("job-evidence-link");
+		const empty = document.getElementById("job-evidence-empty");
+		if (job.evidence_ref) {
+			link.style.display = "";
+			link.href = job.evidence_ref;
+			link.textContent = job.evidence_ref;
+			empty.style.display = "none";
+		} else {
+			link.style.display = "none";
+			empty.style.display = "";
+		}
+
+		// Show/hide action buttons based on status (simple client-side policy)
+		const claimBtn = document.getElementById("job-claim-btn");
+		const submitBtn = document.getElementById("job-submit-btn");
+		const payBtn = document.getElementById("job-pay-btn");
+
+		const st = (job.status || "").toLowerCase();
+		claimBtn.style.display  = (st === "open") ? "" : "none";
+		submitBtn.style.display = (st === "claimed") ? "" : "none";
+		payBtn.style.display    = (st === "submitted") ? "" : "none";
+
+		claimBtn.onclick = () => fetch(`/ecai/jobs/${jobId}/claim`, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({miner_ak: window.myMinerAk})}).then(()=>loadJobIntoModal(jobId));
+		submitBtn.onclick = () => {/* open your submit flow */};
+		payBtn.onclick = () => fetch(`/ecai/jobs/${jobId}/pay`, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({admin_ak: window.myAdminAk})}).then(()=>loadJobIntoModal(jobId));
 	}
 
 	async function handleCustodialExecution({ inputText, concurrency, headers, reportElement }) {

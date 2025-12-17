@@ -73,6 +73,8 @@ render_full_page(Ctx) ->
     NodeSetPasswordM = render_tpl(?TPL("node_set_password_modal.mustache"), Ctx),
     NodeUnlockM = render_tpl(?TPL("node_unlock_modal.mustache"), Ctx),
     SwapOptions = render_tpl(?TPL("swap_options_tab.mustache"), Ctx),
+    EcaiJobs = render_tpl(?TPL("ecai_jobs_list.mustache"), Ctx),
+    EcaiJobDetail = render_tpl(?TPL("ecai_job_detail_modal.mustache"), Ctx),
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
         topbar => Top,
@@ -94,7 +96,9 @@ render_full_page(Ctx) ->
         node_unlock_modal => NodeUnlockM,
         node_set_password_modal => NodeSetPasswordM,
         node_public_key_modal => NpkM,
-        swap_options_tab => SwapOptions
+        swap_options_tab => SwapOptions,
+        ecai_jobs_tab => EcaiJobs,
+        ecai_jobs_detail => EcaiJobDetail
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 
