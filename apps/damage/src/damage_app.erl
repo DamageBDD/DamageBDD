@@ -50,6 +50,7 @@ get_trails() ->
             cowboy_swagger_handler,
             lightning_auth,
             damage_doc,
+            damage_swap_options_http,
             damage_dashboard
         ],
     Trails =
