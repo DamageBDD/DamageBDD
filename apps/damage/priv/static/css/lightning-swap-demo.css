@@ -1,0 +1,144 @@
+/* ===============================
+   Lightning Swap – EXPERIMENTAL
+   Fully namespaced – safe to delete
+   =============================== */
+
+#lightning-swap-demo {
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+#lightning-swap-demo .swap-card {
+  width: 100%;
+  max-width: 420px;
+  background: #111;
+  color: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont;
+}
+
+/* Header */
+#lightning-swap-demo .swap-header {
+  margin-bottom: 16px;
+}
+
+#lightning-swap-demo .swap-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+#lightning-swap-demo .swap-badge {
+  font-size: 10px;
+  background: #ff9800;
+  color: #000;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+/* Steps */
+#lightning-swap-demo .swap-steps {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+#lightning-swap-demo .step {
+  opacity: 0.4;
+}
+
+#lightning-swap-demo .step.active {
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* Inputs */
+#lightning-swap-demo .asset-input {
+  margin-bottom: 12px;
+}
+
+#lightning-swap-demo label {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+#lightning-swap-demo .asset-row {
+  display: flex;
+  align-items: center;
+  background: #1a1a1a;
+  border-radius: 8px;
+  padding: 8px;
+  margin-top: 4px;
+}
+
+#lightning-swap-demo .token {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+#lightning-swap-demo input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  outline: none;
+}
+
+/* Buttons */
+#lightning-swap-demo .primary-btn {
+  width: 100%;
+  background: #ffc107;
+  color: #000;
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  font-weight: 600;
+  margin-top: 12px;
+}
+
+#lightning-swap-demo .secondary-btn {
+  width: 100%;
+  background: transparent;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+/* Summary */
+#lightning-swap-demo .summary-card {
+  background: #1a1a1a;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+#lightning-swap-demo .summary-card .row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+/* Status */
+#lightning-swap-demo .status-card {
+  text-align: center;
+  padding: 24px 12px;
+}
+
+#lightning-swap-demo .status-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+/* Utilities */
+#lightning-swap-demo .hidden {
+  display: none;
+}

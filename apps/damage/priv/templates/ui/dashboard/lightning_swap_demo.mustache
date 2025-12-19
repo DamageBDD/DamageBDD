@@ -1,0 +1,75 @@
+<div id="lightning-swap-demo" class="exp-swap">
+  <div class="swap-card">
+
+    <!-- Header / Step Indicator -->
+    <div class="swap-header">
+      <div class="swap-title">
+        ⚡ Lightning Swap
+        <span class="swap-badge">EXPERIMENTAL</span>
+      </div>
+      <div class="swap-steps">
+        <span class="step active">Select</span>
+        <span class="step">Confirm</span>
+        <span class="step">Status</span>
+      </div>
+    </div>
+
+    <!-- STEP: SELECT -->
+    <div class="swap-step" data-step="select">
+      <div class="asset-input">
+        <label>You send</label>
+        <div class="asset-row">
+          <span class="token">BTC</span>
+          <input type="number" placeholder="0.00" />
+        </div>
+      </div>
+
+      <div class="swap-arrow">↓</div>
+
+      <div class="asset-input">
+        <label>You receive (est.)</label>
+        <div class="asset-row">
+          <span class="token">⚡ BTC</span>
+          <input type="text" placeholder="≈ 0.0098" disabled />
+        </div>
+      </div>
+
+      <button class="primary-btn">Review swap</button>
+    </div>
+
+    <!-- STEP: CONFIRM -->
+    <div class="swap-step hidden" data-step="confirm">
+      <div class="summary-card">
+        <div class="row">
+          <span>From</span>
+          <strong>0.01 BTC</strong>
+        </div>
+        <div class="row">
+          <span>To</span>
+          <strong>≈ 0.0098 ⚡ BTC</strong>
+        </div>
+        <div class="row">
+          <span>Lightning fee</span>
+          <strong>0.0002 BTC</strong>
+        </div>
+      </div>
+
+      <button class="primary-btn">Confirm swap</button>
+      <button class="secondary-btn">Back</button>
+    </div>
+
+    <!-- STEP: STATUS -->
+    <div class="swap-step hidden" data-step="status">
+      <div class="status-card pending">
+        <div class="status-icon">⏳</div>
+        <h3>Processing swap</h3>
+        <p>This usually takes a few seconds.</p>
+      </div>
+
+      <!-- swap .pending → .success / .error for demo -->
+      <button class="primary-btn">Done</button>
+    </div>
+
+  </div>
+</div>
+

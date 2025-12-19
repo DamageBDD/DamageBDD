@@ -54,6 +54,7 @@ render_full_page(Ctx) ->
     %% Assemble from mustache fragments so you can also SSR each piece independently
     %% page_shell.mustache should call {{{topbar}}}, {{{tabs_bar}}}, etc. (triple-stache = HTML safe)
     Top = render_tpl(?TPL("topbar.mustache"), Ctx),
+    LightningSwapDemo = render_tpl(?TPL("lightning_swap_demo.mustache"), Ctx),
     Tabs = render_tpl(?TPL("tabs_bar.mustache"), Ctx),
     Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx),
     Hist = render_tpl(?TPL("history_tab.mustache"), Ctx),
@@ -98,7 +99,9 @@ render_full_page(Ctx) ->
         node_public_key_modal => NpkM,
         swap_options_tab => SwapOptions,
         ecai_jobs_tab => EcaiJobs,
-        ecai_jobs_detail => EcaiJobDetail
+        ecai_jobs_detail => EcaiJobDetail,
+        lightning_swap_demo => LightningSwapDemo,
+        show_lightning_swap_demo => true
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 
