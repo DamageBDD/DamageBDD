@@ -7,17 +7,23 @@
   padding: 16px;
   display: flex;
   justify-content: center;
+  height: 100%;
 }
 
 #lightning-swap-demo .swap-card {
   width: 100%;
+  display: flex;
+  flex-direction: column;
   max-width: 420px;
   background: #111;
   color: #fff;
   border-radius: 12px;
   padding: 16px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont;
 }
 
 /* Header */
@@ -44,6 +50,8 @@
 /* Steps */
 #lightning-swap-demo .swap-steps {
   display: flex;
+  flex-direction: row;
+  min-height: 0; /* helps prevent overflow issues in flex children */
   gap: 8px;
   margin-top: 8px;
   font-size: 12px;
@@ -51,6 +59,13 @@
 
 #lightning-swap-demo .step {
   opacity: 0.4;
+}
+
+#lightning-swap-demo .swap-step {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0; /* helps prevent overflow issues in flex children */
 }
 
 #lightning-swap-demo .step.active {
@@ -71,7 +86,7 @@
 #lightning-swap-demo .asset-row {
   display: flex;
   align-items: center;
-  background: #1a1a1a;
+  background: linear-gradient(0.25turn, #1a1a1a, 90%, #111111);
   border-radius: 8px;
   padding: 8px;
   margin-top: 4px;
@@ -84,7 +99,7 @@
 
 #lightning-swap-demo input {
   flex: 1;
-  background: transparent;
+  background: linear-gradient(0.25turn, #1a1a1a, 90%, #111111);
   border: none;
   color: #fff;
   font-size: 16px;
@@ -94,13 +109,20 @@
 /* Buttons */
 #lightning-swap-demo .primary-btn {
   width: 100%;
-  background: #ffc107;
-  color: #000;
+  padding: 0.85rem 1.5rem;
+  background: linear-gradient(to right, #28a745, #218838);
+  color: #fff;
   border: none;
-  border-radius: 10px;
-  padding: 12px;
+  border-radius: 6px;
   font-weight: 600;
-  margin-top: 12px;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-top: 1rem;
+}
+
+#lightning-swap-demo .primary-btn:active {
+  background: red;
+  background: linear-gradient(to right, #28a745, #181825);
 }
 
 #lightning-swap-demo .secondary-btn {
@@ -141,4 +163,40 @@
 /* Utilities */
 #lightning-swap-demo .hidden {
   display: none;
+}
+
+.swap-intelligence-panel {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr; /* Ensure first column is wide enough but no wider than 120px */
+  grid-template-rows: repeat(4, auto);
+  row-gap: 1%;
+  font-size: 1rem;
+  background: linear-gradient(0.25turn, #1a1a1a, 90%, #111111);
+  border-radius: 0.5rem;
+}
+
+.swap-intelligence-panel div {
+  border: 1px solid #ccc; /* Add border around each item */
+  padding: 8px;
+}
+
+#lightning-swap-demo .swap-intelligence-panel .label {
+  opacity: 0.6;
+  text-align: left;
+  white-space: nowrap;
+}
+
+#lightning-swap-demo .swap-intelligence-panel .value {
+  font-weight: 500;
+}
+
+#lightning-swap-demo .swap-intelligence-panel input[type="number"] {
+  background: transparent;
+}
+
+/* Style the spinner container */
+#lightning-swap-demo input[type="number"]::-webkit-inner-spin-button,
+#lightning-swap-demo input[type="number"]::-webkit-outer-spin-button {
+  background: transparent;
+  opacity: 1; /* keep arrows visible */
 }

@@ -1,11 +1,11 @@
 <!-- -*- mode: html -*- -->
-<!DOCTYPE html>
+
 <html lang="en">
 
   <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico" />
     <title>DamageBDD - Behaviour Driven Development At Planetary Scale</title>
 
     <script src="/static/js/three.min.js"></script>
@@ -13,85 +13,171 @@
     <script src="/static/js/micromodal.min.js"></script>
     <script src="/static/js/tabby.polyfills.min.js"></script>
 
-    <script type='module' src='/static/js/sidekick.js'></script>
+    <script type="module" src="/static/js/sidekick.js"></script>
 
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css"
-          integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls"
-          crossorigin="anonymous">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/base-min.css">
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css"
+      integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/base-min.css"
+    />
 
-    <link rel="stylesheet" type="text/css" href='/static/css/micromodal.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/damage-lightning-ui.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/feature-picker.css' />
-    <link rel="stylesheet" type="text/css" href="/static/css/tango-steven-theme.css" />
-    <link rel="stylesheet" type="text/css" href='/static/css/prism.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/main.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/auth.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/ecai-jobs.css' />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
-    <link rel="stylesheet" href="/static/css/lightning-swap-demo.css">
+    <link rel="stylesheet" type="text/css" href="/static/css/micromodal.css" />
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="/static/css/tabby-ui.min.css"
+    />
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="/static/css/damage-lightning-ui.css"
+    />
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="/static/css/feature-picker.css"
+    />
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="/static/css/tango-steven-theme.css"
+    />
+    <link rel="stylesheet" type="text/css" href="/static/css/prism.css" />
+    <link rel="stylesheet" type="text/css" href="/static/css/main.css" />
+    <link rel="stylesheet" type="text/css" href="/static/css/auth.css" />
+    <link rel="stylesheet" type="text/css" href="/static/css/ecai-jobs.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" type="text/css" href="/static/css/reports.css" />
+    <link rel="stylesheet" href="/static/css/lightning-swap-demo.css" />
   </head>
-<body>
-  {{{lightning_swap_demo}}}
-  {{{invoice_modal}}}
-  {{{login_modal}}}
-  {{{signup_modal}}}
-  {{{logout_modal}}}
-  {{{schedule_modal}}}
-  {{{install_modal}}}
-  {{{feature_picker_modal}}}
-  {{{notification_modal}}}
-  {{{node_set_password_modal}}}
-  {{{node_unlock_modal}}}
-  {{{node_public_key_modal}}}
-  {{{ecai_job_detail_modal}}}
-  <div id="background"></div>
-  <div id="content">
-    {{{topbar}}}
-    {{{tabs_bar}}}
+  <body>
+    <div id="background"></div>
+    <div id="content">
+      {{{topbar}}}
+      {{{tabs_bar}}}
+      <div id="lightning-swap-demo" class="exp-swap">
+        <div class="swap-card">
+          <!-- Header / Step Indicator -->
+          <div class="swap-header">
+            <div class="swap-title">
+              ⚡ Lightning Swap
+              <span class="swap-badge">EXPERIMENTAL</span>
+            </div>
+            <div class="swap-steps">
+              <span class="step active">Select</span>
+              <span class="step">Confirm</span>
+              <span class="step">Status</span>
+            </div>
+          </div>
 
-    <div id="execution-tab" class="execute-container">
-      {{{execution_tab}}}
-    </div>
-    <div id="history-tab">
-      {{{history_tab}}}
-    </div>
-    <div id="analytics-tab">
-      {{{analytics_tab}}}
-    </div>
-    <div id="schedules-tab">
-      {{{schedules_tab}}}
-    </div>
-    <div id="settings-tab">
-      {{{settings_tab}}}
-    </div>
-    <div id="swap-options-tab">
-      {{{swap_options_tab}}}
-    </div>
-    <div id="ecai-jobs-tab">
-      {{{ecai_jobs_tab}}}
-    </div>
-  {{{footer}}}
-  </div>
+          <!-- STEP: SELECT -->
+          <div class="swap-step" data-step="select">
+            <div class="asset-input">
+              <label>You send</label>
+              <div class="asset-row">
+                <span class="token">BTC</span>
+                <input type="number" placeholder="0.00" step="0.01" min="0" />
+              </div>
+            </div>
 
-      <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
-      <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+            <div class="swap-arrow">↓</div>
 
-      <script src="/static/js/reports.js"></script>
-      <script src="/static/js/schedules.js"></script>
-      <script src="/static/js/lineNumbers.js"></script>
-      <script  src="/static/js/balances.js" ></script>
-      <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
-      <script type="module" src="/static/js/damage-scheduler-ui.js"></script>
-      <script type='module' src="/static/js/installer.js" defer></script>
-      <script type='module' src="/static/js/wallet.js" defer></script>
-      <script type='module' src="/static/js/wallet-switcher.js" defer></script>
-      <script type='module' src="/static/js/main.js" defer></script>
-</body>
+            <div class="asset-input">
+              <label>You receive (est.)</label>
+              <div class="asset-row">
+                <span class="token">⚡ BTC</span>
+                <input type="text" placeholder="≈ 0.0098" disabled />
+              </div>
+            </div>
+            <div class="swap-intelligence-panel">
+              <div class="label">Estimated time</div>
+              <div class="value">&lt; 5 seconds</div>
+
+              <div class="label">Lightning fee</div>
+              <div class="value">~0.0002 BTC</div>
+
+              <div class="label">Route</div>
+              <div class="value">2 hops</div>
+
+              <div class="label">Status</div>
+              <div class="value success">Healthy</div>
+            </div>
+            <button class="primary-btn">Review swap</button>
+          </div>
+
+          <!-- STEP: CONFIRM -->
+          <div class="swap-step hidden" data-step="confirm">
+            <div class="summary-card">
+              <div class="row">
+                <span>From</span>
+                <strong>0.01 BTC</strong>
+              </div>
+              <div class="row">
+                <span>To</span>
+                <strong>≈ 0.0098 ⚡ BTC</strong>
+              </div>
+              <div class="row">
+                <span>Lightning fee</span>
+                <strong>0.0002 BTC</strong>
+              </div>
+            </div>
+
+            <button class="primary-btn">Confirm swap</button>
+            <button class="secondary-btn">Back</button>
+          </div>
+
+          <!-- STEP: STATUS -->
+          <div class="swap-step hidden" data-step="status">
+            <div class="status-card pending">
+              <div class="status-icon">⏳</div>
+              <h3>Processing swap</h3>
+              <p>This usually takes a few seconds.</p>
+            </div>
+
+            <!-- swap .pending → .success / .error for demo -->
+            <button class="primary-btn">Done</button>
+          </div>
+
+        </div>
+      </div>
+      {{{footer}}}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"
+    ></script>
+    <script
+      type="module"
+      src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"
+    ></script>
+
+    <script src="/static/js/reports.js"></script>
+    <script src="/static/js/schedules.js"></script>
+    <script src="/static/js/lineNumbers.js"></script>
+    <script src="/static/js/balances.js"></script>
+    <script
+      type="module"
+      src="/static/js/damage-lightning-ui.js"
+      defer
+    ></script>
+    <script type="module" src="/static/js/damage-scheduler-ui.js"></script>
+    <script type="module" src="/static/js/installer.js" defer></script>
+    <script type="module" src="/static/js/wallet.js" defer></script>
+    <script type="module" src="/static/js/wallet-switcher.js" defer></script>
+    <script type="module" src="/static/js/main.js" defer></script>
+  </body>
 </html>
-
