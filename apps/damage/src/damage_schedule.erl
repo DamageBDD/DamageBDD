@@ -288,7 +288,11 @@ list_schedules(AeAccount) ->
         {error, Error} ->
             ?LOG_ERROR("Failed to load schedules ~p ~p", [AeAccount, Error]),
             [];
-        Results ->
+        #{
+            "return_value" :=
+                Results
+        } ->
+            ?LOG_INFO("loaded schedules ~p ", [Results]),
             load_account_schedules(AeAccount, Results)
     end.
 
@@ -350,15 +354,11 @@ delete_schedule(AeAccount, ScheduleId) ->
 
 add_schedule(AeAccount, Name, FeatureHash, Cron) ->
     #{
-        decodedResult := [],
-        result :=
-            #{
-                log := [],
-                gasPrice := GasPrice,
-                callerId := AeAccount,
-                gasUsed := GasUsed,
-                returnType := <<"ok">>
-            }
+        log := [],
+        gasPrice := GasPrice,
+        callerId := AeAccount,
+        gasUsed := GasUsed,
+        returnType := <<"ok">>
     } =
         contract_call(
             AeAccount,
@@ -376,75 +376,123 @@ add_schedule(AeAccount, Name, FeatureHash, Cron) ->
 
 cancel_all_schedules() -> [erlcron:cancel(X) || X <- erlcron:get_all_jobs()].
 
-load_account_schedules(Account, Schedules) ->
-    ?LOG_DEBUG("Accounts ~p", [Account]),
-    lists:map(
-        fun([ScheduleId, EncryptedSchedule]) ->
-            Schedule0 =
-                maps:from_list(
-                    lists:map(
-                        fun
-                            ([<<"cron">>, Value]) ->
-                                {
-                                    cron,
-                                    binary_spec_to_term_spec(
-                                        jsx:decode(damage_utils:decrypt(base64:decode(Value))),
-                                        []
-                                    )
-                                };
-                            ([Key, Value]) when is_binary(Key) ->
-                                {
-                                    binary_to_atom(Key),
-                                    damage_utils:decrypt(base64:decode(Value))
-                                };
-                            ([Key, Value]) when is_list(Key) ->
-                                {
-                                    list_to_atom(Key),
-                                    damage_utils:decrypt(base64:decode(Value))
-                                }
-                        end,
-                        EncryptedSchedule
-                    )
-                ),
-            maps:merge(
-                #{id => ScheduleId, public_key => Account, concurrency => 1},
-                Schedule0
-            )
-        end,
-        Schedules
+load_account_schedules(Account, Schedules0) ->
+    ?LOG_DEBUG("Account ~p", [Account]),
+    Schedules = normalize_schedules(Schedules0),
+    lists:map(fun(Entry) -> parse_schedule_entry(Account, Entry) end, Schedules).
+
+%% Normalize schedules coming back from the Sophia contract.
+%% Old shape:
+%%   [[ScheduleId, EncryptedScheduleKVs], ...]
+%% New shape (contracts/schedules.aes):
+%%   #{ ScheduleId => {tuple,{Id, CronEnc, FeatureHashEnc}}, ... }
+normalize_schedules(Schedules) when is_list(Schedules) ->
+    Schedules;
+normalize_schedules(Schedules) when is_map(Schedules) ->
+    lists:map(fun normalize_schedule_kv/1, maps:to_list(Schedules)).
+
+normalize_schedule_kv({_Key, {tuple, {Id, CronEnc, FeatureHashEnc}}}) ->
+    {Id, CronEnc, FeatureHashEnc};
+normalize_schedule_kv({_Key, {tuple, {Id, CronEnc}}}) ->
+    {Id, CronEnc, undefined};
+normalize_schedule_kv({Key, Other}) ->
+    {Key, Other}.
+
+parse_schedule_entry(Account, [ScheduleId, EncryptedScheduleKVs]) ->
+    %% Legacy API shape: EncryptedScheduleKVs = [[Key, Value], ...]
+    Schedule0 = kvs_to_schedule_map(EncryptedScheduleKVs),
+    maps:merge(#{id => ScheduleId, public_key => Account, concurrency => 1}, Schedule0);
+parse_schedule_entry(Account, {ScheduleId, CronEnc, FeatureHashEnc}) ->
+    %% New contract shape: schedule record {id, cron, feature_hash}
+    CronJson = decrypt_b64_blob(CronEnc),
+    CronSpec = binary_spec_to_term_spec(jsx:decode(CronJson), []),
+    FeatureHash = decrypt_b64_blob(FeatureHashEnc),
+    Schedule0 = #{cron => CronSpec, feature_hash => FeatureHash},
+    maps:merge(#{id => ScheduleId, public_key => Account, concurrency => 1}, Schedule0);
+parse_schedule_entry(_Account, Bad) ->
+    error({invalid_schedule_shape, Bad}).
+
+kvs_to_schedule_map(EncryptedScheduleKVs) ->
+    maps:from_list(
+        lists:map(
+            fun
+                ([<<"cron">>, Value]) ->
+                    {
+                        cron,
+                        binary_spec_to_term_spec(
+                            jsx:decode(decrypt_b64_blob(Value)),
+                            []
+                        )
+                    };
+                ([Key, Value]) when is_binary(Key) ->
+                    {binary_to_atom(Key), decrypt_b64_blob(Value)};
+                ([Key, Value]) when is_list(Key) ->
+                    {list_to_atom(Key), decrypt_b64_blob(Value)}
+            end,
+            EncryptedScheduleKVs
+        )
     ).
 
+decrypt_b64_blob(B64Bin) when is_binary(B64Bin) ->
+    secrets:decrypt(B64Bin).
+
 decrypt_schedules(EncryptedSchedules) ->
-    lists:filtermap(
+    %% EncryptedSchedules is returned as a list of [Account, Schedules] pairs.
+    %% Keep all accounts; do not use filtermap (it expects boolean/option tuples).
+    lists:map(
         fun([Account, Schedules]) ->
             ?LOG_DEBUG("Account ~p", [Account]),
             load_account_schedules(Account, Schedules)
         end,
         EncryptedSchedules
     ).
+
 handle_call({get_schedules, AeAccount}, _From, Cache) ->
     AccountCache = maps:get(AeAccount, Cache, #{}),
     case catch maps:get(schedules, AccountCache, undefined) of
         undefined ->
             #{decodedResult := Results} =
                 damage_ae:contract_call_user_account(AeAccount, "get_schedules", []),
+
+            %% Return a map FeatureHashBin => CronJsonBin (both decrypted).
+            %% This preserves the historical behaviour expected by callers of get_schedules/1.
             Schedules =
-                maps:from_list(
-                    [
-                        {
-                            damage_utils:decrypt(base64:decode(FeatureHashEncrypted)),
-                            damage_utils:decrypt(base64:decode(CronEncrypted))
-                        }
-                     || [FeatureHashEncrypted, CronEncrypted] <- Results
-                    ]
-                ),
+                case Results of
+                    M when is_map(M) ->
+                        maps:from_list(
+                            [
+                                begin
+                                    %% schedule record is {id, cron, feature_hash}
+                                    {tuple, {_Id, CronEnc, FeatureHashEnc}} = V,
+                                    {
+                                        secrets:decrypt(FeatureHashEnc),
+                                        secrets:decrypt(CronEnc)
+                                    }
+                                end
+                             || {_K, V} <- maps:to_list(M)
+                            ]
+                        );
+                    L when is_list(L) ->
+                        %% Older return shape: [[FeatureHashEncrypted, CronEncrypted], ...]
+                        maps:from_list(
+                            [
+                                {
+                                    secrets:decrypt(FeatureHashEncrypted),
+                                    secrets:decrypt(CronEncrypted)
+                                }
+                             || [FeatureHashEncrypted, CronEncrypted] <- L
+                            ]
+                        )
+                end,
             {
                 reply,
                 Schedules,
                 maps:put(AeAccount, maps:put(schedules, Schedules, AccountCache), Cache)
             };
-        Schedules when is_map(Schedules) -> {reply, Schedules, Cache}
+        Schedules when is_map(Schedules) ->
+            {reply, Schedules, Cache}
     end.
+
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
