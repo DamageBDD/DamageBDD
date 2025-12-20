@@ -312,18 +312,10 @@ list_all_schedules() ->
             []
         )
     of
-        {ok, <<"ONLY_OWNER_CALL_ALLOWED">>} ->
-            ?LOG_ERROR("!!! schedules loading failed ~p Reason: ONLY_OWNER_CALL_ALLOWED", [
-                ?SCHEDULES_CONTRACT
-            ]),
-            [];
-        #{decodedResult := Results} ->
+        #{"return_value" := Results} ->
             Decrypted = decrypt_schedules(Results),
-            ?LOG_DEBUG("schedules ~p", [Decrypted]),
+            ?LOG_DEBUG("all schedules ~p", [Decrypted]),
             Decrypted;
-        #{status := <<"fail">>} ->
-            ?LOG_ERROR("schedules loading failed ~p", [?SCHEDULES_CONTRACT]),
-            [];
         Error ->
             ?LOG_ERROR("schedules loading failed ~p", [Error]),
             []

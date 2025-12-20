@@ -53,6 +53,14 @@ init([]) ->
     Core =
         [
             #{
+                id => schedule_index,
+                start => {damage_schedule_index, start_link, []},
+                restart => permanent,
+                shutdown => 10000,
+                type => supervisor,
+                modules => []
+            },
+            #{
                 id => abduco_services,
                 start => {abduco_sup, start_link, [AbducoWorkers]},
                 restart => permanent,
