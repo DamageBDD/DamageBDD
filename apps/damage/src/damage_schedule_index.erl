@@ -81,18 +81,15 @@ handle_cast({refresh_account, Account}, State) ->
         Schedules
     ),
     {noreply, State};
-
 handle_cast({upsert, Account, Id, ScheduleMap}, State) ->
     Cron = maps:get(cron, ScheduleMap),
     upsert_internal(Account, Id, ScheduleMap, Cron, epoch_minute()),
     {noreply, State};
-
 handle_cast({delete, Account, Id}, State) ->
     ets:delete(?SCHED_BY_ID, {Account, Id}),
     ets:delete(?NEXT_DUE, {Account, Id}),
     %% buckets lazily cleaned
     {noreply, State};
-
 handle_cast(tick, State) ->
     run_tick(),
     {noreply, State}.
@@ -145,8 +142,10 @@ reschedule(Account, Id, Cron) ->
 due_keys(From, To) ->
     lists:usort(
         lists:flatten(
-            [ [K || {_, K} <- ets:lookup(?DUE_BUCKET, M)]
-              || M <- lists:seq(From, To) ]
+            [
+                [K || {_, K} <- ets:lookup(?DUE_BUCKET, M)]
+             || M <- lists:seq(From, To)
+            ]
         )
     ).
 
@@ -161,8 +160,9 @@ filter_active_accounts(Keys) ->
 is_active(Account) ->
     Now = os:system_time(second),
     case ets:lookup(?DAMAGE_BAL_CACHE, Account) of
-        [{Account, #{active := Active, checked_at := T}}]
-            when Now - T < ?BALANCE_TTL_SEC ->
+        [{Account, #{active := Active, checked_at := T}}] when
+            Now - T < ?BALANCE_TTL_SEC
+        ->
             Active;
         _ ->
             Balance = damage_token:balance(Account),

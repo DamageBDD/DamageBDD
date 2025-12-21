@@ -186,8 +186,8 @@ execute_bdd(
                 {public_key, AeAccount}, {concurrency, Concurrency}
             ]),
             Context =
-                damage_context:get_account_context(
-                    damage_context:get_global_template_context(Schedule)
+                damage_context:get_context(
+                    Schedule
                 ),
             {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
             {run_id, RunId} = lists:keyfind(run_id, 1, Config),
@@ -312,7 +312,8 @@ list_all_schedules() ->
             []
         )
     of
-        #{"return_value" := Results} ->
+        %% Common wrapper (string keys)
+        #{"return_type" := "ok", "return_value" := Results} ->
             Decrypted = decrypt_schedules(Results),
             ?LOG_DEBUG("all schedules ~p", [Decrypted]),
             Decrypted;
@@ -320,6 +321,45 @@ list_all_schedules() ->
             ?LOG_ERROR("schedules loading failed ~p", [Error]),
             []
     end.
+
+%%--------------------------------------------------------------------
+%% Decrypt schedules returned by the schedules contract.
+%%
+%% Supports:
+%%  A) New: #{ {address, PubKeyBin} => SchedulesMap, ... }
+%%  B) Old: [[Account, Schedules], ...]
+%%--------------------------------------------------------------------
+decrypt_schedules(EncryptedSchedules) when is_map(EncryptedSchedules) ->
+    %% New shape: map keyed by {address, <<pubkey>>}
+    maps:fold(
+        fun(AccountKey, SchedulesMap, Acc) ->
+            Account = account_key_to_ak(AccountKey),
+            [load_account_schedules(Account, SchedulesMap) | Acc]
+        end,
+        [],
+        EncryptedSchedules
+    );
+decrypt_schedules(EncryptedSchedules) when is_list(EncryptedSchedules) ->
+    %% Old shape: list of [Account, Schedules] pairs
+    lists:map(
+        fun
+            ([Account, Schedules]) ->
+                ?LOG_DEBUG("Account ~p", [Account]),
+                load_account_schedules(Account, Schedules);
+            (Other) ->
+                error({invalid_all_schedules_shape, Other})
+        end,
+        EncryptedSchedules
+    ).
+
+account_key_to_ak({address, PubKeyBin}) when is_binary(PubKeyBin) ->
+    %% Convert raw pubkey bytes to <<"ak_...">> binary
+    aeser_api_encoder:encode(account_pubkey, PubKeyBin);
+account_key_to_ak(<<"ak_", _/binary>> = Ak) ->
+    Ak;
+account_key_to_ak(Other) ->
+    %% Last resort: return as-is so logs show the unexpected shape
+    Other.
 
 delete_schedule(AeAccount, ScheduleId) ->
     ScheduleIdHash = secrets:salted_hash(ScheduleId),
@@ -427,17 +467,6 @@ kvs_to_schedule_map(EncryptedScheduleKVs) ->
 
 decrypt_b64_blob(B64Bin) when is_binary(B64Bin) ->
     secrets:decrypt(B64Bin).
-
-decrypt_schedules(EncryptedSchedules) ->
-    %% EncryptedSchedules is returned as a list of [Account, Schedules] pairs.
-    %% Keep all accounts; do not use filtermap (it expects boolean/option tuples).
-    lists:map(
-        fun([Account, Schedules]) ->
-            ?LOG_DEBUG("Account ~p", [Account]),
-            load_account_schedules(Account, Schedules)
-        end,
-        EncryptedSchedules
-    ).
 
 handle_call({get_schedules, AeAccount}, _From, Cache) ->
     AccountCache = maps:get(AeAccount, Cache, #{}),
