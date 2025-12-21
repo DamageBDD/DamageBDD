@@ -27,7 +27,8 @@
 
 /* Header */
 #lightning-swap-demo .swap-header {
-  margin-bottom: 16px;
+  margin: 1rem 0;
+  padding-left: 1rem;
 }
 
 #lightning-swap-demo .swap-title {
@@ -66,6 +67,7 @@
   flex: 1;
   min-height: 0; /* helps prevent overflow issues in flex children */
   gap: 1.8rem; /* controls spacing between children */
+  padding: 0 1rem 1rem 1rem;
 }
 
 #lightning-swap-demo .step.active {
@@ -106,8 +108,10 @@ hr {
 }
 
 #lightning-swap-demo label {
+  display: block; /* <-- this is the key */
   font-size: 12px;
   opacity: 0.7;
+  margin-bottom: 0.25rem; /* now it will actually create vertical space */
 }
 
 #lightning-swap-demo .asset-row {
@@ -125,6 +129,7 @@ hr {
 }
 
 #lightning-swap-demo input {
+  width: 100%;
   flex: 1;
   background: #222233;
   border: none;
@@ -186,7 +191,7 @@ hr {
 /* Summary */
 #lightning-swap-demo .summary-card {
   border-radius: 8px;
-  padding: 12px;
+  padding: 1rem 0 0 0;
 }
 
 #lightning-swap-demo .summary-card .row {
@@ -216,27 +221,15 @@ hr {
   transform-origin: top;
 }
 
-#lightning-swap-demo .confirm-grid {
-  display: grid;
-}
-
-#lightning-swap-demo .swap-grid {
-  grid-template-columns: minmax(120px, auto) 1fr; /* Ensure first column is wide enough but no wider than 120px */
-  grid-template-rows: repeat(4, auto);
-  column-gap: 0.2rem;
-  row-gap: 0.5rem;
-  font-size: 1rem;
-  border-radius: 0.5rem;
-}
-
 #lightning-swap-demo .swap-grid div {
-  padding: 8px;
+  padding: 1rem;
 }
 
 #lightning-swap-demo .swap-grid .label {
   text-align: left;
   color: white;
   white-space: nowrap;
+  padding-left: 0;
 }
 
 #lightning-swap-demo .swap-grid .value {
@@ -260,3 +253,28 @@ hr {
 }
 
 /* ------------------------------------------------------------------- */
+
+@media (min-width: 481px) {
+  #lightning-swap-demo .confirm-grid {
+    display: grid;
+  }
+
+  #lightning-swap-demo .swap-grid {
+    grid-template-columns: minmax(120px, auto) 1fr; /* Ensure first column is wide enough but no wider than 120px */
+    grid-template-rows: repeat(4, auto);
+    column-gap: 0.2rem;
+    row-gap: 0.5rem;
+    font-size: 1rem;
+    border-radius: 0.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  #lightning-swap-demo .swap-grid .label {
+    padding-left: 0;
+  }
+
+  #lightning-swap-demo .swap-step {
+    gap: 1rem;
+  }
+}
