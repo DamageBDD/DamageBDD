@@ -120,7 +120,7 @@ hr {
   background: #222233;
   box-shadow: inset 0 0 0.5rem rgba(0, 0, 0, 0.8);
   border-radius: 8px;
-  padding: 8px;
+  padding: 1rem;
 }
 
 #lightning-swap-demo .token {
@@ -274,7 +274,45 @@ hr {
     padding-left: 0;
   }
 
+  #lightning-swap-demo .summary-card {
+    padding-top: 0;
+  }
+
+  #lightning-swap-demo .summary-card .confirm-grid .label:first-child {
+    padding-top: 0;
+  }
+
+  #lightning-swap-demo .primary-btn {
+    margin-top: 1rem;
+  }
+
   #lightning-swap-demo .swap-step {
     gap: 1rem;
+  }
+}
+
+@media (max-width: 300px) {
+  #lightning-swap-demo .swap-header {
+    padding-left: 0;
+  }
+
+  #lightning-swap-demo .summary-card {
+    padding-top: 0;
+  }
+
+  #lightning-swap-demo .select-grid .label:first-child {
+    padding-top: 0;
+  }
+
+  #lightning-swap-demo .summary-card .confirm-grid .label:first-child {
+    padding-top: 0;
+  }
+
+  #lightning-swap-demo .swap-step {
+    padding: 0;
+  }
+
+  #lightning-swap-demo .primary-btn {
+    margin-top: 0.8rem;
   }
 }
