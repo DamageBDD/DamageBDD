@@ -333,15 +333,19 @@ to_html(Req, #{action := confirm} = State) ->
 authenticate_user(Email, Password0) ->
     Password = secrets:salted_hash(Password0),
     case identity_server:get_account_by_email(Email) of
-        {Account, Password, _PrivateKey} ->
+        {Account, Password, PrivateKey} ->
             Expiry = date_util:now_to_seconds(os:timestamp()) + ?TOKEN_TIMEOUT,
-            Token = secrets:encrypt(term_to_binary({Account, Email, Expiry})),
+            AccToken = secrets:encrypt(
+                #{public_key => Account, private_key => PrivateKey},
+                term_to_binary({Email, Expiry})
+            ),
+            Token = secrets:encrypt(
+                term_to_binary({Account, AccToken, Expiry})
+            ),
             {ok, Account, Token};
         Error = {error, notfound} ->
-            ?LOG_ERROR("authenticate_user error ~p ", [Error]),
             Error;
         notfound ->
-            ?LOG_ERROR("authenticate_user error ~p ", [notfound]),
             {error, notfound};
         _ ->
             {error, notauthorized}
@@ -349,8 +353,22 @@ authenticate_user(Email, Password0) ->
 validate_access_token(Token) ->
     Now = date_util:now_to_seconds(os:timestamp()),
     case catch binary_to_term(secrets:decrypt(Token)) of
-        {AeAccount, Email, Expiry} when Expiry > Now ->
-            {AeAccount, Email};
+        {AeAccount, AccToken, Expiry} when Expiry > Now ->
+            case identity_server:get_account(AeAccount) of
+                #{
+                    public_key := _Address, private_key := _PrivateKey
+                } = Keypair ->
+                    case catch binary_to_term(secrets:decrypt(Keypair, AccToken)) of
+                        {Username, Expiry} when Expiry > Now ->
+                            {AeAccount, Username};
+                        {_Username, Expiry} when Expiry < Now ->
+                            {error, exprired};
+                        _ ->
+                            {error, badrequest}
+                    end;
+                _ ->
+                    {error, badrequest}
+            end;
         {_AeAccount, _Username, Expiry} when Expiry < Now ->
             {error, exprired};
         _ ->

@@ -28,7 +28,6 @@
     encrypt_store/2,
     retrieve_decrypt/1,
     import/0,
-    keypair/1,
     node_keypair/0,
     make_keypair/0,
     salted_hash/1,
@@ -41,7 +40,7 @@
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
--export([has_node_password/0, set_node_password/1, has_node_keypair/0, get_node_password/0]).
+-export([has_node_password/0, set_node_password/1, has_node_keypair/0]).
 
 -define(ASKPASS_TIMEOUT, 60000).
 -define(DETS_FILE, "/var/lib/damage/damage.dets").
@@ -148,6 +147,21 @@ handle_call({decrypt, Key, EncData}, _From, State0) ->
                     Pass
             end
     end;
+handle_call(
+    node_keypair,
+    _From,
+    #{public_key := AeAccount, private_key := PrivateKey} = State
+) when is_binary(PrivateKey) ->
+    {reply, #{public_key => AeAccount, private_key => PrivateKey}, State};
+handle_call(node_keypair, _From, State) ->
+    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+    case get_node_password_cached(State) of
+        error ->
+            {reply, error, State};
+        {NodePassword, State} ->
+            #{public_key := AeAccount, private_key := PrivateKey} = keypair(Path, NodePassword),
+            {reply, #{public_key => AeAccount, private_key => PrivateKey}, State}
+    end;
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
         "got unknown on gun websocket Call ~p, From ~p, State ~p",
@@ -172,52 +186,35 @@ make_keypair() ->
     PubBin = aeser_api_encoder:encode(account_pubkey, Pub),
     PubStr = unicode:characters_to_list(PubBin),
     #{public_key => PubStr, private_key => Priv}.
-keypair(Path) ->
+keypair(Path, NodePassword) ->
     case file:read_file(Path) of
         {error, enoent} ->
             ?LOG_INFO(Path ++ " not found ... creating.", []),
             Data = make_keypair(),
-            case get_node_password() of
-                {error, Error} ->
-                    ?LOG_INFO(
-                        "Failed get password for encrypting new keypair ~p ~nSet password through web interface or usint `set_node_password/1` ~nError: ",
-                        [
-                            Path, Error
-                        ]
-                    ),
-                    {error, keypair_not_initialized};
-                Password ->
-                    EncData = secrets:encrypt(
-                        Password,
-                        term_to_binary(Data)
-                    ),
-                    ok = file:write_file(Path, term_to_binary(EncData)),
-                    Data
-            end;
+            EncData = secrets:encrypt(
+                NodePassword,
+                term_to_binary(Data)
+            ),
+            ok = file:write_file(Path, term_to_binary(EncData)),
+            Data;
         {ok, EncDataBin} ->
-            case get_node_password() of
-                {error, Error} ->
-                    ?LOG_WARNING("Failed get password for decrypting keypair ~p ~p", [Path, Error]),
-                    {error, decrypt_keypair};
-                Password ->
-                    case
-                        secrets:decrypt(
-                            Password,
-                            binary_to_term(EncDataBin)
-                        )
-                    of
-                        error ->
-                            ?LOG_WARNING("Failed to unlock keypair ~p", [Path]),
-                            clear_cache(),
-                            keypair(Path);
-                        Data ->
-                            binary_to_term(Data)
-                    end
+            case
+                secrets:decrypt(
+                    NodePassword,
+                    binary_to_term(EncDataBin)
+                )
+            of
+                error ->
+                    ?LOG_WARNING("Failed to unlock keypair ~p", [Path]),
+                    clear_cache(),
+                    keypair(Path, NodePassword);
+                Data ->
+                    binary_to_term(Data)
             end
     end.
 node_keypair() ->
-    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
-    keypair(Path).
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, node_keypair, ?ASKPASS_TIMEOUT).
 has_node_keypair() ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case file:read_file(Path) of
@@ -240,6 +237,8 @@ encrypt(Key, Password, PlainText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {encrypt, Key, Password, PlainText}, ?ASKPASS_TIMEOUT).
 
+encrypt(#{public_key := _AeAccount, private_key := PrivateKey}, PlainText) ->
+    base64:encode(term_to_binary(encrypt_secret(PlainText, PrivateKey)));
 %% Encrypts data with a password
 encrypt(Password, PlainText) when is_list(Password) ->
     encrypt(list_to_binary(Password), PlainText);
@@ -253,18 +252,20 @@ encrypt(Password, PlainText) ->
 decrypt(null) ->
     error;
 decrypt(Base64EncodedCipherTuple) ->
-    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
-    case base64:decode(Base64EncodedCipherTuple) of
-        Term when is_binary(Term) ->
-            decrypt_secret(binary_to_term(Term), PrivateKey);
-        _ ->
-            error
-    end.
+decrypt(secrets:node_keypair(),Base64EncodedCipherTuple).
 
 decrypt(Key, Password, CipherText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {decrypt, Key, Password, CipherText}, ?ASKPASS_TIMEOUT).
 %% Decrypts data with a password
+decrypt(#{public_key := _AeAccount, private_key := PrivateKey},Base64EncodedCipherTuple) ->
+    case base64:decode(Base64EncodedCipherTuple) of
+        Term when is_binary(Term) ->
+            decrypt_secret(binary_to_term(Term), PrivateKey);
+        _ ->
+            error
+    end;
+
 decrypt(Password, {Salt, IV, Tag, CipherText}) ->
     Key = derive_key(Password, Salt),
     AAD = <<>>,
