@@ -252,6 +252,17 @@ hr {
   opacity: 1; /* keep arrows visible */
 }
 
+#lightning-swap-demo .swap-grid .value {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The sliding text */
+#lightning-swap-demo .swap-grid .value .value-text {
+  display: inline-block; /* required for transform */
+  opacity: 0;
+}
+
 /* ------------------------------------------------------------------- */
 
 @media (min-width: 481px) {
