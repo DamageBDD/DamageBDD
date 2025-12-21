@@ -24,32 +24,87 @@
       x: 0,
       duration: 1,
       ease: "bounce",
-      stagger: .5,
+      stagger: 0.8,
       delay: opts.delay ?? 0,
       clearProps: "transform",
     });
   }
 
-  // function show(step) {
-  //   if (step !== "select") {
-  //     toggleDetails();
-  //   }
-  //   current = step;
-  //   steps.forEach((el) =>
-  //     el.classList.toggle("hidden", el.dataset.step !== step),
-  //   );
-  //   indicators.forEach((el) =>
-  //     el.classList.toggle(
-  //       "active",
-  //       el.textContent.trim().toLowerCase() === step,
-  //     ),
-  //   );
+  function boltVerticalPullAnim(tl, at = 0) {
+    const title = root.querySelector(".swap-title");
+    if (!title) return;
 
-  //   // when leaving select, ensure details panel is not mid-animation
-  //   if (step !== "select") {
-  //     resetDetailsUI();
-  //   }
-  // }
+    // wrap ⚡ once
+    if (!title.querySelector(".bolt")) {
+      title.innerHTML = title.innerHTML.replace(
+        "⚡",
+        '<span class="bolt">⚡</span>',
+      );
+    }
+
+    const bolt = title.querySelector(".bolt");
+    if (!bolt) return;
+
+    tl.fromTo(
+      bolt,
+      { scaleY: 1, scaleX: 1, x: 0 },
+      {
+        scaleY: 2, // vertical pull
+        scaleX: 0.82, // horizontal squash
+        duration: 0.14,
+        x: -5,
+        ease: "power2.out",
+      },
+      at,
+    )
+      // slight extra tension
+      .to(
+        bolt,
+        {
+          scaleY: 1.7,
+          scaleX: 0.78,
+          duration: 0.06,
+          ease: "power1.inOut",
+        },
+        ">",
+      )
+      // snap back with bounce
+      .to(
+        bolt,
+        {
+          scaleY: 1,
+          scaleX: 1,
+          duration: 0.55,
+          x: 0,
+          ease: "elastic.out(1, 0.45)",
+        },
+        ">",
+      );
+  }
+
+  function titleIntroAnim() {
+    if (!window.gsap) return;
+
+    const title = root.querySelector(".swap-title");
+    if (!title) return;
+
+    const tl = gsap.timeline();
+
+    // Title scales up then settles
+    tl.fromTo(
+      title,
+      { scale: 1 },
+      { scale: 1.1, duration: 0.18, ease: "power2.out" },
+    ).to(title, {
+      scale: 1,
+      duration: 1,
+
+      ease: "bounce.out", // or elastic.out for smoother
+    });
+
+    // Bolt stretch starts DURING the scale-up
+    boltVerticalPullAnim(tl, 1);
+  }
 
   // ---------------- Details toggle (Select step only) ----------------
 
@@ -257,6 +312,7 @@
 
   // Init
   show("select");
+  titleIntroAnim();
 
   // Set initial details state
   // If you want collapsed by default: set detailsOpen=false above, then call closeDetails(false)

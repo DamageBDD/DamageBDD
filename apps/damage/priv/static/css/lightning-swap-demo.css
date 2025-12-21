@@ -245,7 +245,6 @@ hr {
   background: transparent;
 }
 
-/* Style the spinner container */
 #lightning-swap-demo input[type="number"]::-webkit-inner-spin-button,
 #lightning-swap-demo input[type="number"]::-webkit-outer-spin-button {
   background: transparent;
@@ -257,10 +256,15 @@ hr {
   overflow: hidden;
 }
 
-/* The sliding text */
 #lightning-swap-demo .swap-grid .value .value-text {
-  display: inline-block; /* required for transform */
+  display: inline-block;
   opacity: 0;
+}
+
+#lightning-swap-demo .swap-title .bolt {
+  display: inline-block;
+  transform-origin: 50% 50%;
+  will-change: transform;
 }
 
 /* ------------------------------------------------------------------- */
