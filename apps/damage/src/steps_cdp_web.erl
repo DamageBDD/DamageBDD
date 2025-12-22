@@ -56,7 +56,16 @@ step(_Cfg, Ctx, <<"When">>, _N, ["I save text of", Sel, "as", Name], _Body) ->
             {ok, V} -> {ok, maps:put({var, to_bin(Name)}, V, Ctx)};
             Error -> Error
         end
-    end).
+    end);
+%% Compare element sizes by CSS selectors (exact match)
+step(_Cfg, Ctx, <<"Then">>, _N, ["the element", SelA, "should be the same size as", SelB], _Body) ->
+    with_client(Ctx, fun(P) -> assert_same_size(P, to_bin(SelA), to_bin(SelB), 0.0) end);
+
+%% Compare element sizes by CSS selectors (allow +/- TolerancePx)
+step(_Cfg, Ctx, <<"Then">>, _N, ["the element", SelA, "should be the same size as", SelB, "within", TolPx0, "px"], _Body) ->
+    TolPx = list_to_float(TolPx0),
+    with_client(Ctx, fun(P) -> assert_same_size(P, to_bin(SelA), to_bin(SelB), TolPx) end).
+
 
 %% ========== Public helpers for other step modules ==========
 attach(Ctx0) ->
@@ -293,6 +302,49 @@ get_text(Pid, Sel) ->
     of
         #{<<"result">> := #{<<"value">> := V}} when is_binary(V) -> {ok, V};
         _ -> {error, not_found}
+    end.
+
+assert_same_size(Pid, SelA, SelB, TolPx) when is_binary(SelA), is_binary(SelB) ->
+    Expr = iolist_to_binary([
+        "(function(){",
+        "  const aSel=", jsx:encode(SelA), ";",
+        "  const bSel=", jsx:encode(SelB), ";",
+        "  const a=document.querySelector(aSel);",
+        "  const b=document.querySelector(bSel);",
+        "  if(!a) return {ok:false,msg:`not found: ${aSel}`};",
+        "  if(!b) return {ok:false,msg:`not found: ${bSel}`};",
+        "  const ar=a.getBoundingClientRect();",
+        "  const br=b.getBoundingClientRect();",
+        "  const aw=Math.round(ar.width*100)/100;",
+        "  const ah=Math.round(ar.height*100)/100;",
+        "  const bw=Math.round(br.width*100)/100;",
+        "  const bh=Math.round(br.height*100)/100;",
+        "  return {ok:true,a:{w:aw,h:ah},b:{w:bw,h:bh}};",
+        "})()"
+    ]),
+    case call(Pid, <<"Runtime.evaluate">>, #{<<"expression">> => Expr, <<"returnByValue">> => true}) of
+        #{<<"result">> := #{<<"value">> := #{<<"ok">> := true,
+                                             <<"a">> := #{<<"w">> := AW, <<"h">> := AH},
+                                             <<"b">> := #{<<"w">> := BW, <<"h">> := BH}}}} ->
+            DW = abs(float(AW) - float(BW)),
+            DH = abs(float(AH) - float(BH)),
+            case (DW =< TolPx) andalso (DH =< TolPx) of
+                true ->
+                    ok;
+                false ->
+                    {error, #{<<"result">> => #{<<"result">> => #{<<"value">> => #{
+                        <<"ok">> => false,
+                        <<"msg">> =>
+                            iolist_to_binary(
+                                io_lib:format(
+                                    "size mismatch ~s vs ~s (A=~.2fx~.2f, B=~.2fx~.2f, tol=~.2f, dw=~.2f, dh=~.2f)",
+                                    [SelA, SelB, float(AW), float(AH), float(BW), float(BH), TolPx, DW, DH]
+                                )
+                            )
+                    }}}}}
+            end;
+        Other ->
+            {error, Other}
     end.
 
 %% Record we keep in ETS: {KeyBin, #{host,port,chrome_pid,chrome_os_port,user_data_dir,cdp_pid}}
