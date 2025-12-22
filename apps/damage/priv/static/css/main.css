@@ -928,7 +928,7 @@ cursor: pointer;
 color: #fff;
 }
 
-.install-btn {
+.toolbar-btn {
 background: linear-gradient(to right, #28a745, #218838);
 color: #fff;
 padding: 10px 16px;
@@ -940,7 +940,7 @@ cursor: pointer;
 transition: all .2s ease-in-out;
 user-select: none;
 }
-.install-btn:hover { transform: scale(1.03); }
+.toolbar-btn:hover { transform: scale(1.03); }
 
 #install-modal input, #install-modal select, #install-modal textarea {
 width: 100%;
@@ -1809,7 +1809,7 @@ body.reset-password-page h2 {
     font-size: 0.95rem;
   }
 
-  .install-btn {
+  .toolbar-btn {
     padding: 8px 12px;
     font-size: 0.85rem;
   }
@@ -2031,7 +2031,7 @@ h3 {
   padding: 0.5rem 0.75rem;
 }
 
-.install-btn {
+.toolbar-btn {
   font-size: 0.8rem;
   padding: 0.5rem 0.75rem;
 }
