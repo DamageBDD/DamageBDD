@@ -161,7 +161,43 @@ from_text(Req, #{public_key := AeAccount} = State) ->
     Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
     {stop, cowboy_req:reply(201, Resp), State}.
 
-from_json(Req, State) -> from_text(Req, State).
+from_json(Req, #{public_key := AeAccount} = State) ->
+    {ok, Data, Req1} = cowboy_req:read_body(Req),
+    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+        {'EXIT', {badarg, Trace}} ->
+            ?LOG_ERROR("JSON decoding failed ~p", [Trace]),
+            Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"error">>, message => <<"Json decoding failed.">>}), Req1),
+            {stop, cowboy_req:reply(400, Resp), State};
+        Json when is_map(Json) ->
+            % Extract feature content from JSON
+            FeatureContent = case maps:get(feature, Json, undefined) of
+                undefined -> Data; % Fallback to raw body if no feature field
+                Feature when is_binary(Feature) -> Feature;
+                Feature when is_list(Feature) -> list_to_binary(Feature);
+                Feature -> list_to_binary(io_lib:format("~p", [Feature]))
+            end,
+            ok = validate(FeatureContent),
+            CronSpec = binary_spec_to_term_spec(cowboy_req:path_info(Req1), []),
+            Concurrency = cowboy_req:header(<<"x-damage-concurrency">>, Req1, 1),
+            ?LOG_DEBUG("Cron Spec: ~p", [CronSpec]),
+            {ok, [#{<<"Hash">> := Hash}]} =
+                damage_ipfs:add({data, FeatureContent, <<"Scheduledjob">>}),
+            Name = list_to_binary(uuid:to_string(uuid:uuid4())),
+            Schedule =
+                #{
+                    id => Name,
+                    public_key => AeAccount,
+                    feature_hash => Hash,
+                    concurrency => Concurrency,
+                    cron => CronSpec
+                },
+            ?LOG_INFO("schedule_job: ~p", [Schedule]),
+            CronJob = apply(?MODULE, schedule_job, [Schedule]),
+            ?LOG_INFO("Cron Job: ~p", [CronJob]),
+            ok = add_schedule(AeAccount, Name, Hash, CronSpec),
+            Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req1),
+            {stop, cowboy_req:reply(201, Resp), State}
+    end.
 
 from_html(Req, State) -> from_text(Req, State).
 

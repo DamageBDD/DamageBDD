@@ -16,6 +16,7 @@
   display: flex;
   justify-content: center;
   align-items: center;
+  z-index: 1000;
 }
 
 .modal__container {
@@ -53,7 +54,6 @@
 
 .modal__content {
   margin-top: 2rem;
-  margin-bottom: 2rem;
   line-height: 1.5;
   color: rgba(0,0,0,.8);
 }
