@@ -810,46 +810,61 @@ color: #ccc;
 font-family: monospace;
 }
 
+/* --- Click-to-copy row: text + icon tight together --- */
 .click-copy {
-position: relative;
-display: flex;
-align-items: center;
-width: 100%;
+  display: inline-flex;     /* hug contents, not full width */
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+  position: relative;       /* harmless; keeps compatibility */
+  flex-direction: row;      /* IMPORTANT: keep icon beside text */
 }
 
-.click-copy input[type="text"],
-.click-copy textarea[readonly] {
-width: 100%;
-padding: 0.75rem 2.5rem 0.75rem 1rem;
-border: 1px solid #444;
-border-radius: 6px;
-background-color: #1c1c2b;
-color: #e0e0e0;
-font-size: 0.95rem;
-font-family: monospace;
-resize: none;
-outline: none;
+/* Copyable text (span) */
+.click-copy .copy-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100vw - 6rem); /* mobile-safe truncation */
 }
 
-.click-copy textarea {
-min-height: 5rem;
-line-height: 1.5;
-}
-
+/* Copy icon (NO absolute positioning) */
 .click-copy .copy-icon {
-position: absolute;
-right: 0.75rem;
-top: 50%;
-transform: translateY(-50%);
-font-size: 1.2rem;
-color: #ffcc00;
-cursor: pointer;
-transition: color 0.2s ease-in-out;
+  position: static;         /* ensure it stays in flex flow */
+  transform: none;
+  flex-shrink: 0;           /* never drift away */
+  font-size: 1.2rem;
+  line-height: 1;
+  color: #ffcc00;
+  cursor: pointer;
+  transition: color 0.2s ease-in-out;
 }
 
 .click-copy .copy-icon:hover {
-color: #ffffff;
+  color: #ffffff;
 }
+
+/* Keep your existing input/textarea styles (for other parts of UI) */
+.click-copy input[type="text"],
+.click-copy textarea[readonly] {
+  width: 100%;
+  padding: 0.75rem 2.5rem 0.75rem 1rem;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background-color: #1c1c2b;
+  color: #e0e0e0;
+  font-size: 0.95rem;
+  font-family: monospace;
+  resize: none;
+  outline: none;
+}
+
+.click-copy textarea {
+  min-height: 5rem;
+  line-height: 1.5;
+}
+
+
 .site-header {
 display: flex;
 align-items: center;
@@ -1846,16 +1861,6 @@ body.reset-password-page h2 {
     font-size: 0.9rem;
   }
 
-  .click-copy {
-    flex-direction: column;
-  }
-
-  .click-copy .copy-icon {
-    position: static;
-    transform: none;
-    margin-top: 0.5rem;
-    align-self: flex-end;
-  }
 
   table {
     font-size: 0.75rem;

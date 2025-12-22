@@ -20,3 +20,6 @@ rebar3.crashdump
 config/sys.config
 contracts/*.aes.deploy.*
 apps/ecai/priv/wikipedia/*
+apps/damage/src/damage_build_info.erl
+
+

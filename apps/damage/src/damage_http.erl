@@ -412,7 +412,15 @@ effective_context(Context0, State) ->
     GlobalCtx = damage_context:get_global_template_context(Ctx1),
     AccountCtx = damage_context:get_context(AeAccount),
     maps:put(
-        public_key, AeAccount, maps:put(account_context, AccountCtx, maps:merge(GlobalCtx, Ctx1))
+        public_key,
+        AeAccount,
+        maps:put(
+            account_context,
+            AccountCtx,
+            maps:merge(
+                GlobalCtx, Ctx1
+            )
+        )
     ).
 
 %% Helper: true iff overrides explicitly request dry-run only
@@ -886,16 +894,26 @@ to_json(Req, #{action := version} = State) ->
     Resp = #{
         version => list_to_binary(Version)
     },
+    VersionInfo = #{
+        git_sha => damage_build_info:git_sha(),
+        git_sha_short => damage_build_info:git_sha_short(),
+        build_time => damage_build_info:build_time(),
+        build_env => damage_build_info:build_env()
+    },
+
     case secrets:node_keypair() of
         #{public_key := PubKey, private_key := _NodePrivateKey} ->
             NodeDamageBalance = damage_ae:node_damage_balance(),
             NodeAeBalance = damage_ae:node_ae_balance(),
+            NodeBtcBalance = cln:get_node_balance(),
             Resp0 =
                 #{
                     ok => true,
                     public_key => list_to_binary(PubKey),
                     damage_balance => NodeDamageBalance,
-                    ae_balance => NodeAeBalance
+                    ae_balance => NodeAeBalance,
+                    btc_balance => NodeBtcBalance,
+                    version => VersionInfo
                 },
             {
                 jsx:encode(

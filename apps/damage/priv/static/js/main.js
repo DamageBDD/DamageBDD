@@ -235,7 +235,11 @@ function generateDamageQR(address){
 			event.preventDefault();
 			await submitDamageForm();
 		});
-		fetchVersion();
+		fetch("/version")
+			.then(r => r.json())
+			.then(renderNodeFooter)
+			.catch(() => {});
+
 
 
         document.querySelectorAll(".toggle-password").forEach((btn) => {
@@ -1150,51 +1154,59 @@ function generateDamageQR(address){
 		const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 		return regex.test(email);
 	}
-	function fetchVersion() {
-		var xhr = new XMLHttpRequest();
-		xhr.open('GET', '/version', true);
-		xhr.setRequestHeader('Content-Type', 'application/json');
-
-		xhr.onload = function() {
-			var versionDom= document.getElementById('node-version');
-			if (xhr.status === 200) {
-				var versionData = JSON.parse(xhr.responseText);
-				if(versionData.ok == true){
-					versionDom.innerText = 'node version: ' + versionData.version
-						+ '\n node $DAMAGE balance: ' + versionData.damage_balance
-						+ '\n node $AE balance: ' + versionData.ae_balance;
-					console.log("version: ");
-					console.log( versionData);
-					var nodePublicKeyDom= document.getElementById('node-public-key');
-					nodePublicKeyDom.innerText = 'node public key: ' + versionData.public_key;
-					window.nodePublicKey = versionData.public_key;
-					document.getElementById("node-public-key").addEventListener("click",(event) => {
-						event.preventDefault();
-						MicroModal.show("node-public-key-modal");
-					});
-					document.getElementById("node-qrcode").innerText = "";
-					var qrcode = new QRCode(
-						document.getElementById("node-qrcode"),
-						versionData.public_key
-					);
-				}else{
-					versionDom.innerText = 'node not initialized: ' + versionData.error;
-					MicroModal.close("login-modal");
-					if(versionData.error == "decrypt_keypair"){
-						MicroModal.show("node-unlock-modal");
-					}else if (versionData.error == "keypair_not_initialized"){
-						MicroModal.show("node-set-password-modal");
-					}
-				}
-			}
-		};
-		
-		xhr.onerror = function() {
-			console.error('Error making the request.');
-		};
-
-		xhr.send();
+	function satsToBtc(sats) {
+		// Ensure input is treated as a number
+		const satoshiAmount = Number(sats);
+		// 1 BTC = 100,000,000 satoshis
+		const btcAmount = satoshiAmount / 100000000;
+		return btcAmount;
 	}
+	function renderNodeFooter(resp) {
+		// schema: { ok:true, version, public_key, damage_balance, ae_balance, btc_balance, verson:{...} }
+		if (!resp || resp.ok !== true) return;
+
+		const pk = resp.public_key ?? "unknown";
+
+		const damage = Number(resp.damage_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+		const ae     = Number(resp.ae_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+		const btc    = Number(resp.btc_balance ?? 0).toLocaleString(); // sats, as provided
+
+		const version = resp.version ?? "unknown";
+
+		const build = version;
+
+		const shaFull  = build.git_sha ?? "unknown";
+		const shaShort = build.git_sha_short ?? (shaFull !== "unknown" ? shaFull.slice(0, 7) : "unknown");
+		const time     = build.build_time ?? "unknown";
+		const env      = build.build_env ?? "unknown";
+
+		// Copyable public key
+		const pkEl = document.getElementById("node-public-key");
+		if (pkEl) {
+			pkEl.textContent = pk;              // copyToClipboard reads textContent
+			pkEl.title = "Click 📋 to copy";
+		}
+
+		// Balances + version
+		const balEl = document.getElementById("node-balances");
+		if (balEl) {
+			balEl.textContent = `Balances — DAMAGE ${damage} | AE ${ae} | BTC(sats) ${btc}`;
+		}
+
+		// Copyable commit hash target (display short, copy same element text unless you choose hidden full)
+		const shaEl = document.getElementById("node-build-sha");
+		if (shaEl) {
+			shaEl.textContent = shaFull;        // ✅ copy full hash using existing helper
+			shaEl.title = `Commit: ${shaFull}`;
+			// If you want UI to show short but still copy full, see note below.
+		}
+
+		const metaEl = document.getElementById("node-build-meta");
+		if (metaEl) {
+			metaEl.textContent = `Build: ${env} · ${shaShort} · ${time}`;
+		}
+	}
+
 
 
 
