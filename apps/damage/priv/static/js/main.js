@@ -1288,3 +1288,93 @@ function copyToClipboard(elementId) {
 
 // ⬅️ Make it accessible from HTML inline
 window.copyToClipboard = copyToClipboard;
+
+// Schedule form submission handler
+async function submitScheduleForm(event) {
+	event.preventDefault();
+	
+	const form = document.getElementById('scheduleForm');
+	const featurePathInput = document.getElementById('feature-path');
+	const featurePath = featurePathInput?.value?.trim();
+	
+	if (!featurePath) {
+		alert('Please enter a feature path');
+		return;
+	}
+	
+	// Get auth token
+	const token = window.TokenManager?.getToken();
+	if (!token) {
+		MicroModal.show('login-modal');
+		return;
+	}
+	
+	try {
+		// Fetch the feature file content
+		const featureResponse = await fetch(`/features/${featurePath}`, {
+			method: 'GET',
+			credentials: 'include',
+			headers: {
+				'Authorization': 'Bearer ' + token
+			}
+		});
+		
+		if (!featureResponse.ok) {
+			throw new Error(`Failed to fetch feature file: ${featureResponse.statusText}`);
+		}
+		
+		const featureContent = await featureResponse.text();
+		
+		// For now, use a default schedule (daily every 10 seconds as shown in the example)
+		// TODO: Add schedule frequency/time fields to the form
+		const scheduleSpec = 'daily/every/10/sec';
+		const scheduleUrl = `/schedules/${scheduleSpec}`;
+		
+		// Submit to schedules endpoint
+		// The endpoint expects the feature content directly in the body (not wrapped in JSON)
+		// Based on the backend implementation, it reads the body directly
+		const scheduleResponse = await fetch(scheduleUrl, {
+			method: 'POST',
+			credentials: 'include',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': 'Bearer ' + token
+			},
+			body: JSON.stringify({ feature: featureContent })
+		});
+		
+		if (!scheduleResponse.ok) {
+			const errorText = await scheduleResponse.text();
+			throw new Error(`Failed to create schedule: ${errorText}`);
+		}
+		
+		const result = await scheduleResponse.json();
+		
+		if (result.status === 'ok') {
+			showNotification({
+				title: 'Success',
+				content: 'Schedule created successfully',
+				style: 'success'
+			});
+			MicroModal.close('schedule-modal');
+			form.reset();
+			
+			// Refresh schedules table if function exists
+			if (typeof updateSchedulesTable === 'function') {
+				updateSchedulesTable();
+			}
+		} else {
+			throw new Error(result.message || 'Unknown error');
+		}
+	} catch (error) {
+		console.error('Schedule submission error:', error);
+		showNotification({
+			title: 'Error',
+			content: error.message || 'Failed to create schedule',
+			style: 'error'
+		});
+	}
+}
+
+// Make it accessible from HTML inline
+window.submitScheduleForm = submitScheduleForm;

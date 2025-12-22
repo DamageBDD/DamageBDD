@@ -393,7 +393,7 @@ box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
 
 .modal__header {
 text-align: center;
-margin-bottom: 1.5rem;
+position: relative;
 }
 
 .login_modal_header {
@@ -524,11 +524,10 @@ background: none;
 border: none;
 font-size: 1.5rem;
 color: #aaa;
-/*
 position: absolute;
-top: 1.25rem;
-right: 1.25rem;
-*/
+top: -1rem;
+right: -1rem;
+
 cursor: pointer;
 transition: color 0.2s ease-in-out;
 }
@@ -1155,7 +1154,7 @@ box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
 }
 
 #schedule-modal .modal__content {
-padding: 1.5rem 2rem;
+padding: 0rem 2rem;
 }
 
 #schedule-modal .form-group {
@@ -1887,10 +1886,6 @@ body.reset-password-page h2 {
   button, .buttonlink {
     -webkit-tap-highlight-color: rgba(0, 123, 255, 0.3);
     user-select: none;
-  }
-
-  form {
-    width: 100%;
   }
 
   .seed-phrase-words {
