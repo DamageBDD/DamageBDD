@@ -928,19 +928,58 @@ cursor: pointer;
 color: #fff;
 }
 
-.toolbar-btn {
-background: linear-gradient(to right, #28a745, #218838);
-color: #fff;
-padding: 10px 16px;
-border: none;
-border-radius: 6px;
-font-size: 13px;
-font-weight: 600;
-cursor: pointer;
-transition: all .2s ease-in-out;
-user-select: none;
+/* .toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 36px;
+  min-width: 96px;
+
+  padding: 10px 16px;
+  border-radius: 6px;
+
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+
+  cursor: pointer;
+  user-select: none;
+  border: none;
+} */
+
+#installBtn, #logoutBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 36px;
+  min-width: 76px; /* important */
+
+  padding: 10px 16px;
+  border-radius: 6px;
+
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+
+  cursor: pointer;
+  user-select: none;
+  border: none;
 }
-.toolbar-btn:hover { transform: scale(1.03); }
+
+.toolbar-btn--install {
+  background: linear-gradient(to right, #28a745, #218838);
+  color: #fff;
+  will-change: transform;
+}
+
+.toolbar-btn--logout {
+  background: transparent;
+  color: #ccc;
+}
+
+.toolbar-btn--install:hover { transform: scale(1.03); }
 
 #install-modal input, #install-modal select, #install-modal textarea {
 width: 100%;
