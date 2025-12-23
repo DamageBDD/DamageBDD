@@ -55,26 +55,33 @@ function formatCell(obj, cell, value, type) {
 		}
 		return cell;
 	}
-async function updateSchedulesTable() {
+	function buildJsonAuthHeaders(token) {
+		const headers = new Headers();
+		headers.set("Content-Type", "application/json");
+		if (token) {
+			headers.set("Authorization", "Bearer " + token);
+		}
+		return headers;
+	}
+
+export async function updateSchedulesTable(opts) {
+	const token = TokenManager.getToken();
 	const request = {
 		method: 'GET',
 		credentials: 'include',
-		headers: { 'Content-Type': 'application/json',
-				   'Authorization': 'Bearer ' + window.TokenManager.getToken()
-				 }
+		headers: buildJsonAuthHeaders(token)
 	};
 
-	debugger;
 	const response = await fetch("/schedules/", request);
 	var data = {};
 	if (response.status === 200) {
 		data = await response.json();
 	} else if (response.status === 401) {
 		MicroModal.show('login-modal');
-		return
+		return;
 	} else {
 		console.error("Error schedules fetching failed: ", response);
-		return
+		return;
 	}
 	if (data && data.status === "ok") {
 		var schedulesDiv = document.getElementById("schedules");

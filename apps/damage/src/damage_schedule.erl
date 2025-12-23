@@ -33,10 +33,7 @@
 -export(
     [
         restart_schedules_proc/1,
-        get_schedules_proc/1,
-        get_webhooks/1,
-        delete_webhook/2,
-        add_webhook/3
+        get_schedules_proc/1
     ]
 ).
 -behaviour(gen_server).
@@ -528,28 +525,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 get_schedules(AeAccount) ->
     DamageAEPid = get_schedules_proc(AeAccount),
     gen_server:call(DamageAEPid, {get_schedules, AeAccount}, ?AE_TIMEOUT).
-get_webhooks(AeAccount) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_schedules_proc(AeAccount),
-    gen_server:call(DamageAEPid, {get_webhooks, AeAccount}, ?AE_TIMEOUT).
 
-add_webhook(AeAccount, WebhookName, WebhookUrl) ->
-    % temporary storage to commit after feature execution
-    Pid = get_schedules_proc(AeAccount),
-    gen_server:call(
-        Pid,
-        {add_webhook, AeAccount, WebhookName, WebhookUrl},
-        ?AE_TIMEOUT
-    ).
-
-delete_webhook(AeAccount, WebhookName) ->
-    % temporary storage to commit after feature execution
-    DamageAEPid = get_schedules_proc(AeAccount),
-    gen_server:call(
-        DamageAEPid,
-        {delete_webhook, AeAccount, WebhookName},
-        ?AE_TIMEOUT
-    ).
 get_schedules_proc(<<"ak_", _/binary>> = AeAccount) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of
         undefined ->

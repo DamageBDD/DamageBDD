@@ -2,6 +2,7 @@ import * as wallet from "/static/js/wallet.js";
 import { initDamageBDDPicker } from '/static/js/featurePicker.js';
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 import { ensureChannel } from '/static/js/ensureChannel.js';
+import { updateSchedulesTable } from '/static/js/schedules.js';
 
 const MDW_BASE = "https://mainnet.aeternity.io/mdw";
 const NODE_BASE = "https://mainnet.aeternity.io";
