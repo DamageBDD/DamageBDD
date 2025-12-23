@@ -862,27 +862,33 @@ ul[data-tabs] li a:hover {
 }
 
 /* Generic wrapper for both input and textarea */
+/* === Click-copy container === */
 .click-copy {
+    display: inline-flex;
+    align-items: center;          /* vertical centering */
+    gap: 0.5rem;
     position: relative;
-    display: flex;
-    align-items: center;
-    width: 100%;
+    max-width: 100%;
 }
 
+
 /* Shared styling for input and textarea */
+/* Copyable text (span, input, textarea) */
+.click-copy .copy-text,
 .click-copy input[type="text"],
 .click-copy textarea[readonly] {
-    width: 100%;
-    padding: 0.75rem 2.5rem 0.75rem 1rem;
-    border: 1px solid #444;
+    flex: 1;
+    padding: 0.4rem 0.6rem;
     border-radius: 6px;
-    background-color: #1c1c2b;
+    background: #1c1c2b;
+    border: 1px solid #444;
     color: #e0e0e0;
-    font-size: 0.95rem;
-    font-family: monospace;
-    resize: none;
-    outline: none;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
+
 
 /* Adjust for taller textareas */
 .click-copy textarea {
@@ -892,19 +898,23 @@ ul[data-tabs] li a:hover {
 
 /* The copy icon */
 .click-copy .copy-icon {
-    position: absolute;
-    right: 0.75rem;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 1.2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
     color: #ffcc00;
     cursor: pointer;
-    transition: color 0.2s ease-in-out;
+    padding: 0.25rem;
+    line-height: 1;
+    border-radius: 6px;
+    transition: background 0.15s ease;
 }
 
 .click-copy .copy-icon:hover {
     color: #ffffff;
+    background: rgba(255, 204, 0, 0.15);
 }
+
 /* Header container */
 .site-header {
     display: flex;
@@ -2004,15 +2014,9 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
     /* Click copy wrapper */
     .click-copy {
-        flex-direction: column;
+        gap: 0.4rem;
     }
 
-    .click-copy .copy-icon {
-        position: static;
-        transform: none;
-        margin-top: 0.5rem;
-        align-self: flex-end;
-    }
 
     /* Table responsive */
     table {
