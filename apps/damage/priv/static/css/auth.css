@@ -285,6 +285,7 @@ body {
   background: linear-gradient(to bottom right, #1e1e2f, #2a2a3d);
   color: #fff;
   min-height: 100vh;
+  padding: 2rem;
   font-family: 'Inter', system-ui, sans-serif;
 }
 
@@ -427,8 +428,16 @@ body h2 {
 
 /* Responsive */
 @media (max-width: 600px) {
+  body {
+    padding: 1rem;
+  }
+  
   #resetPasswdForm {
     padding: 1.5rem;
+  }
+  
+  body h2 {
+    font-size: 1.5rem;
   }
 }
 
