@@ -69,6 +69,78 @@ const TokenManager = {
 	}
 };
 window.TokenManager = TokenManager;
+// helpers (put near the top of the module)
+function b64urlEncode(bytes) {
+	const bin = typeof bytes === "string"
+		  ? bytes
+		  : String.fromCharCode(...(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)));
+	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function utf8ToBytes(s) {
+	return new TextEncoder().encode(s);
+}
+
+function randomNonceHex(len = 16) {
+	const b = new Uint8Array(len);
+	crypto.getRandomValues(b);
+	return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Tries to sign a message using whatever your unified wallet connector exposes.
+ * You may need to adapt ONE place here depending on what connectWalletUnified returns.
+ */
+async function signMessageUnified(message, addressHint) {
+	// Preferred: unified global (if you already have it)
+	if (typeof window.signMessageUnified === "function") {
+		return await window.signMessageUnified({ message, address: addressHint });
+	}
+
+
+	if (typeof wallet.signMessageSmart === "function") {
+		const r = await wallet.signMessageSmart(message);
+		// normalize
+		return { signature: r.result.signature};
+	}
+
+	throw new Error("No message signing method available (unified/smart wallet signer not found).");
+}
+
+async function createSignedAccessToken(address, ttlSeconds = 3600) {
+  const now = Math.floor(Date.now() / 1000);
+
+  const payload = {
+    typ: "damage-access",
+    v: 1,
+    sub: address,
+    iat: now,
+    exp: now + ttlSeconds,
+    nonce: randomNonceHex(16),
+    aud: window.location.host,
+  };
+
+  const payloadJson = JSON.stringify(payload);
+  const payloadB64 = b64urlEncode(utf8ToBytes(payloadJson));
+
+  const messageToSign = `DamageBDD Access Token\n${payloadB64}`;
+
+  const signed = await signMessageUnified(messageToSign, address);
+
+  // normalize signature
+  const signature =
+    (typeof signed === "string" ? signed :
+     signed?.signature ?? signed?.sig ?? signed?.signed ?? "");
+
+  if (!signature || typeof signature !== "string") {
+    throw new Error("Wallet did not return a signature string");
+  }
+
+  // If it's AE-style (sg_), keep as-is.
+  // If your wallet returns some other format later, we can add branches.
+  return `ae1.${payloadB64}.${signature}`;
+}
+
 // ----------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -92,6 +164,8 @@ document.addEventListener('DOMContentLoaded', () => {
 		'#loginBtn.connect-wallet'
 	].join(',');
 
+
+	// ---- your function with token included ----
 	async function connectViaUnified(btn) {
 		const prev = btn.textContent;
 		btn.disabled = true;
@@ -102,11 +176,20 @@ document.addEventListener('DOMContentLoaded', () => {
 			if (res.ok) {
 				const sel = document.getElementById('walletSelector');
 				if (sel) { sel.value = 'extension'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
-				TokenManager.setModeAddress("extension", res.address);
-				TokenManager.setToken("extension", res.address);
 
-				document.dispatchEvent(new CustomEvent('wallet:connected', { detail: res }));
-				MicroModal.close('connect-wallet-modal'); 
+				TokenManager.setModeAddress("extension", res.address);
+
+				// NEW: create + store signed access token (1 hour)
+				const accessToken = await createSignedAccessToken(res.address, 3600);
+
+				// Store wherever you currently store tokens
+				TokenManager.setToken("extension", accessToken);
+
+				// (optional) make it available to fetch wrappers
+				window.__damage_access_token = accessToken;
+
+				document.dispatchEvent(new CustomEvent('wallet:connected', { detail: { ...res, accessToken } }));
+				MicroModal.close('connect-wallet-modal');
 				MicroModal.close('login-modal');
 				const content = document.getElementById("content");
 				content.style.display = "block";
@@ -125,6 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
 			if (btn.textContent !== 'Retry Connect') btn.textContent = prev;
 		}
 	}
+
 
 	function bindLoginConnectButton(root = document) {
 		const nodes = Array.from(root.querySelectorAll(CONNECT_BTN_SELECTOR))
@@ -345,7 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ev.preventDefault();
 		btn.setAttribute('aria-busy', 'true');
 		try {
-			 await updateWalletSummary();
+			await updateWalletSummary();
 			// also emit a simple event some modules may listen for
 			document.dispatchEvent(new Event('balance:refresh'));
 		} catch (e) {

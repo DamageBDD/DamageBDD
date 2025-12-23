@@ -159,10 +159,10 @@ is_authorized(Req, State0) ->
                 _ -> {{false, ?AUTH_HEADER}, Req, State}
             end;
         {oauth, Token} ->
-            case damage_accounts:validate_access_token(Token) of
+            case damage_access_token:verify_token(Token) of
                 {error, _E} ->
                     {{false, ?AUTH_HEADER}, Req, State};
-                {AeAccount, <<"wallet">>} ->
+                {ok, AeAccount, _} ->
                     {
                         true,
                         Req,
@@ -174,25 +174,6 @@ is_authorized(Req, State0) ->
                             }
                         )
                     };
-                {AeAccount, Username} ->
-                    case identity_server:get_account_by_email(Username) of
-                        {AeAccount, _, PrivateKey} ->
-                            damage_ae:set_private_key(AeAccount, PrivateKey),
-                            {
-                                true,
-                                Req,
-                                maps:merge(
-                                    State,
-                                    #{
-                                        public_key => AeAccount,
-                                        username => Username,
-                                        access_token => Token
-                                    }
-                                )
-                            };
-                        _ ->
-                            {{false, ?AUTH_HEADER}, Req, State}
-                    end;
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
                     {{false, ?AUTH_HEADER}, Req, State}

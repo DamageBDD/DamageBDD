@@ -18,7 +18,6 @@
 -export([delete_account/1]).
 -export([delete_resource/2]).
 -export([notify_user/2]).
--export([validate_access_token/1]).
 -export([validate_password/1]).
 -export([authenticate_user/2]).
 
@@ -334,13 +333,8 @@ authenticate_user(Email, Password0) ->
     Password = secrets:salted_hash(Password0),
     case identity_server:get_account_by_email(Email) of
         {Account, Password, PrivateKey} ->
-            Expiry = date_util:now_to_seconds(os:timestamp()) + ?TOKEN_TIMEOUT,
-            AccToken = secrets:encrypt(
-                #{public_key => Account, private_key => PrivateKey},
-                term_to_binary({Email, Expiry})
-            ),
-            Token = secrets:encrypt(
-                term_to_binary({Account, AccToken, Expiry})
+            {ok, Token} = damage_access_token:generate_access_token(
+                #{public_key => Account, private_key => PrivateKey}
             ),
             {ok, Account, Token};
         Error = {error, notfound} ->
@@ -350,31 +344,6 @@ authenticate_user(Email, Password0) ->
         _ ->
             {error, notauthorized}
     end.
-validate_access_token(Token) ->
-    Now = date_util:now_to_seconds(os:timestamp()),
-    case catch binary_to_term(secrets:decrypt(Token)) of
-        {AeAccount, AccToken, Expiry} when Expiry > Now ->
-            case identity_server:get_account(AeAccount) of
-                #{
-                    public_key := _Address, private_key := _PrivateKey
-                } = Keypair ->
-                    case catch binary_to_term(secrets:decrypt(Keypair, AccToken)) of
-                        {Username, Expiry} when Expiry > Now ->
-                            {AeAccount, Username};
-                        {_Username, Expiry} when Expiry < Now ->
-                            {error, exprired};
-                        _ ->
-                            {error, badrequest}
-                    end;
-                _ ->
-                    {error, badrequest}
-            end;
-        {_AeAccount, _Username, Expiry} when Expiry < Now ->
-            {error, exprired};
-        _ ->
-            {error, badrequest}
-    end.
-
 validate_password(Password) ->
     %% For example, minimum 8 characters with at least one uppercase letter,
     %% one lowercase letter, one digit, and one special character

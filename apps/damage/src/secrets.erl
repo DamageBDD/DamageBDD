@@ -159,8 +159,10 @@ handle_call(node_keypair, _From, State) ->
         error ->
             {reply, error, State};
         {NodePassword, State} ->
-            #{public_key := AeAccount, private_key := PrivateKey} = keypair(Path, NodePassword),
-            {reply, #{public_key => AeAccount, private_key => PrivateKey}, State}
+            KeyPair =
+                #{public_key := AeAccount, private_key := PrivateKey} = keypair(Path, NodePassword),
+            {reply, #{public_key => AeAccount, private_key => PrivateKey},
+                maps:merge(KeyPair, State)}
     end;
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
@@ -252,20 +254,19 @@ encrypt(Password, PlainText) ->
 decrypt(null) ->
     error;
 decrypt(Base64EncodedCipherTuple) ->
-decrypt(secrets:node_keypair(),Base64EncodedCipherTuple).
+    decrypt(secrets:node_keypair(), Base64EncodedCipherTuple).
 
 decrypt(Key, Password, CipherText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {decrypt, Key, Password, CipherText}, ?ASKPASS_TIMEOUT).
 %% Decrypts data with a password
-decrypt(#{public_key := _AeAccount, private_key := PrivateKey},Base64EncodedCipherTuple) ->
+decrypt(#{public_key := _AeAccount, private_key := PrivateKey}, Base64EncodedCipherTuple) ->
     case base64:decode(Base64EncodedCipherTuple) of
         Term when is_binary(Term) ->
             decrypt_secret(binary_to_term(Term), PrivateKey);
         _ ->
             error
     end;
-
 decrypt(Password, {Salt, IV, Tag, CipherText}) ->
     Key = derive_key(Password, Salt),
     AAD = <<>>,
