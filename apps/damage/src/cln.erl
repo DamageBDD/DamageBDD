@@ -49,6 +49,14 @@
 % 5 minutes in ms
 -define(CACHE_TTL, 300000).
 -define(CLN_HTTP_TIMEOUT, 300000).
+%% 7 days in ms
+-define(PEER_MIN_TTL, 604800000).
+%% 24h in ms
+-define(PEER_BLACKLIST_TTL, 86400000).
+%% 24h for min-size rejects
+-define(PEER_BLACKLIST_TTL_MIN, 86400000).
+%% 6h for connect/init failures
+-define(PEER_BLACKLIST_TTL_CONN, 21600000).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -150,13 +158,29 @@ init([ws]) ->
     end.
 
 put_cache(Key, Value) ->
-    ets:insert(cln_channel_cache, {Key, {Value, erlang:monotonic_time(millisecond)}}).
+    put_cache(Key, Value, ?CACHE_TTL).
+
+put_cache(Key, Value, TTLms) ->
+    ets:insert(cln_channel_cache, {Key, {Value, erlang:monotonic_time(millisecond), TTLms}}).
 
 get_cache(Key) ->
+    get_cache(Key, ?CACHE_TTL).
+
+get_cache(Key, DefaultTTL) ->
     case ets:lookup(cln_channel_cache, Key) of
-        [{_, {Val, T}}] ->
+        [{_, {Val, T, TTL}}] ->
             Now = erlang:monotonic_time(millisecond),
-            case Now - T =< ?CACHE_TTL of
+            case Now - T =< TTL of
+                true ->
+                    {ok, Val};
+                false ->
+                    ets:delete(cln_channel_cache, Key),
+                    not_found
+            end;
+        [{_, {Val, T}}] ->
+            %% legacy entries created before TTL support
+            Now = erlang:monotonic_time(millisecond),
+            case Now - T =< DefaultTTL of
                 true ->
                     {ok, Val};
                 false ->
@@ -294,6 +318,220 @@ open_channels_with_best_peers() ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, open_channels_with_best_peers, ?CLN_HTTP_TIMEOUT)
     end).
+open_best_peers_loop(_Host, _Port, _Options, _Rune, [], _BaseAmount, _MinPerChannel, SpendableLeft) ->
+    {[], [], SpendableLeft};
+open_best_peers_loop(
+    Host,
+    Port,
+    Options,
+    Rune,
+    [{{NodeId, _Score, Inbound, MinOpen}, PlannedAmount} | Rest],
+
+    BaseAmount,
+    MinPerChannel,
+    SpendableLeft
+) ->
+    AmountToTry0 = lists:max([PlannedAmount, BaseAmount, MinPerChannel, MinOpen]),
+
+    %% inbound too small => skip
+    case Inbound >= AmountToTry0 of
+        false ->
+            open_best_peers_loop(
+                Host, Port, Options, Rune, Rest, BaseAmount, MinPerChannel, SpendableLeft
+            );
+        true ->
+            %% can't afford this peer => SKIP (do NOT stop)
+            case AmountToTry0 =< SpendableLeft of
+                false ->
+                    open_best_peers_loop(
+                        Host, Port, Options, Rune, Rest, BaseAmount, MinPerChannel, SpendableLeft
+                    );
+                true ->
+                    case open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountToTry0) of
+                        {ok, OkMap} ->
+                            {Peers, Results, Spendable2} =
+                                open_best_peers_loop(
+                                    Host,
+                                    Port,
+                                    Options,
+                                    Rune,
+                                    Rest,
+                                    BaseAmount,
+                                    MinPerChannel,
+                                    SpendableLeft - AmountToTry0
+                                ),
+                            {
+                                [NodeId | Peers],
+                                [
+                                    #{
+                                        peer => NodeId,
+                                        amount_sats => AmountToTry0,
+                                        ok => true,
+                                        result => OkMap
+                                    }
+                                    | Results
+                                ],
+                                Spendable2
+                            };
+                        {error, Msg} ->
+                            %% If error reveals a higher min, retry once with that min if affordable.
+                            case extract_min_open_sats(Msg) of
+                                {ok, MinSats} when
+                                    MinSats > AmountToTry0,
+                                    MinSats =< SpendableLeft,
+                                    Inbound >= MinSats
+                                ->
+                                    cache_peer_min(NodeId, MinSats),
+                                    case
+                                        open_channel_with_peer(
+                                            Host, Port, Options, Rune, NodeId, MinSats
+                                        )
+                                    of
+                                        {ok, OkMap2} ->
+                                            {Peers, Results, Spendable2} =
+                                                open_best_peers_loop(
+                                                    Host,
+                                                    Port,
+                                                    Options,
+                                                    Rune,
+                                                    Rest,
+                                                    BaseAmount,
+                                                    MinPerChannel,
+                                                    SpendableLeft - MinSats
+                                                ),
+                                            {
+                                                [NodeId | Peers],
+                                                [
+                                                    #{
+                                                        peer => NodeId,
+                                                        amount_sats => MinSats,
+                                                        ok => true,
+                                                        result => OkMap2
+                                                    }
+                                                    | Results
+                                                ],
+                                                Spendable2
+                                            };
+                                        {error, Msg2} ->
+                                            put_cache(
+                                                peer_blacklist_key(NodeId),
+                                                #{reason => Msg2, min_sats => MinSats},
+                                                ?PEER_BLACKLIST_TTL_MIN
+                                            ),
+                                            {Peers, Results, Spendable2} =
+                                                open_best_peers_loop(
+                                                    Host,
+                                                    Port,
+                                                    Options,
+                                                    Rune,
+                                                    Rest,
+                                                    BaseAmount,
+                                                    MinPerChannel,
+                                                    SpendableLeft
+                                                ),
+                                            {Peers,
+                                                [
+                                                    #{
+                                                        peer => NodeId,
+                                                        amount_sats => AmountToTry0,
+                                                        ok => false,
+                                                        error => Msg2
+                                                    }
+                                                    | Results
+                                                ],
+                                                Spendable2}
+                                    end;
+                                {ok, MinSats} ->
+                                    %% Learned min but can't use it now => cache + blacklist
+                                    cache_peer_min(NodeId, MinSats),
+                                    put_cache(
+                                        peer_blacklist_key(NodeId),
+                                        #{reason => Msg, min_sats => MinSats},
+                                        ?PEER_BLACKLIST_TTL_MIN
+                                    ),
+                                    {Peers, Results, Spendable2} =
+                                        open_best_peers_loop(
+                                            Host,
+                                            Port,
+                                            Options,
+                                            Rune,
+                                            Rest,
+                                            BaseAmount,
+                                            MinPerChannel,
+                                            SpendableLeft
+                                        ),
+                                    {Peers,
+                                        [
+                                            #{
+                                                peer => NodeId,
+                                                amount_sats => AmountToTry0,
+                                                ok => false,
+                                                error => Msg
+                                            }
+                                            | Results
+                                        ],
+                                        Spendable2};
+                                error ->
+                                    %% Connect/init failures etc
+                                    TTL =
+                                        case is_connect_failure(Msg) of
+                                            true -> ?PEER_BLACKLIST_TTL_CONN;
+                                            false -> ?PEER_BLACKLIST_TTL_CONN
+                                        end,
+                                    put_cache(peer_blacklist_key(NodeId), #{reason => Msg}, TTL),
+                                    {Peers, Results, Spendable2} =
+                                        open_best_peers_loop(
+                                            Host,
+                                            Port,
+                                            Options,
+                                            Rune,
+                                            Rest,
+                                            BaseAmount,
+                                            MinPerChannel,
+                                            SpendableLeft
+                                        ),
+                                    {Peers,
+                                        [
+                                            #{
+                                                peer => NodeId,
+                                                amount_sats => AmountToTry0,
+                                                ok => false,
+                                                error => Msg
+                                            }
+                                            | Results
+                                        ],
+                                        Spendable2}
+                            end
+                    end
+            end
+    end.
+
+is_connect_failure(Msg0) ->
+    Msg = to_bin(Msg0),
+    case binary:match(Msg, <<"All addresses failed">>) of
+        nomatch -> false;
+        _ -> true
+    end.
+
+required_open_sats(NodeId, Target, MinPerChannel) ->
+    MinPeer = get_peer_min_open_sats(NodeId),
+    lists:max([Target, MinPerChannel, MinPeer]).
+
+pick_affordable(Cands, Spendable, Target, MinPerChannel) ->
+    pick_affordable(Cands, Spendable, Target, MinPerChannel, 0, []).
+
+pick_affordable([], _Spendable, _Target, _MinPerChannel, _Sum, Acc) ->
+    lists:reverse(Acc);
+pick_affordable(
+    [{NodeId, _Score, Inbound, _MinPeer} = C | Rest], Spendable, Target, MinPerChannel, Sum, Acc
+) ->
+    Req = required_open_sats(NodeId, Target, MinPerChannel),
+    case (Sum + Req =< Spendable) andalso (Inbound >= Req) of
+        true ->
+            pick_affordable(Rest, Spendable, Target, MinPerChannel, Sum + Req, [{C, Req} | Acc]);
+        false ->
+            pick_affordable(Rest, Spendable, Target, MinPerChannel, Sum, Acc)
+    end.
 
 handle_call(
     subscribe,
@@ -485,7 +723,7 @@ handle_call(
     BalanceSats = get_node_balance(Host, Port, Options, Rune),
 
     %% keep a small reserve so we don't strand the wallet
-    Reserve = 10000,
+    Reserve = 100000,
     Spendable =
         case BalanceSats - Reserve of
             N when N =< 0 -> 0;
@@ -508,42 +746,45 @@ handle_call(
             ExistingPeers = existing_peers(SelfChannels),
             ?LOG_DEBUG("ExistingPeers ~p  ", [ExistingPeers]),
 
+            %% build candidates: (skip existing peers + blacklisted peers)
             Candidates =
                 [
                     begin
                         Inbound = inbound_capacity(NodeId, ChannelList),
-                        {NodeId, Score, Inbound}
+                        MinOpen = get_peer_min_open_sats(NodeId),
+                        {NodeId, Score, Inbound, MinOpen}
                     end
                  || {NodeId, Score} <- ScoreList,
-                    not sets:is_element(NodeId, ExistingPeers)
+                    not sets:is_element(NodeId, ExistingPeers),
+                    not is_blacklisted(NodeId)
                 ],
 
             %% sort by score, then inbound capacity
             Sorted =
                 lists:sort(
-                    fun({_, ScoreA, InboundA}, {_, ScoreB, InboundB}) ->
+                    fun({_, ScoreA, InboundA, _}, {_, ScoreB, InboundB, _}) ->
                         (ScoreA > ScoreB) orelse
                             (ScoreA =:= ScoreB andalso InboundA > InboundB)
                     end,
                     Candidates
                 ),
 
-            %% sizing parameters
-            MaxPeers = 5,
-            %% "ideal" channel size (sats)
-            Target = 200000,
-            %% don't bother with tiny channels
+            %% look deeper than 5
+            MaxScan = 100,
+            %% IMPORTANT: set to realistic default (your log shows 400k mins)
+            Target = 400000,
             MinPerChannel = 100000,
 
-            TopCandidates = lists:sublist(Sorted, MaxPeers),
+            TopCandidates = lists:sublist(Sorted, MaxScan),
 
-            case TopCandidates of
+            Chosen = pick_affordable(TopCandidates, Spendable, Target, MinPerChannel),
+
+            case Chosen of
                 [] ->
                     {reply, {error, no_suitable_peers}, State};
                 _ ->
-                    CandidateCount = length(TopCandidates),
+                    CandidateCount = length(Chosen),
 
-                    %% how many channels can our balance support at Target size?
                     MaxNByBalance =
                         case Spendable div Target of
                             0 -> 1;
@@ -551,63 +792,45 @@ handle_call(
                         end,
 
                     RawN = erlang:min(MaxNByBalance, CandidateCount),
-
                     AmountPerPeer0 = Spendable div RawN,
 
-                    %% if that makes channels too small, fall back to one big one
-                    {_N1, AmountPerPeer, ChosenCandidates} =
+                    %% baseline per-peer amount (may be bumped per-peer using cached mins)
+                    BaseAmount =
                         case AmountPerPeer0 < MinPerChannel of
-                            true ->
-                                {1, Spendable, lists:sublist(TopCandidates, 1)};
-                            false ->
-                                {RawN, AmountPerPeer0, lists:sublist(TopCandidates, RawN)}
+                            true -> Spendable;
+                            false -> AmountPerPeer0
                         end,
 
-                    %% 4. Filter peers where inbound capacity is at least our target
-                    SuitablePeers =
+                    %% open sequentially: if one peer rejects (min funding / min chan), cache+blacklist and move on
+                    {OpenedPeers, OpenResults, RemainingSpendable} =
+                        open_best_peers_loop(
+                            Host,
+                            Port,
+                            Options,
+                            Rune,
+                            Chosen,
+                            BaseAmount,
+                            MinPerChannel,
+                            Spendable
+                        ),
+
+                    Aliases =
                         [
-                            {NodeId, Inbound}
-                         || {NodeId, _Score, Inbound} <- ChosenCandidates,
-                            Inbound >= AmountPerPeer
+                            {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId)}
+                         || NodeId <- OpenedPeers
                         ],
 
-                    case SuitablePeers of
-                        [] ->
-                            {reply, {error, no_peer_with_capacity, AmountPerPeer}, State};
-                        _ ->
-                            %% 5. Open channels (fundchannel) for each suitable peer
-                            Aliases =
-                                [
-                                    {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId)}
-                                 || {NodeId, _Inbound} <- SuitablePeers
-                                ],
-                            ?LOG_INFO("Opening channel with peers ~p", [SuitablePeers, Aliases]),
-                            %SourceAlias = maps:get(Source, Aliases, <<"unknown">>),
-                            Results =
-                                [
-                                    open_channel_with_peer(
-                                        Host,
-                                        Port,
-                                        Options,
-                                        Rune,
-                                        NodeId,
-                                        AmountPerPeer
-                                    )
-                                 || {NodeId, _Inbound} <- SuitablePeers
-                                ],
-
-                            Reply = #{
-                                balance_sats => BalanceSats,
-                                spendable_sats => Spendable,
-                                per_peer_sats => AmountPerPeer,
-                                channel_count => length(SuitablePeers),
-                                intended_peers => N,
-                                peers => [NodeId || {NodeId, _} <- SuitablePeers],
-                                aliases => Aliases,
-                                results => Results
-                            },
-                            {reply, Reply, State}
-                    end
+                    Reply = #{
+                        balance_sats => BalanceSats,
+                        spendable_sats => Spendable,
+                        remaining_spendable_sats => RemainingSpendable,
+                        base_per_peer_sats => BaseAmount,
+                        channel_count => length(OpenedPeers),
+                        peers => OpenedPeers,
+                        aliases => Aliases,
+                        results => OpenResults
+                    },
+                    {reply, Reply, State}
             end
     end;
 handle_call(
@@ -727,17 +950,7 @@ handle_call(
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
-        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
-            {response, fin, Status, _RespHeaders} ->
-                ?LOG_DEBUG("Got fin ~p", [Status]),
-                no_data;
-            {response, nofin, _Status, _RespHeaders} ->
-                gun:await_body(ConnPid, StreamRef);
-            {response, nofin, _RespHeaders} ->
-                gun:await_body(ConnPid, StreamRef);
-            Default ->
-                ?LOG_DEBUG("Got unknown ~p ", [Default])
-        end,
+        gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT),
     Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
     %% Parse the response JSON
     gun:cancel(ConnPid, StreamRef),
@@ -1360,6 +1573,71 @@ existing_peers(ChannelList) ->
         sets:new(),
         ChannelList
     ).
+peer_min_key(NodeId) -> {peer_min_open_sats, NodeId}.
+peer_blacklist_key(NodeId) -> {peer_blacklist, NodeId}.
+
+get_peer_min_open_sats(NodeId) ->
+    case get_cache(peer_min_key(NodeId), ?PEER_MIN_TTL) of
+        {ok, Min} when is_integer(Min) -> Min;
+        _ -> 0
+    end.
+
+blacklist_peer(NodeId, Reason, MinSats) ->
+    put_cache(
+        peer_blacklist_key(NodeId), #{reason => Reason, min_sats => MinSats}, ?PEER_BLACKLIST_TTL
+    ),
+    ok.
+
+is_blacklisted(NodeId) ->
+    case get_cache(peer_blacklist_key(NodeId), ?PEER_BLACKLIST_TTL) of
+        {ok, _} -> true;
+        _ -> false
+    end.
+
+cache_peer_min(NodeId, MinSats) when is_integer(MinSats), MinSats > 0 ->
+    put_cache(peer_min_key(NodeId), MinSats, ?PEER_MIN_TTL),
+    ok;
+cache_peer_min(_, _) ->
+    ok.
+
+%% Parse common CLN error strings:
+%% - "... invalid funding amount=260285 sat (min=400000 sat) ..."
+%% - "... chan size of 0.00260285 BTC is below min chan size of 0.02000000 BTC ..."
+extract_min_open_sats(Msg0) ->
+    Msg = to_bin(Msg0),
+
+    case re:run(Msg, <<"min=([0-9]+) sat">>, [{capture, [1], binary}]) of
+        {match, [MinSatBin]} ->
+            {ok, binary_to_integer(MinSatBin)};
+        nomatch ->
+            case
+                re:run(Msg, <<"min chan size of ([0-9]+\\.[0-9]+) BTC">>, [{capture, [1], binary}])
+            of
+                {match, [MinBtcBin]} ->
+                    {ok, btc_bin_to_sats(MinBtcBin)};
+                nomatch ->
+                    %% sometimes message is "... below min chan size of 0.02000000 BTC"
+                    case
+                        re:run(Msg, <<"below min chan size of ([0-9]+\\.[0-9]+) BTC">>, [
+                            {capture, [1], binary}
+                        ])
+                    of
+                        {match, [MinBtcBin2]} ->
+                            {ok, btc_bin_to_sats(MinBtcBin2)};
+                        nomatch ->
+                            error
+                    end
+            end
+    end.
+
+btc_bin_to_sats(Bin) ->
+    %% float parse, then sats
+    F = list_to_float(binary_to_list(Bin)),
+    trunc(F * 100000000).
+
+to_bin(B) when is_binary(B) -> B;
+to_bin(L) when is_list(L) -> list_to_binary(L);
+to_bin(T) -> iolist_to_binary(io_lib:format("~p", [T])).
 
 open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
@@ -1370,28 +1648,24 @@ open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
         amount => AmountSats
     }),
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
-    Body =
+    Res =
         case catch get_json_body(ConnPid, StreamRef) of
             #{
                 code := _,
-                data :=
-                    #{
-                        id :=
-                            NodeId,
-                        method := Method
-                    },
-                message :=
-                    Message
+                data := #{id := NodeId, method := Method},
+                message := Message
             } ->
                 ?LOG_INFO("Failed to open channel with ~p method ~p reason ~p", [
                     NodeId, Method, Message
                 ]),
-                Message;
-            Body0 ->
-                Body0
+                {error, Message};
+            Body0 when is_map(Body0) ->
+                {ok, Body0};
+            Other ->
+                {error, to_bin(Other)}
         end,
     gun:close(ConnPid),
-    Body.
+    Res.
 
 get_node_balance(Host, Port, Options, Rune) ->
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
