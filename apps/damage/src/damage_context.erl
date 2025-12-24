@@ -51,6 +51,7 @@
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Context Management"]).
+-define(REDACTED_TEXT_MARKER, <<"XX-REDACTED-XX">>).
 
 trails() ->
     [
@@ -93,7 +94,7 @@ get_ets_id(AeAccount) ->
 init([AeAccount]) ->
     process_flag(trap_exit, true),
     Table = ets:new(get_ets_id(AeAccount), [named_table, set, private]),
-    {ok, #{ets_table => Table}}.
+    {ok, #{public_key => AeAccount,ets_table => Table}}.
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -169,27 +170,85 @@ delete_resource(Req, #{public_key := AeAccount} = State) ->
         ),
     ?LOG_INFO("deleted ~p context", [Deleted]),
     {true, Req, State}.
-
-handle_call(get_context, _From, #{ets_table := Table} = State) ->
-    {
-        reply,
-        maps:from_list(ets:tab2list(Table)),
-        State
-    };
-handle_call(load_context, _From, #{public_key := AeAccount, ets_table := Table} = State) ->
+%% helper
+do_load_context(AeAccount, Table, Keypair) ->
     #{decodedResult := Results} = contract_get_context(AeAccount),
+    ets:delete_all_objects(Table),
+    [
+        ets:insert(Table, {
+            secrets:decrypt(Keypair, KeyEncrypted),
+            secrets:decrypt(Keypair, ValueEncrypted)
+        })
+     || [KeyEncrypted, ValueEncrypted] <- Results
+    ],
+    ok.
 
-    {
-        reply,
-        [
-            ets:insert(Table, {
-                secrets:decrypt(KeyEncrypted),
-                secrets:decrypt(ValueEncrypted)
-            })
-         || [KeyEncrypted, ValueEncrypted] <- Results
-        ],
-        State
-    };
+resolve_keypair(
+    #{public_key := Pub, private_key := Priv}
+) when is_binary(Priv) ->
+    {ok, #{public_key => Pub, private_key => Priv}};
+
+resolve_keypair(
+    #{public_key := Pub}
+) ->
+    %% fallback to node identity
+    case secrets:node_keypair() of
+        #{public_key := NodePub, private_key := NodePriv} ->
+            {ok, #{
+                public_key => NodePub,
+                private_key => NodePriv,
+                %% optional: record delegation source
+                delegated_for => Pub
+            }};
+        _ ->
+            {error, no_keypair}
+    end.
+
+
+handle_call(
+    get_context, _From,
+    #{public_key := AeAccount, ets_table := Table, loaded := false} = State
+) ->
+    case resolve_keypair(State) of
+        {ok, Keypair} ->
+            ok = do_load_context(AeAccount, Table, Keypair),
+
+            Ctx0 = maps:from_list(ets:tab2list(Table)),
+            Ctx  = damage_access_token:maybe_refresh(Ctx0, Keypair),
+
+            {reply, Ctx, State#{loaded => true}};
+
+        {error, _} ->
+            {reply, {error, no_signing_key}, State}
+    end;
+
+handle_call(
+    get_context, _From,
+    #{ets_table := Table} = State
+) ->
+    case resolve_keypair(State) of
+        {ok, Keypair} ->
+            Ctx0 = maps:from_list(ets:tab2list(Table)),
+            Ctx  = damage_access_token:maybe_refresh(Ctx0, Keypair),
+            {reply, Ctx, State};
+
+        {error, _} ->
+            {reply, maps:from_list(ets:tab2list(Table)), State}
+    end;
+
+handle_call(
+    load_context, _From,
+    #{public_key := AeAccount, ets_table := Table} = State
+) ->
+    case resolve_keypair(State) of
+        {ok, Keypair} ->
+            ok = do_load_context(AeAccount, Table, Keypair),
+            {reply, ok, State#{loaded => true}};
+
+        {error, _} ->
+            {reply, {error, no_signing_key}, State}
+    end;
+
 handle_call({get_value, Key}, _From, #{ets := Table} = State) ->
     case ets:lookup(Table, Key) of
         [{Key, Val}] ->
@@ -257,6 +316,8 @@ add_context(AeAccount, Key, Value) ->
 add_context(AeAccount, Key, Value, masked) ->
     Pid = get_context_proc(AeAccount),
     gen_server:call(Pid, {add_context, AeAccount, Key, Value, [masked]}, ?AE_TIMEOUT).
+load_context(undefined) ->
+    ok;
 load_context(AeAccount) ->
     Pid = get_context_proc(AeAccount),
     gen_server:call(Pid, {load_context, AeAccount}, ?AE_TIMEOUT).
@@ -286,18 +347,28 @@ get_global_template_context(Context) ->
             Context0
     end.
 
+get_context(undefined) ->
+    #{};
+get_context(#{public_key := AeAccount} = ContextIn) when is_map(ContextIn) ->
+    AccountCtx = get_context(AeAccount),
+    maps:merge(AccountCtx, ContextIn);
 get_context(AeAccount) ->
-    Pid = get_context_proc(AeAccount),
-    gen_server:call(Pid, get_context, ?AE_TIMEOUT).
+    GlobalCtx = damage_context:get_global_template_context(#{}),
 
-clean_secrets(#{client_context := ClientContext} = Context, Body, Args) ->
+    Pid = get_context_proc(AeAccount),
+    AccountCtx = gen_server:call(Pid, get_context, ?AE_TIMEOUT),
+    maps:merge(AccountCtx, GlobalCtx).
+
+clean_secrets(#{client_context := ClientContext} = Context0, Body, Args) ->
     %Password = list_to_binary(maps:get(damage_password, Context, "")),
-    AccessToken = maps:get(access_token, Context, <<"null">>),
-    Args0 = binary:replace(Args, AccessToken, <<"00REDACTED00">>),
-    Body0 = binary:replace(Body, AccessToken, <<"00REDACTED00">>),
+    {Body0, Args0} = clean_secrets(Context0, Body, Args),
     clean_context_secrets(ClientContext, Body0, Args0);
-clean_secrets(_Context, Body, Args) ->
-    {Body, Args}.
+clean_secrets(Context0, Body, Args) ->
+    Context = damage_utils:normalize_context(Context0),
+    AccessToken = maps:get("access_token", Context, <<"null">>),
+    Args0 = binary:replace(Args, AccessToken, ?REDACTED_TEXT_MARKER),
+    Body0 = binary:replace(Body, AccessToken, ?REDACTED_TEXT_MARKER),
+    {Body0, Args0}.
 
 clean_context_secrets(AccountContext, Body, Args) ->
     %?LOG_DEBUG("clean got context ~p ~p ~p", [AccountContext, Body, Args]),
@@ -310,12 +381,12 @@ clean_context_secrets(AccountContext, Body, Args) ->
                             binary:replace(
                                 Body1,
                                 maps:get(value, Value, <<"">>),
-                                <<"00REDACTED00">>
+                              ?REDACTED_TEXT_MARKER
                             ),
                             binary:replace(
                                 Args1,
                                 maps:get(value, Value, <<"">>),
-                                <<"00REDACTED00">>
+                              ?REDACTED_TEXT_MARKER
                             )
                         };
                     _ ->
@@ -402,11 +473,12 @@ get_stepargs(Body) when is_list(Body) ->
     end.
 
 render_body_args(Body, Context) when is_map(Context) ->
+ 
     {Body0, Args} = get_stepargs(Body),
     try
         Body1 =
             damage_utils:tokenize(
-                bbmustache:render(
+                damage_utils:render(
                     Body0,
                     Context
                 )
@@ -415,7 +487,7 @@ render_body_args(Body, Context) when is_map(Context) ->
             <<>> ->
                 {ok, {Body1, Args}};
             _ ->
-                Args0 = bbmustache:render(
+                Args0 = damage_utils:render(
                     Args,
                     Context
                 ),

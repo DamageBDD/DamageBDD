@@ -18,11 +18,17 @@
     message_to_sign/1,
     encode_token/2,
     verify_token/1,
-    generate_access_token/1
+    generate_access_token/1,
+          decode_payload/1,
+    token_expiry/1,
+    token_valid/1,
+    maybe_refresh/2
 ]).
 -include_lib("kernel/include/logger.hrl").
 -define(TOKEN_TIMEOUT, 86400).
 
+make_payload(AkAccount, TtlSeconds, AudBin) when is_list(AkAccount) ->
+make_payload(list_to_binary(AkAccount), TtlSeconds, AudBin);
 make_payload(AkAccountBin, TtlSeconds, AudBin) when is_binary(AkAccountBin) ->
     Now = date_util:now_to_seconds(os:timestamp()),
     Exp = Now + TtlSeconds,
@@ -156,3 +162,55 @@ eu(N, Size) ->
     NExtraZeros = Size - byte_size(Bytes),
     ExtraZeros = <<<<0>> || _ <- lists:seq(1, NExtraZeros)>>,
     <<Bytes/binary, ExtraZeros/binary>>.
+-spec decode_payload(binary()) -> {ok, map()} | {error, term()}.
+decode_payload(TokenBin) when is_binary(TokenBin) ->
+    case binary:split(TokenBin, <<".">>, [global]) of
+        [<<"ae1">>, PayloadB64, _Sig] ->
+            try
+                PayloadBin = base64url_decode(PayloadB64),
+                Payload = jsx:decode(PayloadBin, [{labels, atom}, return_maps]),
+                {ok, Payload}
+            catch
+                _:_ -> {error, badpayload}
+            end;
+        _ ->
+            {error, badtoken}
+    end.
+-spec token_expiry(binary()) -> {ok, non_neg_integer()} | {error, term()}.
+token_expiry(TokenBin) ->
+    case decode_payload(TokenBin) of
+        {ok, #{exp := Exp}} when is_integer(Exp) ->
+            {ok, Exp};
+        {ok, _} ->
+            {error, no_exp};
+        Error ->
+            Error
+    end.
+-spec token_valid(binary()) -> boolean().
+token_valid(TokenBin) ->
+    Now = date_util:now_to_seconds(os:timestamp()),
+    case token_expiry(TokenBin) of
+        {ok, Exp} -> Exp > Now;
+        _ -> false
+    end.
+-spec maybe_refresh(map(), map()) -> map().
+maybe_refresh(
+    #{access_token := Token} = Ctx,
+    #{public_key := _Pub, private_key := _Priv} = Keypair
+) when is_binary(Token) ->
+    case token_valid(Token) of
+        true ->
+            Ctx;
+        false ->
+            refresh(Ctx, Keypair)
+    end;
+maybe_refresh(Ctx, Keypair) ->
+    refresh(Ctx, Keypair).
+
+refresh(Ctx, Keypair) ->
+    case generate_access_token(Keypair) of
+        {ok, NewToken} ->
+            Ctx#{access_token => NewToken};
+        {error, _} ->
+            Ctx
+    end.

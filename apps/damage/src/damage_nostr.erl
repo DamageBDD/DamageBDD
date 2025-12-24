@@ -457,10 +457,8 @@ handle_event_payload(
                             jsx:encode(
                                 execute_bdd(
                                     Config,
-                                    damage_context:get_account_context(
-                                        damage_context:get_global_template_context(
-                                            maps:put(feature, Feature, Context)
-                                        )
+                                    damage_context:get_context(
+                                        maps:put(feature, Feature, Context)
                                     ),
                                     Context
                                 )

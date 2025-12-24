@@ -163,6 +163,23 @@ is_authorized(Req, State0) ->
                 {error, _E} ->
                     {{false, ?AUTH_HEADER}, Req, State};
                 {ok, AeAccount, _} ->
+                    case identity_server:get_account(AeAccount) of
+                        #{public_key := AeAccount, private_key := PrivateKey} ->
+                            ?LOG_INFO("Got key", []),
+                            {
+                           true,
+                           Req,
+                           maps:merge(
+                             State,
+                             #{
+                               public_key => AeAccount,
+                               private_key => PrivateKey,
+                               access_token => Token
+                              }
+                            )
+                          };
+                        Other ->
+                            ?LOG_INFO("Got other ~p", [Other]),
                     {
                         true,
                         Req,
@@ -173,7 +190,8 @@ is_authorized(Req, State0) ->
                                 access_token => Token
                             }
                         )
-                    };
+                    }
+                        end;
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
                     {{false, ?AUTH_HEADER}, Req, State}
@@ -384,25 +402,7 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
 -spec effective_context(map(), map()) -> map().
 effective_context(Context0, State) ->
     Ctx1 = maps:merge(Context0, State),
-    AeAccount =
-        case Ctx1 of
-            #{public_key := PK} -> PK;
-            #{address := PK} -> PK;
-            _ -> undefined
-        end,
-    GlobalCtx = damage_context:get_global_template_context(Ctx1),
-    AccountCtx = damage_context:get_context(AeAccount),
-    maps:put(
-        public_key,
-        AeAccount,
-        maps:put(
-            account_context,
-            AccountCtx,
-            maps:merge(
-                GlobalCtx, Ctx1
-            )
-        )
-    ).
+    damage_context:get_context(Ctx1).
 
 %% Helper: true iff overrides explicitly request dry-run only
 -spec dry_run_only(proplists:proplist()) -> boolean().
