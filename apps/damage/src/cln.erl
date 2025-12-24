@@ -45,6 +45,13 @@
 -export([register_listener/1]).
 -export([broadcast/2]).
 -export([existing_peers/1]).
+-export([
+    connect_peer/1,
+    connect_peers/1,
+    connect_best_peers/0,
+    connect_best_peers/1
+]).
+
 -export([test/0]).
 % 5 minutes in ms
 -define(CACHE_TTL, 300000).
@@ -1026,6 +1033,111 @@ handle_call(
     gun:close(ConnPid),
     %% Return the invoice details
     {reply, Invoice, State};
+handle_call(
+    {connect_peer, Peer0},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    case connect_peer_http(Host, Port, Options, Rune, Peer0) of
+        {ok, Res} -> {reply, Res, State};
+        {error, Reason} -> {reply, {error, Reason}, State}
+    end;
+handle_call(
+    {connect_peers, Peers},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    Results =
+        [
+            begin
+                case connect_peer_http(Host, Port, Options, Rune, P) of
+                    {ok, Res} -> #{peer => P, ok => true, result => Res};
+                    {error, Reason} -> #{peer => P, ok => false, error => Reason}
+                end
+            end
+         || P <- Peers
+        ],
+    {reply, Results, State};
+handle_call(
+    {connect_best_peers, Opts},
+    From,
+    State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
+) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+
+    %% Defaults
+    N = maps:get(n, Opts, 10),
+    MinInbound = maps:get(min_inbound_sats, Opts, 200000),
+    MaxScan = maps:get(max_scan, Opts, 300),
+
+    {reply, #{id := SourceNodeId}, _} = handle_call(getinfo, From, State),
+
+    %% Current channels so we don't try to reconnect to existing peers
+    SelfChannels0 = fetch_channel_list(Host, Port, Options, Headers, #{source => SourceNodeId}),
+    SelfChannels1 = fetch_channel_list(Host, Port, Options, Headers, #{destination => SourceNodeId}),
+    SelfChannels = SelfChannels0 ++ SelfChannels1,
+    ExistingPeers = existing_peers(SelfChannels),
+
+    %% Network view (cached)
+    ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
+
+    %% Score nodes (existing logic)
+    ScoreMap = score_peers_for_opening(ChannelList),
+    ScoreList = maps:to_list(ScoreMap),
+
+    %% Build candidates: skip existing + blacklisted + insufficient inbound
+    Candidates0 =
+        [
+            begin
+                Inbound = inbound_capacity(NodeId, ChannelList),
+                {NodeId, Score, Inbound}
+            end
+         || {NodeId, Score} <- ScoreList,
+            not sets:is_element(NodeId, ExistingPeers),
+            not is_blacklisted(NodeId)
+        ],
+
+    Candidates =
+        [C || C = {_NodeId, _Score, Inbound} <- Candidates0, Inbound >= MinInbound],
+
+    Sorted =
+        lists:sort(
+            fun({_, ScoreA, InA}, {_, ScoreB, InB}) ->
+                (ScoreA > ScoreB) orelse (ScoreA =:= ScoreB andalso InA > InB)
+            end,
+            Candidates
+        ),
+
+    ToTry = lists:sublist(Sorted, erlang:min(MaxScan, length(Sorted))),
+    TopN = lists:sublist(ToTry, erlang:min(N, length(ToTry))),
+
+    Results =
+        [
+            begin
+                case connect_peer_http(Host, Port, Options, Rune, #{id => NodeId}) of
+                    {ok, Res} ->
+                        #{peer => NodeId, ok => true, inbound_sats => Inbound, result => Res};
+                    {error, Reason} ->
+                        %% short blacklist for connect failures
+                        put_cache(
+                            peer_blacklist_key(NodeId),
+                            #{reason => Reason, stage => connect},
+                            ?PEER_BLACKLIST_TTL_CONN
+                        ),
+                        #{peer => NodeId, ok => false, inbound_sats => Inbound, error => Reason}
+                end
+            end
+         || {NodeId, _Score, Inbound} <- TopN
+        ],
+
+    {reply,
+        #{
+            requested => N,
+            considered => length(ToTry),
+            connected => length([R || R = #{ok := true} <- Results]),
+            results => Results
+        },
+        State};
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
         "handle_call got unknown ~p, From ~p, State ~p",
@@ -1496,6 +1608,32 @@ verify_peer(NodeId) when is_binary(NodeId) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {verify_peer, NodeId})
     end).
+%% Connect to a single peer.
+%% Peer can be:
+%%   - <<"nodeid">>
+%%   - "nodeid@host:port"
+%%   - #{id => NodeId, host => Host, port => Port}
+connect_peer(Peer) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {connect_peer, Peer}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+connect_peers(Peers) when is_list(Peers) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {connect_peers, Peers}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+%% Discover top peers by network score and attempt to connect to them.
+%% Opts:
+%%   #{n => 10, min_inbound_sats => 200000, max_scan => 300}
+connect_best_peers() ->
+    connect_best_peers(#{}).
+
+connect_best_peers(Opts) when is_map(Opts) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {connect_best_peers, Opts}, ?CLN_HTTP_TIMEOUT)
+    end).
+
 %% Channel = #{base_fee_msat => integer(), fee_per_millionth => integer()}
 %% AmountMsat = integer(), e.g., 100000000 for 100,000 sats
 estimate_routing_fee(Channel, AmountMsat) ->
@@ -1667,6 +1805,67 @@ open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
     gun:close(ConnPid),
     Res.
 
+%% POST /v1/connect
+connect_peer_http(Host, Port, Options, Rune, Peer0) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    Peer = normalize_peer(Peer0),
+
+    Req =
+        case Peer of
+            #{id := Id, host := H, port := P} -> #{id => Id, host => H, port => P};
+            #{id := Id, host := H} -> #{id => Id, host => H};
+            #{id := Id} -> #{id => Id}
+        end,
+
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    StreamRef = gun:post(ConnPid, "/v1/connect", Headers, jsx:encode(Req)),
+    Res =
+        case catch get_json_body(ConnPid, StreamRef) of
+            %% CLN REST errors often decode into #{code:=..., message:=...}
+            #{code := _, message := Message} ->
+                {error, Message};
+            Body0 when is_map(Body0) ->
+                {ok, Body0};
+            Other ->
+                {error, to_bin(Other)}
+        end,
+    gun:close(ConnPid),
+    Res.
+
+%% Normalize Peer input into map with binary strings
+normalize_peer(#{id := _} = M) ->
+    %% already atom keys
+    M1 = M#{id := to_bin(maps:get(id, M))},
+    M2 =
+        case maps:get(host, M, undefined) of
+            undefined -> M1;
+            H -> M1#{host => to_bin(H)}
+        end,
+    case maps:get(port, M, undefined) of
+        undefined -> M2;
+        P when is_integer(P) -> M2#{port => P};
+        P0 -> M2#{port => binary_to_integer(to_bin(P0))}
+    end;
+normalize_peer(Peer0) when is_binary(Peer0); is_list(Peer0) ->
+    Peer = to_bin(Peer0),
+    %% formats:
+    %%   nodeid
+    %%   nodeid@host
+    %%   nodeid@host:port
+    case binary:split(Peer, <<"@">>, [global]) of
+        [Id] ->
+            #{id => Id};
+        [Id, HostPort] ->
+            case binary:split(HostPort, <<":">>, [global]) of
+                [H] -> #{id => Id, host => H, port => 9735};
+                [H, P0] -> #{id => Id, host => H, port => binary_to_integer(P0)}
+            end;
+        _ ->
+            #{id => Peer}
+    end;
+normalize_peer(Other) ->
+    #{id => to_bin(Other)}.
+
 get_node_balance(Host, Port, Options, Rune) ->
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
     {ok, ConnPid} = gun:open(Host, Port, Options),
@@ -1678,13 +1877,21 @@ get_node_balance(Host, Port, Options, Rune) ->
 
     Outputs = maps:get(outputs, Body, []),
 
+    %% Only count UTXOs that are confirmed and not reserved.
+    %% listfunds.outputs fields include: amount_msat, status, reserved, ...
     TotalMsat =
         lists:foldl(
-            fun
-                (#{amount_msat := Msat}, Acc) when is_integer(Msat) ->
-                    Acc + Msat;
-                (_, Acc) ->
-                    Acc
+            fun(Output, Acc) ->
+                Msat = maps:get(amount_msat, Output, 0),
+                Status = maps:get(status, Output, <<"">>),
+                Reserved = maps:get(reserved, Output, false),
+
+                case {is_integer(Msat), Status, Reserved} of
+                    {true, <<"confirmed">>, false} ->
+                        Acc + Msat;
+                    _ ->
+                        Acc
+                end
             end,
             0,
             Outputs
