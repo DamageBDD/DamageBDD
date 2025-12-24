@@ -639,7 +639,6 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
                     gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
                     AePid;
                 {error, {already_started, AePid}} ->
-                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
                     AePid
             end;
         Pid ->
