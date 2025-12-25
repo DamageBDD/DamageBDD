@@ -60,12 +60,103 @@ step(_Cfg, Ctx, <<"When">>, _N, ["I save text of", Sel, "as", Name], _Body) ->
 %% Compare element sizes by CSS selectors (exact match)
 step(_Cfg, Ctx, <<"Then">>, _N, ["the element", SelA, "should be the same size as", SelB], _Body) ->
     with_client(Ctx, fun(P) -> assert_same_size(P, to_bin(SelA), to_bin(SelB), 0.0) end);
-
 %% Compare element sizes by CSS selectors (allow +/- TolerancePx)
-step(_Cfg, Ctx, <<"Then">>, _N, ["the element", SelA, "should be the same size as", SelB, "within", TolPx0, "px"], _Body) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    ["the element", SelA, "should be the same size as", SelB, "within", TolPx0, "px"],
+    _Body
+) ->
     TolPx = list_to_float(TolPx0),
-    with_client(Ctx, fun(P) -> assert_same_size(P, to_bin(SelA), to_bin(SelB), TolPx) end).
+    with_client(Ctx, fun(P) -> assert_same_size(P, to_bin(SelA), to_bin(SelB), TolPx) end);
+%% -------------------------------------------------------------------
+%% Text alignment (center)
+%% -------------------------------------------------------------------
 
+%% Strict: CSS text-align:center
+step(_Cfg, Ctx, <<"Then">>, _N, ["the text of element", Sel, "should be center aligned"], _Body) ->
+    with_client(Ctx, fun(P) -> assert_text_align_center(P, to_bin(Sel)) end);
+%% Practical: "visually centered" for flex/grid/inline (checks computed layout)
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    ["the text of element", Sel, "should be visually centered within", TolPx0, "px"],
+    _Body
+) ->
+    TolPx = list_to_float(TolPx0),
+    with_client(Ctx, fun(P) -> assert_text_visually_centered(P, to_bin(Sel), TolPx) end);
+%% -------------------------------------------------------------------
+%% Pairwise alignment between elements
+%% -------------------------------------------------------------------
+
+%% Horizontal: left/center/right aligned
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    ["the elements", SelA, "and", SelB, "should be horizontally aligned at", Anchor],
+    _Body
+) ->
+    with_client(Ctx, fun(P) -> assert_halign(P, to_bin(SelA), to_bin(SelB), to_bin(Anchor), 0.0) end);
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    [
+        "the elements",
+        SelA,
+        "and",
+        SelB,
+        "should be horizontally aligned at",
+        Anchor,
+        "within",
+        TolPx0,
+        "px"
+    ],
+    _Body
+) ->
+    TolPx = list_to_float(TolPx0),
+    with_client(Ctx, fun(P) ->
+        assert_halign(P, to_bin(SelA), to_bin(SelB), to_bin(Anchor), TolPx)
+    end);
+%% Vertical: top/center/bottom aligned
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    ["the elements", SelA, "and", SelB, "should be vertically aligned at", Anchor],
+    _Body
+) ->
+    with_client(Ctx, fun(P) -> assert_valign(P, to_bin(SelA), to_bin(SelB), to_bin(Anchor), 0.0) end);
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    [
+        "the elements",
+        SelA,
+        "and",
+        SelB,
+        "should be vertically aligned at",
+        Anchor,
+        "within",
+        TolPx0,
+        "px"
+    ],
+    _Body
+) ->
+    TolPx = list_to_float(TolPx0),
+    with_client(Ctx, fun(P) ->
+        assert_valign(P, to_bin(SelA), to_bin(SelB), to_bin(Anchor), TolPx)
+    end).
 
 %% ========== Public helpers for other step modules ==========
 attach(Ctx0) ->
@@ -307,8 +398,12 @@ get_text(Pid, Sel) ->
 assert_same_size(Pid, SelA, SelB, TolPx) when is_binary(SelA), is_binary(SelB) ->
     Expr = iolist_to_binary([
         "(function(){",
-        "  const aSel=", jsx:encode(SelA), ";",
-        "  const bSel=", jsx:encode(SelB), ";",
+        "  const aSel=",
+        jsx:encode(SelA),
+        ";",
+        "  const bSel=",
+        jsx:encode(SelB),
+        ";",
         "  const a=document.querySelector(aSel);",
         "  const b=document.querySelector(bSel);",
         "  if(!a) return {ok:false,msg:`not found: ${aSel}`};",
@@ -322,30 +417,253 @@ assert_same_size(Pid, SelA, SelB, TolPx) when is_binary(SelA), is_binary(SelB) -
         "  return {ok:true,a:{w:aw,h:ah},b:{w:bw,h:bh}};",
         "})()"
     ]),
-    case call(Pid, <<"Runtime.evaluate">>, #{<<"expression">> => Expr, <<"returnByValue">> => true}) of
-        #{<<"result">> := #{<<"value">> := #{<<"ok">> := true,
-                                             <<"a">> := #{<<"w">> := AW, <<"h">> := AH},
-                                             <<"b">> := #{<<"w">> := BW, <<"h">> := BH}}}} ->
+    case
+        call(Pid, <<"Runtime.evaluate">>, #{<<"expression">> => Expr, <<"returnByValue">> => true})
+    of
+        #{
+            <<"result">> := #{
+                <<"value">> := #{
+                    <<"ok">> := true,
+                    <<"a">> := #{<<"w">> := AW, <<"h">> := AH},
+                    <<"b">> := #{<<"w">> := BW, <<"h">> := BH}
+                }
+            }
+        } ->
             DW = abs(float(AW) - float(BW)),
             DH = abs(float(AH) - float(BH)),
             case (DW =< TolPx) andalso (DH =< TolPx) of
                 true ->
                     ok;
                 false ->
-                    {error, #{<<"result">> => #{<<"result">> => #{<<"value">> => #{
-                        <<"ok">> => false,
-                        <<"msg">> =>
-                            iolist_to_binary(
-                                io_lib:format(
-                                    "size mismatch ~s vs ~s (A=~.2fx~.2f, B=~.2fx~.2f, tol=~.2f, dw=~.2f, dh=~.2f)",
-                                    [SelA, SelB, float(AW), float(AH), float(BW), float(BH), TolPx, DW, DH]
-                                )
-                            )
-                    }}}}}
+                    {error, #{
+                        <<"result">> => #{
+                            <<"result">> => #{
+                                <<"value">> => #{
+                                    <<"ok">> => false,
+                                    <<"msg">> =>
+                                        iolist_to_binary(
+                                            io_lib:format(
+                                                "size mismatch ~s vs ~s (A=~.2fx~.2f, B=~.2fx~.2f, tol=~.2f, dw=~.2f, dh=~.2f)",
+                                                [
+                                                    SelA,
+                                                    SelB,
+                                                    float(AW),
+                                                    float(AH),
+                                                    float(BW),
+                                                    float(BH),
+                                                    TolPx,
+                                                    DW,
+                                                    DH
+                                                ]
+                                            )
+                                        )
+                                }
+                            }
+                        }
+                    }}
             end;
         Other ->
             {error, Other}
     end.
+%% ---------- text-align:center (strict CSS) ----------
+assert_text_align_center(Pid, Sel) ->
+    Expr = iolist_to_binary([
+        "(function(){",
+        "  const sel=",
+        jsx:encode(Sel),
+        ";",
+        "  const el=document.querySelector(sel);",
+        "  if(!el) return {ok:false,msg:`not found: ${sel}`};",
+        "  const cs=getComputedStyle(el);",
+        "  const ta=(cs.textAlign||'').toLowerCase();",
+        "  return {ok:true,textAlign:ta};",
+        "})()"
+    ]),
+    case eval_value(Pid, Expr) of
+        #{<<"ok">> := true, <<"textAlign">> := <<"center">>} ->
+            ok;
+        #{<<"ok">> := true, <<"textAlign">> := TA} ->
+            fail_msg(
+                iolist_to_binary(
+                    io_lib:format("expected text-align:center for ~s, got ~p", [Sel, TA])
+                )
+            );
+        #{<<"ok">> := false, <<"msg">> := Msg} ->
+            fail_msg(Msg);
+        Other ->
+            {error, Other}
+    end.
+
+%% ---------- visually centered text (layout-based) ----------
+%% This checks the center X of the element's rendered text range against the element's content box center.
+assert_text_visually_centered(Pid, Sel, TolPx) ->
+    Expr = iolist_to_binary([
+        "(function(){",
+        "  const sel=",
+        jsx:encode(Sel),
+        ";",
+        "  const el=document.querySelector(sel);",
+        "  if(!el) return {ok:false,msg:`not found: ${sel}`};",
+        "  const r=el.getBoundingClientRect();",
+        "  const cs=getComputedStyle(el);",
+        "  const pl=parseFloat(cs.paddingLeft)||0;",
+        "  const pr=parseFloat(cs.paddingRight)||0;",
+        "  const contentLeft=r.left+pl;",
+        "  const contentRight=r.right-pr;",
+        "  const contentCenter=(contentLeft+contentRight)/2;",
+        "  let textRect=null;",
+        "  try {",
+        "    const range=document.createRange();",
+        "    range.selectNodeContents(el);",
+        "    const rects=range.getClientRects();",
+        "    if(rects && rects.length>0){",
+        "      let left=Infinity,right=-Infinity,top=Infinity,bottom=-Infinity;",
+        "      for(const rr of rects){",
+        "        left=Math.min(left, rr.left); right=Math.max(right, rr.right);",
+        "        top=Math.min(top, rr.top); bottom=Math.max(bottom, rr.bottom);",
+        "      }",
+        "      textRect={left,right,top,bottom,center:(left+right)/2};",
+        "    }",
+        "  } catch(e) {}",
+        "  if(!textRect){",
+        "    return {ok:false,msg:`no measurable text rect for ${sel}`};",
+        "  }",
+        "  return {ok:true, contentCenter, textCenter:textRect.center};",
+        "})()"
+    ]),
+    case eval_value(Pid, Expr) of
+        #{<<"ok">> := true, <<"contentCenter">> := CC, <<"textCenter">> := TC} ->
+            Diff = abs(float(CC) - float(TC)),
+            case Diff =< TolPx of
+                true ->
+                    ok;
+                false ->
+                    fail_msg(
+                        iolist_to_binary(
+                            io_lib:format("text not centered for ~s (diff=~.2fpx tol=~.2fpx)", [
+                                Sel, Diff, TolPx
+                            ])
+                        )
+                    )
+            end;
+        #{<<"ok">> := false, <<"msg">> := Msg} ->
+            fail_msg(Msg);
+        Other ->
+            {error, Other}
+    end.
+
+%% ---------- horizontal alignment (left/center/right) ----------
+assert_halign(Pid, SelA, SelB, Anchor, TolPx) ->
+    Expr = iolist_to_binary([
+        "(function(){",
+        "  const aSel=",
+        jsx:encode(SelA),
+        ";",
+        "  const bSel=",
+        jsx:encode(SelB),
+        ";",
+        "  const anchor=",
+        jsx:encode(Anchor),
+        ";",
+        "  const a=document.querySelector(aSel);",
+        "  const b=document.querySelector(bSel);",
+        "  if(!a) return {ok:false,msg:`not found: ${aSel}`};",
+        "  if(!b) return {ok:false,msg:`not found: ${bSel}`};",
+        "  const ar=a.getBoundingClientRect();",
+        "  const br=b.getBoundingClientRect();",
+        "  function x(r){",
+        "    if(anchor==='left') return r.left;",
+        "    if(anchor==='right') return r.right;",
+        "    return (r.left+r.right)/2; /* center */",
+        "  }",
+        "  return {ok:true, ax:x(ar), bx:x(br)};",
+        "})()"
+    ]),
+    case eval_value(Pid, Expr) of
+        #{<<"ok">> := true, <<"ax">> := AX, <<"bx">> := BX} ->
+            Diff = abs(float(AX) - float(BX)),
+            case Diff =< TolPx of
+                true ->
+                    ok;
+                false ->
+                    fail_msg(
+                        iolist_to_binary(
+                            io_lib:format(
+                                "horizontal misalignment (~s) ~s vs ~s (diff=~.2fpx tol=~.2fpx)",
+                                [Anchor, SelA, SelB, Diff, TolPx]
+                            )
+                        )
+                    )
+            end;
+        #{<<"ok">> := false, <<"msg">> := Msg} ->
+            fail_msg(Msg);
+        Other ->
+            {error, Other}
+    end.
+
+%% ---------- vertical alignment (top/center/bottom) ----------
+assert_valign(Pid, SelA, SelB, Anchor, TolPx) ->
+    Expr = iolist_to_binary([
+        "(function(){",
+        "  const aSel=",
+        jsx:encode(SelA),
+        ";",
+        "  const bSel=",
+        jsx:encode(SelB),
+        ";",
+        "  const anchor=",
+        jsx:encode(Anchor),
+        ";",
+        "  const a=document.querySelector(aSel);",
+        "  const b=document.querySelector(bSel);",
+        "  if(!a) return {ok:false,msg:`not found: ${aSel}`};",
+        "  if(!b) return {ok:false,msg:`not found: ${bSel}`};",
+        "  const ar=a.getBoundingClientRect();",
+        "  const br=b.getBoundingClientRect();",
+        "  function y(r){",
+        "    if(anchor==='top') return r.top;",
+        "    if(anchor==='bottom') return r.bottom;",
+        "    return (r.top+r.bottom)/2; /* center */",
+        "  }",
+        "  return {ok:true, ay:y(ar), by:y(br)};",
+        "})()"
+    ]),
+    case eval_value(Pid, Expr) of
+        #{<<"ok">> := true, <<"ay">> := AY, <<"by">> := BY} ->
+            Diff = abs(float(AY) - float(BY)),
+            case Diff =< TolPx of
+                true ->
+                    ok;
+                false ->
+                    fail_msg(
+                        iolist_to_binary(
+                            io_lib:format(
+                                "vertical misalignment (~s) ~s vs ~s (diff=~.2fpx tol=~.2fpx)",
+                                [Anchor, SelA, SelB, Diff, TolPx]
+                            )
+                        )
+                    )
+            end;
+        #{<<"ok">> := false, <<"msg">> := Msg} ->
+            fail_msg(Msg);
+        Other ->
+            {error, Other}
+    end.
+
+%% ---------- shared eval helper ----------
+eval_value(Pid, Expr) ->
+    Res = call(Pid, <<"Runtime.evaluate">>, #{<<"expression">> => Expr, <<"returnByValue">> => true}),
+    case Res of
+        #{<<"result">> := #{<<"value">> := Val}} -> Val;
+        _ -> Res
+    end.
+
+fail_msg(MsgBin) when is_binary(MsgBin) ->
+    {error, #{
+        <<"result">> => #{
+            <<"result">> => #{<<"value">> => #{<<"ok">> => false, <<"msg">> => MsgBin}}
+        }
+    }}.
 
 %% Record we keep in ETS: {KeyBin, #{host,port,chrome_pid,chrome_os_port,user_data_dir,cdp_pid}}
 %% Note: chrome_pid is optional (we primarily health-check via /json/version).
