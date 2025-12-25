@@ -18,16 +18,17 @@
         code_change/3
     ]
 ).
+-define(CTX_TIMEOUT, 60000).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 get_ctx() ->
-    gen_server:call(?MODULE, get_ctx).
+    gen_server:call(?MODULE, get_ctx, ?CTX_TIMEOUT).
 get_ctx_size() ->
-    gen_server:call(?MODULE, get_ctx_size).
+    gen_server:call(?MODULE, get_ctx_size, ?CTX_TIMEOUT).
 set_ctx(Ctx) ->
-    gen_server:call(?MODULE, {set_ctx, Ctx}).
+    gen_server:call(?MODULE, {set_ctx, Ctx}, ?CTX_TIMEOUT).
 
 init([]) ->
     {ok, ecai_search:new(), {continue, load_ctx}}.
