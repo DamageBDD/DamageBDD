@@ -99,6 +99,8 @@ lookup_user_npub(<<"asyncmind">>) ->
     <<"npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc">>;
 lookup_user_npub(<<"damagebdd">>) ->
     <<"npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8">>;
+lookup_user_npub(<<"community">>) ->
+    <<"npub1lxs7aguh3pjyw2hf76gr8sd0jxpdp8s0tzjlfrzla2ndtk82wjcs36drv5">>;
 lookup_user_npub(<<"cocd">>) ->
     <<"npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8">>;
 lookup_user_npub(<<"coordinator">>) ->
@@ -163,7 +165,9 @@ to_json(Req, #{action := nip57} = State) ->
         State
     };
 to_json(Req, #{action := invoice} = State) ->
-    case lookup_user_npub(cowboy_req:binding(user, Req)) of
+    UserBinding = cowboy_req:binding(user, Req),
+    ?LOG_INFO("invoice requested for user ~p", [UserBinding]),
+    case lookup_user_npub(UserBinding) of
         undefined ->
             {<<"user required">>, Req, State};
         _User ->
@@ -185,9 +189,9 @@ to_json(Req, #{action := invoice} = State) ->
 
             %% Amount: lnurl is msat
             AmountBin = maps:get(amount, Qs, <<"0">>),
-            Amount =
+            AmountMsat =
                 case AmountBin of
-                    % fallback min
+                    %% fallback min
                     <<"0">> -> 1000;
                     _ -> binary_to_integer(AmountBin)
                 end,
@@ -204,10 +208,7 @@ to_json(Req, #{action := invoice} = State) ->
                     _ ->
                         case damage_nostr:parse_zap_request(NostrBin) of
                             {ok, ZapReq} ->
-                                ?LOG_INFO(
-                                    "valid zap request for invoice: ~p",
-                                    [ZapReq]
-                                ),
+                                ?LOG_INFO("valid zap request for invoice: ~p", [ZapReq]),
                                 NostrBin;
                             {error, Reason} ->
                                 ?LOG_WARNING(
@@ -218,16 +219,40 @@ to_json(Req, #{action := invoice} = State) ->
                         end
                 end,
 
-            #{
-                payment_hash := _PaymentHash,
-                expires_at := _Expiry,
-                bolt11 := Bolt11,
-                payment_secret := _PaymentSecret,
-                created_index := _CreatedIndex
-            } = Invoice = cln:create_invoice(Amount, Description, 3600, Label),
+            %% --- NEW: forward invoices for damagebdd_community to remote lnaddress (like rizful) ---
+            case forward_lnaddress(UserBinding) of
+                undefined ->
+                    %% Local invoice (Core Lightning)
+                    #{
+                        payment_hash := _PaymentHash,
+                        expires_at := _Expiry,
+                        bolt11 := Bolt11,
+                        payment_secret := _PaymentSecret,
+                        created_index := _CreatedIndex
+                    } = Invoice = cln:create_invoice(AmountMsat, Description, 3600, Label),
 
-            ?LOG_INFO("invoice ~p", [Invoice]),
-            {jsx:encode(#{pr => Bolt11}), Req, State}
+                    ?LOG_INFO("invoice ~p", [Invoice]),
+                    {jsx:encode(#{pr => Bolt11}), Req, State};
+                RemoteLnAddress ->
+                    %% Remote invoice (resolve LNURLp -> callback -> pr)
+                    case
+                        resolve_lnaddress_invoice(RemoteLnAddress, AmountMsat, Comment, NostrBin)
+                    of
+                        {ok, Bolt11} ->
+                            ?LOG_INFO(
+                                "forwarded invoice user=~p -> lnaddress=~p",
+                                [UserBinding, RemoteLnAddress]
+                            ),
+                            {jsx:encode(#{pr => Bolt11}), Req, State};
+                        {error, Reason0} ->
+                            ?LOG_WARNING(
+                                "invoice forward failed user=~p lnaddress=~p reason=~p",
+                                [UserBinding, RemoteLnAddress, Reason0]
+                            ),
+                            %% Keep response shape JSON so wallets don't crash hard.
+                            {jsx:encode(#{error => <<"invoice_forward_failed">>}), Req, State}
+                    end
+            end
     end.
 
 from_html(Req, #{action := reset_password} = State) ->
@@ -327,4 +352,167 @@ from_json(Req, #{action := Action} = State) ->
                     ?LOG_DEBUG("post response ~p ~p ", [Status0, Response]),
                     {stop, Response, State}
             end
+    end.
+%% ---------------------------
+%% Remote LN Address forwarding
+%% ---------------------------
+
+%% Map a local user to a remote lnaddress, fetched from encrypted secrets storage.
+%%
+%% Store it once with:
+%%   secrets:encrypt_store(community_manager_lnaddress, <<"manager@rizful.com">>).
+%%
+%% Then requests to /pay/community will forward invoice generation to that lnaddress.
+forward_lnaddress(<<"community">>) ->
+    case secrets:retrieve_decrypt(community_manager_lnaddress) of
+        {ok, V} when is_binary(V), V =/= <<>> ->
+            V;
+        {ok, V} when is_list(V), V =/= [] ->
+            list_to_binary(V);
+        _ ->
+            %% Safe default: if not configured, don't forward.
+            undefined
+    end;
+forward_lnaddress(_User) ->
+    undefined.
+
+%% Resolve an lnaddress (user@domain) via LNURLp and return {ok, Bolt11}.
+%% Amount is in millisatoshis (LNURL spec).
+resolve_lnaddress_invoice(LnAddress, AmountMsat, Comment, NostrBin) when is_binary(LnAddress) ->
+    {LnUser, LnDomain} = parse_lnaddress(LnAddress),
+    LnurlpUrl = lnurlp_url(LnDomain, LnUser),
+    {ok, Lnurlp} = http_get_json(LnurlpUrl),
+    Callback0 = maps:get(<<"callback">>, Lnurlp, undefined),
+    case Callback0 of
+        undefined ->
+            {error, no_callback};
+        _ ->
+            Callback = ensure_binary(Callback0),
+            Query = build_invoice_query(AmountMsat, Comment, NostrBin),
+            InvoiceUrl = append_query(Callback, Query),
+            {ok, InvoiceResp} = http_get_json(InvoiceUrl),
+            case maps:get(<<"pr">>, InvoiceResp, undefined) of
+                PR when is_binary(PR), PR =/= <<>> -> {ok, PR};
+                _ -> {error, invalid_invoice_response}
+            end
+    end.
+
+parse_lnaddress(LnAddress) ->
+    case binary:split(LnAddress, <<"@">>, [global]) of
+        [User, Domain] when User =/= <<>>, Domain =/= <<>> -> {User, Domain};
+        _ -> error({bad_lnaddress, LnAddress})
+    end.
+
+lnurlp_url(Domain, User) ->
+    %% default to https
+    <<"https://", Domain/binary, "/.well-known/lnurlp/", User/binary>>.
+
+build_invoice_query(AmountMsat, Comment, NostrBin) ->
+    Base = [{"amount", integer_to_list(AmountMsat)}],
+    WithComment =
+        case Comment of
+            <<>> -> Base;
+            _ -> Base ++ [{"comment", binary_to_list(Comment)}]
+        end,
+    WithNostr =
+        case NostrBin of
+            <<>> -> WithComment;
+            _ -> WithComment ++ [{"nostr", binary_to_list(NostrBin)}]
+        end,
+    uri_string:compose_query(WithNostr).
+
+append_query(UrlBin, QueryStr) when is_binary(UrlBin) ->
+    Url0 = binary_to_list(UrlBin),
+    Sep =
+        case string:find(Url0, "?") of
+            nomatch -> "?";
+            _ -> "&"
+        end,
+    list_to_binary(Url0 ++ Sep ++ QueryStr).
+
+ensure_binary(undefined) -> <<>>;
+ensure_binary(V) when is_binary(V) -> V;
+ensure_binary(V) when is_list(V) -> list_to_binary(V);
+ensure_binary(V) -> list_to_binary(io_lib:format("~p", [V])).
+
+http_get_json(UrlBin) when is_binary(UrlBin) ->
+    Uri = uri_string:parse(UrlBin),
+
+    Scheme0 = maps:get(scheme, Uri, <<"https">>),
+    Host0 = maps:get(host, Uri, <<>>),
+    Path0 = maps:get(path, Uri, <<"/">>),
+    Port0 = maps:get(port, Uri, undefined),
+    Query0 = maps:get(query, Uri, undefined),
+
+    Scheme = ensure_binary(Scheme0),
+    Host = ensure_binary(Host0),
+    Path1 = ensure_binary(Path0),
+
+    Port =
+        case Port0 of
+            undefined ->
+                case Scheme of
+                    <<"https">> -> 443;
+                    _ -> 80
+                end;
+            P ->
+                P
+        end,
+
+    Path =
+        case Path1 of
+            <<>> -> <<"/">>;
+            _ -> Path1
+        end,
+
+    FullPath =
+        case Query0 of
+            undefined ->
+                Path;
+            <<>> ->
+                Path;
+            Q0 ->
+                Q = ensure_binary(Q0),
+                <<Path/binary, "?", Q/binary>>
+        end,
+
+    Opts =
+        case Scheme of
+            <<"https">> -> #{transport => tls, tls_opts => [{verify, verify_none}]};
+            _ -> #{transport => tcp}
+        end,
+
+    {ok, ConnPid} = gun:open(binary_to_list(Host), Port, Opts),
+    _ = gun:await_up(ConnPid),
+    StreamRef = gun:get(ConnPid, binary_to_list(FullPath)),
+    Resp = get_json_body(ConnPid, StreamRef),
+    gun:close(ConnPid),
+    {ok, Resp}.
+
+get_json_body(ConnPid, StreamRef) ->
+    receive
+        {gun_response, ConnPid, StreamRef, fin, Status, _Headers} ->
+            ?LOG_WARNING("http_get_json empty response status=~p", [Status]),
+            #{};
+        {gun_response, ConnPid, StreamRef, nofin, Status, _Headers} ->
+            Body = recv_body(ConnPid, StreamRef, <<>>),
+            case Status of
+                S when S >= 200, S < 300 ->
+                    jsx:decode(Body, [return_maps]);
+                _ ->
+                    ?LOG_WARNING("http_get_json bad status=~p body=~p", [Status, Body]),
+                    jsx:decode(Body, [return_maps])
+            end
+    after 15000 ->
+        error(timeout)
+    end.
+
+recv_body(ConnPid, StreamRef, Acc) ->
+    receive
+        {gun_data, ConnPid, StreamRef, nofin, Data} ->
+            recv_body(ConnPid, StreamRef, <<Acc/binary, Data/binary>>);
+        {gun_data, ConnPid, StreamRef, fin, Data} ->
+            <<Acc/binary, Data/binary>>
+    after 15000 ->
+        error(timeout)
     end.
