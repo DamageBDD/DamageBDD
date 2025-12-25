@@ -957,7 +957,17 @@ handle_call(
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
-        gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT),
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
+            {response, fin, Status, _RespHeaders} ->
+                ?LOG_DEBUG("Got fin ~p", [Status]),
+                no_data;
+            {response, nofin, _Status, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            {response, nofin, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            Default ->
+                ?LOG_DEBUG("Got unknown ~p ", [Default])
+        end,
     Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
     %% Parse the response JSON
     gun:cancel(ConnPid, StreamRef),
