@@ -46,8 +46,8 @@ init() ->
     ].
 
 update(schedule_execution, {AeAccount, Hash}) ->
-    prometheus_gauge:inc(schedule_execution, ["all"]),
-    prometheus_gauge:inc(schedule_execution, [AeAccount]),
+    prometheus_gauge:inc(schedule_execution, ["all", "all"]),
+    prometheus_gauge:inc(schedule_execution, [AeAccount, "all"]),
     prometheus_gauge:inc(schedule_execution, [AeAccount, Hash]);
 update(Event, AeAccount) ->
     %?LOG_DEBUG("update prometheus_data  for event ~p ", [Event]),
