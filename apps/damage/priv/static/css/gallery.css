@@ -1,5 +1,97 @@
 
-  /* Minimal extra styling that matches the existing dark modal/card palette */
+  /* Filter layout */
+  #nft-gallery .nft-filter{
+    border: 1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.03);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  #nft-gallery .nft-filter__row{
+    display:flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  #nft-gallery .nft-filter__left{ flex: 1 1 540px; min-width: 280px; }
+  #nft-gallery .nft-filter__right{ flex: 0 0 220px; }
+
+  /* Tag cloud */
+  #nft-gallery .addr-tags{
+    display:flex;
+    flex-wrap:wrap;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: #1a1a1a;
+    min-height: 54px;
+  }
+  #nft-gallery .addr-tag{
+    display:inline-flex;
+    align-items:center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.06);
+    color: #cfd6e4;
+    cursor: pointer;
+    user-select: none;
+    max-width: 100%;
+  }
+  #nft-gallery .addr-tag:hover{
+    border-color: rgba(255,255,255,.18);
+    background: rgba(255,255,255,.08);
+  }
+  #nft-gallery .addr-tag[aria-pressed="true"]{
+    border-color: rgba(0,191,255,.55);
+    background: rgba(0,191,255,.12);
+    color: #ffffff;
+    box-shadow: 0 0 0 2px rgba(0,191,255,.12) inset;
+  }
+  #nft-gallery .addr-tag__label{
+    font-weight: 700;
+    font-size: .85rem;
+    color: inherit;
+    flex: 0 0 auto;
+  }
+  #nft-gallery .addr-tag__addr{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .82rem;
+    opacity: .95;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 420px;
+  }
+  #nft-gallery .addr-tag__x{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    opacity: .7;
+    font-size: .95rem;
+    line-height: 1;
+    padding: 0 2px;
+    border-radius: 6px;
+  }
+  #nft-gallery .addr-tag__x:hover{ opacity: 1; background: rgba(255,255,255,.08); }
+
+  /* Add address row */
+  #nft-gallery .addr-add{
+    display:flex;
+    gap: 10px;
+    margin-top: 10px;
+    align-items: center;
+  }
+  #nft-gallery .addr-add__input{
+    width: 100%;
+    padding: .75rem .85rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: #1a1a1a;
+    color: #eee;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* NFT cards (same as before) */
   #nft-gallery .nft-grid{
     display:grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -24,12 +116,7 @@
     justify-content:center;
     overflow:hidden;
   }
-  #nft-gallery .nft-thumb img{
-    width:100%;
-    height:100%;
-    object-fit:cover;
-    display:block;
-  }
+  #nft-gallery .nft-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
   #nft-gallery .nft-body{
     padding: .85rem .9rem;
     display:flex;
@@ -37,42 +124,20 @@
     gap:.4rem;
     flex: 1;
   }
-  #nft-gallery .nft-title{
-    font-weight:700;
-    color:#fff;
-    line-height:1.25;
-    word-break: break-word;
-  }
+  #nft-gallery .nft-title{ font-weight:700; color:#fff; line-height:1.25; word-break: break-word; }
   #nft-gallery .nft-desc{
-    color:#c9cfdb;
-    font-size:.95rem;
-    line-height:1.45;
-    overflow:hidden;
-    display:-webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
+    color:#c9cfdb; font-size:.95rem; line-height:1.45;
+    overflow:hidden; display:-webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   }
   #nft-gallery .nft-meta{
     margin-top:auto;
-    display:flex;
-    flex-wrap:wrap;
-    gap:.5rem;
-    color:#9aa3b2;
-    font-size:.8rem;
+    display:flex; flex-wrap:wrap; gap:.5rem;
+    color:#9aa3b2; font-size:.8rem;
   }
   #nft-gallery .pill{
-    display:inline-flex;
-    gap:.35rem;
-    align-items:center;
-    padding:.2rem .45rem;
-    border-radius:999px;
+    display:inline-flex; gap:.35rem; align-items:center;
+    padding:.2rem .45rem; border-radius:999px;
     background: rgba(255,255,255,.06);
     border:1px solid rgba(255,255,255,.08);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
-  #nft-gallery .nft-links a{
-    color:#00bfff;
-    text-decoration:none;
-    font-weight:600;
-  }
-  #nft-gallery .nft-links a:hover{ text-decoration:underline; }

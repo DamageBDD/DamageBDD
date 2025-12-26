@@ -129,11 +129,10 @@ function generateDamageQR(address){
 			console.log("add schedule");
 			event.preventDefault();
 		});
-		document.getElementById("historylink").addEventListener("click",(event) => {
+		document.getElementById("activity-link").addEventListener("click",(event) => {
 			event.preventDefault();
-			console.log("historytab");
 			var tabs =Tabby('[data-tabs]');
-			tabs.toggle('history');
+			tabs.toggle('activity');
 		});
 		document.getElementById("node-unlock-password").addEventListener("keydown", async function(event) {
 			if (event.ctrlKey && event.key === "Enter") {
@@ -211,7 +210,7 @@ function generateDamageQR(address){
 		document.addEventListener('tabby', function (event) {
 			var tab = event.target;
 			var content = event.detail.content;
-			if (event.detail.tab.id === 'tabby-toggle_history-tab'){
+			if (event.detail.tab.id === 'tabby-toggle_activity-tab'){
 				const address = TokenManager.getAddress();
 				Reports.renderRunReports(address, { limit: 10 });
 			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){

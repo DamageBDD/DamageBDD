@@ -642,50 +642,126 @@ textarea#lightning-invoice-input {
    */
 }
 
-/* Tabs container */
-ul[data-tabs] {
-    display: flex;
-    border-bottom: 2px solid #3a3a3a;
-    padding: 0;
-    gap: 0.5rem;
-    justify-content: flex-start;
-    background-color: #1e1e2f;
-    padding-left: 1rem;
-    padding-top:0.5rem;
+/* ===========================
+   Modern primary tabs (Tabby)
+   Targets: <ul data-tabs role="tablist"> ... <a role="tab">
+   =========================== */
+
+.tabsbar{
+  /* Optional: sticky modern feel */
+  position: sticky;
+  top: 0;
+  z-index: 50;
+
+  /* “glass” bar */
+  background: rgba(18, 18, 28, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
-/* Tab links */
-ul[data-tabs] li a {
-    display: inline-block;
-    padding: 0.75rem 1.25rem;
-    border-radius: 6px 6px 0 0;
-    background-color: #2a2a3d;
-    color: #ccc;
-    font-weight: 500;
-    transition: background 0.3s, color 0.3s;
-    border: 1px solid #2f2f2f;
-    border-bottom: none;
-    text-decoration: none;
+ul[data-tabs][role="tablist"]{
+  /* kill Tabby defaults */
+  border-bottom: 0 !important;
+  margin: 0 !important;
+  list-style: none;
+  padding: .55rem .65rem !important;
+
+  display: flex !important;
+  align-items: center;
+  gap: .5rem;
+
+  /* mobile-friendly: scrollable chips */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+
+  /* nice scroll behavior */
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;            /* Firefox */
+}
+ul[data-tabs][role="tablist"]::-webkit-scrollbar{
+  width: 0;
+  height: 0;                        /* Chrome/Safari */
 }
 
-/* Active tab */
-ul[data-tabs] li a[data-tabby-default],
-ul[data-tabs] li a[aria-selected="true"] {
-    background-color: #007bff;
-    color: #fff;
-    border-color: #007bff;
-    font-weight: 600;
+ul[data-tabs][role="tablist"] > li{
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: 0 0 auto;
+  scroll-snap-align: start;
 }
 
-/* Hover state */
-ul[data-tabs] li a:hover {
-    background-color: #44475a;
-    color: #fff;
+/* Pill tabs */
+ul[data-tabs] [role="tab"]{
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 44px;                 /* good touch target */
+  padding: .55rem .9rem !important;
+
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  background: rgba(255,255,255,0.06);
+
+  text-decoration: none;
+  color: rgba(255,255,255,0.82);
+  font-weight: 700;
+  letter-spacing: .2px;
+
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .08s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease, border-color .15s ease;
 }
 
-/* Panel styling (like #execution-tab, #history-tab) */
+ul[data-tabs] [role="tab"]:hover{
+  background: rgba(255,255,255,0.09);
+  border-color: rgba(255,255,255,0.16) !important;
+  color: rgba(255,255,255,0.95);
+}
+
+ul[data-tabs] [role="tab"]:active{
+  transform: translateY(1px);
+}
+
+/* ACTIVE must follow aria-selected only */
+ul[data-tabs] [role="tab"][aria-selected="true"]{
+  background: rgba(0, 140, 255, 0.35);
+  border-color: rgba(0, 140, 255, 0.55) !important;
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+}
+
+/* If Tabby marks a default tab, don't let it LOOK active unless selected */
+ul[data-tabs] [role="tab"][data-tabby-default]:not([aria-selected="true"]){
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.10) !important;
+  color: rgba(255,255,255,0.82) !important;
+  box-shadow: none !important;
+}
+
+ul[data-tabs] [role="tab"]:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 140, 255, 0.35);
+}
+
+/* Desktop: a bit more breathing room */
+@media (min-width: 48rem){
+  ul[data-tabs][role="tablist"]{
+    padding: .65rem 1rem !important;
+    gap: .6rem;
+  }
+  ul[data-tabs] [role="tab"]{
+    padding: .6rem 1rem !important;
+  }
+}
+
+
+/* Panel styling (like #execution-tab, #activity-tab) */
 .execute-container,
-#history-tab,
+#activity-tab,
 #analytics-tab,
 #schedules-tab,
 #settings-tab {
@@ -2051,7 +2127,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
     /* Tab panels */
     .execute-container,
-    #history-tab,
+    #activity-tab,
     #analytics-tab,
     #schedules-tab,
     #settings-tab {

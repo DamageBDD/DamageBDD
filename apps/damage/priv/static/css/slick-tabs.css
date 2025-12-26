@@ -1,0 +1,90 @@
+/* --- Slick underline + glow --- */
+
+.tabsbar{
+  /* a bit more depth */
+  box-shadow: 0 12px 30px rgba(0,0,0,0.28);
+}
+
+/* underline "rail" */
+ul[data-tabs][role="tablist"]{
+  position: relative;
+}
+
+/* active underline effect (uses the active tab itself) */
+ul[data-tabs] [role="tab"][aria-selected="true"]{
+  position: relative;
+}
+
+ul[data-tabs] [role="tab"][aria-selected="true"]::after{
+  content: "";
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: -10px;
+  height: 3px;
+  border-radius: 999px;
+
+  background: rgba(0, 140, 255, 0.9);
+  filter: blur(0.2px);
+  box-shadow:
+    0 6px 18px rgba(0, 140, 255, 0.35),
+    0 14px 32px rgba(0, 140, 255, 0.20);
+
+  transform: scaleX(0.92);
+  transition: transform .18s ease, opacity .18s ease;
+  opacity: 0.95;
+}
+
+ul[data-tabs] [role="tab"][aria-selected="true"]:active::after{
+  transform: scaleX(0.86);
+  opacity: 0.85;
+}
+
+/* Reduced motion friendliness */
+@media (prefers-reduced-motion: reduce){
+  ul[data-tabs] [role="tab"]{
+    transition: none;
+  }
+  ul[data-tabs] [role="tab"][aria-selected="true"]::after{
+    transition: none;
+  }
+}
+/* --- Scroll hint fades --- */
+.tabsbar{
+  position: sticky;
+  top: 0;
+}
+
+/* fade overlays */
+.tabsbar::before,
+.tabsbar::after{
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.tabsbar::before{
+  left: 0;
+  background: linear-gradient(to right, rgba(18,18,28,0.92), rgba(18,18,28,0));
+}
+
+.tabsbar::after{
+  right: 0;
+  background: linear-gradient(to left, rgba(18,18,28,0.92), rgba(18,18,28,0));
+}
+
+/* ensure the nav is positioning context */
+.tabsbar{
+  position: sticky;
+  top: 0;
+}
+@media (min-width: 48rem){
+  .tabsbar::before,
+  .tabsbar::after{
+    display: none;
+  }
+}

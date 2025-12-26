@@ -1,5 +1,5 @@
 /* /static/js/reports.js
- * Minimal history list -> #run-reports (inside #history-tab)
+ * Minimal activity list -> #run-reports (inside #activity-tab)
  * Each item: [timestamp] — <first line from feature>  [report link] [aescan tx]
  * Feature CID = arg[2], Report CID = arg[3].
  * Includes Prev/Next pagination using MDW cursors.
@@ -180,7 +180,7 @@
   };
 
   function ensureScaffold() {
-    const container = qs("#history-tab");
+    const container = qs("#activity-tab");
     if (!container) return null;
 
     // List
@@ -238,7 +238,7 @@
 
   async function renderPage() {
     const parts = ensureScaffold();
-    if (!parts) { console.warn("reports.js: #history-tab not found"); return; }
+    if (!parts) { console.warn("reports.js: #activity-tab not found"); return; }
     const { ul } = parts;
 
     ul.innerHTML = `<li style="padding:8px 0; color:#6b7280;">Loading…</li>`;
