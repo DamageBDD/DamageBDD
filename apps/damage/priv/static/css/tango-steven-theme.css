@@ -127,7 +127,7 @@ form {
   width: 100%;
   cursor: pointer;
   transition: background 0.25s ease-in-out;
-  margin-top: 1rem;
+  /*margin-top: 1rem;*/
 }
 .styled-btn:hover {
   background: var(--accent-dark);

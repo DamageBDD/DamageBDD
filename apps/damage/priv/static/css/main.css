@@ -387,7 +387,8 @@ html, body {
     box-shadow: 0 4px 10px rgba(0, 82, 204, 0.2);
     cursor: pointer;
     transition: all 0.25s ease-in-out;
-    margin-top: 1rem;
+    /*margin-top: 1rem;*/
+
 }
 
 .styled-btn:hover {
@@ -529,7 +530,7 @@ html, body {
     font-weight: 600;
     cursor: pointer;
     width: 100%;
-    margin-top: 0.75rem;
+/*    margin-top: 0.75rem;*/
     transition: all 0.2s ease-in-out;
 }
 

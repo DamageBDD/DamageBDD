@@ -9,12 +9,13 @@
   border-radius: 16px;
   background-color: #fff;
 }
+
 #loginSignupForm button[type="submit"]:hover {
   background: #0056b3;
 }
 
 .login_connect_btn {
-  margin: 2rem 0;
+  margin: 1rem 0;
 }
 
 /* Flex container for alignment */
@@ -110,7 +111,7 @@
 }
 
 #loginSubmitBtn {
-  margin-top: 2rem;
+  margin-top: 1rem;
 }
 
 #loginDivider {
@@ -127,7 +128,6 @@
   padding: 2rem 1.5rem;
   border-radius: 16px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-  background-color: #ffffff;
   /*width: 100%;*/
   max-width: 400px;
   font-family: 'Segoe UI', sans-serif;
@@ -175,7 +175,7 @@
 #signupForm button[type="submit"]:hover {
   background-color: #003380;
 }
-
+/*
 input[type="password"] + button,
 input[type="text"] + button {
   margin-left: 10px;
@@ -183,11 +183,12 @@ input[type="text"] + button {
   padding: 4px 8px;
   cursor: pointer;
 }
+*/
 .password-wrapper {
   position: relative;
   display: flex;
   align-items: center;
-  margin-bottom: 15px;
+  margin-bottom: 1rem;
 }
 
 .password-wrapper input {
