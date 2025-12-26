@@ -1,2 +1,39 @@
 <!-- -*- mode: html -*- -->
-<div id="#activity"></div>
+<!-- -*- mode: html -*- -->
+<div class="activity-panel">
+  <div class="activity-toolbar">
+    <div class="activity-address">
+      <span class="activity-label">Activity</span>
+      <code id="activity-account" class="activity-account">—</code>
+      <button id="activity-copy" class="activity-iconbtn" type="button" aria-label="Copy address" title="Copy address">⧉</button>
+    </div>
+
+    <div class="activity-filters">
+      <label class="activity-sr" for="activity-type">Filter</label>
+      <select id="activity-type" class="activity-select">
+        <option value="all">All</option>
+        <option value="aex9">AEX-9</option>
+        <option value="aex141">AEX-141</option>
+        <option value="transactions">Transactions</option>
+        <option value="contract_call">Contract calls</option>
+      </select>
+
+      <label class="activity-sr" for="activity-limit">Limit</label>
+      <select id="activity-limit" class="activity-select">
+        <option value="10">10</option>
+        <option value="25">25</option>
+        <option value="50">50</option>
+      </select>
+
+      <button id="activity-refresh" class="activity-btn" type="button">Refresh</button>
+    </div>
+  </div>
+
+  <ul id="run-reports-list" class="activity-list"></ul>
+
+  <div id="run-reports-pager" class="activity-pager" aria-label="Pagination">
+    <button id="run-reports-prev" class="activity-btn" type="button">◀ Prev</button>
+    <button id="run-reports-next" class="activity-btn" type="button">Next ▶</button>
+    <span id="run-reports-info" class="activity-pagerinfo"></span>
+  </div>
+</div>

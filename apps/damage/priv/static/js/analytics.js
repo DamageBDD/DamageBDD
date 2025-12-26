@@ -2,12 +2,12 @@
   const MDW = "https://mainnet.aeternity.io/mdw/v3";
 
   // Put your real contracts here (or fetch them from your own config endpoint):
-  const CONTRACT_ID_RUNS = "ct_YOUR_RUNS_CONTRACT_ID";     // emits Run/Result events
+  const CONTRACT_ID_RUNS = "ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk";     // emits Run/Result events
   // Optional: token contract etc
   // const CONTRACT_ID_DAMAGE = "ct_YOUR_DAMAGE_TOKEN_CONTRACT_ID";
 
   // How many logs to pull (MDW is paginated; start with a chunk and iterate if you need more)
-  const LOG_LIMIT = 200;
+  const LOG_LIMIT = 10;
 
   // === Helpers ===
   async function fetchJson(url) {
