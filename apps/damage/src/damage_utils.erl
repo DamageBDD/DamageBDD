@@ -168,12 +168,28 @@ binary_to_atom_keys(Map) ->
     ).
 
 load_template(App, Template, Context) ->
-    PrivDir = code:priv_dir(App),
+    PrivDir =
+        case code:priv_dir(App) of
+            {error, enoent} ->
+                %% Fallback: Locate priv relative to this module's .beam file
+                EbinDir = filename:dirname(code:which(?MODULE)),
+                filename:join(filename:dirname(EbinDir), "priv");
+            Path ->
+                Path
+        end,
     FilePath = filename:join([PrivDir, "templates", Template]),
     {ok, TemplateBin} = file:read_file(FilePath),
     bbmustache:render(TemplateBin, normalize_context(Context)).
 load_template(Template, Context) ->
-    PrivDir = code:priv_dir(damage),
+    PrivDir =
+        case code:priv_dir(damage) of
+            {error, enoent} ->
+                %% Fallback: Locate priv relative to this module's .beam file
+                EbinDir = filename:dirname(code:which(?MODULE)),
+                filename:join(filename:dirname(EbinDir), "priv");
+            Path ->
+                Path
+        end,
     FilePath = filename:join([PrivDir, "templates", Template]),
     {ok, TemplateBin} = file:read_file(FilePath),
     bbmustache:render(TemplateBin, normalize_context(Context)).
