@@ -5,6 +5,7 @@
 -export([start_link/0, get_prices/0]).
 
 -export([sats_to_damage/1]).
+-export([fetch_coinstore_prices/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
@@ -87,7 +88,7 @@ fetch_coinstore_prices() ->
     %% Coinstore REST base is https://api.coinstore.com/api (docs)
     %% Endpoint: GET /v1/ticker/price (docs)
     %% We request only the two symbols we need: btcusdt, damageusdt
-    Path = "/api/v1/ticker/price?symbol=btcusdt,damageusdt",
+    Path = "/api/v1/market/tickers?symbol=btcusdt,damageusdt",
     {ok, ConnPid} = gun:open(Host, 443, #{transport => tls, tls_opts => [{verify, verify_none}]}),
     StreamRef = gun:get(ConnPid, Path, [{<<"accept">>, <<"application/json">>}]),
     Res =
@@ -105,7 +106,7 @@ decode_coinstore_price_body(Body) ->
     case catch jsx:decode(Body, [return_maps]) of
         #{<<"code">> := 0, <<"data">> := Data} when is_list(Data) ->
             %% Data items look like: #{<<"symbol">> := <<"btcusdt">>, <<"price">> := <<"400">>}
-            case {find_price(<<"btcusdt">>, Data), find_price(<<"damageusdt">>, Data)} of
+            case {find_price(<<"BTCUSDT">>, Data), find_price(<<"DAMAGEUSDT">>, Data)} of
                 {{ok, BTCUSDT}, {ok, DamageUSDT}} ->
                     {ok, #{btc_usdt => BTCUSDT, damage_usdt => DamageUSDT}};
                 Other ->
@@ -125,7 +126,7 @@ find_price(Symbol, Items) ->
             Items
         )
     of
-        [#{<<"price">> := P0} | _] ->
+        [#{<<"ask">> := P0} | _] ->
             try
                 {ok, binary_to_float(P0)}
             catch
