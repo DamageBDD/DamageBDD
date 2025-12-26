@@ -147,46 +147,61 @@
 		cache.set(key, page, ttlMs);
 		return page;
 	}
-	function normalizeTxContent(tx) {
-		const rows = [];
-
-		// AEX-9 Transfer
-		if (tx.type === "Aex9TransferEvent" || tx.payload?.type === "Aex9TransferEvent") {
-			const p = tx.payload ?? tx;
-			rows.push(
-				{ k: "Token", v: p.token_symbol || "AEX-9" },
-				{ k: "Amount", v: (p.payload?.amount ?? p.amount) / 10 ** (p.payload?.decimals ?? 0) },
-				{ k: "From", v: p.sender_id },
-				{ k: "To", v: p.recipient_id }
-			);
-			return rows;
-		}
-
-		// Contract call
-		if (tx.type === "ContractCallTx" || tx.contract_id) {
-			rows.push(
-				{ k: "Contract", v: tx.contract_id },
-				{ k: "Function", v: tx.function || "call" }
-			);
-
-			if (Array.isArray(tx.arguments)) {
-				tx.arguments.forEach((arg, i) => {
-					rows.push({ k: `arg[${i}]`, v: JSON.stringify(arg.value ?? arg) });
-				});
-			}
-
-			return rows;
-		}
-
-		// Fallback
-		rows.push(
-			{ k: "Type", v: tx.type },
-			{ k: "Block", v: tx.block_height },
-			{ k: "Tx", v: tx.hash }
-		);
-
-		return rows;
+	function toMsOrNull(microTime) {
+		// MDW micro_time is usually milliseconds in your screenshots (13 digits),
+		// but sometimes microseconds can appear. Handle both.
+		if (!microTime) return null;
+		const n = Number(microTime);
+		if (!Number.isFinite(n)) return null;
+		return n > 1e12 ? n : Math.floor(n / 1000);
 	}
+
+	async function normalizeDamageSpend(txFull) {
+		// pull inner tx at txFull.tx.tx.tx (your MDW shape)
+		const inner = txFull?.tx?.tx?.tx || txFull?.tx?.tx || txFull?.tx || null;
+		if (!inner) return null;
+
+		// Only care about contract call "spend"
+		const fn = inner.function || "";
+		if (fn !== "spend") return null;
+
+		const args = extractTxArguments(txFull);
+		// ABI (confirmed): 0 recipient, 1 amount, 2 featureCid, 3 reportCid
+		const amountRaw = args?.[1]?.value;
+		const featureCid = typeof args?.[2]?.value === "string" ? args[2].value : null;
+		const reportCid  = typeof args?.[3]?.value === "string" ? args[3].value : null;
+
+		if (!featureCid || !reportCid) return null;
+
+		// created timestamp from txFull.micro_time (preferred) else inner
+		const createdMs = toMsOrNull(txFull?.micro_time || txFull?.tx?.micro_time || inner?.micro_time);
+		const createdLabel = createdMs ? new Date(createdMs).toLocaleString() : "—";
+
+		// Feature title (first line)
+		const featureLine = await fetchFeaturePreview(featureCid).catch(() => "—");
+
+		// Report: fetch and parse JSON list (your /reports/<cid> currently returns "[]")
+		let reportItems = [];
+		try {
+			const reportText = await fetchTEXT(`/reports/${encodeURIComponent(reportCid)}`);
+			reportItems = JSON.parse(reportText || "[]");
+			if (!Array.isArray(reportItems)) reportItems = [];
+		} catch {
+			reportItems = [];
+		}
+
+		return {
+			createdMs,
+			createdLabel,
+			amountRaw: typeof amountRaw === "number" ? amountRaw : Number(amountRaw),
+			featureCid,
+			featureTitle: featureLine,
+			reportCid,
+			reportCount: reportItems.length,
+			reportItems
+		};
+	}
+
 
 
 	async function getTxDetail(txHash, { bypassCache=false, ttlMs=3600_000 } = {}) {
@@ -547,71 +562,60 @@
 		const rowsWithDetails = await pMap(
 			rows.filter(Boolean).map((r) => ({ r })),
 			async ({ r }) => {
-				if (!r.txHash) return r;
+				if (!r.txHash) { r.spend = null; return r; }
+
 				try {
-					const txFull = await fetchTxDetails(r.txHash);
-					r.detailRows = await normalizeTxContent(txFull); // async; fetches feature/report previews too
-				} catch (e) {
-					r.detailRows = [{ k: "Details", v: "Failed to fetch transaction details" }];
+					const txFull = await fetchTxDetails(r.txHash, { bypassCache: state.bypassCache });
+
+					// Only keep spend calls; everything else becomes null and will be filtered out
+					r.spend = await normalizeDamageSpend(txFull);
+
+					// use created time from spend if present
+					if (r.spend?.createdMs) r.time = r.spend.createdMs;
+				} catch {
+					r.spend = null;
 				}
 				return r;
 			},
 			{ concurrency: 3 }
 		);
 
-		rowsWithDetails.forEach(row => {
+
+		// ✅ Keep ONLY spend rows (contract call spend)
+		const spendRows = rowsWithDetails.filter(r => r?.spend);
+		spendRows.forEach(row => {
 			const li = el("li", { class: "activity-item" });
 
 			const left = el("div", { class: "activity-left" });
 			left.appendChild(el("div", { class: "activity-time" }, safeText(fmtDate(row.time))));
-			left.appendChild(el("div", { class: "activity-badge" }, safeText(prettyType(row.type))));
+			left.appendChild(el("div", { class: "activity-badge" }, "spend"));
 
 			const main = el("div", { class: "activity-main" });
-			const title = row.featureCid ? row.firstLine : (row.txHash ? row.txHash : "Activity");
-			main.appendChild(el("div", { class: "activity-title" }, safeText(title)));
 
+			// Title: feature title
+			main.appendChild(el("div", { class: "activity-title" }, safeText(row.spend.featureTitle || "Spend")));
+
+			// Meta links
 			const meta = el("div", { class: "activity-meta" });
-			if (row.featureCid) {
-				meta.appendChild(el("a", { class: "activity-link", href: `/features/${encodeURIComponent(row.featureCid)}`, target: "_blank", rel: "noopener" }, "feature"));
-			}
-			if (row.reportCid) {
-				meta.appendChild(el("a", { class: "activity-link", href: `/reports/${encodeURIComponent(row.reportCid)}`, target: "_blank", rel: "noopener" }, "report"));
-			}
-			if (row.txHash) {
-				meta.appendChild(el("a", { class: "activity-link", href: aescanTxUrl(row.txHash), target: "_blank", rel: "noopener" }, "aescan"));
-			}
+			meta.appendChild(el("a", { class: "activity-link", href: `/features/${encodeURIComponent(row.spend.featureCid)}`, target: "_blank", rel: "noopener" }, "feature"));
+			meta.appendChild(el("a", { class: "activity-link", href: `/reports/${encodeURIComponent(row.spend.reportCid)}`, target: "_blank", rel: "noopener" }, "report"));
+			meta.appendChild(el("a", { class: "activity-link", href: aescanTxUrl(row.txHash), target: "_blank", rel: "noopener" }, "aescan"));
 			main.appendChild(meta);
 
-			// ✅ Render details by default (no toggle)
-			if (row.txHash) {
-				const detailsWrap = el("div", { class: "activity-details" });
-				const body = el("div", { class: "activity-details-body open" });
+			// Details table (minimal)
+			const detailRows = [
+				{ k: "Created", v: row.spend.createdLabel },
+				{ k: "Amount", v: `${formatTokenAmount(row.spend.amountRaw, 8)} DAMAGE` },
+				{ k: "Feature CID", v: row.spend.featureCid },
+				{ k: "Report CID", v: row.spend.reportCid },
+				{ k: "Report items", v: String(row.spend.reportCount ?? 0) }
+			];
 
-				// If details not ready, show loading (should be rare because we prefetched)
-				if (!isTruthyArray(row.detailRows)) {
-					body.innerHTML = `<div class="activity-details-loading">Loading transaction details…</div>`;
-				} else {
-					renderTxDetailsInto(body, row.detailRows);
-
-					// Add quick links if Feature/Report CIDs were extracted from ABI args
-					const featureCid = row.detailRows.find(r => r.k === "Feature CID")?.v;
-					const reportCid  = row.detailRows.find(r => r.k === "Report CID")?.v;
-
-					if (featureCid || reportCid) {
-						const links = el("div", { class: "activity-meta" });
-						if (featureCid) {
-							links.appendChild(el("a", { class: "activity-link", href: `/features/${encodeURIComponent(featureCid)}`, target: "_blank", rel: "noopener" }, "open feature"));
-						}
-						if (reportCid) {
-							links.appendChild(el("a", { class: "activity-link", href: `/reports/${encodeURIComponent(reportCid)}`, target: "_blank", rel: "noopener" }, "open report"));
-						}
-						body.appendChild(links);
-					}
-				}
-
-				detailsWrap.appendChild(body);
-				main.appendChild(detailsWrap);
-			}
+			const detailsWrap = el("div", { class: "activity-details" });
+			const body = el("div", { class: "activity-details-body open" });
+			renderTxDetailsInto(body, detailRows);
+			detailsWrap.appendChild(body);
+			main.appendChild(detailsWrap);
 
 			li.appendChild(left);
 			li.appendChild(main);
@@ -619,8 +623,14 @@
 		});
 
 
+
 	}
 
+	function formatTokenAmount(raw, decimals = 8) {
+		const n = Number(raw);
+		if (!Number.isFinite(n)) return String(raw ?? "—");
+		return (n / Math.pow(10, decimals)).toLocaleString(undefined, { maximumFractionDigits: decimals });
+	}
 
 	async function fetchTxDetails(txHash) {
 		const cacheKey = `ae:tx:${txHash}`;
