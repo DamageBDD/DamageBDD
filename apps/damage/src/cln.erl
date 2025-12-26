@@ -49,7 +49,8 @@
     connect_peer/1,
     connect_peers/1,
     connect_best_peers/0,
-    connect_best_peers/1
+    connect_best_peers/1,
+    blacklist_peer/3
 ]).
 
 -export([test/0]).

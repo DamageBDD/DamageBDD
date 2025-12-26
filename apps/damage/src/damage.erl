@@ -290,6 +290,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     run_id => list_to_binary(RunId),
                     feature_hash => FeatureHash,
                     report_hash => ReportHash,
+                    report_dir => maps:get(report_dir, FinalContext),
                     start_time => StartTimestamp,
                     execution_time => EndTimestamp - StartTimestamp,
                     end_time => EndTimestamp,
@@ -309,11 +310,6 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     spend => maps:get(step_spend, FinalContext, 0)
                 },
             damage_webhooks:trigger_webhooks(FinalContext),
-            formatter:format(
-                Config,
-                summary,
-                FinalContext
-            ),
             RunRecord;
         {error, enont} = Err ->
             ?LOG_ERROR("Feature file ~p not found.", [Filename]),
@@ -635,7 +631,6 @@ execute_step(Config, Step, Context) ->
                     maps:put(failing_step, Step, Context)
             end
     end.
-
 
 check_setup() ->
     ok =
