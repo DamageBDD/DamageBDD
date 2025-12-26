@@ -2262,7 +2262,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
     .modal__content input[type="password"],
     .modal__content select,
     .modal__content textarea {
-        width: 100%;
+        /*width: 100%;*/
         max-width: 100%;
         font-size: 0.9rem;
     }

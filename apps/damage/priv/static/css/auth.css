@@ -9,6 +9,9 @@
   background-color: #1E1E2F;
 }
 
+form{
+  min-width: 300px;
+}
 #loginSignupForm {
   margin-top: 1rem;
   padding: 2rem 1.5rem;
@@ -136,6 +139,7 @@
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
   /*width: 100%;*/
   max-width: 400px;
+  min-width: 300px;
   font-family: 'Segoe UI', sans-serif;
   margin: 0 auto;
 }
