@@ -179,7 +179,7 @@ handle_event(
     [_, AeAccount] = string:split(Memo, " ", trailing),
     ?LOG_INFO("Invoice paid for ~p ~p", [AeAccount, Event]),
     AmountPaid = binary_to_integer(AmountPaid0),
-    damage_ae:transfer_damage_tokens(AeAccount, damage:sats_to_damage(AmountPaid)),
+    damage_ae:transfer_damage_tokens(AeAccount, price_feed:sats_to_damage(AmountPaid)),
     ?LOG_INFO("Damage Tokens transfered to ~p for ~p", [AeAccount]),
     {ok, SaleWebhook} = application:get_env(damage, sale_webhook),
     damage_webhooks:trigger_webhook(

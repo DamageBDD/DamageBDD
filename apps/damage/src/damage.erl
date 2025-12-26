@@ -27,7 +27,6 @@
 -export(
     [execute_data/3, execute_file/3, execute/3, execute/2, execute_feature/8]
 ).
--export([sats_to_damage/1]).
 -export([check_setup/0]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
@@ -555,7 +554,6 @@ execute_step(Config, Step, #{fail := _} = Context) ->
             ),
             Context;
         {ok, {Body1, Args1}} ->
-            ?LOG_DEBUG("execute_step fail : ~p, ~p.", [Body1, Args1]),
             formatter:format(
                 Config,
                 step,
@@ -638,14 +636,6 @@ execute_step(Config, Step, Context) ->
             end
     end.
 
-sats_to_damage(Sats) ->
-    %TODO get prices from coinstore
-    BTCUSDT = 112000,
-    DamageUSDT = 0.0117,
-    BTC = Sats / 1.0e8,
-    USDT = BTC * BTCUSDT,
-    Damage = USDT / DamageUSDT,
-    round(Damage).
 
 check_setup() ->
     ok =

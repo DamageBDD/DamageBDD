@@ -193,7 +193,7 @@ check_invoices() ->
         cln:list_invoices([{"creation_date_start", CreationDate}])
     ).
 create_invoice(AmountSats, Username, AeAccount) ->
-    DmgAmount = damage:sats_to_damage(AmountSats),
+    DmgAmount = price_feed:sats_to_damage(AmountSats),
     Memo =
         list_to_binary(
             lists:flatten(
