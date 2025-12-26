@@ -280,6 +280,61 @@ function generateDamageQR(address){
 			const jobId = btn.getAttribute("data-job-id");
 			if (jobId) loadJobIntoModal(jobId);
 		});
+		// Live Coinstore quote under invoice amount (sats -> USD -> DAMAGE)
+		const invoiceAmountEl = document.getElementById("invoice-amount");
+		const invoiceForm = document.getElementById("invoice-form");
+
+		if (invoiceAmountEl && invoiceForm) {
+			let hint = document.getElementById("invoice-price-hint");
+			if (!hint) {
+				hint = document.createElement("div");
+				hint.id = "invoice-price-hint";
+				invoiceForm.appendChild(hint);
+			}
+
+			let t = null;
+			const render = async () => {
+				const v = parseFloat(invoiceAmountEl.value);
+				if (!Number.isFinite(v) || v <= 0) {
+					hint.textContent = "";
+					return;
+				}
+
+				// Pricing.js may not be loaded yet
+				if (!window.CoinstorePricing || !window.CoinstorePricing.quoteFromSats) {
+					hint.textContent = "Price feed unavailable.";
+					return;
+				}
+
+				hint.textContent = "Fetching live Coinstore price…";
+
+				try {
+					const q = await window.CoinstorePricing.quoteFromSats(v);
+					if (!q) { hint.textContent = ""; return; }
+
+					const usd = q.usd.toLocaleString(undefined, { maximumFractionDigits: 2 });
+					const dmg = q.damage.toLocaleString(undefined, { maximumFractionDigits: 2 });
+					const dmgPx = q.damage_usdt.toLocaleString(undefined, { maximumFractionDigits: 8 });
+					const btcPx = q.btc_usdt.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+					hint.textContent =
+						`≈ $${usd} USD • ≈ ${dmg} DAMAGE  (DAMAGE/USDT ${dmgPx}, BTC/USDT ${btcPx})`;
+				} catch (e) {
+					console.warn("Coinstore quote failed", e);
+					hint.textContent = "Live price fetch failed (Coinstore).";
+				}
+			};
+
+			// debounce on typing
+			const onInput = () => {
+				if (t) clearTimeout(t);
+				t = setTimeout(render, 200);
+			};
+
+			invoiceAmountEl.addEventListener("input", onInput);
+			invoiceAmountEl.addEventListener("change", render);
+		}
+
 	}); // end DOMContentLoaded 
 
 

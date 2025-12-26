@@ -2651,3 +2651,8 @@ body.reset-password-page #resetPasswdForm ul li::before {
   background: rgba(255,255,255,0.06) !important;
   color: rgba(255,255,255,0.92) !important;
 }
+#invoice-price-hint{
+  margin-top: .35rem;
+  font-size: .9rem;
+  color: rgba(255,255,255,0.8);
+}
