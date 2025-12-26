@@ -49,7 +49,12 @@
     render_script/4,
     %% high-level isogeny renders
     render_isogeny/3,
-    render_isogeny/4
+    render_isogeny/4,
+    runway_walk/0,
+render_christmas_tree/2,
+render_christmas_tree/3,
+render_christmas_tree/4
+
 ]).
 
 %% gen_server callbacks
@@ -62,9 +67,11 @@
     code_change/3
 ]).
 
--define(DEFAULT_BLENDER_CMD, "blender").
+-define(DEFAULT_BLENDER_CMD, "/usr/sbin/blender").
 -define(BLENDER_SCRIPT_TEMPLATE, "blender_render_script.py.mustache").
 -define(SPHERICAL_ISOGENY_TEMPLATE, "isogeny_spherical.py.mustache").
+-define(RUNWAY_WALK_TEMPLATE, "runway_walk.py.mustache").
+-define(CHRISTMAS_TREE_TEMPLATE, "christmas_tree.py.mustache").
 
 -record(state, {
     blender_cmd = ?DEFAULT_BLENDER_CMD :: file:filename_all()
@@ -123,8 +130,8 @@ handle_call({render_blend, BlendFile, OutputPattern, Opts}, _From, State) ->
     Result = run_blender(Cmd, Args),
     {reply, Result, State};
 handle_call({render_script, OutputPath, PyBody, Opts}, _From, State) ->
-    Cmd = State#state.blender_cmd,
-    Result = run_script_render(Cmd, OutputPath, PyBody, Opts),
+    %Cmd = State#state.blender_cmd,
+    Result = run_script_render(?DEFAULT_BLENDER_CMD, OutputPath, PyBody, Opts),
     {reply, Result, State};
 handle_call(_Other, _From, State) ->
     {reply, {error, unknown_call}, State}.
@@ -321,6 +328,61 @@ build_isogeny_pybody(_Kind, _Opts) ->
 spherical_isogeny_pybody() ->
     %% Template is pure scene-body Python (no read_homefile(), no render settings).
     damage_utils:load_template(ecai, ?SPHERICAL_ISOGENY_TEMPLATE, #{}).
+runway_walk() ->
+    PrivDir =
+        case code:priv_dir(ecai) of
+            {error, enoent} ->
+                %% Fallback: Locate priv relative to this module's .beam file
+                EbinDir = filename:dirname(code:which(?MODULE)),
+                filename:join(filename:dirname(EbinDir), "priv");
+            Path ->
+                Path
+        end,
+    ArmaturePath = list_to_binary(
+        filename:join([PrivDir, "blendomatic", "canonical_rigify_human_v1.blend"])
+    ),
+    ParamsJson = jsx:encode(#{
+        armature_filepath => ArmaturePath,
+        armature_object_name => <<"rig">>,
+        fps => 24,
+        frame_start => 1,
+        frame_end => 25,
+        hip_sway_deg => 3.2,
+        arm_swing_deg => 10.0,
+        stride_m => 1.15
+    }),
+    PyBody0 = damage_utils:load_template(ecai, ?RUNWAY_WALK_TEMPLATE, #{}),
+    PyBody = binary:replace(PyBody0, <<"__ECAI_PARAMS_JSON__">>, ParamsJson, [global]),
+    Result = ecai_blender:render_script("/tmp/runway.mp4", PyBody, #{res_x => 1080, res_y => 1920}).
+%% Renders a procedural Christmas tree (lights + ornaments + star).
+%% OutputPath can be .png or .mp4 (if you pass audio_path like your template expects).
+render_christmas_tree(OutputPath, Opts) ->
+    render_christmas_tree(OutputPath, christmas, Opts).
+
+render_christmas_tree(OutputPath, _Kind, Opts) when is_map(Opts) ->
+    PyBody = christmas_tree_pybody(Opts),
+    render_script(OutputPath, PyBody, Opts).
+
+render_christmas_tree(Pid, OutputPath, _Kind, Opts) when is_pid(Pid), is_map(Opts) ->
+    PyBody = christmas_tree_pybody(Opts),
+    render_script(Pid, OutputPath, PyBody, Opts).
+
+christmas_tree_pybody(Opts) ->
+    %% Tuneables (all optional)
+    TreeH  = maps:get(tree_h,  Opts, 2.6),
+    TreeR  = maps:get(tree_r,  Opts, 1.15),
+    Seed   = maps:get(seed,    Opts, 42),
+    Bloom  = maps:get(bloom,   Opts, true),
+
+    damage_utils:load_template(
+                ecai,
+                ?CHRISTMAS_TREE_TEMPLATE,
+                #{
+                  seed => Seed,
+                  bloom => Bloom,
+                  tree_h => TreeH,
+                  tree_r => TreeR
+                 }).
 
 %%%===================================================================
 %%% Public Test

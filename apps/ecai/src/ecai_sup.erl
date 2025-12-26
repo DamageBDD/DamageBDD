@@ -80,6 +80,14 @@ init([]) ->
                 modules => []
             },
             #{
+                id => ecai_blender,
+                start => {ecai_blender, start_link, []},
+                restart => permanent,
+                shutdown => 60,
+                type => worker,
+                modules => []
+            },
+            #{
                 id => wikipedia_loader,
                 start => {ecai_wikipedia_loader, start_link, []},
                 restart => permanent,

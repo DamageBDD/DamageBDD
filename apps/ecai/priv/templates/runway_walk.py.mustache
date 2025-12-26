@@ -1,0 +1,362 @@
+# -*- mode: python -*-
+# runway_walk.py (ECAI-parameterized template)
+# Designed to be used as a PyBody inside blender_render_script.py.mustache wrapper.
+# Parameters are deterministic + externally supplied (ECAI-controlled).
+
+import bpy
+import math
+import os
+import json
+
+# -----------------------------
+# PARAM LOADING (ECAI-controlled)
+# -----------------------------
+# Priority:
+#   1) environment variable ECAI_RUNWAY_PARAMS_JSON
+#   2) embedded placeholder __ECAI_PARAMS_JSON__ (for Erlang string substitution)
+#   3) defaults
+_EMBEDDED = """__ECAI_PARAMS_JSON__"""
+
+DEFAULTS = {
+    # rig / scene
+    "armature_filepath": "/home/steven/DamageInc/DamageBDD/apps/ecai/priv/blendomatic/canonical_rigify_human_v1.blend",
+    "armature_object_name": "rig",
+    "fps": 24,
+    "frame_start": 1,
+    "frame_end": 25,  # last equals first for perfect loop
+
+    # runway flavour knobs (degrees; converted to radians)
+    "step_turnout_deg": 4.0,
+    "hip_sway_deg": 4.0,
+    "shoulder_counter_deg": 2.0,
+    "arm_swing_deg": 12.0,
+
+    "knee_bend_contact_deg": 8.0,
+    "knee_bend_down_deg": 18.0,
+    "knee_bend_pass_deg": 10.0,
+
+    # optional runway translation (meters over one cycle)
+    # if > 0, root bone is keyed forward from frame_start to frame_end
+    "stride_m": 0.0,
+
+    # Rigify FK bone names (override if your rig differs)
+    "bones": {
+        "root": "root",
+        "hips": "hips",
+        "torso": "torso",
+
+        "thighL": "thigh_fk.L",
+        "shinL":  "shin_fk.L",
+        "footL":  "foot_fk.L",
+
+        "thighR": "thigh_fk.R",
+        "shinR":  "shin_fk.R",
+        "footR":  "foot_fk.R",
+
+        "uarmL": "upper_arm_fk.L",
+        "farmL": "forearm_fk.L",
+        "uarmR": "upper_arm_fk.R",
+        "farmR": "forearm_fk.R",
+    }
+}
+
+def _load_params():
+    raw = os.getenv("ECAI_RUNWAY_PARAMS_JSON", "").strip()
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception as e:
+            print("ECAI runway: bad env JSON:", e)
+
+    # Embedded placeholder path (Erlang can replace this string with actual JSON)
+    if _EMBEDDED and _EMBEDDED != """__ECAI_PARAMS_JSON__""":
+        try:
+            return json.loads(_EMBEDDED)
+        except Exception as e:
+            print("ECAI runway: bad embedded JSON:", e)
+
+    return {}
+
+def _deep_merge(a, b):
+    # merge dict b over a
+    out = dict(a)
+    for k, v in b.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+P = _deep_merge(DEFAULTS, _load_params())
+
+# Convert degrees to radians (keep params human-friendly)
+STEP_TURNOUT = math.radians(float(P["step_turnout_deg"]))
+HIP_SWAY = math.radians(float(P["hip_sway_deg"]))
+SHOULDER_COUNTER = math.radians(float(P["shoulder_counter_deg"]))
+ARM_SWING = math.radians(float(P["arm_swing_deg"]))
+
+KNEE_BEND_CONTACT = math.radians(float(P["knee_bend_contact_deg"]))
+KNEE_BEND_DOWN = math.radians(float(P["knee_bend_down_deg"]))
+KNEE_BEND_PASS = math.radians(float(P["knee_bend_pass_deg"]))
+
+ARMATURE_FILEPATH = str(P["armature_filepath"])
+ARMATURE_OBJECT_NAME = str(P["armature_object_name"])
+FRAME_START = int(P["frame_start"])
+FRAME_END = int(P["frame_end"])
+FPS = int(P["fps"])
+STRIDE_M = float(P.get("stride_m", 0.0))
+
+BONES = P["bones"]
+
+# -----------------------------
+# UTILS
+# -----------------------------
+def get_armature(name):
+    obj = bpy.data.objects.get(name)
+    if not obj or obj.type != "ARMATURE":
+        raise RuntimeError(f"Armature object '{name}' not found or not an ARMATURE.")
+    return obj
+
+def pb(arm_obj, bone_name):
+    b = arm_obj.pose.bones.get(bone_name)
+    if not b:
+        raise RuntimeError(f"Missing pose bone: {bone_name}. Check P['bones'] mapping.")
+    b.rotation_mode = "XYZ"
+    return b
+
+def kf_rot(bone, frame):
+    bone.keyframe_insert(data_path="rotation_euler", frame=frame)
+
+
+def set_euler(bone, rx=0.0, ry=0.0, rz=0.0):
+    bone.rotation_euler = (rx, ry, rz)
+
+def set_loc(bone, x=0.0, y=0.0, z=0.0):
+    bone.location = (x, y, z)
+
+def _action_curves(action):
+    """
+    Blender API compatibility:
+    - Blender 2.8–4.x: action.fcurves
+    - Some newer builds may expose a different name (e.g. action.curves)
+    Return a list-like collection or None.
+    """
+    if not action:
+        return None
+
+    # Classic API
+    if hasattr(action, "fcurves"):
+        return action.fcurves
+
+    # Fallback (future / experimental API)
+    if hasattr(action, "curves"):
+        return action.curves
+
+    return None
+
+
+def make_cyclic(action):
+    curves = _action_curves(action)
+    if not curves:
+        # No curves to loop; do not crash.
+        print("make_cyclic: no action curves found; skipping")
+        return
+
+    # curves may be a bpy_prop_collection; len() should work
+    if len(curves) == 0:
+        print("make_cyclic: action has 0 curves; skipping")
+        return
+
+    for fc in curves:
+        # Some curve containers may not support modifiers; be defensive
+        if not hasattr(fc, "modifiers"):
+            continue
+
+        # Remove existing cycles to avoid stacking
+        for m in list(fc.modifiers):
+            if getattr(m, "type", None) == "CYCLES":
+                fc.modifiers.remove(m)
+
+        m = fc.modifiers.new(type="CYCLES")
+        m.mode_before = "REPEAT"
+        m.mode_after = "REPEAT"
+
+
+# -----------------------------
+# BUILD THE WALK (24f loop)
+# -----------------------------
+# Load canonical rig file
+bpy.ops.wm.open_mainfile(filepath=ARMATURE_FILEPATH)
+
+arm = get_armature(ARMATURE_OBJECT_NAME)
+bpy.context.view_layer.objects.active = arm
+bpy.ops.object.mode_set(mode="POSE")
+
+scene = bpy.context.scene
+scene.render.fps = FPS
+scene.frame_start = FRAME_START
+scene.frame_end = FRAME_END
+
+# Grab bones
+root = pb(arm, BONES["root"])
+hips = pb(arm, BONES["hips"])
+torso = pb(arm, BONES["torso"])
+
+thL = pb(arm, BONES["thighL"])
+shL = pb(arm, BONES["shinL"])
+ftL = pb(arm, BONES["footL"])
+
+thR = pb(arm, BONES["thighR"])
+shR = pb(arm, BONES["shinR"])
+ftR = pb(arm, BONES["footR"])
+
+uaL = pb(arm, BONES["uarmL"])
+faL = pb(arm, BONES["farmL"])
+uaR = pb(arm, BONES["uarmR"])
+faR = pb(arm, BONES["farmR"])
+
+# Optional: clear existing action curves (safe for deterministic runs)
+import bpy
+
+# Ensure animation data + action exist (deterministic)
+if arm.animation_data is None:
+    arm.animation_data_create()
+
+if arm.animation_data.action is None:
+    arm.animation_data.action = bpy.data.actions.new(name="ecai_runway_walk_v1")
+
+
+if arm.animation_data and arm.animation_data.action:
+    act = arm.animation_data.action
+    curves = _action_curves(act)
+    print("ECAI: action curves count =", (len(curves) if curves else 0))
+
+    if curves and len(curves) > 0:
+        # Try to clear existing curves (if supported)
+        try:
+            for fc in list(curves):
+                curves.remove(fc)
+        except Exception as e:
+            print("warn: could not clear existing action curves:", e)
+
+
+# Key poses: Contact (L forward) -> Down -> Pass -> Up -> Contact again
+keys = [
+    (FRAME_START + 0,  "CONTACT_L"),
+    (FRAME_START + 6,  "DOWN_L"),
+    (FRAME_START + 12, "PASS_L"),
+    (FRAME_START + 18, "UP_L"),
+    (FRAME_END,        "CONTACT_L"),
+]
+
+def pose_contact_l():
+    set_euler(hips, rx=0.0, ry=HIP_SWAY, rz=0.0)
+    set_euler(torso, rx=0.0, ry=-HIP_SWAY * 0.5, rz=0.0)
+
+    set_euler(thL, rx=math.radians(22), ry=0.0, rz=0.0)
+    set_euler(shL, rx=-KNEE_BEND_CONTACT, ry=0.0, rz=0.0)
+    set_euler(ftL, rx=math.radians(-4), ry=0.0, rz=STEP_TURNOUT)
+
+    set_euler(thR, rx=math.radians(-18), ry=0.0, rz=0.0)
+    set_euler(shR, rx=KNEE_BEND_CONTACT, ry=0.0, rz=0.0)
+    set_euler(ftR, rx=math.radians(6), ry=0.0, rz=-STEP_TURNOUT)
+
+    set_euler(uaL, rx=math.radians(-8),  ry=0.0, rz=SHOULDER_COUNTER)
+    set_euler(faL, rx=math.radians(-6),  ry=0.0, rz=0.0)
+    set_euler(uaR, rx=math.radians(10),  ry=0.0, rz=-SHOULDER_COUNTER)
+    set_euler(faR, rx=math.radians(8),   ry=0.0, rz=0.0)
+
+def pose_down_l():
+    set_euler(hips, rx=math.radians(1), ry=HIP_SWAY * 1.1, rz=0.0)
+    set_euler(torso, rx=math.radians(-1), ry=-HIP_SWAY * 0.6, rz=0.0)
+
+    set_euler(thL, rx=math.radians(16), ry=0.0, rz=0.0)
+    set_euler(shL, rx=-KNEE_BEND_DOWN, ry=0.0, rz=0.0)
+    set_euler(ftL, rx=math.radians(-2), ry=0.0, rz=STEP_TURNOUT)
+
+    set_euler(thR, rx=math.radians(-10), ry=0.0, rz=0.0)
+    set_euler(shR, rx=KNEE_BEND_DOWN * 0.6, ry=0.0, rz=0.0)
+    set_euler(ftR, rx=math.radians(10), ry=0.0, rz=-STEP_TURNOUT)
+
+    set_euler(uaL, rx=math.radians(-4), ry=0.0, rz=SHOULDER_COUNTER * 0.8)
+    set_euler(faL, rx=math.radians(-4), ry=0.0, rz=0.0)
+    set_euler(uaR, rx=math.radians(6),  ry=0.0, rz=-SHOULDER_COUNTER * 0.8)
+    set_euler(faR, rx=math.radians(6),  ry=0.0, rz=0.0)
+
+def pose_pass_l():
+    set_euler(hips, rx=0.0, ry=-HIP_SWAY * 0.6, rz=0.0)
+    set_euler(torso, rx=0.0, ry=HIP_SWAY * 0.3, rz=0.0)
+
+    set_euler(thL, rx=math.radians(-6), ry=0.0, rz=0.0)
+    set_euler(shL, rx=KNEE_BEND_PASS, ry=0.0, rz=0.0)
+    set_euler(ftL, rx=math.radians(8), ry=0.0, rz=STEP_TURNOUT)
+
+    set_euler(thR, rx=math.radians(12), ry=0.0, rz=0.0)
+    set_euler(shR, rx=-KNEE_BEND_PASS, ry=0.0, rz=0.0)
+    set_euler(ftR, rx=math.radians(-2), ry=0.0, rz=-STEP_TURNOUT)
+
+    set_euler(uaL, rx=math.radians(2),  ry=0.0, rz=0.0)
+    set_euler(faL, rx=math.radians(2),  ry=0.0, rz=0.0)
+    set_euler(uaR, rx=math.radians(-2), ry=0.0, rz=0.0)
+    set_euler(faR, rx=math.radians(-2), ry=0.0, rz=0.0)
+
+def pose_up_l():
+    set_euler(hips, rx=math.radians(-1), ry=-HIP_SWAY * 1.0, rz=0.0)
+    set_euler(torso, rx=math.radians(1), ry=HIP_SWAY * 0.5, rz=0.0)
+
+    set_euler(thL, rx=math.radians(-14), ry=0.0, rz=0.0)
+    set_euler(shL, rx=KNEE_BEND_CONTACT, ry=0.0, rz=0.0)
+    set_euler(ftL, rx=math.radians(12), ry=0.0, rz=STEP_TURNOUT)
+
+    set_euler(thR, rx=math.radians(20), ry=0.0, rz=0.0)
+    set_euler(shR, rx=-KNEE_BEND_CONTACT, ry=0.0, rz=0.0)
+    set_euler(ftR, rx=math.radians(-6), ry=0.0, rz=-STEP_TURNOUT)
+
+    set_euler(uaL, rx=math.radians(8),   ry=0.0, rz=-SHOULDER_COUNTER)
+    set_euler(faL, rx=math.radians(6),   ry=0.0, rz=0.0)
+    set_euler(uaR, rx=math.radians(-10), ry=0.0, rz=SHOULDER_COUNTER)
+    set_euler(faR, rx=math.radians(-8),  ry=0.0, rz=0.0)
+
+POSES = {
+    "CONTACT_L": pose_contact_l,
+    "DOWN_L": pose_down_l,
+    "PASS_L": pose_pass_l,
+    "UP_L": pose_up_l,
+}
+
+# Bones to key (explicit, deterministic)
+BONES_TO_KEY = [root, hips, torso, thL, shL, ftL, thR, shR, ftR, uaL, faL, uaR, faR]
+
+# Apply + keyframe (poses)
+for frame, pose_name in keys:
+    scene.frame_set(frame)
+
+    # Keep in-place rotation stable (optional but helps determinism)
+    set_euler(root, 0.0, 0.0, 0.0)
+
+    POSES[pose_name]()
+
+    for b in BONES_TO_KEY:
+        kf_rot(b, frame)
+
+# Optional runway translation across one cycle (root motion)
+if STRIDE_M and STRIDE_M > 0.0:
+    scene.frame_set(FRAME_START)
+    set_loc(root, 0.0, 0.0, 0.0)
+    root.keyframe_insert(data_path="location", frame=FRAME_START)
+
+    scene.frame_set(FRAME_END)
+    set_loc(root, 0.0, STRIDE_M, 0.0)
+    root.keyframe_insert(data_path="location", frame=FRAME_END)
+
+# Make loop cyclic (ONLY after all keys exist)
+act = arm.animation_data.action if arm.animation_data else None
+make_cyclic(act)
+
+
+print("ECAI runway walk keyed:", json.dumps({
+    "fps": FPS,
+    "frame_start": FRAME_START,
+    "frame_end": FRAME_END,
+    "stride_m": STRIDE_M
+}))
