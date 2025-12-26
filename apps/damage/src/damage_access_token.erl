@@ -19,7 +19,7 @@
     encode_token/2,
     verify_token/1,
     generate_access_token/1,
-          decode_payload/1,
+    decode_payload/1,
     token_expiry/1,
     token_valid/1,
     maybe_refresh/2
@@ -28,7 +28,7 @@
 -define(TOKEN_TIMEOUT, 86400).
 
 make_payload(AkAccount, TtlSeconds, AudBin) when is_list(AkAccount) ->
-make_payload(list_to_binary(AkAccount), TtlSeconds, AudBin);
+    make_payload(list_to_binary(AkAccount), TtlSeconds, AudBin);
 make_payload(AkAccountBin, TtlSeconds, AudBin) when is_binary(AkAccountBin) ->
     Now = date_util:now_to_seconds(os:timestamp()),
     Exp = Now + TtlSeconds,
@@ -52,7 +52,6 @@ encode_token(PayloadMap, SigB64Url) when is_map(PayloadMap), is_binary(SigB64Url
     <<"ae1.", PayloadB64/binary, ".", SigB64Url/binary>>.
 
 verify_token(TokenBin) when is_binary(TokenBin) ->
-    ?LOG_INFO("token ~p ", [TokenBin]),
     case binary:split(TokenBin, <<".">>, [global]) of
         [<<"ae1">>, PayloadB64, Sig] ->
             case catch jsx:decode(base64url_decode(PayloadB64), [{labels, atom}, return_maps]) of
@@ -64,7 +63,6 @@ verify_token(TokenBin) when is_binary(TokenBin) ->
                         true ->
                             Msg = <<"DamageBDD Access Token\n", PayloadB64/binary>>,
                             %% Sig is e.g. <<"sg_....">> (pass-through)
-                            ?LOG_INFO("message ~p ~p ~p", [Sig, Msg, Account]),
                             case vanillae:verify_signature(Sig, Msg, Account) of
                                 {ok, true} -> {ok, Account, Payload};
                                 {ok, false} -> {error, badsig};

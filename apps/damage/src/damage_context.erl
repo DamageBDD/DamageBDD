@@ -94,7 +94,7 @@ get_ets_id(AeAccount) ->
 init([AeAccount]) ->
     process_flag(trap_exit, true),
     Table = ets:new(get_ets_id(AeAccount), [named_table, set, private]),
-    {ok, #{public_key => AeAccount,ets_table => Table}}.
+    {ok, #{public_key => AeAccount, ets_table => Table}}.
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
@@ -187,7 +187,6 @@ resolve_keypair(
     #{public_key := Pub, private_key := Priv}
 ) when is_binary(Priv) ->
     {ok, #{public_key => Pub, private_key => Priv}};
-
 resolve_keypair(
     #{public_key := Pub}
 ) ->
@@ -204,9 +203,9 @@ resolve_keypair(
             {error, no_keypair}
     end.
 
-
 handle_call(
-    get_context, _From,
+    get_context,
+    _From,
     #{public_key := AeAccount, ets_table := Table, loaded := false} = State
 ) ->
     case resolve_keypair(State) of
@@ -214,41 +213,37 @@ handle_call(
             ok = do_load_context(AeAccount, Table, Keypair),
 
             Ctx0 = maps:from_list(ets:tab2list(Table)),
-            Ctx  = damage_access_token:maybe_refresh(Ctx0, Keypair),
+            Ctx = damage_access_token:maybe_refresh(Ctx0, Keypair),
 
             {reply, Ctx, State#{loaded => true}};
-
         {error, _} ->
             {reply, {error, no_signing_key}, State}
     end;
-
 handle_call(
-    get_context, _From,
+    get_context,
+    _From,
     #{ets_table := Table} = State
 ) ->
     case resolve_keypair(State) of
         {ok, Keypair} ->
             Ctx0 = maps:from_list(ets:tab2list(Table)),
-            Ctx  = damage_access_token:maybe_refresh(Ctx0, Keypair),
+            Ctx = damage_access_token:maybe_refresh(Ctx0, Keypair),
             {reply, Ctx, State};
-
         {error, _} ->
             {reply, maps:from_list(ets:tab2list(Table)), State}
     end;
-
 handle_call(
-    load_context, _From,
+    load_context,
+    _From,
     #{public_key := AeAccount, ets_table := Table} = State
 ) ->
     case resolve_keypair(State) of
         {ok, Keypair} ->
             ok = do_load_context(AeAccount, Table, Keypair),
             {reply, ok, State#{loaded => true}};
-
         {error, _} ->
             {reply, {error, no_signing_key}, State}
     end;
-
 handle_call({get_value, Key}, _From, #{ets := Table} = State) ->
     case ets:lookup(Table, Key) of
         [{Key, Val}] ->
@@ -381,12 +376,12 @@ clean_context_secrets(AccountContext, Body, Args) ->
                             binary:replace(
                                 Body1,
                                 maps:get(value, Value, <<"">>),
-                              ?REDACTED_TEXT_MARKER
+                                ?REDACTED_TEXT_MARKER
                             ),
                             binary:replace(
                                 Args1,
                                 maps:get(value, Value, <<"">>),
-                              ?REDACTED_TEXT_MARKER
+                                ?REDACTED_TEXT_MARKER
                             )
                         };
                     _ ->
@@ -473,7 +468,6 @@ get_stepargs(Body) when is_list(Body) ->
     end.
 
 render_body_args(Body, Context) when is_map(Context) ->
- 
     {Body0, Args} = get_stepargs(Body),
     try
         Body1 =

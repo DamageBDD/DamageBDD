@@ -741,63 +741,94 @@ gun_await(ConnPid, StreamRef, Context) ->
 
 gun_post(Config0, Context, Path, Headers, Data) ->
     {ok, ConnPid} = get_gun_connection(Config0, Context),
-    StreamRef = gun:post(ConnPid, Path, Headers, Data),
-    Resp = gun_await(ConnPid, StreamRef, Context),
-    Resp.
+    try
+        StreamRef = gun:post(ConnPid, Path, Headers, Data),
+        Resp = gun_await(ConnPid, StreamRef, Context),
+        Resp
+    after
+        catch gun:close(ConnPid)
+    end.
 
 gun_patch(Config0, Context, Path, Headers, Data) ->
     {ok, ConnPid} = get_gun_connection(Config0, Context),
-    StreamRef = gun:patch(ConnPid, Path, Headers, Data),
-    gun_await(ConnPid, StreamRef, Context).
+    try
+        StreamRef = gun:patch(ConnPid, Path, Headers, Data),
+        gun_await(ConnPid, StreamRef, Context)
+    after
+        catch gun:close(ConnPid)
+    end.
 
 gun_put(Config0, Context, Path, Headers, Data) ->
     {ok, ConnPid} = get_gun_connection(Config0, Context),
-    StreamRef = gun:put(ConnPid, Path, Headers, Data),
-    gun_await(ConnPid, StreamRef, Context).
+    try
+        StreamRef = gun:put(ConnPid, Path, Headers, Data),
+        gun_await(ConnPid, StreamRef, Context)
+    after
+        catch gun:close(ConnPid)
+    end.
 
-gun_get(Config0, Context, Path, Headers) ->
-    {ok, ConnPid} = get_gun_connection(Config0, Context),
-    ?LOG_DEBUG("Gun get ~p ~p", [Path, Headers]),
-    StreamRef = gun:get(ConnPid, Path, Headers),
-    gun_await(ConnPid, StreamRef, Context).
+gun_get(Config, Context, Path, Headers) ->
+    {ok, ConnPid} = get_gun_connection(Config, Context),
+    try
+        StreamRef = gun:get(ConnPid, Path, Headers),
+        gun_await(ConnPid, StreamRef, Context)
+    after
+        catch gun:close(ConnPid)
+    end.
 
-gun_options(Config0, Context, Path, Headers) ->
-    {ok, ConnPid} = get_gun_connection(Config0, Context),
-    StreamRef = gun:options(ConnPid, Path, Headers),
-    gun_await(ConnPid, StreamRef, Context).
+gun_options(Config, Context, Path, Headers) ->
+    {ok, ConnPid} = get_gun_connection(Config, Context),
+    try
+        StreamRef = gun:options(ConnPid, Path, Headers),
+        gun_await(ConnPid, StreamRef, Context)
+    after
+        catch gun:close(ConnPid)
+    end.
 
-gun_head(Config0, Context, Path, Headers) ->
-    {ok, ConnPid} = get_gun_connection(Config0, Context),
-    StreamRef = gun:head(ConnPid, Path, Headers),
-    gun_await(ConnPid, StreamRef, Context).
+gun_head(Config, Context, Path, Headers) ->
+    {ok, ConnPid} = get_gun_connection(Config, Context),
+    try
+        StreamRef = gun:head(ConnPid, Path, Headers),
+        gun_await(ConnPid, StreamRef, Context)
+    after
+        catch gun:close(ConnPid)
+    end.
 
-gun_delete(Config0, Context, Path, Headers) ->
-    {ok, ConnPid} = get_gun_connection(Config0, Context),
-    StreamRef = gun:delete(ConnPid, Path, Headers),
-    gun_await(ConnPid, StreamRef, Context).
+gun_delete(Config, Context, Path, Headers) ->
+    {ok, ConnPid} = get_gun_connection(Config, Context),
+    try
+        StreamRef = gun:delete(ConnPid, Path, Headers),
+        gun_await(ConnPid, StreamRef, Context)
+    after
+        catch gun:close(ConnPid)
+    end.
 
 retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt) ->
     {ok, ConnPid} = get_gun_connection(Config, Context),
-    StreamRef = gun:get(ConnPid, Path, Headers),
-    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-        {response, nofin, Status, Headers} ->
-            {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            {ok, {Status, Headers, Body}};
-        Default ->
-            case Attempt < N of
-                true ->
-                    % Wait in milliseconds
-                    timer:sleep(WaitSecs * 1000),
-                    retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt + 1);
-                false ->
-                    {
-                        fail,
-                        damage_utils:strf(
-                            "Maximum attempts reached. Exiting. ~p",
-                            [Default]
-                        )
-                    }
-            end
+    try
+        StreamRef = gun:get(ConnPid, Path, Headers),
+        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+            {response, nofin, Status, Headers} ->
+                {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                {ok, {Status, Headers, Body}};
+            Default ->
+                case Attempt < N of
+                    true ->
+                        % Wait in milliseconds
+                        timer:sleep(WaitSecs * 1000),
+                        retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt + 1);
+                    false ->
+                        {
+                            fail,
+                            damage_utils:strf(
+                                "Maximum attempts reached. Exiting. ~p",
+                                [Default]
+                            )
+                        }
+                end
+        end
+    after
+        catch gun:close(ConnPid)
     end.
 
 retry_get_ejsonmatch(

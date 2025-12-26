@@ -36,6 +36,7 @@
     migrate/0,
     import_secret_key/2,
     list_secrets/0,
+    get_node_password/0,
     interpolate_template/1
 ]).
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).

@@ -271,31 +271,28 @@ get_channel(ChannelId) ->
     end.
 
 get_mdw_transaction(TxId) ->
-    case damage_ae:get_ae_mdw_node() of
-        {ok, ConnPid, Prefix} ->
-            PathBin =
-                Prefix ++
-                    "v3/transactions/" ++
-                    TxId,
-            Headers = [{<<"accept">>, <<"application/json">>}],
-            StreamRef = gun:get(ConnPid, PathBin, Headers),
-            case gun:await(ConnPid, StreamRef, 50000) of
-                {response, _Fin, 200, _RespHeaders} ->
-                    {ok, Body} = gun:await_body(ConnPid, StreamRef),
-                    ?LOG_DEBUG("chanel Data ~p", [Body]),
-                    case jsx:decode(Body, [{labels, atom}, return_maps]) of
-                        Acts when is_map(Acts) ->
-                            {ok, Acts};
-                        _ ->
-                            {error, ae_invalid_reply}
-                    end;
-                Other ->
-                    ?LOG_DEBUG("chanel path ~s", [PathBin]),
-                    {error, {ae_http_error, Other}}
-            end;
-        Error ->
-            Error
-    end.
+    damage_ae:with_ae_mdw_node(fun(ConnPid, Prefix) ->
+        PathBin =
+            Prefix ++
+                "v3/transactions/" ++
+                TxId,
+        Headers = [{<<"accept">>, <<"application/json">>}],
+        StreamRef = gun:get(ConnPid, PathBin, Headers),
+        case gun:await(ConnPid, StreamRef, 50000) of
+            {response, _Fin, 200, _RespHeaders} ->
+                {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                ?LOG_DEBUG("chanel Data ~p", [Body]),
+                case jsx:decode(Body, [{labels, atom}, return_maps]) of
+                    Acts when is_map(Acts) ->
+                        {ok, Acts};
+                    _ ->
+                        {error, ae_invalid_reply}
+                end;
+            Other ->
+                ?LOG_DEBUG("chanel path ~s", [PathBin]),
+                {error, {ae_http_error, Other}}
+        end
+    end).
 get_existing_channel(ChannelId) ->
     case damage_ae:get_ae_mdw_node() of
         {ok, ConnPid, Prefix} ->

@@ -5,6 +5,11 @@
 %%% - ASCII lowercase; stable across OTP versions
 %%%-------------------------------------------------------------------
 -module(ecai_tokenizer).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
 -export([
     % Value -> [<<Token/binary>>]
     tokens/1,
