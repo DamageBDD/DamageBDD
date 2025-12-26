@@ -167,31 +167,31 @@ is_authorized(Req, State0) ->
                         #{public_key := AeAccount, private_key := PrivateKey} ->
                             ?LOG_INFO("Got key", []),
                             {
-                           true,
-                           Req,
-                           maps:merge(
-                             State,
-                             #{
-                               public_key => AeAccount,
-                               private_key => PrivateKey,
-                               access_token => Token
-                              }
-                            )
-                          };
+                                true,
+                                Req,
+                                maps:merge(
+                                    State,
+                                    #{
+                                        public_key => AeAccount,
+                                        private_key => PrivateKey,
+                                        access_token => Token
+                                    }
+                                )
+                            };
                         Other ->
                             ?LOG_INFO("Got other ~p", [Other]),
-                    {
-                        true,
-                        Req,
-                        maps:merge(
-                            State,
-                            #{
-                                public_key => AeAccount,
-                                access_token => Token
+                            {
+                                true,
+                                Req,
+                                maps:merge(
+                                    State,
+                                    #{
+                                        public_key => AeAccount,
+                                        access_token => Token
+                                    }
+                                )
                             }
-                        )
-                    }
-                        end;
+                    end;
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
                     {{false, ?AUTH_HEADER}, Req, State}
@@ -380,9 +380,17 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                         true ->
                             %% --- 2) COSTED RUN --------------------------------
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
-                            ?LOG_INFO("starting real execution ~p", [RunConfig]),
                             {200, Result} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
-                            damage_ae:confirm_spend(RunConfig, Result),
+                            Spend = damage_ae:confirm_spend(
+                                RunConfig,
+                                maps:put(private_key, maps:get(private_key, State), Result)
+                            ),
+                            ?LOG_INFO("Result ~p", [Spend]),
+                            formatter:format(
+                                RunConfig,
+                                summary,
+                                maps:put(spend, Spend, Result)
+                            ),
                             {200, Result};
                         false ->
                             {200, #{
@@ -519,16 +527,7 @@ do_action_tx(
             Req
         )
     of
-        {200, Response} ->
-            ?LOG_INFO(
-                "ok execute_feature from_json tx ~p concurrency ~p",
-                [Response, Concurrency]
-            ),
-            {
-                200, Response
-            };
-        {Status, Response} ->
-            ?LOG_INFO("~p execute_feature from_json tx ~p", [Status, Response]),
+        {_Status, Response} ->
             {
                 200, Response
             }
