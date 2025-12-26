@@ -86,6 +86,95 @@ select{
     padding: 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.6);
 }
+/* ========= Invoice modal: compact + viewport-safe ========= */
+body.modal-open {
+  overflow: hidden;
+}
+
+/* Keep modal container inside viewport */
+#invoice-modal .modal__container {
+  max-width: 520px;          /* slightly tighter than your 540-600 */
+  width: min(520px, 92vw);
+  max-height: 90vh;          /* prevents outer/page scrollbars */
+  padding: 1rem 1.1rem;      /* compact */
+  overflow: hidden;          /* IMPORTANT: prevent container scrollbars */
+}
+
+/* Compact header */
+#invoice-modal .modal__header {
+  margin-bottom: .75rem;
+  padding: 0;
+}
+
+#invoice-modal .modal__title {
+  font-size: 1.15rem;
+  line-height: 1.2;
+  margin: 0;
+}
+
+/* Make content area the only scroller (if needed) */
+#invoice-modal .modal__content {
+  padding: 0;
+  margin: 0;
+  max-height: calc(90vh - 140px); /* header+footer budget; tweak if needed */
+  overflow: auto;
+}
+
+/* Optional: hide the inner scrollbar visuals but keep scroll working */
+#invoice-modal .modal__content {
+  scrollbar-width: none; /* Firefox */
+}
+#invoice-modal .modal__content::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Tighten typography spacing inside the modal */
+#invoice-modal .modal__content p {
+  margin: .35rem 0;
+  line-height: 1.45;
+}
+
+/* Make tab row and selector tighter */
+#invoice-modal #walletSelectorWrap { margin: 0 0 .5rem 0; }
+#invoice-modal [data-token-tabs] {
+  margin: .35rem 0 .65rem 0;
+  padding-bottom: .35rem;
+  gap: .35rem;
+}
+
+/* QR blocks: less padding + smaller max width */
+#invoice-modal #qrcode-damage,
+#invoice-modal #qrcode-lightning {
+  margin: .65rem auto;
+  padding: .75rem;
+  max-width: 260px;
+}
+
+/* Transfer form: tighter fields */
+#invoice-modal #transfer-out-form input,
+#invoice-modal #invoice-form input {
+  padding: .65rem .75rem;
+  margin: .35rem 0;
+}
+
+#invoice-modal #damage-transfer-out-btn,
+#invoice-modal #generate-invoice-btn {
+  margin-top: .5rem;
+  padding: .65rem .9rem;
+}
+
+/* Footer: compact */
+#invoice-modal .modal__footer {
+  margin-top: .75rem;
+  padding-top: .5rem;
+}
+#invoice-modal .modal__btn {
+  padding: .6rem .9rem;
+  margin-top: 0;
+}
+
+
 #editor {
     float: left;
     width: 80%;
@@ -156,9 +245,6 @@ pre{
     height: 30em;
 }
 */
-.is-open{
-    z-index: 99999;
-}
 #run-report{
     font-size: xx-small;
 }
@@ -428,11 +514,6 @@ html, body {
     background-color: #2a2a3d;
 }
 
-[data-token-tabs] a:hover,
-[data-token-tabs] a[data-tabby-default] {
-    background-color: #007bff;
-    color: white;
-}
 
 
 /* === Form Buttons === */
@@ -1135,6 +1216,111 @@ ul[data-tabs] li a:hover {
     border-color:#007bff;
     box-shadow: 0 0 0 3px rgba(0,123,255,.25);
 }
+/* ===== Wallet selector: full width + neat ===== */
+
+#walletSelectorWrap {
+  width: 100%;
+  margin: 0 0 .75rem 0;
+}
+
+/* If the wrapper is flex, ensure it doesn't shrink */
+#walletSelectorWrap,
+#walletSelectorWrap * {
+  box-sizing: border-box;
+}
+
+#walletSelector {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+
+  /* compact + consistent with your dark UI */
+  padding: .65rem .9rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(10, 12, 18, 0.55);
+
+  color: #e8eefc;
+  font-weight: 600;
+  line-height: 1.1;
+
+  /* remove default weirdness */
+  margin: 0;
+  outline: none;
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  /* space for custom chevron */
+  padding-right: 2.2rem;
+}
+
+/* Custom dropdown chevron */
+#walletSelectorWrap {
+  position: relative;
+}
+
+#walletSelectorWrap::after {
+  content: "▾";
+  position: absolute;
+  right: .8rem;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  opacity: 0.75;
+  font-size: 0.95rem;
+}
+
+/* Hover/focus states */
+#walletSelector:hover {
+  border-color: rgba(255,255,255,0.16);
+  background: rgba(10, 12, 18, 0.65);
+}
+
+#walletSelector:focus {
+  border-color: rgba(60, 140, 255, 0.65);
+  box-shadow: 0 0 0 3px rgba(60, 140, 255, 0.18);
+}
+
+/* Options (limited styling support across browsers, but harmless) */
+#walletSelector option {
+  background: #0b0e15;
+  color: #e8eefc;
+}
+/* ===== Wallet selector dropdown items ===== */
+
+#walletSelector option {
+  background-color: #0b0f18;   /* dark dropdown */
+  color: #e8eefc;              /* readable text */
+  font-weight: 600;
+  padding: .5rem .75rem;       /* works in Firefox / some Chromium */
+}
+
+/* Selected item */
+#walletSelector option:checked {
+  background-color: #0a3cff;   /* Damage blue highlight */
+  color: #ffffff;
+}
+
+/* Hover (works in Firefox, partial elsewhere) */
+#walletSelector option:hover {
+  background-color: #16224d;
+  color: #ffffff;
+}
+
+/* Disabled (future-proof) */
+#walletSelector option:disabled {
+  color: rgba(255,255,255,0.4);
+}
+
+#walletSelector optgroup {
+  background: #070b12;
+  color: rgba(255,255,255,0.5);
+  font-weight: 500;
+}
+
+
 #balanceLabel{ color:#9fc9ff; margin-right:.4rem; font-weight:600; font-size:.95rem; }
 #balanceAmount{ font-weight:700; font-family:monospace; }
 
@@ -1261,7 +1447,12 @@ ul[data-tabs] li a:hover {
 }
 
 /* 1) Stop leaking z-index to everything */
-.modal.is-open { z-index: 100000; }
+.modal.is-open {
+  position: fixed;
+  inset: 0;          /* top:0 right:0 bottom:0 left:0 */
+  z-index: 100000;
+}
+
 
 /* Schedule a Feature Run - New Fields */
 .damage-scheduler label {
@@ -1362,10 +1553,6 @@ ul[data-tabs] li a:hover {
     line-height: 1.5;
 }
 
-#schedule-modal label::after {
-    content: ":";
-    margin-left: 2px;
-}
 
 #schedule-modal input[type="text"],
 #schedule-modal input[type="password"] {
@@ -1492,10 +1679,6 @@ ul[data-tabs] li a:hover {
     font-style: italic;
 }
 
-/* Wallet Address Section */
-#damage-transfers-tab .click-copy {
-    margin-top: 1rem;
-}
 
 /* QR Code Section */
 #damage-transfers-tab #qrcode-damage {
@@ -1773,7 +1956,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
     }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
 
     .brand-text .title {
         font-size: 1.3rem;
@@ -2057,7 +2240,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
 
     /* Better spacing for form elements */
     form {
-        width: 100%;
+        /*width: 100%;*/
     }
 
     /* Settings form specific mobile fixes */
@@ -2203,7 +2386,7 @@ body.reset-password-page #resetPasswdForm ul li::before {
     }
 
     #execution-tab .pure-u-md-1-2 {
-        padding: 0 1rem;
+        padding: 0 0rem;
     }
 }
 
@@ -2319,4 +2502,152 @@ body.reset-password-page #resetPasswdForm ul li::before {
     .modal__container {
         padding: 0.75rem;
     }
+}
+
+/* Wallet Address Section */
+#damage-transfers-tab .click-copy {
+    margin-top: 1rem;
+}
+/* === FIX overlap: wallet address click-copy row === */
+#invoice-modal .click-copy{
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 40px; /* key: minmax(0,1fr) */
+  gap: .5rem;
+  align-items: center;
+  width: 100%;
+}
+
+/* input MUST be allowed to shrink inside grid */
+#invoice-modal .click-copy input#damage-address{
+  min-width: 0 !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* make the icon a real button cell, not overlay */
+#invoice-modal .click-copy .copy-icon{
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+
+  /* kill anything that could cause overlay */
+  position: static !important;
+  float: none !important;
+  margin: 0 !important;
+}
+#invoice-modal .click-copy textarea#lightning-invoice-input{
+  min-width: 0 !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+/* -------------------------------------------
+   Token modal: Purchase / Transfer tab selector
+   Targets: <ul data-token-tabs role="tablist"> ... <a role="tab">
+-------------------------------------------- */
+
+[data-token-tabs][role="tablist"] {
+  /* kill Tabby defaults */
+  border-bottom: 0 !important;
+  padding: 0 !important;
+  margin: 0 0 1rem 0 !important;
+  list-style: none;
+
+  /* segmented control */
+  display: flex !important;
+  gap: .5rem;
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  padding: .35rem;
+  box-sizing: border-box;
+}
+
+[data-token-tabs][role="tablist"] > li {
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: 1 1 0%;
+  display: block;
+}
+
+[data-token-tabs] [role="tab"] {
+  /* make each tab a full-width button */
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+
+  width: 100%;
+  min-height: 40px;
+  padding: .55rem .75rem !important;
+
+  border: 0 !important;           /* override tabby borders */
+  border-radius: 10px;
+  margin: 0 !important;
+  text-decoration: none;
+
+  background: transparent;
+  color: rgba(255,255,255,0.78);
+  font-weight: 700;
+  letter-spacing: .2px;
+
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .08s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+[data-token-tabs] [role="tab"]:hover {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.92);
+}
+
+[data-token-tabs] [role="tab"]:active {
+  transform: translateY(1px);
+}
+
+[data-token-tabs] [role="tab"][aria-selected="true"] {
+  background: rgba(0, 140, 255, 0.35);
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+}
+
+[data-token-tabs] [role="tab"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 140, 255, 0.35);
+}
+
+/* Optional: tighter spacing inside the modal header/content */
+#invoice-modal [data-token-tabs][role="tablist"] {
+  margin-top: .5rem !important;
+}
+/* === Token modal tabs: active state MUST follow aria-selected only === */
+
+/* Base style (not selected) */
+#invoice-modal [data-token-tabs] [role="tab"]{
+  background: transparent !important;
+  color: rgba(255,255,255,0.78) !important;
+  box-shadow: none !important;
+}
+
+/* Active tab */
+#invoice-modal [data-token-tabs] [role="tab"][aria-selected="true"]{
+  background: rgba(0, 140, 255, 0.35) !important;
+  color: #fff !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.25) !important;
+}
+
+/* Ensure default marker DOES NOT look active unless it's actually selected */
+#invoice-modal [data-token-tabs] [role="tab"][data-tabby-default]:not([aria-selected="true"]){
+  background: transparent !important;
+  color: rgba(255,255,255,0.78) !important;
+  box-shadow: none !important;
+}
+
+/* Hover should not mimic "selected" */
+#invoice-modal [data-token-tabs] [role="tab"]:hover{
+  background: rgba(255,255,255,0.06) !important;
+  color: rgba(255,255,255,0.92) !important;
 }

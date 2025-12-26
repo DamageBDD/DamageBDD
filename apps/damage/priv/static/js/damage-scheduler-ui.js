@@ -22,58 +22,6 @@ export function initDamageScheduler(config = {}) {
     document.body.appendChild(root);
   }
 
-    // --- simple UI form
-    root.innerHTML = `
-    <div class="damage-scheduler">
-      <h3>Schedule a Feature Run</h3>
-      <label>Feature IPFS CID <input id="featureCid" type="text" placeholder="Qm..." /></label>
-      
-      <!-- Schedule Frequency -->
-      <label>Frequency 
-        <select id="scheduleFrequency" onchange="toggleScheduleFields()">
-          <option value="">Select frequency...</option>
-          <option value="once">Once</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-        </select>
-      </label>
-      
-      <!-- Date and Time Picker -->
-      <div id="datetimeFields">
-        <label>Date <input id="scheduleDate" type="date" /></label>
-        <label>Time <input id="scheduleTime" type="time" /></label>
-      </div>
-      
-      <!-- Weekly specific: Day of week -->
-      <div id="weeklyFields" style="display: none;">
-        <label>Day of Week 
-          <select id="scheduleDayOfWeek">
-            <option value="monday">Monday</option>
-            <option value="tuesday">Tuesday</option>
-            <option value="wednesday">Wednesday</option>
-            <option value="thursday">Thursday</option>
-            <option value="friday">Friday</option>
-            <option value="saturday">Saturday</option>
-            <option value="sunday">Sunday</option>
-          </select>
-        </label>
-      </div>
-      
-      <!-- Monthly specific: Day of month -->
-      <div id="monthlyFields" style="display: none;">
-        <label>Day of Month (1-31) <input id="scheduleDayOfMonth" type="number" min="1" max="31" value="1" /></label>
-      </div>
-      
-      <!-- Hidden field for generated schedule string -->
-      <input type="hidden" id="scheduleSpec" />
-      
-      <button id="dryRunBtn">Dry-Run</button>
-      <div id="dryRunResult"></div>
-      <button id="approveBtn" disabled>Approve & Schedule</button>
-      <div id="scheduleList"></div>
-    </div>
-  `;
 
   const cidEl = root.querySelector('#featureCid');
   const schedEl = root.querySelector('#scheduleSpec');

@@ -1,0 +1,35 @@
+<!-- -*- mode: html -*- -->
+<!-- AEX-141 NFT Gallery (Mainnet) — uses connected wallet address + multi-select known addresses.
+     Drop into a page that already loads main.css (for .modal__container, .styled-btn, etc.) -->
+
+<section id="nft-gallery" class="modal__container" style="max-width:1100px;">
+  <header class="modal__header" style="margin-bottom:1rem;">
+    <h3 class="modal__title" style="margin:0;">NFT Gallery</h3>
+    <div style="color:#c9cfdb;">Mainnet AEX-141 NFTs for selected addresses</div>
+  </header>
+
+  <div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end;">
+    <div style="flex:1 1 520px;">
+      <div style="font-weight:600; margin-bottom:.35rem;">Addresses</div>
+      <select id="nftAddresses" multiple size="6" style="width:100%; background:#1a1a1a; color:#eee; border:1px solid rgba(255,255,255,.12); border-radius:8px;">
+        <!-- JS will populate -->
+      </select>
+      <div style="color:#9aa3b2; font-size:.85rem; margin-top:.35rem;">
+        Tip: Ctrl/⌘-click to multi-select.
+      </div>
+    </div>
+
+    <div style="flex:0 0 260px;">
+      <button id="useConnectedBtn" class="styled-btn" type="button" style="margin-top:0;">
+        Use connected wallet
+      </button>
+      <button id="loadNftsBtn" class="styled-btn" type="button">
+        Load NFTs
+      </button>
+    </div>
+  </div>
+
+  <div id="nftStatus" style="margin-top:.75rem; color:#9aa3b2; font-size:.95rem;"></div>
+  <div id="nftGrid" class="nft-grid" style="margin-top:1rem;"></div>
+</section>
+

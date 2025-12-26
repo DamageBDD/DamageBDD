@@ -7,26 +7,32 @@
         <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
       </header>
       <main class="modal__content" id="modal-1-content">
-        <div id="purchase-damage-tabs">
-          <div id="walletSelectorWrap">
-            <select id="walletSelector" aria-label="Select Wallet">
+        <div id="walletSelectorWrap">
+          <select id="walletSelector" aria-label="Select Wallet">
+            <optgroup label="Wallet Type">
               <option value="custodial">Custodial (email)</option>
               <option value="extension">Browser Wallet (extension)</option>
-            </select>
-          </div>
+            </optgroup>
+          </select>
+
+        </div>
+        <div id="purchase-damage-tabs">
           <ul data-token-tabs>
-            <li><a data-tabby-default href="#damage-transfers-tab">Transfer Damage</a></li>
-            <li><a href="#lightning-invoice-tab">Purchase Damage.</a></li>
+            <li><a data-tabby-default href="#damage-address-tab">Address.</a></li>
+            <li><a href="#lightning-invoice-tab">Purchase</a></li>
+            <li><a href="#damage-transfers-tab">Transfer</a></li>
           </ul>
-          <div id="damage-transfers-tab">
-            <p>If you already have some DAMAGE tokens use this address to transfer them to your account address.</p>
-            <p>Wallet Address:
+          <div id="damage-address-tab">
+            <div>
+              Wallet Address:
               <div class="click-copy">
                 <input type="text" id="damage-address" readonly>
-                <span class="copy-icon" onclick="copyToClipboard('damage-address')">📝</span>
+                <span class="copy-icon" onclick="copyToClipboard('damage-address')"> ⧉</span>
               </div>
-            </p>
+            </div>
             <div id="qrcode-damage"></div>
+          </div>
+          <div id="damage-transfers-tab">
             <div id="damage-transfer">
               <form id="transfer-out-form">
                 <label for="totalAmt">Transfer DAMAGE tokens out to address.</label>
@@ -37,9 +43,8 @@
             </div>
           </div>
           <div id="lightning-invoice-tab">
-            <p>Buy Damage Tokens to power more tests at higher concurrency and for longer durations.</p>
-            <p>To top up on damage tokens to deal more damage. Make a payment by scanning the QR code below, using a lightning BIP21 compatible wallet.</p>
-            <p>Please review the <a href="/token_tos">Token Sale Terms and Conditions</a> before purchasing tokens.</p>
+            <p>Purchase $DAMAGE using bitcoin lightning network.</p>
+            <p>Please read <a href="/token_tos">Token Sale Terms and Conditions</a> before purchasing tokens.</p>
             <div id="qrcode-lightning">
               <form id="invoice-form">
                 <label for="totalAmt">Invoice Amount in Sats</label>
@@ -47,11 +52,10 @@
                 <button id="generate-invoice-btn">Generate Invoice</button>
               </form>
             </div>
-            <p>Or pay this lightning invoice directly using a lightning wallet.</p>
             <details><summary>Show full Lightning Invoice: <span class="icon">👇</span></summary>
               <div class="click-copy">
                 <textarea id="lightning-invoice-input" readonly class='click-copy'></textarea>
-                <span class="copy-icon" onclick="copyToClipboard('lightning-invoice-input')">📝</span>
+                <span class="copy-icon" onclick="copyToClipboard('lightning-invoice-input')"> ⧉</span>
               </div>
             </details>
           </div>
