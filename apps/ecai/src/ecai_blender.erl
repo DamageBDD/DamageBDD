@@ -51,10 +51,9 @@
     render_isogeny/3,
     render_isogeny/4,
     runway_walk/0,
-render_christmas_tree/2,
-render_christmas_tree/3,
-render_christmas_tree/4
-
+    render_christmas_tree/2,
+    render_christmas_tree/3,
+    render_christmas_tree/4
 ]).
 
 %% gen_server callbacks
@@ -353,7 +352,7 @@ runway_walk() ->
     }),
     PyBody0 = damage_utils:load_template(ecai, ?RUNWAY_WALK_TEMPLATE, #{}),
     PyBody = binary:replace(PyBody0, <<"__ECAI_PARAMS_JSON__">>, ParamsJson, [global]),
-    Result = ecai_blender:render_script("/tmp/runway.mp4", PyBody, #{res_x => 1080, res_y => 1920}).
+    ecai_blender:render_script("/tmp/runway.mp4", PyBody, #{res_x => 1080, res_y => 1920}).
 %% Renders a procedural Christmas tree (lights + ornaments + star).
 %% OutputPath can be .png or .mp4 (if you pass audio_path like your template expects).
 render_christmas_tree(OutputPath, Opts) ->
@@ -369,20 +368,21 @@ render_christmas_tree(Pid, OutputPath, _Kind, Opts) when is_pid(Pid), is_map(Opt
 
 christmas_tree_pybody(Opts) ->
     %% Tuneables (all optional)
-    TreeH  = maps:get(tree_h,  Opts, 2.6),
-    TreeR  = maps:get(tree_r,  Opts, 1.15),
-    Seed   = maps:get(seed,    Opts, 42),
-    Bloom  = maps:get(bloom,   Opts, true),
+    TreeH = maps:get(tree_h, Opts, 2.6),
+    TreeR = maps:get(tree_r, Opts, 1.15),
+    Seed = maps:get(seed, Opts, 42),
+    Bloom = maps:get(bloom, Opts, true),
 
     damage_utils:load_template(
-                ecai,
-                ?CHRISTMAS_TREE_TEMPLATE,
-                #{
-                  seed => Seed,
-                  bloom => Bloom,
-                  tree_h => TreeH,
-                  tree_r => TreeR
-                 }).
+        ecai,
+        ?CHRISTMAS_TREE_TEMPLATE,
+        #{
+            seed => Seed,
+            bloom => Bloom,
+            tree_h => TreeH,
+            tree_r => TreeR
+        }
+    ).
 
 %%%===================================================================
 %%% Public Test
