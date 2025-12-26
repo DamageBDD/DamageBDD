@@ -108,7 +108,8 @@ input:focus, textarea:focus {
 
 /* Forms */
 form {
-  background-color: var(--modal-bg);
+/*  background-color: var(--modal-bg);*/
+  background: rgba(255, 255, 255, 0.05);
   padding: 1rem;
   border-radius: 8px;
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
@@ -147,9 +148,9 @@ form {
   padding: 1rem 0;
 }
 .modal__header img {
-  max-width: 120px;
+  max-width: 128px;
   height: auto;
-  margin: 0 auto 1rem auto;
+  /*margin: 0 auto 0rem auto;*/
 }
 
 /* Summary Dropdowns */

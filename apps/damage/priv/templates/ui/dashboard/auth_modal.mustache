@@ -1,0 +1,90 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="login-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1">
+    <div class="modal__container auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <main class="modal__content" id="login_modal_content">
+        <div class="panel auth-panel-shell">
+
+          <header class="modal__header login_modal_header">
+            <img src="/static/img/logo.png" alt="DamageBDD" />
+            <h2 class="modal__title" id="auth-modal-title">DamageBDD</h2>
+          </header>
+
+          <!-- Auth tabs (Tabby) -->
+          <nav class="auth-chooser" aria-label="Authentication method">
+            <ul class="auth-tabs" data-auth-tabs>
+              <li><a data-tabby-default href="#auth-email">Email</a></li>
+              <li><a href="#auth-signup">Sign up</a></li>
+              <li><a href="#auth-wallet">Wallet</a></li>
+            </ul>
+          </nav>
+
+          <!-- Panels -->
+          <section class="auth-panel" id="auth-email">
+            <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
+              <input type="email"
+                     id="login-username"
+                     autocomplete="username"
+                     required
+                     placeholder="Email Address">
+              <div class="password-wrapper">
+                <input type="password"
+                       name="password"
+                       id="password"
+                       autocomplete="current-password"
+                       required
+                       placeholder="Password">
+                <button type="button" class="toggle-password" data-target="password" aria-label="Show or hide password">👁️</button>
+              </div>
+
+              <button id="loginSubmitBtn"
+                      class="modal__btn modal__btn-primary styled-btn auth-primary"
+                      aria-label="Login with email and password"
+                      title="Login Submit">Login</button>
+
+              <div class="login-links auth-links-row">
+                <button id="loginResetPasswdBtn" class="buttonlink" aria-label="Forgot Password" title="Reset Password">Forgot Password</button>
+              </div>
+                <div class="terms">By continuing, you accept the <a href="/terms">Terms and Conditions</a>.</div>
+            </form>
+          </section>
+
+          <section class="auth-panel" id="auth-signup" hidden>
+            <form id="signupForm" onsubmit="submitSignupForm(event)">
+              <input type="email"
+                     id="signup-username"
+                     autocomplete="email"
+                     required
+                     placeholder="Email Address">
+              <button id="signupSubmitBtn"
+                      class="modal__btn modal__btn-primary styled-btn auth-primary"
+                      aria-label="Signup with email"
+                      title="Sign Up Submit">Create Account</button>
+
+              <div class="terms">By signing up, you acknowledge and agree to the <a href="/terms">Terms and Conditions</a>.</div>
+            </form>
+          </section>
+
+          <section class="auth-panel" id="auth-wallet" hidden>
+            <button id="connect-button"
+                    class="modal__btn modal__btn-primary styled-btn auth-primary"
+                    aria-label="Connect wallet"
+                    title="Wallet Connect">Connect Wallet</button>
+
+            <p id="dont_have_wallet" class="auth-hint">
+              Don’t have a wallet?
+              <a href="https://www.superherowallet.com" target="_blank" rel="noreferrer">Install Superhero Wallet</a>
+            </p>
+
+          </section>
+
+          <div id="connect-status" class="auth-status" aria-live="polite"></div>
+
+          <footer id="login_footer" class="modal__footer">
+          </footer>
+
+        </div>
+      </main>
+    </div>
+  </div>
+</div>

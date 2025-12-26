@@ -1,4 +1,10 @@
 
+.login_modal_header {
+    display: inline-flex;
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
 #login_modal_content {
   background-color: #1E1E2F;
 }
@@ -122,7 +128,7 @@
 
 /* Container styling */
 #signupForm {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   gap: 1rem;
   padding: 2rem 1.5rem;
@@ -442,3 +448,45 @@ body h2 {
   }
 }
 
+
+
+
+/* Tabby auth tabs (Email / Sign up / Wallet) */
+.auth-chooser { margin-top: 0.75rem; margin-bottom: 1rem; }
+.auth-tabs {
+  list-style: none;
+  display: flex;
+  padding: 0;
+  margin: 0;
+  gap: 0.5rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  padding: 0.35rem;
+}
+.auth-tabs > li { margin: 0; flex: 1 1 0; }
+.auth-tabs a[role="tab"],
+.auth-tabs a {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-decoration: none;
+  padding: 0.6rem 0.75rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: rgba(255,255,255,0.75);
+  outline: none;
+  user-select: none;
+}
+.auth-tabs a[aria-selected="true"] {
+  color: #fff;
+  background: rgba(0, 163, 255, 0.25);
+  border: 1px solid rgba(0, 163, 255, 0.55);
+}
+.auth-tabs a:focus-visible {
+  box-shadow: 0 0 0 3px rgba(0, 163, 255, 0.25);
+}
+
+/* Ensure Tabby hidden panels actually hide on older browsers */
+[hidden] { display: none !important; }

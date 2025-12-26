@@ -85,11 +85,11 @@ function generateDamageQR(address){
 			event.preventDefault();
 		});
 
-		document.getElementById("signup-modal").addEventListener("keydown", function(event){
+		/*document.getElementById("signup-modal").addEventListener("keydown", function(event){
 			if (event.keyCode === 13) {
 				submitSignUpForm(event);
 			}
-		});
+			});*/
 		document.getElementById("signupForm").addEventListener("submit", (event) => {
 			event.preventDefault();
 		});
@@ -99,17 +99,17 @@ function generateDamageQR(address){
 			}
 		});
 		document.getElementById("signupSubmitBtn").addEventListener("click", submitSignUpForm);
-		document.getElementById("signupDialogBtn").addEventListener("click", (event) => {
-			MicroModal.close("login-modal");
-			MicroModal.show("signup-modal");
-			event.preventDefault();
-		});
+		//document.getElementById("signupDialogBtn").addEventListener("click", (event) => {
+		//	MicroModal.close("login-modal");
+		//	MicroModal.show("signup-modal");
+		//	event.preventDefault();
+		//});
 		document.getElementById("loginResetPasswdBtn").addEventListener("click", submitForgotPasswordForm);
-		document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
-			event.preventDefault();
-			MicroModal.close("signup-modal");
-			MicroModal.show("login-modal");
-		});
+		//document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
+		//	event.preventDefault();
+		//	MicroModal.close("signup-modal");
+		//	MicroModal.show("login-modal");
+		//});
 		document.getElementById("logoutSubmitBtn").addEventListener("click", (event) => {
 			window.TokenManager.logout(window.TokenManager.getMode());
 			MicroModal.close('logout-modal');
@@ -175,7 +175,12 @@ function generateDamageQR(address){
 		if (typeof Tabby !== 'undefined') {
 			const nodeSetupTabs = Tabby('[data-node-setup-tabs]');
 			
-			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
+			
+			// Auth modal tabs (Email / Sign up / Wallet)
+			if (document.querySelector('[data-auth-tabs]')) {
+				Tabby('[data-auth-tabs]');
+			}
+// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
 			document.addEventListener('tabby', function(event) {
 				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
 					// Check if seed phrase was already set

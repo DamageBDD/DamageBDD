@@ -480,11 +480,6 @@ html, body {
 }
 
 /* === Modal Header and Title === */
-.login_modal_header {
-  margin: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-}
 .modal__header {
     text-align: center;
     margin-bottom: 1.5rem;

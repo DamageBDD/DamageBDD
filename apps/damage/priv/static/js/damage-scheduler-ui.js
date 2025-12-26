@@ -25,7 +25,6 @@ export function initDamageScheduler(config = {}) {
 
   const cidEl = root.querySelector('#featureCid');
   const schedEl = root.querySelector('#scheduleSpec');
-  const dryBtn = root.querySelector('#dryRunBtn');
   const approveBtn = root.querySelector('#approveBtn');
   const dryOut = root.querySelector('#dryRunResult');
   const listEl = root.querySelector('#scheduleList');
@@ -40,6 +39,7 @@ export function initDamageScheduler(config = {}) {
     listEl.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
   }
 
+  /*const dryBtn = root.querySelector('#dryRunBtn');
   dryBtn.onclick = async () => {
     const cid = cidEl.value.trim();
     const sched = root.querySelector('#scheduleSpec').value.trim();
@@ -74,6 +74,7 @@ export function initDamageScheduler(config = {}) {
     fetchSchedules();
   };
 
+  */
     // Schedule field toggle and generation
     window.toggleScheduleFields = function() {
       const frequency = root.querySelector('#scheduleFrequency').value;
@@ -164,18 +165,18 @@ export function initDamageScheduler(config = {}) {
     });
   
     // Update dryRunBtn and approveBtn to use hidden scheduleSpec field
-    const originalDryBtnOnclick = dryBtn.onclick;
-    const originalApproveBtnOnclick = approveBtn.onclick;
+    //const originalDryBtnOnclick = dryBtn.onclick;
+    //
+    //dryBtn.onclick = async () => {
+    //  generateScheduleString(); // Ensure schedule string is generated
+    //  await originalDryBtnOnclick();
+    //};
     
-    dryBtn.onclick = async () => {
-      generateScheduleString(); // Ensure schedule string is generated
-      await originalDryBtnOnclick();
-    };
-    
-    approveBtn.onclick = async () => {
-      generateScheduleString(); // Ensure schedule string is generated
-      await originalApproveBtnOnclick();
-    };
+    //const originalApproveBtnOnclick = approveBtn.onclick;
+    //approveBtn.onclick = async () => {
+    //  generateScheduleString(); // Ensure schedule string is generated
+    //  await originalApproveBtnOnclick();
+    //};
 
 }
 
