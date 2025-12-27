@@ -202,7 +202,7 @@ function generateDamageQR(address){
 
 				if (typeof window.initInstallForm === 'function') window.initInstallForm();
 
-				if(modal.id == 'invoice-modal'){
+				if(modal.id == 'wallet-modal'){
 					var address = window.TokenManager.getAddress();
 					generateDamageQR(address);
 					var damageAddr = document.getElementById("damage-address");
@@ -1274,6 +1274,10 @@ function generateDamageQR(address){
 
 	function generateInvoice() {
 		var amount = document.getElementById('invoice-amount').value;
+			try{
+				MicroModal.close('wallet-modal');
+			}catch(e){};
+			MicroModal.show("invoice-modal");
 		const request = {
 			method: 'POST',
 			credentials: 'include',

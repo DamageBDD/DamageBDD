@@ -13,18 +13,20 @@
           <!-- Auth tabs (Tabby) -->
           <nav class="auth-chooser" aria-label="Authentication method">
             <ul class="auth-tabs" data-auth-tabs>
-              <li><a data-tabby-default href="#auth-email">Email</a></li>
-              <li><a href="#auth-signup">Sign up</a></li>
+              <li><a data-tabby-default href="#auth-email">Log In</a></li>
+              <li><a href="#auth-signup">Sign Up</a></li>
               <li><a href="#auth-wallet">Wallet</a></li>
             </ul>
           </nav>
 
           <!-- Panels -->
-          <section class="auth-panel" id="auth-email">
-            <form id="loginSignupForm" onsubmit="submitLoginForm(event)">
+	      <section class="auth-panel" data-auth-panel="login"  id="auth-email">
+	        <!-- Use standard field names + autocomplete so password managers can offer save/fill -->
+	        <form id="loginSignupForm" onsubmit="submitLoginForm(event)" autocomplete="on">
               <input type="email"
                      id="login-username"
-                     autocomplete="username"
+	                 name="username"
+	                 autocomplete="username"
                      required
                      placeholder="Email Address">
               <div class="password-wrapper">
@@ -49,11 +51,12 @@
             </form>
           </section>
 
-          <section class="auth-panel" id="auth-signup" hidden>
-            <form id="signupForm" onsubmit="submitSignupForm(event)">
+          <section class="auth-panel" data-auth-panel="signup" id="auth-signup" hidden>
+            <form id="signupForm" onsubmit="submitSignupForm(event)" autocomplete="on">
               <input type="email"
                      id="signup-username"
-                     autocomplete="email"
+	                 name="username"
+	                 autocomplete="username"
                      required
                      placeholder="Email Address">
               <button id="signupSubmitBtn"
@@ -65,7 +68,7 @@
             </form>
           </section>
 
-          <section class="auth-panel" id="auth-wallet" hidden>
+          <section class="auth-panel" data-auth-panel="wallet" id="auth-wallet" hidden>
             <button id="connect-button"
                     class="modal__btn modal__btn-primary styled-btn auth-primary"
                     aria-label="Connect wallet"
@@ -76,6 +79,10 @@
               <a href="https://www.superherowallet.com" target="_blank" rel="noreferrer">Install Superhero Wallet</a>
             </p>
 
+            <div class="auth-hint">
+              Prefer email?
+              <button type="button" class="auth-link buttonlink" data-auth-jump="login">Login</button>
+            </div>
           </section>
 
           <div id="connect-status" class="auth-status" aria-live="polite"></div>

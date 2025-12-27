@@ -1,0 +1,61 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="wallet-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+    <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+      <header class="modal__header">
+        <h2 class="modal__title" id="modal-1-title">Manage Damage Tokens</h2>
+        <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+      </header>
+      <main class="modal__content" id="modal-1-content">
+        <div id="walletSelectorWrap">
+          <select id="walletSelector" aria-label="Select Wallet">
+            <optgroup label="Wallet Type">
+              <option value="custodial">Custodial (email)</option>
+              <option value="extension">Browser Wallet (extension)</option>
+            </optgroup>
+          </select>
+
+        </div>
+        <div id="purchase-damage-tabs">
+          <ul data-token-tabs>
+            <li><a data-tabby-default href="#damage-address-tab">Address</a></li>
+            <li><a href="#lightning-invoice-tab">Purchase</a></li>
+            <li><a href="#damage-transfers-tab">Transfer</a></li>
+          </ul>
+          <div id="damage-address-tab">
+            <div>
+              Wallet Address:
+              <div class="click-copy">
+                <input type="text" id="damage-address" readonly>
+                <span class="copy-icon" onclick="copyToClipboard('damage-address')"> ⧉</span>
+              </div>
+            </div>
+            <div id="qrcode-damage"></div>
+          </div>
+          <div id="damage-transfers-tab">
+            <div id="damage-transfer">
+              <form id="transfer-out-form">
+                <label for="totalAmt">Transfer DAMAGE tokens out to address.</label>
+                <input type="text" id="damage-transfer-out-address" placeholder="Enter recipient address">
+                <input type="number" step="1" id="damage-transfer-out-amount" placeholder="Enter amount">
+                <button id="damage-transfer-out-btn">Transfer Out!</button>
+              </form>
+            </div>
+          </div>
+          <div id="lightning-invoice-tab">
+            <p>Purchase $DAMAGE using bitcoin lightning network.</p>
+            <p>Please read <a href="/token_tos">Token Sale Terms and Conditions</a> before purchasing tokens.</p>
+              <form id="invoice-form">
+                <label for="totalAmt">Invoice Amount in Sats</label>
+                <input type="number" step="1000" id="invoice-amount">
+                <button id="generate-invoice-btn">Generate Invoice</button>
+              </form>
+          </div>
+        </div>
+      </main>
+      <footer class="modal__footer">
+        <!--<button class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Close this dialog window">Close</button>-->
+      </footer>
+    </div>
+  </div>
+</div>
