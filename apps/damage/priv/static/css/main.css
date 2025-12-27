@@ -86,92 +86,8 @@ select{
     padding: 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.6);
 }
-/* ========= Invoice modal: compact + viewport-safe ========= */
 body.modal-open {
   overflow: hidden;
-}
-
-/* Keep modal container inside viewport */
-#invoice-modal .modal__container {
-  max-width: 520px;          /* slightly tighter than your 540-600 */
-  width: min(520px, 92vw);
-  max-height: 90vh;          /* prevents outer/page scrollbars */
-  padding: 1rem 1.1rem;      /* compact */
-  overflow: hidden;          /* IMPORTANT: prevent container scrollbars */
-}
-
-/* Compact header */
-#invoice-modal .modal__header {
-  margin-bottom: .75rem;
-  padding: 0;
-}
-
-#invoice-modal .modal__title {
-  font-size: 1.15rem;
-  line-height: 1.2;
-  margin: 0;
-}
-
-/* Make content area the only scroller (if needed) */
-#invoice-modal .modal__content {
-  padding: 0;
-  margin: 0;
-  max-height: calc(90vh - 140px); /* header+footer budget; tweak if needed */
-  overflow: auto;
-}
-
-/* Optional: hide the inner scrollbar visuals but keep scroll working */
-#invoice-modal .modal__content {
-  scrollbar-width: none; /* Firefox */
-}
-#invoice-modal .modal__content::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-/* Tighten typography spacing inside the modal */
-#invoice-modal .modal__content p {
-  margin: .35rem 0;
-  line-height: 1.45;
-}
-
-/* Make tab row and selector tighter */
-#invoice-modal #walletSelectorWrap { margin: 0 0 .5rem 0; }
-#invoice-modal [data-token-tabs] {
-  margin: .35rem 0 .65rem 0;
-  padding-bottom: .35rem;
-  gap: .35rem;
-}
-
-/* QR blocks: less padding + smaller max width */
-#invoice-modal #qrcode-damage,
-#invoice-modal #qrcode-lightning {
-  margin: .65rem auto;
-  padding: .75rem;
-  max-width: 260px;
-}
-
-/* Transfer form: tighter fields */
-#invoice-modal #transfer-out-form input,
-#invoice-modal #invoice-form input {
-  padding: .65rem .75rem;
-  margin: .35rem 0;
-}
-
-#invoice-modal #damage-transfer-out-btn,
-#invoice-modal #generate-invoice-btn {
-  margin-top: .5rem;
-  padding: .65rem .9rem;
-}
-
-/* Footer: compact */
-#invoice-modal .modal__footer {
-  margin-top: .75rem;
-  padding-top: .5rem;
-}
-#invoice-modal .modal__btn {
-  padding: .6rem .9rem;
-  margin-top: 0;
 }
 
 
@@ -199,15 +115,6 @@ body.modal-open {
   background-color: rgba(0, 0, 0, 0.5);
 }*/
 
-#qrcode {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background-color: white;
-    padding: 20px;
-    border-radius: 5px;
-}
 #toolbar{
     text-align: right;
     float: right;
@@ -548,59 +455,6 @@ html, body {
     color: #ffffff;
 }
 
-/* === QR Code Box === */
-#qrcode-damage,
-#qrcode-lightning {
-    margin: 1rem 0;
-    text-align: center;
-    background-color: #2a2a3d;
-    padding: 1rem;
-    border-radius: 6px;
-}
-
-/* === Invoice Detail Expand === */
-details {
-    margin-top: 1rem;
-    background-color: #2a2a3d;
-    padding: 0.75rem;
-    border-radius: 6px;
-    color: #ddd;
-}
-
-summary {
-    font-weight: 600;
-    cursor: pointer;
-}
-
-textarea#lightning-invoice-input {
-    font-family: monospace;
-    font-size: 0.85rem;
-    resize: none;
-    background-color: #1a1a1a;
-    color: #eee;
-    padding: 1rem;
-    border-radius: 6px;
-    border: none;
-}
-/* Center the QR code image inside modal */
-#qrcode-damage,
-#qrcode-lightning {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 1rem;
-    background-color: #2a2a3d;
-    border-radius: 6px;
-    margin: 1rem auto;
-    max-width: 300px;
-}
-
-/* Fix img inside QR div to avoid double alignment issues */
-#qrcode-damage img,
-#qrcode-lightning img {
-    display: block;
-    margin: auto;
-}
 
 
 /* Close (X) button styling */
@@ -2596,26 +2450,6 @@ body.reset-password-page #resetPasswdForm ul li::before {
   box-sizing: border-box;
 }
 
-/* make the icon a real button cell, not overlay */
-#invoice-modal .click-copy .copy-icon{
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-
-  /* kill anything that could cause overlay */
-  position: static !important;
-  float: none !important;
-  margin: 0 !important;
-}
-#invoice-modal .click-copy textarea#lightning-invoice-input{
-  min-width: 0 !important;
-  width: 100%;
-  box-sizing: border-box;
-}
 /* -------------------------------------------
    Token modal: Purchase / Transfer tab selector
    Targets: <ul data-token-tabs role="tablist"> ... <a role="tab">
@@ -2689,42 +2523,4 @@ body.reset-password-page #resetPasswdForm ul li::before {
 [data-token-tabs] [role="tab"]:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px rgba(0, 140, 255, 0.35);
-}
-
-/* Optional: tighter spacing inside the modal header/content */
-#invoice-modal [data-token-tabs][role="tablist"] {
-  margin-top: .5rem !important;
-}
-/* === Token modal tabs: active state MUST follow aria-selected only === */
-
-/* Base style (not selected) */
-#invoice-modal [data-token-tabs] [role="tab"]{
-  background: transparent !important;
-  color: rgba(255,255,255,0.78) !important;
-  box-shadow: none !important;
-}
-
-/* Active tab */
-#invoice-modal [data-token-tabs] [role="tab"][aria-selected="true"]{
-  background: rgba(0, 140, 255, 0.35) !important;
-  color: #fff !important;
-  box-shadow: 0 6px 16px rgba(0,0,0,0.25) !important;
-}
-
-/* Ensure default marker DOES NOT look active unless it's actually selected */
-#invoice-modal [data-token-tabs] [role="tab"][data-tabby-default]:not([aria-selected="true"]){
-  background: transparent !important;
-  color: rgba(255,255,255,0.78) !important;
-  box-shadow: none !important;
-}
-
-/* Hover should not mimic "selected" */
-#invoice-modal [data-token-tabs] [role="tab"]:hover{
-  background: rgba(255,255,255,0.06) !important;
-  color: rgba(255,255,255,0.92) !important;
-}
-#invoice-price-hint{
-  margin-top: .35rem;
-  font-size: .9rem;
-  color: rgba(255,255,255,0.8);
 }
