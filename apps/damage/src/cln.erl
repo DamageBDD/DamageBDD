@@ -206,7 +206,7 @@ scid_to_channel_id(SCID0) when is_binary(SCID0); is_list(SCID0) ->
             CID;
         not_found ->
             CID = poolboy:transaction(?MODULE, fun(W) ->
-                gen_server:call(W, {scid_to_channel_id_uncached, SCID})
+                gen_server:call(W, {scid_to_channel_id_uncached, SCID}, ?CLN_HTTP_TIMEOUT)
             end),
             put_cache({scid, SCID}, CID),
             put_cache({cid, CID}, SCID),
@@ -219,7 +219,7 @@ channel_id_to_scid(CID0) when is_binary(CID0); is_list(CID0) ->
             SCID;
         not_found ->
             SCID = poolboy:transaction(?MODULE, fun(W) ->
-                gen_server:call(W, {channel_id_to_scid_uncached, CID})
+                gen_server:call(W, {channel_id_to_scid_uncached, CID}, ?CLN_HTTP_TIMEOUT)
             end),
             put_cache({cid, CID}, SCID),
             put_cache({scid, SCID}, CID),
@@ -1330,30 +1330,38 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 subscribe() ->
     poolboy:transaction(
         ?MODULE,
-        fun(Worker) -> gen_server:call(Worker, subscribe) end
+        fun(Worker) -> gen_server:call(Worker, subscribe, ?CLN_HTTP_TIMEOUT) end
     ).
 getinfo() ->
     poolboy:transaction(
         ?MODULE,
-        fun(Worker) -> gen_server:call(Worker, getinfo) end
+        fun(Worker) -> gen_server:call(Worker, getinfo, ?CLN_HTTP_TIMEOUT) end
     ).
 
 list_invoices() ->
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
-            gen_server:call(Worker, {list_invoices, #{index => <<"created">>, limit => 10}})
+            gen_server:call(
+                Worker, {list_invoices, #{index => <<"created">>, limit => 10}}, ?CLN_HTTP_TIMEOUT
+            )
         end
     ).
 list_invoices_by_label(Label) ->
     poolboy:transaction(
         ?MODULE,
-        fun(Worker) -> gen_server:call(Worker, {list_invoices, #{label => Label}}) end
+        fun(Worker) ->
+            gen_server:call(Worker, {list_invoices, #{label => Label}}, ?CLN_HTTP_TIMEOUT)
+        end
     ).
 list_invoices_by_invoicestring(InvoiceString) ->
     poolboy:transaction(
         ?MODULE,
-        fun(Worker) -> gen_server:call(Worker, {list_invoices, #{invstring => InvoiceString}}) end
+        fun(Worker) ->
+            gen_server:call(
+                Worker, {list_invoices, #{invstring => InvoiceString}}, ?CLN_HTTP_TIMEOUT
+            )
+        end
     ).
 list_invoices_by_payment_hash(PaymentHash) ->
     poolboy:transaction(
