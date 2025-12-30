@@ -1,0 +1,68 @@
+<!-- -*- mode: html -*- -->
+<section id="swap-options-tab" class="execute-container">
+  <h2>Lightning Swap Options</h2>
+  <p class="section-description">
+    Listing is fetched from Æternity middleware contract logs (events).
+    Creation is submitted via your backend (signed call).
+  </p>
+
+  <div class="topbar" style="margin-bottom: 1rem;">
+    <div class="site-header" style="background:transparent; box-shadow:none; padding:0;">
+      <div class="brand-text">
+        <div class="title">Swap Options</div>
+        <div class="subtitle">Events → UI (source of truth)</div>
+      </div>
+    </div>
+
+    <div class="toolbar-items">
+      <button id="swap-refresh-btn" class="install-btn" type="button">Refresh</button>
+      <button class="install-btn" type="button" onclick="MicroModal.show('swap-create-modal')">
+        Create Option
+      </button>
+    </div>
+  </div>
+
+  <div id="swap-options-alert" class="warning-box" style="display:none;"></div>
+
+  <div id="swap-options-list"></div>
+</section>
+
+<script id="swap-options-table-tpl" type="x-tmpl-mustache">
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Issue</th>
+        <th>Buyer</th>
+        <th>Seller</th>
+        <th>State</th>
+        <th>Tx</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#options}}
+      <tr>
+        <td><code>#{{id}}</code></td>
+
+        <td class="hash">
+          {{#issue_url}}<a href="{{issue_url}}" target="_blank" rel="noopener">{{issue_ref}}</a>{{/issue_url}}
+          {{^issue_url}}<span style="color:#aaa;">(no issue link)</span>{{/issue_url}}
+        </td>
+
+        <td class="hash"><code>{{buyer}}</code></td>
+        <td class="hash"><code>{{seller}}</code></td>
+
+        <td><span class="tag">{{state}}</span></td>
+
+        <td class="hash">
+          {{#call_tx_hash}}<code>{{call_tx_hash}}</code>{{/call_tx_hash}}
+        </td>
+      </tr>
+      {{/options}}
+
+      {{^options}}
+      <tr><td colspan="6" style="color:#aaa;">No swap option events found.</td></tr>
+      {{/options}}
+    </tbody>
+  </table>
+</script>
