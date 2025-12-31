@@ -55,7 +55,7 @@
 
 -export([test/0]).
 % 5 minutes in ms
--define(CACHE_TTL, 300000).
+-define(CACHE_TTL_SECS, 300).
 -define(CLN_HTTP_TIMEOUT, 300000).
 %% 7 days in ms
 -define(PEER_MIN_TTL, 604800000).
@@ -81,6 +81,14 @@
     options :: map(),
     heartbeat_timer = undefined
 }).
+
+-define(SAT_TO_MSAT, 1000).
+
+sats_to_msat(Sats) when is_integer(Sats) ->
+    Sats * ?SAT_TO_MSAT.
+
+msat_to_sats(Msat) when is_integer(Msat) ->
+    Msat div ?SAT_TO_MSAT.
 
 %% API Functions
 
@@ -166,13 +174,13 @@ init([ws]) ->
     end.
 
 put_cache(Key, Value) ->
-    put_cache(Key, Value, ?CACHE_TTL).
+    put_cache(Key, Value, ?CACHE_TTL_SECS).
 
 put_cache(Key, Value, TTLms) ->
     ets:insert(cln_channel_cache, {Key, {Value, erlang:monotonic_time(millisecond), TTLms}}).
 
 get_cache(Key) ->
-    get_cache(Key, ?CACHE_TTL).
+    get_cache(Key, ?CACHE_TTL_SECS).
 
 get_cache(Key, DefaultTTL) ->
     case ets:lookup(cln_channel_cache, Key) of
@@ -271,7 +279,6 @@ get_channel_balances(Host, Port, Options, Rune) ->
 get_node_alias(Host, Port, Options, Rune, NodeId) ->
     case get_cache({node_alias, NodeId}) of
         {ok, Alias} ->
-            ?LOG_INFO("got alias from cache ~p", [Alias]),
             Alias;
         not_found ->
             ?LOG_INFO("fetching aliases from node", []),
@@ -322,41 +329,140 @@ get_node_balance() ->
         gen_server:call(Worker, get_node_balance, ?CLN_HTTP_TIMEOUT)
     end).
 
+-spec inbound_capacity_msat(binary(), [map()]) -> integer().
+inbound_capacity_msat(NodeId, Channels) ->
+    lists:foldl(
+        fun
+            (
+                #{
+                    destination := NodeId1,
+                    amount_msat := Capacity,
+                    htlc_maximum_msat := HtlcMax
+                },
+                Acc
+            ) when NodeId1 =:= NodeId ->
+                %% What can actually be routed
+                Acc + min(Capacity, HtlcMax);
+            (_, Acc) ->
+                Acc
+        end,
+        0,
+        Channels
+    ).
+
+%% Existing signature wrapper (keeps callers working)
+
 open_channels_with_best_peers() ->
+    TargetMsat = sats_to_msat(400000),
+
+    Opts = #{
+        %% true for simulation
+        dry_run => false,
+        verbose => true,
+        %% hard_gate | soft_boost | ignore
+        inbound_mode => soft_boost,
+        inbound_boost_weight => 1.0,
+        %% only used if hard_gate
+        min_inbound_ratio => 1.0,
+        target_msat => TargetMsat
+    },
     poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(Worker, open_channels_with_best_peers, ?CLN_HTTP_TIMEOUT)
+        gen_server:call(Worker, {open_channels_with_best_peers, Opts}, ?CLN_HTTP_TIMEOUT)
     end).
-open_best_peers_loop(_Host, _Port, _Options, _Rune, [], _BaseAmount, _MinPerChannel, SpendableLeft) ->
+%% Existing signature wrapper (keeps callers working)
+open_best_peers_loop(Host, Port, Options, Rune, Chosen, BaseMsat, MinPerChannelMsat, SpendableLeft) ->
+    open_best_peers_loop(
+        Host, Port, Options, Rune, Chosen, BaseMsat, MinPerChannelMsat, SpendableLeft, #{}
+    ).
+
+%% New signature with Opts
+%% Opts = #{
+%%    dry_run => boolean(),                 %% default true
+%%    verbose => boolean(),                 %% default true
+%%    inbound_mode => hard_gate | soft_boost | ignore, %% default soft_boost
+%%    min_inbound_ratio => float()          %% default 1.0 (only for hard_gate)
+%%}.
+
+open_best_peers_loop(
+    _Host, _Port, _Options, _Rune, [], _BaseMsat, _MinPerChannelMsat, SpendableLeft, _Opts
+) ->
     {[], [], SpendableLeft};
 open_best_peers_loop(
     Host,
     Port,
     Options,
     Rune,
-    [{{NodeId, _Score, Inbound, MinOpen}, PlannedAmount} | Rest],
-
-    BaseAmount,
-    MinPerChannel,
-    SpendableLeft
+    [{{NodeId, _Score, InboundMsat, MinOpenMsat}, PlannedMsat} | Rest],
+    BaseMsat,
+    MinPerChannelMsat,
+    SpendableLeftMsat,
+    Opts
 ) ->
-    AmountToTry0 = lists:max([PlannedAmount, BaseAmount, MinPerChannel, MinOpen]),
+    DryRun = maps:get(dry_run, Opts, true),
+    Verbose = maps:get(verbose, Opts, true),
+    InMode = maps:get(inbound_mode, Opts, soft_boost),
+    MinRatio = maps:get(min_inbound_ratio, Opts, 1.0),
 
-    %% inbound too small => skip
-    case Inbound >= AmountToTry0 of
+    AmountMsat = lists:max([PlannedMsat, BaseMsat, MinPerChannelMsat, MinOpenMsat]),
+    AmountSats = msat_to_sats(AmountMsat),
+
+    %% Inbound check ONLY if hard-gated
+    InboundOk =
+        case InMode of
+            hard_gate ->
+                InboundMsat >= trunc(AmountMsat * MinRatio);
+            _ ->
+                true
+        end,
+
+    case InboundOk of
         false ->
+            %% only hard_gate skips here
             open_best_peers_loop(
-                Host, Port, Options, Rune, Rest, BaseAmount, MinPerChannel, SpendableLeft
+                Host,
+                Port,
+                Options,
+                Rune,
+                Rest,
+                BaseMsat,
+                MinPerChannelMsat,
+                SpendableLeftMsat,
+                Opts
             );
         true ->
-            %% can't afford this peer => SKIP (do NOT stop)
-            case AmountToTry0 =< SpendableLeft of
+            %% affordability check (always applies)
+            case AmountMsat =< SpendableLeftMsat of
                 false ->
                     open_best_peers_loop(
-                        Host, Port, Options, Rune, Rest, BaseAmount, MinPerChannel, SpendableLeft
+                        Host,
+                        Port,
+                        Options,
+                        Rune,
+                        Rest,
+                        BaseMsat,
+                        MinPerChannelMsat,
+                        SpendableLeftMsat,
+                        Opts
                     );
                 true ->
-                    case open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountToTry0) of
-                        {ok, OkMap} ->
+                    %% --------------------
+                    %% DRY RUN
+                    %% --------------------
+                    case DryRun of
+                        true ->
+                            Verbose andalso
+                                io:format(
+                                    "DRYRUN would open ~s amount=~p msat (~p sats) inbound=~p msat spendable=~p msat mode=~p~n",
+                                    [
+                                        NodeId,
+                                        AmountMsat,
+                                        AmountSats,
+                                        InboundMsat,
+                                        SpendableLeftMsat,
+                                        InMode
+                                    ]
+                                ),
+
                             {Peers, Results, Spendable2} =
                                 open_best_peers_loop(
                                     Host,
@@ -364,67 +470,183 @@ open_best_peers_loop(
                                     Options,
                                     Rune,
                                     Rest,
-                                    BaseAmount,
-                                    MinPerChannel,
-                                    SpendableLeft - AmountToTry0
+                                    BaseMsat,
+                                    MinPerChannelMsat,
+                                    SpendableLeftMsat,
+                                    Opts
                                 ),
+
                             {
                                 [NodeId | Peers],
                                 [
                                     #{
                                         peer => NodeId,
-                                        amount_sats => AmountToTry0,
+                                        dry_run => true,
+                                        amount_msat => AmountMsat,
+                                        amount_sats => AmountSats,
+                                        inbound_msat => InboundMsat,
+                                        inbound_mode => InMode,
                                         ok => true,
-                                        result => OkMap
+                                        action => would_open
                                     }
                                     | Results
                                 ],
                                 Spendable2
                             };
-                        {error, Msg} ->
-                            %% If error reveals a higher min, retry once with that min if affordable.
-                            case extract_min_open_sats(Msg) of
-                                {ok, MinSats} when
-                                    MinSats > AmountToTry0,
-                                    MinSats =< SpendableLeft,
-                                    Inbound >= MinSats
-                                ->
-                                    cache_peer_min(NodeId, MinSats),
-                                    case
-                                        open_channel_with_peer(
-                                            Host, Port, Options, Rune, NodeId, MinSats
-                                        )
-                                    of
-                                        {ok, OkMap2} ->
-                                            {Peers, Results, Spendable2} =
-                                                open_best_peers_loop(
-                                                    Host,
-                                                    Port,
-                                                    Options,
-                                                    Rune,
-                                                    Rest,
-                                                    BaseAmount,
-                                                    MinPerChannel,
-                                                    SpendableLeft - MinSats
-                                                ),
-                                            {
-                                                [NodeId | Peers],
-                                                [
-                                                    #{
-                                                        peer => NodeId,
-                                                        amount_sats => MinSats,
-                                                        ok => true,
-                                                        result => OkMap2
-                                                    }
-                                                    | Results
-                                                ],
-                                                Spendable2
-                                            };
-                                        {error, Msg2} ->
+                        %% --------------------
+                        %% REAL OPEN
+                        %% --------------------
+                        false ->
+                            case
+                                open_channel_with_peer(
+                                    Host, Port, Options, Rune, NodeId, AmountSats
+                                )
+                            of
+                                {ok, OkMap} ->
+                                    {Peers, Results, Spendable2} =
+                                        open_best_peers_loop(
+                                            Host,
+                                            Port,
+                                            Options,
+                                            Rune,
+                                            Rest,
+                                            BaseMsat,
+                                            MinPerChannelMsat,
+                                            SpendableLeftMsat - AmountMsat,
+                                            Opts
+                                        ),
+                                    {
+                                        [NodeId | Peers],
+                                        [
+                                            #{
+                                                peer => NodeId,
+                                                amount_msat => AmountMsat,
+                                                amount_sats => AmountSats,
+                                                ok => true,
+                                                result => OkMap
+                                            }
+                                            | Results
+                                        ],
+                                        Spendable2
+                                    };
+                                {error, Msg} ->
+                                    %% retry once if peer reveals a higher min
+                                    case extract_min_open_sats(Msg) of
+                                        {ok, MinSats} ->
+                                            MinMsat = sats_to_msat(MinSats),
+                                            RetryOk =
+                                                MinMsat > AmountMsat andalso
+                                                    MinMsat =< SpendableLeftMsat andalso
+                                                    (InMode =/= hard_gate orelse
+                                                        InboundMsat >= MinMsat),
+
+                                            case RetryOk of
+                                                true ->
+                                                    cache_peer_min(NodeId, MinSats),
+                                                    case
+                                                        open_channel_with_peer(
+                                                            Host,
+                                                            Port,
+                                                            Options,
+                                                            Rune,
+                                                            NodeId,
+                                                            MinSats
+                                                        )
+                                                    of
+                                                        {ok, OkMap2} ->
+                                                            {Peers, Results, Spendable2} =
+                                                                open_best_peers_loop(
+                                                                    Host,
+                                                                    Port,
+                                                                    Options,
+                                                                    Rune,
+                                                                    Rest,
+                                                                    BaseMsat,
+                                                                    MinPerChannelMsat,
+                                                                    SpendableLeftMsat - MinMsat,
+                                                                    Opts
+                                                                ),
+                                                            {
+                                                                [NodeId | Peers],
+                                                                [
+                                                                    #{
+                                                                        peer => NodeId,
+                                                                        amount_msat => MinMsat,
+                                                                        amount_sats => MinSats,
+                                                                        ok => true,
+                                                                        result => OkMap2
+                                                                    }
+                                                                    | Results
+                                                                ],
+                                                                Spendable2
+                                                            };
+                                                        {error, Msg2} ->
+                                                            put_cache(
+                                                                peer_blacklist_key(NodeId),
+                                                                #{
+                                                                    reason => Msg2,
+                                                                    min_sats => MinSats
+                                                                },
+                                                                ?PEER_BLACKLIST_TTL_MIN
+                                                            ),
+                                                            {Peers, Results, Spendable2} =
+                                                                open_best_peers_loop(
+                                                                    Host,
+                                                                    Port,
+                                                                    Options,
+                                                                    Rune,
+                                                                    Rest,
+                                                                    BaseMsat,
+                                                                    MinPerChannelMsat,
+                                                                    SpendableLeftMsat,
+                                                                    Opts
+                                                                ),
+                                                            {Peers,
+                                                                [
+                                                                    #{
+                                                                        peer => NodeId,
+                                                                        ok => false,
+                                                                        error => Msg2
+                                                                    }
+                                                                    | Results
+                                                                ],
+                                                                Spendable2}
+                                                    end;
+                                                false ->
+                                                    cache_peer_min(NodeId, MinSats),
+                                                    put_cache(
+                                                        peer_blacklist_key(NodeId),
+                                                        #{reason => Msg, min_sats => MinSats},
+                                                        ?PEER_BLACKLIST_TTL_MIN
+                                                    ),
+                                                    {Peers, Results, Spendable2} =
+                                                        open_best_peers_loop(
+                                                            Host,
+                                                            Port,
+                                                            Options,
+                                                            Rune,
+                                                            Rest,
+                                                            BaseMsat,
+                                                            MinPerChannelMsat,
+                                                            SpendableLeftMsat,
+                                                            Opts
+                                                        ),
+                                                    {Peers,
+                                                        [
+                                                            #{
+                                                                peer => NodeId,
+                                                                ok => false,
+                                                                error => Msg
+                                                            }
+                                                            | Results
+                                                        ],
+                                                        Spendable2}
+                                            end;
+                                        error ->
                                             put_cache(
                                                 peer_blacklist_key(NodeId),
-                                                #{reason => Msg2, min_sats => MinSats},
-                                                ?PEER_BLACKLIST_TTL_MIN
+                                                #{reason => Msg},
+                                                ?PEER_BLACKLIST_TTL_CONN
                                             ),
                                             {Peers, Results, Spendable2} =
                                                 open_best_peers_loop(
@@ -433,82 +655,18 @@ open_best_peers_loop(
                                                     Options,
                                                     Rune,
                                                     Rest,
-                                                    BaseAmount,
-                                                    MinPerChannel,
-                                                    SpendableLeft
+                                                    BaseMsat,
+                                                    MinPerChannelMsat,
+                                                    SpendableLeftMsat,
+                                                    Opts
                                                 ),
                                             {Peers,
                                                 [
-                                                    #{
-                                                        peer => NodeId,
-                                                        amount_sats => AmountToTry0,
-                                                        ok => false,
-                                                        error => Msg2
-                                                    }
+                                                    #{peer => NodeId, ok => false, error => Msg}
                                                     | Results
                                                 ],
                                                 Spendable2}
-                                    end;
-                                {ok, MinSats} ->
-                                    %% Learned min but can't use it now => cache + blacklist
-                                    cache_peer_min(NodeId, MinSats),
-                                    put_cache(
-                                        peer_blacklist_key(NodeId),
-                                        #{reason => Msg, min_sats => MinSats},
-                                        ?PEER_BLACKLIST_TTL_MIN
-                                    ),
-                                    {Peers, Results, Spendable2} =
-                                        open_best_peers_loop(
-                                            Host,
-                                            Port,
-                                            Options,
-                                            Rune,
-                                            Rest,
-                                            BaseAmount,
-                                            MinPerChannel,
-                                            SpendableLeft
-                                        ),
-                                    {Peers,
-                                        [
-                                            #{
-                                                peer => NodeId,
-                                                amount_sats => AmountToTry0,
-                                                ok => false,
-                                                error => Msg
-                                            }
-                                            | Results
-                                        ],
-                                        Spendable2};
-                                error ->
-                                    %% Connect/init failures etc
-                                    TTL =
-                                        case is_connect_failure(Msg) of
-                                            true -> ?PEER_BLACKLIST_TTL_CONN;
-                                            false -> ?PEER_BLACKLIST_TTL_CONN
-                                        end,
-                                    put_cache(peer_blacklist_key(NodeId), #{reason => Msg}, TTL),
-                                    {Peers, Results, Spendable2} =
-                                        open_best_peers_loop(
-                                            Host,
-                                            Port,
-                                            Options,
-                                            Rune,
-                                            Rest,
-                                            BaseAmount,
-                                            MinPerChannel,
-                                            SpendableLeft
-                                        ),
-                                    {Peers,
-                                        [
-                                            #{
-                                                peer => NodeId,
-                                                amount_sats => AmountToTry0,
-                                                ok => false,
-                                                error => Msg
-                                            }
-                                            | Results
-                                        ],
-                                        Spendable2}
+                                    end
                             end
                     end
             end
@@ -521,24 +679,93 @@ is_connect_failure(Msg0) ->
         _ -> true
     end.
 
-required_open_sats(NodeId, Target, MinPerChannel) ->
-    MinPeer = get_peer_min_open_sats(NodeId),
-    lists:max([Target, MinPerChannel, MinPeer]).
+required_open_msat(NodeId, TargetMsat, MinPerChannelMsat) ->
+    MinPeerSats = get_peer_min_open_sats(NodeId),
+    MinPeerMsat = sats_to_msat(MinPeerSats),
+    lists:max([TargetMsat, MinPerChannelMsat, MinPeerMsat]).
 
-pick_affordable(Cands, Spendable, Target, MinPerChannel) ->
-    pick_affordable(Cands, Spendable, Target, MinPerChannel, 0, []).
+-spec score_candidates(
+    ChannelList :: [map()],
+    MinSats :: integer(),
+    Opts :: map()
+) -> [{NodeId :: binary(), Score :: float(), InboundMsat :: integer(), MinOpenMsat :: integer()}].
+score_candidates(ChannelList, MinSats, Opts) ->
+    BaseScores = score_peers_for_opening(ChannelList, MinSats),
 
-pick_affordable([], _Spendable, _Target, _MinPerChannel, _Sum, Acc) ->
+    TargetMsat = maps:get(target_msat, Opts, MinSats * 1000),
+    InMode = maps:get(inbound_mode, Opts, soft_boost),
+    BoostW = maps:get(inbound_boost_weight, Opts, 1.0),
+
+    lists:map(
+        fun({NodeId, BaseScore}) ->
+            InboundMsat = inbound_capacity_msat(NodeId, ChannelList),
+            MinOpenMsat = sats_to_msat(get_peer_min_open_sats(NodeId)),
+
+            InboundBoost =
+                case InMode of
+                    soft_boost ->
+                        %% ratio ~ 1.0 means “roughly target-sized connectivity”
+                        Ratio = InboundMsat / (TargetMsat + 1),
+                        %% log-scaled, capped
+                        math:log10(1 + 9 * min(Ratio, 10));
+                    _ ->
+                        0.0
+                end,
+
+            {
+                NodeId,
+                BaseScore + InboundBoost * BoostW,
+                InboundMsat,
+                MinOpenMsat
+            }
+        end,
+        maps:to_list(BaseScores)
+    ).
+
+pick_affordable(Cands, SpendableMsat, TargetMsat, MinPerChannelMsat, Opts) ->
+    InMode = maps:get(inbound_mode, Opts, soft_boost),
+    pick_affordable(Cands, SpendableMsat, TargetMsat, MinPerChannelMsat, InMode, 0, []).
+
+pick_affordable([], _Spendable, _Target, _Min, _Mode, _Sum, Acc) ->
     lists:reverse(Acc);
 pick_affordable(
-    [{NodeId, _Score, Inbound, _MinPeer} = C | Rest], Spendable, Target, MinPerChannel, Sum, Acc
+    [{NodeId, _Score, InboundMsat, _MinPeer} = C | Rest],
+    SpendableMsat,
+    TargetMsat,
+    MinPerChannelMsat,
+    InMode,
+    Sum,
+    Acc
 ) ->
-    Req = required_open_sats(NodeId, Target, MinPerChannel),
-    case (Sum + Req =< Spendable) andalso (Inbound >= Req) of
+    ReqMsat = required_open_msat(NodeId, TargetMsat, MinPerChannelMsat),
+
+    InboundOk =
+        case InMode of
+            hard_gate -> InboundMsat >= ReqMsat;
+            _ -> true
+        end,
+
+    case (Sum + ReqMsat =< SpendableMsat) andalso InboundOk of
         true ->
-            pick_affordable(Rest, Spendable, Target, MinPerChannel, Sum + Req, [{C, Req} | Acc]);
+            pick_affordable(
+                Rest,
+                SpendableMsat,
+                TargetMsat,
+                MinPerChannelMsat,
+                InMode,
+                Sum + ReqMsat,
+                [{C, ReqMsat} | Acc]
+            );
         false ->
-            pick_affordable(Rest, Spendable, Target, MinPerChannel, Sum, Acc)
+            pick_affordable(
+                Rest,
+                SpendableMsat,
+                TargetMsat,
+                MinPerChannelMsat,
+                InMode,
+                Sum,
+                Acc
+            )
     end.
 
 handle_call(
@@ -715,7 +942,7 @@ handle_call(
     BalanceSats = get_node_balance(Host, Port, Options, Rune),
     {reply, BalanceSats, State};
 handle_call(
-    open_channels_with_best_peers,
+    {open_channels_with_best_peers, Opts},
     From,
     State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
 ) ->
@@ -726,6 +953,7 @@ handle_call(
     SelfChannels1 = fetch_channel_list(Host, Port, Options, Headers, #{destination => SourceNodeId}),
     SelfChannels = SelfChannels0 ++ SelfChannels1,
     ?LOG_INFO("Self channels ~p", [SelfChannels]),
+    TargetMsat = maps:get(target_msat, Opts),
 
     %% 1. Node balance (all spendable funds)
     BalanceSats = get_node_balance(Host, Port, Options, Rune),
@@ -742,50 +970,51 @@ handle_call(
         true ->
             {reply, {error, insufficient_funds, BalanceSats}, State};
         false ->
-            %% 2. Network view
+            % Network view
             ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
 
-            %% score peers (existing scoring)
-            ScoreMap = score_peers_for_opening(ChannelList),
-            ScoreList = maps:to_list(ScoreMap),
+            %% Score + inbound-aware candidates
+            Candidates0 =
+                score_candidates(
+                    ChannelList,
+                    %% MinSats
+                    TargetMsat div 1000,
+                    Opts
+                ),
 
-            %% 3. Build candidate list with inbound capacity
-            %% build set of nodes we already have channels with
+            %% Remove existing peers + blacklisted
             ExistingPeers = existing_peers(SelfChannels),
-            ?LOG_DEBUG("ExistingPeers ~p  ", [ExistingPeers]),
 
-            %% build candidates: (skip existing peers + blacklisted peers)
             Candidates =
                 [
-                    begin
-                        Inbound = inbound_capacity(NodeId, ChannelList),
-                        MinOpen = get_peer_min_open_sats(NodeId),
-                        {NodeId, Score, Inbound, MinOpen}
-                    end
-                 || {NodeId, Score} <- ScoreList,
+                    C
+                 || {NodeId, _Score, _InboundMsat, _MinOpenMsat} = C <- Candidates0,
                     not sets:is_element(NodeId, ExistingPeers),
                     not is_blacklisted(NodeId)
                 ],
 
-            %% sort by score, then inbound capacity
             Sorted =
                 lists:sort(
-                    fun({_, ScoreA, InboundA, _}, {_, ScoreB, InboundB, _}) ->
-                        (ScoreA > ScoreB) orelse
-                            (ScoreA =:= ScoreB andalso InboundA > InboundB)
+                    fun({_, ScoreA, _, _}, {_, ScoreB, _, _}) ->
+                        ScoreA > ScoreB
                     end,
                     Candidates
                 ),
 
-            %% look deeper than 5
-            MaxScan = 100,
-            %% IMPORTANT: set to realistic default (your log shows 400k mins)
-            Target = 400000,
-            MinPerChannel = 100000,
+            TargetMsat = sats_to_msat(400000),
+            MinPerChannelMsat = sats_to_msat(100000),
 
-            TopCandidates = lists:sublist(Sorted, MaxScan),
+            SpendableMsat = sats_to_msat(Spendable),
+            MinPerChannelMsat = sats_to_msat(100000),
 
-            Chosen = pick_affordable(TopCandidates, Spendable, Target, MinPerChannel),
+            Chosen =
+                pick_affordable(
+                    Sorted,
+                    SpendableMsat,
+                    TargetMsat,
+                    MinPerChannelMsat,
+                    Opts
+                ),
 
             case Chosen of
                 [] ->
@@ -794,19 +1023,18 @@ handle_call(
                     CandidateCount = length(Chosen),
 
                     MaxNByBalance =
-                        case Spendable div Target of
+                        case SpendableMsat div TargetMsat of
                             0 -> 1;
                             N0 -> N0
                         end,
 
-                    RawN = erlang:min(MaxNByBalance, CandidateCount),
-                    AmountPerPeer0 = Spendable div RawN,
+                    RawN = min(MaxNByBalance, CandidateCount),
+                    AmountPerPeerMsat = SpendableMsat div RawN,
 
-                    %% baseline per-peer amount (may be bumped per-peer using cached mins)
-                    BaseAmount =
-                        case AmountPerPeer0 < MinPerChannel of
-                            true -> Spendable;
-                            false -> AmountPerPeer0
+                    BaseMsat =
+                        case AmountPerPeerMsat < MinPerChannelMsat of
+                            true -> SpendableMsat;
+                            false -> AmountPerPeerMsat
                         end,
 
                     %% open sequentially: if one peer rejects (min funding / min chan), cache+blacklist and move on
@@ -814,17 +1042,17 @@ handle_call(
                         open_best_peers_loop(
                             Host,
                             Port,
-                            Options,
+                            Opts,
                             Rune,
                             Chosen,
-                            BaseAmount,
-                            MinPerChannel,
+                            BaseMsat,
+                            MinPerChannelMsat,
                             Spendable
                         ),
 
                     Aliases =
                         [
-                            {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId)}
+                            {NodeId, get_node_alias(Host, Port, Opts, Rune, NodeId)}
                          || NodeId <- OpenedPeers
                         ],
 
@@ -832,7 +1060,7 @@ handle_call(
                         balance_sats => BalanceSats,
                         spendable_sats => Spendable,
                         remaining_spendable_sats => RemainingSpendable,
-                        base_per_peer_sats => BaseAmount,
+                        base_per_peer_msat => BaseMsat,
                         channel_count => length(OpenedPeers),
                         peers => OpenedPeers,
                         aliases => Aliases,
@@ -1465,6 +1693,7 @@ score_peers_for_opening(ChannelList) ->
 -spec score_peers_for_opening([map()], integer()) -> map().
 score_peers_for_opening(ChannelList, MinSats) ->
     Now = erlang:system_time(second),
+    TargetMsat = MinSats * 1000,
 
     lists:foldl(
         fun
@@ -1473,36 +1702,41 @@ score_peers_for_opening(ChannelList, MinSats) ->
                     source := Src,
                     destination := Dst,
                     amount_msat := AmountMsat,
-                    base_fee_millisatoshi := BaseFee,
+                    base_fee_millisatoshi := BaseFeeMsat,
                     fee_per_millionth := FeeRate,
                     last_update := LU,
                     active := true
                 },
                 Acc
             ) ->
-                %% channel capacity in sats
                 Sats = AmountMsat div 1000,
                 PeerNodes = [Src, Dst],
-                lists:foldl(
-                    fun(NodeId, InnerAcc) ->
-                        case Sats >= MinSats of
-                            true ->
-                                Score = compute_score(Sats, BaseFee, FeeRate, LU, Now),
-                                update_score(NodeId, Score, InnerAcc);
-                            false ->
-                                InnerAcc
-                        end
-                    end,
-                    Acc,
-                    PeerNodes
-                );
-            (
-                #{
-                    % ignore inactive nodes
-                    active := false
-                },
-                Acc
-            ) ->
+
+                case Sats >= MinSats of
+                    false ->
+                        Acc;
+                    true ->
+                        %% Estimated fee to route MinSats
+                        FeeCostMsat =
+                            BaseFeeMsat +
+                                (TargetMsat * FeeRate div 1000000),
+
+                        lists:foldl(
+                            fun(NodeId, InnerAcc) ->
+                                Score =
+                                    compute_score(
+                                        Sats,
+                                        FeeCostMsat,
+                                        LU,
+                                        Now
+                                    ),
+                                update_score(NodeId, Score, InnerAcc)
+                            end,
+                            Acc,
+                            PeerNodes
+                        )
+                end;
+            (#{active := false}, Acc) ->
                 Acc
         end,
         #{},
@@ -1514,13 +1748,21 @@ top_five_nodes(ChannelList) ->
     Sorted = lists:sort(fun({_, A}, {_, B}) -> A > B end, maps:to_list(ScoreMap)),
     lists:sublist(Sorted, 5).
 
-compute_score(Sats, _BaseFee, FeeRate, LastUpdate, Now) ->
-    %% Higher sats = better; lower fee = better; recent = better
-    NormalizedSats = math:log10(Sats + 1),
-    NormalizedFee = 1000000 / (FeeRate + 1),
-    %% decays over time
-    RecencyBonus = 1.0 / (1.0 + (Now - LastUpdate) / 3600),
-    NormalizedSats + NormalizedFee * 0.1 + RecencyBonus * 5.
+compute_score(Sats, FeeCostMsat, LastUpdate, Now) ->
+    %% Capacity bonus (log-scaled so hubs don’t dominate)
+    CapacityScore = math:log10(Sats + 1),
+
+    %% Fee penalty (lower fee = higher score)
+    %% +1 to avoid div-by-zero
+    FeeScore = min(1_000_000 / (FeeCostMsat + 1), 1000),
+
+    %% Recency bonus (decays over hours)
+    RecencyScore = 1.0 / (1.0 + (Now - LastUpdate) / 3600),
+
+    %% Weighted sum
+    CapacityScore +
+        FeeScore * 0.3 +
+        RecencyScore * 5.0.
 
 update_score(NodeId, Score, Map) ->
     maps:update_with(NodeId, fun(S) -> S + Score end, Score, Map).
@@ -1550,14 +1792,13 @@ test_listchannels() ->
 get_cached_channel_list(Host, Port, Options, Headers, ReqMap) ->
     Now = erlang:monotonic_time(second),
     case ets:lookup(cln_channel_cache, listchannels) of
-        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < ?CACHE_TTL ->
+        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < ?CACHE_TTL_SECS ->
             ?LOG_DEBUG("Using cached listchannels", []),
             Channels;
-        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp > ?CACHE_TTL ->
+        [{listchannels, {Timestamp, Channels}}] when Now - Timestamp > ?CACHE_TTL_SECS ->
             ?LOG_INFO("Cache age ~p", [Now - Timestamp]),
-            ?LOG_DEBUG("Fetching listchannels from CLN", []),
-            Channels = fetch_channel_list(Host, Port, Options, Headers, ReqMap),
-            ets:insert(cln_channel_cache, {listchannels, {Now, Channels}}),
+            FreshChannels = fetch_channel_list(Host, Port, Options, Headers, ReqMap),
+            ets:insert(cln_channel_cache, {listchannels, {Now, FreshChannels}}),
             Channels;
         _ ->
             ?LOG_DEBUG("Fetching listchannels from CLN", []),
@@ -1666,6 +1907,7 @@ do_find_best_peer_to_open(
 ) ->
     Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
     ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
+    ?LOG_DEBUG("ChannelList ~p", [ChannelList]),
 
     %% Score peers based on capacity/fees/recency for the given amount
     ScoreMap = score_peers_for_opening(ChannelList, AmountSats),
@@ -1680,8 +1922,8 @@ do_find_best_peer_to_open(
     InboundMap =
         lists:foldl(
             fun
-                (#{destination := Dst, satoshis := Sats}, Acc) ->
-                    maps:update_with(Dst, fun(V) -> V + Sats end, Sats, Acc);
+                (#{destination := Dst, amount_msat := MSats}, Acc) ->
+                    maps:update_with(Dst, fun(V) -> V + MSats end, MSats, Acc);
                 (_, Acc) ->
                     Acc
             end,
@@ -1689,6 +1931,7 @@ do_find_best_peer_to_open(
             ChannelList
         ),
 
+    ?LOG_DEBUG("InboundMap ~p", [InboundMap]),
     %% Build {NodeId, Alias, Score, InboundCapacity} tuples
     Candidates =
         [
@@ -1700,6 +1943,7 @@ do_find_best_peer_to_open(
          || {NodeId, Score} <- maps:to_list(ScoreMap)
         ],
 
+    ?LOG_DEBUG("Candidates ~p", [Candidates]),
     %% Filter out nodes whose inbound capacity is clearly too small for the amount
     Suitable =
         [
@@ -1707,6 +1951,7 @@ do_find_best_peer_to_open(
          || C = {_NodeId, _Alias, _Score, Inbound} <- Candidates,
             Inbound >= AmountSats
         ],
+    ?LOG_DEBUG("Suitable Candidates ~p", [Suitable]),
 
     %% Sort primarily by score, secondary by inbound capacity
     Sorted =
