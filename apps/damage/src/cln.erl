@@ -50,7 +50,9 @@
     connect_peers/1,
     connect_best_peers/0,
     connect_best_peers/1,
-    blacklist_peer/3
+    blacklist_peer/3,
+    sats_to_msat/1,
+    msat_to_sats/1
 ]).
 
 -export([test/0]).
@@ -389,11 +391,6 @@ open_channels_with_best_peers() ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {open_channels_with_best_peers, Opts}, ?CLN_HTTP_TIMEOUT)
     end).
-%% Existing signature wrapper (keeps callers working)
-open_best_peers_loop(Host, Port, Options, Rune, Chosen, BaseMsat, MinPerChannelMsat, SpendableLeft) ->
-    open_best_peers_loop(
-        Host, Port, Options, Rune, Chosen, BaseMsat, MinPerChannelMsat, SpendableLeft, #{}
-    ).
 
 %% New signature with Opts
 %% Opts = #{
@@ -1124,23 +1121,26 @@ handle_call(
                         open_best_peers_loop(
                             Host,
                             Port,
-                            Opts,
+                            Options,
                             Rune,
                             Chosen,
                             BaseMsat,
                             MinPerChannelMsat,
-                            Spendable
+                            SpendableMsat,
+                            Opts
                         ),
 
                     Aliases =
                         [
-                            {NodeId, get_node_alias(Host, Port, Opts, Rune, NodeId)}
+                            {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId)}
                          || NodeId <- OpenedPeers
                         ],
 
                     Reply = #{
                         balance_sats => BalanceSats,
+                        balance_msats => sats_to_msat(BalanceSats),
                         spendable_sats => Spendable,
+                        spendable_msats => SpendableMsat,
                         remaining_spendable_sats => RemainingSpendable,
                         base_per_peer_msat => BaseMsat,
                         channel_count => length(OpenedPeers),
