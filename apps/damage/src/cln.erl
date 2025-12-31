@@ -367,7 +367,7 @@ maybe_connect_peer(Host, Port, Options, Rune, NodeId, Opts) ->
                     ok;
                 {error, Msg} ->
                     Verbose andalso
-                        io:format("connect_peer failed peer=~s reason=~p~n", [NodeId, Msg]),
+                        ?LOG_INFO("connect_peer failed peer=~s reason=~p~n", [NodeId, Msg]),
                     {error, Msg}
             end
     end.
@@ -471,7 +471,7 @@ open_best_peers_loop(
                     case DryRun of
                         true ->
                             Verbose andalso
-                                io:format(
+                                ?LOG_INFO(
                                     "DRYRUN would open ~s amount=~p msat (~p sats) inbound=~p msat spendable=~p msat mode=~p~n",
                                     [
                                         NodeId,
@@ -975,7 +975,7 @@ handle_call(
                     Skew > 80 -> " [⚠ needs rebalancing]";
                     true -> ""
                 end,
-            io:format(
+            ?LOG_INFO(
                 "Active ~p Public ~p ~s (~s) <--> ~s (~s): Ours: ~p msat, Theirs: ~p msat~s~n",
                 [
                     Active,
@@ -1501,7 +1501,6 @@ handle_info(heartbeat, State) ->
 handle_info({gun_down, ConnPid, _Reason}, State) when
     ConnPid =:= State#state.conn_pid
 ->
-    io:format("Connection closed~n"),
     erlang:cancel_timer(State#state.heartbeat_timer),
     {stop, normal, State};
 handle_info({gun_up, _, _} = _Info, State) ->

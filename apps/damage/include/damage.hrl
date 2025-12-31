@@ -75,5 +75,6 @@
 -define(JOB_REGISTRY_CONTRACT,
     "ct_JJGKrTpqtivJCfMGJZo9iWrmKTFyD47ipCiNLtdiqxtnQ3PKQ"
 ).
+-define(LIGHTNING_SWAP_OPTION_CONTRACT, "ct_aWMwTaxGRxcjbb11NiVYVM4NHWmTAViteE5Gp2ayrrmrZi3ry").
 
 -define(AUTH_HEADER, <<"authorization">>).
