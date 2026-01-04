@@ -674,55 +674,134 @@ get_headers(Context, DefaultHeaders) ->
 response_to_list({StatusCode, Headers, Body}) ->
     [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
+%% Hardened: SSRF/IP-range blocking + sane TLS verify defaults + keep your concurrency gating.
+%% NOTE: BasicAuth does NOT belong in gun:open opts. Apply it as an Authorization header per request.
+
 get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
-    Host = damage_utils:get_context_value(host, Context, Config0),
-    Port = damage_utils:get_context_value(port, Context, Config0, ?DEFAULT_HTTP_PORT),
-    ?LOG_DEBUG("Host ~p port ~p", [Host, Port]),
+    Host0 = damage_utils:get_context_value(host, Context, Config0),
+    Port  = damage_utils:get_context_value(port, Context, Config0, ?DEFAULT_HTTP_PORT),
+
+    %% --- ESSENTIAL: block SSRF to local/private/link-local/metadata etc ---
+    ensure_host_is_public(Host0),
+
+    ?LOG_DEBUG("Host ~p port ~p", [Host0, Port]),
+
+    %% Transport selection
     Config =
         case Port of
             443 -> [{transport, tls} | Config0];
-            _ -> Config0
+            _   -> Config0
         end,
+
+    VerifySSL = maps:get(verify_ssl, Context, true),
+
     Opts =
         case lists:keyfind(transport, 1, Config) of
-            false -> #{transport => tcp};
-            _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
+            false ->
+                #{transport => tcp};
+            _ ->
+                %% ESSENTIAL: verify peer by default (no verify_none unless explicitly disabled)
+                TlsOpts =
+                    case VerifySSL of
+                        false ->
+                            [{verify, verify_none}];
+                        true ->
+                            [
+                                {verify, verify_peer},
+                                {depth, 3},
+                                {cacerts, public_key:cacerts_get()},
+                                %% SNI helps correct cert selection on shared hosts
+                                {server_name_indication, host_for_sni(Host0)}
+                            ]
+                    end,
+                #{transport => tls, tls_opts => TlsOpts}
         end,
-    Opts0 =
-        case maps:get(basic_auth, Context, none) of
-            none -> Opts;
-            {User, Pass} -> maps:put(username, User, maps:put(password, Pass, Context))
-        end,
-    Opts1 = maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts0),
+
+    Opts1 = maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts),
+
+    %% Keep your concurrency/domain gating, but now *after* SSRF block.
     case lists:keyfind(concurrency, 1, Config0) of
         false ->
-            ?LOG_DEBUG(
-                "Opening connecion Host ~p port ~p opts ~p",
-                [Host, Port, Opts1]
-            ),
-            gun:open(Host, Port, Opts1);
+            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [Host0, Port, Opts1]),
+            gun:open(Host0, Port, Opts1);
+
         {concurrency, 1} ->
-            ?LOG_DEBUG(
-                "Opening connecion Host ~p port ~p opts ~p",
-                [Host, Port, Opts1]
-            ),
-            gun:open(Host, Port, Opts1);
+            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [Host0, Port, Opts1]),
+            gun:open(Host0, Port, Opts1);
+
         {concurrency, _Concurrency} ->
-            case damage_domains:is_allowed_domain(Host, AeAccount) of
+            case damage_domains:is_allowed_domain(Host0, AeAccount) of
                 true ->
-                    ?LOG_DEBUG(
-                        "Opening connecion Host ~p port ~p opts ~p",
-                        [Host, Port, Opts1]
-                    ),
-                    gun:open(Host, Port, Opts1);
+                    ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [Host0, Port, Opts1]),
+                    gun:open(Host0, Port, Opts1);
                 _ ->
-                    throw(
-                        <<
-                            "Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html"
-                        >>
-                    )
+                    throw(<<"Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html">>)
             end
     end.
+
+%% -------------------------
+%% SSRF / host safety helpers
+%% -------------------------
+
+ensure_host_is_public(Host0) ->
+    Host = host_to_list(Host0),
+
+    %% Block obvious local names
+    case string:lowercase(Host) of
+        "localhost" -> throw(<<"SSRF blocked: localhost">>);
+        _ -> ok
+    end,
+
+    %% If the host is already an IP literal, validate it directly.
+    case inet:parse_address(Host) of
+        {ok, Ip} ->
+            ensure_public_ip(Ip);
+        error ->
+            %% Resolve A records
+            case inet:getaddrs(Host, inet) of
+                {ok, Addrs4} -> lists:foreach(fun ensure_public_ip/1, Addrs4);
+                _ -> ok
+            end,
+            %% Resolve AAAA records (best-effort)
+            case inet:getaddrs(Host, inet6) of
+                {ok, Addrs6} -> lists:foreach(fun ensure_public_ip/1, Addrs6);
+                _ -> ok
+            end
+    end.
+
+ensure_public_ip({A,B,C,D}) ->
+    %% IPv4 blocks: loopback, RFC1918, link-local (incl cloud metadata), etc.
+    case {A,B,C,D} of
+        {127,_,_,_} -> throw(<<"SSRF blocked: 127/8 loopback">>);
+        {10,_,_,_}  -> throw(<<"SSRF blocked: 10/8 private">>);
+        {169,254,_,_} -> throw(<<"SSRF blocked: 169.254/16 link-local/metadata">>);
+        {192,168,_,_} -> throw(<<"SSRF blocked: 192.168/16 private">>);
+        {172,X,_,_} when X >= 16, X =< 31 -> throw(<<"SSRF blocked: 172.16/12 private">>);
+        {0,_,_,_}   -> throw(<<"SSRF blocked: 0.0.0.0/8">>);
+        _ -> ok
+    end;
+ensure_public_ip({0,0,0,0,0,0,0,1}) ->
+    throw(<<"SSRF blocked: ::1 loopback">>);
+ensure_public_ip({A,B,_,_,_,_,_,_}) ->
+    %% IPv6 blocks: unique local (fc00::/7) and link-local (fe80::/10)
+    %% fc00::/7 => first byte 0xFC or 0xFD
+    case A band 16#FE of
+        16#FC -> throw(<<"SSRF blocked: fc00::/7 unique-local">>);
+        _ -> ok
+    end,
+    %% fe80::/10 => first byte 0xFE and top two bits of second byte 10xxxxxx
+    case {A, (B band 16#C0)} of
+        {16#FE, 16#80} -> throw(<<"SSRF blocked: fe80::/10 link-local">>);
+        _ -> ok
+    end,
+    ok.
+
+host_to_list(H) when is_list(H)   -> H;
+host_to_list(H) when is_binary(H) -> binary_to_list(H).
+
+host_for_sni(H) when is_binary(H) -> H;
+host_for_sni(H) when is_list(H)   -> list_to_binary(H).
+
 
 gun_await(ConnPid, StreamRef, Context) ->
     case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
