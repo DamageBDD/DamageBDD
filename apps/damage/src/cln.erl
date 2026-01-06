@@ -415,7 +415,7 @@ open_best_peers_loop(
     SpendableLeftMsat,
     Opts
 ) ->
-    DryRun = maps:get(dry_run, Opts, true),
+    DryRun = maps:get(dry_run, Opts, false),
     Verbose = maps:get(verbose, Opts, true),
     InMode = maps:get(inbound_mode, Opts, soft_boost),
     MinRatio = maps:get(min_inbound_ratio, Opts, 1.0),
@@ -1387,7 +1387,7 @@ handle_call(
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
 
     %% Defaults
-    N = maps:get(n, Opts, 10),
+    N = maps:get(n, Opts, 100),
     MinInbound = maps:get(min_inbound_sats, Opts, 200000),
     MaxScan = maps:get(max_scan, Opts, 300),
 
