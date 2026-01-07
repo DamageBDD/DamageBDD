@@ -60,13 +60,11 @@
 ).
 
 -define(WEBHOOKS_CONTRACT,
-    % staging "ct_f5LMGRP1p7Vdmp8Y5TXih8bXn8Sx8HLTFMm7gt4dLXDeeuGvS"
     "ct_XDiXtNguPHqdFkR6q4AhtAWNnSMpvRsxuMVanNZM2EzR7yhZJ"
 ).
 
 -define(SCHEDULES_CONTRACT,
-    % schedules "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
-    "ct_G9RWbygCGihwbwbdVtMSYsLzrg7wWnVoqUTv5ffxKoHSkMjGU"
+    "ct_hCcHw4hNAkvbadmVrkCRQJxEqvx825hA4gL3gbf4Kh9hpRrwS"
 ).
 
 -define(MARKETS_CONTRACT,

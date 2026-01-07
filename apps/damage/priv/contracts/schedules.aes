@@ -1,30 +1,89 @@
 @compiler >= 6
 
 main contract Schedules =
-    record schedule =
-        { id : string, cron: string, feature_hash: string}
-    record state =
-        { owner      : address,
-          schedules  : map(address, map(string, schedule)) }
+  // -----------------------------
+  // Types / State
+  // -----------------------------
+  record schedule =
+    { id_hash      : hash        // stable key for events + storage
+    , id_plain     : string      // human id (kept in state)
+    , cron         : string      // encrypted or plain (your choice)
+    , feature_hash : string      // encrypted or plain (your choice)
+    }
 
-    stateful entrypoint init() : state =
-        { owner = Call.caller,
-          schedules = {} }
+  record state =
+    { owner     : address
+    , schedules : map(address, map(hash, schedule))
+    }
 
+  // -----------------------------
+  // Events (middleware-friendly)
+  // -----------------------------
+  // NOTE: events have an implicit topic = Blake2b(EventName).
+  // Keep fields indexable (address/hash/int/bool) so middleware can filter quickly.
+  datatype event =
+    ScheduleAdded(address, hash)
+    | ScheduleDeleted(address, hash)
 
-    stateful entrypoint add_schedule(id: string, feature_hash: string, cronspec: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
-        let newmap = oldmap{[id] = {id = id, cron = cronspec, feature_hash = feature_hash}}
-        put(state{schedules[Call.caller] = newmap})
+  // -----------------------------
+  // Init
+  // -----------------------------
+  stateful entrypoint init() : state =
+    { owner = Call.caller,
+      schedules = {}}
 
-    stateful entrypoint delete_schedule(id: string) =
-        let oldmap = Map.lookup_default(Call.caller, state.schedules, {})
-        let newmap = Map.delete(id, oldmap)
-        put(state{schedules[Call.caller] = newmap})
+  // -----------------------------
+  // Helpers
+  // -----------------------------
+  function mk_id_hash(id_plain : string) : hash =
+    Crypto.blake2b(id_plain)
 
-    stateful entrypoint get_schedules(): map(string, schedule) =
-        Map.lookup_default(Call.caller, state.schedules, {})
+  function get_user_map(who : address) : map(hash, schedule) =
+    Map.lookup_default(who, state.schedules, {})
 
-    stateful entrypoint get_all_schedules(): map(address, map(string, schedule)) =
-        require(Call.caller == state.owner, "only_owner_call_allowed")
-        state.schedules
+  // -----------------------------
+  // Write API
+  // -----------------------------
+  stateful entrypoint add_schedule(id_plain : string, cron : string, feature_hash : string) : hash =
+    let h = mk_id_hash(id_plain)
+    let user_map = get_user_map(Call.caller)
+    let sch : schedule =
+      { id_hash = h,
+        id_plain = id_plain,
+        cron = cron,
+        feature_hash = feature_hash}
+    put(state{ schedules[Call.caller] = user_map{[h] = sch} })
+    Chain.event(ScheduleAdded(Call.caller, h))
+    h
+
+  stateful entrypoint delete_schedule(id_plain : string) : bool =
+    let h = mk_id_hash(id_plain)
+    let user_map = get_user_map(Call.caller)
+    let existed = Map.member(h, user_map)
+    put(state{ schedules[Call.caller] = Map.delete(h, user_map) })
+    // Emit even if missing? Here: only emit when it existed.
+    if(existed)
+      Chain.event(ScheduleDeleted(Call.caller, h))
+    existed
+
+  // Optional: delete by hash directly (handy for middleware-driven UIs)
+  stateful entrypoint delete_schedule_by_hash(id_hash : hash) : bool =
+    let user_map = get_user_map(Call.caller)
+    let existed = Map.member(id_hash, user_map)
+    put(state{ schedules[Call.caller] = Map.delete(id_hash, user_map) })
+    if(existed)
+      Chain.event(ScheduleDeleted(Call.caller, id_hash))
+    existed
+
+  // -----------------------------
+  // Read API (still useful for direct contract calls)
+  // -----------------------------
+  entrypoint get_schedules() : map(hash, schedule) =
+    get_user_map(Call.caller)
+
+  entrypoint get_schedules_for(who : address) : map(hash, schedule) =
+    get_user_map(who)
+
+  entrypoint get_all_schedules() : map(address, map(hash, schedule)) =
+    state.schedules
+
