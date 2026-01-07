@@ -27,6 +27,7 @@
 -export([test_schedule/0]).
 -export([test_list_schedule/0]).
 -export([delete_resource/2]).
+-export([delete_schedule/2]).
 -export([cancel_all_schedules/0]).
 -export([get_schedules/1]).
 -export([deploy_schedules_contract/0]).
@@ -311,6 +312,7 @@ list_all_schedules() ->
     of
         %% Common wrapper (string keys)
         #{"return_type" := "ok", "return_value" := Results} ->
+            ?LOG_DEBUG("all schedules encrypted ~p", [Results]),
             Decrypted = decrypt_schedules(Results),
             ?LOG_DEBUG("all schedules ~p", [Decrypted]),
             Decrypted;
@@ -359,29 +361,28 @@ account_key_to_ak(Other) ->
     Other.
 
 delete_schedule(AeAccount, ScheduleId) ->
-    ScheduleIdHash = secrets:salted_hash(ScheduleId),
-    #{
-        decodedResult := [],
-        result :=
-            #{
-                log := [],
-                gasPrice := GasPrice,
-                callerId := AeAccount,
-                gasUsed := GasUsed,
-                returnType := <<"ok">>
-            }
-    } =
+    %ScheduleIdHash = secrets:salted_hash(ScheduleId),
+
+    #{"caller_id" :=
+          _AeAccountList,
+      "caller_nonce" := _Nonce,
+      "contract_id" :=
+          ?SCHEDULES_CONTRACT,
+      "gas_price" := GasPrice,"gas_used" := GasUsed,
+      "height" := Height,"log" := [],"return_type" := "ok",
+      "return_value" := {}} = 
         contract_call(
             AeAccount,
             "delete_schedule",
-            [ScheduleIdHash]
+            [binary_to_list(ScheduleId)]
         ),
+    Cancelled = erlcron:cancel(ScheduleId),
     ?LOG_DEBUG(
-        "call AE contract ~p gasprice ~p gasused ~p",
-        [AeAccount, GasPrice, GasUsed]
+        "call AE contract ~p gasprice ~p gasused ~p, height ~p, cancelled ~p",
+        [AeAccount, GasPrice, GasUsed, Height,Cancelled]
     ).
 
-add_schedule(AeAccount, Name, FeatureHash, Cron) ->
+add_schedule(AeAccount, Name, FeatureHash, Cron) when is_binary(AeAccount)->
     #{
         log := [],
         gasPrice := GasPrice,
@@ -601,9 +602,13 @@ test_list_schedule() ->
     ?LOG_DEBUG("schedules ~p", [Decrypted]),
     Decrypted.
 
-contract_call(AeAccount, Func, Args) ->
+contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
+
+    #{public_key:=PubKey, private_key := PrivateKey} = 
+     identity_server:get_account(AeAccount),
+    damage_ae:set_private_key(AeAccount, PrivateKey),
     damage_ae:contract_call_payfor_user(
-        AeAccount,
+    AeAccount,
         ?SCHEDULES_CONTRACT,
         "contracts/schedules.aes",
         Func,

@@ -165,7 +165,6 @@ is_authorized(Req, State0) ->
                 {ok, AeAccount, _} ->
                     case identity_server:get_account(AeAccount) of
                         #{public_key := AeAccount, private_key := PrivateKey} ->
-                            ?LOG_INFO("Got key", []),
                             {
                                 true,
                                 Req,
@@ -797,10 +796,6 @@ from_html(Req0, State) ->
         stream => Stream,
         color_formatter => ColorFormatter
     },
-    ?LOG_INFO(
-        "ok execute_feature from_html ~p ",
-        [Req1]
-    ),
     case execute_bdd(Context, State, Req1) of
         {_Status, _Resp} when Stream =:= maybe_stream ->
             %% all output has already gone via formatter+stream_reply
