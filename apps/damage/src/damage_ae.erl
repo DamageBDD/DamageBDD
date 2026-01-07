@@ -27,8 +27,10 @@
     code_change/3
 ]).
 -export([
-    transfer_damage_tokens/2,
-    transfer_damage_tokens/3,
+    transfer_damage/2,
+    transfer_damage/3,
+    transfer_hits/2,
+    transfer_hits/3,
     confirm_spend_all/0,
     start_batch_spend_timer/0,
     get_reports/1,
@@ -36,8 +38,8 @@
     get_domain_token/2,
     add_domain_token/3,
     revoke_domain_token/2,
-    get_ae_node/0,
-    get_ae_mdw_node/0,
+    with_ae_node/1,
+    with_ae_mdw_node/1,
     get_ae_mdw_ws_node/0,
     node_ae_balance/0,
     node_damage_balance/0,
@@ -52,6 +54,7 @@
     is_custodial/1,
     set_private_key/2,
     get_ae_balance/1,
+    deploy_damage_nft/0,
     contract_path/1
 ]).
 -export([
@@ -79,6 +82,7 @@
     balance/1,
     invalidate_cache/1,
     spend/2,
+    mint_nft_report/1,
     confirm_spend/2
 ]).
 -export([
@@ -101,7 +105,7 @@ ae_to_aetto(Ae) -> Ae * 1000000000000000.
 init([]) ->
     process_flag(trap_exit, true),
     ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
-    {ok, WS, _Path} = get_ae_mdw_node(),
+    {ok, WS, _Path} = get_ae_mdw_ws_node(),
     cln:register_listener(invoice_paid),
     {ok, #{heartbeat_timer => ConfirmSpendTimer, websocket => WS}};
 init([AeAccount, PrivateKey]) ->
@@ -293,8 +297,10 @@ handle_call(
     _From,
     #{public_key := AeAccount, private_key := PrivateKey} = State
 ) ->
+
+    ?LOG_INFO("calling contract_call_payfor_user ~p", [PrivateKey]),
     KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
-    Result = contract_call_payfor_user(
+    Result = do_contract_call_payfor_user(
         KeyPair,
         Contract,
         ContractSource,
@@ -317,108 +323,93 @@ handle_call(
     ),
     {reply, Result, State};
 handle_call({get_published, AeAccount}, _From, Cache) ->
-    case get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-            Path =
-                PathPrefix ++ "v3/accounts/" ++ AeAccount ++ "activities?type=aex141",
-            StreamRef = gun:get(ConnPid, Path),
-            Balance =
-                case read_stream(ConnPid, StreamRef) of
-                    #{amount := null} -> 0;
-                    #{amount := Balance0} -> Balance0
-                end,
-            {reply, Balance, Cache};
-        Err ->
-            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
-            {reply, {error, not_found}, Cache}
-    end;
+    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
+        Path =
+            PathPrefix ++ "v3/accounts/" ++ AeAccount ++ "activities?type=aex141",
+        StreamRef = gun:get(ConnPid, Path),
+        Balance =
+            case read_stream(ConnPid, StreamRef) of
+                #{amount := null} -> 0;
+                #{amount := Balance0} -> Balance0
+            end,
+        {reply, Balance, Cache}
+    end);
 handle_call(
     {get_last_test_status, AeAccount, FeatureHash, _Hours},
     _From,
     Cache
 ) ->
-    case get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-            %BlockHeight = get_block_height_since(Hours, ConnPid),
-            %?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
-            Path =
-                PathPrefix ++
-                    "v3/accounts/" ++
-                    binary_to_list(AeAccount) ++
-                    "/activities?owned_only=true&direction=backward&type=transactions&limit=100",
-            %++
-            %integer_to_list(BlockHeight),
-            ?LOG_DEBUG("Path ~p", [Path]),
-            StreamRef = gun:get(ConnPid, Path),
-            case read_stream(ConnPid, StreamRef) of
-                #{data := null} ->
-                    {reply, undefined, Cache};
-                #{data := Results} ->
-                    TxData = [extract_feature_hash(Result) || Result <- Results],
-                    case find_latest_record_with_feature_hash(TxData, FeatureHash) of
-                        #{
-                            <<"result_status">> :=
-                                <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>
-                        } ->
-                            {reply, "success", Cache};
-                        #{
-                            <<"result_status">> :=
-                                <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>
-                        } ->
-                            {reply, "failed", Cache};
-                        {error, not_found} ->
-                            {reply, "not_found", Cache};
-                        #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
-                            {reply, Result, Cache}
-                    end
-            end;
-        Err ->
-            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
-            {reply, {error, not_found}, Cache}
-    end;
+    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
+        %BlockHeight = get_block_height_since(Hours, ConnPid),
+        %?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
+        Path =
+            PathPrefix ++
+                "v3/accounts/" ++
+                binary_to_list(AeAccount) ++
+                "/activities?owned_only=true&direction=backward&type=transactions&limit=100",
+        %++
+        %integer_to_list(BlockHeight),
+        ?LOG_DEBUG("Path ~p", [Path]),
+        StreamRef = gun:get(ConnPid, Path),
+        case read_stream(ConnPid, StreamRef) of
+            #{data := null} ->
+                {reply, undefined, Cache};
+            #{data := Results} ->
+                TxData = [extract_feature_hash(Result) || Result <- Results],
+                case find_latest_record_with_feature_hash(TxData, FeatureHash) of
+                    #{
+                        <<"result_status">> :=
+                            <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>
+                    } ->
+                        {reply, "success", Cache};
+                    #{
+                        <<"result_status">> :=
+                            <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>
+                    } ->
+                        {reply, "failed", Cache};
+                    {error, not_found} ->
+                        {reply, "not_found", Cache};
+                    #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
+                        {reply, Result, Cache}
+                end
+        end
+    end);
 handle_call({events, ContractId, Limit}, _From, Cache) ->
-    case get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-            Path =
-                PathPrefix ++
-                    "v3/contracts/logs?direction=forward&contract_id=" ++
-                    ContractId ++
-                    "&limit=" ++ integer_to_list(Limit),
-            StreamRef = gun:get(ConnPid, Path),
+    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
+        Path =
+            PathPrefix ++
+                "v3/contracts/logs?direction=forward&contract_id=" ++
+                ContractId ++
+                "&limit=" ++ integer_to_list(Limit),
+        StreamRef = gun:get(ConnPid, Path),
 
-            Events =
-                case read_stream(ConnPid, StreamRef) of
-                    #{data := Data} ->
-                        Data;
-                    Other ->
-                        ?LOG_ERROR("Invalid response from events endpoint ~p", [Other]),
-                        []
-                end,
-            {reply, Events, Cache};
-        Err ->
-            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
-            {reply, {error, not_found}, Cache}
-    end;
+        Events =
+            case read_stream(ConnPid, StreamRef) of
+                #{data := Data} ->
+                    Data;
+                Other ->
+                    ?LOG_ERROR("Invalid response from events endpoint ~p", [Other]),
+                    []
+            end,
+        {reply, Events, Cache}
+    end);
 handle_call({reports, AeAccount}, _From, Cache) ->
-    case get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-            %TODO use events
-            Path =
-                PathPrefix ++
-                    "v3/accounts/" ++
-                    binary_to_list(AeAccount) ++
-                    "/activities?" ++
-                    "direction=backward" ++
-                    "&type=aex9" ++
-                    "&limit=10",
-            %?DAMAGE_TOKEN_CONTRACT ++
-            ?LOG_DEBUG("Path ~p", [Path]),
-            StreamRef = gun:get(ConnPid, Path),
-            {reply, read_stream(ConnPid, StreamRef), Cache};
-        Err ->
-            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
-            {reply, {error, not_found}, Cache}
-    end;
+    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
+        %TODO use events
+        Path =
+            PathPrefix ++
+                "v3/accounts/" ++
+                binary_to_list(AeAccount) ++
+                "/activities?" ++
+                "direction=backward" ++
+                "&type=aex9" ++
+                "&limit=10",
+        %?DAMAGE_TOKEN_CONTRACT ++
+        ?LOG_DEBUG("Path ~p", [Path]),
+        StreamRef = gun:get(ConnPid, Path),
+        catch gun:close(ConnPid),
+        {reply, read_stream(ConnPid, StreamRef), Cache}
+    end);
 handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
     Now = erlang:monotonic_time(second),
     case maps:get({balance, AeAccount}, Cache, none) of
@@ -432,7 +423,7 @@ handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
                     NewCache = maps:put({balance, AeAccount}, {ContractBalance, ExpiryTime}, Cache),
                     {reply, ContractBalance, NewCache};
                 Err ->
-                    ?LOG_DEBUG("ContractBalance failed ~p", [Err]),
+                    ?LOG_DEBUG("Balance fetch failed ~p", [Err]),
                     {reply, error, Cache}
             end
     end;
@@ -457,6 +448,9 @@ handle_call(
     #{public_key := AeAccount} = State
 ) ->
     {reply, false, maps:put(private_key, PrivateKey, State)};
+handle_call({transaction, Data}, _From, State) ->
+    ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
+    {reply, ok, State};
 handle_call(
     {
         confirm_spend,
@@ -485,35 +479,19 @@ handle_call(
             ?LOG_DEBUG("Amount 0: ~p", [Amount]),
             {reply, Context, Cache}
     end;
-handle_call({transaction, Data}, _From, State) ->
-    ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
-    {reply, ok, State}.
-
-handle_cast(
-    {
-        confirm_spend,
-        #{
-            public_key := AeAccount,
-            feature_hash := FeatureHash,
-            report_hash := _ReportHash,
-            node_public_key := _NodePublicKey
-        } = _RunRecord
-    },
-    #{public_key := AeAccount, private_key := none, username := <<"wallet">>} = Cache
-) ->
-    ?LOG_DEBUG("confirm spend on wallet account ~p ~p", [AeAccount, FeatureHash]),
-    {noreply, Cache};
-handle_cast(
+handle_call(
     {
         confirm_spend,
         #{
             public_key := AeAccount,
             feature_hash := FeatureHash,
             report_hash := ReportHash,
-            node_public_key := NodePublicKey
+            node_public_key := NodePublicKey,
+            private_key := PrivateKey
         } = _RunRecord
     },
-    #{public_key := AeAccount, private_key := PrivateKey} = Cache
+    _From,
+    #{public_key := AeAccount} = Cache
 ) ->
     KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
     SpendRecord = #{"report_hash" => binary_to_list(ReportHash)},
@@ -522,7 +500,7 @@ handle_cast(
         {_, Amount} when Amount > 0 ->
             ?LOG_INFO("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
             case
-                contract_call_payfor_user(
+                do_contract_call_payfor_user(
                     KeyPair,
                     ?DAMAGE_TOKEN_CONTRACT,
                     "contracts/token.aes",
@@ -556,15 +534,15 @@ handle_cast(
                             Cache
                         ),
                     ?LOG_DEBUG("confirm spend cached ~p", [NewCache]),
-                    {noreply, maps:put({balance, AeAccount}, none, NewCache)};
+                    {reply, Amount, maps:put({balance, AeAccount}, none, NewCache)};
                 #{status := <<"fail">>} ->
                     ?LOG_DEBUG("confirm spend failed ~p", [Cache]),
-                    {noreply, Cache}
+                    {reply, Amount, Cache}
             end;
         {_, Amount} ->
             ?LOG_DEBUG("Amount 0: ~p", [Amount]),
-            {noreply, Cache}
-    end;
+            {reply, Amount, Cache}
+    end.
 handle_cast({spend, AeAccount, Amount}, Cache) when is_list(AeAccount) ->
     handle_cast({spend, list_to_binary(AeAccount), Amount}, Cache);
 handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
@@ -582,8 +560,8 @@ damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
     case binary:split(Label, <<":">>, [global]) of
         [<<"damage">>, AeAccount, AmountDamage, _Timestamp] ->
             ?LOG_INFO("Transfering ~p damage to ~p", [AmountDamage, AeAccount]),
-            transfer_damage_tokens(
-                AeAccount, trunc(binary_to_integer(AmountDamage) * math:pow(10, ?DAMAGE_DECIMALS))
+            transfer_damage(
+                AeAccount, binary_to_integer(AmountDamage)
             );
         Err ->
             ?LOG_INFO("damage_ae ignores label: ~p", [Err])
@@ -694,10 +672,11 @@ confirm_spend(Config, #{public_key := AeAccount} = Context) ->
     ?LOG_INFO("confirm_spend ~p", [proplists:get_value(dry_run, Config, none)]),
     case proplists:get_value(dry_run, Config, none) of
         true ->
-            gen_server:call(DamageAEPid, {confirm_spend, maps:put(dry_run, true, Context)});
+            gen_server:call(
+                DamageAEPid, {confirm_spend, maps:put(dry_run, true, Context)}, ?AE_TIMEOUT
+            );
         _ ->
-            gen_server:cast(DamageAEPid, {confirm_spend, Context}),
-            Context
+            gen_server:call(DamageAEPid, {confirm_spend, Context}, ?AE_TIMEOUT)
     end.
 
 delete_account(AeAccount) ->
@@ -743,16 +722,26 @@ read_stream(ConnPid, StreamRef) ->
             ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
             Default
     end.
+with_ae_node(Fun) ->
+    {ok, ConnPid, PathPrefix} = get_ae_node(),
+    try
+        Fun(ConnPid, PathPrefix)
+    after
+        catch gun:close(ConnPid)
+    end.
 
 get_ae_balance(AeAccount) when is_binary(AeAccount) ->
     get_ae_balance(binary_to_list(AeAccount));
 get_ae_balance(AeAccount) ->
-    {ok, ConnPid, PathPrefix} = get_ae_node(),
-    Path = PathPrefix ++ "v3/accounts/" ++ AeAccount,
-    StreamRef = gun:get(ConnPid, Path),
-    read_stream(ConnPid, StreamRef).
+    with_ae_node(fun(ConnPid, PathPrefix) ->
+        Path = PathPrefix ++ "v3/accounts/" ++ AeAccount,
+        StreamRef = gun:get(ConnPid, Path),
+        read_stream(ConnPid, StreamRef)
+    end).
 
-transfer_damage_tokens(AeAccount, Amount) ->
+transfer_damage(AeAccount, Damage) when is_integer(Damage) ->
+    transfer_hits(AeAccount, trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))).
+transfer_hits(AeAccount, Hits) when is_integer(Hits) ->
     % transfer damage tokens from admin account to to account
     ContractCall =
         contract_call(
@@ -760,19 +749,21 @@ transfer_damage_tokens(AeAccount, Amount) ->
             ?DAMAGE_TOKEN_CONTRACT,
             "contracts/token.aes",
             "transfer",
-            [AeAccount, Amount]
+            [AeAccount, Hits]
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
     ContractCall.
 
-transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
+transfer_damage(FromAccount, ToAeAccount, Damage) when is_integer(Damage) ->
+    transfer_hits(FromAccount, ToAeAccount, trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))).
+transfer_hits(FromAccount, ToAeAccount, Hits) when is_integer(Hits) ->
     Result =
         contract_call(
             account_keypair(FromAccount),
             ?DAMAGE_TOKEN_CONTRACT,
             "contracts/token.aes",
             "transfer",
-            [ToAeAccount, Amount]
+            [ToAeAccount, Hits]
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [Result]),
     Result.
@@ -797,7 +788,7 @@ contract_path(Contract0) ->
     %% Strip "contracts/" prefix if present
     Contract1 =
         case string:prefix(Contract0, "contracts/") of
-            undefined -> Contract0;
+            nomatch -> Contract0;
             Name -> Name
         end,
     %% Ensure it ends with ".aes"
@@ -914,9 +905,9 @@ payfor_tx(
             Error
     end.
 
-contract_call_payfor_user(
+do_contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
-) ->
+) when is_binary(PrivateKey) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Fee = min_fee(),
@@ -958,8 +949,10 @@ contract_call_payfor_user(
             wait_tx(ContractCallTxHash);
         Error ->
             Error
-    end;
-contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
+    end.
+contract_call_payfor_user(
+    AeAccount, Contract, ContractSource, Func, Args
+) when is_binary(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(
         DamageAEPid,
@@ -1168,20 +1161,23 @@ contract_deploy_for(
             Error
     end.
 
+with_ae_mdw_node(Fun) ->
+    {ok, ConnPid, PathPrefix} = get_ae_mdw_node(),
+    try
+        Fun(ConnPid, PathPrefix)
+    after
+        catch gun:close(ConnPid)
+    end.
+
 middleware_balance(Account) when is_binary(Account) ->
     middleware_balance(binary_to_list(Account));
 middleware_balance(Account) ->
-    case get_ae_mdw_node() of
-        {ok, ConnPid, PathPrefix} ->
-            Path = PathPrefix ++ "v3/aex9/" ++ ?DAMAGE_TOKEN_CONTRACT ++ "/balances/" ++ Account,
-            ?LOG_INFO("Path ~p", [Path]),
-            StreamRef = gun:get(ConnPid, Path),
-            #{amount := Amount} = read_stream(ConnPid, StreamRef),
-            Amount;
-        Error ->
-            ?LOG_ERROR("Failed to find block timestamp ~p", [Error]),
-            0
-    end.
+    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
+        Path = PathPrefix ++ "v3/aex9/" ++ ?DAMAGE_TOKEN_CONTRACT ++ "/balances/" ++ Account,
+        StreamRef = gun:get(ConnPid, Path),
+        #{amount := Amount} = read_stream(ConnPid, StreamRef),
+        Amount
+    end).
 contract_balance(Account) ->
     #{public_key := NodeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     #{
@@ -1473,6 +1469,17 @@ deploy_node_registry() ->
         AccountKeypair, "contracts/AccountRegistry.aes", []
     ),
     ContractId.
+
+deploy_damage_nft() ->
+    AccountKeypair = secrets:node_keypair(),
+    #{"contract_id" := ContractId} = contract_deploy_for(
+        AccountKeypair, "contracts/AccountRegistry.aes", []
+    ),
+    ContractId.
+
+mint_nft_report(_TestTx) ->
+    ok.
+
 test_contract_deploy() ->
     KeyPair = secrets:node_keypair(),
     #{"contract_id" := ContractId} = contract_deploy(KeyPair, "contracts/test.aes", []),
@@ -1525,27 +1532,20 @@ test_find_block() ->
     {Today, _Now} = calendar:local_time(),
     Yesterday = date_util:subtract(Today, {days, 1}),
     ADayAgo = date_util:date_to_epoch(Yesterday),
-    case get_ae_mdw_node() of
-        {ok, ConnPid, _PathPrefix} ->
-            case find_block_at_timestamp(ADayAgo * 1000, ConnPid) of
-                {ok, Block, Mblocks} ->
-                    ?LOG_INFO("Found block ~p ~p", [Block, Mblocks]);
-                Error ->
-                    ?LOG_ERROR("block not found ~p", [Error])
-            end;
-        Error ->
-            ?LOG_ERROR("Failed to find block timestamp ~p", [Error])
-    end.
-
+    with_ae_mdw_node(fun(ConnPid, _PathPrefix) ->
+        case find_block_at_timestamp(ADayAgo * 1000, ConnPid) of
+            {ok, Block, Mblocks} ->
+                ?LOG_INFO("Found block ~p ~p", [Block, Mblocks]);
+            Error ->
+                ?LOG_ERROR("block not found ~p", [Error])
+        end
+    end).
 test_get_block_height_since() ->
-    case get_ae_mdw_node() of
-        {ok, ConnPid, _PathPrefix} ->
-            Result = get_block_height_since(36, ConnPid),
-            ?LOG_INFO("block height ~p", [Result]),
-            Result;
-        Err ->
-            ?LOG_DEBUG("Finding ae node failed ~p", [Err])
-    end.
+    with_ae_mdw_node(fun(ConnPid, _PathPrefix) ->
+        Result = get_block_height_since(36, ConnPid),
+        ?LOG_INFO("block height ~p", [Result]),
+        Result
+    end).
 
 test_verify_message() ->
     #{public_key := PubKey, private_key := PrivateKey} = secret:node_keypair(),
