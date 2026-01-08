@@ -6,7 +6,8 @@ Feature: Lightning Swap Options API (issue-linked)
   #  - Fetch raw AE contract logs from MDW for the LightningSwapOption contract
   Background:
 
-    Given I am using server "https://run.staging.damagebdd.com"
+    Given I am using server "https://run.dev.damagebdd.com"
+    And I set "Authorization" header to "Bearer {{{access_token}}}"
     And I set "accept" header to "application/json"
     And I set "content-type" header to "application/json"
 

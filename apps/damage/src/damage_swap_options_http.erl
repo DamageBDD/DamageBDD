@@ -46,17 +46,53 @@ trails() ->
                 post =>
                     #{
                         tags => ?TRAILS_TAG,
-                        description => "Create a Lightning swap option (returns bolt11 + payment_hash).",
+                        description =>
+                            "Create a Lightning swap option (returns bolt11 + payment_hash).",
                         produces => ["application/json"],
                         parameters =>
                             [
-                                #{name => <<"contract_id">>, in => <<"body">>, required => true, type => <<"string">>},
-                                #{name => <<"issue_url">>,   in => <<"body">>, required => true, type => <<"string">>},
-                                #{name => <<"buyer_ak">>,    in => <<"body">>, required => true, type => <<"string">>},
-                                #{name => <<"seller_ak">>,   in => <<"body">>, required => true, type => <<"string">>},
-                                #{name => <<"sats_amount">>, in => <<"body">>, required => true, type => <<"integer">>},
-                                #{name => <<"damage_amount">>, in => <<"body">>, required => true, type => <<"integer">>},
-                                #{name => <<"expiry_seconds">>, in => <<"body">>, required => true, type => <<"integer">>}
+                                #{
+                                    name => <<"contract_id">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"issue_url">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"buyer_ak">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"seller_ak">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"sats_amount">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"integer">>
+                                },
+                                #{
+                                    name => <<"damage_amount">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"integer">>
+                                },
+                                #{
+                                    name => <<"expiry_seconds">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"integer">>
+                                }
                             ]
                     }
             }
@@ -94,7 +130,7 @@ to_json(Req, State) ->
 
     %% Enrich with issue_url (stored locally keyed by payment_hash)
     Opts0 =
-        [ enrich_issue(Opt) || Opt <- Opts0 ],
+        [enrich_issue(Opt) || Opt <- Opts0],
 
     {jsx:encode(Opts0), Req, State}.
 
@@ -127,16 +163,16 @@ from_json(Req, State) ->
     case Decoded of
         {error, bad_json} ->
             reply_json(Req, State, 400, #{error => <<"Json decoding failed.">>});
-
-        {ok, #{
-            contract_id := CtId0,
-            issue_url := IssueUrl0,
-            buyer_ak := Buyer0,
-            seller_ak := Seller0,
-            sats_amount := Sats0,
-            damage_amount := Damage0,
-            expiry_seconds := Ttl0
-        } = _In} ->
+        {ok,
+            #{
+                contract_id := CtId0,
+                issue_url := IssueUrl0,
+                buyer_ak := Buyer0,
+                seller_ak := Seller0,
+                sats_amount := Sats0,
+                damage_amount := Damage0,
+                expiry_seconds := Ttl0
+            } = _In} ->
             CtId = to_bin(CtId0),
             IssueUrl = to_bin(IssueUrl0),
             Buyer = to_bin(Buyer0),
@@ -168,18 +204,18 @@ from_json(Req, State) ->
                                     }
                                 ),
                             reply_json(Req, State, 201, Out);
-
                         {error, Reason} ->
-                            reply_json(Req, State, 500, #{error => to_bin(io_lib:format("~p", [Reason]))});
-
+                            reply_json(Req, State, 500, #{
+                                error => to_bin(io_lib:format("~p", [Reason]))
+                            });
                         Other ->
-                            reply_json(Req, State, 500, #{error => to_bin(io_lib:format("~p", [Other]))})
+                            reply_json(Req, State, 500, #{
+                                error => to_bin(io_lib:format("~p", [Other]))
+                            })
                     end;
-
                 {error, Why} ->
                     reply_json(Req, State, 500, #{error => to_bin(io_lib:format("~p", [Why]))})
             end;
-
         {ok, _Missing} ->
             reply_json(Req, State, 400, #{error => <<"Missing required fields.">>})
     end.
@@ -196,7 +232,8 @@ ensure_issue_table() ->
             ok
     end.
 
-maybe_store_issue(undefined, _IssueUrl) -> ok;
+maybe_store_issue(undefined, _IssueUrl) ->
+    ok;
 maybe_store_issue(PaymentHash, IssueUrl) ->
     ets:insert(?ISSUE_TAB, {PaymentHash, IssueUrl}),
     ok.
