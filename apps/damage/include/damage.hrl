@@ -66,6 +66,9 @@
 -define(SCHEDULES_CONTRACT,
     "ct_hCcHw4hNAkvbadmVrkCRQJxEqvx825hA4gL3gbf4Kh9hpRrwS"
 ).
+-define(SWAP_OPTIONS_CONTRACT,
+    "ct_2T1Zv7DnUgxWxCDWXe4i5649Tyx1uxBeBk7SUymUWpbpABiMhg"
+).
 
 -define(MARKETS_CONTRACT,
     "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"

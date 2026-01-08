@@ -1,178 +1,288 @@
 // LightningSwapOption.aes
-// Registry for DAMAGE ↔ Lightning SAT swap options.
-// On-chain we only track intent + state; the SATs are locked in a CLN
-// hold invoice off-chain and the orchestrator (damage_swap_option)
-// calls `mark_exercised` once the invoice is paid.
+// Offer book + option registry for DAMAGE ↔ Lightning SAT swaps.
+//
+// Flow:
+//  - Sellers publish OFFERS (with lnaddress, amounts, ttl).
+//  - Buyer EXECUTES an offer -> creates an OPTION (Open, no payment hash yet).
+//  - Orchestrator resolves lnaddress, fetches invoice, obtains payment_hash.
+//  - Orchestrator ATTACHES payment_hash to the option.
+//  - Once invoice is paid, orchestrator MARKS option exercised.
+//
+// @compiler >= 6
+
+// LightningSwapOption.aes
+// Offer book + option registry for DAMAGE ↔ Lightning SAT swaps.
+//
+// @compiler >= 6
+include "List.aes"
 
 contract LightningSwapOption =
 
-  // Option lifecycle
   datatype option_state =
     Open
     | Exercised
     | Expired
     | Cancelled
 
-  // Core option record
-  record option =
-    { id              : int
-    , buyer           : address      // receives DAMAGE
-    , seller          : address      // provides DAMAGE liquidity
-    , damage_amount   : int          // in smallest DAMAGE unit (10^-? decimals)
-    , sats_amount     : int          // sats locked in the Lightning hold invoice
-    , premium         : int          // optional, in sats or DAMAGE (off-chain convention)
-    , created_at      : int          // Chain.timestamp at creation
-    , expiry          : int          // unix timestamp; option invalid after this
-    , ln_payment_hash : hash         // CLN hold invoice payment_hash
-    , state           : option_state
-    }
+  record offer =
+    { id            : int,
+      seller        : address,
+      lnaddress     : string,
+      damage_amount : int,
+      sats_amount   : int,
+      premium       : int,
+      ttl_seconds   : int,
+      created_at    : int,
+      active        : bool}
+
+  // IMPORTANT: don't name this record `option` (Sophia has built-in option('a))
+  record swap_option =
+    { id              : int,
+      buyer           : address,
+      seller          : address,
+      lnaddress       : string,
+      damage_amount   : int,
+      sats_amount     : int,
+      premium         : int,
+      created_at      : int,
+      expiry          : int,
+      ln_payment_hash : option(hash),
+      state           : option_state}
 
   datatype event =
-    OptionCreated(indexed int, indexed address, indexed address)
+    OfferAdded(indexed int, indexed address)
+    | OfferDeactivated(indexed int, indexed address)
+    | OfferReactivated(indexed int, indexed address)
+    | OptionCreated(indexed int, indexed address, indexed address)
+    | OptionPaymentHashAttached(indexed int, indexed address)
     | OptionExercised(indexed int, indexed address, indexed address)
     | OptionCancelled(indexed int, indexed address, indexed address)
     | OptionExpired(indexed int, indexed address, indexed address)
 
-
-  // Global contract state
   record state =
-    { next_id : int
-    , options : map(int, option)
-    , admin   : address   // Damage node that orchestrates swaps
-    }
+    { next_option_id : int,
+      next_offer_id  : int,
+      options        : map(int, swap_option),
+      offers         : map(int, offer),
+      admin          : address}
 
-  // ------------------------------------------------------------
-  // Init
-  // ------------------------------------------------------------
-
-  stateful entrypoint init(admin' : address) : state =
-    { next_id = 0
-    , options = {}
-    , admin   = admin'
-    }
-
-  // ------------------------------------------------------------
-  // Internal helpers
-  // ------------------------------------------------------------
+  stateful entrypoint init(admin : address) : state =
+    { next_option_id = 0,
+      next_offer_id  = 0,
+      options        = {},
+      offers         = {},
+      admin          = admin}
 
   function require_admin() =
     require(Call.caller == state.admin, "ONLY_ADMIN")
 
-  // Fetch an option or fail
-  function get_option_unsafe(id : int) : option =
+  function get_offer_unsafe(id : int) : offer =
+    switch(Map.lookup(id, state.offers))
+      None    => abort("OFFER_NOT_FOUND")
+      Some(o) => o
+
+  function get_option_unsafe(id : int) : swap_option =
     switch(Map.lookup(id, state.options))
       None    => abort("OPTION_NOT_FOUND")
       Some(o) => o
 
-  // Save updated option back into state
-  function put_option(o : option) =
-    put(state{ options[id = o.id] = o })
+  stateful function put_offer(o : offer) =
+    put(state{ offers[o.id] = o })
 
-  // ------------------------------------------------------------
-  // Public read-only entrypoints
-  // ------------------------------------------------------------
 
-  entrypoint get_option(id : int) : option =
+  stateful function put_option(o : swap_option) =
+    put(state{ options[o.id] = o })
+
+  // -----------------------------
+  // Offers (read)
+  // -----------------------------
+  entrypoint get_offer(id : int) : offer =
+    get_offer_unsafe(id)
+
+            
+  function offer_k(p : (int * offer)) : int =
+    let (k, _v) = p
+    k
+
+  entrypoint list_offer_ids() : list(int) =
+    List.map(offer_k, Map.to_list(state.offers))
+
+
+  function offer_v(p : (int * offer)) : offer =
+    let (_k, v) = p
+    v
+
+  entrypoint list_offers() : list(offer) =
+    List.map(offer_v, Map.to_list(state.offers))
+
+
+  // -----------------------------
+  // Options (read)
+  // -----------------------------
+  entrypoint get_option(id : int) : swap_option =
     get_option_unsafe(id)
 
-  // cheap enumerable view for UI (not efficient for huge maps,
-  // but fine for low option counts)
-  entrypoint list_ids() : list(int) =
-    Map.keys(state.options)
+  function option_k(p : (int * swap_option)) : int =
+    let (k, _v) = p
+    k
+  
+  entrypoint list_option_ids() : list(int) =
+    List.map(option_k, Map.to_list(state.options))
 
-  entrypoint get_admin() : address = state.admin
+            
 
-  // ------------------------------------------------------------
-  // Mutation entrypoints
-  // ------------------------------------------------------------
+  entrypoint get_admin() : address =
+    state.admin
 
-  // Called when we *create* a Lightning hold invoice and want to
-  // register the option intent on-chain.
-  //
-  // Only the seller or admin can create options. You can enforce more
-  // complex rules off-chain in the gen_server.
-  //
-  // Returns: id of newly created option.
-  stateful entrypoint create_option(
-      buyer           : address,
-      seller          : address,
-      damage_amount   : int,
-      sats_amount     : int,
-      premium         : int,
-      expiry          : int,   // unix timestamp
-      ln_payment_hash : hash
+  // -----------------------------
+  // Offer mutation
+  // -----------------------------
+  stateful entrypoint add_offer(
+      lnaddress     : string,
+      damage_amount : int,
+      sats_amount   : int,
+      premium       : int,
+      ttl_seconds   : int
     ) : int =
-    let now = Chain.timestamp
-    require(expiry > now, "EXPIRY_IN_PAST")
+    require(lnaddress != "", "LNADDRESS_EMPTY")
+
     require(damage_amount > 0, "DAMAGE_ZERO")
     require(sats_amount > 0, "SATS_ZERO")
+    require(ttl_seconds > 0, "TTL_ZERO")
 
-    // Only seller or admin can propose
-    require(
-      (Call.caller == seller) || (Call.caller == state.admin),
-      "UNAUTHORISED_CREATOR"
-    )
+    let id  = state.next_offer_id
+    let now = Chain.timestamp
 
-    let id = state.next_id
+    let o : offer =
+      { id            = id,
+        seller        = Call.caller,
+        lnaddress     = lnaddress,
+        damage_amount = damage_amount,
+        sats_amount   = sats_amount,
+        premium       = premium,
+        ttl_seconds   = ttl_seconds,
+        created_at    = now,
+        active        = true}
 
-    let o : option =
-      { id              = id
-      , buyer           = buyer
-      , seller          = seller
-      , damage_amount   = damage_amount
-      , sats_amount     = sats_amount
-      , premium         = premium
-      , created_at      = now
-      , expiry          = expiry
-      , ln_payment_hash = ln_payment_hash
-      , state           = Open
-      }
-
-    put(
-      state{
-        next_id = id + 1,
-        options[id] = o
-      }
-    )
-    Chain.event(OptionCreated(id, buyer, seller))
+    put(state{ next_offer_id = id + 1, offers[id] = o })
+    Chain.event(OfferAdded(id, Call.caller))
     id
 
-  // Mark the option as exercised after the Lightning hold invoice
-  // is irrevocably paid. Only admin should do this (the gen_server
-  // will check the payment on CLN).
+  stateful entrypoint add_offer_for(
+      seller        : address,
+      lnaddress     : string,
+      damage_amount : int,
+      sats_amount   : int,
+      premium       : int,
+      ttl_seconds   : int
+    ) : int =
+    require_admin()
+    require(lnaddress != "", "LNADDRESS_EMPTY")
+    require(damage_amount > 0, "DAMAGE_ZERO")
+    require(sats_amount > 0, "SATS_ZERO")
+    require(ttl_seconds > 0, "TTL_ZERO")
+
+    let id  = state.next_offer_id
+    let now = Chain.timestamp
+
+    let o : offer =
+      { id            = id,
+        seller        = seller,
+        lnaddress     = lnaddress,
+        damage_amount = damage_amount,
+        sats_amount   = sats_amount,
+        premium       = premium,
+        ttl_seconds   = ttl_seconds,
+        created_at    = now,
+        active        = true}
+
+    put(state{ next_offer_id = id + 1, offers[id] = o })
+    Chain.event(OfferAdded(id, seller))
+    id
+
+  stateful entrypoint set_offer_active(id : int, active : bool) : unit =
+    let o = get_offer_unsafe(id)
+    require((Call.caller == o.seller) || (Call.caller == state.admin), "UNAUTHORISED_OFFER_EDIT")
+
+    if(active)
+      Chain.event(OfferReactivated(id, o.seller))
+    else
+      Chain.event(OfferDeactivated(id, o.seller))
+
+    put_offer(o{ active = active })
+
+  // -----------------------------
+  // Option creation from offer
+  // -----------------------------
+  stateful entrypoint execute_offer(offer_id : int, buyer : address) : int =
+    let off = get_offer_unsafe(offer_id)
+    require(off.active, "OFFER_INACTIVE")
+
+    let now    = Chain.timestamp
+    let expiry = now + off.ttl_seconds
+    require(expiry > now, "EXPIRY_IN_PAST")
+
+    let id = state.next_option_id
+
+    let opt : swap_option =
+      { id              = id,
+        buyer           = buyer,
+        seller          = off.seller,
+        lnaddress       = off.lnaddress,
+        damage_amount   = off.damage_amount,
+        sats_amount     = off.sats_amount,
+        premium         = off.premium,
+        created_at      = now,
+        expiry          = expiry,
+        ln_payment_hash = None,
+        state           = Open}
+
+    put(state{ next_option_id = id + 1, options[id] = opt })
+    Chain.event(OptionCreated(id, buyer, off.seller))
+    id
+
+  // Attach hash after LNURL invoice fetched off-chain
+  stateful entrypoint attach_payment_hash(id : int, payment_hash : hash) : unit =
+    require_admin()
+    let o = get_option_unsafe(id)
+
+    require(o.state == Open, "NOT_OPEN")
+    require(Chain.timestamp =< o.expiry, "EXPIRED")
+
+    switch(o.ln_payment_hash)
+      None =>
+        put_option(o{ ln_payment_hash = Some(payment_hash) })
+        Chain.event(OptionPaymentHashAttached(id, o.seller))
+      Some(_) =>
+        abort("HASH_ALREADY_SET")
+
   stateful entrypoint mark_exercised(id : int, payment_hash : hash) : unit =
     require_admin()
     let o = get_option_unsafe(id)
 
     require(o.state == Open, "NOT_OPEN")
-    require(Chain.timestamp <= o.expiry, "EXPIRED")
-    require(payment_hash == o.ln_payment_hash, "HASH_MISMATCH")
-    Chain.event(OptionExercised(id, buyer, seller))
+    require(Chain.timestamp =< o.expiry, "EXPIRED")
 
-    put_option(o{ state = Exercised })
+    switch(o.ln_payment_hash)
+      None        => abort("NO_PAYMENT_HASH")
+      Some(h) =>
+        require(h == payment_hash, "HASH_MISMATCH")
+        put_option(o{ state = Exercised })
+        Chain.event(OptionExercised(id, o.buyer, o.seller))
 
-  // Mark option as expired (after expiry). Anyone can call this to
-  // make state consistent; no economic effect beyond the flag.
   stateful entrypoint mark_expired(id : int) : unit =
     let o = get_option_unsafe(id)
     require(o.state == Open, "NOT_OPEN")
     require(Chain.timestamp > o.expiry, "NOT_YET_EXPIRED")
 
-    Chain.event(OptionExpired(id, buyer, seller))
     put_option(o{ state = Expired })
+    Chain.event(OptionExpired(id, o.buyer, o.seller))
 
-  // Allow seller or admin to cancel before expiry, *as long as* the
-  // option hasn’t already been exercised.
-  // You can enforce “no cancel after LN invoice issued” in the
-  // orchestrator if you want stricter semantics.
   stateful entrypoint cancel(id : int) : unit =
     let o = get_option_unsafe(id)
-
     require(o.state == Open, "NOT_OPEN")
-    require(
-      (Call.caller == o.seller) || (Call.caller == state.admin),
-      "UNAUTHORISED_CANCEL"
-    )
+    require((Call.caller == o.seller) || (Call.caller == state.admin), "UNAUTHORISED_CANCEL")
 
-    Chain.event(OptionCancelled(id, buyer, seller))
     put_option(o{ state = Cancelled })
+    Chain.event(OptionCancelled(id, o.buyer, o.seller))
+
