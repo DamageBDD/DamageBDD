@@ -85,6 +85,7 @@
 -export([start/0, stop/0]).
 -export([start/2, stop/1]).
 
+-include_lib("kernel/include/logger.hrl").
 
 %%% Types
 
@@ -856,6 +857,7 @@ channel_snapshot_solo(ChannelId, FromId, Payload, TTL, Fee, Nonce) ->
         fee        => Fee,
         nonce      => Nonce
     },
+             ?LOG_INFO("channel_snapshot_solo ~p", [Body]),
     zj:binary_encode(Body).
 
 
@@ -1506,11 +1508,26 @@ opaque_type(Params, #{variant := VariantDefs}) ->
     end,
     Variants = lists:map(ConvertVariant, VariantDefs),
     {variant, Variants};
+opaque_type(_Params, Name) when is_atom(Name) ->
+    %% Builtins like bytes may arrive as atoms from ACI JSON decoding
+    Name;
+opaque_type(_Params, N) when is_integer(N) ->
+    %% Parametric args like bytes(32) may arrive as bare integers
+    N;
 opaque_type(Params, #{tuple := TypeDefs}) ->
     {tuple, [opaque_type(Params, Type) || Type <- TypeDefs]};
 opaque_type(Params, Pair) when is_map(Pair) ->
     [{Name, TypeArgs}] = maps:to_list(Pair),
-    {opaque_type_name(Name), [opaque_type(Params, Arg) || Arg <- TypeArgs]}.
+    %% Some parametric types come through as a single arg (integer) not a list.
+    Args =
+        case TypeArgs of
+            L when is_list(L)    -> L;
+            N when is_integer(N) -> [N];
+            B when is_binary(B)  -> [B];
+            A when is_atom(A)    -> [A];
+            Other                -> [Other]
+        end,
+    {opaque_type_name(Name), [opaque_type(Params, Arg) || Arg <- Args]}.
 
 % atoms for builtins, lists for user defined types
 opaque_type_name(<<"int">>)      -> integer;
@@ -1521,7 +1538,13 @@ opaque_type_name(<<"option">>)   -> option;
 opaque_type_name(<<"list">>)     -> list;
 opaque_type_name(<<"map">>)      -> map;
 opaque_type_name(<<"string">>)   -> string;
-opaque_type_name(Name)           -> binary_to_list(Name).
+opaque_type_name(<<"bytes">>)    -> bytes;
+opaque_type_name(bytes)          -> bytes;
+%% Be tolerant: some ACI decoders yield atoms for names
+opaque_type_name(Name) when is_atom(Name) ->
+    Name;
+opaque_type_name(Name) when is_binary(Name) ->
+    binary_to_list(Name).
 
 flatten_opaque_type(T, Types) ->
     case normalize_opaque_type(T, Types) of
@@ -1565,7 +1588,14 @@ flatten_opaque_variants([{Name, Elems} | Rest], Types, Acc) ->
     end;
 flatten_opaque_variants([], _Types, Acc) ->
     {ok, lists:reverse(Acc)}.
-
+%% ------------------------------------------------------------------
+%% Literal parameters (e.g. bytes(32))
+%%
+%% Integers are NOT types; they are already-normalized parameters.
+%% Treat them as terminal nodes during flattening.
+%% ------------------------------------------------------------------
+flatten_normalized_type(N, _Types) when is_integer(N) ->
+    {ok, N};
 flatten_normalized_type(PrimitiveType, _Types) when is_atom(PrimitiveType) ->
     {ok, PrimitiveType};
 flatten_normalized_type({variant, VariantsOpaque}, Types) ->
@@ -1589,6 +1619,10 @@ normalize_opaque_type(T, Types) ->
         false -> normalize_opaque_type(T, Types, true);
         true  -> {ok, true, T, T}
     end.
+normalize_opaque_type(N, _Types, _IsFirst) when is_integer(N) ->
+    {ok, true, N, N};
+
+
 
 % FIXME detect infinite loops
 % FIXME detect builtins with the wrong number of arguments
@@ -1599,6 +1633,7 @@ normalize_opaque_type({option, [T]}, _Types, IsFirst) ->
     {ok, IsFirst, {option, [T]}, {variant, [{"None", []}, {"Some", [T]}]}};
 normalize_opaque_type(T, Types, IsFirst) when is_list(T) ->
     normalize_opaque_type({T, []}, Types, IsFirst);
+
 normalize_opaque_type({T, TypeArgs}, Types, IsFirst) when is_list(T) ->
     case maps:find(T, Types) of
         %{error, invalid_aci}; % FIXME more info
@@ -1638,6 +1673,8 @@ normalize_opaque_type3(NextT, Types) ->
         false -> normalize_opaque_type(NextT, Types, false);
         true  -> {ok, false, NextT, NextT}
     end.
+
+type_is_expanded(X) when is_integer(X)   -> true;
 
 % Strings indicate names that should be substituted. Atoms indicate built in
 % types, which don't need to be expanded, except for option.
@@ -1805,6 +1842,19 @@ coerce({O, N, _}, Data, from_fate) ->
             io:format("Warning: Unimplemented type ~p (i.e. ~p).~nUsing term as is:~n~p~n", [O, N, Data])
     end,
     {ok, Data};
+%% Accept exact-size binaries for bytes(N)
+coerce({_, _, {bytes, [Size]}}, Value, _Env)
+  when is_binary(Value), byte_size(Value) =:= Size ->
+    Value;
+
+%% Reject binaries of the wrong size
+coerce({_, _, {bytes, [Size]}}, Value, _Env)
+  when is_binary(Value) ->
+    error({bytes_size_mismatch, Size, byte_size(Value)});
+
+%% Reject non-binaries
+coerce({_, _, {bytes, [_Size]}}, Value, _Env) ->
+    error({bytes_expected_binary, Value});
 coerce({O, N, _}, Data, _) -> single_error({invalid, O, N, Data}).
 
 coerce_list(Type, Elements, Direction) ->

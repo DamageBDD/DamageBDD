@@ -297,7 +297,6 @@ handle_call(
     _From,
     #{public_key := AeAccount, private_key := PrivateKey} = State
 ) ->
-
     ?LOG_INFO("calling contract_call_payfor_user ~p", [PrivateKey]),
     KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
     Result = do_contract_call_payfor_user(
@@ -1075,9 +1074,10 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
         DummyGas,
         GasPrice,
         DummyFee,
-        contract_path(Contract),
+        Contract,
         Args
     ),
+    ?LOG_INFO("Contract create ~p:~p ~p", [Contract, ContractData, Args]),
 
     SignedContract = sign_transaction_base58(PrivateKey, ContractData),
     {transaction, TxBin} = aeser_api_encoder:decode(SignedContract),
@@ -1091,7 +1091,7 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
         CorrectGas,
         GasPrice,
         CorrectFee,
-        contract_path(Contract),
+        Contract,
         Args
     ),
     SignedContract0 = sign_transaction_base58(PrivateKey, ContractData0),
