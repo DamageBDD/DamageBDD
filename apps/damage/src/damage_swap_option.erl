@@ -57,7 +57,8 @@
 
     %% new
     list_offers/1,
-    execute_offer/4
+    execute_offer/4,
+    deploy_options_contract/0
 ]).
 
 -export([
@@ -450,3 +451,10 @@ http_get_json(UrlBin0) ->
     {ok, Body} = gun:await_body(ConnPid, StreamRef),
     gun:close(ConnPid),
     {ok, jsx:decode(Body)}.
+
+deploy_options_contract() ->
+    #{public_key := PubKey, private_key := _PrivateKey} =
+        secrets:node_keypair(),
+    damage_ae:contract_deploy(
+        damage_ae:contract_path("LightningSwapOption"), [PubKey]
+    ).

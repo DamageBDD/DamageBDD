@@ -44,7 +44,8 @@
         to_bin/1,
         to_int/1,
         ct_id/2,
-        float_to_full_integer/1
+        float_to_full_integer/1,
+        generate_8_digit_random_int/0
     ]
 ).
 -export([yaml_encode/1, yaml_encode_to_file/2]).
@@ -636,3 +637,8 @@ to_int(V) when is_integer(V) -> V;
 to_int(V) when is_float(V) -> float_to_full_integer(V);
 to_int(V) when is_binary(V) -> list_to_integer(binary_to_list(V));
 to_int(V) when is_list(V) -> list_to_integer(V).
+generate_8_digit_random_int() ->
+    Min = 10000000,
+    Max = 99999999,
+    % Formula: Min + rand:uniform(Max - Min + 1)
+    Min + rand:uniform(Max - Min + 1).

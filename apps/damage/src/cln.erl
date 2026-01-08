@@ -2220,7 +2220,7 @@ get_node_balance(Host, Port, Options, Rune) ->
     Body = get_json_body(ConnPid, StreamRef),
     gun:close(ConnPid),
 
-    Outputs  = maps:get(outputs,  Body, []),
+    Outputs = maps:get(outputs, Body, []),
     Channels = maps:get(channels, Body, []),
 
     %% Only count UTXOs that are confirmed and not reserved.
@@ -2244,16 +2244,16 @@ get_node_balance(Host, Port, Options, Rune) ->
     ChannelMsat =
         lists:foldl(
             fun(Chan, Acc) ->
-                OurMsat   = maps:get(our_amount_msat, Chan, 0),
+                OurMsat = maps:get(our_amount_msat, Chan, 0),
                 Connected = maps:get(connected, Chan, false),
-                State0    = maps:get(state, Chan, <<"">>),
+                State0 = maps:get(state, Chan, <<"">>),
 
                 %% Normalize state to binary for matching
                 State =
                     case State0 of
                         S when is_binary(S) -> S;
-                        S when is_list(S)   -> list_to_binary(S);
-                        _                   -> <<"">>
+                        S when is_list(S) -> list_to_binary(S);
+                        _ -> <<"">>
                     end,
 
                 %% Conservative: only count live, normal channels
@@ -2269,11 +2269,10 @@ get_node_balance(Host, Port, Options, Rune) ->
     #{
         onchain_msat => OnchainMsat,
         channel_msat => ChannelMsat,
-        total_msat   => OnchainMsat + ChannelMsat,
+        total_msat => OnchainMsat + ChannelMsat,
 
         %% sats
         onchain_sats => OnchainMsat div 1000,
         channel_sats => ChannelMsat div 1000,
-        total_sats   => (OnchainMsat + ChannelMsat) div 1000
+        total_sats => (OnchainMsat + ChannelMsat) div 1000
     }.
-
