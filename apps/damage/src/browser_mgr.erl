@@ -16,6 +16,7 @@
 ]).
 
 -define(TAB, cdp_browser_registry).
+-define(CHROME_CMD_TIMEOUT, 300).
 
 %%% ───────────────── Public ─────────────────
 
@@ -75,8 +76,11 @@ info(Key0) ->
 
 ensure_table() ->
     case ets:info(?TAB) of
-        undefined -> ets:new(?TAB, [named_table, public, set]);
-        _ -> ok
+        undefined ->
+            ets:new(?TAB, [named_table, public, set]),
+            ok;
+        _ ->
+            ok
     end.
 
 launch(Key, RunDir) ->
@@ -88,22 +92,31 @@ launch(Key, RunDir) ->
     Args = [
         "--headless=new",
         "--remote-debugging-address=127.0.0.1",
-        io_lib:format("--remote-debugging-port=~p", [Port]),
-        io_lib:format("--user-data-dir=~s", [UDir]),
+        damage_utils:strf(
+            "--remote-debugging-port=~p", [Port]
+        ),
+        damage_utils:strf(
+            "--user-data-dir=~s", [UDir]
+        ),
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-gpu",
         "about:blank"
     ],
+    Cmd = [
+        Chrome
+        | Args
+    ],
     ExecOpts = [
         monitor,
         % kill grandchildren when erlexec stops (:contentReference[oaicite:4]{index=4})
-        {kill_group, true},
+        %kill_group,
         {cd, RunDir},
-        {stdout, {file, Log}},
-        {stderr, {file, Log}}
+        {stdout, Log},
+        {stderr, Log}
     ],
-    case exec:run_link(Chrome, [{args, Args} | ExecOpts]) of
+    ?LOG_DEBUG("Starting browser ~p ~p", [Cmd, ExecOpts]),
+    case exec:run_link(Cmd, ExecOpts, ?CHROME_CMD_TIMEOUT) of
         {ok, ExecPid, OsPid} ->
             case wait_devtools_ready(Host, Port, 10_000) of
                 ok ->
@@ -119,7 +132,7 @@ launch(Key, RunDir) ->
                     ets:insert(?TAB, {Key, Rec}),
                     {ok, Rec};
                 {error, Why} ->
-                    exec:kill(ExecPid),
+                    exec:kill(ExecPid, sigterm),
                     {error, {chrome_not_ready, Why}}
             end;
         Error ->

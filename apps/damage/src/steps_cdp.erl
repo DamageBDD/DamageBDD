@@ -14,6 +14,7 @@
 -include_lib("browser_mgr.hrl").
 
 -export([step/6, test/0]).
+-export([ensure_client/1]).
 
 %% ───────── Steps ─────────
 
