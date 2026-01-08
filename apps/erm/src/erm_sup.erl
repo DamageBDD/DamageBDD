@@ -69,6 +69,14 @@ init([]) ->
                         %    shutdown => 5000,
                         %    type => worker,
                         %    modules => [erm_tray]
+                    },
+                    #{
+                        id => gtknode4,
+                        start => {gtknode4, start_link, []},
+                        restart => permanent,
+                        shutdown => 5000,
+                        type => worker,
+                        modules => [gtknode4]
                     }
                 ] ++
                     PoolSpecs,
