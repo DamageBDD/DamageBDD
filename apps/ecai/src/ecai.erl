@@ -73,7 +73,7 @@ point_to_filename_hash({X, Y}) ->
 
 mint_knowledge(
     #{public_key := AeAccount, private_key := _PrivateKey} = KeyPair,
-    #{ subject := Subject, predicate := Predicate, object := Object, context := Context } = Knowledge
+    #{subject := Subject, predicate := Predicate, object := Object, context := Context} = Knowledge
 ) ->
     EncodedKnowledge = encode(Knowledge),
 
@@ -83,7 +83,11 @@ mint_knowledge(
     %% Derived token_id: uint64(big-endian) from first 8 bytes of FactKey
     <<Id64:64/unsigned-big, _/binary>> = FactKey,
     TokenId0 = Id64,
-    TokenId  = case TokenId0 of 0 -> 1; _ -> TokenId0 end,
+    TokenId =
+        case TokenId0 of
+            0 -> 1;
+            _ -> TokenId0
+        end,
 
     %% Curve point (kept for ECAI clients; not required by chain)
     Point = ecai:hash_to_curve(EncodedKnowledge),
@@ -107,7 +111,11 @@ mint_knowledge(
         {fact_key, FactKey},
         {token_id, TokenId},
         {point, term_to_binary(Point)},
-        {s, SKey}, {p, PKey}, {o, OKey}, {c, CKey}, {k, KKey}
+        {s, SKey},
+        {p, PKey},
+        {o, OKey},
+        {c, CKey},
+        {k, KKey}
         %% optionally include raw strings too (costs bytes, but off-chain only):
         %% , {subject, Subject}, {predicate, Predicate}, {object, Object}, {context, Context}
     ]),
@@ -115,14 +123,14 @@ mint_knowledge(
     %% Optional on-chain metadata (small map). Not required for indexing.
     %% Keep it tiny: hex strings only, plus ipfs.
     MetaData = #{
-        <<"v">>    => <<"3">>,
+        <<"v">> => <<"3">>,
         <<"ipfs">> => IpfsHash,
-        <<"bh">>   => binary:encode_hex(FactKey),
-        <<"s">>    => binary:encode_hex(SKey),
-        <<"p">>    => binary:encode_hex(PKey),
-        <<"o">>    => binary:encode_hex(OKey),
-        <<"c">>    => binary:encode_hex(CKey),
-        <<"k">>    => binary:encode_hex(KKey)
+        <<"bh">> => binary:encode_hex(FactKey),
+        <<"s">> => binary:encode_hex(SKey),
+        <<"p">> => binary:encode_hex(PKey),
+        <<"o">> => binary:encode_hex(OKey),
+        <<"c">> => binary:encode_hex(CKey),
+        <<"k">> => binary:encode_hex(KKey)
     },
 
     damage_ae:contract_call(
@@ -140,7 +148,6 @@ encode_atom(X) when is_list(X) ->
     vrlp:encode([list_to_binary(X)]);
 encode_atom(X) ->
     vrlp:encode([iolist_to_binary(X)]).
-
 
 encode(#{subject := Subject, predicate := Predicate, object := Object, context := Context}) ->
     Timestamp = erlang:system_time(seconds),
@@ -255,9 +262,9 @@ contract_path(Contract0) ->
 
 deploy_knowledge_nft_contract() ->
     ContractPath = contract_path("knowledge_nft"),
-    ?LOG_INFO("Contract ~p",[ContractPath]),
+    ?LOG_INFO("Contract ~p", [ContractPath]),
     #{"contract_id" := ContractId} = damage_ae:contract_deploy(
-        ContractPath, ["Wikipedia Search Index Fragment 1", "ecai", "10" ]
+        ContractPath, ["Wikipedia Search Index Fragment 1", "ecai", "10"]
     ),
 
     ContractId.

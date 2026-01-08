@@ -21,6 +21,10 @@
 ).
 -export([
     load/1,
+    load/2,
+    load_auto/1,
+    tune_memory_opts/1,
+    system_memory/0,
     get_wikipedia_job/1
 ]).
 -import(damage_utils, [ensure_dir/1]).
@@ -32,16 +36,16 @@
 %% not used in line-mode; keep if you switch to slab mode
 -define(SLAB, 256 * 1024).
 %% 8 GiB  (pause when over this)
--define(MEM_HIGH, 24 bsl 30).
+-define(MEM_HIGH, 94 bsl 30).
 %% 6 GiB  (resume when below this)
--define(MEM_LOW, 16 bsl 30).
+-define(MEM_LOW, 32 bsl 30).
 %% 1 GiB  (binary heap backpressure)
 -define(BIN_HIGH, 6 bsl 30).
 %% polling interval during pause
 -define(SNOOZE_MS, 200).
 %% Defaults (tweak as you like)
 -define(CHK_DIR, "/var/lib/damage/ecai/state/wiki_checkpoints").
--define(CHK_EVERY, 1000).
+-define(CHK_EVERY, 100).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -95,14 +99,19 @@ ct_id(Opts) ->
     end.
 
 load(FilePath) ->
-    %% defaults: pause if total > 8GiB OR binaries > 1GiB; resume below 6GiB
-    Opts = #{
-        mem_high => ?MEM_HIGH,
-        mem_low => ?MEM_LOW,
-        bin_high => ?BIN_HIGH,
+    %% Defaults:
+    %%  - auto_tune=true: thresholds are derived from *system* memory (moderate profile)
+    %%  - backpressure is based on erlang:memory/0, but tuned against host capacity
+    Opts = tune_memory_opts(#{
+        auto_tune => true,
+        mem_profile => moderate,
         snooze_ms => ?SNOOZE_MS
-    },
+    }),
     load(FilePath, Opts).
+
+%% Convenience: always auto-tune with the moderate profile
+load_auto(FilePath) ->
+    load(FilePath, #{auto_tune => true, mem_profile => moderate}).
 
 %% Opts may include:
 %%  #{mem_high:=Bytes, mem_low:=Bytes, bin_high:=Bytes, snooze_ms:=Ms,
@@ -110,10 +119,22 @@ load(FilePath) ->
 load(FilePath, Opts0) when is_list(FilePath); is_binary(FilePath) ->
     File = to_list(FilePath),
     %% merge defaults
-    Opts = maps:merge(
-        #{checkpoint_dir => ?CHK_DIR, checkpoint_every => ?CHK_EVERY},
+    Opts1 = maps:merge(
+        #{
+            checkpoint_dir => ?CHK_DIR,
+            checkpoint_every => ?CHK_EVERY,
+            auto_tune => false,
+            mem_profile => moderate,
+            tune_every_ms => 2000,
+            snooze_ms => ?SNOOZE_MS,
+            %% Safe fallbacks (used if auto_tune=false)
+            mem_high => ?MEM_HIGH,
+            mem_low => ?MEM_LOW,
+            bin_high => ?BIN_HIGH
+        },
         Opts0
     ),
+    Opts = tune_memory_opts(Opts1),
     ChkDir = maps:get(checkpoint_dir, Opts),
     ok = ensure_dir(ChkDir),
     CkptPath = checkpoint_path(ChkDir, File),
@@ -147,9 +168,9 @@ load(FilePath, Opts0) when is_list(FilePath); is_binary(FilePath) ->
 
 %% ---------------- Streaming (line-by-line) with checkpointing --------
 
-read_lines(IoDevice, _File, Opts, CkptPath, Lines0) ->
-    %% Backpressure check before each read
-    maybe_backpressure(Opts),
+read_lines(IoDevice, _File, Opts0, CkptPath, Lines0) ->
+    %% Backpressure check (and optional retune) before each read
+    Opts = maybe_backpressure(Opts0),
     case io:get_line(IoDevice, '') of
         eof ->
             %% success: remove checkpoint
@@ -170,7 +191,9 @@ read_lines(IoDevice, _File, Opts, CkptPath, Lines0) ->
                     case Lines1 rem N of
                         0 ->
                             {ok, CurOff} = file:position(IoDevice, cur),
-                            ?LOG_INFO("write_checkpoint ~p ~p", [CurOff, Lines1]),
+                            ?LOG_INFO("write_checkpoint current offset: ~p read lines ~p", [
+                                CurOff, Lines1
+                            ]),
                             ok = write_checkpoint(CkptPath, CurOff, Lines1),
                             read_lines(IoDevice, _File, Opts, CkptPath, Lines1);
                         _ ->
@@ -222,32 +245,186 @@ read_checkpoint(Path) ->
 
 %% ---------------- Memory backpressure ----------------
 
-maybe_backpressure(#{mem_high := MH, mem_low := ML, bin_high := BH, snooze_ms := Ms}) ->
+maybe_backpressure(Opts0) ->
+    %% Optionally re-tune thresholds against host memory every tune_every_ms.
+    Opts1 = maybe_retune(Opts0),
+    #{mem_high := MH, mem_low := _ML, bin_high := BH, snooze_ms := Ms} = Opts1,
+
     Mem = erlang:memory(),
     Total = proplists:get_value(total, Mem),
     Bins = proplists:get_value(binary, Mem),
     case (Total >= MH) orelse (Bins >= BH) of
-        %% proceed
         false ->
-            ok;
+            Opts1;
         true ->
             ?LOG_WARNING("Memory high: total=~B, bins=~B (pausing)", [Total, Bins]),
             %% Light GC to drop short-lived binaries, then poll until below low watermark
             erlang:garbage_collect(self()),
-            pause_until_safe(ML, BH, Ms)
+            pause_until_safe(Opts1, Ms)
     end.
 
-pause_until_safe(MemLow, BinHigh, Ms) ->
+pause_until_safe(Opts0, Ms) ->
+    %% While paused, keep polling and allow thresholds to adapt (e.g., other processes free RAM).
+    Opts1 = maybe_retune(Opts0),
+    #{mem_low := MemLow, bin_high := BinHigh} = Opts1,
     Mem = erlang:memory(),
     Total = proplists:get_value(total, Mem),
     Bins = proplists:get_value(binary, Mem),
     case (Total =< MemLow) andalso (Bins =< BinHigh) of
         true ->
-            ?LOG_INFO("Memory ok: total=~B, bins=~B (resuming)", [Total, Bins]);
+            ?LOG_INFO("Memory ok: total=~B, bins=~B (resuming)", [Total, Bins]),
+            Opts1;
         false ->
             timer:sleep(Ms),
             %% (optional) tick another GC occasionally
-            pause_until_safe(MemLow, BinHigh, Ms)
+            pause_until_safe(Opts1, Ms)
+    end.
+
+%% ---------------- Auto-tuned memory thresholds ----------------
+%% The goal: "moderate" memory use that scales with host RAM.
+%%
+%% Keys:
+%%  auto_tune      := boolean()
+%%  mem_profile    := conservative | moderate | aggressive
+%%  tune_every_ms  := integer()   (how often to re-evaluate host memory)
+%%  tuned_at_ms    := integer()   (monotonic timestamp)
+%%  tuned_from     := #{total:=Bytes, available:=Bytes}  (for logging/debug)
+%%
+%% We tune mem_high/mem_low/bin_high (bytes) used by maybe_backpressure/1.
+
+-spec tune_memory_opts(map()) -> map().
+tune_memory_opts(Opts0) ->
+    case maps:get(auto_tune, Opts0, false) of
+        false ->
+            Opts0;
+        true ->
+            Sys = system_memory(),
+            Profile = maps:get(mem_profile, Opts0, moderate),
+            Tuned = tuned_thresholds(Profile, Sys),
+            Now = erlang:monotonic_time(millisecond),
+            maps:merge(Opts0, Tuned#{tuned_at_ms => Now, tuned_from => Sys})
+    end.
+
+-spec maybe_retune(map()) -> map().
+maybe_retune(Opts0) ->
+    case maps:get(auto_tune, Opts0, false) of
+        false ->
+            Opts0;
+        true ->
+            Now = erlang:monotonic_time(millisecond),
+            Every = maps:get(tune_every_ms, Opts0, 2000),
+            Last = maps:get(tuned_at_ms, Opts0, 0),
+            case (Now - Last) >= Every of
+                false ->
+                    Opts0;
+                true ->
+                    tune_memory_opts(Opts0)
+            end
+    end.
+
+-spec tuned_thresholds(conservative | moderate | aggressive, map()) -> map().
+tuned_thresholds(Profile, #{total := Total, available := Avail}) ->
+    %% Ratios are against TOTAL physical memory, but we also cap by AVAILABLE
+    %% to behave well under external memory pressure.
+    {HighR, LowR, BinR} =
+        case Profile of
+            conservative -> {0.45, 0.35, 0.10};
+            aggressive -> {0.70, 0.60, 0.20};
+            _moderate -> {0.55, 0.45, 0.12}
+        end,
+
+    High0 = trunc(Total * HighR),
+    Low0 = trunc(Total * LowR),
+    Bin0 = trunc(Total * BinR),
+
+    %% Keep headroom for OS/other processes by capping against AVAILABLE.
+    High1 = min(High0, trunc(Avail * 0.85)),
+    Low1 = min(Low0, trunc(Avail * 0.75)),
+
+    %% Floors and ordering
+
+    %% >= 1 GiB
+    High = max(High1, 1024 bsl 20),
+    %% >= 512 MiB
+    Low = max(min(Low1, High - (256 bsl 20)), 512 bsl 20),
+    BinHigh = max(min(Bin0, High div 3), 256 bsl 20),
+
+    #{mem_high => High, mem_low => Low, bin_high => BinHigh}.
+
+-spec system_memory() -> #{total := non_neg_integer(), available := non_neg_integer()}.
+system_memory() ->
+    %% Prefer os_mon's memsup when available; fall back to /proc/meminfo; then best-effort.
+    case system_memory_memsup() of
+        {ok, M} ->
+            M;
+        _ ->
+            case system_memory_procfs() of
+                {ok, M2} ->
+                    M2;
+                _ ->
+                    Mem = erlang:memory(),
+                    Used = proplists:get_value(total, Mem, 0),
+                    %% Best-effort fallback (keeps behaviour similar to old defaults)
+                    Total = 8 bsl 30,
+                    Avail = max(Total - Used, 1 bsl 30),
+                    #{total => Total, available => Avail}
+            end
+    end.
+
+system_memory_memsup() ->
+    case code:ensure_loaded(memsup) of
+        {module, memsup} ->
+            try
+                _ = application:ensure_all_started(os_mon),
+                Data = memsup:get_system_memory_data(),
+                %% Values are typically in kB.
+                TotalKB = proplists:get_value(total_memory, Data, undefined),
+                AvailKB =
+                    case proplists:get_value(available_memory, Data, undefined) of
+                        undefined ->
+                            Free = proplists:get_value(free_memory, Data, 0),
+                            Cached = proplists:get_value(cached_memory, Data, 0),
+                            Buff = proplists:get_value(buffered_memory, Data, 0),
+                            Free + Cached + Buff;
+                        X ->
+                            X
+                    end,
+                case TotalKB of
+                    undefined -> {error, no_total};
+                    _ -> {ok, #{total => TotalKB * 1024, available => AvailKB * 1024}}
+                end
+            catch
+                _:_ -> {error, memsup_failed}
+            end;
+        _ ->
+            {error, no_memsup}
+    end.
+
+system_memory_procfs() ->
+    case file:read_file("/proc/meminfo") of
+        {ok, Bin} ->
+            Lines = binary:split(Bin, <<"\n">>, [global]),
+            TotalKB = meminfo_kb(Lines, <<"MemTotal:">>),
+            AvailKB = meminfo_kb(Lines, <<"MemAvailable:">>),
+            case {TotalKB, AvailKB} of
+                {undefined, _} -> {error, no_total};
+                {T, undefined} -> {ok, #{total => T * 1024, available => T * 1024}};
+                {T, A} -> {ok, #{total => T * 1024, available => A * 1024}}
+            end;
+        _ ->
+            {error, no_procfs}
+    end.
+
+meminfo_kb(Lines, Key) ->
+    Found = lists:filter(fun(L) -> binary:match(L, Key) =/= nomatch end, Lines),
+    case Found of
+        [L | _] ->
+            case re:run(L, <<"([0-9]+)">>, [{capture, [1], binary}]) of
+                {match, [NumBin]} -> binary_to_integer(NumBin);
+                _ -> undefined
+            end;
+        _ ->
+            undefined
     end.
 
 %% ---------------- Default indexer (unchanged) ----------------
