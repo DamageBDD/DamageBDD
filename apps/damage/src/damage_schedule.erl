@@ -363,14 +363,19 @@ account_key_to_ak(Other) ->
 delete_schedule(AeAccount, ScheduleId) ->
     %ScheduleIdHash = secrets:salted_hash(ScheduleId),
 
-    #{"caller_id" :=
-          _AeAccountList,
-      "caller_nonce" := _Nonce,
-      "contract_id" :=
-          ?SCHEDULES_CONTRACT,
-      "gas_price" := GasPrice,"gas_used" := GasUsed,
-      "height" := Height,"log" := [],"return_type" := "ok",
-      "return_value" := {}} = 
+    #{
+        "caller_id" :=
+            _AeAccountList,
+        "caller_nonce" := _Nonce,
+        "contract_id" :=
+            ?SCHEDULES_CONTRACT,
+        "gas_price" := GasPrice,
+        "gas_used" := GasUsed,
+        "height" := Height,
+        "log" := [],
+        "return_type" := "ok",
+        "return_value" := {}
+    } =
         contract_call(
             AeAccount,
             "delete_schedule",
@@ -379,10 +384,10 @@ delete_schedule(AeAccount, ScheduleId) ->
     Cancelled = erlcron:cancel(ScheduleId),
     ?LOG_DEBUG(
         "call AE contract ~p gasprice ~p gasused ~p, height ~p, cancelled ~p",
-        [AeAccount, GasPrice, GasUsed, Height,Cancelled]
+        [AeAccount, GasPrice, GasUsed, Height, Cancelled]
     ).
 
-add_schedule(AeAccount, Name, FeatureHash, Cron) when is_binary(AeAccount)->
+add_schedule(AeAccount, Name, FeatureHash, Cron) when is_binary(AeAccount) ->
     #{
         log := [],
         gasPrice := GasPrice,
@@ -603,12 +608,11 @@ test_list_schedule() ->
     Decrypted.
 
 contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
-
-    #{public_key:=PubKey, private_key := PrivateKey} = 
-     identity_server:get_account(AeAccount),
+    #{public_key := PubKey, private_key := PrivateKey} =
+        identity_server:get_account(AeAccount),
     damage_ae:set_private_key(AeAccount, PrivateKey),
     damage_ae:contract_call_payfor_user(
-    AeAccount,
+        AeAccount,
         ?SCHEDULES_CONTRACT,
         "contracts/schedules.aes",
         Func,
