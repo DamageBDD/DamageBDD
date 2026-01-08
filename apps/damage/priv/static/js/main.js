@@ -180,7 +180,7 @@ function generateDamageQR(address){
 			if (document.querySelector('[data-auth-tabs]')) {
 				Tabby('[data-auth-tabs]');
 			}
-// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
+			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
 			document.addEventListener('tabby', function(event) {
 				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
 					// Check if seed phrase was already set
@@ -265,7 +265,6 @@ function generateDamageQR(address){
 			{ cid: 'QmSaePitmi9NaZmZ2DmbtC7sSMSQBBsz113qVvpY2Wd9K3', label: 'CDP Demo' },
 			'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
 			'QmXAwxg4Hnb4uEYr55XFrAv6e7GEJfG2y16RaSyVgAcTxG',
-			'QmcLedvbu4jXNcyJSDXNKPrhmK6iM4Ff2SwVkXi2AX3prP',
 			'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
 			'QmYJF7LbpHvuUXVpjWAksht3ypGvzPbViCo16gFmiCUa1D'
 		];
@@ -1222,18 +1221,56 @@ function generateDamageQR(address){
 		return btcAmount;
 	}
 	function renderNodeFooter(resp) {
-		// schema: { ok:true, version, public_key, damage_balance, ae_balance, btc_balance, verson:{...} }
+		// schema:
+		// {
+		//   ok:true,
+		//   public_key,
+		//   damage_balance,
+		//   ae_balance,
+		//   btc_balance {
+		//     onchain_sats,
+		//     channel_sats,
+		//     total_sats,
+		//     onchain_msat,
+		//     channel_msat,
+		//     total_msat
+		//   },
+		//   version:{...}
+		// }
 		if (!resp || resp.ok !== true) return;
 
 		const pk = resp.public_key ?? "unknown";
 
 		const damage = Number(resp.damage_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 		const ae     = Number(resp.ae_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
-		const btc    = Number(resp.btc_balance ?? 0).toLocaleString(); // sats, as provided
 
-		const version = resp.version ?? "unknown";
+		const btcObj = resp.btc_balance;
 
-		const build = version;
+		const fmtInt = (n) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+		const fmtMsat = (msat) => {
+			// show sats with 3 decimals from msat
+			const sats = Number(msat ?? 0) / 1000;
+			return sats.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+		};
+
+		let btcLine = "";
+		if (btcObj) {
+			const onchainSats  = btcObj.onchain_sats  ?? (btcObj.onchain_msat != null ? Math.floor(Number(btcObj.onchain_msat) / 1000) : 0);
+			const channelSats  = btcObj.channel_sats  ?? (btcObj.channel_msat != null ? Math.floor(Number(btcObj.channel_msat) / 1000) : 0);
+			const totalSats    = btcObj.total_sats    ?? (btcObj.total_msat   != null ? Math.floor(Number(btcObj.total_msat)   / 1000) : (Number(onchainSats) + Number(channelSats)));
+
+			// If you want some extra precision, also show sats from msat as decimals:
+			const onchainSatsPrec = btcObj.onchain_msat != null ? fmtMsat(btcObj.onchain_msat) : fmtInt(onchainSats);
+			const channelSatsPrec = btcObj.channel_msat != null ? fmtMsat(btcObj.channel_msat) : fmtInt(channelSats);
+			const totalSatsPrec   = btcObj.total_msat   != null ? fmtMsat(btcObj.total_msat)   : fmtInt(totalSats);
+
+			btcLine = `BTC — onchain ${onchainSatsPrec} sats | channels ${channelSatsPrec} sats | total ${totalSatsPrec} sats`;
+		} else {
+			const btcLegacy = fmtInt(resp.btc_balance ?? 0); // sats as provided
+			btcLine = `BTC — total ${btcLegacy} sats`;
+		}
+
+		const build = resp.version ?? "unknown";
 
 		const shaFull  = build.git_sha ?? "unknown";
 		const shaShort = build.git_sha_short ?? (shaFull !== "unknown" ? shaFull.slice(0, 7) : "unknown");
@@ -1243,22 +1280,21 @@ function generateDamageQR(address){
 		// Copyable public key
 		const pkEl = document.getElementById("node-public-key");
 		if (pkEl) {
-			pkEl.textContent = pk;              // copyToClipboard reads textContent
+			pkEl.textContent = pk; // copyToClipboard reads textContent
 			pkEl.title = "Click 📋 to copy";
 		}
 
-		// Balances + version
+		// Balances + version (now with BTC details)
 		const balEl = document.getElementById("node-balances");
 		if (balEl) {
-			balEl.textContent = `Balances — DAMAGE ${damage} | AE ${ae} | BTC(sats) ${btc}`;
+			balEl.textContent = `Balances — DAMAGE ${damage} | AE ${ae} | ${btcLine}`;
 		}
 
-		// Copyable commit hash target (display short, copy same element text unless you choose hidden full)
+		// Copyable commit hash target (copy full hash using existing helper)
 		const shaEl = document.getElementById("node-build-sha");
 		if (shaEl) {
-			shaEl.textContent = shaFull;        // ✅ copy full hash using existing helper
+			shaEl.textContent = shaFull;
 			shaEl.title = `Commit: ${shaFull}`;
-			// If you want UI to show short but still copy full, see note below.
 		}
 
 		const metaEl = document.getElementById("node-build-meta");
@@ -1272,12 +1308,13 @@ function generateDamageQR(address){
 
 
 
+
 	function generateInvoice() {
 		var amount = document.getElementById('invoice-amount').value;
-			try{
-				MicroModal.close('wallet-modal');
-			}catch(e){};
-			MicroModal.show("invoice-modal");
+		try{
+			MicroModal.close('wallet-modal');
+		}catch(e){};
+		MicroModal.show("invoice-modal");
 		const request = {
 			method: 'POST',
 			credentials: 'include',

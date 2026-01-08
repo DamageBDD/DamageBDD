@@ -2220,27 +2220,60 @@ get_node_balance(Host, Port, Options, Rune) ->
     Body = get_json_body(ConnPid, StreamRef),
     gun:close(ConnPid),
 
-    Outputs = maps:get(outputs, Body, []),
+    Outputs  = maps:get(outputs,  Body, []),
+    Channels = maps:get(channels, Body, []),
 
     %% Only count UTXOs that are confirmed and not reserved.
-    %% listfunds.outputs fields include: amount_msat, status, reserved, ...
-    TotalMsat =
+    OnchainMsat =
         lists:foldl(
             fun(Output, Acc) ->
                 Msat = maps:get(amount_msat, Output, 0),
                 Status = maps:get(status, Output, <<"">>),
                 Reserved = maps:get(reserved, Output, false),
-
                 case {is_integer(Msat), Status, Reserved} of
-                    {true, <<"confirmed">>, false} ->
-                        Acc + Msat;
-                    _ ->
-                        Acc
+                    {true, <<"confirmed">>, false} -> Acc + Msat;
+                    _ -> Acc
                 end
             end,
             0,
             Outputs
         ),
 
-    %% sats
-    TotalMsat div 1000.
+    %% Sum spendable channel balance (our side).
+    %% listfunds.channels commonly includes: our_amount_msat, connected, state, ...
+    ChannelMsat =
+        lists:foldl(
+            fun(Chan, Acc) ->
+                OurMsat   = maps:get(our_amount_msat, Chan, 0),
+                Connected = maps:get(connected, Chan, false),
+                State0    = maps:get(state, Chan, <<"">>),
+
+                %% Normalize state to binary for matching
+                State =
+                    case State0 of
+                        S when is_binary(S) -> S;
+                        S when is_list(S)   -> list_to_binary(S);
+                        _                   -> <<"">>
+                    end,
+
+                %% Conservative: only count live, normal channels
+                case {is_integer(OurMsat), Connected, State} of
+                    {true, true, <<"CHANNELD_NORMAL">>} -> Acc + OurMsat;
+                    _ -> Acc
+                end
+            end,
+            0,
+            Channels
+        ),
+
+    #{
+        onchain_msat => OnchainMsat,
+        channel_msat => ChannelMsat,
+        total_msat   => OnchainMsat + ChannelMsat,
+
+        %% sats
+        onchain_sats => OnchainMsat div 1000,
+        channel_sats => ChannelMsat div 1000,
+        total_sats   => (OnchainMsat + ChannelMsat) div 1000
+    }.
+
