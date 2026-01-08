@@ -340,3 +340,122 @@ pre code.language-gherkin.report {
   font-size: 12px;
   padding: 8px 0;
 }
+/* -----------------------------------
+ * Shared Address/Contract Tag Filter
+ * (used by activity + gallery)
+ * ----------------------------------- */
+
+.addr-tags{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.25);
+  min-height: 54px;
+}
+
+.addr-tag{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.06);
+  color: #cfd6e4;
+  cursor: pointer;
+  user-select: none;
+  max-width: 100%;
+}
+
+.addr-tag:hover{
+  border-color: rgba(255,255,255,.18);
+  background: rgba(255,255,255,.08);
+}
+
+.addr-tag[aria-pressed="true"]{
+  border-color: rgba(0,191,255,.55);
+  background: rgba(0,191,255,.12);
+  color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(0,191,255,.12) inset;
+}
+
+.addr-tag__label{
+  font-weight: 700;
+  font-size: .85rem;
+  color: inherit;
+  flex: 0 0 auto;
+}
+
+.addr-tag__addr{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .82rem;
+  opacity: .95;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.addr-tag__x{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: .7;
+  font-size: .95rem;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 6px;
+}
+
+.addr-tag__x:hover{
+  opacity: 1;
+  background: rgba(255,255,255,.08);
+}
+
+.addr-add{
+  display:flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.addr-add__input{
+  width: 100%;
+  padding: .75rem .85rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.25);
+  color: #eee;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* invalid input */
+.invalid{
+  outline: 2px solid rgba(255, 85, 85, .75);
+  border-color: rgba(255, 85, 85, .55) !important;
+}
+
+/* -----------------------------------
+ * Activity filter layout refinement
+ * ----------------------------------- */
+
+.activity-filters{
+  /* previously row; now a compact stacked panel */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+  flex: 1 1 520px;
+  min-width: min(520px, 100%);
+}
+
+.activity-filters .addr-tags{
+  width: 100%;
+}
+
+@media (max-width: 600px){
+  .activity-filters{ min-width: 100%; }
+  .addr-tag__addr{ max-width: 240px; }
+  .addr-add{ flex-direction: column; align-items: stretch; }
+}

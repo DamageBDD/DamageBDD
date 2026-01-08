@@ -1,31 +1,22 @@
 <!-- -*- mode: html -*- -->
-<!-- -*- mode: html -*- -->
 <div class="activity-panel">
   <div class="activity-toolbar">
-    <div class="activity-address">
-      <span class="activity-label">Activity</span>
-      <code id="activity-account" class="activity-account">—</code>
-      <button id="activity-copy" class="activity-iconbtn" type="button" aria-label="Copy address" title="Copy address">⧉</button>
-    </div>
-
     <div class="activity-filters">
-      <label class="activity-sr" for="activity-type">Filter</label>
-      <select id="activity-type" class="activity-select">
-        <option value="all">All</option>
-        <option value="aex9">AEX-9</option>
-        <option value="aex141">AEX-141</option>
-        <option value="transactions">Transactions</option>
-        <option value="contract_call">Contract calls</option>
-      </select>
+      <div style="font-weight:600;">Account filters</div>
 
-      <label class="activity-sr" for="activity-limit">Limit</label>
-      <select id="activity-limit" class="activity-select">
-        <option value="10">10</option>
-        <option value="25">25</option>
-        <option value="50">50</option>
-      </select>
+      <div id="activityAddrTags" class="addr-tags" aria-label="Known accounts">
+        <!-- tags injected by JS -->
+      </div>
 
-      <button id="activity-refresh" class="activity-btn" type="button">Refresh</button>
+      <div class="addr-add">
+        <input id="activityAddrInput" type="text"
+               placeholder="Add account (ak_... or ct_...)"
+               spellcheck="false" autocomplete="off" inputmode="text"
+               class="addr-add__input">
+        <button id="activityAddrAddBtn" class="styled-btn" type="button">Add</button>
+      </div>
+
+      <div id="activityAddrHint" style="color:#9aa3b2; font-size:.85rem;"></div>
     </div>
   </div>
 
@@ -37,3 +28,4 @@
     <span id="run-reports-info" class="activity-pagerinfo"></span>
   </div>
 </div>
+
