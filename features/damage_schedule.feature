@@ -1,17 +1,19 @@
 Feature: Test DamageBDD Scheduling API
   Scenario: Post feature data
-    Given I am using server "http://localhost:8080"
-    When I make a GET request to "/execute_feature/"
-    Then the response status must be "200"
+    Given I am using server "https://run.dev.damagebdd.com"
+    And I set "Authorization" header to "Bearer {{{access_token}}}"
     And I set "Content-Type" header to "x-www-form-urlencoded"
-    When I make a POST request to "/schedule/once/60/"
+    When I make a POST request to "/schedules/once/60/secs"
     """
-    Feature: For testing an request to google
+    Feature: For testing schedule post
        Scenario: root
-       When I make a GET request to "/"
-       Then the response status must be "200"
+         Given I am using server "https://run.dev.damagebdd.com"
+         And I set "Authorization" header to "Bearer {{{access_token}}}"
+         When I make a GET request to "/"
+         Then the response status must be "200"
     
     """
+    Then I print the response
     Then the response status must be "200"
     Then the json at path "$.status" must be "ok"
     When I make a GET request to "/schedule/"
