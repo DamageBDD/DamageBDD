@@ -202,10 +202,21 @@ to_html(Req, #{action := features} = State) ->
             FeatureData = cat(list_to_binary(Hash), <<"">>),
             FeatureTitle =
                 lists:nth(1, binary:split(FeatureData, <<"\n">>, [global])),
+            {ok, DamageApi} = application:get_env(damage, api_url),
+            FeatureUrl =
+                list_to_binary(
+                    string:join([DamageApi, "features", Hash, ""], "/")
+                ),
+            Preview = feature_preview(FeatureData),
             Body =
                 damage_utils:load_template(
                     "feature.mustache",
-                    #{body => FeatureData, feature_title => FeatureTitle}
+                    #{
+                        body => FeatureData,
+                        feature_title => FeatureTitle,
+                        feature_preview => Preview,
+                        feature_url => FeatureUrl
+                    }
                 ),
             {Body, Req, State}
     end;
@@ -408,6 +419,30 @@ cat(Hash, Path) ->
             filename:join([Hash, Path])
         ),
     Data.
+%% --- tiny HTML escaper for meta tags ---
+html_escape(Bin) when is_binary(Bin) ->
+    Bin1 = binary:replace(Bin, <<"&">>, <<"&amp;">>, [global]),
+    Bin2 = binary:replace(Bin1, <<"<">>, <<"&lt;">>, [global]),
+    Bin3 = binary:replace(Bin2, <<">">>, <<"&gt;">>, [global]),
+    Bin4 = binary:replace(Bin3, <<"\"">>, <<"&quot;">>, [global]),
+    binary:replace(Bin4, <<"'">>, <<"&#39;">>, [global]).
+
+feature_preview(FeatureData) when is_binary(FeatureData) ->
+    %% Skip the first line (usually used as the title) to avoid duplication in link previews.
+    Rest0 =
+        case binary:split(FeatureData, <<"\n">>, []) of
+            [_FirstLine, After] -> After;
+            _ -> FeatureData
+        end,
+
+    %% Take a small leading chunk and flatten whitespace for meta tags
+    Max = 400,
+    Size = byte_size(Rest0),
+    Take = case Size > Max of true -> Max; false -> Size end,
+    Chunk0 = binary:part(Rest0, 0, Take),
+
+    html_escape(Chunk0).
+
 test() ->
     {
         ok,
