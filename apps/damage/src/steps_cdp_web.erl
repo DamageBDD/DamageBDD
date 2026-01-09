@@ -210,7 +210,7 @@ with_client(Ctx0, Fun) when is_map(Ctx0), is_function(Fun, 1) ->
 
 handle_cdp_fun_result(ok, Ctx) ->
     Ctx;
-handle_cdp_fun_result({ok, CtxOrVal}, Ctx) when is_map(CtxOrVal) ->
+handle_cdp_fun_result({ok, CtxOrVal}, _Ctx) when is_map(CtxOrVal) ->
     CtxOrVal;
 handle_cdp_fun_result({ok, _Val}, Ctx) ->
     Ctx;
