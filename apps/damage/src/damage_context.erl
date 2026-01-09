@@ -327,7 +327,7 @@ get_global_template_context(Context) ->
             headers => [],
             token_contract => list_to_binary(?DAMAGE_TOKEN_CONTRACT),
             timestamp => date_util:now_to_seconds_hires(os:timestamp()),
-            proxy, {socks5, "127.0.0.1", 9050}
+            proxy=> {socks5, "127.0.0.1", 9050}
         },
         Context
     ),
