@@ -97,10 +97,7 @@ step(
     ["the", "contractor", "should", "be", "paid", "for", "the", "tracked", "issue"],
     _B
 ) ->
-    assert_contractor_paid(Ctx);
-step(_, Ctx, _, _, _, _) ->
-    %% allow other modules to match
-    {undefined, Ctx}.
+    assert_contractor_paid(Ctx).
 
 %%%===================================================================
 %%% Implementation
