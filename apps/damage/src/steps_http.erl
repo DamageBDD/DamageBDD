@@ -687,8 +687,10 @@ get_proxy(Context, Config) ->
                 {proxy, {socks5, PH, PP}} -> {socks5, PH, PP};
                 {proxy, {PH, PP}} -> {socks5, PH, PP}
             end;
-        {socks5, PH, PP} -> {socks5, PH, PP};
-        {PH, PP} -> {socks5, PH, PP}
+        {socks5, PH, PP} ->
+            {socks5, PH, PP};
+        {PH, PP} ->
+            {socks5, PH, PP}
     end.
 
 get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
@@ -764,13 +766,16 @@ get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
         {concurrency, _Concurrency} ->
             case damage_domains:is_allowed_domain(DestHost, AeAccount) of
                 true ->
-                    ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [OpenHost, OpenPort, FinalOpts]),
+                    ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [
+                        OpenHost, OpenPort, FinalOpts
+                    ]),
                     gun:open(OpenHost, OpenPort, FinalOpts);
                 _ ->
-                    throw(<<"Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html">>)
+                    throw(
+                        <<"Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html">>
+                    )
             end
     end.
-
 
 %% -------------------------
 %% SSRF / host safety helpers

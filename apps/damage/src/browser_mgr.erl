@@ -89,21 +89,22 @@ launch(Key, RunDir, C0) ->
     UDir = tmp_profile_dir(),
     Chrome = chrome_bin(),
     Log = filename:join(RunDir, io_lib:format("chrome_~p.log", [Port])),
-    Args = [
-        "--headless=new",
-        "--remote-debugging-address=127.0.0.1",
-        damage_utils:strf(
-            "--remote-debugging-port=~p", [Port]
-        ),
-        damage_utils:strf(
-            "--user-data-dir=~s", [UDir]
-        ),
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-gpu"
-        ]
-        ++ proxy_args(C0)
-        ++ ["about:blank"],
+    Args =
+        [
+            "--headless=new",
+            "--remote-debugging-address=127.0.0.1",
+            damage_utils:strf(
+                "--remote-debugging-port=~p", [Port]
+            ),
+            damage_utils:strf(
+                "--user-data-dir=~s", [UDir]
+            ),
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-gpu"
+        ] ++
+            proxy_args(C0) ++
+            ["about:blank"],
 
     Cmd = [
         Chrome

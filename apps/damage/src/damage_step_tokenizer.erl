@@ -24,18 +24,14 @@ tokenize(Step) when is_list(Step) ->
 
 tokenize_scan([], _State, Acc, Out) ->
     lists:reverse(flush_acc(Acc, Out));
-
 tokenize_scan([$" | Rest], outside, Acc, Out) ->
     %% Enter quote: flush accumulated outside text first
     tokenize_scan(Rest, in_quote, [], flush_acc(Acc, Out));
-
 tokenize_scan([$" | Rest], in_quote, Acc, Out) ->
     %% Exit quote: push quoted token as-is (no strip inside quotes)
     tokenize_scan(Rest, outside, [], [lists:reverse(Acc) | Out]);
-
 tokenize_scan([C | Rest], in_quote, Acc, Out) ->
     tokenize_scan(Rest, in_quote, [C | Acc], Out);
-
 tokenize_scan([C | Rest], outside, Acc, Out) ->
     case is_num_start(C, Rest) of
         true ->
@@ -46,7 +42,6 @@ tokenize_scan([C | Rest], outside, Acc, Out) ->
             %% fallthrough to arg-word / normal char handling
             tokenize_scan_outside_nonnum([C | Rest], Acc, Out)
     end.
-
 
 tokenize_scan_outside_nonnum(Rest, Acc, Out) ->
     case read_arg_word(Rest) of
@@ -61,7 +56,6 @@ tokenize_scan_outside_nonnum(Rest, Acc, Out) ->
             tokenize_scan(Rest1, outside, [C | Acc], Out)
     end.
 
-
 %% -------------------------------------------------------------------
 %% helpers
 %% -------------------------------------------------------------------
@@ -72,7 +66,7 @@ flush_acc(Acc, Out) ->
     Tok = strip(lists:reverse(Acc)),
     case Tok of
         "" -> Out;
-        _  -> [Tok | Out]
+        _ -> [Tok | Out]
     end.
 
 strip(S) ->
@@ -84,7 +78,7 @@ strip(S) ->
 %% - '.' followed by digit (allows .5)
 is_num_start($-, [Nxt | _]) -> is_digit(Nxt);
 is_num_start($., [Nxt | _]) -> is_digit(Nxt);
-is_num_start(C, _)          -> is_digit(C).
+is_num_start(C, _) -> is_digit(C).
 
 is_digit(C) -> C >= $0 andalso C =< $9.
 
@@ -96,10 +90,9 @@ read_number([], Acc) ->
     {lists:reverse(Acc), []};
 read_number([C | Rest], Acc) ->
     case ((C >= $0 andalso C =< $9) orelse C =:= $. orelse C =:= $-) of
-        true  -> read_number(Rest, [C | Acc]);
+        true -> read_number(Rest, [C | Acc]);
         false -> {lists:reverse(Acc), [C | Rest]}
     end.
-
 
 %% -------------------------------------------------------------------
 %% arg-word splitting (non-numeric params)
@@ -107,16 +100,15 @@ read_number([C | Rest], Acc) ->
 
 arg_words() ->
     %% Keep this list small and “argument-like” to avoid breaking phrase chunks
-    ["left","right","center","top","bottom","middle","start","end"].
+    ["left", "right", "center", "top", "bottom", "middle", "start", "end"].
 
 read_arg_word(Rest = [C | _]) ->
     case is_alpha(C) of
-        true  -> try_match_arg_words(Rest, arg_words());
+        true -> try_match_arg_words(Rest, arg_words());
         false -> {none}
     end;
 read_arg_word([]) ->
     {none}.
-
 
 try_match_arg_words(_Rest, []) ->
     {none};
@@ -129,7 +121,7 @@ try_match_arg_words(Rest, [W | Ws]) ->
                     {arg, W, RestAfter, true};
                 [Next | _] ->
                     case is_boundary(Next) of
-                        true  -> {arg, W, RestAfter, true};
+                        true -> {arg, W, RestAfter, true};
                         false -> try_match_arg_words(Rest, Ws)
                     end
             end;
@@ -140,11 +132,12 @@ try_match_arg_words(Rest, [W | Ws]) ->
 prefix_ci(Rest, Word) ->
     WL = length(Word),
     case length(Rest) >= WL of
-        false -> false;
+        false ->
+            false;
         true ->
             Prefix = lists:sublist(Rest, WL),
             case string:to_lower(Prefix) =:= Word of
-                true  -> {true, lists:nthtail(WL, Rest)};
+                true -> {true, lists:nthtail(WL, Rest)};
                 false -> false
             end
     end.
@@ -154,10 +147,10 @@ is_alpha(C) ->
 
 is_boundary(C) ->
     C =:= $\s orelse C =:= $\t orelse C =:= $\n orelse
-    C =:= $.  orelse C =:= $,  orelse C =:= $:  orelse
-    C =:= $;  orelse C =:= $(  orelse C =:= $)  orelse
-    C =:= $[  orelse C =:= $]  orelse C =:= ${  orelse
-    C =:= $}  orelse C =:= $/  orelse C =:= $\\ orelse
-    C =:= $=  orelse C =:= $+  orelse C =:= $-  orelse
-    C =:= $*  orelse C =:= $?  orelse C =:= $!  orelse
-    C =:= $<  orelse C =:= $>.
+        C =:= $. orelse C =:= $, orelse C =:= $: orelse
+        C =:= $; orelse C =:= $( orelse C =:= $) orelse
+        C =:= $[ orelse C =:= $] orelse C =:= ${ orelse
+        C =:= $} orelse C =:= $/ orelse C =:= $\\ orelse
+        C =:= $= orelse C =:= $+ orelse C =:= $- orelse
+        C =:= $* orelse C =:= $? orelse C =:= $! orelse
+        C =:= $< orelse C =:= $>.

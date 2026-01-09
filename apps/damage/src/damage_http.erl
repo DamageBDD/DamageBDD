@@ -20,7 +20,6 @@
 -export([trails/0]).
 -import(damage_utils, [float_to_full_integer/1]).
 
-
 -define(TRAILS_TAG, ["Executing Tests"]).
 
 trails() ->

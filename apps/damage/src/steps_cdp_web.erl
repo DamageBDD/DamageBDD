@@ -27,7 +27,6 @@ step(_Cfg, Ctx, _, _N, ["I set viewport to", W0, "x", H0, "scale", S0], _Body) -
     H = to_number(H0),
     S = to_number(S0),
     with_client(Ctx, fun(P) -> set_viewport(P, W, H, S, true) end);
-
 %% Open a URL and wait for load
 step(_Cfg, Ctx, <<"When">>, _N, ["I open", Url], _Body) ->
     with_client(Ctx, fun(P) ->
@@ -174,11 +173,24 @@ step(
 %% -------------------------------------------------------------------
 step(_Cfg, Ctx, <<"Then">>, _N, ["the page should have no horizontal overflow"], _Body) ->
     with_client(Ctx, fun(P) -> assert_no_horizontal_overflow(P, 0.0) end);
-step(_Cfg, Ctx, <<"Then">>, _N, ["the page should have no horizontal overflow within", TolPx0, "px"], _Body) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    ["the page should have no horizontal overflow within", TolPx0, "px"],
+    _Body
+) ->
     TolPx = to_number(TolPx0),
     with_client(Ctx, fun(P) -> assert_no_horizontal_overflow(P, TolPx) end);
-
-step(_Cfg, Ctx, <<"Then">>, _N, ["the element", Sel, "should be within the viewport horizontally"], _Body) ->
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    ["the element", Sel, "should be within the viewport horizontally"],
+    _Body
+) ->
     with_client(Ctx, fun(P) -> assert_within_viewport_x(P, to_bin(Sel), 0.0) end);
 step(
     _Cfg,
@@ -233,7 +245,11 @@ handle_cdp_fun_result({error, Resp}, Ctx) when is_map(Resp) ->
     end;
 handle_cdp_fun_result({'EXIT', Reason}, Ctx) ->
     ?LOG_ERROR("CDP step crashed: ~p", [Reason]),
-    maps:put(cdp_last, Reason, maps:put(fail, to_bin(io_lib:format("cdp step crashed: ~p", [Reason])), Ctx));
+    maps:put(
+        cdp_last,
+        Reason,
+        maps:put(fail, to_bin(io_lib:format("cdp step crashed: ~p", [Reason])), Ctx)
+    );
 handle_cdp_fun_result(Other, Ctx) ->
     maps:put(cdp_last, Other, Ctx).
 
@@ -278,16 +294,15 @@ exception_to_bin(ED) when is_map(ED) ->
                     #{<<"value">> := V} -> V;
                     _ -> <<"CDP exception">>
                 end;
-            T -> T
+            T ->
+                T
         end,
     to_bin(Text);
 exception_to_bin(Other) ->
     to_bin(io_lib:format("CDP exception: ~p", [Other])).
 
-
 %% ========== CDP mini-API ==========
 set_viewport(Pid, W, H, Scale, Mobile) ->
-
     ?LOG_INFO("Set viewport ~p", [Pid]),
     _ = call(Pid, <<"Emulation.setDeviceMetricsOverride">>, #{
         <<"width">> => W,
@@ -296,7 +311,6 @@ set_viewport(Pid, W, H, Scale, Mobile) ->
         <<"mobile">> => Mobile
     }),
     ok.
-
 
 call(Pid, Method, Params) ->
     cdp_client:call(Pid, Method, Params).
@@ -759,7 +773,8 @@ assert_no_horizontal_overflow(Pid, TolPx) ->
         #{<<"ok">> := true, <<"diff">> := D0, <<"cw">> := CW, <<"sw">> := SW} ->
             D = float(D0),
             case D =< TolPx of
-                true -> ok;
+                true ->
+                    ok;
                 false ->
                     fail_msg(
                         iolist_to_binary(
@@ -794,7 +809,8 @@ assert_within_viewport_x(Pid, Sel, TolPx) ->
             R = float(R0),
             VW = float(VW0),
             case (L >= (0.0 - TolPx)) andalso (R =< (VW + TolPx)) of
-                true -> ok;
+                true ->
+                    ok;
                 false ->
                     fail_msg(
                         iolist_to_binary(

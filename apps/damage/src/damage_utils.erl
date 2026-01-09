@@ -76,9 +76,7 @@ get_all_memory_stats() ->
     ).
 
 tokenize(Step) when is_binary(Step) -> tokenize(binary_to_list(Step));
-tokenize(Step) ->
-    damage_step_tokenizer:tokenize(Step).
-
+tokenize(Step) -> damage_step_tokenizer:tokenize(Step).
 
 binarystr_join(ListSep) -> binarystr_join(ListSep, <<"">>).
 
