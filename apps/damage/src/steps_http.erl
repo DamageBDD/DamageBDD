@@ -677,65 +677,100 @@ response_to_list({StatusCode, Headers, Body}) ->
 %% Hardened: SSRF/IP-range blocking + sane TLS verify defaults + keep your concurrency gating.
 %% NOTE: BasicAuth does NOT belong in gun:open opts. Apply it as an Authorization header per request.
 
+%% Add near other helpers (optional)
+get_proxy(Context, Config) ->
+    %% Prefer Context override, fallback to Config proplist
+    case maps:get(proxy, Context, undefined) of
+        undefined ->
+            case lists:keyfind(proxy, 1, Config) of
+                false -> none;
+                {proxy, {socks5, PH, PP}} -> {socks5, PH, PP};
+                {proxy, {PH, PP}} -> {socks5, PH, PP}
+            end;
+        {socks5, PH, PP} -> {socks5, PH, PP};
+        {PH, PP} -> {socks5, PH, PP}
+    end.
+
 get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
-    Host0 = damage_utils:get_context_value(host, Context, Config0),
-    Port = damage_utils:get_context_value(port, Context, Config0, ?DEFAULT_HTTP_PORT),
+    DestHost = damage_utils:get_context_value(host, Context, Config0),
+    DestPort = damage_utils:get_context_value(port, Context, Config0, ?DEFAULT_HTTP_PORT),
+    ?LOG_DEBUG("DestHost ~p DestPort ~p ~p", [DestHost, DestPort, Config0]),
+    ensure_host_is_public(DestHost),
 
-    %% --- ESSENTIAL: block SSRF to local/private/link-local/metadata etc ---
-    ensure_host_is_public(Host0),
-
-    ?LOG_DEBUG("Host ~p port ~p", [Host0, Port]),
-
-    %% Transport selection
+    %% Keep your existing "443 => tls" behavior (this is about the *destination*)
     Config =
-        case Port of
+        case DestPort of
             443 -> [{transport, tls} | Config0];
             _ -> Config0
         end,
 
-    VerifySSL = maps:get(verify_ssl, Context, true),
-
-    Opts =
+    BaseOpts =
         case lists:keyfind(transport, 1, Config) of
-            false ->
-                #{transport => tcp};
-            _ ->
-                %% ESSENTIAL: verify peer by default (no verify_none unless explicitly disabled)
-                TlsOpts =
-                    case VerifySSL of
-                        false ->
-                            [{verify, verify_none}];
-                        true ->
-                            [
-                                {verify, verify_peer},
-                                {depth, 3},
-                                {cacerts, public_key:cacerts_get()}
-                            ]
-                    end,
-                #{transport => tls, tls_opts => TlsOpts}
+            false -> #{transport => tcp};
+            _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
         end,
 
-    Opts1 = maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, Opts),
+    BaseOpts0 =
+        case maps:get(basic_auth, Context, none) of
+            none -> BaseOpts;
+            {User, Pass} -> maps:put(username, User, maps:put(password, Pass, Context))
+        end,
 
-    %% Keep your concurrency/domain gating, but now *after* SSRF block.
+    BaseOpts1 = maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, BaseOpts0),
+
+    %% ---- NEW: proxy handling (Tor SOCKS5) ----
+    %% Tor default is often 127.0.0.1:9050 (system tor) or 127.0.0.1:9150 (Tor Browser).
+    {OpenHost, OpenPort, FinalOpts} =
+        case get_proxy(Context, Config0) of
+            {socks5, ProxyHost, ProxyPort} ->
+                ?LOG_INFO("Using proxy ~p:~p", [ProxyHost, ProxyPort]),
+                %% We connect to the proxy, and tell SOCKS where to go.
+                %% Destination transport depends on whether we're doing https (tls) or not.
+                DestTransport = maps:get(transport, BaseOpts1, tcp),
+                SocksOpts0 = #{
+                    host => DestHost,
+                    port => DestPort,
+                    transport => DestTransport
+                },
+                %% If tls is used to the destination, pass through your tls opts.
+                SocksOpts =
+                    case DestTransport of
+                        tls ->
+                            SocksTlsOpts = maps:get(tls_opts, BaseOpts1, []),
+                            maps:put(tls_opts, SocksTlsOpts, SocksOpts0);
+                        tcp ->
+                            SocksOpts0
+                    end,
+                %% IMPORTANT: transport to the proxy itself must be tcp for Tor socks5.
+                %% Protocols must be ONLY socks when transport=tcp.
+                Opts2 = BaseOpts1#{
+                    transport => tcp,
+                    protocols => [{socks, SocksOpts}]
+                },
+                {ProxyHost, ProxyPort, Opts2};
+            none ->
+                ?LOG_INFO("Not Using proxy", []),
+                {DestHost, DestPort, BaseOpts1}
+        end,
+
+    %% Your existing concurrency gating should apply to the *destination host* (not the proxy)
     case lists:keyfind(concurrency, 1, Config0) of
         false ->
-            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [Host0, Port, Opts1]),
-            gun:open(Host0, Port, Opts1);
+            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [OpenHost, OpenPort, FinalOpts]),
+            gun:open(OpenHost, OpenPort, FinalOpts);
         {concurrency, 1} ->
-            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [Host0, Port, Opts1]),
-            gun:open(Host0, Port, Opts1);
+            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [OpenHost, OpenPort, FinalOpts]),
+            gun:open(OpenHost, OpenPort, FinalOpts);
         {concurrency, _Concurrency} ->
-            case damage_domains:is_allowed_domain(Host0, AeAccount) of
+            case damage_domains:is_allowed_domain(DestHost, AeAccount) of
                 true ->
-                    ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [Host0, Port, Opts1]),
-                    gun:open(Host0, Port, Opts1);
+                    ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [OpenHost, OpenPort, FinalOpts]),
+                    gun:open(OpenHost, OpenPort, FinalOpts);
                 _ ->
-                    throw(
-                        <<"Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html">>
-                    )
+                    throw(<<"Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html">>)
             end
     end.
+
 
 %% -------------------------
 %% SSRF / host safety helpers

@@ -65,8 +65,10 @@ get_default_config(ConfigIn0) ->
         run_id => RunId,
         run_dir => RunDir,
         reports_dir => ReportDir,
-        artifacts_dir => ArtifactsDir
+        artifacts_dir => ArtifactsDir,
+        proxy, {socks5, "127.0.0.1", 9050}
     },
+
 
     %% --- merge everything: caller wins for scalars, keep our list merges ---
     %% Remove keys we already handled specially to avoid double-writing them.
@@ -79,7 +81,8 @@ get_default_config(ConfigIn0) ->
             run_id,
             run_dir,
             reports_dir,
-            artifacts_dir
+            artifacts_dir,
+            proxy
         ],
         C0
     ),

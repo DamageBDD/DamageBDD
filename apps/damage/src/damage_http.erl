@@ -8,6 +8,8 @@
 
 -license("Apache-2.0").
 
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
 -export([init/2]).
 -export([content_types_accepted/2]).
 -export([content_types_provided/2]).
@@ -18,8 +20,6 @@
 -export([trails/0]).
 -import(damage_utils, [float_to_full_integer/1]).
 
--include_lib("kernel/include/logger.hrl").
--include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["Executing Tests"]).
 

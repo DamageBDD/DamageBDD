@@ -263,8 +263,8 @@ function generateDamageQR(address){
 		tabs.toggle('execution');
 		const hashes = [
 			{ cid: 'QmSaePitmi9NaZmZ2DmbtC7sSMSQBBsz113qVvpY2Wd9K3', label: 'CDP Demo' },
+			{ cid: 'QmVvbyrAM5ixneSXnvvr8oiy1mXrkxkHaQHwBuKBaiqZDZ', label: 'DamageBDD HTTP Self Test' },
 			'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
-			'QmXAwxg4Hnb4uEYr55XFrAv6e7GEJfG2y16RaSyVgAcTxG',
 			'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
 			'QmYJF7LbpHvuUXVpjWAksht3ypGvzPbViCo16gFmiCUa1D'
 		];

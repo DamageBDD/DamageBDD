@@ -41,10 +41,10 @@ ensure_session(C0) when is_map(C0) ->
                     {ok, Rec};
                 false ->
                     ?LOG_WARNING("Browser for ~p down; relaunching", [Key]),
-                    launch(Key, RunDir)
+                    launch(Key, RunDir, C0)
             end;
         [] ->
-            launch(Key, RunDir)
+            launch(Key, RunDir, C0)
     end.
 
 stop_for_key(Key0) ->
@@ -83,7 +83,7 @@ ensure_table() ->
             ok
     end.
 
-launch(Key, RunDir) ->
+launch(Key, RunDir, C0) ->
     Host = "127.0.0.1",
     Port = pick_free_port(),
     UDir = tmp_profile_dir(),
@@ -100,9 +100,11 @@ launch(Key, RunDir) ->
         ),
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-gpu",
-        "about:blank"
-    ],
+        "--disable-gpu"
+        ]
+        ++ proxy_args(C0)
+        ++ ["about:blank"],
+
     Cmd = [
         Chrome
         | Args
@@ -222,3 +224,29 @@ to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> iolist_to_binary(L);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(X) -> iolist_to_binary(io_lib:format("~p", [X])).
+
+proxy_args(C0) when is_map(C0) ->
+    case maps:get(proxy, C0, none) of
+        none ->
+            [];
+        {socks5, Host0, Port0} ->
+            Host = to_list(Host0),
+            Port = to_int(Port0),
+            [
+                damage_utils:strf("--proxy-server=socks5://~s:~p", [Host, Port]),
+                %% Prevent local DNS leaks (forces proxy-side resolution behavior)
+                "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost",
+                "--dns-prefetch-disable"
+            ];
+        {Host0, Port0} ->
+            proxy_args(maps:put(proxy, {socks5, Host0, Port0}, C0))
+    end.
+
+to_list(B) when is_binary(B) -> binary_to_list(B);
+to_list(L) when is_list(L) -> L;
+to_list(A) when is_atom(A) -> atom_to_list(A);
+to_list(I) when is_integer(I) -> integer_to_list(I).
+
+to_int(I) when is_integer(I) -> I;
+to_int(B) when is_binary(B) -> binary_to_integer(B);
+to_int(L) when is_list(L) -> list_to_integer(L).
