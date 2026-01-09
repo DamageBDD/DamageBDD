@@ -17,14 +17,15 @@
 step(_Cfg, Ctx, <<"Given">>, _N, ["I attach CDP"], _Body) ->
     attach(Ctx);
 %% Emulate a mobile/desktop viewport (important for reproducing the header bug)
-step(_Cfg, Ctx, <<"Given">>, _N, ["I set viewport to", W0, "x", H0], _Body) ->
-    W = list_to_integer(W0),
-    H = list_to_integer(H0),
-    with_client(Ctx, fun(P) -> set_viewport(P, W, H, 1, true) end);
-step(_Cfg, Ctx, <<"Given">>, _N, ["I set viewport to", W0, "x", H0, "scale", S0], _Body) ->
-    W = list_to_integer(W0),
-    H = list_to_integer(H0),
-    S = list_to_integer(S0),
+step(_Cfg, Ctx, _, _N, ["I set viewport to", W0, "x", H0], _Body) ->
+    W = to_number(W0),
+    H = to_number(H0),
+    ?LOG_DEBUG("View port set "),
+    with_client(Ctx, fun(P) -> ok = set_viewport(P, W, H, 1, true) end);
+step(_Cfg, Ctx, _, _N, ["I set viewport to", W0, "x", H0, "scale", S0], _Body) ->
+    W = to_number(W0),
+    H = to_number(H0),
+    S = to_number(S0),
     with_client(Ctx, fun(P) -> set_viewport(P, W, H, S, true) end);
 
 %% Open a URL and wait for load
@@ -37,31 +38,31 @@ step(_Cfg, Ctx, <<"When">>, _N, ["I open", Url], _Body) ->
         ok
     end);
 %% Wait for CSS selector to exist (and be visible-ish)
-step(_Cfg, Ctx, <<"When">>, _N, ["I wait for", Sel], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I wait for", Sel], _Body) ->
     with_client(Ctx, fun(P) -> wait_selector(P, to_bin(Sel), 8000) end);
 %% Click element by visible text (button/input submit supported)
-step(_Cfg, Ctx, <<"When">>, _N, ["I click text", Text], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I click text", Text], _Body) ->
     with_client(Ctx, fun(P) -> click_by_text(P, to_bin(Text)) end);
 %% Click by CSS selector
-step(_Cfg, Ctx, <<"When">>, _N, ["I click", Sel], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I click", Sel], _Body) ->
     with_client(Ctx, fun(P) -> click_selector(P, to_bin(Sel)) end);
 %% Type into CSS selector (set value + dispatch input events)
-step(_Cfg, Ctx, <<"When">>, _N, ["I type", Text, "into", Sel], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I type", Text, "into", Sel], _Body) ->
     with_client(Ctx, fun(P) -> type_into(P, to_bin(Sel), to_bin(Text)) end);
 %% Press Enter on focused element
-step(_Cfg, Ctx, <<"When">>, _N, ["I press Enter"], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I press Enter"], _Body) ->
     with_client(Ctx, fun(P) -> press_enter(P) end);
 %% Scroll element into view
-step(_Cfg, Ctx, <<"When">>, _N, ["I scroll", Sel, "into view"], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I scroll", Sel, "into view"], _Body) ->
     with_client(Ctx, fun(P) -> scroll_into_view(P, to_bin(Sel)) end);
 %% Assert page contains text (case-sensitive)
-step(_Cfg, Ctx, <<"Then">>, _N, ["the page should contain", Text], _Body) ->
+step(_Cfg, Ctx, _, _N, ["the page should contain", Text], _Body) ->
     with_client(Ctx, fun(P) -> assert_contains(P, to_bin(Text)) end);
 %% Wait until the page contains <Text> (polls until timeout)
-step(_Cfg, Ctx, <<"When">>, _N, ["I wait until the page contains", Text], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I wait until the page contains", Text], _Body) ->
     with_client(Ctx, fun(P) -> wait_until_contains(P, to_bin(Text), 8000) end);
 %% Extract text of first element and stash in context as {var,Name}
-step(_Cfg, Ctx, <<"When">>, _N, ["I save text of", Sel, "as", Name], _Body) ->
+step(_Cfg, Ctx, _, _N, ["I save text of", Sel, "as", Name], _Body) ->
     with_client(Ctx, fun(P) ->
         case get_text(P, to_bin(Sel)) of
             {ok, V} -> {ok, maps:put({var, to_bin(Name)}, V, Ctx)};
@@ -80,7 +81,7 @@ step(
     ["the element", SelA, "should be the same size as", SelB, "within", TolPx0, "px"],
     _Body
 ) ->
-    TolPx = list_to_float(TolPx0),
+    TolPx = to_number(TolPx0),
     with_client(Ctx, fun(P) -> assert_same_size(P, to_bin(SelA), to_bin(SelB), TolPx) end);
 %% -------------------------------------------------------------------
 %% Text alignment (center)
@@ -98,7 +99,7 @@ step(
     ["the text of element", Sel, "should be visually centered within", TolPx0, "px"],
     _Body
 ) ->
-    TolPx = list_to_float(TolPx0),
+    TolPx = to_number(TolPx0),
     with_client(Ctx, fun(P) -> assert_text_visually_centered(P, to_bin(Sel), TolPx) end);
 %% -------------------------------------------------------------------
 %% Pairwise alignment between elements
@@ -132,7 +133,7 @@ step(
     ],
     _Body
 ) ->
-    TolPx = list_to_float(TolPx0),
+    TolPx = to_number(TolPx0),
     with_client(Ctx, fun(P) ->
         assert_halign(P, to_bin(SelA), to_bin(SelB), to_bin(Anchor), TolPx)
     end);
@@ -164,7 +165,7 @@ step(
     ],
     _Body
 ) ->
-    TolPx = list_to_float(TolPx0),
+    TolPx = to_number(TolPx0),
     with_client(Ctx, fun(P) ->
         assert_valign(P, to_bin(SelA), to_bin(SelB), to_bin(Anchor), TolPx)
     end);
@@ -174,7 +175,7 @@ step(
 step(_Cfg, Ctx, <<"Then">>, _N, ["the page should have no horizontal overflow"], _Body) ->
     with_client(Ctx, fun(P) -> assert_no_horizontal_overflow(P, 0.0) end);
 step(_Cfg, Ctx, <<"Then">>, _N, ["the page should have no horizontal overflow within", TolPx0, "px"], _Body) ->
-    TolPx = list_to_float(TolPx0),
+    TolPx = to_number(TolPx0),
     with_client(Ctx, fun(P) -> assert_no_horizontal_overflow(P, TolPx) end);
 
 step(_Cfg, Ctx, <<"Then">>, _N, ["the element", Sel, "should be within the viewport horizontally"], _Body) ->
@@ -187,7 +188,7 @@ step(
     ["the element", Sel, "should be within the viewport horizontally within", TolPx0, "px"],
     _Body
 ) ->
-    TolPx = list_to_float(TolPx0),
+    TolPx = to_number(TolPx0),
     with_client(Ctx, fun(P) -> assert_within_viewport_x(P, to_bin(Sel), TolPx) end).
 
 %% ========== Public helpers for other step modules ==========
@@ -201,40 +202,93 @@ with_client(Ctx0, Fun) when is_map(Ctx0), is_function(Fun, 1) ->
     case steps_cdp:ensure_client(Ctx0) of
         {ok, C1} ->
             P = maps:get(cdp_pid, C1),
-            case Fun(P) of
-                ok ->
-                    C1;
-                {ok, CtxOrVal} when is_map(CtxOrVal) -> CtxOrVal;
-                {ok, _Val} ->
-                    C1;
-                {error, #{
-                    <<"id">> := _,
-                    <<"result">> :=
-                        #{
-                            <<"result">> :=
-                                #{
-                                    <<"type">> := _,
-                                    <<"value">> :=
-                                        #{
-                                            <<"msg">> := Why,
-                                            <<"ok">> := false
-                                        }
-                                }
-                        }
-                }} ->
-                    maps:put(fail, Why, C1);
-                {error, Unknown} ->
-                    ?LOG_ERROR("Unknown CDP step error ~p", [Unknown]),
-                    maps:put(fail, <<"unknown error">>, C1);
-                Other ->
-                    maps:put(cdp_last, Other, C1)
-            end;
+            Res = (catch Fun(P)),
+            handle_cdp_fun_result(Res, C1);
         {error, Why} ->
             maps:put(fail, to_bin(io_lib:format("No CDP: ~p", [Why])), Ctx0)
     end.
 
+handle_cdp_fun_result(ok, Ctx) ->
+    Ctx;
+handle_cdp_fun_result({ok, CtxOrVal}, Ctx) when is_map(CtxOrVal) ->
+    CtxOrVal;
+handle_cdp_fun_result({ok, _Val}, Ctx) ->
+    Ctx;
+handle_cdp_fun_result({error, Resp}, Ctx) when is_map(Resp) ->
+    %% Normalize CDP response envelopes so we don't lose "ok:true" results
+    case cdp_extract_value(Resp) of
+        {ok_value, #{<<"ok">> := true} = Val} ->
+            %% Treat as success; keep Val for debugging/metrics
+            maps:put(cdp_last, Val, Ctx);
+        {ok_value, #{<<"ok">> := false, <<"msg">> := Why} = Val} ->
+            maps:put(cdp_last, Val, maps:put(fail, Why, Ctx));
+        {ok_value, #{<<"ok">> := false} = Val} ->
+            %% ok=false but no msg; still fail with a useful summary
+            maps:put(cdp_last, Val, maps:put(fail, <<"CDP step failed">>, Ctx));
+        {exception, WhyBin} ->
+            maps:put(cdp_last, Resp, maps:put(fail, WhyBin, Ctx));
+        unknown ->
+            ?LOG_ERROR("Unknown CDP step error ~p", [Resp]),
+            maps:put(cdp_last, Resp, maps:put(fail, <<"unknown error">>, Ctx))
+    end;
+handle_cdp_fun_result({'EXIT', Reason}, Ctx) ->
+    ?LOG_ERROR("CDP step crashed: ~p", [Reason]),
+    maps:put(cdp_last, Reason, maps:put(fail, to_bin(io_lib:format("cdp step crashed: ~p", [Reason])), Ctx));
+handle_cdp_fun_result(Other, Ctx) ->
+    maps:put(cdp_last, Other, Ctx).
+
+%% --- CDP response normalization helpers --------------------------------
+
+cdp_extract_value(Resp) ->
+    %% Common Runtime.evaluate envelope:
+    %% #{<<"result">> => #{<<"result">> => #{<<"type">>=>..., <<"value">>=>Val}}}
+    case maps:get(<<"result">>, Resp, undefined) of
+        #{<<"result">> := #{<<"value">> := Val}} when is_map(Val) ->
+            {ok_value, Val};
+        #{<<"result">> := #{<<"value">> := Val}} ->
+            %% value could be non-map; still return it
+            {ok_value, Val};
+        _ ->
+            %% Some CDP errors carry exceptionDetails at top or inside "result"
+            case cdp_extract_exception(Resp) of
+                {exception, Why} -> {exception, Why};
+                none -> unknown
+            end
+    end.
+
+cdp_extract_exception(Resp) ->
+    %% Look for exceptionDetails in known places
+    case maps:get(<<"exceptionDetails">>, Resp, undefined) of
+        undefined ->
+            case maps:get(<<"result">>, Resp, undefined) of
+                #{<<"exceptionDetails">> := ED} -> {exception, exception_to_bin(ED)};
+                _ -> none
+            end;
+        ED ->
+            {exception, exception_to_bin(ED)}
+    end.
+
+exception_to_bin(ED) when is_map(ED) ->
+    %% Try to extract something human-readable
+    Text =
+        case maps:get(<<"text">>, ED, undefined) of
+            undefined ->
+                case maps:get(<<"exception">>, ED, undefined) of
+                    #{<<"description">> := D} -> D;
+                    #{<<"value">> := V} -> V;
+                    _ -> <<"CDP exception">>
+                end;
+            T -> T
+        end,
+    to_bin(Text);
+exception_to_bin(Other) ->
+    to_bin(io_lib:format("CDP exception: ~p", [Other])).
+
+
 %% ========== CDP mini-API ==========
 set_viewport(Pid, W, H, Scale, Mobile) ->
+
+    ?LOG_INFO("Set viewport ~p", [Pid]),
     _ = call(Pid, <<"Emulation.setDeviceMetricsOverride">>, #{
         <<"width">> => W,
         <<"height">> => H,
@@ -770,6 +824,19 @@ fail_msg(MsgBin) when is_binary(MsgBin) ->
             <<"result">> => #{<<"value">> => #{<<"ok">> => false, <<"msg">> => MsgBin}}
         }
     }}.
+
+to_number(Str) when is_binary(Str) -> to_number(binary_to_list(Str));
+to_number(Str) when is_list(Str) ->
+    %% Accept "1" or "1.0" or "0.5"
+    case catch list_to_integer(Str) of
+        I when is_integer(I) ->
+            float(I);
+        _ ->
+            case catch list_to_float(Str) of
+                F when is_float(F) -> F;
+                _ -> erlang:error({bad_number, Str})
+            end
+    end.
 
 %% Record we keep in ETS: {KeyBin, #{host,port,chrome_pid,chrome_os_port,user_data_dir,cdp_pid}}
 %% Note: chrome_pid is optional (we primarily health-check via /json/version).

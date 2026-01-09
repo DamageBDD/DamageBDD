@@ -608,7 +608,7 @@ test_list_schedule() ->
     Decrypted.
 
 contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
-    #{public_key := PubKey, private_key := PrivateKey} =
+    #{public_key := _PubKey, private_key := PrivateKey} =
         identity_server:get_account(AeAccount),
     damage_ae:set_private_key(AeAccount, PrivateKey),
     damage_ae:contract_call_payfor_user(
