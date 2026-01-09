@@ -16,6 +16,17 @@
 
 step(_Cfg, Ctx, <<"Given">>, _N, ["I attach CDP"], _Body) ->
     attach(Ctx);
+%% Emulate a mobile/desktop viewport (important for reproducing the header bug)
+step(_Cfg, Ctx, <<"Given">>, _N, ["I set viewport to", W0, "x", H0], _Body) ->
+    W = list_to_integer(W0),
+    H = list_to_integer(H0),
+    with_client(Ctx, fun(P) -> set_viewport(P, W, H, 1, true) end);
+step(_Cfg, Ctx, <<"Given">>, _N, ["I set viewport to", W0, "x", H0, "scale", S0], _Body) ->
+    W = list_to_integer(W0),
+    H = list_to_integer(H0),
+    S = list_to_integer(S0),
+    with_client(Ctx, fun(P) -> set_viewport(P, W, H, S, true) end);
+
 %% Open a URL and wait for load
 step(_Cfg, Ctx, <<"When">>, _N, ["I open", Url], _Body) ->
     with_client(Ctx, fun(P) ->
@@ -156,7 +167,28 @@ step(
     TolPx = list_to_float(TolPx0),
     with_client(Ctx, fun(P) ->
         assert_valign(P, to_bin(SelA), to_bin(SelB), to_bin(Anchor), TolPx)
-    end).
+    end);
+%% -------------------------------------------------------------------
+%% Overflow / viewport guards (catches the “header spills sideways” class of bugs)
+%% -------------------------------------------------------------------
+step(_Cfg, Ctx, <<"Then">>, _N, ["the page should have no horizontal overflow"], _Body) ->
+    with_client(Ctx, fun(P) -> assert_no_horizontal_overflow(P, 0.0) end);
+step(_Cfg, Ctx, <<"Then">>, _N, ["the page should have no horizontal overflow within", TolPx0, "px"], _Body) ->
+    TolPx = list_to_float(TolPx0),
+    with_client(Ctx, fun(P) -> assert_no_horizontal_overflow(P, TolPx) end);
+
+step(_Cfg, Ctx, <<"Then">>, _N, ["the element", Sel, "should be within the viewport horizontally"], _Body) ->
+    with_client(Ctx, fun(P) -> assert_within_viewport_x(P, to_bin(Sel), 0.0) end);
+step(
+    _Cfg,
+    Ctx,
+    <<"Then">>,
+    _N,
+    ["the element", Sel, "should be within the viewport horizontally within", TolPx0, "px"],
+    _Body
+) ->
+    TolPx = list_to_float(TolPx0),
+    with_client(Ctx, fun(P) -> assert_within_viewport_x(P, to_bin(Sel), TolPx) end).
 
 %% ========== Public helpers for other step modules ==========
 attach(Ctx0) ->
@@ -202,6 +234,15 @@ with_client(Ctx0, Fun) when is_map(Ctx0), is_function(Fun, 1) ->
     end.
 
 %% ========== CDP mini-API ==========
+set_viewport(Pid, W, H, Scale, Mobile) ->
+    _ = call(Pid, <<"Emulation.setDeviceMetricsOverride">>, #{
+        <<"width">> => W,
+        <<"height">> => H,
+        <<"deviceScaleFactor">> => Scale,
+        <<"mobile">> => Mobile
+    }),
+    ok.
+
 
 call(Pid, Method, Params) ->
     cdp_client:call(Pid, Method, Params).
@@ -650,6 +691,71 @@ assert_valign(Pid, SelA, SelB, Anchor, TolPx) ->
             {error, Other}
     end.
 
+%% ---------- page-level horizontal overflow ----------
+assert_no_horizontal_overflow(Pid, TolPx) ->
+    Expr = iolist_to_binary([
+        "(function(){",
+        "  const de=document.documentElement;",
+        "  const cw=de.clientWidth||0;",
+        "  const sw=de.scrollWidth||0;",
+        "  return {ok:true,cw,sw,diff:(sw-cw)};",
+        "})()"
+    ]),
+    case eval_value(Pid, Expr) of
+        #{<<"ok">> := true, <<"diff">> := D0, <<"cw">> := CW, <<"sw">> := SW} ->
+            D = float(D0),
+            case D =< TolPx of
+                true -> ok;
+                false ->
+                    fail_msg(
+                        iolist_to_binary(
+                            io_lib:format(
+                                "horizontal overflow: scrollWidth(~.2f) > clientWidth(~.2f) (diff=~.2fpx tol=~.2fpx)",
+                                [float(SW), float(CW), D, TolPx]
+                            )
+                        )
+                    )
+            end;
+        Other ->
+            {error, Other}
+    end.
+
+%% ---------- element-level “stays inside viewport horizontally” ----------
+assert_within_viewport_x(Pid, Sel, TolPx) ->
+    Expr = iolist_to_binary([
+        "(function(){",
+        "  const sel=",
+        jsx:encode(Sel),
+        ";",
+        "  const el=document.querySelector(sel);",
+        "  if(!el) return {ok:false,msg:`not found: ${sel}`};",
+        "  const r=el.getBoundingClientRect();",
+        "  const vw=document.documentElement.clientWidth||0;",
+        "  return {ok:true,left:r.left,right:r.right,vw};",
+        "})()"
+    ]),
+    case eval_value(Pid, Expr) of
+        #{<<"ok">> := true, <<"left">> := L0, <<"right">> := R0, <<"vw">> := VW0} ->
+            L = float(L0),
+            R = float(R0),
+            VW = float(VW0),
+            case (L >= (0.0 - TolPx)) andalso (R =< (VW + TolPx)) of
+                true -> ok;
+                false ->
+                    fail_msg(
+                        iolist_to_binary(
+                            io_lib:format(
+                                "element overflows viewport: ~s (left=~.2f right=~.2f vw=~.2f tol=~.2f)",
+                                [Sel, L, R, VW, TolPx]
+                            )
+                        )
+                    )
+            end;
+        #{<<"ok">> := false, <<"msg">> := Msg} ->
+            fail_msg(Msg);
+        Other ->
+            {error, Other}
+    end.
 %% ---------- shared eval helper ----------
 eval_value(Pid, Expr) ->
     Res = call(Pid, <<"Runtime.evaluate">>, #{<<"expression">> => Expr, <<"returnByValue">> => true}),
