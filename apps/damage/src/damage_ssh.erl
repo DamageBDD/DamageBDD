@@ -173,10 +173,10 @@ ensure_dir(D) ->
     end.
 
 start_link() ->
-    {ok, Repos} = app_env(repos_root, "/var/lib/damage/git"),
-    {ok, SystemDir} = app_env(system_dir, "/var/lib/damage/ssh/system"),
-    {ok, UserDir} = app_env(user_dir, "/var/lib/damage/ssh/user"),
-    damage_utils:ensure_dir(UserDir),
+    Home = os:getenv("HOME", "/var/lib/damage/"),
+    {ok, Repos} = app_env(repos_root, filename:join(Home, "git")),
+    {ok, SystemDir} = app_env(system_dir, filename:join(Home, "ssh/system")),
+    {ok, UserDir} = app_env(user_dir, filename:join(Home, "ssh/user")),
     ensure_dirs([SystemDir, UserDir, Repos]),
 
     {ok, SSHPid} =
