@@ -201,7 +201,92 @@ step(
     _Body
 ) ->
     TolPx = to_number(TolPx0),
-    with_client(Ctx, fun(P) -> assert_within_viewport_x(P, to_bin(Sel), TolPx) end).
+    with_client(Ctx, fun(P) -> assert_within_viewport_x(P, to_bin(Sel), TolPx) end);
+step(
+    _Cfg,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the page must have no JavaScript errors"],
+    _
+) ->
+    case steps_cdp:ensure_client(Context) of
+        {ok, Ctx} ->
+            Pid = maps:get(cdp_pid, Ctx),
+            Logs = cdp_client:get_console_logs(Pid),
+            Errors =
+                [
+                    L
+                 || L <- Logs,
+                    maps:get(level, L) =:= <<"error">> orelse
+                        maps:get(type, L) =:= exception
+                ],
+            case Errors of
+                [] ->
+                    Ctx;
+                _ ->
+                    maps:put(
+                        fail,
+                        to_bin(
+                            io_lib:format(
+                                "JavaScript errors detected: ~p", [Errors]
+                            )
+                        ),
+                        Ctx
+                    )
+            end;
+        Err ->
+            maps:put(fail, to_bin(io_lib:format("CDP error ~p", [Err])), Context)
+    end;
+step(
+    _Cfg,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the page console should contain log", Text0],
+    _
+) ->
+    Text = to_bin(Text0),
+    {ok, Ctx} = steps_cdp:ensure_client(Context),
+    Pid = maps:get(cdp_pid, Ctx),
+    Logs = cdp_client:get_console_logs(Pid),
+    case
+        lists:any(
+            fun(L) -> binary:match(maps:get(text, L, <<>>), Text) =/= nomatch end,
+            Logs
+        )
+    of
+        true ->
+            Ctx;
+        false ->
+            maps:put(
+                fail,
+                to_bin(io_lib:format("Console log not found: ~s", [Text])),
+                Ctx
+            )
+    end;
+step(
+    _Cfg,
+    Context,
+    <<"Then">>,
+    _N,
+    ["the page console should have no error logs"],
+    _
+) ->
+    {ok, Ctx} = steps_cdp:ensure_client(Context),
+    Pid = maps:get(cdp_pid, Ctx),
+    Logs = cdp_client:get_console_logs(Pid),
+    Errors = [L || L <- Logs, maps:get(level, L) =:= <<"error">>],
+    case Errors of
+        [] ->
+            Ctx;
+        _ ->
+            maps:put(
+                fail,
+                to_bin(io_lib:format("Error logs present: ~p", [Errors])),
+                Ctx
+            )
+    end.
 
 %% ========== Public helpers for other step modules ==========
 attach(Ctx0) ->

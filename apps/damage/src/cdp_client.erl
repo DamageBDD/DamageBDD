@@ -46,7 +46,8 @@
     %% integer
     port,
     %% protocol index cache
-    index = #{}
+    index = #{},
+    console_logs = []
 }).
 
 %%% ───────── Public API ─────────
@@ -193,8 +194,8 @@ handle_info({gun_ws, _Conn, _Ref, {text, Data}}, S = #state{pending = P0}) ->
         #{<<"method">> := <<"Runtime.consoleAPICalled">>} ->
             ?LOG_INFO("consoleAPICalled ~p", [Data]),
             {noreply, S};
-        #{<<"method">> := _Any} ->
-            {noreply, S};
+        #{<<"method">> := _Any} = Event ->
+            handle_event(Event, S);
         _ ->
             {noreply, S}
     end;
@@ -203,6 +204,24 @@ handle_info({gun_down, _Conn, _Proto, Reason, _Killed, _Unproc}, S) ->
     {stop, {ws_down, Reason}, S};
 handle_info(_Other, S) ->
     {noreply, S}.
+handle_event(
+    #{
+        <<"method">> := <<"Console.messageAdded">>,
+        <<"params">> := Msg
+    },
+    State
+) ->
+    Logs = maps:get(console_logs, State, []),
+    {noreply, State#{console_logs => [normalize_console(Msg) | Logs]}};
+handle_event(
+    #{
+        <<"method">> := <<"Runtime.exceptionThrown">>,
+        <<"params">> := Ex
+    },
+    State
+) ->
+    Logs = maps:get(console_logs, State, []),
+    {noreply, State#{console_logs => [normalize_exception(Ex) | Logs]}}.
 
 terminate(Reason, _S = #state{conn = Conn}) ->
     ?LOG_INFO("Terminating cdp client ~p.", [Reason]),
@@ -549,3 +568,17 @@ sh_hostport() ->
             P -> list_to_integer(P)
         end,
     {Host, Port}.
+
+normalize_console(#{<<"message">> := M}) ->
+    #{
+        type => console,
+        level => maps:get(<<"level">>, M, <<"log">>),
+        text => maps:get(<<"text">>, M, <<"">>)
+    }.
+
+normalize_exception(#{<<"exceptionDetails">> := D}) ->
+    #{
+        type => exception,
+        level => <<"error">>,
+        text => maps:get(<<"text">>, D, <<"uncaught exception">>)
+    }.
