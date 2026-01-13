@@ -257,6 +257,37 @@ contract KnowledgeNFTs =
 
         token_id
 
+  stateful entrypoint mint_index_job(
+    to           : address,
+    token_id     : int,
+    job_key      : bytes(32),   // canonical job identity
+    dataset_key  : bytes(32),   // e.g. sha256(wikipedia_dump)
+    chunk_key    : bytes(32),   // sha256(chunk_id)
+    kind_key     : bytes(32),   // sha256("ecai:index:v1")
+    meta         : metadata,
+    payload      : bytes
+    ) : int =
+    require(!Map.member(job_key, state.fact_index), "JOB_ALREADY_EXISTS")
+  
+    put(state{
+      fact_index[job_key] = token_id,
+      token_fact_key[token_id] = job_key,
+      token_to_owners[token_id] = to,
+      owners_to_tokens[to] @ts = Set.insert(token_id, ts),
+      balances[to] @b = b + 1,
+      metadata_store[token_id] = meta,
+      total_supply = state.total_supply + 1
+        })
+  
+    // events for middleware indexing
+    Chain.event(FactMinted(job_key, token_id, to, payload))
+    Chain.event(KeyIndex(dataset_key, token_id, payload))
+    Chain.event(KeyIndex(chunk_key, token_id, payload))
+    Chain.event(KeyIndex(kind_key, token_id, payload))
+  
+    token_id
+
+
   // Deprecated legacy mint (keep to force callers onto mint_derived)
   stateful entrypoint mint(_to: address, _metadata: option(metadata), _data: option(string)) : int =
     abort("DEPRECATED_USE_MINT_DERIVED")
