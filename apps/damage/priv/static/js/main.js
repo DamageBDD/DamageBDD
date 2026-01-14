@@ -242,7 +242,18 @@ function generateDamageQR(address){
 		});
 		fetch("/version")
 			.then(r => r.json())
-			.then(renderNodeFooter)
+			.then(data => {
+				if (data.ok === true) {
+					renderNodeFooter(data);
+				}else{
+					//versionDom.innerText = 'node not initialized: ' + versionData.error;
+					MicroModal.close("login-modal");
+					if(data.error === "node_locked"){
+						MicroModal.show("node-unlock-modal");
+					}else if (data.error === "keypair_not_initialized"){
+						MicroModal.show("node-set-password-modal");
+					}
+				}})
 			.catch(() => {});
 
 

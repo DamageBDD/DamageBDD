@@ -74,7 +74,7 @@ get_node_password_cached(State) ->
         undefined ->
             case os:getenv("DAMAGE_SECRET_KEY") of
                 false ->
-                    {error, undefined};
+                    {error, node_locked};
                 NodePassword ->
                     {NodePassword, State}
             end;
@@ -157,8 +157,8 @@ handle_call(
 handle_call(node_keypair, _From, State) ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case get_node_password_cached(State) of
-        error ->
-            {reply, error, State};
+        {error, Other} ->
+            {reply, {error, Other}, State};
         {NodePassword, State} ->
             KeyPair =
                 #{public_key := AeAccount, private_key := PrivateKey} = keypair(Path, NodePassword),
