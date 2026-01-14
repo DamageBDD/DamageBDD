@@ -21,15 +21,17 @@
 -define(DEFAULT_MAX_EVENTS, 200).
 
 -record(st, {
-    relay          :: binary(),
-    pubhex         :: binary(),
-    conn_pid       :: pid() | undefined,
-    stream_ref     :: term() | undefined,
-    sub_id         :: binary(),
-    max_events     :: pos_integer(),
-    events         :: [map()],     %% newest first
-    waiters        :: [pid()],     %% processes waiting for next event
-    connected      :: boolean()
+    relay :: binary(),
+    pubhex :: binary(),
+    conn_pid :: pid() | undefined,
+    stream_ref :: term() | undefined,
+    sub_id :: binary(),
+    max_events :: pos_integer(),
+    %% newest first
+    events :: [map()],
+    %% processes waiting for next event
+    waiters :: [pid()],
+    connected :: boolean()
 }).
 
 %% -------------------------------------------------------------------
@@ -51,20 +53,34 @@
 %% Helpers:
 %%   Then I store the nostr event content from "note_event" in "note_content"
 %%
-step(_Config, Context, _Kw, _Line,
-     ["I start a nostr monitor for", Npub0, "on relay", Relay0],
-     Body) ->
-    step(_Config, Context, _Kw, _Line,
-         ["I start a nostr monitor for", Npub0, "on relay", Relay0, "as", <<"nostr_mon">>],
-         Body);
-
-step(_Config, Context, _Kw, _Line,
-     ["I start a nostr monitor for", Npub0, "on relay", Relay0, "as", MonVar],
-     Body) ->
+step(
+    _Config,
+    Context,
+    _Kw,
+    _Line,
+    ["I start a nostr monitor for", Npub0, "on relay", Relay0],
+    Body
+) ->
+    step(
+        _Config,
+        Context,
+        _Kw,
+        _Line,
+        ["I start a nostr monitor for", Npub0, "on relay", Relay0, "as", <<"nostr_mon">>],
+        Body
+    );
+step(
+    _Config,
+    Context,
+    _Kw,
+    _Line,
+    ["I start a nostr monitor for", Npub0, "on relay", Relay0, "as", MonVar],
+    Body
+) ->
     case ensure_not_running(Context, MonVar) of
         ok ->
             Relay = maybe_bin(Relay0),
-            Npub  = maybe_bin(Npub0),
+            Npub = maybe_bin(Npub0),
             PubHex = normalize_pub_hex(Npub),
 
             case PubHex of
@@ -94,17 +110,30 @@ step(_Config, Context, _Kw, _Line,
         {error, Why} ->
             maps:put(fail, Why, Context)
     end;
-
-step(_Config, Context, _Kw, _Line,
-     ["I stop the nostr monitor"],
-     _Body) ->
-    step(_Config, Context, _Kw, _Line,
-         ["I stop the nostr monitor", <<"nostr_mon">>],
-         _Body);
-
-step(_Config, Context, _Kw, _Line,
-     ["I stop the nostr monitor", MonVar],
-     _Body) ->
+step(
+    _Config,
+    Context,
+    _Kw,
+    _Line,
+    ["I stop the nostr monitor"],
+    _Body
+) ->
+    step(
+        _Config,
+        Context,
+        _Kw,
+        _Line,
+        ["I stop the nostr monitor", <<"nostr_mon">>],
+        _Body
+    );
+step(
+    _Config,
+    Context,
+    _Kw,
+    _Line,
+    ["I stop the nostr monitor", MonVar],
+    _Body
+) ->
     case get_mon_pid(Context, MonVar) of
         {ok, Pid} ->
             _ = stop(Pid),
@@ -113,17 +142,35 @@ step(_Config, Context, _Kw, _Line,
         {error, Why} ->
             maps:put(fail, Why, Context)
     end;
-
-step(_Config, Context, _Kw, _Line,
-     ["I wait for the next nostr note and store event as", OutVar],
-     Body) ->
-    step(_Config, Context, _Kw, _Line,
-         ["I wait for the next nostr note from monitor", <<"nostr_mon">>, "and store event as", OutVar],
-         Body);
-
-step(_Config, Context, _Kw, _Line,
-     ["I wait for the next nostr note from monitor", MonVar, "and store event as", OutVar],
-     Body) ->
+step(
+    _Config,
+    Context,
+    _Kw,
+    _Line,
+    ["I wait for the next nostr note and store event as", OutVar],
+    Body
+) ->
+    step(
+        _Config,
+        Context,
+        _Kw,
+        _Line,
+        [
+            "I wait for the next nostr note from monitor",
+            <<"nostr_mon">>,
+            "and store event as",
+            OutVar
+        ],
+        Body
+    );
+step(
+    _Config,
+    Context,
+    _Kw,
+    _Line,
+    ["I wait for the next nostr note from monitor", MonVar, "and store event as", OutVar],
+    Body
+) ->
     TimeoutMs = pick_timeout_ms(Body, Context),
     case get_mon_pid(Context, MonVar) of
         {ok, Pid} ->
@@ -137,10 +184,14 @@ step(_Config, Context, _Kw, _Line,
         {error, Why} ->
             maps:put(fail, Why, Context)
     end;
-
-step(_Config, Context, _Kw, _Line,
-     ["I store the nostr event content from", EventVar, "in", OutVar],
-     _Body) ->
+step(
+    _Config,
+    Context,
+    _Kw,
+    _Line,
+    ["I store the nostr event content from", EventVar, "in", OutVar],
+    _Body
+) ->
     case maps:get(EventVar, Context, undefined) of
         #{<<"content">> := Content} ->
             maps:put(OutVar, Content, Context);
@@ -148,11 +199,101 @@ step(_Config, Context, _Kw, _Line,
             maps:put(OutVar, maybe_bin(Content), Context);
         _ ->
             maps:put(fail, <<"nostr event not found / missing content">>, Context)
+    end;
+%% ------------------------------------------------------------
+%% High-level steps
+%% ------------------------------------------------------------
+
+%% Then I wait for nostr events in the last "N" hours
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _Line,
+    ["I wait for nostr events in the last", Hours0, "hours"],
+    Body
+) ->
+    %% default monitor is "nostr_mon"
+    step(
+        _Config,
+        Context,
+        <<"Then">>,
+        _Line,
+        ["I wait for nostr events in the last", Hours0, "hours", "from monitor", <<"nostr_mon">>],
+        Body
+    );
+
+%% Then I wait for nostr events in the last "N" hours from monitor "X"
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _Line,
+    ["I wait for nostr events in the last", Hours0, "hours", "from monitor", MonVar],
+    Body
+) ->
+    TimeoutMs = pick_timeout_ms(Body, Context),
+    Hours = to_int(Hours0, 0),
+    SinceSec = erlang:system_time(second) - (Hours * 3600),
+
+    case get_mon_pid(Context, MonVar) of
+        {ok, Pid} ->
+            %% Keep waiting until we get an event whose created_at is within window,
+            %% or until timeout is reached.
+            case pop_event_until_since(Pid, SinceSec, TimeoutMs) of
+                {ok, Event} ->
+                    %% Store canonical vars for downstream steps
+                    Content = get_event_content(Event),
+                    C1 = maps:put(nostr_event, Event, Context),
+                    C2 = maps:put(nostr_event_content, Content, C1),
+                    append_monitored(Event, C2);
+                {error, Reason} ->
+                    maps:put(fail, Reason, Context)
+            end;
+        {error, Why} ->
+            maps:put(fail, Why, Context)
+    end;
+
+%% Then the nostr event content must contain "damagebdd"
+step(
+    _Config,
+    Context,
+    <<"Then">>,
+    _Line,
+    ["the nostr event content must contain", Needle0],
+    _Body
+) ->
+    Needle = lowercase_bin(maybe_bin(Needle0)),
+    Hay =
+        case maps:get(nostr_event_content, Context, undefined) of
+            undefined ->
+                %% fallback: try last stored nostr_event
+                get_event_content(maps:get(nostr_event, Context, #{}));
+            V ->
+                maybe_bin(V)
+        end,
+    Hay2 = lowercase_bin(Hay),
+
+    case binary:match(Hay2, Needle) of
+        nomatch ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    <<"nostr content did not contain ~p. content=~p">>,
+                    [Needle0, Hay]
+                ),
+                Context
+            );
+        _ ->
+            Context
     end.
+
+
 
 ensure_not_running(Context, MonVar) ->
     case maps:get(MonVar, Context, undefined) of
-        undefined -> ok;
+        undefined ->
+            ok;
         #{pid := Pid} when is_pid(Pid) ->
             case is_process_alive(Pid) of
                 true -> {error, <<"nostr monitor already running">>};
@@ -178,7 +319,11 @@ append_monitored(Event, Context) ->
 
 pick_timeout_ms(Body, Context) ->
     FromCtx =
-        case maps:get(<<"nostr_timeout_ms">>, Context, maps:get(nostr_timeout_ms, Context, undefined)) of
+        case
+            maps:get(
+                <<"nostr_timeout_ms">>, Context, maps:get(nostr_timeout_ms, Context, undefined)
+            )
+        of
             T when is_integer(T), T > 0 -> T;
             _ -> undefined
         end,
@@ -190,12 +335,17 @@ pick_timeout_ms(Body, Context) ->
                 _ -> ?DEFAULT_TIMEOUT_MS
             end;
         _ when is_integer(FromCtx) -> FromCtx;
-        _ -> ?DEFAULT_TIMEOUT_MS
+        _ ->
+            ?DEFAULT_TIMEOUT_MS
     end.
 
 pick_max_events(Body, Context) ->
     FromCtx =
-        case maps:get(<<"nostr_max_events">>, Context, maps:get(nostr_max_events, Context, undefined)) of
+        case
+            maps:get(
+                <<"nostr_max_events">>, Context, maps:get(nostr_max_events, Context, undefined)
+            )
+        of
             M when is_integer(M), M > 0 -> M;
             _ -> undefined
         end,
@@ -207,7 +357,8 @@ pick_max_events(Body, Context) ->
                 _ -> ?DEFAULT_MAX_EVENTS
             end;
         _ when is_integer(FromCtx) -> FromCtx;
-        _ -> ?DEFAULT_MAX_EVENTS
+        _ ->
+            ?DEFAULT_MAX_EVENTS
     end.
 
 %% -------------------------------------------------------------------
@@ -251,11 +402,9 @@ init(#{relay := Relay0, pubhex := PubHex0, max_events := MaxEvents}) ->
 
 handle_call(stop, _From, St) ->
     {stop, normal, ok, St};
-
 handle_call(stats, _From, #st{events = Ev, connected = Conn} = St) ->
     {reply, #{connected => Conn, queued_events => length(Ev)}, St};
-
-handle_call({pop_event, TimeoutMs}, From, #st{events = [E | Rest]} = St) ->
+handle_call({pop_event, _TimeoutMs}, _From, #st{events = [E | Rest]} = St) ->
     {reply, {ok, E}, St#st{events = Rest}};
 handle_call({pop_event, _TimeoutMs}, From, #st{events = []} = St) ->
     %% No events yet: park caller; we will reply when first event arrives
@@ -275,9 +424,10 @@ handle_info(connect, St0) ->
             erlang:send_after(2000, self(), connect),
             {noreply, St1}
     end;
-
-handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers},
-            #st{conn_pid = ConnPid, stream_ref = StreamRef} = St0) ->
+handle_info(
+    {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers},
+    #st{conn_pid = ConnPid, stream_ref = StreamRef} = St0
+) ->
     %% Subscribe on successful upgrade
     Filter = #{
         <<"kinds">> => [1],
@@ -286,9 +436,10 @@ handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers},
     Req = jsx:encode([<<"REQ">>, St0#st.sub_id, Filter]),
     ok = gun:ws_send(ConnPid, StreamRef, {text, Req}),
     {noreply, St0#st{connected = true}};
-
-handle_info({gun_ws, ConnPid, StreamRef, {text, MsgBin}},
-            #st{conn_pid = ConnPid, stream_ref = StreamRef} = St0) ->
+handle_info(
+    {gun_ws, ConnPid, StreamRef, {text, MsgBin}},
+    #st{conn_pid = ConnPid, stream_ref = StreamRef} = St0
+) ->
     %% Process incoming frames forever
     case safe_decode(MsgBin) of
         [<<"EVENT">>, SubId, EventMap] when SubId =:= St0#st.sub_id ->
@@ -301,18 +452,17 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, MsgBin}},
         _Other ->
             {noreply, St0}
     end;
-
-handle_info({gun_down, ConnPid, _Proto, _Reason, _Killed, _Unprocessed},
-            #st{conn_pid = ConnPid} = St0) ->
+handle_info(
+    {gun_down, ConnPid, _Proto, _Reason, _Killed, _Unprocessed},
+    #st{conn_pid = ConnPid} = St0
+) ->
     %% Relay went away — reconnect
     ?LOG_WARNING("nostr monitor disconnected; reconnecting", []),
     erlang:send_after(1000, self(), connect),
     {noreply, St0#st{conn_pid = undefined, stream_ref = undefined, connected = false}};
-
 handle_info({'DOWN', _MRef, process, _Pid, _Reason}, St0) ->
     %% A waiter died; prune waiters in a cheap way by filtering later
     {noreply, St0};
-
 handle_info(_Info, St) ->
     {noreply, St}.
 
@@ -323,7 +473,8 @@ terminate(_Reason, #st{conn_pid = ConnPid, stream_ref = StreamRef, sub_id = SubI
             {P, S} when is_pid(P) ->
                 _ = gun:ws_send(P, S, {text, jsx:encode([<<"CLOSE">>, SubId])}),
                 gun:close(P);
-            _ -> ok
+            _ ->
+                ok
         end
     end,
     ok.
@@ -359,11 +510,13 @@ enqueue_event(Ev, #st{events = Ev0, max_events = Max, waiters = Waiters} = St0) 
             St0#st{waiters = Waiters2}
     end.
 
-take_alive_waiter([]) -> {none, []};
+take_alive_waiter([]) ->
+    {none, []};
 take_alive_waiter([From | Rest]) ->
     Pid = element(1, From),
     case is_process_alive(Pid) of
-        true -> {{some, From}, Rest};
+        true ->
+            {{some, From}, Rest};
         false ->
             {W, Rest2} = take_alive_waiter(Rest),
             {W, Rest2}
@@ -442,10 +595,16 @@ parse_relay(Relay0) ->
                     "ws" -> 80;
                     _ -> 443
                 end;
-            P -> P
+            P ->
+                P
         end,
     Path0 = maps:get(path, M, "/"),
-    Path = list_to_binary(if Path0 =:= "" -> "/"; true -> Path0 end),
+    Path = list_to_binary(
+        if
+            Path0 =:= "" -> "/";
+            true -> Path0
+        end
+    ),
     Tls = (Scheme =:= "wss"),
     {Host, Port, Path, Tls}.
 
@@ -462,3 +621,45 @@ to_bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])).
 
 lowercase_bin(Bin) ->
     list_to_binary(string:lowercase(binary_to_list(Bin))).
+%% ------------------------------------------------------------
+%% Helpers for high-level steps
+%% ------------------------------------------------------------
+
+pop_event_until_since(Pid, SinceSec, TimeoutMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    loop_pop(Pid, SinceSec, Deadline).
+
+loop_pop(Pid, SinceSec, DeadlineMs) ->
+    NowMs = erlang:monotonic_time(millisecond),
+    Remaining = DeadlineMs - NowMs,
+    case Remaining =< 0 of
+        true ->
+            {error, <<"nostr wait timed out">>};
+        false ->
+            case pop_event(Pid, Remaining) of
+                {ok, Ev} ->
+                    CreatedAt = get_event_created_at(Ev),
+                    case CreatedAt >= SinceSec of
+                        true -> {ok, Ev};
+                        false -> loop_pop(Pid, SinceSec, DeadlineMs)
+                    end;
+                {error, R} ->
+                    {error, R}
+            end
+    end.
+
+get_event_created_at(#{<<"created_at">> := V}) -> to_int(V, 0);
+get_event_created_at(#{created_at := V}) -> to_int(V, 0);
+get_event_created_at(_) -> 0.
+
+get_event_content(#{<<"content">> := C}) -> maybe_bin(C);
+get_event_content(#{content := C}) -> maybe_bin(C);
+get_event_content(_) -> <<>>.
+
+to_int(V, Default) when is_integer(V) -> V;
+to_int(V, Default) when is_binary(V) ->
+    try binary_to_integer(V) catch _:_ -> Default end;
+to_int(V, Default) when is_list(V) ->
+    try list_to_integer(V) catch _:_ -> Default end;
+to_int(_, Default) ->
+    Default.
