@@ -31,7 +31,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/logger.hrl").
 
--define(DEFAULT_IPFS_TIMEOUT, 5000).
+-define(DEFAULT_IPFS_TIMEOUT, 50000).
 
 %% Public API functions
 

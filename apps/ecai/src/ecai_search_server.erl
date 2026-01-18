@@ -18,7 +18,7 @@
         code_change/3
     ]
 ).
--define(CTX_TIMEOUT, 60000).
+-define(CTX_TIMEOUT, 600000).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).

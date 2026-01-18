@@ -15,8 +15,9 @@
 -include_lib("kernel/include/logger.hrl").
 %% ecai_index_snapshot.erl
 -record(state, {ctx_fun, path, interval_ms}).
+-define(ECAI_LOAD_TIMEOUT, 600000).
 
-start_link(CtxFun, Path) -> start_link(CtxFun, Path, 60000).
+start_link(CtxFun, Path) -> start_link(CtxFun, Path, ?ECAI_LOAD_TIMEOUT).
 start_link(CtxFun, Path, IntervalMs) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, {CtxFun, Path, IntervalMs}, []).
 

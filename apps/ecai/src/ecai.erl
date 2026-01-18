@@ -14,7 +14,7 @@
 ]).
 
 -export([
-         point_to_filename_hash/1,
+    point_to_filename_hash/1,
     hash_to_curve/1,
     curve_add/4
 ]).
@@ -57,6 +57,5 @@ point_to_filename_hash({X, Y}) ->
     Slug = base32:encode(binary:part(Hash, 0, 20)),
     <<"ecai_", Slug/binary>>.
 
-
 test() ->
-    {1650075109,63181} = ecai:hash_to_curve("Hello world!").
+    {1650075109, 63181} = ecai:hash_to_curve("Hello world!").
