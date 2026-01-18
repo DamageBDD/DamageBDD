@@ -67,6 +67,7 @@
 -define(PEER_BLACKLIST_TTL_MIN, 86400000).
 %% 6h for connect/init failures
 -define(PEER_BLACKLIST_TTL_CONN, 21600000).
+-define(SECRETS_RETRY_MS, 60000).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -80,6 +81,9 @@
     cln_certfile = undefined,
     cln_keyfile = undefined,
     rune = undefined,
+    readonly_rune = undefined,
+    retry_timer = undefined,
+    secrets_ready = false,
     options :: map(),
     heartbeat_timer = undefined
 }).
@@ -153,26 +157,14 @@ init([]) ->
         heartbeat_timer = HeartbeatTimer
     }};
 init([ws]) ->
-    {ok, State} = init([]),
+    {ok, State0} = init([]),
     ?LOG_INFO("cln ws started"),
-    case secrets:retrieve_decrypt(cln_readonly_rune) of
-        {ok, ReadOnlyRuneBin} ->
-            {ok, ConnPid} = gun:open(
-                State#state.cln_host, State#state.cln_port, State#state.options
-            ),
-            ?LOG_DEBUG("cln websocket upgrade using rune ~p", [ReadOnlyRuneBin]),
-            StreamRef = gun:ws_upgrade(ConnPid, "/socket.io/?EIO=4&transport=websocket", [
-                {<<"rune">>, ReadOnlyRuneBin}
-            ]),
-
-            ?LOG_DEBUG("cln websocket upgrade successfull ~p", [ConnPid]),
-            {ok, State#state{
-                conn_pid = ConnPid,
-                streamref = StreamRef
-            }};
-        Error ->
-            ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret. ~p", [Error]),
-            {ok, #state{}}
+    case load_runes(State0) of
+        {ok, State1} ->
+            start_ws(State1);
+        {error, _} ->
+            TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
+            {ok, State0#state{secrets_ready = false, retry_timer = TRef}}
     end.
 
 put_cache(Key, Value) ->
@@ -1492,6 +1484,10 @@ handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
         [ConnPid, StreamRef, Reason]
     ),
     {noreply, State};
+handle_info(heartbeat, State = #state{secrets_ready = false}) ->
+    %% optionally: don’t do heartbeat work while disabled
+    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+    {noreply, State#state{heartbeat_timer = HeartbeatTimer}};
 handle_info(heartbeat, State) ->
     %% Send a ping message to check the connection
     %ok = gun:ws_send(State#state.conn_pid, State#state.streamref,  {text,  jsx:encode(#{jsonrpc => <<"2.0">>,  method => <<"getinfo">>, params => []})}),
@@ -1525,6 +1521,24 @@ handle_info({gun_ws, _, _, close} = _Info, State) ->
 handle_info({gun_down, _, ws, normal, _} = _Info, State) ->
     %?LOG_DEBUG("cln handle_info got gun_down on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
+handle_info(retry_secrets, State0) ->
+    case load_runes(State0) of
+        {ok, State1} ->
+            %% cancel any existing retry timer
+            maybe_cancel(State0#state.retry_timer),
+            %% now actually connect
+            case start_ws(State1#state{retry_timer = undefined, secrets_ready = true}) of
+                {ok, State2} ->
+                    {noreply, State2};
+                {error, _} ->
+                    %% if connect fails, you can also backoff here
+                    TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
+                    {noreply, State1#state{retry_timer = TRef, secrets_ready = false}}
+            end;
+        {error, _} ->
+            TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
+            {noreply, State0#state{retry_timer = TRef, secrets_ready = false}}
+    end;
 handle_info(_Info, State) ->
     %?LOG_DEBUG("cln handle_info got unknown on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State}.
@@ -2276,3 +2290,26 @@ get_node_balance(Host, Port, Options, Rune) ->
         channel_sats => ChannelMsat div 1000,
         total_sats => (OnchainMsat + ChannelMsat) div 1000
     }.
+load_runes(State) ->
+    case {secrets:retrieve_decrypt(cln_rune), secrets:retrieve_decrypt(cln_readonly_rune)} of
+        {{ok, Rune}, {ok, ReadOnly}} ->
+            {ok, State#state{rune = Rune, readonly_rune = ReadOnly}};
+        Error ->
+            %% log once per retry tick (or rate-limit)
+            {error, Error}
+    end.
+
+start_ws(
+    #state{cln_host = Host, cln_port = Port, options = Opts, readonly_rune = ReadOnly} = State
+) ->
+    {ok, ConnPid} = gun:open(Host, Port, Opts),
+    StreamRef = gun:ws_upgrade(ConnPid, "/socket.io/?EIO=4&transport=websocket", [
+        {<<"rune">>, ReadOnly}
+    ]),
+    {ok, State#state{conn_pid = ConnPid, streamref = StreamRef}}.
+
+maybe_cancel(undefined) ->
+    ok;
+maybe_cancel(TRef) ->
+    _ = erlang:cancel_timer(TRef),
+    ok.
