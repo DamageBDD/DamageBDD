@@ -172,6 +172,7 @@ init([ws]) ->
     ?LOG_INFO("cln ws started"),
     case load_runes(State0) of
         {ok, State1} ->
+            ensure_swap_ledger(),
             case start_ws(State1#state{secrets_ready = true}) of
                 {ok, State2} ->
                     %% Start periodic swap reconciliation (replays missed invoice_paid events)
@@ -1557,7 +1558,8 @@ handle_info(reconcile_swaps, State) ->
     %% Not ready yet; try again later
     TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
     {noreply, State#state{ln_reconcile_timer = TRef}};
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    ?LOG_DEBUG("Unknown info ~p",[Info]),
     {noreply, State}.
 handle_event(
     _ConnPid,
@@ -1573,8 +1575,9 @@ handle_event(
                         _PeerId
                 }
         }
-    ] = _Message
+    ] = Message
 ) ->
+    ?LOG_DEBUG("Unknown message ~p",[Message]),
     ok;
 handle_event(
     ConnPid,
@@ -2333,13 +2336,16 @@ is_damage_label(Inv) when is_map(Inv) ->
     end.
 
 already_reconciled(Key) ->
+    ensure_swap_ledger(),
     case ets:lookup(?LN_SWAP_LEDGER, Key) of
         [{_, _, _}] -> true;
         _ -> false
     end.
 
 mark_reconciled(Key, Meta) ->
-    ets:insert(?LN_SWAP_LEDGER, {Key, Meta, erlang:system_time(second)}),
+    %% Ensure ledger exists in case owner process restarted.
+    ensure_swap_ledger(),
+    true = ets:insert(?LN_SWAP_LEDGER, {Key, Meta, erlang:system_time(second)}),
     ok.
 
 maybe_mark_reconciled(Inv) when is_map(Inv) ->
@@ -2350,6 +2356,24 @@ maybe_mark_reconciled(Inv) when is_map(Inv) ->
     end;
 maybe_mark_reconciled(_) ->
     ok.
+ensure_swap_ledger() ->
+    case ets:info(?LN_SWAP_LEDGER) of
+        undefined ->
+            %% Create the table in the websocket worker (so it stays alive as long as ws stays alive).
+            %% Named table allows other processes to read it by name.
+            try ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
+                _Tid ->
+                    ?LOG_INFO("~p created", [?LN_SWAP_LEDGER]),
+                    ok
+            catch
+                error:badarg ->
+                    %% Race: another process created it between info/1 and new/2
+                    ok
+            end;
+        _ ->
+            ok
+    end.
+
 
 ensure_reconcile_timer(State = #state{ln_reconcile_timer = undefined}) ->
     TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
