@@ -24,6 +24,7 @@
         hold_invoice/4,
         hold_invoice_cancel/1,
         list_invoices/0,
+        list_invoices/1,
         list_invoices_by_label/1,
         list_invoices_by_invoicestring/1,
         list_invoices_by_payment_hash/1,
@@ -69,6 +70,10 @@
 -define(PEER_BLACKLIST_TTL_CONN, 21600000).
 -define(SECRETS_RETRY_MS, 60000).
 
+%% LN -> AE swap reconciliation
+-define(LN_RECONCILE_MS, 60000).
+-define(LN_SWAP_LEDGER, cln_ln_swap_ledger).
+
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
@@ -85,7 +90,8 @@
     retry_timer = undefined,
     secrets_ready = false,
     options :: map(),
-    heartbeat_timer = undefined
+    heartbeat_timer = undefined,
+    ln_reconcile_timer = undefined
 }).
 
 -define(SAT_TO_MSAT, 1000).
@@ -146,13 +152,18 @@ init([]) ->
     ?LOG_INFO("cln started"),
     case catch ets:new(cln_channel_cache, [set, public, named_table, {read_concurrency, true}]) of
         {badarg, exists} ->
-            ?LOG_DEBUG("cln_channel_cache exists");
+            ?LOG_INFO("cln_channel_cache exists");
         _ ->
-            ?LOG_DEBUG("cln_channel_cache created")
+            ?LOG_INFO("cln_channel_cache created")
+    end,
+    case catch ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
+        {badarg, exists} ->
+            ?LOG_INFO("~p exists", [?LN_SWAP_LEDGER]);
+        _ ->
+            ?LOG_INFO("~p created", [?LN_SWAP_LEDGER])
     end,
     State = get_cln_client_config(),
     HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-    ?LOG_DEBUG("State ~p ", [State]),
     {ok, State#state{
         heartbeat_timer = HeartbeatTimer
     }};
@@ -161,7 +172,15 @@ init([ws]) ->
     ?LOG_INFO("cln ws started"),
     case load_runes(State0) of
         {ok, State1} ->
-            start_ws(State1);
+            case start_ws(State1#state{secrets_ready = true}) of
+                {ok, State2} ->
+                    %% Start periodic swap reconciliation (replays missed invoice_paid events)
+                    maybe_cancel(State2#state.ln_reconcile_timer),
+                    TRef2 = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+                    {ok, State2#state{ln_reconcile_timer = TRef2}};
+                Error ->
+                    Error
+            end;
         {error, _} ->
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {ok, State0#state{secrets_ready = false, retry_timer = TRef}}
@@ -848,7 +867,6 @@ handle_call(
     Message =
         <<"42", Message0/binary>>,
 
-    ?LOG_DEBUG("sending waitanyinvoice ~p", [Message]),
     ok =
         gun:ws_send(
             ConnPid,
@@ -990,7 +1008,6 @@ handle_call(
 ) ->
     Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
     ChannelList = fetch_channel_list(Host, Port, Options, Headers, #{}),
-    ?LOG_DEBUG("ChannelList ~p", [ChannelList]),
     {reply, ChannelList, State};
 handle_call(
     find_best_peer_to_open,
@@ -1027,7 +1044,8 @@ handle_call(
     TargetMsat = maps:get(target_msat, Opts),
 
     %% 1. Node balance (all spendable funds)
-    BalanceSats = get_node_balance(Host, Port, Options, Rune),
+    
+    #{onchain_sats := BalanceSats} = get_node_balance(Host, Port, Options, Rune),
 
     %% keep a small reserve so we don't strand the wallet
     Reserve = 100000,
@@ -1171,15 +1189,15 @@ handle_call(
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
         case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
-            {response, fin, Status, _RespHeaders} ->
-                ?LOG_DEBUG("Got fin ~p", [Status]),
+            {response, fin, _Status, _RespHeaders} ->
                 no_data;
             {response, nofin, _Status, _RespHeaders} ->
                 gun:await_body(ConnPid, StreamRef);
             {response, nofin, _RespHeaders} ->
                 gun:await_body(ConnPid, StreamRef);
             Default ->
-                ?LOG_DEBUG("Got unknown ~p ", [Default])
+                ?LOG_DEBUG("Got unknown ~p ", [Default]),
+                {error, Default}
         end,
     Invoice = jsx:decode(Response, [return_maps, {labels, atom}]),
     %% Parse the response JSON
@@ -1471,10 +1489,6 @@ handle_info(
     {gun_response, ConnPid, _, _, Status, Headers},
     State = #state{conn_pid = ConnPid}
 ) ->
-    ?LOG_DEBUG(
-        "gun_response got message on gun websocket ConnPid ~p, \nStatus ~p Headers ~p",
-        [ConnPid, Status, Headers]
-    ),
     {noreply, State};
 handle_info({gun_error, _ConnPid, _StreamRef, {badstate, "The stream cannot be found."}}, State) ->
     {noreply, State};
@@ -1500,10 +1514,8 @@ handle_info({gun_down, ConnPid, _Reason}, State) when
     erlang:cancel_timer(State#state.heartbeat_timer),
     {stop, normal, State};
 handle_info({gun_up, _, _} = _Info, State) ->
-    %?LOG_DEBUG("handle_info gun_up websocket Info ~p, State ~p ", [Info, State]),
     {noreply, State};
 handle_info({gun_ws, ConnPid, StreamRef, {text, <<"2">>}}, State) ->
-    %?LOG_DEBUG("cln socket Received ping, sending pong. ~p ~p ~n", [ConnPid, StreamRef]),
     gun:ws_send(
         ConnPid,
         StreamRef,
@@ -1512,14 +1524,11 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, <<"2">>}}, State) ->
     {noreply, State};
 handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
     Message = parse_socketio_message(Message0),
-    %?LOG_DEBUG("cln handle_info gun_ws ~p", [Message]),
     handle_event(ConnPid, StreamRef, Message),
     {noreply, State};
 handle_info({gun_ws, _, _, close} = _Info, State) ->
-    %?LOG_DEBUG("cln handle_info got close on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
 handle_info({gun_down, _, ws, normal, _} = _Info, State) ->
-    %?LOG_DEBUG("cln handle_info got gun_down on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State};
 handle_info(retry_secrets, State0) ->
     case load_runes(State0) of
@@ -1529,7 +1538,7 @@ handle_info(retry_secrets, State0) ->
             %% now actually connect
             case start_ws(State1#state{retry_timer = undefined, secrets_ready = true}) of
                 {ok, State2} ->
-                    {noreply, State2};
+                    {noreply, ensure_reconcile_timer(State2)};
                 {error, _} ->
                     %% if connect fails, you can also backoff here
                     TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
@@ -1539,8 +1548,16 @@ handle_info(retry_secrets, State0) ->
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {noreply, State0#state{retry_timer = TRef, secrets_ready = false}}
     end;
+handle_info(reconcile_swaps, State0 = #state{secrets_ready = true}) ->
+    %% Safety net: periodically scan for paid 'damage:' invoices and replay invoice_paid events
+    catch reconcile_swaps(State0),
+    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+    {noreply, State0#state{ln_reconcile_timer = TRef}};
+handle_info(reconcile_swaps, State) ->
+    %% Not ready yet; try again later
+    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+    {noreply, State#state{ln_reconcile_timer = TRef}};
 handle_info(_Info, State) ->
-    %?LOG_DEBUG("cln handle_info got unknown on gun websocket Info ~p, State ~p", [Info, State]),
     {noreply, State}.
 handle_event(
     _ConnPid,
@@ -1558,7 +1575,6 @@ handle_event(
         }
     ] = _Message
 ) ->
-    %?LOG_DEBUG("handle_event custommsg ~p", [Message]),
     ok;
 handle_event(
     ConnPid,
@@ -1570,7 +1586,6 @@ handle_event(
         pingInterval := _PingInteraval
     } = _Event
 ) ->
-    ?LOG_DEBUG("Websocket session created ~p", [SessionId]),
     gun:ws_send(
         ConnPid,
         StreamRef,
@@ -1583,11 +1598,9 @@ handle_event(
         sid := _SessionId
     } = Event
 ) ->
-    ?LOG_DEBUG("Websocket session got ~p", [Event]),
     Message0 = jsx:encode([<<"subscribe">>]),
     Message =
         <<"42", Message0/binary>>,
-    ?LOG_DEBUG("sending waitanyinvoice ~p", [Message]),
     ok =
         gun:ws_send(
             ConnPid,
@@ -1623,9 +1636,11 @@ handle_event(
                 paid_at_unix => erlang:system_time(second),
                 status_runtime => <<"paid">>
             },
+            maybe_mark_reconciled(PaidInv),
             broadcast(invoice_paid, PaidInv);
         _ ->
             %% We didn't create/track this label locally (rare). Still surface a useful payload.
+            maybe_mark_reconciled(#{label => Label, preimage => Preimage}),
             broadcast(invoice_paid, #{
                 label => Label,
                 preimage => Preimage,
@@ -1634,12 +1649,13 @@ handle_event(
             })
     end;
 handle_event(_ConnPid, _StreamRef, _UnknownEvent) ->
-    %?LOG_DEBUG("Websocket unknown event ~p", [UnknownEvent]),
     ok.
 
 terminate(Reason, State) ->
     maybe_close_gun(State#state.conn_pid),
-    erlang:cancel_timer(State#state.heartbeat_timer),
+    maybe_cancel(State#state.heartbeat_timer),
+    maybe_cancel(State#state.retry_timer),
+    maybe_cancel(State#state.ln_reconcile_timer),
     ?LOG_ERROR("Terminating clnconnect ~p", [Reason]),
     ok.
 maybe_close_gun(Conn) when is_pid(Conn) ->
@@ -1669,6 +1685,13 @@ list_invoices() ->
                 Worker, {list_invoices, #{index => <<"created">>, limit => 10}}, ?CLN_HTTP_TIMEOUT
             )
         end
+    ).
+%% Generic listinvoices wrapper so callers can control paging / limit.
+%% Example: cln:list_invoices(#{index => <<"created">>, limit => 500}).
+list_invoices(Params) when is_map(Params) ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) -> gen_server:call(Worker, {list_invoices, Params}, ?CLN_HTTP_TIMEOUT) end
     ).
 list_invoices_by_label(Label) ->
     poolboy:transaction(
@@ -1749,7 +1772,6 @@ decode_payload(Payload) ->
     jsx:decode(Payload, [return_maps, {labels, atom}]).
 parse_socketio_message(<<"0", Payload/binary>>) ->
     %% "42" is Socket.IO event prefix for normal message
-    ?LOG_DEBUG("Got init sockeio 0 "),
     decode_payload(Payload);
 parse_socketio_message(<<"40", Payload/binary>>) ->
     decode_payload(Payload);
@@ -1757,7 +1779,6 @@ parse_socketio_message(<<"42", Payload/binary>>) ->
     %% "42" is Socket.IO event prefix for normal message
     decode_payload(Payload);
 parse_socketio_message(Other) ->
-    %?LOG_DEBUG("unknown socketio message ~p", [Other]),
     Other.
 register_listener(Topic) when is_atom(Topic) ->
     gproc:reg({p, l, {cln_event, Topic}}).
@@ -1766,8 +1787,7 @@ broadcast(Topic, Payload) ->
     Message = {cln_event, Topic, Payload},
     lists:foreach(
         fun(Pid) ->
-            Pid ! Message,
-            ?LOG_DEBUG("broadcast pid ~p", [Pid])
+            Pid ! Message
         end,
         gproc:lookup_pids({p, l, {cln_event, Topic}})
     ).
@@ -1888,7 +1908,6 @@ get_cached_channel_list(Host, Port, Options, Headers, ReqMap) ->
     Now = erlang:monotonic_time(second),
     case ets:lookup(cln_channel_cache, listchannels) of
         [{listchannels, {Timestamp, Channels}}] when Now - Timestamp < ?CACHE_TTL_SECS ->
-            ?LOG_DEBUG("Using cached listchannels", []),
             Channels;
         [{listchannels, {Timestamp, Channels}}] when Now - Timestamp > ?CACHE_TTL_SECS ->
             ?LOG_INFO("Cache age ~p", [Now - Timestamp]),
@@ -1896,7 +1915,6 @@ get_cached_channel_list(Host, Port, Options, Headers, ReqMap) ->
             ets:insert(cln_channel_cache, {listchannels, {Now, FreshChannels}}),
             Channels;
         _ ->
-            ?LOG_DEBUG("Fetching listchannels from CLN", []),
             Channels = fetch_channel_list(Host, Port, Options, Headers, ReqMap),
             ets:insert(cln_channel_cache, {listchannels, {Now, Channels}}),
             Channels
@@ -2002,7 +2020,6 @@ do_find_best_peer_to_open(
 ) ->
     Headers = [{"Rune", Rune}, {"content-type", "application/json"}],
     ChannelList = get_cached_channel_list(Host, Port, Options, Headers, #{}),
-    ?LOG_DEBUG("ChannelList ~p", [ChannelList]),
 
     %% Score peers based on capacity/fees/recency for the given amount
     ScoreMap = score_peers_for_opening(ChannelList, AmountSats),
@@ -2026,7 +2043,6 @@ do_find_best_peer_to_open(
             ChannelList
         ),
 
-    ?LOG_DEBUG("InboundMap ~p", [InboundMap]),
     %% Build {NodeId, Alias, Score, InboundCapacity} tuples
     Candidates =
         [
@@ -2038,7 +2054,6 @@ do_find_best_peer_to_open(
          || {NodeId, Score} <- maps:to_list(ScoreMap)
         ],
 
-    ?LOG_DEBUG("Candidates ~p", [Candidates]),
     %% Filter out nodes whose inbound capacity is clearly too small for the amount
     Suitable =
         [
@@ -2290,6 +2305,120 @@ get_node_balance(Host, Port, Options, Rune) ->
         channel_sats => ChannelMsat div 1000,
         total_sats => (OnchainMsat + ChannelMsat) div 1000
     }.
+%% -------- LN swap reconciliation helpers (contained to cln) --------
+
+swap_key(Inv) when is_map(Inv) ->
+    case maps:get(payment_hash, Inv, undefined) of
+        undefined -> maps:get(label, Inv, undefined);
+        PH -> PH
+    end.
+
+is_paid_invoice(Inv) when is_map(Inv) ->
+    %% Accept either the native CLN listinvoices status or our runtime-enriched status field.
+    case maps:get(status, Inv, undefined) of
+        <<"paid">> -> true;
+        paid -> true;
+        _ ->
+            case maps:get(status_runtime, Inv, undefined) of
+                <<"paid">> -> true;
+                paid -> true;
+                _ -> false
+            end
+    end.
+
+is_damage_label(Inv) when is_map(Inv) ->
+    case maps:get(label, Inv, undefined) of
+        <<"damage:", _/binary>> -> true;
+        _ -> false
+    end.
+
+already_reconciled(Key) ->
+    case ets:lookup(?LN_SWAP_LEDGER, Key) of
+        [{_, _, _}] -> true;
+        _ -> false
+    end.
+
+mark_reconciled(Key, Meta) ->
+    ets:insert(?LN_SWAP_LEDGER, {Key, Meta, erlang:system_time(second)}),
+    ok.
+
+maybe_mark_reconciled(Inv) when is_map(Inv) ->
+    Key = swap_key(Inv),
+    case Key of
+        undefined -> ok;
+        _ -> mark_reconciled(Key, Inv)
+    end;
+maybe_mark_reconciled(_) ->
+    ok.
+
+ensure_reconcile_timer(State = #state{ln_reconcile_timer = undefined}) ->
+    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+    State#state{ln_reconcile_timer = TRef};
+ensure_reconcile_timer(State) ->
+    State.
+
+list_invoices_http(Params, #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}) ->
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/listinvoices",
+    ReqJson = jsx:encode(Params),
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    Resp =
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
+            {response, fin, _Status, _RespHeaders} ->
+                no_data;
+            {response, nofin, _Status, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            {response, nofin, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            Default ->
+                {error, Default}
+        end,
+    _ = gun:cancel(ConnPid, StreamRef),
+    _ = gun:close(ConnPid),
+    case Resp of
+        {ok, Body} ->
+            jsx:decode(Body, [return_maps, {labels, atom}]);
+        no_data ->
+            #{};
+        {error, _} = Err ->
+            Err
+    end.
+
+reconcile_swaps(State) ->
+    %% Scan recent invoices and replay any paid 'damage:' ones we haven't seen (idempotent via ETS).
+    Params = #{index => <<"created">>, limit => 500},
+    case catch list_invoices_http(Params, State) of
+        #{invoices := Invoices} when is_list(Invoices) ->
+            lists:foreach(
+                fun(Inv) ->
+                    try
+                        case is_damage_label(Inv) andalso is_paid_invoice(Inv) of
+                            true ->
+                                Key = swap_key(Inv),
+                                case Key =/= undefined andalso not already_reconciled(Key) of
+                                    true ->
+                                        mark_reconciled(Key, #{replayed => true}),
+                                        broadcast(invoice_paid, Inv);
+                                    false ->
+                                        ok
+                                end;
+                            false ->
+                                ok
+                        end
+                    catch
+                        _:Reason ->
+                            ?LOG_WARNING("LN reconcile failed invoice=~p reason=~p", [Inv, Reason])
+                    end
+                end,
+                Invoices
+            ),
+            ok;
+        Other ->
+            ?LOG_WARNING("LN reconcile: list_invoices returned ~p", [Other]),
+            ok
+    end.
+
 load_runes(State) ->
     case {secrets:retrieve_decrypt(cln_rune), secrets:retrieve_decrypt(cln_readonly_rune)} of
         {{ok, Rune}, {ok, ReadOnly}} ->
