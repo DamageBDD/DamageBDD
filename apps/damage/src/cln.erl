@@ -70,10 +70,6 @@
 -define(PEER_BLACKLIST_TTL_CONN, 21600000).
 -define(SECRETS_RETRY_MS, 60000).
 
-%% LN -> AE swap reconciliation
--define(LN_RECONCILE_MS, 60000).
--define(LN_SWAP_LEDGER, cln_ln_swap_ledger).
-
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
@@ -90,8 +86,7 @@
     retry_timer = undefined,
     secrets_ready = false,
     options :: map(),
-    heartbeat_timer = undefined,
-    ln_reconcile_timer = undefined
+    heartbeat_timer = undefined
 }).
 
 -define(SAT_TO_MSAT, 1000).
@@ -156,12 +151,6 @@ init([]) ->
         _ ->
             ?LOG_INFO("cln_channel_cache created")
     end,
-    case catch ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
-        {badarg, exists} ->
-            ?LOG_INFO("~p exists", [?LN_SWAP_LEDGER]);
-        _ ->
-            ?LOG_INFO("~p created", [?LN_SWAP_LEDGER])
-    end,
     State = get_cln_client_config(),
     HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
     {ok, State#state{
@@ -172,17 +161,14 @@ init([ws]) ->
     ?LOG_INFO("cln ws started"),
     case load_runes(State0) of
         {ok, State1} ->
-            ensure_swap_ledger(),
             case start_ws(State1#state{secrets_ready = true}) of
                 {ok, State2} ->
-                    %% Start periodic swap reconciliation (replays missed invoice_paid events)
-                    maybe_cancel(State2#state.ln_reconcile_timer),
-                    TRef2 = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-                    {ok, State2#state{ln_reconcile_timer = TRef2}};
+                    {ok, State2};
                 Error ->
                     Error
             end;
-        {error, _} ->
+        {error, Error} ->
+            ?LOG_INFO("cln ws error ~p", [Error]),
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {ok, State0#state{secrets_ready = false, retry_timer = TRef}}
     end.
@@ -1045,7 +1031,7 @@ handle_call(
     TargetMsat = maps:get(target_msat, Opts),
 
     %% 1. Node balance (all spendable funds)
-    
+
     #{onchain_sats := BalanceSats} = get_node_balance(Host, Port, Options, Rune),
 
     %% keep a small reserve so we don't strand the wallet
@@ -1484,7 +1470,7 @@ handle_cast(Msg, State) ->
 handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State) when
     StreamRef == State#state.streamref
 ->
-    ?LOG_DEBUG("gun_upgrade upgraded ~p ", [StreamRef]),
+    ?LOG_DEBUG("cln gun_upgrade upgraded ~p ", [StreamRef]),
     {noreply, State#state{conn_pid = ConnPid}};
 handle_info(
     {gun_response, ConnPid, _, _, Status, Headers},
@@ -1530,6 +1516,7 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
 handle_info({gun_ws, _, _, close} = _Info, State) ->
     {noreply, State};
 handle_info({gun_down, _, ws, normal, _} = _Info, State) ->
+    ?LOG_DEBUG("cln websocket down", []),
     {noreply, State};
 handle_info(retry_secrets, State0) ->
     case load_runes(State0) of
@@ -1539,7 +1526,7 @@ handle_info(retry_secrets, State0) ->
             %% now actually connect
             case start_ws(State1#state{retry_timer = undefined, secrets_ready = true}) of
                 {ok, State2} ->
-                    {noreply, ensure_reconcile_timer(State2)};
+                    {noreply, State2};
                 {error, _} ->
                     %% if connect fails, you can also backoff here
                     TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
@@ -1549,17 +1536,8 @@ handle_info(retry_secrets, State0) ->
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {noreply, State0#state{retry_timer = TRef, secrets_ready = false}}
     end;
-handle_info(reconcile_swaps, State0 = #state{secrets_ready = true}) ->
-    %% Safety net: periodically scan for paid 'damage:' invoices and replay invoice_paid events
-    catch reconcile_swaps(State0),
-    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-    {noreply, State0#state{ln_reconcile_timer = TRef}};
-handle_info(reconcile_swaps, State) ->
-    %% Not ready yet; try again later
-    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-    {noreply, State#state{ln_reconcile_timer = TRef}};
 handle_info(Info, State) ->
-    ?LOG_DEBUG("Unknown info ~p",[Info]),
+    ?LOG_DEBUG("Unknown info ~p", [Info]),
     {noreply, State}.
 handle_event(
     _ConnPid,
@@ -1577,7 +1555,7 @@ handle_event(
         }
     ] = Message
 ) ->
-    ?LOG_DEBUG("Unknown message ~p",[Message]),
+    ?LOG_DEBUG("Unknown message ~p", [Message]),
     ok;
 handle_event(
     ConnPid,
@@ -1601,6 +1579,7 @@ handle_event(
         sid := _SessionId
     } = Event
 ) ->
+    ?LOG_INFO("cln: subscribe = ~p", [Event]),
     Message0 = jsx:encode([<<"subscribe">>]),
     Message =
         <<"42", Message0/binary>>,
@@ -1639,17 +1618,18 @@ handle_event(
                 paid_at_unix => erlang:system_time(second),
                 status_runtime => <<"paid">>
             },
-            maybe_mark_reconciled(PaidInv),
+            ?LOG_INFO("received broadcast invoice_payment ~p", [PaidInv]),
             broadcast(invoice_paid, PaidInv);
         _ ->
             %% We didn't create/track this label locally (rare). Still surface a useful payload.
-            maybe_mark_reconciled(#{label => Label, preimage => Preimage}),
-            broadcast(invoice_paid, #{
+            Inv = #{
                 label => Label,
                 preimage => Preimage,
                 received_msat => MSat,
                 details => Pay
-            })
+            },
+            ?LOG_INFO("broadcast invoice_payment ~p", [Inv]),
+            broadcast(invoice_paid, Inv)
     end;
 handle_event(_ConnPid, _StreamRef, _UnknownEvent) ->
     ok.
@@ -1658,7 +1638,6 @@ terminate(Reason, State) ->
     maybe_close_gun(State#state.conn_pid),
     maybe_cancel(State#state.heartbeat_timer),
     maybe_cancel(State#state.retry_timer),
-    maybe_cancel(State#state.ln_reconcile_timer),
     ?LOG_ERROR("Terminating clnconnect ~p", [Reason]),
     ok.
 maybe_close_gun(Conn) when is_pid(Conn) ->
@@ -1786,8 +1765,11 @@ parse_socketio_message(Other) ->
 register_listener(Topic) when is_atom(Topic) ->
     gproc:reg({p, l, {cln_event, Topic}}).
 
+broadcast(invoice_paid, Payload) ->
+    broadcast(invoice_paid, Payload);
 broadcast(Topic, Payload) ->
     Message = {cln_event, Topic, Payload},
+    ?LOG_DEBUG("Broadcast event ~p ~p", [Topic, Payload]),
     lists:foreach(
         fun(Pid) ->
             Pid ! Message
@@ -2308,140 +2290,6 @@ get_node_balance(Host, Port, Options, Rune) ->
         channel_sats => ChannelMsat div 1000,
         total_sats => (OnchainMsat + ChannelMsat) div 1000
     }.
-%% -------- LN swap reconciliation helpers (contained to cln) --------
-
-swap_key(Inv) when is_map(Inv) ->
-    case maps:get(payment_hash, Inv, undefined) of
-        undefined -> maps:get(label, Inv, undefined);
-        PH -> PH
-    end.
-
-is_paid_invoice(Inv) when is_map(Inv) ->
-    %% Accept either the native CLN listinvoices status or our runtime-enriched status field.
-    case maps:get(status, Inv, undefined) of
-        <<"paid">> -> true;
-        paid -> true;
-        _ ->
-            case maps:get(status_runtime, Inv, undefined) of
-                <<"paid">> -> true;
-                paid -> true;
-                _ -> false
-            end
-    end.
-
-is_damage_label(Inv) when is_map(Inv) ->
-    case maps:get(label, Inv, undefined) of
-        <<"damage:", _/binary>> -> true;
-        _ -> false
-    end.
-
-already_reconciled(Key) ->
-    ensure_swap_ledger(),
-    case ets:lookup(?LN_SWAP_LEDGER, Key) of
-        [{_, _, _}] -> true;
-        _ -> false
-    end.
-
-mark_reconciled(Key, Meta) ->
-    %% Ensure ledger exists in case owner process restarted.
-    ensure_swap_ledger(),
-    true = ets:insert(?LN_SWAP_LEDGER, {Key, Meta, erlang:system_time(second)}),
-    ok.
-
-maybe_mark_reconciled(Inv) when is_map(Inv) ->
-    Key = swap_key(Inv),
-    case Key of
-        undefined -> ok;
-        _ -> mark_reconciled(Key, Inv)
-    end;
-maybe_mark_reconciled(_) ->
-    ok.
-ensure_swap_ledger() ->
-    case ets:info(?LN_SWAP_LEDGER) of
-        undefined ->
-            %% Create the table in the websocket worker (so it stays alive as long as ws stays alive).
-            %% Named table allows other processes to read it by name.
-            try ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
-                _Tid ->
-                    ?LOG_INFO("~p created", [?LN_SWAP_LEDGER]),
-                    ok
-            catch
-                error:badarg ->
-                    %% Race: another process created it between info/1 and new/2
-                    ok
-            end;
-        _ ->
-            ok
-    end.
-
-
-ensure_reconcile_timer(State = #state{ln_reconcile_timer = undefined}) ->
-    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-    State#state{ln_reconcile_timer = TRef};
-ensure_reconcile_timer(State) ->
-    State.
-
-list_invoices_http(Params, #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}) ->
-    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    Path = "/v1/listinvoices",
-    ReqJson = jsx:encode(Params),
-    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
-    Resp =
-        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
-            {response, fin, _Status, _RespHeaders} ->
-                no_data;
-            {response, nofin, _Status, _RespHeaders} ->
-                gun:await_body(ConnPid, StreamRef);
-            {response, nofin, _RespHeaders} ->
-                gun:await_body(ConnPid, StreamRef);
-            Default ->
-                {error, Default}
-        end,
-    _ = gun:cancel(ConnPid, StreamRef),
-    _ = gun:close(ConnPid),
-    case Resp of
-        {ok, Body} ->
-            jsx:decode(Body, [return_maps, {labels, atom}]);
-        no_data ->
-            #{};
-        {error, _} = Err ->
-            Err
-    end.
-
-reconcile_swaps(State) ->
-    %% Scan recent invoices and replay any paid 'damage:' ones we haven't seen (idempotent via ETS).
-    Params = #{index => <<"created">>, limit => 500},
-    case catch list_invoices_http(Params, State) of
-        #{invoices := Invoices} when is_list(Invoices) ->
-            lists:foreach(
-                fun(Inv) ->
-                    try
-                        case is_damage_label(Inv) andalso is_paid_invoice(Inv) of
-                            true ->
-                                Key = swap_key(Inv),
-                                case Key =/= undefined andalso not already_reconciled(Key) of
-                                    true ->
-                                        mark_reconciled(Key, #{replayed => true}),
-                                        broadcast(invoice_paid, Inv);
-                                    false ->
-                                        ok
-                                end;
-                            false ->
-                                ok
-                        end
-                    catch
-                        _:Reason ->
-                            ?LOG_WARNING("LN reconcile failed invoice=~p reason=~p", [Inv, Reason])
-                    end
-                end,
-                Invoices
-            ),
-            ok;
-        Other ->
-            ?LOG_WARNING("LN reconcile: list_invoices returned ~p", [Other]),
-            ok
-    end.
 
 load_runes(State) ->
     case {secrets:retrieve_decrypt(cln_rune), secrets:retrieve_decrypt(cln_readonly_rune)} of
