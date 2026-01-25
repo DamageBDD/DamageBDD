@@ -15,6 +15,8 @@
 -define(GAS_PER_BYTE, 20).
 % Time-to-live in seconds
 -define(CACHE_TTL_SECONDS, 30).
+-define(LN_RECONCILE_MS, 600000).
+-define(LN_SWAP_LEDGER, cln_ln_swap_ledger).
 
 -export([
     init/1,
@@ -31,8 +33,6 @@
     transfer_damage/3,
     transfer_hits/2,
     transfer_hits/3,
-    confirm_spend_all/0,
-    start_batch_spend_timer/0,
     get_reports/1,
     get_reports/2,
     get_domain_token/2,
@@ -94,6 +94,10 @@
     test_paying_for_tx/0,
     test_contract_deploy_for/0
 ]).
+-export([
+    reconcile_swaps/1,
+    deploy_swap_registry/0
+]).
 -import(damage_utils, [float_to_full_integer/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
@@ -104,10 +108,20 @@ ae_to_aetto(Ae) -> Ae * 1000000000000000.
 %Ae * 100000000000000000.
 init([]) ->
     process_flag(trap_exit, true),
-    ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
-    {ok, WS, _Path} = get_ae_mdw_ws_node(),
     cln:register_listener(invoice_paid),
-    {ok, #{heartbeat_timer => ConfirmSpendTimer, websocket => WS}};
+    case catch ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
+        {badarg, exists} ->
+            ?LOG_INFO("~p exists", [?LN_SWAP_LEDGER]);
+        _ ->
+            ?LOG_INFO("~p created", [?LN_SWAP_LEDGER])
+    end,
+    ensure_swap_ledger(),
+    TRef2 = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+    maybe_cancel(TRef2),
+    {ok, WS, _Path} = get_ae_mdw_ws_node(),
+    %% Start periodic swap reconciliation (replays missed invoice_paid events)
+    State = #{ websocket => WS, ln_reconcile_timer => TRef2},
+    {ok, ensure_reconcile_timer(State)};
 init([AeAccount, PrivateKey]) ->
     process_flag(trap_exit, true),
     {ok, #{public_key => AeAccount, private_key => PrivateKey}}.
@@ -426,9 +440,6 @@ handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
                     {reply, error, Cache}
             end
     end;
-handle_call({confirm_spend_all}, _From, Cache) ->
-    ?LOG_DEBUG("handle_call confirm_spend_all/0 : ~p", [Cache]),
-    {reply, ok, Cache};
 handle_call(
     {is_custodial, AeAccount},
     _From,
@@ -554,14 +565,72 @@ handle_cast({invalidate_cache, _AeAccount}, _Cache) ->
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
+ensure_reconcile_timer(State = #{ln_reconcile_timer := undefined}) ->
+    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+    State#{ln_reconcile_timer => TRef};
+ensure_reconcile_timer(State) ->
+    State.
+reconcile_swaps(State) ->
+    %% Scan recent invoices and replay any paid 'damage:' ones we haven't seen (idempotent via ETS).
+    Params = #{index => <<"created">>, limit => 500},
+    case catch list_invoices_http(Params, State) of
+        #{invoices := Invoices} when is_list(Invoices) ->
+            lists:foreach(
+                fun(Inv) ->
+                    try
+                        case is_damage_label(Inv) andalso is_paid_invoice(Inv) of
+                            true ->
+                                Key = swap_key(Inv),
+                                case Key =/= undefined andalso not already_reconciled(Key) of
+                                    true ->
+                                        mark_reconciled(Key, #{replayed => true}),
+                                        ?LOG_INFO("paid invoice not reconciled ~p", [Inv]);
+                                        %broadcast(invoice_paid, Inv);
+                                    false ->
+                                        ok
+                                end;
+                            false ->
+                                ok
+                        end
+                    catch
+                        _:Reason ->
+                            ?LOG_WARNING("LN reconcile failed invoice=~p reason=~p", [Inv, Reason])
+                    end
+                end,
+                Invoices
+            ),
+            ok;
+        Other ->
+            ?LOG_WARNING("LN reconcile: list_invoices returned ~p", [Other]),
+            ok
+    end.
 
-damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
+deploy_swap_registry() ->
+    damage_ae:contract_deploy(
+        "contracts/ln_swap_registry.aes", []
+    ).
+
+ln_swap_registry(mark_reconciled, Recipient, Amount, AeTxHash, PaymentHash) ->
+    damage_ae:contract_call(
+        secrets:node_keypair(),
+        ?LIGHTNING_SWAP_REGISTRY_CONTRACT,
+        "contracts/ln_swap_registry.aes",
+        "mark_reconciled",
+        [
+            PaymentHash, Recipient, Amount, AeTxHash
+        ]
+    ).
+damage_for_invoice(
+    #{label := Label, amount_msat := _AmountMsat, payment_hash := PaymentHash} = PaidInv
+) ->
     case binary:split(Label, <<":">>, [global]) of
         [<<"damage">>, AeAccount, AmountDamage, _Timestamp] ->
             ?LOG_INFO("Transfering ~p damage to ~p", [AmountDamage, AeAccount]),
-            transfer_damage(
+            #{tx_hash := AeTxHash} = transfer_damage(
                 AeAccount, binary_to_integer(AmountDamage)
-            );
+            ),
+            maybe_mark_reconciled(PaidInv),
+            ln_swap_registry(mark_reconciled, AeAccount, AmountDamage, AeTxHash, PaymentHash);
         Err ->
             ?LOG_INFO("damage_ae ignores label: ~p", [Err])
     end.
@@ -573,11 +642,22 @@ handle_info({cln_event, invoice_paid, Invoice}, State) ->
             ?LOG_WARNING("Failed to send damage for invoice: ~p", [Reason])
     end,
     {noreply, State};
-handle_info(_Info, State) ->
+handle_info(reconcile_swaps, State0 = #{secrets_ready := true}) ->
+    %% Safety net: periodically scan for paid 'damage:' invoices and replay invoice_paid events
+    catch reconcile_swaps(State0),
+    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+    {noreply, State0#{ln_reconcile_timer => TRef}};
+handle_info(reconcile_swaps, State) ->
+    %% Not ready yet; try again later
+    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
+    {noreply, State#{ln_reconcile_timer => TRef}};
+handle_info(Info, State) ->
+    ?LOG_DEBUG("damage_ae: Unhandled info ~p", [Info]),
     {noreply, State}.
 
-terminate(Reason, _State) ->
+terminate(Reason, #{ln_reconcile_timer := LnTref} = _State) ->
     ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    maybe_cancel(LnTref),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
@@ -655,16 +735,6 @@ spend(AeAccount, Amount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {spend, AeAccount, Amount}).
 
-confirm_spend_all() ->
-    DamageAEPid = get_wallet_proc(admin),
-    gen_server:cast(DamageAEPid, {confirm_spend_all}).
-
-start_batch_spend_timer() ->
-    ?LOG_INFO("Starting batch spend timer."),
-    erlcron:cron(
-        <<"batch_spend_timer">>,
-        {{daily, {every, {3600, sec}}}, {damage_ae, confirm_spend_all, []}}
-    ).
 
 confirm_spend(Config, #{public_key := AeAccount} = Context) ->
     DamageAEPid = get_wallet_proc(AeAccount),
@@ -996,7 +1066,7 @@ contract_call(
     Func,
     Args
 ) ->
-    ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
+    %?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
 
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
     GasPrice = min_gas_price(),
@@ -1007,6 +1077,8 @@ contract_call(
     DummyGas = min_gas(),
     DummyFee = min_fee(),
 
+    %?LOG_DEBUG("contract call ~p", [[
+    %    AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args]]),
     {ok, ContractCall0} = vanillae:contract_call(
         AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args
     ),
@@ -1458,6 +1530,108 @@ post_signed_or_payfor(SignedTx) ->
 
     %% your existing helper; returns {ok, #{ "tx_hash" := ...}} or {error, ...}
     payfor_tx(SignedTx).
+maybe_cancel(undefined) ->
+    ok;
+maybe_cancel(TRef) ->
+    _ = erlang:cancel_timer(TRef),
+    ok.
+%% -------- LN swap reconciliation helpers (contained to cln) --------
+
+swap_key(Inv) when is_map(Inv) ->
+    case maps:get(payment_hash, Inv, undefined) of
+        undefined -> maps:get(label, Inv, undefined);
+        PH -> PH
+    end.
+
+is_paid_invoice(Inv) when is_map(Inv) ->
+    %% Accept either the native CLN listinvoices status or our runtime-enriched status field.
+    case maps:get(status, Inv, undefined) of
+        <<"paid">> ->
+            true;
+        paid ->
+            true;
+        _ ->
+            case maps:get(status_runtime, Inv, undefined) of
+                <<"paid">> -> true;
+                paid -> true;
+                _ -> false
+            end
+    end.
+
+is_damage_label(Inv) when is_map(Inv) ->
+    case maps:get(label, Inv, undefined) of
+        <<"damage:", _/binary>> -> true;
+        _ -> false
+    end.
+
+already_reconciled(Key) ->
+    ensure_swap_ledger(),
+    case ets:lookup(?LN_SWAP_LEDGER, Key) of
+        [{_, _, _}] -> true;
+        _ -> false
+    end.
+
+mark_reconciled(Key, Meta) ->
+    %% Ensure ledger exists in case owner process restarted.
+    ensure_swap_ledger(),
+    true = ets:insert(?LN_SWAP_LEDGER, {Key, Meta, erlang:system_time(second)}),
+    ok.
+
+maybe_mark_reconciled(Inv) when is_map(Inv) ->
+    Key = swap_key(Inv),
+    case Key of
+        undefined -> ok;
+        _ -> mark_reconciled(Key, Inv)
+    end;
+maybe_mark_reconciled(_) ->
+    ok.
+ensure_swap_ledger() ->
+    case ets:info(?LN_SWAP_LEDGER) of
+        undefined ->
+            %% Create the table in the websocket worker (so it stays alive as long as ws stays alive).
+            %% Named table allows other processes to read it by name.
+            try ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
+                _Tid ->
+                    ?LOG_INFO("~p created", [?LN_SWAP_LEDGER]),
+                    ok
+            catch
+                error:badarg ->
+                    %% Race: another process created it between info/1 and new/2
+                    ok
+            end;
+        _ ->
+            ok
+    end.
+
+list_invoices_http(Params, #{cln_host := Host, cln_port := Port, rune := Rune, options := Options}) ->
+    {ok, Rune} =
+        secrets:retrieve_decrypt(cln_rune),
+    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/listinvoices",
+    ReqJson = jsx:encode(Params),
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    Resp =
+        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+            {response, fin, _Status, _RespHeaders} ->
+                no_data;
+            {response, nofin, _Status, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            {response, nofin, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            Default ->
+                {error, Default}
+        end,
+    _ = gun:cancel(ConnPid, StreamRef),
+    _ = gun:close(ConnPid),
+    case Resp of
+        {ok, Body} ->
+            jsx:decode(Body, [return_maps, {labels, atom}]);
+        no_data ->
+            #{};
+        {error, _} = Err ->
+            Err
+    end.
 deploy_account_registry(AccountKeypair) ->
     #{"contract_id" := ContractId} = contract_deploy_for(
         AccountKeypair, "contracts/AccountRegistry.aes", []
