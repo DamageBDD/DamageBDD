@@ -107,11 +107,11 @@ init([]) ->
             %% 3) the rest of your workers that don't depend on pools
             #{
                 id => cln_websocket,
-                start => {cln, start_link, [[ws]]},
+                start => {cln_ws_mgr, start_link, [[ws]]},
                 restart => permanent,
                 shutdown => 60000,
                 type => worker,
-                modules => [cln]
+                modules => [cln, cln_ws_mgr]
             },
             #{
                 id => damage_ssh,

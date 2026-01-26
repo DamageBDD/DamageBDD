@@ -44,7 +44,6 @@
     ]
 ).
 -export([register_listener/1]).
--export([broadcast/2]).
 -export([existing_peers/1]).
 -export([
     connect_peer/1,
@@ -99,8 +98,7 @@ msat_to_sats(Msat) when is_integer(Msat) ->
 
 %% API Functions
 
-start_link([]) -> gen_server:start_link(?MODULE, [], []);
-start_link([ws]) -> gen_server:start_link(?MODULE, [ws], []).
+start_link([]) -> gen_server:start_link(?MODULE, [], []).
 
 get_cln_client_config() ->
     {ok, Host} = application:get_env(damage, cln_host),
@@ -126,7 +124,6 @@ get_cln_client_config() ->
             "localhost" -> #{};
             _ -> #{transport => tls, tls_opts => TLSOptions}
         end,
-    State =
         #state{
             cln_host = Host,
             cln_port = Port,
@@ -134,13 +131,15 @@ get_cln_client_config() ->
             cln_certfile = CertFile,
             cln_keyfile = KeyFile,
             options = Options
-        },
-    case secrets:retrieve_decrypt(cln_rune) of
-        {ok, RuneBin} ->
-            State#state{rune = RuneBin};
+        }.
+
+load_runes(State) ->
+    case {secrets:retrieve_decrypt(cln_rune), secrets:retrieve_decrypt(cln_readonly_rune)} of
+        {{ok, Rune}, {ok, ReadOnly}} ->
+            {ok, State#state{rune = Rune, readonly_rune = ReadOnly}};
         Error ->
-            ?LOG_INFO("!!!! CLN Integration disabled, set `cln_rune` secret. ~p", [Error]),
-            State#state{rune = <<"">>}
+            %% log once per retry tick (or rate-limit)
+            {error, Error}
     end.
 
 init([]) ->
@@ -152,25 +151,13 @@ init([]) ->
             ?LOG_INFO("cln_channel_cache created")
     end,
     State = get_cln_client_config(),
-    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-    {ok, State#state{
-        heartbeat_timer = HeartbeatTimer
-    }};
-init([ws]) ->
-    {ok, State0} = init([]),
-    ?LOG_INFO("cln ws started"),
-    case load_runes(State0) of
+    case load_runes(State) of 
         {ok, State1} ->
-            case start_ws(State1#state{secrets_ready = true}) of
-                {ok, State2} ->
-                    {ok, State2};
-                Error ->
-                    Error
-            end;
+                    {ok, State1#state{secrets_ready = true}};
         {error, Error} ->
-            ?LOG_INFO("cln ws error ~p", [Error]),
+            ?LOG_DEBUG("cln worker error in init ~p ~p", [Error, State ]),
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
-            {ok, State0#state{secrets_ready = false, retry_timer = TRef}}
+            {ok, State#state{secrets_ready = false, retry_timer = TRef}}
     end.
 
 put_cache(Key, Value) ->
@@ -844,7 +831,14 @@ pick_affordable(
                 Acc
             )
     end.
-
+handle_call(
+    %% Poolboy safety: fail fast until secrets are loaded.
+    %% Otherwise pooled workers can attempt HTTP calls with Rune=undefined.
+    Request,
+    _From,
+    #state{secrets_ready = false} = State
+) when Request =/= subscribe ->
+    {reply, {error, secrets_not_ready}, State};
 handle_call(
     subscribe,
     _From,
@@ -1012,8 +1006,9 @@ handle_call(
 handle_call(
     get_node_balance,
     _From,
-    State = #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options}
+    State = #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options}
 ) ->
+    ?LOG_DEBUG("calling get_node_balance ~p", [State]),
     BalanceSats = get_node_balance(Host, Port, Options, Rune),
     {reply, BalanceSats, State};
 handle_call(
@@ -1467,13 +1462,8 @@ handle_cast(Msg, State) ->
     ?LOG_DEBUG("handle_cast got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
     {noreply, State}.
 
-handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State) when
-    StreamRef == State#state.streamref
-->
-    ?LOG_DEBUG("cln gun_upgrade upgraded ~p ", [StreamRef]),
-    {noreply, State#state{conn_pid = ConnPid}};
 handle_info(
-    {gun_response, ConnPid, _, _, Status, Headers},
+    {gun_response, ConnPid, _, _, _Status, _Headers},
     State = #state{conn_pid = ConnPid}
 ) ->
     {noreply, State};
@@ -1485,35 +1475,11 @@ handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
         [ConnPid, StreamRef, Reason]
     ),
     {noreply, State};
-handle_info(heartbeat, State = #state{secrets_ready = false}) ->
-    %% optionally: don’t do heartbeat work while disabled
-    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-    {noreply, State#state{heartbeat_timer = HeartbeatTimer}};
-handle_info(heartbeat, State) ->
-    %% Send a ping message to check the connection
-    %ok = gun:ws_send(State#state.conn_pid, State#state.streamref,  {text,  jsx:encode(#{jsonrpc => <<"2.0">>,  method => <<"getinfo">>, params => []})}),
-    %% Reset the heartbeat timer
-    HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
-    {noreply, State#state{heartbeat_timer = HeartbeatTimer}};
 handle_info({gun_down, ConnPid, _Reason}, State) when
     ConnPid =:= State#state.conn_pid
 ->
-    erlang:cancel_timer(State#state.heartbeat_timer),
     {stop, normal, State};
 handle_info({gun_up, _, _} = _Info, State) ->
-    {noreply, State};
-handle_info({gun_ws, ConnPid, StreamRef, {text, <<"2">>}}, State) ->
-    gun:ws_send(
-        ConnPid,
-        StreamRef,
-        {text, <<"3">>}
-    ),
-    {noreply, State};
-handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
-    Message = parse_socketio_message(Message0),
-    handle_event(ConnPid, StreamRef, Message),
-    {noreply, State};
-handle_info({gun_ws, _, _, close} = _Info, State) ->
     {noreply, State};
 handle_info({gun_down, _, ws, normal, _} = _Info, State) ->
     ?LOG_DEBUG("cln websocket down", []),
@@ -1523,15 +1489,11 @@ handle_info(retry_secrets, State0) ->
         {ok, State1} ->
             %% cancel any existing retry timer
             maybe_cancel(State0#state.retry_timer),
-            %% now actually connect
-            case start_ws(State1#state{retry_timer = undefined, secrets_ready = true}) of
-                {ok, State2} ->
-                    {noreply, State2};
-                {error, _} ->
-                    %% if connect fails, you can also backoff here
-                    TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
-                    {noreply, State1#state{retry_timer = TRef, secrets_ready = false}}
-            end;
+            {noreply,
+                State1#state{
+                    secrets_ready = true,
+                    retry_timer = undefined
+                }};
         {error, _} ->
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {noreply, State0#state{retry_timer = TRef, secrets_ready = false}}
@@ -1539,104 +1501,9 @@ handle_info(retry_secrets, State0) ->
 handle_info(Info, State) ->
     ?LOG_DEBUG("Unknown info ~p", [Info]),
     {noreply, State}.
-handle_event(
-    _ConnPid,
-    _StreamRef,
-    [
-        <<"message">>,
-        #{
-            custommsg :=
-                #{
-                    payload :=
-                        _Payload,
-                    peer_id :=
-                        _PeerId
-                }
-        }
-    ] = Message
-) ->
-    ?LOG_DEBUG("Unknown message ~p", [Message]),
-    ok;
-handle_event(
-    ConnPid,
-    StreamRef,
-    #{
-        sid := SessionId,
-        upgrades := [],
-        pingTimeout := _PingTimeout,
-        pingInterval := _PingInteraval
-    } = _Event
-) ->
-    gun:ws_send(
-        ConnPid,
-        StreamRef,
-        {text, <<"40">>}
-    );
-handle_event(
-    ConnPid,
-    StreamRef,
-    #{
-        sid := _SessionId
-    } = Event
-) ->
-    ?LOG_INFO("cln: subscribe = ~p", [Event]),
-    Message0 = jsx:encode([<<"subscribe">>]),
-    Message =
-        <<"42", Message0/binary>>,
-    ok =
-        gun:ws_send(
-            ConnPid,
-            StreamRef,
-            {text, Message}
-        );
-%% Inbound invoice was paid (authoritative)
-handle_event(
-    _ConnPid,
-    _StreamRef,
-    [
-        <<"message">>,
-        #{
-            invoice_payment :=
-                #{
-                    label := Label,
-                    preimage := Preimage,
-                    msat := MSat
-                } = Pay
-        }
-    ]
-) ->
-    ?LOG_INFO("cln: invoice_payment label=~p msat=~p", [Label, MSat]),
-    %% Prefer matching by label (unique for our created invoices); fall back to hash if needed later.
-    case list_invoices_by_label(Label) of
-        #{invoices := [Inv | _]} ->
-            %% Enrich the invoice record with runtime facts and broadcast a single canonical event.
-            PaidInv = Inv#{
-                event => invoice_payment,
-                details => Pay,
-                preimage => Preimage,
-                received_msat => MSat,
-                paid_at_unix => erlang:system_time(second),
-                status_runtime => <<"paid">>
-            },
-            ?LOG_INFO("received broadcast invoice_payment ~p", [PaidInv]),
-            broadcast(invoice_paid, PaidInv);
-        _ ->
-            %% We didn't create/track this label locally (rare). Still surface a useful payload.
-            Inv = #{
-                label => Label,
-                preimage => Preimage,
-                received_msat => MSat,
-                details => Pay
-            },
-            ?LOG_INFO("broadcast invoice_payment ~p", [Inv]),
-            broadcast(invoice_paid, Inv)
-    end;
-handle_event(_ConnPid, _StreamRef, _UnknownEvent) ->
-    ok.
 
 terminate(Reason, State) ->
     maybe_close_gun(State#state.conn_pid),
-    maybe_cancel(State#state.heartbeat_timer),
     maybe_cancel(State#state.retry_timer),
     ?LOG_ERROR("Terminating clnconnect ~p", [Reason]),
     ok.
@@ -1750,32 +1617,9 @@ list_all_channels() ->
         ?MODULE,
         fun(Worker) -> gen_server:call(Worker, list_all_channels, ?CLN_HTTP_TIMEOUT) end
     ).
-decode_payload(Payload) ->
-    jsx:decode(Payload, [return_maps, {labels, atom}]).
-parse_socketio_message(<<"0", Payload/binary>>) ->
-    %% "42" is Socket.IO event prefix for normal message
-    decode_payload(Payload);
-parse_socketio_message(<<"40", Payload/binary>>) ->
-    decode_payload(Payload);
-parse_socketio_message(<<"42", Payload/binary>>) ->
-    %% "42" is Socket.IO event prefix for normal message
-    decode_payload(Payload);
-parse_socketio_message(Other) ->
-    Other.
 register_listener(Topic) when is_atom(Topic) ->
     gproc:reg({p, l, {cln_event, Topic}}).
 
-broadcast(invoice_paid, Payload) ->
-    broadcast(invoice_paid, Payload);
-broadcast(Topic, Payload) ->
-    Message = {cln_event, Topic, Payload},
-    ?LOG_DEBUG("Broadcast event ~p ~p", [Topic, Payload]),
-    lists:foreach(
-        fun(Pid) ->
-            Pid ! Message
-        end,
-        gproc:lookup_pids({p, l, {cln_event, Topic}})
-    ).
 find_best_peer_to_open() ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, find_best_peer_to_open, ?CLN_HTTP_TIMEOUT)
@@ -2080,6 +1924,7 @@ get_peer_min_open_sats(NodeId) ->
     end.
 
 blacklist_peer(NodeId, Reason, MinSats) ->
+    ?LOG_DEBUG("cln: blacklist peer ~p reason ~p minsats ~p", [NodeId, Reason, MinSats]),
     put_cache(
         peer_blacklist_key(NodeId), #{reason => Reason, min_sats => MinSats}, ?PEER_BLACKLIST_TTL
     ),
@@ -2100,37 +1945,30 @@ cache_peer_min(_, _) ->
 %% Parse common CLN error strings:
 %% - "... invalid funding amount=260285 sat (min=400000 sat) ..."
 %% - "... chan size of 0.00260285 BTC is below min chan size of 0.02000000 BTC ..."
+extract_min_open_sats(#{type := min_chan_size, min_sats := MinSats}) when is_integer(MinSats) ->
+    {ok, MinSats};
 extract_min_open_sats(Msg0) ->
     Msg = to_bin(Msg0),
-
-    case re:run(Msg, <<"min=([0-9]+) sat">>, [{capture, [1], binary}]) of
-        {match, [MinSatBin]} ->
-            {ok, binary_to_integer(MinSatBin)};
-        nomatch ->
-            case
-                re:run(Msg, <<"min chan size of ([0-9]+\\.[0-9]+) BTC">>, [{capture, [1], binary}])
-            of
-                {match, [MinBtcBin]} ->
-                    {ok, btc_bin_to_sats(MinBtcBin)};
-                nomatch ->
-                    %% sometimes message is "... below min chan size of 0.02000000 BTC"
-                    case
-                        re:run(Msg, <<"below min chan size of ([0-9]+\\.[0-9]+) BTC">>, [
-                            {capture, [1], binary}
-                        ])
-                    of
-                        {match, [MinBtcBin2]} ->
-                            {ok, btc_bin_to_sats(MinBtcBin2)};
-                        nomatch ->
-                            error
-                    end
-            end
+    %% New CLN text
+    case parse_min_chan_size_sats(Msg) of
+        {ok, MinSats} ->
+            {ok, MinSats};
+        error ->
+            %% Fall back to your existing patterns (whatever you already had)
+            %% If none match:
+            error
     end.
 
-btc_bin_to_sats(Bin) ->
-    %% float parse, then sats
-    F = list_to_float(binary_to_list(Bin)),
-    trunc(F * 100000000).
+
+btc_bin_to_sats(BtcBin) when is_binary(BtcBin) ->
+    %% float BTC -> sats (truncate down)
+    try
+        F = list_to_float(binary_to_list(BtcBin)),
+        {ok, trunc(F * 100000000)}
+    catch
+        _:_ ->
+            error
+    end.
 
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> list_to_binary(L);
@@ -2140,29 +1978,70 @@ open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
     {ok, ConnPid} = gun:open(Host, Port, Options),
     Path = "/v1/fundchannel",
-    ReqJson = jsx:encode(#{
-        id => NodeId,
-        amount => AmountSats
-    }),
+    ReqJson =
+        jsx:encode(#{
+            id => NodeId,
+            amount => AmountSats
+        }),
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+
     Res =
         case catch get_json_body(ConnPid, StreamRef) of
             #{
                 code := _,
                 data := #{id := NodeId, method := Method},
-                message := Message
+                message := Message0
             } ->
+                Message = to_bin(Message0),
+
+                %% Detect & parse "chan size ... below min chan size ..." (BTC -> sats)
+                Err =
+                    case parse_min_chan_size_sats(Message) of
+                        {ok, MinSats} ->
+                            %% Structured error lets caller decide: retry/cache/blacklist/skip
+                            #{
+                                type => min_chan_size,
+                                min_sats => MinSats,
+                                method => Method,
+                                message => Message
+                            };
+                        error ->
+                            %% Keep legacy behavior for unknown errors
+                            Message
+                    end,
+
                 ?LOG_INFO("Failed to open channel with ~p method ~p reason ~p", [
                     NodeId, Method, Message
                 ]),
-                {error, Message};
+                {error, Err};
+
             Body0 when is_map(Body0) ->
                 {ok, Body0};
+
             Other ->
                 {error, to_bin(Other)}
         end,
+
     gun:close(ConnPid),
     Res.
+%% Parses:
+%%   "... chan size of 0.00451753 BTC is below min chan size of 0.005 BTC"
+%% Returns {ok, MinSats} or error.
+parse_min_chan_size_sats(Msg0) ->
+    Msg = to_bin(Msg0),
+    %% capture the "min chan size of <float> BTC"
+    case re:run(
+             Msg,
+             <<"min chan size of ([0-9]+(?:\\.[0-9]+)?) BTC">>,
+             [{capture, [1], binary}]
+         ) of
+        {match, [BtcBin]} ->
+            btc_bin_to_sats(BtcBin);
+        nomatch ->
+            error
+    end.
+
+
 
 %% POST /v1/connect
 connect_peer_http(Host, Port, Options, Rune, Peer0) ->
@@ -2290,24 +2169,6 @@ get_node_balance(Host, Port, Options, Rune) ->
         channel_sats => ChannelMsat div 1000,
         total_sats => (OnchainMsat + ChannelMsat) div 1000
     }.
-
-load_runes(State) ->
-    case {secrets:retrieve_decrypt(cln_rune), secrets:retrieve_decrypt(cln_readonly_rune)} of
-        {{ok, Rune}, {ok, ReadOnly}} ->
-            {ok, State#state{rune = Rune, readonly_rune = ReadOnly}};
-        Error ->
-            %% log once per retry tick (or rate-limit)
-            {error, Error}
-    end.
-
-start_ws(
-    #state{cln_host = Host, cln_port = Port, options = Opts, readonly_rune = ReadOnly} = State
-) ->
-    {ok, ConnPid} = gun:open(Host, Port, Opts),
-    StreamRef = gun:ws_upgrade(ConnPid, "/socket.io/?EIO=4&transport=websocket", [
-        {<<"rune">>, ReadOnly}
-    ]),
-    {ok, State#state{conn_pid = ConnPid, streamref = StreamRef}}.
 
 maybe_cancel(undefined) ->
     ok;
