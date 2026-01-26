@@ -105,7 +105,6 @@ start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, 
 
 ae_to_aetto(Ae) -> Ae * 1000000000000000.
 
-%Ae * 100000000000000000.
 init([]) ->
     process_flag(trap_exit, true),
     cln:register_listener(invoice_paid),
@@ -120,7 +119,7 @@ init([]) ->
     maybe_cancel(TRef2),
     {ok, WS, _Path} = get_ae_mdw_ws_node(),
     %% Start periodic swap reconciliation (replays missed invoice_paid events)
-    State = #{ websocket => WS, ln_reconcile_timer => TRef2},
+    State = #{websocket => WS, ln_reconcile_timer => TRef2},
     {ok, ensure_reconcile_timer(State)};
 init([AeAccount, PrivateKey]) ->
     process_flag(trap_exit, true),
@@ -584,8 +583,8 @@ reconcile_swaps(State) ->
                                 case Key =/= undefined andalso not already_reconciled(Key) of
                                     true ->
                                         mark_reconciled(Key, #{replayed => true}),
-                                        ?LOG_INFO("paid invoice not reconciled ~p", [Inv]);
-                                        %broadcast(invoice_paid, Inv);
+                                        ?LOG_INFO("paid invoice reconciled ~p", [Inv], invoice);
+                                    %broadcast(invoice_paid, Inv);
                                     false ->
                                         ok
                                 end;
@@ -594,7 +593,9 @@ reconcile_swaps(State) ->
                         end
                     catch
                         _:Reason ->
-                            ?LOG_WARNING("LN reconcile failed invoice=~p reason=~p", [Inv, Reason])
+                            ?LOG_WARNING(
+                                "LN reconcile failed invoice=~p reason=~p", [Inv, Reason], invoice
+                            )
                     end
                 end,
                 Invoices
@@ -734,7 +735,6 @@ spend(AeAccount, Amount) ->
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {spend, AeAccount, Amount}).
-
 
 confirm_spend(Config, #{public_key := AeAccount} = Context) ->
     DamageAEPid = get_wallet_proc(AeAccount),
@@ -1099,7 +1099,7 @@ contract_call(
 
     case vanillae:post_tx(SignedTX) of
         {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
+            maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
         Error ->
             Error
     end.

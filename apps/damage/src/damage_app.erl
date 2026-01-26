@@ -138,7 +138,6 @@ start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Started cowboy.");
 start_phase(damage, _StartType, []) ->
     damage_schedule:load_all_schedules(),
-    damage_ae:start_batch_spend_timer(),
     ?LOG_INFO("Started Damage.");
 start_phase(register_node, _StartType, []) ->
     ?LOG_INFO("registering node."),

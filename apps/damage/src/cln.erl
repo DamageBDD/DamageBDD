@@ -124,14 +124,14 @@ get_cln_client_config() ->
             "localhost" -> #{};
             _ -> #{transport => tls, tls_opts => TLSOptions}
         end,
-        #state{
-            cln_host = Host,
-            cln_port = Port,
-            cln_wspath = Path,
-            cln_certfile = CertFile,
-            cln_keyfile = KeyFile,
-            options = Options
-        }.
+    #state{
+        cln_host = Host,
+        cln_port = Port,
+        cln_wspath = Path,
+        cln_certfile = CertFile,
+        cln_keyfile = KeyFile,
+        options = Options
+    }.
 
 load_runes(State) ->
     case {secrets:retrieve_decrypt(cln_rune), secrets:retrieve_decrypt(cln_readonly_rune)} of
@@ -151,11 +151,11 @@ init([]) ->
             ?LOG_INFO("cln_channel_cache created")
     end,
     State = get_cln_client_config(),
-    case load_runes(State) of 
+    case load_runes(State) of
         {ok, State1} ->
-                    {ok, State1#state{secrets_ready = true}};
+            {ok, State1#state{secrets_ready = true}};
         {error, Error} ->
-            ?LOG_DEBUG("cln worker error in init ~p ~p", [Error, State ]),
+            ?LOG_DEBUG("cln worker error in init ~p ~p", [Error, State]),
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {ok, State#state{secrets_ready = false, retry_timer = TRef}}
     end.
@@ -1489,11 +1489,10 @@ handle_info(retry_secrets, State0) ->
         {ok, State1} ->
             %% cancel any existing retry timer
             maybe_cancel(State0#state.retry_timer),
-            {noreply,
-                State1#state{
-                    secrets_ready = true,
-                    retry_timer = undefined
-                }};
+            {noreply, State1#state{
+                secrets_ready = true,
+                retry_timer = undefined
+            }};
         {error, _} ->
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {noreply, State0#state{retry_timer = TRef, secrets_ready = false}}
@@ -1959,7 +1958,6 @@ extract_min_open_sats(Msg0) ->
             error
     end.
 
-
 btc_bin_to_sats(BtcBin) when is_binary(BtcBin) ->
     %% float BTC -> sats (truncate down)
     try
@@ -2014,10 +2012,8 @@ open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
                     NodeId, Method, Message
                 ]),
                 {error, Err};
-
             Body0 when is_map(Body0) ->
                 {ok, Body0};
-
             Other ->
                 {error, to_bin(Other)}
         end,
@@ -2030,18 +2026,18 @@ open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
 parse_min_chan_size_sats(Msg0) ->
     Msg = to_bin(Msg0),
     %% capture the "min chan size of <float> BTC"
-    case re:run(
-             Msg,
-             <<"min chan size of ([0-9]+(?:\\.[0-9]+)?) BTC">>,
-             [{capture, [1], binary}]
-         ) of
+    case
+        re:run(
+            Msg,
+            <<"min chan size of ([0-9]+(?:\\.[0-9]+)?) BTC">>,
+            [{capture, [1], binary}]
+        )
+    of
         {match, [BtcBin]} ->
             btc_bin_to_sats(BtcBin);
         nomatch ->
             error
     end.
-
-
 
 %% POST /v1/connect
 connect_peer_http(Host, Port, Options, Rune, Peer0) ->

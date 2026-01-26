@@ -29,7 +29,6 @@
     heartbeat_timer = undefined
 }).
 
-
 -define(CLN_HTTP_TIMEOUT, 300000).
 -define(SECRETS_RETRY_MS, 60000).
 
@@ -60,14 +59,14 @@ get_cln_client_config() ->
             "localhost" -> #{};
             _ -> #{transport => tls, tls_opts => TLSOptions}
         end,
-        #state{
-            cln_host = Host,
-            cln_port = Port,
-            cln_wspath = Path,
-            cln_certfile = CertFile,
-            cln_keyfile = KeyFile,
-            options = Options
-        }.
+    #state{
+        cln_host = Host,
+        cln_port = Port,
+        cln_wspath = Path,
+        cln_certfile = CertFile,
+        cln_keyfile = KeyFile,
+        options = Options
+    }.
 
 start_link([ws]) -> gen_server:start_link(?MODULE, [ws], []).
 init([ws]) ->
@@ -284,8 +283,8 @@ maybe_close_gun(Conn) when is_pid(Conn) ->
 maybe_close_gun(_) ->
     ok.
 
-broadcast(invoice_paid, Payload) ->
-    broadcast(invoice_paid, Payload);
+%broadcast(invoice_paid, Payload) ->
+%    broadcast(invoice_paid, Payload);
 broadcast(Topic, Payload) ->
     Message = {cln_event, Topic, Payload},
     ?LOG_DEBUG("Broadcast event ~p ~p", [Topic, Payload]),
