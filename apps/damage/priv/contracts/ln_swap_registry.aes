@@ -1,0 +1,48 @@
+@compiler >= 6
+include "String.aes"
+main contract LnSwapRegistry =
+  record swap =
+    { payment_hash : string
+      , recipient    : address
+      , amount       : int
+      , ae_tx_hash   : string
+      , ts           : int
+        }
+
+  record state =
+    { admin : address
+      , swaps : map(string, swap)}
+// -----------------------------
+// Events (middleware-friendly)
+// -----------------------------
+// NOTE: events have an implicit topic = Blake2b(EventName).
+// Keep fields indexable (address/hash/int/bool) so middleware can filter quickly.
+  datatype event =
+    SwapReconciled(address, int, string)
+
+  stateful entrypoint init() : state =
+    { admin = Call.caller,
+        swaps = {}}
+
+  stateful entrypoint mark_reconciled(payment_hash : string, recipient : address, amount : int, ae_tx_hash : string) =
+    require(Call.caller == state.admin, "ONLY_ADMIN")
+    require(Map.lookup(payment_hash, state.swaps) == None, "ALREADY_RECONCILED")
+    let s : swap =
+        { payment_hash = payment_hash
+          , recipient    = recipient
+          , amount       = amount
+          , ae_tx_hash   = ae_tx_hash
+          , ts           = Chain.timestamp
+            }
+
+    put(state{ swaps[payment_hash] = s })
+    Chain.event(SwapReconciled(recipient, amount, String.concats([payment_hash, "|",ae_tx_hash])))
+
+  entrypoint is_reconciled(payment_hash : string) : bool =
+    switch(Map.lookup(payment_hash, state.swaps))
+              None    => false
+              Some(_) => true
+
+  entrypoint get_swap(payment_hash : string) : option(swap) =
+    Map.lookup(payment_hash, state.swaps)
+
