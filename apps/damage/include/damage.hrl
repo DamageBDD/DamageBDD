@@ -77,5 +77,6 @@
     "ct_JJGKrTpqtivJCfMGJZo9iWrmKTFyD47ipCiNLtdiqxtnQ3PKQ"
 ).
 -define(LIGHTNING_SWAP_OPTION_CONTRACT, "ct_aWMwTaxGRxcjbb11NiVYVM4NHWmTAViteE5Gp2ayrrmrZi3ry").
+-define(LIGHTNING_SWAP_REGISTRY_CONTRACT, "ct_2uwLnU149TP8wHDYUZx1KmKYbDCXoZCPwLU4RpJz3B4QR81UG5").
 
 -define(AUTH_HEADER, <<"authorization">>).
