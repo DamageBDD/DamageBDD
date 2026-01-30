@@ -136,7 +136,8 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
 handle_info({gun_ws, _, _, close} = _Info, State) ->
     {noreply, State};
 handle_info(
-  {gun_down,_ConnPid,ws,closed,_Ref}, State) ->
+    {gun_down, _ConnPid, ws, closed, _Ref}, State
+) ->
     ?LOG_DEBUG("cln ws gun_down  ~p ", [State]),
     {stop, normal, State};
 handle_info(retry_secrets, State0) ->

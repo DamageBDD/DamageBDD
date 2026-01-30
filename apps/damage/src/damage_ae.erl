@@ -608,7 +608,7 @@ reconcile_swaps(State) ->
 
 deploy_swap_registry() ->
     damage_ae:contract_deploy(
-        "contracts/ln_swap_registry.aes", []
+        damage_ae:contract_path("contracts/ln_swap_registry.aes"), []
     ).
 
 ln_swap_registry(mark_reconciled, Recipient, Amount, AeTxHash, PaymentHash) ->
@@ -625,23 +625,24 @@ damage_for_invoice(
     #{label := Label, amount_msat := _AmountMsat, payment_hash := PaymentHash} = PaidInv
 ) ->
     case binary:split(Label, <<":">>, [global]) of
-        [<<"damage">>, AeAccount, AmountDamage, _Timestamp] ->
+        [<<"damage">>, AeAccount, AmountDamageBin, _Timestamp] ->
+            AmountDamage = binary_to_integer(AmountDamageBin),
             ?LOG_INFO("Transfering ~p damage to ~p", [AmountDamage, AeAccount]),
-            #{tx_hash := AeTxHash} = transfer_damage(
-                AeAccount, binary_to_integer(AmountDamage)
+            #{"tx_hash" := AeTxHash} = transfer_damage(
+                AeAccount, AmountDamage
             ),
             maybe_mark_reconciled(PaidInv),
-            ln_swap_registry(mark_reconciled, AeAccount, AmountDamage, AeTxHash, PaymentHash);
+            Result = ln_swap_registry(
+                mark_reconciled, AeAccount, AmountDamage, AeTxHash, PaymentHash
+            ),
+            ?LOG_INFO("damage_ae ln_swap_registry ~p updated : ~p", [
+                ?LIGHTNING_SWAP_REGISTRY_CONTRACT, Result
+            ]);
         Err ->
             ?LOG_INFO("damage_ae ignores label: ~p", [Err])
     end.
 handle_info({cln_event, invoice_paid, Invoice}, State) ->
-    try
-        damage_for_invoice(Invoice)
-    catch
-        _:Reason ->
-            ?LOG_WARNING("Failed to send damage for invoice: ~p", [Reason])
-    end,
+    damage_for_invoice(Invoice),
     {noreply, State};
 handle_info(reconcile_swaps, State0 = #{secrets_ready := true}) ->
     %% Safety net: periodically scan for paid 'damage:' invoices and replay invoice_paid events

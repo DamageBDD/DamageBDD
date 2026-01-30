@@ -100,7 +100,9 @@ step(
                 [{status_code, Status}, _Headers, {body, Body}] ->
                     maps:put(
                         fail,
-                        damage_utils:strf(<<"lnurlp resolve failed status=~p body=~p">>, [Status, Body]),
+                        damage_utils:strf(<<"lnurlp resolve failed status=~p body=~p">>, [
+                            Status, Body
+                        ]),
                         Context
                     );
                 Other ->
@@ -113,7 +115,6 @@ step(
         {error, Why} ->
             maps:put(fail, Why, Context)
     end;
-
 %% And I request an invoice for "X" sats
 step(
     _Config,
@@ -152,14 +153,19 @@ step(
                 [{status_code, Status}, _Headers, {body, Body}] ->
                     maps:put(
                         fail,
-                        damage_utils:strf(<<"invoice request failed status=~p body=~p">>, [Status, Body]),
+                        damage_utils:strf(<<"invoice request failed status=~p body=~p">>, [
+                            Status, Body
+                        ]),
                         Context
                     );
                 Other ->
-                    maps:put(fail, damage_utils:strf(<<"unexpected invoice response ~p">>, [Other]), Context)
+                    maps:put(
+                        fail,
+                        damage_utils:strf(<<"unexpected invoice response ~p">>, [Other]),
+                        Context
+                    )
             end
     end;
-
 %% Then I pay the invoice
 step(
     _Config,
@@ -177,7 +183,6 @@ step(
             Result = cln:settle_invoice(to_bin(Pr)),
             maps:put(lightning_payment_status, Result, Context)
     end;
-
 %% And I record the payment result
 step(
     _Config,
@@ -206,8 +211,6 @@ step(
     Prev = maps:get(payment_results, Context, []),
     maps:put(payment_results, Prev ++ [Record], maps:put(last_payment_result, Record, Context)).
 
-
-
 %% ------------------------------------------------------------
 %% Helpers
 %% ------------------------------------------------------------
@@ -217,12 +220,21 @@ to_bin(V) when is_list(V) -> unicode:characters_to_binary(V);
 to_bin(V) when is_atom(V) -> atom_to_binary(V, utf8);
 to_bin(V) -> unicode:characters_to_binary(io_lib:format("~p", [V])).
 
-to_int(V, Default) when is_integer(V) -> V;
+to_int(V, _Default) when is_integer(V) -> V;
 to_int(V, Default) when is_binary(V) ->
-    try binary_to_integer(V) catch _:_ -> Default end;
+    try
+        binary_to_integer(V)
+    catch
+        _:_ -> Default
+    end;
 to_int(V, Default) when is_list(V) ->
-    try list_to_integer(V) catch _:_ -> Default end;
-to_int(_, Default) -> Default.
+    try
+        list_to_integer(V)
+    catch
+        _:_ -> Default
+    end;
+to_int(_, Default) ->
+    Default.
 
 split_lnaddress(LnAddr) ->
     case binary:split(LnAddr, <<"@">>, [global]) of
@@ -243,8 +255,7 @@ build_lnurl_invoice_url(Callback, AmountMsat, Comment) ->
     EncComment = uri_string:quote(Comment),
     list_to_binary(
         binary_to_list(
-            <<Callback/binary, Sep/binary,
-              "amount=", (integer_to_binary(AmountMsat))/binary,
-              "&comment=", EncComment/binary>>
+            <<Callback/binary, Sep/binary, "amount=", (integer_to_binary(AmountMsat))/binary,
+                "&comment=", EncComment/binary>>
         )
     ).

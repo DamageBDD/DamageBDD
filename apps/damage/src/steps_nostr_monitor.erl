@@ -222,7 +222,6 @@ step(
         ["I wait for nostr events in the last", Hours0, "hours", "from monitor", <<"nostr_mon">>],
         Body
     );
-
 %% Then I wait for nostr events in the last "N" hours from monitor "X"
 step(
     _Config,
@@ -253,7 +252,6 @@ step(
         {error, Why} ->
             maps:put(fail, Why, Context)
     end;
-
 %% Then the nostr event content must contain "damagebdd"
 step(
     _Config,
@@ -287,8 +285,6 @@ step(
         _ ->
             Context
     end.
-
-
 
 ensure_not_running(Context, MonVar) ->
     case maps:get(MonVar, Context, undefined) of
@@ -656,10 +652,18 @@ get_event_content(#{<<"content">> := C}) -> maybe_bin(C);
 get_event_content(#{content := C}) -> maybe_bin(C);
 get_event_content(_) -> <<>>.
 
-to_int(V, Default) when is_integer(V) -> V;
+to_int(V, _Default) when is_integer(V) -> V;
 to_int(V, Default) when is_binary(V) ->
-    try binary_to_integer(V) catch _:_ -> Default end;
+    try
+        binary_to_integer(V)
+    catch
+        _:_ -> Default
+    end;
 to_int(V, Default) when is_list(V) ->
-    try list_to_integer(V) catch _:_ -> Default end;
+    try
+        list_to_integer(V)
+    catch
+        _:_ -> Default
+    end;
 to_int(_, Default) ->
     Default.
