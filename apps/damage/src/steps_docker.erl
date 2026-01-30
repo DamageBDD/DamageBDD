@@ -26,18 +26,19 @@
 -define(THEN_NO_UNUSED_OLDER_THAN,
         ["the Docker system should have no unused resources older than", Relative]).
 
-%% Build pipeline (build.sh)
--define(WHEN_BUILD_MINT22_BUILDER_IMAGE,
-        ["I build the mint22 builder Docker image"]).
--define(WHEN_RUN_MINT22_BUILDER_TO_BUILD_DEBS,
-        ["I build Debian packages using the mint22 builder container"]).
-
-%% Test / run pipeline (run.sh)
--define(WHEN_RUN_MINT22_TEST_CONTAINER,
-        ["I run a mint22 test container installing the built Debian package"]).
 %% Build an image from an inline Dockerfile
 -define(WHEN_BUILD_IMAGE_FROM_INLINE_DOCKERFILE,
         ["I build docker image", Image, "from this Dockerfile"]).
+-define(WHEN_BUILD_IMAGE_FROM_DOCKERFILE,
+        ["I build an image from Dockerfile at", Src,"as tag", Tag]).
+
+-define(WHEN_BUILD_IMAGE_FROM_DOCKERFILE_PARAMS,
+  ["I build an image from Dockerfile at", Src,
+    "as tag", Tag,
+    "with params", Params]).
+
+-define(RUN_DOCKER_IMAGE_TAGGED,
+    ["I run docker image tagged", Tag]).
 
 %% erlfmt:ignore-end
 
@@ -108,71 +109,6 @@ step(Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
             end
     end;
 %% ---------------------------------------------------------------------------
-%% When: build the mint22 builder image (first half of build.sh)
-%%   When I build the mint22 builder Docker image
-%% ---------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?WHEN_BUILD_MINT22_BUILDER_IMAGE, _Raw) ->
-    steps_utils:ensure_admin(Context),
-    Command =
-        "DOCKER_BUILDKIT=1 docker build "
-        "--build-arg CACHEBUST=$(date +%s) "
-        "-t damagebdd/mint22-builder:latest .",
-    ?LOG_INFO("Building mint22 builder image with command: ~s", [Command]),
-    %stream_chunk(Config, <<"Building mint22 builder image with command: ~s">>),
-    run_cmd(Config, Command, Context);
-%% ---------------------------------------------------------------------------
-%% When: run the builder container to produce .deb packages (rest of build.sh)
-%%   When I build Debian packages using the mint22 builder container
-%% ---------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_BUILDER_TO_BUILD_DEBS, _Raw) ->
-    steps_utils:ensure_admin(Context),
-    %% This replicates the bash -lc '...' block from build.sh as closely as
-    %% possible, but wrapped in a single docker run. :contentReference[oaicite:5]{index=5}
-    InnerScript =
-        "set -e\n"
-        "git reset --hard\n"
-        "if [ -d .git ]; then git pull --ff-only || true; fi\n"
-        "rm -f rebar.lock\n"
-        "rm -rf _build\n"
-        "DEBUG=1\n"
-        "rebar3 as prod release\n"
-        "rebar3 pkg gen -t deb\n"
-        "rm -f /out/*.deb\n"
-        "cp -a _build/pkg/deb/*.deb /out/\n"
-        "rm -f rebar.lock\n",
-    Command =
-        "docker run --rm -i "
-        "-v \"$(pwd)/deb:/out\" "
-        "-w /opt/workspace "
-        "damagebdd/mint22-builder:latest "
-        "bash -lc " ++ "\"" ++
-            escape_for_double_quotes(InnerScript) ++ "\"",
-    ?LOG_INFO("Running mint22 builder container with command: ~s", [Command]),
-    run_cmd(Config, Command, Context);
-%% ---------------------------------------------------------------------------
-%% When: run a mint22 test container to install and run the built deb
-%%   When I run a mint22 test container installing the built Debian package
-%% ---------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
-    steps_utils:ensure_admin(Context),
-    %% Directly mirrors run.sh behaviour. :contentReference[oaicite:6]{index=6}
-    InnerScript =
-        "set -e\n"
-        "PKG_DEBUG=1 dpkg -i -D3 /deb/damage_*.deb\n"
-        "export SHELL=sh\n"
-        "bash\n"
-        "/opt/damage/bin/damage foreground\n",
-    Command =
-        "docker run -i "
-        "-v \"$(pwd)/deb:/deb\" "
-        "-w /opt/workspace "
-        "-p 8888:8080 "
-        "linuxmintd/mint22-amd64 "
-        "bash -xlc " ++ "\"" ++
-            escape_for_double_quotes(InnerScript) ++ "\"",
-    ?LOG_INFO("Running mint22 test container with command: ~s", [Command]),
-    run_cmd(Config, Command, Context);
-%% ---------------------------------------------------------------------------
 %% When: build a docker image from an inline Dockerfile body
 %%   When I build docker image "damagebdd/mint22-inline:latest" from this Dockerfile
 %%   """
@@ -183,28 +119,144 @@ step(Config, Context, <<"When">>, _N, ?WHEN_RUN_MINT22_TEST_CONTAINER, _Raw) ->
 %% ---------------------------------------------------------------------------
 step(Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_INLINE_DOCKERFILE, Raw) ->
     steps_utils:ensure_admin(Context),
-    build_image_from_inline_dockerfile(Config, Image, Raw, Context).
+    build_image_from_inline_dockerfile(Config, Image, Raw, Context);
+step(Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_DOCKERFILE, _Raw) ->
+    build_image_from_dockerfile(Config, Src, Tag, <<>>, undefined, Context);
+step(Config, Context, <<"When">>, _N, ?WHEN_BUILD_IMAGE_FROM_DOCKERFILE_PARAMS, _Raw) ->
+    build_image_from_dockerfile(Config, Src, Tag, Params, undefined, Context);
+step(Config, Context, <<"Then">>, _N, ?RUN_DOCKER_IMAGE_TAGGED, ScriptBin) ->
+    run_docker_tagged(Config, Tag, ScriptBin, Context).
+
+run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
+    ScriptBin = to_binary(ScriptBin0),
+
+    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+    WorkDir = filename:join(RunDir, "docker"),
+    OutDir = filename:join(RunDir, "out"),
+
+    ok = filelib:ensure_dir(WorkDir),
+    ok = filelib:ensure_dir(OutDir),
+
+    %% Write script to file (useful for debugging / artifacts)
+    ScriptPath = filename:join(WorkDir, "script.sh"),
+    ok = file:write_file(ScriptPath, ScriptBin),
+
+    %% Execute using sh -lc so heredoc-style scripts work naturally
+    %% Note: we pass the script contents directly to sh -lc for simplicity.
+    Cmd =
+        iolist_to_binary([
+            "docker run --rm ",
+            "-v ",
+            shell_quote(OutDir),
+            ":/out ",
+            "-w /opt/workspace ",
+            shell_quote(Tag),
+            " ",
+            "sh -lc ",
+            shell_quote(ScriptBin)
+        ]),
+
+    ?LOG_DEBUG("Docker cmd ~p script path ~p", [Cmd, ScriptPath]),
+    %% Use your existing command runner (whatever you already call for docker)
+    %% If you already default cwd to <run_dir>/docker, this is fine.
+    Ctx1 = run_cmd_in_docker_dir(Config, Cmd, Ctx0),
+
+    %% Save locations for later steps (eg: IPFS upload of built artifacts)
+    maps:merge(Ctx1, #{
+        docker_workdir => WorkDir,
+        docker_outdir => OutDir
+    }).
+
+build_image_from_dockerfile(Config, Src, Tag, Params, ContextRel0, Ctx0) ->
+    WorkDir = docker_workdir(Config),
+    ok = filelib:ensure_dir(filename:join(WorkDir, "x")),
+
+    %% 1) Fetch Dockerfile contents
+    {ok, DockerfileBin} = fetch_dockerfile(Src),
+
+    %% 2) Write Dockerfile into workdir
+    DockerfilePath = filename:join(WorkDir, "Dockerfile"),
+    ok = file:write_file(DockerfilePath, DockerfileBin),
+
+    %% 3) Resolve build context
+    ContextDir =
+        case ContextRel0 of
+            undefined ->
+                WorkDir;
+            Rel when is_binary(Rel) ->
+                %% relative to WorkDir
+                filename:join(WorkDir, binary_to_list(Rel))
+        end,
+
+    %% 4) Run docker build inside WorkDir
+    %% NOTE: Params is appended verbatim (user-controlled).
+    Cmd =
+        iolist_to_binary([
+            "docker build -f ",
+            shell_quote(DockerfilePath),
+            " -t ",
+            shell_quote(Tag),
+            " ",
+            Params,
+            " ",
+            shell_quote(ContextDir)
+        ]),
+    Ctx1 = run_cmd_in_docker_dir(Config, Cmd, Ctx0),
+
+    maps:put(docker_image_tag, Tag, Ctx1).
+
+docker_workdir(Config) ->
+    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+    filename:join(RunDir, "docker").
+
+fetch_dockerfile(Src0) ->
+    Src = to_binary(Src0),
+    case is_ipfs_cid(Src) of
+        true -> damage_ipfs:cat(Src);
+        false -> fetch_url(Src)
+    end.
+to_binary(Bin) when is_binary(Bin) ->
+    Bin;
+to_binary(List) when is_list(List) ->
+    list_to_binary(List).
+
+is_ipfs_cid(<<"Qm", _/binary>>) -> true;
+is_ipfs_cid(<<"bafy", _/binary>>) -> true;
+is_ipfs_cid(_) -> false.
+
+fetch_url(Url) ->
+    inets:start(),
+    ssl:start(),
+    case httpc:request(get, {Url, []}, [{timeout, 60000}], [{body_format, binary}]) of
+        {ok, {{_, 200, _}, _, Body}} -> {ok, Body};
+        {ok, {{_, Code, _}, _, Body}} -> {error, {http_error, Code, Body}};
+        Err -> Err
+    end.
+
+run_cmd_in_docker_dir(Config, CmdBin, Ctx0) ->
+    %% Use your existing run_cmd but force cwd to docker workdir
+    %% (If you already refactored run_cmd to use <run_dir>/docker by default, just call it.)
+    %% Placeholder:
+    run_cmd(Config, CmdBin, Ctx0).
+
+shell_quote(List) when is_list(List) ->
+    shell_quote(list_to_binary(List));
+shell_quote(Bin) when is_binary(Bin) ->
+    %% minimal safe quoting for paths/tags (single quotes)
+    <<"'", (binary:replace(Bin, <<"'>">>, <<"'\"'\"'">>, [global]))/binary, "'">>.
 
 %% ===== Helpers ===============================================================
-
-%% Run a shell command via erlexec, mirroring steps_cmd behaviour but keeping
-%% the result under 'cmd_result' so the generic "Then the exit status must be"
-%% and stdout assertion steps can be reused. :contentReference[oaicite:7]{index=7}
-%% ===== Helpers ===============================================================
-
-%% Run a shell command via erlexec, but:
-%%   * stream stdout/stderr via logger (picked up by the text formatter
-%%     when you're in streaming mode),
-%%   * keep a result under 'cmd_result' compatible with the old shape
-%%     so existing "Then the exit status must be" and stdout match steps
-%%     continue to work.
-%% Run a shell command via erlexec, but:
-%%   * stream stdout/stderr via text_formatter when in HTTP mode
-%%   * keep a result under 'cmd_result' compatible with old shape
 run_cmd(Config, Command, Context) ->
-    CWD = filename:absname(maps:get(cmd_cwd, Context, ".")),
+    DockerDir = docker_workdir(Config),
+    ?LOG_INFO("steps_docker running command in ~s: ~s", [DockerDir, Command]),
+    LogDir0 =
+        filename:join(DockerDir, "logs"),
+    ok = ensure_dir(LogDir0),
+
+    %LogFile = filename:join(LogDir0, gen_log_name("docker")),
+
     %Opts = [stdout, stderr, monitor, {cd, CWD}],
-    ?LOG_INFO("steps_docker running command in ~s: ~s", [CWD, Command]),
+    ?LOG_INFO("steps_docker running command in ~s: ~s", [DockerDir, Command]),
 
     Parent = self(),
     Watcher =
@@ -212,7 +264,7 @@ run_cmd(Config, Command, Context) ->
             docker_watcher(Config, Parent)
         end),
 
-    case exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, CWD}]) of
+    case exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}]) of
         {ok, ExecPid, OsPid} ->
             %% Tell watcher which PIDs to care about
             Watcher ! {attach, ExecPid, OsPid},
@@ -220,7 +272,10 @@ run_cmd(Config, Command, Context) ->
             receive
                 {docker_done, Result} ->
                     ?LOG_DEBUG("steps_docker exec result ~p", [Result]),
-                    maps:put(cmd_result, Result, Context)
+                    maps:put(cmd_result, Result, Context);
+                {'DOWN', _, process, _, normal} = Other ->
+                    ?LOG_DEBUG("steps_docker exec result Other ~p", [Other]),
+                    maps:put(cmd_result, "error", Context)
             after 600000 ->
                 %% Very defensive timeout
                 ?LOG_ERROR("steps_docker: watcher timeout for command ~p", [Command]),
@@ -238,14 +293,16 @@ run_cmd(Config, Command, Context) ->
 docker_watcher(Config, Parent) ->
     receive
         {attach, ExecPid, OsPid} ->
-            docker_loop(Config, Parent, ExecPid, OsPid, [])
+            docker_loop(Config, Parent, ExecPid, OsPid, []);
+        Other ->
+            ?LOG_WARNING("docker_watcher got unexpected message: ~p", [Other])
     end.
 
 docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
     receive
         %% stdout from OS process
         {stdout, OsPid, Data} ->
-            ?LOG_INFO("docker stdout: ~s", [Data]),
+            ?LOG_DEBUG("docker stdout: ~s", [Data]),
             formatter:format(
                 Config,
                 stdout,
@@ -287,7 +344,7 @@ docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
 
             Parent ! {docker_done, Result};
         Other ->
-            ?LOG_WARNING("docker_watcher got unexpected message: ~p", [Other]),
+            ?LOG_INFO("docker_loop got unexpected message: ~p", [Other]),
             docker_loop(Config, Parent, ExecPid, OsPid, Acc)
     after 600000 ->
         Timeout = <<"docker command timed out in watcher after 600s">>,
@@ -298,6 +355,19 @@ docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
             {-1, Timeout}
         ),
         Parent ! {docker_done, {error, [{stderr, [Timeout]}]}}
+    end.
+
+%% -------------------------------------------------------
+%% Helpers
+%% -------------------------------------------------------
+
+ensure_dir(Dir) ->
+    case filelib:ensure_dir(filename:join(Dir, "x")) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR("Cannot create directory ~s (~p)", [Dir, Reason]),
+            error({cannot_create_dir, Dir, Reason})
     end.
 
 %% Build a docker image from an inline Dockerfile contained in Raw.
@@ -386,16 +456,3 @@ seconds_for_unit("months", N) -> date_util:days_to_seconds(N * 30);
 seconds_for_unit("year", N) -> date_util:days_to_seconds(N * 365);
 seconds_for_unit("years", N) -> date_util:days_to_seconds(N * 365);
 seconds_for_unit(Unit, _) -> erlang:error({unknown_unit, Unit}).
-
-escape_for_double_quotes(Str) when is_list(Str) ->
-    lists:flatten(
-        [
-            case C of
-                $" -> "\\\"";
-                $\n -> "\\n";
-                $\\ -> "\\\\";
-                _ -> [C]
-            end
-         || C <- Str
-        ]
-    ).
