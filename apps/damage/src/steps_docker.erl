@@ -261,26 +261,15 @@ run_cmd(Config, Command, Context) ->
     Parent = self(),
     Watcher =
         spawn_link(fun() ->
-            docker_watcher(Config, Parent)
+            docker_loop(Config, Parent, [])
         end),
 
-    case exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}]) of
-        {ok, ExecPid, OsPid} ->
-            %% Tell watcher which PIDs to care about
-            Watcher ! {attach, ExecPid, OsPid},
-            %% Block until watcher finishes and sends result
-            receive
-                {docker_done, Result} ->
-                    ?LOG_DEBUG("steps_docker exec result ~p", [Result]),
-                    maps:put(cmd_result, Result, Context);
-                {'DOWN', _, process, _, normal} = Other ->
-                    ?LOG_DEBUG("steps_docker exec result Other ~p", [Other]),
-                    maps:put(cmd_result, "error", Context)
-            after 600000 ->
-                %% Very defensive timeout
-                ?LOG_ERROR("steps_docker: watcher timeout for command ~p", [Command]),
-                maps:put(cmd_result, {error, [{stderr, [<<"watcher timeout">>]}]}, Context)
-            end;
+    case
+        exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}, sync])
+    of
+        {ok, []} ->
+            ?LOG_DEBUG("steps_docker exec result ~p", [[]]),
+            maps:put(cmd_result, ok, Context);
         {error, Reason} ->
             ?LOG_ERROR("steps_docker failed to start command ~p: ~p", [Command, Reason]),
             ErrorBin =
@@ -290,36 +279,27 @@ run_cmd(Config, Command, Context) ->
             Result = {error, [{stderr, [ErrorBin]}]},
             maps:put(cmd_result, Result, Context)
     end.
-docker_watcher(Config, Parent) ->
-    receive
-        {attach, ExecPid, OsPid} ->
-            docker_loop(Config, Parent, ExecPid, OsPid, []);
-        Other ->
-            ?LOG_WARNING("docker_watcher got unexpected message: ~p", [Other])
-    end.
-
-docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
+docker_loop(Config, Parent, Acc) ->
     receive
         %% stdout from OS process
-        {stdout, OsPid, Data} ->
+        {stdout, _OsPid, Data} ->
             ?LOG_DEBUG("docker stdout: ~s", [Data]),
             formatter:format(
                 Config,
                 stdout,
                 Data
             ),
-            docker_loop(Config, Parent, ExecPid, OsPid, [{stdout, Data} | Acc]);
+            docker_loop(Config, Parent, [{stdout, Data} | Acc]);
         %% stderr from OS process
-        {stderr, OsPid, Data} ->
+        {stderr, _OsPid, Data} ->
             ?LOG_WARNING("docker stderr: ~s", [Data]),
             formatter:format(
                 Config,
                 stderr,
                 Data
             ),
-            docker_loop(Config, Parent, ExecPid, OsPid, [{stderr, Data} | Acc]);
-        %% monitor message from erlexec
-        {'DOWN', OsPid, process, ExecPid, ExitStatus} ->
+            docker_loop(Config, Parent, [{stderr, Data} | Acc]);
+        {'DOWN', _OsPid, process, _ExecPid, ExitStatus} ->
             ?LOG_WARNING("docker down: ~p", [ExitStatus]),
             Rev = lists:reverse(Acc),
             Stdouts = [D || {stdout, D} <- Rev],
@@ -345,10 +325,10 @@ docker_loop(Config, Parent, ExecPid, OsPid, Acc) ->
             Parent ! {docker_done, Result};
         Other ->
             ?LOG_INFO("docker_loop got unexpected message: ~p", [Other]),
-            docker_loop(Config, Parent, ExecPid, OsPid, Acc)
+            docker_loop(Config, Parent, Acc)
     after 600000 ->
         Timeout = <<"docker command timed out in watcher after 600s">>,
-        ?LOG_ERROR("docker_watcher timeout"),
+        ?LOG_ERROR("docker_loop timeout"),
         formatter:format(
             Config,
             error,

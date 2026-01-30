@@ -131,7 +131,9 @@ start_phase(start_trails_http, _StartType, []) ->
                 metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
                 stream_handlers =>
                     [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h],
-                middlewares => [cowboy_router, throttling_middleware, cowboy_handler]
+                middlewares => [cowboy_router, throttling_middleware, cowboy_handler],
+                idle_timeout => 600000,
+                request_timeout => 600000
             }
         ),
     metrics:init(),

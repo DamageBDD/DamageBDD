@@ -18,7 +18,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libsodium23 libsodium-dev \
       ruby ruby-dev rubygems \
       rpm dpkg-dev gnupg libwxgtk3.2-dev rsync nvidia-cuda-toolkit \
-    && gem install --no-document fpm
+      pkg-config \
+      libgtk-4-dev \
+      libcairo2-dev \
+      libpango1.0-dev \
+      libglib2.0-dev \
+      libgdk-pixbuf-2.0-dev \
+      libharfbuzz-dev \
+      libgraphene-1.0-dev \
+    && gem install --no-document fpm 
+    #&& rm -rf /var/lib/apt/lists/*
 
 # --- kerl + OTP
 RUN curl -fsSL https://raw.githubusercontent.com/kerl/kerl/master/kerl -o /usr/local/bin/kerl \

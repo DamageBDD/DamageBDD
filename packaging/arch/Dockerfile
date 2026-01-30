@@ -13,7 +13,7 @@ RUN sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf   
     base-devel git fakeroot which curl wget ca-certificates     \
     tar gzip unzip xz zstd patch pkgconf cmake ninja            \
     erlang jq pacman-contrib ccache git rebar3 make             \
-    gcc libsodium base-devel kubo pass cuda vim                 \
+    gcc libsodium base-devel kubo pass cuda vim gtk4      \
     && mkdir -p "$CCACHE_DIR"  /root/.cache      && pacman -Scc --noconfirm
 
 WORKDIR /src
