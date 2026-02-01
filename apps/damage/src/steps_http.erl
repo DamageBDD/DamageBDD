@@ -52,19 +52,21 @@
                                    ]).
 
 %% THEN
--define(STEP_THEN_CONTAINS,       ["the response must contain text", Contains]).
--define(STEP_THEN_STATUS_EQ,      ["the response status must be", Status]).
--define(STEP_THEN_STATUS_ONEOF,   ["the response status must be one of", Statuses]).
--define(STEP_THEN_YAML_MUST,      ["the yaml at path", Path, "must be", Expected0]).
--define(STEP_THEN_JSON_MUST,      ["the json at path", Path, "must be", Expected0]).
--define(STEP_THEN_HEADER_IS,      ["the", Var, "header should be", Value]).
--define(STEP_THEN_PRINT_JSON_PATH,["I print the json at path", Path]).
--define(STEP_THEN_PRINT_BODY,     ["I print the response body"]).
--define(STEP_THEN_PRINT_RESP,     ["I print the response"]).
--define(STEP_THEN_STORE_JSON,     ["I store the JSON at path", Path, "in", Variable]).
--define(STEP_JSON_SHOULD_BE,      ["the JSON should be"]).
--define(STEP_VAR_EQ_JSON_LIT,     ["the variable", Variable, "should be equal to JSON", Value]).
--define(STEP_JSON_SHOULD_ALIAS,   ["the JSON at path", JsonPath, "should be"]).
+-define(STEP_RESPONSE_CONTAINS,       ["the response must contain text", Contains]).
+-define(STEP_RESPONSE_STATUS_EQ,      ["the response status must be", Status]).
+-define(STEP_RESPONSE_STATUS_ONEOF,   ["the response status must be one of", Statuses]).
+-define(STEP_RESPONSE_YAML_MUST,      ["the yaml at path", Path, "must be", Expected0]).
+-define(STEP_RESPONSE_JSON_MUST,      ["the json at path", Path, "must be", Expected0]).
+-define(STEP_RESPONSE_JSON_SHOULD,    ["the JSON at path", JsonPath, "should be"]).
+-define(STEP_RESPONSE_HEADER_IS,      ["the", Var, "header should be", Value]).
+-define(STEP_RESPONSE_PRINT_JSON_PATH,["I print the json at path", Path]).
+-define(STEP_RESPONSE_PRINT_BODY,     ["I print the response body"]).
+-define(STEP_RESPONSE_PRINT_RESP,     ["I print the response"]).
+-define(STEP_RESPONSE_STORE_JSON,     ["I store the JSON at path", Path, "in", Variable]).
+-define(STEP_RESPONSE_JSON_SHOULD_BE, ["the JSON should be"]).
+-define(STEP_VAR_EQ_JSON_LIT,         ["the variable", Variable, "should be equal to JSON", Value]).
+-define(STEP_RESPONSE_JSON_PATH_ONE_OF, ["the json at path", JsonPath, "must be one of", Csv]).
+-define(STEP_RESPONSE_JSON_PATH_MUST_BE_GTE, ["the json int at path", JsonPath, "must be >=", MinStr]).
 
 %% GIVEN / ANY
 -define(STEP_GIVEN_USING_SERVER,  ["I am using server", Server]).
@@ -126,7 +128,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ?STEP_THEN_CONTAINS,
+    ?STEP_RESPONSE_CONTAINS,
     _
 ) ->
     %% Extract raw body (expects [{...},{...},{body, Body}] shape)
@@ -281,7 +283,7 @@ step(Config, Context, <<"When">>, _N, ?STEP_HTTP_FORM_POST_PATH, Data) ->
 %%------------------------------------------------------------------------------
 %% THEN: Exact response status match (single status)
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"Then">>, _N, ?STEP_THEN_STATUS_EQ, _) ->
+step(_Config, Context, _, _N, ?STEP_RESPONSE_STATUS_EQ, _) ->
     Status0 = list_to_integer(Status),
     case maps:get(response, Context, undefined) of
         [{status_code, Status0}, _, _] ->
@@ -307,7 +309,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ?STEP_THEN_YAML_MUST,
+    ?STEP_RESPONSE_YAML_MUST,
     _
 ) ->
     Expected = list_to_binary(Expected0),
@@ -325,12 +327,13 @@ step(
 %%------------------------------------------------------------------------------
 %% THEN: JSON at JSONPath equals expected (with JSON decoding safety)
 %%------------------------------------------------------------------------------
+%% Then the json at path $.Key must be "<cid>"
 step(
     _Config,
     Context,
     <<"Then">>,
     _N,
-    ?STEP_THEN_JSON_MUST,
+    ?STEP_RESPONSE_JSON_MUST,
     _
 ) ->
     Expected = list_to_binary(Expected0),
@@ -356,14 +359,14 @@ step(
 step(
     _Config,
     Context,
-    <<"Then">>,
+    _,
     _N,
-    ?STEP_THEN_STATUS_ONEOF,
+    ?STEP_RESPONSE_STATUS_ONEOF,
     _
 ) ->
     ?LOG_DEBUG("the response status must be one of ~p.", [Statuses]),
     case maps:get(response, Context, undefined) of
-        [_, {status_code, StatusCode}, _Headers, _Body] ->
+        [{status_code, StatusCode}, _Headers, _Body] ->
             case
                 lists:member(
                     StatusCode,
@@ -390,7 +393,7 @@ step(
 %%------------------------------------------------------------------------------
 %% THEN: Specific header should equal an expected value
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"Then">>, _N, ?STEP_THEN_HEADER_IS, _) ->
+step(_Config, Context, <<"Then">>, _N, ?STEP_RESPONSE_HEADER_IS, _) ->
     case maps:get(response, Context) of
         {_, Headers, _} ->
             case lists:keyfind(Var, 1, Headers) of
@@ -417,7 +420,7 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_THEN_HEADER_IS, _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print JSON at JSONPath (for debugging/visibility in formatter)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_JSON_PATH, _) ->
+step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_JSON_PATH, _) ->
     [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
         maps:get(response, Context),
     case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
@@ -439,7 +442,7 @@ step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_JSON_PATH, _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print raw response body
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_BODY, _) ->
+step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_BODY, _) ->
     [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
         maps:get(response, Context),
     formatter:format(
@@ -452,7 +455,7 @@ step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_BODY, _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print the entire response structure (as JSON)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ?STEP_THEN_PRINT_RESP, _) ->
+step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_RESP, _) ->
     Response = maps:get(response, Context, <<"">>),
     formatter:format(
         Config,
@@ -494,7 +497,7 @@ step(
     Context,
     <<"Then">>,
     _N,
-    ?STEP_THEN_STORE_JSON,
+    ?STEP_RESPONSE_STORE_JSON,
     _
 ) ->
     case maps:get(response, Context) of
@@ -627,7 +630,7 @@ step(Config, Context, _, _N, ?STEP_HEAD_PATH, _) ->
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Assert entire JSON body equals Args (exact match)
 %%------------------------------------------------------------------------------
-step(_Config, Context, _, _N, ?STEP_JSON_SHOULD_BE, Args) ->
+step(_Config, Context, _, _N, ?STEP_RESPONSE_JSON_SHOULD_BE, Args) ->
     case maps:get(response, Context) of
         {_Status, _Headers, Args} ->
             Context;
@@ -651,7 +654,7 @@ step(
     Context,
     KeyWord,
     LineNo,
-    ?STEP_JSON_SHOULD_ALIAS,
+    ?STEP_RESPONSE_JSON_SHOULD,
     Args
 ) ->
     step(
@@ -661,7 +664,93 @@ step(
         LineNo,
         ["the json at path", JsonPath, "must be", Args],
         <<>>
-    ).
+    );
+%% Then the JSON at path "Keys.<cid>.Type" must be one of "recursive,direct,indirect"
+step(
+    _Cfg,
+    Context0,
+    _,
+    _N,
+    ?STEP_RESPONSE_JSON_PATH_ONE_OF,
+    _
+) ->
+    [{status_code, _}, _Hdrs, {body, Body}] = maps:get(response, Context0),
+    case catch jsx:decode(Body, [return_maps]) of
+        {'EXIT', _} ->
+            maps:put(fail, <<"invalid json in response">>, Context0);
+        Json ->
+            case ejsonpath:q(JsonPath, Json) of
+                {[Val | _], _} ->
+                    ValB =
+                        case Val of
+                            B when is_binary(B) -> B;
+                            L when is_list(L) -> list_to_binary(L);
+                            Other -> list_to_binary(io_lib:format("~p", [Other]))
+                        end,
+                    Allowed = [
+                        list_to_binary(string:trim(S))
+                     || S <- string:split(Csv, ",", all)
+                    ],
+                    case lists:member(ValB, Allowed) of
+                        true ->
+                            Context0;
+                        false ->
+                            maps:put(
+                                fail, damage_utils:strf("~p not in ~p", [ValB, Allowed]), Context0
+                            )
+                    end;
+                Other ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf("Path ~p not found (~p)", [JsonPath, Other]),
+                        Context0
+                    )
+            end
+    end;
+%% Then the JSON integer field at $.Size must be >= N
+step(
+    _Cfg,
+    Context,
+    _,
+    _N,
+    ?STEP_RESPONSE_JSON_PATH_MUST_BE_GTE,
+    _
+) ->
+    case maps:get(response, Context) of
+        [{status_code, _}, _Hdrs, {body, Body}] ->
+            case catch jsx:decode(Body, [return_maps]) of
+                {'EXIT', _} ->
+                    maps:put(fail, <<"invalid json in response">>, Context);
+                Json ->
+                    case ejsonpath:q(JsonPath, Json) of
+                        {[Val | _], _} ->
+                            V =
+                                case Val of
+                                    I when is_integer(I) -> I;
+                                    B when is_binary(B) -> binary_to_integer(B);
+                                    L when is_list(L) -> list_to_integer(L);
+                                    _ -> -1
+                                end,
+                            Min = list_to_integer(MinStr),
+                            if
+                                V >= Min ->
+                                    Context;
+                                true ->
+                                    maps:put(
+                                        fail, damage_utils:strf("Value ~p < ~p", [V, Min]), Context
+                                    )
+                            end;
+                        Other ->
+                            maps:put(
+                                fail,
+                                damage_utils:strf("Path ~p not found (~p)", [JsonPath, Other]),
+                                Context
+                            )
+                    end
+            end;
+        Unexpected ->
+            maps:put(fail, damage_utils:strf("Unexpected response ~p", [Unexpected]), Context)
+    end.
 
 get_headers(Context, DefaultHeaders) ->
     maps:to_list(

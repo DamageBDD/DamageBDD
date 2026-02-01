@@ -24,6 +24,7 @@
   ]
 ).
 -export([invoke_formatters/3]).
+-define(FORMATTER_TIMEOUT, 600000).
 
 start_link(_Args) ->
   ?LOG_INFO("formater process started ~p~n", [self()]),
@@ -74,7 +75,7 @@ format(Config, Keyword, Data) ->
     formatter,
     fun
       (Worker) ->
-        gen_server:call(Worker, {invoke_formatters, Config, Keyword, Data})
+        gen_server:call(Worker, {invoke_formatters, Config, Keyword, Data}, ?FORMATTER_TIMEOUT)
     end
   ).
 

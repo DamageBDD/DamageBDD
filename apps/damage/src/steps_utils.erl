@@ -21,6 +21,7 @@
     run/2,
     run_ok/2
 ]).
+-define(STEP_PRINT, ["I print", String]).
 
 step_dry(_Config, Context, _, _N, _, _) ->
     Context.
@@ -97,42 +98,11 @@ step(_Config, Context, _Phase, _N, ["I ensure an SSH host key at", KeyPath], _Bo
             damage_utils:ensure_dir(filename:dirname(KeyPath) ++ "/"),
             damage_utils:run_ok(damage_utils:ctx(Context), damage_utils:ssh_keygen(KeyPath))
     end;
-%% Ensure IPFS asset (optional)
-step(_Config, Context, _Phase, _N, ["I ensure IPFS asset", Hash, "at", OutPath], _Body) ->
-    case filelib:is_file(OutPath) of
-        true ->
-            Context;
-        false ->
-            damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
-            case damage_ipfs:get(Hash, OutPath) of
-                {error, Reason} ->
-                    ?LOG_WARNING("ipfs failed to fetch ~s -> ~s error: ~p", [Hash, OutPath, Reason]),
-                    damage_utils:fail(Context, Reason);
-                {ok, Result} ->
-                    ?LOG_DEBUG("ensure ipfs asset result ~p", [Result]),
-
-                    maps:put(ipfs_result, Result, Context)
-            end
-    end;
 %% Then file exists
 step(_Config, Context, _Phase, _N, ["the file", Path, "should exist"], _Body) ->
     case filelib:is_file(Path) of
         true -> Context;
         false -> damage_utils:fail(Context, {missing_file, Path})
-    end;
-%% Then file exists (conditional on ipfs present)
-step(
-    _Config, Context, _Phase, _N, ["the file", Path, "should exist (if ipfs is installed)"], _Body
-) ->
-    case damage_utils:exists_cmd("ipfs") of
-        % skip
-        false ->
-            Context;
-        true ->
-            case filelib:is_file(Path) of
-                true -> Context;
-                false -> damage_utils:fail(Context, {missing_file, Path})
-            end
     end;
 %% Then executable bit
 step(
@@ -152,7 +122,15 @@ step(
                 true -> Context;
                 false -> set_fail(Context, {not_executable, Path})
             end
-    end.
+    end;
+step(Config, Context, _, N, ?STEP_PRINT, _) ->
+    formatter:format(
+        Config,
+        print,
+        {<<"Then">>, N, ["Response Body:"], list_to_binary(damage_utils:strf("~s", [String])),
+            Context, success}
+    ),
+    Context.
 
 is_admin(Context) when is_map(Context) ->
     is_admin(maps:get(public_key, Context, undefined));
