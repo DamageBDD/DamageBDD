@@ -31,6 +31,30 @@ function generateDamageQR(address){
 	});
 }
 
+function restoreFeatureDraftFromShareLink() {
+	const ta = document.getElementById("damageTextArea");
+	if (!ta) return;
+
+	let txt = localStorage.getItem("damagebdd_feature_draft");
+	const autorun = localStorage.getItem("damagebdd_feature_autorun") === "1";
+
+	localStorage.removeItem("damagebdd_feature_draft");
+	localStorage.removeItem("damagebdd_feature_autorun");
+
+	if (!txt || !txt.trim()) return;
+
+	ta.value = txt.trim();
+
+	if (autorun) {
+		// defer so all handlers are bound
+		setTimeout(() => {
+			if (typeof submitDamageForm === "function") {
+				submitDamageForm();
+			}
+		}, 0);
+	}
+}
+
 (function(window, document, undefined) {
 
 	// code that should be taken care of right away
@@ -349,6 +373,7 @@ function generateDamageQR(address){
 			invoiceAmountEl.addEventListener("change", render);
 		}
 
+		restoreFeatureDraftFromShareLink();
 	}); // end DOMContentLoaded 
 
 
@@ -768,6 +793,138 @@ function generateDamageQR(address){
 		el.innerHTML = html;
 	}
 
+	function extractReportIpfsHashFromText(text) {
+		if (!text) return null;
+		const lines = String(text).trim().split(/\r?\n/);
+		// Only look at the tail to avoid matching earlier unrelated hashes
+		const tail = lines.slice(Math.max(0, lines.length - 50)).join("\n");
+
+		// Prefer hashes that appear in the canonical reports URL
+		const reportUrlRe = /\/reports\/(Qm[1-9A-HJ-NP-Za-km-z]{40,}|bafy[0-9a-z]{20,})/g;
+		let m;
+		let last = null;
+		while ((m = reportUrlRe.exec(tail)) !== null) last = m[1];
+		if (last) return last;
+
+		// Fallback: any CID-looking token near the bottom
+		const cidRe = /\b(Qm[1-9A-HJ-NP-Za-km-z]{40,}|bafy[0-9a-z]{20,})\b/g;
+		while ((m = cidRe.exec(tail)) !== null) last = m[1];
+		return last;
+	}
+
+	async function copyToClipboard(text) {
+		try {
+			if (navigator.clipboard && navigator.clipboard.writeText) {
+				await navigator.clipboard.writeText(text);
+				return true;
+			}
+		} catch (_e) {}
+
+		// Fallback
+		try {
+			const ta = document.createElement("textarea");
+			ta.value = text;
+			ta.setAttribute("readonly", "");
+			ta.style.position = "absolute";
+			ta.style.left = "-9999px";
+			document.body.appendChild(ta);
+			ta.select();
+			const ok = document.execCommand("copy");
+			document.body.removeChild(ta);
+			return ok;
+		} catch (_e2) {
+			return false;
+		}
+	}
+	function extractFeatureIpfsHashFromText(text) {
+		if (!text) return null;
+		const lines = String(text).trim().split(/\r?\n/);
+
+		// Look near the top + bottom (feature header is usually early)
+		const scan = lines.slice(0, 20).concat(lines.slice(-20)).join("\n");
+
+		// Matches: Feature: <CID>
+		const featureRe = /Feature:\s*(Qm[1-9A-HJ-NP-Za-km-z]{40,}|bafy[0-9a-z]{20,})/;
+		const m = scan.match(featureRe);
+		return m ? m[1] : null;
+	}
+
+	function ensureReportLinkActions(reportElement) {
+		// reportElement is the <code> element inside <pre>
+		const root = reportElement.closest("div") || reportElement.parentElement;
+		if (!root) return;
+
+		// Don't duplicate
+		const existing = root.querySelector(".report-actions");
+		if (existing) existing.remove();
+
+		const reportHash  = extractReportIpfsHashFromText(reportElement.textContent);
+		const featureHash = extractFeatureIpfsHashFromText(reportElement.textContent);
+
+		if (!reportHash && !featureHash) return;
+
+		const actions = document.createElement("div");
+		actions.className = "report-actions";
+		actions.style.display = "flex";
+		actions.style.gap = "0.5rem";
+		actions.style.alignItems = "center";
+		actions.style.marginTop = "0.75rem";
+		actions.style.flexWrap = "wrap";
+
+		/* ── Report link ───────────────────────────── */
+		if (reportHash) {
+			const reportUrl = `https://run.dev.damagebdd.com/reports/${reportHash}`;
+
+			const reportBtn = document.createElement("button");
+			reportBtn.type = "button";
+			reportBtn.className = "btn";
+			reportBtn.textContent = "Copy report link";
+			reportBtn.addEventListener("click", async () => {
+				const ok = await copyToClipboard(reportUrl);
+				reportBtn.textContent = ok ? "Copied!" : "Copy failed";
+				setTimeout(() => (reportBtn.textContent = "Copy report link"), 1200);
+			});
+
+			const reportA = document.createElement("a");
+			reportA.href = reportUrl;
+			reportA.target = "_blank";
+			reportA.rel = "noopener noreferrer";
+			reportA.textContent = reportHash;
+			reportA.style.fontSize = "0.9em";
+
+			actions.appendChild(reportBtn);
+			actions.appendChild(reportA);
+		}
+
+		/* ── Feature link ──────────────────────────── */
+		if (featureHash) {
+			const featureUrl = `${window.location.origin}/features/${featureHash}`;
+
+			const featureBtn = document.createElement("button");
+			featureBtn.type = "button";
+			featureBtn.className = "btn secondary";
+			featureBtn.textContent = "Copy feature link";
+			featureBtn.addEventListener("click", async () => {
+				const ok = await copyToClipboard(featureUrl);
+				featureBtn.textContent = ok ? "Copied!" : "Copy failed";
+				setTimeout(() => (featureBtn.textContent = "Copy feature link"), 1200);
+			});
+
+			const featureA = document.createElement("a");
+			featureA.href = featureUrl;
+			featureA.target = "_blank";
+			featureA.rel = "noopener noreferrer";
+			featureA.textContent = featureHash;
+			featureA.style.fontSize = "0.9em";
+
+			actions.appendChild(featureBtn);
+			actions.appendChild(featureA);
+		}
+
+		root.appendChild(actions);
+	}
+
+
 	async function streamResponseToDOM(response, reportElement) {
 		reportElement.innerHTML = "";
 
@@ -778,10 +935,14 @@ function generateDamageQR(address){
 		Prism.highlightElement(reportElement);
 		replaceMarkers(reportElement);
 
-		if (reportElement.hasAttribute('data-highlighted')) {
-			reportElement.removeAttribute('data-highlighted');
+		if (reportElement.hasAttribute("data-highlighted")) {
+			reportElement.removeAttribute("data-highlighted");
 		}
+
+		// Add a "copy report link" action at the end if we can detect a report hash
+		ensureReportLinkActions(reportElement);
 	}
+
 
 	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value.trim();
