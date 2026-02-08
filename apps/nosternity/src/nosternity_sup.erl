@@ -45,9 +45,18 @@ init([]) ->
             end,
             Pools
         ),
+    DefaultRelays = nostr_pool:default_relays(#{}),
 
     PoolSpecs0 =
         [
+            #{
+                id => damage_nostr,
+                start => {damage_nostr, start_link, [damage_nostr_nsec]},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_nostr]
+            },
             #{
                 id => nosternity_nostr,
                 start => {damage_nostr, start_link, [nosternity_nostr_nsec]},
@@ -57,12 +66,20 @@ init([]) ->
                 modules => [damage_nostr]
             },
             #{
-                id => damage_nostr,
+                id => inglorious_nostr,
                 start => {damage_nostr, start_link, [inglorious_nostr_nsec]},
                 restart => permanent,
                 shutdown => 60000,
                 type => worker,
                 modules => [damage_nostr]
+            },
+            #{
+                id => nostr_pool,
+                start => {nostr_pool, start_link, [#{relays => DefaultRelays}]},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [nostr_pool]
             }
         ] ++
             PoolSpecs,

@@ -43,6 +43,8 @@
 -export([post_note/2]).
 -export([post_bdd/1]).
 -export([post_note/4]).
+-export([zap_note/3]).
+-export([zap_note/4]).
 -export([post_bdd/2]).
 -export([get_recent_posts/2]).
 -export([
@@ -57,7 +59,8 @@
     publish_zap_receipt/3,
     parse_zap_request/1,
     construct_nip56_report/6,
-    post_report/6
+    post_report/6,
+    fetch_event_by_id/2
 ]).
 -import(damage_utils, [to_bin/1]).
 
@@ -73,6 +76,8 @@
 }).
 
 -define(NOSTR_PROC(Nsec), {?MODULE, Nsec}).
+-define(NOSTR_DEFAULT_TIMEOUT, 300000).
+-define(NOSTR_DEFAULT_FANOUT, 3).
 
 %%% API Functions
 %% Start the gen_server
@@ -99,6 +104,8 @@ get_posts_since(NsecKey, Npub, Since) ->
         {get_posts_since, Npub, Since}
     ).
 
+fetch_event_by_id(NsecKey, EventId) ->
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {fetch_event_by_id, EventId}).
 post_note(NsecKey, Note) ->
     gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {post_note, Note, [], ""}).
 
@@ -106,13 +113,27 @@ post_note(NsecKey, Note, Tags, ImageURL) ->
     gen_server:call(
         gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {post_note, Note, Tags, ImageURL}
     ).
+zap_note(NsecKey, NoteId, Amount) ->
+    gen_server:call(
+        gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
+        {zap_note, NoteId, Amount},
+        ?NOSTR_DEFAULT_TIMEOUT
+    ).
+zap_note(NsecKey, NoteId, Author, Amount) ->
+    gen_server:call(
+        gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
+        {zap_note, NoteId, Author, Amount},
+        ?NOSTR_DEFAULT_TIMEOUT
+    ).
 post_bdd(BDD) ->
-    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(damage_nostr_nsec)), {post_bdd, BDD, []}).
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(nostr_nsec)), {post_bdd, BDD, []}).
 post_bdd(BDD, Tags) ->
-    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(damage_nostr_nsec)), {post_bdd, BDD, Tags}).
+    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(nostr_nsec)), {post_bdd, BDD, Tags}).
 
-get_recent_posts(NsecKey, Limit) ->
-    gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {get_recent_posts, Limit}).
+get_recent_posts(Npub, Limit) ->
+    gen_server:call(
+        gproc:lookup_local_name(?NOSTR_PROC(nostr_nsec)), {get_recent_posts, Npub, Limit}
+    ).
 %% Parse a nostrconnect:// URI into a map
 parse_nostrconnect_uri(Uri0) ->
     Uri = to_bin(Uri0),
@@ -181,7 +202,7 @@ init([NsecKey]) ->
                 }
             };
         _Error ->
-            ?LOG_INFO("!!!! Nostr Integration disabled, set `nostr_nsec` secret."),
+            ?LOG_INFO("!!!! Nostr Integration disabled, set `~p` secret.", [NsecKey]),
             {ok, #state{}}
     end.
 
@@ -229,33 +250,91 @@ handle_call(
     ok = gun:ws_send(ConnPid, StreamRef, {text, RequestJson}),
     {reply, ok, State};
 handle_call(
-    {zap_note, OriginalEventId, OriginalAuthorPubKey, Amount},
+    {fetch_event_by_id, EventId},
+    _From,
+    #state{conn_pid = ConnPid, streamref = StreamRef} = State
+) ->
+    Filter = #{
+        ids => [EventId],
+        limit => 1
+    },
+
+    %% printable sub id
+    SubRand = crypto:strong_rand_bytes(4),
+    SubscriptionId = <<"recent_", (binary:encode_hex(SubRand))/binary>>,
+
+    RequestJson = jsx:encode([<<"REQ">>, SubscriptionId, Filter]),
+    ok = gun:ws_send(ConnPid, StreamRef, {text, RequestJson}),
+
+    Reply = await_event_or_eose(ConnPid, StreamRef, SubscriptionId, 8000),
+
+    %% always close sub (best practice)
+    _ = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"CLOSE">>, SubscriptionId])}),
+
+    {reply, Reply, State};
+handle_call(
+    {zap_note, OriginalEventId, OriginalAuthorPubKey, AmountSats},
     _From,
     #state{
         conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey
     } = State
 ) ->
+    AmountMsats = cln:sats_to_msat(AmountSats),
+
+    %% 1) Fetch author lud16/lud06 via kind:0 on THIS relay
+    %{ok, Lud} = fetch_author_lud_ws(ConnPid, StreamRef, OriginalAuthorPubKey),
+
+    %% however you store it
+    DefaultRelays = nostr_pool:default_relays(#{}),
+
+    AuthorRelays = fetch_author_relays(OriginalAuthorPubKey),
+    ?LOG_DEBUG("AuthorRelays ~p", [AuthorRelays]),
+    RelaysForTag = merge_relays(DefaultRelays, AuthorRelays),
+
+    {ok, Lud} = fetch_author_lud(OriginalAuthorPubKey),
+
+    %% 2) Build lnurlp url + lnurl bech32
+    {ok, LnurlpUrlStr} = lud_to_lnurlp_url(Lud),
+    LnurlBech32 = encode_lnurl_bech32(LnurlpUrlStr),
+
+    %% 3) Fetch lnurlp info to get callback and ensure allowsNostr
+    {ok, #{callback := CallbackUrlStr, allowsNostr := Allows}} = fetch_lnurlp_info(LnurlpUrlStr),
+    case Allows of
+        true -> ok;
+        false -> exit({lnurl_does_not_allow_nostr, LnurlpUrlStr})
+    end,
+
+    %% 4) Relay hints: you can keep your merge_relays logic
+    %% If you don’t want nostr_pool, replace DefaultRelays with what you store in State/config.
+
+    %% your existing function
+    AuthorRelays = fetch_author_relays(OriginalAuthorPubKey),
+    RelaysForTag = merge_relays(DefaultRelays, AuthorRelays),
+
+    %% 5) Build + sign zap request (kind 9734)
     Tags = [
-        %["relays", "wss://nostr-pub.wellorder.com", "wss://anotherrelay.example.com"],
-        %["lnurl", "lnurl1dp68gurn8ghj7um5v93kketj9ehx2amn9uh8wetvdskkkmn0wahz7mrww4excup0dajx2mrv92x9xp"],
-        ["amount", integer_to_list(Amount)],
-        %% Tag for event ID being replied to
+        [<<"relays">> | RelaysForTag],
+        [<<"lnurl">>, LnurlBech32],
+        [<<"amount">>, integer_to_binary(AmountMsats)],
         [<<"e">>, OriginalEventId],
-        %% Tag for public key of original author
         [<<"p">>, OriginalAuthorPubKey]
     ],
-
     Timestamp = erlang:system_time(seconds),
-    Event = construct_event(lower_hex(PublicKey), 9734, <<"Zap !">>, Timestamp, Tags),
-    PostEvent = finalize_event(Event, PrivateKey),
-    EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
-    ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
-    ok =
-        gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
-    {ws, {text, Response}} =
-        gun:await(ConnPid, StreamRef),
-    ?LOG_DEBUG("got response ~p", [Response]),
-    {reply, Response, State};
+    Event0 = construct_event(lower_hex(PublicKey), 9734, <<"Zap !">>, Timestamp, Tags),
+    ZapReq = finalize_event(Event0, PrivateKey),
+
+    %% 6) LNURL callback -> get invoice
+    {ok, Invoice} = request_zap_invoice(CallbackUrlStr, AmountMsats, ZapReq, LnurlBech32),
+
+    %% 7) Pay invoice with CLN
+    PayRes = cln:pay_invoice(Invoice),
+
+    %% 8) Optional: publish zap request to relay (some clients like seeing it)
+    _ = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"EVENT">>, ZapReq])}),
+    %% Best-effort await OK (don’t crash if something else arrives)
+    _ = catch gun:await(ConnPid, StreamRef, 2000),
+
+    {reply, #{invoice => Invoice, pay => PayRes, zap_request => ZapReq}, State};
 handle_call(
     {post_note, Content, Tags, ImageURL},
     _From,
@@ -504,8 +583,9 @@ handle_event(
         string:str(string:to_lower(binary_to_list(Content)), "damagebdd"),
         Event,
         State
-    ).
-
+    );
+handle_event(Event, _State) ->
+    ?LOG_INFO("Got unhandled event ~p", [Event]).
 execute_bdd(Config, Context, #{feature := FeatureData}) ->
     case damage:execute_data(Config, Context, FeatureData) of
         [#{fail := _FailReason, failing_step := {_KeyWord, Line, Step, _Args}} | _] ->
@@ -898,33 +978,6 @@ finalize_event(Event, PrivateKey) ->
     Sig = sign_event(PrivateKey, Hash),
     Event#{<<"id">> => lower_hex(Hash), <<"sig">> => Sig}.
 
-test() ->
-    post_note(damage_nostr_nsec, <<"Hello from Erlang!">>).
-test_nip800() ->
-    post_bdd(file:read_file("features/jsontest.feature")).
-
-test_nip05() ->
-    Npub = "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc",
-    Expected =
-        <<"16D114303D8203115918CA34A220E925C022C09168175A5ACE5E9F3B61640947">>,
-    ExpectedLen = size(Expected),
-    {ok, #{data := <<Expected:ExpectedLen/binary, "00">>}} =
-        bech32:decode(
-            Npub,
-            [
-                {
-                    converter,
-                    fun(Data) ->
-                        {ok, Base8} = bech32:convertbits(Data, 5, 8),
-                        Binary = erlang:list_to_binary(Base8),
-                        Hex = binary:encode_hex(Binary),
-                        {ok, Hex}
-                    end
-                }
-            ]
-        ).
-
-test_generate_pdf() -> _DataJson = file:open("test/nostr_pdftest.json").
 xclip_post(NsecKey, AltText) ->
     {ok, [{stdout, Stdout}]} = exec:run("xclip -o -selection clipboard \n", [stdout, sync]),
     {ok, [{stdout, ImageFile}]} = exec:run(
@@ -983,7 +1036,7 @@ get_lnurl_from_npub(Npub) ->
 
 %% Extract LNURL from metadata
 extract_lnurl(Content) ->
-    case jsone:decode(Content) of
+    case jsx:decode(Content) of
         #{<<"lud16">> := LightningAddress} ->
             {ok, "https://" ++ LightningAddress ++ "/.well-known/lnurlp/"};
         #{<<"lud06">> := LnUrlEncoded} ->
@@ -997,7 +1050,7 @@ fetch_ln_invoice(LnUrl, AmountSats) ->
     InvoiceRequestUrl = LnUrl ++ "?amount=" ++ integer_to_list(AmountSats * 1000),
     case httpc:request(get, {InvoiceRequestUrl, []}, [], []) of
         {ok, {_, _, Body}} ->
-            case jsone:decode(Body) of
+            case jsx:decode(Body) of
                 #{<<"pr">> := Invoice} -> {ok, Invoice};
                 _ -> {error, "Invalid response"}
             end;
@@ -1148,3 +1201,170 @@ post_report(NsecKey, ReportedPubKey, MaybeEventId, ReportType, Content, Opts) ->
         gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
         {post_report, ReportedPubKey, MaybeEventId, ReportType, Content, Opts}
     ).
+
+await_event_or_eose(ConnPid, StreamRef, SubId, TimeoutMs) ->
+    receive
+        {gun_ws, ConnPid, StreamRef, {text, Msg}} ->
+            case jsx:decode(Msg, [{return_maps, true}]) of
+                [<<"EVENT">>, SubId, Event] when is_map(Event) ->
+                    {ok, Event};
+                [<<"EOSE">>, SubId] ->
+                    {error, not_found};
+                [<<"NOTICE">>, _] ->
+                    await_event_or_eose(ConnPid, StreamRef, SubId, TimeoutMs);
+                _Other ->
+                    %% ignore unrelated frames
+                    await_event_or_eose(ConnPid, StreamRef, SubId, TimeoutMs)
+            end
+    after TimeoutMs ->
+        {error, timeout}
+    end.
+lud_to_lnurlp_url(Lud) ->
+    case Lud of
+        <<"http://", _/binary>> ->
+            {ok, binary_to_list(Lud)};
+        <<"https://", _/binary>> ->
+            {ok, binary_to_list(Lud)};
+        <<"lnurl1", _/binary>> ->
+            %% decode lnurl bech32 into URL
+            case bech32:decode(Lud) of
+                {ok, #{data := Data5}} ->
+                    {ok, Bytes8} = bech32:convertbits(Data5, 5, 8, [{padding, false}]),
+                    {ok, binary_to_list(list_to_binary(Bytes8))};
+                Other ->
+                    {error, {bad_lnurl_bech32, Other}}
+            end;
+        _ ->
+            %% lud16 name@domain => https://domain/.well-known/lnurlp/name
+            case binary:split(Lud, <<"@">>, [global]) of
+                [Name, Domain] ->
+                    {ok,
+                        "https://" ++ binary_to_list(Domain) ++ "/.well-known/lnurlp/" ++
+                            binary_to_list(Name)};
+                _ ->
+                    {error, bad_lud16}
+            end
+    end.
+
+encode_lnurl_bech32(UrlStr) when is_list(UrlStr) ->
+    UrlBin = list_to_binary(UrlStr),
+    Bytes8 = binary_to_list(UrlBin),
+    {ok, Data5} = bech32:convertbits(Bytes8, 8, 5, [{padding, true}]),
+    {ok, Enc} = bech32:encode("lnurl", Data5),
+    list_to_binary(Enc).
+
+fetch_lnurlp_info(UrlStr) ->
+    case httpc:request(get, {UrlStr, []}, [], []) of
+        {ok, {{_, 200, _}, _Hdrs, Body}} ->
+            J = jsx:decode(iolist_to_binary(Body)),
+            {ok, #{
+                callback => binary_to_list(maps:get(<<"callback">>, J)),
+                allowsNostr => maps:get(<<"allowsNostr">>, J, false)
+            }};
+        {ok, {{_, Code, _}, _Hdrs, Body}} ->
+            {error, {lnurlp_http_error, Code, Body}};
+        Err ->
+            {error, {lnurlp_http_failed, Err}}
+    end.
+
+request_zap_invoice(CallbackUrlStr, AmountMsat, ZapReqEvent, LnurlBech32) ->
+    ZapJson = jsx:encode(ZapReqEvent),
+    Full =
+        CallbackUrlStr ++
+            "?amount=" ++ integer_to_list(AmountMsat) ++
+            "&nostr=" ++ uri_string:quote(binary_to_list(ZapJson)) ++
+            "&lnurl=" ++ uri_string:quote(binary_to_list(LnurlBech32)),
+    case httpc:request(get, {Full, []}, [], []) of
+        {ok, {{_, 200, _}, _Hdrs, Body}} ->
+            J = jsx:decode(iolist_to_binary(Body)),
+            case J of
+                #{<<"pr">> := Invoice} -> {ok, Invoice};
+                _ -> {error, {bad_invoice_response, J}}
+            end;
+        {ok, {{_, Code, _}, _Hdrs, Body}} ->
+            {error, {callback_http_error, Code, Body}};
+        Err ->
+            {error, {callback_http_failed, Err}}
+    end.
+
+-spec fetch_author_lud(PubHex :: binary()) ->
+    {ok, binary()} | {error, term()}.
+fetch_author_lud(PubHex) ->
+    Filter = #{<<"kinds">> => [0], <<"authors">> => [PubHex], <<"limit">> => 1},
+    case nostr_pool:req_one(Filter, ?NOSTR_DEFAULT_TIMEOUT, ?NOSTR_DEFAULT_FANOUT) of
+        {ok, MetaEvt} ->
+            Content = maps:get(<<"content">>, MetaEvt, <<>>),
+            extract_lud_from_kind0(Content);
+        Err ->
+            Err
+    end.
+
+extract_lud_from_kind0(ContentBin) ->
+    try
+        M = jsx:decode(ContentBin),
+        case M of
+            #{<<"lud16">> := Lud16} when is_binary(Lud16), Lud16 =/= <<>> -> {ok, Lud16};
+            #{<<"lud06">> := Lud06} when is_binary(Lud06), Lud06 =/= <<>> -> {ok, Lud06};
+            _ -> {error, no_lud_in_metadata}
+        end
+    catch
+        _:E -> {error, {bad_kind0_json, E}}
+    end.
+-spec fetch_author_relays(PubHex :: binary()) -> [binary()].
+fetch_author_relays(PubHex) ->
+    Filter = #{<<"kinds">> => [10002], <<"authors">> => [PubHex], <<"limit">> => 1},
+    case nostr_pool:req_one(Filter, ?NOSTR_DEFAULT_TIMEOUT, ?NOSTR_DEFAULT_FANOUT) of
+        {ok, Evt} ->
+            Tags = maps:get(<<"tags">>, Evt, []),
+            RelayUrls = [R || [<<"r">>, R | _] <- Tags, is_binary(R)],
+            RelayUrls;
+        _ ->
+            []
+    end.
+
+-spec merge_relays([binary()], [binary()]) -> [binary()].
+merge_relays(Default, Author) ->
+    %% dedupe + cap
+    All = Default ++ Author,
+    Unique = lists:usort(All),
+    take(10, Unique).
+
+take(0, _) -> [];
+take(_, []) -> [];
+take(N, [H | T]) -> [H | take(N - 1, T)].
+
+test() ->
+    %post_note(damage_nostr_nsec, <<"Hello from Erlang!">>).
+    NoteId =
+        <<"b685f2b08104835b49a4ae183ec9037a8bb7e23506696724360903c9903e948d">>,
+
+    {ok, #{
+        <<"pubkey">> :=
+            Author
+    }} = fetch_event_by_id(damage_nostr_nsec, NoteId),
+    zap_note(damage_nostr_nsec, NoteId, Author, 100).
+test_nip800() ->
+    post_bdd(file:read_file("features/jsontest.feature")).
+
+test_nip05() ->
+    Npub = "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc",
+    Expected =
+        <<"16D114303D8203115918CA34A220E925C022C09168175A5ACE5E9F3B61640947">>,
+    ExpectedLen = size(Expected),
+    {ok, #{data := <<Expected:ExpectedLen/binary, "00">>}} =
+        bech32:decode(
+            Npub,
+            [
+                {
+                    converter,
+                    fun(Data) ->
+                        {ok, Base8} = bech32:convertbits(Data, 5, 8),
+                        Binary = erlang:list_to_binary(Base8),
+                        Hex = binary:encode_hex(Binary),
+                        {ok, Hex}
+                    end
+                }
+            ]
+        ).
+
+test_generate_pdf() -> _DataJson = file:open("test/nostr_pdftest.json").

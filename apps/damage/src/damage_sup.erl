@@ -155,14 +155,6 @@ init([]) ->
                 type => supervisor,
                 modules => [damage_mm_sup]
             },
-            #{
-                id => damage_nostr,
-                start => {damage_nostr, start_link, [damage_nostr_nsec]},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [damage_nostr]
-            },
             %% 5) listeners
             git_ssh_listener:child_spec()
         ],
