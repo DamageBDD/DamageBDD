@@ -35,7 +35,7 @@ step(
     Context,
     _,
     _N,
-    ["I store current time string in ", Variable, " with format ", Format],
+    ["I store current time string in", Variable, "with format", Format],
     _
 ) ->
     maps:put(

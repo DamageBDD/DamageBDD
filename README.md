@@ -15,6 +15,12 @@ Swagger API available at: [https://damagebdd.com/api/](https://damagebdd.com/api
 
 ## Running a Damage Node Locally
 
+### From pre-built packages
+
+Official packages for your distro available at: [https://damagebdd.com/node/](https://damagebdd.com/node/)
+
+
+### From source
 ```bash
 git clone https://github.com/DamageBDD/DamageBDD.git
 cd DamageBDD
@@ -71,20 +77,18 @@ secrets:encrypt_store(lnd_macaroon, "macaroon for lnd").
 
 ---
 
-## Configuration via `sys.config`
+## Configuration via `/etc/damage/damage.config` erlang `sys.config` override.
 
-The Erlang `sys.config` file allows you to configure the runtime. A sample is provided in the repo.  
+The Erlang `sys.config` file allows you to configure the runtime. A sample for overriding default settings is provided created by the package installer.
 Typical settings include:
 
 ```erlang
 [
   {damagebdd, [
-    {port, 8080},
+    {port, 4888},
     {bind_addr, "0.0.0.0"},
     {log_dir, "/var/log/damagebdd"},
     {data_dir, "/var/lib/damagebdd"},
-    {upstreams, ["http://127.0.0.1:8080"]},
-    {secrets_backend, encrypted_store}
   ]}
 ].
 ```

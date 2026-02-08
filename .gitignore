@@ -21,5 +21,8 @@ config/sys.config
 contracts/*.aes.deploy.*
 apps/ecai/priv/wikipedia/*
 apps/damage/src/damage_build_info.erl
-
+ct_run.*
+packaging/arch/.cache/*
+packaging/arch/zst/*
+packaging/mint/22/deb/*
 
