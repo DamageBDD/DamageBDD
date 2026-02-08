@@ -619,7 +619,7 @@ ensure_ssh_host_key(KeyPath) ->
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> list_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
-to_bin(Else) -> iolist_to_binary(Else).
+to_bin(T) -> iolist_to_binary(io_lib:format("~p", [T])).
 
 ct_id(Key, ContractId) ->
     case application:get_env(damage, Key) of

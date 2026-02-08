@@ -12,6 +12,7 @@
 
 -export([info/1]).
 -export([build_context/0]).
+-export([get_stepdocs/1]).
 
 -define(TPL(Name), (filename:join("ui/docs", Name))).
 
@@ -45,8 +46,8 @@ to_html(Req, #{action := index} = State) ->
 base_context(Req) ->
     %% Add anything you want available to all templates (user, feature list, etc.)
     #{
-        request_path => cowboy_req:path(Req),
-        node_version => <<"v0.1">>
+        "request_path" => cowboy_req:path(Req),
+        "node_version" => <<"v0.1">>
     }.
 
 %% -------------------------- Page -----------------------------
@@ -55,17 +56,17 @@ render_full_page(Ctx0) ->
     Foot = render_tpl(?TPL("footer.mustache"), Ctx0),
     Built = build_context(),
     PageCtx = Ctx0#{
-        topbar => Top,
-        footer => Foot
+        "topbar" => Top,
+        "footer" => Foot
     }#{
-        groups => maps:get(groups, Built, []),
-        title => maps:get(title, Built, <<"Step Reference">>),
-        product => maps:get(product, Built, <<"DamageBDD">>),
-        description => maps:get(description, Built, <<"Supported Gherkin steps">>),
-        version => maps:get(version, Built, <<"dev">>),
-        commit_hash => maps:get(commit_hash, Built, <<"-">>),
-        generated_at => maps:get(generated_at, Built, <<"-">>),
-        intro => maps:get(intro, Built, <<"Browse steps below. Use the search box above.">>)
+        "groups" => maps:get("groups", Built, []),
+        "title" => maps:get("title", Built, <<"Step Reference">>),
+        "product" => maps:get("product", Built, <<"DamageBDD">>),
+        "description" => maps:get("description", Built, <<"Supported Gherkin steps">>),
+        "version" => maps:get("version", Built, <<"dev">>),
+        "commit_hash" => maps:get("commit_hash", Built, <<"-">>),
+        "generated_at" => maps:get("generated_at", Built, <<"-">>),
+        "intro" => maps:get("intro", Built, <<"Browse steps below. Use the search box above.">>)
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 
@@ -227,9 +228,11 @@ get_stepdocs(Mod) ->
     case code:get_object_code(Mod) of
         {Mod, Beam, _File} ->
             case beam_lib:chunks(Beam, [attributes]) of
-                {ok, {_M, [{attributes, Attrs}]}} ->
+                {ok, {M, [{attributes, Attrs}]}} ->
+                    ?LOG_DEBUG("stepdoc  ~p ~p", [M, Attrs]),
                     proplists:get_all_values(stepdoc, Attrs);
-                _ ->
+                Other ->
+                    ?LOG_DEBUG("stepdoc other ~p", [Other]),
                     []
             end;
         error ->
@@ -239,7 +242,7 @@ get_stepdocs(Mod) ->
 build_context() ->
     Mods = list_step_modules(),
     Groups = [group_for_module(M) || M <- Mods],
-    #{
+    damage_utils:normalize_context(#{
         groups => Groups,
         title => <<"Step Reference">>,
         product => <<"DamageBDD">>,
@@ -248,7 +251,7 @@ build_context() ->
         commit_hash => <<"local">>,
         generated_at => list_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second))),
         intro => <<"This page lists all available steps, grouped by module. Type to filter.">>
-    }.
+    }).
 
 list_step_modules() ->
     %% Prefer loaded modules; fallback to code:all_available() scan.
@@ -274,9 +277,9 @@ list_step_modules() ->
 group_for_module(M) ->
     Steps = steps_for_module(M),
     #{
-        name => list_to_binary(module_name_pretty(M)),
-        slug => list_to_binary(slug(module_name_pretty(M))),
-        steps => Steps
+        "name" => list_to_binary(module_name_pretty(M)),
+        "slug" => list_to_binary(slug(module_name_pretty(M))),
+        "steps" => Steps
     }.
 
 module_name_pretty(M) ->
@@ -314,6 +317,7 @@ steps_for_module(M) ->
     %% Pull stepdoc attributes; shape may be a map or proplist. Normalize.
     Docs = get_stepdocs(M),
     Norm = [normalize_stepdoc(M, D) || D <- Docs],
+    ?LOG_DEBUG("Step docs ~p, ~p", [M, Docs]),
     %% If no -stepdoc attrs, try exported functions for fallback visibility:
     case Norm of
         [] ->
@@ -361,7 +365,7 @@ step_entry_from_fun(M, F0, A0, Meta0) ->
         string:join([binary_to_list(X) || X <- Headers ++ [A1 || {A1, _} <- Args]], ", ")
     ),
     HtmlId = iolist_to_binary(slug(binary_to_list(Signature))),
-    #{
+    damage_utils:normalize_context(#{
         module => atom_to_binary(M, utf8),
         function => atom_to_binary(F, utf8),
         arity => A,
@@ -378,7 +382,7 @@ step_entry_from_fun(M, F0, A0, Meta0) ->
         doc => DocBin,
         doc_html => DocHtml,
         spec_text => SpecText
-    }.
+    }).
 
 ensure_fun_arity(_M, F, A) when is_atom(F), is_integer(A) -> {F, A};
 ensure_fun_arity(M, _F, _A) ->
