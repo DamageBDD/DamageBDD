@@ -115,6 +115,8 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 get_access_token(Req) ->
     case cowboy_req:header(?AUTH_HEADER, Req) of
+        <<"L402 ", Token/binary>> ->
+            {l402, <<"L402 ", Token/binary>>};
         <<"Nostr ", Token/binary>> ->
             {nostr, Token};
         <<"Bearer null">> ->
@@ -148,6 +150,19 @@ is_authorized(Req, State0) ->
             maps:put(useragent, cowboy_req:header(<<"user-agent">>, Req, ""), State0)
         ),
     case get_access_token(Req) of
+        {l402, AuthHeader} ->
+            case damage_l402:verify_authorization(AuthHeader, Req) of
+                {ok, _Meta} ->
+                    %% Paid access: run as node identity by default
+                    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+                    {true, Req, maps:put(public_key, NodeAeAccount, State)};
+                {error, _} ->
+                    %% No/invalid token → challenge
+                    Scope = iolist_to_binary(["/", atom_to_list(maps:get(action, State0, unknown))]),
+                    PriceMsat = application:get_env(damage, l402_price_msat, 1000),
+                    {Req1, _} = damage_l402:challenge(Req, Scope, PriceMsat),
+                    {stop, Req1, State}
+            end;
         {nostr, Token} ->
             #{pubkey := Npub} =
                 NostrEvent =
