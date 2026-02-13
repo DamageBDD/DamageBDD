@@ -51,7 +51,8 @@ get_trails() ->
             lightning_auth,
             damage_doc,
             damage_swap_options_http,
-            damage_dashboard
+            damage_dashboard,
+            damage_nwc_http
         ],
     Trails =
         [

@@ -55,6 +55,8 @@
     msat_to_sats/1
 ]).
 
+-export([pay_invoice/1, pay_invoice/2]).
+
 -export([test/0]).
 % 5 minutes in ms
 -define(CACHE_TTL_SECS, 300).
@@ -1347,6 +1349,42 @@ handle_call(
     %% Return the invoice details
     {reply, Invoice, State};
 handle_call(
+    {pay_invoice, Bolt11, Opts},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    Headers = [{<<"Rune">>, Rune}, {<<"Content-Type">>, <<"application/json">>}],
+    {ok, ConnPid} = gun:open(Host, Port, Options),
+    Path = "/v1/pay",
+
+    %% Minimal CLN payload
+    %% You can add fields from Opts like maxfee, retry_for, exemptfee, etc.
+    ReqMap = maps:merge(#{bolt11 => Bolt11}, Opts),
+    ReqJson = jsx:encode(ReqMap),
+
+    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
+    {ok, Response} =
+        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
+            {response, fin, _Status, _RespHeaders} ->
+                no_data;
+            {response, nofin, _Status, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            {response, nofin, _RespHeaders} ->
+                gun:await_body(ConnPid, StreamRef);
+            Default ->
+                {error, Default}
+        end,
+
+    gun:cancel(ConnPid, StreamRef),
+    gun:close(ConnPid),
+
+    case Response of
+        {error, _} = E ->
+            {reply, E, State};
+        _ ->
+            {reply, jsx:decode(Response, [return_maps, {labels, atom}]), State}
+    end;
+handle_call(
     {connect_peer, Peer0},
     _From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
@@ -2171,3 +2209,12 @@ maybe_cancel(undefined) ->
 maybe_cancel(TRef) ->
     _ = erlang:cancel_timer(TRef),
     ok.
+-spec pay_invoice(binary()) -> map() | {error, term()}.
+pay_invoice(Bolt11) ->
+    pay_invoice(Bolt11, #{}).
+
+-spec pay_invoice(binary(), map()) -> map() | {error, term()}.
+pay_invoice(Bolt11, Opts) ->
+    poolboy:transaction(?MODULE, fun(W) ->
+        gen_server:call(W, {pay_invoice, Bolt11, Opts}, ?CLN_HTTP_TIMEOUT)
+    end).

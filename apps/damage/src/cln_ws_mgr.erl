@@ -175,12 +175,12 @@ handle_event(
                     payload :=
                         _Payload,
                     peer_id :=
-                        PeerId
+                        _PeerId
                 }
         }
     ] = _Message
 ) ->
-    ?LOG_DEBUG("Unknown custommsg message from ~p", [PeerId]),
+    %?LOG_DEBUG("Unknown custommsg message from ~p", [PeerId]),
     ok;
 handle_event(
     ConnPid,

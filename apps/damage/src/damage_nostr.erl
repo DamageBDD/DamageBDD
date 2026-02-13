@@ -26,11 +26,12 @@
         handle_info/2,
         terminate/2,
         code_change/3,
-        test/0,
         test_nip05/0,
         test_generate_pdf/0,
         test_simple/0,
-        test_nip800/0
+        test_nip800/0,
+        test_get_recent_posts/0,
+        test_zap_note/0
     ]
 ).
 -export([get_posts_since/3]).
@@ -51,7 +52,12 @@
     parse_nostrconnect_uri/1,
     nip46_connect/2,
     nip46_send/3,
-    nip04_encrypt/3
+    nip04_encrypt/3,
+    nip04_decrypt/4,
+    nip04_decrypt_content/3,
+    construct_event/5,
+    finalize_event/2,
+    parse_kv_query/1
 ]).
 -export([
     construct_zap_receipt/5,
@@ -130,9 +136,9 @@ post_bdd(BDD) ->
 post_bdd(BDD, Tags) ->
     gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(nostr_nsec)), {post_bdd, BDD, Tags}).
 
-get_recent_posts(Npub, Limit) ->
+get_recent_posts(NsecKey, Limit) ->
     gen_server:call(
-        gproc:lookup_local_name(?NOSTR_PROC(nostr_nsec)), {get_recent_posts, Npub, Limit}
+        gproc:lookup_local_name(?NOSTR_PROC(damage_nostr_nsec)), {get_recent_posts, NsecKey, Limit}
     ).
 %% Parse a nostrconnect:// URI into a map
 parse_nostrconnect_uri(Uri0) ->
@@ -160,7 +166,7 @@ nip46_connect(NsecKey, Uri) ->
     Secret = maps:get(secret, M),
     nip46_send(NsecKey, AppHex, #{
         method => <<"connect">>,
-        params => [lower_hex(public_key()), Secret]
+        params => [npub_or_hex_to_lower_hex64(public_key()), Secret]
     }).
 
 %% Low-level: build & encrypt a NIP-46 request to a remote app pubkey (hex)
@@ -169,6 +175,10 @@ nip46_send(NsecKey, RemoteHexPubKey, Payload) ->
         gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
         {nip46_send, RemoteHexPubKey, Payload}
     ).
+nsec_to_npub(Nsec) ->
+    PrivateKey = list_to_binary(decode_nsec(Nsec)),
+    {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
+    {PublicKey, PrivateKey}.
 
 %%% gen_server Callbacks
 %% Initialize the server and open a WebSocket connection
@@ -177,8 +187,7 @@ init([NsecKey]) ->
     {ok, Host} = application:get_env(damage, nostr_relay),
     case secrets:retrieve_decrypt(NsecKey) of
         {ok, Nsec} ->
-            PrivateKey = list_to_binary(decode_nsec(Nsec)),
-            {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
+            {PublicKey, PrivateKey} = nsec_to_npub(Nsec),
             {ok, ConnPid} =
                 gun:open(
                     Host,
@@ -216,7 +225,7 @@ handle_call(
 ) ->
     Unsigned =
         construct_nip56_report(
-            lower_hex(PublicKey),
+            PublicKey,
             ReportedPubKey,
             MaybeEventId,
             ReportType,
@@ -239,12 +248,13 @@ handle_call(
         %% Kind 1 = text note
         kinds => [1],
         %% Filter by pubkey
-        p => [lower_hex(Npub)],
+        '#p' => [npub_or_hex_to_lower_hex64(Npub)],
         %% Reverse chronological fetch starts from now
         until => Now,
         limit => Limit
     },
-    SubscriptionId = <<"recent_", (crypto:strong_rand_bytes(4))/binary>>,
+    SubRand = crypto:strong_rand_bytes(4),
+    SubscriptionId = <<"recent_", (binary:encode_hex(SubRand))/binary>>,
     RequestJson = jsx:encode([<<"REQ">>, SubscriptionId, Filter]),
     ?LOG_INFO("Fetching recent posts for ~p: ~p", [Npub, RequestJson]),
     ok = gun:ws_send(ConnPid, StreamRef, {text, RequestJson}),
@@ -320,7 +330,7 @@ handle_call(
         [<<"p">>, OriginalAuthorPubKey]
     ],
     Timestamp = erlang:system_time(seconds),
-    Event0 = construct_event(lower_hex(PublicKey), 9734, <<"Zap !">>, Timestamp, Tags),
+    Event0 = construct_event(PublicKey, 9734, <<"Zap !">>, Timestamp, Tags),
     ZapReq = finalize_event(Event0, PrivateKey),
 
     %% 6) LNURL callback -> get invoice
@@ -343,7 +353,7 @@ handle_call(
     } = State
 ) ->
     Timestamp = erlang:system_time(seconds),
-    Event = construct_note(lower_hex(PublicKey), Content, Timestamp, Tags, ImageURL),
+    Event = construct_note(PublicKey, Content, Timestamp, Tags, ImageURL),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
     ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
@@ -360,7 +370,7 @@ handle_call(
     } = State
 ) ->
     Timestamp = erlang:system_time(seconds),
-    Event = construct_bdd(lower_hex(PublicKey), BDD, Timestamp, Tags),
+    Event = construct_bdd(PublicKey, BDD, Timestamp, Tags),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
     ?LOG_INFO("Nostr Sending bdd: ~p ~p", [State, EventJson]),
@@ -382,7 +392,7 @@ handle_call(
         jsx:encode([
             <<"REQ">>,
             <<"kind">>,
-            #{kinds => [0], <<"authors">> => [lower_hex(Npub)]}
+            #{kinds => [0], <<"authors">> => [npub_or_hex_to_lower_hex64(Npub)]}
         ]),
     ?LOG_INFO("Nostr Sending profile request: ~p ~p", [State, ProfileRequest]),
     ok =
@@ -405,7 +415,7 @@ handle_call(
         jsx:encode([
             <<"REQ">>,
             <<"damagebdd">>,
-            #{kinds => [1], since => Timestamp, '#p' => [lower_hex(PublicKey)]}
+            #{kinds => [1], since => Timestamp, '#p' => [npub_or_hex_to_lower_hex64(PublicKey)]}
         ]),
     ?LOG_INFO("Nostr Sending subscription request: ~p ~p", [State, SubscriptionMessage]),
     ok =
@@ -430,7 +440,7 @@ handle_call(
     %% 2) Build kind 24133 event with required tags:
     %%    ["p", <receiver-pubkey>] and (optionally) one or more ["relay", <wss://...>]
     Tags = [[<<"p">>, RemoteHex]],
-    Event0 = construct_event(lower_hex(PubKey), 24133, CipherB64, TS, Tags),
+    Event0 = construct_event(PubKey, 24133, CipherB64, TS, Tags),
 
     %% 3) Sign as usual (you already have finalize_event/2)
     Event = finalize_event(Event0, PrivKey),
@@ -651,7 +661,7 @@ reply_event(
     ],
 
     Timestamp = erlang:system_time(seconds),
-    Event = construct_note(lower_hex(PublicKey), ReplyContent, Timestamp, Tags),
+    Event = construct_note(npub_or_hex_to_lower_hex64(PublicKey), ReplyContent, Timestamp, Tags),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
     ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
@@ -935,10 +945,63 @@ lower_hex(List) when is_list(List) ->
 lower_hex(Binary) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Binary)))).
 
+-spec npub_or_hex_to_lower_hex64(binary() | list()) ->
+    {ok, binary()} | {error, term()}.
+npub_or_hex_to_lower_hex64(In0) ->
+    In = to_bin(In0),
+    case In of
+        <<"npub1", _/binary>> ->
+            Hex0 = to_bin(damage_nostr:decode_npub(In)),
+            {ok, lower_hex_ascii64(Hex0)};
+        _ ->
+            case classify_key(In) of
+                {hex, 64} ->
+                    lower_hex_ascii64(In);
+                {raw, 32} ->
+                    lower_hex(In);
+                Other ->
+                    {error, Other}
+            end
+    end.
+-spec classify_key(binary()) ->
+    {hex, non_neg_integer()}
+    | {raw, non_neg_integer()}
+    | invalid.
+classify_key(Bin) when is_binary(Bin) ->
+    case is_hex_ascii(Bin) of
+        true ->
+            {hex, byte_size(Bin)};
+        false ->
+            case byte_size(Bin) of
+                32 -> {raw, 32};
+                _ -> invalid
+            end
+    end.
+
+%% --- helpers ---
+
+-spec lower_hex_ascii64(binary()) -> binary().
+lower_hex_ascii64(Bin) ->
+    %% Bin is ASCII hex. Just lowercase; DO NOT encode_hex again.
+    list_to_binary(string:lowercase(binary_to_list(Bin))).
+
+-spec is_hex_ascii(binary()) -> boolean().
+is_hex_ascii(Bin) when is_binary(Bin) ->
+    (byte_size(Bin) band 1) =:= 0 andalso
+        bin_all_hex(Bin).
+
+bin_all_hex(<<>>) -> true;
+bin_all_hex(<<C, Rest/binary>>) -> is_hex_byte(C) andalso bin_all_hex(Rest).
+
+is_hex_byte(C) when C >= $0, C =< $9 -> true;
+is_hex_byte(C) when C >= $a, C =< $f -> true;
+is_hex_byte(C) when C >= $A, C =< $F -> true;
+is_hex_byte(_) -> false.
+
 construct_event(PubKey, Kind, Content, Timestamp, Tags) ->
     #{
         <<"id">> => <<"">>,
-        <<"pubkey">> => PubKey,
+        <<"pubkey">> => npub_or_hex_to_lower_hex64(PubKey),
         <<"created_at">> => Timestamp,
         <<"kind">> => Kind,
         <<"tags">> => Tags,
@@ -1073,7 +1136,7 @@ zap_receipt_for_invoice(Invoice, #state{public_key = PubKey, private_key = PrivK
 
             %% Build unsigned event with the correct created_at and tags
             Builder = construct_zap_receipt(PaidAt, Bolt11, ZapReq, DescBin, Preimage),
-            UnsignedEvent = Builder(lower_hex(PubKey)),
+            UnsignedEvent = Builder(PubKey),
 
             %% Sign and publish
             Signed = finalize_event(UnsignedEvent, PrivKey),
@@ -1333,7 +1396,89 @@ take(0, _) -> [];
 take(_, []) -> [];
 take(N, [H | T]) -> [H | take(N - 1, T)].
 
-test() ->
+%% -------------------------------------------------------------------
+%% NIP-04 decrypt helpers (for NIP-46 / NIP-47)
+%%
+%% Content is "base64(ciphertext)?iv=base64(iv)"
+%% Key is sha256(ecdh_shared_secret)
+%% Cipher is AES-256-CBC with PKCS7 padding
+%% -------------------------------------------------------------------
+
+-spec nip04_decrypt_content(binary(), binary(), binary()) -> {ok, binary()} | {error, term()}.
+nip04_decrypt_content(Content0, PrivKey32, RemotePubHex) ->
+    try
+        Content = to_bin(Content0),
+        case binary:split(Content, <<"?iv=">>) of
+            [CipherB64, IvB64] ->
+                nip04_decrypt(CipherB64, IvB64, PrivKey32, RemotePubHex);
+            _ ->
+                {error, {bad_nip04_content, Content}}
+        end
+    catch
+        C:R ->
+            {error, {C, R}}
+    end.
+
+-spec nip04_decrypt(binary(), binary(), binary(), binary()) -> {ok, binary()} | {error, term()}.
+nip04_decrypt(CipherB64, IvB64, PrivKey32, RemotePubHex0) ->
+    try
+        RemotePubHex = to_bin(RemotePubHex0),
+        RemoteX = hex_to_bin(RemotePubHex),
+
+        %% NIP-04: shared secret via ECDH with pubkey parity prefix 02/03.
+        %% Some implementations only provide x coordinate, so we try both.
+        case try_ecdh(RemoteX, PrivKey32, 16#02) of
+            {ok, Shared1} ->
+                ok_decrypt(Shared1, CipherB64, IvB64);
+            error ->
+                case try_ecdh(RemoteX, PrivKey32, 16#03) of
+                    {ok, Shared2} ->
+                        ok_decrypt(Shared2, CipherB64, IvB64);
+                    error ->
+                        {error, ecdh_failed}
+                end
+        end
+    catch
+        C:R ->
+            {error, {C, R}}
+    end.
+
+ok_decrypt(SharedSecret, CipherB64, IvB64) ->
+    Key = crypto:hash(sha256, SharedSecret),
+    Iv = base64:decode(to_bin(IvB64)),
+    Cipher = base64:decode(to_bin(CipherB64)),
+    PlainPadded = crypto:crypto_one_time(aes_256_cbc, Key, Iv, Cipher, false),
+    case pkcs7_unpad(PlainPadded) of
+        {ok, Plain} -> {ok, Plain};
+        {error, Why} -> {error, Why}
+    end.
+
+%% PKCS7 unpad (block size 16)
+pkcs7_unpad(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
+    PadLen = binary:last(Bin),
+    Sz = byte_size(Bin),
+    case (PadLen > 0) andalso (PadLen =< 16) andalso (PadLen =< Sz) of
+        true ->
+            DataLen = Sz - PadLen,
+            <<Data:DataLen/binary, Pad:PadLen/binary>> = Bin,
+            Expected = binary:copy(<<PadLen>>, PadLen),
+            case Pad =:= Expected of
+                true -> {ok, Data};
+                false -> {error, bad_padding}
+            end;
+        false ->
+            {error, bad_padding_len}
+    end;
+pkcs7_unpad(_) ->
+    {error, bad_padding_len}.
+
+test_get_recent_posts() ->
+    Posts = get_recent_posts(
+        <<"e8b93582d5cd2085cbbd90794af81430866d1934ef26cde980f07c58ad7d4eaf">>, 20
+    ),
+    Posts.
+
+test_zap_note() ->
     %post_note(damage_nostr_nsec, <<"Hello from Erlang!">>).
     NoteId =
         <<"b685f2b08104835b49a4ae183ec9037a8bb7e23506696724360903c9903e948d">>,
