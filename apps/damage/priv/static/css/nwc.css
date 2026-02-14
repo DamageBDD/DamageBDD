@@ -1,0 +1,14 @@
+.nwc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px){ .nwc-grid { grid-template-columns: 1fr; } }
+.nwc-panel { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px; }
+.nwc-h3 { margin: 0 0 10px 0; }
+.nwc-label { display:block; font-size: 12px; opacity:.85; margin: 10px 0 6px; }
+.nwc-input, .nwc-textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #eaeaea; }
+.nwc-textarea { resize: vertical; }
+.nwc-row { display:flex; gap: 10px; }
+.nwc-col { flex: 1; }
+.nwc-actions { display:flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.nwc-status { margin-top: 10px; font-size: 13px; opacity: .9; }
+.nwc-qr { display:flex; justify-content:center; padding: 12px; border-radius: 12px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); min-height: 180px; align-items: center; }
+.nwc-hint { font-size: 12px; opacity: .85; margin-top: 10px; }
+.modal__btn-danger { background: #b91c1c; color: #fff; }

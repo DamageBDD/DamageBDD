@@ -49,29 +49,43 @@
 
 -record(state, {
     %% Nostr wallet service keys
-    wallet_privkey,          %% 32 bytes
-    wallet_pub_hex,          %% 64 hex lower
+
+    %% 32 bytes
+    wallet_privkey,
+    %% 64 hex lower
+    wallet_pub_hex,
 
     %% Relays
-    relays = [],             %% [binary()]
-    conns = #{},             %% StreamRef => #conn{}
+
+    %% [binary()]
+    relays = [],
+    %% StreamRef => #conn{}
+    conns = #{},
 
     %% Subscription id
     subid = <<>>,
 
     %% NWC ledger contract
-    ledger_contract_id = undefined,     %% <<"ct_...">>
-    ledger_contract_source = undefined, %% "contracts/ledger.aes" or similar
-    ledger_unit = msat,                 %% msat | sat
+
+    %% <<"ct_...">>
+    ledger_contract_id = undefined,
+    %% "contracts/ledger.aes" or similar
+    ledger_contract_source = undefined,
+    %% msat | sat
+    ledger_unit = msat,
     func_balance = <<"balance">>,
-    func_debit   = <<"debit">>,
-    func_credit  = <<"credit">>,        %% optional
-    func_record  = <<"record">>,        %% optional
+    func_debit = <<"debit">>,
+    %% optional
+    func_credit = <<"credit">>,
+    %% optional
+    func_record = <<"record">>,
 
     %% Policy
     allow_methods = [<<"get_info">>, <<"get_balance">>, <<"make_invoice">>, <<"pay_invoice">>],
-    max_single_pay_msat = 50_000_000,    %% 50k sats default
-    min_poll_ms = 0,                    %% unused (we subscribe)
+    %% 50k sats default
+    max_single_pay_msat = 50_000_000,
+    %% unused (we subscribe)
+    min_poll_ms = 0,
 
     %% Cache
     info_content = <<"get_info get_balance make_invoice pay_invoice">>
@@ -158,7 +172,6 @@ init([Opts0]) ->
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-
 handle_call(_Any, _From, State) ->
     {reply, {error, unknown_call}, State}.
 
@@ -174,14 +187,11 @@ handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State = #st
     gun:flush(ConnPid),
     ?LOG_INFO("damage_nwc_wallet subscribed relay ~p", [StreamRef]),
     {noreply, State};
-
 handle_info({gun_ws, _ConnPid, _StreamRef, {text, MsgBin}}, State) ->
     {noreply, handle_relay_message(MsgBin, State)};
-
 handle_info({gun_down, _ConnPid, _Proto, Reason, _Killed, _Unproc}, State) ->
     ?LOG_WARNING("damage_nwc_wallet relay down: ~p", [Reason]),
     {noreply, State};
-
 handle_info(_Other, State) ->
     {noreply, State}.
 
@@ -246,7 +256,13 @@ process_request(Event, State = #state{wallet_privkey = WalletPriv, wallet_pub_he
 
         case method_allowed(Method, State#state.allow_methods) of
             false ->
-                reply_error(ClientPub, ReqId, Method, #{code => <<"METHOD_NOT_ALLOWED">>, message => <<"not allowed">>}, State);
+                reply_error(
+                    ClientPub,
+                    ReqId,
+                    Method,
+                    #{code => <<"METHOD_NOT_ALLOWED">>, message => <<"not allowed">>},
+                    State
+                );
             true ->
                 dispatch_method(ClientPub, ReqId, Method, Params, State)
         end
@@ -267,15 +283,19 @@ dispatch_method(ClientPub, ReqId, <<"get_info">>, _Params, State) ->
         methods => binary:split(State#state.info_content, <<" ">>, [global])
     },
     reply_ok(ClientPub, ReqId, <<"get_info">>, Res, State);
-
 dispatch_method(ClientPub, ReqId, <<"get_balance">>, _Params, State) ->
     case ledger_balance_msat(ClientPub, State) of
         {ok, BalMsat} ->
             reply_ok(ClientPub, ReqId, <<"get_balance">>, #{balance_msat => BalMsat}, State);
         {error, Why} ->
-            reply_error(ClientPub, ReqId, <<"get_balance">>, #{code => <<"LEDGER_ERROR">>, message => to_bin(io_lib:format("~p", [Why]))}, State)
+            reply_error(
+                ClientPub,
+                ReqId,
+                <<"get_balance">>,
+                #{code => <<"LEDGER_ERROR">>, message => to_bin(io_lib:format("~p", [Why]))},
+                State
+            )
     end;
-
 dispatch_method(ClientPub, ReqId, <<"make_invoice">>, Params, State) ->
     %% Params: amount (msat or sat depending on your contract/unit), description
     Amount0 = maps:get(<<"amount">>, Params, 0),
@@ -284,19 +304,32 @@ dispatch_method(ClientPub, ReqId, <<"make_invoice">>, Params, State) ->
     AmountMsat = normalize_amount_to_msat(Amount0, State),
     %% This mints an incoming invoice; you may want to CREDIT ledger on settle (not here).
     %% For now, just create invoice and record "invoice_created".
-    Label = << "nwc_", ReqId/binary >>,
+    Label = <<"nwc_", ReqId/binary>>,
 
     CLNRes = cln:create_invoice(AmountMsat, Label, Desc),
     case CLNRes of
         #{bolt11 := Bolt11} = M ->
-            _ = ledger_record(ClientPub, <<"invoice_created">>, AmountMsat, ReqId, #{bolt11 => Bolt11}, State),
+            _ = ledger_record(
+                ClientPub, <<"invoice_created">>, AmountMsat, ReqId, #{bolt11 => Bolt11}, State
+            ),
             reply_ok(ClientPub, ReqId, <<"make_invoice">>, M, State);
         {error, Why} ->
-            reply_error(ClientPub, ReqId, <<"make_invoice">>, #{code => <<"CLN_ERROR">>, message => to_bin(io_lib:format("~p", [Why]))}, State);
+            reply_error(
+                ClientPub,
+                ReqId,
+                <<"make_invoice">>,
+                #{code => <<"CLN_ERROR">>, message => to_bin(io_lib:format("~p", [Why]))},
+                State
+            );
         Other ->
-            reply_error(ClientPub, ReqId, <<"make_invoice">>, #{code => <<"CLN_ERROR">>, message => to_bin(io_lib:format("~p", [Other]))}, State)
+            reply_error(
+                ClientPub,
+                ReqId,
+                <<"make_invoice">>,
+                #{code => <<"CLN_ERROR">>, message => to_bin(io_lib:format("~p", [Other]))},
+                State
+            )
     end;
-
 dispatch_method(ClientPub, ReqId, <<"pay_invoice">>, Params, State) ->
     Bolt11 = maps:get(<<"invoice">>, Params, <<>>),
     AmountParam = maps:get(<<"amount">>, Params, undefined),
@@ -306,8 +339,7 @@ dispatch_method(ClientPub, ReqId, <<"pay_invoice">>, Params, State) ->
         case AmountParam of
             undefined -> #{};
             null -> #{};
-            _ ->
-                #{amount_msat => normalize_amount_to_msat(AmountParam, State)}
+            _ -> #{amount_msat => normalize_amount_to_msat(AmountParam, State)}
         end,
 
     %% Pre-check spendable (best effort). We debit based on actual paid msat after success.
@@ -318,7 +350,13 @@ dispatch_method(ClientPub, ReqId, <<"pay_invoice">>, Params, State) ->
         ok ->
             case ledger_balance_msat(ClientPub, State) of
                 {ok, BalMsat} when BalMsat =< 0 ->
-                    reply_error(ClientPub, ReqId, <<"pay_invoice">>, #{code => <<"INSUFFICIENT_FUNDS">>, message => <<"no spendable balance">>}, State);
+                    reply_error(
+                        ClientPub,
+                        ReqId,
+                        <<"pay_invoice">>,
+                        #{code => <<"INSUFFICIENT_FUNDS">>, message => <<"no spendable balance">>},
+                        State
+                    );
                 {ok, _BalMsat} ->
                     %% Pay using CLN
                     PayRes = cln:pay_invoice(to_bin(Bolt11), Opts),
@@ -327,13 +365,35 @@ dispatch_method(ClientPub, ReqId, <<"pay_invoice">>, Params, State) ->
                             PaidMsat = normalize_msat_value(PaidMsat0),
                             case PaidMsat > MaxMsat of
                                 true ->
-                                    reply_error(ClientPub, ReqId, <<"pay_invoice">>, #{code => <<"LIMIT_EXCEEDED">>, message => <<"payment exceeds limit">>}, State);
+                                    reply_error(
+                                        ClientPub,
+                                        ReqId,
+                                        <<"pay_invoice">>,
+                                        #{
+                                            code => <<"LIMIT_EXCEEDED">>,
+                                            message => <<"payment exceeds limit">>
+                                        },
+                                        State
+                                    );
                                 false ->
                                     %% Debit ledger on-chain
-                                    case ledger_debit(ClientPub, PaidMsat, ReqId, #{bolt11 => Bolt11}, State) of
+                                    case
+                                        ledger_debit(
+                                            ClientPub, PaidMsat, ReqId, #{bolt11 => Bolt11}, State
+                                        )
+                                    of
                                         ok ->
-                                            _ = ledger_record(ClientPub, <<"paid_invoice">>, PaidMsat, ReqId, #{bolt11 => Bolt11}, State),
-                                            reply_ok(ClientPub, ReqId, <<"pay_invoice">>, PR, State);
+                                            _ = ledger_record(
+                                                ClientPub,
+                                                <<"paid_invoice">>,
+                                                PaidMsat,
+                                                ReqId,
+                                                #{bolt11 => Bolt11},
+                                                State
+                                            ),
+                                            reply_ok(
+                                                ClientPub, ReqId, <<"pay_invoice">>, PR, State
+                                            );
                                         {error, Why2} ->
                                             %% At this point payment succeeded but ledger failed.
                                             %% You likely want a reconciliation job; we return an error that indicates partial failure.
@@ -341,23 +401,54 @@ dispatch_method(ClientPub, ReqId, <<"pay_invoice">>, Params, State) ->
                                                 ClientPub,
                                                 ReqId,
                                                 <<"pay_invoice">>,
-                                                #{code => <<"LEDGER_DEBIT_FAILED">>, message => to_bin(io_lib:format("~p", [Why2]))},
+                                                #{
+                                                    code => <<"LEDGER_DEBIT_FAILED">>,
+                                                    message => to_bin(io_lib:format("~p", [Why2]))
+                                                },
                                                 State
                                             )
                                     end
                             end;
                         {error, Why} ->
-                            reply_error(ClientPub, ReqId, <<"pay_invoice">>, #{code => <<"PAY_FAILED">>, message => to_bin(io_lib:format("~p", [Why]))}, State);
+                            reply_error(
+                                ClientPub,
+                                ReqId,
+                                <<"pay_invoice">>,
+                                #{
+                                    code => <<"PAY_FAILED">>,
+                                    message => to_bin(io_lib:format("~p", [Why]))
+                                },
+                                State
+                            );
                         Other ->
-                            reply_error(ClientPub, ReqId, <<"pay_invoice">>, #{code => <<"PAY_FAILED">>, message => to_bin(io_lib:format("~p", [Other]))}, State)
+                            reply_error(
+                                ClientPub,
+                                ReqId,
+                                <<"pay_invoice">>,
+                                #{
+                                    code => <<"PAY_FAILED">>,
+                                    message => to_bin(io_lib:format("~p", [Other]))
+                                },
+                                State
+                            )
                     end;
                 {error, Why} ->
-                    reply_error(ClientPub, ReqId, <<"pay_invoice">>, #{code => <<"LEDGER_ERROR">>, message => to_bin(io_lib:format("~p", [Why]))}, State)
+                    reply_error(
+                        ClientPub,
+                        ReqId,
+                        <<"pay_invoice">>,
+                        #{
+                            code => <<"LEDGER_ERROR">>,
+                            message => to_bin(io_lib:format("~p", [Why]))
+                        },
+                        State
+                    )
             end
     end;
-
 dispatch_method(ClientPub, ReqId, Method, _Params, State) ->
-    reply_error(ClientPub, ReqId, Method, #{code => <<"UNKNOWN_METHOD">>, message => <<"unknown">>}, State).
+    reply_error(
+        ClientPub, ReqId, Method, #{code => <<"UNKNOWN_METHOD">>, message => <<"unknown">>}, State
+    ).
 
 %% -------------------------------------------------------------------
 %% Responding
@@ -371,7 +462,12 @@ reply_error(ClientPub, ReqId, Method, ErrMap, State) ->
     Payload = #{result_type => Method, error => ErrMap, result => null},
     send_response(ClientPub, ReqId, Payload, State).
 
-send_response(ClientPub, ReqId, Payload, State = #state{wallet_privkey = WalletPriv, wallet_pub_hex = WalletPub}) ->
+send_response(
+    ClientPub,
+    ReqId,
+    Payload,
+    State = #state{wallet_privkey = WalletPriv, wallet_pub_hex = WalletPub}
+) ->
     TS = erlang:system_time(seconds),
     Plain = jsx:encode(Payload),
 
@@ -407,8 +503,10 @@ publish_event(Event, #state{conns = Conns}) ->
 
 ledger_balance_msat(ClientPubHex, State) ->
     case {State#state.ledger_contract_id, State#state.ledger_contract_source} of
-        {undefined, _} -> {error, no_ledger_config};
-        {_, undefined} -> {error, no_ledger_config};
+        {undefined, _} ->
+            {error, no_ledger_config};
+        {_, undefined} ->
+            {error, no_ledger_config};
         {Cid, Src} ->
             %% Contract arg format depends on your Sophia contract ABI.
             %% We pass pubkey as string.
@@ -425,8 +523,10 @@ ledger_balance_msat(ClientPubHex, State) ->
 
 ledger_debit(ClientPubHex, AmountMsat, Ref, Meta, State) ->
     case {State#state.ledger_contract_id, State#state.ledger_contract_source} of
-        {undefined, _} -> {error, no_ledger_config};
-        {_, undefined} -> {error, no_ledger_config};
+        {undefined, _} ->
+            {error, no_ledger_config};
+        {_, undefined} ->
+            {error, no_ledger_config};
         {Cid, Src} ->
             MetaJson = jsx:encode(Meta),
             AmountForContract = amount_for_contract_unit(AmountMsat, State#state.ledger_unit),
@@ -445,10 +545,20 @@ ledger_debit(ClientPubHex, AmountMsat, Ref, Meta, State) ->
     end.
 
 ledger_record(ClientPubHex, Type, AmountMsat, Ref, Meta, State) ->
-    case {State#state.ledger_contract_id, State#state.ledger_contract_source, State#state.func_record} of
-        {undefined, _, _} -> {error, no_ledger_config};
-        {_, undefined, _} -> {error, no_ledger_config};
-        {_, _, undefined} -> ok; %% optional
+    case
+        {
+            State#state.ledger_contract_id,
+            State#state.ledger_contract_source,
+            State#state.func_record
+        }
+    of
+        {undefined, _, _} ->
+            {error, no_ledger_config};
+        {_, undefined, _} ->
+            {error, no_ledger_config};
+        %% optional
+        {_, _, undefined} ->
+            ok;
         {Cid, Src, Func} ->
             MetaJson = jsx:encode(Meta),
             AmountForContract = amount_for_contract_unit(AmountMsat, State#state.ledger_unit),
@@ -491,7 +601,7 @@ open_relay(RelayUrl) ->
     Path =
         case Query0 of
             <<>> -> binary_to_list(to_bin(Path0));
-            _ -> binary_to_list(<< (to_bin(Path0))/binary, "?", (to_bin(Query0))/binary >>)
+            _ -> binary_to_list(<<(to_bin(Path0))/binary, "?", (to_bin(Query0))/binary>>)
         end,
 
     P =
@@ -534,12 +644,15 @@ normalize_opts(Opts0) ->
 
 ensure_p_tag(Event, WalletPub) ->
     Tags = maps:get(tags, Event, []),
-    case lists:any(
-        fun(Tag) ->
-            is_list(Tag) andalso length(Tag) >= 2 andalso hd(Tag) =:= <<"p">> andalso lists:nth(2, Tag) =:= WalletPub
-        end,
-        Tags
-    ) of
+    case
+        lists:any(
+            fun(Tag) ->
+                is_list(Tag) andalso length(Tag) >= 2 andalso hd(Tag) =:= <<"p">> andalso
+                    lists:nth(2, Tag) =:= WalletPub
+            end,
+            Tags
+        )
+    of
         true -> ok;
         false -> error(not_addressed_to_wallet)
     end.
@@ -563,7 +676,8 @@ normalize_msat_value(Val) ->
                 [NumBin | _] -> normalize_int(NumBin);
                 _ -> normalize_int(B)
             end;
-        _ -> normalize_int(Val)
+        _ ->
+            normalize_int(Val)
     end.
 
 normalize_int(V) when is_integer(V) -> V;
@@ -577,8 +691,10 @@ normalize_int(V) when is_list(V) ->
 normalize_int(_) ->
     0.
 
-maybe_estimate_intended_msat(undefined, _Max, _State) -> ok;
-maybe_estimate_intended_msat(null, _Max, _State) -> ok;
+maybe_estimate_intended_msat(undefined, _Max, _State) ->
+    ok;
+maybe_estimate_intended_msat(null, _Max, _State) ->
+    ok;
 maybe_estimate_intended_msat(Amount0, Max, State) ->
     Msat = normalize_amount_to_msat(Amount0, State),
     case Msat > Max of

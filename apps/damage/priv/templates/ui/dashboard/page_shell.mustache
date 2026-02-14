@@ -5,6 +5,12 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="description" content="Behaviour Driven Development At Planetary Scale.">
+    <meta property="og:description" content="Your new and updated page description here.">
+    <meta name="twitter:description" content="Your new and updated page description here.">
+
+
     <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
     <title>DamageBDD - Behaviour Driven Development At Planetary Scale</title>
 
@@ -32,14 +38,23 @@
     <link rel="stylesheet" type="text/css" href='/static/css/gallery.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/ecai-jobs.css' />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" type="text/css" href='/static/css/analytics.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/slick-tabs.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/topbar.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/invoice-modal.css' />
+    <link rel="stylesheet" href="/static/css/ipfs-filepicker.css">
+
   </head>
 <body>
+<div class="modal micromodal-slide" id="feature-picker-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close > 
+    <div class="modal__container" role="dialog" aria-modal="true">
+      <div id="feature-picker-mount"></div>
+    </div>
+  </div>
+</div>
+  {{{file_picker_modal}}}
   {{{invoice_modal}}}
   {{{wallet_modal}}}
   {{{auth_modal}}}
@@ -52,6 +67,7 @@
   {{{node_public_key_modal}}}
   {{{node_unlock_modal}}}
   {{{ecai_job_detail_modal}}}
+  {{{nwc_modal}}}
   <div id="background"></div>
   <div id="content">
     {{{topbar}}}
@@ -83,6 +99,7 @@
 
       <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js" integrity="sha256-uqjf5+HZM2uY6Jhrp+IOoV582+oe9CpZ1ZR4Yy+kWh0=" crossorigin="anonymous"></script>
       <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
 
       <script src="/static/js/lineNumbers.js"></script>

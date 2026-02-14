@@ -1,8 +1,11 @@
 import * as wallet from "/static/js/wallet.js";
-import { initDamageBDDPicker } from '/static/js/featurePicker.js';
+import * as nwc from "/static/js/nwc.js";
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 import { ensureChannel } from '/static/js/ensureChannel.js';
 import { updateSchedulesTable } from '/static/js/schedules.js';
+import { initDamageBDDPicker, rememberRecentFeature } from "./featurePicker.js";
+
+
 
 const MDW_BASE = "https://mainnet.aeternity.io/mdw";
 const NODE_BASE = "https://mainnet.aeternity.io";
@@ -110,10 +113,10 @@ function restoreFeatureDraftFromShareLink() {
 		});
 
 		/*document.getElementById("signup-modal").addEventListener("keydown", function(event){
-			if (event.keyCode === 13) {
-				submitSignUpForm(event);
-			}
-			});*/
+		  if (event.keyCode === 13) {
+			submitSignUpForm(event);
+		  }
+		  });*/
 		document.getElementById("signupForm").addEventListener("submit", (event) => {
 			event.preventDefault();
 		});
@@ -372,8 +375,20 @@ function restoreFeatureDraftFromShareLink() {
 			invoiceAmountEl.addEventListener("input", onInput);
 			invoiceAmountEl.addEventListener("change", render);
 		}
+		nwc.bindNwcUi();
+
+		// Optional: bind a button somewhere to open the modal
+		const openNwcBtn = document.getElementById("open-nwc-modal-btn");
+		if (openNwcBtn) {
+			openNwcBtn.addEventListener("click", (event) => {
+				event.preventDefault();
+				nwc.openNwcModal();
+			});
+		}
+
 
 		restoreFeatureDraftFromShareLink();
+
 	}); // end DOMContentLoaded 
 
 

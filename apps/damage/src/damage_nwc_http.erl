@@ -25,7 +25,8 @@ trails() ->
                 post =>
                     #{
                         tags => ?TRAILS_TAG,
-                        description => "Mint a Nostr Wallet Connect connection for authenticated user.",
+                        description =>
+                            "Mint a Nostr Wallet Connect connection for authenticated user.",
                         produces => ["application/json"]
                     }
             }
@@ -70,7 +71,8 @@ content_types_accepted(Req, State) ->
 %% --- Auth: reuse Damage token style (Bearer / cookie) similar to damage_http.erl ---
 get_access_token(Req) ->
     case cowboy_req:header(?AUTH_HEADER, Req) of
-        <<"Bearer ", Token/binary>> -> {oauth, Token};
+        <<"Bearer ", Token/binary>> ->
+            {oauth, Token};
         _ ->
             Cookies = cowboy_req:parse_cookies(Req),
             case lists:keyfind(<<"sessionid">>, 1, Cookies) of
@@ -84,7 +86,10 @@ is_authorized(Req, State0) ->
         {oauth, Token} ->
             case damage_accounts:validate_access_token(Token) of
                 {AeAccount, Role} ->
-                    {true, Req, maps:merge(State0, #{public_key => AeAccount, role => Role, access_token => Token})};
+                    {true, Req,
+                        maps:merge(State0, #{
+                            public_key => AeAccount, role => Role, access_token => Token
+                        })};
                 _ ->
                     {{false, ?AUTH_HEADER}, Req, State0}
             end;
@@ -105,7 +110,7 @@ from_json(Req0, State = #{action := mint}) ->
     %%  max_single_sat, max_total_sat (optional; defaults)
     Relays = maps:get(<<"relays">>, Json, []),
     MaxSingleSat = maps:get(<<"max_single_sat">>, Json, 10000),
-    MaxTotalSat  = maps:get(<<"max_total_sat">>,  Json, 100000),
+    MaxTotalSat = maps:get(<<"max_total_sat">>, Json, 100000),
     ExpiresHeight = maps:get(<<"expires_height">>, Json, 0),
 
     %% Generate client secret (private key) and pubkey
@@ -121,11 +126,15 @@ from_json(Req0, State = #{action := mint}) ->
     MaxTotalMsat = MaxTotalSat * 1000,
 
     _ = damage_ae:contract_call(
-        LedgerId, LedgerSrc, "register",
-        [binary_to_list(ClientPubHex),
-         integer_to_list(MaxSingleMsat),
-         integer_to_list(MaxTotalMsat),
-         integer_to_list(ExpiresHeight)],
+        LedgerId,
+        LedgerSrc,
+        "register",
+        [
+            binary_to_list(ClientPubHex),
+            integer_to_list(MaxSingleMsat),
+            integer_to_list(MaxTotalMsat),
+            integer_to_list(ExpiresHeight)
+        ],
         #{}
     ),
 
@@ -134,21 +143,24 @@ from_json(Req0, State = #{action := mint}) ->
     Relay = pick_first_relay(Relays),
     NwcUri =
         <<
-            "nostr+walletconnect://", WalletPubHex/binary,
-            "?relay=", Relay/binary,
-            "&secret=", SecretHex/binary
+            "nostr+walletconnect://",
+            WalletPubHex/binary,
+            "?relay=",
+            Relay/binary,
+            "&secret=",
+            SecretHex/binary
         >>,
 
     Resp = #{
         status => <<"ok">>,
         client_pubkey => ClientPubHex,
-        secret_hex => SecretHex,        %% only show once
+        %% only show once
+        secret_hex => SecretHex,
         nwc_uri => NwcUri,
         wallet_pubkey => WalletPubHex,
         relay => Relay
     },
     {true, Req, State#{resp_body => Resp}};
-
 from_json(Req0, State = #{action := revoke}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
@@ -156,23 +168,29 @@ from_json(Req0, State = #{action := revoke}) ->
 
     {LedgerId, LedgerSrc} = nwc_ledger_cfg(),
     _ = damage_ae:contract_call(
-        LedgerId, LedgerSrc, "revoke",
+        LedgerId,
+        LedgerSrc,
+        "revoke",
         [binary_to_list(ClientPubHex)],
         #{}
     ),
 
-    {true, Req, State#{resp_body => #{status => <<"ok">>, revoked => true, client_pubkey => ClientPubHex}}};
-
+    {true, Req, State#{
+        resp_body => #{status => <<"ok">>, revoked => true, client_pubkey => ClientPubHex}
+    }};
 from_json(Req0, State = #{action := ledger_balance}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
     ClientPubHex = maps:get(<<"client_pubkey">>, Json),
 
     {LedgerId, LedgerSrc} = nwc_ledger_cfg(),
-    Res = damage_ae:contract_call_dry(LedgerId, LedgerSrc, "balance", [binary_to_list(ClientPubHex)], #{}),
+    Res = damage_ae:contract_call_dry(
+        LedgerId, LedgerSrc, "balance", [binary_to_list(ClientPubHex)], #{}
+    ),
     %% adjust extraction based on your middleware response shape
-    {true, Req, State#{resp_body => #{status => <<"ok">>, client_pubkey => ClientPubHex, result => Res}}};
-
+    {true, Req, State#{
+        resp_body => #{status => <<"ok">>, client_pubkey => ClientPubHex, result => Res}
+    }};
 from_json(Req0, State = #{action := ledger_credit, role := Role}) ->
     %% Restrict this endpoint however you like (admin-only recommended)
     case Role of
@@ -189,11 +207,15 @@ from_json(Req0, State = #{action := ledger_credit, role := Role}) ->
     AmountMsat = AmountSat * 1000,
     {LedgerId, LedgerSrc} = nwc_ledger_cfg(),
     _ = damage_ae:contract_call(
-        LedgerId, LedgerSrc, "credit",
-        [binary_to_list(ClientPubHex),
-         integer_to_list(AmountMsat),
-         binary_to_list(Ref),
-         binary_to_list(Meta)],
+        LedgerId,
+        LedgerSrc,
+        "credit",
+        [
+            binary_to_list(ClientPubHex),
+            integer_to_list(AmountMsat),
+            binary_to_list(Ref),
+            binary_to_list(Meta)
+        ],
         #{}
     ),
 
@@ -208,7 +230,8 @@ pick_first_relay([]) ->
     %% fallback to your default pool relay
     <<"wss://relay.damus.io">>;
 pick_first_relay([R | _]) when is_binary(R) -> R;
-pick_first_relay([R | _]) -> unicode:characters_to_binary(R).
+pick_first_relay([R | _]) ->
+    unicode:characters_to_binary(R).
 
 %% You’ll wire these to your actual config system:
 nwc_ledger_cfg() ->

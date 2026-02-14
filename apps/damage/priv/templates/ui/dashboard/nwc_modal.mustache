@@ -1,0 +1,72 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="nwc-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+    <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="nwc-modal-title">
+      <header class="modal__header">
+        <h2 class="modal__title" id="nwc-modal-title">Nostr Wallet Connect</h2>
+        <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+      </header>
+
+      <main class="modal__content">
+        <div class="nwc-grid">
+          <section class="nwc-panel">
+            <h3 class="nwc-h3">Mint connection</h3>
+
+            <label class="nwc-label">Relay (wss://…)</label>
+            <input id="nwc-relay" class="nwc-input" type="text" placeholder="wss://relay.damus.io" value="wss://relay.damus.io">
+
+            <div class="nwc-row">
+              <div class="nwc-col">
+                <label class="nwc-label">Max single (sats)</label>
+                <input id="nwc-max-single" class="nwc-input" type="number" min="0" value="1000">
+              </div>
+              <div class="nwc-col">
+                <label class="nwc-label">Max total (sats)</label>
+                <input id="nwc-max-total" class="nwc-input" type="number" min="0" value="5000">
+              </div>
+            </div>
+
+            <label class="nwc-label">Expires height (0 = never)</label>
+            <input id="nwc-expires-height" class="nwc-input" type="number" min="0" value="0">
+
+            <div class="nwc-actions">
+              <button id="nwc-mint-btn" class="modal__btn modal__btn-primary">Mint NWC</button>
+              <button id="nwc-clear-btn" class="modal__btn">Clear</button>
+            </div>
+
+            <div id="nwc-status" class="nwc-status" aria-live="polite"></div>
+          </section>
+
+          <section class="nwc-panel">
+            <h3 class="nwc-h3">Connection URI</h3>
+
+            <div id="nwc-qr" class="nwc-qr"></div>
+
+            <textarea id="nwc-uri" class="nwc-textarea" rows="4" spellcheck="false" placeholder="nostr+walletconnect://…"></textarea>
+
+            <div class="nwc-actions">
+              <button id="nwc-copy-btn" class="modal__btn modal__btn-primary">Copy URI</button>
+              <button id="nwc-open-btn" class="modal__btn">Open in app</button>
+            </div>
+
+            <h3 class="nwc-h3" style="margin-top:1rem;">Revoke</h3>
+            <label class="nwc-label">Client pubkey (hex)</label>
+            <input id="nwc-client-pubkey" class="nwc-input" type="text" placeholder="64-hex pubkey">
+
+            <div class="nwc-actions">
+              <button id="nwc-revoke-btn" class="modal__btn modal__btn-danger">Revoke</button>
+            </div>
+
+            <p class="nwc-hint">
+              ⚠️ The URI contains a secret. Treat it like a password. Don’t paste it into public places.
+            </p>
+          </section>
+        </div>
+      </main>
+
+      <footer class="modal__footer">
+        <button class="modal__btn" data-micromodal-close aria-label="Close this dialog">Close</button>
+      </footer>
+    </div>
+  </div>
+</div>

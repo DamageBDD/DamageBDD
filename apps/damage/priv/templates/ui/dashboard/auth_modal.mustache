@@ -69,21 +69,66 @@
           </section>
 
           <section class="auth-panel" data-auth-panel="wallet" id="auth-wallet" hidden>
-            <button id="connect-button"
-                    class="modal__btn modal__btn-primary styled-btn auth-primary"
-                    aria-label="Connect wallet"
-                    title="Wallet Connect">Connect Wallet</button>
 
-            <p id="dont_have_wallet" class="auth-hint">
-              Don’t have a wallet?
-              <a href="https://www.superherowallet.com" target="_blank" rel="noreferrer">Install Superhero Wallet</a>
-            </p>
+            <!-- AE Wallet (L1) -->
+            <div class="auth-wallet-block">
+              <h3 class="auth-subtitle">Æternity Wallet (L1)</h3>
+
+              <button id="connect-button"
+                      class="modal__btn modal__btn-primary styled-btn auth-primary"
+                      aria-label="Connect AE Wallet"
+                      title="Connect Æternity Wallet">
+                Connect AE Wallet
+              </button>
+
+              <p id="dont_have_wallet" class="auth-hint">
+                Don’t have an AE wallet?
+                <a href="https://www.superherowallet.com"
+                   target="_blank"
+                   rel="noreferrer">
+                  Install Superhero Wallet
+                </a>
+              </p>
+            </div>
+
+            <hr class="auth-divider">
+
+            <!-- Lightning via Damage (NWC) -->
+            <div class="auth-wallet-block">
+              <h3 class="auth-subtitle">Lightning Wallet (NWC)</h3>
+
+              <button id="open-nwc-modal-btn"
+                      class="modal__btn modal__btn-primary styled-btn auth-primary"
+                      aria-label="Create NWC connection"
+                      title="Create Nostr Wallet Connect session">
+                ⚡ Create Lightning Connection
+              </button>
+
+              <p class="auth-hint">
+                Generate a secure Nostr Wallet Connect (NWC) session.
+              </p>
+
+              <p class="auth-hint">
+                Compatible with:
+                <strong>Damus</strong>,
+                <strong>Amethyst</strong>,
+                <strong>Alby Hub</strong>
+              </p>
+            </div>
+
+            <hr class="auth-divider">
 
             <div class="auth-hint">
               Prefer email?
-              <button type="button" class="auth-link buttonlink" data-auth-jump="login">Login</button>
+              <button type="button"
+                      class="auth-link buttonlink"
+                      data-auth-jump="login">
+                Login
+              </button>
             </div>
+
           </section>
+
 
           <div id="connect-status" class="auth-status" aria-live="polite"></div>
 
