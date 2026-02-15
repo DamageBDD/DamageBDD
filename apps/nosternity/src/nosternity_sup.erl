@@ -34,7 +34,7 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
-    SupFlags = {one_for_one, 10, 10},
+    SupFlags = {rest_for_one, 10, 10},
     Pools = application:get_env(nosternity, pools, []),
     ?LOG_DEBUG("Starting erm workers ~p~n", [Pools]),
     PoolSpecs =
