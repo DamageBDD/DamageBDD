@@ -3,6 +3,11 @@
 %%%  Event monitor: spawns `herbstclient --idle` and parses events
 %%%-------------------------------------------------------------------
 -module(hlwm_events).
+-author("Steven Joseph <steven@damagebdd.com>").
+
+-copyright("Steven Joseph <steven@damagebdd.com>").
+
+-license("Apache-2.0").
 -include_lib("kernel/include/logger.hrl").
 -behaviour(gen_server).
 -define(NOTIFY_ID, "42").

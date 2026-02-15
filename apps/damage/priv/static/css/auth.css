@@ -494,3 +494,19 @@ body h2 {
 
 /* Ensure Tabby hidden panels actually hide on older browsers */
 [hidden] { display: none !important; }
+.auth-wallet-block {
+  margin-bottom: 18px;
+}
+
+.auth-subtitle {
+  margin: 0 0 10px 0;
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.auth-divider {
+  margin: 18px 0;
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}

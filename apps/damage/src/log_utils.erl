@@ -9,7 +9,8 @@
     compile_patterns/1,
     tail_file/3,
     query_journald/4,
-    match_lines/2
+    match_lines/2,
+    filter_by_module/2
 ]).
 
 -define(REGEX_OPTS, [unicode, dotall, multiline]).
@@ -136,3 +137,25 @@ any_match(Line, [{literal, S} | Rest]) ->
     end;
 any_match(_Line, []) ->
     false.
+
+%% ------------------------------------------------------------------
+%% Generic logger filter
+%%
+%% Usage in sys.config:
+%%
+%% filters => #{
+%%     only_damage_nostr =>
+%%         {fun log_utils:filter_by_module/2, damage_nostr}
+%% }
+%%
+%% ------------------------------------------------------------------
+
+filter_by_module(LogEvent = #{meta := Meta}, Module) ->
+    case maps:get(mfa, Meta, undefined) of
+        {Module, _, _} ->
+            LogEvent;
+        _ ->
+            stop
+    end;
+filter_by_module(_, _) ->
+    stop.

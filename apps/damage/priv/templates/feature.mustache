@@ -27,10 +27,37 @@
   </head>
   <body>
     <h1>DamageBDD Feature — {{feature_title}}</h1>
-    <div class="sub">
-      Link: <a href="{{feature_url}}">{{feature_url}}</a>
+    <div class="toolbar">
+      <button id="execute-feature-btn" class="btn" type="button">Execute this feature</button>
+      <button id="copy-feature-link-btn" class="btn secondary" type="button">Copy feature link</button>
+      <span id="feature-action-hint" class="hint"></span>
+      <div class="sub">
+        Link: <a href="{{feature_url}}">{{feature_url}}</a>
+      </div>
     </div>
-    <pre><code class="language-gherkin">{{body}}</code></pre>
+    <pre><code id="feature-body" class="language-gherkin">{{body}}</code></pre>
+    <script>
+      (function () {
+          const btn = document.getElementById('execute-feature-btn');
+          const codeEl = document.getElementById('feature-body');
+
+          const featureText = () => (codeEl && codeEl.textContent ? codeEl.textContent : '').trim();
+
+          if (btn) {
+              btn.addEventListener('click', () => {
+                  const txt = featureText();
+                  if (!txt) return;
+
+                  localStorage.setItem('damagebdd_feature_draft', txt);
+                  localStorage.setItem('damagebdd_feature_autorun', '1');
+
+                  window.location.href = '/';
+              });
+          }
+      })();
+    </script>
   </body>
 </html>
+
+
 

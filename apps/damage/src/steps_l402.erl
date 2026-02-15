@@ -9,26 +9,38 @@
 
 %% You may want to align these keys with your existing steps_http storage.
 -define(CTX_HEADERS, response_headers).
--define(CTX_STATUS,  response_status).
--define(CTX_BODY,    response_body).
+-define(CTX_STATUS, response_status).
+-define(CTX_BODY, response_body).
 
 %% -------------------------------------------------------------------
 %% Step dispatcher
 %% -------------------------------------------------------------------
-step(_Config, Context0, <<"Then">>, _N,
-     ["I store L402 challenge macaroon in", MacVar, "and invoice in", InvVar], _Body) ->
+step(
+    _Config,
+    Context0,
+    <<"Then">>,
+    _N,
+    ["I store L402 challenge macaroon in", MacVar, "and invoice in", InvVar],
+    _Body
+) ->
     case l402_extract_from_context(Context0) of
         {ok, Mac, Invoice} ->
-            maps:put(InvVar, Invoice,
-    maps:put(MacVar, Mac, Context0)
-);
-
+            maps:put(
+                InvVar,
+                Invoice,
+                maps:put(MacVar, Mac, Context0)
+            );
         {error, Why} ->
             maps:put(fail, fail_msg("Cannot extract L402 challenge: ~p", [Why]), Context0)
     end;
-
-step(_Config, Context0, <<"When">>, _N,
-     ["I pay the L402 invoice", InvoiceTpl, "via CLN and store preimage in", PreVar], _Body) ->
+step(
+    _Config,
+    Context0,
+    <<"When">>,
+    _N,
+    ["I pay the L402 invoice", InvoiceTpl, "via CLN and store preimage in", PreVar],
+    _Body
+) ->
     Invoice = resolve_var(Context0, InvoiceTpl),
     case cln_pay_invoice(Invoice) of
         {ok, PreimageHex} ->
@@ -36,14 +48,18 @@ step(_Config, Context0, <<"When">>, _N,
         {error, Why} ->
             maps:put(fail, fail_msg("CLN pay failed: ~p", [Why]), Context0)
     end;
-
-step(_Config, Context0, <<"When">>, _N,
-     ["I set L402 Authorization header using macaroon", MacTpl, "and preimage", PreTpl], _Body) ->
+step(
+    _Config,
+    Context0,
+    <<"When">>,
+    _N,
+    ["I set L402 Authorization header using macaroon", MacTpl, "and preimage", PreTpl],
+    _Body
+) ->
     Mac = resolve_var(Context0, MacTpl),
     Pre = resolve_var(Context0, PreTpl),
     Auth = iolist_to_binary(["L402 ", Mac, ":", Pre]),
     set_header(Context0, <<"authorization">>, Auth);
-
 %% Fallback
 step(_Config, Context0, _GWT, _N, _Tokens, _Body) ->
     maps:put(fail, <<"steps_l402: unknown step">>, Context0).
@@ -126,12 +142,14 @@ trim_left(B) ->
     case B of
         <<C, Rest/binary>> when C =:= $\s; C =:= $\t; C =:= $\n; C =:= $\r ->
             trim_left(Rest);
-        _ -> B
+        _ ->
+            B
     end.
 
 trim_right(B) ->
     case B of
-        <<>> -> <<>>;
+        <<>> ->
+            <<>>;
         _ ->
             Last = binary:last(B),
             case Last of
@@ -154,10 +172,11 @@ set_header(Context0, HeaderName, Value) ->
     %% We write both to be safe; your steps_http can just pick one.
     H0 = maps:get(request_headers, Context0, #{}),
     H1 = maps:put(lower_bin(HeaderName), Value, normalize_headers(H0)),
-    maps:put(headers, H1,
-    maps:put(request_headers, H1, Context0)
-            ).
-
+    maps:put(
+        headers,
+        H1,
+        maps:put(request_headers, H1, Context0)
+    ).
 
 %% -------------------------------------------------------------------
 %% Resolve template variables like "{{var}}"
@@ -168,8 +187,11 @@ resolve_var(Context, Bin0) ->
         <<"{{", Inner/binary>> ->
             case binary:split(Inner, <<"}}">>, [global]) of
                 [Var, _Rest] ->
-                    maps:get(binary_to_list(Var), Context,
-                             maps:get(Var, Context, Bin));
+                    maps:get(
+                        binary_to_list(Var),
+                        Context,
+                        maps:get(Var, Context, Bin)
+                    );
                 _ ->
                     Bin
             end;
@@ -187,12 +209,12 @@ cln_pay_invoice(Bolt11) when is_binary(Bolt11) ->
         {cln, pay_invoice, 1},
         {cln, pay, 1},
         {cln, pay_bolt11, 1},
-        {cln, pay_invoice, 2}  %% maybe needs options
+        %% maybe needs options
+        {cln, pay_invoice, 2}
     ]).
 
 try_call_pay(_Bolt11, []) ->
     {error, no_cln_pay_function};
-
 try_call_pay(Bolt11, [{M, F, 1} | Rest]) ->
     case erlang:function_exported(M, F, 1) of
         true ->
@@ -206,7 +228,6 @@ try_call_pay(Bolt11, [{M, F, 1} | Rest]) ->
         false ->
             try_call_pay(Bolt11, Rest)
     end;
-
 try_call_pay(Bolt11, [{M, F, 2} | Rest]) ->
     case erlang:function_exported(M, F, 2) of
         true ->
@@ -226,16 +247,20 @@ extract_preimage_hex({ok, Map}) when is_map(Map) ->
     extract_preimage_hex(Map);
 extract_preimage_hex(Map) when is_map(Map) ->
     %% Common keys: preimage, payment_preimage, <<"preimage">>, <<"payment_preimage">>
-    case pick_first(Map, [
-        preimage, payment_preimage, <<"preimage">>, <<"payment_preimage">>
-    ]) of
+    case
+        pick_first(Map, [
+            preimage, payment_preimage, <<"preimage">>, <<"payment_preimage">>
+        ])
+    of
         undefined ->
             %% Some CLN pay responses put it nested under "payment"
             case maps:get(payment, Map, maps:get(<<"payment">>, Map, undefined)) of
                 P when is_map(P) ->
-                    case pick_first(P, [
-                        preimage, payment_preimage, <<"preimage">>, <<"payment_preimage">>
-                    ]) of
+                    case
+                        pick_first(P, [
+                            preimage, payment_preimage, <<"preimage">>, <<"payment_preimage">>
+                        ])
+                    of
                         undefined -> {error, no_preimage_in_response};
                         V -> {ok, normalize_preimage(V)}
                     end;

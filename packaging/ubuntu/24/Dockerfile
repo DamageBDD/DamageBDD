@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
-# Linux Mint 22 (Wilma) base — stays Mint-only per your requirement
-FROM nvidia/cuda:13.1.1-runtime-ubuntu24.04
+FROM nvidia/cuda:13.1.1-cudnn-devel-ubuntu24.04
 #FROM ubuntu:22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
