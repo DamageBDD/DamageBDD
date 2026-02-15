@@ -39,7 +39,7 @@
 
 -define(RUN_DOCKER_IMAGE_TAGGED,
     ["I run docker image tagged", Tag]).
-
+-define(DOCKER_LOOP_TIMEOUT, infinity).
 %% erlfmt:ignore-end
 
 %% ===== Types / spec ==========================================================
@@ -327,8 +327,8 @@ docker_loop(Config, Parent, Acc) ->
         Other ->
             ?LOG_INFO("docker_loop got unexpected message: ~p", [Other]),
             docker_loop(Config, Parent, Acc)
-    after 600000 ->
-        Timeout = <<"docker command timed out in watcher after 600s">>,
+    after ?DOCKER_LOOP_TIMEOUT ->
+        Timeout = damage_utils:strf("docker command timed out in watcher after ~p",[?DOCKER_LOOP_TIMEOUT]),
         ?LOG_ERROR("docker_loop timeout"),
         formatter:format(
             Config,
