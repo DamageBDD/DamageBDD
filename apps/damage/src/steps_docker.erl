@@ -272,12 +272,13 @@ run_cmd(Config, Command, Context) ->
             maps:put(cmd_result, ok, Context);
         {error, Reason} ->
             ?LOG_ERROR("steps_docker failed to start command ~p: ~p", [Command, Reason]),
-            ErrorBin =
-                iolist_to_binary(
-                    io_lib:format("Failed to start command ~p: ~p~n", [Command, Reason])
-                ),
+            ErrorBin = damage_utils:strf("Failed to start command ~p: ~p~n", [Command, Reason]),
             Result = {error, [{stderr, [ErrorBin]}]},
-            maps:put(cmd_result, Result, Context)
+            maps:put(
+                fail,
+                ErrorBin,
+                maps:put(cmd_result, Result, Context)
+            )
     end.
 docker_loop(Config, Parent, Acc) ->
     receive
