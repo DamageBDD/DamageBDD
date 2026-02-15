@@ -155,6 +155,16 @@ init([]) ->
                 type => supervisor,
                 modules => [damage_mm_sup]
             },
+            {damage_hwmon,
+                {damage_hwmon, start_link, [
+                    #{
+                        interval_ms => 5000,
+                        timeout_ms => 1500,
+                        use_ets => true,
+                        sink => fun damage_hwmon_sink:emit/1
+                    }
+                ]},
+                permanent, 5000, worker, [damage_hwmon]},
             %% 5) listeners
             git_ssh_listener:child_spec()
         ],
