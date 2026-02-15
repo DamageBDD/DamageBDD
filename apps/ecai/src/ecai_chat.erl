@@ -13,6 +13,7 @@
 %% API
 -export([
     store_message/4,
+    get_reply/2,
     get_reply/3
 ]).
 
@@ -52,6 +53,17 @@ store_message(
             gen_server:cast(
                 Worker,
                 {store, SessionID, UserID, UserMessage, AIReply}
+            )
+        end
+    ).
+get_reply(SessionID, UserMessage) ->
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) ->
+            gen_server:call(
+                Worker,
+                {infer, SessionID, undefined, UserMessage},
+                ?DEFAULT_TIMEOUT
             )
         end
     ).
