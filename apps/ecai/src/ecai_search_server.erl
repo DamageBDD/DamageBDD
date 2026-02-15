@@ -57,6 +57,7 @@ handle_continue(load_ctx, Ctx0) ->
             false ->
                 application:get_env(ecai, search_context_file, "/var/lib/damage/ecai/default.ctx")
         end,
+    ?LOG_INFO("ECAI context loading from ~p", [CtxPath]),
     NewCtx =
         case ecai_search:load(Ctx0, CtxPath) of
             {ok, L} ->

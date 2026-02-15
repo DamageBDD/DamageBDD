@@ -11,9 +11,10 @@
 %%====================================================================
 
 %% Entry point: decoded JSON map
-ingest_report(#{ <<"reportMetadata">> := Meta,
-                 <<"factSet">> := Facts }) ->
-
+ingest_report(#{
+    <<"reportMetadata">> := Meta,
+    <<"factSet">> := Facts
+}) ->
     lists:map(
         fun(Fact) ->
             NamedSet = build_named_set(Meta, Fact),
@@ -28,45 +29,53 @@ ingest_report(#{ <<"reportMetadata">> := Meta,
 
 build_named_set(Meta, Fact) ->
     #{
-      <<"NAMED_SET">> => #{
-        <<"SIGN">> => sign(Meta, Fact),
-        <<"CONTEXT">> => context(Meta, Fact),
-        <<"CARRIER_METADATA">> => carrier_metadata(Meta)
-      }
+        <<"NAMED_SET">> => #{
+            <<"SIGN">> => sign(Meta, Fact),
+            <<"CONTEXT">> => context(Meta, Fact),
+            <<"CARRIER_METADATA">> => carrier_metadata(Meta)
+        }
     }.
 
 %%--------------------------------------------------------------------
 %% SIGN
 %%--------------------------------------------------------------------
 
-sign(#{ <<"entityID">> := EntityID,
-        <<"currency">> := Currency },
-     #{ <<"conceptID">> := ConceptID,
-        <<"value">> := Value }) ->
-
+sign(
     #{
-      <<"subject">>   => EntityID,
-      <<"predicate">> => ConceptID,
-      <<"object">>    => Value,
-      <<"unit">>      => Currency
+        <<"entityID">> := EntityID,
+        <<"currency">> := Currency
+    },
+    #{
+        <<"conceptID">> := ConceptID,
+        <<"value">> := Value
+    }
+) ->
+    #{
+        <<"subject">> => EntityID,
+        <<"predicate">> => ConceptID,
+        <<"object">> => Value,
+        <<"unit">> => Currency
     }.
 
 %%--------------------------------------------------------------------
 %% CONTEXT
 %%--------------------------------------------------------------------
 
-context(#{ <<"reportName">> := ReportName,
-           <<"reportingPeriod">> := Period,
-           <<"status">> := Status },
-        Fact) ->
-
+context(
+    #{
+        <<"reportName">> := ReportName,
+        <<"reportingPeriod">> := Period,
+        <<"status">> := Status
+    },
+    Fact
+) ->
     Base =
         #{
-          <<"report_name">>      => ReportName,
-          <<"reporting_period">> => Period,
-          <<"period_type">>      => maps:get(<<"periodType">>, Fact, undefined),
-          <<"balance">>          => maps:get(<<"balance">>, Fact, undefined),
-          <<"status">>           => Status
+            <<"report_name">> => ReportName,
+            <<"reporting_period">> => Period,
+            <<"period_type">> => maps:get(<<"periodType">>, Fact, undefined),
+            <<"balance">> => maps:get(<<"balance">>, Fact, undefined),
+            <<"status">> => Status
         },
 
     add_flags(Base, Fact).
@@ -75,8 +84,8 @@ add_flags(Context, Fact) ->
     Flags =
         lists:filtermap(
             fun
-                ({<<"isTotal">>, true})       -> {true, <<"total">>};
-                ({<<"isGrandTotal">>, true})  -> {true, <<"grand_total">>};
+                ({<<"isTotal">>, true}) -> {true, <<"total">>};
+                ({<<"isGrandTotal">>, true}) -> {true, <<"grand_total">>};
                 (_) -> false
             end,
             maps:to_list(Fact)
@@ -84,7 +93,7 @@ add_flags(Context, Fact) ->
 
     case Flags of
         [] -> Context;
-        _  -> Context#{ <<"flags">> => Flags }
+        _ -> Context#{<<"flags">> => Flags}
     end.
 
 %%--------------------------------------------------------------------
@@ -93,6 +102,6 @@ add_flags(Context, Fact) ->
 
 carrier_metadata(_Meta) ->
     #{
-      <<"source">> => <<"financial_report">>,
-      <<"ingestion">> => <<"chunked_fact">>
+        <<"source">> => <<"financial_report">>,
+        <<"ingestion">> => <<"chunked_fact">>
     }.
