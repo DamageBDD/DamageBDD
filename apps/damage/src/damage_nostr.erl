@@ -247,8 +247,8 @@ handle_call(
     Filter = #{
         %% Kind 1 = text note
         kinds => [1],
-        %% Filter by pubkey
-        '#p' => [npub_or_hex_to_lower_hex64(Npub)],
+        %% Filter by author pubkey
+        author => [npub_or_hex_to_lower_hex64(Npub)],
         %% Reverse chronological fetch starts from now
         until => Now,
         limit => Limit

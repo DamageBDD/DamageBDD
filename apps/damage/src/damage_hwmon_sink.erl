@@ -7,7 +7,7 @@
 -license("Apache-2.0").
 -export([emit/1]).
 
-emit(Sample) ->
+emit(_Sample) ->
     %% Replace with your internal event bus / telemetry / DB / chain anchor.
     %% Example:
     %% damage_events:emit(hw_sample, Sample),
