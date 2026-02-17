@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM nvidia/cuda:13.1.1-cudnn-devel-ubuntu24.04
+# Linux Mint 22 (Wilma) base — stays Mint-only per your requirement
+FROM ubuntu:noble
 #FROM ubuntu:22.04
+
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
@@ -9,16 +11,31 @@ ARG REBAR3_URL=https://s3.amazonaws.com/rebar3/rebar3
 ARG OTP_VERSION=28.3
 WORKDIR /opt/workspace
 
-# --- System deps (Mint/Ubuntu repos) ---
-# Erlang and rebar3 from apt so we don't bring non-Mint bases.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+
+# Optional: Use a specific mirror for speed
+#RUN sed -i 's|http://archive.ubuntu.com|http://ubuntu.mirror.serveraustralia.com|g' /etc/apt/sources.list
+RUN set -eux; \
+  printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+    > /etc/apt/apt.conf.d/99retries; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends git\
       build-essential autoconf m4 \
       libncurses-dev libssl-dev xsltproc fop unixodbc-dev \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
       ruby ruby-dev rubygems \
-      rpm dpkg-dev gnupg rsync nvidia-cuda-toolkit \
-    && gem install --no-document fpm
+      rpm dpkg-dev gnupg rsync \
+    nvidia-cuda-toolkit \
+      pkg-config \
+      libgtk-4-dev \
+      libcairo2-dev \
+      libpango1.0-dev \
+      libglib2.0-dev \
+      libgdk-pixbuf-2.0-dev \
+      libharfbuzz-dev \
+      libgraphene-1.0-dev \
+    && gem install --no-document fpm \
+ && rm -rf /var/lib/apt/lists/*
 
 # --- kerl + OTP
 RUN curl -fsSL https://raw.githubusercontent.com/kerl/kerl/master/kerl -o /usr/local/bin/kerl \

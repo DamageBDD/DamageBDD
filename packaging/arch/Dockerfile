@@ -7,8 +7,11 @@ FROM archlinux:latest AS base
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8    CCACHE_DIR=/ccache
 
 # Prime pacman and install build deps in one layer
-RUN sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf      \
-    && pacman -Syu --noconfirm                                  \
+RUN sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf \
+    && pacman -Syy --noconfirm archlinux-keyring \
+    && pacman-key --init \
+    && pacman-key --populate archlinux \
+    && pacman -Syu --noconfirm \
     && pacman -S --noconfirm --needed                           \
     base-devel git fakeroot which curl wget ca-certificates     \
     tar gzip unzip xz zstd patch pkgconf cmake ninja            \

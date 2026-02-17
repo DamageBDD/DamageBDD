@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
       ruby ruby-dev rubygems \
-      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync nvidia-cuda-toolkit \
+      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync wget\
       pkg-config \
       libgtk-4-dev \
       libcairo2-dev \
@@ -27,6 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libharfbuzz-dev \
       libgraphene-1.0-dev \
     && gem install --no-document fpm 
+&& wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+&& dpkg -i cuda-keyring_1.1-1_all.deb \
+apt update \
+apt-get install -y --no-install-recommends cuda-toolkit-12-4
+
     #&& rm -rf /var/lib/apt/lists/*
 
 # --- kerl + OTP
