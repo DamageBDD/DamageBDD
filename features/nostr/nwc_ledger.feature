@@ -3,7 +3,7 @@ Feature: NWC Ledger-backed connections
   limits, and revocation.
 
   Background:
-    Given I am using server "https://damagebdd.com":
+    Given I am using server "https://run.dev.damagebdd.com":
     # Provide a real token when running for real.
     # For local dev, point at localhost and use a dev token.
     And I set "Authorization" header to "Bearer {{ACCESS_TOKEN}}"
