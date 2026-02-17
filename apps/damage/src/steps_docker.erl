@@ -247,6 +247,7 @@ shell_quote(Bin) when is_binary(Bin) ->
 
 %% ===== Helpers ===============================================================
 run_cmd(Config, Command, Context) ->
+    true = steps_utils:is_admin(Context),
     DockerDir = docker_workdir(Config),
     ?LOG_INFO("steps_docker running command in ~s: ~s", [DockerDir, Command]),
     LogDir0 =
@@ -353,6 +354,7 @@ ensure_dir(Dir) ->
 
 %% Build a docker image from an inline Dockerfile contained in Raw.
 build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
+    true = steps_utils:is_admin(Context),
     %% Raw is iodata() from the feature body
     BodyBin = iolist_to_binary(Raw),
     Trimmed = binary:trim(BodyBin, both, " \t\r\n"),
@@ -375,7 +377,7 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
                 ok ->
                     CmdIO =
                         io_lib:format(
-                            "docker build -t ~s -f ~s ~s",
+                            "docker build --network=host -t ~s -f ~s ~s",
                             [Image, DockerfilePath, BuildDir]
                         ),
                     Command = lists:flatten(CmdIO),
