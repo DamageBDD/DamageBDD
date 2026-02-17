@@ -75,6 +75,7 @@ render_full_page(Ctx) ->
     SwapOptions = render_tpl(?TPL("swap_options_tab.mustache"), Ctx),
     Gallery = render_tpl(?TPL("gallery_tab.mustache"), Ctx),
     EcaiJobDetail = render_tpl(?TPL("ecai_job_detail_modal.mustache"), Ctx),
+    NwcModal = render_tpl(?TPL("nwc_modal.mustache"), Ctx),
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
         topbar => Top,
@@ -98,7 +99,8 @@ render_full_page(Ctx) ->
         node_public_key_modal => NpkM,
         swaps_tab => SwapOptions,
         gallery_tab => Gallery,
-        ecai_jobs_detail => EcaiJobDetail
+        ecai_jobs_detail => EcaiJobDetail,
+        nwc_modal => NwcModal
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 

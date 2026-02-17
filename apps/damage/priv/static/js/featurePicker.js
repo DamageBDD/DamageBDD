@@ -1,47 +1,117 @@
 // featurePicker.js
 // DamageBDD Feature Picker — vanilla JS, no deps.
+// Adds:
+//  - Samples tab: loads from samplesIndexUrl (JSON index)
+//  - Recent Runs tab: loads from localStorage (populated by reports.js or execute flow)
+//
 // Usage:
-//   import { initDamageBDDPicker } from './featurePicker.js';
+//   import { initDamageBDDPicker, rememberRecentFeature } from './featurePicker.js';
+//
 //   initDamageBDDPicker({
-//     mount: '#picker',
-//     editor: '#editor',
-//     hashes: ['bafy...','Qm...'], // or [{ cid:'Qm...', label:'Home page search' }]
-//     gateway: 'https://cloudflare-ipfs.com/ipfs', // any public or private gateway
+//     opener: '#open-feature-picker',
+//     mount:  '#feature-picker-mount',
+//     editor: '#feature-editor',
+//     gateway: '/features/',              // your app already serves /features/<cid> (see reports.js):contentReference[oaicite:5]{index=5}
+//     samplesIndexUrl: '/samples/features/index.json',
+//     hashes: [], // optional legacy source
 //   });
+//
+//   // Optional: whenever you execute a feature, call rememberRecentFeature({ cid, title })
+
+// Keep this aligned with reports.js AccountFilter storage key.
+const LS_ACTIVITY_FILTER = "damagebdd.activity.filter.v2";
+
+// Aeternity middleware (MDW) base for on-chain activity.
+// If you run your own MDW, override with window.DAMAGEBDD_MDW_BASE.
+const MDW_BASE = (typeof window !== "undefined" && window.DAMAGEBDD_MDW_BASE)
+  ? String(window.DAMAGEBDD_MDW_BASE)
+  : "https://mainnet.aeternity.io/mdw";
+
+const LS_RECENT_FEATURES = "dbdd_recent_features_v1";
+
+export function rememberRecentFeature(entry) {
+  // entry: { cid, title?, whenMs?, source?, reportCid? }
+  try {
+    const cid = String(entry?.cid || "").trim();
+    if (!cid) return;
+    const now = Date.now();
+    const rec = loadJSON(LS_RECENT_FEATURES, []);
+    const next = [
+      {
+        cid,
+        title: String(entry?.title || "").trim(),
+        whenMs: Number(entry?.whenMs || now),
+        source: entry?.source || "run",
+        reportCid: entry?.reportCid || null
+      },
+      ...rec.filter((x) => x?.cid !== cid)
+    ].slice(0, 30);
+    saveJSON(LS_RECENT_FEATURES, next);
+  } catch {}
+}
 
 export async function initDamageBDDPicker(opts) {
   const {
-	  opener,
+    opener,
     mount,
     editor,
-    hashes,
-    gateway = 'https://cloudflare-ipfs.com/ipfs',
-    title = 'DamageBDD Feature Picker',
+    hashes = [],
+    gateway = "/features/", // default to your app route (not a public IPFS gateway)
+    title = "Feature Picker",
+    samplesIndexUrl = null, // e.g. "/samples/features/index.json"
   } = opts || {};
 
   if (!opener) throw new Error('initDamageBDDPicker: "opener" selector is required');
   if (!mount) throw new Error('initDamageBDDPicker: "mount" selector is required');
   if (!editor) throw new Error('initDamageBDDPicker: "editor" selector is required');
-  if (!hashes || !hashes.length) throw new Error('initDamageBDDPicker: "hashes" must be a non-empty array');
 
-  const $opener = typeof mount === 'string' ? document.querySelector(opener) : opener;
-  const $root = typeof mount === 'string' ? document.querySelector(mount) : mount;
-  const $editor = typeof editor === 'string' ? document.querySelector(editor) : editor;
+  const $opener = typeof opener === "string" ? document.querySelector(opener) : opener;
+  const $root   = typeof mount === "string" ? document.querySelector(mount) : mount;
+  const $editor = typeof editor === "string" ? document.querySelector(editor) : editor;
+  if (!$opener) throw new Error(`initDamageBDDPicker: opener "${opener}" not found`);
   if (!$root) throw new Error(`initDamageBDDPicker: mount "${mount}" not found`);
   if (!$editor) throw new Error(`initDamageBDDPicker: editor "${editor}" not found`);
-    $opener.onclick = (event) => {
-		MicroModal.show('feature-picker-modal');
-		event.preventDefault(); // Prevent default form submission
-
-    };
 
   injectStylesOnce();
 
-  // Normalize into [{cid,label}]
-  const items = hashes.map(h => (typeof h === 'string' ? { cid: h, label: h } : h));
+  // --- sources (tabs) ---
+  const sources = [];
 
-  // Build shell
-  $root.classList.add('dbdd-picker');
+  if (samplesIndexUrl) {
+    sources.push({
+      id: "samples",
+      label: "Samples",
+      icon: "🧪",
+      load: () => loadSamplesIndex(samplesIndexUrl)
+    });
+  }
+
+  sources.push({
+    id: "recent",
+	label: "Recent (on-chain)",
+    icon: "🕒",
+    load: () => loadRecentRuns()
+  });
+
+  // legacy provided hashes
+  if (hashes && hashes.length) {
+    const provided = hashes.map((h) => (typeof h === "string" ? { cid: h, label: h } : h));
+    sources.push({
+      id: "provided",
+      label: "Library",
+      icon: "📚",
+      load: async () =>
+        provided.map((x) => ({
+          cid: x.cid,
+          label: x.label || x.cid,
+          subtitle: "Provided",
+          whenMs: null
+        }))
+    });
+  }
+
+  // Build UI shell
+  $root.classList.add("dbdd-picker");
   $root.innerHTML = `
     <div class="dbdd-header">
       <div class="dbdd-title">${escapeHtml(title)}</div>
@@ -50,299 +120,725 @@ export async function initDamageBDDPicker(opts) {
         <button class="dbdd-refresh" aria-label="Refresh">↻</button>
       </div>
     </div>
+
+    <div class="dbdd-tabs" role="tablist" aria-label="Feature sources">
+      ${sources
+        .map(
+          (s, i) => `
+        <button class="dbdd-tab ${i === 0 ? "active" : ""}" role="tab"
+                aria-selected="${i === 0 ? "true" : "false"}"
+                data-tab="${escapeHtml(s.id)}">
+          <span class="dbdd-tab-ico">${escapeHtml(s.icon)}</span>
+          <span>${escapeHtml(s.label)}</span>
+          <span class="dbdd-tab-count" data-count="${escapeHtml(s.id)}">0</span>
+        </button>`
+        )
+        .join("")}
+    </div>
+
     <div class="dbdd-body">
       <div class="dbdd-list" role="list"></div>
       <div class="dbdd-detail" aria-live="polite" aria-atomic="true">
         <div class="dbdd-detail-empty">Select a feature to preview</div>
       </div>
     </div>
+
     <div class="dbdd-toast" hidden></div>
   `;
 
-  const $list = $root.querySelector('.dbdd-list');
-  const $detail = $root.querySelector('.dbdd-detail');
-  const $search = $root.querySelector('.dbdd-search');
-  const $refresh = $root.querySelector('.dbdd-refresh');
-  const $toast = $root.querySelector('.dbdd-toast');
+  // Wire modal open (your original file already used MicroModal.show):contentReference[oaicite:6]{index=6}
+  $opener.onclick = (event) => {
+    if (window.MicroModal?.show) window.MicroModal.show("feature-picker-modal");
+    event.preventDefault?.();
+  };
 
-  // Data cache
-  const cache = new Map(); // cid -> { text, meta, error }
+  const $list    = $root.querySelector(".dbdd-list");
+  const $detail  = $root.querySelector(".dbdd-detail");
+  const $search  = $root.querySelector(".dbdd-search");
+  const $refresh = $root.querySelector(".dbdd-refresh");
+  const $toast   = $root.querySelector(".dbdd-toast");
+  const $tabs    = Array.from($root.querySelectorAll(".dbdd-tab"));
 
-  async function loadAll() {
-    $list.innerHTML = '';
-    const cards = [];
+  // cache cid -> { text, meta, error }
+  const cache = new Map();
+  let activeTabId = sources[0]?.id || "recent";
+  let activeItems = [];
 
-    for (const { cid, label } of items) {
-      const card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'dbdd-card';
-      card.setAttribute('role', 'listitem');
-      card.dataset.cid = cid;
-      card.innerHTML = `
-        <div class="dbdd-card-top">
-          <span class="dbdd-card-cid" title="${escapeHtml(cid)}">${escapeHtml(shortCid(cid))}</span>
-          <span class="dbdd-chip">loading…</span>
-        </div>
-        <div class="dbdd-card-title ellipsis">Fetching…</div>
-        <div class="dbdd-card-desc ellipsis"></div>
-      `;
-      $list.appendChild(card);
-      cards.push(card);
+  $tabs.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      setActiveTab(btn.dataset.tab);
+      await loadTab();
+    });
+  });
 
-      // fetch (lazy but kicked immediately)
-      fetchFeature(cid, gateway)
-        .then(({ text, meta }) => {
-          cache.set(cid, { text, meta });
-          card.querySelector('.dbdd-chip').textContent = 'ready';
-          card.querySelector('.dbdd-card-title').textContent = meta.title || label || cid;
-          card.querySelector('.dbdd-card-desc').textContent = meta.description || '(no description)';
-        })
-        .catch(err => {
-          cache.set(cid, { error: err });
-          card.querySelector('.dbdd-chip').textContent = 'error';
-          card.querySelector('.dbdd-card-title').textContent = label || cid;
-          card.querySelector('.dbdd-card-desc').textContent = 'Failed to fetch or parse';
-          card.classList.add('dbdd-card-error');
-        });
+  $refresh.addEventListener("click", async () => {
+    cache.clear();
+    await loadTab();
+    toast("Refreshed", $toast);
+  });
+
+  $search.addEventListener("input", () => {
+    const q = $search.value.trim().toLowerCase();
+    for (const $card of $list.querySelectorAll(".dbdd-card")) {
+      const hay =
+        ($card.querySelector(".dbdd-card-title")?.textContent || "") +
+        " " +
+        ($card.querySelector(".dbdd-card-desc")?.textContent || "") +
+        " " +
+        ($card.dataset.cid || "");
+      $card.style.display = hay.toLowerCase().includes(q) ? "" : "none";
     }
+  });
 
-    // click handling
-    $list.addEventListener('click', e => {
-      const $btn = e.target.closest('.dbdd-card');
-      if (!$btn) return;
-      const cid = $btn.dataset.cid;
-      const rec = cache.get(cid);
-      if (!rec) return;
-      showDetail(cid, rec);
-      // mark selected
-      $list.querySelectorAll('.dbdd-card.selected').forEach(el => el.classList.remove('selected'));
-      $btn.classList.add('selected');
+  function setActiveTab(id) {
+    activeTabId = id;
+    $tabs.forEach((t) => {
+      const on = t.dataset.tab === id;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
     });
   }
 
-  function showDetail(cid, rec) {
-    if (rec.error) {
-      $detail.innerHTML = `
-        <div class="dbdd-detail-error">
-          <div class="dbdd-detail-head">
-            <span class="dbdd-detail-cid">${escapeHtml(cid)}</span>
-            <span class="dbdd-chip chip-error">error</span>
-          </div>
-          <p>Could not load this feature. Check gateway or CID.</p>
-          <div class="dbdd-detail-actions">
-            <a class="dbdd-link" target="_blank" rel="noopener" href="${gateway}/${cid}">Open on gateway</a>
-          </div>
+  async function loadTab() {
+    $list.innerHTML = `<div class="dbdd-skel">Loading…</div>`;
+    $detail.innerHTML = `<div class="dbdd-detail-empty">Select a feature to preview</div>`;
+
+    const src = sources.find((s) => s.id === activeTabId) || sources[0];
+    const items = (await src.load()) || [];
+    activeItems = normalizeItems(items);
+
+    // update counts
+    const cntEl = $root.querySelector(`[data-count="${cssEscape(src.id)}"]`);
+    if (cntEl) cntEl.textContent = String(activeItems.length);
+
+    renderList(activeItems);
+  }
+
+  function normalizeItems(items) {
+    // expects { cid, title/label?, subtitle?, whenMs? }
+    return items
+      .map((x) => ({
+        cid: String(x.cid || "").trim(),
+        title: x.title || x.label || x.cid,
+        subtitle: x.subtitle || "",
+        whenMs: x.whenMs || null,
+        reportCid: x.reportCid || null
+      }))
+      .filter((x) => x.cid);
+  }
+
+  function renderList(items) {
+    $list.innerHTML = "";
+    if (!items.length) {
+      $list.innerHTML = `<div class="dbdd-empty">No items.</div>`;
+      return;
+    }
+
+    for (const it of items) {
+      const card = document.createElement("div");
+      card.className = "dbdd-card";
+      card.dataset.cid = it.cid;
+
+      const when = it.whenMs ? new Date(it.whenMs).toLocaleString() : "";
+      card.innerHTML = `
+        <div class="dbdd-card-top">
+          <div class="dbdd-card-title">${escapeHtml(it.title || it.cid)}</div>
+          ${when ? `<div class="dbdd-card-when">${escapeHtml(when)}</div>` : ""}
         </div>
+        <div class="dbdd-card-desc">${escapeHtml(it.subtitle || shortCid(it.cid))}</div>
+        <div class="dbdd-card-cid">${escapeHtml(shortCid(it.cid))}</div>
       `;
+
+      card.addEventListener("click", async () => {
+        selectCard(card);
+        await showDetail(it.cid);
+      });
+
+      $list.appendChild(card);
+    }
+  }
+
+  function selectCard(card) {
+    for (const c of $list.querySelectorAll(".dbdd-card")) c.classList.remove("selected");
+    card.classList.add("selected");
+  }
+
+  async function showDetail(cid) {
+    $detail.innerHTML = `<div class="dbdd-skel">Loading preview…</div>`;
+
+    let rec = cache.get(cid);
+    if (!rec) {
+      try {
+        rec = await fetchFeature(cid, gateway);
+      } catch (e) {
+        rec = { error: String(e?.message || e) };
+      }
+      cache.set(cid, rec);
+    }
+
+    if (rec.error) {
+      $detail.innerHTML = `<div class="dbdd-empty">Failed to load: ${escapeHtml(rec.error)}</div>`;
       return;
     }
 
     const { text, meta } = rec;
     const preview = meta.headSnippet || text.slice(0, 1500);
+
     $detail.innerHTML = `
       <div class="dbdd-detail-head">
         <div class="dbdd-detail-left">
-          <div class="dbdd-detail-title">${escapeHtml(meta.title || '(Untitled Feature)')}</div>
-          <div class="dbdd-detail-sub">${escapeHtml(meta.description || '')}</div>
+          <div class="dbdd-detail-title">${escapeHtml(meta.title || "(Untitled Feature)")}</div>
+          <div class="dbdd-detail-sub">${escapeHtml(meta.description || "")}</div>
         </div>
         <div class="dbdd-detail-right">
           <span class="dbdd-detail-cid">${escapeHtml(shortCid(cid))}</span>
-          <a class="dbdd-link" target="_blank" rel="noopener" href="${gateway}${cid}">View raw</a>
+          <a class="dbdd-link" target="_blank" rel="noopener" href="${escapeHtml(gatewayUrl(gateway, cid))}">View raw</a>
         </div>
       </div>
+
       <pre class="dbdd-code"><code>${escapeHtml(preview)}</code></pre>
+
       <div class="dbdd-detail-actions">
-        <button class="dbdd-insert">Insert into editor</button>
-        <button class="dbdd-copy">Copy to clipboard</button>
+        <button class="dbdd-insert">Insert</button>
+        <button class="dbdd-copy">Copy</button>
       </div>
     `;
 
-    $detail.querySelector('.dbdd-insert').onclick = () => {
+    $detail.querySelector(".dbdd-insert").onclick = () => {
       insertIntoEditor($editor, text);
-		MicroModal.close('feature-picker-modal');
-      toast(`Inserted feature from ${shortCid(cid)} into editor`, $toast);
+      // keep your existing behavior (close modal):contentReference[oaicite:7]{index=7}
+      if (window.MicroModal?.close) window.MicroModal.close("feature-picker-modal");
+      rememberRecentFeature({ cid, title: meta.title, source: "picker" });
+      toast(`Inserted ${shortCid(cid)}`, $toast);
     };
-    $detail.querySelector('.dbdd-copy').onclick = async () => {
+
+    $detail.querySelector(".dbdd-copy").onclick = async () => {
       try {
         await navigator.clipboard.writeText(text);
-        toast('Copied feature to clipboard', $toast);
+        toast("Copied feature to clipboard", $toast);
       } catch {
-        toast('Clipboard copy failed', $toast);
+        toast("Clipboard copy failed", $toast);
       }
     };
   }
 
-  $search.addEventListener('input', () => {
-    const q = $search.value.trim().toLowerCase();
-    for (const $card of $list.querySelectorAll('.dbdd-card')) {
-      const cid = $card.dataset.cid;
-      const rec = cache.get(cid);
-      const t = ($card.querySelector('.dbdd-card-title')?.textContent || '') + ' ' +
-                ($card.querySelector('.dbdd-card-desc')?.textContent || '') + ' ' + cid;
-      $card.style.display = t.toLowerCase().includes(q) ? '' : 'none';
+  // initial load
+  setActiveTab(activeTabId);
+  await loadTab();
+}
+
+// ----------------------------- data loaders -----------------------------
+
+async function loadSamplesIndex(indexUrl) {
+  // Expect JSON either:
+  //  - ["Qm..", "bafy..", ...]
+  //  - [{ cid, title, subtitle }, ...]
+  const res = await fetch(indexUrl, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Samples index HTTP ${res.status}`);
+  const data = await res.json();
+
+  const arr = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
+  return arr.map((x) => {
+    if (typeof x === "string") return { cid: x, title: x, subtitle: "Sample" };
+    return {
+      cid: x.cid || x.hash || x.id,
+      title: x.title || x.label || x.name || x.cid,
+      subtitle: x.subtitle || x.description || "Sample"
+    };
+  });
+}
+
+function loadRecentRuns() {
+  // On-chain first (wallet + any accounts in the wallet selector), then fall back to localStorage.
+  return loadOnchainRecentRuns({
+    storageKey: LS_ACTIVITY_FILTER,
+    featureLimit: 30,
+    perAccountActivities: 18
+  }).catch(() => loadRecentRunsFromLocal());
+}
+
+function loadRecentRunsFromLocal() {
+  const rec = loadJSON(LS_RECENT_FEATURES, []);
+  // newest first
+  return rec
+    .slice()
+    .sort((a, b) => Number(b.whenMs || 0) - Number(a.whenMs || 0))
+    .map((x) => ({
+      cid: x.cid,
+      title: x.title || x.cid,
+      subtitle: x.reportCid ? `Report: ${shortCid(x.reportCid)}` : "Recently run",
+      whenMs: x.whenMs || null,
+      reportCid: x.reportCid || null
+    }));
+}
+
+// ----------------------------- on-chain recents -----------------------------
+
+async function loadOnchainRecentRuns({ storageKey, featureLimit = 30, perAccountActivities = 18 } = {}) {
+  const accounts = await getAccountsForOnchainRecents(storageKey);
+  if (!accounts.length) {
+    // No wallet available — fall back to local recents.
+    return loadRecentRunsFromLocal();
+  }
+
+  // Fetch activities for all accounts (bounded), then pull tx details only for the newest ones.
+  const pages = await Promise.all(
+    accounts.map((ak) => getAccountActivities({ accountId: ak, limit: perAccountActivities }).catch(() => null))
+  );
+
+  const acts = [];
+  for (let i = 0; i < pages.length; i++) {
+    const p = pages[i];
+    const ak = accounts[i];
+    const data = Array.isArray(p?.data) ? p.data : [];
+    for (const a of data) {
+      const txHash = a?.tx_hash || a?.txHash || null;
+      const micro = a?.micro_time || a?.microTime || null;
+      if (!txHash) continue;
+      acts.push({ txHash: String(txHash), whenMs: toMsOrNull(micro), accountId: ak });
     }
-  });
+  }
 
-  $refresh.addEventListener('click', () => {
-    cache.clear();
-    loadAll();
-  });
+  // newest first
+  acts.sort((a, b) => Number(b.whenMs || 0) - Number(a.whenMs || 0));
 
-  await loadAll();
+  // Pull tx-full for the newest tx hashes until we have enough unique features.
+  const seenFeatures = new Set();
+  const out = [];
+
+  for (const a of acts) {
+    if (out.length >= featureLimit) break;
+
+    let txFull = null;
+    try {
+      txFull = await getTxFull(a.txHash);
+    } catch {
+      continue;
+    }
+
+    const spend = await normalizeDamageSpend(txFull).catch(() => null);
+    if (!spend?.featureCid) continue;
+    if (seenFeatures.has(spend.featureCid)) continue;
+
+    seenFeatures.add(spend.featureCid);
+
+    // Prefer a cheap title fetch; detail panel will fetch full feature anyway.
+    const featureTitle = await fetchTextFirstLine(`/features/${encodeURIComponent(spend.featureCid)}`).catch(
+      () => spend.featureCid
+    );
+
+    out.push({
+      cid: spend.featureCid,
+      title: featureTitle || spend.featureCid,
+      subtitle: `On-chain • ${shortCid(a.accountId)}${spend.reportCid ? ` • Report ${shortCid(spend.reportCid)}` : ""}`,
+      whenMs: spend.createdMs || a.whenMs || null,
+      reportCid: spend.reportCid || null
+    });
+  }
+
+  if (!out.length) return loadRecentRunsFromLocal();
+  return out;
+}
+
+async function getAccountsForOnchainRecents(storageKey) {
+  const out = [];
+
+  // 1) Primary wallet (TokenManager)
+  try {
+    const w = await window.TokenManager?.getAddress?.();
+    if (typeof w === "string" && w.startsWith("ak_")) out.push(w);
+  } catch {}
+
+  // 2) AccountFilter wallets used elsewhere (reports/activity tab)
+  try {
+    const stored = loadJSON(storageKey || LS_ACTIVITY_FILTER, null);
+    const ids = extractAccountIdsFromFilterState(stored);
+    for (const id of ids) if (typeof id === "string" && id.startsWith("ak_")) out.push(id);
+  } catch {}
+
+  // uniq, preserve order
+  return Array.from(new Set(out));
+}
+
+function extractAccountIdsFromFilterState(stored) {
+  if (!stored) return [];
+  // Be liberal: AccountFilter implementations vary.
+  // Common shapes:
+  //  - { items: [{id, ...}, ...] }
+  //  - { selected: [{id,...}], primary: "ak_..." }
+  //  - [{id,...}, ...]
+  const acc = [];
+
+  const add = (v) => {
+    if (!v) return;
+    const s = String(v).trim();
+    if (!s) return;
+    acc.push(s);
+  };
+
+  if (Array.isArray(stored)) {
+    for (const x of stored) add(x?.id || x?.value || x);
+    return acc;
+  }
+
+  if (typeof stored === "object") {
+    add(stored.primary);
+    const arrays = [stored.items, stored.selected, stored.tags, stored.values, stored.addresses];
+    for (const arr of arrays) {
+      if (!Array.isArray(arr)) continue;
+      for (const x of arr) add(x?.id || x?.value || x);
+    }
+  }
+
+  return acc;
+}
+
+async function fetchJSON(url, { retries = 1, backoff = 250 } = {}) {
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0"
+        }
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      if (i >= retries) throw e;
+      await new Promise((r) => setTimeout(r, backoff * (i + 1)));
+    }
+  }
+}
+
+async function getAccountActivities({ accountId, limit = 10, pagePath = null } = {}) {
+  const base = String(MDW_BASE || "").replace(/\/$/, "");
+  const url = pagePath
+    ? `${base}${pagePath}`
+    : `${base}/v3/accounts/${encodeURIComponent(accountId)}/activities?direction=backward&limit=${encodeURIComponent(limit)}`;
+  return fetchJSON(url);
+}
+
+async function getTxFull(txHash) {
+  const base = String(MDW_BASE || "").replace(/\/$/, "");
+  return fetchJSON(`${base}/v3/transactions/${encodeURIComponent(txHash)}`);
+}
+
+function toMsOrNull(microTime) {
+  if (!microTime) return null;
+  const n = Number(microTime);
+  if (!Number.isFinite(n)) return null;
+  return n > 1e12 ? n : Math.floor(n / 1000);
+}
+
+function extractTxArguments(txFull) {
+  return (
+    txFull?.tx?.tx?.tx?.arguments ||
+    txFull?.tx?.tx?.arguments ||
+    txFull?.tx?.arguments ||
+    []
+  );
+}
+
+async function fetchTextFirstLine(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  return (text || "").split(/\r?\n/)[0] || "—";
+}
+
+// Keep aligned with reports.js normalization: DAMAGE spend(tx args: amount, featureCid, reportCid)
+async function normalizeDamageSpend(txFull) {
+  const inner = txFull?.tx?.tx?.tx || txFull?.tx?.tx || txFull?.tx || null;
+  if (!inner) return null;
+  if (inner.function !== "spend") return null;
+
+  const args = extractTxArguments(txFull);
+  const featureCid = typeof args?.[2]?.value === "string" ? args[2].value : null;
+  const reportCid = typeof args?.[3]?.value === "string" ? args[3].value : null;
+  if (!featureCid) return null;
+
+  const createdMs = toMsOrNull(txFull?.micro_time || inner?.micro_time);
+  return { createdMs, featureCid, reportCid };
 }
 
 // ----------------------------- helpers -----------------------------
 
 async function fetchFeature(cid, gateway) {
-  const url = `${gateway.replace(/\/+$/, '')}/${cid}`;
-  const res = await fetch(url, { mode: 'cors' });
+  // If gateway is "/features/" => "/features/<cid>"
+  // If gateway is "https://.../ipfs" => "https://.../ipfs/<cid>"
+  const url = gatewayUrl(gateway, cid);
+  const res = await fetch(url, { mode: "cors" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
   const meta = parseGherkinHead(text);
   return { text, meta };
 }
 
+function gatewayUrl(gateway, cid) {
+  const g = String(gateway || "").trim();
+  if (!g) return cid;
+  if (g.endsWith("/")) return g + cid;
+  return g + "/" + cid;
+}
+
 // Extract "summary from the head": the Feature line + its contiguous description lines
 function parseGherkinHead(text) {
-  // Normalize line endings
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
 
-  // find "Feature:" (case-insensitive, allow leading whitespace and comments before)
   let featureIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const s = lines[i].trim();
     if (/^Feature\s*:/.test(s)) { featureIdx = i; break; }
   }
 
-  let title = '';
-  let description = '';
+  let title = "";
+  let description = "";
   if (featureIdx >= 0) {
-    title = lines[featureIdx].replace(/^\s*Feature\s*:\s*/i, '').trim();
-
-    // Collect description lines until blank line or a new Gherkin section (Scenario/Rule/Background)
-    const desc = [];
-    for (let i = featureIdx + 1; i < lines.length; i++) {
-      const raw = lines[i];
+    title = lines[featureIdx].replace(/^\s*Feature\s*:\s*/i, "").trim();
+    const descLines = [];
+    for (let j = featureIdx + 1; j < lines.length; j++) {
+      const raw = lines[j];
       const t = raw.trim();
-      if (t === '') break;
-      if (/^(Scenario|Rule|Background)\b/i.test(t)) break;
-      // Stop if we encounter tags line for next block
-      if (/^@/.test(t)) break;
-      // Keep comment lines (# …) and plain prose
-      desc.push(raw.replace(/^\s*#\s?/, '').trimEnd());
+      if (!t) { if (descLines.length) break; else continue; }
+      if (/^(Scenario|Background|Rule)\s*:/.test(t)) break;
+      if (/^(#|@)/.test(t)) continue;
+      descLines.push(raw.trim());
+      if (descLines.join(" ").length > 240) break;
     }
-    description = desc.join('\n').trim();
+    description = descLines.join(" ").trim();
   }
 
-  // Build a compact head snippet (first ~40 lines or until first scenario)
-  const headLines = [];
-  for (let i = 0; i < Math.min(lines.length, 200); i++) {
-    const t = lines[i].trim();
-    if (/^(Scenario|Rule|Background)\b/i.test(t) && headLines.length > 0) break;
-    headLines.push(lines[i]);
-  }
-  const headSnippet = headLines.slice(0, 40).join('\n');
-
+  const headSnippet = lines.slice(Math.max(0, featureIdx), Math.min(lines.length, featureIdx + 18)).join("\n");
   return { title, description, headSnippet };
 }
 
-function insertIntoEditor($editor, content) {
-  const isInputish = $editor instanceof HTMLTextAreaElement || $editor instanceof HTMLInputElement;
-  const isContentEditable = $editor.hasAttribute('contenteditable');
-
-  if (isInputish) {
-    $editor.value = content;
-    $editor.dispatchEvent(new Event('input', { bubbles: true }));
-    $editor.focus();
-  } else if (isContentEditable) {
-    // Preserve newlines by converting to <br>
-    $editor.innerText = ''; // clear
-    // Use textContent to avoid injecting HTML; preserve as plain text
-    $editor.textContent = content;
-    // Move caret to end
-    placeCaretAtEnd($editor);
-  } else {
-    throw new Error('Editor must be a <textarea>, <input>, or contenteditable element');
-  }
-}
-
-function placeCaretAtEnd(el) {
-  el.focus();
-  if (typeof window.getSelection != "undefined" && document.createRange) {
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-}
-
-function toast(msg, $toast) {
-  $toast.textContent = msg;
-  $toast.hidden = false;
-  $toast.classList.add('show');
-  window.clearTimeout($toast._t);
-  $toast._t = window.setTimeout(() => {
-    $toast.classList.remove('show');
-    $toast.hidden = true;
-  }, 2400);
+function insertIntoEditor(el, text) {
+  if (!el) return;
+  if ("value" in el) el.value = text;
+  else el.textContent = text;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function shortCid(cid) {
-  return cid.length > 16 ? `${cid.slice(0, 8)}…${cid.slice(-6)}` : cid;
+  cid = String(cid || "");
+  if (cid.length <= 16) return cid;
+  return cid.slice(0, 8) + "…" + cid.slice(-6);
+}
+
+function toast(msg, $toast) {
+  if (!$toast) return;
+  $toast.hidden = false;
+  $toast.textContent = msg;
+  $toast.classList.add("show");
+  clearTimeout($toast._t);
+  $toast._t = setTimeout(() => {
+    $toast.classList.remove("show");
+    $toast.hidden = true;
+  }, 1600);
 }
 
 function escapeHtml(s) {
-  return String(s)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-let __DBDD_STYLES_INJECTED__ = false;
-function injectStylesOnce() {
-  if (__DBDD_STYLES_INJECTED__) return;
-  __DBDD_STYLES_INJECTED__ = true;
-  const css = `
-  .dbdd-picker{--bg:#0c0f14;--muted:#a8b3cf;--card:#121826;--card2:#0f1522;--border:#263043;--brand:#79ffe1;--brand-2:#a8ff63;--err:#ff6b6b;color:#e6eefc;background:var(--bg);border:1px solid var(--border);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:12px;font:14px/1.35 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Inter,"Helvetica Neue",Arial;}
-  .dbdd-header{display:flex;justify-content:space-between;align-items:center;gap:12px}
-  .dbdd-title{font-weight:700;font-size:16px}
-  .dbdd-actions{display:flex;gap:8px;align-items:center}
-  .dbdd-search{background:var(--card);border:1px solid var(--border);color:inherit;border-radius:10px;padding:8px 10px;min-width:220px;outline:none}
-  .dbdd-refresh{background:var(--card);border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:8px 10px;cursor:pointer}
-  .dbdd-body{display:grid;grid-template-columns: 1fr minmax(280px, 42%); gap:12px;}
-  .dbdd-list{display:grid;grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap:10px; align-content:start; max-height:420px; padding-right:2px}
-  .dbdd-card{display:flex;flex-direction:column;gap:6px;background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:12px;padding:10px;text-align:left;color:inherit;cursor:pointer;transition:transform .06s ease,border-color .15s ease}
-  .dbdd-card:hover{transform:translateY(-1px);border-color:#3b4a66}
-  .dbdd-card.selected{outline:2px solid var(--brand);outline-offset:2px}
-  .dbdd-card-error{border-color:#5a3131}
-  .dbdd-card-top{display:flex;justify-content:space-between;align-items:center}
-  .dbdd-card-cid{font-family:ui-monospace,Consolas,Menlo,monospace;font-size:12px;color:var(--muted)}
-  .dbdd-chip{font-size:11px;border:1px solid var(--border);border-radius:999px;padding:2px 6px;color:var(--muted);background:#0b1524}
-  .chip-error{border-color:#6e3a3a;color:#ff9c9c;background:#241014}
-  .dbdd-card-title{font-weight:600}
-  .dbdd-card-desc{font-size:12px;color:var(--muted);min-height:2.2em}
-  .ellipsis{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .dbdd-detail{background:linear-gradient(180deg,#0e1422,#0c111d);border:1px solid var(--border);border-radius:12px;padding:12px;min-height:220px;display:flex;flex-direction:column;gap:10px}
-  .dbdd-detail-empty{color:var(--muted);margin:auto}
-  .dbdd-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-  .dbdd-detail-title{font-size:15px;font-weight:700}
-  .dbdd-detail-sub{white-space:pre-wrap;color:var(--muted)}
-  .dbdd-detail-left{width: 50%; white-space: normal; word-wrap: break-word; overflow-wrap: break-word;}
-  .dbdd-detail-right{display:flex;gap:10px;align-items:center}
-  .dbdd-detail-cid{font-family:ui-monospace,Consolas,Menlo,monospace;font-size:12px;color:var(--muted)}
-  .dbdd-link{font-size:12px;color:var(--brand);text-decoration:none;border-bottom:1px dotted var(--brand)}
-  .dbdd-code{background:#0a0f1a;border:1px solid var(--border);border-radius:10px;padding:10px;max-height:260px;overflow:auto}
-  .dbdd-detail-actions{display:flex;gap:8px}
-  .dbdd-detail-actions button{background:var(--card);border:1px solid var(--border);color:inherit;border-radius:10px;padding:8px 10px;cursor:pointer}
-  .dbdd-toast{position:relative;align-self:flex-start;background:#0b1822;border:1px solid #1e2b3f;padding:8px 10px;border-radius:10px;opacity:0;transform:translateY(-6px);transition:all .2s ease;color:#d8f3ff}
-  .dbdd-toast.show{opacity:1;transform:translateY(0)}
-  `;
-  const el = document.createElement('style');
-  el.setAttribute('data-dbdd-picker', 'true');
-  el.textContent = css;
-  document.head.appendChild(el);
+function cssEscape(s) {
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
 }
+
+function loadJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || ""); }
+  catch { return fallback; }
+}
+
+function saveJSON(key, val) {
+  localStorage.setItem(key, JSON.stringify(val));
+}
+
+let __dbddPickerStyles = false;
+function injectStylesOnce() {
+  if (__dbddPickerStyles) return;
+  __dbddPickerStyles = true;
+
+  const css = `
+  .dbdd-picker{
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    color: rgba(231,233,238,.95);
+  }
+  .dbdd-header{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:12px 12px 10px;
+  }
+  .dbdd-title{ font-weight:700; letter-spacing:.2px; }
+  .dbdd-actions{ display:flex; gap:8px; align-items:center; }
+  .dbdd-search{
+    width:min(340px, 52vw);
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.10);
+    color: inherit;
+    border-radius: 12px;
+    padding: 10px 12px;
+    outline: none;
+  }
+  .dbdd-search:focus{ border-color: rgba(255,255,255,.22); }
+  .dbdd-refresh{
+    width:40px; height:40px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.06);
+    color: inherit;
+    cursor:pointer;
+  }
+  .dbdd-refresh:hover{ background: rgba(255,255,255,.09); }
+
+  .dbdd-tabs{
+    display:flex; gap:8px;
+    padding: 0 12px 12px;
+    flex-wrap: wrap;
+  }
+  .dbdd-tab{
+    display:flex; align-items:center; gap:8px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.05);
+    color: inherit;
+    cursor:pointer;
+    user-select:none;
+  }
+  .dbdd-tab:hover{ background: rgba(255,255,255,.08); }
+  .dbdd-tab.active{
+    background: rgba(255,255,255,.12);
+    border-color: rgba(255,255,255,.22);
+  }
+  .dbdd-tab-ico{ opacity:.9; }
+  .dbdd-tab-count{
+    margin-left: 2px;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.28);
+    border: 1px solid rgba(255,255,255,.10);
+  }
+
+  .dbdd-body{
+    display:grid;
+    grid-template-columns: 340px 1fr;
+    gap: 12px;
+    padding: 0 12px 12px;
+    min-height: 440px;
+  }
+  @media (max-width: 860px){
+    .dbdd-body{ grid-template-columns: 1fr; }
+  }
+
+  .dbdd-list{
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.03);
+    border-radius: 16px;
+    overflow: hidden;
+    min-height: 360px;
+  }
+
+  .dbdd-card{
+    padding: 12px 12px;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    cursor:pointer;
+  }
+  .dbdd-card:hover{ background: rgba(255,255,255,.05); }
+  .dbdd-card.selected{ background: rgba(255,255,255,.09); }
+  .dbdd-card-top{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+  .dbdd-card-title{ font-weight: 700; font-size: 13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dbdd-card-when{ font-size: 11.5px; opacity:.75; white-space:nowrap; }
+  .dbdd-card-desc{ font-size: 12px; opacity:.80; margin-top: 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dbdd-card-cid{ font-size: 11.5px; opacity:.65; margin-top: 6px; }
+
+  .dbdd-detail{
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.03);
+    border-radius: 16px;
+    padding: 12px;
+    min-height: 360px;
+  }
+  .dbdd-detail-empty, .dbdd-empty, .dbdd-skel{
+    padding: 18px;
+    opacity: .78;
+  }
+
+  .dbdd-detail-head{
+    display:flex; justify-content:space-between; gap:12px; align-items:flex-start;
+    padding: 8px 6px 10px;
+  }
+  .dbdd-detail-title{ font-weight: 800; letter-spacing:.2px; }
+  .dbdd-detail-sub{ margin-top: 6px; opacity:.85; font-size: 13px; }
+  .dbdd-detail-right{ display:flex; align-items:center; gap:10px; }
+  .dbdd-detail-cid{
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.28);
+    border: 1px solid rgba(255,255,255,.10);
+    opacity:.9;
+  }
+  .dbdd-link{
+    font-size: 12px;
+    color: rgba(231,233,238,.95);
+    opacity:.85;
+    text-decoration: none;
+  }
+  .dbdd-link:hover{ opacity: 1; text-decoration: underline; }
+
+  .dbdd-code{
+    margin: 8px 0 10px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(0,0,0,.30);
+    overflow:auto;
+    max-height: 340px;
+  }
+
+  .dbdd-detail-actions{
+    display:flex; gap:8px; padding: 6px;
+  }
+  .dbdd-detail-actions button{
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.06);
+    color: inherit;
+    padding: 10px 12px;
+    cursor:pointer;
+  }
+  .dbdd-detail-actions button:hover{ background: rgba(255,255,255,.09); }
+
+  .dbdd-toast{
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.75);
+    border: 1px solid rgba(255,255,255,.12);
+    color: rgba(231,233,238,.98);
+    opacity: 0;
+    transition: opacity .18s ease;
+    z-index: 9999;
+    pointer-events:none;
+  }
+  .dbdd-toast.show{ opacity: 1; }
+  `;
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+

@@ -419,29 +419,6 @@ html, body {
 
 
 
-/* === Form Buttons === */
-#damage-transfer-out-btn,
-#generate-invoice-btn,
-.modal__btn {
-    background: linear-gradient(to right, #0052cc, #007bff);
-    border: none;
-    padding: 0.75rem 1rem;
-    border-radius: 6px;
-    font-size: 1rem;
-    color: white;
-    font-weight: 600;
-    cursor: pointer;
-    width: 100%;
-/*    margin-top: 0.75rem;*/
-    transition: all 0.2s ease-in-out;
-}
-
-#damage-transfer-out-btn:hover,
-#generate-invoice-btn:hover,
-.modal__btn:hover {
-    background: linear-gradient(to right, #003fa6, #005ec4);
-    transform: scale(1.02);
-}
 
 /* === Copy Icon === */
 #copyAddressIcon,

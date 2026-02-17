@@ -44,7 +44,6 @@ step(
         Other ->
             maps:put(fail, to_bin(Other), Context)
     end;
-
 %% Explicit range (unix seconds)
 %%
 %% Then I list nostr posts for npub "npub1..." since "1700000000" until "1700086400" store as "posts"
@@ -70,7 +69,6 @@ step(
         Other ->
             maps:put(fail, to_bin(Other), Context)
     end;
-
 %% -------------------------------------------------------------------
 %% NEW: Zap all posts by npub since date
 %% -------------------------------------------------------------------
@@ -138,11 +136,9 @@ step(
 
             Context1 = maps:put(StateOutVar, StateOut, Context),
             maps:put(ReceiptsOutVar, Receipts, Context1);
-
         Other ->
             maps:put(fail, to_bin(Other), Context)
     end;
-
 %% Convenience: no prior state provided
 step(
     Config,
@@ -188,7 +184,6 @@ step(
         ],
         Body
     );
-
 %% -------------------------------------------------------------------
 %% Zapping posts with cap + state in/out
 %% -------------------------------------------------------------------
@@ -248,7 +243,6 @@ step(
 
     Context1 = maps:put(StateOutVar, StateOut, Context),
     maps:put(ReceiptsOutVar, Receipts, Context1);
-
 %% Convenience: if you don’t have prior state, start from empty
 step(
     _Config,
@@ -290,7 +284,6 @@ step(
         ],
         Body
     );
-
 step(_Config, Context, _Step, _Line, _Tokens, _Body) ->
     maps:put(fail, <<"steps_nostr_payout: no matching step">>, Context).
 
@@ -390,8 +383,8 @@ parse_isoish(<<Y:4/binary, "-", M:2/binary, "-", D:2/binary, _/binary>> = B) ->
             _ ->
                 {0, 0, 0}
         end,
-    calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Min, Sec}})
-    - calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}});
+    calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Min, Sec}}) -
+        calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}});
 parse_isoish(_Other) ->
     %% fallback: now - 24h
     erlang:system_time(seconds) - 86400.
@@ -437,4 +430,3 @@ map_get_atom_or_bin(M, K, DefaultAtom) ->
     end.
 
 test() -> ok.
-

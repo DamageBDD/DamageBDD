@@ -108,7 +108,8 @@ from_json(Req0, State = #{action := mint}) ->
     %% Inputs:
     %%  relays: [string] (optional; default from config)
     %%  max_single_sat, max_total_sat (optional; defaults)
-    Relays = maps:get(<<"relays">>, Json, []),
+    DefaultRelays = nostr_pool:default_relays(#{}),
+    Relays = maps:get(<<"relays">>, Json, DefaultRelays),
     MaxSingleSat = maps:get(<<"max_single_sat">>, Json, 10000),
     MaxTotalSat = maps:get(<<"max_total_sat">>, Json, 100000),
     ExpiresHeight = maps:get(<<"expires_height">>, Json, 0),

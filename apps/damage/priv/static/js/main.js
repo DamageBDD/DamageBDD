@@ -299,22 +299,17 @@ function restoreFeatureDraftFromShareLink() {
         });
 		var tabs =Tabby('[data-tabs]');
 		tabs.toggle('execution');
-		const hashes = [
-			{ cid: 'QmSaePitmi9NaZmZ2DmbtC7sSMSQBBsz113qVvpY2Wd9K3', label: 'CDP Demo' },
-			{ cid: 'QmVvbyrAM5ixneSXnvvr8oiy1mXrkxkHaQHwBuKBaiqZDZ', label: 'DamageBDD HTTP Self Test' },
-			'QmWnbqr8j7G7Wh9ZW7XvAvagSGEg9mThBVnhzicSNxsW9U',
-			'QmXRbJWPcq8DXniHcJzkuhwGuRvzf86kZcwkvUbx9nsDcQ',
-			'QmYJF7LbpHvuUXVpjWAksht3ypGvzPbViCo16gFmiCUa1D'
-		];
+		// optional bridge for reports.js
+		window.rememberRecentFeature = rememberRecentFeature;
 
 		initDamageBDDPicker({
-			opener: '#picker-dialog-btn',
-			mount: '#picker',
+			opener: "#open-feature-picker",
+			mount: "#feature-picker-mount",
 			editor: '#damageTextArea',
-			hashes,
-			gateway: window.location.origin + '/features/', // swap for your private gateway if needed
-			title: 'Pick a DamageBDD Feature',
+			gateway: "/features/",
+			samplesIndexUrl: "/samples/features/index.json"
 		});
+
 		document.addEventListener("click", (e) => {
 			const btn = e.target.closest("[data-micromodal-trigger='ecai-job-details-modal']");
 			if (!btn) return;

@@ -19,8 +19,9 @@
         <div id="purchase-damage-tabs">
           <ul data-token-tabs>
             <li><a data-tabby-default href="#damage-address-tab">Address</a></li>
-            <li><a href="#lightning-invoice-tab">Purchase</a></li>
+            <li><a href="#lightning-invoice-tab">Damage Wallet</a></li>
             <li><a href="#damage-transfers-tab">Transfer</a></li>
+            <li><a href="#lightning-ledger-tab">Lightning Wallet</a></li>
           </ul>
           <div id="damage-address-tab">
             <div>
@@ -38,18 +39,27 @@
                 <label for="totalAmt">Transfer DAMAGE tokens out to address.</label>
                 <input type="text" id="damage-transfer-out-address" placeholder="Enter recipient address">
                 <input type="number" step="1" id="damage-transfer-out-amount" placeholder="Enter amount">
-                <button id="damage-transfer-out-btn">Transfer Out!</button>
+                <button class="styled-btn" id="damage-transfer-out-btn">Transfer Out!</button>
               </form>
             </div>
           </div>
           <div id="lightning-invoice-tab">
-            <p>Purchase $DAMAGE using bitcoin lightning network.</p>
+            <p>Purchase $DAMAGE using the bitcoin lightning network.</p>
             <p>Please read <a href="/token_tos">Token Sale Terms and Conditions</a> before purchasing tokens.</p>
               <form id="invoice-form">
                 <label for="totalAmt">Invoice Amount in Sats</label>
                 <input type="number" step="1000" id="invoice-amount">
-                <button id="generate-invoice-btn">Generate Invoice</button>
+                <button class="styled-btn" id="generate-invoice-btn">Generate Invoice</button>
               </form>
+          </div>
+          <div id="lightning-ledger-tab">
+            <p>Purchase sats credits using the bitcoin lightning network.</p>
+            <p>Please read <a href="/token_tos">Token Sale Terms and Conditions</a> before depositing sats.</p>
+            <form id="ledger-invoice-form">
+              <label for="totalAmt">Credit Amount in Sats</label>
+              <input type="number" step="1000" id="ledger-invoice-amount">
+              <button class="styled-btn" id="generate-ledger-invoice-btn">Credit Sats</button>
+            </form>
           </div>
         </div>
       </main>
