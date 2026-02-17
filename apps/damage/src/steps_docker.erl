@@ -128,6 +128,7 @@ step(Config, Context, <<"Then">>, _N, ?RUN_DOCKER_IMAGE_TAGGED, ScriptBin) ->
     run_docker_tagged(Config, Tag, ScriptBin, Context).
 
 run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
+    steps_utils:ensure_admin(Ctx0),
     ScriptBin = to_binary(ScriptBin0),
 
     {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
@@ -145,7 +146,7 @@ run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
     %% Note: we pass the script contents directly to sh -lc for simplicity.
     Cmd =
         iolist_to_binary([
-            "docker run --rm ",
+            "docker run --network=host --rm ",
             "-v ",
             shell_quote(OutDir),
             ":/out ",
@@ -168,6 +169,7 @@ run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
     }).
 
 build_image_from_dockerfile(Config, Src, Tag, Params, ContextRel0, Ctx0) ->
+    steps_utils:ensure_admin(Context),
     WorkDir = docker_workdir(Config),
     ok = filelib:ensure_dir(filename:join(WorkDir, "x")),
 
@@ -192,7 +194,7 @@ build_image_from_dockerfile(Config, Src, Tag, Params, ContextRel0, Ctx0) ->
     %% NOTE: Params is appended verbatim (user-controlled).
     Cmd =
         iolist_to_binary([
-            "docker build -f ",
+            "docker build --network=host -f ",
             shell_quote(DockerfilePath),
             " -t ",
             shell_quote(Tag),
@@ -247,7 +249,7 @@ shell_quote(Bin) when is_binary(Bin) ->
 
 %% ===== Helpers ===============================================================
 run_cmd(Config, Command, Context) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     DockerDir = docker_workdir(Config),
     ?LOG_INFO("steps_docker running command in ~s: ~s", [DockerDir, Command]),
     LogDir0 =
@@ -354,7 +356,7 @@ ensure_dir(Dir) ->
 
 %% Build a docker image from an inline Dockerfile contained in Raw.
 build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
-    true = steps_utils:is_admin(Context),
+    steps_utils:ensure_admin(Context),
     %% Raw is iodata() from the feature body
     BodyBin = iolist_to_binary(Raw),
     Trimmed = binary:trim(BodyBin, both, " \t\r\n"),
