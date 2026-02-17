@@ -287,6 +287,9 @@ document.addEventListener('DOMContentLoaded', () => {
 		}
 		console.log("updateWalletSummary ", address);
 
+		var damageAddr = document.getElementById("damage-address");
+		damageAddr.value = address;
+
 		try {
 			const res = await window.fetchAeAndAex9Balances(address);
 			console.log("damage balances (raw)", res);
