@@ -169,7 +169,7 @@ run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
     }).
 
 build_image_from_dockerfile(Config, Src, Tag, Params, ContextRel0, Ctx0) ->
-    steps_utils:ensure_admin(Context),
+    steps_utils:ensure_admin(Ctx0),
     WorkDir = docker_workdir(Config),
     ok = filelib:ensure_dir(filename:join(WorkDir, "x")),
 
@@ -331,7 +331,9 @@ docker_loop(Config, Parent, Acc) ->
             ?LOG_INFO("docker_loop got unexpected message: ~p", [Other]),
             docker_loop(Config, Parent, Acc)
     after ?DOCKER_LOOP_TIMEOUT ->
-        Timeout = damage_utils:strf("docker command timed out in watcher after ~p",[?DOCKER_LOOP_TIMEOUT]),
+        Timeout = damage_utils:strf("docker command timed out in watcher after ~p", [
+            ?DOCKER_LOOP_TIMEOUT
+        ]),
         ?LOG_ERROR("docker_loop timeout"),
         formatter:format(
             Config,
