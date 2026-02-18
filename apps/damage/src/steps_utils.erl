@@ -22,6 +22,7 @@
     run_ok/2
 ]).
 -define(STEP_PRINT, ["I print", String]).
+-define(STEP_SET_VAR, ["I set the variable", Variable, "to", Value]).
 
 step_dry(_Config, Context, _, _N, _, _) ->
     Context.
@@ -30,6 +31,11 @@ step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
 step(_Config, Context, _, _N, ["I wait", Seconds, "seconds"], _) ->
     timer:sleep(Seconds),
     Context;
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Set an arbitrary variable in context
+%%------------------------------------------------------------------------------
+step(_Config, Context, _, _N, ?STEP_SET_VAR, _) ->
+    maps:put(Variable, Value, Context);
 step(
     _Config,
     Context,
@@ -43,6 +49,22 @@ step(
         datestring:format(Format, calendar:universal_time()),
         Context
     );
+step(
+    Config,
+    Context,
+    K,
+    N,
+    ["I print", Variable],
+    _
+) ->
+    formatter:format(
+        Config,
+        print,
+        {K, N, ["print:"],
+            list_to_binary(damage_utils:strf("~s", [maps:get(Variable, Context, "None")])), Context,
+            success}
+    ),
+    Context;
 step(
     _Config,
     #{public_key := AeAccount} = Context,

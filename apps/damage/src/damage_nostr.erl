@@ -31,10 +31,12 @@
         test_simple/0,
         test_nip800/0,
         test_get_recent_posts/0,
+        test_get_posts_since/0,
         test_zap_note/0
     ]
 ).
 -export([get_posts_since/3]).
+-export([get_posts_since/2]).
 -export([get_public_keys/1]).
 -export([get_nostr_json/0]).
 -export([get_metadata/2]).
@@ -66,8 +68,10 @@
     parse_zap_request/1,
     construct_nip56_report/6,
     post_report/6,
-    fetch_event_by_id/2
+    fetch_event_by_id/2,
+    npub_or_hex_to_lower_hex64/1
 ]).
+-export([pp_event/1, pp_event/2, pp_events/1]).
 -import(damage_utils, [to_bin/1]).
 
 %% Define the record to store state
@@ -84,6 +88,7 @@
 -define(NOSTR_PROC(Nsec), {?MODULE, Nsec}).
 -define(NOSTR_DEFAULT_TIMEOUT, 300000).
 -define(NOSTR_DEFAULT_FANOUT, 3).
+-define(NOSTR_DEFAULT_EVENT_LIMIT, 50).
 
 %%% API Functions
 %% Start the gen_server
@@ -107,9 +112,14 @@ get_metadata(NsecKey, Npub) ->
 get_posts_since(NsecKey, Npub, Since) ->
     gen_server:call(
         gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
-        {get_posts_since, Npub, Since}
+        {get_posts_since, Npub, Since},
+        ?NOSTR_DEFAULT_TIMEOUT
     ).
 
+get_posts_since(Npub, Since) ->
+    gen_server:call(
+        gproc:lookup_local_name(?NOSTR_PROC(damage_nostr_nsec)), {get_posts_since, Npub, Since}
+    ).
 fetch_event_by_id(NsecKey, EventId) ->
     gen_server:call(gproc:lookup_local_name(?NOSTR_PROC(NsecKey)), {fetch_event_by_id, EventId}).
 post_note(NsecKey, Note) ->
@@ -239,6 +249,45 @@ handle_call(
     {ws, {text, Response}} = gun:await(ConnPid, StreamRef),
     {reply, Response, State};
 handle_call(
+    {get_posts_since, Npub, Since},
+    _From,
+    #state{conn_pid = ConnPid, streamref = StreamRef} = State
+) ->
+    Filter = #{
+        %% Kind 1 = text note
+        kinds => [1],
+        %% Posts authored by pubkey
+        authors => [npub_or_hex_to_lower_hex64(Npub)],
+        since => Since,
+        %% relay may cap; callers can slice further
+        limit => ?NOSTR_DEFAULT_EVENT_LIMIT
+    },
+
+    SubRand = crypto:strong_rand_bytes(4),
+    SubscriptionId = <<"since_", (binary:encode_hex(SubRand))/binary>>,
+
+    RequestJson = jsx:encode([<<"REQ">>, SubscriptionId, Filter]),
+    ?LOG_INFO("Fetching posts since ~p for ~p: ~p", [Since, Npub, RequestJson]),
+    ok = gun:ws_send(ConnPid, StreamRef, {text, RequestJson}),
+
+    %% Await all events until EOSE (or timeout)
+    Reply = await_events_or_eose(ConnPid, StreamRef, SubscriptionId, ?NOSTR_DEFAULT_TIMEOUT),
+    %?LOG_INFO("Fetche posts since ~p for ~p: ~p", [Since, Npub, Reply]),
+    QueriedAuthor = npub_or_hex_to_lower_hex64(Npub),
+
+    Reply1 =
+        case Reply of
+            {ok, Events0} when is_list(Events0) ->
+                {ok, filter_events_by_authors(Events0, [QueriedAuthor])};
+            Other ->
+                Other
+        end,
+
+    %% Always close subscription (best practice)
+    _ = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"CLOSE">>, SubscriptionId])}),
+
+    {reply, Reply1, State};
+handle_call(
     {get_recent_posts, Npub, Limit},
     _From,
     #state{conn_pid = ConnPid, streamref = StreamRef} = State
@@ -248,7 +297,7 @@ handle_call(
         %% Kind 1 = text note
         kinds => [1],
         %% Filter by author pubkey
-        author => [npub_or_hex_to_lower_hex64(Npub)],
+        '#p' => [npub_or_hex_to_lower_hex64(Npub)],
         %% Reverse chronological fetch starts from now
         until => Now,
         limit => Limit
@@ -258,7 +307,13 @@ handle_call(
     RequestJson = jsx:encode([<<"REQ">>, SubscriptionId, Filter]),
     ?LOG_INFO("Fetching recent posts for ~p: ~p", [Npub, RequestJson]),
     ok = gun:ws_send(ConnPid, StreamRef, {text, RequestJson}),
-    {reply, ok, State};
+    %% Await all events until EOSE (or timeout)
+    Reply = await_events_or_eose(ConnPid, StreamRef, SubscriptionId, 15000),
+
+    %% Always close subscription (best practice)
+    _ = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"CLOSE">>, SubscriptionId])}),
+
+    {reply, Reply, State};
 handle_call(
     {fetch_event_by_id, EventId},
     _From,
@@ -952,7 +1007,7 @@ npub_or_hex_to_lower_hex64(In0) ->
     case In of
         <<"npub1", _/binary>> ->
             Hex0 = to_bin(damage_nostr:decode_npub(In)),
-            {ok, lower_hex_ascii64(Hex0)};
+            lower_hex_ascii64(Hex0);
         _ ->
             case classify_key(In) of
                 {hex, 64} ->
@@ -1264,6 +1319,28 @@ post_report(NsecKey, ReportedPubKey, MaybeEventId, ReportType, Content, Opts) ->
         gproc:lookup_local_name(?NOSTR_PROC(NsecKey)),
         {post_report, ReportedPubKey, MaybeEventId, ReportType, Content, Opts}
     ).
+%% Await multiple EVENT frames for a given subscription id until EOSE.
+%% Returns {ok, [EventMap,...]} (chronological) or {error, timeout}.
+await_events_or_eose(ConnPid, StreamRef, SubId, TimeoutMs) ->
+    await_events_or_eose(ConnPid, StreamRef, SubId, TimeoutMs, []).
+
+await_events_or_eose(ConnPid, StreamRef, SubId, TimeoutMs, Acc) ->
+    receive
+        {gun_ws, ConnPid, StreamRef, {text, Msg}} ->
+            case jsx:decode(Msg, [{return_maps, true}]) of
+                [<<"EVENT">>, SubId, Event] when is_map(Event) ->
+                    await_events_or_eose(ConnPid, StreamRef, SubId, TimeoutMs, [Event | Acc]);
+                [<<"EOSE">>, SubId] ->
+                    {ok, lists:reverse(Acc)};
+                [<<"NOTICE">>, _] ->
+                    await_events_or_eose(ConnPid, StreamRef, SubId, TimeoutMs, Acc);
+                _Other ->
+                    %% ignore unrelated frames
+                    await_events_or_eose(ConnPid, StreamRef, SubId, TimeoutMs, Acc)
+            end
+    after TimeoutMs ->
+        {error, timeout}
+    end.
 
 await_event_or_eose(ConnPid, StreamRef, SubId, TimeoutMs) ->
     receive
@@ -1478,6 +1555,16 @@ test_get_recent_posts() ->
     ),
     Posts.
 
+test_get_posts_since() ->
+    {ok, Posts} = get_posts_since(
+        <<"e8b93582d5cd2085cbbd90794af81430866d1934ef26cde980f07c58ad7d4eaf">>, 1768395600
+    ),
+    ?LOG_INFO("Got posts ~p", [length(Posts)]),
+    {ok, Posts} = get_posts_since(
+        <<"npub1azuntqk4e5sgtjaajpu547q5xzrx6xf5aunvm6vq7p793ttaf6hst3etlz">>, 1768395600
+    ),
+    ?LOG_INFO("Got posts ~p", [length(Posts)]),
+    pp_events(Posts).
 test_zap_note() ->
     %post_note(damage_nostr_nsec, <<"Hello from Erlang!">>).
     NoteId =
@@ -1513,3 +1600,174 @@ test_nip05() ->
         ).
 
 test_generate_pdf() -> _DataJson = file:open("test/nostr_pdftest.json").
+%% -------------------------------------------------------------------
+%% Nostr event pretty printer
+%% -------------------------------------------------------------------
+
+pp_events(Events) when is_list(Events) ->
+    lists:foreach(
+        fun(E) ->
+            pp_event(E),
+            io:format("~n", [])
+        end,
+        Events
+    ),
+    ok.
+
+%% default: show tags but truncate content to 280 chars
+pp_event(E) ->
+    pp_event(E, #{show_tags => true, max_content => 280}).
+
+pp_event(E, Opts) when is_map(E), is_map(Opts) ->
+    Id = mget_bin(<<"id">>, E, <<"-">>),
+    PubKey = mget_bin(<<"pubkey">>, E, <<"-">>),
+    Kind = mget_int(<<"kind">>, E, -1),
+    CA = mget_int(<<"created_at">>, E, 0),
+    TsStr = ts_utc_string(CA),
+    Content0 = mget_bin(<<"content">>, E, <<>>),
+    Content = maybe_truncate(Content0, maps:get(max_content, Opts, 280)),
+
+    io:format("Nostr Event~n", []),
+    io:format("  id:         ~ts~n", [Id]),
+    io:format("  pubkey:     ~ts~n", [PubKey]),
+    io:format("  kind:       ~p~n", [Kind]),
+    io:format("  created_at: ~p (~ts)~n", [CA, TsStr]),
+
+    case maps:get(<<"sig">>, E, undefined) of
+        undefined ->
+            ok;
+        Sig when is_binary(Sig) ->
+            io:format("  sig:        ~ts~n", [Sig])
+    end,
+
+    io:format("  content:~n", []),
+    io:format("    ~ts~n", [indent_lines(Content, 4)]),
+
+    case maps:get(show_tags, Opts, true) of
+        true ->
+            Tags = maps:get(<<"tags">>, E, []),
+            io:format("  tags (~p):~n", [safe_len(Tags)]),
+            pp_tags(Tags);
+        false ->
+            ok
+    end,
+    ok;
+pp_event(Other, _Opts) ->
+    io:format("Not an event map: ~p~n", [Other]),
+    ok.
+
+pp_tags(Tags) when is_list(Tags) ->
+    lists:foreach(
+        fun(Tag) ->
+            io:format("    - ~ts~n", [tag_to_iolist(Tag)])
+        end,
+        Tags
+    ),
+    ok;
+pp_tags(_) ->
+    ok.
+
+tag_to_iolist(Tag) when is_list(Tag) ->
+    %% Tag is often a list of binaries: [<<"p">>, <<"hex">>, <<"relay">>, <<"petname">>]
+    Parts = [to_ts(P) || P <- Tag],
+    iolist_join(Parts, <<" ">>);
+tag_to_iolist(Tag) ->
+    to_ts(Tag).
+
+%% -------------------------------------------------------------------
+%% Helpers
+%% -------------------------------------------------------------------
+
+mget_bin(K, M, D) ->
+    case maps:get(K, M, D) of
+        V when is_binary(V) -> V;
+        V when is_list(V) -> list_to_binary(V);
+        V when is_atom(V) -> atom_to_binary(V, utf8);
+        V when is_integer(V) -> integer_to_binary(V);
+        V -> to_bin(V)
+    end.
+
+mget_int(K, M, D) ->
+    case maps:get(K, M, D) of
+        I when is_integer(I) -> I;
+        B when is_binary(B) ->
+            case catch binary_to_integer(B) of
+                I when is_integer(I) -> I;
+                _ -> D
+            end;
+        L when is_list(L) ->
+            case catch list_to_integer(L) of
+                I when is_integer(I) -> I;
+                _ -> D
+            end;
+        _ ->
+            D
+    end.
+
+to_ts(V) ->
+    %% for io:format "~ts"
+    to_bin(V).
+
+safe_len(L) when is_list(L) -> length(L);
+safe_len(_) -> 0.
+
+maybe_truncate(Bin, Max) when is_integer(Max), Max > 0, is_binary(Bin) ->
+    case byte_size(Bin) =< Max of
+        true ->
+            Bin;
+        false ->
+            <<Prefix:Max/binary, _/binary>> = Bin,
+            <<Prefix/binary, "..."/utf8>>
+    end;
+maybe_truncate(Bin, _) ->
+    Bin.
+
+indent_lines(Bin, Spaces) ->
+    Ind = lists:duplicate(Spaces, $\s),
+    Lines = binary:split(Bin, <<"\n">>, [global]),
+    list_to_binary(
+        iolist_join([[Ind, L] || L <- Lines], <<"\n">>)
+    ).
+
+iolist_join([], _Sep) -> [];
+iolist_join([One], _Sep) -> One;
+iolist_join([H | T], Sep) -> [H | [[Sep, X] || X <- T]].
+
+ts_utc_string(Seconds) when is_integer(Seconds), Seconds > 0 ->
+    %% Uses calendar to render roughly; if you already have time utils, swap in.
+    try
+        {{Y, M, D}, {HH, MM, SS}} = calendar:system_time_to_universal_time(Seconds, second),
+        list_to_binary(
+            io_lib:format(
+                "~4..0B-~2..0B-~2..0B ~2..0B:~2..0B:~2..0B UTC",
+                [Y, M, D, HH, MM, SS]
+            )
+        )
+    catch
+        _:_ -> <<"-">>
+    end;
+ts_utc_string(_) ->
+    <<"-">>.
+%% Normalize a hex pubkey (lowercase, binary)
+norm_hex_pk(Pk) when is_binary(Pk) ->
+    list_to_binary(string:lowercase(binary_to_list(Pk)));
+norm_hex_pk(Pk) when is_list(Pk) ->
+    norm_hex_pk(list_to_binary(Pk));
+norm_hex_pk(Pk) when is_atom(Pk) ->
+    norm_hex_pk(atom_to_binary(Pk, utf8));
+norm_hex_pk(Pk) ->
+    norm_hex_pk(iolist_to_binary(io_lib:format("~p", [Pk]))).
+
+event_author_hex(Event) when is_map(Event) ->
+    norm_hex_pk(maps:get(<<"pubkey">>, Event, <<>>));
+event_author_hex(_) ->
+    <<>>.
+
+filter_events_by_authors(Events, AuthorHexes0) ->
+    AuthorHexes = [norm_hex_pk(A) || A <- AuthorHexes0],
+    [
+        E
+     || E <- Events,
+        is_map(E),
+        lists:member(event_author_hex(E), AuthorHexes)
+    ].

@@ -73,7 +73,6 @@
 -define(STEP_SET_BASE_URL,        ["I set base URL to", Server]).
 -define(STEP_STORE_COOKIES,       ["I store cookies"]).
 -define(STEP_SET_HEADER,          ["I set", Header, "header to", Value]).
--define(STEP_SET_VAR,             ["I set the variable", Variable, "to", Value]).
 -define(STEP_NO_VERIFY_SSL,       ["I do not want to verify server certificate"]).
 -define(STEP_GIVEN_BASIC_AUTH,    ["I set BasicAuth username to ", User, "and password to", Password]).
 -define(STEP_GIVEN_OAUTH_QUERY,   ["I use query OAuth with key=", Key, "and secret=", Secret]).
@@ -584,11 +583,6 @@ step(
     _
 ) ->
     maps:put(oauth_header_auth, {Key, Secret}, Context);
-%%------------------------------------------------------------------------------
-%% (Given/When/Then/And): Set an arbitrary variable in context
-%%------------------------------------------------------------------------------
-step(_Config, Context, _, _N, ?STEP_SET_VAR, _) ->
-    maps:put(Variable, Value, Context);
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Disable TLS certificate verification for subsequent requests
 %%------------------------------------------------------------------------------
