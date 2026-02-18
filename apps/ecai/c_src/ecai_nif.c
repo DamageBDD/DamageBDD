@@ -1,122 +1,268 @@
-#include <stdio.h>
+/*
+ * ecai_nif.c
+ *
+ * Elliptic Curve AI (ECAI)
+ * Deterministic Hash-to-Curve NIF for Curve25519
+ *
+ * Implements:
+ *   - Deterministic SHA-512 seed derivation
+ *   - Try-and-increment hash-to-curve construction
+ *   - Valid Curve25519 point generation
+ *   - Stable finite-field arithmetic using GMP
+ *
+ * Copyright (c) 2025 Steven Joseph
+ *
+ * Author: Steven Joseph
+ * Project: ECAI – Elliptic Curve Artificial Intelligence
+ *
+ * License: MIT License
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ */
+
+// Replace hash_to_curve/1 with a deterministic “try-and-increment”
+// hash-to-curve for Curve25519 (Montgomery form):
+//
+//   y^2 = x^3 + A*x^2 + x   (mod p),  A=486662
+//   p = 2^255 - 19
+//
+// Algorithm:
+//   seed = SHA512(text)
+//   for counter = 0..MAX:
+//     h = SHA512(seed || counter_be32)
+//     x = (h[0..31] mod p)
+//     rhs = x^3 + A*x^2 + x mod p
+//     y = sqrt_mod_p(rhs) if exists
+//     if exists: return {X_bin32_le, Y_bin32_le, Counter}
+//
+// Notes:
+// - This yields an ACTUAL curve point (x,y) in F_p, not truncated ints.
+// - Uses p ≡ 5 (mod 8) so we can do fast sqrt for Curve25519.
+// - Returns 32-byte little-endian field elements (Curve25519 convention).
+//
+// Build requires: OpenSSL, GMP, Erlang headers.
+
 #include <string.h>
-#include <math.h>
-#include <gmp.h>
+#include <stdint.h>
 #include <openssl/sha.h>
+#include <gmp.h>
 #include "erl_nif.h"
 
 #define MAX_TEXT_SIZE 2048
-const char *P_CURVE25519 = "7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED";
+#define MAX_TRIES 4096
 
+static const char *P_CURVE25519_HEX = "7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED";
+static const unsigned long A_CURVE25519 = 486662;
 
-#include <stdio.h>
-#include <string.h>
-#include <math.h>
-#include <gmp.h>
-#include "erl_nif.h"
+// -----------------------------
+// Helpers: endian + GMP import/export
+// -----------------------------
 
+static void be32(uint32_t v, unsigned char out[4]) {
+    out[0] = (unsigned char)((v >> 24) & 0xff);
+    out[1] = (unsigned char)((v >> 16) & 0xff);
+    out[2] = (unsigned char)((v >>  8) & 0xff);
+    out[3] = (unsigned char)((v >>  0) & 0xff);
+}
 
+// Import 32 bytes as integer, treating input as big-endian.
+static void mpz_import_be32(mpz_t out, const unsigned char in[32]) {
+    mpz_import(out, 32, 1 /*most significant word first*/, 1, 1 /*big endian*/, 0, in);
+}
 
-// Map text to a Curve25519 elliptic curve point as a numerical scalar
+// Export mpz to 32 bytes little-endian (Curve25519-style field encoding).
+// Assumes 0 <= x < p fits in <= 32 bytes.
+static void mpz_export_le32(unsigned char out[32], const mpz_t x) {
+    memset(out, 0, 32);
+    size_t count = 0;
+
+    // Export as little-endian bytes.
+    // order=-1 => least significant word first
+    // endian=0 => native endian per word; but word size=1 so it's ok.
+    unsigned char tmp[32];
+    memset(tmp, 0, 32);
+
+    mpz_export(tmp, &count, -1, 1, 0, 0, x);
+
+    // mpz_export writes exactly 'count' bytes in tmp[0..count-1]
+    // already little-endian because order=-1 with size=1.
+    if (count > 32) count = 32;
+    memcpy(out, tmp, count);
+
+    // Clamp to 255 bits (optional safety; x mod p already).
+    out[31] &= 0x7F;
+}
+
+// -----------------------------
+// Field arithmetic mod p
+// -----------------------------
+
+static void fp_mod(mpz_t r, const mpz_t a, const mpz_t p) {
+    mpz_mod(r, a, p);
+    if (mpz_sgn(r) < 0) mpz_add(r, r, p);
+}
+
+// rhs = x^3 + A*x^2 + x (mod p)
+static void curve25519_rhs(mpz_t rhs, const mpz_t x, const mpz_t p) {
+    mpz_t x2, x3, t;
+    mpz_inits(x2, x3, t, NULL);
+
+    // x2 = x^2
+    mpz_mul(x2, x, x);
+    fp_mod(x2, x2, p);
+
+    // x3 = x^3
+    mpz_mul(x3, x2, x);
+    fp_mod(x3, x3, p);
+
+    // t = A*x^2
+    mpz_mul_ui(t, x2, A_CURVE25519);
+    fp_mod(t, t, p);
+
+    // rhs = x^3 + A*x^2 + x
+    mpz_add(rhs, x3, t);
+    mpz_add(rhs, rhs, x);
+    fp_mod(rhs, rhs, p);
+
+    mpz_clears(x2, x3, t, NULL);
+}
+
+// -----------------------------
+// sqrt mod p for p ≡ 5 (mod 8) (Curve25519 prime)
+// From standard Curve25519 sqrt algorithm:
+//   Let p = 2^255 - 19, so p % 8 = 5.
+//   Compute y = a^((p+3)/8) mod p.
+//   If y^2 != a, set y = y * 2^((p-1)/4) mod p.
+//   If y^2 == a, sqrt exists.
+//
+// Returns 1 if sqrt exists and sets y; else 0.
+static int fp_sqrt_curve25519(mpz_t y, const mpz_t a, const mpz_t p) {
+    mpz_t exp1, exp2, t, check, two, pow_const;
+    mpz_inits(exp1, exp2, t, check, two, pow_const, NULL);
+
+    // exp1 = (p + 3) / 8
+    mpz_add_ui(exp1, p, 3);
+    mpz_fdiv_q_ui(exp1, exp1, 8);
+
+    // y = a^exp1 mod p
+    mpz_powm(y, a, exp1, p);
+
+    // check = y^2 mod p
+    mpz_mul(check, y, y);
+    fp_mod(check, check, p);
+
+    if (mpz_cmp(check, a) != 0) {
+        // pow_const = 2^((p-1)/4) mod p
+        // exp2 = (p - 1) / 4
+        mpz_sub_ui(exp2, p, 1);
+        mpz_fdiv_q_ui(exp2, exp2, 4);
+
+        mpz_set_ui(two, 2);
+        mpz_powm(pow_const, two, exp2, p);
+
+        // y = y * pow_const mod p
+        mpz_mul(t, y, pow_const);
+        fp_mod(y, t, p);
+
+        // re-check
+        mpz_mul(check, y, y);
+        fp_mod(check, check, p);
+        if (mpz_cmp(check, a) != 0) {
+            mpz_clears(exp1, exp2, t, check, two, pow_const, NULL);
+            return 0;
+        }
+    }
+
+    mpz_clears(exp1, exp2, t, check, two, pow_const, NULL);
+    return 1;
+}
+
+// -----------------------------
+// New NIF: hash_to_curve/1
+// Returns {X_bin32, Y_bin32, Counter}
+// -----------------------------
+
 static ERL_NIF_TERM hash_to_curve(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 1) return enif_make_badarg(env);
 
     char text[MAX_TEXT_SIZE];
-    if (!enif_get_string(env, argv[0], text, sizeof(text), ERL_NIF_LATIN1))
-        return enif_make_badarg(env);
-    
-    unsigned char hash[SHA512_DIGEST_LENGTH];
-    SHA512((unsigned char *)text, strlen(text), hash);
-
-    mpz_t x, p;
-    mpz_init(x);
-    mpz_init_set_str(p, P_CURVE25519, 16);
-    mpz_import(x, 32, 1, 1, 1, 0, hash);
-    mpz_mod(x, x, p);
-
-    char x_str[65];
-    gmp_sprintf(x_str, "%Zx", x);
-
-    int numeric_x = (int)(mpz_get_ui(x) % 2147483647);  // Ensure value fits in int
-    int numeric_y = (int)(hash[0] << 8 | hash[1]);  // Approximate secondary hash
-
-    mpz_clear(x);
-    mpz_clear(p);
-
-    return enif_make_tuple2(env, 
-                                   enif_make_int(env, numeric_x),
-                                   enif_make_int(env, numeric_y));
-}
-
-static ERL_NIF_TERM curve_add(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-    if (argc != 2) return enif_make_badarg(env);
-
-    int x1, y1, x2, y2;
-    if (!enif_get_int(env, argv[0], &x1) ||
-        !enif_get_int(env, argv[1], &y1) ||
-        !enif_get_int(env, argv[2], &x2) ||
-        !enif_get_int(env, argv[3], &y2)) {
+    if (!enif_get_string(env, argv[0], text, sizeof(text), ERL_NIF_LATIN1)) {
         return enif_make_badarg(env);
     }
 
-    mpz_t p, x1_mp, y1_mp, x2_mp, y2_mp, s, x3, y3, num, denom, denom_inv;
-    mpz_init_set_str(p, P_CURVE25519, 16);
-    mpz_inits(x1_mp, y1_mp, x2_mp, y2_mp, s, x3, y3, num, denom, denom_inv, NULL);
+    // p = 2^255 - 19
+    mpz_t p, seed_mp, x, rhs, y;
+    mpz_inits(p, seed_mp, x, rhs, y, NULL);
+    mpz_init_set_str(p, P_CURVE25519_HEX, 16);
 
-    mpz_set_ui(x1_mp, x1);
-    mpz_set_ui(y1_mp, y1);
-    mpz_set_ui(x2_mp, x2);
-    mpz_set_ui(y2_mp, y2);
+    // seed = SHA512(text)
+    unsigned char seed[SHA512_DIGEST_LENGTH];
+    SHA512((unsigned char *)text, strlen(text), seed);
 
-    if (mpz_cmp(x1_mp, x2_mp) == 0 && mpz_cmp(y1_mp, y2_mp) == 0) {
-        // Point Doubling
-        mpz_mul_ui(num, x1_mp, 3);
-        mpz_add_ui(num, num, 486662);
-        mpz_mul(num, num, x1_mp);
+    unsigned char h[SHA512_DIGEST_LENGTH];
+    unsigned char ctr_be[4];
+    unsigned char x_be32[32];
 
-        mpz_mul_ui(denom, y1_mp, 2);
-    } else {
-        // Point Addition
-        mpz_sub(num, y2_mp, y1_mp);
-        mpz_sub(denom, x2_mp, x1_mp);
+    for (uint32_t ctr = 0; ctr < MAX_TRIES; ctr++) {
+        // h = SHA512(seed || counter_be32)
+        SHA512_CTX ctx;
+        SHA512_Init(&ctx);
+        SHA512_Update(&ctx, seed, sizeof(seed));
+        be32(ctr, ctr_be);
+        SHA512_Update(&ctx, ctr_be, sizeof(ctr_be));
+        SHA512_Final(h, &ctx);
+
+        // x candidate from first 32 bytes (big-endian), then mod p
+        memcpy(x_be32, h, 32);
+        mpz_import_be32(x, x_be32);
+        fp_mod(x, x, p);
+
+        // rhs = x^3 + A*x^2 + x mod p
+        curve25519_rhs(rhs, x, p);
+
+        // attempt sqrt
+        if (fp_sqrt_curve25519(y, rhs, p)) {
+            // Return x,y as 32-byte little-endian binaries + counter
+            unsigned char x_le32[32], y_le32[32];
+            mpz_export_le32(x_le32, x);
+            mpz_export_le32(y_le32, y);
+
+            ERL_NIF_TERM xb, yb;
+            unsigned char *xbp = enif_make_new_binary(env, 32, &xb);
+            unsigned char *ybp = enif_make_new_binary(env, 32, &yb);
+            memcpy(xbp, x_le32, 32);
+            memcpy(ybp, y_le32, 32);
+
+            mpz_clears(p, seed_mp, x, rhs, y, NULL);
+            return enif_make_tuple3(env, xb, yb, enif_make_uint(env, ctr));
+        }
     }
 
-    // Modular inverse for division
-    if (mpz_invert(denom_inv, denom, p) == 0) {
-        return enif_make_atom(env, "infinity");
-    }
-
-    // Compute slope
-    mpz_mul(s, num, denom_inv);
-    mpz_mod(s, s, p);
-
-    // Compute new x3 and y3
-    mpz_mul(x3, s, s);
-    mpz_sub(x3, x3, x1_mp);
-    mpz_sub(x3, x3, x2_mp);
-    mpz_mod(x3, x3, p);
-
-    mpz_sub(y3, x1_mp, x3);
-    mpz_mul(y3, s, y3);
-    mpz_sub(y3, y3, y1_mp);
-    mpz_mod(y3, y3, p);
-
-    int x3_int = mpz_get_ui(x3);
-    int y3_int = mpz_get_ui(y3);
-
-    mpz_clears(x1_mp, y1_mp, x2_mp, y2_mp, s, x3, y3, num, denom, denom_inv, NULL);
-    mpz_clear(p);
-
-    return enif_make_tuple2(env, enif_make_int(env, x3_int), enif_make_int(env, y3_int));
+    mpz_clears(p, seed_mp, x, rhs, y, NULL);
+    return enif_make_atom(env, "not_found");
 }
-
-
-
 
 // Register NIF Functions
 static ErlNifFunc nif_funcs[] = {
-    {"hash_to_curve", 1, hash_to_curve},
-    {"curve_add", 4, curve_add}
+    {"hash_to_curve", 1, hash_to_curve}
 };
 
 ERL_NIF_INIT(ecai, nif_funcs, NULL, NULL, NULL, NULL)
+
