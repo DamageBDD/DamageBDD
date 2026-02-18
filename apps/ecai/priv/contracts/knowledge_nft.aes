@@ -9,18 +9,6 @@ include "./core/IAEX141NFTReceiver.aes"
 
 contract KnowledgeNFTs =
 
-
-  // --- Metadata (keep it, but indexing uses bytes(32) args + events) ---
-  datatype metadata = MetadataIdentifier(string) | MetadataMap(map(string, string))
-  datatype metadata_type = URL | OBJECT_ID | MAP
-
-  record meta_info =
-    { name          : string
-    , symbol        : string
-    , base_url      : option(string)
-    , metadata_type : metadata_type
-    }
-
   // --- Events ---
   //
   // IMPORTANT:
@@ -30,160 +18,258 @@ contract KnowledgeNFTs =
   //   - bytes with length > 32.
   //
   // We use bytes payload (no strings), and we keep <=3 indexed fields per event.
-  datatype event =
-      // Primary mapping (3 indexed + payload):
-      // indexed: fact_key(bytes32), token_id(int), owner(address)
-      // payload: bytes (>32) containing ipfs + extras (VRLP/CBOR/etc)
-      FactMinted(bytes(32), int, address, bytes)
+    datatype event
+        // aex141 default events
+        = Transfer(address, address, int) // from, to, token_id
+        | Approval(address, address, int, string) // owner, approved_account, token_id, enabled ("true"/"false")
+        | ApprovalForAll(address, address, string) // owner, operator, approved ("true"/"false")
+        // mintable extension
+        | Mint(address, int) // to, token_id
+        // mintable_limit extension
+        | TokenLimit(int) // limit
+        | TokenLimitDecrease(int, int) // old_limit, new_limit
+        // burnable extension
+        | Burn(address, int) // owner, token_id
+        // Primary mapping (3 indexed + payload):
+        // indexed: fact_key(bytes32), token_id(int), owner(address)
+        // payload: bytes (>32) containing ipfs + extras (VRLP/CBOR/etc)
+        | FactMinted(bytes(32), int, address, bytes)
+        | FactBurned(bytes(32), int, address)
+        // Secondary key index (2 indexed + payload):
+        // indexed: key(bytes32), token_id(int)
+        // payload: same bytes (>32)
+        | KeyIndex(bytes(32), int, bytes)
 
-    | FactBurned(bytes(32), int, address)
+    datatype metadata_type = URL | OBJECT_ID | MAP
+    datatype metadata = MetadataIdentifier(string) | MetadataMap(map(string, string))
 
-      // Secondary key index (2 indexed + payload):
-      // indexed: key(bytes32), token_id(int)
-      // payload: same bytes (>32)
-    | KeyIndex(bytes(32), int, bytes)
+    record meta_info =
+        { name: string
+        , symbol: string
+        , base_url: option(string)
+        , metadata_type : metadata_type }
 
-      // Classic-ish events (optional for compatibility)
-    | Transfer(address, address, int)
-    | Approval(address, address, int, string)
-    | ApprovalForAll(address, address, bool)
-    | Mint(address, int)
-    | Burn(address, int)
-    | TokenLimit(int)
-    | TokenLimitDecrease(int, int)
 
   // --- State ---
-  record state =
-    { owner            : address
-    , meta_info        : meta_info
+    record state =
+        { owner: address
+        , meta_info: meta_info
+        , token_to_owners: map(int, address)
+        , owners_to_tokens: map(address, Set.set(int))
+        , balances: map(address, int)
+        , approvals: map(int, address)
+        , operators: map(address, map(address, bool))
+        , metadata_store: map(int, metadata)
+        , total_supply: int
+        , token_limit: int
+        , counter: int 
+        // Option B: derived token ids => no sequential enumeration; keep a set
+        , all_tokens       : Set.set(int)
+        // Canonical identity: fact_key -> token_id (O(1) dedupe)
+        , fact_index       : map(bytes(32), int)
+        , token_fact_key   : map(int, bytes(32))
+        // Store the 5 index keys per token so burn(token_id) can delete indices deterministically
+        , token_index_keys : map(int, (bytes(32) * bytes(32) * bytes(32) * bytes(32) * bytes(32)))
+ 
 
-    , token_to_owners  : map(int, address)
-    , owners_to_tokens : map(address, Set.set(int))
-    , balances         : map(address, int)
+        // On-chain indices (optional but useful): key -> token_id set
+        , subject_index    : map(bytes(32), Set.set(int))
+        , predicate_index  : map(bytes(32), Set.set(int))
+        , object_index     : map(bytes(32), Set.set(int))
+        , context_index    : map(bytes(32), Set.set(int))
+        , kind_index       : map(bytes(32), Set.set(int)) }
 
-    , approvals        : map(int, address)
-    , operators        : map(address, map(address, bool))
+    stateful entrypoint init(name: string, symbol: string, token_limit: int) =
+        require(String.length(name) >= 1, "STRING_TOO_SHORT_NAME")
+        require(String.length(symbol) >= 1, "STRING_TOO_SHORT_SYMBOL")
+        require(token_limit > 0, "TOKEN_LIMIT_INVALID")
+        Chain.event(TokenLimit(token_limit))
+        { owner = Contract.creator,
+          meta_info = { name = name, symbol = symbol, base_url = None, metadata_type = MAP },
+          token_to_owners = {},
+          owners_to_tokens = {},
+          balances = {},
+          approvals = {},
+          operators = {},
+          metadata_store = {},
+          total_supply = 0,
+          token_limit = token_limit,
+          counter = 1,
 
-    , metadata_store   : map(int, metadata)
-    , total_supply     : int
-    , token_limit      : int
+          all_tokens       = Set.new(),
+          fact_index       = {},
+          token_fact_key   = {},
+          token_index_keys = {},
 
-    // Option B: derived token ids => no sequential enumeration; keep a set
-    , all_tokens       : Set.set(int)
+          subject_index    = {},
+          predicate_index  = {},
+          object_index     = {},
+          context_index    = {},
+          kind_index       = {} }
 
-    // Canonical identity: fact_key -> token_id (O(1) dedupe)
-    , fact_index       : map(bytes(32), int)
-    , token_fact_key   : map(int, bytes(32))
+    entrypoint aex141_extensions() : list(string) =
+        ["mintable", "mintable_limit", "burnable"]
 
-    // On-chain indices (optional but useful): key -> token_id set
-    , subject_index    : map(bytes(32), Set.set(int))
-    , predicate_index  : map(bytes(32), Set.set(int))
-    , object_index     : map(bytes(32), Set.set(int))
-    , context_index    : map(bytes(32), Set.set(int))
-    , kind_index       : map(bytes(32), Set.set(int))
-    }
+    entrypoint meta_info() : meta_info =
+        state.meta_info
 
-  // ----------------
-  // Init / meta
-  // ----------------
-  stateful entrypoint init(name: string, symbol: string, token_limit: int) =
-    require(String.length(name) >= 1, "STRING_TOO_SHORT_NAME")
-    require(String.length(symbol) >= 1, "STRING_TOO_SHORT_SYMBOL")
-    require(token_limit > 0, "TOKEN_LIMIT_INVALID")
-    Chain.event(TokenLimit(token_limit))
-    { owner            = Contract.creator,
-      meta_info        = { name = name, symbol = symbol, base_url = None, metadata_type = MAP },
+    entrypoint metadata(token_id: int) : option(metadata) =
+        Map.lookup(token_id, state.metadata_store)
 
-      token_to_owners  = {},
-      owners_to_tokens = {},
-      balances         = {},
-     
-      approvals        = {},
-      operators        = {},
+    entrypoint total_supply() : int =
+        state.total_supply
+    
 
-      metadata_store   = {},
-      total_supply     = 0,
-      token_limit      = token_limit,
+    entrypoint balance(owner: address) : option(int) =
+        Map.lookup(owner, state.balances)
 
-      all_tokens       = Set.new(),
+    entrypoint owner(token_id: int) : option(address) =
+        Map.lookup(token_id, state.token_to_owners)
 
-      fact_index       = {},
-      token_fact_key   = {},
+    stateful entrypoint transfer(to: address, token_id: int, data: option(string)) =
+        let from = require_authorized(token_id)
+        require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+        remove_approval(token_id)
+        put(state{ balances[from] @balance1 = balance1 - 1
+            , balances[to = 0] @balance2 = balance2 + 1
+            , token_to_owners[token_id] = to
+            , owners_to_tokens[from] @from_tokens = Set.delete(token_id, from_tokens)
+            , owners_to_tokens[to = Set.new()] @to_tokens = Set.insert(token_id, to_tokens) })
+        switch(invoke_nft_receiver(Some(from), to, token_id, data))
+            (true, false) => abort("SAFE_TRANSFER_FAILED")
+            _ => Chain.event(Transfer(from, to, token_id))
 
-      subject_index    = {},
-      predicate_index  = {},
-      object_index     = {},
-      context_index    = {},
-      kind_index       = {}
-        }
+    stateful entrypoint transfer_to_contract(token_id: int) =
+        let to = Call.caller
+        require(Address.is_contract(to), "CALLER_MUST_BE_A_CONTRACT")
+        let from = require_authorized(token_id)
+        require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+        remove_approval(token_id)
+        put(state{ balances[from] @balance1 = balance1 - 1
+            , balances[to = 0] @balance2 = balance2 + 1
+            , token_to_owners[token_id] = to
+            , owners_to_tokens[from] @from_tokens = Set.delete(token_id, from_tokens)
+            , owners_to_tokens[to = Set.new()] @to_tokens = Set.insert(token_id, to_tokens) })
+        Chain.event(Transfer(from, to, token_id))
 
-  entrypoint meta_info() : meta_info = state.meta_info
-  entrypoint total_supply() : int = state.total_supply
-  entrypoint token_limit() : int = state.token_limit
+    stateful entrypoint approve(approved: address, token_id: int, enabled: bool) =
+        require_authorized(token_id)
+        if(enabled)
+            put(state{approvals[token_id] = approved})
+        else
+            remove_approval(token_id)
+        Chain.event(Approval(Call.caller, approved, token_id, Utils.bool_to_string(enabled)))
 
-  entrypoint owner(token_id: int) : option(address) =
-    Map.lookup(token_id, state.token_to_owners)
 
-  entrypoint balance(owner: address) : int =
-    Map.lookup_default(owner, state.balances, 0)
+    stateful entrypoint approve_all(operator: address, enabled: bool) =
+        put(state{operators @ ops = ops{[Call.caller = {}] @ op = op{[operator] = enabled}}})
+        Chain.event(ApprovalForAll(Call.caller, operator, Utils.bool_to_string(enabled)))
 
-  entrypoint metadata(token_id: int) : option(metadata) =
-    Map.lookup(token_id, state.metadata_store)
 
-  // Enumeration helpers (since ids are derived and not 1..N)
-  entrypoint all_tokens() : list(int) =
-    Set.to_list(state.all_tokens)
+    entrypoint get_approved(token_id: int) : option(address) =
+        Map.lookup(token_id, state.approvals)
 
-  entrypoint owned_tokens(owner: address) : list(int) =
-    Set.to_list(Map.lookup_default(owner, state.owners_to_tokens, Set.new()))
+    entrypoint is_approved(token_id: int, a: address) : bool =
+        switch(Map.lookup(token_id, state.approvals))
+            None => false
+            Some(o) => o == a
 
-  // ----------------
-  // Approvals / operators
-  // ----------------
-  stateful entrypoint approve(approved: address, token_id: int, enabled: bool) =
-    let owner = require_token_owner(token_id)
-    require(Call.caller == owner || is_approved_for_all(owner, Call.caller), "NOT_AUTHORIZED")
-    if(enabled)
-      put(state{ approvals[token_id] = approved })
-    else
-      put(state{ approvals = Map.delete(token_id, state.approvals) })
-    Chain.event(Approval(owner, approved, token_id, "true"))
+    entrypoint is_approved_for_all(owner: address, operator: address) : bool =
+        switch(Map.lookup(owner, state.operators))
+            None => false
+            Some(ops) =>
+                switch(Map.lookup(operator, ops))
+                    None => false
+                    Some(v) => v
 
-  stateful entrypoint approve_all(operator: address, enabled: bool) =
-    put(state{ operators @ ops = ops{[Call.caller = {}] @ op = op{[operator] = enabled}} })
-    Chain.event(ApprovalForAll(Call.caller, operator, enabled))
+    // mintable extension
 
-  entrypoint get_approved(token_id: int) : option(address) =
-    Map.lookup(token_id, state.approvals)
+    stateful entrypoint mint(to: address, metadata: option(metadata), data: option(string)) : int =  
+        require_contract_owner()
+        if(state.token_limit == state.total_supply)
+            abort("TOKEN_LIMIT_REACHED")
+        switch(metadata)
+            None => abort("NO_METADATA_PROVIDED")
+            Some(MetadataIdentifier(_)) => abort("NOT_METADATA_MAP")
+            Some(v) =>
+                let token_id = state.counter
+                put(state{ counter = state.counter + 1
+                    , total_supply = state.total_supply + 1
+                    , balances[to = 0] @balance = balance + 1
+                    , token_to_owners[token_id] = to
+                    , owners_to_tokens[to = Set.new()] @owners_tokens = Set.insert(token_id, owners_tokens)
+                    , metadata_store[token_id] = v })
+                switch(invoke_nft_receiver(None, to, token_id, data))
+                    (true, false) => abort("SAFE_TRANSFER_FAILED")
+                    _ => Chain.event(Mint(to, token_id))
+                token_id
 
-  entrypoint is_approved_for_all(owner: address, operator: address) : bool =
-    switch(Map.lookup(owner, state.operators))
-      None => false
-      Some(ops) =>
-        switch(Map.lookup(operator, ops))
-          None => false
-          Some(v) => v
+    // mintable_limit extension
 
-  // ----------------
-  // Transfers
-  // ----------------
-  stateful entrypoint transfer(to: address, token_id: int, data: option(string)) =
-    let from = require_authorized(token_id)
-    require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
-    clear_approval(token_id)
+    entrypoint token_limit() : int =
+        state.token_limit
 
-    put(state{
-        balances[from] @b1 = b1 - 1
-      , balances[to = 0] @b2 = b2 + 1
-      , token_to_owners[token_id] = to
-      , owners_to_tokens[from] @fts = Set.delete(token_id, fts)
-      , owners_to_tokens[to = Set.new()] @tts = Set.insert(token_id, tts)
-        })
+    stateful entrypoint decrease_token_limit(new_limit: int) =
+        require(new_limit > 0, "TOKEN_LIMIT_INVALID")
+        require_contract_owner()
+        let old_limit = state.token_limit
+        if(new_limit > old_limit)
+            abort("TOKEN_LIMIT_INCREASE_NOT_ALLOWED")
+        if(new_limit == old_limit)
+            abort("NO_CHANGE_PROVIDED")
+        if(new_limit < state.total_supply)
+            abort("MORE_TOKENS_ALREADY_IN_EXISTENCE")
+        put(state{token_limit = new_limit})
+        Chain.event(TokenLimitDecrease(old_limit, new_limit))
 
-    // safe receiver call if contract
-    switch(invoke_nft_receiver(Some(from), to, token_id, data))
-      (true, false) => abort("SAFE_TRANSFER_FAILED")
-      _ => Chain.event(Transfer(from, to, token_id))
+    // burnable extension (implemented below with index cleanup)
+
+    // not part of AEX-141
+
+    entrypoint get_owned_tokens(owner: address) : list(int) =
+        Set.to_list(Map.lookup_default(owner, state.owners_to_tokens, Set.new()))
+
+    // internal helper functions
+
+    function require_contract_owner() =
+        require(Call.caller == state.owner, "ONLY_CONTRACT_OWNER_CALL_ALLOWED")
+
+    function require_authorized(token_id: int) : address =
+        let owner = switch(owner(token_id))
+            None => abort("TOKEN_NOT_EXISTS")
+            Some(v) => v
+        require(Call.caller == owner || is_approved(token_id, Call.caller) || is_approved_for_all(owner, Call.caller), "ONLY_OWNER_APPROVED_OR_OPERATOR_CALL_ALLOWED")
+        owner
+
+    function is_token_owner(token_id: int, a: address) : bool =
+        switch(Map.lookup(token_id, state.token_to_owners))
+            None => false
+            Some(o) => o == a
+
+    stateful function remove_approval(token_id: int) =
+        if(Map.member(token_id, state.approvals))
+            put(state{ approvals = Map.delete(token_id, state.approvals) })
+
+    stateful function burn_internal(owner: address, token_id: int) =
+        put(state{ balances[owner] @owner_balance = owner_balance - 1
+            , total_supply = state.total_supply - 1
+            , token_to_owners = Map.delete(token_id, state.token_to_owners)
+            , owners_to_tokens[owner] @owners_tokens = Set.delete(token_id, owners_tokens) })
+
+    function invoke_nft_receiver(from: option(address), to: address, token_id: int, data: option(string)) : (bool * bool) =
+        if(Address.is_contract(to))
+            let c = Address.to_contract(to)
+            switch(c.on_aex141_received(from, token_id, data, protected = true) : option(bool))
+                None => (true, false)
+                Some(val) => (true, val)
+        else
+            (false, false)
+    // Enumeration helpers (since ids are derived and not 1..N)
+    entrypoint all_tokens() : list(int) =
+        Set.to_list(state.all_tokens)
+
+    entrypoint owned_tokens(owner: address) : list(int) =
+        Set.to_list(Map.lookup_default(owner, state.owners_to_tokens, Set.new()))
 
   // ----------------
   // Option B mint: derived token_id + bytes32 indices + payload bytes
@@ -195,238 +281,226 @@ contract KnowledgeNFTs =
   // - s/p/o/c/k keys: bytes32 compact keys for indexing (sha256(vrlp([atom])))
   // - payload: bytes > 32 (VRLP/CBOR) containing ipfs hash + optional extras (point, raw strings, etc.)
   // - md_opt: optional on-chain metadata map (small). Indexing does NOT depend on it.
-  //
-  stateful entrypoint mint_derived(
-    to       : address,
-    token_id : int,
-    fact_key : bytes(32),
-    s_key    : bytes(32),
-    p_key    : bytes(32),
-    o_key    : bytes(32),
-    c_key    : bytes(32),
-    k_key    : bytes(32),
-    md_opt   : option(metadata),
-    payload  : bytes
-    ) : int =
-    require_contract_owner()
-    require(token_id > 0, "TOKEN_ID_INVALID")
-    require(Bytes.size(payload) > 32, "PAYLOAD_TOO_SMALL") // must be payload field, not indexed
+    stateful entrypoint mint_derived(
+        to       : address,
+        token_id : int,
+        fact_key : bytes(32),
+        s_key    : bytes(32),
+        p_key    : bytes(32),
+        o_key    : bytes(32),
+        c_key    : bytes(32),
+        k_key    : bytes(32),
+        md_opt   : option(metadata),
+        payload  : bytes ) : int =
+        require_contract_owner()
+        require(token_id > 0, "TOKEN_ID_INVALID")
+        require(Bytes.size(payload) > 32, "PAYLOAD_TOO_SMALL") // must be payload field, not indexed
 
-    if(state.total_supply >= state.token_limit)
-      abort("TOKEN_LIMIT_REACHED")
+        if(state.total_supply >= state.token_limit)
+            abort("TOKEN_LIMIT_REACHED")
 
-    // idempotent: if the fact already exists, return existing id
-    switch(Map.lookup(fact_key, state.fact_index))
-      Some(existing_id) => existing_id
-      None =>
-        // collision guard: derived token_id already in use for a different fact
-        require(!Map.member(token_id, state.token_to_owners), "TOKEN_ID_COLLISION")
+        // idempotent: if the fact already exists, return existing id
+        switch(Map.lookup(fact_key, state.fact_index))
+          Some(existing_id) => existing_id
+          None =>
+            // collision guard: derived token_id already in use for a different fact
+            require(!Map.member(token_id, state.token_to_owners), "TOKEN_ID_COLLISION")
 
-        // mint base ownership
-        put(state{
-            total_supply = state.total_supply + 1
-          , balances[to = 0] @bal = bal + 1
-          , token_to_owners[token_id] = to
-          , owners_to_tokens[to = Set.new()] @ots = Set.insert(token_id, ots)
-          , all_tokens @ats = Set.insert(token_id, ats)
+            // mint base ownership
+            put(state{
+                total_supply = state.total_supply + 1
+              , balances[to = 0] @bal = bal + 1
+              , token_to_owners[token_id] = to
+              , owners_to_tokens[to = Set.new()] @ots = Set.insert(token_id, ots)
+              , all_tokens @ats = Set.insert(token_id, ats)
 
-          , fact_index[fact_key] = token_id
-          , token_fact_key[token_id] = fact_key
-            })
+              , fact_index[fact_key] = token_id
+              , token_fact_key[token_id] = fact_key
+              , token_index_keys[token_id] = (s_key, p_key, o_key, c_key, k_key)
+                })
 
-        // optional metadata store
-        switch(md_opt)
-          None => ()
-          Some(md) => put(state{ metadata_store[token_id] = md })
+            // optional metadata store
+            switch(md_opt)
+              None => ()
+              Some(md) => put(state{ metadata_store[token_id] = md })
 
-        // update on-chain indices (optional but fast)
-        index_add_all(token_id, s_key, p_key, o_key, c_key, k_key)
+            // update on-chain indices (optional but fast)
+            index_add_all(token_id, s_key, p_key, o_key, c_key, k_key)
 
-        // emit middleware-friendly events
-        Chain.event(FactMinted(fact_key, token_id, to, payload))
+            // emit middleware-friendly events
+            Chain.event(FactMinted(fact_key, token_id, to, payload))
 
-        // one event per secondary key (so each key is indexed in middleware topics)
-        Chain.event(KeyIndex(s_key, token_id, payload))
-        Chain.event(KeyIndex(p_key, token_id, payload))
-        Chain.event(KeyIndex(o_key, token_id, payload))
-        Chain.event(KeyIndex(c_key, token_id, payload))
-        Chain.event(KeyIndex(k_key, token_id, payload))
+            // one event per secondary key (so each key is indexed in middleware topics)
+            Chain.event(KeyIndex(s_key, token_id, payload))
+            Chain.event(KeyIndex(p_key, token_id, payload))
+            Chain.event(KeyIndex(o_key, token_id, payload))
+            Chain.event(KeyIndex(c_key, token_id, payload))
+            Chain.event(KeyIndex(k_key, token_id, payload))
 
-        // optional “classic” mint event
-        Chain.event(Mint(to, token_id))
+            // optional “classic” mint event
+            Chain.event(Mint(to, token_id))
 
-        token_id
+            token_id
 
-  stateful entrypoint mint_index_job(
-    to           : address,
-    token_id     : int,
-    job_key      : bytes(32),   // canonical job identity
-    dataset_key  : bytes(32),   // e.g. sha256(wikipedia_dump)
-    chunk_key    : bytes(32),   // sha256(chunk_id)
-    kind_key     : bytes(32),   // sha256("ecai:index:v1")
-    meta         : metadata,
-    payload      : bytes
-    ) : int =
-    require(!Map.member(job_key, state.fact_index), "JOB_ALREADY_EXISTS")
-  
-    put(state{
-      fact_index[job_key] = token_id,
-      token_fact_key[token_id] = job_key,
-      token_to_owners[token_id] = to,
-      owners_to_tokens[to] @ts = Set.insert(token_id, ts),
-      balances[to] @b = b + 1,
-      metadata_store[token_id] = meta,
-      total_supply = state.total_supply + 1
-        })
-  
-    // events for middleware indexing
-    Chain.event(FactMinted(job_key, token_id, to, payload))
-    Chain.event(KeyIndex(dataset_key, token_id, payload))
-    Chain.event(KeyIndex(chunk_key, token_id, payload))
-    Chain.event(KeyIndex(kind_key, token_id, payload))
-  
-    token_id
+    stateful entrypoint mint_index_job(
+      to           : address,
+      token_id     : int,
+      job_key      : bytes(32),   // canonical job identity
+      dataset_key  : bytes(32),   // e.g. sha256(wikipedia_dump)
+      chunk_key    : bytes(32),   // sha256(chunk_id)
+      kind_key     : bytes(32),   // sha256("ecai:index:v1")
+      meta         : metadata,
+      payload      : bytes
+      ) : int =
+      require_contract_owner()
+      require(token_id > 0, "TOKEN_ID_INVALID")
+      require(Bytes.size(payload) > 32, "PAYLOAD_TOO_SMALL")
+    
+      if(state.total_supply >= state.token_limit)
+        abort("TOKEN_LIMIT_REACHED")
+    
+      // idempotent by job_key
+      switch(Map.lookup(job_key, state.fact_index))
+        Some(existing_id) => existing_id
+        None =>
+          // collision guard: token already exists for a different key
+          require(!Map.member(token_id, state.token_to_owners), "TOKEN_ID_COLLISION")
+    
+          put(state{
+              fact_index[job_key] = token_id
+            , token_fact_key[token_id] = job_key
+            , token_to_owners[token_id] = to
+            , owners_to_tokens[to = Set.new()] @ts = Set.insert(token_id, ts)
+            , balances[to = 0] @b = b + 1
+            , metadata_store[token_id] = meta
+            , total_supply = state.total_supply + 1
+            , all_tokens @ats = Set.insert(token_id, ats)
+            // store keys so burn() can clean indices deterministically
+            , token_index_keys[token_id] = (dataset_key, chunk_key, kind_key, kind_key, kind_key)
+              })
+    
+          // events for middleware indexing
+          Chain.event(FactMinted(job_key, token_id, to, payload))
+          Chain.event(KeyIndex(dataset_key, token_id, payload))
+          Chain.event(KeyIndex(chunk_key, token_id, payload))
+          Chain.event(KeyIndex(kind_key, token_id, payload))
+    
+          // optional “classic” mint event
+          Chain.event(Mint(to, token_id))
+    
+          token_id
+    
+    
+        // ----------------
+        // Burn (cleans indices + emits event)
+        // ----------------
+    stateful entrypoint burn(token_id: int) =
+      let _owner = require_authorized(token_id)
+      // keys are stored at mint-time so we can clean indices deterministically
+      let keys = switch(Map.lookup(token_id, state.token_index_keys))
+        None => abort("MISSING_INDEX_KEYS")
+        Some(v) => v
+      let (s_key, p_key, o_key, c_key, k_key) = keys
+      burn_with_keys(token_id, s_key, p_key, o_key, c_key, k_key)
+
+    // Burn that can remove key indices efficiently
+    stateful entrypoint burn_with_keys(
+      token_id: int,
+      s_key   : bytes(32),
+      p_key   : bytes(32),
+      o_key   : bytes(32),
+      c_key   : bytes(32),
+      k_key   : bytes(32)
+        ) =
+      let owner = require_authorized(token_id)
+      clear_approval(token_id)
+
+      let fk = switch(Map.lookup(token_id, state.token_fact_key))
+        None => abort("MISSING_FACT_KEY")
+        Some(v) => v
+
+      index_del_all(token_id, s_key, p_key, o_key, c_key, k_key)
+
+      put(state{
+          balances[owner] @bal = bal - 1
+        , total_supply = state.total_supply - 1
+
+        , token_to_owners = Map.delete(token_id, state.token_to_owners)
+        , owners_to_tokens[owner] @ots = Set.delete(token_id, ots)
+        , all_tokens @ats = Set.delete(token_id, ats)
+
+        , approvals = Map.delete(token_id, state.approvals)
+        , metadata_store = Map.delete(token_id, state.metadata_store)
+
+        , token_fact_key = Map.delete(token_id, state.token_fact_key)
+        , token_index_keys = Map.delete(token_id, state.token_index_keys)
+        , fact_index = Map.delete(fk, state.fact_index)
+          })
+
+      Chain.event(FactBurned(fk, token_id, owner))
+      Chain.event(Burn(owner, token_id))
+
+    // ----------------
+    // ECAI / middleware-friendly lookups
+    // ----------------
+    entrypoint token_of_fact_key(fact_key: bytes(32)) : option(int) =
+      Map.lookup(fact_key, state.fact_index)
+
+    entrypoint metadata_of_fact_key(fact_key: bytes(32)) : option(metadata) =
+      switch(Map.lookup(fact_key, state.fact_index))
+        None => None
+        Some(token_id) => Map.lookup(token_id, state.metadata_store)
+
+    // On-chain indices (optional)
+    entrypoint tokens_by_subject_key(k: bytes(32)) : list(int) =
+      Set.to_list(Map.lookup_default(k, state.subject_index, Set.new()))
+    entrypoint tokens_by_predicate_key(k: bytes(32)) : list(int) =
+      Set.to_list(Map.lookup_default(k, state.predicate_index, Set.new()))
+    entrypoint tokens_by_object_key(k: bytes(32)) : list(int) =
+      Set.to_list(Map.lookup_default(k, state.object_index, Set.new()))
+    entrypoint tokens_by_context_key(k: bytes(32)) : list(int) =
+      Set.to_list(Map.lookup_default(k, state.context_index, Set.new()))
+    entrypoint tokens_by_kind_key(k: bytes(32)) : list(int) =
+      Set.to_list(Map.lookup_default(k, state.kind_index, Set.new()))
+
+    // ----------------
+    // Internal helpers
+    // ----------------
+    function require_token_owner(token_id: int) : address =
+      switch(Map.lookup(token_id, state.token_to_owners))
+        None => abort("TOKEN_NOT_EXISTS")
+        Some(o) => o
 
 
-  // Deprecated legacy mint (keep to force callers onto mint_derived)
-  stateful entrypoint mint(_to: address, _metadata: option(metadata), _data: option(string)) : int =
-    abort("DEPRECATED_USE_MINT_DERIVED")
+    stateful function clear_approval(token_id: int) =
+      if(Map.member(token_id, state.approvals))
+        put(state{ approvals = Map.delete(token_id, state.approvals) })
 
-  // ----------------
-  // Burn (cleans indices + emits event)
-  // ----------------
-  stateful entrypoint burn(token_id: int) =
-    let owner = require_authorized(token_id)
-    clear_approval(token_id)
+    // --- Index set manipulation for bytes32 keys ---
+    function idx_add(idx: map(bytes(32), Set.set(int)), key: bytes(32), token_id: int) : map(bytes(32), Set.set(int)) =
+      let cur = Map.lookup_default(key, idx, Set.new())
+      idx{[key] = Set.insert(token_id, cur)}
 
-    let fk = switch(Map.lookup(token_id, state.token_fact_key))
-      None => abort("MISSING_FACT_KEY")
-      Some(v) => v
+    function idx_del(idx: map(bytes(32), Set.set(int)), key: bytes(32), token_id: int) : map(bytes(32), Set.set(int)) =
+      let cur  = Map.lookup_default(key, idx, Set.new())
+      let cur2 = Set.delete(token_id, cur)
+      if(Set.size(cur2) == 0) Map.delete(key, idx) else idx{[key] = cur2}
 
-    // remove from indices: we need keys; easiest is to require callers to keep them off-chain.
-    // BUT since we store indices on-chain keyed by bytes32, we can’t reconstruct which keys were used
-    // unless we also store them. So: store them inside metadata_store OR accept burn_with_keys.
-    //
-    // To keep burn clean and deterministic, we provide burn_with_keys(token_id, s,p,o,c,k).
-    abort("USE_BURN_WITH_KEYS")
+    stateful function index_add_all(token_id: int, s: bytes(32), p: bytes(32), o: bytes(32), c: bytes(32), k: bytes(32)) =
+      put(state{
+          subject_index   = idx_add(state.subject_index, s, token_id)
+        , predicate_index = idx_add(state.predicate_index, p, token_id)
+        , object_index    = idx_add(state.object_index, o, token_id)
+        , context_index   = idx_add(state.context_index, c, token_id)
+        , kind_index      = idx_add(state.kind_index, k, token_id)
+          })
 
-  // Burn that can remove key indices efficiently
-  stateful entrypoint burn_with_keys(
-    token_id: int,
-    s_key   : bytes(32),
-    p_key   : bytes(32),
-    o_key   : bytes(32),
-    c_key   : bytes(32),
-    k_key   : bytes(32)
-      ) =
-    let owner = require_authorized(token_id)
-    clear_approval(token_id)
-
-    let fk = switch(Map.lookup(token_id, state.token_fact_key))
-      None => abort("MISSING_FACT_KEY")
-      Some(v) => v
-
-    index_del_all(token_id, s_key, p_key, o_key, c_key, k_key)
-
-    put(state{
-        balances[owner] @bal = bal - 1
-      , total_supply = state.total_supply - 1
-
-      , token_to_owners = Map.delete(token_id, state.token_to_owners)
-      , owners_to_tokens[owner] @ots = Set.delete(token_id, ots)
-      , all_tokens @ats = Set.delete(token_id, ats)
-
-      , approvals = Map.delete(token_id, state.approvals)
-      , metadata_store = Map.delete(token_id, state.metadata_store)
-
-      , token_fact_key = Map.delete(token_id, state.token_fact_key)
-      , fact_index = Map.delete(fk, state.fact_index)
-        })
-
-    Chain.event(FactBurned(fk, token_id, owner))
-    Chain.event(Burn(owner, token_id))
-
-  // ----------------
-  // ECAI / middleware-friendly lookups
-  // ----------------
-  entrypoint token_of_fact_key(fact_key: bytes(32)) : option(int) =
-    Map.lookup(fact_key, state.fact_index)
-
-  entrypoint metadata_of_fact_key(fact_key: bytes(32)) : option(metadata) =
-    switch(Map.lookup(fact_key, state.fact_index))
-      None => None
-      Some(token_id) => Map.lookup(token_id, state.metadata_store)
-
-  // On-chain indices (optional)
-  entrypoint tokens_by_subject_key(k: bytes(32)) : list(int) =
-    Set.to_list(Map.lookup_default(k, state.subject_index, Set.new()))
-  entrypoint tokens_by_predicate_key(k: bytes(32)) : list(int) =
-    Set.to_list(Map.lookup_default(k, state.predicate_index, Set.new()))
-  entrypoint tokens_by_object_key(k: bytes(32)) : list(int) =
-    Set.to_list(Map.lookup_default(k, state.object_index, Set.new()))
-  entrypoint tokens_by_context_key(k: bytes(32)) : list(int) =
-    Set.to_list(Map.lookup_default(k, state.context_index, Set.new()))
-  entrypoint tokens_by_kind_key(k: bytes(32)) : list(int) =
-    Set.to_list(Map.lookup_default(k, state.kind_index, Set.new()))
-
-  // ----------------
-  // Internal helpers
-  // ----------------
-  function require_contract_owner() =
-    require(Call.caller == state.owner, "ONLY_CONTRACT_OWNER_CALL_ALLOWED")
-
-  function require_token_owner(token_id: int) : address =
-    switch(Map.lookup(token_id, state.token_to_owners))
-      None => abort("TOKEN_NOT_EXISTS")
-      Some(o) => o
-
-  function require_authorized(token_id: int) : address =
-    let owner = require_token_owner(token_id)
-    let caller = Call.caller
-    let approved = switch(Map.lookup(token_id, state.approvals))
-      None => false
-      Some(a) => a == caller
-    require(caller == owner || approved || is_approved_for_all(owner, caller), "NOT_AUTHORIZED")
-    owner
-
-  stateful function clear_approval(token_id: int) =
-    if(Map.member(token_id, state.approvals))
-      put(state{ approvals = Map.delete(token_id, state.approvals) })
-
-  function invoke_nft_receiver(from: option(address), to: address, token_id: int, data: option(string)) : (bool * bool) =
-    if(Address.is_contract(to))
-      let c = Address.to_contract(to)
-      switch(c.on_aex141_received(from, token_id, data, protected = true) : option(bool))
-        None => (true, false)
-        Some(val) => (true, val)
-    else
-      (false, false)
-
-  // --- Index set manipulation for bytes32 keys ---
-  function idx_add(idx: map(bytes(32), Set.set(int)), key: bytes(32), token_id: int) : map(bytes(32), Set.set(int)) =
-    let cur = Map.lookup_default(key, idx, Set.new())
-    idx{[key] = Set.insert(token_id, cur)}
-
-  function idx_del(idx: map(bytes(32), Set.set(int)), key: bytes(32), token_id: int) : map(bytes(32), Set.set(int)) =
-    let cur  = Map.lookup_default(key, idx, Set.new())
-    let cur2 = Set.delete(token_id, cur)
-    if(Set.size(cur2) == 0) Map.delete(key, idx) else idx{[key] = cur2}
-
-  stateful function index_add_all(token_id: int, s: bytes(32), p: bytes(32), o: bytes(32), c: bytes(32), k: bytes(32)) =
-    put(state{
-        subject_index   = idx_add(state.subject_index, s, token_id)
-      , predicate_index = idx_add(state.predicate_index, p, token_id)
-      , object_index    = idx_add(state.object_index, o, token_id)
-      , context_index   = idx_add(state.context_index, c, token_id)
-      , kind_index      = idx_add(state.kind_index, k, token_id)
-        })
-
-  stateful function index_del_all(token_id: int, s: bytes(32), p: bytes(32), o: bytes(32), c: bytes(32), k: bytes(32)) =
-    put(state{
-        subject_index   = idx_del(state.subject_index, s, token_id)
-      , predicate_index = idx_del(state.predicate_index, p, token_id)
-      , object_index    = idx_del(state.object_index, o, token_id)
-      , context_index   = idx_del(state.context_index, c, token_id)
-      , kind_index      = idx_del(state.kind_index, k, token_id)
-        })
+    stateful function index_del_all(token_id: int, s: bytes(32), p: bytes(32), o: bytes(32), c: bytes(32), k: bytes(32)) =
+      put(state{
+          subject_index   = idx_del(state.subject_index, s, token_id)
+        , predicate_index = idx_del(state.predicate_index, p, token_id)
+        , object_index    = idx_del(state.object_index, o, token_id)
+        , context_index   = idx_del(state.context_index, c, token_id)
+        , kind_index      = idx_del(state.kind_index, k, token_id)
+          })
 

@@ -44,9 +44,10 @@ step(
     ["I store current time string in", Variable, "with format", Format],
     _
 ) ->
+    {ok, DateString} = datestring:format(Format, calendar:universal_time()),
     maps:put(
         Variable,
-        datestring:format(Format, calendar:universal_time()),
+        DateString,
         Context
     );
 step(

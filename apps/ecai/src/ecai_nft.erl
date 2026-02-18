@@ -105,13 +105,13 @@ mint_knowledge(
     %% Use MetadataMap and provide a map(string,string).
     MetaDataMap = #{
         "v" => "3",
-        "ipfs" => binary_to_list(IpfsHash),
-        "bh" => binary_to_list(binary:encode_hex(FactKey)),
-        "s" => binary_to_list(binary:encode_hex(SKey)),
-        "p" => binary_to_list(binary:encode_hex(PKey)),
-        "o" => binary_to_list(binary:encode_hex(OKey)),
-        "c" => binary_to_list(binary:encode_hex(CKey)),
-        "k" => binary_to_list(binary:encode_hex(KKey))
+        "ipfs" => IpfsHash,
+        "bh" => binary:encode_hex(FactKey),
+        "s" => binary:encode_hex(SKey),
+        "p" => binary:encode_hex(PKey),
+        "o" => binary:encode_hex(OKey),
+        "c" => binary:encode_hex(CKey),
+        "k" => binary:encode_hex(KKey)
     },
     MetaVariant = {"MetadataMap", MetaDataMap},
     MdOpt = {"Some", MetaVariant},
@@ -122,12 +122,12 @@ mint_knowledge(
             [
                 AeAccount,
                 TokenId,
-                binary_to_list(FactKey),
-                binary_to_list(SKey),
-                binary_to_list(PKey),
-                binary_to_list(OKey),
-                binary_to_list(CKey),
-                binary_to_list(KKey),
+                FactKey,
+                SKey,
+                PKey,
+                OKey,
+                CKey,
+                KKey,
                 MdOpt,
                 Payload
             ]
@@ -308,21 +308,23 @@ mint_index_job(
             {price, Price}
         ])
     ),
-
-    Meta = #{
-        <<"type">> => <<"ecai_index_job">>,
-        <<"dataset">> => binary:encode_hex(DatasetKey),
-        <<"chunk">> => binary:encode_hex(ChunkKey),
-        <<"price">> => integer_to_binary(Price)
+    MetaMap = #{
+        "type" => "ecai_index_job",
+        "dataset" => binary_to_list(binary:encode_hex(DatasetKey)),
+        "chunk" => binary_to_list(binary:encode_hex(ChunkKey)),
+        "price" => integer_to_list(Price)
     },
+    MetaVariant = {"MetadataMap", MetaMap},
 
     damage_ae:contract_call_dry(
         KeyPair,
         ct_id(#{}),
         contract_path("knowledge_nft"),
         "mint_index_job",
-        [AeAccount, TokenId, JobKey, DatasetKey, ChunkKey, KindKey, Meta, Payload]
+        [AeAccount, TokenId, JobKey, DatasetKey, ChunkKey, KindKey, MetaVariant, Payload]
     ).
+
+
 
 mint_index_jobs_from_chunks(KeyPair, DatasetId, Chunks, Price) ->
     lists:foreach(

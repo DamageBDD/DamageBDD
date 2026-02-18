@@ -1,3 +1,3 @@
 -define(KNOWLEDGE_NFT_CONTRACT,
-        "ct_26mzuxpUPEhvV8c3dvRKnDo4BaNxpXXNpNYfytVMnpDC9TBNa8"
+        "ct_2CnpPzcwQjNLGEEfBELyqzWm3Pgetffihpm4QJsGDYdr5zMT38"
 ).
