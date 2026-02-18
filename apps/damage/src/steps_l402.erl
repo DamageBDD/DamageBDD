@@ -59,10 +59,7 @@ step(
     Mac = resolve_var(Context0, MacTpl),
     Pre = resolve_var(Context0, PreTpl),
     Auth = iolist_to_binary(["L402 ", Mac, ":", Pre]),
-    set_header(Context0, <<"authorization">>, Auth);
-%% Fallback
-step(_Config, Context0, _GWT, _N, _Tokens, _Body) ->
-    maps:put(fail, <<"steps_l402: unknown step">>, Context0).
+    set_header(Context0, <<"authorization">>, Auth).
 
 %% -------------------------------------------------------------------
 %% Extract L402 WWW-Authenticate challenge from last response

@@ -283,9 +283,7 @@ step(
             ReceiptsOutVar
         ],
         Body
-    );
-step(_Config, Context, _Step, _Line, _Tokens, _Body) ->
-    maps:put(fail, <<"steps_nostr_payout: no matching step">>, Context).
+    ).
 
 %% -------------------------------------------------------------------
 %% Internals
