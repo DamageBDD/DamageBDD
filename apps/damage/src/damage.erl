@@ -230,6 +230,32 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                 end,
             EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
             {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+
+            %% Decide Result early (you already do this later)
+            Result =
+                case maps:get(fail, FinalContext0, none) of
+                    none -> <<"success">>;
+                    R0 when is_list(R0) -> list_to_binary(R0);
+                    R1 -> R1
+                end,
+
+            %% Use a stable “completed_at” in seconds for reaping
+            CompletedAtSec = round(date_util:now_to_seconds(os:timestamp())),
+
+            %% Write meta BEFORE IPFS add so it is included in ReportHash
+            ok = write_run_meta(
+                RunDir,
+                #{
+                    v => 1,
+                    run_id => list_to_binary(RunId),
+                    completed_at => CompletedAtSec,
+                    start_time_hires => StartTimestamp,
+                    end_time_hires => EndTimestamp,
+                    execution_time_hires => (EndTimestamp - StartTimestamp),
+                    result => Result
+                }
+            ),
+
             {ok, DamageApi} = application:get_env(damage, api_url),
             {ok, HashList} = damage_ipfs:add({directory, RunDir}),
             [#{<<"Hash">> := ReportHash}] =
@@ -278,12 +304,6 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                             ?RESULT_STATUS_PREFIX_FAIL ++
                                 integer_to_list(round(date_util:now_to_seconds(os:timestamp())))
                         )
-                end,
-            Result =
-                case maps:get(fail, FinalContext, none) of
-                    none -> "success";
-                    Result0 when is_list(Result0) -> list_to_binary(Result0);
-                    Result1 -> Result1
                 end,
             RunRecord =
                 #{
@@ -722,6 +742,11 @@ check_setup() ->
                         ok = secrets:encrypt_store(smtp_pass, SmtpPassword)
                 end
         end.
+%% Write run metadata into the run directory so it becomes part of the IPFS report hash.
+write_run_meta(RunDir, MetaMap) ->
+    %% Keep it stable + easy to parse.
+    Bin = jsx:encode(MetaMap),
+    file:write_file(filename:join(RunDir, "run.meta"), Bin).
 %% -------------------------------------------------------------------
 %% Catch-all step ban (no fallbacks / catchalls allowed)
 %% -------------------------------------------------------------------
