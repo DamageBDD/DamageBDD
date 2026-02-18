@@ -296,7 +296,7 @@ to_html(Req, #{action := reset_password} = State) ->
                             }
                         ),
                     {Body, Req, State};
-                Error ->
+                _Error ->
                     {<<"Invalid reset password link. Please try again.">>, Req, State}
             end
     end;
@@ -323,7 +323,7 @@ to_html(Req, #{action := confirm} = State) ->
                     }
                 ),
             {Body, Req, State};
-        Error ->
+        _Error ->
             {<<"Invalid confirmation link. Please try again.">>, Req, State}
     end.
 
@@ -370,7 +370,7 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
     ToEmail = {maps:get(full_name, Meta, <<"">>), Email},
     TextBody = damage_utils:load_template("signup_email.txt.mustache", Context),
     HtmlBody = damage_utils:load_template("signup_email.html.mustache", Context),
-    Result = damage_utils:send_email(
+    {ok, _Pid} = damage_utils:send_email(
         ToEmail,
         <<"DamageBDD Account SignUp">>,
         TextBody,
@@ -470,7 +470,7 @@ do_post_action(
             <<ApiUrl0/binary, "/accounts/reset_password?", Query/binary>>,
             Data
         ),
-    Result = damage_utils:send_email(
+    {ok, _Pid} = damage_utils:send_email(
         {maps:get(full_name, Data, <<"">>), Email},
         <<"DamageBDD Account Reset Password">>,
         damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
@@ -521,7 +521,7 @@ do_post_action(
     end;
 do_post_action(create, #{email := Email} = Data) when is_atom(Email) ->
     do_post_action(create, maps:put(email, atom_to_binary(Email), Data));
-do_post_action(create, #{email := Email} = Data) ->
+do_post_action(create, #{email := Email} = _Data) ->
     case damage_utils:is_valid_email(Email) of
         true ->
             case send_account_confirm_email(#{email => Email}) of
@@ -548,7 +548,7 @@ from_html(Req, #{action := authenticate} = State) ->
                     )
                 ),
                 State};
-        {error, Message} ->
+        {error, _Message} ->
             {
                 stop,
                 cowboy_req:reply(

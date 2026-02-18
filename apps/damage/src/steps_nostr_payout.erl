@@ -420,9 +420,9 @@ list_posts_since_date_step_test_() ->
         OutVar
     ],
 
-    Now = erlang:system_time(seconds),
+    %Now = erlang:system_time(seconds),
     %% event inside window
-    E1 = #{<<"kind">> => 1, <<"created_at">> => Now - 60, <<"id">> => <<"e1">>},
+    %E1 = #{<<"kind">> => 1, <<"created_at">> => Now - 60, <<"id">> => <<"e1">>},
 
     Since0 = <<"2026-01-15">>,
     Since = parse_since(Since0),
