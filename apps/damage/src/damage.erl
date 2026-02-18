@@ -28,6 +28,7 @@
     [execute_data/3, execute_file/3, execute/3, execute/2, execute_feature/8]
 ).
 -export([check_setup/0]).
+-export([parse_file/1]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -363,14 +364,16 @@ execute_feature(
     Scenarios
 ) ->
     init_logging(Config),
-     %% BAN catch-all steps globally
+    %% BAN catch-all steps globally
     case ensure_no_catchall_steps(Config) of
         ok ->
             ok;
         {error, Errors} ->
             %% Convert to a fail context and stop executing scenarios.
             ?LOG_ERROR("Catch-all step(s) banned: ~p", [Errors]),
-            formatter:format(Config, error, {LineNo, io_lib:format("Catch-all steps banned: ~p", [Errors])}),
+            formatter:format(
+                Config, error, {LineNo, io_lib:format("Catch-all steps banned: ~p", [Errors])}
+            ),
             deinit_logging(Config),
             %% mark failure in context so run is red
             throw({catchall_steps_banned, Errors})
@@ -753,11 +756,11 @@ write_run_meta(RunDir, MetaMap) ->
 
 -define(STEP_CATCHALL_CACHE_KEY, {damage, step_catchall_checked}).
 get_module_md5(M) ->
-    try M:module_info(md5)
+    try
+        M:module_info(md5)
     catch
         _:_ -> undefined
     end.
-
 
 ensure_no_catchall_steps(Config) ->
     Modules = damage_utils:loaded_steps(),
@@ -770,56 +773,55 @@ ensure_no_catchall_steps(Config) ->
 
     {Cache1, Errors} =
         lists:foldl(
-          fun(M, {AccCache, AccErrs}) ->
-              Md5 = get_module_md5(M),
-              case maps:get(M, AccCache, undefined) of
-                  Md5 ->
-                      %% unchanged → skip re-check
-                      {AccCache, AccErrs};
-                  _ ->
-                      case check_module_for_catchall_steps(Config, M) of
-                          ok ->
-                              {maps:put(M, Md5, AccCache), AccErrs};
-                          {error, Why} ->
-                              {maps:put(M, Md5, AccCache), [{M, Why} | AccErrs]}
-                      end
-              end
-          end,
-          {Cache0, []},
-          Modules
+            fun(M, {AccCache, AccErrs}) ->
+                Md5 = get_module_md5(M),
+                case maps:get(M, AccCache, undefined) of
+                    Md5 ->
+                        %% unchanged → skip re-check
+                        {AccCache, AccErrs};
+                    _ ->
+                        case check_module_for_catchall_steps(Config, M) of
+                            ok ->
+                                {maps:put(M, Md5, AccCache), AccErrs};
+                            {error, Why} ->
+                                {maps:put(M, Md5, AccCache), [{M, Why} | AccErrs]}
+                        end
+                end
+            end,
+            {Cache0, []},
+            Modules
         ),
 
     persistent_term:put(CacheKey, Cache1),
 
     case Errors of
         [] -> ok;
-        _  -> {error, lists:reverse(Errors)}
+        _ -> {error, lists:reverse(Errors)}
     end.
-
 
 check_module_for_catchall_steps(Config, M) ->
     %% If module isn't loaded yet, code:which/1 still works.
     case code:which(M) of
         non_existing ->
-            ok; %% ignore
+            %% ignore
+            ok;
         BeamPath ->
             case beam_lib:chunks(BeamPath, [abstract_code]) of
                 {ok, {M, [{abstract_code, {raw_abstract_v1, Forms}}]}} ->
                     case find_catchall_in_forms(Forms) of
                         none -> ok;
-                        {found, FunName, Line} ->
-                            {error, {catchall_step_banned, FunName, Line}}
+                        {found, FunName, Line} -> {error, {catchall_step_banned, FunName, Line}}
                     end;
                 {ok, {M, [{abstract_code, no_abstract_code}]}} ->
                     %% Policy choice:
                     case proplists:get_value(strict_no_catchall, Config, true) of
-                        true  -> {error, {no_debug_info, M}};
+                        true -> {error, {no_debug_info, M}};
                         false -> ok
                     end;
                 {error, Reason} ->
                     %% If we can't inspect, choose strict or warn.
                     case proplists:get_value(strict_no_catchall, Config, true) of
-                        true  -> {error, {beam_inspect_failed, Reason}};
+                        true -> {error, {beam_inspect_failed, Reason}};
                         false -> ok
                     end
             end
@@ -827,37 +829,42 @@ check_module_for_catchall_steps(Config, M) ->
 
 find_catchall_in_forms(Forms) ->
     %% Look for step/6 and step_dry/6, and any clause with 6 var patterns.
-    case lists:filtermap(
-           fun
-               ({function, Line, step, 6, Clauses}) ->
-                   case clause_list_has_catchall(Clauses) of
-                       true -> {true, {found, step, Line}};
-                       false -> false
-                   end;
-               %({function, Line, step_dry, 6, Clauses}) ->
-               %    case clause_list_has_catchall(Clauses) of
-               %        true -> {true, {found, step_dry, Line}};
-               %        false -> false
-               %    end;
-               (_) ->
-                   false
-           end,
-           Forms
-         ) of
+    case
+        lists:filtermap(
+            fun
+                ({function, Line, step, 6, Clauses}) ->
+                    case clause_list_has_catchall(Clauses) of
+                        true -> {true, {found, step, Line}};
+                        false -> false
+                    end;
+                %({function, Line, step_dry, 6, Clauses}) ->
+                %    case clause_list_has_catchall(Clauses) of
+                %        true -> {true, {found, step_dry, Line}};
+                %        false -> false
+                %    end;
+                (_) ->
+                    false
+            end,
+            Forms
+        )
+    of
         [Hit | _] -> Hit;
         [] -> none
     end.
 
 clause_list_has_catchall(Clauses) ->
     lists:any(
-      fun
-          ({clause, _Line, Pats, _Guards, _Body}) when is_list(Pats), length(Pats) =:= 6 ->
-              lists:all(fun is_var_pat/1, Pats);
-          (_) ->
-              false
-      end,
-      Clauses).
+        fun
+            ({clause, _Line, Pats, _Guards, _Body}) when is_list(Pats), length(Pats) =:= 6 ->
+                lists:all(fun is_var_pat/1, Pats);
+            (_) ->
+                false
+        end,
+        Clauses
+    ).
 
-is_var_pat({var, _, '_'}) -> true;         %% underscore
-is_var_pat({var, _, _Name}) -> true;       %% any variable
+%% underscore
+is_var_pat({var, _, '_'}) -> true;
+%% any variable
+is_var_pat({var, _, _Name}) -> true;
 is_var_pat(_) -> false.

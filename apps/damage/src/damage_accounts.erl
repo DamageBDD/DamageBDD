@@ -297,7 +297,6 @@ to_html(Req, #{action := reset_password} = State) ->
                         ),
                     {Body, Req, State};
                 Error ->
-                    ?LOG_DEBUG("Error validating ~p", [Error]),
                     {<<"Invalid reset password link. Please try again.">>, Req, State}
             end
     end;
@@ -325,7 +324,6 @@ to_html(Req, #{action := confirm} = State) ->
                 ),
             {Body, Req, State};
         Error ->
-            ?LOG_DEBUG("Error validating ~p", [Error]),
             {<<"Invalid confirmation link. Please try again.">>, Req, State}
     end.
 
@@ -363,7 +361,6 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
 
     Data = maps:put(allowance, Allowance, maps:put(password, AuthTokenEncrypted, Meta)),
     Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
-    ?LOG_DEBUG("AuthToken sent ~p", [Query]),
     Context =
         maps:put(
             <<"password_reset_url">>,
@@ -379,7 +376,6 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
         TextBody,
         HtmlBody
     ),
-    ?LOG_DEBUG("Email sent ~p ~p", [ToEmail, Result]),
     {
         ok,
         <<
@@ -468,7 +464,6 @@ do_post_action(
 
     Data = maps:put(password, AuthTokenEncrypted, #{email => Email}),
     Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
-    ?LOG_DEBUG("AuthToken sent ~p", [Query]),
     Ctxt =
         maps:put(
             <<"password_reset_url">>,
@@ -481,7 +476,6 @@ do_post_action(
         damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
         damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
     ),
-    ?LOG_DEBUG("Email sent ~p", [Result]),
     {200, #{
         status => <<"ok">>,
         message =>
@@ -530,7 +524,6 @@ do_post_action(create, #{email := Email} = Data) when is_atom(Email) ->
 do_post_action(create, #{email := Email} = Data) ->
     case damage_utils:is_valid_email(Email) of
         true ->
-            ?LOG_DEBUG("account  ~p", [Data]),
             case send_account_confirm_email(#{email => Email}) of
                 {ok, Message} -> {201, #{status => <<"ok">>, message => Message}};
                 {error, Message} -> {400, #{status => <<"failed">>, message => Message}};
@@ -542,7 +535,6 @@ do_post_action(create, #{email := Email} = Data) ->
 
 from_html(Req, #{action := authenticate} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
-    ?LOG_DEBUG(" form data: ~p ", [Params]),
     Username = proplists:get_value(<<"username">>, Params),
     Password = proplists:get_value(<<"password">>, Params),
     case authenticate_user(Username, Password) of
@@ -557,7 +549,6 @@ from_html(Req, #{action := authenticate} = State) ->
                 ),
                 State};
         {error, Message} ->
-            ?LOG_DEBUG("Auth failed ~p", [Message]),
             {
                 stop,
                 cowboy_req:reply(
@@ -568,7 +559,6 @@ from_html(Req, #{action := authenticate} = State) ->
     end;
 from_html(Req, #{action := create} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
-    ?LOG_DEBUG(" form data: ~p ", [Params]),
     case proplists:get_value(<<"email">>, Params) of
         undefined ->
             Response = cowboy_req:set_resp_body(
@@ -656,7 +646,6 @@ from_json(Req, #{action := Action} = State) ->
                     Req0
                 ),
             cowboy_req:reply(400, Response),
-            ?LOG_DEBUG("post response 400 ~p ", [Response]),
             {stop, Response, State};
         {'EXIT', {badarg, _}} ->
             Response =
@@ -667,7 +656,6 @@ from_json(Req, #{action := Action} = State) ->
                     Req0
                 ),
             cowboy_req:reply(400, Response),
-            ?LOG_DEBUG("post response 400 ~p ", [Response]),
             {stop, Response, State};
         Data0 ->
             case do_post_action(Action, Data0) of
@@ -725,7 +713,7 @@ delete_resource(Req, #{action := invoices} = State) ->
             Deleted =
                 lists:foldl(
                     fun(RHash, Acc) ->
-                        ?LOG_DEBUG(
+                        ?LOG_INFO(
                             "cancelling invoice ~p ~p",
                             [maps:get(path_info, Req), RHash]
                         ),
@@ -764,4 +752,4 @@ delete_account(Email) ->
     end.
 
 notify_user(Username, Message) ->
-    ?LOG_DEBUG("NotifyUser ~p, Message: ~p", [Username, Message]).
+    ?LOG_INFO("NotifyUser ~p, Message: ~p", [Username, Message]).
