@@ -133,8 +133,8 @@ start_phase(start_trails_http, _StartType, []) ->
                 stream_handlers =>
                     [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h],
                 middlewares => [cowboy_router, throttling_middleware, cowboy_handler],
-                idle_timeout => 600000,
-                request_timeout => 600000
+                idle_timeout => 90_000_000,
+                request_timeout => 90_000_000
             }
         ),
     metrics:init(),
