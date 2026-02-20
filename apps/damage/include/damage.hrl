@@ -7,11 +7,6 @@
 % Accounts ---
 -define(MAX_DAMAGE_INVOICE, 5000000).
 -define(MIN_DAMAGE_INVOICE, 1000).
--define(INVOICE_BUCKET, {<<"Default">>, <<"Invoices">>}).
--define(USER_BUCKET, {<<"Default">>, <<"Users">>}).
--define(AEACCOUNT_BUCKET, {<<"Default">>, <<"AeAccounts">>}).
--define(CONFIRM_TOKEN_BUCKET, {<<"Default">>, <<"ConfirmTokens">>}).
--define(INVOICES_SINCE, 30).
 -define(DAMAGE_USER_WALLET_MINIMUM_BALANCE, 4000).
 -define(AE_USER_WALLET_MINIMUM_BALANCE, 1000000000000000000).
 -define(DAMAGE_INITIAL_HITS, 10000000000).

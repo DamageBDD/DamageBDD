@@ -1258,13 +1258,11 @@ handle_call(
         end,
     ReqJson = jsx:encode(ReqMap),
 
-    ?LOG_DEBUG("sending req head ~p ~p", [Headers, ReqJson]),
     %% Send the HTTP POST request
     StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
     {ok, Response} =
         case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
-            {response, fin, Status, _RespHeaders} ->
-                ?LOG_DEBUG("Got fin ~p", [Status]),
+            {response, fin, _Status, _RespHeaders} ->
                 no_data;
             {response, nofin, _Status, _RespHeaders} ->
                 gun:await_body(ConnPid, StreamRef);

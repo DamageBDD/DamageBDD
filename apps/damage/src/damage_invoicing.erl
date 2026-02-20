@@ -24,6 +24,8 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
+-define(INVOICES_SINCE, 30).
+
 -define(TRAILS_TAG, ["Damage Invoices"]).
 
 trails() ->
