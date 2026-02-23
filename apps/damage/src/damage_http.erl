@@ -18,7 +18,7 @@
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
 -export([trails/0]).
--import(damage_utils, [float_to_full_integer/1]).
+-import(damage_utils, [float_to_full_integer/1, to_bin/1]).
 
 -define(TRAILS_TAG, ["Executing Tests"]).
 
@@ -158,10 +158,7 @@ is_authorized(Req, State0) ->
                     {true, Req, maps:put(public_key, NodeAeAccount, State)};
                 {error, _} ->
                     %% No/invalid token → challenge
-                    Scope = iolist_to_binary(["/", atom_to_list(maps:get(action, State0, unknown))]),
-                    PriceMsat = application:get_env(damage, l402_price_msat, 1000),
-                    {Req1, _} = damage_l402:challenge(Req, Scope, PriceMsat),
-                    {stop, Req1, State}
+                    generate_l402_invoice(Req, State)
             end;
         {nostr, Token} ->
             #{pubkey := Npub} =
@@ -170,7 +167,8 @@ is_authorized(Req, State0) ->
             ?LOG_INFO("Got Nostr auth ~p", [NostrEvent]),
             case nostrlib:verify(NostrEvent) of
                 true -> damage_ae:contract_call_admin_account("resolve_npub", [Npub]);
-                _ -> {{false, ?AUTH_HEADER}, Req, State}
+                _ ->
+                    generate_l402_invoice(Req, State)
             end;
         {oauth, Token} ->
             case damage_access_token:verify_token(Token) of
@@ -207,11 +205,88 @@ is_authorized(Req, State0) ->
                     end;
                 Other ->
                     ?LOG_ERROR("Unexpected auth ~p", [Other]),
-                    {{false, ?AUTH_HEADER}, Req, State}
+                    generate_l402_invoice(Req, State)
             end;
         {error, _} ->
-            {{false, ?AUTH_HEADER}, Req, State}
+            generate_l402_invoice(Req, State)
     end.
+generate_l402_invoice(Req0, State) ->
+    Action = maps:get(action, State, unknown),
+    Scope = iolist_to_binary(["/", atom_to_list(Action)]),
+
+    case Action of
+        execute_feature ->
+            %% Only attempt dynamic pricing if a feature payload was submitted.
+            %% We read the body here (auth phase) because we are going to STOP with 402 anyway.
+            case cowboy_req:has_body(Req0) of
+                true ->
+                    {ok, FeatureBin, Req1} = cowboy_req:read_body(Req0),
+                    case dry_run_cost_msat(FeatureBin, State, Req1) of
+                        {ok, AmountMsat, DryRec} ->
+                            Body = jsx:encode(#{
+                                                status => <<"payment_required">>,
+                                                scope => Scope,
+                                                amount_msat => AmountMsat,
+                                                dry_run => DryRec
+                                               }),
+                            {Req2, _} =
+                                damage_l402:challenge_with_body(Req1, Scope, AmountMsat, Body),
+                            {stop, Req2, State};
+                        {error, _Why} ->
+                            %% fallback static price if dry-run fails
+                            static_l402(Req1, State, Scope)
+                    end;
+                false ->
+                    static_l402(Req0, State, Scope)
+            end;
+
+        _ ->
+            static_l402(Req0, State, Scope)
+    end.
+
+static_l402(Req, State, Scope) ->
+    PriceMsat = application:get_env(damage, l402_price_msat, 1000),
+    {Req1, _} = damage_l402:challenge(Req, Scope, PriceMsat),
+    {stop, Req1, State}.
+
+
+
+dry_run_cost_msat(FeatureBin, State, Req) ->
+
+        #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
+    Context0 = #{
+        feature => FeatureBin,
+        stream => nostream,
+        concurrency => 1,
+        color_formatter => false,
+public_key => to_bin(NodePublicKey)
+    },
+    case execute_bdd(Context0, State, Req, [{dry_run, true}]) of
+        {200, #{status := <<"ok">>, cost := Cost, feature_hash := FeatureHash} = DryRec} ->
+            %% Convert DAMAGE cost -> sats -> msat
+?LOG_DEBUG("cost ~p", [Cost/?DAMAGE_DECIMALS]),
+            Sats = price_feed:damage_to_sats(damage:hits_to_damage(Cost)),
+            MinSats = application:get_env(damage, l402_min_sats, 1),
+            Sats1 = max(MinSats, Sats),
+            AmountMsat = Sats1 ,
+
+            %% Return dry-run + explicit keys client wants
+            DryOut =
+                DryRec#{
+                    cost_damage => Cost,
+                    feature_hash => FeatureHash,
+                    sats => Sats1,
+                    amount_msat => AmountMsat
+                },
+
+            {ok, AmountMsat, DryOut};
+
+        {200, Other} ->
+            {error, {dry_run_not_ok, Other}};
+        {Code, Err} ->
+            {error, {dry_run_failed, Code, Err}}
+    end.
+
 
 content_types_provided(Req, State) ->
     {
