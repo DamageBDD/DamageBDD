@@ -137,6 +137,14 @@ init([]) ->
                 type => worker,
                 modules => [damage_aemdw]
             },
+            #{
+                id => damage_l402,
+                start => {damage_l402, start_link, []},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_l402]
+            },
 
             %% 4) supervisors that may create pools/workers relying on the above
             #{

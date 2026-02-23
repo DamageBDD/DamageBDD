@@ -9,6 +9,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
+-export([damage_to_sats/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -33,6 +34,29 @@ start_link() ->
 get_prices() ->
     gen_server:call(?MODULE, get_price).
 
+damage_to_sats(Damage0) ->
+    Damage =
+        case Damage0 of
+            I when is_integer(I) -> I * 1.0;
+            F when is_float(F) -> F;
+            B when is_binary(B) ->
+                try binary_to_float(B) catch _:_ -> list_to_float(binary_to_list(B)) end;
+            L when is_list(L) ->
+                try list_to_float(L) catch _:_ -> list_to_float(L) end;
+            _ ->
+                0.0
+        end,
+
+    {BTCUSDT, DamageUSDT} =
+        case get_prices() of
+            {ok, #{btc_usdt := B0, damage_usdt := D}} -> {B0, D};
+            _ -> {112000.0, 0.0117}
+        end,
+
+    %% DAMAGE -> USDT -> BTC -> sats
+    USDT = Damage * DamageUSDT,
+    BTC = USDT / BTCUSDT,
+    round(BTC * 1.0e8).
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
