@@ -12,9 +12,9 @@ LDLIBS  ?= -lcrypto
 BIN     := sandwich
 SRC     := sandwich.c
 
-OWNER   ?= "npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc"
-NAME    ?= "BLT"
-NOTES   ?= "extra mayo"
+OWNER   ?= npub1zmg3gvpasgp3zkgceg62yg8fyhqz9sy3dqt45kkwt60nkctyp9rs9wyppc
+NAME    ?= BLT
+NOTES   ?= extra mayo
 
 .PHONY: all clean init demo me a
 

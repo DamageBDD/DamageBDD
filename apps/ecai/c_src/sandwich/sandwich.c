@@ -1,5 +1,5 @@
 /*
- * ecai_sandwich.c
+ * sandwich.c
  *
  * "not even with sudo unless sandwich.c is present"
  *
@@ -8,15 +8,15 @@
  *  - Retrieve them by deterministic lookup (no probabilistic AI, no guessing).
  *
  * Build:
- *   cc -O2 -Wall -Wextra -pedantic ecai_sandwich.c -o ecai_sandwich -lcrypto
+ *   cc -O2 -Wall -Wextra -pedantic sandwich.c -o sandwich -lcrypto
  *
  * Examples:
- *   ./ecai_sandwich init
- *   ./ecai_sandwich mint --owner "npub1..." --name "BLT" --notes "extra mayo"
- *   ./ecai_sandwich mint --owner "npub1..." --name "Vegemite" --notes "be brave"
- *   ./ecai_sandwich query --owner "npub1..."
- *   ./ecai_sandwich query --name "BLT"
- *   ./ecai_sandwich query --id 1a2b3c
+ *   ./sandwich init
+ *   ./sandwich mint --owner "npub1..." --name "BLT" --notes "extra mayo"
+ *   ./sandwich mint --owner "npub1..." --name "Vegemite" --notes "be brave"
+ *   ./sandwich query --owner "npub1..."
+ *   ./sandwich query --name "BLT"
+ *   ./sandwich query --id 1a2b3c
  *
  * Ledger format (one line per token):
  *   v1|token_id_hex|owner|name|notes|curve_point_hex
