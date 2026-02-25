@@ -21,11 +21,13 @@
     run/2,
     run_ok/2
 ]).
--define(STEP_PRINT, ["I print", String]).
+-define(STEP_PRINT, ["I print the variable", Variable]).
 -define(STEP_SET_VAR, ["I set the variable", Variable, "to", Value]).
 
 step_dry(_Config, Context, _, _N, _, _) ->
-    Context.
+    Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
+    ?LOG_DEBUG("step_dry ~p", [Spend]),
+    maps:put(step_spend, Spend, Context).
 step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
     maps:put(Variable, list_to_binary(uuid:to_string(uuid:uuid4())), Context);
 step(_Config, Context, _, _N, ["I wait", Seconds, "seconds"], _) ->
@@ -55,14 +57,14 @@ step(
     Context,
     K,
     N,
-    ["I print", Variable],
+    ?STEP_PRINT,
     _
 ) ->
     formatter:format(
         Config,
         print,
         {K, N, ["print:"],
-            list_to_binary(damage_utils:strf("~s", [maps:get(Variable, Context, "None")])), Context,
+            list_to_binary(damage_utils:strf("~p", [maps:get(Variable, Context, "None")])), Context,
             success}
     ),
     Context;
@@ -145,15 +147,7 @@ step(
                 true -> Context;
                 false -> set_fail(Context, {not_executable, Path})
             end
-    end;
-step(Config, Context, _, N, ?STEP_PRINT, _) ->
-    formatter:format(
-        Config,
-        print,
-        {<<"Then">>, N, ["Response Body:"], list_to_binary(damage_utils:strf("~s", [String])),
-            Context, success}
-    ),
-    Context.
+    end.
 
 is_admin(Context) when is_map(Context) ->
     is_admin(maps:get(public_key, Context, undefined));
