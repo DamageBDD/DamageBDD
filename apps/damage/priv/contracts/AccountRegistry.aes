@@ -4,15 +4,22 @@ contract AccountRegistry =
 
   record state = {
     owner     : address,
-    contracts : map(string, address)
-  }
+    contracts : map(string, address),
+    names     : list(string)}
 
   stateful entrypoint init() : state =
     { owner = Call.caller,
-      contracts = {} }
+      contracts = {},
+      names = [] }
 
   function require_owner() =
     require(Call.caller == state.owner, "Only the account owner can modify this registry")
+
+  // local reverse (compiler 6-safe)
+  function reverse(xs : list(string), acc : list(string)) : list(string) =
+    switch(xs)
+      []      => acc
+      x :: xs => reverse(xs, x :: acc)
 
   ///
   /// Register a named contract for this account.
@@ -20,7 +27,9 @@ contract AccountRegistry =
   stateful entrypoint register_contract(name: string, contract_id: address) : bool =
     require_owner()
     require(!Map.member(name, state.contracts), "Contract name already exists")
-    put(state{contracts[name] = contract_id})
+    put(state{
+      contracts[name] = contract_id,
+      names = name :: state.names})
     true
 
   ///
@@ -40,13 +49,14 @@ contract AccountRegistry =
     state.contracts[name]
 
   ///
-  /// List all registered contract names
+  /// List all registered contract names (in insertion order)
   ///
   entrypoint get_registered_names() : list(string) =
-    Map.keys(state.contracts)
+    reverse(state.names, [])
 
   ///
   /// Get the full contract mapping
   ///
   entrypoint get_all_contracts() : map(string, address) =
     state.contracts
+

@@ -29,6 +29,8 @@
 ).
 -export([check_setup/0]).
 -export([parse_file/1]).
+-export([hits_to_damage/1]).
+-import(damage_utils, [to_bin/1]).
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -290,7 +292,9 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                         feature_title => FeatureTitle,
                         public_key => maps:get(public_key, Context),
                         report_dir =>
-                            string:join([DamageApi, "reports", ReportHash], "/")
+                            to_bin(
+                                string:join([DamageApi, "reports", binary_to_list(ReportHash)], "/")
+                            )
                     }
                 ),
             ResultStatus =
@@ -306,6 +310,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                                 integer_to_list(round(date_util:now_to_seconds(os:timestamp())))
                         )
                 end,
+            PublicKey = maps:get(public_key, Context),
             RunRecord =
                 #{
                     run_id => list_to_binary(RunId),
@@ -322,15 +327,16 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                             false -> false
                         end,
                     result => Result,
-                    public_key => maps:get(public_key, Context),
+                    public_key => PublicKey,
                     result_status => ResultStatus,
                     token_contract => maps:get(token_contract, FinalContext),
                     node_public_key => maps:get(node_public_key, FinalContext),
-                    dry_run => maps:get(dry_run, FinalContext, false),
-                    cost => maps:get(cost, FinalContext, 0),
+                    dry_run => proplists:get_value(dry_run, Config, false),
+                    cost => damage_ae:get_spend(PublicKey),
                     spend => maps:get(step_spend, FinalContext, 0)
                 },
             damage_webhooks:trigger_webhooks(FinalContext),
+            %?LOG_DEBUG("RunRecord ~p", [RunRecord]),
             RunRecord;
         {error, enont} = Err ->
             ?LOG_ERROR("Feature file ~p not found.", [Filename]),
@@ -566,9 +572,11 @@ execute_step_module(
             )
     end.
 
+hits_to_damage(Hits) ->
+    Hits / 100000000.
 step_spend(Context) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
-    %?LOG_DEBUG("Step spend ~p", [Spend]),
+    ?LOG_DEBUG("Step spend ~p", [Spend]),
     damage_ae:spend(maps:get(public_key, Context), Spend),
     maps:remove(step_spend, Context).
 

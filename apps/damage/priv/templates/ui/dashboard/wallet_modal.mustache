@@ -7,15 +7,78 @@
         <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
       </header>
       <main class="modal__content" id="modal-1-content">
-        <div id="walletSelectorWrap">
-          <select id="walletSelector" aria-label="Select Wallet">
-            <optgroup label="Wallet Type">
-              <option value="custodial">Custodial (email)</option>
-              <option value="extension">Browser Wallet (extension)</option>
-            </optgroup>
-          </select>
+        <select id="walletSelector">
+          <optgroup label="Wallet Type">
+            <option value="custodial">Custodial (email)</option>
+            <option value="extension">Browser Wallet (AE Extension)</option>
+          </optgroup>
+        </select>
+        <ul data-token-tabs>
+          <li><a data-tabby-default href="#ae-wallet-tab">🟠 Aeternity Wallet</a></li>
+          <li><a href="#lightning-wallet-tab">⚡ Lightning Wallet</a></li>
+        </ul>
+        <div id="ae-wallet-tab">
+
+          <h3>Your AE Address</h3>
+
+          <div class="click-copy">
+            <input type="text" id="damage-address" readonly>
+            <span class="copy-icon" onclick="copyToClipboard('damage-address')"> ⧉</span>
+          </div>
+
+          <div id="qrcode-damage"></div>
+
+          <hr>
+
+          <h3>Transfer DAMAGE Tokens</h3>
+
+          <form id="transfer-out-form">
+            <input type="text"
+                   id="damage-transfer-out-address"
+                   placeholder="Recipient AE address (ak_...)">
+
+            <input type="number"
+                   step="1"
+                   id="damage-transfer-out-amount"
+                   placeholder="Amount">
+
+            <button class="styled-btn">
+              Transfer Tokens
+            </button>
+          </form>
 
         </div>
+        <div id="lightning-wallet-tab">
+
+          <h3>Buy DAMAGE Tokens (Lightning)</h3>
+
+          <form id="invoice-form">
+            <label>Amount in Sats</label>
+            <input type="number" step="10" id="invoice-amount">
+            <button class="styled-btn" id="generate-invoice-btn">Generate Lightning Invoice</button>
+          </form>
+
+          <hr>
+
+          <h3>Deposit Sats Credits</h3>
+
+          <form id="ledger-invoice-form">
+            <label>Credit Amount (Sats)</label>
+            <input type="number" step="10" id="ledger-invoice-amount">
+            <button class="styled-btn" id="generate-ledger-invoice-btn">Generate Credit Invoice</button>
+          </form>
+
+          <hr>
+
+          <h3>Nostr Wallet Connect (NWC)</h3>
+
+          <button id="open-nwc-modal-btn"
+                  class="styled-btn auth-primary">
+            ⚡ Generate NWC Session
+          </button>
+
+        </div>
+        <!--
         <div id="purchase-damage-tabs">
           <ul data-token-tabs>
             <li><a data-tabby-default href="#damage-address-tab">Address</a></li>
@@ -60,8 +123,30 @@
               <input type="number" step="1000" id="ledger-invoice-amount">
               <button class="styled-btn" id="generate-ledger-invoice-btn">Credit Sats</button>
             </form>
+            <div class="nwc-wallet-block">
+              <h3 class="auth-subtitle">Lightning Wallet (NWC)</h3>
+
+              <button id="open-nwc-modal-btn"
+                      class="modal__btn modal__btn-primary styled-btn auth-primary"
+                      aria-label="Create NWC connection"
+                      title="Create Nostr Wallet Connect session">
+                ⚡ Generate NWC Session.
+              </button>
+
+              <p class="auth-hint">
+                Generate a secure Nostr Wallet Connect (NWC) session.
+              </p>
+
+              <p class="auth-hint">
+                Compatible with:
+                <strong>Damus</strong>,
+                <strong>Amethyst</strong>,
+                <strong>Alby Hub</strong>
+              </p>
+            </div>
           </div>
         </div>
+        -->
       </main>
       <footer class="modal__footer">
         <!--<button class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Close this dialog window">Close</button>-->

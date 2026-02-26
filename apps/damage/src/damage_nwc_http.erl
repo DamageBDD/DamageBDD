@@ -69,50 +69,32 @@ content_types_accepted(Req, State) ->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
 %% --- Auth: reuse Damage token style (Bearer / cookie) similar to damage_http.erl ---
-get_access_token(Req) ->
-    case cowboy_req:header(?AUTH_HEADER, Req) of
-        <<"Bearer ", Token/binary>> ->
-            {oauth, Token};
-        _ ->
-            Cookies = cowboy_req:parse_cookies(Req),
-            case lists:keyfind(<<"sessionid">>, 1, Cookies) of
-                {<<"sessionid">>, Token} -> {oauth, Token};
-                _ -> {error, missing}
-            end
-    end.
 
-is_authorized(Req, State0) ->
-    case get_access_token(Req) of
-        {oauth, Token} ->
-            case damage_accounts:validate_access_token(Token) of
-                {AeAccount, Role} ->
-                    {true, Req,
-                        maps:merge(State0, #{
-                            public_key => AeAccount, role => Role, access_token => Token
-                        })};
-                _ ->
-                    {{false, ?AUTH_HEADER}, Req, State0}
-            end;
-        _ ->
-            {{false, ?AUTH_HEADER}, Req, State0}
-    end.
+is_authorized(Req, State) ->
+    damage_http:is_authorized(Req, State).
 
 to_json(Req, State) ->
     Body = maps:get(resp_body, State, #{}),
     {jsx:encode(Body), Req, State}.
 
+%% --- mint ----------------------------------------------------------
 from_json(Req0, State = #{action := mint}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
 
-    %% Inputs:
-    %%  relays: [string] (optional; default from config)
-    %%  max_single_sat, max_total_sat (optional; defaults)
+    %% owner comes from auth (same pattern used throughout Damage)
+    Owner = maps:get(public_key, State),
+
     DefaultRelays = nostr_pool:default_relays(#{}),
     Relays = maps:get(<<"relays">>, Json, DefaultRelays),
+
+    Label = maps:get(<<"label">>, Json, <<"damage-nwc">>),
+
     MaxSingleSat = maps:get(<<"max_single_sat">>, Json, 10000),
-    MaxTotalSat = maps:get(<<"max_total_sat">>, Json, 100000),
-    ExpiresHeight = maps:get(<<"expires_height">>, Json, 0),
+    MaxDailySat = maps:get(<<"max_daily_sat">>, Json, 100000),
+
+    %% unix seconds, 0 = never
+    ExpiresAt = maps:get(<<"expires_at">>, Json, 0),
 
     %% Generate client secret (private key) and pubkey
     Secret = crypto:strong_rand_bytes(32),
@@ -120,26 +102,32 @@ from_json(Req0, State = #{action := mint}) ->
     {ok, ClientPubBin} = nostrlib_schnorr:new_publickey(Secret),
     ClientPubHex = lower_hex_hex(ClientPubBin),
 
-    %% Register in ledger contract (admin call or contract admin set to this server account)
-    %% Assumes config has nwc_ledger_contract_id and source path.
     {LedgerId, LedgerSrc} = nwc_ledger_cfg(),
     MaxSingleMsat = MaxSingleSat * 1000,
-    MaxTotalMsat = MaxTotalSat * 1000,
+    MaxDailyMsat = MaxDailySat * 1000,
 
     _ = damage_ae:contract_call(
         LedgerId,
         LedgerSrc,
         "register",
         [
+            %% owner : address
+            binary_to_list(Owner),
+
+            %% nwc_pubkey : string
             binary_to_list(ClientPubHex),
+
+            %% label : string
+            binary_to_list(Label),
+
+            %% limits
             integer_to_list(MaxSingleMsat),
-            integer_to_list(MaxTotalMsat),
-            integer_to_list(ExpiresHeight)
+            integer_to_list(MaxDailyMsat),
+            integer_to_list(ExpiresAt)
         ],
         #{}
     ),
 
-    %% Build URI using THIS wallet service pubkey (server's pubkey)
     WalletPubHex = nwc_wallet_pubhex(),
     Relay = pick_first_relay(Relays),
     NwcUri =
@@ -154,6 +142,7 @@ from_json(Req0, State = #{action := mint}) ->
 
     Resp = #{
         status => <<"ok">>,
+        owner => Owner,
         client_pubkey => ClientPubHex,
         %% only show once
         secret_hex => SecretHex,
@@ -162,9 +151,12 @@ from_json(Req0, State = #{action := mint}) ->
         relay => Relay
     },
     {true, Req, State#{resp_body => Resp}};
+%% --- revoke --------------------------------------------------------
 from_json(Req0, State = #{action := revoke}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
+
+    Owner = maps:get(public_key, State),
     ClientPubHex = maps:get(<<"client_pubkey">>, Json),
 
     {LedgerId, LedgerSrc} = nwc_ledger_cfg(),
@@ -172,13 +164,17 @@ from_json(Req0, State = #{action := revoke}) ->
         LedgerId,
         LedgerSrc,
         "revoke",
-        [binary_to_list(ClientPubHex)],
+        [
+            binary_to_list(Owner),
+            binary_to_list(ClientPubHex)
+        ],
         #{}
     ),
 
     {true, Req, State#{
         resp_body => #{status => <<"ok">>, revoked => true, client_pubkey => ClientPubHex}
     }};
+%% --- ledger balance ------------------------------------------------
 from_json(Req0, State = #{action := ledger_balance}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
@@ -186,20 +182,20 @@ from_json(Req0, State = #{action := ledger_balance}) ->
 
     {LedgerId, LedgerSrc} = nwc_ledger_cfg(),
     Res = damage_ae:contract_call_dry(
-        LedgerId, LedgerSrc, "balance", [binary_to_list(ClientPubHex)], #{}
+        LedgerId, LedgerSrc, "balance_msat", [binary_to_list(ClientPubHex)], #{}
     ),
-    %% adjust extraction based on your middleware response shape
     {true, Req, State#{
         resp_body => #{status => <<"ok">>, client_pubkey => ClientPubHex, result => Res}
     }};
+%% --- ledger credit (admin-only) ------------------------------------
 from_json(Req0, State = #{action := ledger_credit, role := Role}) ->
-    %% Restrict this endpoint however you like (admin-only recommended)
     case Role of
         <<"admin">> -> ok;
         _ -> throw({forbidden, not_admin})
     end,
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
+
     ClientPubHex = maps:get(<<"client_pubkey">>, Json),
     AmountSat = maps:get(<<"amount_sat">>, Json, 0),
     Ref = maps:get(<<"ref">>, Json, <<"">>),
@@ -210,7 +206,7 @@ from_json(Req0, State = #{action := ledger_credit, role := Role}) ->
     _ = damage_ae:contract_call(
         LedgerId,
         LedgerSrc,
-        "credit",
+        "credit_msat",
         [
             binary_to_list(ClientPubHex),
             integer_to_list(AmountMsat),

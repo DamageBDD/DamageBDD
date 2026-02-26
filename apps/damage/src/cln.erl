@@ -39,8 +39,7 @@
         open_channels_with_best_peers/0,
         inbound_capacity/2,
         verify_peer/1,
-        estimate_routing_fee/2,
-        subscribe/0
+        estimate_routing_fee/2
     ]
 ).
 -export([register_listener/1]).
@@ -836,27 +835,11 @@ pick_affordable(
 handle_call(
     %% Poolboy safety: fail fast until secrets are loaded.
     %% Otherwise pooled workers can attempt HTTP calls with Rune=undefined.
-    Request,
+    _Request,
     _From,
     #state{secrets_ready = false} = State
-) when Request =/= subscribe ->
-    {reply, {error, secrets_not_ready}, State};
-handle_call(
-    subscribe,
-    _From,
-    #state{conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
-    Message0 = jsx:encode([<<"subscribe">>]),
-    Message =
-        <<"42", Message0/binary>>,
-
-    ok =
-        gun:ws_send(
-            ConnPid,
-            StreamRef,
-            {text, Message}
-        ),
-    {reply, ok, State};
+    {reply, {error, secrets_not_ready}, State};
 handle_call(
     {scid_to_channel_id_uncached, SCID},
     _From,
@@ -1550,11 +1533,6 @@ maybe_close_gun(_) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-subscribe() ->
-    poolboy:transaction(
-        ?MODULE,
-        fun(Worker) -> gen_server:call(Worker, subscribe, ?CLN_HTTP_TIMEOUT) end
-    ).
 getinfo() ->
     poolboy:transaction(
         ?MODULE,

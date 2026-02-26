@@ -27,7 +27,7 @@
 
 -define(TAB, damage_l402_tokens).
 -define(TAB_HASH, damage_l402_by_hash).
--define(TAB_INV,  damage_l402_by_inv).
+-define(TAB_INV, damage_l402_by_inv).
 
 -record(state, {
     subscribed = false
@@ -54,8 +54,7 @@ init([]) ->
     ensure_tabs(),
     %% Tell CLN we want invoice events
     %% Your cln already has register_listener/1 and subscribe/0
-    ok = cln:register_listener(invoice_payment),
-    _ = cln:subscribe(),
+    true = cln:register_listener(invoice_payment),
     {ok, #state{subscribed = true}}.
 
 handle_call({get_meta, MacB64}, _From, S) ->
@@ -65,7 +64,6 @@ handle_call({get_meta, MacB64}, _From, S) ->
             [] -> {error, unknown}
         end,
     {reply, Reply, S};
-
 handle_call({get_damage_available, MacB64}, _From, S) ->
     Reply =
         case ets:lookup(?TAB, MacB64) of
@@ -73,7 +71,6 @@ handle_call({get_damage_available, MacB64}, _From, S) ->
             [] -> {error, unknown}
         end,
     {reply, Reply, S};
-
 handle_call({consume_damage, MacB64, AmountDamage}, _From, S) ->
     Reply =
         case ets:lookup(?TAB, MacB64) of
@@ -100,7 +97,6 @@ handle_info({cln_event, invoice_payment, Ev}, S) ->
     %% Ev is expected to include payment_hash and amount_msat (or amount_received_msat)
     handle_invoice_paid_event(Ev),
     {noreply, S};
-
 handle_info(_Info, S) ->
     {noreply, S}.
 
@@ -148,21 +144,24 @@ challenge(Req0, Scope, AmountMsat) ->
         }),
     challenge_with_body(Req0, Scope, AmountMsat, Body).
 
--spec challenge_with_body(cowboy_req:req(), binary(), integer(), binary()) -> {cowboy_req:req(), map()}.
+-spec challenge_with_body(cowboy_req:req(), binary(), integer(), binary()) ->
+    {cowboy_req:req(), map()}.
 challenge_with_body(Req0, Scope, AmountMsat, BodyBin) ->
     ensure_tabs(),
     Expiry = application:get_env(damage, l402_invoice_expiry, 600),
-    Uses   = application:get_env(damage, l402_uses, 1),
+    Uses = application:get_env(damage, l402_uses, 1),
 
     MacB64 = base64:encode(crypto:strong_rand_bytes(32)),
 
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = <<"l402:", Scope/binary, ":", (list_to_binary(Timestamp))/binary, ":", MacB64/binary>>,
-    Desc  = <<"DamageBDD L402 ", Scope/binary>>,
+    Desc = <<"DamageBDD L402 ", Scope/binary>>,
 
     InvoiceMap = cln:create_invoice(AmountMsat, Desc, Expiry, Label),
     Bolt11 = maps:get(bolt11, InvoiceMap, maps:get(<<"bolt11">>, InvoiceMap, undefined)),
-    PaymentHash0 = maps:get(payment_hash, InvoiceMap, maps:get(<<"payment_hash">>, InvoiceMap, undefined)),
+    PaymentHash0 = maps:get(
+        payment_hash, InvoiceMap, maps:get(<<"payment_hash">>, InvoiceMap, undefined)
+    ),
     PaymentHashHex = normalize_hex(PaymentHash0),
 
     Now = erlang:system_time(second),
@@ -186,7 +185,7 @@ challenge_with_body(Req0, Scope, AmountMsat, BodyBin) ->
 
     ets:insert(?TAB, {MacB64, Meta}),
     ets:insert(?TAB_HASH, {PaymentHashHex, MacB64}),
-    ets:insert(?TAB_INV,  {Bolt11, MacB64}),
+    ets:insert(?TAB_INV, {Bolt11, MacB64}),
 
     HeaderVal = iolist_to_binary(["L402 macaroon=\"", MacB64, "\", invoice=\"", Bolt11, "\""]),
     Req1 =
@@ -257,8 +256,15 @@ mark_paid(MacB64, _PH, PaidMsat) ->
 normalize_ev(Ev) when is_map(Ev) ->
     %% expect CLN event like #{payment_hash:=..., amount_msat:=...} or binary keys
     PH0 = maps:get(payment_hash, Ev, maps:get(<<"payment_hash">>, Ev, undefined)),
-    Msat0 = maps:get(amount_msat, Ev, maps:get(<<"amount_msat">>, Ev,
-                 maps:get(amount_received_msat, Ev, maps:get(<<"amount_received_msat">>, Ev, 0)))),
+    Msat0 = maps:get(
+        amount_msat,
+        Ev,
+        maps:get(
+            <<"amount_msat">>,
+            Ev,
+            maps:get(amount_received_msat, Ev, maps:get(<<"amount_received_msat">>, Ev, 0))
+        )
+    ),
     #{
         payment_hash_hex => normalize_hex(PH0),
         amount_msat => to_int(Msat0)
@@ -269,8 +275,13 @@ normalize_ev(_) ->
 to_int(I) when is_integer(I) -> I;
 to_int(B) when is_binary(B) ->
     %% could be "123msat" in some encodings — strip non-digits if you need later
-    try binary_to_integer(B) catch _:_ -> 0 end;
-to_int(_) -> 0.
+    try
+        binary_to_integer(B)
+    catch
+        _:_ -> 0
+    end;
+to_int(_) ->
+    0.
 
 %%% -------------------------------------------------------------------
 %%% Token verification (now includes "paid" and uses_left)
@@ -280,14 +291,18 @@ verify_token(MacB64, PreimageHex, _Req) ->
     case ets:lookup(?TAB, MacB64) of
         [{_, Meta0}] ->
             case is_expired(Meta0) of
-                true -> ets:delete(?TAB, MacB64), {error, expired};
+                true ->
+                    ets:delete(?TAB, MacB64),
+                    {error, expired};
                 false ->
                     case maps:get(uses_left, Meta0, 0) of
-                        0 -> {error, exhausted};
+                        0 ->
+                            {error, exhausted};
                         _ ->
                             PH = maps:get(payment_hash_hex, Meta0, <<>>),
                             case proof_ok(PH, PreimageHex) of
-                                false -> {error, bad_preimage};
+                                false ->
+                                    {error, bad_preimage};
                                 true ->
                                     case maps:get(paid, Meta0, false) of
                                         true ->
@@ -322,8 +337,10 @@ proof_ok(PaymentHashHex, PreimageHex) ->
     end.
 
 safe_hex_to_bin(Hex) when is_binary(Hex) ->
-    try {ok, binary:decode_hex(string:lowercase(Hex))}
-    catch _:_ -> {error, badhex}
+    try
+        {ok, binary:decode_hex(string:lowercase(Hex))}
+    catch
+        _:_ -> {error, badhex}
     end.
 
 normalize_hex(undefined) -> <<>>;
@@ -341,5 +358,6 @@ ensure_tab(Name) ->
         undefined ->
             ets:new(Name, [named_table, public, set, {read_concurrency, true}]),
             ok;
-        _ -> ok
+        _ ->
+            ok
     end.

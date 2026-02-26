@@ -1303,6 +1303,25 @@ ul[data-tabs] [role="tab"]:focus-visible{
     opacity: .9;
 }
 
+/* Lightning sats credit balance */
+.sats-sub{
+  font-size: .78rem;
+  line-height: 1.2;
+  color: #9fc9ff;
+  opacity: .9;
+}
+
+.sats-balance{
+  font-size: .78rem;
+  line-height: 1.2;
+  color: #ffffff;
+  opacity: .9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+.balance-row{
+  flex-wrap: wrap;
+  row-gap: .25rem;
+}
 
 /* Fix the invalid comment so the rest of CSS parses */
 /* === Form Buttons === */

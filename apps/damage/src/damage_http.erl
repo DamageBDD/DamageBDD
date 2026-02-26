@@ -108,35 +108,47 @@ trails() ->
                             ]
                     }
             }
+        ),
+        trails:trail(
+            "/execute_feature_from_ipfs/",
+            damage_http,
+            #{action => execute_feature_from_ipfs},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Form to execute an IPFS-hosted feature on this DamageBDD server.",
+                        produces => ["text/html"]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Execute a feature fetched from IPFS (feature CID).",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"feature_cid">>,
+                                    description => <<"IPFS CID of the feature file (gherkin).">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"vars">>,
+                                    description => <<"Variables to merge into execution context.">>,
+                                    in => <<"body">>,
+                                    required => false,
+                                    type => <<"object">>
+                                }
+                            ]
+                    }
+            }
         )
     ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
-
-get_access_token(Req) ->
-    case cowboy_req:header(?AUTH_HEADER, Req) of
-        <<"L402 ", Token/binary>> ->
-            {l402, <<"L402 ", Token/binary>>};
-        <<"Nostr ", Token/binary>> ->
-            {nostr, Token};
-        <<"Bearer null">> ->
-            {error, missing};
-        <<"Bearer ", Token/binary>> ->
-            {oauth, Token};
-        _ ->
-            case catch cowboy_req:match_qs([access_token], Req) of
-                #{access_token := null} ->
-                    {error, missing};
-                #{access_token := Token} ->
-                    {oauth, Token};
-                _ ->
-                    Cookies = cowboy_req:parse_cookies(Req),
-                    case lists:keyfind(<<"sessionid">>, 1, Cookies) of
-                        {<<"sessionid">>, Token} -> {oauth, Token};
-                        _ -> {error, missing}
-                    end
-            end
-    end.
 
 is_authorized(Req, #{action := version} = State) ->
     {true, Req, State};
@@ -149,13 +161,12 @@ is_authorized(Req, State0) ->
             damage_utils:get_ip(Req),
             maps:put(useragent, cowboy_req:header(<<"user-agent">>, Req, ""), State0)
         ),
-    case get_access_token(Req) of
+    case damage_access_token:get_access_token(Req) of
         {l402, AuthHeader} ->
             case damage_l402:verify_authorization(AuthHeader, Req) of
-                {ok, _Meta} ->
+                {ok, #{account := AeAccount} = _Meta} ->
                     %% Paid access: run as node identity by default
-                    #{public_key := NodeAeAccount} = secrets:node_keypair(),
-                    {true, Req, maps:put(public_key, NodeAeAccount, State)};
+                    {true, Req, maps:put(public_key, AeAccount, State)};
                 {error, _} ->
                     %% No/invalid token → challenge
                     generate_l402_invoice(Req, State)
@@ -167,8 +178,7 @@ is_authorized(Req, State0) ->
             ?LOG_INFO("Got Nostr auth ~p", [NostrEvent]),
             case nostrlib:verify(NostrEvent) of
                 true -> damage_ae:contract_call_admin_account("resolve_npub", [Npub]);
-                _ ->
-                    generate_l402_invoice(Req, State)
+                _ -> generate_l402_invoice(Req, State)
             end;
         {oauth, Token} ->
             case damage_access_token:verify_token(Token) of
@@ -216,31 +226,32 @@ generate_l402_invoice(Req0, State) ->
 
     case Action of
         execute_feature ->
-            %% Only attempt dynamic pricing if a feature payload was submitted.
-            %% We read the body here (auth phase) because we are going to STOP with 402 anyway.
-            case cowboy_req:has_body(Req0) of
-                true ->
-                    {ok, FeatureBin, Req1} = cowboy_req:read_body(Req0),
-                    case dry_run_cost_msat(FeatureBin, State, Req1) of
-                        {ok, AmountMsat, DryRec} ->
-                            Body = jsx:encode(#{
-                                                status => <<"payment_required">>,
-                                                scope => Scope,
-                                                amount_msat => AmountMsat,
-                                                dry_run => DryRec
-                                               }),
-                            {Req2, _} =
-                                damage_l402:challenge_with_body(Req1, Scope, AmountMsat, Body),
-                            {stop, Req2, State};
-                        {error, _Why} ->
-                            %% fallback static price if dry-run fails
-                            static_l402(Req1, State, Scope)
-                    end;
-                false ->
-                    static_l402(Req0, State, Scope)
-            end;
-
+            maybe_dynamic_price(Req0, State, Scope);
+        execute_feature_from_ipfs ->
+            maybe_dynamic_price(Req0, State, Scope);
         _ ->
+            static_l402(Req0, State, Scope)
+    end.
+
+maybe_dynamic_price(Req0, State, Scope) ->
+    case cowboy_req:has_body(Req0) of
+        true ->
+            {ok, FeatureBin, Req1} = cowboy_req:read_body(Req0),
+            case dry_run_cost_msat(FeatureBin, State, Req1) of
+                {ok, AmountMsat, DryRec} ->
+                    Body = jsx:encode(#{
+                        status => <<"payment_required">>,
+                        scope => Scope,
+                        amount_msat => AmountMsat,
+                        dry_run => DryRec
+                    }),
+                    {Req2, _} =
+                        damage_l402:challenge_with_body(Req1, Scope, AmountMsat, Body),
+                    {stop, Req2, State};
+                {error, _Why} ->
+                    static_l402(Req1, State, Scope)
+            end;
+        false ->
             static_l402(Req0, State, Scope)
     end.
 
@@ -249,26 +260,23 @@ static_l402(Req, State, Scope) ->
     {Req1, _} = damage_l402:challenge(Req, Scope, PriceMsat),
     {stop, Req1, State}.
 
-
-
 dry_run_cost_msat(FeatureBin, State, Req) ->
-
-        #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
+    #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
     Context0 = #{
         feature => FeatureBin,
         stream => nostream,
         concurrency => 1,
         color_formatter => false,
-public_key => to_bin(NodePublicKey)
+        public_key => to_bin(NodePublicKey)
     },
     case execute_bdd(Context0, State, Req, [{dry_run, true}]) of
         {200, #{status := <<"ok">>, cost := Cost, feature_hash := FeatureHash} = DryRec} ->
             %% Convert DAMAGE cost -> sats -> msat
-?LOG_DEBUG("cost ~p", [Cost/?DAMAGE_DECIMALS]),
+            ?LOG_DEBUG("cost ~p", [Cost / ?DAMAGE_DECIMALS]),
             Sats = price_feed:damage_to_sats(damage:hits_to_damage(Cost)),
             MinSats = application:get_env(damage, l402_min_sats, 1),
             Sats1 = max(MinSats, Sats),
-            AmountMsat = Sats1 ,
+            AmountMsat = Sats1,
 
             %% Return dry-run + explicit keys client wants
             DryOut =
@@ -280,13 +288,11 @@ public_key => to_bin(NodePublicKey)
                 },
 
             {ok, AmountMsat, DryOut};
-
         {200, Other} ->
             {error, {dry_run_not_ok, Other}};
         {Code, Err} ->
             {error, {dry_run_failed, Code, Err}}
     end.
-
 
 content_types_provided(Req, State) ->
     {
@@ -327,11 +333,11 @@ stream_mode(Req, Concurrency0) ->
         1 -> maybe_stream;
         _ -> nostream
     end.
-get_stream_config(Config, Context, Req0) ->
+get_stream_config(Config, Context, Req) ->
     %% stream logs via text formatter to cowboy stream
-    Req = cowboy_req:stream_reply(
-        200, #{<<"content-type">> => <<"text/plain">>}, Req0
-    ),
+    %Req = cowboy_req:stream_reply(
+    %    200, #{<<"content-type">> => <<"text/plain">>}, Req0
+    %),
     Formatters = [
         {text, #{
             output => Req,
@@ -820,7 +826,6 @@ from_json(Req, #{action := tx} = State) ->
             };
         Json when is_map(Json) ->
             {Status0, Response0} = do_action_tx_throttled(Json, State, Req),
-            ?LOG_DEBUG("response ~p", [Response0]),
             {
                 stop,
                 cowboy_req:reply(
@@ -842,9 +847,28 @@ from_json(Req0, State) ->
                 Req1
             ),
             {stop, Req2, State};
-        Json when is_map(Json) ->
-            %% choose streaming or not without guard functions
-            %Concurrency = maps:get(concurrency, Json, 1),
+        Json0 when is_map(Json0) ->
+            %% Support IPFS-hosted feature execution
+            Json =
+                case maps:is_key(feature_cid, Json0) of
+                    true ->
+                        case damage_ipfs:hydrate_feature_from_ipfs(Json0) of
+                            {ok, J} ->
+                                J;
+                            {error, Why} ->
+                                ErrBin = jsx:encode(#{status => <<"notok">>, error => to_bin(Why)}),
+                                ReqE = cowboy_req:reply(
+                                    400,
+                                    #{<<"content-type">> => <<"application/json">>},
+                                    ErrBin,
+                                    Req1
+                                ),
+                                throw({stop, ReqE, State})
+                        end;
+                    false ->
+                        Json0
+                end,
+
             Stream = maps:get(stream, Json, false),
             case execute_bdd(Json, State, Req1) of
                 {_Status, _Response} when Stream == true ->
@@ -866,87 +890,113 @@ from_json(Req0, State) ->
     end.
 
 from_html(Req0, State) ->
-    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-    _UserAgent = cowboy_req:header(<<"user-agent">>, Req1, ""),
-    Concurrency =
-        binary_to_integer(
-            cowboy_req:header(<<"x-damage-concurrency">>, Req1, <<"1">>)
-        ),
-    ColorFormatter =
-        case cowboy_req:match_qs([{color, [], <<"true">>}], Req1) of
-            #{color := <<"true">>} -> true;
-            _ -> false
-        end,
-    Stream = stream_mode(Req1, Concurrency),
+    try
+        {ok, Body, Req1} = cowboy_req:read_body(Req0),
+        _UserAgent = cowboy_req:header(<<"user-agent">>, Req1, ""),
+        Concurrency =
+            binary_to_integer(cowboy_req:header(<<"x-damage-concurrency">>, Req1, <<"1">>)),
+        ColorFormatter =
+            case cowboy_req:match_qs([{color, [], <<"true">>}], Req1) of
+                #{color := <<"true">>} -> true;
+                _ -> false
+            end,
+        Stream = stream_mode(Req1, Concurrency),
 
-    Context = #{
-        feature => Body,
-        concurrency => Concurrency,
-        stream => Stream,
-        color_formatter => ColorFormatter
-    },
-    case execute_bdd(Context, State, Req1) of
-        {_Status, _Resp} when Stream =:= maybe_stream ->
-            %% all output has already gone via formatter+stream_reply
-            {stop, Req1, State};
-        %% -------------------- OK (send JSON) --------------------
-        {200, Response} ->
-            ?LOG_INFO(
-                "ok execute_feature from_html ~p concurrency ~p",
-                [Response, Concurrency]
-            ),
+        %% Own the stream lifecycle here (DON'T guess using resp_headers).
+        {ReqRun, Context} =
             case Stream of
-                false ->
-                    Req2 = cowboy_req:reply(
+                maybe_stream ->
+                    ReqS =
+                        cowboy_req:stream_reply(
+                            200,
+                            #{<<"content-type">> => <<"text/plain">>},
+                            Req1
+                        ),
+                    {ReqS, #{
+                        feature => Body,
+                        concurrency => Concurrency,
+                        stream => maybe_stream,
+                        color_formatter => ColorFormatter
+                    }};
+                _ ->
+                    {Req1, #{
+                        feature => Body,
+                        concurrency => Concurrency,
+                        stream => Stream,
+                        color_formatter => ColorFormatter
+                    }}
+            end,
+
+        case execute_bdd(Context, State, ReqRun) of
+            %% STREAM MODE: always finish with a footer + fin
+            {Status, Resp} when Stream =:= maybe_stream ->
+                Footer = stream_footer(Status, Resp),
+                Req2 = cowboy_req:stream_body(Footer, fin, ReqRun),
+                {stop, Req2, State};
+            %% Non-stream OK (JSON)
+            {200, Response} ->
+                Req2 =
+                    cowboy_req:reply(
                         200,
-                        #{<<"content-type">> => <<"text/plain">>},
+                        #{<<"content-type">> => <<"application/json">>},
                         jsx:encode(Response),
                         Req1
                     ),
-                    {stop, Req2, State};
-                _ ->
-                    %% If you really want to stream success, do it here:
-                    Req2 = cowboy_req:stream_reply(
-                        200,
-                        #{<<"content-type">> => <<"text/plain">>},
-                        Req1
-                    ),
-                    Req3 = cowboy_req:stream_body(jsx:encode(Response), fin, Req2),
-                    {stop, Req3, State}
-            end;
-        %% -------------------- Error (stream the dry-run error) --------------------
-        {Status, Response} ->
-            ?LOG_INFO("~p execute_feature from_html ~p", [Status, Response]),
-            case Stream of
-                false ->
-                    %% Non-streaming error JSON
-                    Req2 = cowboy_req:reply(
-                        200,
-                        #{<<"content-type">> => <<"text/plain">>},
+                {stop, Req2, State};
+            %% Non-stream error (JSON + real status)
+            {Status, Response} ->
+                Req2 =
+                    cowboy_req:reply(
+                        Status,
+                        #{<<"content-type">> => <<"application/json">>},
                         jsx:encode(Response),
                         Req1
                     ),
-                    {stop, Req2, State};
+                {stop, Req2, State}
+        end
+    catch
+        Class:Reason:Stack ->
+            ?LOG_ERROR("from_html crashed ~p:~p ~p", [Class, Reason, Stack]),
+            %% Best effort: stream a 500 if we were streaming, else JSON 500
+            Concurrency0 =
+                catch binary_to_integer(
+                    cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
+                ),
+            Stream0 = stream_mode(Req0, Concurrency0),
+            case Stream0 of
+                maybe_stream ->
+                    ReqS0 =
+                        cowboy_req:stream_reply(
+                            500,
+                            #{<<"content-type">> => <<"text/plain">>},
+                            Req0
+                        ),
+                    Footer0 =
+                        iolist_to_binary([
+                            "\n---\n",
+                            "ERROR: 500 ",
+                            io_lib:format("~p:~p", [Class, Reason]),
+                            "\n"
+                        ]),
+                    Req3 = cowboy_req:stream_body(Footer0, fin, ReqS0),
+                    {stop, Req3, State};
                 _ ->
-                    %% Streaming error text (or JSON – your call)
-                    Req2 = cowboy_req:stream_reply(
-                        200,
-                        #{<<"content-type">> => <<"text/plain">>},
-                        Req1
-                    ),
-                    %% send a header line and then details
-                    Req3 = cowboy_req:stream_body(maps:get(message, Response), nofin, Req2),
-                    %% stream the pretty message or entire map
-                    Chunk =
-                        case Response of
-                            #{message := Msg} when is_binary(Msg) -> Msg;
-                            _ -> list_to_binary(io_lib:format("~p~n", [Response]))
-                        end,
-                    Req4 = cowboy_req:stream_body(Chunk, fin, Req3),
+                    BodyBin =
+                        jsx:encode(#{
+                            error => <<"internal_error">>,
+                            class => to_bin(Class),
+                            reason => to_bin(Reason)
+                        }),
+                    Req4 =
+                        cowboy_req:reply(
+                            500,
+                            #{<<"content-type">> => <<"application/json">>},
+                            BodyBin,
+                            Req0
+                        ),
                     {stop, Req4, State}
             end
     end.
-
 to_html(Req, #{action := version} = State) ->
     to_json(Req, State);
 to_html(Req, State) ->
@@ -1014,3 +1064,31 @@ to_json(Req0, State) ->
     {Body, Req0, State}.
 
 to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.
+
+%% -------------------------------------------------------------------
+%% Helpers
+%% -------------------------------------------------------------------
+
+stream_footer(Status, Resp) ->
+    Encoded =
+        case Resp of
+            B when is_binary(B) ->
+                B;
+            L when is_list(L) ->
+                unicode:characters_to_binary(L);
+            _ ->
+                %% Safest: always JSON encode maps/tuples/etc.
+                jsx:encode(Resp)
+        end,
+    case Status of
+        200 ->
+            iolist_to_binary(["\n---\nRESULT: ", Encoded, "\n"]);
+        _ ->
+            iolist_to_binary([
+                "\n---\nERROR: ",
+                integer_to_list(Status),
+                " ",
+                Encoded,
+                "\n"
+            ])
+    end.

@@ -12,6 +12,7 @@
 -license("Apache-2.0").
 
 -compile(warn_export_all).
+-include_lib("damage.hrl").
 
 -export([
     make_payload/3,
@@ -22,7 +23,8 @@
     decode_payload/1,
     token_expiry/1,
     token_valid/1,
-    maybe_refresh/2
+    maybe_refresh/2,
+    get_access_token/1
 ]).
 -include_lib("kernel/include/logger.hrl").
 -define(TOKEN_TIMEOUT, 86400).
@@ -51,6 +53,30 @@ encode_token(PayloadMap, SigB64Url) when is_map(PayloadMap), is_binary(SigB64Url
     PayloadB64 = base64url_encode(PayloadJson),
     <<"ae1.", PayloadB64/binary, ".", SigB64Url/binary>>.
 
+get_access_token(Req) ->
+    case cowboy_req:header(?AUTH_HEADER, Req) of
+        <<"L402 ", Token/binary>> ->
+            {l402, <<"L402 ", Token/binary>>};
+        <<"Nostr ", Token/binary>> ->
+            {nostr, Token};
+        <<"Bearer null">> ->
+            {error, missing};
+        <<"Bearer ", Token/binary>> ->
+            {oauth, Token};
+        _ ->
+            case catch cowboy_req:match_qs([access_token], Req) of
+                #{access_token := null} ->
+                    {error, missing};
+                #{access_token := Token} ->
+                    {oauth, Token};
+                _ ->
+                    Cookies = cowboy_req:parse_cookies(Req),
+                    case lists:keyfind(<<"sessionid">>, 1, Cookies) of
+                        {<<"sessionid">>, Token} -> {oauth, Token};
+                        _ -> {error, missing}
+                    end
+            end
+    end.
 verify_token(TokenBin) when is_binary(TokenBin) ->
     case binary:split(TokenBin, <<".">>, [global]) of
         [<<"ae1">>, PayloadB64, Sig] ->

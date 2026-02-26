@@ -24,9 +24,11 @@
         cat/1,
         ls/1,
         fetch_to/2,
-        ensure_ipfs_asset/2
+        ensure_ipfs_asset/2,
+        hydrate_feature_from_ipfs/1
     ]
 ).
+-import(damage_utils, [to_bin/1]).
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/logger.hrl").
@@ -183,6 +185,44 @@ cat(Hash) ->
 fetch_to(Hash, OutPath) ->
     ok = damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
     get(Hash, OutPath).
+-spec hydrate_feature_from_ipfs(map()) -> {ok, map()} | {error, term()}.
+hydrate_feature_from_ipfs(Json0) ->
+    case maps:get(feature_cid, Json0, undefined) of
+        undefined ->
+            {error, missing_feature_cid};
+        Cid0 ->
+            Cid = to_bin(Cid0),
+            case damage_ipfs:cat(Cid) of
+                {ok, FeatureBin} when is_binary(FeatureBin) ->
+                    Vars0 = maps:get(vars, Json0, #{}),
+                    Vars =
+                        case Vars0 of
+                            M when is_map(M) -> M;
+                            _ -> #{}
+                        end,
+
+                    %% Merge vars into top-level context so steps can read them,
+                    %% AND attach fetched feature bytes into `feature`.
+                    Json1 =
+                        maps:merge(
+                            Vars,
+                            maps:remove(vars, Json0#{feature => FeatureBin})
+                        ),
+                    {ok, Json1};
+                FeatureBin when is_binary(FeatureBin) ->
+                    %% support cat returning raw binary
+                    Vars0 = maps:get(vars, Json0, #{}),
+                    Vars =
+                        case Vars0 of
+                            M when is_map(M) -> M;
+                            _ -> #{}
+                        end,
+                    Json1 = maps:merge(Vars, maps:remove(vars, Json0#{feature => FeatureBin})),
+                    {ok, Json1};
+                Err ->
+                    {error, {ipfs_cat_failed, Cid, Err}}
+            end
+    end.
 test() ->
     ?LOG_INFO("ipfs add directory", []),
     {ok, HashList} = damage_ipfs:add({directory, "features"}),

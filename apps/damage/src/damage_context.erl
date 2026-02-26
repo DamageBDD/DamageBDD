@@ -46,6 +46,7 @@
     render_body_args/2,
     contract_get_context/1
 ]).
+-import(damage_utils, [to_bin/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -348,7 +349,9 @@ get_context(undefined) ->
 get_context(#{public_key := AeAccount} = ContextIn) when is_map(ContextIn) ->
     AccountCtx = get_context(AeAccount),
     maps:merge(AccountCtx, ContextIn);
-get_context(AeAccount) ->
+get_context(AeAccount) when is_list(AeAccount) ->
+    get_context(to_bin(AeAccount));
+get_context(AeAccount) when is_binary(AeAccount) ->
     GlobalCtx = damage_context:get_global_template_context(#{}),
 
     Pid = get_context_proc(AeAccount),

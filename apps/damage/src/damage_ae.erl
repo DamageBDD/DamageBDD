@@ -69,7 +69,6 @@
     contract_call_payfor_user/5,
     payfor_tx/1,
     contract_call_prepare_tx/5,
-    deploy_account_registry/1,
     deploy_node_registry/0,
     make_transaction_signature_base58/2,
     make_transaction_signature/2,
@@ -82,6 +81,7 @@
     balance/1,
     invalidate_cache/1,
     spend/2,
+    get_spend/1,
     mint_nft_report/1,
     confirm_spend/2
 ]).
@@ -462,6 +462,20 @@ handle_call({transaction, Data}, _From, State) ->
     {reply, ok, State};
 handle_call(
     {
+        get_spend,
+        AeAccount
+    },
+    _From,
+    Cache
+) ->
+    AccountCache = maps:get(AeAccount, Cache, #{}),
+    case maps:get(spent_balance, AccountCache, {0, 0}) of
+        {_, Amount} ->
+            ?LOG_DEBUG("Amount 0: ~p", [Amount]),
+            {reply, Amount, Cache}
+    end;
+handle_call(
+    {
         confirm_spend,
         #{
             public_key := AeAccount,
@@ -653,12 +667,16 @@ handle_info(reconcile_swaps, State) ->
     %% Not ready yet; try again later
     TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
     {noreply, State#{ln_reconcile_timer => TRef}};
+handle_info({gun_up, _, _} = _Info, State) ->
+    {noreply, State};
+handle_info({gun_down, _, _} = _Info, State) ->
+    {noreply, State};
 handle_info(Info, State) ->
     ?LOG_DEBUG("damage_ae: Unhandled info ~p", [Info]),
     {noreply, State}.
 
-terminate(Reason, #{ln_reconcile_timer := LnTref} = _State) ->
-    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+terminate(_Reason, #{ln_reconcile_timer := LnTref} = _State) ->
+    %?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
     maybe_cancel(LnTref),
     ok.
 
@@ -737,6 +755,10 @@ spend(AeAccount, Amount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {spend, AeAccount, Amount}).
 
+get_spend(AeAccount) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {get_spend, AeAccount}).
 confirm_spend(Config, #{public_key := AeAccount} = Context) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     ?LOG_INFO("confirm_spend ~p", [proplists:get_value(dry_run, Config, none)]),
@@ -1016,7 +1038,7 @@ do_contract_call_payfor_user(
 
     case vanillae:post_tx(PayingSignedTX) of
         {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
+            maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
         Error ->
             Error
     end.
@@ -1229,7 +1251,7 @@ contract_deploy_for(
     ?LOG_INFO("Paying for ~p", [PayingSignedTX]),
     case vanillae:post_tx(PayingSignedTX) of
         {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
+            maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
         Error ->
             Error
     end.
@@ -1633,11 +1655,6 @@ list_invoices_http(Params, #{cln_host := Host, cln_port := Port, rune := Rune, o
         {error, _} = Err ->
             Err
     end.
-deploy_account_registry(AccountKeypair) ->
-    #{"contract_id" := ContractId} = contract_deploy_for(
-        AccountKeypair, "contracts/AccountRegistry.aes", []
-    ),
-    ContractId.
 deploy_node_registry() ->
     AccountKeypair = secrets:node_keypair(),
     #{"contract_id" := ContractId} = contract_deploy_for(

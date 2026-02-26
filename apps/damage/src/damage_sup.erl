@@ -143,7 +143,7 @@ init([]) ->
                 restart => permanent,
                 shutdown => 60000,
                 type => worker,
-                modules => [damage_l402]
+                modules => [cln, cln_ws_mgr, damage_l402]
             },
 
             %% 4) supervisors that may create pools/workers relying on the above
