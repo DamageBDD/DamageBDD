@@ -4,6 +4,9 @@
 // Keyed by NWC "client" pubkey (hex string).
 // Stores spendable msats and policy limits.
 // Admin-controlled mutation: register/revoke/credit/debit/record.
+// Optional operator role enables future custodial / service execution:
+//   - admin can set operator
+//   - operator may debit only (bounded by limits), cannot credit or change limits.
 //
 // Notes:
 // - We use string pubkey keys for simplicity.
@@ -29,6 +32,7 @@ contract DamageNWCLedger =
 
   record state =
     { admin      : address
+    , operator : option(address)
     , balances   : map(string, int)        // spendable msat
     , policies   : map(string, policy)     // per client pubkey policy
     , tx_count   : map(string, int)        // per client counter
@@ -37,6 +41,8 @@ contract DamageNWCLedger =
 
   entrypoint init(admin' : address) =
     { admin = admin'
+    , operator = None
+
     , balances = {}
     , policies = {}
     , tx_count = {}
@@ -90,9 +96,19 @@ contract DamageNWCLedger =
   // -----------------------
   // Admin-only mutation
   // -----------------------
+  function only_admin() = require(Call.caller == state.admin, "ONLY_ADMIN")
 
-  function require_admin() =
-    require(Call.caller == state.admin, "ONLY_ADMIN")
+  function only_admin_or_operator() =
+    switch(state.operator)
+      None => only_admin()
+      Some(op) => require(
+  
+  stateful entrypoint set_operator(op : option(address)) : bool =
+    only_admin()
+    put(state{ operator = op })
+    true
+
+  function require_admin() = only_admin()
 
   entrypoint register(
     client_pubkey     : string,
@@ -157,7 +173,7 @@ contract DamageNWCLedger =
     ref           : string,
     meta          : string
   ) : bool =
-    require_admin()
+    only_admin_or_operator()
     require(amount_msat > 0, "BAD_AMOUNT")
     let p = policy_of(client_pubkey)
     require(p.revoked == false, "REVOKED")

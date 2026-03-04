@@ -173,6 +173,14 @@ init([]) ->
                     }
                 ]},
                 permanent, 5000, worker, [damage_hwmon]},
+            #{
+                id => damage_node_registry,
+                start => {damage_node_registry, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [damage_node_registry]
+            },
             %% 5) listeners
             git_ssh_listener:child_spec()
         ],

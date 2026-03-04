@@ -1,25 +1,32 @@
 %% -------------------------------------------------------------------
-%% damage_nwc.erl
+%% damage_nwc.erl (UPDATED)
 %%
-%% NIP-47 (Nostr Wallet Connect) client.
+%% NIP-47 (Nostr Wallet Connect) client + optional AE ledger enforcement.
 %%
-%% Reuses:
-%%   - damage_nostr:nip04_encrypt/3 + nip04_decrypt_content/3
-%%   - damage_nostr:construct_event/5 + finalize_event/2
-%%   - nostr_pool:publish/3 + nostr_pool:req_one/4
+%% Key changes vs your pasted version:
+%%   - Fix duplicate macros + exports
+%%   - start_link/1 now expects Opts map: #{user_ae_account, nwc_uri, ledger_mode, server_ae_account}
+%%   - init/1 accepts [Opts] (not [UserAeAccount, Uri])
+%%   - Resolve ledger ct_id via account_registry for the USER (per-user registry)
+%%   - Normalize state fields (use user_ae_account; remove ae_account mismatch)
+%%   - Fix ledger call names to match DamageNWCLedger.aes:
+%%       balance/1, policy_of/1, register/4, revoke/1, credit/4, debit/4
+%%   - Add ledger helpers:
+%%       ledger_contract_id/1, ledger_call/3, ledger_call_dry/3
+%%   - Add deploy_nwc_contract/1 (deploy for user admin) + keep deploy_nwc_contract/0 for legacy
 %%
-%% Strategy:
-%%   1) publish request event (kind 23194)
-%%   2) query for response event (kind 23195) filtered by:
-%%        authors=[wallet_pubkey], '#p'=[client_pubkey], '#e'=[request_event_id]
+%% Modes:
+%%   user_signed      -> do not sign ledger mutations here (return intents from HTTP layer)
+%%   server_signed    -> ledger mutations signed by user_ae_account (custodial keys in identity_server)
+%%   operator_signed  -> debit allowed if operator is set in contract; signing key = server_ae_account
+%%
 %% -------------------------------------------------------------------
 
 -module(damage_nwc).
 -author("Steven Joseph <steven@damagebdd.com>").
-
 -copyright("Steven Joseph <steven@damagebdd.com>").
-
 -license("Apache-2.0").
+
 -behaviour(gen_server).
 
 -include_lib("kernel/include/logger.hrl").
@@ -35,13 +42,25 @@
     make_invoice/3,
 
     call/3,
-    call/4
+    call/4,
+
+    %% ledger utilities (read-only, safe)
+    ledger_balance_msat/1,
+    ledger_policy/1,
+
+    %% deploy helper
+    deploy_nwc_contract/0,
+    deploy_nwc_contract/1,
+    ledger_call/3,
+    ledger_call_dry/3
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -import(damage_utils, [to_bin/1]).
 
+-define(NWC_CONTRACT_PATH, "contracts/nwc_ledger.aes").
+-define(NWC_REGISTRY_NAME, <<"nwc_ledger">>).
 -define(DEFAULT_TIMEOUT, 30000).
 -define(DEFAULT_FANOUT, 3).
 
@@ -57,15 +76,36 @@
     client_pubkey_hex,
     %% [binary()]
     relays = [],
-    info_cache = undefined
+    info_cache = undefined,
+
+    %% per-user (registry owner / ledger admin)
+
+    %% binary() identity_server key for user OR just ak_... if noncustodial future
+    user_ae_account,
+    %% ct_... resolved via AccountRegistry
+    nwc_contract_id,
+
+    %% execution mode
+
+    %% user_signed | server_signed | operator_signed
+    ledger_mode = user_signed,
+    %% optional signing key for operator_signed/server_signed
+    server_ae_account = undefined
 }).
 
 %% -------------------------------------------------------------------
 %% API
 %% -------------------------------------------------------------------
 
-start_link(NwcUri) ->
-    gen_server:start_link(?MODULE, [NwcUri], []).
+-spec start_link(map()) -> {ok, pid()} | {error, term()}.
+start_link(Opts) when is_map(Opts) ->
+    %% Opts required:
+    %%   #{ user_ae_account := <<"ak_... or identity key">>,
+    %%      nwc_uri := <<"nostr+walletconnect://...">> }
+    %% Opts optional:
+    %%   ledger_mode := user_signed|server_signed|operator_signed
+    %%   server_ae_account := <<"identity key for service operator">>
+    gen_server:start_link(?MODULE, [Opts], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop).
@@ -83,10 +123,18 @@ pay_invoice(Pid, Invoice, AmountMsats) ->
     P0 = #{invoice => to_bin(Invoice)},
     Params =
         case AmountMsats of
-            undefined -> P0;
-            null -> P0;
-            <<>> -> P0;
-            _ -> maps:put(amount, AmountMsats, P0)
+            undefined ->
+                P0;
+            null ->
+                P0;
+            <<>> ->
+                P0;
+            A when is_integer(A) -> maps:put(amount, A, P0);
+            A when is_binary(A) ->
+                %% allow string digits
+                maps:put(amount, binary_to_integer(A), P0);
+            _ ->
+                P0
         end,
     call(Pid, <<"pay_invoice">>, Params).
 
@@ -100,12 +148,24 @@ call(Pid, Method, Params) ->
 call(Pid, Method, Params, Timeout) ->
     gen_server:call(Pid, {nwc_call, to_bin(Method), Params, Timeout}, Timeout + 2000).
 
+%% Optional ledger reads (useful for UI/debug)
+ledger_balance_msat(Pid) ->
+    gen_server:call(Pid, ledger_balance_msat, ?DEFAULT_TIMEOUT).
+
+ledger_policy(Pid) ->
+    gen_server:call(Pid, ledger_policy, ?DEFAULT_TIMEOUT).
+
 %% -------------------------------------------------------------------
 %% gen_server
 %% -------------------------------------------------------------------
 
-init([NwcUri0]) ->
+init([Opts]) ->
     try
+        UserAeAccount0 = maps:get(user_ae_account, Opts),
+        NwcUri0 = maps:get(nwc_uri, Opts),
+        Mode = maps:get(ledger_mode, Opts, user_signed),
+        ServerAe = maps:get(server_ae_account, Opts, undefined),
+
         Uri = parse_nwc_uri(NwcUri0),
         WalletPub = lower_hex_ascii64(maps:get(wallet_pubkey, Uri)),
         SecretHex = lower_hex_ascii64(maps:get(secret, Uri)),
@@ -118,6 +178,14 @@ init([NwcUri0]) ->
         %% ensure pool up (best effort)
         _ = nostr_pool:ensure_started(#{relays => Relays}),
 
+        UserAeAccount = to_bin(UserAeAccount0),
+
+        %% Resolve ledger ct_id via AccountRegistry owned by user.
+        %% (If this fails, the HTTP layer should return intents for deploy+register;
+        %%  here we treat it as init-failed because the client cannot enforce ledger.)
+        {ok, CtId0} = resolve_user_nwc_contract_id(UserAeAccount),
+        CtId = to_bin(CtId0),
+
         {ok, #state{
             nwc_uri = to_bin(NwcUri0),
             wallet_pubkey_hex = WalletPub,
@@ -125,7 +193,11 @@ init([NwcUri0]) ->
             client_privkey = ClientPriv,
             client_pubkey_hex = ClientPubHex,
             relays = Relays,
-            info_cache = undefined
+            info_cache = undefined,
+            user_ae_account = UserAeAccount,
+            nwc_contract_id = CtId,
+            ledger_mode = Mode,
+            server_ae_account = ServerAe
         }}
     catch
         C:R:S ->
@@ -151,6 +223,13 @@ handle_call(get_info, _From, State = #state{wallet_pubkey_hex = WalletPub, relay
                 #{error => Why}
         end,
     {reply, Reply, State#state{info_cache = Reply}};
+handle_call(ledger_balance_msat, _From, State = #state{client_pubkey_hex = ClientPub}) ->
+    %% ledger uses "balance(client_pubkey)" returning msat int
+    Reply = ledger_call_dry(State, "balance", [to_s(ClientPub)]),
+    {reply, Reply, State};
+handle_call(ledger_policy, _From, State = #state{client_pubkey_hex = ClientPub}) ->
+    Reply = ledger_call_dry(State, "policy_of", [to_s(ClientPub)]),
+    {reply, Reply, State};
 handle_call(
     {nwc_call, Method, Params, Timeout},
     _From,
@@ -207,7 +286,8 @@ handle_call(
         {error, Why} ->
             {reply,
                 {error, #{
-                    code => <<"ENCRYPT_FAILED">>, message => to_bin(io_lib:format("~p", [Why]))
+                    code => <<"ENCRYPT_FAILED">>,
+                    message => to_bin(io_lib:format("~p", [Why]))
                 }},
                 State}
     end;
@@ -244,11 +324,15 @@ handle_response_event(RespEvent, Priv, WalletPub) ->
             catch
                 _:E ->
                     {error, #{
-                        code => <<"BAD_RESPONSE_JSON">>, message => to_bin(io_lib:format("~p", [E]))
+                        code => <<"BAD_RESPONSE_JSON">>,
+                        message => to_bin(io_lib:format("~p", [E]))
                     }}
             end;
         {error, Why} ->
-            {error, #{code => <<"DECRYPT_FAILED">>, message => to_bin(io_lib:format("~p", [Why]))}}
+            {error, #{
+                code => <<"DECRYPT_FAILED">>,
+                message => to_bin(io_lib:format("~p", [Why]))
+            }}
     end.
 
 %% -------------------------------------------------------------------
@@ -267,6 +351,75 @@ parse_nwc_uri(Uri0) ->
     }.
 
 %% -------------------------------------------------------------------
+%% Ledger resolution + calls
+%% -------------------------------------------------------------------
+
+user_keypair(UserAeAccount0) ->
+    UserAeAccount = to_bin(UserAeAccount0),
+    #{public_key := Pub0, private_key := Priv} = identity_server:get_account(UserAeAccount),
+    #{public_key => to_bin(Pub0), private_key => Priv}.
+
+resolve_user_nwc_contract_id(UserAeAccount) ->
+    KP = user_keypair(UserAeAccount),
+    account_registry:get_contract(KP, ?NWC_REGISTRY_NAME).
+
+%% Determine which AE identity is used to sign ledger mutations.
+%% - user_signed: no signing should happen here (HTTP layer returns intents)
+%% - server_signed: sign as user_ae_account (custodial user keys held server-side)
+%% - operator_signed: sign as server_ae_account (service operator key); contract must have operator set
+ledger_signer_account(#state{ledger_mode = user_signed}) ->
+    undefined;
+ledger_signer_account(#state{ledger_mode = server_signed, user_ae_account = A}) ->
+    A;
+ledger_signer_account(#state{ledger_mode = operator_signed, server_ae_account = A}) ->
+    A;
+ledger_signer_account(_) ->
+    undefined.
+
+ledger_call(State = #state{nwc_contract_id = CtId}, Fun, Args) ->
+    case ledger_signer_account(State) of
+        undefined ->
+            {error, not_signing_in_user_signed_mode};
+        SignerAe ->
+            #{public_key := _PubKey, private_key := PrivateKey} =
+                identity_server:get_account(SignerAe),
+            damage_ae:set_private_key(SignerAe, PrivateKey),
+            damage_ae:contract_call_payfor_user(
+                SignerAe,
+                CtId,
+                damage_ae:contract_path(?NWC_CONTRACT_PATH),
+                Fun,
+                Args
+            )
+    end.
+
+ledger_call_dry(#state{nwc_contract_id = CtId}, Fun, Args) ->
+    damage_ae:contract_call_dry(
+        CtId,
+        damage_ae:contract_path(?NWC_CONTRACT_PATH),
+        Fun,
+        Args,
+        #{}
+    ).
+
+%% -------------------------------------------------------------------
+%% Deploy helpers
+%% -------------------------------------------------------------------
+
+%% Legacy: deploy using whatever default key is configured inside damage_ae (kept for compatibility).
+deploy_nwc_contract() ->
+    damage_ae:contract_deploy(damage_ae:contract_path(?NWC_CONTRACT_PATH), []).
+
+%% Deploy FOR USER: admin = user's AE address; requires custodial access to user keypair in identity_server.
+deploy_nwc_contract(UserAeAccount0) ->
+    UserAeAccount = to_bin(UserAeAccount0),
+    KP = user_keypair(UserAeAccount),
+    %% init(admin' : address) expects an address string; use the public_key as admin
+    damage_ae:contract_deploy_for(KP, damage_ae:contract_path(?NWC_CONTRACT_PATH), [
+        to_s(maps:get(public_key, KP))
+    ]).
+
+%% -------------------------------------------------------------------
 %% Helpers
 %% -------------------------------------------------------------------
 
@@ -281,3 +434,6 @@ lower_hex_ascii64(Bin) when is_binary(Bin) ->
 
 normalize_relays(Relays0) ->
     [to_bin(R) || R <- Relays0, R =/= <<>>].
+
+to_s(B) when is_binary(B) -> binary_to_list(B);
+to_s(L) when is_list(L) -> L.
