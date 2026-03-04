@@ -11,6 +11,7 @@ RUN sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf \
     && pacman -Syy --noconfirm archlinux-keyring \
     && pacman-key --init \
     && pacman-key --populate archlinux \
+    && pacman-key --refresh-keys \
     && pacman -Syu --noconfirm \
     && pacman -S --noconfirm --needed                           \
     base-devel git fakeroot which curl wget ca-certificates     \

@@ -1,0 +1,157 @@
+name: build-release
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon runner
+          - target: macos-arm64
+            os: macos-14
+            profile: "mac,prod"
+          # Intel runner
+          - target: macos-x86_64
+            os: macos-13
+            profile: "mac,prod"
+          # Linux runner
+          - target: linux-x86_64
+            os: ubuntu-22.04
+            profile: "linux,prod"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Erlang/OTP + rebar3
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "26.2"
+          rebar3-version: "3.24.0"
+
+      - name: Cache rebar3 + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/rebar3
+            _build
+          key: ${{ runner.os }}-${{ matrix.target }}-otp26-${{ hashFiles('rebar.config', '**/*.app.src', '**/*.erl', '**/*.hrl', '**/Makefile', '**/*.c', '**/*.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-otp26-
+
+      # ---------------------------
+      # OS dependencies
+      # ---------------------------
+      - name: Install deps (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          set -euxo pipefail
+          brew update
+          # These commonly fix -lgmp / -lcrypto / libsodium linkage for NIFs
+          brew install gmp openssl@3 libsodium || true
+
+          echo "HOMEBREW_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
+          echo "OPENSSL_PREFIX=$(brew --prefix openssl@3 || true)" >> "$GITHUB_ENV"
+          echo "GMP_PREFIX=$(brew --prefix gmp || true)" >> "$GITHUB_ENV"
+          echo "SODIUM_PREFIX=$(brew --prefix libsodium || true)" >> "$GITHUB_ENV"
+
+      - name: Install deps (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential make pkg-config \
+            libgmp-dev \
+            libssl-dev \
+            libsodium-dev \
+            libgtk-4-dev
+
+      # ---------------------------
+      # Tool + env info
+      # ---------------------------
+      - name: Show versions
+        run: |
+          set -euxo pipefail
+          uname -a
+          uname -m
+          erl -noshell -eval 'io:format("OTP=~p~n",[erlang:system_info(otp_release)]), halt().'
+          rebar3 --version
+
+      # ---------------------------
+      # Build
+      # ---------------------------
+      - name: Set build env (macOS link flags)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          set -euxo pipefail
+
+          # Help clang find Homebrew libs/headers (for -lgmp and OpenSSL)
+          if [ -n "${OPENSSL_PREFIX:-}" ] && [ -d "${OPENSSL_PREFIX}/include" ]; then
+            echo "CPPFLAGS=-I${OPENSSL_PREFIX}/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+            echo "LDFLAGS=-L${OPENSSL_PREFIX}/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${GMP_PREFIX:-}" ] && [ -d "${GMP_PREFIX}/include" ]; then
+            echo "CPPFLAGS=-I${GMP_PREFIX}/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+            echo "LDFLAGS=-L${GMP_PREFIX}/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${SODIUM_PREFIX:-}" ] && [ -d "${SODIUM_PREFIX}/include" ]; then
+            echo "CPPFLAGS=-I${SODIUM_PREFIX}/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+            echo "LDFLAGS=-L${SODIUM_PREFIX}/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          fi
+
+          # Also pass through to Erlang port compiler environment
+          echo "CFLAGS=${CFLAGS:-} ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+          echo "ERL_CFLAGS=${ERL_CFLAGS:-} ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+          echo "ERL_LDFLAGS=${ERL_LDFLAGS:-} ${LDFLAGS:-}" >> "$GITHUB_ENV"
+
+      - name: Compile
+        run: |
+          set -euxo pipefail
+          rebar3 clean
+          rebar3 as ${{ matrix.profile }} compile
+
+      - name: Release
+        run: |
+          set -euxo pipefail
+          rebar3 as ${{ matrix.profile }} release
+
+      # ---------------------------
+      # Package artifacts
+      # ---------------------------
+      - name: Package tarball
+        run: |
+          set -euxo pipefail
+
+          # Find the release directory (handles profile naming differences)
+          REL_DIR="$(find _build -maxdepth 4 -type d -path '*/rel/damage' | head -n 1)"
+          if [ -z "$REL_DIR" ]; then
+            echo "ERROR: could not find _build/**/rel/damage" >&2
+            find _build -maxdepth 6 -type d -print
+            exit 1
+          fi
+
+          ARCH="$(uname -m)"
+          OUT="damage-${{ matrix.target }}-${ARCH}.tar.gz"
+
+          # Tar the release root folder 'damage'
+          cd "$(dirname "$REL_DIR")"
+          tar -czf "$GITHUB_WORKSPACE/$OUT" damage
+
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          ls -lh "$GITHUB_WORKSPACE/$OUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUT }}
+          path: ${{ env.OUT }}
+          if-no-files-found: error
