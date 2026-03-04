@@ -55,13 +55,10 @@ jobs:
         run: |
           set -euxo pipefail
           brew update
-          # These commonly fix -lgmp / -lcrypto / libsodium linkage for NIFs
-          brew install gmp openssl@3 libsodium || true
-
-          echo "HOMEBREW_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
+          brew install libsodium gmp openssl@3 || true
+          echo "SODIUM_PREFIX=$(brew --prefix libsodium)" >> "$GITHUB_ENV"
           echo "OPENSSL_PREFIX=$(brew --prefix openssl@3 || true)" >> "$GITHUB_ENV"
           echo "GMP_PREFIX=$(brew --prefix gmp || true)" >> "$GITHUB_ENV"
-          echo "SODIUM_PREFIX=$(brew --prefix libsodium || true)" >> "$GITHUB_ENV"
 
       - name: Install deps (Linux)
         if: startsWith(matrix.os, 'ubuntu')
@@ -89,29 +86,24 @@ jobs:
       # ---------------------------
       # Build
       # ---------------------------
-      - name: Set build env (macOS link flags)
+      - name: Set build env (macOS includes/libs)
         if: startsWith(matrix.os, 'macos')
+        shell: bash
         run: |
           set -euxo pipefail
-
-          # Help clang find Homebrew libs/headers (for -lgmp and OpenSSL)
-          if [ -n "${OPENSSL_PREFIX:-}" ] && [ -d "${OPENSSL_PREFIX}/include" ]; then
-            echo "CPPFLAGS=-I${OPENSSL_PREFIX}/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
-            echo "LDFLAGS=-L${OPENSSL_PREFIX}/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
-          fi
-          if [ -n "${GMP_PREFIX:-}" ] && [ -d "${GMP_PREFIX}/include" ]; then
-            echo "CPPFLAGS=-I${GMP_PREFIX}/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
-            echo "LDFLAGS=-L${GMP_PREFIX}/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
-          fi
-          if [ -n "${SODIUM_PREFIX:-}" ] && [ -d "${SODIUM_PREFIX}/include" ]; then
-            echo "CPPFLAGS=-I${SODIUM_PREFIX}/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
-            echo "LDFLAGS=-L${SODIUM_PREFIX}/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
-          fi
-
-          # Also pass through to Erlang port compiler environment
+          add_prefix () {
+            local p="$1"
+            [ -n "$p" ] || return 0
+            [ -d "$p/include" ] && echo "CPPFLAGS=-I$p/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+            [ -d "$p/lib" ] && echo "LDFLAGS=-L$p/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          }
+          add_prefix "${SODIUM_PREFIX:-}"
+          add_prefix "${OPENSSL_PREFIX:-}"
+          add_prefix "${GMP_PREFIX:-}"
+          # Make sure rebar3 port compiler sees them
           echo "CFLAGS=${CFLAGS:-} ${CPPFLAGS:-}" >> "$GITHUB_ENV"
           echo "ERL_CFLAGS=${ERL_CFLAGS:-} ${CPPFLAGS:-}" >> "$GITHUB_ENV"
-          echo "ERL_LDFLAGS=${ERL_LDFLAGS:-} ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          echo "ERL_LDFLAGS=${ERL_LDFLAGS:-} ${LDFLAGS:-}" >> "$GITHUB_ENV"      
 
       - name: Export Erlang EI paths (macOS)
         if: startsWith(matrix.os, 'macos')
