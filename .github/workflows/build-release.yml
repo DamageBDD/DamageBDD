@@ -113,6 +113,38 @@ jobs:
           echo "ERL_CFLAGS=${ERL_CFLAGS:-} ${CPPFLAGS:-}" >> "$GITHUB_ENV"
           echo "ERL_LDFLAGS=${ERL_LDFLAGS:-} ${LDFLAGS:-}" >> "$GITHUB_ENV"
 
+      - name: Export Erlang EI paths (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # Where OTP is installed by setup-beam
+          OTP_ROOT="$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().' )"
+          echo "OTP_ROOT=$OTP_ROOT" >> "$GITHUB_ENV"
+
+          # EI include + lib directories
+          EI_INCDIR="$OTP_ROOT/usr/include"
+          EI_LIBDIR="$OTP_ROOT/usr/lib"
+
+          # Some OTP layouts use lib/erlang/usr/*
+          [ -d "$EI_LIBDIR" ] || EI_LIBDIR="$OTP_ROOT/lib/erlang/usr/lib"
+          [ -d "$EI_INCDIR" ] || EI_INCDIR="$OTP_ROOT/lib/erlang/usr/include"
+
+          echo "ERL_EI_INCDIR=$EI_INCDIR" >> "$GITHUB_ENV"
+          echo "ERL_EI_LIBDIR=$EI_LIBDIR" >> "$GITHUB_ENV"
+
+          # Make sure compiler & linker see it
+          echo "CPPFLAGS=-I$EI_INCDIR ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$EI_LIBDIR ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          echo "CFLAGS=${CFLAGS:-} -I$EI_INCDIR" >> "$GITHUB_ENV"
+          echo "ERL_CFLAGS=${ERL_CFLAGS:-} -I$EI_INCDIR" >> "$GITHUB_ENV"
+          echo "ERL_LDFLAGS=${ERL_LDFLAGS:-} -L$EI_LIBDIR" >> "$GITHUB_ENV"
+
+          # sanity
+          ls -la "$EI_LIBDIR" | head
+          test -e "$EI_LIBDIR/libei.a" -o -e "$EI_LIBDIR/libei.dylib"
+
       - name: Compile
         run: |
           set -euxo pipefail
