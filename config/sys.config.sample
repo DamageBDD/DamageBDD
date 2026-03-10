@@ -218,15 +218,15 @@
                 ]
             },
             {abduco_workers, [
-                #{
-                    name => "lightningd",
-                    cmd =>
-                        ["/usr/sbin/lightningd"]
-                },
+                %#{
+                %    name => "lightningd",
+                %    cmd =>
+                %        ["/usr/sbin/lightningd"]
+                %},
 
-                #{name => "lightpanda", cmd => ["bin/lightpanda-x86_64-linux", "--verbose"]},
+                %#{name => "lightpanda", cmd => ["bin/lightpanda-x86_64-linux", "--verbose"]},
                 #{name => "chromedriver", cmd => ["chromedriver", "--port=9515"]},
-                #{name => "bitcoind", cmd => ["/usr/local/bin/bitcoind"]},
+                %#{name => "bitcoind", cmd => ["/usr/local/bin/bitcoind"]},
                 #{name => "ipfs", cmd => ["/usr/local/bin/ipfs", "daemon"]}
             ]},
             {market_rules, [

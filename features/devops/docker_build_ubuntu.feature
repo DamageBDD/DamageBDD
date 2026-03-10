@@ -1,11 +1,13 @@
 Feature: Build damagebdd package for ubuntu 24.04 LTS
   Scenario: Build package for Ubuntu
-    When I build an image from Dockerfile at "QmT1K755zSRCZYMdbQ9NoG9QLEYt9K9GPGG5XFRTB98PMp" as tag "damagebdd/ubuntu24-builder:latest"
+    When I build an image from Dockerfile at "QmZtw9D9qf6BoMMHDAyEzqPRS4zTQdntgtZ2ZCnaacWvG3" as tag "damagebdd/ubuntu24-builder:latest"
     Then I run docker image tagged "damagebdd/ubuntu24-builder:latest"
     """
     set -e
 
+
     git reset --hard
+    if [ -d .git ]; then git pull --ff-only --tags || true; fi
 
     rm -f rebar.lock
     rm -rf _build
@@ -20,6 +22,7 @@ Feature: Build damagebdd package for ubuntu 24.04 LTS
     cp -a _build/pkg/deb/*.deb /out/
     """
     When I add the path "docker/out/" to IPFS and store the hash in "asset_hash"
+    And I print "asset_hash"
 
     When I set the JSON variable "meta" to:
     """
@@ -51,6 +54,8 @@ Feature: Build damagebdd package for ubuntu 24.04 LTS
     When I set JSON key "file_ipfs" to "{{asset_hash}}" in variable "meta"
     When I write JSON variable "meta" to file "meta.json"
     When I add the path "meta.json" to IPFS and store the hash in "meta_hash"
+    And I print "meta_hash"
 
     When I mint an NFT with metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
     And I store the mint result in "mint"
+    And I print the variable "mint"

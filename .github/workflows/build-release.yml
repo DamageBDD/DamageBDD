@@ -70,7 +70,8 @@ jobs:
             libgmp-dev \
             libssl-dev \
             libsodium-dev \
-            libgtk-4-dev
+            libgtk-4-dev \
+            nvidia-cuda-toolkit
 
       # ---------------------------
       # Tool + env info

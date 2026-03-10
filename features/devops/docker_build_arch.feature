@@ -1,11 +1,14 @@
 Feature: Build damagebdd package for Arch
   Scenario: Build package for Arch Linux
-    When I build an image from Dockerfile at "QmTpVQRMKT7oabBwieoiYg39x9eJYujccAb4XqZbS7KFAm" as tag "damagebdd/arch-builder:latest"
+    When I build an image from Dockerfile at "QmatJahHtWEUKwwwak2wK2DTXuzQ6MGSi3MyDmTrUFR6KQ" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
     Then I run docker image tagged "damagebdd/arch-builder:latest"
     """
     set -e
 
+    cd /app
+
     git reset --hard
+    git pull --ff-only --tags
 
     rm -f rebar.lock
     rm -rf _build
@@ -15,7 +18,8 @@ Feature: Build damagebdd package for Arch
     rebar3 as prod release
 
     export CUDA_LIB64=/opt/cuda/lib64/
-    DEBUG=1 rebar3 pkg gen -t arch
+    #DEBUG=1 rebar3 pkg gen -t arch
+    rebar3 pkg gen -t arch
 
     cd _build/pkg/arch/damage/
     makepkg 
@@ -24,6 +28,7 @@ Feature: Build damagebdd package for Arch
     rm -f /out/*.zst
     cp -a *.zst /out/
     """
+    Then I copy a file from the container to ipfs and store the hash in "asset_hash"
     When I add the path "docker/out/" to IPFS and store the hash in "asset_hash"
 
     When I set the JSON variable "meta" to:

@@ -4,22 +4,49 @@
 # Base toolchain (stable, cached layer)
 ############################################
 FROM archlinux:latest AS base
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8    CCACHE_DIR=/ccache
 
-# Prime pacman and install build deps in one layer
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CCACHE_DIR=/ccache
+
+WORKDIR /src
+
+############################################
+# Pacman setup (rarely changes)
+############################################
 RUN sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf \
-    && pacman -Syy --noconfirm archlinux-keyring \
-    && pacman-key --init \
-    && pacman-key --populate archlinux \
-    && pacman-key --refresh-keys \
-    && pacman -Syu --noconfirm \
-    && pacman -S --noconfirm --needed                           \
-    base-devel git fakeroot which curl wget ca-certificates     \
-    tar gzip unzip xz zstd patch pkgconf cmake ninja            \
-    erlang jq pacman-contrib ccache git rebar3 make             \
-    gcc libsodium base-devel kubo pass cuda vim gtk4      \
-    && mkdir -p "$CCACHE_DIR"  /root/.cache      && pacman -Scc --noconfirm
+ && pacman -Syy --noconfirm archlinux-keyring \
+ && pacman-key --init \
+ && pacman-key --populate archlinux
 
+############################################
+# Mirror selection (keep cached)
+############################################
+RUN pacman -S --noconfirm --needed reflector ca-certificates \
+ && reflector \
+      --country AU,NZ \
+      --protocol https \
+      --latest 20 \
+      --sort rate \
+      --save /etc/pacman.d/mirrorlist
+
+############################################
+# System update
+############################################
+RUN pacman -Syu --noconfirm
+
+############################################
+# Build dependencies (this layer changes often)
+############################################
+RUN pacman -S --noconfirm --needed \
+    base-devel git fakeroot which curl wget \
+    tar gzip unzip xz zstd patch pkgconf \
+    cmake ninja make gcc \
+    erlang rebar3 jq pacman-contrib \
+    libsodium kubo pass cuda vim gtk4 \
+    ccache \
+ && mkdir -p "$CCACHE_DIR" /root/.cache \
+ && pacman -Scc --noconfirm
 WORKDIR /src
 
 ############################################
@@ -47,21 +74,21 @@ WORKDIR /src
 #############################################
 # Runtime image (slim; contains built artifacts)
 #############################################
-#FROM archlinux:latest AS runtime
-#ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-#RUN pacman -Syu --noconfirm      && pacman -S --noconfirm --needed ca-certificates bash      && pacman -Scc --noconfirm
+FROM fetch AS runtime
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+RUN pacman -Syu --noconfirm
 #
-#WORKDIR /app
-#COPY --from=build /src /app
+WORKDIR /app
+COPY --from=fetch /src /app
 
 # Default to a shell so you can explore artifacts or run your binary/script.
 
 # Create non-root user and group for running Damage/Build tools
 RUN groupadd -r damage && \
     useradd -r -g damage -d /home/damage -m -s /bin/bash damage
-
+RUN mkdir /out
+RUN chown -R damage:damage /app /out
 USER damage
-WORKDIR /home/damage
 
 CMD ["bash"]
 
