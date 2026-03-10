@@ -40,9 +40,17 @@ damage_to_sats(Damage0) ->
             I when is_integer(I) -> I * 1.0;
             F when is_float(F) -> F;
             B when is_binary(B) ->
-                try binary_to_float(B) catch _:_ -> list_to_float(binary_to_list(B)) end;
+                try
+                    binary_to_float(B)
+                catch
+                    _:_ -> list_to_float(binary_to_list(B))
+                end;
             L when is_list(L) ->
-                try list_to_float(L) catch _:_ -> list_to_float(L) end;
+                try
+                    list_to_float(L)
+                catch
+                    _:_ -> list_to_float(L)
+                end;
             _ ->
                 0.0
         end,
@@ -155,11 +163,12 @@ find_price(Symbol, Items) ->
                 {ok, binary_to_float(P0)}
             catch
                 _:_ ->
-                    %% sometimes price may come as integer string; still ok with float conversion via list
+                    %% fallback: integer string (e.g. <<"123">>)
                     try
-                        {ok, list_to_float(binary_to_list(P0))}
+                        {ok, float(binary_to_integer(P0))}
                     catch
-                        _:_ -> {error, {bad_price, Symbol, P0}}
+                        _:_ ->
+                            {error, {bad_price, Symbol, P0}}
                     end
             end;
         [] ->

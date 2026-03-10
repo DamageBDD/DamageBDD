@@ -40,6 +40,7 @@
 -export([get_public_keys/1]).
 -export([get_nostr_json/0]).
 -export([get_metadata/2]).
+-export([nsec_to_npub/1]).
 -export([decode_npub/1]).
 -export([decode_nsec/1]).
 -export([xclip_post/2]).

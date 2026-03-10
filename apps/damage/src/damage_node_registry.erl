@@ -45,6 +45,7 @@
     is_registered/1,
     get_registry/1,
     update_tier/2,
+    get_registry_ct_from_node_registry/1,
 
     %% node-level
     register_node/4,

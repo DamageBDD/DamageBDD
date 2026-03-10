@@ -471,7 +471,6 @@ handle_call(
     AccountCache = maps:get(AeAccount, Cache, #{}),
     case maps:get(spent_balance, AccountCache, {0, 0}) of
         {_, Amount} ->
-            ?LOG_DEBUG("Amount 0: ~p", [Amount]),
             {reply, Amount, Cache}
     end;
 handle_call(
@@ -672,6 +671,10 @@ handle_info({gun_up, _, _} = _Info, State) ->
     {noreply, State};
 handle_info({gun_down, _, _} = _Info, State) ->
     {noreply, State};
+handle_info({gun_down, _, http2, {error, closed}, []} = _Info, State) ->
+    {noreply, State};
+handle_info({gun_down, _, http2, normal, []} = _Info, State) ->
+    {noreply, State};
 handle_info(Info, State) ->
     ?LOG_DEBUG("damage_ae: Unhandled info ~p", [Info]),
     {noreply, State}.
@@ -733,7 +736,6 @@ restart_wallet_proc(AeAccount) ->
     end.
 
 balance(AeAccount) ->
-    ?LOG_DEBUG("Check balance ~p", [AeAccount]),
     DamageAEPid = get_wallet_proc(admin),
     gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
 

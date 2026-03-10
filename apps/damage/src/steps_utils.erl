@@ -26,7 +26,6 @@
 
 step_dry(_Config, Context, _, _N, _, _) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
-    ?LOG_DEBUG("step_dry ~p", [Spend]),
     maps:put(step_spend, Spend, Context).
 step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
     maps:put(Variable, list_to_binary(uuid:to_string(uuid:uuid4())), Context);

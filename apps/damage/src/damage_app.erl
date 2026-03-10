@@ -59,12 +59,15 @@ get_trails() ->
             %{"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
             {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}},
             {"/x", x_redirect_h, #{}},
+            {"/samples/features/index.json", cowboy_static,
+                {priv_file, damage, "static/samples.json"}},
             {"/.well-known/security.txt", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt"}},
             {"/.well-known/security.txt.asc", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt.asc"}},
             {"/token_tos", cowboy_static, {priv_file, damage, "static/token_tos.html"}},
             {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
+            {"/scripts/[...]", cowboy_static, {priv_dir, damage, "scripts/"}},
             {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
             {"/steps.json", cowboy_static, {priv_file, damage, "static/steps.json"}},
             {"/steps.yaml", cowboy_static, {priv_file, damage, "static/steps.yaml"}},
@@ -94,7 +97,7 @@ start_phase(start_vanillae, _StartType, []) ->
     {ok, NetworkId} = application:get_env(damage, ae_network_id),
     vanillae:network_id(NetworkId),
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
-    {ok, AeTls} = application:get_env(damage, ae_tls),
+    AeTls = application:get_env(damage, ae_tls, true),
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
     vanillae:tls(AeTls),
     ok = vanillae:ae_nodes(Nodes),
@@ -121,7 +124,7 @@ start_phase(start_trails_http, _StartType, []) ->
             ]
         ),
     Dispatch = get_trails(),
-    WsPort = application:get_env(damage, port, 8080),
+    WsPort = application:get_env(damage, port, 4888),
     WsIp = application:get_env(damage, ip, {127, 0, 0, 1}),
     {ok, _} =
         cowboy:start_clear(

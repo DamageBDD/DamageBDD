@@ -50,8 +50,6 @@
     ]
 ).
 
--define(SCHEDULES_BUCKET, {<<"Default">>, <<"Schedules">>}).
--define(SCHEDULE_EXECUTION_COUNTER, {<<"counters">>, <<"ScheduleExecution">>}).
 -define(TRAILS_TAG, ["Scheduling Tests"]).
 
 trails() ->
@@ -621,5 +619,5 @@ contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
 
 deploy_schedules_contract() ->
     damage_ae:contract_deploy(
-        "contracts/schedules.aes", []
+        damage_ae:contract_path("contracts/schedules.aes"), []
     ).
