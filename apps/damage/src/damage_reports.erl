@@ -128,7 +128,7 @@ allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>], Req, State}.
 %% ================= Helpers =================
 
 get_reports_dir(Hash) ->
-    list_to_binary(string:join([binary_to_list(Hash), "reports"], "/")).
+    filename:join([Hash, <<"reports">>]).
 
 list_reports(Hash) ->
     Dir0 = ls(get_reports_dir(Hash)),
@@ -146,16 +146,17 @@ build_report_li(DamageApi, Hash, File) ->
 
 render_reports_index(Hash) ->
     {ok, DamageApi} = application:get_env(damage, api_url),
+    ReportList0 = list_reports(Hash),
     Items =
         [
             binary_to_list(build_report_li(DamageApi, Hash, X))
-         || X <- list_reports(Hash)
+         || X <- ReportList0
         ],
     ReportList = list_to_binary(string:join(Items, "\n")),
     damage_utils:load_template("report.mustache", #{reports_list => ReportList, hash => Hash}).
 
 full_reports_path(PathList) ->
-    string:join(["reports", PathList], "/").
+    filename:join(["reports", PathList]).
 
 render_report_html(Hash, PathList) ->
     FullPath = full_reports_path(PathList),
@@ -182,18 +183,23 @@ route_report_file(Hash, Req, State, PathBin) ->
     FullPath = full_reports_path(PathList),
     case filename:extension(PathList) of
         ".html" ->
-            {render_report_html(Hash, PathList), Req, State};
+            %% Expand inside the HTML fragment too (if it contains ECAI refs)
+            Html0 = render_report_html(Hash, PathList),
+            Html = ecai_log_decode:expand(Hash, FullPath, iolist_to_binary(Html0)),
+            {Html, Req, State};
         ".txt" ->
-            Txt = cat(Hash, FullPath),
+            Txt0 = cat(Hash, FullPath),
+            Txt = ecai_log_decode:expand(Hash, FullPath, Txt0),
             Req1 = reply_plain_text(Req, Txt),
             {stop, Req1, State};
         _Other ->
-            {cat(Hash, FullPath), Req, State}
+            Data0 = cat(Hash, FullPath),
+            Data = ecai_log_decode:expand(Hash, FullPath, Data0),
+            {Data, Req, State}
     end.
 
 %% ================= Controller =================
 to_html(Req, #{action := features} = State) ->
-    ?LOG_DEBUG("feature to ", []),
     case cowboy_req:binding(hash, Req) of
         undefined ->
             {<<"Hash required">>, Req, State};
@@ -205,7 +211,7 @@ to_html(Req, #{action := features} = State) ->
             {ok, DamageApi} = application:get_env(damage, api_url),
             FeatureUrl =
                 list_to_binary(
-                    string:join([DamageApi, "features", Hash, ""], "/")
+                    filename:join([DamageApi, "features", Hash, ""])
                 ),
             Preview = feature_preview(FeatureData),
             Body =
@@ -227,12 +233,10 @@ to_html(Req, #{hash := Hash} = State) ->
             ?LOG_INFO("report html ~p", [Body]),
             {Body, Req, State};
         PathBin ->
-            ?LOG_DEBUG("cat hash ~p", [Hash]),
             route_report_file(Hash, Req, State, PathBin)
     end.
 
 to_json(Req, #{action := features} = State) ->
-    ?LOG_DEBUG("feature to ", []),
     case cowboy_req:binding(hash, Req) of
         undefined ->
             {<<"Path required">>, Req, State};
@@ -260,10 +264,9 @@ to_json(Req, #{hash := Hash0} = State) ->
 get_reports(Req, Hash) ->
     case cowboy_req:binding(path, Req) of
         undefined ->
-            ls(list_to_binary(string:join([binary_to_list(Hash), "reports"], "/")));
+            ls(list_to_binary(filename:join([binary_to_list(Hash), "reports"])));
         Path ->
-            Path0 = string:join(["reports", binary_to_list(Path)], "/"),
-            ?LOG_DEBUG(" cat hash ~p", [Hash]),
+            Path0 = filename:join(["reports", binary_to_list(Path)]),
             cat(Hash, Path0)
     end.
 
@@ -275,9 +278,7 @@ get_record(Hash) ->
 
 do_query_base(Fun, Index, Args, AeAccount) when is_list(AeAccount) ->
     do_query_base(Fun, Index, Args, list_to_binary(AeAccount));
-do_query_base(_Fun, Index, Args, AeAccount) ->
-    Args0 = [?RUNRECORDS_BUCKET, Index] ++ Args ++ [[{max_results, 30}]],
-    ?LOG_DEBUG("get reports query ~p", [Args0]),
+do_query_base(_Fun, _Index, _Args, AeAccount) ->
     damage_ae:get_reports(AeAccount).
 
 since_seconds(hours, Value) -> Value * 3600;
@@ -292,7 +293,6 @@ since_seconds(weeks, Value) -> Value * 3600 * 24 * 7.
 range_query(StartDateTime0, EndDateTime0, Prefix, AeAccount) ->
     StartDateTime = list_to_integer(Prefix ++ integer_to_list(StartDateTime0)),
     EndDateTime = list_to_integer(Prefix ++ integer_to_list(EndDateTime0)),
-    ?LOG_DEBUG("Since ~p to ~p", [StartDateTime, EndDateTime]),
     do_query_base(
         get_index_range,
         {integer_index, "result_status"},
@@ -333,8 +333,7 @@ do_query(#{public_key := AeAccount, since := Since0, status := Status}) ->
                         AeAccount
                     )
             end;
-        Other ->
-            ?LOG_DEBUG("Invalid query ~p", [Other]),
+        _Other ->
             <<"Invalid query.">>
     end;
 do_query(#{public_key := AeAccount, since := Since0}) ->
@@ -354,15 +353,13 @@ do_query(#{public_key := AeAccount, since := Since0}) ->
                         list_to_integer(string:substr(Since, 1, End))
                     ),
             EndDateTime = date_util:epoch(),
-            ?LOG_DEBUG("Since ~p", [StartDateTime]),
             do_query_base(
                 get_index_range,
                 {integer_index, "created"},
                 [StartDateTime, EndDateTime],
                 AeAccount
             );
-        Other ->
-            ?LOG_DEBUG("Invalid query ~p", [Other]),
+        _Other ->
             <<"Invalid query.">>
     end;
 do_query(#{public_key := AeAccount, schedule_id := ScheduleId}) ->
@@ -397,7 +394,6 @@ from_json(Req, #{public_key := AeAccount} = State) ->
                 {400, <<"Json decoding failed.">>};
             PostData ->
                 QueryData = maps:merge(PostData, #{public_key => AeAccount}),
-                ?LOG_DEBUG("Query data ~p", [QueryData]),
                 {200, do_query(QueryData)}
         end,
     Resp = cowboy_req:set_resp_body(jsx:encode(Resp0), Req),
@@ -438,7 +434,11 @@ feature_preview(FeatureData) when is_binary(FeatureData) ->
     %% Take a small leading chunk and flatten whitespace for meta tags
     Max = 400,
     Size = byte_size(Rest0),
-    Take = case Size > Max of true -> Max; false -> Size end,
+    Take =
+        case Size > Max of
+            true -> Max;
+            false -> Size
+        end,
     Chunk0 = binary:part(Rest0, 0, Take),
 
     html_escape(Chunk0).

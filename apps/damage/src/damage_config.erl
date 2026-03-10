@@ -52,10 +52,10 @@ get_default_config(ConfigIn0) ->
 
     %% --- user-provided knobs ----------------------------------------------
     Concurrency = max(1, maps:get(concurrency, C0, 1)),
-    UserFmts = maps:get(formatters, C0, DefaultInFormatters),
+    UserFmts = maps:get(formatters, C0, []),
 
     %% Append user formatters after built-ins, then dedupe (keep last)
-    FinalFormatters = dedupe_tuples(UserFmts),
+    FinalFormatters = dedupe_tuples(UserFmts ++ DefaultInFormatters),
 
     %% --- base config we guarantee -----------------------------------------
     Base = #{
