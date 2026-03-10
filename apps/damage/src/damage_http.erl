@@ -475,7 +475,7 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                             %% --- 2) COSTED RUN --------------------------------
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
                             {200, Result} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
-                            Spend = damage_ae:confirm_spend(
+                            {ok, Spend, TxHash} = damage_ae:confirm_spend(
                                 RunConfig,
                                 maps:put(private_key, maps:get(private_key, State), Result)
                             ),
@@ -483,7 +483,11 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                             formatter:format(
                                 RunConfig,
                                 summary,
-                                maps:put(spend, Spend, Result)
+                                maps:put(
+                                    tx_hash,
+                                    TxHash,
+                                    maps:put(spend, Spend, Result)
+                                )
                             ),
                             {200, Result};
                         false ->
@@ -929,8 +933,8 @@ from_html(Req0, State) ->
 
         case execute_bdd(Context, State, ReqRun) of
             %% STREAM MODE: always finish with a footer + fin
-            {Status, Resp} when Stream =:= maybe_stream ->
-                Footer = stream_footer(Status, Resp),
+            {_Status, _Resp} when Stream =:= maybe_stream ->
+                Footer = <<"">>,
                 Req2 = cowboy_req:stream_body(Footer, fin, ReqRun),
                 {stop, Req2, State};
             %% Non-stream OK (JSON)
@@ -1065,30 +1069,3 @@ to_json(Req0, State) ->
 
 to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.
 
-%% -------------------------------------------------------------------
-%% Helpers
-%% -------------------------------------------------------------------
-
-stream_footer(Status, Resp) ->
-    Encoded =
-        case Resp of
-            B when is_binary(B) ->
-                B;
-            L when is_list(L) ->
-                unicode:characters_to_binary(L);
-            _ ->
-                %% Safest: always JSON encode maps/tuples/etc.
-                jsx:encode(Resp)
-        end,
-    case Status of
-        200 ->
-            iolist_to_binary(["\n---\nRESULT: ", Encoded, "\n"]);
-        _ ->
-            iolist_to_binary([
-                "\n---\nERROR: ",
-                integer_to_list(Status),
-                " ",
-                Encoded,
-                "\n"
-            ])
-    end.

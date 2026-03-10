@@ -548,6 +548,7 @@ handle_call(
                     "log" :=
                         _Log,
                     "return_type" := "ok",
+                    "tx_hash" := TxHash,
                     "return_value" := {}
                 } ->
                     NewCache =
@@ -557,10 +558,10 @@ handle_call(
                             Cache
                         ),
                     ?LOG_DEBUG("confirm spend cached ~p", [NewCache]),
-                    {reply, Amount, maps:put({balance, AeAccount}, none, NewCache)};
+                    {reply, {ok, Amount, TxHash}, maps:put({balance, AeAccount}, none, NewCache)};
                 #{status := <<"fail">>} ->
                     ?LOG_DEBUG("confirm spend failed ~p", [Cache]),
-                    {reply, Amount, Cache}
+                    {reply, {error, Amount}, Cache}
             end;
         {_, Amount} ->
             ?LOG_DEBUG("Amount 0: ~p", [Amount]),
