@@ -90,15 +90,12 @@ get_contract(KeyPair, Name) ->
 -spec get_contract(keypair(), contract_id(), name()) ->
     {ok, contract_id()} | {error, term()}.
 get_contract(KeyPair, RegistryId, Name) ->
-    {ok, {address, Address}} =
-        call_value(
-            KeyPair,
-            RegistryId,
-            "get_contract",
-            [to_str(Name)]
-        ),
-
-    {ok, aeser_api_encoder:encode(contract_pubkey, Address)}.
+    call_value(
+        KeyPair,
+        RegistryId,
+        "get_contract",
+        [to_str(Name)]
+    ).
 
 -spec get_registered_names(keypair(), contract_id()) ->
     {ok, [string()]} | {error, term()}.

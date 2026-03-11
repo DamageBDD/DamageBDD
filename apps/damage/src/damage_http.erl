@@ -187,6 +187,7 @@ is_authorized(Req, State0) ->
                 {ok, AeAccount, _} ->
                     case identity_server:get_account(AeAccount) of
                         #{public_key := AeAccount, private_key := PrivateKey} ->
+                            damage_ae:set_private_key(AeAccount, PrivateKey),
                             {
                                 true,
                                 Req,
@@ -200,7 +201,7 @@ is_authorized(Req, State0) ->
                                 )
                             };
                         Other ->
-                            ?LOG_INFO("Got other ~p", [Other]),
+                            ?LOG_INFO("Got other ~p ~p", [AeAccount, Other]),
                             {
                                 true,
                                 Req,
@@ -351,7 +352,7 @@ get_stream_config(Config, Context, Req) ->
     Config0.
 get_config(Config, Context, Req0) ->
     Concurrency = maps:get(concurrency, Context, 1),
-    StreamFlag = maps:get(stream, Context, nostream),
+    StreamFlag = maps:get(stream, Context, true),
     case {Concurrency, StreamFlag} of
         {1, maybe_stream} ->
             get_stream_config(Config, Context, Req0);
@@ -474,10 +475,10 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                         true ->
                             %% --- 2) COSTED RUN --------------------------------
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
-                            {200, Result} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
+                            {_, Result} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
                             {ok, Spend, TxHash} = damage_ae:confirm_spend(
                                 RunConfig,
-                                maps:put(private_key, maps:get(private_key, State), Result)
+                                Result
                             ),
                             ?LOG_INFO("Result ~p", [Spend]),
                             formatter:format(
@@ -1068,4 +1069,3 @@ to_json(Req0, State) ->
     {Body, Req0, State}.
 
 to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.
-

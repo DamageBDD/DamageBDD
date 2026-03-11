@@ -508,19 +508,17 @@ handle_call(
             public_key := AeAccount,
             feature_hash := FeatureHash,
             report_hash := ReportHash,
-            node_public_key := NodePublicKey,
-            private_key := PrivateKey
+            node_public_key := NodePublicKey
         } = _RunRecord
     },
     _From,
-    #{public_key := AeAccount} = Cache
+    #{public_key := AeAccount, private_key := PrivateKey} = Cache
 ) ->
     KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
-    SpendRecord = #{"report_hash" => binary_to_list(ReportHash)},
     AccountCache = maps:get(AeAccount, Cache, #{}),
     case maps:get(spent_balance, AccountCache, {0, 0}) of
         {_, Amount} when Amount > 0 ->
-            ?LOG_INFO("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
+            ?LOG_INFO("confirm spend ~p ~p ~p ~p", [Amount, AeAccount, ReportHash, FeatureHash]),
             case
                 do_contract_call_payfor_user(
                     KeyPair,
@@ -940,18 +938,16 @@ paying_for(PK, Nonce, Fee, Tx) ->
     end.
 -spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
 calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
-    BaseGas = 46000,
-    GasPerByte = 20,
     SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
-    BaseGas + (SizeDiff * GasPerByte).
+    ?DAMAGE_BASE_GAS + (SizeDiff * ?DAMAGE_GAS_PERBYTE).
 min_gas_price() ->
-    1000000000.
+    vanillae:min_gas_price() * ?DAMAGE_GAS_PRICE_MULTIPLIER.
 min_fee() ->
     %TODO some fine tuning
-    vanillae:min_fee() * 2.
+    vanillae:min_fee() * ?DAMAGE_FEE_MULTIPLIER.
 min_gas() ->
     %TODO some fine tuning
-    vanillae:min_gas() * 2.
+    vanillae:min_gas() * ?DAMAGE_GAS_MULTIPLIER.
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->
@@ -1127,7 +1123,7 @@ contract_call(
         {ok, #{"tx_hash" := ContractCallTxHash}} ->
             maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
         Error ->
-            Error
+            throw(Error)
     end.
 
 contract_call_dry(
@@ -1137,7 +1133,6 @@ contract_call_dry(
     Func,
     Args
 ) ->
-    ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
     Fee = min_fee(),
     Gas = min_gas(),
@@ -1216,7 +1211,7 @@ contract_deploy_for(
     DummyGas = min_gas(),
     DummyFee = min_fee(),
     Amount = 0,
-    GasPrice = min_gas_price() * 2,
+    GasPrice = min_gas_price() * 10,
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
 
@@ -1235,7 +1230,7 @@ contract_deploy_for(
     %?LOG_INFO("Paying for tx ~p ~p ~p", [NodeAeAccount, NodeNonce, PayingForTx]),
 
     CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
-    CorrectFee = CorrectGas * GasPrice,
+    CorrectFee = (CorrectGas * GasPrice) * 2,
 
     ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
 

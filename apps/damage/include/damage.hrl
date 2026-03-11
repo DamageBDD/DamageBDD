@@ -26,6 +26,14 @@
 -define(DAMAGE_DECIMALS, 8).
 -define(AE_DECIMALS, 18).
 
+% Infra Fees
+% multipliers to pedal the fees and gas usage starting from the default of vanillae
+-define(DAMAGE_GAS_MULTIPLIER, 2).
+-define(DAMAGE_GAS_PRICE_MULTIPLIER, 1).
+-define(DAMAGE_FEE_MULTIPLIER, 4).
+-define(DAMAGE_GAS_PERBYTE, 20).
+-define(DAMAGE_BASE_GAS, 46000).
+
 -record(damage_state, {
     formatters = [] :: [term()],
     test_state = [] :: term()

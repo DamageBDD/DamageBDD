@@ -120,34 +120,32 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
       ]
     );
 
-format(Config, step, {Keyword, LineNo, StepStatement, <<>>, _Context, Status}) ->
-  ok =
-    write_file(
-      Config,
-      "    ~s ~s line:~p  ~s",
-      [
-        get_keyword(Config, Keyword),
-        StepStatement,
-        LineNo,
-        get_status_text(Config, Status)
-      ]
-    );
-
 format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) ->
-  ok =
-    write_file(
-      Config,
-      "    ~s ~s line:~p  ~s\n~s ",
-      [
-        get_keyword(Config, Keyword),
-        StepStatement,
-        %%     rows = [["Top left", "Top right"], ["Bottom left", "Bottom right"]],
-        LineNo,
-        get_status_text(Config, Status),
-        format_args(Args)
-      ]
-    );
+    Text =
+        io_lib:format(
+          "    ~s ~s line:~p  ~s",
+          [
+            get_keyword(Config, Keyword),
+            StepStatement,
+            LineNo,
+            get_status_text(Config, Status)
+          ]
+        ),
 
+    case ecai_compress:compress(Config, Text) of
+        {compressed, Ref} ->
+            ok = ecai_cache:remember_ref(iolist_to_binary(Ref), iolist_to_binary(Text)),
+            write_file(Config, "    ~s", [Ref]);
+        {raw, Raw} ->
+            write_file(Config, "~s", [Raw])
+    end,
+
+
+    case Args of
+        <<>> -> ok;
+        []   -> ok;
+        _    -> write_file(Config, "~s", [format_args(Args)])
+    end;
 format(
   Config,
   print,
@@ -155,8 +153,17 @@ format(
 ) ->
   ok = write_file(Config, "\n~s \n\n~s\n", [StepStatement, Args]);
 
-format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address}) ->
-  ok = write_file(Config, "\nSummary: \n Feature: ~s\nReport ~s\nRunId: ~s\nAccount: ~s", [FeatureHash, ReportDir, RunId, Address]).
+format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address, spend := Spend, tx_hash := TxHash}) ->
+    ok = write_file(Config, "\nSummary: \n Feature: ~s\nReport ~s\nRunId: ~s\nAccount: ~s\nCost: ~p\ntx_hash: ~p", [FeatureHash, ReportDir, RunId, Address, Spend, TxHash]),
+    %% new: persist the dictionary beside the report artifacts
+    case maps:get(ecai, Config, false) of
+        true ->
+            MapFile = filename:join([ReportDir, "ecai_map.term"]),
+            _ = ecai_cache:export_ref_map(MapFile),
+            ok;
+        false ->
+            ok
+    end.
 
 
 format_args([]) -> <<"\n">>;

@@ -29,6 +29,11 @@ write_file(#{output := Output}, FormatStr, Args) ->
     ).
 
 
+%% Stream raw docker output chunks
+format(#{output := _} = Config, stdout, Bin) when is_binary(Bin); is_list(Bin) ->
+  ok = write_file(Config, "<code class='stdout'> ~s</code>", [Bin]);
+format(#{output := _} = Config, stderr, Bin) when is_binary(Bin); is_list(Bin) ->
+  ok = write_file(Config, "<code class='stderr'> ~s</code>", [Bin]);
 format(Config, error, {LineNo, Message}) ->
   ok =
     write_file(
@@ -84,8 +89,10 @@ format(
 ) ->
   ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]);
 
-format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address}) ->
-  ok = write_file(Config, "<h2>Summary</h2> <br> Feature: ~s<br>Report ~s<br>RunId: ~s<br><br>Address: ~s<br>", [FeatureHash, ReportDir, RunId, Address]).
+format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address, spend := Spend, tx_hash := TxHash}) ->
+  ok = write_file(
+         Config,
+         "<h2>Summary</h2> <br> Feature: ~s<br>Report ~s<br>RunId: ~s<br><br>Address: ~s<br>Cost: ~p<br>tx_hash: ~p <br>", [FeatureHash, ReportDir, RunId, Address, Spend, TxHash]).
 
 format_args([]) -> <<"\n">>;
 format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p<br>">>, [Reason]);
