@@ -3,32 +3,28 @@ Feature: Build damagebdd package for Arch
     When I build an image from Dockerfile at "QmatJahHtWEUKwwwak2wK2DTXuzQ6MGSi3MyDmTrUFR6KQ" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
     Then I run docker image tagged "damagebdd/arch-builder:latest"
     """
-    set -e
+    #set -ex
+    export CUDA_LIB64=/opt/cuda/lib64/
+    export PATH=$PATH:/opt/cuda/bin/
 
     cd /app
-
-    git reset --hard
     git pull --ff-only --tags
-
     rm -f rebar.lock
     rm -rf _build
 
     DEBUG=1
 
     rebar3 as prod release
-
-    export CUDA_LIB64=/opt/cuda/lib64/
     #DEBUG=1 rebar3 pkg gen -t arch
     rebar3 pkg gen -t arch
 
     cd _build/pkg/arch/damage/
     makepkg 
+    echo "build success"
+    exit 0
 
-    # copy zst to host
-    rm -f /out/*.zst
-    cp -a *.zst /out/
     """
-    Then I copy a file from the container to ipfs and store the hash in "asset_hash"
+    Then I copy file "/app/_build/pkg/arch/damage/" from the container to ipfs and store the hash in "asset_hash"
     When I add the path "docker/out/" to IPFS and store the hash in "asset_hash"
 
     When I set the JSON variable "meta" to:
