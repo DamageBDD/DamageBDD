@@ -8,26 +8,25 @@ Feature: Build damagebdd package for Arch
     export PATH=$PATH:/opt/cuda/bin/
 
     cd /app
-    git pull --ff-only --tags
+    git pull --ff-only --tags --unshallow
+    git describe --tags --always --dirty
     rm -f rebar.lock
     rm -rf _build
 
-    DEBUG=1
+    #DEBUG=1
 
     rebar3 as prod release
-    #DEBUG=1 rebar3 pkg gen -t arch
-    rebar3 pkg gen -t arch
+    DEBUG=1 rebar3 pkg gen -t arch
+    #rebar3 pkg gen -t arch
 
     cd _build/pkg/arch/damage/
     makepkg 
     echo "build success"
-    exit 0
+    #exit 0
 
     """
     Then I copy file "/app/_build/pkg/arch/damage/" from the container to ipfs and store the hash in "asset_hash"
-    When I add the path "docker/out/" to IPFS and store the hash in "asset_hash"
-
-    When I set the JSON variable "meta" to:
+    When I set the JSON variable "meta" to
     """
     {
         "name": "DamageBDD Arch Linux Software Package",
