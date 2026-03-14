@@ -48,6 +48,9 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
+-define(WEBHOOKS_CONTRACT,
+    "ct_XDiXtNguPHqdFkR6q4AhtAWNnSMpvRsxuMVanNZM2EzR7yhZJ"
+).
 -define(WEBHOOKS_BUCKET, {<<"Default">>, <<"Webhooks">>}).
 -define(TRAILS_TAG, ["Manage Webhooks"]).
 
@@ -317,10 +320,12 @@ restart_webhook_proc(AeAccount) ->
             get_webhooks_proc(AeAccount)
     end.
 
+get_webhooks_contract() ->
+    application:get_env(damage, context_ct, ?WEBHOOKS_CONTRACT).
 contract_call(AeAccount, Func, Args) ->
     damage_ae:contract_call(
         AeAccount,
-        ?WEBHOOKS_CONTRACT,
+        get_webhooks_contract(),
         "contracts/webhooks.aes",
         Func,
         Args

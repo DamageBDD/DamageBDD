@@ -50,6 +50,10 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
+-define(CONTEXT_CONTRACT,
+    % staging "ct_7rVLDU2eDG4ip7CKnX3Xzd43TnJ9BiYvGaWeEhtL6EVxfGAZQ"
+    "ct_Mz99gAjHDHEGpTJktsjRUXjr2A4FQa38VV57K9qxrsNznpSnt"
+).
 
 -define(TRAILS_TAG, ["Context Management"]).
 -define(REDACTED_TEXT_MARKER, <<"XX-REDACTED-XX">>).
@@ -438,11 +442,13 @@ restart_context_proc(AeAccount) ->
             supervisor:terminate_child(damage_sup, Pid),
             get_context_proc(AeAccount)
     end.
+get_context_contract() ->
+    application:get_env(damage, context_ct, ?CONTEXT_CONTRACT).
 contract_call(AeAccount, Func, Args) ->
     ?LOG_DEBUG("damage_context ~p ~p ~p", [AeAccount, Func, Args]),
     damage_ae:contract_call_payfor_user(
         AeAccount,
-        ?CONTEXT_CONTRACT,
+        get_context_contract(),
         "contracts/context.aes",
         Func,
         Args

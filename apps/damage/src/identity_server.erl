@@ -24,6 +24,17 @@
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
+-define(EMAIL_REGISTRY_CONTRACT,
+    % staging "ct_9arW6cnYKGoioHceaJ3v9rBWXpVXYP6VjKD19JEa5FosFGPBo"
+    "ct_BJi1Lg4JmpPZqY5Pt1JB4PoRiTNphMvkuxTzCk2kNLimKMHvB"
+).
+-define(NPUB_REGISTRY_CONTRACT,
+    "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"
+).
+
+-define(LIGHTNING_REGISTRY_CONTRACT,
+    "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"
+).
 %%% =========================
 %%% PUBLIC API
 %%% =========================
@@ -74,6 +85,12 @@ get_access_token(AeAccount) ->
     AeAccount.
 verify_access_token(Token) ->
     Token.
+get_email_registry_contract() ->
+    application:get_env(damage, email_registry_ct, ?EMAIL_REGISTRY_CONTRACT).
+get_npub_registry_contract() ->
+    application:get_env(damage, npub_registry_ct, ?NPUB_REGISTRY_CONTRACT).
+get_lightning_registry_contract() ->
+    application:get_env(damage, npub_registry_ct, ?LIGHTNING_REGISTRY_CONTRACT).
 %%% =========================
 %%% gen_server CALLBACKS
 %%% =========================
@@ -89,7 +106,7 @@ handle_call({get_account, PublicKey}, _From, #{ets_table := Table} = State) ->
         [] ->
             case
                 damage_ae:contract_call(
-                    ?EMAIL_REGISTRY_CONTRACT,
+                    get_email_registry_contract(),
                     "contracts/email_registry.aes",
                     "get_email",
                     [
@@ -122,7 +139,7 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
     KeyPair = secrets:node_keypair(),
     Response = damage_ae:contract_call(
         KeyPair,
-        ?EMAIL_REGISTRY_CONTRACT,
+        get_email_registry_contract(),
         "contracts/email_registry.aes",
         % TODO update contract
         ?AE_INITIAL_AETTOS + 1,
@@ -148,7 +165,7 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
             case
                 damage_ae:contract_call(
                     KeyPair,
-                    ?EMAIL_REGISTRY_CONTRACT,
+                    get_email_registry_contract(),
                     "contracts/email_registry.aes",
                     "get_account",
                     [
@@ -188,7 +205,7 @@ handle_call({set_email_password, Email, Password}, _From, #{ets_table := Table} 
     KeyPair = secrets:node_keypair(),
     Response = damage_ae:contract_call(
         KeyPair,
-        ?EMAIL_REGISTRY_CONTRACT,
+        get_email_registry_contract(),
         "contracts/email_registry.aes",
         "set_password",
         [
@@ -203,11 +220,11 @@ handle_call({register_npub, Npub, PublicKey}, _From, State) ->
     KeyPair = secrets:node_keypair(),
     Response = damage_ae:contract_call(
         KeyPair,
-        ?NPUB_REGISTRY_CONTRACT,
+        get_npub_registry_contract(),
         "contracts/nostr_registry.aes",
         "register_npub",
         [
-            ?EMAIL_REGISTRY_CONTRACT,
+            get_email_registry_contract(),
             binary_to_list(secrets:salted_hash(Npub)),
             PublicKey
         ]
@@ -217,11 +234,11 @@ handle_call({register_lightning, AuthKey, PublicKey}, _From, State) ->
     KeyPair = secrets:node_keypair(),
     Response = damage_ae:contract_call(
         KeyPair,
-        ?NPUB_REGISTRY_CONTRACT,
+        get_npub_registry_contract(),
         "contracts/lightning_registry.aes",
         "register_lightning",
         [
-            ?EMAIL_REGISTRY_CONTRACT,
+            get_email_registry_contract(),
             binary_to_list(secrets:salted_hash(AuthKey)),
             PublicKey
         ]
@@ -232,11 +249,11 @@ handle_call({get_account_by_npub, Npub}, _From, State) ->
     Response =
         damage_ae:contract_call(
             KeyPair,
-            ?NPUB_REGISTRY_CONTRACT,
+            get_npub_registry_contract(),
             "contracts/npub_registry.aes",
             "get_account",
             [
-                ?EMAIL_REGISTRY_CONTRACT,
+                get_email_registry_contract(),
                 binary_to_list(secrets:salted_hash(Npub))
             ]
         ),
@@ -246,11 +263,11 @@ handle_call({get_account_by_lightning, AuthKey}, _From, State) ->
     Response =
         damage_ae:contract_call(
             KeyPair,
-            ?LIGHTNING_REGISTRY_CONTRACT,
+            get_lightning_registry_contract(),
             "contracts/lightning_registry.aes",
             "get_account",
             [
-                ?EMAIL_REGISTRY_CONTRACT,
+                get_email_registry_contract(),
                 binary_to_list(secrets:salted_hash(AuthKey))
             ]
         ),

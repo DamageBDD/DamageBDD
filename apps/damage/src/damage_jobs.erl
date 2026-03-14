@@ -51,11 +51,16 @@
     % op_unpause(Operator, JobId, Opts)
     op_unpause/3,
     % deploy node job registry
-    deploy_jobregistry/0
+    deploy_jobregistry/0,
+    ct_id/1
 ]).
 
 %% ─── Defaults ────────────────────────────────────────────────────────────────
 -define(DEFAULT_SRC, "contracts/JobRegistry.aes").
+
+-define(JOB_REGISTRY_CONTRACT,
+    "ct_JJGKrTpqtivJCfMGJZo9iWrmKTFyD47ipCiNLtdiqxtnQ3PKQ"
+).
 
 %% Pull the contract id from Opts or application env
 -spec ct_id(map()) -> binary().

@@ -25,6 +25,9 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
+-define(MARKETS_CONTRACT,
+    "ct_2ZbBJQsgr4VwTQpumVQ8Dv4VXfCMVgvE5xLcZQRutJ7BZCDKgQ"
+).
 -define(TRAILS_TAG, ["Publish Tests For Open Market Execution"]).
 
 trails() ->

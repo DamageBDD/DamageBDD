@@ -181,7 +181,6 @@ start_link() ->
 
     {ok, SSHPid} =
         ssh:daemon(
-            %{127,0,0,1},
             0,
             [
                 {system_dir, SystemDir},

@@ -70,6 +70,9 @@
     code_change/3
 ]).
 
+-define(SWAP_OPTIONS_CONTRACT,
+    "ct_2T1Zv7DnUgxWxCDWXe4i5649Tyx1uxBeBk7SUymUWpbpABiMhg"
+).
 %%%===================================================================
 %%% Public API
 %%%===================================================================

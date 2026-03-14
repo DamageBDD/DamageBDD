@@ -17,6 +17,8 @@
 -define(CACHE_TTL_SECONDS, 30).
 -define(LN_RECONCILE_MS, 600000).
 -define(LN_SWAP_LEDGER, cln_ln_swap_ledger).
+-define(TX_POLL_TIMEOUT, 600000).
+-define(TX_POLL_INTERVAL, 2000).
 
 -export([
     init/1,
@@ -43,7 +45,6 @@
     get_ae_mdw_ws_node/0,
     node_ae_balance/0,
     node_damage_balance/0,
-    account_keypair/1,
     ae_to_aetto/1,
     delete_account/1,
     revoke_token/2,
@@ -99,6 +100,9 @@
     deploy_swap_registry/0
 ]).
 -import(damage_utils, [float_to_full_integer/1]).
+
+-define(LIGHTNING_SWAP_OPTION_CONTRACT, "ct_aWMwTaxGRxcjbb11NiVYVM4NHWmTAViteE5Gp2ayrrmrZi3ry").
+-define(LIGHTNING_SWAP_REGISTRY_CONTRACT, "ct_2uwLnU149TP8wHDYUZx1KmKYbDCXoZCPwLU4RpJz3B4QR81UG5").
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -781,6 +785,8 @@ is_custodial(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {is_custodial, AeAccount}, ?AE_TIMEOUT).
 
+set_private_key(AeAccount, PrivateKey) when is_list(AeAccount) ->
+    set_private_key(list_to_binary(AeAccount), PrivateKey);
 set_private_key(AeAccount, PrivateKey) ->
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
@@ -852,7 +858,7 @@ transfer_damage(FromAccount, ToAeAccount, Damage) when is_integer(Damage) ->
 transfer_hits(FromAccount, ToAeAccount, Hits) when is_integer(Hits) ->
     Result =
         contract_call(
-            account_keypair(FromAccount),
+            identity_server:get_account(FromAccount),
             ?DAMAGE_TOKEN_CONTRACT,
             "contracts/token.aes",
             "transfer",
@@ -1426,19 +1432,6 @@ sign_transaction_base58(Priv, EncodedTX) ->
     SignedTX = sign_transaction(Priv, TX),
     aeser_api_encoder:encode(transaction, SignedTX).
 
-account_keypair(AeAccount) ->
-    #{
-        "return_type" := "ok",
-        "return_value" := KeyPair
-    } =
-        contract_call(
-            secrets:node_keypair(),
-            ?EMAIL_REGISTRY_CONTRACT,
-            "contracts/email_registry.aes",
-            "get_email",
-            [AeAccount]
-        ),
-    KeyPair.
 tx_info_convert_dry_run_result(Result) ->
     case Result of
         #{
@@ -1507,7 +1500,7 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     end.
 
 wait_tx(ConId) ->
-    poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 55000).
+    poll_tx(fun vanillae:tx_info/1, [ConId], ?TX_POLL_INTERVAL, ?TX_POLL_TIMEOUT).
 
 node_ae_balance() ->
     case secrets:node_keypair() of

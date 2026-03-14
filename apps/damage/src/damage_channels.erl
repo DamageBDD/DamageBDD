@@ -179,7 +179,7 @@ init_job(ChannelId, _Meta) ->
     Gas = 3_000_000,
 
     %% Call off-chain using resolved JobRegistry contract id
-    CtId = ct_id(job_registry_ct, ?JOB_REGISTRY_CONTRACT),
+    CtId = damage_jobs:ct_id(#{}),
     Src = "contracts/JobRegistry.aes",
 
     case
@@ -966,7 +966,7 @@ test() ->
 
     %% Propose off-chain contract call and ack it
     {ok, Update} = update_contract(
-        ChannelPid, ?JOB_REGISTRY_CONTRACT, <<"fund_job">>, [JobId, 1], 100000
+        ChannelPid, damage_jobs:ct_id(#{}), <<"fund_job">>, [JobId, 1], 100000
     ),
     {ok, #{round := _R, state_hash := StateHash} = _Ack} = update_ack(ChannelPid, Update),
 

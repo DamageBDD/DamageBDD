@@ -51,6 +51,9 @@
 ).
 
 -define(TRAILS_TAG, ["Scheduling Tests"]).
+-define(SCHEDULES_CONTRACT,
+    "ct_hCcHw4hNAkvbadmVrkCRQJxEqvx825hA4gL3gbf4Kh9hpRrwS"
+).
 
 trails() ->
     [
@@ -604,6 +607,8 @@ test_list_schedule() ->
     Decrypted = load_account_schedules("Acc", Results),
     ?LOG_DEBUG("schedules ~p", [Decrypted]),
     Decrypted.
+get_schedules_contract() ->
+    application:get_env(damage, schedules_ct, ?SCHEDULES_CONTRACT).
 
 contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
     #{public_key := _PubKey, private_key := PrivateKey} =
@@ -611,7 +616,7 @@ contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
     damage_ae:set_private_key(AeAccount, PrivateKey),
     damage_ae:contract_call_payfor_user(
         AeAccount,
-        ?SCHEDULES_CONTRACT,
+        get_schedules_contract(),
         "contracts/schedules.aes",
         Func,
         Args

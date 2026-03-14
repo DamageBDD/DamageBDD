@@ -69,6 +69,9 @@
     %% test helpers
     test/0
 ]).
+-define(NODE_REGISTRY_CONTRACT,
+    "ct_KxoBnfbSvhy3c2384VMS2j99YKuqtUihAMSsk6TekjqnZeNEQ"
+).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
