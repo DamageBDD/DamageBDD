@@ -15,6 +15,8 @@
     get_all_contracts/2,
     deploy_account_registry/1
 ]).
+-export([test/0]).
+-import(damage_utils, [to_bin/1]).
 
 -type keypair() :: #{public_key := binary() | list(), private_key := binary()}.
 -type contract_id() :: binary() | list().
@@ -89,13 +91,14 @@ get_contract(KeyPair, Name) ->
 
 -spec get_contract(keypair(), contract_id(), name()) ->
     {ok, contract_id()} | {error, term()}.
-get_contract(KeyPair, RegistryId, Name) ->
-    call_value(
-        KeyPair,
+get_contract(#{public_key := Pub0, private_key := Priv}, RegistryId, Name) ->
+    {ok, {address, AddrBin}} = call_value(
+        #{public_key => to_bin(Pub0), private_key => Priv},
         RegistryId,
         "get_contract",
         [to_str(Name)]
-    ).
+    ),
+    {ok, aeser_api_encoder:encode(contract_pubkey, AddrBin)}.
 
 -spec get_registered_names(keypair(), contract_id()) ->
     {ok, [string()]} | {error, term()}.
@@ -134,7 +137,7 @@ call_value(#{public_key := AeAccount, private_key := PrivateKey} = KeyPair, Regi
     ]),
     case
         damage_ae:contract_call_payfor_user(
-            AeAccount,
+            to_bin(AeAccount),
             ContractIdStr,
             damage_ae:contract_path(?CONTRACT_PATH),
             Fun,
@@ -167,3 +170,13 @@ call_bool(KeyPair, RegistryId, Fun, Args) ->
 %% Accept binaries or lists for all string / id args
 to_str(B) when is_binary(B) -> binary_to_list(B);
 to_str(L) when is_list(L) -> L.
+
+test() ->
+    KP = identity_server:get_account(
+        <<"ak_ag9FGrk8okPzGJZzWL7UuK21NYckM6Tsbtaapmv3iFM4Hn8dW">>
+    ),
+    get_contract(
+        KP,
+        "ct_xraS4aWmvMTxXcuWnaZMi3iQVdmtyC94xeeAnbLyynt1K5XgR",
+        "nwc_ledger"
+    ).
