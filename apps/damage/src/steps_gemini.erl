@@ -84,16 +84,15 @@
 %%------------------------------------------------------------------------------
 %% GIVEN: Set API key in context (session-scoped, not persisted to secrets)
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_SET_GEMINI_API_KEY, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_SET_GEMINI_API_KEY, _) ->
     _ = ApiKey,
     "GIVEN: Store the Gemini API key in context for this session only (not persisted)";
 step(_Config, Context, _Kw, _N, ?STEP_SET_GEMINI_API_KEY, _) ->
     maps:put(gemini_api_key, ensure_binary(ApiKey), Context);
-
 %%------------------------------------------------------------------------------
 %% GIVEN: Persist API key to secrets store (encrypt_store) and put in context
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
     _ = ApiKey,
     "GIVEN: Encrypt and persist the Gemini API key in the secrets store, then load into context";
 step(_Config, Context, _Kw, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
@@ -109,7 +108,6 @@ step(_Config, Context, _Kw, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
                 Context
             )
     end;
-
 %%------------------------------------------------------------------------------
 %% GIVEN: Load API key from secrets store by name
 %%
@@ -117,7 +115,7 @@ step(_Config, Context, _Kw, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
 %% secrets:encrypt_store/2.  Example Gherkin:
 %%   Given I load the Gemini API key from secret gemini_api_key
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_LOAD_GEMINI_SECRET, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_LOAD_GEMINI_SECRET, _) ->
     _ = SecretName,
     "GIVEN: Retrieve and decrypt the Gemini API key from the secrets DETS store";
 step(_Config, Context, _Kw, _N, ?STEP_LOAD_GEMINI_SECRET, _) ->
@@ -142,29 +140,26 @@ step(_Config, Context, _Kw, _N, ?STEP_LOAD_GEMINI_SECRET, _) ->
                 Context
             )
     end;
-
 %%------------------------------------------------------------------------------
 %% GIVEN: Select a specific Gemini model
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_SET_GEMINI_MODEL, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_SET_GEMINI_MODEL, _) ->
     _ = Model,
     "GIVEN: Choose which Gemini model to use (e.g. gemini-3-flash-preview)";
 step(_Config, Context, _Kw, _N, ?STEP_SET_GEMINI_MODEL, _) ->
     maps:put(gemini_model, Model, Context);
-
 %%------------------------------------------------------------------------------
 %% GIVEN: Set system instruction
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_SET_GEMINI_SYSTEM, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_SET_GEMINI_SYSTEM, _) ->
     _ = Instruction,
     "GIVEN: Set a system-level instruction that guides all subsequent Gemini turns";
 step(_Config, Context, _Kw, _N, ?STEP_SET_GEMINI_SYSTEM, _) ->
     maps:put(gemini_system, Instruction, Context);
-
 %%------------------------------------------------------------------------------
 %% GIVEN: Set generation temperature
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_SET_GEMINI_TEMP, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_SET_GEMINI_TEMP, _) ->
     _ = Temperature,
     "GIVEN: Set temperature for generation (float 0.0-2.0 as string, e.g. '0.7')";
 step(_Config, Context, _Kw, _N, ?STEP_SET_GEMINI_TEMP, _) ->
@@ -175,77 +170,71 @@ step(_Config, Context, _Kw, _N, ?STEP_SET_GEMINI_TEMP, _) ->
             T when is_binary(T) -> binary_to_float(T)
         end,
     maps:put(gemini_temp, Temp, Context);
-
 %%------------------------------------------------------------------------------
 %% GIVEN: Set thinking level
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_SET_THINKING_LEVEL, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_SET_THINKING_LEVEL, _) ->
     _ = Level,
     "GIVEN: Set thinking level: low | medium | high | minimal";
 step(_Config, Context, _Kw, _N, ?STEP_SET_THINKING_LEVEL, _) ->
     maps:put(gemini_thinking, Level, Context);
-
 %%------------------------------------------------------------------------------
 %% WHEN: Send a prompt inline in the step text
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_GENERATE, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_GENERATE, _) ->
     _ = Prompt,
     "WHEN: Send the given prompt string to Gemini and store the response";
 step(Config, Context, <<"When">>, _N, ?STEP_GEMINI_GENERATE, _) ->
     call_gemini(Config, Context, Prompt, []);
-
 %%------------------------------------------------------------------------------
 %% WHEN: Send a prompt from the docstring body
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_GENERATE_BODY, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_GENERATE_BODY, _) ->
     "WHEN: Send the docstring body as a prompt to Gemini";
 step(Config, Context, <<"When">>, _N, ?STEP_GEMINI_GENERATE_BODY, Body) ->
     Prompt = iolist_to_binary(Body),
     call_gemini(Config, Context, Prompt, []);
-
 %%------------------------------------------------------------------------------
 %% WHEN: Continue a multi-turn conversation
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_CHAT, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_CHAT, _) ->
     _ = Message,
     "WHEN: Append Message as a user turn to conversation history and call Gemini";
 step(Config, Context, <<"When">>, _N, ?STEP_GEMINI_CHAT, _) ->
     History = maps:get(gemini_history, Context, []),
-    UserTurn = #{<<"role">> => <<"user">>, <<"parts">> => [#{<<"text">> => ensure_binary(Message)}]},
+    UserTurn = #{
+        <<"role">> => <<"user">>, <<"parts">> => [#{<<"text">> => ensure_binary(Message)}]
+    },
     call_gemini_with_history(Config, Context, [UserTurn | History]);
-
 %%------------------------------------------------------------------------------
 %% WHEN: Generate with Google Search grounding
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_WITH_SEARCH, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_WITH_SEARCH, _) ->
     _ = Prompt,
     "WHEN: Send prompt to Gemini with Google Search grounding tool enabled";
 step(Config, Context, <<"When">>, _N, ?STEP_GEMINI_WITH_SEARCH, _) ->
     call_gemini(Config, Context, Prompt, [#{<<"google_search">> => #{}}]);
-
 %%------------------------------------------------------------------------------
 %% WHEN: Generate with code execution tool
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_WITH_CODE_EXEC, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_WITH_CODE_EXEC, _) ->
     _ = Prompt,
     "WHEN: Send prompt to Gemini with the code_execution tool enabled";
 step(Config, Context, <<"When">>, _N, ?STEP_GEMINI_WITH_CODE_EXEC, _) ->
     call_gemini(Config, Context, Prompt, [#{<<"code_execution">> => #{}}]);
-
 %%------------------------------------------------------------------------------
 %% WHEN: Store last Gemini response text into a named variable
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_STORE_RESP, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_STORE_RESP, _) ->
     _ = Variable,
     "WHEN: Store the last Gemini text response into context variable Variable";
 step(_Config, Context, _Kw, _N, ?STEP_GEMINI_STORE_RESP, _) ->
     Response = maps:get(gemini_response, Context, <<"">>),
     maps:put(Variable, Response, Context);
-
 %%------------------------------------------------------------------------------
 %% THEN: Assert response contains a substring
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_RESP_CONTAINS, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_RESP_CONTAINS, _) ->
     _ = Expected,
     "THEN: Fail if the Gemini response text does not contain Expected substring";
 step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_RESP_CONTAINS, _) ->
@@ -265,11 +254,10 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_RESP_CONTAINS, _) ->
         _ ->
             Context
     end;
-
 %%------------------------------------------------------------------------------
 %% THEN: Assert response is not empty
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_RESP_NOT_EMPTY, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_RESP_NOT_EMPTY, _) ->
     "THEN: Fail if the Gemini response is empty or missing";
 step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_RESP_NOT_EMPTY, _) ->
     case maps:get(gemini_response, Context, <<"">>) of
@@ -282,11 +270,10 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_RESP_NOT_EMPTY, _) ->
         _ ->
             Context
     end;
-
 %%------------------------------------------------------------------------------
 %% THEN: Assert JSON path in raw response
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_RESP_JSON_PATH, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_RESP_JSON_PATH, _) ->
     _ = Path,
     _ = Value,
     "THEN: Assert ejsonpath Path in the raw Gemini JSON response equals Value";
@@ -305,11 +292,10 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_RESP_JSON_PATH, _) ->
                 Context
             )
     end;
-
 %%------------------------------------------------------------------------------
 %% THEN: Print Gemini response to output
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_PRINT_RESP, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_PRINT_RESP, _) ->
     "THEN: Print the last Gemini response text";
 step(Config, Context, Kw, N, ?STEP_GEMINI_PRINT_RESP, _) ->
     Response = maps:get(gemini_response, Context, <<"(no response)">>),
@@ -319,11 +305,10 @@ step(Config, Context, Kw, N, ?STEP_GEMINI_PRINT_RESP, _) ->
         {Kw, N, ["Gemini response:"], ensure_binary(Response), Context, success}
     ),
     Context;
-
 %%------------------------------------------------------------------------------
 %% THEN: Assert request succeeded (no fail key set)
 %%------------------------------------------------------------------------------
-step(_Config, Context, documentation, _N, ?STEP_GEMINI_STATUS_OK, _) ->
+step(_Config, _Context, documentation, _N, ?STEP_GEMINI_STATUS_OK, _) ->
     "THEN: Fail if a previous Gemini step has set the fail key in context";
 step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_STATUS_OK, _) ->
     case maps:get(fail, Context, none) of
@@ -472,7 +457,8 @@ build_history_body(History, Opts) ->
     Base = #{<<"contents">> => Contents},
     WithSystem =
         case maps:get(system, Opts, undefined) of
-            undefined -> Base;
+            undefined ->
+                Base;
             Sys ->
                 Base#{
                     <<"system_instruction">> => #{
@@ -514,8 +500,8 @@ extract_text(Body) ->
                 Parts = maps:get(<<"parts">>, Content, []),
                 Texts = [
                     maps:get(<<"text">>, P, <<"">>)
-                    || P <- Parts,
-                       maps:get(<<"text">>, P, undefined) =/= undefined
+                 || P <- Parts,
+                    maps:get(<<"text">>, P, undefined) =/= undefined
                 ],
                 {ok, iolist_to_binary(Texts)}
         end
@@ -525,7 +511,7 @@ extract_text(Body) ->
     end.
 
 %% High-level: call Gemini from a step, updating context
-call_gemini(Config, Context, Prompt, Tools) ->
+call_gemini(_Config, Context, Prompt, Tools) ->
     ApiKey = resolve_api_key(Context),
     Model = maps:get(gemini_model, Context, ?DEFAULT_MODEL),
     Opts = build_opts_from_context(Context),
@@ -570,7 +556,7 @@ call_gemini(Config, Context, Prompt, Tools) ->
     end.
 
 %% High-level: multi-turn call using conversation history
-call_gemini_with_history(Config, Context, History) ->
+call_gemini_with_history(_Config, Context, History) ->
     ApiKey = resolve_api_key(Context),
     Model = maps:get(gemini_model, Context, ?DEFAULT_MODEL),
     Opts = build_opts_from_context(Context),
@@ -657,8 +643,17 @@ test_chat() ->
         gemini_model => ?DEFAULT_MODEL,
         gemini_system => <<"You are a helpful assistant.">>
     },
-    Context1 = step([], Context0, <<"When">>, 0, ["I send a prompt to Gemini", "Hello, who are you?"], <<"">>),
+    Context1 = step(
+        [], Context0, <<"When">>, 0, ["I send a prompt to Gemini", "Hello, who are you?"], <<"">>
+    ),
     ?LOG_INFO("Turn 1 response: ~p", [maps:get(gemini_response, Context1)]),
-    Context2 = step([], Context1, <<"When">>, 1, ["I continue the Gemini conversation with", "What can you help me with?"], <<"">>),
+    Context2 = step(
+        [],
+        Context1,
+        <<"When">>,
+        1,
+        ["I continue the Gemini conversation with", "What can you help me with?"],
+        <<"">>
+    ),
     ?LOG_INFO("Turn 2 response: ~p", [maps:get(gemini_response, Context2)]),
     Context2.
