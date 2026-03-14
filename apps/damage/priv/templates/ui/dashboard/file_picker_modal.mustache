@@ -1,0 +1,68 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide ipfsfp" id="${escapeHtml(modalId)}" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+    <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="${escapeHtml(modalId)}-title">
+      <aside class="ipfsfp-side">
+        <div class="ipfsfp-title">
+          <div>IPFS Picker</div>
+          <div class="ipfsfp-pill" data-ipfsfp-node>node</div>
+        </div>
+
+        <div class="ipfsfp-nav">
+          <button type="button" data-ipfsfp-tab="browse" class="active">📁 Browse</button>
+          <button type="button" data-ipfsfp-tab="recents">🕘 Recents</button>
+          <button type="button" data-ipfsfp-tab="pinned">⭐ Pinned</button>
+          <button type="button" data-ipfsfp-tab="upload">⬆️ Upload</button>
+        </div>
+
+        <div class="ipfsfp-sep"></div>
+
+        <div class="ipfsfp-kv">
+          <div class="ipfsfp-mini">Start path</div>
+          <input type="text" data-ipfsfp-startpath value="/ipfs/" placeholder="/ipfs/<cid> or /ipns/<name>" />
+          <div class="ipfsfp-rowbtn">
+            <button type="button" data-ipfsfp-go>Go</button>
+            <button type="button" data-ipfsfp-up>Up</button>
+          </div>
+        </div>
+
+        <div class="ipfsfp-sep"></div>
+
+        <div class="ipfsfp-mini">
+          Double-click folders to open. Double-click files to select.<br/>
+          Recents + pinned are stored locally in your browser.
+        </div>
+      </aside>
+
+      <main class="ipfsfp-main">
+        <div class="ipfsfp-topbar">
+          <div class="ipfsfp-crumbs">
+            <button type="button" data-ipfsfp-back>←</button>
+            <button type="button" data-ipfsfp-forward>→</button>
+            <button type="button" data-ipfsfp-refresh>↻</button>
+            <div class="ipfsfp-path" data-ipfsfp-path>/ipfs/</div>
+          </div>
+          <div class="ipfsfp-actions">
+            <button type="button" data-ipfsfp-copy>Copy path</button>
+            <button type="button" aria-label="Close" data-micromodal-close>✕</button>
+          </div>
+        </div>
+
+        <div class="ipfsfp-searchbar">
+          <input type="search" data-ipfsfp-search placeholder="Search in folder…" />
+          <div class="ipfsfp-hint" data-ipfsfp-status>Ready</div>
+        </div>
+
+        <div class="ipfsfp-list" data-ipfsfp-list></div>
+
+        <div class="ipfsfp-footer">
+          <div class="ipfsfp-selection" data-ipfsfp-selection>No selection</div>
+          <div class="right">
+            <button type="button" class="styled-btn" data-micromodal-close>Cancel</button>
+            <button type="button" class="primary" data-ipfsfp-select disabled>Select</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>

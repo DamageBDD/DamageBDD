@@ -154,6 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
 	TokenManager.activate(selector.value);
 
 	selector.addEventListener('change', () => onWalletChange(selector.value)); //.catch(console.error));
+	selector.style.display ='none';
 
 	initWalletSelector().then(updateWalletSummary);
 
@@ -238,8 +239,6 @@ document.addEventListener('DOMContentLoaded', () => {
 		var address = TokenManager.getAddress(mode);
 		console.log("onwalletchange ", address);
 		if (mode === 'extension') {
-			// 1) make sure wallet is connected
-
 			// 2) ensure an extension token exists (if not, do challenge/verify handshake)
 			let extTok = TokenManager.getToken('extension');
 			if (!extTok) { /* user cancelled */ return; }
@@ -271,12 +270,13 @@ document.addEventListener('DOMContentLoaded', () => {
 	async function updateWalletSummary() {
 		var balanceAmountId = 'balanceAmount';
 		var aeBalanceId = 'aeBalance';
-		var addressId = 'balanceAddress';
+		var addressId = 'damage-address';
 
 		const balanceAmountEl = document.getElementById(balanceAmountId);
 		const aeBalanceEl = document.getElementById(aeBalanceId);
-		const addressEl = document.getElementById(addressId);
+		const addressInput = document.getElementById(addressId);
 		var address = TokenManager.getAddress();
+		var addressEl = document.getElementById("balanceAddress");
 		if(!address && TokenManager.getMode()=="extension"){
 			address = await ensureExtensionToken();
 		}
@@ -308,7 +308,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 				balanceAmountEl.textContent = "—";
 				aeBalanceEl.textContent = "—";
-				addressEl.textContent = address + " (no data)";
+				addressInput.textContent = address + " (no data)";
+				addressInput.value = address + " (no data)";
 				return;
 			}
 
@@ -318,6 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 			balanceAmountEl.textContent = dmg;
 			aeBalanceEl.textContent     = ae;
+			addressInput.value          = address;
 			addressEl.textContent       = address;
 
 			return;
@@ -328,6 +330,7 @@ document.addEventListener('DOMContentLoaded', () => {
 			balanceAmountEl.textContent = "ERR";
 			aeBalanceEl.textContent     = "ERR";
 			addressEl.textContent       = address + " (error)";
+			addressInput.value       = address + " (error)";
 			return;
 		}
 

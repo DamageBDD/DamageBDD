@@ -26,3 +26,4 @@ packaging/arch/.cache/*
 packaging/arch/zst/*
 packaging/mint/22/deb/*
 *.so
+Q*
