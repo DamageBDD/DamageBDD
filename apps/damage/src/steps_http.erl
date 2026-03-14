@@ -18,7 +18,7 @@
 
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
--define(DEFAULT_HTTP_TIMEOUT, 30000).
+-define(DEFAULT_HTTP_TIMEOUT, 60000).
 -define(DEFAULT_HTTP_PORT, 80).
 -define(DEFAULT_HEADERS, [
     {<<"accept">>, "application/json,text/html"},
@@ -779,7 +779,6 @@ get_proxy(Context, Config) ->
 get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
     DestHost = damage_utils:get_context_value(host, Context, Config0),
     DestPort = damage_utils:get_context_value(port, Context, Config0, ?DEFAULT_HTTP_PORT),
-    ?LOG_DEBUG("DestHost ~p DestPort ~p ~p", [DestHost, DestPort, Config0]),
     ensure_host_is_public(DestHost),
 
     %% Keep your existing "443 => tls" behavior (this is about the *destination*)
@@ -869,8 +868,11 @@ ensure_host_is_public(Host0) ->
 
     %% Block obvious local names
     case string:lowercase(Host) of
-        "localhost" -> throw(<<"SSRF blocked: localhost">>);
-        _ -> ok
+        "localhost" ->
+            ?LOG_INFO(<<"SSRF blocked: localhost">>),
+            throw(unauthorized);
+        _ ->
+            ok
     end,
 
     %% If the host is already an IP literal, validate it directly.
