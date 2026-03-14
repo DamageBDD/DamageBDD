@@ -6,12 +6,14 @@ Feature: Zap payout for Nostr posts
 
   Background:
     Given I set the variable "damage_contributor_npub" to "npub1azuntqk4e5sgtjaajpu547q5xzrx6xf5aunvm6vq7p793ttaf6hst3etlz"
-    Given I set zap limit for npub "{{damage_contributor_npub}}" to 100000 sats
+    Given I set zap limit for npub "{{damage_contributor_npub}}" to 600000 sats
 
-  Scenario: List posts and zap them with state tracking
-    Then I list nostr posts for npub "{{damage_contributor_npub}}" in last "24" hours store as "posts"
-    Then I zap posts in "posts" base sats "21" cap sats "10000"
+  #Scenario: List posts and zap them with state tracking
+  #  Then I list nostr posts for npub "{{damage_contributor_npub}}" in last "24" hours store as "posts"
+  #  Then I zap posts in "posts" base sats "21" cap sats "10000"
 
   Scenario: Zap all posts by npub since a date (single-step payout)
     Then I list nostr posts for npub "{{damage_contributor_npub}}" since "2026-01-15" store as "posts"
-    Then I zap posts in "posts" base sats "21" cap sats "10000"
+    Then I zap posts in "posts" base sats "1000" cap sats "10000"
+    Then I get the zap spent for npub "{{damage_contributor_npub}}" as "spent"
+    Then I print the variable "spent"
