@@ -465,21 +465,19 @@ handle_call(
     _From,
     #state{public_key = PublicKey} = State
 ) ->
-    %% Subscribe to all messages
+    WalletPubHex = damage_nostr:npub_or_hex_to_lower_hex64(PublicKey),
     Timestamp = erlang:system_time(seconds),
-    SubscriptionMessage =
-        jsx:encode([
-            <<"REQ">>,
-            <<"damagebdd">>,
-            #{kinds => [1], since => Timestamp, '#p' => [npub_or_hex_to_lower_hex64(PublicKey)]}
-        ]),
-    ?LOG_INFO("Nostr Sending subscription request: ~p ~p", [State, SubscriptionMessage]),
-    ok =
-        gun:ws_send(
-            State#state.conn_pid,
-            State#state.streamref,
-            {text, SubscriptionMessage}
-        ),
+
+    MentionSub = jsx:encode([
+        <<"REQ">>,
+        <<"damagebdd">>,
+        #{kinds => [1], since => Timestamp, '#p' => [WalletPubHex]}
+    ]),
+
+    NwcSub = damage_nwc_wallet:subscribe_request(WalletPubHex),
+
+    ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, MentionSub}),
+    ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, NwcSub}),
     gun:flush(State#state.conn_pid),
     {reply, ok, State};
 handle_call(
@@ -512,6 +510,7 @@ handle_cast(Any, State) ->
     {noreply, State}.
 
 handle_info({cln_event, invoice_paid, Invoice}, State) ->
+    ?LOG_DEBUG("Nostr invoice_paid message: ~s~n", [Invoice]),
     try
         zap_receipt_for_invoice(Invoice, State)
     catch
@@ -629,6 +628,11 @@ handle_event_payload(
             ])
     end.
 
+handle_event(
+    [<<"EVENT">>, <<"nwc_wallet">>, Event],
+    State
+) when is_map(Event) ->
+    damage_nwc_wallet:handle_event(Event, State);
 handle_event([<<"OK">>, EventAck, true, <<>>] = _Event, _State) ->
     ?LOG_INFO("Got event EventAck for damagebdd topic ~p", [EventAck]),
     ok;
@@ -1082,7 +1086,7 @@ serialize_event(Event) ->
         maps:get(<<"tags">>, Event),
         maps:get(<<"content">>, Event)
     ],
-    ?LOG_DEBUG("Nip 01 event ~p", [Nip0Evt]),
+    %?LOG_DEBUG("Nip 01 event ~p", [Nip0Evt]),
     Json = jsx:encode(Nip0Evt),
     crypto:hash(sha256, Json).
 sign_event(PrivateKey, Hash) ->

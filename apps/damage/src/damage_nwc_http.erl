@@ -10,13 +10,16 @@
 -export([from_json/2, to_json/2, allowed_methods/2, is_authorized/2]).
 -export([trails/0]).
 -export([resolve_user_ledger_ct/1]).
+-export([ledger_src_path/0]).
+-export([test/0]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
 -define(TRAILS_TAG, ["NWC"]).
 -define(NWC_REGISTRY_NAME, <<"nwc_ledger">>).
--define(NWC_LEDGER_SRC_PATH, "contracts/DamageNWCLedger.aes").
+-define(NWC_LEDGER_SRC_PATH, "contracts/nwc_ledger.aes").
+-define(NWC_NOSTR_NSEC, damage_nostr_nsec).
 
 trails() ->
     [
@@ -103,7 +106,8 @@ ledger_mode() ->
         {ok, <<"operator_signed">>} -> operator_signed;
         {ok, server_signed} -> server_signed;
         {ok, operator_signed} -> operator_signed;
-        _ -> user_signed
+        _ -> server_signed
+        %_ -> user_signed
     end.
 
 %% -------------------------------------------------------------------
@@ -130,9 +134,11 @@ from_json(Req0, State = #{action := mint}) ->
     {ok, ClientPubBin} = nostrlib_schnorr:new_publickey(Secret),
     ClientPubHex = lower_hex_hex(ClientPubBin),
 
+    ?LOG_DEBUG("Resolve ledger ~p", [Owner]),
     %% Resolve user's ledger ct_id via AccountRegistry
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
+            ?LOG_DEBUG("Got ledger ~p", [LedgerCt0]),
             LedgerCt = to_bin(LedgerCt0),
 
             MaxSingleMsat = MaxSingleSat * 1000,
@@ -159,12 +165,23 @@ from_json(Req0, State = #{action := mint}) ->
                     _ ->
                         []
                 end,
+            ?LOG_DEBUG("ledger mode ~p", [Mode]),
 
             case Mode of
                 user_signed ->
                     ok;
                 server_signed ->
-                    _ = ledger_call_user(
+                    ?LOG_DEBUG("ledger register ~p ~p ~p", [
+                        Owner,
+                        LedgerCt,
+                        [
+                            to_s(ClientPubHex),
+                            integer_to_list(MaxSingleMsat),
+                            integer_to_list(MaxTotalMsat),
+                            integer_to_list(ExpiresHeight)
+                        ]
+                    ]),
+                    Results = ledger_call_user(
                         Owner,
                         LedgerCt,
                         "register",
@@ -175,23 +192,23 @@ from_json(Req0, State = #{action := mint}) ->
                             integer_to_list(ExpiresHeight)
                         ]
                     ),
+                    ?LOG_DEBUG("ledger register ~p", [Results]),
                     ok;
                 operator_signed ->
                     %% register is admin-only; do not execute as operator
                     ok
             end,
 
-            WalletPubHex = nwc_wallet_pubhex(),
+            WalletPubHex = ensure_hex_pubkey(nwc_wallet_pubhex()),
             Relay = pick_first_relay(Relays),
-            NwcUri =
-                <<
-                    "nostr+walletconnect://",
-                    WalletPubHex/binary,
-                    "?relay=",
-                    Relay/binary,
-                    "&secret=",
-                    SecretHex/binary
-                >>,
+            NwcUri = iolist_to_binary([
+                <<"nostr+walletconnect://">>,
+                WalletPubHex,
+                <<"?relay=">>,
+                Relay,
+                <<"&secret=">>,
+                SecretHex
+            ]),
 
             Resp = #{
                 status => <<"ok">>,
@@ -208,12 +225,18 @@ from_json(Req0, State = #{action := mint}) ->
 
                 intents => Intents
             },
-            {true, Req, State#{resp_body => Resp}};
+            ?LOG_DEBUG("Response ledger ~p", [Resp]),
+            Req1 = cowboy_req:reply(
+                200,
+                #{<<"content-type">> => <<"application/json">>},
+                jsx:encode(Resp),
+                Req
+            ),
+            {stop, Req1, State};
         {error, Why} ->
-            %% If no ledger is registered yet, return deploy+registry intents so wallet can set up.
-            %% (We still return the freshly minted NWC secret/pubkey so the UI can continue.)
             Mode = ledger_mode(),
-            {RegistryCt, DeployAndRegisterIntents} = setup_intents_for_missing_ledger(Owner),
+            MaxSingleMsat = MaxSingleSat * 1000,
+            MaxTotalMsat = MaxTotalSat * 1000,
 
             WalletPubHex = nwc_wallet_pubhex(),
             Relay = pick_first_relay(Relays),
@@ -227,45 +250,71 @@ from_json(Req0, State = #{action := mint}) ->
                     SecretHex/binary
                 >>,
 
-            %% Also include the ledger register intent (it will reference placeholder ct until deploy completes).
-            %% UI should substitute returned deploy result ct_id into registry+ledger intents.
-            MaxSingleMsat = MaxSingleSat * 1000,
-            MaxTotalMsat = MaxTotalSat * 1000,
+            case
+                maybe_setup_missing_ledger(
+                    Owner,
+                    ClientPubHex,
+                    MaxSingleMsat,
+                    MaxTotalMsat,
+                    ExpiresHeight
+                )
+            of
+                {ok, RegistryCt, LedgerCt} ->
+                    Resp = #{
+                        status => <<"ok">>,
+                        setup_executed => true,
+                        owner => Owner,
+                        account_registry_ct => RegistryCt,
+                        ledger_ct => LedgerCt,
+                        ledger_mode => atom_to_binary(Mode, utf8),
 
-            Resp = #{
-                status => <<"needs_ledger_setup">>,
-                reason => to_bin(io_lib:format("~p", [Why])),
-                owner => Owner,
-                account_registry_ct => RegistryCt,
-                ledger_mode => atom_to_binary(Mode, utf8),
+                        client_pubkey => ClientPubHex,
+                        secret_hex => SecretHex,
+                        nwc_uri => NwcUri,
+                        wallet_pubkey => WalletPubHex,
+                        relay => Relay,
 
-                client_pubkey => ClientPubHex,
-                secret_hex => SecretHex,
-                nwc_uri => NwcUri,
-                wallet_pubkey => WalletPubHex,
-                relay => Relay,
+                        intents => []
+                    },
+                    Req1 = cowboy_req:reply(
+                        200,
+                        #{<<"content-type">> => <<"application/json">>},
+                        jsx:encode(Resp),
+                        Req
+                    ),
+                    {stop, Req1, State};
+                {fallback_to_intents, SetupWhy} ->
+                    {RegistryCt, DeployAndRegisterIntents} = setup_intents_for_missing_ledger(
+                        Owner
+                    ),
 
-                %% Intents returned for wallet signing:
-                %% - deploy ledger (admin = Owner)
-                %% - update_contract("nwc_ledger", <ledger_ct>) (wallet must fill in <ledger_ct>)
-                %% - register(client_pubkey, ...) on the new ledger (wallet must fill in <ledger_ct>)
-                intents => DeployAndRegisterIntents ++
-                    [
-                        damage_ledger_intent:ledger_register_intent(
-                            <<"ct_TBD_FROM_DEPLOY">>,
-                            ClientPubHex,
-                            <<"">>,
-                            MaxSingleMsat,
-                            MaxTotalMsat,
-                            ExpiresHeight
-                        )
-                    ]
-            },
+                    Resp = #{
+                        status => <<"needs_ledger_setup">>,
+                        reason => to_bin(io_lib:format("~p", [{Why, SetupWhy}])),
+                        owner => Owner,
+                        account_registry_ct => RegistryCt,
+                        ledger_mode => atom_to_binary(Mode, utf8),
 
-            %% If server_signed, you MAY choose to auto-deploy+register here (custodial),
-            %% but since ledger is per-user and you want future compatibility, we keep the
-            %% default behavior as intent-based setup.
-            {true, Req, State#{resp_body => Resp}}
+                        client_pubkey => ClientPubHex,
+                        secret_hex => SecretHex,
+                        nwc_uri => NwcUri,
+                        wallet_pubkey => WalletPubHex,
+                        relay => Relay,
+
+                        intents => DeployAndRegisterIntents ++
+                            [
+                                damage_ledger_intent:ledger_register_intent(
+                                    <<"ct_TBD_FROM_DEPLOY">>,
+                                    ClientPubHex,
+                                    <<"">>,
+                                    MaxSingleMsat,
+                                    MaxTotalMsat,
+                                    ExpiresHeight
+                                )
+                            ]
+                    },
+                    {true, Req, State#{resp_body => Resp}}
+            end
     end;
 %% -------------------------------------------------------------------
 %% revoke
@@ -434,37 +483,77 @@ to_s(L) when is_list(L) -> L.
 lower_hex_hex(Bin) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Bin)))).
 
-pick_first_relay([]) ->
-    <<"wss://relay.damus.io">>;
-pick_first_relay([R | _]) when is_binary(R) -> R;
-pick_first_relay([R | _]) ->
-    unicode:characters_to_binary(R).
+pick_first_relay([R | _]) when is_binary(R) ->
+    R;
+pick_first_relay([R | _]) when is_list(R) ->
+    unicode:characters_to_binary(R);
+pick_first_relay(R) when is_binary(R) ->
+    R;
+pick_first_relay(R) when is_list(R) ->
+    unicode:characters_to_binary(R);
+pick_first_relay(_) ->
+    {ok, Host} = application:get_env(damage, nostr_relay),
+    HostBin = list_to_binary(Host),
+    <<"wss://", HostBin/binary>>.
 
-%% Resolve per-user ledger via AccountRegistry recorded in NodeRegistry
 resolve_user_ledger_ct(OwnerAkBin) ->
-    %% Ensure user has an AccountRegistry deployed + recorded in NodeRegistry
-    {ok, _} = damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>),
+    case damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>) of
+        {ok, _} ->
+            resolve_user_ledger_ct_from_registry(OwnerAkBin);
+        {error, Why} ->
+            {error, {ensure_account_registry_failed, Why}}
+    end.
 
-    %% NodeRegistry.get_registry(account) returns an AE contract_call response.
-    %% We expect: #{"return_type":"ok","return_value":{address, Bin}}
+resolve_user_ledger_ct_from_registry(OwnerAkBin) ->
     case damage_node_registry:get_registry(OwnerAkBin) of
         #{"return_type" := "ok", "return_value" := {address, RegBin}} ->
             RegistryCt = aeser_api_encoder:encode(contract_pubkey, RegBin),
-
-            %% Now read nwc ledger ct from that AccountRegistry
-            KP = user_keypair_from_owner(OwnerAkBin),
-            case account_registry:get_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME) of
-                {ok, LedgerCt} ->
-                    {ok, to_bin(LedgerCt)};
-                {error, Reason} ->
-                    {error, {ledger_not_found_in_account_registry, RegistryCt, Reason}}
+            case account_registry_reader_keypair(OwnerAkBin) of
+                {ok, KP} ->
+                    %AllContracts = account_registry:get_all_contracts(KP, RegistryCt),
+                    ?LOG_DEBUG("get_contract ~p ~p ~p ", [
+                        KP, RegistryCt, ?NWC_REGISTRY_NAME
+                    ]),
+                    case account_registry:get_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME) of
+                        {ok, LedgerCt} ->
+                            {ok, to_bin(LedgerCt)};
+                        {error, Reason} ->
+                            {error, {ledger_not_found_in_account_registry, RegistryCt, Reason}}
+                    end;
+                {error, Why} ->
+                    {error, {account_registry_reader_keypair_failed, Why}}
             end;
         #{"return_type" := "revert", "return_value" := Msg} ->
             {error, {node_registry_revert, Msg}};
         Other ->
             {error, {node_registry_bad_reply, Other}}
     end.
+%% Select how we read from AccountRegistry based on execution mode.
+%% - server_signed: prefer user's custodial keypair
+%% - user_signed/operator_signed: use service keypair for read-only lookups
+-spec account_registry_reader_keypair(binary()) -> {ok, map()} | {error, term()}.
+account_registry_reader_keypair(OwnerAkBin) ->
+    case ledger_mode() of
+        server_signed ->
+            maybe_user_keypair_from_owner(OwnerAkBin);
+        user_signed ->
+            {ok, secrets:node_keypair()};
+        operator_signed ->
+            {ok, secrets:node_keypair()}
+    end.
 
+-spec maybe_user_keypair_from_owner(binary()) -> {ok, map()} | {error, term()}.
+maybe_user_keypair_from_owner(OwnerAkBin) ->
+    case catch identity_server:get_account(OwnerAkBin) of
+        #{public_key := Pub0, private_key := Priv} when Priv =/= undefined ->
+            {ok, #{public_key => to_bin(Pub0), private_key => Priv}};
+        notfound ->
+            {error, notfound};
+        {'EXIT', Why} ->
+            {error, Why};
+        Other ->
+            {error, {unexpected_identity_result, Other}}
+    end.
 user_keypair_from_owner(OwnerAkBin) ->
     %% Custodial path: user key is present server-side.
     %% Future noncustodial: this is the seam where you detect "no key" and return intents only.
@@ -477,7 +566,15 @@ ledger_src_path() ->
 ledger_call_user(OwnerAkBin, LedgerCt, Fun, Args) ->
     KP = user_keypair_from_owner(OwnerAkBin),
     AeAccount = maps:get(public_key, KP),
-    damage_ae:set_private_key(AeAccount, maps:get(private_key, KP)),
+    PrivateKey = maps:get(private_key, KP),
+    damage_ae:set_private_key(to_s(AeAccount), PrivateKey),
+    ?LOG_DEBUG("ledger_call_user ~p, ~p ~p ~p ~p", [
+        AeAccount,
+        to_s(LedgerCt),
+        ledger_src_path(),
+        Fun,
+        Args
+    ]),
     damage_ae:contract_call_payfor_user(
         AeAccount,
         to_s(LedgerCt),
@@ -511,13 +608,153 @@ setup_intents_for_missing_ledger(OwnerAkBin) ->
             Other ->
                 throw({cannot_get_registry_ct, Other})
         end,
+    ?LOG_DEBUG("get registry ~p", [RegistryCt]),
 
     Deploy = damage_ledger_intent:deploy_ledger_intent(OwnerAkBin, <<"DamageNWCLedger">>),
     Upsert = damage_ledger_intent:upsert_registry_intent(
-        to_bin(RegistryCt), ?NWC_REGISTRY_NAME, <<"ct_TBD_FROM_DEPLOY">>
+        to_bin(RegistryCt), ?NWC_REGISTRY_NAME, ?NWC_REGISTRY_NAME
     ),
     {to_bin(RegistryCt), [Deploy, Upsert]}.
 
 nwc_wallet_pubhex() ->
-    {Pub, _Priv} = secrets:nostr_wallet_keypair(),
-    Pub.
+    {ok, Nsec} = secrets:retrieve_decrypt(?NWC_NOSTR_NSEC),
+    {PublicKey, _PrivateKey} = damage_nostr:nsec_to_npub(Nsec),
+    ensure_hex_pubkey(PublicKey).
+
+ensure_hex_pubkey(Bin) when is_binary(Bin) ->
+    case is_hex_64(Bin) of
+        true -> Bin;
+        false -> lower_hex_hex(Bin)
+    end;
+ensure_hex_pubkey(List) when is_list(List) ->
+    ensure_hex_pubkey(unicode:characters_to_binary(List)).
+
+is_hex_64(B) when is_binary(B), byte_size(B) =:= 64 ->
+    re:run(B, <<"^[0-9a-fA-F]{64}$">>, [{capture, none}]) =:= match;
+is_hex_64(_) ->
+    false.
+%% Try to fully set up missing ledger if custodial private key is available.
+%% On success:
+%%   - ensures AccountRegistry exists
+%%   - deploys ledger
+%%   - upserts nwc_ledger -> LedgerCt
+%%   - registers client policy in ledger
+%%
+%% Falls back to intents if any custodial prerequisite is missing.
+-spec maybe_setup_missing_ledger(binary(), binary(), integer(), integer(), integer()) ->
+    {ok, binary(), binary()} | {fallback_to_intents, term()}.
+maybe_setup_missing_ledger(OwnerAkBin, ClientPubHex, MaxSingleMsat, MaxTotalMsat, ExpiresHeight) ->
+    case maybe_user_keypair_from_owner(OwnerAkBin) of
+        {ok, KP} ->
+            case ensure_registry_ct(OwnerAkBin) of
+                {ok, RegistryCt} ->
+                    case
+                        deploy_and_register_user_ledger(
+                            KP,
+                            RegistryCt,
+                            ClientPubHex,
+                            MaxSingleMsat,
+                            MaxTotalMsat,
+                            ExpiresHeight
+                        )
+                    of
+                        {ok, LedgerCt} ->
+                            {ok, RegistryCt, LedgerCt};
+                        {error, Why} ->
+                            {fallback_to_intents, {deploy_and_register_user_ledger_failed, Why}}
+                    end;
+                {error, Why} ->
+                    {fallback_to_intents, {ensure_registry_ct_failed, Why}}
+            end;
+        {error, Why} ->
+            {fallback_to_intents, {no_custodial_key, Why}}
+    end.
+
+-spec ensure_registry_ct(binary()) -> {ok, binary()} | {error, term()}.
+ensure_registry_ct(OwnerAkBin) ->
+    case damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>) of
+        {ok, RegistryCt} ->
+            {ok, to_bin(RegistryCt)};
+        {error, Why} ->
+            {error, Why}
+    end.
+
+-spec deploy_and_register_user_ledger(map(), binary(), binary(), integer(), integer(), integer()) ->
+    {ok, binary()} | {error, term()}.
+deploy_and_register_user_ledger(
+    KP, RegistryCt0, ClientPubHex, MaxSingleMsat, MaxTotalMsat, ExpiresHeight
+) ->
+    RegistryCt = to_bin(RegistryCt0),
+
+    #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
+    case damage_ae:contract_deploy_for(KP, ledger_src_path(), [NodePublicKey]) of
+        #{"contract_id" := LedgerCt0} ->
+            LedgerCt = to_bin(LedgerCt0),
+            case upsert_registry_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME, LedgerCt) of
+                {ok, true} ->
+                    AeAccount = maps:get(public_key, KP),
+                    case
+                        ledger_call_user(
+                            AeAccount,
+                            LedgerCt,
+                            "register",
+                            [
+                                to_s(ClientPubHex),
+                                integer_to_list(MaxSingleMsat),
+                                integer_to_list(MaxTotalMsat),
+                                integer_to_list(ExpiresHeight)
+                            ]
+                        )
+                    of
+                        #{"return_type" := "ok"} ->
+                            {ok, LedgerCt};
+                        Other ->
+                            {error, {ledger_register_failed, Other}}
+                    end;
+                {error, Why} ->
+                    {error, {registry_upsert_failed, Why}}
+            end;
+        #{"return_type" := "revert"} = Info ->
+            {error, {ledger_deploy_revert, Info}};
+        Other ->
+            {error, {ledger_deploy_failed, Other}}
+    end.
+
+-spec upsert_registry_contract(map(), binary(), binary(), binary()) ->
+    {ok, true} | {error, term()}.
+upsert_registry_contract(KP, RegistryCt, Name, ContractCt) ->
+    case account_registry:update_contract(KP, RegistryCt, Name, ContractCt) of
+        {ok, true} ->
+            {ok, true};
+        {error,
+            {unexpected_return_type, "revert", #{"return_value" := <<"Contract name not found">>}}} ->
+            account_registry:register_contract(KP, RegistryCt, Name, ContractCt);
+        {error,
+            {unexpected_return_type, <<"revert">>, #{
+                "return_value" := <<"Contract name not found">>
+            }}} ->
+            account_registry:register_contract(KP, RegistryCt, Name, ContractCt);
+        Other ->
+            Other
+    end.
+
+test() ->
+    Owner = "ct_4SUjjufRpMD6KmhZwX3sAdih2FTV1Qry11TJpEGdmrdPh8bdy",
+    LedgerCt =
+        "/home/steven/DamageInc/DamageBDD/_build/default/lib/damage/priv/contracts/nwc_ledger.aes",
+    ClientPubHex = "e9c3305715c9fabdbab6c2fcbe027bd78e056a97cbab5c85e106b9eaa80b2f2a",
+    MaxSingleMsat =
+        10000,
+    MaxTotalMsat = 50000,
+    ExpiresHeight = 0,
+    _Results = ledger_call_user(
+        Owner,
+        LedgerCt,
+        "register",
+        [
+            to_s(ClientPubHex),
+            integer_to_list(MaxSingleMsat),
+            integer_to_list(MaxTotalMsat),
+            integer_to_list(ExpiresHeight)
+        ]
+    ).

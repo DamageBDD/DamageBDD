@@ -39,15 +39,14 @@ contract DamageNWCLedger =
     , txs        : map(string, map(int, tx)) // nested map for txs
     }
 
-  entrypoint init(admin' : address) =
-    { admin = admin'
-    , operator = None
-
-    , balances = {}
-    , policies = {}
-    , tx_count = {}
-    , txs = {}
-    }
+  entrypoint init(admin : address) =
+    { admin = admin,
+      operator = None,
+      balances = {},
+      policies = {},
+      tx_count = {},
+      txs = {}
+      }
 
   // -----------------------
   // Read-only
@@ -73,14 +72,39 @@ contract DamageNWCLedger =
     p.revoked
 
   entrypoint can_debit(client_pubkey : string, amount_msat : int) : bool =
-    if (amount_msat =< 0) then false else
     let p = policy_of(client_pubkey)
-    if (p.revoked) then false else
-    if (p.expires_height > 0 && Chain.block_height > p.expires_height) then false else
-    if (p.max_single_msat > 0 && amount_msat > p.max_single_msat) then false else
-    if (p.max_total_msat > 0 && (p.spent_msat + amount_msat) > p.max_total_msat) then false else
     let bal = balance(client_pubkey)
-    bal >= amount_msat
+    if (amount_msat =< 0)
+      false
+    else
+      if (p.revoked)
+        false
+      else
+        if (p.expires_height > 0)
+          if (Chain.block_height > p.expires_height)
+            false
+          else
+            can_debit_with_limits(p, bal, amount_msat)
+        else
+          can_debit_with_limits(p, bal, amount_msat)
+  
+  function can_debit_with_limits(p : policy, bal : int, amount_msat : int) : bool =
+    if (p.max_single_msat > 0)
+      if (amount_msat > p.max_single_msat)
+        false
+      else
+        can_debit_with_total_limit(p, bal, amount_msat)
+    else
+      can_debit_with_total_limit(p, bal, amount_msat)
+  
+  function can_debit_with_total_limit(p : policy, bal : int, amount_msat : int) : bool =
+    if (p.max_total_msat > 0)
+      if ((p.spent_msat + amount_msat) > p.max_total_msat)
+        false
+      else
+        bal >= amount_msat
+    else
+      bal >= amount_msat
 
   entrypoint tx_count_of(client_pubkey : string) : int =
     switch(Map.lookup(client_pubkey, state.tx_count))
@@ -101,7 +125,7 @@ contract DamageNWCLedger =
   function only_admin_or_operator() =
     switch(state.operator)
       None => only_admin()
-      Some(op) => require(
+      Some(op) => require_admin()
   
   stateful entrypoint set_operator(op : option(address)) : bool =
     only_admin()
@@ -110,37 +134,37 @@ contract DamageNWCLedger =
 
   function require_admin() = only_admin()
 
-  entrypoint register(
+  stateful entrypoint register(
     client_pubkey     : string,
     max_single_msat   : int,
     max_total_msat    : int,
     expires_height    : int
-  ) : bool =
+    ) : bool =
     require_admin()
-    require(String.length(client_pubkey) > 0, "BAD_CLIENT_PUBKEY")
+    require(client_pubkey != "", "BAD_CLIENT_PUBKEY")
     let p =
       { revoked = false
-      , max_single_msat = max_single_msat
-      , max_total_msat  = max_total_msat
-      , spent_msat      = 0
-      , expires_height  = expires_height
-      }
+        , max_single_msat = max_single_msat
+        , max_total_msat  = max_total_msat
+        , spent_msat      = 0
+        , expires_height  = expires_height
+        }
     put(state{ policies[client_pubkey] = p })
     true
 
-  entrypoint revoke(client_pubkey : string) : bool =
+  stateful entrypoint revoke(client_pubkey : string) : bool =
     require_admin()
     let old = policy_of(client_pubkey)
     let p = old{ revoked = true }
     put(state{ policies[client_pubkey] = p })
     true
 
-  entrypoint set_limits(
+  stateful entrypoint set_limits(
     client_pubkey     : string,
     max_single_msat   : int,
     max_total_msat    : int,
     expires_height    : int
-  ) : bool =
+    ) : bool =
     require_admin()
     let old = policy_of(client_pubkey)
     require(old.revoked == false, "NOT_REGISTERED_OR_REVOKED")
@@ -149,16 +173,16 @@ contract DamageNWCLedger =
         max_single_msat = max_single_msat,
         max_total_msat  = max_total_msat,
         expires_height  = expires_height
-      }
+        }
     put(state{ policies[client_pubkey] = p })
     true
 
-  entrypoint credit(
+  stateful entrypoint credit(
     client_pubkey : string,
     amount_msat   : int,
     ref           : string,
     meta          : string
-  ) : bool =
+    ) : bool =
     require_admin()
     require(amount_msat > 0, "BAD_AMOUNT")
     let bal0 = balance(client_pubkey)
@@ -167,12 +191,12 @@ contract DamageNWCLedger =
     record_tx(client_pubkey, "credit", amount_msat, ref, meta)
     true
 
-  entrypoint debit(
+  stateful entrypoint debit(
     client_pubkey : string,
     amount_msat   : int,
     ref           : string,
     meta          : string
-  ) : bool =
+    ) : bool =
     only_admin_or_operator()
     require(amount_msat > 0, "BAD_AMOUNT")
     let p = policy_of(client_pubkey)
@@ -187,21 +211,10 @@ contract DamageNWCLedger =
     put(state{
       balances[client_pubkey] = bal1,
       policies[client_pubkey] = p1
-    })
+        })
     record_tx(client_pubkey, "debit", amount_msat, ref, meta)
     true
 
-  // Optional explicit record hook (admin-only)
-  entrypoint record(
-    client_pubkey : string,
-    kind          : string,
-    amount_msat   : int,
-    ref           : string,
-    meta          : string
-  ) : bool =
-    require_admin()
-    record_tx(client_pubkey, kind, amount_msat, ref, meta)
-    true
 
   // -----------------------
   // Internal tx record
@@ -213,7 +226,7 @@ contract DamageNWCLedger =
     amount_msat   : int,
     ref           : string,
     meta          : string
-  ) =
+    ) =
     let h : bytes(32) = Crypto.sha256(meta)
     let height = Chain.block_height
     let t : tx = { kind = kind, amount_msat = amount_msat, ref = ref, meta_sha256 = h, height = height }
@@ -232,4 +245,4 @@ contract DamageNWCLedger =
     put(state{
       tx_count[client_pubkey] = n0 + 1,
       txs[client_pubkey] = m1
-    })
+        })

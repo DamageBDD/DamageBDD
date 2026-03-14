@@ -1,722 +1,688 @@
-%% -------------------------------------------------------------------
-%% damage_nwc_wallet.erl
-%%
-%% Server-side NIP-47 (Nostr Wallet Connect) wallet service for Damage.
-%%
-%% - Listens on Nostr relays for NWC request events (kind 23194) addressed
-%%   to this wallet pubkey via ["p", WalletPub].
-%% - Decrypts request content via NIP-04 (wallet_priv + client_pub)
-%% - Enforces spendable sats via an Aeternity smart contract ledger
-%% - Executes allowed methods through Core Lightning (cln.erl)
-%% - Records transactions on-chain and updates spendable balance
-%% - Responds with kind 23195 with tags ["p", ClientPub], ["e", ReqId]
-%%
-%% Dependencies in your tree:
-%%   - damage_nostr.erl: construct_event/5, finalize_event/2,
-%%                      nip04_encrypt/3, nip04_decrypt_content/3
-%%   - damage_ae.erl: contract_call_dry/5, contract_call/5
-%%   - cln.erl: pay_invoice/2, create_invoice/3
-%%
-%% Smart contract expectations (configurable function names):
-%%   balance(pubkey_hex) -> int (msats or sats; choose one and be consistent)
-%%   debit(pubkey_hex, amount_msat, ref, meta) -> ok/bool
-%%   credit(pubkey_hex, amount_msat, ref, meta) -> ok/bool  (optional)
-%%   record(pubkey_hex, type, amount_msat, ref, meta) -> ok/bool (optional)
-%%
-%% -------------------------------------------------------------------
+%%%-------------------------------------------------------------------
+%%% damage_nwc_wallet.erl
+%%%
+%%% NWC wallet-side handler for DamageBDD.
+%%%
+%%% Purpose
+%%%   - plugs into damage_nostr.erl
+%%%   - handles incoming NIP-47 request events (kind 23194)
+%%%   - decrypts request content with NIP-04
+%%%   - dispatches supported wallet methods
+%%%   - enforces per-client ledger policy via DamageNWCLedger
+%%%   - publishes encrypted response events (kind 23195)
+%%%
+%%% Expected integration from damage_nostr:
+%%%
+%%%   1) subscribe to wallet requests:
+%%%      ["REQ","nwc_wallet",#{kinds => [23194], '#p' => [WalletPubHex]}]
+%%%
+%%%   2) route incoming events here:
+%%%      damage_nwc_wallet:handle_event(Event, State).
+%%%
+%%%   3) leave state as damage_nostr #state{} record; this module only reads:
+%%%      - public_key
+%%%      - private_key
+%%%      - conn_pid
+%%%      - streamref
+%%%
+%%% Assumptions
+%%%   - wallet pubkey is the pubkey of the running damage_nostr process
+%%%   - ledger entries are keyed by client pubkey hex
+%%%   - resolve_owner_and_ledger_by_client_pubkey/1 currently scans known owners
+%%%     via identity_server:list_accounts/0 if available, or can be replaced with
+%%%     a direct reverse index later
+%%%
+%%% Supported methods
+%%%   - get_info
+%%%   - get_balance
+%%%   - pay_invoice
+%%%   - make_invoice
+%%%
+%%% Response shape
+%%%   #{
+%%%      result_type => Method,
+%%%      error => null | #{code => ..., message => ...},
+%%%      result => map() | null
+%%%   }
+%%%
+%%%-------------------------------------------------------------------
 
 -module(damage_nwc_wallet).
--author("Steven Joseph <steven@damagebdd.com>").
 
--copyright("Steven Joseph <steven@damagebdd.com>").
-
+-author("Steven Joseph <steven@stevenjoseph.in>").
 -license("Apache-2.0").
--behaviour(gen_server).
 
 -include_lib("kernel/include/logger.hrl").
 
 -export([
-    start_link/1,
-    stop/1,
-    connection_uri/1
+    handle_event/2,
+    subscribe_request/1,
+
+    handle_request_event/2,
+    send_response/5,
+    send_error/5,
+
+    resolve_owner_and_ledger_by_client_pubkey/1,
+    ledger_balance_msat/3,
+    ledger_policy/3,
+    authorize_amount_msat/4,
+    debit_after_payment/6,
+
+    wallet_info/1
 ]).
-
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
-
 -import(damage_utils, [to_bin/1]).
 
--record(conn, {relay_url, conn_pid, streamref}).
+-define(NWC_LEDGER_SRC_PATH, "contracts/nwc_ledger.aes").
+-define(NWC_REGISTRY_NAME, <<"nwc_ledger">>).
+-define(NWC_REQ_KIND, 23194).
+-define(NWC_RESP_KIND, 23195).
 
--record(state, {
-    %% Nostr wallet service keys
+%%%===================================================================
+%%% Public entrypoints
+%%%===================================================================
 
-    %% 32 bytes
-    wallet_privkey,
-    %% 64 hex lower
-    wallet_pub_hex,
+-spec subscribe_request(binary()) -> iolist().
+subscribe_request(WalletPubKey0) ->
+    WalletPubKey = hex64(WalletPubKey0),
+    jsx:encode([
+        <<"REQ">>,
+        <<"nwc_wallet">>,
+        #{
+            kinds => [?NWC_REQ_KIND],
+            '#p' => [WalletPubKey]
+        }
+    ]).
 
-    %% Relays
-
-    %% [binary()]
-    relays = [],
-    %% StreamRef => #conn{}
-    conns = #{},
-
-    %% Subscription id
-    subid = <<>>,
-
-    %% NWC ledger contract
-
-    %% <<"ct_...">>
-    ledger_contract_id = undefined,
-    %% "contracts/ledger.aes" or similar
-    ledger_contract_source = undefined,
-    %% msat | sat
-    ledger_unit = msat,
-    func_balance = <<"balance">>,
-    func_debit = <<"debit">>,
-    %% optional
-    func_credit = <<"credit">>,
-    %% optional
-    func_record = <<"record">>,
-
-    %% Policy
-    allow_methods = [<<"get_info">>, <<"get_balance">>, <<"make_invoice">>, <<"pay_invoice">>],
-    %% 50k sats default
-    max_single_pay_msat = 50_000_000,
-    %% unused (we subscribe)
-    min_poll_ms = 0,
-
-    %% Cache
-    info_content = <<"get_info get_balance make_invoice pay_invoice">>
-}).
-
-%% -------------------------------------------------------------------
-%% Public API
-%% -------------------------------------------------------------------
-
--spec start_link(map()) -> {ok, pid()} | {error, term()}.
-start_link(Opts) ->
-    gen_server:start_link(?MODULE, [Opts], []).
-
-stop(Pid) ->
-    gen_server:call(Pid, stop).
-
-%% If you want to show a connection URI to an authenticated user:
-%% secret is a *client* key (private key) that you mint per user/session.
-%% This function just formats; you still must persist secret->user mapping
-%% in your Damage auth layer (DB/contract/etc).
-connection_uri(#{wallet_pub_hex := WalletPub, relays := [Relay | _], secret_hex := SecretHex}) ->
-    <<
-        "nostr+walletconnect://",
-        (to_bin(WalletPub))/binary,
-        "?relay=",
-        (to_bin(Relay))/binary,
-        "&secret=",
-        (to_bin(SecretHex))/binary
-    >>.
-
-%% -------------------------------------------------------------------
-%% gen_server
-%% -------------------------------------------------------------------
-
-init([Opts0]) ->
-    try
-        Opts = normalize_opts(Opts0),
-
-        WalletPriv = maps:get(wallet_privkey, Opts),
-        {ok, WalletPubBin} = nostrlib_schnorr:new_publickey(WalletPriv),
-        WalletPubHex = lower_hex(WalletPubBin),
-
-        Relays = maps:get(relays, Opts),
-        SubId = rand_subid(<<"nwc_srv">>),
-
-        State0 =
-            #state{
-                wallet_privkey = WalletPriv,
-                wallet_pub_hex = WalletPubHex,
-                relays = Relays,
-                subid = SubId,
-
-                ledger_contract_id = maps:get(ledger_contract_id, Opts, undefined),
-                ledger_contract_source = maps:get(ledger_contract_source, Opts, undefined),
-                ledger_unit = maps:get(ledger_unit, Opts, msat),
-
-                func_balance = maps:get(func_balance, Opts, <<"balance">>),
-                func_debit = maps:get(func_debit, Opts, <<"debit">>),
-                func_credit = maps:get(func_credit, Opts, <<"credit">>),
-                func_record = maps:get(func_record, Opts, <<"record">>),
-
-                allow_methods = maps:get(
-                    allow_methods,
-                    Opts,
-                    [<<"get_info">>, <<"get_balance">>, <<"make_invoice">>, <<"pay_invoice">>]
-                ),
-                max_single_pay_msat = maps:get(max_single_pay_msat, Opts, 50_000_000),
-                info_content = maps:get(
-                    info_content,
-                    Opts,
-                    <<"get_info get_balance make_invoice pay_invoice">>
-                )
-            },
-
-        %% Connect all relays (subscribe in upgrade handler)
-        State1 = lists:foldl(fun connect_relay/2, State0, Relays),
-
-        {ok, State1}
-    catch
-        C:R:S ->
-            ?LOG_ERROR("damage_nwc_wallet init failed ~p:~p ~p", [C, R, S]),
-            {stop, {init_failed, R}}
-    end.
-
-handle_call(stop, _From, State) ->
-    {stop, normal, ok, State};
-handle_call(_Any, _From, State) ->
-    {reply, {error, unknown_call}, State}.
-
-handle_cast(_Any, State) ->
-    {noreply, State}.
-
-handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State = #state{}) ->
-    %% Subscribe to NWC requests addressed to our wallet pubkey.
-    %% Filter: kind 23194 and #p includes WalletPubHex
-    Filter = #{kinds => [23194], '#p' => [State#state.wallet_pub_hex], limit => 0},
-    Req = jsx:encode([<<"REQ">>, State#state.subid, Filter]),
-    ok = gun:ws_send(ConnPid, StreamRef, {text, Req}),
-    gun:flush(ConnPid),
-    ?LOG_INFO("damage_nwc_wallet subscribed relay ~p", [StreamRef]),
-    {noreply, State};
-handle_info({gun_ws, _ConnPid, _StreamRef, {text, MsgBin}}, State) ->
-    {noreply, handle_relay_message(MsgBin, State)};
-handle_info({gun_down, _ConnPid, _Proto, Reason, _Killed, _Unproc}, State) ->
-    ?LOG_WARNING("damage_nwc_wallet relay down: ~p", [Reason]),
-    {noreply, State};
-handle_info(_Other, State) ->
-    {noreply, State}.
-
-terminate(_Reason, #state{conns = Conns}) ->
-    maps:foreach(
-        fun(_Ref, #conn{conn_pid = ConnPid}) ->
-            catch gun:shutdown(ConnPid)
-        end,
-        Conns
-    ),
+-spec handle_event(map(), tuple()) -> ok.
+handle_event(
+    #{
+        <<"id">> := EventId,
+        <<"kind">> := ?NWC_REQ_KIND,
+        <<"pubkey">> := ClientPubHex,
+        <<"content">> := EncContent
+    } = Event,
+    State
+) ->
+    handle_request_event(
+        #{
+            event_id => EventId,
+            client_pubkey => hex64(ClientPubHex),
+            content => EncContent,
+            event => Event
+        },
+        State
+    );
+handle_event(Event, _State) ->
+    ?LOG_DEBUG("Ignoring non-NWC event ~p", [maps:get(<<"kind">>, Event, undefined)]),
     ok.
 
-code_change(_Old, State, _Extra) ->
-    {ok, State}.
-
-%% -------------------------------------------------------------------
-%% Relay message handling
-%% -------------------------------------------------------------------
-
-handle_relay_message(MsgBin0, State) ->
-    MsgBin = to_bin(MsgBin0),
-    try jsx:decode(MsgBin, [{labels, atom}]) of
-        [<<"EVENT">>, _SubId, Event] when is_map(Event) ->
-            handle_event(Event, State);
-        [<<"NOTICE">>, Notice] ->
-            ?LOG_WARNING("damage_nwc_wallet relay NOTICE: ~p", [Notice]),
-            State;
-        _ ->
-            State
-    catch
-        _:Reason ->
-            ?LOG_WARNING("damage_nwc_wallet bad relay msg ~p (~p)", [MsgBin, Reason]),
-            State
-    end.
-
-handle_event(#{kind := 23194} = Event, State) ->
-    %% NWC request event
-    spawn(fun() -> process_request(Event, State) end),
-    State;
-handle_event(_Other, State) ->
-    State.
-
-%% -------------------------------------------------------------------
-%% NWC request processing
-%% -------------------------------------------------------------------
-
-process_request(Event, State = #state{wallet_privkey = WalletPriv, wallet_pub_hex = WalletPub}) ->
-    try
-        ClientPub = lower_hex_ascii64(to_bin(maps:get(pubkey, Event))),
-        ReqId = to_bin(maps:get(id, Event)),
-        Content = to_bin(maps:get(content, Event, <<>>)),
-
-        %% Ensure it is actually addressed to us
-        ok = ensure_p_tag(Event, WalletPub),
-
-        %% Decrypt request JSON (method + params)
-        {ok, Plain} = damage_nostr:nip04_decrypt_content(Content, WalletPriv, ClientPub),
-        Req = jsx:decode(Plain, [return_maps]),
-
-        Method = maps:get(<<"method">>, Req, <<"">>),
-        Params = maps:get(<<"params">>, Req, #{}),
-
-        case method_allowed(Method, State#state.allow_methods) of
-            false ->
-                reply_error(
-                    ClientPub,
-                    ReqId,
-                    Method,
-                    #{code => <<"METHOD_NOT_ALLOWED">>, message => <<"not allowed">>},
-                    State
-                );
-            true ->
-                dispatch_method(ClientPub, ReqId, Method, Params, State)
-        end
-    catch
-        C:R ->
-            %% Best effort error response if we can
-            ?LOG_WARNING("damage_nwc_wallet request failed ~p:~p", [C, R]),
-            ok
-    end.
-
-dispatch_method(ClientPub, ReqId, <<"get_info">>, _Params, State) ->
-    %% Per NIP-47 wallet service publishes info event kind 13194 (replaceable).
-    %% But clients also call method get_info. Return capabilities.
-    Res = #{
-        alias => <<"Damage NWC">>,
-        color => <<"#f7931a">>,
-        pubkey => State#state.wallet_pub_hex,
-        methods => binary:split(State#state.info_content, <<" ">>, [global])
-    },
-    reply_ok(ClientPub, ReqId, <<"get_info">>, Res, State);
-dispatch_method(ClientPub, ReqId, <<"get_balance">>, _Params, State) ->
-    case ledger_balance_msat(ClientPub, State) of
-        {ok, BalMsat} ->
-            reply_ok(ClientPub, ReqId, <<"get_balance">>, #{balance_msat => BalMsat}, State);
-        {error, Why} ->
-            reply_error(
-                ClientPub,
-                ReqId,
-                <<"get_balance">>,
-                #{code => <<"LEDGER_ERROR">>, message => to_bin(io_lib:format("~p", [Why]))},
-                State
-            )
-    end;
-dispatch_method(ClientPub, ReqId, <<"make_invoice">>, Params, State) ->
-    %% Params: amount (msat or sat depending on your contract/unit), description
-    Amount0 = maps:get(<<"amount">>, Params, 0),
-    Desc = maps:get(<<"description">>, Params, <<"">>),
-
-    AmountMsat = normalize_amount_to_msat(Amount0, State),
-    %% This mints an incoming invoice; you may want to CREDIT ledger on settle (not here).
-    %% For now, just create invoice and record "invoice_created".
-    Label = <<"nwc_", ReqId/binary>>,
-
-    CLNRes = cln:create_invoice(AmountMsat, Label, Desc),
-    case CLNRes of
-        #{bolt11 := Bolt11} = M ->
-            _ = ledger_record(
-                ClientPub, <<"invoice_created">>, AmountMsat, ReqId, #{bolt11 => Bolt11}, State
-            ),
-            reply_ok(ClientPub, ReqId, <<"make_invoice">>, M, State);
-        {error, Why} ->
-            reply_error(
-                ClientPub,
-                ReqId,
-                <<"make_invoice">>,
-                #{code => <<"CLN_ERROR">>, message => to_bin(io_lib:format("~p", [Why]))},
-                State
-            );
-        Other ->
-            reply_error(
-                ClientPub,
-                ReqId,
-                <<"make_invoice">>,
-                #{code => <<"CLN_ERROR">>, message => to_bin(io_lib:format("~p", [Other]))},
-                State
-            )
-    end;
-dispatch_method(ClientPub, ReqId, <<"pay_invoice">>, Params, State) ->
-    Bolt11 = maps:get(<<"invoice">>, Params, <<>>),
-    AmountParam = maps:get(<<"amount">>, Params, undefined),
-
-    %% Policy: optional explicit amount for zero-amount invoices
-    Opts =
-        case AmountParam of
-            undefined -> #{};
-            null -> #{};
-            _ -> #{amount_msat => normalize_amount_to_msat(AmountParam, State)}
-        end,
-
-    %% Pre-check spendable (best effort). We debit based on actual paid msat after success.
-    MaxMsat = State#state.max_single_pay_msat,
-    case maybe_estimate_intended_msat(AmountParam, MaxMsat, State) of
-        {error, Err} ->
-            reply_error(ClientPub, ReqId, <<"pay_invoice">>, Err, State);
-        ok ->
-            case ledger_balance_msat(ClientPub, State) of
-                {ok, BalMsat} when BalMsat =< 0 ->
-                    reply_error(
-                        ClientPub,
-                        ReqId,
-                        <<"pay_invoice">>,
-                        #{code => <<"INSUFFICIENT_FUNDS">>, message => <<"no spendable balance">>},
-                        State
-                    );
-                {ok, _BalMsat} ->
-                    %% Pay using CLN
-                    PayRes = cln:pay_invoice(to_bin(Bolt11), Opts),
-                    case PayRes of
-                        #{amount_msat := PaidMsat0} = PR ->
-                            PaidMsat = normalize_msat_value(PaidMsat0),
-                            case PaidMsat > MaxMsat of
-                                true ->
-                                    reply_error(
-                                        ClientPub,
-                                        ReqId,
-                                        <<"pay_invoice">>,
-                                        #{
-                                            code => <<"LIMIT_EXCEEDED">>,
-                                            message => <<"payment exceeds limit">>
-                                        },
-                                        State
-                                    );
-                                false ->
-                                    %% Debit ledger on-chain
-                                    case
-                                        ledger_debit(
-                                            ClientPub, PaidMsat, ReqId, #{bolt11 => Bolt11}, State
-                                        )
-                                    of
-                                        ok ->
-                                            _ = ledger_record(
-                                                ClientPub,
-                                                <<"paid_invoice">>,
-                                                PaidMsat,
-                                                ReqId,
-                                                #{bolt11 => Bolt11},
-                                                State
-                                            ),
-                                            reply_ok(
-                                                ClientPub, ReqId, <<"pay_invoice">>, PR, State
-                                            );
-                                        {error, Why2} ->
-                                            %% At this point payment succeeded but ledger failed.
-                                            %% You likely want a reconciliation job; we return an error that indicates partial failure.
-                                            reply_error(
-                                                ClientPub,
-                                                ReqId,
-                                                <<"pay_invoice">>,
-                                                #{
-                                                    code => <<"LEDGER_DEBIT_FAILED">>,
-                                                    message => to_bin(io_lib:format("~p", [Why2]))
-                                                },
-                                                State
-                                            )
-                                    end
-                            end;
-                        {error, Why} ->
-                            reply_error(
-                                ClientPub,
-                                ReqId,
-                                <<"pay_invoice">>,
-                                #{
-                                    code => <<"PAY_FAILED">>,
-                                    message => to_bin(io_lib:format("~p", [Why]))
-                                },
-                                State
-                            );
-                        Other ->
-                            reply_error(
-                                ClientPub,
-                                ReqId,
-                                <<"pay_invoice">>,
-                                #{
-                                    code => <<"PAY_FAILED">>,
-                                    message => to_bin(io_lib:format("~p", [Other]))
-                                },
-                                State
-                            )
-                    end;
+-spec handle_request_event(map(), tuple()) -> ok.
+handle_request_event(
+    #{
+        event_id := RequestEventId,
+        client_pubkey := ClientPubHex,
+        content := EncContent
+    } = _Req,
+    State
+) ->
+    WalletPriv = state_private_key(State),
+    case damage_nostr:nip04_decrypt_content(EncContent, WalletPriv, ClientPubHex) of
+        {ok, Plain} ->
+            ?LOG_DEBUG("NWC decrypted request ~p", [Plain]),
+            case decode_json_map(Plain) of
+                {ok, ReqJson} ->
+                    handle_request_json(RequestEventId, ClientPubHex, ReqJson, State);
                 {error, Why} ->
-                    reply_error(
-                        ClientPub,
-                        ReqId,
-                        <<"pay_invoice">>,
-                        #{
-                            code => <<"LEDGER_ERROR">>,
-                            message => to_bin(io_lib:format("~p", [Why]))
-                        },
+                    send_error(
+                        RequestEventId,
+                        ClientPubHex,
+                        <<"PARSE_ERROR">>,
+                        fmt(Why),
                         State
                     )
-            end
-    end;
-dispatch_method(ClientPub, ReqId, Method, _Params, State) ->
-    reply_error(
-        ClientPub, ReqId, Method, #{code => <<"UNKNOWN_METHOD">>, message => <<"unknown">>}, State
-    ).
-
-%% -------------------------------------------------------------------
-%% Responding
-%% -------------------------------------------------------------------
-
-reply_ok(ClientPub, ReqId, Method, Result, State) ->
-    Payload = #{result_type => Method, error => null, result => Result},
-    send_response(ClientPub, ReqId, Payload, State).
-
-reply_error(ClientPub, ReqId, Method, ErrMap, State) ->
-    Payload = #{result_type => Method, error => ErrMap, result => null},
-    send_response(ClientPub, ReqId, Payload, State).
-
-send_response(
-    ClientPub,
-    ReqId,
-    Payload,
-    State = #state{wallet_privkey = WalletPriv, wallet_pub_hex = WalletPub}
-) ->
-    TS = erlang:system_time(seconds),
-    Plain = jsx:encode(Payload),
-
-    case damage_nostr:nip04_encrypt(Plain, WalletPriv, ClientPub) of
-        {ok, CipherB64, IvB64} ->
-            Content = <<CipherB64/binary, "?iv=", IvB64/binary>>,
-            Tags = [
-                [<<"p">>, ClientPub],
-                [<<"e">>, ReqId]
-            ],
-            Ev0 = damage_nostr:construct_event(WalletPub, 23195, Content, TS, Tags),
-            Ev = damage_nostr:finalize_event(Ev0, WalletPriv),
-            publish_event(Ev, State),
-            ok;
-        Other ->
-            ?LOG_WARNING("damage_nwc_wallet cannot encrypt response: ~p", [Other]),
-            ok
-    end.
-
-publish_event(Event, #state{conns = Conns}) ->
-    Msg = jsx:encode([<<"EVENT">>, Event]),
-    maps:foreach(
-        fun(_Ref, #conn{conn_pid = ConnPid, streamref = StreamRef}) ->
-            catch gun:ws_send(ConnPid, StreamRef, {text, Msg})
-        end,
-        Conns
-    ),
-    ok.
-
-%% -------------------------------------------------------------------
-%% Ledger (smart contract)
-%% -------------------------------------------------------------------
-
-ledger_balance_msat(ClientPubHex, State) ->
-    case {State#state.ledger_contract_id, State#state.ledger_contract_source} of
-        {undefined, _} ->
-            {error, no_ledger_config};
-        {_, undefined} ->
-            {error, no_ledger_config};
-        {Cid, Src} ->
-            %% Contract arg format depends on your Sophia contract ABI.
-            %% We pass pubkey as string.
-            Args = [binary_to_list(ClientPubHex)],
-            case damage_ae:contract_call_dry(Cid, Src, State#state.func_balance, Args, #{}) of
-                #{<<"result">> := R} ->
-                    %% Your dry-call result shape may differ. Adjust extraction here.
-                    %% Expect integer in msat (preferred).
-                    {ok, normalize_contract_int(R, State#state.ledger_unit)};
-                Other ->
-                    {error, Other}
-            end
-    end.
-
-ledger_debit(ClientPubHex, AmountMsat, Ref, Meta, State) ->
-    case {State#state.ledger_contract_id, State#state.ledger_contract_source} of
-        {undefined, _} ->
-            {error, no_ledger_config};
-        {_, undefined} ->
-            {error, no_ledger_config};
-        {Cid, Src} ->
-            MetaJson = jsx:encode(Meta),
-            AmountForContract = amount_for_contract_unit(AmountMsat, State#state.ledger_unit),
-            Args = [
-                binary_to_list(ClientPubHex),
-                AmountForContract,
-                binary_to_list(to_bin(Ref)),
-                binary_to_list(MetaJson)
-            ],
-            %% On-chain mutation
-            case damage_ae:contract_call(Cid, Src, State#state.func_debit, Args, #{}) of
-                #{<<"call_tx_hash">> := _Tx} -> ok;
-                #{<<"result">> := _} -> ok;
-                Other -> {error, Other}
-            end
-    end.
-
-ledger_record(ClientPubHex, Type, AmountMsat, Ref, Meta, State) ->
-    case
-        {
-            State#state.ledger_contract_id,
-            State#state.ledger_contract_source,
-            State#state.func_record
-        }
-    of
-        {undefined, _, _} ->
-            {error, no_ledger_config};
-        {_, undefined, _} ->
-            {error, no_ledger_config};
-        %% optional
-        {_, _, undefined} ->
-            ok;
-        {Cid, Src, Func} ->
-            MetaJson = jsx:encode(Meta),
-            AmountForContract = amount_for_contract_unit(AmountMsat, State#state.ledger_unit),
-            Args = [
-                binary_to_list(ClientPubHex),
-                binary_to_list(Type),
-                AmountForContract,
-                binary_to_list(to_bin(Ref)),
-                binary_to_list(MetaJson)
-            ],
-            catch damage_ae:contract_call(Cid, Src, Func, Args, #{}),
-            ok
-    end.
-
-%% -------------------------------------------------------------------
-%% Connection management
-%% -------------------------------------------------------------------
-
-connect_relay(RelayUrl0, State) ->
-    RelayUrl = to_bin(RelayUrl0),
-    case open_relay(RelayUrl) of
-        {ok, ConnPid, StreamRef} ->
-            Conn = #conn{relay_url = RelayUrl, conn_pid = ConnPid, streamref = StreamRef},
-            Conns2 = maps:put(StreamRef, Conn, State#state.conns),
-            State#state{conns = Conns2};
+            end;
         {error, Why} ->
-            ?LOG_WARNING("damage_nwc_wallet cannot connect relay ~p: ~p", [RelayUrl, Why]),
-            State
+            ?LOG_WARNING("NWC decrypt failed ~p", [Why]),
+            send_error(
+                RequestEventId,
+                ClientPubHex,
+                <<"DECRYPT_FAILED">>,
+                fmt(Why),
+                State
+            )
     end.
 
-open_relay(RelayUrl) ->
-    Parsed = uri_string:parse(RelayUrl),
-    Scheme = maps:get(scheme, Parsed, <<"wss">>),
-    Host0 = maps:get(host, Parsed, <<>>),
-    Host = binary_to_list(to_bin(Host0)),
-    Port = maps:get(port, Parsed, undefined),
-    Path0 = maps:get(path, Parsed, <<"/">>),
-    Query0 = maps:get(query, Parsed, <<>>),
+%%%===================================================================
+%%% Request dispatch
+%%%===================================================================
 
-    Path =
-        case Query0 of
-            <<>> -> binary_to_list(to_bin(Path0));
-            _ -> binary_to_list(<<(to_bin(Path0))/binary, "?", (to_bin(Query0))/binary>>)
-        end,
+handle_request_json(RequestEventId, ClientPubHex, ReqJson, State) ->
+    Method = maps:get(<<"method">>, ReqJson, <<>>),
+    Params = maps:get(<<"params">>, ReqJson, #{}),
+    case dispatch(Method, ClientPubHex, Params, State) of
+        {ok, Result} ->
+            send_response(RequestEventId, ClientPubHex, Method, Result, State);
+        {error, Code, Message} ->
+            send_error(RequestEventId, ClientPubHex, Code, Message, State)
+    end.
 
-    P =
-        case Port of
-            undefined when Scheme =:= "ws"; Scheme =:= <<"ws">> -> 80;
-            undefined -> 443;
-            _ -> Port
-        end,
+dispatch(<<"get_info">>, _ClientPubHex, _Params, State) ->
+    {ok, wallet_info(State)};
+dispatch(<<"get_balance">>, ClientPubHex, _Params, _State) ->
+    case resolve_owner_and_ledger_by_client_pubkey(ClientPubHex) of
+        {ok, Owner, LedgerCt} ->
+            case ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
+                {ok, Msat} ->
+                    {ok, #{
+                        balance => Msat,
+                        currency => <<"msat">>
+                    }};
+                {error, Why} ->
+                    {error, <<"LEDGER_BALANCE_FAILED">>, fmt(Why)}
+            end;
+        {error, Why} ->
+            {error, <<"UNKNOWN_CLIENT">>, fmt(Why)}
+    end;
+dispatch(<<"pay_invoice">>, ClientPubHex, Params, State) ->
+    ?LOG_DEBUG("Pay invoice ~p ~p", [ClientPubHex, Params]),
+    handle_pay_invoice(ClientPubHex, Params, State);
+dispatch(<<"make_invoice">>, _ClientPubHex, Params, _State) ->
+    handle_make_invoice(Params);
+dispatch(Method, _ClientPubHex, _Params, _State) ->
+    {error, <<"NOT_IMPLEMENTED">>, <<Method/binary, " not supported">>}.
 
-    TransportOpts =
-        case Scheme of
-            "ws" -> #{};
-            <<"ws">> -> #{};
-            _ -> #{transport => tls, tls_opts => [{verify, verify_peer}]}
-        end,
+%%%===================================================================
+%%% Method handlers
+%%%===================================================================
 
-    case gun:open(Host, P, TransportOpts) of
-        {ok, ConnPid} ->
-            StreamRef = gun:ws_upgrade(ConnPid, Path, []),
-            {ok, ConnPid, StreamRef};
+handle_pay_invoice(ClientPubHex, Params, _State) ->
+    Invoice = maps:get(<<"invoice">>, Params, maps:get(invoice, Params, <<>>)),
+    case Invoice of
+        <<>> ->
+            {error, <<"INVALID_PARAMS">>, <<"missing invoice">>};
+        _ ->
+            case cln:decode_invoice(Invoice) of
+                {ok, Decoded} ->
+                    AmountMsat = invoice_amount_msat(Params, Decoded),
+                    case resolve_owner_and_ledger_by_client_pubkey(ClientPubHex) of
+                        {ok, Owner, LedgerCt} ->
+                            case authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat) of
+                                ok ->
+                                    case cln:pay_invoice(Invoice) of
+                                        {ok, PayRes} ->
+                                            FeesPaidMsat = pay_fees_msat(PayRes),
+                                            _ = debit_after_payment(
+                                                Owner,
+                                                LedgerCt,
+                                                ClientPubHex,
+                                                AmountMsat,
+                                                payment_ref(PayRes),
+                                                payment_meta(PayRes)
+                                            ),
+                                            {ok, #{
+                                                preimage => pay_preimage(PayRes),
+                                                fees_paid => FeesPaidMsat,
+                                                payment_hash => pay_hash(PayRes)
+                                            }};
+                                        {error, Why} ->
+                                            {error, <<"PAYMENT_FAILED">>, fmt(Why)};
+                                        Other ->
+                                            {error, <<"PAYMENT_FAILED">>, fmt(Other)}
+                                    end;
+                                {error, Code, Msg} ->
+                                    {error, Code, Msg}
+                            end;
+                        {error, Why} ->
+                            {error, <<"UNKNOWN_CLIENT">>, fmt(Why)}
+                    end;
+                {error, Why} ->
+                    {error, <<"BAD_INVOICE">>, fmt(Why)};
+                Other ->
+                    {error, <<"BAD_INVOICE">>, fmt(Other)}
+            end
+    end.
+
+handle_make_invoice(Params) ->
+    AmountMsat = maps:get(<<"amount">>, Params, maps:get(amount, Params, 0)),
+    Desc = maps:get(<<"description">>, Params, maps:get(description, Params, <<"DamageBDD">>)),
+    case cln:create_invoice(AmountMsat, Desc) of
+        {ok, Invoice} ->
+            {ok, #{
+                type => <<"incoming">>,
+                invoice => invoice_bolt11(Invoice),
+                payment_hash => invoice_payment_hash(Invoice)
+            }};
+        {error, Why} ->
+            {error, <<"INVOICE_CREATE_FAILED">>, fmt(Why)};
+        Other ->
+            {error, <<"INVOICE_CREATE_FAILED">>, fmt(Other)}
+    end.
+
+%%%===================================================================
+%%% Responses
+%%%===================================================================
+
+-spec send_response(binary(), binary(), binary(), map(), tuple()) -> ok.
+send_response(RequestEventId, ClientPubHex, Method, Result, State) ->
+    Payload = #{
+        result_type => Method,
+        error => null,
+        result => Result
+    },
+    send_payload(RequestEventId, ClientPubHex, Payload, State).
+
+-spec send_error(binary(), binary(), binary(), binary(), tuple()) -> ok.
+send_error(RequestEventId, ClientPubHex, Code, Message, State) ->
+    Payload = #{
+        result_type => <<"error">>,
+        error => #{
+            code => Code,
+            message => Message
+        },
+        result => null
+    },
+    send_payload(RequestEventId, ClientPubHex, Payload, State).
+
+send_payload(RequestEventId, ClientPubHex, Payload, State) ->
+    WalletPub = hex64(state_public_key(State)),
+    WalletPriv = state_private_key(State),
+    Plain = jsx:encode(Payload),
+    case nip04_encrypt_content(Plain, WalletPriv, ClientPubHex) of
+        {ok, EncContent} ->
+            TS = erlang:system_time(seconds),
+            Tags = [
+                [<<"p">>, ClientPubHex],
+                [<<"e">>, RequestEventId]
+            ],
+            Event0 = damage_nostr:construct_event(
+                WalletPub,
+                ?NWC_RESP_KIND,
+                EncContent,
+                TS,
+                Tags
+            ),
+            Event = damage_nostr:finalize_event(Event0, WalletPriv),
+            EventJson = jsx:encode([<<"EVENT">>, Event]),
+            ok = gun:ws_send(state_conn_pid(State), state_streamref(State), {text, EventJson}),
+            gun:flush(state_conn_pid(State)),
+            ok;
+        {error, Why} ->
+            ?LOG_WARNING("NWC response encryption failed ~p", [Why]),
+            ok
+    end.
+
+nip04_encrypt_content(Plain, PrivKey32, RemoteHex) ->
+    case damage_nostr:nip04_encrypt(Plain, PrivKey32, RemoteHex) of
+        {ok, CipherB64, IvB64} ->
+            {ok, <<CipherB64/binary, "?iv=", IvB64/binary>>};
         Error ->
             Error
     end.
 
-%% -------------------------------------------------------------------
-%% Helpers
-%% -------------------------------------------------------------------
+%%%===================================================================
+%%% Wallet metadata
+%%%===================================================================
 
-normalize_opts(Opts0) ->
-    Opts = Opts0,
-    Relays0 = maps:get(relays, Opts, nostr_pool:default_relays(#{})),
-    Relays = [to_bin(R) || R <- Relays0, R =/= <<>>],
-    WalletPriv =
-        case maps:get(wallet_privkey, Opts, undefined) of
-            Bin when is_binary(Bin), byte_size(Bin) =:= 32 -> Bin;
-            Hex when is_binary(Hex), byte_size(Hex) >= 64 -> binary:decode_hex(Hex);
-            _ -> error({missing_or_bad_wallet_privkey, Opts})
-        end,
-    Opts#{relays => Relays, wallet_privkey => WalletPriv}.
+wallet_info(State) ->
+    #{
+        alias => <<"DamageBDD">>,
+        color => <<"#1d4ed8">>,
+        pubkey => hex64(state_public_key(State)),
+        network => network_name(),
+        methods => [<<"get_info">>, <<"get_balance">>, <<"pay_invoice">>, <<"make_invoice">>],
+        notifications => []
+    }.
 
-ensure_p_tag(Event, WalletPub) ->
-    Tags = maps:get(tags, Event, []),
-    case
-        lists:any(
-            fun(Tag) ->
-                is_list(Tag) andalso length(Tag) >= 2 andalso hd(Tag) =:= <<"p">> andalso
-                    lists:nth(2, Tag) =:= WalletPub
-            end,
-            Tags
-        )
-    of
-        true -> ok;
-        false -> error(not_addressed_to_wallet)
+network_name() ->
+    case application:get_env(damage, ae_network_id) of
+        {ok, <<"ae_mainnet">>} -> <<"mainnet">>;
+        {ok, <<"mainnet">>} -> <<"mainnet">>;
+        {ok, <<"testnet">>} -> <<"testnet">>;
+        {ok, X} -> to_bin(X);
+        _ -> <<"mainnet">>
     end.
 
-method_allowed(Method, Allow) ->
-    lists:member(to_bin(Method), Allow).
+%%%===================================================================
+%%% Ledger enforcement
+%%%===================================================================
 
-normalize_amount_to_msat(Amount0, #state{ledger_unit = msat}) ->
-    normalize_msat_value(Amount0);
-normalize_amount_to_msat(Amount0, #state{ledger_unit = sat}) ->
-    %% amount given in sats -> msat
-    Sats = normalize_int(Amount0),
-    Sats * 1000.
+-spec resolve_owner_and_ledger_by_client_pubkey(binary()) ->
+    {ok, binary(), binary()} | {error, term()}.
+resolve_owner_and_ledger_by_client_pubkey(ClientPubHex0) ->
+    ClientPubHex = hex64(ClientPubHex0),
+    case identity_accounts() of
+        {ok, Owners} ->
+            find_client_across_owners(ClientPubHex, Owners);
+        {error, Why} ->
+            {error, {identity_accounts_unavailable, Why}}
+    end.
 
-normalize_msat_value(Val) ->
-    %% CLN sometimes returns {"amount_msat":"1234msat"} or integer-ish.
-    case Val of
-        I when is_integer(I) -> I;
-        B when is_binary(B) ->
-            case binary:split(B, <<"msat">>) of
-                [NumBin | _] -> normalize_int(NumBin);
-                _ -> normalize_int(B)
+find_client_across_owners(_ClientPubHex, []) ->
+    {error, not_found};
+find_client_across_owners(ClientPubHex, [Owner | Rest]) ->
+    OwnerBin = owner_pubkey(Owner),
+    case damage_nwc_http:resolve_user_ledger_ct(OwnerBin) of
+        {ok, LedgerCt} ->
+            case ledger_policy(OwnerBin, LedgerCt, ClientPubHex) of
+                {ok, _Policy} ->
+                    {ok, OwnerBin, to_bin(LedgerCt)};
+                {error, _} ->
+                    find_client_across_owners(ClientPubHex, Rest)
             end;
-        _ ->
-            normalize_int(Val)
+        {error, _} ->
+            find_client_across_owners(ClientPubHex, Rest)
     end.
 
-normalize_int(V) when is_integer(V) -> V;
-normalize_int(V) when is_binary(V) ->
-    case catch binary_to_integer(V) of
-        I when is_integer(I) -> I;
-        _ -> 0
+identity_accounts() ->
+    case erlang:function_exported(identity_server, list_accounts, 0) of
+        true ->
+            try
+                {ok, identity_server:list_accounts()}
+            catch
+                C:R ->
+                    {error, {C, R}}
+            end;
+        false ->
+            {error, list_accounts_not_exported}
+    end.
+
+owner_pubkey(#{public_key := Pub}) -> to_bin(Pub);
+owner_pubkey(#{<<"public_key">> := Pub}) -> to_bin(Pub);
+owner_pubkey(Pub) when is_binary(Pub) -> Pub;
+owner_pubkey(Pub) when is_list(Pub) -> to_bin(Pub).
+
+-spec ledger_balance_msat(binary(), binary(), binary()) ->
+    {ok, integer()} | {error, term()}.
+ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
+    case damage_nwc_http:ledger_call_user_dry(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]) of
+        #{"return_type" := "ok", "return_value" := Value} ->
+            normalize_int(Value);
+        Other ->
+            {error, {balance_failed, Other}}
+    end.
+
+-spec ledger_policy(binary(), binary(), binary()) ->
+    {ok, map()} | {error, term()}.
+ledger_policy(Owner, LedgerCt, ClientPubHex) ->
+    case damage_nwc_http:ledger_call_user_dry(Owner, LedgerCt, "policy_of", [to_s(ClientPubHex)]) of
+        #{"return_type" := "ok", "return_value" := Value} ->
+            {ok, normalize_policy(Value)};
+        Other ->
+            {error, {policy_failed, Other}}
+    end.
+
+authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat) ->
+    authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, current_height()).
+
+authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, Height) ->
+    case ledger_policy(Owner, LedgerCt, ClientPubHex) of
+        {ok, Policy} ->
+            MaxSingle = maps:get(max_single_msat, Policy, 0),
+            MaxTotal = maps:get(max_total_msat, Policy, 0),
+            Expires = maps:get(expires_height, Policy, 0),
+            case MaxSingle > 0 andalso AmountMsat > MaxSingle of
+                true ->
+                    {error, <<"QUOTA_EXCEEDED">>, <<"amount exceeds max_single_msat">>};
+                false ->
+                    case Expires > 0 andalso Height > Expires of
+                        true ->
+                            {error, <<"EXPIRED">>, <<"policy expired">>};
+                        false ->
+                            case ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
+                                {ok, BalanceMsat} ->
+                                    case MaxTotal > 0 andalso (BalanceMsat < AmountMsat) of
+                                        true ->
+                                            {error, <<"INSUFFICIENT_BALANCE">>,
+                                                <<"balance too low">>};
+                                        false ->
+                                            ok
+                                    end;
+                                {error, Why} ->
+                                    {error, <<"LEDGER_BALANCE_FAILED">>, fmt(Why)}
+                            end
+                    end
+            end;
+        {error, Why} ->
+            {error, <<"LEDGER_POLICY_FAILED">>, fmt(Why)}
+    end.
+
+debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
+    case damage_nwc_http:ledger_mode() of
+        user_signed ->
+            ok;
+        server_signed ->
+            _ = damage_nwc_http:ledger_call_user(
+                Owner,
+                LedgerCt,
+                "debit",
+                [to_s(ClientPubHex), integer_to_list(AmountMsat), to_s(Ref), to_s(Meta)]
+            ),
+            ok;
+        operator_signed ->
+            ok
+    end.
+
+%%%===================================================================
+%%% Normalization helpers
+%%%===================================================================
+
+normalize_policy(#{<<"max_single_msat">> := A, <<"max_total_msat">> := B, <<"expires_height">> := C}) ->
+    #{
+        max_single_msat => intish(A),
+        max_total_msat => intish(B),
+        expires_height => intish(C)
+    };
+normalize_policy(#{max_single_msat := A, max_total_msat := B, expires_height := C}) ->
+    #{
+        max_single_msat => intish(A),
+        max_total_msat => intish(B),
+        expires_height => intish(C)
+    };
+normalize_policy({A, B, C}) ->
+    #{
+        max_single_msat => intish(A),
+        max_total_msat => intish(B),
+        expires_height => intish(C)
+    };
+normalize_policy(Other) ->
+    #{raw => Other}.
+
+normalize_int(I) when is_integer(I) -> {ok, I};
+normalize_int(B) when is_binary(B) ->
+    try
+        {ok, binary_to_integer(B)}
+    catch
+        _:_ -> {error, {bad_integer, B}}
     end;
-normalize_int(V) when is_list(V) ->
-    normalize_int(to_bin(V));
-normalize_int(_) ->
+normalize_int(L) when is_list(L) ->
+    try
+        {ok, list_to_integer(L)}
+    catch
+        _:_ -> {error, {bad_integer, L}}
+    end;
+normalize_int(Other) ->
+    {error, {bad_integer, Other}}.
+
+intish(I) when is_integer(I) -> I;
+intish(B) when is_binary(B) ->
+    try
+        binary_to_integer(B)
+    catch
+        _:_ -> 0
+    end;
+intish(L) when is_list(L) ->
+    try
+        list_to_integer(L)
+    catch
+        _:_ -> 0
+    end;
+intish(_) ->
     0.
 
-maybe_estimate_intended_msat(undefined, _Max, _State) ->
-    ok;
-maybe_estimate_intended_msat(null, _Max, _State) ->
-    ok;
-maybe_estimate_intended_msat(Amount0, Max, State) ->
-    Msat = normalize_amount_to_msat(Amount0, State),
-    case Msat > Max of
-        true -> {error, #{code => <<"LIMIT_EXCEEDED">>, message => <<"payment exceeds limit">>}};
-        false -> ok
+current_height() ->
+    case erlang:function_exported(damage_ae, top_height, 0) of
+        true ->
+            try
+                damage_ae:top_height()
+            catch
+                _:_ -> 0
+            end;
+        false ->
+            0
     end.
 
-amount_for_contract_unit(AmountMsat, msat) -> AmountMsat;
-amount_for_contract_unit(AmountMsat, sat) -> AmountMsat div 1000.
+%%%===================================================================
+%%% CLN normalization helpers
+%%%===================================================================
 
-normalize_contract_int(R, msat) ->
-    %% R extraction depends on your middleware response; adjust if needed.
-    normalize_int(to_bin(io_lib:format("~p", [R])));
-normalize_contract_int(R, sat) ->
-    normalize_int(to_bin(io_lib:format("~p", [R]))) * 1000.
+invoice_amount_msat(Params, Decoded) ->
+    case maps:get(<<"amount">>, Params, maps:get(amount, Params, undefined)) of
+        undefined ->
+            decode_msat_from_invoice(Decoded);
+        A when is_integer(A) ->
+            A;
+        A when is_binary(A) ->
+            binary_to_integer(A);
+        A when is_list(A) ->
+            list_to_integer(A)
+    end.
 
-lower_hex(Bin) ->
+decode_msat_from_invoice(Decoded) ->
+    case maps:get(amount_msat, Decoded, maps:get(<<"amount_msat">>, Decoded, 0)) of
+        #{msat := M} -> M;
+        #{<<"msat">> := M} -> M;
+        M when is_integer(M) -> M;
+        B when is_binary(B) -> binary_to_integer(B);
+        L when is_list(L) -> list_to_integer(L);
+        _ -> 0
+    end.
+
+pay_preimage(#{payment_preimage := V}) -> to_bin(V);
+pay_preimage(#{<<"payment_preimage">> := V}) -> to_bin(V);
+pay_preimage(#{preimage := V}) -> to_bin(V);
+pay_preimage(#{<<"preimage">> := V}) -> to_bin(V);
+pay_preimage(_) -> <<>>.
+
+pay_hash(#{payment_hash := V}) -> to_bin(V);
+pay_hash(#{<<"payment_hash">> := V}) -> to_bin(V);
+pay_hash(_) -> <<>>.
+
+pay_fees_msat(#{amount_sent_msat := #{msat := Sent}, amount_msat := #{msat := Amt}}) when
+    is_integer(Sent), is_integer(Amt), Sent >= Amt
+->
+    Sent - Amt;
+pay_fees_msat(#{
+    <<"amount_sent_msat">> := #{<<"msat">> := Sent}, <<"amount_msat">> := #{<<"msat">> := Amt}
+}) when
+    is_integer(Sent), is_integer(Amt), Sent >= Amt
+->
+    Sent - Amt;
+pay_fees_msat(_) ->
+    0.
+
+payment_ref(PayRes) ->
+    case pay_hash(PayRes) of
+        <<>> -> <<"nwc_payment">>;
+        H -> H
+    end.
+
+payment_meta(PayRes) ->
+    jsx:encode(#{
+        source => <<"nwc">>,
+        payment_hash => pay_hash(PayRes)
+    }).
+
+invoice_bolt11(#{bolt11 := V}) -> to_bin(V);
+invoice_bolt11(#{<<"bolt11">> := V}) -> to_bin(V);
+invoice_bolt11(#{invoice := V}) -> to_bin(V);
+invoice_bolt11(#{<<"invoice">> := V}) -> to_bin(V);
+invoice_bolt11(_) -> <<>>.
+
+invoice_payment_hash(#{payment_hash := V}) -> to_bin(V);
+invoice_payment_hash(#{<<"payment_hash">> := V}) -> to_bin(V);
+invoice_payment_hash(_) -> <<>>.
+
+%%%===================================================================
+%%% damage_nostr state accessors
+%%%===================================================================
+
+state_public_key(State) ->
+    element(state_pos(public_key), State).
+
+state_private_key(State) ->
+    element(state_pos(private_key), State).
+
+state_conn_pid(State) ->
+    element(state_pos(conn_pid), State).
+
+state_streamref(State) ->
+    element(state_pos(streamref), State).
+
+state_pos(conn_pid) -> 2;
+state_pos(streamref) -> 3;
+state_pos(public_key) -> 5;
+state_pos(private_key) -> 6.
+
+%%%===================================================================
+%%% Generic helpers
+%%%===================================================================
+
+decode_json_map(Bin) ->
+    try jsx:decode(Bin, [return_maps]) of
+        M when is_map(M) -> {ok, M};
+        Other -> {error, {not_a_map, Other}}
+    catch
+        C:R ->
+            {error, {C, R}}
+    end.
+
+fmt(Term) ->
+    to_bin(io_lib:format("~p", [Term])).
+
+to_s(B) when is_binary(B) -> binary_to_list(B);
+to_s(L) when is_list(L) -> L.
+
+hex64(Bin) when is_binary(Bin) ->
+    case classify_key(Bin) of
+        {hex, 64} ->
+            lower_hex_ascii64(Bin);
+        {raw, 32} ->
+            lower_hex(Bin);
+        _ ->
+            error({invalid_hex64, Bin})
+    end;
+hex64(List) when is_list(List) ->
+    hex64(to_bin(List)).
+
+lower_hex(Bin) when is_binary(Bin) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Bin)))).
 
-lower_hex_ascii64(Bin) when is_binary(Bin) ->
-    list_to_binary(string:lowercase(binary_to_list(Bin))).
+lower_hex_ascii64(Bin) when is_binary(Bin), byte_size(Bin) =:= 64 ->
+    case re:run(Bin, <<"^[0-9a-fA-F]{64}$">>, [{capture, none}]) of
+        match ->
+            list_to_binary(string:lowercase(binary_to_list(Bin)));
+        nomatch ->
+            error({invalid_hex_ascii64, Bin})
+    end.
 
-rand_subid(Prefix) ->
-    R = crypto:strong_rand_bytes(4),
-    <<Prefix/binary, "_", (binary:encode_hex(R))/binary>>.
+classify_key(Bin) when is_binary(Bin) ->
+    case is_hex_ascii(Bin) of
+        true ->
+            {hex, byte_size(Bin)};
+        false ->
+            case byte_size(Bin) of
+                32 -> {raw, 32};
+                _ -> invalid
+            end
+    end.
+
+is_hex_ascii(Bin) when is_binary(Bin) ->
+    (byte_size(Bin) band 1) =:= 0 andalso bin_all_hex(Bin).
+
+bin_all_hex(<<>>) -> true;
+bin_all_hex(<<C, Rest/binary>>) -> is_hex_byte(C) andalso bin_all_hex(Rest).
+
+is_hex_byte(C) when C >= $0, C =< $9 -> true;
+is_hex_byte(C) when C >= $a, C =< $f -> true;
+is_hex_byte(C) when C >= $A, C =< $F -> true;
+is_hex_byte(_) -> false.

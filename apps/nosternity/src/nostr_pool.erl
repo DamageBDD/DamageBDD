@@ -42,9 +42,9 @@ default_relays(Ctx) ->
                     [to_bin(X) || X <- R2];
                 _ ->
                     [
-                        <<"wss://nos.lol">>,
                         <<"wss://nostr-01.yakihonne.com">>,
-                        <<"wss://nostr-02.yakihonne.com">>
+                        <<"wss://nostr-02.yakihonne.com">>,
+                        <<"wss://nos.lol">>
                         %<<"wss://relay.damus.io">>,
                         %<<"wss://relay.nostr.band">>
                     ]

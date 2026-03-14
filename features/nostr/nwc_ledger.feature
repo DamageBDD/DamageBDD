@@ -3,10 +3,10 @@ Feature: NWC Ledger-backed connections
   limits, and revocation.
 
   Background:
-    Given I am using server "https://run.dev.damagebdd.com":
+    Given I am using server "https://run.dev.damagebdd.com"
     # Provide a real token when running for real.
     # For local dev, point at localhost and use a dev token.
-    And I set "Authorization" header to "Bearer {{ACCESS_TOKEN}}"
+    And I set "Authorization" header to "Bearer {{{access_token}}}"
     And I set "content-type" header to "application/json"
 
   Scenario: Mint -> Balance 0 -> Credit -> Balance increases -> Revoke
@@ -19,7 +19,8 @@ Feature: NWC Ledger-backed connections
       "expires_height": 0
     }
     """
-    Then the response status must be "200"
+    Then the response status must be "204"
+    Then I print the response
     Then I store the JSON at path "$.client_pubkey" in "client_pubkey"
     Then I store the JSON at path "$.nwc_uri" in "nwc_uri"
 
