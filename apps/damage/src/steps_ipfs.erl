@@ -183,7 +183,7 @@ step(
         {error, Why} ->
             maps:put(
                 fail,
-                damage_utils:strf("refusing path outside run_dir: ~p", [Why]),
+                damage_utils:strf("refusing path outside run_dir: ~p ~p ~p", [Why, RunDir, Path]),
                 Context0
             )
     end;
@@ -202,6 +202,29 @@ step(_Config, Context, _Phase, _N, ["I ensure IPFS asset", Hash, "at", OutPath],
                     ?LOG_DEBUG("ensure ipfs asset result ~p", [Result]),
 
                     maps:put(ipfs_result, Result, Context)
+            end
+    end;
+step(
+    _Config,
+    Context,
+    _Phase,
+    _N,
+    ["I ensure IPFS asset", Hash, "at", OutPath, "as", Variable],
+    _Body
+) ->
+    case filelib:is_file(OutPath) of
+        true ->
+            Context;
+        false ->
+            damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
+            case damage_ipfs:get(Hash, OutPath) of
+                {error, Reason} ->
+                    ?LOG_WARNING("ipfs failed to fetch ~s -> ~s error: ~p", [Hash, OutPath, Reason]),
+                    damage_utils:fail(Context, Reason);
+                {ok, Result} ->
+                    ?LOG_DEBUG("ensure ipfs asset result ~p", [Result]),
+
+                    maps:put(ipfs_result, Result, maps:put(Variable, OutPath, Context))
             end
     end;
 %% Then file exists (conditional on ipfs present)

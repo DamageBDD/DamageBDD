@@ -179,7 +179,9 @@ run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
     }).
 unique_container_name() ->
     Enc = base64:encode(crypto:strong_rand_bytes(9)),
-    Safe = binary:replace(binary:replace(Enc, <<"/">>, <<"_">>, [global]), <<"+">>, <<"-">>, [global]),
+    Safe = binary:replace(binary:replace(Enc, <<"/">>, <<"_">>, [global]), <<"+">>, <<"-">>, [
+        global
+    ]),
     <<"damagebdd-", Safe/binary>>.
 
 build_image_from_dockerfile(Config, Src, Tag, Params, ContextRel0, Ctx0) ->
@@ -276,7 +278,9 @@ run_cmd(Config, Command, Context) ->
             docker_loop(Config, Parent, [])
         end),
 
-    case exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}, sync]) of
+    case
+        exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}, sync])
+    of
         {ok, []} ->
             Ctx1 =
                 receive
@@ -315,7 +319,12 @@ maybe_put_container_info(Command0, Ctx0) ->
                     Cid -> maps:put(docker_container_id, Cid, Ctx1)
                 end,
 
-            case {maps:get(docker_container_id, Ctx2, undefined), maps:get(docker_container_name, Ctx2, undefined)} of
+            case
+                {
+                    maps:get(docker_container_id, Ctx2, undefined),
+                    maps:get(docker_container_name, Ctx2, undefined)
+                }
+            of
                 {undefined, undefined} ->
                     Ctx2;
                 {undefined, Name0} ->
@@ -353,9 +362,11 @@ extract_container_id_from_result(Ctx) ->
 extract_container_id(Bin0) when is_binary(Bin0) ->
     Bin = iolist_to_binary(Bin0),
     Lines =
-        [list_to_binary(string:trim(L))
+        [
+            list_to_binary(string:trim(L))
          || L <- string:split(binary_to_list(Bin), "\n", all),
-            string:trim(L) =/= ""],
+            string:trim(L) =/= ""
+        ],
     case Lines of
         [First | _] ->
             case re:run(First, <<"^[0-9a-f]{12,64}$">>, [{capture, none}]) of
@@ -574,15 +585,20 @@ copy_file_from_container_to_ipfs(Config, Ctx0, Path0, Var0) ->
     maps:put(Var, Hash, Ctx1).
 
 docker_container_id(Ctx) ->
-    case first_defined(
-        [docker_container, docker_container_name, docker_container_id, container_id, container],
-        Ctx
-    ) of
+    case
+        first_defined(
+            [docker_container, docker_container_name, docker_container_id, container_id, container],
+            Ctx
+        )
+    of
         undefined ->
             erlang:error(
                 {missing_container_in_context, [
-                    docker_container, docker_container_name, docker_container_id,
-                    container_id, container
+                    docker_container,
+                    docker_container_name,
+                    docker_container_id,
+                    container_id,
+                    container
                 ]}
             );
         V ->

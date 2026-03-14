@@ -100,6 +100,11 @@ RUN set -eu \
 #WORKDIR /opt/app
 #RUN mkdir -p /opt/app
 #COPY --chown=root:root /opt/workspace/_build/prod/rel/* /opt/app/
+RUN groupadd -r damage && \
+    useradd -r -g damage -d /home/damage -m -s /bin/bash damage
+RUN mkdir /out
+RUN chown -R damage:damage /app /out
+USER damage
 EXPOSE 8080
 CMD ["/opt/damage/bin/damage", "foreground"]
 
