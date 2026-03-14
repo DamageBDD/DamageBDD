@@ -265,7 +265,7 @@ to_json(Req, #{action := confirm} = State) ->
     % for some browsers who send in applicaion/json contenttype
     to_html(Req, State);
 to_json(Req, #{action := rate} = State) ->
-    {jsx:encode(#{price => ?DAMAGE_PRICE}), Req, State};
+    {jsx:encode(#{price => price_feed:get_prices()}), Req, State};
 to_json(Req, #{action := balance} = State) ->
     case damage_http:is_authorized(Req, State) of
         {true, _Req0, #{public_key := AeAccount} = _State0} ->

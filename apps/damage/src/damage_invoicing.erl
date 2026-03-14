@@ -257,7 +257,7 @@ check_invoice_foldn(Invoice, Acc) ->
                     Result =
                         damage_ae:transfer_damage_tokens(
                             AeAccount,
-                            AmountPaid * ?DAMAGE_PRICE
+                            price_feed:sats_to_damage(AmountPaid)
                         ),
                     ?LOG_INFO("Funded contract ~p ~p", [Result, AmountPaid]),
                     Acc ++ [Invoice];
