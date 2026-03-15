@@ -69,7 +69,9 @@
 %% 6h for connect/init failures
 -define(PEER_BLACKLIST_TTL_CONN, 21600000).
 -define(SECRETS_RETRY_MS, 60000).
-
+-define(DEFAULT_CHANNEL_OPEN_SATS, 200000).
+-define(DEFAULT_RESERVE_SATS, 50000).
+-define(DEFAULT_MIN_PER_CHANNEL_SATS, 100000).
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
@@ -361,19 +363,18 @@ maybe_connect_peer(Host, Port, Options, Rune, NodeId, Opts) ->
     end.
 
 open_channels_with_best_peers() ->
-    TargetMsat = sats_to_msat(400000),
-
-    Opts = #{
-        %% true for simulation
+    open_channels_with_best_peers(#{
         dry_run => false,
         verbose => true,
-        %% hard_gate | soft_boost | ignore
         inbound_mode => soft_boost,
-        inbound_boost_weight => 1.0,
-        %% only used if hard_gate
-        min_inbound_ratio => 1.0,
-        target_msat => TargetMsat
-    },
+        inbound_boost_weight => 1.2,
+        min_inbound_ratio => 0.5,
+        target_msat => sats_to_msat(200000),
+        min_per_channel_msat => sats_to_msat(100000),
+        connect_before_open => true
+    }).
+
+open_channels_with_best_peers(Opts) when is_map(Opts) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {open_channels_with_best_peers, Opts}, ?CLN_HTTP_TIMEOUT)
     end).
@@ -822,6 +823,7 @@ pick_affordable(
                 [{C, ReqMsat} | Acc]
             );
         false ->
+            ?LOG_INFO("not affordable ~p ~p ~p ~p", [InboundOk, SpendableMsat, Sum, ReqMsat]),
             pick_affordable(
                 Rest,
                 SpendableMsat,
@@ -1007,20 +1009,26 @@ handle_call(
     SelfChannels0 = fetch_channel_list(Host, Port, Options, Headers, #{source => SourceNodeId}),
     SelfChannels1 = fetch_channel_list(Host, Port, Options, Headers, #{destination => SourceNodeId}),
     SelfChannels = SelfChannels0 ++ SelfChannels1,
-    ?LOG_INFO("Self channels ~p", [SelfChannels]),
-    TargetMsat = maps:get(target_msat, Opts),
+
+    TargetMsat = maps:get(target_msat, Opts, sats_to_msat(?DEFAULT_CHANNEL_OPEN_SATS)),
+    MinPerChannelMsat = maps:get(
+    min_per_channel_msat,
+    Opts,
+    sats_to_msat(?DEFAULT_MIN_PER_CHANNEL_SATS)
+),
 
     %% 1. Node balance (all spendable funds)
 
     #{onchain_sats := BalanceSats} = get_node_balance(Host, Port, Options, Rune),
 
     %% keep a small reserve so we don't strand the wallet
-    Reserve = 100000,
+    Reserve = ?DEFAULT_RESERVE_SATS,
     Spendable =
         case BalanceSats - Reserve of
             N when N =< 0 -> 0;
             N -> N
         end,
+    SpendableMsat = sats_to_msat(Spendable),
 
     case Spendable =< 0 of
         true ->
@@ -1057,11 +1065,7 @@ handle_call(
                     Candidates
                 ),
 
-            TargetMsat = sats_to_msat(400000),
-            MinPerChannelMsat = sats_to_msat(100000),
 
-            SpendableMsat = sats_to_msat(Spendable),
-            MinPerChannelMsat = sats_to_msat(100000),
 
             Chosen =
                 pick_affordable(
@@ -1071,6 +1075,7 @@ handle_call(
                     MinPerChannelMsat,
                     Opts
                 ),
+            ?LOG_DEBUG("Affordable ~p ~p", [Chosen, Opts]),
 
             case Chosen of
                 [] ->
@@ -1398,7 +1403,7 @@ handle_call(
     Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
 
     %% Defaults
-    N = maps:get(n, Opts, 100),
+    N = maps:get(n, Opts, 300),
     MinInbound = maps:get(min_inbound_sats, Opts, 200000),
     MaxScan = maps:get(max_scan, Opts, 300),
 
@@ -1899,9 +1904,9 @@ do_find_best_peer_to_open(
     %% Filter out nodes whose inbound capacity is clearly too small for the amount
     Suitable =
         [
-            C
+         C
          || C = {_NodeId, _Alias, _Score, Inbound} <- Candidates,
-            Inbound >= AmountSats
+            Inbound >= sats_to_msat(AmountSats)
         ],
     ?LOG_DEBUG("Suitable Candidates ~p", [Suitable]),
 
