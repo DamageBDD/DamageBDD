@@ -1422,10 +1422,8 @@ function restoreFeatureDraftFromShareLink() {
 		if (!resp || resp.ok !== true) return;
 
 		const pk = resp.public_key ?? "unknown";
-
 		const damage = Number(resp.damage_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 		const ae     = Number(resp.ae_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
-
 		const btcObj = resp.btc_balance;
 
 		const fmtInt = (n) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -1464,6 +1462,11 @@ function restoreFeatureDraftFromShareLink() {
 		if (pkEl) {
 			pkEl.textContent = pk; // copyToClipboard reads textContent
 			pkEl.title = "Click 📋 to copy";
+		}
+		const auth_pkEl = document.getElementById("auth-modal-node-public-key");
+		if (auth_pkEl) {
+			auth_pkEl.textContent = pk; // copyToClipboard reads textContent
+			auth_pkEl.title = "Click 📋 to copy";
 		}
 
 		// Balances + version (now with BTC details)

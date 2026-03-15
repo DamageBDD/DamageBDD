@@ -6,8 +6,18 @@
         <div class="panel auth-panel-shell">
 
           <header class="modal__header login_modal_header">
+
             <img src="/static/img/logo.png" alt="DamageBDD" />
-            <h2 class="modal__title" id="auth-modal-title">DamageBDD</h2>
+
+            <div class="title-stack">
+              <h2 class="modal__title" id="auth-modal-title">DamageBDD</h2>
+
+              <div class="click-copy">
+                <span id="auth-modal-node-public-key" class="copy-text mono"></span>
+                <span class="copy-icon" onclick="copyToClipboard('node-public-key')">📋</span>
+              </div>
+            </div>
+
           </header>
 
           <!-- Auth tabs (Tabby) -->

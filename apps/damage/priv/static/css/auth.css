@@ -1,9 +1,10 @@
 
 .login_modal_header {
-    display: inline-flex;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin: 0;
-  padding-top: 0;
-  padding-bottom: 0;
+  padding: 0;
 }
 #login_modal_content {
   background-color: #1E1E2F;
@@ -509,4 +510,64 @@ body h2 {
   margin: 18px 0;
   border: none;
   border-top: 1px solid rgba(255,255,255,0.08);
+}
+.login_modal_header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0;
+}
+
+/* Stack title + pubkey vertically */
+.title-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* Pubkey container */
+.click-copy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* Pubkey chip */
+#auth-modal-node-public-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
+
+  padding: 4px 8px;
+  border-radius: 6px;
+
+  color: rgba(255,255,255,0.65);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Copy icon */
+.copy-icon {
+  font-size: 0.9rem;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity .15s;
+}
+
+.copy-icon:hover {
+  opacity: 1;
+}
+#auth-modal-node-public-key:hover {
+  color: rgba(255,255,255,0.9);
+}
+
+#auth-modal-node-public-key {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
 }
