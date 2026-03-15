@@ -164,9 +164,30 @@ is_authorized(Req, State0) ->
     case damage_access_token:get_access_token(Req) of
         {l402, AuthHeader} ->
             case damage_l402:verify_authorization(AuthHeader, Req) of
-                {ok, #{account := AeAccount} = _Meta} ->
-                    %% Paid access: run as node identity by default
-                    {true, Req, maps:put(public_key, AeAccount, State)};
+                {ok, Meta} ->
+                    ?LOG_DEBUG("L402 auth ~p", [Meta]),
+                    case application:get_env(damage, l402_account) of
+                        {ok, AeAccount} ->
+                            %% Paid access: run as node identity by default
+                            #{public_key := AeAccount, private_key := PrivateKey} = identity_server:get_account(
+                                AeAccount
+                            ),
+                            damage_ae:set_private_key(AeAccount, PrivateKey),
+                            {
+                                true,
+                                Req,
+                                maps:merge(
+                                    State,
+                                    #{
+                                        public_key => AeAccount,
+                                        private_key => PrivateKey
+                                    }
+                                )
+                            };
+                        Other ->
+                            ?LOG_INFO("L402 not enabled ~p", [Other]),
+                            {{false, ?AUTH_HEADER}, Req, State}
+                    end;
                 {error, _} ->
                     %% No/invalid token → challenge
                     generate_l402_invoice(Req, State)
