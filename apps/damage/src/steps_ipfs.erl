@@ -12,12 +12,17 @@
 
 -export([step/6]).
 -export([test/0]).
+-import(damage_utils, [to_bin/1]).
+-import(steps_utils, [set_fail/3]).
 
 -define(DEFAULT_HTTP_TIMEOUT, 30000).
 -define(DEFAULT_HEADERS, [
     {<<"accept">>, "application/json,text/plain,*/*"},
     {<<"user-agent">>, "damagebdd/1.0"},
     {<<"content-type">>, "application/json"}
+]).
+-define(STEP_ADD_PATH_TO_IPFS_AND_STORE_HASH, [
+    "I add the path", Path, "to IPFS and store the hash in", Variable
 ]).
 
 %%% ---------------------- helpers (kept similar to steps_http) -----------------
@@ -151,13 +156,13 @@ step(
     Context0,
     <<"When">>,
     _N,
-    ["I add the path", Path0, "to IPFS and store the hash in", Var],
+    ?STEP_ADD_PATH_TO_IPFS_AND_STORE_HASH,
     _Body
 ) ->
     {run_dir, RunDir0} = lists:keyfind(run_dir, 1, Config),
     RunDir = filename:absname(RunDir0),
 
-    Path = to_list(Path0),
+    Path = to_list(Path),
 
     case safe_resolve_under_run_dir(RunDir, Path) of
         {ok, AbsPath} ->
@@ -166,7 +171,7 @@ step(
                     RootName = root_name_for_path(AbsPath),
                     case pick_root_hash(HashList, RootName) of
                         {ok, Cid} ->
-                            maps:put(Var, Cid, maps:put(ipfs_add_result, HashList, Context0));
+                            maps:put(Variable, Cid, maps:put(ipfs_add_result, HashList, Context0));
                         {error, Why} ->
                             maps:put(
                                 fail,
@@ -305,8 +310,9 @@ realpath(Path) ->
             {ok, filename:absname(Path)}
     end.
 
-add_path_to_ipfs(AbsPath) ->
-    case filelib:is_dir(AbsPath) of
+add_path_to_ipfs(AbsPath0) ->
+    AbsPath = to_bin(AbsPath0),
+    case filelib:is_dir(binary_to_list(AbsPath)) of
         true -> damage_ipfs:add({directory, AbsPath});
         false -> damage_ipfs:add({file, AbsPath})
     end.

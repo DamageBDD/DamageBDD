@@ -21,8 +21,15 @@
     run/2,
     run_ok/2
 ]).
--define(STEP_PRINT, ["I print the variable", Variable]).
+-define(STEP_PRINT, ["I print", Variable]).
 -define(STEP_SET_VAR, ["I set the variable", Variable, "to", Value]).
+-define(STEP_SET_JSON_VAR, ["I set the JSON variable", Variable]).
+-define(STEP_SET_JSON_KEY_IN_VAR, [
+    "I set JSON key", Key, "to", Value0, "in variable", Variable
+]).
+-define(STEP_WRITE_JSON_VAR_TO_FILE, [
+    "I write JSON variable", Variable, "to file", Path
+]).
 
 step_dry(_Config, Context, _, _N, _, _) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
@@ -37,6 +44,31 @@ step(_Config, Context, _, _N, ["I wait", Seconds, "seconds"], _) ->
 %%------------------------------------------------------------------------------
 step(_Config, Context, _, _N, ?STEP_SET_VAR, _) ->
     maps:put(Variable, Value, Context);
+%%------------------------------------------------------------------------------
+%% (Given/When/Then/And): Set a variable from JSON docstring body
+%% Example:
+%%   When I set the JSON variable "meta"
+%%   """
+%%   {"name":"DamageBDD"}
+%%   """
+%%------------------------------------------------------------------------------
+step(_Config, Context, _Keyword, _N, ?STEP_SET_JSON_VAR, Body) ->
+    case catch jsx:decode(iolist_to_binary(Body), [return_maps]) of
+        {'EXIT', _Reason} ->
+            set_fail(
+                Context,
+                "Invalid JSON provided for variable ~p",
+                [Variable]
+            );
+        Json when is_map(Json); is_list(Json) ->
+            maps:put(Variable, Json, Context);
+        Other ->
+            set_fail(
+                Context,
+                "Unexpected JSON value for variable ~p: ~p",
+                [Variable, Other]
+            )
+    end;
 step(
     _Config,
     Context,
@@ -59,11 +91,11 @@ step(
     ?STEP_PRINT,
     _
 ) ->
+    PrintedValue = resolve_print_value(Variable, Context),
     formatter:format(
         Config,
         print,
-        {K, N, ["print:"],
-            list_to_binary(damage_utils:strf("~p", [maps:get(Variable, Context, "None")])), Context,
+        {K, N, ["print:"], list_to_binary(damage_utils:strf("~p", [PrintedValue])), Context,
             success}
     ),
     Context;
@@ -127,6 +159,74 @@ step(_Config, Context, _Phase, _N, ["the file", Path, "should exist"], _Body) ->
     case filelib:is_file(Path) of
         true -> Context;
         false -> damage_utils:fail(Context, {missing_file, Path})
+    end;
+%%------------------------------------------------------------------------------
+%% Set one key in a JSON map variable
+%% Example:
+%%   When I set JSON key "file_ipfs" to "{{asset_hash}}" in variable "meta"
+%%------------------------------------------------------------------------------
+step(_Config, Context, _Keyword, _N, ?STEP_SET_JSON_KEY_IN_VAR, _) ->
+    VarKey = to_bin(Variable),
+    KeyBin = to_bin(Key),
+    RenderedValue = render_string(Value0, Context),
+
+    case maps:get(VarKey, Context, maps:get(Variable, Context, undefined)) of
+        Json when is_map(Json) ->
+            Context#{VarKey => Json#{KeyBin => RenderedValue}};
+        undefined ->
+            set_fail(Context, "JSON variable ~p is not set", [Variable]);
+        Other ->
+            set_fail(Context, "Variable ~p is not a JSON object: ~p", [Variable, Other])
+    end;
+%%------------------------------------------------------------------------------
+%% Write a JSON variable to a file (only under run_dir)
+%% Example:
+%%   When I write JSON variable "meta" to file "meta.json"
+%%------------------------------------------------------------------------------
+step(
+    Config,
+    Context,
+    _Keyword,
+    _N,
+    ?STEP_WRITE_JSON_VAR_TO_FILE,
+    _
+) ->
+    VarKey = to_bin(Variable),
+
+    case lists:keyfind(run_dir, 1, Config) of
+        false ->
+            set_fail(Context, "run_dir not configured");
+        {run_dir, RunDir0} ->
+            RunDir = filename:absname(to_list(RunDir0)),
+            RequestedPath = to_list(unquote_arg(Path)),
+
+            case maps:get(VarKey, Context, maps:get(Variable, Context, undefined)) of
+                Json when is_map(Json); is_list(Json) ->
+                    case safe_write_path_under_run_dir(RunDir, RequestedPath) of
+                        {ok, AbsFilePath} ->
+                            ok = filelib:ensure_dir(AbsFilePath),
+                            case file:write_file(AbsFilePath, jsx:encode(Json)) of
+                                ok ->
+                                    Context;
+                                {error, Reason} ->
+                                    set_fail(
+                                        Context,
+                                        "Failed writing JSON variable ~p to ~p: ~p",
+                                        [Variable, RequestedPath, Reason]
+                                    )
+                            end;
+                        {error, Why} ->
+                            set_fail(
+                                Context,
+                                "Refusing to write outside run_dir: ~p (~p)",
+                                [RequestedPath, Why]
+                            )
+                    end;
+                undefined ->
+                    set_fail(Context, "JSON variable ~p is not set", [Variable]);
+                Other ->
+                    set_fail(Context, "Variable ~p is not JSON-encodable: ~p", [Variable, Other])
+            end
     end;
 %% Then executable bit
 step(
@@ -236,4 +336,134 @@ run(_Context = #{exec_ctx := #ctx{sudo = Sudo}}, Cmd) when is_list(Cmd) ->
         {error, Reason} ->
             ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Full]),
             {error, Reason}
+    end.
+to_bin(B) when is_binary(B) -> B;
+to_bin(L) when is_list(L) -> list_to_binary(L);
+to_bin(I) when is_integer(I) -> integer_to_binary(I);
+to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
+to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
+
+to_list(B) when is_binary(B) -> binary_to_list(B);
+to_list(L) when is_list(L) -> L;
+to_list(A) when is_atom(A) -> atom_to_list(A);
+to_list(Other) -> binary_to_list(to_bin(Other)).
+
+render_string(Value0, Context) ->
+    Value = to_bin(Value0),
+    damage_utils:render(Value, Context).
+
+resolve_print_value(Value0, Context) ->
+    Value = to_bin(Value0),
+    Rendered = damage_utils:render(Value, Context),
+    case maps:find(Rendered, Context) of
+        {ok, Exact} ->
+            Exact;
+        error ->
+            case maps:find(binary_to_list(Rendered), Context) of
+                {ok, Exact2} ->
+                    Exact2;
+                error ->
+                    Rendered
+            end
+    end.
+
+%% Resolve a target file path under RunDir and guarantee it cannot escape.
+%% Suitable for writes, so the file itself may not exist yet.
+safe_write_path_under_run_dir(RunDirAbs0, Path0) ->
+    RunDirAbs = filename:absname(RunDirAbs0),
+    Path = string:trim(Path0),
+
+    case filename:pathtype(Path) of
+        absolute ->
+            {error, absolute_path_not_allowed};
+        _ ->
+            Joined = filename:join(RunDirAbs, Path),
+            Abs = filename:absname(Joined),
+            Parent0 = filename:dirname(Abs),
+
+            case filelib:is_dir(Parent0) of
+                true ->
+                    case realpath(Parent0) of
+                        {ok, RealParent} ->
+                            FinalAbs = filename:join(RealParent, filename:basename(Abs)),
+                            case is_within_dir(FinalAbs, RunDirAbs) of
+                                true -> {ok, FinalAbs};
+                                false -> {error, escaped_via_symlink_or_traversal}
+                            end;
+                        {error, R} ->
+                            {error, {realpath_failed, R}}
+                    end;
+                false ->
+                    case nearest_existing_dir(Parent0) of
+                        {ok, ExistingParent, SuffixParts} ->
+                            case realpath(ExistingParent) of
+                                {ok, RealExistingParent} ->
+                                    RealParent =
+                                        lists:foldl(
+                                            fun(Part, Acc) -> filename:join(Acc, Part) end,
+                                            RealExistingParent,
+                                            SuffixParts
+                                        ),
+                                    FinalAbs = filename:join(
+                                        RealParent,
+                                        filename:basename(Abs)
+                                    ),
+                                    case is_within_dir(FinalAbs, RunDirAbs) of
+                                        true -> {ok, FinalAbs};
+                                        false -> {error, escaped_via_symlink_or_traversal}
+                                    end;
+                                {error, R} ->
+                                    {error, {realpath_failed, R}}
+                            end;
+                        {error, Why} ->
+                            {error, Why}
+                    end
+            end
+    end.
+
+nearest_existing_dir(Path) ->
+    nearest_existing_dir(filename:absname(Path), []).
+
+nearest_existing_dir(Path, AccSuffix) ->
+    case filelib:is_dir(Path) of
+        true ->
+            {ok, Path, lists:reverse(AccSuffix)};
+        false ->
+            Parent = filename:dirname(Path),
+            Base = filename:basename(Path),
+            case Parent =:= Path of
+                true ->
+                    {error, no_existing_parent_dir};
+                false ->
+                    nearest_existing_dir(Parent, [Base | AccSuffix])
+            end
+    end.
+
+%% Returns true if PathAbs is inside DirAbs (or equal to it).
+is_within_dir(PathAbs0, DirAbs0) ->
+    PathAbs = filename:absname(PathAbs0),
+    DirAbs = filename:absname(DirAbs0),
+    DirWithSep =
+        case lists:last(DirAbs) of
+            $/ -> DirAbs;
+            _ -> DirAbs ++ "/"
+        end,
+    (PathAbs =:= DirAbs) orelse lists:prefix(DirWithSep, PathAbs).
+
+realpath(Path) ->
+    try
+        {ok, filelib:realpath(Path)}
+    catch
+        _:_ ->
+            {ok, filename:absname(Path)}
+    end.
+unquote_arg(B) when is_binary(B) ->
+    to_bin(unquote_arg(binary_to_list(B)));
+unquote_arg(S) when is_list(S) ->
+    S1 = string:trim(S),
+    case {S1, lists:reverse(S1)} of
+        {[$" | Rest], [$" | RevRest]} when Rest =/= [], RevRest =/= [] ->
+            lists:reverse(tl(lists:reverse(Rest)));
+        _ ->
+            S1
     end.
