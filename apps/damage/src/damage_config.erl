@@ -66,7 +66,8 @@ get_default_config(ConfigIn0) ->
         run_dir => RunDir,
         reports_dir => ReportDir,
         artifacts_dir => ArtifactsDir,
-        proxy => {socks5, "127.0.0.1", 9050}
+        proxy => {socks5, "127.0.0.1", 9050},
+        strict_no_catchall => application:get_env(damage, strict_no_catchall, true)
     },
 
     %% --- merge everything: caller wins for scalars, keep our list merges ---
