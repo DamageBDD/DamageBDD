@@ -73,7 +73,8 @@ include_paths(File) ->
 find_banned_clause(Forms) ->
     lists:foldl(
         fun
-            ({function, _FLine, Name, 6, Clauses}, none) when Name =:= step; Name =:= step_dry ->
+            ({function, _FLine, Name, 6, Clauses}, none) when Name =:= step ->
+                %; Name =:= step_dry ->
                 find_banned_clause_in_fun(Name, Clauses);
             (_Other, Acc) ->
                 Acc
