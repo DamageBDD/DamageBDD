@@ -6,9 +6,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <meta name="description" content="Behaviour Driven Development At Planetary Scale.">
-    <meta property="og:description" content="Your new and updated page description here.">
-    <meta name="twitter:description" content="Your new and updated page description here.">
+    <!-- OpenGraph (Slack / LinkedIn / Nostr / Discord) -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="DamageBDD — Behaviour Driven Development at Planetary Scale">
+    <meta property="og:description" content="DamageBDD turns behaviour into executable infrastructure. Define software expectations in plain language and verify them continuously with deterministic execution, Lightning payments, and cryptographic assurance.">
+    <meta property="og:url" content="https://damagebdd.com">
+    <meta property="og:site_name" content="DamageBDD">
+    <meta property="og:image" content="https://damagebdd.com/static/img/og-damagebdd.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="DamageBDD — Behaviour Driven Development at Planetary Scale">
+    <meta name="twitter:description" content="Behaviour becomes executable verification. DamageBDD runs plain-language expectations directly against software with deterministic execution and Lightning-native automation.">
+    <meta name="twitter:image" content="https://damagebdd.com/static/img/og-damagebdd.png">
+    <meta name="twitter:creator" content="@damagebdd">
 
 
     <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
@@ -46,68 +59,68 @@
     <link rel="stylesheet" href="/static/css/ipfs-filepicker.css">
 
   </head>
-<body>
-  {{{file_picker_modal}}}
-  {{{invoice_modal}}}
-  {{{wallet_modal}}}
-  {{{auth_modal}}}
-  {{{logout_modal}}}
-  {{{schedule_modal}}}
-  {{{install_modal}}}
-  {{{feature_picker_modal}}}
-  {{{notification_modal}}}
-  {{{node_set_password_modal}}}
-  {{{node_public_key_modal}}}
-  {{{node_unlock_modal}}}
-  {{{ecai_job_detail_modal}}}
-  {{{nwc_modal}}}
-  <div id="background"></div>
-  <div id="content">
-    {{{topbar}}}
-    {{{tabs_bar}}}
+  <body>
+    {{{file_picker_modal}}}
+    {{{invoice_modal}}}
+    {{{wallet_modal}}}
+    {{{auth_modal}}}
+    {{{logout_modal}}}
+    {{{schedule_modal}}}
+    {{{install_modal}}}
+    {{{feature_picker_modal}}}
+    {{{notification_modal}}}
+    {{{node_set_password_modal}}}
+    {{{node_public_key_modal}}}
+    {{{node_unlock_modal}}}
+    {{{ecai_job_detail_modal}}}
+    {{{nwc_modal}}}
+    <div id="background"></div>
+    <div id="content">
+      {{{topbar}}}
+      {{{tabs_bar}}}
 
-    <div id="execution-tab" class="execute-container">
-      {{{execution_tab}}}
+      <div id="execution-tab" class="execute-container">
+        {{{execution_tab}}}
+      </div>
+      <div id="activity-tab">
+        {{{activity_tab}}}
+      </div>
+      <div id="analytics-tab">
+        {{{analytics_tab}}}
+      </div>
+      <div id="schedules-tab">
+        {{{schedules_tab}}}
+      </div>
+      <div id="settings-tab">
+        {{{settings_tab}}}
+      </div>
+      <div id="swap-options-tab">
+        {{{swaps_tab}}}
+      </div>
+      <div id="ecai-jobs-tab">
+        {{{gallery_tab}}}
+      </div>
+      {{{footer}}}
     </div>
-    <div id="activity-tab">
-      {{{activity_tab}}}
-    </div>
-    <div id="analytics-tab">
-      {{{analytics_tab}}}
-    </div>
-    <div id="schedules-tab">
-      {{{schedules_tab}}}
-    </div>
-    <div id="settings-tab">
-      {{{settings_tab}}}
-    </div>
-    <div id="swap-options-tab">
-      {{{swaps_tab}}}
-    </div>
-    <div id="ecai-jobs-tab">
-      {{{gallery_tab}}}
-    </div>
-  {{{footer}}}
-  </div>
 
-      <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js" integrity="sha256-uqjf5+HZM2uY6Jhrp+IOoV582+oe9CpZ1ZR4Yy+kWh0=" crossorigin="anonymous"></script>
-      <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js" integrity="sha256-uqjf5+HZM2uY6Jhrp+IOoV582+oe9CpZ1ZR4Yy+kWh0=" crossorigin="anonymous"></script>
+    <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
 
-      <script src="/static/js/lineNumbers.js"></script>
-      <script  src="/static/js/balances.js" ></script>
-      <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
-      <script type='module' src="/static/js/installer.js" defer></script>
-      <script type='module' src="/static/js/wallet.js" defer></script>
-      <script type='module' src="/static/js/wallet-switcher.js" defer></script>
-      <script type='module' src="/static/js/filter.js" defer></script>
-      <script type='module' src="/static/js/reports.js" defer></script>
-      <script type='module' src="/static/js/gallery.js" defer></script>
-      <script type='module' src="/static/js/analytics.js" defer></script>
-      <script type='module' src="/static/js/pricing.js" defer></script>
+    <script src="/static/js/lineNumbers.js"></script>
+    <script  src="/static/js/balances.js" ></script>
+    <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
+    <script type='module' src="/static/js/installer.js" defer></script>
+    <script type='module' src="/static/js/wallet.js" defer></script>
+    <script type='module' src="/static/js/wallet-switcher.js" defer></script>
+    <script type='module' src="/static/js/filter.js" defer></script>
+    <script type='module' src="/static/js/reports.js" defer></script>
+    <script type='module' src="/static/js/gallery.js" defer></script>
+    <script type='module' src="/static/js/analytics.js" defer></script>
+    <script type='module' src="/static/js/pricing.js" defer></script>
 
-      <script type='module' src="/static/js/main.js" defer></script>
-</body>
+    <script type='module' src="/static/js/main.js" defer></script>
+  </body>
 </html>
 
