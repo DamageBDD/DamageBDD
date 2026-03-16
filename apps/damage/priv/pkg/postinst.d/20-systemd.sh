@@ -113,6 +113,7 @@ Wants=network-online.target
 Type=simple
 User=damage
 Environment=SHELL=sh
+EnvironmentFile=/etc/default/damage
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=${INSTALL_DIR}/bin/damage foreground -config ${CONFIG_FILE}
 Restart=on-failure
