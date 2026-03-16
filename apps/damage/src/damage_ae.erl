@@ -1522,8 +1522,11 @@ node_ae_balance() ->
 
 node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
-    Balance = balance(list_to_binary(AeAccount)),
-    Balance / math:pow(10, ?DAMAGE_DECIMALS).
+    case balance(list_to_binary(AeAccount)) of
+        null -> 0;
+        0 -> 0;
+        Balance -> Balance / math:pow(10, ?DAMAGE_DECIMALS)
+    end.
 
 %% Post the already-signed tx, with optional paying_for wrapper
 %-spec post_signed_or_payfor(binary(), boolean()) -> {ok, map()} | {error, term()}.
