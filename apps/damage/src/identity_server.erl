@@ -14,6 +14,7 @@
     get_account_by_lightning/1,
     get_access_token/1,
     verify_access_token/1,
+    deploy_contracts/0,
     test/0,
     test_email_contract/0
 ]).
@@ -279,6 +280,25 @@ terminate(_, _) -> ok.
 %%% =========================
 %%% HELPER FUNCTIONS
 %%% =========================
+deploy_contracts() ->
+    #{
+        "contract_id" :=
+            EmailContractId,
+        "return_type" := "ok"
+    } = damage_ae:contract_deploy("contracts/email_registry.aes", []),
+    ?LOG_INFO("email_registry contract id ~p", [EmailContractId]),
+    #{
+        "contract_id" :=
+            NostrContractId,
+        "return_type" := "ok"
+    } = damage_ae:contract_deploy("contracts/nostr_registry.aes", []),
+    ?LOG_INFO("nostr_registry contract id ~p", [NostrContractId]),
+    #{
+        "contract_id" :=
+            LightningContractId,
+        "return_type" := "ok"
+    } = damage_ae:contract_deploy("contracts/lightning_registry.aes", []),
+    ?LOG_INFO("lightning_registry contract id ~p", [LightningContractId]).
 
 test() ->
     Email = <<"test@gmail.com">>,
