@@ -106,12 +106,13 @@
             <h3>Bitcoin Onchain Deposit Address</h3>
 
             <div class="wallet-inline-row">
+              <!--
               <label for="node-liquidity-address-type">Address Type</label>
               <select id="node-liquidity-address-type">
                 <option value="bech32" selected>bech32</option>
                 <option value="p2tr">p2tr</option>
                 <option value="all">all</option>
-              </select>
+              </select>-->
 
               <button type="button"
                       class="styled-btn"
@@ -119,6 +120,7 @@
                 Refresh Address
               </button>
             </div>
+            <div id="node-liquidity-address-qrcode"></div>
 
             <div class="click-copy">
               <input type="text" id="node-liquidity-address" readonly>

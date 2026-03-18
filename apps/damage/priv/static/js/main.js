@@ -1643,18 +1643,22 @@ function restoreFeatureDraftFromShareLink() {
 	}
 
 	async function loadNodeLiquidityAddress() {
+		debugger;
 		const type = document.getElementById("node-liquidity-address-type")?.value || "bech32";
 		const input = document.getElementById("node-liquidity-address");
 		const raw = document.getElementById("node-liquidity-address-json");
+		const qrWrap = document.getElementById("node-liquidity-address-qrcode");
 
 		if (input) input.value = "Loading...";
 		if (raw) raw.textContent = "";
+		if (qrWrap) qrWrap.innerHTML = "";
 
 		try {
 			const r = await fetch(`/api/liquidity/address?type=${encodeURIComponent(type)}`, {
 				method: "GET",
-				headers: { "accept": "application/json" }
+				headers: { accept: "application/json" }
 			});
+
 			const data = await r.json();
 
 			const address =
@@ -1666,9 +1670,21 @@ function restoreFeatureDraftFromShareLink() {
 
 			if (input) input.value = address || "No address returned";
 			if (raw) raw.textContent = JSON.stringify(data, null, 2);
+
+			if (address && qrWrap) {
+				const qr = document.createElement("bitcoin-qr");
+				qr.bitcoin = address;
+				qr.width = 260;
+				qr.height = 260;
+				qr.setAttribute("aria-label", "Bitcoin deposit address QR code");
+				qr.style.display = "block";
+				qr.style.margin = "0.75rem auto 0";
+				qrWrap.appendChild(qr);
+			}
 		} catch (err) {
 			if (input) input.value = "Failed to load address";
 			if (raw) raw.textContent = String(err);
+			if (qrWrap) qrWrap.innerHTML = "";
 		}
 	}
 
