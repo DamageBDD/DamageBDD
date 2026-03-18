@@ -12,10 +12,6 @@
             <div class="title-stack">
               <h2 class="modal__title" id="auth-modal-title">DamageBDD</h2>
 
-              <div class="click-copy">
-                <span id="auth-modal-node-public-key" class="copy-text mono"></span>
-                <span class="copy-icon" onclick="copyToClipboard('node-public-key')">📋</span>
-              </div>
             </div>
 
           </header>
@@ -119,6 +115,15 @@
           <div id="connect-status" class="auth-status" aria-live="polite"></div>
 
           <footer id="login_footer" class="modal__footer">
+            <button
+              id="open-node-wallet-btn-auth"
+              class="node-wallet-cog"
+              type="button"
+              aria-label="Open node wallet"
+              data-tooltip="Node Wallet">
+              ⚙
+              <span class="node-wallet-cog__label">Node Wallet</span>
+            </button>
           </footer>
 
         </div>

@@ -18,7 +18,7 @@ Feature: Build damagebdd package for ubuntu 24.04 LTS
     Then I copy file "/opt/workspace/_build/pkg/deb/" from the container to ipfs and store the hash in "asset_hash"
     And I print "asset_hash"
 
-    When I set the JSON variable "meta" to:
+    When I set the JSON variable "meta"
     """
     {
         "name": "DamageBDD Ubuntu 24.04 LTS Software Package",

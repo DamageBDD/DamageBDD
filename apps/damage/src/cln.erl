@@ -12,6 +12,11 @@
     terminate/2,
     code_change/3
 ]).
+-export([
+    newaddr/0,
+    newaddr/1
+]).
+
 
 -export([
     getinfo/0,
@@ -451,7 +456,14 @@ verify_peer(NodeId) when is_binary(NodeId) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {verify_peer, NodeId})
     end).
+newaddr() ->
+    newaddr(<<"bech32">>).
 
+newaddr(AddressType0) ->
+    AddressType = to_bin(AddressType0),
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {newaddr, AddressType}, ?CLN_HTTP_TIMEOUT)
+    end).
 %% ===================================================================
 %% Planning helpers
 %% ===================================================================
@@ -1166,6 +1178,29 @@ get_node_balance(Host, Port, Options, Rune) ->
 %% Gen server callbacks
 %% ===================================================================
 
+handle_call(
+    {newaddr, AddressType0},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    AddressType = to_bin(AddressType0),
+    ReqMap =
+        case AddressType of
+            <<"all">> ->
+                #{};
+            _ ->
+                #{addresstype => AddressType}
+        end,
+    Reply =
+        case cln_post_json(Host, Port, Options, Rune, "/v1/newaddr", ReqMap) of
+            #{code := _, message := Message} ->
+                {error, Message};
+            Body when is_map(Body) ->
+                {ok, Body};
+            Other ->
+                {error, to_bin(Other)}
+        end,
+    {reply, Reply, State};
 handle_call(_Request, _From, #state{secrets_ready = false} = State) ->
     {reply, {error, secrets_not_ready}, State};
 handle_call(

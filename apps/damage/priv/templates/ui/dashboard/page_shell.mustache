@@ -60,10 +60,10 @@
 
   </head>
   <body>
+    {{{auth_modal}}}
     {{{file_picker_modal}}}
     {{{invoice_modal}}}
     {{{wallet_modal}}}
-    {{{auth_modal}}}
     {{{logout_modal}}}
     {{{schedule_modal}}}
     {{{install_modal}}}
@@ -74,6 +74,7 @@
     {{{node_unlock_modal}}}
     {{{ecai_job_detail_modal}}}
     {{{nwc_modal}}}
+    {{{node_wallet_modal}}}
     <div id="background"></div>
     <div id="content">
       {{{topbar}}}
@@ -100,7 +101,6 @@
       <div id="ecai-jobs-tab">
         {{{gallery_tab}}}
       </div>
-      {{{footer}}}
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
@@ -121,6 +121,7 @@
     <script type='module' src="/static/js/pricing.js" defer></script>
 
     <script type='module' src="/static/js/main.js" defer></script>
+      {{{footer}}}
   </body>
 </html>
 

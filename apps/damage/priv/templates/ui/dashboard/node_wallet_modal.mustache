@@ -1,0 +1,186 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="node-wallet-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+    <div class="modal__container wallet-modal-shell"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="wallet-modal-title">
+
+      <header class="modal__header">
+        <h2 class="modal__title" id="wallet-modal-title">Node Wallet</h2>
+        <button class="modal__close"
+                aria-label="Close modal"
+                data-micromodal-close></button>
+      </header>
+
+      <main class="modal__content" id="wallet-modal-content">
+
+        <ul data-node-wallet-tabs class="wallet-top-tabs">
+          <li><a data-tabby-default href="#node-wallet-tab">💼 Wallet</a></li>
+          <li><a href="#node-liquidity-tab">⚡ Liquidity</a></li>
+        </ul>
+
+        <!-- ========================================================= -->
+        <!-- WALLET TAB -->
+        <!-- ========================================================= -->
+        <section id="node-wallet-tab">
+
+          <div class="wallet-section">
+            <h3>Node Public Key</h3>
+            <div class="click-copy">
+              <input type="text" id="node-wallet-public-key" readonly>
+              <span class="copy-icon" onclick="copyToClipboard('node-wallet-public-key')">⧉</span>
+            </div>
+          </div>
+
+          <div class="wallet-section">
+            <h3>Balances</h3>
+
+            <div class="wallet-stats-grid">
+              <div class="wallet-stat-card">
+                <div class="wallet-stat-label">DAMAGE</div>
+                <div class="wallet-stat-value" id="node-wallet-damage-balance">0</div>
+              </div>
+
+              <div class="wallet-stat-card">
+                <div class="wallet-stat-label">AE</div>
+                <div class="wallet-stat-value" id="node-wallet-ae-balance">0</div>
+              </div>
+
+              <div class="wallet-stat-card">
+                <div class="wallet-stat-label">BTC Onchain</div>
+                <div class="wallet-stat-value" id="node-wallet-btc-onchain">0 sats</div>
+              </div>
+
+              <div class="wallet-stat-card">
+                <div class="wallet-stat-label">BTC Channels</div>
+                <div class="wallet-stat-value" id="node-wallet-btc-channels">0 sats</div>
+              </div>
+
+              <div class="wallet-stat-card wallet-stat-card--wide">
+                <div class="wallet-stat-label">BTC Total</div>
+                <div class="wallet-stat-value" id="node-wallet-btc-total">0 sats</div>
+              </div>
+            </div>
+          </div>
+
+          <hr>
+
+          <div class="wallet-section">
+            <h3>Node Build</h3>
+
+            <div class="wallet-meta-row">
+              <span class="wallet-meta-label">Commit</span>
+              <div class="click-copy wallet-meta-copy">
+                <input type="text" id="node-wallet-build-sha" readonly>
+                <span class="copy-icon" onclick="copyToClipboard('node-wallet-build-sha')">⧉</span>
+              </div>
+            </div>
+
+            <div class="wallet-meta-row">
+              <span class="wallet-meta-label">Build Info</span>
+              <div id="node-wallet-build-meta" class="wallet-meta-value">unknown</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================================================= -->
+        <!-- LIQUIDITY TAB -->
+        <!-- ========================================================= -->
+        <section id="node-liquidity-tab">
+
+          <div class="wallet-section">
+            <h3>Inbound Liquidity Summary</h3>
+            <p class="wallet-hint">
+              Fund the node onchain or generate a Lightning invoice to add inbound liquidity.
+            </p>
+
+            <div id="node-liquidity-summary" class="wallet-summary-box">
+              BTC balances will appear here.
+            </div>
+          </div>
+
+          <hr>
+
+          <div class="wallet-section">
+            <h3>Bitcoin Onchain Deposit Address</h3>
+
+            <div class="wallet-inline-row">
+              <label for="node-liquidity-address-type">Address Type</label>
+              <select id="node-liquidity-address-type">
+                <option value="bech32" selected>bech32</option>
+                <option value="p2tr">p2tr</option>
+                <option value="all">all</option>
+              </select>
+
+              <button type="button"
+                      class="styled-btn"
+                      id="refresh-node-liquidity-address-btn">
+                Refresh Address
+              </button>
+            </div>
+
+            <div class="click-copy">
+              <input type="text" id="node-liquidity-address" readonly>
+              <span class="copy-icon" onclick="copyToClipboard('node-liquidity-address')">⧉</span>
+            </div>
+
+            <pre id="node-liquidity-address-json"
+                 class="wallet-raw-json hidden"></pre>
+          </div>
+
+          <hr>
+
+          <div class="wallet-section">
+            <h3>Create Lightning Invoice</h3>
+
+            <form id="node-liquidity-invoice-form">
+              <label>Amount in Sats</label>
+              <input type="number"
+                     step="10"
+                     min="1"
+                     id="node-liquidity-invoice-amount"
+                     value="50000">
+
+              <label>Description</label>
+              <input type="text"
+                     id="node-liquidity-invoice-description"
+                     value="Inbound liquidity topup">
+
+              <label>Expiry (seconds)</label>
+              <input type="number"
+                     step="60"
+                     min="60"
+                     id="node-liquidity-invoice-expiry"
+                     value="3600">
+
+              <button class="styled-btn" id="generate-node-liquidity-invoice-btn">
+                Generate Lightning Invoice
+              </button>
+            </form>
+
+            <div id="node-liquidity-qrcode"></div>
+            <div class="wallet-invoice-block">
+              <label>BOLT11</label>
+              <div class="click-copy">
+                <textarea id="node-liquidity-bolt11" rows="5" readonly></textarea>
+                <span class="copy-icon" onclick="copyTextareaClipboard('node-liquidity-bolt11')">⧉</span>
+              </div>
+            </div>
+
+            <div id="node-liquidity-invoice-meta" class="wallet-meta-value">
+              No invoice generated yet.
+            </div>
+
+            <pre id="node-liquidity-invoice-json"
+                 class="wallet-raw-json hidden"></pre>
+          </div>
+
+        </section>
+
+      </main>
+
+      <footer class="modal__footer"></footer>
+    </div>
+  </div>
+</div>

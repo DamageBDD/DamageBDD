@@ -1,19 +1,17 @@
 <!-- -*- mode: html -*- -->
 <footer id="node-footer">
-  <div class="click-copy">
-    <span id="node-public-key" class="copy-text mono"></span>
-    <span class="copy-icon" onclick="copyToClipboard('node-public-key')">📋</span>
+  <div class="footer-node-wallet-entry">
+    <button
+      id="open-node-wallet-btn-auth"
+      class="node-wallet-cog"
+      type="button"
+      aria-label="Open node wallet"
+      data-tooltip="Node Wallet">
+
+      ⚙
+      <span class="node-wallet-cog__label">Node Wallet</span>
+    </button>
   </div>
-
-  <p id="node-balances"></p>
-
-  <div class="click-copy">
-    <span id="node-build-sha" class="copy-text mono"></span>
-    <span class="copy-icon" onclick="copyToClipboard('node-build-sha')">📋</span>
-  </div>
-
-  <p id="node-build-meta"></p>
-
 
 </footer>
 

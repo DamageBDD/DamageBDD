@@ -52,7 +52,8 @@ get_trails() ->
             damage_doc,
             damage_swap_options_http,
             damage_dashboard,
-            damage_nwc_http
+            damage_nwc_http,
+            damage_liquidity_http
         ],
     Trails =
         [

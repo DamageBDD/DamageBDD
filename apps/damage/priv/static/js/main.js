@@ -63,6 +63,21 @@ function restoreFeatureDraftFromShareLink() {
 	// code that should be taken care of right away
 	window.dataLayer = window.dataLayer || [];
 
+	document.addEventListener("DOMContentLoaded", function () {
+		[
+			"open-node-wallet-btn",
+			"open-node-wallet-btn-auth",
+			"open-node-wallet-btn-floating"
+		].forEach((id) => {
+			const el = document.getElementById(id);
+			if (!el) return;
+
+			el.addEventListener("click", async function (event) {
+				event.preventDefault();
+				await openNodeWalletDialog(el);
+			});
+		});
+	});
 
 	document.addEventListener("DOMContentLoaded", async function() {
 		var kycForm = document.getElementById('kycForm');
@@ -114,7 +129,7 @@ function restoreFeatureDraftFromShareLink() {
 
 		/*document.getElementById("signup-modal").addEventListener("keydown", function(event){
 		  if (event.keyCode === 13) {
-			submitSignUpForm(event);
+		  submitSignUpForm(event);
 		  }
 		  });*/
 		document.getElementById("signupForm").addEventListener("submit", (event) => {
@@ -235,6 +250,9 @@ function restoreFeatureDraftFromShareLink() {
 					var damageAddr = document.getElementById("damage-address");
 					damageAddr.value = address;
 				}
+				if(modal.id == 'node-wallet-modal'){
+					Tabby('[data-node-wallet-tabs]');
+				}
 			}
 		});
 		
@@ -251,6 +269,7 @@ function restoreFeatureDraftFromShareLink() {
 			}
 		}, false);
 		var tabs =Tabby('[data-token-tabs]');
+		Tabby('[data-node-wallet-tabs]');
 		document.addEventListener('tabby', function (event) {
 			var tab = event.target;
 			var content = event.detail.content;
@@ -1559,79 +1578,292 @@ function restoreFeatureDraftFromShareLink() {
 		document.getElementById("variableName").value = "";
 		document.getElementById("variableType").selectedIndex = 0;
 	}
+	function renderNodeWalletModal(resp) {
+		if (!resp || resp.ok !== true) return;
 
-})(window, document, undefined);
+		const pk = resp.public_key ?? "unknown";
+		const damage = Number(resp.damage_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+		const ae = Number(resp.ae_balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+		const btcObj = resp.btc_balance || null;
+		const build = resp.version ?? {};
 
-function copyInvoiceToClipboard(){
-	// Copy the text inside the text field
-	navigator.clipboard.writeText(document.getElementById("lightning-invoice-input").value);
-	var copyIcon = document.getElementById("copyInvoiceIcon");
-	copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
-	copyIcon.style.color = 'green'; // Change color to green
-}
+		const fmtInt = (n) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+		const fmtMsat = (msat) => (Number(msat ?? 0) / 1000).toLocaleString(undefined, {
+			minimumFractionDigits: 0,
+			maximumFractionDigits: 3
+		});
 
-function copyAddressToClipboard(){
-	// Copy the text inside the text field
-	navigator.clipboard.writeText(document.getElementById("damage-address").value);
-	var copyIcon = document.getElementById("copyAddressIcon");
-	copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
-	copyIcon.style.color = 'green'; // Change color to green
-}
+		let onchainText = "0 sats";
+		let channelText = "0 sats";
+		let totalText = "0 sats";
+		let summaryText = "BTC wallet data unavailable.";
 
-function copyToClipboard(elementId) {
-	const el = document.getElementById(elementId);
-	if (!el) return;
+		if (btcObj) {
+			const onchain = btcObj.onchain_msat != null ? fmtMsat(btcObj.onchain_msat) : fmtInt(btcObj.onchain_sats);
+			const channel = btcObj.channel_msat != null ? fmtMsat(btcObj.channel_msat) : fmtInt(btcObj.channel_sats);
+			const total = btcObj.total_msat != null ? fmtMsat(btcObj.total_msat) : fmtInt(btcObj.total_sats);
 
-	const icon = el.parentElement?.querySelector(".copy-icon");
-	const text = el.value || el.textContent;
-
-	const showSuccess = () => {
-		if (icon) {
-			const original = icon.textContent;
-			icon.textContent = "✅";
-			icon.style.color = "#00ff88";
-			setTimeout(() => {
-				icon.textContent = original;
-				icon.style.color = "";
-			}, 1500);
+			onchainText = `${onchain} sats`;
+			channelText = `${channel} sats`;
+			totalText = `${total} sats`;
+			summaryText = `BTC — onchain ${onchain} sats | channels ${channel} sats | total ${total} sats`;
 		}
-	};
 
-	if (navigator.clipboard && window.isSecureContext) {
-		navigator.clipboard.writeText(text)
-			.then(() => {
-				console.log("Copied to clipboard:", text);
-				showSuccess();
-			})
-			.catch(err => {
-				console.error("Clipboard copy failed:", err);
-			});
-	} else {
-		let range, selection;
+		const shaFull = build.git_sha ?? "unknown";
+		const shaShort = build.git_sha_short ?? (shaFull !== "unknown" ? shaFull.slice(0, 7) : "unknown");
+		const time = build.build_time ?? "unknown";
+		const env = build.build_env ?? "unknown";
 
-		if (el.nodeName === "INPUT" || el.nodeName === "TEXTAREA") {
-			el.select();
-			el.setSelectionRange(0, text.length);
-		} else {
-			range = document.createRange();
-			range.selectNodeContents(el);
-			selection = window.getSelection();
-			selection.removeAllRanges();
-			selection.addRange(range);
-		}
+		const pkEl = document.getElementById("node-wallet-public-key");
+		if (pkEl) pkEl.value = pk;
+
+		const dmgEl = document.getElementById("node-wallet-damage-balance");
+		if (dmgEl) dmgEl.textContent = damage;
+
+		const aeEl = document.getElementById("node-wallet-ae-balance");
+		if (aeEl) aeEl.textContent = ae;
+
+		const btcOnchainEl = document.getElementById("node-wallet-btc-onchain");
+		if (btcOnchainEl) btcOnchainEl.textContent = onchainText;
+
+		const btcChannelsEl = document.getElementById("node-wallet-btc-channels");
+		if (btcChannelsEl) btcChannelsEl.textContent = channelText;
+
+		const btcTotalEl = document.getElementById("node-wallet-btc-total");
+		if (btcTotalEl) btcTotalEl.textContent = totalText;
+
+		const buildShaEl = document.getElementById("node-wallet-build-sha");
+		if (buildShaEl) buildShaEl.value = shaFull;
+
+		const buildMetaEl = document.getElementById("node-wallet-build-meta");
+		if (buildMetaEl) buildMetaEl.textContent = `Build: ${env} · ${shaShort} · ${time}`;
+
+		const summaryEl = document.getElementById("node-liquidity-summary");
+		if (summaryEl) summaryEl.textContent = summaryText;
+	}
+
+	async function loadNodeLiquidityAddress() {
+		const type = document.getElementById("node-liquidity-address-type")?.value || "bech32";
+		const input = document.getElementById("node-liquidity-address");
+		const raw = document.getElementById("node-liquidity-address-json");
+
+		if (input) input.value = "Loading...";
+		if (raw) raw.textContent = "";
 
 		try {
-			document.execCommand("copy");
-			console.log("Copied (fallback):", text);
-			showSuccess();
+			const r = await fetch(`/api/liquidity/address?type=${encodeURIComponent(type)}`, {
+				method: "GET",
+				headers: { "accept": "application/json" }
+			});
+			const data = await r.json();
+
+			const address =
+				  data?.bech32 ||
+				  data?.p2tr ||
+				  data?.all?.bech32 ||
+				  data?.all?.p2tr ||
+				  "";
+
+			if (input) input.value = address || "No address returned";
+			if (raw) raw.textContent = JSON.stringify(data, null, 2);
 		} catch (err) {
-			console.error("Fallback copy failed:", err);
+			if (input) input.value = "Failed to load address";
+			if (raw) raw.textContent = String(err);
+		}
+	}
+
+	async function createNodeLiquidityInvoice() {
+		const amount = Number(document.getElementById("node-liquidity-invoice-amount")?.value || 0);
+		const description =
+			  document.getElementById("node-liquidity-invoice-description")?.value || "Inbound liquidity topup";
+		const expiry = Number(document.getElementById("node-liquidity-invoice-expiry")?.value || 3600);
+
+		const bolt11El = document.getElementById("node-liquidity-bolt11");
+		const metaEl = document.getElementById("node-liquidity-invoice-meta");
+		const rawEl = document.getElementById("node-liquidity-invoice-json");
+		const qrContainer = document.getElementById("node-liquidity-qrcode");
+
+		if (bolt11El) bolt11El.value = "";
+		if (metaEl) metaEl.textContent = "Creating invoice...";
+		if (rawEl) rawEl.textContent = "";
+		if (qrContainer) qrContainer.innerHTML = "";
+
+		try {
+			const r = await fetch("/api/liquidity/invoice", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"accept": "application/json"
+				},
+				body: JSON.stringify({
+					amount_sats: amount,
+					description,
+					expiry
+				})
+			});
+
+			const data = await r.json();
+			const bolt11 = data?.bolt11 || data?.payment_request || "";
+
+			if (bolt11El) bolt11El.value = bolt11;
+
+			if (metaEl) {
+				if (bolt11) {
+					metaEl.textContent =
+						`Amount ${data.amount_sats ?? amount} sats | label ${data.label ?? "unknown"} | payment_hash ${data.payment_hash ?? "unknown"}`;
+
+					showLightningQR({
+						containerId: "node-liquidity-qrcode",
+						paymentRequest: bolt11,
+						address: window.TokenManager?.getAddress?.() || "node",
+						expirySeconds: Number(data.expires_at)
+							? Math.max(1, Number(data.expires_at) - Math.floor(Date.now() / 1000))
+							: expiry,
+						helpUrl: "/lightning",
+						logo: "/static/img/logo.png"
+					});
+				} else {
+					metaEl.textContent = data?.message || "Invoice creation failed";
+				}
+			}
+
+			if (rawEl) rawEl.textContent = JSON.stringify(data, null, 2);
+		} catch (err) {
+			if (metaEl) metaEl.textContent = `Invoice request failed: ${err}`;
+			if (rawEl) rawEl.textContent = String(err);
+		}
+	}
+
+	document.addEventListener("DOMContentLoaded", function () {
+		const refreshBtn = document.getElementById("refresh-node-liquidity-address-btn");
+		if (refreshBtn) {
+			refreshBtn.addEventListener("click", function (e) {
+				e.preventDefault();
+				loadNodeLiquidityAddress();
+			});
 		}
 
-		if (selection) selection.removeAllRanges();
-		if (el.blur) el.blur();
-	}
-}
+		const invoiceForm = document.getElementById("node-liquidity-invoice-form");
+		if (invoiceForm) {
+			invoiceForm.addEventListener("submit", function (e) {
+				e.preventDefault();
+				createNodeLiquidityInvoice();
+			});
+		}
+	});
 
-// ⬅️ Make it accessible from HTML inline
-window.copyToClipboard = copyToClipboard;
+	function copyTextareaClipboard(id) {
+		const el = document.getElementById(id);
+		if (!el) return;
+		navigator.clipboard.writeText(el.value || "").catch(() => {});
+	}
+	async function refreshNodeWalletModal() {
+		const r = await fetch("/version", {
+			method: "GET",
+			headers: { "accept": "application/json" }
+		});
+		const resp = await r.json();
+		renderNodeFooter(resp);
+		renderNodeWalletModal(resp);
+	}
+
+
+	function copyInvoiceToClipboard(){
+		// Copy the text inside the text field
+		navigator.clipboard.writeText(document.getElementById("lightning-invoice-input").value);
+		var copyIcon = document.getElementById("copyInvoiceIcon");
+		copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
+		copyIcon.style.color = 'green'; // Change color to green
+	}
+
+	function copyAddressToClipboard(){
+		// Copy the text inside the text field
+		navigator.clipboard.writeText(document.getElementById("damage-address").value);
+		var copyIcon = document.getElementById("copyAddressIcon");
+		copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
+		copyIcon.style.color = 'green'; // Change color to green
+	}
+
+	function copyToClipboard(elementId) {
+		const el = document.getElementById(elementId);
+		if (!el) return;
+
+		const icon = el.parentElement?.querySelector(".copy-icon");
+		const text = el.value || el.textContent;
+
+		const showSuccess = () => {
+			if (icon) {
+				const original = icon.textContent;
+				icon.textContent = "✅";
+				icon.style.color = "#00ff88";
+				setTimeout(() => {
+					icon.textContent = original;
+					icon.style.color = "";
+				}, 1500);
+			}
+		};
+
+		if (navigator.clipboard && window.isSecureContext) {
+			navigator.clipboard.writeText(text)
+				.then(() => {
+					console.log("Copied to clipboard:", text);
+					showSuccess();
+				})
+				.catch(err => {
+					console.error("Clipboard copy failed:", err);
+				});
+		} else {
+			let range, selection;
+
+			if (el.nodeName === "INPUT" || el.nodeName === "TEXTAREA") {
+				el.select();
+				el.setSelectionRange(0, text.length);
+			} else {
+				range = document.createRange();
+				range.selectNodeContents(el);
+				selection = window.getSelection();
+				selection.removeAllRanges();
+				selection.addRange(range);
+			}
+
+			try {
+				document.execCommand("copy");
+				console.log("Copied (fallback):", text);
+				showSuccess();
+			} catch (err) {
+				console.error("Fallback copy failed:", err);
+			}
+
+			if (selection) selection.removeAllRanges();
+			if (el.blur) el.blur();
+		}
+	}
+
+	// ⬅️ Make it accessible from HTML inline
+	window.copyToClipboard = copyToClipboard;
+
+	async function openNodeWalletDialog(triggerEl = null) {
+		const btn = triggerEl || document.getElementById("open-node-wallet-btn");
+
+		try {
+			btn?.classList.add("is-loading");
+
+			await refreshNodeWalletModal();
+			//await loadNodeLiquidityAddress();
+
+			if (window.MicroModal) {
+				MicroModal.show("node-wallet-modal");
+			}
+		} catch (err) {
+			console.error("Failed to open node wallet dialog:", err);
+			showNotification?.({
+				title: "Node Wallet",
+				content: "Failed to load node wallet data.",
+				style: "error"
+			});
+		} finally {
+			btn?.classList.remove("is-loading");
+		}
+	}
+})(window, document, undefined);
+
