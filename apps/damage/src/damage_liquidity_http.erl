@@ -81,7 +81,8 @@ trails() ->
                                 },
                                 #{
                                     name => <<"expiry">>,
-                                    description => <<"Invoice expiry in seconds. Defaults to 3600.">>,
+                                    description =>
+                                        <<"Invoice expiry in seconds. Defaults to 3600.">>,
                                     in => <<"body">>,
                                     required => false,
                                     type => <<"integer">>
@@ -153,9 +154,13 @@ from_json(Req, #{action := invoice} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
         {'EXIT', _} ->
-            reply_json(400, #{status => <<"failed">>, message => <<"Json decode error.">>}, Req0, State);
+            reply_json(
+                400, #{status => <<"failed">>, message => <<"Json decode error.">>}, Req0, State
+            );
         badarg ->
-            reply_json(400, #{status => <<"failed">>, message => <<"Json decode error.">>}, Req0, State);
+            reply_json(
+                400, #{status => <<"failed">>, message => <<"Json decode error.">>}, Req0, State
+            );
         Json when is_map(Json) ->
             handle_create_invoice(Json, Req0, State)
     end;
@@ -259,9 +264,17 @@ normalize_positive_int(_, Msg) ->
 normalize_int(V) when is_integer(V) ->
     V;
 normalize_int(V) when is_binary(V) ->
-    try binary_to_integer(V) catch _:_ -> ?DEFAULT_INVOICE_EXPIRY end;
+    try
+        binary_to_integer(V)
+    catch
+        _:_ -> ?DEFAULT_INVOICE_EXPIRY
+    end;
 normalize_int(V) when is_list(V) ->
-    try list_to_integer(V) catch _:_ -> ?DEFAULT_INVOICE_EXPIRY end;
+    try
+        list_to_integer(V)
+    catch
+        _:_ -> ?DEFAULT_INVOICE_EXPIRY
+    end;
 normalize_int(_) ->
     ?DEFAULT_INVOICE_EXPIRY.
 

@@ -17,7 +17,6 @@
     newaddr/1
 ]).
 
-
 -export([
     getinfo/0,
     create_invoice/2,
