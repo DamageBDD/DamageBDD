@@ -34,12 +34,11 @@ build_auth_state(Req, State0) ->
 %% Admin check
 %% ------------------------------------------------------------------
 
-is_node_admin_account(AeAccount) when is_binary(AeAccount) ->
-    is_node_admin_account(binary_to_list(AeAccount));
-is_node_admin_account(AeAccount) ->
+is_node_admin_account(AeAccount0) ->
+    AeAccount = to_bin(AeAccount0),
     case application:get_env(damage, node_admins, []) of
         Admins when is_list(Admins) ->
-            lists:member(AeAccount, Admins);
+            lists:member(AeAccount, [to_bin(A) || A <- Admins]);
         _ ->
             false
     end.
@@ -123,8 +122,15 @@ resolve_l402(AuthHeader, Req, State) ->
         {ok, Meta} ->
             ?LOG_DEBUG("L402 auth ~p", [Meta]),
             case application:get_env(damage, l402_account) of
-                {ok, AeAccount} ->
-                    with_identity_account(to_bin(AeAccount), State, #{});
+                {ok, AeAccount0} ->
+                    AeAccount = to_bin(AeAccount0),
+                    case is_node_admin_account(AeAccount) of
+                        true ->
+                            ?LOG_ERROR("Refusing L402 auth for node admin account ~p", [AeAccount]),
+                            {error, l402_account_cannot_be_node_admin};
+                        false ->
+                            with_identity_account(AeAccount, State, #{})
+                    end;
                 Other ->
                     ?LOG_INFO("L402 not enabled ~p", [Other]),
                     {error, l402_not_enabled}
