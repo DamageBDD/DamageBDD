@@ -17,6 +17,7 @@
     maybe_authenticate/2,
     require_auth/4
 ]).
+-import(damage_utils, [to_bin/1]).
 
 %% ------------------------------------------------------------------
 %% Base request-derived state
@@ -51,12 +52,12 @@ auth_success_state(State, AeAccount, Extra) ->
     Resp = maps:merge(
         State,
         Extra#{
-            public_key => AeAccount,
+            public_key => to_bin(AeAccount),
             authenticated => true,
             node_admin => is_node_admin_account(AeAccount)
         }
     ),
-        ?LOG_DEBUG("auth_success_state ~p ~p", [Resp, is_node_admin_account(AeAccount)]),
+    ?LOG_DEBUG("auth_success_state ~p ~p", [Resp, is_node_admin_account(AeAccount)]),
     Resp.
 
 with_identity_account(AeAccount, State, Extra) ->
@@ -64,7 +65,7 @@ with_identity_account(AeAccount, State, Extra) ->
     case identity_server:get_account(AeAccount) of
         #{public_key := AeAccount, private_key := PrivateKey} ->
             damage_ae:set_private_key(AeAccount, PrivateKey),
-            AuthState =auth_success_state(State, AeAccount, Extra#{private_key => PrivateKey}),
+            AuthState = auth_success_state(State, AeAccount, Extra#{private_key => PrivateKey}),
             ?LOG_DEBUG("with_identity_account 1 ~p ", [AuthState]),
             {ok, AuthState};
         Other ->
@@ -123,7 +124,7 @@ resolve_l402(AuthHeader, Req, State) ->
             ?LOG_DEBUG("L402 auth ~p", [Meta]),
             case application:get_env(damage, l402_account) of
                 {ok, AeAccount} ->
-                    with_identity_account(AeAccount, State, #{});
+                    with_identity_account(to_bin(AeAccount), State, #{});
                 Other ->
                     ?LOG_INFO("L402 not enabled ~p", [Other]),
                     {error, l402_not_enabled}
@@ -181,8 +182,9 @@ maybe_authenticate(Req, State0) ->
             {true, Req, BaseState}
     end.
 
-require_auth(Req, State0, OnAnonymousFun, OnErrorFun)
-when is_function(OnAnonymousFun, 2), is_function(OnErrorFun, 3) ->
+require_auth(Req, State0, OnAnonymousFun, OnErrorFun) when
+    is_function(OnAnonymousFun, 2), is_function(OnErrorFun, 3)
+->
     case authenticate(Req, State0) of
         {ok, AuthState} ->
             {true, Req, AuthState};

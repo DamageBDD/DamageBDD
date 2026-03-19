@@ -737,6 +737,8 @@ restart_wallet_proc(AeAccount) ->
             get_wallet_proc(AeAccount)
     end.
 
+balance(AeAccount) when is_list(AeAccount) ->
+    balance(list_to_binary(AeAccount));
 balance(AeAccount) ->
     DamageAEPid = get_wallet_proc(admin),
     gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).

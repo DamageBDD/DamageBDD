@@ -232,7 +232,7 @@ trails() ->
                     }
             }
         ),
-             trails:trail(
+        trails:trail(
             "/accounts/logout",
             damage_accounts,
             #{action => logout},
@@ -718,7 +718,6 @@ from_json(Req, #{action := logout} = State) ->
             Req1
         ),
     {stop, Req2, State};
-
 from_json(Req, #{action := authenticate} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
@@ -763,7 +762,6 @@ from_json(Req, #{action := authenticate} = State) ->
                     {stop, Req1, State}
             end
     end;
-
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of

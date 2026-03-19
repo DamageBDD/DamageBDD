@@ -247,12 +247,14 @@ schedule_job(
         {{once, {Hour, Minute, Second}}, {damage_schedule, execute_bdd, [Schedule]}},
     erlcron_cron(ScheduleId, Job);
 schedule_job(#{id := ScheduleId, cron := [once, Hour, Minute, AMPM]} = Schedule) when
-    is_atom(AMPM) ->
+    is_atom(AMPM)
+->
     Job =
         {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [Schedule]}},
     erlcron_cron(ScheduleId, Job);
 schedule_job(#{id := ScheduleId, cron := [once, Seconds]} = Schedule) when
-    is_integer(Seconds) ->
+    is_integer(Seconds)
+->
     Job = {{once, Seconds}, {damage_schedule, execute_bdd, [Schedule]}},
     erlcron_cron(ScheduleId, Job).
 
@@ -539,7 +541,6 @@ handle_call({get_schedules, AeAccount}, _From, State) ->
                 end,
             {reply, Schedules, cache_put(Key, Schedules, State)}
     end;
-
 handle_call({list_schedules, AeAccount}, _From, State) ->
     Key = ?CK_LIST_SCHEDULES(AeAccount),
     case cache_get(Key, State) of
@@ -549,7 +550,6 @@ handle_call({list_schedules, AeAccount}, _From, State) ->
             Schedules = list_schedules_uncached(AeAccount),
             {reply, Schedules, cache_put(Key, Schedules, State)}
     end;
-
 handle_call(list_all_schedules, _From, State) ->
     Key = ?CK_LIST_ALL_SCHEDULES,
     case cache_get(Key, State) of

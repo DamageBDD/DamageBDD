@@ -161,7 +161,6 @@ is_authorized(Req, State0) ->
         fun(Req1, _Reason, State1) -> generate_l402_invoice(Req1, State1) end
     ).
 
-
 generate_l402_invoice(Req0, State) ->
     Action = maps:get(action, State, unknown),
     Scope = iolist_to_binary(["/", atom_to_list(Action)]),

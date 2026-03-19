@@ -54,7 +54,7 @@ init([]) ->
     ensure_tabs(),
     %% Tell CLN we want invoice events
     %% Your cln already has register_listener/1 and subscribe/0
-    true = cln:register_listener(invoice_payment),
+    true = cln:register_listener(invoice_paid),
     {ok, #state{subscribed = true}}.
 
 handle_call({get_meta, MacB64}, _From, S) ->
@@ -93,8 +93,9 @@ handle_cast(_Msg, S) ->
     {noreply, S}.
 
 %% This is the callback from CLN dispatch (we add that in cln.erl below)
-handle_info({cln_event, invoice_payment, Ev}, S) ->
+handle_info({cln_event, invoice_paid, Ev}, S) ->
     %% Ev is expected to include payment_hash and amount_msat (or amount_received_msat)
+    ?LOG_DEBUG("cln_event invoice_paid ~p", [Ev]),
     handle_invoice_paid_event(Ev),
     {noreply, S};
 handle_info(_Info, S) ->
@@ -262,7 +263,11 @@ normalize_ev(Ev) when is_map(Ev) ->
         maps:get(
             <<"amount_msat">>,
             Ev,
-            maps:get(amount_received_msat, Ev, maps:get(<<"amount_received_msat">>, Ev, 0))
+            maps:get(
+                received_msat,
+                Ev,
+                maps:get(amount_received_msat, Ev, maps:get(<<"amount_received_msat">>, Ev, 0))
+            )
         )
     ),
     #{

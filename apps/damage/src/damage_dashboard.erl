@@ -11,7 +11,7 @@
 -include_lib("kernel/include/logger.hrl").
 
 -export([trails/0]).
--export([init/2, allowed_methods/2, content_types_provided/2, to_html/2,is_authorized/2]).
+-export([init/2, allowed_methods/2, content_types_provided/2, to_html/2, is_authorized/2]).
 
 -define(TPL(Name), (filename:join("ui/dashboard", Name))).
 
@@ -33,12 +33,10 @@ is_authorized(Req, State0) ->
     ?LOG_DEBUG("is_authorized 2 ~p ", [Resp]),
     Resp.
 
-    
-
 to_html(Req, #{action := index} = State) ->
     Ctx0 = maps:merge(base_context(Req), State),
     #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
-                ?LOG_DEBUG("node admin state ~p ~p ~p", [maps:get(node_admin, Ctx0, false), Ctx0, State]),
+    ?LOG_DEBUG("node admin state ~p ~p ~p", [maps:get(node_admin, Ctx0, false), Ctx0, State]),
     case Comp0 of
         undefined ->
             {render_full_page(Ctx0), Req, State};
