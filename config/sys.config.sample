@@ -145,6 +145,7 @@
             {account_contract, "ct_aBXwRhTXYXyD6Gqz7Vk7Nq3U1QhMsZuxFyZ2GvoiroKavxW6B"},
             {identity_contract, "ct_aBXwRhTXYXyD6Gqz7Vk7Nq3U1QhMsZuxFyZ2GvoiroKavxW6B"},
             {strict_no_catchall, false},
+            {cookie_secure, false},
             {
                 node_admins,
                 [

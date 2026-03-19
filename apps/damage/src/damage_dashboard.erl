@@ -11,7 +11,7 @@
 -include_lib("kernel/include/logger.hrl").
 
 -export([trails/0]).
--export([init/2, allowed_methods/2, content_types_provided/2, to_html/2]).
+-export([init/2, allowed_methods/2, content_types_provided/2, to_html/2,is_authorized/2]).
 
 -define(TPL(Name), (filename:join("ui/dashboard", Name))).
 
@@ -20,7 +20,7 @@ trails() ->
         trails:trail(
             "/",
             ?MODULE,
-            #{action => index},
+            #{action => index, node_admin => false},
             #{get => #{tags => ["UI", "HTML"], produces => ["text/html"]}}
         )
     ].
@@ -28,11 +28,17 @@ trails() ->
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 allowed_methods(Req, State) -> {[<<"GET">>], Req, State}.
 content_types_provided(Req, State) -> {[{{<<"text">>, <<"html">>, '*'}, to_html}], Req, State}.
+is_authorized(Req, State0) ->
+    Resp = damage_auth:maybe_authenticate(Req, State0),
+    ?LOG_DEBUG("is_authorized 2 ~p ", [Resp]),
+    Resp.
+
+    
 
 to_html(Req, #{action := index} = State) ->
-    Ctx0 = base_context(Req),
-    %% ?component=login_modal (atoms are fine)
+    Ctx0 = maps:merge(base_context(Req), State),
     #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
+                ?LOG_DEBUG("node admin state ~p ~p ~p", [maps:get(node_admin, Ctx0, false), Ctx0, State]),
     case Comp0 of
         undefined ->
             {render_full_page(Ctx0), Req, State};
@@ -77,6 +83,9 @@ render_full_page(Ctx) ->
     EcaiJobDetail = render_tpl(?TPL("ecai_job_detail_modal.mustache"), Ctx),
     NwcModal = render_tpl(?TPL("nwc_modal.mustache"), Ctx),
     NodeWalletModal = render_tpl(?TPL("node_wallet_modal.mustache"), Ctx),
+    NodeTransactionsTab = render_tpl(?TPL("node_transactions_tab.mustache"), Ctx),
+    NodeChannelsTab = render_tpl(?TPL("node_channels_tab.mustache"), Ctx),
+
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
         topbar => Top,
@@ -100,9 +109,11 @@ render_full_page(Ctx) ->
         node_public_key_modal => NpkM,
         swaps_tab => SwapOptions,
         gallery_tab => Gallery,
-        ecai_jobs_detail => EcaiJobDetail,
+        ecai_job_detail_modal => EcaiJobDetail,
         nwc_modal => NwcModal,
-        node_wallet_modal => NodeWalletModal
+        node_wallet_modal => NodeWalletModal,
+        node_transactions_tab => NodeTransactionsTab,
+        node_channels_tab => NodeChannelsTab
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 

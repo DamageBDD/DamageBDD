@@ -56,6 +56,12 @@
     msat_to_sats/1
 ]).
 -export([pay_invoice/1, pay_invoice/2]).
+-export([
+    list_funds/0,
+    list_pays/0,
+    list_sendpays/0,
+    open_channel/2
+]).
 -export([test/0]).
 
 %% Cache / timeouts
@@ -462,6 +468,26 @@ newaddr(AddressType0) ->
     AddressType = to_bin(AddressType0),
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {newaddr, AddressType}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+list_funds() ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, list_funds, ?CLN_HTTP_TIMEOUT)
+    end).
+
+list_pays() ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, list_pays, ?CLN_HTTP_TIMEOUT)
+    end).
+
+list_sendpays() ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, list_sendpays, ?CLN_HTTP_TIMEOUT)
+    end).
+
+open_channel(NodeId, AmountSats) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {open_channel, NodeId, AmountSats}, ?CLN_HTTP_TIMEOUT)
     end).
 %% ===================================================================
 %% Planning helpers
@@ -1531,6 +1557,34 @@ handle_call(
             results => Results
         },
         State};
+handle_call(
+    list_funds,
+    _From,
+    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
+) ->
+    Reply = cln_post_json(Host, Port, Options, Rune, "/v1/listfunds", #{}),
+    {reply, Reply, State};
+handle_call(
+    list_pays,
+    _From,
+    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
+) ->
+    Reply = cln_post_json(Host, Port, Options, Rune, "/v1/listpays", #{}),
+    {reply, Reply, State};
+handle_call(
+    list_sendpays,
+    _From,
+    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
+) ->
+    Reply = cln_post_json(Host, Port, Options, Rune, "/v1/listsendpays", #{}),
+    {reply, Reply, State};
+handle_call(
+    {open_channel, NodeId, AmountSats},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    Reply = open_channel_with_peer(Host, Port, Options, Rune, to_bin(NodeId), AmountSats),
+    {reply, Reply, State};
 handle_call(Request, From, State) ->
     ?LOG_ERROR("handle_call got unknown ~p, From ~p, State ~p", [Request, From, State]),
     {reply, err, State}.

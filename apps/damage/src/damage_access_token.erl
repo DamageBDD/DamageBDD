@@ -24,7 +24,9 @@
     token_expiry/1,
     token_valid/1,
     maybe_refresh/2,
-    get_access_token/1
+    get_access_token/1,
+    set_access_cookie/2,
+    clear_access_cookie/1
 ]).
 -include_lib("kernel/include/logger.hrl").
 -define(TOKEN_TIMEOUT, 86400).
@@ -62,17 +64,17 @@ get_access_token(Req) ->
         <<"Bearer null">> ->
             {error, missing};
         <<"Bearer ", Token/binary>> ->
-            {oauth, Token};
+            {access_token, Token};
         _ ->
             case catch cowboy_req:match_qs([access_token], Req) of
                 #{access_token := null} ->
                     {error, missing};
                 #{access_token := Token} ->
-                    {oauth, Token};
+                    {access_token, Token};
                 _ ->
                     Cookies = cowboy_req:parse_cookies(Req),
                     case lists:keyfind(<<"sessionid">>, 1, Cookies) of
-                        {<<"sessionid">>, Token} -> {oauth, Token};
+                        {<<"sessionid">>, Token} -> {access_token, Token};
                         _ -> {error, missing}
                     end
             end
@@ -238,3 +240,34 @@ refresh(Ctx, Keypair) ->
         {error, _} ->
             Ctx
     end.
+
+set_access_cookie(Req, Token) when is_binary(Token) ->
+    Secure =
+        case application:get_env(damage, cookie_secure, true) of
+            true -> true;
+            false -> false
+        end,
+    cowboy_req:set_resp_cookie(
+        <<"sessionid">>,
+        Token,
+        Req,
+        #{
+            path => <<"/">>,
+            http_only => true,
+            secure => Secure,
+            same_site => lax
+        }
+    ).
+
+clear_access_cookie(Req) ->
+    cowboy_req:set_resp_cookie(
+        <<"sessionid">>,
+        <<>>,
+        Req,
+        #{
+            path => <<"/">>,
+            http_only => true,
+            same_site => lax,
+            max_age => 0
+        }
+    ).

@@ -199,7 +199,8 @@
       }
     });
 
-    await filter.init();
+	  if(filter)
+		  await filter.init();
 
     // Clear button: deselect everything except locked
     const clearBtn = qs("#clearBtn");

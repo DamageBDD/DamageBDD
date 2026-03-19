@@ -1,0 +1,54 @@
+<!-- -*- mode: html -*- -->
+<section class="pure-g admin-tab">
+  <div class="pure-u-1">
+    <h2>CLN Open Channel Admin</h2>
+    <p>Admin-only tools for peer discovery, peer connect, and opening channels.</p>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <h3>Open channel with a specific peer</h3>
+
+      <label for="cln-peer-id">Peer</label>
+      <input id="cln-peer-id" class="pure-input-1" placeholder="nodeid@host:9735 or nodeid">
+
+      <label for="cln-open-amount">Amount (sats)</label>
+      <input id="cln-open-amount" class="pure-input-1" type="number" value="200000">
+
+      <button id="cln-connect-peer-btn" class="pure-button">Connect Peer</button>
+      <button id="cln-open-peer-btn" class="pure-button pure-button-primary">Open Channel</button>
+
+      <pre id="cln-open-peer-result" class="admin-pre"></pre>
+    </div>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <h3>Best-peer automation</h3>
+
+      <label for="cln-target-msat">Target per channel (msat)</label>
+      <input id="cln-target-msat" class="pure-input-1" type="number" value="200000000">
+
+      <label for="cln-min-channel-msat">Minimum channel size (msat)</label>
+      <input id="cln-min-channel-msat" class="pure-input-1" type="number" value="100000000">
+
+      <label for="cln-reserve-sats">Reserve (sats)</label>
+      <input id="cln-reserve-sats" class="pure-input-1" type="number" value="50000">
+
+      <button id="cln-best-peer-btn" class="pure-button">Suggest Best Peers</button>
+      <button id="cln-open-best-btn" class="pure-button pure-button-primary">Open Best Channels</button>
+
+      <pre id="cln-best-peer-result" class="admin-pre"></pre>
+    </div>
+  </div>
+
+  <div class="pure-u-1">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Existing channels</h3>
+        <button id="refresh-cln-channels" class="pure-button">Refresh</button>
+      </div>
+      <pre id="cln-channels-json" class="admin-pre">Loading...</pre>
+    </div>
+  </div>
+</section>

@@ -231,6 +231,25 @@ trails() ->
                             ]
                     }
             }
+        ),
+             trails:trail(
+            "/accounts/logout",
+            damage_accounts,
+            #{action => logout},
+            #{
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Log out current browser session.",
+                        produces => ["text/html", "application/json"]
+                    },
+                delete =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Log out current browser session.",
+                        produces => ["text/html", "application/json"]
+                    }
+            }
         )
     ].
 
@@ -261,6 +280,17 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
+to_json(Req, #{action := logout} = State) ->
+    Req1 = damage_access_token:clear_access_cookie(Req),
+    Body = jsx:encode(#{status => <<"ok">>, message => <<"Logged out.">>}),
+    Req2 =
+        cowboy_req:reply(
+            200,
+            #{<<"content-type">> => <<"application/json">>},
+            Body,
+            Req1
+        ),
+    {stop, Req2, State};
 to_json(Req, #{action := confirm} = State) ->
     % for some browsers who send in applicaion/json contenttype
     to_html(Req, State);
@@ -276,6 +306,26 @@ to_json(Req, #{action := balance} = State) ->
 to_json(Req, State) ->
     {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}.
 
+to_html(Req, #{action := logout} = State) ->
+    Req1 = damage_access_token:clear_access_cookie(Req),
+    {ok, ApiUrl} = application:get_env(damage, api_url),
+    Body =
+        damage_utils:load_template(
+            "reset_password_response.html.mustache",
+            #{
+                status => <<"ok">>,
+                message => <<"Logged out.">>,
+                login_url => list_to_binary(ApiUrl)
+            }
+        ),
+    Req2 =
+        cowboy_req:reply(
+            200,
+            #{<<"content-type">> => <<"text/html">>},
+            Body,
+            Req1
+        ),
+    {stop, Req2, State};
 to_html(Req, #{action := reset_password} = State) ->
     case cowboy_req:match_qs([token], Req) of
         #{token := Token} ->
@@ -385,6 +435,8 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
 
 -spec do_post_action(atom(), map()) ->
     {integer(), map()}.
+do_post_action(logout, _Data) ->
+    {200, #{status => <<"ok">>, message => <<"Logged out.">>}};
 do_post_action(
     authenticate,
     #{username := Email, password := Password}
@@ -533,18 +585,39 @@ do_post_action(create, #{email := Email} = _Data) ->
             {400, #{status => <<"failed">>, message => <<"Invalid email">>}}
     end.
 
+from_html(Req, #{action := logout} = State) ->
+    Req1 = damage_access_token:clear_access_cookie(Req),
+    {ok, ApiUrl} = application:get_env(damage, api_url),
+    Body =
+        damage_utils:load_template(
+            "reset_password_response.html.mustache",
+            #{
+                status => <<"ok">>,
+                message => <<"Logged out.">>,
+                login_url => list_to_binary(ApiUrl)
+            }
+        ),
+    Req2 =
+        cowboy_req:reply(
+            200,
+            #{<<"content-type">> => <<"text/html">>},
+            Body,
+            Req1
+        ),
+    {stop, Req2, State};
 from_html(Req, #{action := authenticate} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
     Username = proplists:get_value(<<"username">>, Params),
     Password = proplists:get_value(<<"password">>, Params),
     case authenticate_user(Username, Password) of
         {ok, Account, Token} ->
+            Req1 = damage_access_token:set_access_cookie(Req0, Token),
             {stop,
                 cowboy_req:reply(
                     200,
                     cowboy_req:set_resp_body(
                         jsx:encode(#{status => <<"ok">>, access_token => Token, address => Account}),
-                        Req0
+                        Req1
                     )
                 ),
                 State};
@@ -634,40 +707,97 @@ from_html(Req, #{action := Action} = State) ->
         State
     }.
 
+from_json(Req, #{action := logout} = State) ->
+    Req1 = damage_access_token:clear_access_cookie(Req),
+    Response0 = #{status => <<"ok">>, message => <<"Logged out.">>},
+    Req2 =
+        cowboy_req:reply(
+            200,
+            #{<<"content-type">> => <<"application/json">>},
+            jsx:encode(Response0),
+            Req1
+        ),
+    {stop, Req2, State};
+
+from_json(Req, #{action := authenticate} = State) ->
+    {ok, Data, Req0} = cowboy_req:read_body(Req),
+    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+        badarg ->
+            Req1 =
+                cowboy_req:reply(
+                    400,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
+                    Req0
+                ),
+            {stop, Req1, State};
+        {'EXIT', {badarg, _}} ->
+            Req1 =
+                cowboy_req:reply(
+                    400,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
+                    Req0
+                ),
+            {stop, Req1, State};
+        Data0 ->
+            case do_post_action(authenticate, Data0) of
+                {200, #{access_token := Token} = Response0} ->
+                    Req1 = damage_access_token:set_access_cookie(Req0, Token),
+                    Req2 =
+                        cowboy_req:reply(
+                            200,
+                            #{<<"content-type">> => <<"application/json">>},
+                            jsx:encode(Response0),
+                            Req1
+                        ),
+                    {stop, Req2, State};
+                {Status0, Response0} ->
+                    Req1 =
+                        cowboy_req:reply(
+                            Status0,
+                            #{<<"content-type">> => <<"application/json">>},
+                            jsx:encode(Response0),
+                            Req0
+                        ),
+                    {stop, Req1, State}
+            end
+    end;
+
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
         badarg ->
-            Response =
-                cowboy_req:set_resp_body(
-                    jsx:encode(
-                        #{status => <<"failed">>, message => <<"Json decode error.">>}
-                    ),
+            Req1 =
+                cowboy_req:reply(
+                    400,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
                     Req0
                 ),
-            cowboy_req:reply(400, Response),
-            {stop, Response, State};
+            {stop, Req1, State};
         {'EXIT', {badarg, _}} ->
-            Response =
-                cowboy_req:set_resp_body(
-                    jsx:encode(
-                        #{status => <<"failed">>, message => <<"Json decode error.">>}
-                    ),
+            Req1 =
+                cowboy_req:reply(
+                    400,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
                     Req0
                 ),
-            cowboy_req:reply(400, Response),
-            {stop, Response, State};
+            {stop, Req1, State};
         Data0 ->
             case do_post_action(Action, Data0) of
                 {204, <<"">>} ->
                     {stop, cowboy_req:reply(204, Req0), State};
                 {Status0, Response0} ->
-                    Response = cowboy_req:set_resp_body(
-                        jsx:encode(Response0),
-                        Req0
-                    ),
-                    cowboy_req:reply(Status0, Response),
-                    {stop, Response, State}
+                    Req1 =
+                        cowboy_req:reply(
+                            Status0,
+                            #{<<"content-type">> => <<"application/json">>},
+                            jsx:encode(Response0),
+                            Req0
+                        ),
+                    {stop, Req1, State}
             end
     end.
 

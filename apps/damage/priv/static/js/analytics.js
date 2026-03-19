@@ -105,18 +105,20 @@
 
   function setKpis({ topHeight, totalRuns, passRate, activeDays }) {
     const kpis = document.querySelectorAll("#kpis .card");
-    const cards = [
-      { label: "Top height", value: topHeight ?? "—" },
-      { label: "Total runs (sample)", value: totalRuns ?? "—" },
-      { label: "Pass rate (sample)", value: passRate ?? "—" },
-      { label: "Active days (30d)", value: activeDays ?? "—" },
-    ];
-    cards.forEach((c, i) => {
-      kpis[i].innerHTML = `
-        <div class="kpiLabel">${c.label}</div>
-        <div class="kpiValue">${c.value}</div>
-      `;
-    });
+	  if(kpis.length>0){
+		  const cards = [
+			  { label: "Top height", value: topHeight ?? "—" },
+			  { label: "Total runs (sample)", value: totalRuns ?? "—" },
+			  { label: "Pass rate (sample)", value: passRate ?? "—" },
+			  { label: "Active days (30d)", value: activeDays ?? "—" },
+		  ];
+		  cards.forEach((c, i) => {
+			  kpis[i].innerHTML = `
+		<div class="kpiLabel">${c.label}</div>
+		<div class="kpiValue">${c.value}</div>
+	  `;
+		  });
+	  }
   }
 
   async function main() {
@@ -183,6 +185,7 @@
 
     // Recent list (top 8 rows)
     const recentEl = document.getElementById("recent");
+	  if(recentEl){
     recentEl.innerHTML = rows.slice(0, 8).map(r => {
       const ts = new Date(pickTimestampMs(r)).toISOString().replace("T"," ").replace(".000Z","Z");
       const short = JSON.stringify(r).slice(0, 140);
@@ -203,11 +206,13 @@
     document.getElementById("legend").textContent = "lines: runs (black), pass (green), fail (red)";
     document.getElementById("lastUpdated").textContent = `updated ${new Date().toISOString().slice(0,19).replace("T"," ")}Z`;
   }
+	  }
 
   // Run
   main().catch(err => {
     console.error(err);
     const kpis = document.getElementById("kpis");
+	  if(kpis)
     kpis.innerHTML = `<div class="card" style="grid-column:1/-1; border-color:#f4c;">
       <strong>Analytics fetch failed</strong><div style="color:#666; margin-top:6px;">${err.message}</div>
     </div>`;

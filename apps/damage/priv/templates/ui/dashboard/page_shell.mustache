@@ -61,6 +61,10 @@
   </head>
   <body>
     {{{auth_modal}}}
+    {{{node_wallet_modal}}}
+    {{{node_set_password_modal}}}
+    {{{node_public_key_modal}}}
+    {{{node_unlock_modal}}}
     {{{file_picker_modal}}}
     {{{invoice_modal}}}
     {{{wallet_modal}}}
@@ -69,13 +73,10 @@
     {{{install_modal}}}
     {{{feature_picker_modal}}}
     {{{notification_modal}}}
-    {{{node_set_password_modal}}}
-    {{{node_public_key_modal}}}
-    {{{node_unlock_modal}}}
     {{{ecai_job_detail_modal}}}
     {{{nwc_modal}}}
-    {{{node_wallet_modal}}}
     <div id="background"></div>
+{{#authenticated}}
     <div id="content">
       {{{topbar}}}
       {{{tabs_bar}}}
@@ -101,7 +102,17 @@
       <div id="ecai-jobs-tab">
         {{{gallery_tab}}}
       </div>
+      {{#node_admin}}
+      <div id="node-transactions-tab">
+        {{{node_transactions_tab}}}
+      </div>
+      <div id="node-channels-tab">
+        {{{node_channels_tab}}}
+      </div>
+      {{/node_admin}}
     </div>
+      {{{footer}}}
+{{/authenticated}}
 
     <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
@@ -121,7 +132,6 @@
     <script type='module' src="/static/js/pricing.js" defer></script>
 
     <script type='module' src="/static/js/main.js" defer></script>
-      {{{footer}}}
   </body>
 </html>
 

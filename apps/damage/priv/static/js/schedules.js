@@ -345,6 +345,8 @@ export async function updateSchedulesTable(opts = {}) {
 //////////////////////////////
 
 export function initDamageScheduler(config = {}) {
+	const contentDiv = document.getElementById("content");
+	if(!contentDiv)return;
 	const defaults = {
 		apiBase: "/schedules",
 		ipfsGateway: window.origin + "/ipfs",
@@ -437,27 +439,27 @@ export function initDamageScheduler(config = {}) {
 		let scheduleString = "";
 
 		switch (frequency) {
-			case "once":
-				if (date && time) scheduleString = `once/${date}/${time}`;
-				break;
-			case "daily":
-				if (time) {
-					const [hours, minutes] = time.split(":");
-					scheduleString = `daily/${hours}:${minutes}`;
-				}
-				break;
-			case "weekly":
-				if (time && dayOfWeek) {
-					const [hours, minutes] = time.split(":");
-					scheduleString = `weekly/${dayOfWeek}/${hours}:${minutes}`;
-				}
-				break;
-			case "monthly":
-				if (time && dayOfMonth) {
-					const [hours, minutes] = time.split(":");
-					scheduleString = `monthly/${dayOfMonth}/${hours}:${minutes}`;
-				}
-				break;
+		case "once":
+			if (date && time) scheduleString = `once/${date}/${time}`;
+			break;
+		case "daily":
+			if (time) {
+				const [hours, minutes] = time.split(":");
+				scheduleString = `daily/${hours}:${minutes}`;
+			}
+			break;
+		case "weekly":
+			if (time && dayOfWeek) {
+				const [hours, minutes] = time.split(":");
+				scheduleString = `weekly/${dayOfWeek}/${hours}:${minutes}`;
+			}
+			break;
+		case "monthly":
+			if (time && dayOfMonth) {
+				const [hours, minutes] = time.split(":");
+				scheduleString = `monthly/${dayOfMonth}/${hours}:${minutes}`;
+			}
+			break;
 		}
 
 		scheduleSpecInput.value = scheduleString;

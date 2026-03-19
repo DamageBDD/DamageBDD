@@ -37,7 +37,9 @@
         get_schedules_proc/1
     ]
 ).
+
 -behaviour(gen_server).
+
 -export(
     [
         init/1,
@@ -54,6 +56,14 @@
 -define(SCHEDULES_CONTRACT,
     "ct_hCcHw4hNAkvbadmVrkCRQJxEqvx825hA4gL3gbf4Kh9hpRrwS"
 ).
+
+%% Short TTL because schedules can change, but they are still read-heavy.
+-define(SCHEDULE_CACHE_TTL_SECONDS, 15).
+
+%% Cache keys
+-define(CK_GET_SCHEDULES(AeAccount), {get_schedules, AeAccount}).
+-define(CK_LIST_SCHEDULES(AeAccount), {list_schedules, AeAccount}).
+-define(CK_LIST_ALL_SCHEDULES, list_all_schedules).
 
 trails() ->
     [
@@ -96,9 +106,11 @@ trails() ->
     ].
 
 start_link(AeAccount) -> gen_server:start_link(?MODULE, [AeAccount], []).
+
 init([AeAccount]) ->
     process_flag(trap_exit, true),
-    {ok, #{public_key => AeAccount}}.
+    {ok, #{public_key => AeAccount, cache => #{}}}.
+
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
@@ -156,12 +168,10 @@ from_text(Req, #{public_key := AeAccount} = State) ->
     CronJob = apply(?MODULE, schedule_job, [Schedule]),
     ?LOG_INFO("Cron Job: ~p", [CronJob]),
     ok = add_schedule(AeAccount, Name, Hash, CronSpec),
-    %damage_accounts:update_schedules(AeAccount, Hash, CronJob),
     Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
     {stop, cowboy_req:reply(201, Resp), State}.
 
 from_json(Req, State) -> from_text(Req, State).
-
 from_html(Req, State) -> from_text(Req, State).
 
 to_json(Req, #{public_key := AeAccount} = State) ->
@@ -174,9 +184,7 @@ to_json(Req, #{public_key := AeAccount} = State) ->
     {Body, Req, State}.
 
 execute_bdd(
-    %% Add the filter to allow PidToLog to send debug events
-    #{public_key := AeAccount, feature_hash := Hash, concurrency := Concurrency} =
-        Schedule
+    #{public_key := AeAccount, feature_hash := Hash, concurrency := Concurrency} = Schedule
 ) ->
     MinBalance = Concurrency * math:pow(10, ?DAMAGE_DECIMALS),
     case damage_ae:balance(AeAccount) of
@@ -184,10 +192,7 @@ execute_bdd(
             Config = damage_config:get_default_config([
                 {public_key, AeAccount}, {concurrency, Concurrency}
             ]),
-            Context =
-                damage_context:get_context(
-                    Schedule
-                ),
+            Context = damage_context:get_context(Schedule),
             {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
             {run_id, RunId} = lists:keyfind(run_id, 1, Config),
             BddFileName = filename:join(RunDir, string:join([RunId, ".feature"], "")),
@@ -237,21 +242,17 @@ schedule_job(
     erlcron_cron(ScheduleId, Job);
 schedule_job(
     #{id := ScheduleId, cron := [once, Hour, Minute, Second]} = Schedule
-) when
-    is_integer(Second)
-->
+) when is_integer(Second) ->
     Job =
         {{once, {Hour, Minute, Second}}, {damage_schedule, execute_bdd, [Schedule]}},
     erlcron_cron(ScheduleId, Job);
 schedule_job(#{id := ScheduleId, cron := [once, Hour, Minute, AMPM]} = Schedule) when
-    is_atom(AMPM)
-->
+    is_atom(AMPM) ->
     Job =
         {{once, {Hour, Minute, AMPM}}, {damage_schedule, execute_bdd, [Schedule]}},
     erlcron_cron(ScheduleId, Job);
 schedule_job(#{id := ScheduleId, cron := [once, Seconds]} = Schedule) when
-    is_integer(Seconds)
-->
+    is_integer(Seconds) ->
     Job = {{once, Seconds}, {damage_schedule, execute_bdd, [Schedule]}},
     erlcron_cron(ScheduleId, Job).
 
@@ -276,24 +277,13 @@ validate(Gherkin) ->
             ok
     end.
 
+%% ------------------------------------------------------------------
+%% Cached public readers
+%% ------------------------------------------------------------------
+
 list_schedules(AeAccount) ->
-    case
-        contract_call(
-            AeAccount,
-            "get_schedules",
-            []
-        )
-    of
-        {error, Error} ->
-            ?LOG_ERROR("Failed to load schedules ~p ~p", [AeAccount, Error]),
-            [];
-        #{
-            "return_value" :=
-                Results
-        } ->
-            ?LOG_INFO("loaded schedules ~p ", [Results]),
-            load_account_schedules(AeAccount, Results)
-    end.
+    SchedulesPid = get_schedules_proc(AeAccount),
+    gen_server:call(SchedulesPid, {list_schedules, AeAccount}, ?AE_TIMEOUT).
 
 load_all_schedules() ->
     ?LOG_INFO("Loading all schedules ..."),
@@ -303,15 +293,32 @@ load_all_schedules() ->
     ].
 
 list_all_schedules() ->
+    SchedulesPid = get_schedules_proc(admin),
+    gen_server:call(SchedulesPid, list_all_schedules, ?AE_TIMEOUT).
+
+%% ------------------------------------------------------------------
+%% Raw uncached fetchers
+%% ------------------------------------------------------------------
+
+list_schedules_uncached(AeAccount) ->
+    case contract_call(AeAccount, "get_schedules", []) of
+        {error, Error} ->
+            ?LOG_ERROR("Failed to load schedules ~p ~p", [AeAccount, Error]),
+            [];
+        #{"return_value" := Results} ->
+            ?LOG_INFO("loaded schedules ~p ", [Results]),
+            load_account_schedules(AeAccount, Results)
+    end.
+
+list_all_schedules_uncached() ->
     case
         catch damage_ae:contract_call(
-            ?SCHEDULES_CONTRACT,
+            get_schedules_contract(),
             "contracts/schedules.aes",
             "get_all_schedules",
             []
         )
     of
-        %% Common wrapper (string keys)
         #{"return_type" := "ok", "return_value" := Results} ->
             ?LOG_DEBUG("all schedules encrypted ~p", [Results]),
             Decrypted = decrypt_schedules(Results),
@@ -324,13 +331,8 @@ list_all_schedules() ->
 
 %%--------------------------------------------------------------------
 %% Decrypt schedules returned by the schedules contract.
-%%
-%% Supports:
-%%  A) New: #{ {address, PubKeyBin} => SchedulesMap, ... }
-%%  B) Old: [[Account, Schedules], ...]
 %%--------------------------------------------------------------------
 decrypt_schedules(EncryptedSchedules) when is_map(EncryptedSchedules) ->
-    %% New shape: map keyed by {address, <<pubkey>>}
     maps:fold(
         fun(AccountKey, SchedulesMap, Acc) ->
             Account = account_key_to_ak(AccountKey),
@@ -340,7 +342,6 @@ decrypt_schedules(EncryptedSchedules) when is_map(EncryptedSchedules) ->
         EncryptedSchedules
     );
 decrypt_schedules(EncryptedSchedules) when is_list(EncryptedSchedules) ->
-    %% Old shape: list of [Account, Schedules] pairs
     lists:map(
         fun
             ([Account, Schedules]) ->
@@ -353,23 +354,17 @@ decrypt_schedules(EncryptedSchedules) when is_list(EncryptedSchedules) ->
     ).
 
 account_key_to_ak({address, PubKeyBin}) when is_binary(PubKeyBin) ->
-    %% Convert raw pubkey bytes to <<"ak_...">> binary
     aeser_api_encoder:encode(account_pubkey, PubKeyBin);
 account_key_to_ak(<<"ak_", _/binary>> = Ak) ->
     Ak;
 account_key_to_ak(Other) ->
-    %% Last resort: return as-is so logs show the unexpected shape
     Other.
 
 delete_schedule(AeAccount, ScheduleId) ->
-    %ScheduleIdHash = secrets:salted_hash(ScheduleId),
-
     #{
-        "caller_id" :=
-            _AeAccountList,
+        "caller_id" := _AeAccountList,
         "caller_nonce" := _Nonce,
-        "contract_id" :=
-            ?SCHEDULES_CONTRACT,
+        "contract_id" := ?SCHEDULES_CONTRACT,
         "gas_price" := GasPrice,
         "gas_used" := GasUsed,
         "height" := Height,
@@ -383,10 +378,12 @@ delete_schedule(AeAccount, ScheduleId) ->
             [binary_to_list(ScheduleId)]
         ),
     Cancelled = erlcron:cancel(ScheduleId),
+    invalidate_schedule_cache(AeAccount),
     ?LOG_DEBUG(
         "call AE contract ~p gasprice ~p gasused ~p, height ~p, cancelled ~p",
         [AeAccount, GasPrice, GasUsed, Height, Cancelled]
-    ).
+    ),
+    ok.
 
 add_schedule(AeAccount, Name, FeatureHash, Cron) when is_binary(AeAccount) ->
     #{
@@ -405,10 +402,12 @@ add_schedule(AeAccount, Name, FeatureHash, Cron) when is_binary(AeAccount) ->
                 binary_to_list(secrets:encrypt(jsx:encode(Cron)))
             ]
         ),
+    invalidate_schedule_cache(AeAccount),
     ?LOG_DEBUG(
         "call AE contract ~p gasprice ~p gasused ~p",
         [AeAccount, GasPrice, GasUsed]
-    ).
+    ),
+    ok.
 
 cancel_all_schedules() -> [erlcron:cancel(X) || X <- erlcron:get_all_jobs()].
 
@@ -417,11 +416,6 @@ load_account_schedules(Account, Schedules0) ->
     Schedules = normalize_schedules(Schedules0),
     lists:map(fun(Entry) -> parse_schedule_entry(Account, Entry) end, Schedules).
 
-%% Normalize schedules coming back from the Sophia contract.
-%% Old shape:
-%%   [[ScheduleId, EncryptedScheduleKVs], ...]
-%% New shape (contracts/schedules.aes):
-%%   #{ ScheduleId => {tuple,{Id, CronEnc, FeatureHashEnc}}, ... }
 normalize_schedules(Schedules) when is_list(Schedules) ->
     Schedules;
 normalize_schedules(Schedules) when is_map(Schedules) ->
@@ -435,11 +429,9 @@ normalize_schedule_kv({Key, Other}) ->
     {Key, Other}.
 
 parse_schedule_entry(Account, [ScheduleId, EncryptedScheduleKVs]) ->
-    %% Legacy API shape: EncryptedScheduleKVs = [[Key, Value], ...]
     Schedule0 = kvs_to_schedule_map(EncryptedScheduleKVs),
     maps:merge(#{id => ScheduleId, public_key => Account, concurrency => 1}, Schedule0);
 parse_schedule_entry(Account, {ScheduleId, CronEnc, FeatureHashEnc}) ->
-    %% New contract shape: schedule record {id, cron, feature_hash}
     CronJson = decrypt_b64_blob(CronEnc),
     CronSpec = binary_spec_to_term_spec(jsx:decode(CronJson), []),
     FeatureHash = decrypt_b64_blob(FeatureHashEnc),
@@ -472,22 +464,59 @@ kvs_to_schedule_map(EncryptedScheduleKVs) ->
 decrypt_b64_blob(B64Bin) when is_binary(B64Bin) ->
     secrets:decrypt(B64Bin).
 
-handle_call({get_schedules, AeAccount}, _From, Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    case catch maps:get(schedules, AccountCache, undefined) of
-        undefined ->
+%% ------------------------------------------------------------------
+%% Cache helpers
+%% ------------------------------------------------------------------
+
+cache_now() ->
+    erlang:monotonic_time(second).
+
+cache_get(Key, #{cache := Cache}) ->
+    Now = cache_now(),
+    case maps:get(Key, Cache, undefined) of
+        {Value, Expiry} when Now < Expiry ->
+            {hit, Value};
+        _ ->
+            miss
+    end.
+
+cache_put(Key, Value, #{cache := Cache} = State) ->
+    Expiry = cache_now() + ?SCHEDULE_CACHE_TTL_SECONDS,
+    State#{cache := maps:put(Key, {Value, Expiry}, Cache)}.
+
+cache_invalidate(Keys, #{cache := Cache} = State) ->
+    State#{cache := maps:without(Keys, Cache)}.
+
+invalidate_schedule_cache(AeAccount) ->
+    AccountPid = get_schedules_proc(AeAccount),
+    gen_server:cast(
+        AccountPid,
+        {invalidate_cache_keys, [
+            ?CK_GET_SCHEDULES(AeAccount),
+            ?CK_LIST_SCHEDULES(AeAccount)
+        ]}
+    ),
+    GlobalPid = get_schedules_proc(admin),
+    gen_server:cast(
+        GlobalPid,
+        {invalidate_cache_keys, [?CK_LIST_ALL_SCHEDULES]}
+    ),
+    ok.
+
+handle_call({get_schedules, AeAccount}, _From, State) ->
+    Key = ?CK_GET_SCHEDULES(AeAccount),
+    case cache_get(Key, State) of
+        {hit, Schedules} ->
+            {reply, Schedules, State};
+        miss ->
             #{decodedResult := Results} =
                 damage_ae:contract_call_user_account(AeAccount, "get_schedules", []),
-
-            %% Return a map FeatureHashBin => CronJsonBin (both decrypted).
-            %% This preserves the historical behaviour expected by callers of get_schedules/1.
             Schedules =
                 case Results of
                     M when is_map(M) ->
                         maps:from_list(
                             [
                                 begin
-                                    %% schedule record is {id, cron, feature_hash}
                                     {tuple, {_Id, CronEnc, FeatureHashEnc}} = V,
                                     {
                                         secrets:decrypt(FeatureHashEnc),
@@ -498,7 +527,6 @@ handle_call({get_schedules, AeAccount}, _From, Cache) ->
                             ]
                         );
                     L when is_list(L) ->
-                        %% Older return shape: [[FeatureHashEncrypted, CronEncrypted], ...]
                         maps:from_list(
                             [
                                 {
@@ -509,15 +537,31 @@ handle_call({get_schedules, AeAccount}, _From, Cache) ->
                             ]
                         )
                 end,
-            {
-                reply,
-                Schedules,
-                maps:put(AeAccount, maps:put(schedules, Schedules, AccountCache), Cache)
-            };
-        Schedules when is_map(Schedules) ->
-            {reply, Schedules, Cache}
+            {reply, Schedules, cache_put(Key, Schedules, State)}
+    end;
+
+handle_call({list_schedules, AeAccount}, _From, State) ->
+    Key = ?CK_LIST_SCHEDULES(AeAccount),
+    case cache_get(Key, State) of
+        {hit, Schedules} ->
+            {reply, Schedules, State};
+        miss ->
+            Schedules = list_schedules_uncached(AeAccount),
+            {reply, Schedules, cache_put(Key, Schedules, State)}
+    end;
+
+handle_call(list_all_schedules, _From, State) ->
+    Key = ?CK_LIST_ALL_SCHEDULES,
+    case cache_get(Key, State) of
+        {hit, Schedules} ->
+            {reply, Schedules, State};
+        miss ->
+            Schedules = list_all_schedules_uncached(),
+            {reply, Schedules, cache_put(Key, Schedules, State)}
     end.
 
+handle_cast({invalidate_cache_keys, Keys}, State) ->
+    {noreply, cache_invalidate(Keys, State)};
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
@@ -529,10 +573,37 @@ terminate(Reason, _State) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
+
 get_schedules(AeAccount) ->
     DamageAEPid = get_schedules_proc(AeAccount),
     gen_server:call(DamageAEPid, {get_schedules, AeAccount}, ?AE_TIMEOUT).
 
+get_schedules_proc(admin) ->
+    case gproc:lookup_local_name({?MODULE, admin}) of
+        undefined ->
+            case
+                supervisor:start_child(
+                    damage_sup,
+                    #{
+                        id => {?MODULE, admin},
+                        start => {?MODULE, start_link, [admin]},
+                        restart => permanent,
+                        shutdown => 60,
+                        type => worker,
+                        modules => [damage_schedule]
+                    }
+                )
+            of
+                {ok, Pid} ->
+                    gproc:reg_other({n, l, {?MODULE, admin}}, Pid),
+                    Pid;
+                {error, {already_started, Pid}} ->
+                    gproc:reg_other({n, l, {?MODULE, admin}}, Pid),
+                    Pid
+            end;
+        Pid ->
+            Pid
+    end;
 get_schedules_proc(<<"ak_", _/binary>> = AeAccount) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of
         undefined ->
@@ -540,17 +611,12 @@ get_schedules_proc(<<"ak_", _/binary>> = AeAccount) ->
                 supervisor:start_child(
                     damage_sup,
                     #{
-                        % mandatory
                         id => {?MODULE, AeAccount},
-                        % mandatory
                         start => {?MODULE, start_link, [AeAccount]},
-                        % optional
                         restart => permanent,
-                        % optional
                         shutdown => 60,
-                        % optional
                         type => worker,
-                        modules => [damage_ae, damage_context, damage_schedule]
+                        modules => [damage_schedule]
                     }
                 )
             of
@@ -607,6 +673,7 @@ test_list_schedule() ->
     Decrypted = load_account_schedules("Acc", Results),
     ?LOG_DEBUG("schedules ~p", [Decrypted]),
     Decrypted.
+
 get_schedules_contract() ->
     application:get_env(damage, schedules_ct, ?SCHEDULES_CONTRACT).
 

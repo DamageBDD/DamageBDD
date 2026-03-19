@@ -127,7 +127,10 @@
     const hintEl = hintId ? qs(hintId) : null;
     const bindInputEl = bindInputId ? qs(bindInputId) : null;
 
-    if (!hostEl) throw new Error(`AccountFilter: missing tags host #${tagsHostId}`);
+      if (!hostEl) {
+		  console.log(`AccountFilter: missing tags host #${tagsHostId}`);
+		  return;
+	  }
 
     // model
     const tags = []; // { id, label, selected, locked }

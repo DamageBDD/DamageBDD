@@ -370,7 +370,8 @@
       }
     });
 
-    await filter.init();
+	  if(filter)
+		  await filter.init();
   }
 
   // Public API (for other tabs if needed)

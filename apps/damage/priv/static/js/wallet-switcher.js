@@ -46,11 +46,11 @@ const TokenManager = {
 		return t;
 	},
 	on_custodial_login(address, email, access_token){
-					var mode = "custodial";
-					this.activate(mode);
-					this.setAddress(address, mode);
-					this.setToken(mode, access_token);
-					this.setEmail(email);
+		var mode = "custodial";
+		this.activate(mode);
+		this.setAddress(address, mode);
+		this.setToken(mode, access_token);
+		this.setEmail(email);
 	},
 
 
@@ -108,37 +108,37 @@ async function signMessageUnified(message, addressHint) {
 }
 
 async function createSignedAccessToken(address, ttlSeconds = 3600) {
-  const now = Math.floor(Date.now() / 1000);
+	const now = Math.floor(Date.now() / 1000);
 
-  const payload = {
-    typ: "damage-access",
-    v: 1,
-    sub: address,
-    iat: now,
-    exp: now + ttlSeconds,
-    nonce: randomNonceHex(16),
-    aud: window.location.host,
-  };
+	const payload = {
+		typ: "damage-access",
+		v: 1,
+		sub: address,
+		iat: now,
+		exp: now + ttlSeconds,
+		nonce: randomNonceHex(16),
+		aud: window.location.host,
+	};
 
-  const payloadJson = JSON.stringify(payload);
-  const payloadB64 = b64urlEncode(utf8ToBytes(payloadJson));
+	const payloadJson = JSON.stringify(payload);
+	const payloadB64 = b64urlEncode(utf8ToBytes(payloadJson));
 
-  const messageToSign = `DamageBDD Access Token\n${payloadB64}`;
+	const messageToSign = `DamageBDD Access Token\n${payloadB64}`;
 
-  const signed = await signMessageUnified(messageToSign, address);
+	const signed = await signMessageUnified(messageToSign, address);
 
-  // normalize signature
-  const signature =
-    (typeof signed === "string" ? signed :
-     signed?.signature ?? signed?.sig ?? signed?.signed ?? "");
+	// normalize signature
+	const signature =
+		  (typeof signed === "string" ? signed :
+		   signed?.signature ?? signed?.sig ?? signed?.signed ?? "");
 
-  if (!signature || typeof signature !== "string") {
-    throw new Error("Wallet did not return a signature string");
-  }
+	if (!signature || typeof signature !== "string") {
+		throw new Error("Wallet did not return a signature string");
+	}
 
-  // If it's AE-style (sg_), keep as-is.
-  // If your wallet returns some other format later, we can add branches.
-  return `ae1.${payloadB64}.${signature}`;
+	// If it's AE-style (sg_), keep as-is.
+	// If your wallet returns some other format later, we can add branches.
+	return `ae1.${payloadB64}.${signature}`;
 }
 
 // ----------------------------------------------------------------------------
@@ -180,21 +180,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
 				TokenManager.setModeAddress("extension", res.address);
 
-				// NEW: create + store signed access token (1 hour)
 				const accessToken = await createSignedAccessToken(res.address, 3600);
-
-				// Store wherever you currently store tokens
 				TokenManager.setToken("extension", accessToken);
+				TokenManager.activate("extension");
 
-				// (optional) make it available to fetch wrappers
 				window.__damage_access_token = accessToken;
 
-				document.dispatchEvent(new CustomEvent('wallet:connected', { detail: { ...res, accessToken } }));
-				MicroModal.close('connect-wallet-modal');
-				MicroModal.close('login-modal');
+				document.dispatchEvent(new CustomEvent("wallet:connected", {
+					detail: { ...res, accessToken }
+				}));
+
+				try { MicroModal.close("connect-wallet-modal"); } catch (_e) {}
+				try { MicroModal.close("login-modal"); } catch (_e) {}
+
 				const content = document.getElementById("content");
-				content.style.display = "block";
-				await updateWalletSummary();
+				if (content) content.style.display = "block";
+
+				await refreshAfterAuthChange();
 			} else {
 				console.error('Wallet connect failed:', res.error);
 				btn.textContent = 'Retry Connect';
@@ -224,46 +226,51 @@ document.addEventListener('DOMContentLoaded', () => {
 	}
 
 	async function ensureExtensionToken() {
-		// Non-custodial (browser wallet)
 		const r = await window.connectWalletUnified({ prompt: true, prefer: ['smart','browser','getter'] });
 		if (!r.address) {
-			MicroModal.show('connect-wallet-modal');
+			MicroModal.show("connect-wallet-modal");
 			return undefined;
 		}
-		TokenManager.setToken('extension',r.address);
+
+		let extTok = TokenManager.getToken("extension");
+		if (!extTok) {
+			extTok = await createSignedAccessToken(r.address, 3600);
+			TokenManager.setToken("extension", extTok);
+		}
+		TokenManager.setModeAddress("extension", r.address);
+		TokenManager.activate("extension");
 		return r.address;
 	}
 
 
 	async function onWalletChange(mode) {
-		var address = TokenManager.getAddress(mode);
+		let address = TokenManager.getAddress(mode);
 		console.log("onwalletchange ", address);
-		if (mode === 'extension') {
-			// 2) ensure an extension token exists (if not, do challenge/verify handshake)
-			let extTok = TokenManager.getToken('extension');
-			if (!extTok) { /* user cancelled */ return; }
 
-			if(!address){
-				address = await ensureExtensionToken(); // may open wallet to sign
+		if (mode === "extension") {
+			let extTok = TokenManager.getToken("extension");
+
+			if (!address || !extTok) {
+				address = await ensureExtensionToken();
 			}
-			if (!address) { /* user cancelled */ return; }
+			if (!address) return;
 
-			// 3) swap active access_token
-			TokenManager.activate(mode);
-			TokenManager.setAddress(address);
+			TokenManager.activate("extension");
+			TokenManager.setAddress(address, "extension");
 		} else {
-			// custodial: require login flow to set its token
-			let custTok = TokenManager.getToken('custodial');
-			address = TokenManager.getAddress('custodial');
+			let custTok = TokenManager.getToken("custodial");
+			address = TokenManager.getAddress("custodial");
+
 			if (!custTok || !address) {
-				if (window.MicroModal) MicroModal.show('email-login-modal');
-				// your login handler should call `TokenManager.setToken('custodial', token); TokenManager.activate('custodial');`
+				if (window.MicroModal) MicroModal.show("email-login-modal");
 				return;
 			}
-			TokenManager.activate('custodial');
-			TokenManager.setAddress(address);
+
+			TokenManager.activate("custodial");
+			TokenManager.setAddress(address, "custodial");
 		}
-		await updateWalletSummary();
+
+		await refreshAfterAuthChange();
 	}
 
 
@@ -273,6 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
 		var addressId = 'damage-address';
 
 		const balanceAmountEl = document.getElementById(balanceAmountId);
+		if(!balanceAmountEl)return;
 		const aeBalanceEl = document.getElementById(aeBalanceId);
 		const addressInput = document.getElementById(addressId);
 		var address = TokenManager.getAddress();
@@ -379,24 +387,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
 		fetch("/accounts/auth/", {
 			method: "POST",
+			credentials: "include",
 			headers: headers,
 			body: JSON.stringify(signupData)
 		})
-			.then(response => {
-				return response.json();
-			})
-			.then(data => {
+			.then(response => response.json())
+			.then(async data => {
 				if (data.access_token) {
 					TokenManager.on_custodial_login(data.address, data.email, data.access_token);
-					MicroModal.close("email-login-modal");
+					TokenManager.activate("custodial");
 
+					try { MicroModal.close("email-login-modal"); } catch (_e) {}
+					try { MicroModal.close("login-modal"); } catch (_e) {}
+
+					await refreshAfterAuthChange();
 				} else {
 					showConnectStatus("Login Failed!", "failed");
 				}
-			})
-			.catch(error => {
-				console.error("Error:", error);
 			});
+		
 		event.preventDefault();
 		return;
 	});
@@ -430,7 +439,8 @@ document.addEventListener('DOMContentLoaded', () => {
 	const div = document.getElementById('balanceDiv');
 
 	let btn = document.getElementById('balanceRefreshBtn');
-
+	if(btn){
+		btn.addEventListener('click', refresh);
 	async function refresh(ev) {
         ev.preventDefault();
 		btn.setAttribute('aria-busy', 'true');
@@ -444,13 +454,76 @@ document.addEventListener('DOMContentLoaded', () => {
 			btn.removeAttribute('aria-busy');
 		}
 	}
-
-	btn.addEventListener('click', refresh);
-
 	// If your balances.js fires this when done, spinner will also stop immediately.
 	document.addEventListener('balance:updated', () => {
 		btn && btn.removeAttribute('aria-busy');
 	});
+	}
+
+
+
+
+
+
+	window.updateWalletSummary = updateWalletSummary;
+	async function refreshAfterAuthChange() {
+		try {
+			await updateWalletSummary();
+		} catch (e) {
+			console.error("updateWalletSummary failed:", e);
+		}
+
+		try {
+			document.dispatchEvent(new Event("balance:refresh"));
+		} catch (e) {
+			console.error("balance refresh event failed:", e);
+		}
+
+		try {
+			document.dispatchEvent(new CustomEvent("auth:changed", {
+				detail: {
+					mode: TokenManager.getMode(),
+					address: TokenManager.getAddress(),
+					token: TokenManager.getToken()
+				}
+			}));
+		} catch (e) {
+			console.error("auth changed event failed:", e);
+		}
+	}
+	window.refreshAfterAuthChange = refreshAfterAuthChange;
+
+	async function logoutActiveSession() {
+		const mode = TokenManager.getMode();
+		const token = TokenManager.getToken(mode);
+
+		const headers = new Headers();
+		headers.set("Content-Type", "application/json");
+		headers.set("Accept", "application/json");
+		if (token) headers.set("Authorization", "Bearer " + token);
+
+		try {
+			await fetch("/accounts/logout", {
+				method: "POST",
+				credentials: "include",
+				headers,
+				body: JSON.stringify({})
+			});
+		} catch (e) {
+			console.warn("Server logout failed:", e);
+		}
+
+		TokenManager.logout(mode);
+		localStorage.removeItem(AUTH_KEYS.activeToken);
+
+		try {
+			document.dispatchEvent(new CustomEvent("auth:changed", {
+				detail: { mode: null, address: null, token: null }
+			}));
+		} catch (_e) {}
+
+		await refreshAfterAuthChange();
+	}
+	window.logoutActiveSession = logoutActiveSession;
 
 });
-

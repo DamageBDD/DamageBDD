@@ -1,5 +1,4 @@
 <!-- -*- mode: html -*- -->
-<!-- -*- mode: html -*- -->
 <nav class="tabsbar" aria-label="Primary">
   <ul data-tabs>
     <li><a href="#execution-tab">Execute</a></li>
@@ -9,6 +8,10 @@
     <li><a href="#swap-options-tab">Swaps</a></li>
     <li><a href="#ecai-jobs-tab">NFTs</a></li>
     <li><a href="#settings-tab">Settings</a></li>
+    {{#node_admin}}
+    <li><a href="#node-transactions-tab">Node Transactions</a></li>
+    <li><a href="#node-channels-tab">CLN Channels</a></li>
+    {{/node_admin}}
   </ul>
 </nav>
 

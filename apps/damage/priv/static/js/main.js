@@ -79,6 +79,32 @@ function restoreFeatureDraftFromShareLink() {
 		});
 	});
 
+	document.addEventListener("auth:changed", async () => {
+		try {
+			const r = await fetch("/version", {
+				method: "GET",
+				credentials: "include",
+				headers: { accept: "application/json" }
+			});
+			const data = await r.json();
+			if (data && data.ok === true) {
+				renderNodeFooter(data);
+				if (typeof renderNodeWalletModal === "function") {
+					renderNodeWalletModal(data);
+				}
+			}
+		} catch (err) {
+			console.warn("auth-changed version refresh failed:", err);
+		}
+
+		try {
+			if (window.TokenManager.getToken()) {
+				updateSchedulesTable();
+			}
+		} catch (err) {
+			console.warn("auth-changed schedules refresh failed:", err);
+		}
+	});
 	document.addEventListener("DOMContentLoaded", async function() {
 		var kycForm = document.getElementById('kycForm');
 		if (kycForm){
@@ -152,30 +178,48 @@ function restoreFeatureDraftFromShareLink() {
 		//	MicroModal.close("signup-modal");
 		//	MicroModal.show("login-modal");
 		//});
-		document.getElementById("logoutSubmitBtn").addEventListener("click", (event) => {
-			window.TokenManager.logout(window.TokenManager.getMode());
-			MicroModal.close('logout-modal');
-			showLoginButton();
+		document.getElementById("logoutSubmitBtn").addEventListener("click", async (event) => {
+			event.preventDefault();
 
+			try {
+				if (typeof window.logoutActiveSession === "function") {
+					await window.logoutActiveSession();
+				} else {
+					window.TokenManager.logout(window.TokenManager.getMode());
+				}
+			} finally {
+				try { MicroModal.close("logout-modal"); } catch (_e) {}
+				showLoginButton();
+			}
 		});
-		document.getElementById("generate-invoice-btn").addEventListener("click", (event) => {
-			event.preventDefault();
-			generateInvoice();
+		var logoutBtn = document.getElementById("logoutBtn");
+		if(logoutBtn){
+			logoutBtn.addEventListener("click",(event) => {
+				event.preventDefault();
+				MicroModal.show("logout-modal");
+			});
+		}
+
+		showHideLoginButton();
+		MicroModal.init({
+			onShow: modal => {
+				console.info(`${modal.id} is shown`);
+
+				if (typeof window.initInstallForm === 'function') window.initInstallForm();
+
+				if(modal.id == 'wallet-modal'){
+					var address = window.TokenManager.getAddress();
+					generateDamageQR(address);
+					var damageAddr = document.getElementById("damage-address");
+					damageAddr.value = address;
+				}
+				if(modal.id == 'node-wallet-modal'){
+					Tabby('[data-node-wallet-tabs]');
+				}
+			}
 		});
-		document.getElementById("logoutBtn").addEventListener("click",(event) => {
-			event.preventDefault();
-			MicroModal.show("logout-modal");
-		});
-		const balanceDiv = document.getElementById("balanceDiv");
-		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
-			console.log("add schedule");
-			event.preventDefault();
-		});
-		document.getElementById("activity-link").addEventListener("click",(event) => {
-			event.preventDefault();
-			var tabs =Tabby('[data-tabs]');
-			tabs.toggle('activity');
-		});
+
+
 		document.getElementById("node-unlock-password").addEventListener("keydown", async function(event) {
 			if (event.ctrlKey && event.key === "Enter") {
 				event.preventDefault();
@@ -195,6 +239,39 @@ function restoreFeatureDraftFromShareLink() {
 			await nodeSetPassword();
 		});
 
+		document.getElementById("generate-invoice-btn").addEventListener("click", (event) => {
+			event.preventDefault();
+			generateInvoice();
+		});
+		fetch("/version")
+			.then(r => r.json())
+			.then(data => {
+				if (data.ok === true) {
+					renderNodeFooter(data);
+				}else{
+					//versionDom.innerText = 'node not initialized: ' + versionData.error;
+					MicroModal.close("login-modal");
+					if(data.error === "node_locked"){
+						MicroModal.show("node-unlock-modal");
+					}else if (data.error === "keypair_not_initialized"){
+						MicroModal.show("node-set-password-modal");
+					}
+				}})
+			.catch(() => {});
+
+
+		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
+			console.log("add schedule");
+			event.preventDefault();
+		});
+		var activityLink = document.getElementById("activity-link");
+		if(activityLink){
+			document.getElementById("activity-link").addEventListener("click",(event) => {
+				event.preventDefault();
+				var tabs =Tabby('[data-tabs]');
+				tabs.toggle('activity');
+			});
+		}
 		// Sweep wallet button handler
 		const sweepWalletBtn = document.getElementById("sweep-wallet-btn");
 		if (sweepWalletBtn) {
@@ -237,24 +314,12 @@ function restoreFeatureDraftFromShareLink() {
 			}, false);
 		}
 
-		showHideLoginButton();
-		MicroModal.init({
-			onShow: modal => {
-				console.info(`${modal.id} is shown`);
-
-				if (typeof window.initInstallForm === 'function') window.initInstallForm();
-
-				if(modal.id == 'wallet-modal'){
-					var address = window.TokenManager.getAddress();
-					generateDamageQR(address);
-					var damageAddr = document.getElementById("damage-address");
-					damageAddr.value = address;
-				}
-				if(modal.id == 'node-wallet-modal'){
-					Tabby('[data-node-wallet-tabs]');
-				}
-			}
-		});
+		
+		const contentDiv = document.getElementById("content");
+		if(!contentDiv){
+			showLoginButton();
+			return;
+		}
 		
 		var tabs =Tabby('[data-tabs]');
 		document.addEventListener('tabby', function (event) {
@@ -286,21 +351,6 @@ function restoreFeatureDraftFromShareLink() {
 			event.preventDefault();
 			await submitDamageForm();
 		});
-		fetch("/version")
-			.then(r => r.json())
-			.then(data => {
-				if (data.ok === true) {
-					renderNodeFooter(data);
-				}else{
-					//versionDom.innerText = 'node not initialized: ' + versionData.error;
-					MicroModal.close("login-modal");
-					if(data.error === "node_locked"){
-						MicroModal.show("node-unlock-modal");
-					}else if (data.error === "keypair_not_initialized"){
-						MicroModal.show("node-set-password-modal");
-					}
-				}})
-			.catch(() => {});
 
 
 
@@ -725,15 +775,16 @@ function restoreFeatureDraftFromShareLink() {
 		}
 	}
 	function showLoginButton(){
-		const content = document.getElementById("content");
 		const background = document.getElementById("background");
 
-		content.style.display = "none";
 		background.style.display = "block";
+		const content = document.getElementById("content");
+		if(content)content.style.display = "none";
 		MicroModal.show('login-modal');
 	}
 	function showHideLoginButton(){
 		const content = document.getElementById("content");
+		if(!content)return;
 		const background = document.getElementById("background");
 		if (isAuthenticated()) {
 			try{
@@ -1343,28 +1394,212 @@ function restoreFeatureDraftFromShareLink() {
 
 		fetch("/accounts/auth/", {
 			method: "POST",
+			credentials: "include",
 			headers: headers,
 			body: JSON.stringify(signupData)
 		})
-			.then(response => {
-				return response.json();
-			})
-			.then(data => {
+			.then(response => response.json())
+			.then(async data => {
 				if (data.access_token) {
-
 					window.TokenManager.on_custodial_login(data.address, data.email, data.access_token);
+					window.TokenManager.activate("custodial");
+
 					showConnectStatus("Login Success!", "success");
 					showHideLoginButton();
 
+					if (typeof window.refreshAfterAuthChange === "function") {
+						await window.refreshAfterAuthChange();
+					}
 				} else {
 					showConnectStatus("Login Failed!", "failed");
 				}
-			})
-			.catch(error => {
-				console.error("Error:", error);
 			});
 		event.preventDefault();
 		return;
+	}
+	async function refreshPostLoginUi() {
+		try {
+			const r = await fetch("/accounts/balance", {
+				method: "GET",
+				credentials: "include",
+				headers: {
+					accept: "application/json",
+					...(window.TokenManager.getToken()
+						? { Authorization: "Bearer " + window.TokenManager.getToken() }
+						: {})
+				}
+			});
+			if (r.ok) {
+				const data = await r.json();
+				applyAccountBalance(data);
+			}
+		} catch (err) {
+			console.warn("accounts/balance refresh failed:", err);
+		}
+
+		try {
+			const r = await fetch("/version", {
+				method: "GET",
+				credentials: "include",
+				headers: { accept: "application/json" }
+			});
+			const data = await r.json();
+			if (data && data.ok === true) {
+				renderNodeFooter(data);
+				renderNodeWalletModal(data);
+			}
+		} catch (err) {
+			console.warn("version refresh failed:", err);
+		}
+	}
+
+	function applyAccountBalance(data) {
+		if (!data) return;
+
+		const damageAmount = document.getElementById("balanceAmount");
+		if (damageAmount && data.amount != null) {
+			damageAmount.textContent = Number(data.amount).toLocaleString(undefined, {
+				maximumFractionDigits: 4
+			});
+		}
+
+		const aeBalance = document.getElementById("aeBalance");
+		if (aeBalance && data.ae_amount != null) {
+			aeBalance.textContent = Number(data.ae_amount).toLocaleString(undefined, {
+				maximumFractionDigits: 4
+			});
+		}
+
+		const balanceAddress = document.getElementById("balanceAddress");
+		const addr = window.TokenManager?.getAddress?.();
+		if (balanceAddress && addr) {
+			balanceAddress.textContent = addr;
+			balanceAddress.title = addr;
+		}
+	}
+	async function submitLogout() {
+		const btn = document.getElementById("logoutSubmitBtn");
+		const oldText = btn ? btn.textContent : "";
+
+		try {
+			if (btn) {
+				btn.disabled = true;
+				btn.textContent = "Logging out...";
+			}
+
+			const token = window.TokenManager?.getToken?.();
+			const headers = new Headers();
+			headers.set("Content-Type", "application/json");
+			headers.set("Accept", "application/json");
+
+			// Optional: send bearer too, though cookie clearing is the important part
+			if (token) {
+				headers.set("Authorization", "Bearer " + token);
+			}
+
+			const resp = await fetch("/accounts/logout", {
+				method: "POST",
+				credentials: "include",
+				headers,
+				body: JSON.stringify({})
+			});
+
+			let data = null;
+			try {
+				data = await resp.json();
+			} catch (_e) {
+				data = null;
+			}
+
+			// Always clear local state even if server reply is odd:
+			// user intent is logout.
+			try {
+				window.TokenManager.logout(window.TokenManager.getMode());
+			} catch (e) {
+				console.warn("TokenManager logout failed:", e);
+			}
+
+			try {
+				MicroModal.close("logout-modal");
+			} catch (_e) {}
+
+			try {
+				MicroModal.close("wallet-modal");
+			} catch (_e) {}
+
+			try {
+				MicroModal.close("node-wallet-modal");
+			} catch (_e) {}
+
+			showLoginButton();
+
+			if (!resp.ok) {
+				showNotification({
+					title: "Logged out locally",
+					content: (data && (data.message || data.error)) || "Server logout returned an unexpected response.",
+					style: "info"
+				});
+				return;
+			}
+
+			showNotification({
+				title: "Logged out",
+				content: (data && data.message) || "You have been logged out.",
+				style: "success"
+			});
+		} catch (err) {
+			console.error("Logout failed:", err);
+
+			// Still clear client-side auth as a fallback
+			try {
+				window.TokenManager.logout(window.TokenManager.getMode());
+			} catch (_e) {}
+
+			try {
+				MicroModal.close("logout-modal");
+			} catch (_e) {}
+
+			showLoginButton();
+
+			showNotification({
+				title: "Logged out locally",
+				content: "Network error while contacting the server, but local session data was cleared.",
+				style: "info"
+			});
+		} finally {
+			if (btn) {
+				btn.disabled = false;
+				btn.textContent = oldText || "Logout";
+			}
+		}
+	}
+	function resetPostLogoutUi() {
+		const damageAmount = document.getElementById("balanceAmount");
+		if (damageAmount) damageAmount.textContent = "";
+
+		const aeBalance = document.getElementById("aeBalance");
+		if (aeBalance) aeBalance.textContent = "";
+
+		const balanceAddress = document.getElementById("balanceAddress");
+		if (balanceAddress) balanceAddress.textContent = "ak_...";
+
+		const nodeWalletPk = document.getElementById("node-wallet-public-key");
+		if (nodeWalletPk) nodeWalletPk.value = "";
+
+		const nodeWalletDamage = document.getElementById("node-wallet-damage-balance");
+		if (nodeWalletDamage) nodeWalletDamage.textContent = "0";
+
+		const nodeWalletAe = document.getElementById("node-wallet-ae-balance");
+		if (nodeWalletAe) nodeWalletAe.textContent = "0";
+
+		const nodeWalletBtcOnchain = document.getElementById("node-wallet-btc-onchain");
+		if (nodeWalletBtcOnchain) nodeWalletBtcOnchain.textContent = "0 sats";
+
+		const nodeWalletBtcChannels = document.getElementById("node-wallet-btc-channels");
+		if (nodeWalletBtcChannels) nodeWalletBtcChannels.textContent = "0 sats";
+
+		const nodeWalletBtcTotal = document.getElementById("node-wallet-btc-total");
+		if (nodeWalletBtcTotal) nodeWalletBtcTotal.textContent = "0 sats";
 	}
 	function submitForgotPasswordForm(event) {
 		const username = document.getElementById("login-username").value;

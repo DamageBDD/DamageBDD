@@ -147,7 +147,6 @@ trails() ->
             }
         )
     ].
-
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 is_authorized(Req, #{action := version} = State) ->
@@ -155,93 +154,14 @@ is_authorized(Req, #{action := version} = State) ->
 is_authorized(Req, #{action := tx} = State) ->
     {true, Req, State};
 is_authorized(Req, State0) ->
-    State =
-        maps:put(
-            ip,
-            damage_utils:get_ip(Req),
-            maps:put(useragent, cowboy_req:header(<<"user-agent">>, Req, ""), State0)
-        ),
-    case damage_access_token:get_access_token(Req) of
-        {l402, AuthHeader} ->
-            case damage_l402:verify_authorization(AuthHeader, Req) of
-                {ok, Meta} ->
-                    ?LOG_DEBUG("L402 auth ~p", [Meta]),
-                    case application:get_env(damage, l402_account) of
-                        {ok, AeAccount} ->
-                            %% Paid access: run as node identity by default
-                            #{public_key := AeAccount, private_key := PrivateKey} = identity_server:get_account(
-                                AeAccount
-                            ),
-                            damage_ae:set_private_key(AeAccount, PrivateKey),
-                            {
-                                true,
-                                Req,
-                                maps:merge(
-                                    State,
-                                    #{
-                                        public_key => AeAccount,
-                                        private_key => PrivateKey
-                                    }
-                                )
-                            };
-                        Other ->
-                            ?LOG_INFO("L402 not enabled ~p", [Other]),
-                            {{false, ?AUTH_HEADER}, Req, State}
-                    end;
-                {error, _} ->
-                    %% No/invalid token → challenge
-                    generate_l402_invoice(Req, State)
-            end;
-        {nostr, Token} ->
-            #{pubkey := Npub} =
-                NostrEvent =
-                jsx:decode(base64:decode(Token), [{labels, atom}, return_maps]),
-            ?LOG_INFO("Got Nostr auth ~p", [NostrEvent]),
-            case nostrlib:verify(NostrEvent) of
-                true -> damage_ae:contract_call_admin_account("resolve_npub", [Npub]);
-                _ -> generate_l402_invoice(Req, State)
-            end;
-        {oauth, Token} ->
-            case damage_access_token:verify_token(Token) of
-                {error, _E} ->
-                    {{false, ?AUTH_HEADER}, Req, State};
-                {ok, AeAccount, _} ->
-                    case identity_server:get_account(AeAccount) of
-                        #{public_key := AeAccount, private_key := PrivateKey} ->
-                            damage_ae:set_private_key(AeAccount, PrivateKey),
-                            {
-                                true,
-                                Req,
-                                maps:merge(
-                                    State,
-                                    #{
-                                        public_key => AeAccount,
-                                        private_key => PrivateKey,
-                                        access_token => Token
-                                    }
-                                )
-                            };
-                        Other ->
-                            ?LOG_INFO("Got other ~p ~p", [AeAccount, Other]),
-                            {
-                                true,
-                                Req,
-                                maps:merge(
-                                    State,
-                                    #{
-                                        public_key => AeAccount,
-                                        access_token => Token
-                                    }
-                                )
-                            }
-                    end;
-                Other ->
-                    ?LOG_ERROR("Unexpected auth ~p", [Other]),
-                    generate_l402_invoice(Req, State)
-            end;
-        {error, _} ->
-            generate_l402_invoice(Req, State)
-    end.
+    damage_auth:require_auth(
+        Req,
+        State0,
+        fun generate_l402_invoice/2,
+        fun(Req1, _Reason, State1) -> generate_l402_invoice(Req1, State1) end
+    ).
+
+
 generate_l402_invoice(Req0, State) ->
     Action = maps:get(action, State, unknown),
     Scope = iolist_to_binary(["/", atom_to_list(Action)]),

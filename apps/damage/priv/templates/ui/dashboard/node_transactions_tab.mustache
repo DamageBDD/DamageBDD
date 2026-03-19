@@ -1,0 +1,27 @@
+<!-- -*- mode: html -*- -->
+<section class="pure-g admin-tab">
+  <div class="pure-u-1">
+    <h2>Node Bitcoin & Lightning Transactions</h2>
+    <p>Admin-only view of on-chain outputs and Lightning payments/invoices.</p>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>On-chain</h3>
+        <button id="refresh-node-onchain" class="pure-button pure-button-primary">Refresh</button>
+      </div>
+      <pre id="node-onchain-json" class="admin-pre">Loading...</pre>
+    </div>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Lightning</h3>
+        <button id="refresh-node-lightning" class="pure-button pure-button-primary">Refresh</button>
+      </div>
+      <pre id="node-lightning-json" class="admin-pre">Loading...</pre>
+    </div>
+  </div>
+</section>
