@@ -694,7 +694,7 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
     get_wallet_proc(AeAccount, none);
 get_wallet_proc(admin) ->
     #{public_key := NodePublicKey, private_key := PrivateKey} = secrets:node_keypair(),
-    get_wallet_proc(list_to_binary(NodePublicKey), PrivateKey).
+    get_wallet_proc(NodePublicKey, PrivateKey).
 get_wallet_proc(AeAccount, PrivateKey) when is_list(AeAccount) ->
     get_wallet_proc(list_to_binary(AeAccount), PrivateKey);
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
@@ -1023,7 +1023,7 @@ do_contract_call_payfor_user(
     {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
 
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, Fee, InnerTxBin),
+    {ok, PayingForTx} = paying_for(NodeAeAccount, NodeNonce, Fee, InnerTxBin),
     {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
 
     CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
@@ -1038,7 +1038,7 @@ do_contract_call_payfor_user(
     {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedTX0),
 
     {ok, PayingForTxFinal} = paying_for(
-        list_to_binary(NodeAeAccount), NodeNonce, CorrectFee, InnerTxBin0
+        NodeAeAccount, NodeNonce, CorrectFee, InnerTxBin0
     ),
     PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
@@ -1233,7 +1233,7 @@ contract_deploy_for(
     {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedContract),
 
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, DummyFee, InnerTxBin),
+    {ok, PayingForTx} = paying_for(NodeAeAccount, NodeNonce, DummyFee, InnerTxBin),
     {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
     %?LOG_INFO("Paying for tx ~p ~p ~p", [NodeAeAccount, NodeNonce, PayingForTx]),
 
@@ -1249,7 +1249,7 @@ contract_deploy_for(
     {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedContract0),
 
     {ok, PayingForTxFinal} = paying_for(
-        list_to_binary(NodeAeAccount), NodeNonce, CorrectFee, InnerTxBin0
+        NodeAeAccount, NodeNonce, CorrectFee, InnerTxBin0
     ),
     PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
@@ -1524,7 +1524,7 @@ node_ae_balance() ->
 
 node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
-    case balance(list_to_binary(AeAccount)) of
+    case balance(AeAccount) of
         null -> 0;
         0 -> 0;
         Balance -> Balance / math:pow(10, ?DAMAGE_DECIMALS)

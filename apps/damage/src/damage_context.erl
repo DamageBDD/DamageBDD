@@ -340,7 +340,7 @@ get_global_template_context(Context) ->
         #{public_key := NodePublicKey, private_key := _PrivateKey} ->
             maps:merge(
                 #{
-                    node_public_key => list_to_binary(NodePublicKey)
+                    node_public_key => NodePublicKey
                 },
                 Context0
             );

@@ -42,6 +42,7 @@
 -export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
 -export([has_node_password/0, set_node_password/1, has_node_keypair/0]).
+-import(damage_utils, [to_bin/1]).
 
 -define(ASKPASS_TIMEOUT, 60000).
 -define(DETS_FILE, "/var/lib/damage/damage.dets").
@@ -153,7 +154,7 @@ handle_call(
     _From,
     #{public_key := AeAccount, private_key := PrivateKey} = State
 ) when is_binary(PrivateKey) ->
-    {reply, #{public_key => AeAccount, private_key => PrivateKey}, State};
+    {reply, #{public_key => to_bin(AeAccount), private_key => PrivateKey}, State};
 handle_call(node_keypair, _From, State) ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case get_node_password_cached(State) of

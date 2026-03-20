@@ -494,7 +494,7 @@ do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
     Fee = get_int(fee, J),
 
     #{public_key := NodePub} = secrets:node_keypair(),
-    Responder = list_to_binary(NodePub),
+    Responder = NodePub,
 
     case
         damage_channels:build_channel_create_tx(
@@ -968,7 +968,7 @@ to_json(Req, #{action := version} = State) ->
             Resp0 =
                 #{
                     ok => true,
-                    public_key => list_to_binary(PubKey),
+                    public_key => PubKey,
                     damage_balance => NodeDamageBalance,
                     ae_balance => NodeAeBalance,
                     btc_balance => NodeBtcBalance,
