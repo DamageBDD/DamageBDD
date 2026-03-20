@@ -200,6 +200,7 @@ function restoreFeatureDraftFromShareLink() {
 		}
 
 		showHideLoginButton();
+		Tabby('[data-node-wallet-tabs]');
 		MicroModal.init({
 			onShow: modal => {
 				console.info(`${modal.id} is shown`);
@@ -211,9 +212,6 @@ function restoreFeatureDraftFromShareLink() {
 					generateDamageQR(address);
 					var damageAddr = document.getElementById("damage-address");
 					damageAddr.value = address;
-				}
-				if(modal.id == 'node-wallet-modal'){
-					Tabby('[data-node-wallet-tabs]');
 				}
 			}
 		});
