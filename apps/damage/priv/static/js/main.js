@@ -67,7 +67,6 @@ function restoreFeatureDraftFromShareLink() {
 		[
 			"open-node-wallet-btn",
 			"open-node-wallet-btn-auth",
-			"open-node-wallet-btn-floating"
 		].forEach((id) => {
 			const el = document.getElementById(id);
 			if (!el) return;
@@ -189,7 +188,7 @@ function restoreFeatureDraftFromShareLink() {
 				}
 			} finally {
 				try { MicroModal.close("logout-modal"); } catch (_e) {}
-				showLoginButton();
+				window.location.reload();
 			}
 		});
 		var logoutBtn = document.getElementById("logoutBtn");
@@ -1875,7 +1874,6 @@ function restoreFeatureDraftFromShareLink() {
 	}
 
 	async function loadNodeLiquidityAddress() {
-		debugger;
 		const type = document.getElementById("node-liquidity-address-type")?.value || "bech32";
 		const input = document.getElementById("node-liquidity-address");
 		const raw = document.getElementById("node-liquidity-address-json");
