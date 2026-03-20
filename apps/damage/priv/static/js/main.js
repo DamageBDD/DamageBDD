@@ -1406,10 +1406,7 @@ function restoreFeatureDraftFromShareLink() {
 
 					showConnectStatus("Login Success!", "success");
 					showHideLoginButton();
-
-					if (typeof window.refreshAfterAuthChange === "function") {
-						await window.refreshAfterAuthChange();
-					}
+					window.location.reload();
 				} else {
 					showConnectStatus("Login Failed!", "failed");
 				}
