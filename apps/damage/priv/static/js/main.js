@@ -33,6 +33,55 @@ function generateDamageQR(address){
 		correctLevel : QRCode.CorrectLevel.H
 	});
 }
+function debounceAsync(fn, delay = 800) {
+	let timeout = null;
+	let inFlight = false;
+
+	return async function (...args) {
+		if (inFlight) return;
+
+		clearTimeout(timeout);
+
+		timeout = setTimeout(async () => {
+			inFlight = true;
+			try {
+				await fn.apply(this, args);
+			} finally {
+				inFlight = false;
+			}
+		}, delay);
+	};
+}
+function setButtonLoading(btn, isLoading) {
+	if (!btn) return;
+
+	if (isLoading) {
+		btn.dataset.originalText = btn.innerHTML;
+		btn.disabled = true;
+		btn.innerHTML = '⏳';
+		btn.classList.add('loading');
+	} else {
+		btn.disabled = false;
+		if (btn.dataset.originalText) {
+			btn.innerHTML = btn.dataset.originalText;
+		}
+		btn.classList.remove('loading');
+	}
+}
+function wrapApiButton(btn, handler, delay = 800) {
+	if (!btn) return;
+
+	const wrapped = debounceAsync(async (e) => {
+		try {
+			setButtonLoading(btn, true);
+			await handler(e);
+		} finally {
+			setButtonLoading(btn, false);
+		}
+	}, delay);
+
+	btn.addEventListener('click', wrapped);
+}
 
 function restoreFeatureDraftFromShareLink() {
 	const ta = document.getElementById("damageTextArea");
@@ -71,7 +120,7 @@ function restoreFeatureDraftFromShareLink() {
 			const el = document.getElementById(id);
 			if (!el) return;
 
-			el.addEventListener("click", async function (event) {
+			wrapApiButton(el, async (event) => {
 				event.preventDefault();
 				await openNodeWalletDialog(el);
 			});
@@ -145,7 +194,10 @@ function restoreFeatureDraftFromShareLink() {
 				submitLoginForm(event);
 			}
 		});
-		document.getElementById("loginSubmitBtn").addEventListener("click", submitLoginForm);
+		wrapApiButton(
+			document.getElementById("loginSubmitBtn"),
+			submitLoginForm
+		);
 
 
 		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
@@ -165,19 +217,20 @@ function restoreFeatureDraftFromShareLink() {
 				submitSignUpForm(event);
 			}
 		});
-		document.getElementById("signupSubmitBtn").addEventListener("click", submitSignUpForm);
-		//document.getElementById("signupDialogBtn").addEventListener("click", (event) => {
-		//	MicroModal.close("login-modal");
-		//	MicroModal.show("signup-modal");
-		//	event.preventDefault();
-		//});
-		document.getElementById("loginResetPasswdBtn").addEventListener("click", submitForgotPasswordForm);
+		wrapApiButton(
+			document.getElementById("signupSubmitBtn"),
+			submitSignUpForm);
+		wrapApiButton(
+			document.getElementById("loginResetPasswdBtn"),
+			submitForgotPasswordForm);
 		//document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
 		//	event.preventDefault();
 		//	MicroModal.close("signup-modal");
 		//	MicroModal.show("login-modal");
 		//});
-		document.getElementById("logoutSubmitBtn").addEventListener("click", async (event) => {
+		const logoutSubmitBtn = document.getElementById("logoutSubmitBtn");
+
+		wrapApiButton(logoutSubmitBtn, async (event) => {
 			event.preventDefault();
 
 			try {
@@ -191,9 +244,12 @@ function restoreFeatureDraftFromShareLink() {
 				window.location.reload();
 			}
 		});
-		var logoutBtn = document.getElementById("logoutBtn");
-		if(logoutBtn){
-			logoutBtn.addEventListener("click",(event) => {
+
+
+		const logoutBtn = document.getElementById("logoutBtn");
+
+		if (logoutBtn) {
+			logoutBtn.addEventListener("click", (event) => {
 				event.preventDefault();
 				MicroModal.show("logout-modal");
 			});
@@ -222,24 +278,41 @@ function restoreFeatureDraftFromShareLink() {
 				event.preventDefault();
 				await nodeUnlock();
 			}});
-		document.getElementById("node-unlock-password-submit-btn").addEventListener("click", async (event) => {
-			event.preventDefault();
-			await nodeUnlock();
-		});
-		document.getElementById("node-password-confirm").addEventListener("keydown", async function(event) {
-			if (event.ctrlKey && event.key === "Enter") {
+		wrapApiButton(
+			document.getElementById("node-unlock-password-submit-btn"),
+			async (event) => {
+				event.preventDefault();
+				await nodeUnlock();
+			}
+		);
+
+
+		// Ctrl+Enter → keep immediate (no debounce, no loading UI)
+		document.getElementById("node-password-confirm")
+			.addEventListener("keydown", async function (event) {
+				if (event.ctrlKey && event.key === "Enter") {
+					event.preventDefault();
+					await nodeSetPassword();
+				}
+			});
+
+
+		wrapApiButton(
+			document.getElementById("node-set-password-submit-btn"),
+			async (event) => {
 				event.preventDefault();
 				await nodeSetPassword();
-			}});
-		document.getElementById("node-set-password-submit-btn").addEventListener("click", async (event) => {
-			event.preventDefault();
-			await nodeSetPassword();
-		});
+			}
+		);
 
-		document.getElementById("generate-invoice-btn").addEventListener("click", (event) => {
-			event.preventDefault();
-			generateInvoice();
-		});
+
+		wrapApiButton(
+			document.getElementById("generate-invoice-btn"),
+			async (event) => {
+				event.preventDefault();
+				await generateInvoice();
+			}
+		);
 		fetch("/version")
 			.then(r => r.json())
 			.then(data => {
@@ -257,26 +330,26 @@ function restoreFeatureDraftFromShareLink() {
 			.catch(() => {});
 
 
-		document.getElementById("addScheduleBtn").addEventListener("click",(event) => {
+		document.getElementById("addScheduleBtn").addEventListener("click", (event) => {
 			console.log("add schedule");
 			event.preventDefault();
 		});
+
 		var activityLink = document.getElementById("activity-link");
-		if(activityLink){
-			document.getElementById("activity-link").addEventListener("click",(event) => {
+		if (activityLink) {
+			document.getElementById("activity-link").addEventListener("click", (event) => {
 				event.preventDefault();
-				var tabs =Tabby('[data-tabs]');
+				var tabs = Tabby('[data-tabs]');
 				tabs.toggle('activity');
 			});
 		}
+
 		// Sweep wallet button handler
 		const sweepWalletBtn = document.getElementById("sweep-wallet-btn");
-		if (sweepWalletBtn) {
-			sweepWalletBtn.addEventListener("click", async (event) => {
-				event.preventDefault();
-				await sweepWallet();
-			});
-		}
+		wrapApiButton(sweepWalletBtn, async (event) => {
+			event.preventDefault();
+			await sweepWallet();
+		});
 
 		// Skip sweep button handler
 		const skipSweepBtn = document.getElementById("skip-sweep-btn");
@@ -344,30 +417,41 @@ function restoreFeatureDraftFromShareLink() {
 				event.preventDefault();
 				await submitDamageForm();
 			}});
-		document.getElementById("execute-feature-btn").addEventListener("click", async function(event) {
-			event.preventDefault();
-			await submitDamageForm();
+		// Execute feature (API → wrap)
+		wrapApiButton(
+			document.getElementById("execute-feature-btn"),
+			async function (event) {
+				event.preventDefault();
+				await submitDamageForm();
+			}
+		);
+
+
+		// Toggle password (UI only → no debounce)
+		document.querySelectorAll(".toggle-password").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const input = document.querySelector(`input[name='${btn.dataset.target}']`);
+				if (input.type === "password") {
+					input.type = "text";
+					btn.textContent = "🙈";
+				} else {
+					input.type = "password";
+					btn.textContent = "👁️";
+				}
+			});
 		});
 
 
-
-        document.querySelectorAll(".toggle-password").forEach((btn) => {
-            btn.addEventListener("click", () => {
-                const input = document.querySelector(`input[name='${btn.dataset.target}']`);
-                if (input.type === "password") {
-                    input.type = "text";
-                    btn.textContent = "🙈"; // Eye with slash
-                } else {
-                    input.type = "password";
-                    btn.textContent = "👁️"; // Eye
-                }
-            });
-        });
-		var tabs =Tabby('[data-tabs]');
+		// Tabs (UI only → no debounce)
+		var tabs = Tabby('[data-tabs]');
 		tabs.toggle('execution');
-		// optional bridge for reports.js
+
+
+		// Optional bridge (no change)
 		window.rememberRecentFeature = rememberRecentFeature;
 
+
+		// Picker init (no change)
 		initDamageBDDPicker({
 			opener: "#open-feature-picker",
 			mount: "#feature-picker-mount",
@@ -376,11 +460,29 @@ function restoreFeatureDraftFromShareLink() {
 			samplesIndexUrl: "/samples/features/index.json"
 		});
 
+
+		// Job modal trigger (likely API → wrap dynamically)
 		document.addEventListener("click", (e) => {
 			const btn = e.target.closest("[data-micromodal-trigger='ecai-job-details-modal']");
 			if (!btn) return;
+
+			// prevent rapid re-clicks
+			if (btn.dataset.loading === "true") return;
+
 			const jobId = btn.getAttribute("data-job-id");
-			if (jobId) loadJobIntoModal(jobId);
+			if (!jobId) return;
+
+			btn.dataset.loading = "true";
+
+			(async () => {
+				try {
+					setButtonLoading(btn, true);
+					await loadJobIntoModal(jobId);
+				} finally {
+					setButtonLoading(btn, false);
+					btn.dataset.loading = "false";
+				}
+			})();
 		});
 		// Live Coinstore quote under invoice amount (sats -> USD -> DAMAGE)
 		const invoiceAmountEl = document.getElementById("invoice-amount");
@@ -440,12 +542,11 @@ function restoreFeatureDraftFromShareLink() {
 
 		// Optional: bind a button somewhere to open the modal
 		const openNwcBtn = document.getElementById("open-nwc-modal-btn");
-		if (openNwcBtn) {
-			openNwcBtn.addEventListener("click", (event) => {
-				event.preventDefault();
-				nwc.openNwcModal();
-			});
-		}
+
+		wrapApiButton(openNwcBtn, async (event) => {
+			event.preventDefault();
+			nwc.openNwcModal();
+		}, 0);
 
 
 		restoreFeatureDraftFromShareLink();
@@ -1981,9 +2082,9 @@ function restoreFeatureDraftFromShareLink() {
 	document.addEventListener("DOMContentLoaded", function () {
 		const refreshBtn = document.getElementById("refresh-node-liquidity-address-btn");
 		if (refreshBtn) {
-			refreshBtn.addEventListener("click", function (e) {
+			wrapApiButton(refreshBtn, async () => {
 				e.preventDefault();
-				loadNodeLiquidityAddress();
+				await loadNodeLiquidityAddress();
 			});
 		}
 
