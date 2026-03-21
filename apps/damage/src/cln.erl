@@ -41,6 +41,7 @@
     open_channels_with_best_peers/1,
     inbound_capacity/2,
     verify_peer/1,
+    clear_cache/0,
     estimate_routing_fee/2
 ]).
 
@@ -1018,20 +1019,6 @@ open_channel_with_peer(Host, Port, Options, Rune, NodeId, AmountSats) ->
 %% Lookup / cache helpers
 %% ===================================================================
 
-scid_to_channel_id(SCID0) when is_binary(SCID0); is_list(SCID0) ->
-    SCID = to_bin(SCID0),
-    case get_cache({scid, SCID}) of
-        {ok, CID} ->
-            CID;
-        not_found ->
-            CID = poolboy:transaction(?MODULE, fun(W) ->
-                gen_server:call(W, {scid_to_channel_id_uncached, SCID}, ?CLN_HTTP_TIMEOUT)
-            end),
-            put_cache({scid, SCID}, CID),
-            put_cache({cid, CID}, SCID),
-            CID
-    end.
-
 channel_id_to_scid(CID0) when is_binary(CID0); is_list(CID0) ->
     CID = to_bin(CID0),
     case get_cache({cid, CID}) of
@@ -1046,31 +1033,19 @@ channel_id_to_scid(CID0) when is_binary(CID0); is_list(CID0) ->
             SCID
     end.
 
-get_channel_balances(Host, Port, Options, Rune) ->
-    case get_cache(channel_balances) of
+get_cached_peer_channel_list(Host, Port, Options, Rune) ->
+    case get_cache(listpeerchannels) of
         {ok, Cached} ->
             Cached;
         not_found ->
-            Result =
+            Channels =
                 case cln_post_json(Host, Port, Options, Rune, "/v1/listpeerchannels", #{}) of
-                    #{channels := Channels} ->
-                        lists:foldl(
-                            fun(Chan, Acc) ->
-                                ChannelId = maps:get(channel_id, Chan),
-                                OurMsat = maps:get(to_us_msat, Chan),
-                                TheirMsat = maps:get(total_msat, Chan) - OurMsat,
-                                maps:put(ChannelId, #{ours => OurMsat, theirs => TheirMsat}, Acc)
-                            end,
-                            #{},
-                            Channels
-                        );
-                    _ ->
-                        #{}
+                    #{channels := C} -> C;
+                    _ -> []
                 end,
-            put_cache(channel_balances, Result),
-            Result
+            put_cache(listpeerchannels, Channels),
+            Channels
     end.
-
 get_cached_channel_list(Host, Port, Options, Headers, ReqMap) ->
     Now = erlang:monotonic_time(second),
     case ets:lookup(cln_channel_cache, listchannels) of
@@ -1198,7 +1173,9 @@ get_node_balance(Host, Port, Options, Rune) ->
         channel_sats => ChannelMsat div 1000,
         total_sats => (OnchainMsat + ChannelMsat) div 1000
     }.
-
+clear_cache() ->
+    ets:delete_all_objects(cln_channel_cache),
+    ok.
 %% ===================================================================
 %% Gen server callbacks
 %% ===================================================================
@@ -1274,29 +1251,22 @@ handle_call(
     _From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
 ) ->
-    Headers0 = headers(Rune),
-    ChannelList = get_cached_channel_list(Host, Port, Options, Headers0, #{}),
-    NodeIds = lists:usort(
-        lists:flatten([[maps:get(source, Chan), maps:get(destination, Chan)] || Chan <- ChannelList])
-    ),
+    PeerChannels = get_cached_peer_channel_list(Host, Port, Options, Rune),
+    NodeIds = lists:usort([maps:get(peer_id, Chan) || Chan <- PeerChannels]),
     Aliases = resolve_aliases(NodeIds, Host, Port, Options, Rune),
-    ChannelBalances = get_channel_balances(Host, Port, Options, Rune),
+
     lists:foreach(
-        fun(
-            #{
-                active := Active,
-                public := Public,
-                short_channel_id := ShortChannelId,
-                source := Source,
-                destination := Destination
-            }
-        ) ->
-            SourceAlias = maps:get(Source, Aliases, <<"unknown">>),
-            DestAlias = maps:get(Destination, Aliases, <<"unknown">>),
-            ChannelId = scid_to_channel_id(ShortChannelId),
-            Balance = maps:get(ChannelId, ChannelBalances, #{ours => 0, theirs => 0}),
-            OurMsat = maps:get(ours, Balance),
-            TheirMsat = maps:get(theirs, Balance),
+        fun(Chan) ->
+            PeerId = maps:get(peer_id, Chan, <<"unknown">>),
+            PeerAlias = maps:get(PeerId, Aliases, <<"unknown">>),
+            ChannelId = maps:get(channel_id, Chan, <<"not_found">>),
+            ShortChannelId = maps:get(short_channel_id, Chan, <<"unknown">>),
+            OurMsat = maps:get(to_us_msat, Chan, 0),
+            TotalMsat = maps:get(total_msat, Chan, 0),
+            TheirMsat = TotalMsat - OurMsat,
+            Active = maps:get(peer_connected, Chan, false),
+            StateName = maps:get(state, Chan, <<"unknown">>),
+
             Total = OurMsat + TheirMsat,
             Skew =
                 if
@@ -1308,24 +1278,25 @@ handle_call(
                     Skew > 80 -> " [⚠ needs rebalancing]";
                     true -> ""
                 end,
+
             ?LOG_INFO(
-                "Active ~p Public ~p ~s (~s) <--> ~s (~s): Ours: ~p msat, Theirs: ~p msat~s~n",
+                "Peer ~s (~s) channel_id=~s scid=~s connected=~p state=~p ours=~p msat theirs=~p msat~s",
                 [
+                    PeerAlias,
+                    PeerId,
+                    ChannelId,
+                    ShortChannelId,
                     Active,
-                    Public,
-                    SourceAlias,
-                    Source,
-                    DestAlias,
-                    Destination,
+                    StateName,
                     OurMsat,
                     TheirMsat,
                     RebalanceFlag
                 ]
             )
         end,
-        ChannelList
+        PeerChannels
     ),
-    {reply, ChannelList, State};
+    {reply, PeerChannels, State};
 handle_call(
     list_all_channels,
     _From,
