@@ -29,6 +29,15 @@
           <div id="qrcode-damage"></div>
 
           <hr>
+          <h3>Buy DAMAGE Tokens (Lightning)</h3>
+
+          <form id="invoice-form">
+            <label>Amount in Sats</label>
+            <input type="number" step="10" value="1000" id="invoice-amount">
+            <button class="styled-btn" id="generate-invoice-btn">Generate Lightning Invoice</button>
+          </form>
+
+          <hr>
 
           <h3>Transfer DAMAGE Tokens</h3>
 
@@ -38,7 +47,7 @@
                    placeholder="Recipient AE address (ak_...)">
 
             <input type="number"
-                   step="1"
+                   step="10"
                    id="damage-transfer-out-amount"
                    placeholder="Amount">
 
@@ -50,21 +59,12 @@
         </div>
         <div id="lightning-wallet-tab">
 
-          <h3>Buy DAMAGE Tokens (Lightning)</h3>
-
-          <form id="invoice-form">
-            <label>Amount in Sats</label>
-            <input type="number" step="10" id="invoice-amount">
-            <button class="styled-btn" id="generate-invoice-btn">Generate Lightning Invoice</button>
-          </form>
-
-          <hr>
 
           <h3>Deposit Sats Credits</h3>
 
           <form id="ledger-invoice-form">
             <label>Credit Amount (Sats)</label>
-            <input type="number" step="10" id="ledger-invoice-amount">
+            <input type="number" step="10" value="100" id="ledger-invoice-amount">
             <button class="styled-btn" id="generate-ledger-invoice-btn">Generate Credit Invoice</button>
           </form>
 

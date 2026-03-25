@@ -123,7 +123,6 @@ export function showLightningQR({ containerId, paymentRequest, address, expirySe
     instructions.style.fontSize = "1em";
     instructions.innerHTML = `
     🛡️ Scan the QR code with your Lightning wallet or paste the invoice manually.<br>
-    💸 After payment, your Damage Tokens will arrive within seconds.
   `;
     qrSection.appendChild(instructions);
 
