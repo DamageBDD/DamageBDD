@@ -82,6 +82,25 @@ function wrapApiButton(btn, handler, delay = 800) {
 
 	btn.addEventListener('click', wrapped);
 }
+function wrapApiForm(form, button, handler) {
+  if (!form) return;
+
+  form.addEventListener("submit", async (event) => {
+    if (button) {
+      button.disabled = true;
+      button.classList.add("loading");
+    }
+
+    try {
+      await handler(event);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.classList.remove("loading");
+      }
+    }
+  });
+}
 
 function restoreFeatureDraftFromShareLink() {
 	const ta = document.getElementById("damageTextArea");
@@ -306,11 +325,22 @@ function restoreFeatureDraftFromShareLink() {
 		);
 
 
-		wrapApiButton(
+		wrapApiForm(
+			document.getElementById("invoice-form"),
 			document.getElementById("generate-invoice-btn"),
 			async (event) => {
 				event.preventDefault();
 				await generateInvoice();
+					MicroModal.close("wallet-modal");
+			}
+		);
+		wrapApiForm(
+			document.getElementById("ledger-invoice-form"),
+			document.getElementById("generate-ledger-invoice-btn"),
+			async (event) => {
+				event.preventDefault();
+				await generateLedgerInvoice();
+				MicroModal.close("wallet-modal");
 			}
 		);
 		fetch("/version")
@@ -382,6 +412,14 @@ function restoreFeatureDraftFromShareLink() {
 					loadWalletBalance();
 				}
 			}, false);
+		}
+		const balanceRefreshBtn = document.getElementById("balanceRefreshBtn");
+		if (balanceRefreshBtn) {
+			wrapApiButton(balanceRefreshBtn, async (event) => {
+				event.preventDefault();
+				await refreshPostLoginUi();
+				loadWalletBalance();
+			}, 0);
 		}
 
 		
