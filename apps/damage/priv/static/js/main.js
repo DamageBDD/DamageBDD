@@ -413,12 +413,20 @@ function restoreFeatureDraftFromShareLink() {
 				}
 			}, false);
 		}
+		const openWalletModalBtn = document.getElementById("open-wallet-modal-btn");
+		if (openWalletModalBtn) {
+			openWalletModalBtn.addEventListener("click", (event) => {
+				event.preventDefault();
+				MicroModal.show("wallet-modal");
+			});
+		}
+
 		const balanceRefreshBtn = document.getElementById("balanceRefreshBtn");
 		if (balanceRefreshBtn) {
 			wrapApiButton(balanceRefreshBtn, async (event) => {
 				event.preventDefault();
 				await refreshPostLoginUi();
-				loadWalletBalance();
+				await loadWalletBalance();
 			}, 0);
 		}
 
@@ -1603,6 +1611,18 @@ function restoreFeatureDraftFromShareLink() {
 			});
 		}
 
+		const satsBalance = document.getElementById("satsBalance");
+		if (satsBalance) {
+			const sats =
+				  data?.ledger?.balance_sat ??
+				  data?.ledger_balance_sat ??
+				  0;
+
+			satsBalance.textContent = Number(sats).toLocaleString(undefined, {
+				maximumFractionDigits: 0
+			});
+		}
+
 		const balanceAddress = document.getElementById("balanceAddress");
 		const addr = window.TokenManager?.getAddress?.();
 		if (balanceAddress && addr) {
@@ -1932,6 +1952,76 @@ function restoreFeatureDraftFromShareLink() {
 					style: 'error'
 				});
 			});
+	}
+	function getSessionId() {
+		let sessionId = sessionStorage.getItem("damage_session_id");
+
+		if (!sessionId) {
+			sessionId = Math.random().toString(36).slice(2, 10);
+			sessionStorage.setItem("damage_session_id", sessionId);
+		}
+
+		return sessionId;
+	}
+	async function generateLedgerInvoice() {
+		const amount = parseInt(document.getElementById("ledger-invoice-amount")?.value || "0", 10);
+		const walletAddress = window.TokenManager?.getAddress?.();
+
+		if (!amount || amount <= 0) {
+			alert("Enter a valid amount in sats.");
+			return;
+		}
+
+		if (!walletAddress) {
+			alert("Wallet not connected.");
+			return;
+		}
+
+		const sessionId = getSessionId();
+		const ts = Date.now();
+		const label = `nwc:${walletAddress}:${sessionId}:${ts}`;
+
+		try {
+			MicroModal.show("invoice-modal");
+
+			const resp = await fetch("/invoices/", {
+				method: "POST",
+				credentials: "include",
+				headers: {
+					"Content-Type": "application/json",
+					"Authorization": "Bearer " + window.TokenManager.getToken()
+				},
+				body: JSON.stringify({
+					amount_sats: amount,
+					label
+				})
+			});
+
+			if (resp.status === 401) {
+				MicroModal.show("login-modal");
+				return;
+			}
+
+			const data = await resp.json();
+
+			if (data && data.status === "ok") {
+				document.getElementById("qrcode-lightning").innerText = "";
+				document.getElementById("lightning-invoice-input").value =
+					"lightning:" + data.invoice.payment_request;
+
+				showLightningQR({
+					containerId: "qrcode-lightning",
+					paymentRequest: data.invoice.payment_request,
+					address: walletAddress,
+					logo: "/static/img/logo.png"
+				});
+			} else {
+				throw new Error(data?.message || "Invoice generation failed");
+			}
+		} catch (err) {
+			console.error("Ledger invoice error:", err);
+			alert("Failed to generate invoice: " + err.message);
+		}
 	}
 
 
