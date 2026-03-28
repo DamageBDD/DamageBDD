@@ -1545,7 +1545,14 @@ opaque_type_name(Name) when is_atom(Name) ->
     Name;
 opaque_type_name(Name) when is_binary(Name) ->
     binary_to_list(Name).
-
+%% ------------------------------------------------------------------
+%% Literal parameters (e.g. bytes(32))
+%% Integers are parameters, not types: do NOT annotate them.
+%% ------------------------------------------------------------------
+flatten_opaque_type(T, _Types) when is_integer(T) ->
+    {ok, T};
+flatten_opaque_type(T, _Types) when is_atom(T) ->
+    {ok, T};
 flatten_opaque_type(T, Types) ->
     case normalize_opaque_type(T, Types) of
         {ok, AlreadyNormalized, NOpaque, NExpanded} ->
@@ -1752,15 +1759,48 @@ coerce({O, N, integer},  S, to_fate) when is_list(S) ->
     catch
         error:badarg -> single_error({invalid, O, N, S})
     end;
-coerce({O, N, address},  S, to_fate) ->
+
+%% ------------------------------------------------------------------
+%% Compatibility: some call-sites pass bare scalar atoms (integer, string,
+%% address, contract) instead of {Origin, Name, Type}.
+%% Normalize them here to avoid missing function clause crashes.
+%% ------------------------------------------------------------------
+coerce(integer, V, to_fate) ->
+    coerce({"integer", "integer", integer}, V, to_fate);
+coerce(integer, V, from_fate) ->
+    coerce({"integer", "integer", integer}, V, from_fate);
+
+coerce(string, V, to_fate) ->
+    coerce({"string", "string", string}, V, to_fate);
+coerce(string, V, from_fate) ->
+    coerce({"string", "string", string}, V, from_fate);
+
+coerce(bool, V, to_fate) ->
+    coerce({"bool", "bool", bool}, V, to_fate);
+coerce(bool, V, from_fate) ->
+    coerce({"bool", "bool", bool}, V, from_fate);
+
+coerce(address, S, to_fate) ->
+    coerce({"address", "address", address}, S, to_fate);
+coerce(address, V, from_fate) ->
+    coerce({"address", "address", address}, V, from_fate);
+
+coerce(contract, S, to_fate) ->
+    coerce({"contract", "contract", contract}, S, to_fate);
+coerce(contract, V, from_fate) ->
+    coerce({"contract", "contract", contract}, V, from_fate);
+
+coerce({O, N, address}, S, to_fate) ->
     try
         case aeser_api_encoder:decode(unicode:characters_to_binary(S)) of
-            {account_pubkey, Key} -> {ok, {address, Key}};
-            _                     -> single_error({invalid, O, N, S})
+            {account_pubkey, Key}  -> {ok, {address, Key}};
+            {contract_pubkey, Key} -> {ok, {address, Key}};
+            _                      -> single_error({invalid, O, N, S})
         end
     catch
         error:_ -> single_error({invalid, O, N, S})
     end;
+
 coerce({_, _, address}, {address, Bin}, from_fate) ->
     Address = aeser_api_encoder:encode(account_pubkey, Bin),
     {ok, unicode:characters_to_list(Address)};
@@ -1842,19 +1882,23 @@ coerce({O, N, _}, Data, from_fate) ->
             io:format("Warning: Unimplemented type ~p (i.e. ~p).~nUsing term as is:~n~p~n", [O, N, Data])
     end,
     {ok, Data};
+%% bytes(any): accept any binary length
+coerce({_, _, {bytes, [any]}}, Value, _Env) when is_binary(Value) ->
+    {ok, Value};
 %% Accept exact-size binaries for bytes(N)
 coerce({_, _, {bytes, [Size]}}, Value, _Env)
   when is_binary(Value), byte_size(Value) =:= Size ->
-    Value;
+    {ok, Value};
 
-%% Reject binaries of the wrong size
+%% Reject binaries of the wrong size (do NOT throw)
 coerce({_, _, {bytes, [Size]}}, Value, _Env)
   when is_binary(Value) ->
-    error({bytes_size_mismatch, Size, byte_size(Value)});
+    single_error({bytes_size_mismatch, Size, byte_size(Value)});
 
-%% Reject non-binaries
+%% Reject non-binaries (do NOT throw)
 coerce({_, _, {bytes, [_Size]}}, Value, _Env) ->
-    error({bytes_expected_binary, Value});
+    single_error({bytes_expected_binary, Value});
+
 coerce({O, N, _}, Data, _) -> single_error({invalid, O, N, Data}).
 
 coerce_list(Type, Elements, Direction) ->
