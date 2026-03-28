@@ -28,11 +28,12 @@
 
 % Infra Fees
 % multipliers to pedal the fees and gas usage starting from the default of vanillae
--define(DAMAGE_GAS_MULTIPLIER, 4).
--define(DAMAGE_GAS_PRICE_MULTIPLIER, 4).
--define(DAMAGE_FEE_MULTIPLIER, 8).
--define(DAMAGE_GAS_PERBYTE, 20).
--define(DAMAGE_BASE_GAS, 46000).
+-define(GAS_MULTIPLIER, 8).
+-define(GAS_PRICE_MULTIPLIER, 16).
+-define(FEE_MULTIPLIER, 10).
+-define(CONTRACT_CALL_GAS_MULTIPLIER, 48).
+-define(CONTRACT_CALL_GAS_FLOOR, 70000).
+-define(CONTRACT_CALL_GAS_BUFFER_PCT, 20).
 
 -record(damage_state, {
     formatters = [] :: [term()],
