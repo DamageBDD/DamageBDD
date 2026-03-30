@@ -132,6 +132,14 @@
     <script type='module' src="/static/js/pricing.js" defer></script>
 
     <script type='module' src="/static/js/main.js" defer></script>
+    {{#node_admin}}
+    <script src="/static/js/node-admin.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+      window.nodeAdmin.bindDefaultUi();
+      });
+    </script>
+    {{/node_admin}}
   </body>
 </html>
 

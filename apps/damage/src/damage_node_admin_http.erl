@@ -132,23 +132,66 @@ is_node_admin(_) ->
     false.
 
 to_json(Req, #{action := transactions} = State) ->
+    LimitBin = cowboy_req:qs_val(<<"limit">>, Req, <<"50">>),
+    Limit =
+        case LimitBin of
+            B when is_binary(B) ->
+                try
+                    binary_to_integer(B)
+                catch
+                    _:_ -> 50
+                end;
+            I when is_integer(I) -> I;
+            _ ->
+                50
+        end,
+
+    Funds0 = cln:list_funds(),
+    Onchain0 = maps:get(outputs, Funds0, []),
+    FundingChannels0 = maps:get(channels, Funds0, []),
+
+    {ok, Invoices0} = cln:list_all_invoices(#{page_limit => Limit, order => desc}),
+    Pays0 = cln:list_pays(),
+    SendPays0 = cln:list_sendpays(),
+
+    Pays =
+        case Pays0 of
+            #{pays := L} when is_list(L) ->
+                Pays0#{pays := cln:sort_pays_desc(L)};
+            _ ->
+                Pays0
+        end,
+
+    SendPays =
+        case SendPays0 of
+            #{payments := L0} when is_list(L0) ->
+                SendPays0#{payments := cln:sort_sendpays_desc(L0)};
+            _ ->
+                SendPays0
+        end,
+
     Body =
         #{
             ok => true,
-            onchain => cln:list_funds(),
+            onchain => Funds0#{
+                outputs => cln:sort_outputs_desc(Onchain0),
+                channels => cln:sort_peerchannels_desc(FundingChannels0)
+            },
             lightning => #{
-                pays => cln:list_pays(),
-                sendpays => cln:list_sendpays(),
-                invoices => cln:list_invoices()
+                pays => Pays,
+                sendpays => SendPays,
+                invoices => #{invoices => Invoices0}
             }
         },
     {jsx:encode(Body), Req, State};
 to_json(Req, #{action := channels} = State) ->
+    Channels0 = cln:list_channels(),
+    SortedChannels = cln:sort_peerchannels_desc(Channels0),
     Body =
         #{
             ok => true,
             balance => cln:get_node_balance(),
-            channels => cln:list_channels()
+            channels => SortedChannels
         },
     {jsx:encode(Body), Req, State};
 to_json(Req, #{action := best_peers} = State) ->

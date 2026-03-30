@@ -302,44 +302,203 @@ html, body {
     background: linear-gradient(to right, #003fa6, #005ec4);
     transform: scale(1.02);
 }
-#balanceDiv {
-    cursor: pointer;
-    border-radius: 4px;
-    transition: all 0.2s ease-in-out;
-    background: linear-gradient(to right, #0052cc, #007bff);
+
+/* === Updated wallet toolbar === */
+.wallet-toolbar-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(31, 42, 58, 0.96), rgba(20, 30, 48, 0.96));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    min-width: 340px;
+    max-width: 100%;
 }
 
-#balanceDiv:hover {
-    background-color: rgba(0, 123, 255, 0.2);
-}
-.balance-column {
+.wallet-toolbar-main {
     display: flex;
     flex-direction: column;
-    align-items: flex-start; /* keeps it left-aligned */
-    gap: 0.25rem;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
 }
 
-#balanceAddress {
+.wallet-toolbar-address-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.wallet-toolbar-kicker {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9fc9ff;
+    opacity: 0.9;
+    white-space: nowrap;
+}
+
+.wallet-toolbar-address {
     display: inline-block;
+    min-width: 0;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: 600 .85rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font: 600 0.85rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     color: #e6eefc;
-    background: linear-gradient(to right, #1f2a3a, #141e30);
-    border: 1px solid rgba(0,123,255,.35);
-    border-radius: 6px;
-    padding: .25rem .5rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(0, 123, 255, 0.22);
+    border-radius: 8px;
+    padding: 0.35rem 0.6rem;
     vertical-align: middle;
 }
 
-.balance-row {
+.wallet-toolbar-balances {
     display: flex;
     align-items: center;
-    gap: .5rem;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
+.wallet-balance-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.wallet-balance-chip-subtle {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.wallet-balance-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9fc9ff;
+    opacity: 0.9;
+}
+
+.wallet-balance-value {
+    font-weight: 700;
+    color: #fff;
+}
+
+.wallet-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.wallet-open-btn {
+    width: auto;
+    min-width: 124px;
+    padding: 0.72rem 1rem;
+    white-space: nowrap;
+    margin: 0;
+}
+
+.wallet-refresh-btn {
+    appearance: none;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font: 600 16px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    cursor: pointer;
+    transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.wallet-refresh-btn:hover {
+    opacity: 1;
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(120, 200, 255, 0.35);
+}
+
+.wallet-refresh-btn[aria-busy="true"] {
+    animation: balance-spin 0.9s linear infinite;
+}
+
+@keyframes balance-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+/* legacy ids kept compatible with new wallet markup */
+#balanceDiv {
+    cursor: default;
+    border-radius: 0;
+    transition: none;
+    display: block;
+    max-width: 100%;
+    background: transparent;
+    transform: none;
+}
+
+#balanceDiv:hover {
+    border: 0;
+    transform: none;
+    will-change: auto;
+    background: transparent;
+}
+
+.balance-column,
+.balance-row {
+    display: contents;
+}
+
+#balanceAddress {
+    all: unset;
+    display: inline-block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 600 0.85rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    color: #e6eefc;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(0, 123, 255, 0.22);
+    border-radius: 8px;
+    padding: 0.35rem 0.6rem;
+}
+
+#balanceLabel,
+#aeBalanceLabel,
+#satsBalanceLabel {
+    color: #9fc9ff;
+    font-weight: 600;
+    font-size: 0.72rem;
+    margin-right: 0;
+}
+
+#balanceAmount {
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 1rem;
+    letter-spacing: 0.2px;
+    color: #fff;
+}
+
+#aeBalance,
+#satsBalance {
+    font-size: 0.82rem;
+    line-height: 1.2;
+    color: #fff;
+    opacity: 0.95;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
 
 #toolbar {
     display: flex;
@@ -955,6 +1114,7 @@ ul[data-tabs] [role="tab"]:focus-visible{
 .topbar .toolbar-items {
     display: flex;
     gap: 1rem;
+    align-items: center;
 }
 
 .topbar .toolbar-items #toolbar-btns {
@@ -1054,9 +1214,14 @@ ul[data-tabs] [role="tab"]:focus-visible{
 
     .topbar .toolbar-items {
         flex-direction: column;
-        align-items: initial;
+        align-items: stretch;
         gap: 1rem;
 
+    }
+
+    .wallet-toolbar-card {
+        width: 100%;
+        min-width: 0;
     }
 
     .topbar .toolbar-items #toolbar-btns  {
@@ -1070,6 +1235,31 @@ ul[data-tabs] [role="tab"]:focus-visible{
 
     .topbar .toolbar-items #toolbar-btns .logout-btn {
         flex: 1;
+    }
+}
+
+@media(max-width: 640px) {
+    .wallet-toolbar-card {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .wallet-toolbar-actions {
+        width: 100%;
+    }
+
+    .wallet-open-btn {
+        flex: 1;
+        width: 100%;
+    }
+
+    .wallet-refresh-btn {
+        flex: 0 0 40px;
+    }
+
+    .wallet-toolbar-address-row,
+    .wallet-toolbar-balances {
+        flex-wrap: wrap;
     }
 }
 
@@ -1223,51 +1413,6 @@ ul[data-tabs] [role="tab"]:focus-visible{
   font-weight: 500;
 }
 
-
-#balanceLabel{ color:#9fc9ff; margin-right:.4rem; font-weight:600; font-size:.95rem; }
-#balanceAmount{ font-weight:700; font-family:monospace; }
-
-/* Emphasize DAMAGE, add subtle AE subtext */
-#balanceDiv {
-    cursor: pointer;
-    border-radius: 6px;
-    transition: all 0.2s ease-in-out;
-    display: inline-flex;
-    flex-direction: column;
-    gap: 2px;
-    max-width: 470px;
-    background-color: linear-gradient(to left, #1f2a3a, #44494d);
-    transform: scale(1);
-}
-
-#balanceDiv:hover { 
-    border: 1px solid white;
-    will-change: transform; 
-    transform: scale(1.025);
-}
-
-.balance-row { display: inline-flex; align-items: baseline; gap: .5rem; }
-#balanceLabel { color:#9fc9ff; font-weight:600; font-size:.95rem; }
-/* balance refresh button */
-#balanceRefreshBtn {
-    appearance: none;
-    border: 0;
-    background: none;
-    color: white;
-    width: 22px; height: 22px;
-    border-radius: 9999px;
-    display: inline-flex; align-items: center; justify-content: center;
-    font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    opacity: .8; cursor: pointer; margin-left: .25rem;
-}
-#balanceRefreshBtn:hover { opacity: 1; }
-#balanceRefreshBtn[aria-busy="true"] { animation: balance-spin .9s linear infinite; }
-
-@keyframes balance-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
-
-/* keep rows tidy when the button is appended */
-#balanceDiv .balance-row { align-items: center; gap: .45rem; }
-
 #balanceTopupBtn {
     appearance: none;
     border: 0;
@@ -1284,8 +1429,6 @@ ul[data-tabs] [role="tab"]:focus-visible{
     margin-left: .25rem;
 }
 #balanceTopupBtn:hover { opacity: 1; }
-
-
 
 .damage-amount { font-weight:800; font-family:monospace; font-size:1.05rem; letter-spacing:.3px; }
 
@@ -1317,10 +1460,6 @@ ul[data-tabs] [role="tab"]:focus-visible{
   color: #ffffff;
   opacity: .9;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-}
-.balance-row{
-  flex-wrap: wrap;
-  row-gap: .25rem;
 }
 
 /* Fix the invalid comment so the rest of CSS parses */
@@ -2820,4 +2959,135 @@ body.reset-password-page #resetPasswdForm ul li::before {
   border-width: 6px;
   border-style: solid;
   border-color: rgba(12, 18, 24, 0.96) transparent transparent transparent;
+}
+.admin-data {
+  width: 100%;
+}
+
+.admin-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.94rem;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  word-break: break-word;
+}
+
+.admin-table th {
+  color: #7fc0ff;
+  font-weight: 700;
+  background: rgba(255,255,255,0.04);
+  position: sticky;
+  top: 0;
+}
+
+.admin-section-block {
+  margin-bottom: 22px;
+}
+
+.admin-section-block h4 {
+  margin: 0 0 10px;
+}
+
+.admin-empty,
+.admin-loading,
+.admin-kv {
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+}
+
+.admin-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.admin-details {
+  margin-top: 12px;
+}
+
+.admin-details summary {
+  cursor: pointer;
+  color: #7fc0ff;
+  margin-bottom: 8px;
+}
+
+.admin-copy-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-code {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.admin-copy-btn {
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.admin-copy-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.admin-copy-btn {
+  padding: 2px 6px;
+  min-height: 22px;
+  font-size: 0.72rem;
+  line-height: 1;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.admin-code {
+  display: inline-block;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.84em;
+}
+
+.admin-amount {
+  cursor: help;
+  border-bottom: 1px dotted rgba(127, 192, 255, 0.35);
+}
+
+.admin-table td {
+  padding: 9px 10px;
 }
