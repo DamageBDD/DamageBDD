@@ -181,6 +181,22 @@ init([]) ->
                 type => worker,
                 modules => [damage_node_registry]
             },
+            #{
+                id => damage_nwc_invoice_watch_sup,
+                start => {damage_nwc_invoice_watch_sup, start_link, []},
+                restart => permanent,
+                shutdown => infinity,
+                type => supervisor,
+                modules => [cln, damage_nwc_invoice_watch_sup]
+            },
+            #{
+                id => damage_ipfs_peers,
+                start => {damage_ipfs_peers, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [damage_ipfs_peers]
+            },
             %% 5) listeners
             git_ssh_listener:child_spec()
         ],
