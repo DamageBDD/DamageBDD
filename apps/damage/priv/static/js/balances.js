@@ -1,27 +1,41 @@
-// balances.js (or paste into wallet.js / main.js)
-// Global helpers: fetchAeAndAex9Balances(pubkey[, opts]), fetchAeBalance, fetchAex9Balances
-const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk';
+// balances.js
+// Single-endpoint balance loader using /accounts/balance
+//
+// Expected response shape from /accounts/balance:
+// {
+//   status: "ok",
+//   aettos: "1230000000000000000",
+//   hits: "45600000000",
+//   msats: "7890"
+// }
+//
+// Public helpers:
+//   fetchAllBalances(pubkey[, opts])
+//   updateAllBalances([opts])
 
 (function (g) {
 	'use strict';
 
 	const DEFAULTS = {
-		nodeBase: 'https://mainnet.aeternity.io',
-		mdwBase:  'https://mainnet.aeternity.io/mdw',
-		timeoutMs: 12000
+		apiBase: '',
+		timeoutMs: 10000,
+		credentials: 'include'
 	};
+
+	const AE_DECIMALS = 18;
+	const DAMAGE_DECIMALS = 8;
+	const MSATS_DECIMALS = 3;
 
 	// ---- utils ---------------------------------------------------------------
 
-	// fetch with timeout
 	async function fetchT(url, init = {}, timeoutMs = DEFAULTS.timeoutMs) {
 		const ctrl = new AbortController();
 		const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
 		try {
 			const r = await fetch(url, { ...init, signal: ctrl.signal });
 			if (!r.ok) {
-				const msg = `${r.status} ${r.statusText}`;
-				throw new Error(`${url} → ${msg}`);
+				throw new Error(`${url} → ${r.status} ${r.statusText}`);
 			}
 			return r;
 		} finally {
@@ -29,47 +43,42 @@ const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk
 		}
 	}
 
-	// Convert big-int string to decimal string with 'decimals'
 	function formatUnitsString(bnStr, decimals) {
 		if (bnStr == null) return '0';
-		const neg = bnStr[0] === '-';
-		let s = neg ? bnStr.slice(1) : bnStr;
-		if (!/^\d+$/.test(s)) s = String(s || '0').replace(/\D/g, '') || '0';
+
+		const neg = String(bnStr)[0] === '-';
+		let s = neg ? String(bnStr).slice(1) : String(bnStr);
+
+		if (!/^\d+$/.test(s)) {
+			s = String(s || '0').replace(/\D/g, '') || '0';
+		}
 
 		const d = Math.max(0, Number(decimals || 0));
 		if (d === 0) return (neg ? '-' : '') + s;
 
-		// pad left with zeros to at least d+1 length
-		if (s.length <= d) s = '0'.repeat(d - s.length + 1) + s;
+		if (s.length <= d) {
+			s = '0'.repeat(d - s.length + 1) + s;
+		}
 
 		const i = s.slice(0, s.length - d);
 		let f = s.slice(s.length - d);
-		f = f.replace(/0+$/, ''); // trim trailing zeros
-		return (neg ? '-' : '') + (f ? i + '.' + f : i);
+		f = f.replace(/0+$/, '');
+
+		return (neg ? '-' : '') + (f ? `${i}.${f}` : i);
 	}
 
 	function toBigIntString(x) {
-		// Accept number | string | bigint
 		if (typeof x === 'bigint') return x.toString(10);
-		if (typeof x === 'number')  return BigInt(Math.trunc(x)).toString(10);
-		if (typeof x === 'string')  return x;
-		return '0';
+		if (typeof x === 'number') return BigInt(Math.trunc(x)).toString(10);
+		if (typeof x === 'string') return x;
+		if (x == null) return '0';
+		return String(x);
 	}
-
-	// ---- AE (node) -----------------------------------------------------------
-
-	// ---- Common Normalized Errors ----------------------------------------------
 
 	function normalizeError(err) {
 		if (!err) return { type: 'unknown', message: 'Unknown error' };
-
-		if (typeof err === 'string') {
-			return { type: 'string-error', message: err };
-		}
-
-		if (err.name === 'AbortError') {
-			return { type: 'timeout', message: 'Request timed out' };
-		}
+		if (typeof err === 'string') return { type: 'string-error', message: err };
+		if (err.name === 'AbortError') return { type: 'timeout', message: 'Request timed out' };
 
 		return {
 			type: err.type || 'exception',
@@ -78,7 +87,6 @@ const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk
 		};
 	}
 
-	// Wrap any async function in safe container
 	const safe = (fn) => async (...args) => {
 		try {
 			return { ok: true, value: await fn(...args) };
@@ -86,85 +94,121 @@ const DAMAGE_CONTRACT_ID = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk
 			return { ok: false, error: normalizeError(err) };
 		}
 	};
-	const _fetchAeBalance = async (pubkey, opts = {}) => {
-		const { nodeBase = DEFAULTS.nodeBase, timeoutMs = DEFAULTS.timeoutMs } = opts;
-		const url = `${nodeBase.replace(/\/$/, '')}/v3/accounts/${encodeURIComponent(pubkey)}?int-as-string=true`;
+
+	// ---- balance fetch -------------------------------------------------------
+
+	const _fetchAllBalances = async (pubkey, opts = {}) => {
+		const {
+			apiBase = DEFAULTS.apiBase,
+			timeoutMs = DEFAULTS.timeoutMs,
+			credentials = DEFAULTS.credentials,
+			headers = {}
+		} = opts;
+
+		if (!pubkey) {
+			throw new Error('pubkey required');
+		}
+
+		const url = `${String(apiBase).replace(/\/$/, '')}/accounts/balance?pubkey=${encodeURIComponent(pubkey)}`;
 
 		const r = await fetchT(url, {
-			headers: { 'Accept': 'application/json' },
-			credentials: 'omit'
+			method: 'GET',
+			headers: {
+				'Accept': 'application/json',
+				...headers
+			},
+			credentials
 		}, timeoutMs);
-
-		if (!r.ok) {
-			throw new Error(`HTTP ${r.status} ${r.statusText}`);
-		}
 
 		const j = await r.json();
 
-		const aettos = toBigIntString(j.balance || '0');
-		const ae = formatUnitsString(aettos, 18);
+		if (j?.status && j.status !== 'ok') {
+			throw new Error(j?.reason || j?.error || 'balance fetch failed');
+		}
+
+		// Accept a few possible field names just in case the backend varies.
+		const aettos = toBigIntString(j.aettos ?? j.ae_balance ?? j.balance ?? '0');
+		const hits = toBigIntString(j.hits ?? j.damage_hits ?? j.damage_balance ?? '0');
+		const msats = toBigIntString(j.msats ?? j.sats_msats ?? j.btc_balance ?? '0');
 
 		return {
-			ok: true,
+			pubkey,
 			aettos,
-			ae,
-			nonce: j.nonce,
+			ae: formatUnitsString(aettos, AE_DECIMALS),
+			hits,
+			damage: formatUnitsString(hits, DAMAGE_DECIMALS),
+			msats,
+			sats: formatUnitsString(msats, MSATS_DECIMALS),
 			raw: j
 		};
 	};
 
-	const fetchAeBalance = safe(_fetchAeBalance);
-	const _fetchAex9Balances = async (pubkey, opts = {}) => {
-		const { mdwBase = DEFAULTS.mdwBase, timeoutMs = DEFAULTS.timeoutMs } = opts;
-		const base = mdwBase.replace(/\/$/, '');
-		const url = `${base}/v3/aex9/${DAMAGE_CONTRACT_ID}/balances/${encodeURIComponent(pubkey)}`;
+	const fetchAllBalances = safe(_fetchAllBalances);
 
-		const r = await fetchT(url, {
-			headers: { 'Accept': 'application/json' },
-			credentials: 'omit'
-		}, timeoutMs);
+	// ---- single DOM update function -----------------------------------------
 
-		if (!r.ok) {
-			throw new Error(`HTTP ${r.status} ${r.statusText}`);
+	async function updateAllBalances(pubkey) {
+		const pubkeyEl = document.getElementById('balanceAddress');
+		const aeEl = document.getElementById('aeBalanceAmount');
+		const damageEl = document.getElementById('balanceAmount');
+		const satsEl = document.getElementById('satsBalanceAmount');
+
+		if (!pubkey || pubkey === 'ak_...') {
+			return {
+				ok: false,
+				error: { type: 'input', message: 'pubkey missing' }
+			};
 		}
 
-		const j = await r.json();
+		if (aeEl) aeEl.textContent = '...';
+		if (damageEl) damageEl.textContent = '...';
+		if (satsEl) satsEl.textContent = '...';
 
-		const hits = toBigIntString(j.amount || '0');
-		const damage = formatUnitsString(hits, 8);
+		const result = await fetchAllBalances(pubkey, {});
+
+		if (!result.ok) {
+			if (aeEl) aeEl.textContent = '0';
+			if (damageEl) damageEl.textContent = '0';
+			if (satsEl) satsEl.textContent = '0';
+			console.warn('updateAllBalances failed:', result.error);
+			return result;
+		}
+
+		const { value } = result;
+
+		if (aeEl) aeEl.textContent = value.ae;
+		if (damageEl) damageEl.textContent = value.damage;
+		if (satsEl) satsEl.textContent = value.sats;
+
+		if (pubkeyEl) {
+			const full = value.pubkey;
+			if (full && !opts.preserveAddressText && !pubkeyEl.dataset.keepFullAddress) {
+				pubkeyEl.textContent =
+					full.length > 14 ? `${full.slice(0, 8)}...${full.slice(-6)}` : full;
+			}
+			pubkeyEl.title = full;
+			if (!pubkeyEl.dataset.pubkey) {
+				pubkeyEl.dataset.pubkey = full;
+			}
+		}
 
 		return {
 			ok: true,
-			raw: j.amount,
-			damage,
-			hits
+			value
 		};
-	};
-
-	const fetchAex9Balances = safe(_fetchAex9Balances);
-
-	async function fetchAeAndAex9Balances(pubkey, opts = {}) {
-		const [ae, dgt] = await Promise.all([
-			fetchAeBalance(pubkey, opts),
-			fetchAex9Balances(pubkey, opts)
-		]);
-
-		const out = {
-			ok: ae.ok && dgt.ok,
-			ae: ae.ok ? ae.value : null,
-			damage: dgt.ok ? dgt.value : null,
-			errors: []
-		};
-
-		if (!ae.ok) out.errors.push({ which: 'ae', ...ae.error });
-		if (!dgt.ok) out.errors.push({ which: 'aex9', ...dgt.error });
-
-		return out;
 	}
 
-	// expose for easy use + console testing
-	g.fetchAeBalance = fetchAeBalance;
-	g.fetchAex9Balances = fetchAex9Balances;
-	g.fetchAeAndAex9Balances = fetchAeAndAex9Balances;
+	// ---- exports -------------------------------------------------------------
+
+	g.fetchAllBalances = fetchAllBalances;
+	g.updateAllBalances = updateAllBalances;
+
+	// ---- auto-load -----------------------------------------------------------
+
+	//document.addEventListener('DOMContentLoaded', () => {
+	//	updateAllBalances().catch((err) => {
+	//		console.error('DOMContentLoaded balance update failed:', err);
+	//	});
+	//});
 
 })(typeof globalThis !== 'undefined' ? globalThis : window);

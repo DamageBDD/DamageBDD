@@ -298,6 +298,7 @@ document.addEventListener('DOMContentLoaded', () => {
 		var damageAddr = document.getElementById("damage-address");
 		damageAddr.value = address;
 
+		if(!window.fetchAeAndAex9Balances)return;
 		try {
 			const res = await window.fetchAeAndAex9Balances(address);
 			console.log("damage balances (raw)", res);

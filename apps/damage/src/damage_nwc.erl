@@ -52,7 +52,9 @@
     deploy_nwc_contract/0,
     deploy_nwc_contract/1,
     ledger_call/3,
-    ledger_call_dry/3
+    ledger_call_dry/3,
+    ledger_balance_for_account_cached/1,
+    ledger_balance_for_account_uncached/1
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -437,3 +439,51 @@ normalize_relays(Relays0) ->
 
 to_s(B) when is_binary(B) -> binary_to_list(B);
 to_s(L) when is_list(L) -> L.
+
+ledger_balance_for_account_cached(AeAccount) ->
+    AeAccountBin = damage_utils:to_bin(AeAccount),
+    case damage_nwc_balance_cache:get(AeAccountBin) of
+        {ok, Ledger} ->
+            Ledger;
+        miss ->
+            Ledger = ledger_balance_for_account_uncached(AeAccountBin),
+            ok = damage_nwc_balance_cache:put(AeAccountBin, Ledger),
+            Ledger
+    end.
+
+ledger_balance_for_account_uncached(AeAccountBin) ->
+    case damage_nwc_http:resolve_user_ledger_ct(AeAccountBin) of
+        {ok, LedgerCt} ->
+            LedgerCtBin = damage_utils:to_bin(LedgerCt),
+            ?LOG_DEBUG("damage_nwc ledger_balance_for_account_uncached ~p ~p", [
+                AeAccountBin, LedgerCtBin
+            ]),
+            case damage_nwc_wallet:ledger_balance_msat(AeAccountBin, LedgerCtBin, AeAccountBin) of
+                {ok, LedgerMsat} ->
+                    #{
+                        account => AeAccountBin,
+                        ledger_ct => LedgerCtBin,
+                        balance_msat => LedgerMsat,
+                        balance_sat => LedgerMsat div 1000
+                    };
+                {error, Why} ->
+                    #{
+                        account => AeAccountBin,
+                        status => <<"error">>,
+                        message => damage_utils:to_bin(io_lib:format("~p", [Why]))
+                    }
+            end;
+        {error, not_found} ->
+            #{
+                account => AeAccountBin,
+                status => <<"not_found">>,
+                balance_msat => 0,
+                balance_sat => 0
+            };
+        {error, Why} ->
+            #{
+                account => AeAccountBin,
+                status => <<"error">>,
+                message => damage_utils:to_bin(io_lib:format("~p", [Why]))
+            }
+    end.

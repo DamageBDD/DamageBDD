@@ -1,19 +1,6 @@
-// DamageNWCLedger.aes
-// NWC Ledger for DamageBDD
-//
-// Keyed by NWC "client" pubkey (hex string).
-// Stores spendable msats and policy limits.
-// Admin-controlled mutation: register/revoke/credit/debit/record.
-// Optional operator role enables future custodial / service execution:
-//   - admin can set operator
-//   - operator may debit only (bounded by limits), cannot credit or change limits.
-//
-// Notes:
-// - We use string pubkey keys for simplicity.
-// - We store tx meta as a sha256 hash (bytes(32)) to avoid bloat.
-// - Expiry is an optional chain height threshold (0 => never expires).
-
+include "String.aes"
 contract DamageNWCLedger =
+
   record policy =
     { revoked         : bool
     , max_single_msat : int
@@ -23,37 +10,64 @@ contract DamageNWCLedger =
     }
 
   record tx =
-    { kind      : string
-    , amount_msat : int
-    , ref       : string
-    , meta_sha256 : bytes(32)
-    , height    : int
+    { kind          : string
+    , amount_msat   : int
+    , ref           : string
+    , meta_sha256   : bytes(32)
+    , height        : int
+    }
+
+  record totals_out =
+    { total_balance_msat : int
+    , total_credit_msat  : int
+    , total_debit_msat   : int
+    }
+
+  record client_totals_out =
+    { balance_msat       : int
+    , total_credit_msat  : int
+    , total_debit_msat   : int
     }
 
   record state =
-    { admin      : address
-    , operator : option(address)
-    , balances   : map(string, int)        // spendable msat
-    , policies   : map(string, policy)     // per client pubkey policy
-    , tx_count   : map(string, int)        // per client counter
-    , txs        : map(string, map(int, tx)) // nested map for txs
+    { admin              : address
+    , operator           : option(address)
+    , balances           : map(string, int)
+    , policies           : map(string, policy)
+    , total_credited     : map(string, int)
+    , total_debited      : map(string, int)
+    , total_balance_msat : int
+    , total_credit_msat  : int
+    , total_debit_msat   : int
+    , tx_count           : map(string, int)
+    , txs                : map(string, map(int, tx))
     }
 
+  datatype event =
+    LedgerEvent(hash, int, string)
+    // LedgerEvent(client_pubkey_hash, kind, payload)
+    // kind: 0 = credit, 1 = debit
+
+  function client_pubkey_hash(client_pubkey : string) : hash =
+    Crypto.sha256(client_pubkey)
+
+
   entrypoint init(admin : address) =
-    { admin = admin,
-      operator = None,
-      balances = {},
-      policies = {},
-      tx_count = {},
-      txs = {}
-      }
+    { admin              = admin
+      , operator           = None
+      , balances           = {}
+      , policies           = {}
+      , total_credited     = {}
+      , total_debited      = {}
+      , total_balance_msat = 0
+      , total_credit_msat  = 0
+      , total_debit_msat   = 0
+      , tx_count           = {}
+      , txs                = {}
+        }
 
-  // -----------------------
-  // Read-only
-  // -----------------------
-
-  entrypoint admin() : address =
-    state.admin
+  entrypoint admin() : address = state.admin
+  entrypoint operator() : option(address) = state.operator
 
   entrypoint balance(client_pubkey : string) : int =
     switch(Map.lookup(client_pubkey, state.balances))
@@ -63,9 +77,39 @@ contract DamageNWCLedger =
   entrypoint policy_of(client_pubkey : string) : policy =
     switch(Map.lookup(client_pubkey, state.policies))
       None =>
-        // default policy: not revoked, no limits (but debit() will require registration anyway)
-        { revoked = true, max_single_msat = 0, max_total_msat = 0, spent_msat = 0, expires_height = 0 }
+        { revoked = true
+          , max_single_msat = 0
+          , max_total_msat = 0
+          , spent_msat = 0
+          , expires_height = 0
+            }
       Some(p) => p
+
+  entrypoint total_balance() : int = state.total_balance_msat
+  entrypoint total_credit() : int = state.total_credit_msat
+  entrypoint total_debit() : int = state.total_debit_msat
+
+  entrypoint totals() : totals_out =
+    { total_balance_msat = state.total_balance_msat
+      , total_credit_msat  = state.total_credit_msat
+      , total_debit_msat   = state.total_debit_msat
+        }
+
+  entrypoint client_total_credit(client_pubkey : string) : int =
+    switch(Map.lookup(client_pubkey, state.total_credited))
+      None    => 0
+      Some(v) => v
+
+  entrypoint client_total_debit(client_pubkey : string) : int =
+    switch(Map.lookup(client_pubkey, state.total_debited))
+      None    => 0
+      Some(v) => v
+
+  entrypoint client_totals(client_pubkey : string) : client_totals_out =
+    { balance_msat      = balance(client_pubkey)
+      , total_credit_msat = client_total_credit(client_pubkey)
+      , total_debit_msat  = client_total_debit(client_pubkey)
+        }
 
   entrypoint is_revoked(client_pubkey : string) : bool =
     let p = policy_of(client_pubkey)
@@ -87,7 +131,7 @@ contract DamageNWCLedger =
             can_debit_with_limits(p, bal, amount_msat)
         else
           can_debit_with_limits(p, bal, amount_msat)
-  
+
   function can_debit_with_limits(p : policy, bal : int, amount_msat : int) : bool =
     if (p.max_single_msat > 0)
       if (amount_msat > p.max_single_msat)
@@ -96,7 +140,7 @@ contract DamageNWCLedger =
         can_debit_with_total_limit(p, bal, amount_msat)
     else
       can_debit_with_total_limit(p, bal, amount_msat)
-  
+
   function can_debit_with_total_limit(p : policy, bal : int, amount_msat : int) : bool =
     if (p.max_total_msat > 0)
       if ((p.spent_msat + amount_msat) > p.max_total_msat)
@@ -114,33 +158,30 @@ contract DamageNWCLedger =
   entrypoint tx_at(client_pubkey : string, idx : int) : option(tx) =
     switch(Map.lookup(client_pubkey, state.txs))
       None => None
-      Some(m) =>
-        Map.lookup(idx, m)
+      Some(m) => Map.lookup(idx, m)
 
-  // -----------------------
-  // Admin-only mutation
-  // -----------------------
-  function only_admin() = require(Call.caller == state.admin, "ONLY_ADMIN")
+  function only_admin() =
+    require(Call.caller == state.admin, "ONLY_ADMIN")
 
   function only_admin_or_operator() =
     switch(state.operator)
-      None => only_admin()
-      Some(op) => require_admin()
-  
+      None =>
+        require(Call.caller == state.admin, "ONLY_ADMIN")
+      Some(op) =>
+        require(Call.caller == state.admin || Call.caller == op, "ONLY_ADMIN_OR_OPERATOR")
+
   stateful entrypoint set_operator(op : option(address)) : bool =
     only_admin()
     put(state{ operator = op })
     true
 
-  function require_admin() = only_admin()
-
   stateful entrypoint register(
-    client_pubkey     : string,
-    max_single_msat   : int,
-    max_total_msat    : int,
-    expires_height    : int
+    client_pubkey   : string,
+    max_single_msat : int,
+    max_total_msat  : int,
+    expires_height  : int
     ) : bool =
-    require_admin()
+    only_admin()
     require(client_pubkey != "", "BAD_CLIENT_PUBKEY")
     let p =
       { revoked = false
@@ -153,19 +194,19 @@ contract DamageNWCLedger =
     true
 
   stateful entrypoint revoke(client_pubkey : string) : bool =
-    require_admin()
+    only_admin()
     let old = policy_of(client_pubkey)
     let p = old{ revoked = true }
     put(state{ policies[client_pubkey] = p })
     true
 
   stateful entrypoint set_limits(
-    client_pubkey     : string,
-    max_single_msat   : int,
-    max_total_msat    : int,
-    expires_height    : int
+    client_pubkey   : string,
+    max_single_msat : int,
+    max_total_msat  : int,
+    expires_height  : int
     ) : bool =
-    require_admin()
+    only_admin()
     let old = policy_of(client_pubkey)
     require(old.revoked == false, "NOT_REGISTERED_OR_REVOKED")
     let p =
@@ -183,53 +224,91 @@ contract DamageNWCLedger =
     ref           : string,
     meta          : string
     ) : bool =
-    require_admin()
+    only_admin()
+    require(client_pubkey != "", "BAD_CLIENT_PUBKEY")
     require(amount_msat > 0, "BAD_AMOUNT")
+
     let bal0 = balance(client_pubkey)
     let bal1 = bal0 + amount_msat
-    put(state{ balances[client_pubkey] = bal1 })
-    record_tx(client_pubkey, "credit", amount_msat, ref, meta)
+
+    let c0 =
+      switch(Map.lookup(client_pubkey, state.total_credited))
+        None    => 0
+        Some(v) => v
+    let c1 = c0 + amount_msat
+
+    let meta_hash : bytes(32) = Crypto.sha256(meta)
+    let height = Chain.block_height
+
+    put(state{
+            balances[client_pubkey]       = bal1,
+            total_credited[client_pubkey] = c1,
+            total_balance_msat            = state.total_balance_msat + amount_msat,
+            total_credit_msat             = state.total_credit_msat + amount_msat
+        })
+
+    record_tx(client_pubkey, "credit", amount_msat, ref, meta_hash, height)
+    emit_ledger_event(client_pubkey, 0, amount_msat, ref, meta_hash, height, bal1)
     true
 
   stateful entrypoint debit(
-    client_pubkey : string,
-    amount_msat   : int,
-    ref           : string,
-    meta          : string
-    ) : bool =
+      client_pubkey : string,
+      amount_msat   : int,
+      ref           : string,
+      meta          : string
+      ) : bool =
     only_admin_or_operator()
+    require(client_pubkey != "", "BAD_CLIENT_PUBKEY")
     require(amount_msat > 0, "BAD_AMOUNT")
+
     let p = policy_of(client_pubkey)
     require(p.revoked == false, "REVOKED")
     require(!(p.expires_height > 0 && Chain.block_height > p.expires_height), "EXPIRED")
     require(!(p.max_single_msat > 0 && amount_msat > p.max_single_msat), "MAX_SINGLE")
     require(!(p.max_total_msat > 0 && (p.spent_msat + amount_msat) > p.max_total_msat), "MAX_TOTAL")
+
     let bal0 = balance(client_pubkey)
     require(bal0 >= amount_msat, "INSUFFICIENT_FUNDS")
+
     let bal1 = bal0 - amount_msat
     let p1 = p{ spent_msat = p.spent_msat + amount_msat }
+
+    let d0 =
+      switch(Map.lookup(client_pubkey, state.total_debited))
+        None    => 0
+        Some(v) => v
+    let d1 = d0 + amount_msat
+
+    let meta_hash : bytes(32) = Crypto.sha256(meta)
+    let height = Chain.block_height
+
     put(state{
-      balances[client_pubkey] = bal1,
-      policies[client_pubkey] = p1
+            balances[client_pubkey]       = bal1,
+            policies[client_pubkey]       = p1,
+            total_debited[client_pubkey]  = d1,
+            total_balance_msat            = state.total_balance_msat - amount_msat,
+            total_debit_msat              = state.total_debit_msat + amount_msat
         })
-    record_tx(client_pubkey, "debit", amount_msat, ref, meta)
+
+    record_tx(client_pubkey, "debit", amount_msat, ref, meta_hash, height)
+    emit_ledger_event(client_pubkey, 1, amount_msat, ref, meta_hash, height, bal1)
     true
-
-
-  // -----------------------
-  // Internal tx record
-  // -----------------------
 
   stateful function record_tx(
     client_pubkey : string,
     kind          : string,
     amount_msat   : int,
     ref           : string,
-    meta          : string
+    meta_hash     : bytes(32),
+    height        : int
     ) =
-    let h : bytes(32) = Crypto.sha256(meta)
-    let height = Chain.block_height
-    let t : tx = { kind = kind, amount_msat = amount_msat, ref = ref, meta_sha256 = h, height = height }
+    let t : tx =
+            { kind = kind
+              , amount_msat = amount_msat
+              , ref = ref
+              , meta_sha256 = meta_hash
+              , height = height
+                }
 
     let n0 =
       switch(Map.lookup(client_pubkey, state.tx_count))
@@ -242,7 +321,42 @@ contract DamageNWCLedger =
         Some(m) => m
 
     let m1 = m0{ [n0] = t }
+
     put(state{
-      tx_count[client_pubkey] = n0 + 1,
-      txs[client_pubkey] = m1
+            tx_count[client_pubkey] = n0 + 1,
+            txs[client_pubkey] = m1
         })
+
+  stateful function emit_ledger_event(
+    client_pubkey : string,
+    kind          : int,
+    amount_msat   : int,
+    ref           : string,
+    meta_hash     : bytes(32),
+    height        : int,
+    balance_after : int
+    ) =
+    let payload =
+      String.concat(
+        Int.to_str(amount_msat),
+        String.concat(
+          "|",
+          String.concat(
+            ref,
+            String.concat(
+              "|",
+              String.concat(
+                Bytes.to_str(meta_hash),
+                String.concat(
+                  "|",
+                  String.concat(
+                    Int.to_str(height),
+                    String.concat("|", Int.to_str(balance_after))
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+    Chain.event(LedgerEvent(client_pubkey_hash(client_pubkey), kind, payload))

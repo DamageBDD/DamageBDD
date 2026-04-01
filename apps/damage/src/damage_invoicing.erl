@@ -19,6 +19,7 @@
 -export([delete_resource/2]).
 -export([lookup_invoice/2]).
 -export([check_invoices/0]).
+-export([create_invoice/2]).
 -export([filter_valid_invoices/2]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -140,30 +141,90 @@ to_json(Req, #{action := get_invoice} = State) ->
 to_json(Req, #{public_key := _AeAccount} = State) ->
     {jsx:encode(#{}), Req, State}.
 
-from_json(Req, #{username := Username, public_key := AeAccount} = State) ->
-    {ok, Data, _Req2} = cowboy_req:read_body(Req),
+from_json(Req, #{public_key := AeAccount} = State) ->
+    {ok, Data, Req2} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
         {'EXIT', {badarg, Trace}} ->
             ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
-            {stop, #{status => <<"failed">>, message => <<"Json decoding failed.">>}, State};
+            {
+                stop,
+                cowboy_req:reply(
+                    400,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(#{
+                        status => <<"failed">>,
+                        message => <<"Json decoding failed.">>
+                    }),
+                    Req2
+                ),
+                State
+            };
         #{
-            amount_sats := Amount
-        } ->
-            ?LOG_INFO("Generating invoice ~p.", [Amount]),
+            amount_sats := AmountSats,
+            label := Label
+        } when
+            is_integer(AmountSats),
+            AmountSats > 0,
+            ((is_binary(Label) andalso Label =/= <<>>) orelse
+                (is_list(Label) andalso Label =/= []))
+        ->
+            LabelBin = normalize_label(Label),
+            Desc = <<"DamageBDD credit topup">>,
+            ?LOG_INFO("Generating labeled invoice amount_sats=~p label=~p.", [AmountSats, LabelBin]),
             Response = #{
                 status => <<"ok">>,
-                invoice => create_invoice(Amount, Username, AeAccount)
+                invoice => create_invoice(AmountSats, Desc, LabelBin)
             },
             {
                 stop,
                 cowboy_req:reply(
-                    201, cowboy_req:set_resp_body(jsx:encode(Response), Req)
+                    201,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(Response),
+                    Req2
+                ),
+                State
+            };
+        #{
+            amount_sats := AmountSats
+        } when
+            is_integer(AmountSats),
+            AmountSats > 0
+        ->
+            Response = #{
+                status => <<"ok">>,
+                invoice => create_invoice(AmountSats, AeAccount)
+            },
+            {
+                stop,
+                cowboy_req:reply(
+                    201,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(Response),
+                    Req2
+                ),
+                State
+            };
+        _Other ->
+            {
+                stop,
+                cowboy_req:reply(
+                    400,
+                    #{<<"content-type">> => <<"application/json">>},
+                    jsx:encode(#{
+                        status => <<"failed">>,
+                        message => <<"amount_sats must be a positive integer">>
+                    }),
+                    Req2
                 ),
                 State
             }
-    end;
-from_json(Req, #{public_key := _AeAccount} = State) ->
-    from_json(Req, maps:put(username, <<"Anon">>, State)).
+    end.
+
+normalize_label(V) when is_binary(V), V =/= <<>> ->
+    V;
+normalize_label(V) when is_list(V), V =/= [] ->
+    unicode:characters_to_binary(V).
 
 delete_resource(Req, #{public_key := _AeAccount} = State) ->
     Deleted =
@@ -194,23 +255,28 @@ check_invoices() ->
         [],
         cln:list_invoices([{"creation_date_start", CreationDate}])
     ).
-create_invoice(AmountSats, Username, AeAccount) ->
+create_invoice(AmountSats, <<"ak_", _/binary>> = AeAccount) ->
     DmgAmount = price_feed:sats_to_damage(AmountSats),
-    Memo =
-        list_to_binary(
-            lists:flatten(
-                io_lib:format(
-                    "Invoice for ~p damage tokens for user ~s, with AE Account ~s",
-                    [DmgAmount, Username, AeAccount]
-                )
+    ?LOG_INFO(
+        "Generating damage token purchase invoice amount_sats=~p ae_account=~p damage ~p.",
+        [AmountSats, AeAccount, DmgAmount]
+    ),
+    Memo = list_to_binary(
+        lists:flatten(
+            io_lib:format(
+                "Invoice for ~p damage tokens for AE Account ~s",
+                [DmgAmount, AeAccount]
             )
-        ),
+        )
+    ),
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary(
         "damage:" ++ binary_to_list(AeAccount) ++ ":" ++ integer_to_list(DmgAmount) ++ ":" ++
             Timestamp
     ),
-    ?LOG_DEBUG("creating invoice with memo ~p", [Memo]),
+    create_invoice(AmountSats, Memo, Label).
+create_invoice(AmountSats, Memo, Label) ->
+    ?LOG_DEBUG("creating invoice with memo ~p and label ~p", [Memo, Label]),
     #{
         payment_hash := PaymentHash,
         expires_at := Expiry,

@@ -148,6 +148,7 @@ export async function initDamageBDDPicker(opts) {
 
   // Wire modal open (your original file already used MicroModal.show):contentReference[oaicite:6]{index=6}
   $opener.onclick = (event) => {
+	  debugger;
     if (window.MicroModal?.show) window.MicroModal.show("feature-picker-modal");
     event.preventDefault?.();
   };
@@ -171,10 +172,11 @@ export async function initDamageBDDPicker(opts) {
     });
   });
 
-  $refresh.addEventListener("click", async () => {
+  $refresh.addEventListener("click", async (event) => {
     cache.clear();
     await loadTab();
     toast("Refreshed", $toast);
+	  event.preventDefault();
   });
 
   $search.addEventListener("input", () => {

@@ -69,7 +69,9 @@ function setButtonLoading(btn, isLoading) {
 	}
 }
 function wrapApiButton(btn, handler, delay = 800) {
-	if (!btn) return;
+	if (!btn) {
+		return;
+	}
 
 	const wrapped = debounceAsync(async (e) => {
 		try {
@@ -218,6 +220,10 @@ function restoreFeatureDraftFromShareLink() {
 			submitLoginForm
 		);
 
+		document.getElementById("loginSubmitBtn").addEventListener("click",(event) => {
+		
+			event.preventDefault();
+		});
 
 		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
 			event.preventDefault();
@@ -409,7 +415,7 @@ function restoreFeatureDraftFromShareLink() {
 					}
 				}
 				if (event.detail && event.detail.content && event.detail.content.id === 'sweep-wallet-tab') {
-					loadWalletBalance();
+					//loadWalletBalance();
 				}
 			}, false);
 		}
@@ -425,8 +431,7 @@ function restoreFeatureDraftFromShareLink() {
 		if (balanceRefreshBtn) {
 			wrapApiButton(balanceRefreshBtn, async (event) => {
 				event.preventDefault();
-				await refreshPostLoginUi();
-				await loadWalletBalance();
+				updateAllBalances(window.TokenManager.getAddress());
 			}, 0);
 		}
 
@@ -471,6 +476,10 @@ function restoreFeatureDraftFromShareLink() {
 				await submitDamageForm();
 			}
 		);
+		document.getElementById("damageForm").addEventListener("submit", async function (event) {
+			event.preventDefault();
+			await submitDamageForm();
+		});
 
 
 		// Toggle password (UI only → no debounce)
@@ -508,28 +517,28 @@ function restoreFeatureDraftFromShareLink() {
 
 
 		// Job modal trigger (likely API → wrap dynamically)
-		document.addEventListener("click", (e) => {
-			const btn = e.target.closest("[data-micromodal-trigger='ecai-job-details-modal']");
-			if (!btn) return;
+		//document.addEventListener("click", (e) => {
+		//	const btn = e.target.closest("[data-micromodal-trigger='ecai-job-details-modal']");
+		//	if (!btn) return;
 
-			// prevent rapid re-clicks
-			if (btn.dataset.loading === "true") return;
+		//	// prevent rapid re-clicks
+		//	if (btn.dataset.loading === "true") return;
 
-			const jobId = btn.getAttribute("data-job-id");
-			if (!jobId) return;
+		//	const jobId = btn.getAttribute("data-job-id");
+		//	if (!jobId) return;
 
-			btn.dataset.loading = "true";
+		//	btn.dataset.loading = "true";
 
-			(async () => {
-				try {
-					setButtonLoading(btn, true);
-					await loadJobIntoModal(jobId);
-				} finally {
-					setButtonLoading(btn, false);
-					btn.dataset.loading = "false";
-				}
-			})();
-		});
+		//	(async () => {
+		//		try {
+		//			setButtonLoading(btn, true);
+		//			await loadJobIntoModal(jobId);
+		//		} finally {
+		//			setButtonLoading(btn, false);
+		//			btn.dataset.loading = "false";
+		//		}
+		//	})();
+		//});
 		// Live Coinstore quote under invoice amount (sats -> USD -> DAMAGE)
 		const invoiceAmountEl = document.getElementById("invoice-amount");
 		const invoiceForm = document.getElementById("invoice-form");
@@ -666,7 +675,6 @@ function restoreFeatureDraftFromShareLink() {
 								} else {
 									// If no seed phrase available, go to sweep wallet tab
 									tabs.toggle('sweep-wallet-tab');
-									loadWalletBalance();
 								}
 							});
 						}
@@ -768,7 +776,6 @@ function restoreFeatureDraftFromShareLink() {
 					const sweepWalletTabLink = document.getElementById("sweep-wallet-tab-link");
 					if (sweepWalletTabLink && sweepWalletTabLink.style.display !== "none") {
 						tabs.toggle('sweep-wallet-tab');
-						loadWalletBalance();
 					} else {
 						MicroModal.close("node-set-password-modal");
 					}
@@ -777,39 +784,6 @@ function restoreFeatureDraftFromShareLink() {
 		}
 	}
 
-	async function loadWalletBalance() {
-		const balanceDisplay = document.getElementById("wallet-balance-display");
-		if (!balanceDisplay) return;
-		
-		try {
-			// Try to get node public key/address
-			const resp = await fetch("/node/public_key", {
-				method: "GET",
-				headers: { "Content-Type": "application/json" }
-			});
-			const data = await resp.json();
-			
-			if (data.status === "ok" && data.public_key) {
-				// Fetch balance using existing wallet balance function if available
-				if (typeof fetchWalletBalance === 'function') {
-					await fetchWalletBalance(data.public_key);
-					const balanceDiv = document.getElementById('wallet-balance');
-					if (balanceDiv && balanceDiv.innerHTML) {
-						balanceDisplay.innerHTML = balanceDiv.innerHTML;
-					} else {
-						balanceDisplay.innerHTML = `<p>Wallet Address: <code>${data.public_key}</code></p>`;
-					}
-				} else {
-					balanceDisplay.innerHTML = `<p>Wallet Address: <code>${data.public_key}</code></p>`;
-				}
-			} else {
-				balanceDisplay.innerHTML = `<p class="warning-text">Unable to load wallet balance. You can still sweep funds if you know the address.</p>`;
-			}
-		} catch (err) {
-			console.error("Load wallet balance error:", err);
-			balanceDisplay.innerHTML = `<p class="warning-text">Unable to load wallet balance. You can still sweep funds if you know the address.</p>`;
-		}
-	}
 
 	async function sweepWallet() {
 		const addressInput = document.getElementById("sweep-wallet-address");
@@ -1036,30 +1010,6 @@ function restoreFeatureDraftFromShareLink() {
 		return last;
 	}
 
-	async function copyToClipboard(text) {
-		try {
-			if (navigator.clipboard && navigator.clipboard.writeText) {
-				await navigator.clipboard.writeText(text);
-				return true;
-			}
-		} catch (_e) {}
-
-		// Fallback
-		try {
-			const ta = document.createElement("textarea");
-			ta.value = text;
-			ta.setAttribute("readonly", "");
-			ta.style.position = "absolute";
-			ta.style.left = "-9999px";
-			document.body.appendChild(ta);
-			ta.select();
-			const ok = document.execCommand("copy");
-			document.body.removeChild(ta);
-			return ok;
-		} catch (_e2) {
-			return false;
-		}
-	}
 	function extractFeatureIpfsHashFromText(text) {
 		if (!text) return null;
 		const lines = String(text).trim().split(/\r?\n/);
@@ -1560,25 +1510,6 @@ function restoreFeatureDraftFromShareLink() {
 	}
 	async function refreshPostLoginUi() {
 		try {
-			const r = await fetch("/accounts/balance", {
-				method: "GET",
-				credentials: "include",
-				headers: {
-					accept: "application/json",
-					...(window.TokenManager.getToken()
-						? { Authorization: "Bearer " + window.TokenManager.getToken() }
-						: {})
-				}
-			});
-			if (r.ok) {
-				const data = await r.json();
-				applyAccountBalance(data);
-			}
-		} catch (err) {
-			console.warn("accounts/balance refresh failed:", err);
-		}
-
-		try {
 			const r = await fetch("/version", {
 				method: "GET",
 				credentials: "include",
@@ -1589,47 +1520,13 @@ function restoreFeatureDraftFromShareLink() {
 				renderNodeFooter(data);
 				renderNodeWalletModal(data);
 			}
+			
+			updateAllBalances(window.TokenManager.getAddress());
 		} catch (err) {
 			console.warn("version refresh failed:", err);
 		}
 	}
 
-	function applyAccountBalance(data) {
-		if (!data) return;
-
-		const damageAmount = document.getElementById("balanceAmount");
-		if (damageAmount && data.amount != null) {
-			damageAmount.textContent = Number(data.amount).toLocaleString(undefined, {
-				maximumFractionDigits: 4
-			});
-		}
-
-		const aeBalance = document.getElementById("aeBalance");
-		if (aeBalance && data.ae_amount != null) {
-			aeBalance.textContent = Number(data.ae_amount).toLocaleString(undefined, {
-				maximumFractionDigits: 4
-			});
-		}
-
-		const satsBalance = document.getElementById("satsBalance");
-		if (satsBalance) {
-			const sats =
-				  data?.ledger?.balance_sat ??
-				  data?.ledger_balance_sat ??
-				  0;
-
-			satsBalance.textContent = Number(sats).toLocaleString(undefined, {
-				maximumFractionDigits: 0
-			});
-		}
-
-		const balanceAddress = document.getElementById("balanceAddress");
-		const addr = window.TokenManager?.getAddress?.();
-		if (balanceAddress && addr) {
-			balanceAddress.textContent = addr;
-			balanceAddress.title = addr;
-		}
-	}
 	async function submitLogout() {
 		const btn = document.getElementById("logoutSubmitBtn");
 		const oldText = btn ? btn.textContent : "";
@@ -1894,11 +1791,6 @@ function restoreFeatureDraftFromShareLink() {
 			metaEl.textContent = `Build: ${env} · ${shaShort} · ${time}`;
 		}
 	}
-
-
-
-
-
 
 
 	function generateInvoice() {
@@ -2241,79 +2133,6 @@ function restoreFeatureDraftFromShareLink() {
 	}
 
 
-	function copyInvoiceToClipboard(){
-		// Copy the text inside the text field
-		navigator.clipboard.writeText(document.getElementById("lightning-invoice-input").value);
-		var copyIcon = document.getElementById("copyInvoiceIcon");
-		copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
-		copyIcon.style.color = 'green'; // Change color to green
-	}
-
-	function copyAddressToClipboard(){
-		// Copy the text inside the text field
-		navigator.clipboard.writeText(document.getElementById("damage-address").value);
-		var copyIcon = document.getElementById("copyAddressIcon");
-		copyIcon.textContent = '✔️ Copied!'; // Change icon to tick
-		copyIcon.style.color = 'green'; // Change color to green
-	}
-
-	function copyToClipboard(elementId) {
-		const el = document.getElementById(elementId);
-		if (!el) return;
-
-		const icon = el.parentElement?.querySelector(".copy-icon");
-		const text = el.value || el.textContent;
-
-		const showSuccess = () => {
-			if (icon) {
-				const original = icon.textContent;
-				icon.textContent = "✅";
-				icon.style.color = "#00ff88";
-				setTimeout(() => {
-					icon.textContent = original;
-					icon.style.color = "";
-				}, 1500);
-			}
-		};
-
-		if (navigator.clipboard && window.isSecureContext) {
-			navigator.clipboard.writeText(text)
-				.then(() => {
-					console.log("Copied to clipboard:", text);
-					showSuccess();
-				})
-				.catch(err => {
-					console.error("Clipboard copy failed:", err);
-				});
-		} else {
-			let range, selection;
-
-			if (el.nodeName === "INPUT" || el.nodeName === "TEXTAREA") {
-				el.select();
-				el.setSelectionRange(0, text.length);
-			} else {
-				range = document.createRange();
-				range.selectNodeContents(el);
-				selection = window.getSelection();
-				selection.removeAllRanges();
-				selection.addRange(range);
-			}
-
-			try {
-				document.execCommand("copy");
-				console.log("Copied (fallback):", text);
-				showSuccess();
-			} catch (err) {
-				console.error("Fallback copy failed:", err);
-			}
-
-			if (selection) selection.removeAllRanges();
-			if (el.blur) el.blur();
-		}
-	}
-
-	// ⬅️ Make it accessible from HTML inline
-	window.copyToClipboard = copyToClipboard;
 
 	async function openNodeWalletDialog(triggerEl = null) {
 		const btn = triggerEl || document.getElementById("open-node-wallet-btn");

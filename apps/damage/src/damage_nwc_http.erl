@@ -11,6 +11,14 @@
 -export([trails/0]).
 -export([resolve_user_ledger_ct/1]).
 -export([ledger_src_path/0]).
+-export([ledger_call_user_dry/4]).
+-export([ledger_call_user/4]).
+-export([
+    migrate_user_ledger/1,
+    migrate_user_ledger/2,
+    upsert_registry_contract/4
+]).
+
 -export([test/0]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -381,7 +389,7 @@ from_json(Req0, State = #{action := ledger_balance}) ->
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
             LedgerCt = to_bin(LedgerCt0),
-            Res = ledger_call_user_dry(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]),
+            Res = ledger_call_user(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]),
             {true, Req, State#{
                 resp_body => #{
                     status => <<"ok">>,
@@ -583,13 +591,14 @@ ledger_call_user(OwnerAkBin, LedgerCt, Fun, Args) ->
         Args
     ).
 
-ledger_call_user_dry(_OwnerAkBin, LedgerCt, Fun, Args) ->
+ledger_call_user_dry(OwnerAkBin, LedgerCt, Fun, Args) ->
+    KP = user_keypair_from_owner(OwnerAkBin),
     damage_ae:contract_call_dry(
+        KP,
         to_s(LedgerCt),
         ledger_src_path(),
         Fun,
-        Args,
-        #{}
+        Args
     ).
 
 %% When a user has no ledger registered yet:
@@ -736,6 +745,120 @@ upsert_registry_contract(KP, RegistryCt, Name, ContractCt) ->
             account_registry:register_contract(KP, RegistryCt, Name, ContractCt);
         Other ->
             Other
+    end.
+
+%% -------------------------------------------------------------------
+%% Shell helper: deploy a new ledger and update AccountRegistry
+%%
+%% migrate_user_ledger(OwnerAkBin) ->
+%%   - ensures the user's AccountRegistry exists
+%%   - resolves current nwc_ledger (best effort)
+%%   - deploys a fresh DamageNWCLedger with the user's custodial key
+%%   - updates AccountRegistry: nwc_ledger -> NewLedgerCt
+%%
+%% Returns:
+%%   {ok, #{
+%%      owner => OwnerAk,
+%%      registry_ct => RegistryCt,
+%%      old_ledger_ct => OldLedgerCt | undefined,
+%%      new_ledger_ct => NewLedgerCt
+%%   }}
+%%
+%% Note:
+%%   This migrates the registry pointer to a fresh contract.
+%%   It does NOT copy old per-client balances/policies, because the ledger
+%%   contract is keyed by client pubkey and not enumerable on-chain.
+%% -------------------------------------------------------------------
+
+-spec migrate_user_ledger(binary()) -> {ok, map()} | {error, term()}.
+migrate_user_ledger(OwnerAkBin) ->
+    migrate_user_ledger(OwnerAkBin, #{}).
+
+-spec migrate_user_ledger(binary(), map()) -> {ok, map()} | {error, term()}.
+migrate_user_ledger(OwnerAkBin0, Opts) ->
+    OwnerAkBin = to_bin(OwnerAkBin0),
+
+    case maybe_user_keypair_from_owner(OwnerAkBin) of
+        {ok, KP} ->
+            case ensure_registry_ct(OwnerAkBin) of
+                {ok, RegistryCt0} ->
+                    RegistryCt = to_bin(RegistryCt0),
+
+                    OldLedgerCt =
+                        case resolve_user_ledger_ct(OwnerAkBin) of
+                            {ok, Ct0} -> to_bin(Ct0);
+                            {error, _} -> undefined
+                        end,
+
+                    InitAdmin =
+                        case maps:get(admin_ak, Opts, undefined) of
+                            undefined ->
+                                maps:get(public_key, KP);
+                            V ->
+                                to_bin(V)
+                        end,
+
+                    case damage_ae:contract_deploy_for(KP, ledger_src_path(), [InitAdmin]) of
+                        #{"contract_id" := NewLedgerCt0} ->
+                            NewLedgerCt = to_bin(NewLedgerCt0),
+
+                            case
+                                upsert_registry_contract(
+                                    KP,
+                                    RegistryCt,
+                                    ?NWC_REGISTRY_NAME,
+                                    NewLedgerCt
+                                )
+                            of
+                                {ok, true} ->
+                                    maybe_set_operator_after_migration(
+                                        OwnerAkBin,
+                                        NewLedgerCt,
+                                        Opts
+                                    ),
+                                    {ok, #{
+                                        owner => OwnerAkBin,
+                                        registry_ct => RegistryCt,
+                                        old_ledger_ct => OldLedgerCt,
+                                        new_ledger_ct => NewLedgerCt
+                                    }};
+                                {error, Why} ->
+                                    {error, {registry_upsert_failed, Why}};
+                                Other ->
+                                    {error, {registry_upsert_bad_reply, Other}}
+                            end;
+                        #{"return_type" := "revert"} = Info ->
+                            {error, {ledger_deploy_revert, Info}};
+                        Other ->
+                            {error, {ledger_deploy_failed, Other}}
+                    end;
+                {error, Why} ->
+                    {error, {ensure_registry_ct_failed, Why}}
+            end;
+        {error, Why} ->
+            {error, {no_custodial_key, Why}}
+    end.
+
+-spec maybe_set_operator_after_migration(binary(), binary(), map()) -> ok | {error, term()}.
+maybe_set_operator_after_migration(OwnerAkBin, NewLedgerCt, Opts) ->
+    case maps:get(operator_ak, Opts, undefined) of
+        undefined ->
+            ok;
+        OperatorAk0 ->
+            OperatorAk = to_bin(OperatorAk0),
+            case
+                ledger_call_user(
+                    OwnerAkBin,
+                    NewLedgerCt,
+                    "set_operator",
+                    [#{<<"Some">> => binary_to_list(OperatorAk)}]
+                )
+            of
+                #{"return_type" := "ok"} ->
+                    ok;
+                Other ->
+                    {error, {set_operator_failed, Other}}
+            end
     end.
 
 test() ->

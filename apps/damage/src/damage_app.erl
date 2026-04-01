@@ -115,6 +115,7 @@ start_phase(start_trails_http, _StartType, []) ->
     {ok, _} = application:ensure_all_started(gen_smtp),
     {ok, _} = application:ensure_all_started(gproc),
     {ok, _} = application:ensure_all_started(ssh),
+    ok = damage_nwc_balance_cache:start(),
     {ok, _} =
         gen_smtp_server:start(
             damage_smtp_server,

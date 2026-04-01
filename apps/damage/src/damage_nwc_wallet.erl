@@ -67,7 +67,7 @@
     ledger_policy/3,
     authorize_amount_msat/4,
     debit_after_payment/6,
-
+    do_get_balance/1,
     wallet_info/1
 ]).
 -import(damage_utils, [to_bin/1]).
@@ -169,6 +169,15 @@ handle_request_json(RequestEventId, ClientPubHex, ReqJson, State) ->
 dispatch(<<"get_info">>, _ClientPubHex, _Params, State) ->
     {ok, wallet_info(State)};
 dispatch(<<"get_balance">>, ClientPubHex, _Params, _State) ->
+    do_get_balance(ClientPubHex);
+dispatch(<<"pay_invoice">>, ClientPubHex, Params, State) ->
+    ?LOG_DEBUG("Pay invoice ~p ~p", [ClientPubHex, Params]),
+    handle_pay_invoice(ClientPubHex, Params, State);
+dispatch(<<"make_invoice">>, _ClientPubHex, Params, _State) ->
+    handle_make_invoice(Params);
+dispatch(Method, _ClientPubHex, _Params, _State) ->
+    {error, <<"NOT_IMPLEMENTED">>, <<Method/binary, " not supported">>}.
+do_get_balance(ClientPubHex) ->
     case resolve_owner_and_ledger_by_client_pubkey(ClientPubHex) of
         {ok, Owner, LedgerCt} ->
             case ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
@@ -182,15 +191,7 @@ dispatch(<<"get_balance">>, ClientPubHex, _Params, _State) ->
             end;
         {error, Why} ->
             {error, <<"UNKNOWN_CLIENT">>, fmt(Why)}
-    end;
-dispatch(<<"pay_invoice">>, ClientPubHex, Params, State) ->
-    ?LOG_DEBUG("Pay invoice ~p ~p", [ClientPubHex, Params]),
-    handle_pay_invoice(ClientPubHex, Params, State);
-dispatch(<<"make_invoice">>, _ClientPubHex, Params, _State) ->
-    handle_make_invoice(Params);
-dispatch(Method, _ClientPubHex, _Params, _State) ->
-    {error, <<"NOT_IMPLEMENTED">>, <<Method/binary, " not supported">>}.
-
+    end.
 %%%===================================================================
 %%% Method handlers
 %%%===================================================================
@@ -243,20 +244,86 @@ handle_pay_invoice(ClientPubHex, Params, _State) ->
     end.
 
 handle_make_invoice(Params) ->
-    AmountMsat = maps:get(<<"amount">>, Params, maps:get(amount, Params, 0)),
-    Desc = maps:get(<<"description">>, Params, maps:get(description, Params, <<"DamageBDD">>)),
-    case cln:create_invoice(AmountMsat, Desc) of
-        {ok, Invoice} ->
-            {ok, #{
-                type => <<"incoming">>,
-                invoice => invoice_bolt11(Invoice),
-                payment_hash => invoice_payment_hash(Invoice)
-            }};
-        {error, Why} ->
-            {error, <<"INVOICE_CREATE_FAILED">>, fmt(Why)};
-        Other ->
-            {error, <<"INVOICE_CREATE_FAILED">>, fmt(Other)}
+    AmountMsat = invoice_amount_msat_from_params(Params),
+    Desc = invoice_desc_from_params(Params),
+    Label = invoice_label_from_params(Params),
+    case AmountMsat > 0 of
+        true ->
+            case cln:create_invoice(AmountMsat, Desc, Label) of
+                #{bolt11 := _} = Invoice ->
+                    _ = damage_nwc_invoice_watch_sup:start_child(Label),
+                    {ok, #{
+                        type => <<"incoming">>,
+                        invoice => invoice_bolt11(Invoice),
+                        payment_hash => invoice_payment_hash(Invoice),
+                        label => Label
+                    }};
+                {error, Why} ->
+                    {error, <<"INVOICE_CREATE_FAILED">>, fmt(Why)};
+                Other ->
+                    {error, <<"INVOICE_CREATE_FAILED">>, fmt(Other)}
+            end;
+        false ->
+            {error, <<"INVALID_PARAMS">>, <<"amount must be > 0">>}
     end.
+
+invoice_amount_msat_from_params(Params) ->
+    case maps:get(<<"amount_msat">>, Params, maps:get(amount_msat, Params, undefined)) of
+        undefined ->
+            case maps:get(<<"amount_sats">>, Params, maps:get(amount_sats, Params, undefined)) of
+                undefined ->
+                    normalize_nonneg_int(
+                        maps:get(<<"amount">>, Params, maps:get(amount, Params, 0))
+                    );
+                Sats ->
+                    normalize_nonneg_int(Sats) * 1000
+            end;
+        Msat ->
+            normalize_nonneg_int(Msat)
+    end.
+
+invoice_desc_from_params(Params) ->
+    case maps:get(<<"description">>, Params, maps:get(description, Params, undefined)) of
+        undefined ->
+            <<"DamageBDD">>;
+        Desc ->
+            normalize_desc(Desc)
+    end.
+
+invoice_label_from_params(Params) ->
+    case maps:get(<<"label">>, Params, maps:get(label, Params, undefined)) of
+        undefined ->
+            <<"DamageBDD">>;
+        Label ->
+            normalize_label(Label)
+    end.
+
+normalize_label(V) when is_binary(V), V =/= <<>> ->
+    V;
+normalize_label(V) when is_list(V), V =/= [] ->
+    unicode:characters_to_binary(V).
+normalize_desc(V) when is_binary(V) ->
+    V;
+normalize_desc(V) when is_list(V) ->
+    unicode:characters_to_binary(V).
+normalize_nonneg_int(I) when is_integer(I), I >= 0 ->
+    I;
+normalize_nonneg_int(B) when is_binary(B) ->
+    try binary_to_integer(B) of
+        V when V >= 0 -> V;
+        _ -> 0
+    catch
+        _:_ -> 0
+    end;
+normalize_nonneg_int(L) when is_list(L) ->
+    try list_to_integer(L) of
+        V when V >= 0 -> V;
+        _ -> 0
+    catch
+        _:_ -> 0
+    end;
+normalize_nonneg_int(_) ->
+    0.
 
 %%%===================================================================
 %%% Responses
@@ -394,7 +461,7 @@ owner_pubkey(Pub) when is_list(Pub) -> to_bin(Pub).
 -spec ledger_balance_msat(binary(), binary(), binary()) ->
     {ok, integer()} | {error, term()}.
 ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
-    case damage_nwc_http:ledger_call_user_dry(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]) of
+    case damage_nwc_http:ledger_call_user(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]) of
         #{"return_type" := "ok", "return_value" := Value} ->
             normalize_int(Value);
         Other ->
@@ -404,7 +471,7 @@ ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
 -spec ledger_policy(binary(), binary(), binary()) ->
     {ok, map()} | {error, term()}.
 ledger_policy(Owner, LedgerCt, ClientPubHex) ->
-    case damage_nwc_http:ledger_call_user_dry(Owner, LedgerCt, "policy_of", [to_s(ClientPubHex)]) of
+    case damage_nwc_http:ledger_call_user(Owner, LedgerCt, "policy_of", [to_s(ClientPubHex)]) of
         #{"return_type" := "ok", "return_value" := Value} ->
             {ok, normalize_policy(Value)};
         Other ->
@@ -457,6 +524,7 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
                 "debit",
                 [to_s(ClientPubHex), integer_to_list(AmountMsat), to_s(Ref), to_s(Meta)]
             ),
+            ok = damage_nwc_balance_cache:invalidate(Owner),
             ok;
         operator_signed ->
             ok

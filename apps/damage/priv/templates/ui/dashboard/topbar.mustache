@@ -9,35 +9,66 @@
       </div>
     </div>
   </div>
+
   <div class="toolbar-items">
-    <div id="balanceDiv" class="token-cta" data-micromodal-trigger="wallet-modal">
-      <div class="balance-column">
-        <span id="balanceAddress" title="Wallet Address">ak_...</span>
+    <div class="wallet-toolbar-card" aria-label="Wallet summary">
+      <div class="wallet-toolbar-main">
+        <div class="wallet-toolbar-address-row">
+          <span class="wallet-toolbar-kicker">Wallet</span>
+          <span id="balanceAddress" class="wallet-toolbar-address" title="Wallet Address">
+            ak_...
+          </span>
+        </div>
 
-        <div class="balance-row">
-          <span id="balanceLabel">DAMAGE:</span>
-          <span id="balanceAmount" class="damage-amount"></span>
+        <div class="wallet-toolbar-balances" id="balanceDiv">
+          <div class="wallet-balance-chip">
+            <span class="wallet-balance-label">DAMAGE</span>
+            <span id="balanceAmount" class="wallet-balance-value damage-amount">—</span>
+          </div>
 
-          <span id="aeBalanceLabel" class="ae-sub">AE:</span>
-          <span id="aeBalance" class="ae-balance"></span>
+          <div class="wallet-balance-chip wallet-balance-chip-subtle">
+            <span class="wallet-balance-label">AE</span>
+            <span id="aeBalance" class="wallet-balance-value ae-balance">—</span>
+          </div>
 
-          <span id="satsBalanceLabel" class="sats-sub">SATS:</span>
-          <span id="satsBalance" class="sats-balance"></span>
-
-          <button id="balanceRefreshBtn"
-                  type="button"
-                  class="icon-btn"
-                  title="Refresh balance"
-                  aria-label="Refresh balance">
-            ⟳
-          </button>
+          <div class="wallet-balance-chip wallet-balance-chip-subtle">
+            <span class="wallet-balance-label">SATS</span>
+            <span id="satsBalance" class="wallet-balance-value sats-balance">—</span>
+          </div>
         </div>
       </div>
+
+      <div class="wallet-toolbar-actions">
+        <button
+          id="open-wallet-modal-btn"
+          type="button"
+          class="styled-btn wallet-open-btn"
+          data-micromodal-trigger="wallet-modal"
+          aria-label="Open wallet"
+          title="Open wallet"
+        >
+          Open Wallet
+        </button>
+
+        <button
+          id="balanceRefreshBtn"
+          type="button"
+          class="icon-btn wallet-refresh-btn"
+          aria-label="Refresh balances"
+          title="Refresh balances"
+        >
+          ⟳
+        </button>
+      </div>
     </div>
+
     <div id="toolbar-btns">
-      <div id="installBtn" class="install-btn" data-micromodal-trigger="install-modal">Install Node</div>
-      <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">Logout</div>
+      <div id="installBtn" class="install-btn" data-micromodal-trigger="install-modal">
+        Install Node
+      </div>
+      <div id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">
+        Logout
+      </div>
     </div>
   </div>
 </div>
-

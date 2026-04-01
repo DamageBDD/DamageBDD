@@ -18,7 +18,8 @@
     ledger_revoke_intent/3,
     ledger_credit_intent/6,
     ledger_debit_intent/6,
-    ledger_set_operator_intent/4
+    ledger_set_operator_intent/4,
+    migrate_user_ledger_intents/3
 ]).
 
 -define(LEDGER_SRC_PATH, "contracts/DamageNWCLedger.aes").
@@ -58,6 +59,50 @@ upsert_registry_intent(RegistryCt, Name, LedgerCt) ->
         contract_id => to_bin(RegistryCt),
         <<"fun">> => <<"update_contract">>,
         args => [to_str(Name), to_str(LedgerCt)]
+    }.
+
+%% -------------------------------------------------------------------
+%% Migrate user ledger
+%%
+%% Returns an ordered bundle of intents:
+%%   1) deploy new ledger contract
+%%   2) update account registry nwc_ledger -> new contract
+%%
+%% The deployed contract id is not known ahead of time, so the registry
+%% update uses a placeholder contract id that the wallet/UI should replace
+%% with the actual deployed ct_... after the deploy transaction succeeds.
+%%
+%% Example return:
+%% #{
+%%   kind => <<"ae_intent_bundle">>,
+%%   action => <<"migrate_user_ledger">>,
+%%   registry_name => <<"nwc_ledger">>,
+%%   intents => [DeployIntent, UpsertIntent]
+%% }.
+%% -------------------------------------------------------------------
+-spec migrate_user_ledger_intents(binary(), binary(), binary()) -> map().
+migrate_user_ledger_intents(AdminAk, RegistryCt, Label) ->
+    DeployLabel =
+        case to_bin(Label) of
+            <<>> -> <<"DamageNWCLedgerMigration">>;
+            B -> B
+        end,
+
+    DeployIntent = deploy_ledger_intent(AdminAk, DeployLabel),
+
+    %% Wallet/UI should replace this after deploy with actual ct_...
+    UpsertIntent = upsert_registry_intent(
+        RegistryCt,
+        ?REGISTRY_NAME,
+        <<"ct_TBD_FROM_DEPLOY">>
+    ),
+
+    #{
+        kind => <<"ae_intent_bundle">>,
+        action => <<"migrate_user_ledger">>,
+        label => DeployLabel,
+        registry_name => ?REGISTRY_NAME,
+        intents => [DeployIntent, UpsertIntent]
     }.
 
 %% Ledger calls

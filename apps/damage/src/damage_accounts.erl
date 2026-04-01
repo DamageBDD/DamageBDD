@@ -871,7 +871,12 @@ delete_resource(Req, #{action := invoices} = State) ->
 
 balance(AeAccount) ->
     #{id := AeAccount, balance := BalanceAettos} = damage_ae:get_ae_balance(AeAccount),
-    #{amount => damage_ae:balance(AeAccount), ae_amount => BalanceAettos}.
+    Ledger = damage_nwc:ledger_balance_for_account_cached(AeAccount),
+    #{
+        amount => damage_ae:balance(AeAccount),
+        ae_amount => BalanceAettos,
+        ledger => Ledger
+    }.
 
 delete_account(Email) ->
     case damage_ae:delete_account(Email) of
