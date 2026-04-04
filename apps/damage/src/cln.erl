@@ -63,6 +63,43 @@
     list_sendpays/0,
     open_channel/2
 ]).
+-export([
+    list_all_invoices/0,
+    list_all_invoices/1
+]).
+
+-export([
+    sort_invoices_desc/1,
+    sort_sendpays_desc/1,
+    sort_pays_desc/1,
+    sort_peerchannels_desc/1,
+    sort_outputs_desc/1
+]).
+%% -------------------------------------------------------------------
+%% SQL-backed canned queries for CLN
+%% Read-only, safe, parameterized-by-construction
+%% -------------------------------------------------------------------
+
+-export([
+    sql/1,
+    sql_rows/1,
+
+    recent_invoices/1,
+    recent_invoices/2,
+    unpaid_invoices/1,
+    unpaid_invoices/2,
+    paid_invoices_since/2,
+    invoice_counts_by_status/0,
+
+    recent_account_events/2,
+    recent_account_events/3,
+    account_event_summary/1,
+    account_event_summary/2,
+
+    recent_peerchannels/1,
+    peerchannel_summary/0
+]).
+-define(DEFAULT_LIST_INVOICES_PAGE_LIMIT, 100).
 -export([test/0]).
 
 %% Cache / timeouts
@@ -128,6 +165,112 @@ msat_to_sats(Msat) when is_integer(Msat) ->
 start_link([]) ->
     gen_server:start_link(?MODULE, [], []).
 
+to_sort_int(V) when is_integer(V) -> V;
+to_sort_int(V) when is_binary(V) ->
+    try
+        binary_to_integer(V)
+    catch
+        _:_ -> -1
+    end;
+to_sort_int(V) when is_list(V) ->
+    try
+        list_to_integer(V)
+    catch
+        _:_ -> -1
+    end;
+to_sort_int(_) ->
+    -1.
+
+map_get_any(Keys, Map, Default) ->
+    lists:foldl(
+        fun(Key, Acc) ->
+            case Acc of
+                Default ->
+                    maps:get(Key, Map, Default);
+                _ ->
+                    Acc
+            end
+        end,
+        Default,
+        Keys
+    ).
+
+invoice_sort_key(Inv) ->
+    {
+        to_sort_int(map_get_any([created_index, <<"created_index">>], Inv, -1)),
+        to_sort_int(map_get_any([updated_index, <<"updated_index">>], Inv, -1)),
+        to_sort_int(map_get_any([created_at, <<"created_at">>], Inv, -1)),
+        to_sort_int(
+            map_get_any([expires_at, <<"expires_at">>, expiry_time, <<"expiry_time">>], Inv, -1)
+        )
+    }.
+
+sort_invoices_desc(Invoices) when is_list(Invoices) ->
+    lists:sort(
+        fun(A, B) ->
+            invoice_sort_key(A) >= invoice_sort_key(B)
+        end,
+        Invoices
+    ).
+
+sendpay_sort_key(Pay) ->
+    {
+        to_sort_int(map_get_any([created_at, <<"created_at">>], Pay, -1)),
+        to_sort_int(map_get_any([updated_index, <<"updated_index">>], Pay, -1))
+    }.
+
+sort_sendpays_desc(Pays) when is_list(Pays) ->
+    lists:sort(
+        fun(A, B) ->
+            sendpay_sort_key(A) >= sendpay_sort_key(B)
+        end,
+        Pays
+    ).
+
+pay_sort_key(Pay) ->
+    {
+        to_sort_int(
+            map_get_any([created_at, <<"created_at">>, completed_at, <<"completed_at">>], Pay, -1)
+        ),
+        to_sort_int(map_get_any([updated_index, <<"updated_index">>], Pay, -1))
+    }.
+
+sort_pays_desc(Pays) when is_list(Pays) ->
+    lists:sort(
+        fun(A, B) ->
+            pay_sort_key(A) >= pay_sort_key(B)
+        end,
+        Pays
+    ).
+
+peerchannel_sort_key(Chan) ->
+    {
+        to_sort_int(map_get_any([created_at, <<"created_at">>], Chan, -1)),
+        to_sort_int(map_get_any([last_update, <<"last_update">>], Chan, -1)),
+        to_sort_int(map_get_any([updated_at, <<"updated_at">>], Chan, -1))
+    }.
+
+sort_peerchannels_desc(Channels) when is_list(Channels) ->
+    lists:sort(
+        fun(A, B) ->
+            peerchannel_sort_key(A) >= peerchannel_sort_key(B)
+        end,
+        Channels
+    ).
+
+output_sort_key(Out) ->
+    {
+        to_sort_int(map_get_any([blockheight, <<"blockheight">>], Out, -1)),
+        to_sort_int(map_get_any([output, <<"output">>], Out, -1))
+    }.
+
+sort_outputs_desc(Outputs) when is_list(Outputs) ->
+    lists:sort(
+        fun(A, B) ->
+            output_sort_key(A) >= output_sort_key(B)
+        end,
+        Outputs
+    ).
 %% ===================================================================
 %% Init / state
 %% ===================================================================
@@ -276,7 +419,7 @@ maybe_cancel(TRef) ->
 %% ===================================================================
 
 to_bin(B) when is_binary(B) -> B;
-to_bin(L) when is_list(L) -> list_to_binary(L);
+to_bin(L) when is_list(L) -> unicode:characters_to_binary(L);
 to_bin(T) -> iolist_to_binary(io_lib:format("~p", [T])).
 
 normalize_peer(#{id := _} = M) ->
@@ -367,24 +510,74 @@ list_invoices_by_payment_hash(PaymentHash) ->
         gen_server:call(Worker, {list_invoices, #{payment_hash => PaymentHash}}, ?CLN_HTTP_TIMEOUT)
     end).
 
-create_invoice(AmountMsats, Description) ->
+create_invoice(AmountMsats, Description) when
+    is_integer(AmountMsats),
+    AmountMsats > 0,
+    (is_binary(Description) orelse is_list(Description))
+->
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("asyncmind" ++ Timestamp),
     poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(Worker, {create_invoice, AmountMsats, Description, 3600, Label})
+        gen_server:call(
+            Worker,
+            {create_invoice, AmountMsats, normalize_desc(Description), 3600, Label}
+        )
     end).
 
-create_invoice(AmountMsats, Description, Expiry) ->
+create_invoice(AmountMsats, Description, Expiry) when
+    is_integer(AmountMsats),
+    AmountMsats > 0,
+    (is_binary(Description) orelse is_list(Description)),
+    is_integer(Expiry),
+    Expiry > 0
+->
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("asyncmind" ++ Timestamp),
     poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(Worker, {create_invoice, AmountMsats, Description, Expiry, Label})
+        gen_server:call(
+            Worker,
+            {create_invoice, AmountMsats, normalize_desc(Description), Expiry, Label}
+        )
+    end);
+create_invoice(AmountMsats, Description, Label) when
+    is_integer(AmountMsats),
+    AmountMsats > 0,
+    (is_binary(Description) orelse is_list(Description)),
+    ((is_binary(Label) andalso Label =/= <<>>) orelse
+        (is_list(Label) andalso Label =/= []))
+->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(
+            Worker,
+            {create_invoice, AmountMsats, normalize_desc(Description), 3600, normalize_label(Label)}
+        )
     end).
 
-create_invoice(AmountMsats, Description, Expiry, Label) ->
+create_invoice(AmountMsats, Description, Expiry, Label) when
+    is_integer(AmountMsats),
+    AmountMsats > 0,
+    (is_binary(Description) orelse is_list(Description)),
+    is_integer(Expiry),
+    Expiry > 0,
+    ((is_binary(Label) andalso Label =/= <<>>) orelse
+        (is_list(Label) andalso Label =/= []))
+->
     poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(Worker, {create_invoice, AmountMsats, Description, Expiry, Label})
+        gen_server:call(
+            Worker,
+            {create_invoice, AmountMsats, normalize_desc(Description), Expiry,
+                normalize_label(Label)}
+        )
     end).
+normalize_label(V) when is_binary(V), V =/= <<>> ->
+    V;
+normalize_label(V) when is_list(V), V =/= [] ->
+    unicode:characters_to_binary(V).
+
+normalize_desc(V) when is_binary(V) ->
+    V;
+normalize_desc(V) when is_list(V) ->
+    unicode:characters_to_binary(V).
 
 hold_invoice(Amount, Description, Expiry, Cltv) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
@@ -1556,6 +1749,34 @@ handle_call(
 ) ->
     Reply = open_channel_with_peer(Host, Port, Options, Rune, to_bin(NodeId), AmountSats),
     {reply, Reply, State};
+handle_call(
+    {sql, #{query := Query0}},
+    _From,
+    #state{
+        cln_host = Host,
+        cln_port = Port,
+        readonly_rune = ReadonlyRune,
+        options = Options
+    } = State
+) ->
+    Query = to_bin(Query0),
+    Reply =
+        case {ReadonlyRune, Query} of
+            {undefined, _} ->
+                {error, readonly_rune_not_configured};
+            {_, <<>>} ->
+                {error, empty_sql_query};
+            _ ->
+                cln_post_json(
+                    Host,
+                    Port,
+                    Options,
+                    ReadonlyRune,
+                    "/v1/sql",
+                    #{query => Query}
+                )
+        end,
+    {reply, Reply, State};
 handle_call(Request, From, State) ->
     ?LOG_ERROR("handle_call got unknown ~p, From ~p, State ~p", [Request, From, State]),
     {reply, err, State}.
@@ -1599,6 +1820,473 @@ terminate(Reason, State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% -------------------------------------------------------------------
+%% Invoice pagination helpers
+%% -------------------------------------------------------------------
+%% Opts supported:
+%%   #{
+%%      start => non_neg_integer(),
+%%      page_limit => pos_integer(),
+%%      min_created_index => non_neg_integer(),
+%%      unpaid_only => boolean(),
+%%      paid_only => boolean(),
+%%      expired_only => boolean(),
+%%      unexpired_only => boolean(),
+%%      label_prefix => binary() | list(),
+%%      min_expires_at => integer(),   %% absolute unix seconds
+%%      max_expires_at => integer()    %% absolute unix seconds
+%%    }
+%%
+%% Returns:
+%%   {ok, [Invoice]}
+%%   {error, Reason}
+%% -------------------------------------------------------------------
+
+list_all_invoices() ->
+    list_all_invoices(#{}).
+
+list_all_invoices(Opts0) when is_map(Opts0) ->
+    Start = maps:get(start, Opts0, 0),
+    PageLimit = maps:get(page_limit, Opts0, ?DEFAULT_LIST_INVOICES_PAGE_LIMIT),
+    Order = maps:get(order, Opts0, desc),
+    Filters = normalize_invoice_filters(Opts0),
+    case list_all_invoices_page(Start, PageLimit, Filters, []) of
+        {ok, Invoices} ->
+            Sorted =
+                case Order of
+                    desc ->
+                        sort_invoices_desc(Invoices);
+                    asc ->
+                        lists:sort(
+                            fun(A, B) -> invoice_sort_key(A) =< invoice_sort_key(B) end,
+                            Invoices
+                        );
+                    _ ->
+                        sort_invoices_desc(Invoices)
+                end,
+            {ok, Sorted};
+        Error ->
+            Error
+    end.
+
+list_all_invoices_page(Start, PageLimit, Filters, Acc) ->
+    Params = #{
+        index => <<"created">>,
+        start => Start,
+        limit => PageLimit
+    },
+    case list_invoices(Params) of
+        #{invoices := Invoices} when is_list(Invoices) ->
+            Filtered = filter_invoices(Invoices, Filters),
+            NewAcc = lists:reverse(Filtered, Acc),
+            case Invoices of
+                [] ->
+                    {ok, lists:reverse(NewAcc)};
+                _ ->
+                    NextStart = next_invoice_created_start(Invoices, Start),
+                    case length(Invoices) < PageLimit of
+                        true ->
+                            {ok, lists:reverse(NewAcc)};
+                        false when NextStart =< Start ->
+                            {error, {invalid_invoice_pagination_cursor, Start, NextStart}};
+                        false ->
+                            list_all_invoices_page(NextStart, PageLimit, Filters, NewAcc)
+                    end
+            end;
+        Other ->
+            {error, {unexpected_list_invoices_result, Other}}
+    end.
+
+normalize_invoice_filters(Opts0) ->
+    #{
+        min_created_index => maps:get(min_created_index, Opts0, undefined),
+        unpaid_only => maps:get(unpaid_only, Opts0, false),
+        paid_only => maps:get(paid_only, Opts0, false),
+        expired_only => maps:get(expired_only, Opts0, false),
+        unexpired_only => maps:get(unexpired_only, Opts0, false),
+        label_prefix => normalize_optional_binary(maps:get(label_prefix, Opts0, undefined)),
+        min_expires_at => maps:get(min_expires_at, Opts0, undefined),
+        max_expires_at => maps:get(max_expires_at, Opts0, undefined)
+    }.
+
+filter_invoices(Invoices, Filters) ->
+    [I || I <- Invoices, invoice_matches_filters(I, Filters)].
+
+invoice_matches_filters(Invoice, Filters) ->
+    ?LOG_INFO("invoice filters ~p ~p", [Invoice, Filters]),
+    created_index_matches(Invoice, maps:get(min_created_index, Filters, undefined)) andalso
+        status_matches(
+            Invoice,
+            maps:get(unpaid_only, Filters, false),
+            maps:get(paid_only, Filters, false),
+            maps:get(expired_only, Filters, false)
+        ) andalso
+        label_prefix_matches(Invoice, maps:get(label_prefix, Filters, undefined)) andalso
+        expiry_matches(
+            Invoice,
+            maps:get(unexpired_only, Filters, false),
+            maps:get(min_expires_at, Filters, undefined),
+            maps:get(max_expires_at, Filters, undefined)
+        ).
+
+created_index_matches(_Invoice, undefined) ->
+    true;
+created_index_matches(Invoice, MinCreatedIndex) when is_integer(MinCreatedIndex) ->
+    case invoice_created_index(Invoice) of
+        N when is_integer(N) -> N >= MinCreatedIndex;
+        undefined -> false
+    end.
+
+status_matches(_Invoice, false, false, false) ->
+    true;
+status_matches(Invoice, UnpaidOnly, PaidOnly, ExpiredOnly) ->
+    Status = invoice_status(Invoice),
+    ((not UnpaidOnly) orelse Status =:= <<"unpaid">>) andalso
+        ((not PaidOnly) orelse Status =:= <<"paid">>) andalso
+        ((not ExpiredOnly) orelse Status =:= <<"expired">>).
+
+label_prefix_matches(_Invoice, undefined) ->
+    true;
+label_prefix_matches(Invoice, Prefix) when is_binary(Prefix), Prefix =/= <<>> ->
+    case invoice_label(Invoice) of
+        Label when is_binary(Label) ->
+            binary:longest_common_prefix([Label, Prefix]) =:= byte_size(Prefix);
+        _ ->
+            false
+    end.
+
+expiry_matches(Invoice, UnexpiredOnly, MinExpiresAt, MaxExpiresAt) ->
+    ExpiresAt = invoice_expires_at(Invoice),
+    unexpired_only_matches(ExpiresAt, UnexpiredOnly) andalso
+        min_expires_at_matches(ExpiresAt, MinExpiresAt) andalso
+        max_expires_at_matches(ExpiresAt, MaxExpiresAt).
+
+unexpired_only_matches(_ExpiresAt, false) ->
+    true;
+unexpired_only_matches(ExpiresAt, true) when is_integer(ExpiresAt) ->
+    ExpiresAt > erlang:system_time(second);
+unexpired_only_matches(_ExpiresAt, true) ->
+    false.
+
+min_expires_at_matches(_ExpiresAt, undefined) ->
+    true;
+min_expires_at_matches(ExpiresAt, MinExpiresAt) when is_integer(ExpiresAt) ->
+    ExpiresAt >= MinExpiresAt;
+min_expires_at_matches(_ExpiresAt, _MinExpiresAt) ->
+    false.
+
+max_expires_at_matches(_ExpiresAt, undefined) ->
+    true;
+max_expires_at_matches(ExpiresAt, MaxExpiresAt) when is_integer(ExpiresAt) ->
+    ExpiresAt =< MaxExpiresAt;
+max_expires_at_matches(_ExpiresAt, _MaxExpiresAt) ->
+    false.
+
+next_invoice_created_start(Invoices, FallbackStart) ->
+    MaxCreatedIndex =
+        lists:foldl(
+            fun(Invoice, Acc) ->
+                case invoice_created_index(Invoice) of
+                    N when is_integer(N), N > Acc -> N;
+                    _ -> Acc
+                end
+            end,
+            FallbackStart - 1,
+            Invoices
+        ),
+    case MaxCreatedIndex >= FallbackStart of
+        true -> MaxCreatedIndex + 1;
+        false -> FallbackStart
+    end.
+
+invoice_created_index(#{created_index := N}) when is_integer(N) -> N;
+invoice_created_index(#{<<"created_index">> := N}) when is_integer(N) -> N;
+invoice_created_index(_) -> undefined.
+
+invoice_expires_at(#{expires_at := N}) when is_integer(N) -> N;
+invoice_expires_at(#{<<"expires_at">> := N}) when is_integer(N) -> N;
+invoice_expires_at(#{expiry_time := N}) when is_integer(N) -> N;
+invoice_expires_at(#{<<"expiry_time">> := N}) when is_integer(N) -> N;
+invoice_expires_at(_) -> undefined.
+
+invoice_label(#{label := L}) -> normalize_optional_binary(L);
+invoice_label(#{<<"label">> := L}) -> normalize_optional_binary(L);
+invoice_label(_) -> undefined.
+
+invoice_status(#{status := S}) ->
+    normalize_invoice_status(S);
+invoice_status(#{<<"status">> := S}) ->
+    normalize_invoice_status(S);
+invoice_status(#{state := S}) ->
+    normalize_invoice_status(S);
+invoice_status(#{<<"state">> := S}) ->
+    normalize_invoice_status(S);
+invoice_status(_) ->
+    undefined.
+
+normalize_invoice_status(S) when is_binary(S) ->
+    string:lowercase(S);
+normalize_invoice_status(S) when is_list(S) ->
+    binary:lowercase(unicode:characters_to_binary(S));
+normalize_invoice_status(S) when is_atom(S) ->
+    binary:lowercase(atom_to_binary(S, utf8));
+normalize_invoice_status(_) ->
+    undefined.
+
+normalize_optional_binary(undefined) ->
+    undefined;
+normalize_optional_binary(V) when is_binary(V) ->
+    V;
+normalize_optional_binary(V) when is_list(V) ->
+    unicode:characters_to_binary(V);
+normalize_optional_binary(_) ->
+    undefined.
+
+%% -------------------------------------------------------------------
+%% Low-level SQL wrapper
+%% -------------------------------------------------------------------
+
+sql(Query) when is_list(Query) ->
+    sql(list_to_binary(Query));
+sql(Query) when is_binary(Query), Query =/= <<>> ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {sql, #{query => Query}}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+sql_rows(Query) ->
+    case sql(Query) of
+        #{rows := Rows} when is_list(Rows) -> {ok, Rows};
+        Other -> {error, {unexpected_sql_result, Other}}
+    end.
+
+%% -------------------------------------------------------------------
+%% Helpers
+%% -------------------------------------------------------------------
+
+sql_quote(V0) ->
+    V = to_bin(V0),
+    Esc = binary:replace(V, <<"'">>, <<"''">>, [global]),
+    <<"'", Esc/binary, "'">>.
+
+sql_limit(N) when is_integer(N), N > 0 ->
+    integer_to_binary(N);
+sql_limit(_) ->
+    <<"50">>.
+
+sql_unix_ts(Ts) when is_integer(Ts), Ts >= 0 ->
+    integer_to_binary(Ts).
+
+rows_to_maps(Cols, Rows) ->
+    [
+        maps:from_list(lists:zip(Cols, Row))
+     || Row <- Rows, is_list(Row)
+    ].
+
+%% -------------------------------------------------------------------
+%% Invoice canned queries
+%% -------------------------------------------------------------------
+
+recent_invoices(Limit) ->
+    recent_invoices(<<"">>, Limit).
+
+recent_invoices(LabelPrefix, Limit) ->
+    Prefix =
+        case to_bin(LabelPrefix) of
+            <<>> -> <<"%">>;
+            P -> <<P/binary, "%">>
+        end,
+    Q = iolist_to_binary([
+        "SELECT label, description, status, amount_msat, amount_received_msat, ",
+        "expires_at, created_index, updated_index, paid_at, payment_hash, bolt11 ",
+        "FROM invoices ",
+        "WHERE label LIKE ", sql_quote(Prefix), " ",
+        "ORDER BY created_index DESC ",
+        "LIMIT ", sql_limit(Limit)
+    ]),
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok,
+             rows_to_maps(
+               [label, description, status, amount_msat, amount_received_msat,
+                expires_at, created_index, updated_index, paid_at, payment_hash, bolt11],
+               Rows)};
+        Error ->
+            Error
+    end.
+
+unpaid_invoices(Limit) ->
+    unpaid_invoices(<<"">>, Limit).
+
+unpaid_invoices(LabelPrefix, Limit) ->
+    Prefix =
+        case to_bin(LabelPrefix) of
+            <<>> -> <<"%">>;
+            P -> <<P/binary, "%">>
+        end,
+    Q = iolist_to_binary([
+        "SELECT label, description, status, amount_msat, expires_at, created_index, payment_hash, bolt11 ",
+        "FROM invoices ",
+        "WHERE status = 'unpaid' ",
+        "AND label LIKE ", sql_quote(Prefix), " ",
+        "ORDER BY created_index DESC ",
+        "LIMIT ", sql_limit(Limit)
+    ]),
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok,
+             rows_to_maps(
+               [label, description, status, amount_msat, expires_at, created_index, payment_hash, bolt11],
+               Rows)};
+        Error ->
+            Error
+    end.
+
+paid_invoices_since(SinceTs, Limit) when is_integer(SinceTs), SinceTs >= 0 ->
+    Q = iolist_to_binary([
+        "SELECT label, description, status, amount_msat, amount_received_msat, paid_at, created_index, payment_hash ",
+        "FROM invoices ",
+        "WHERE status = 'paid' ",
+        "AND paid_at IS NOT NULL ",
+        "AND paid_at >= ", sql_unix_ts(SinceTs), " ",
+        "ORDER BY paid_at DESC ",
+        "LIMIT ", sql_limit(Limit)
+    ]),
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok,
+             rows_to_maps(
+               [label, description, status, amount_msat, amount_received_msat, paid_at, created_index, payment_hash],
+               Rows)};
+        Error ->
+            Error
+    end.
+
+invoice_counts_by_status() ->
+    Q = <<
+        "SELECT status, COUNT(*) AS count, "
+        "COALESCE(SUM(amount_msat), 0) AS total_amount_msat, "
+        "COALESCE(SUM(amount_received_msat), 0) AS total_received_msat "
+        "FROM invoices "
+        "GROUP BY status "
+        "ORDER BY status ASC"
+    >>,
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok, rows_to_maps([status, count, total_amount_msat, total_received_msat], Rows)};
+        Error ->
+            Error
+    end.
+
+%% -------------------------------------------------------------------
+%% Account / bkpr canned queries
+%% -------------------------------------------------------------------
+
+recent_account_events(Account, Limit) ->
+    recent_account_events(Account, undefined, Limit).
+
+recent_account_events(Account0, Tag0, Limit) ->
+    Account = to_bin(Account0),
+    Base = [
+        "SELECT account, type, tag, credit_msat, debit_msat, fees_msat, currency, ",
+        "timestamp, description, outpoint, blockheight, origin, is_rebalance ",
+        "FROM bkpr_accountevents ",
+        "WHERE account = ", sql_quote(Account), " "
+    ],
+    TagSql =
+        case Tag0 of
+            undefined -> [];
+            <<>> -> [];
+            _ -> ["AND tag = ", sql_quote(to_bin(Tag0)), " "]
+        end,
+    Q = iolist_to_binary([
+        Base,
+        TagSql,
+        "ORDER BY timestamp DESC ",
+        "LIMIT ", sql_limit(Limit)
+    ]),
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok,
+             rows_to_maps(
+               [account, type, tag, credit_msat, debit_msat, fees_msat, currency,
+                timestamp, description, outpoint, blockheight, origin, is_rebalance],
+               Rows)};
+        Error ->
+            Error
+    end.
+
+account_event_summary(Account0) ->
+    account_event_summary(Account0, undefined).
+
+account_event_summary(Account0, Tag0) ->
+    Account = to_bin(Account0),
+    Base = [
+        "SELECT account, ",
+        "COUNT(*) AS event_count, ",
+        "COALESCE(SUM(credit_msat), 0) AS total_credit_msat, ",
+        "COALESCE(SUM(debit_msat), 0) AS total_debit_msat, ",
+        "COALESCE(SUM(fees_msat), 0) AS total_fees_msat ",
+        "FROM bkpr_accountevents ",
+        "WHERE account = ", sql_quote(Account), " "
+    ],
+    TagSql =
+        case Tag0 of
+            undefined -> [];
+            <<>> -> [];
+            _ -> ["AND tag = ", sql_quote(to_bin(Tag0)), " "]
+        end,
+    Q = iolist_to_binary([Base, TagSql, "GROUP BY account"]),
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok,
+             rows_to_maps(
+               [account, event_count, total_credit_msat, total_debit_msat, total_fees_msat],
+               Rows)};
+        Error ->
+            Error
+    end.
+
+%% -------------------------------------------------------------------
+%% Operator / channel canned queries
+%% -------------------------------------------------------------------
+
+recent_peerchannels(Limit) ->
+    Q = iolist_to_binary([
+        "SELECT peer_id, short_channel_id, to_us_msat, total_msat, ",
+        "peerchannels_status.status, state_change_cause ",
+        "FROM peerchannels ",
+        "INNER JOIN peerchannels_status ON peerchannels_status.row = peerchannels.rowid ",
+        "ORDER BY peerchannels.rowid DESC ",
+        "LIMIT ", sql_limit(Limit)
+    ]),
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok,
+             rows_to_maps(
+               [peer_id, short_channel_id, to_us_msat, total_msat, status, state_change_cause],
+               Rows)};
+        Error ->
+            Error
+    end.
+
+peerchannel_summary() ->
+    Q = <<
+        "SELECT peerchannels_status.status, "
+        "COUNT(*) AS channel_count, "
+        "COALESCE(SUM(to_us_msat), 0) AS total_to_us_msat, "
+        "COALESCE(SUM(total_msat), 0) AS total_capacity_msat "
+        "FROM peerchannels "
+        "INNER JOIN peerchannels_status ON peerchannels_status.row = peerchannels.rowid "
+        "GROUP BY peerchannels_status.status "
+        "ORDER BY channel_count DESC"
+    >>,
+    case sql_rows(Q) of
+        {ok, Rows} ->
+            {ok, rows_to_maps([status, channel_count, total_to_us_msat, total_capacity_msat], Rows)};
+        Error ->
+            Error
+    end.
 
 %% ===================================================================
 %% Misc entry points
