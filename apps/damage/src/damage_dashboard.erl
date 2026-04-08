@@ -83,6 +83,7 @@ render_full_page(Ctx) ->
     NodeWalletModal = render_tpl(?TPL("node_wallet_modal.mustache"), Ctx),
     NodeTransactionsTab = render_tpl(?TPL("node_transactions_tab.mustache"), Ctx),
     NodeChannelsTab = render_tpl(?TPL("node_channels_tab.mustache"), Ctx),
+    NodeClnAdminTab = render_tpl(?TPL("node_cln_admin.mustache"), Ctx),
 
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
@@ -111,7 +112,8 @@ render_full_page(Ctx) ->
         nwc_modal => NwcModal,
         node_wallet_modal => NodeWalletModal,
         node_transactions_tab => NodeTransactionsTab,
-        node_channels_tab => NodeChannelsTab
+        node_channels_tab => NodeChannelsTab,
+        node_cln_admin_tab => NodeClnAdminTab
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 

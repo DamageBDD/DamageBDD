@@ -60,6 +60,8 @@
 
   </head>
   <body>
+    {{#reset_password}}
+    {{/reset_password}}
     {{{auth_modal}}}
     {{{node_wallet_modal}}}
     {{{node_set_password_modal}}}
@@ -108,6 +110,9 @@
       </div>
       <div id="node-channels-tab">
         {{{node_channels_tab}}}
+      </div>
+      <div id="node-cln-admin-tab">
+        {{{node_cln_admin_tab}}}
       </div>
       {{/node_admin}}
     </div>

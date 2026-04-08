@@ -1,0 +1,98 @@
+<!-- -*- mode: html -*- -->
+<section class="pure-g admin-tab">
+  <div class="pure-u-1">
+    <h2>CLN Invoice, Account & Peer Analytics</h2>
+    <p>Admin-only views powered by read-only CLN canned queries.</p>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Recent invoices</h3>
+        <button id="refresh-cln-invoices-recent" class="pure-button pure-button-primary">Refresh</button>
+      </div>
+
+      <label for="cln-invoices-prefix">Label prefix</label>
+      <input id="cln-invoices-prefix" class="pure-input-1" placeholder="damage:">
+
+      <label for="cln-invoices-limit">Limit</label>
+      <input id="cln-invoices-limit" class="pure-input-1" type="number" value="50">
+
+      <div id="cln-invoices-recent-json" class="admin-data">Loading...</div>
+    </div>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Unpaid invoices</h3>
+        <button id="refresh-cln-invoices-unpaid" class="pure-button pure-button-primary">Refresh</button>
+      </div>
+
+      <label for="cln-unpaid-prefix">Label prefix</label>
+      <input id="cln-unpaid-prefix" class="pure-input-1" placeholder="damage:">
+
+      <label for="cln-unpaid-limit">Limit</label>
+      <input id="cln-unpaid-limit" class="pure-input-1" type="number" value="50">
+
+      <div id="cln-invoices-unpaid-json" class="admin-data">Loading...</div>
+    </div>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Invoice status counts</h3>
+        <button id="refresh-cln-invoice-counts" class="pure-button">Refresh</button>
+      </div>
+      <div id="cln-invoice-counts-json" class="admin-data">Loading...</div>
+    </div>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Peerchannel summary</h3>
+        <button id="refresh-cln-peerchannel-summary" class="pure-button">Refresh</button>
+      </div>
+      <div id="cln-peerchannel-summary-json" class="admin-data">Loading...</div>
+    </div>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Account events</h3>
+        <button id="refresh-cln-account-events" class="pure-button pure-button-primary">Refresh</button>
+      </div>
+
+      <label for="cln-account-name">Account</label>
+      <input id="cln-account-name" class="pure-input-1" placeholder="wallet">
+
+      <label for="cln-account-tag">Tag</label>
+      <input id="cln-account-tag" class="pure-input-1" placeholder="optional tag">
+
+      <label for="cln-account-events-limit">Limit</label>
+      <input id="cln-account-events-limit" class="pure-input-1" type="number" value="100">
+
+      <div id="cln-account-events-json" class="admin-data">Loading...</div>
+    </div>
+  </div>
+
+  <div class="pure-u-1 pure-u-md-1-2">
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <h3>Account summary</h3>
+        <button id="refresh-cln-account-summary" class="pure-button">Refresh</button>
+      </div>
+
+      <label for="cln-account-summary-name">Account</label>
+      <input id="cln-account-summary-name" class="pure-input-1" placeholder="wallet">
+
+      <label for="cln-account-summary-tag">Tag</label>
+      <input id="cln-account-summary-tag" class="pure-input-1" placeholder="optional tag">
+
+      <div id="cln-account-summary-json" class="admin-data">Loading...</div>
+    </div>
+  </div>
+</section>

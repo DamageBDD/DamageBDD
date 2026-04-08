@@ -149,6 +149,41 @@ trails() ->
     ].
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
+%% ------------------------------------------------------------------
+%% node_admin helpers
+%% ------------------------------------------------------------------
+
+normalize_account(A) when is_binary(A) ->
+    A;
+normalize_account(A) when is_list(A) ->
+    unicode:characters_to_binary(A);
+normalize_account(A) when is_atom(A) ->
+    atom_to_binary(A);
+normalize_account(A) ->
+    iolist_to_binary(io_lib:format("~p", [A])).
+
+normalize_accounts(Accounts) when is_list(Accounts) ->
+    [normalize_account(A) || A <- Accounts];
+normalize_accounts(_) ->
+    [].
+
+is_node_admin_account(AeAccount) when is_binary(AeAccount) ->
+    case application:get_env(damage, node_admins, []) of
+        {ok, Accounts} ->
+            lists:member(AeAccount, normalize_accounts(Accounts));
+        Accounts when is_list(Accounts) ->
+            lists:member(AeAccount, normalize_accounts(Accounts));
+        _ ->
+            false
+    end;
+is_node_admin_account(AeAccount) when is_list(AeAccount) ->
+    is_node_admin_account(unicode:characters_to_binary(AeAccount));
+is_node_admin_account(_) ->
+    false.
+
+add_node_admin_flag(State, AeAccount) ->
+    maps:put(node_admin, is_node_admin_account(AeAccount), State).
+
 is_authorized(Req, #{action := version} = State) ->
     {true, Req, State};
 is_authorized(Req, #{action := tx} = State) ->
@@ -158,7 +193,16 @@ is_authorized(Req, State0) ->
         Req,
         State0,
         fun generate_l402_invoice/2,
-        fun(Req1, _Reason, State1) -> generate_l402_invoice(Req1, State1) end
+        fun(Req1, AuthState0, State1) ->
+            AuthState =
+                case maps:get(public_key, AuthState0, undefined) of
+                    undefined ->
+                        AuthState0;
+                    AeAccount ->
+                        add_node_admin_flag(AuthState0, AeAccount)
+                end,
+            {true, Req1, maps:merge(State1, AuthState)}
+        end
     ).
 
 generate_l402_invoice(Req0, State) ->
@@ -551,7 +595,7 @@ do_action_tx(
         "gas_used" := _GasUsed,
         "height" := _Height,
         "log" := _Log,
-        "return_type" := "ok",
+        "return_type" := <<"ok">>,
         "return_value" := {}
     } = damage_ae:wait_tx(ContractCallTxHash),
     case
