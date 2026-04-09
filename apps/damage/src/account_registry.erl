@@ -13,7 +13,11 @@
     get_contract/3,
     get_registered_names/2,
     get_all_contracts/2,
-    deploy_account_registry/1
+    deploy_account_registry/1,
+    invalidate_cache/0,
+    invalidate_cache/2,
+    invalidate_registry_cache/1,
+    cache_ttl/0
 ]).
 -export([test/0]).
 -import(damage_utils, [to_bin/1]).
@@ -23,6 +27,8 @@
 -type name() :: binary() | list().
 
 -define(CONTRACT_PATH, "contracts/account_registry.aes").
+-define(CACHE_TABLE, account_registry_cache).
+-define(DEFAULT_CACHE_TTL_SECONDS, 3000).
 
 -spec ct_id(map()) -> binary().
 ct_id(Opts) ->
@@ -35,6 +41,67 @@ ct_id(Opts) ->
                 _ -> error({missing_contract_id, account_registry_ct})
             end
     end.
+
+cache_ttl() ->
+    application:get_env(damage, account_registry_cache_ttl_seconds, ?DEFAULT_CACHE_TTL_SECONDS).
+
+ensure_cache_table() ->
+    case ets:info(?CACHE_TABLE) of
+        undefined ->
+            ets:new(?CACHE_TABLE, [named_table, public, set, {read_concurrency, true}]),
+            ok;
+        _ ->
+            ok
+    end.
+
+cache_now() ->
+    erlang:monotonic_time(second).
+
+cache_key_get_contract(RegistryId, Name) ->
+    {get_contract, to_bin(RegistryId), to_bin(Name)}.
+
+cache_key_get_registered_names(RegistryId) ->
+    {get_registered_names, to_bin(RegistryId)}.
+
+cache_key_get_all_contracts(RegistryId) ->
+    {get_all_contracts, to_bin(RegistryId)}.
+
+cache_get(Key) ->
+    ensure_cache_table(),
+    Now = cache_now(),
+    case ets:lookup(?CACHE_TABLE, Key) of
+        [{Key, Value, ExpiresAt}] when ExpiresAt > Now ->
+            {ok, Value};
+        [{Key, _Value, _ExpiresAt}] ->
+            ets:delete(?CACHE_TABLE, Key),
+            miss;
+        [] ->
+            miss
+    end.
+
+cache_put(Key, Value) ->
+    ensure_cache_table(),
+    ExpiresAt = cache_now() + cache_ttl(),
+    ets:insert(?CACHE_TABLE, {Key, Value, ExpiresAt}),
+    ok.
+
+invalidate_cache() ->
+    ensure_cache_table(),
+    ets:delete_all_objects(?CACHE_TABLE),
+    ok.
+
+invalidate_cache(RegistryId, Name) ->
+    ensure_cache_table(),
+    ets:delete(?CACHE_TABLE, cache_key_get_contract(RegistryId, Name)),
+    ets:delete(?CACHE_TABLE, cache_key_get_registered_names(RegistryId)),
+    ets:delete(?CACHE_TABLE, cache_key_get_all_contracts(RegistryId)),
+    ok.
+
+invalidate_registry_cache(RegistryId) ->
+    ensure_cache_table(),
+    ets:delete(?CACHE_TABLE, cache_key_get_registered_names(RegistryId)),
+    ets:delete(?CACHE_TABLE, cache_key_get_all_contracts(RegistryId)),
+    ok.
 
 %%--------------------------------------------------------------------
 %% Deployment helpers
@@ -51,6 +118,7 @@ deploy_account_registry(AccountKeypair) when is_map(AccountKeypair) ->
         AccountKeypair, damage_ae:contract_path(?CONTRACT_PATH), []
     ),
     ContractId.
+
 %%--------------------------------------------------------------------
 %% Write entrypoints (stateful)
 %%--------------------------------------------------------------------
@@ -63,22 +131,38 @@ register_contract(KeyPair, Name, ContractId) ->
 -spec register_contract(keypair(), contract_id(), name(), contract_id()) ->
     {ok, boolean()} | {error, term()}.
 register_contract(KeyPair, RegistryId, Name, ContractId) ->
-    call_bool(
-        KeyPair,
-        RegistryId,
-        "register_contract",
-        [to_str(Name), to_str(ContractId)]
-    ).
+    case
+        call_bool(
+            KeyPair,
+            RegistryId,
+            "register_contract",
+            [to_str(Name), to_str(ContractId)]
+        )
+    of
+        {ok, Bool} = Ok ->
+            invalidate_cache(RegistryId, Name),
+            Ok;
+        Error ->
+            Error
+    end.
 
 -spec update_contract(keypair(), contract_id(), name(), contract_id()) ->
     {ok, boolean()} | {error, term()}.
 update_contract(KeyPair, RegistryId, Name, ContractId) ->
-    call_bool(
-        KeyPair,
-        RegistryId,
-        "update_contract",
-        [to_str(Name), to_str(ContractId)]
-    ).
+    case
+        call_bool(
+            KeyPair,
+            RegistryId,
+            "update_contract",
+            [to_str(Name), to_str(ContractId)]
+        )
+    of
+        {ok, Bool} = Ok ->
+            invalidate_cache(RegistryId, Name),
+            Ok;
+        Error ->
+            Error
+    end.
 
 %%--------------------------------------------------------------------
 %% Read entrypoints (pure)
@@ -92,39 +176,66 @@ get_contract(KeyPair, Name) ->
 -spec get_contract(keypair(), contract_id(), name()) ->
     {ok, contract_id()} | {error, term()}.
 get_contract(#{public_key := Pub0, private_key := Priv}, RegistryId, Name) ->
-    {ok, {address, AddrBin}} = call_value(
-        #{public_key => to_bin(Pub0), private_key => Priv},
-        RegistryId,
-        "get_contract",
-        [to_str(Name)]
-    ),
-    {ok, aeser_api_encoder:encode(contract_pubkey, AddrBin)}.
+    CacheKey = cache_key_get_contract(RegistryId, Name),
+    case cache_get(CacheKey) of
+        {ok, ContractPubkey} ->
+            {ok, ContractPubkey};
+        miss ->
+            case
+                call_value(
+                    #{public_key => to_bin(Pub0), private_key => Priv},
+                    RegistryId,
+                    "get_contract",
+                    [to_str(Name)]
+                )
+            of
+                {ok, {address, AddrBin}} ->
+                    Encoded = aeser_api_encoder:encode(contract_pubkey, AddrBin),
+                    cache_put(CacheKey, Encoded),
+                    {ok, Encoded};
+                Error ->
+                    Error
+            end
+    end.
 
 -spec get_registered_names(keypair(), contract_id()) ->
     {ok, [string()]} | {error, term()}.
 get_registered_names(KeyPair, RegistryId) ->
-    call_value(
-        KeyPair,
-        RegistryId,
-        "get_registered_names",
-        []
-    ).
+    CacheKey = cache_key_get_registered_names(RegistryId),
+    case cache_get(CacheKey) of
+        {ok, Names} ->
+            {ok, Names};
+        miss ->
+            case call_value(KeyPair, RegistryId, "get_registered_names", []) of
+                {ok, Names} = Ok ->
+                    cache_put(CacheKey, Names),
+                    Ok;
+                Error ->
+                    Error
+            end
+    end.
 
 -spec get_all_contracts(keypair(), contract_id()) ->
     {ok, map()} | {error, term()}.
 get_all_contracts(KeyPair, RegistryId) ->
-    call_value(
-        KeyPair,
-        RegistryId,
-        "get_all_contracts",
-        []
-    ).
+    CacheKey = cache_key_get_all_contracts(RegistryId),
+    case cache_get(CacheKey) of
+        {ok, Contracts} ->
+            {ok, Contracts};
+        miss ->
+            case call_value(KeyPair, RegistryId, "get_all_contracts", []) of
+                {ok, Contracts} = Ok ->
+                    cache_put(CacheKey, Contracts),
+                    Ok;
+                Error ->
+                    Error
+            end
+    end.
 
 %%--------------------------------------------------------------------
 %% Internal helpers
 %%--------------------------------------------------------------------
 
-%% Generic contract_call wrapper returning just {ok, Value} | {error, Reason}
 call_value(#{public_key := AeAccount, private_key := PrivateKey} = KeyPair, RegistryId, Fun, Args) ->
     ContractIdStr = to_str(RegistryId),
     damage_ae:set_private_key(AeAccount, PrivateKey),
@@ -158,7 +269,6 @@ call_value(#{public_key := AeAccount, private_key := PrivateKey} = KeyPair, Regi
             {error, {unexpected_result, Other}}
     end.
 
-%% Same as call_value but enforces boolean return
 call_bool(KeyPair, RegistryId, Fun, Args) ->
     case call_value(KeyPair, RegistryId, Fun, Args) of
         {ok, true} -> {ok, true};
@@ -167,7 +277,6 @@ call_bool(KeyPair, RegistryId, Fun, Args) ->
         Error -> Error
     end.
 
-%% Accept binaries or lists for all string / id args
 to_str(B) when is_binary(B) -> binary_to_list(B);
 to_str(L) when is_list(L) -> L.
 
