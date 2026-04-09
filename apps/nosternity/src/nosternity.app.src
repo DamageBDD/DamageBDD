@@ -10,14 +10,16 @@
         {mod, {nosternity_app, []}},
         {
             applications,
-            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc]
+            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, gun, damage]
         },
         {env, []},
-        {modules, []},
+        {modules, [nosternity_app, nosternity_sup]},
         {licenses, ["Apache 2.0"]},
         {
             start_phases,
-            []
+            [
+                {start_trails_http, []}
+            ]
         },
         {links, []}
     ]
