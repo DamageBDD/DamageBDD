@@ -90,7 +90,7 @@ trails() ->
                 }
             }
         ),
-     trails:trail(
+        trails:trail(
             "/api/node_admin/invoices/recent",
             damage_node_admin_http,
             #{action => invoices_recent},
@@ -137,14 +137,12 @@ allowed_methods(Req, State = #{action := Action}) ->
             transactions -> [<<"GET">>];
             channels -> [<<"GET">>];
             best_peers -> [<<"GET">>];
-
             invoices_recent -> [<<"GET">>];
             invoices_unpaid -> [<<"GET">>];
             invoice_status_counts -> [<<"GET">>];
             account_events -> [<<"GET">>];
             account_summary -> [<<"GET">>];
             peerchannel_summary -> [<<"GET">>];
-
             connect_peer -> [<<"POST">>];
             open_channel -> [<<"POST">>];
             open_best_channels -> [<<"POST">>]
@@ -166,7 +164,10 @@ is_authorized(Req, State) ->
                 false ->
                     ?LOG_WARNING(
                         "forbidden node_admin request public_key=~p action=~p",
-                        [maps:get(public_key, AuthState, undefined), maps:get(action, State, undefined)]
+                        [
+                            maps:get(public_key, AuthState, undefined),
+                            maps:get(action, State, undefined)
+                        ]
                     ),
                     {{false, <<"Forbidden">>}, Req1, AuthState}
             end;
@@ -228,7 +229,6 @@ to_json(Req, #{action := transactions} = State) ->
             }
         },
     {jsx:encode(Body), Req, State};
-
 to_json(Req, #{action := channels} = State) ->
     Channels0 = cln:list_channels(),
     SortedChannels = cln:sort_peerchannels_desc(Channels0),
@@ -239,20 +239,13 @@ to_json(Req, #{action := channels} = State) ->
             channels => SortedChannels
         },
     {jsx:encode(Body), Req, State};
-
 to_json(Req, #{action := best_peers} = State) ->
-    {AmountMsat0, Req1} = cowboy_req:qs_val(<<"amount_msat">>, Req, <<"200000000">>),
-    AmountMsat =
-        case AmountMsat0 of
-            B when is_binary(B) -> binary_to_integer(B);
-            I when is_integer(I) -> I;
-            _ -> 200000000
-        end,
-    AmountSats = AmountMsat div 1000,
+    {AmountMsat0, Req1} = qs_int(Req, <<"amount_msat">>, 200000000),
+    AmountSats = AmountMsat0 div 1000,
     Body =
         #{
             ok => true,
-            amount_msat => AmountMsat,
+            amount_msat => AmountMsat0,
             amount_sats => AmountSats,
             best_peers => cln:find_best_peer_to_open(AmountSats)
         },
@@ -267,10 +260,10 @@ to_json(Req, #{action := invoices_recent} = State) ->
             {ok, Rows} ->
                 #{ok => true, invoices => Rows};
             Error ->
-                #{ok => false, error => Error}
+                #{ok => false, error => normalize_error(Error)}
         end,
 
-    {jsx:encode(Body), Req2, State};
+    safe_json(Req2, State, Body);
 to_json(Req, #{action := invoices_unpaid} = State) ->
     {Limit0, Req1} = qs_int(Req, <<"limit">>, 50),
     {Prefix, Req2} = qs_bin(Req1, <<"label_prefix">>, <<>>),
@@ -281,20 +274,20 @@ to_json(Req, #{action := invoices_unpaid} = State) ->
             {ok, Rows} ->
                 #{ok => true, invoices => Rows};
             Error ->
-                #{ok => false, error => Error}
+                #{ok => false, error => normalize_error(Error)}
         end,
 
-    {jsx:encode(Body), Req2, State};
+    safe_json(Req2, State, Body);
 to_json(Req, #{action := invoice_status_counts} = State) ->
     Body =
         case cln:invoice_counts_by_status() of
             {ok, Rows} ->
                 #{ok => true, counts => Rows};
             Error ->
-                #{ok => false, error => Error}
+                #{ok => false, error => normalize_error(Error)}
         end,
 
-    {jsx:encode(Body), Req, State};
+    safe_json(Req, State, Body);
 to_json(Req, #{action := account_events} = State) ->
     {Account, Req1} = qs_bin(Req, <<"account">>, <<>>),
     {Tag, Req2} = qs_bin(Req1, <<"tag">>, <<>>),
@@ -308,13 +301,23 @@ to_json(Req, #{action := account_events} = State) ->
             _ ->
                 case Tag of
                     <<>> ->
-                        cln:recent_account_events(Account, L);
+                        case cln:recent_account_events(Account, L) of
+                            {ok, Rows} ->
+                                #{ok => true, events => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end;
                     _ ->
-                        cln:recent_account_events(Account, Tag, L)
+                        case cln:recent_account_events(Account, Tag, L) of
+                            {ok, Rows} ->
+                                #{ok => true, events => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end
                 end
         end,
 
-    {jsx:encode(Body), Req3, State};
+    safe_json(Req3, State, Body);
 to_json(Req, #{action := account_summary} = State) ->
     {Account, Req1} = qs_bin(Req, <<"account">>, <<>>),
     {Tag, Req2} = qs_bin(Req1, <<"tag">>, <<>>),
@@ -326,24 +329,33 @@ to_json(Req, #{action := account_summary} = State) ->
             _ ->
                 case Tag of
                     <<>> ->
-                        cln:account_event_summary(Account);
+                        case cln:account_event_summary(Account) of
+                            {ok, Rows} ->
+                                #{ok => true, summary => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end;
                     _ ->
-                        cln:account_event_summary(Account, Tag)
+                        case cln:account_event_summary(Account, Tag) of
+                            {ok, Rows} ->
+                                #{ok => true, summary => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end
                 end
         end,
 
-    {jsx:encode(Body), Req2, State};
+    safe_json(Req2, State, Body);
 to_json(Req, #{action := peerchannel_summary} = State) ->
     Body =
         case cln:peerchannel_summary() of
             {ok, Rows} ->
                 #{ok => true, summary => Rows};
             Error ->
-                #{ok => false, error => Error}
+                #{ok => false, error => normalize_error(Error)}
         end,
 
-    {jsx:encode(Body), Req, State}.
-
+    safe_json(Req, State, Body).
 
 from_json(Req, #{action := connect_peer} = State) ->
     {ok, Raw, Req1} = cowboy_req:read_body(Req),
@@ -351,7 +363,6 @@ from_json(Req, #{action := connect_peer} = State) ->
     Peer = maps:get(peer, Data),
     Reply = cln:connect_peer(Peer),
     reply_json(Req1, State, #{ok => true, result => Reply});
-
 from_json(Req, #{action := open_channel} = State) ->
     {ok, Raw, Req1} = cowboy_req:read_body(Req),
     Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
@@ -359,7 +370,6 @@ from_json(Req, #{action := open_channel} = State) ->
     AmountSats = maps:get(amount_sats, Data, 200000),
     Reply = cln:open_channel(Peer, AmountSats),
     reply_json(Req1, State, #{ok => true, result => Reply});
-
 from_json(Req, #{action := open_best_channels} = State) ->
     {ok, Raw, Req1} = cowboy_req:read_body(Req),
     Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
@@ -375,23 +385,52 @@ reply_json(Req, State, Body) ->
     ),
     {stop, Req1, State}.
 
+normalize_error(E) when is_binary(E); is_integer(E); is_float(E); is_boolean(E) ->
+    E;
+normalize_error(null) ->
+    null;
+normalize_error(E) when is_atom(E) ->
+    atom_to_binary(E, utf8);
+normalize_error(E) ->
+    iolist_to_binary(io_lib:format("~p", [E])).
+
+safe_json(Req, State, Body) ->
+    try
+        {jsx:encode(Body), Req, State}
+    catch
+        error:badarg:Stack ->
+            ?LOG_ERROR("node_admin json encode failed body=~p stack=~p", [Body, Stack]),
+            {
+                jsx:encode(#{
+                    ok => false,
+                    error => <<"internal_json_encode_error">>
+                }),
+                Req,
+                State
+            }
+    end.
+
 qs_int(Req, Key, Default) ->
-    case cowboy_req:qs_val(Key, Req, integer_to_binary(Default)) of
-        {B, Req1} when is_binary(B) ->
-            try {binary_to_integer(B), Req1}
-            catch _:_ -> {Default, Req1}
+    QS = maps:from_list(cowboy_req:parse_qs(Req)),
+    case maps:get(Key, QS, integer_to_binary(Default)) of
+        B when is_binary(B) ->
+            try
+                {binary_to_integer(B), Req}
+            catch
+                _:_ -> {Default, Req}
             end;
-        {I, Req1} when is_integer(I) ->
-            {I, Req1};
-        {_, Req1} ->
-            {Default, Req1}
+        I when is_integer(I) ->
+            {I, Req};
+        _ ->
+            {Default, Req}
     end.
 
 qs_bin(Req, Key, Default) ->
-    case cowboy_req:qs_val(Key, Req, Default) of
-        {B, Req1} when is_binary(B) -> {B, Req1};
-        {L, Req1} when is_list(L) -> {unicode:characters_to_binary(L), Req1};
-        {_, Req1} -> {Default, Req1}
+    QS = maps:from_list(cowboy_req:parse_qs(Req)),
+    case maps:get(Key, QS, Default) of
+        B when is_binary(B) -> {B, Req};
+        L when is_list(L) -> {unicode:characters_to_binary(L), Req};
+        _ -> {Default, Req}
     end.
 
 limit(N) when N < 1 -> 1;

@@ -34,10 +34,11 @@
 
 -behaviour(gen_server).
 
-%% API
 -export([
     start_link/0,
     set_contract/1,
+    clear_cache/0,
+    clear_cache/1,
 
     %% account-level
     register_account/3,
@@ -81,27 +82,30 @@
 
 -define(DEFAULT_CONTRACT_PATH, "contracts/node_registry.aes").
 -define(ETS_TABLE, node_registry_cache).
-%% cache TTL for read calls
--define(TTL_MS, 30_000).
+-define(DEFAULT_TTL_MS, 30_000).
 
 -record(state, {
     ets_table,
     contract_id = undefined,
-    contract_path = ?DEFAULT_CONTRACT_PATH
+    contract_path = ?DEFAULT_CONTRACT_PATH,
+    ttl_ms = ?DEFAULT_TTL_MS
 }).
 
-%%% =========================
-%%% PUBLIC API
-%%% =========================
+%% =========================
+%% PUBLIC API
+%% =========================
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% Optional: set contract id at runtime (overrides ?NODE_REGISTRY_CONTRACT macro).
 set_contract(ContractId) when is_binary(ContractId); is_list(ContractId) ->
     gen_server:call(?MODULE, {set_contract, ContractId}).
 
-%% -------- Account-level
+clear_cache() ->
+    gen_server:call(?MODULE, clear_cache).
+
+clear_cache(Key) ->
+    gen_server:call(?MODULE, {clear_cache, Key}).
 
 register_account(Account, Registry, Tier) ->
     gen_server:call(?MODULE, {register_account, Account, Registry, Tier}, ?AE_TIMEOUT).
@@ -246,97 +250,31 @@ handle_call({register_account, Account0, Registry0, Tier0}, _From, State) ->
     Registry = to_bin(Registry0),
     Tier = to_bin(Tier0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "register_account",
-            [Account, Registry, Tier]
-        ),
-    %% invalidate account cache
-    cache_delete(State, {user_info, Account}),
-    cache_delete(State, {registry, Account}),
-    cache_delete(State, {is_registered, Account}),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "register_account",
+        [Account, Registry, Tier]
+    ),
+
+    invalidate_account(State, Account),
     {reply, Resp, State};
-handle_call({get_user_info, Account0}, _From, State) ->
-    ContractId = require_contract(State),
-    Account = to_bin(Account0),
-    Key = {user_info, Account},
-
-    case cache_get(State, Key) of
-        {ok, Val} ->
-            {reply, Val, State};
-        miss ->
-            KeyPair = secrets:node_keypair(),
-            Resp =
-                damage_ae:contract_call(
-                    KeyPair,
-                    ContractId,
-                    State#state.contract_path,
-                    "get_user_info",
-                    [Account]
-                ),
-            cache_put(State, Key, Resp),
-            {reply, Resp, State}
-    end;
-handle_call({is_registered, Account0}, _From, State) ->
-    ContractId = require_contract(State),
-    Account = to_bin(Account0),
-    Key = {is_registered, Account},
-
-    case cache_get(State, Key) of
-        {ok, Val} ->
-            {reply, Val, State};
-        miss ->
-            KeyPair = secrets:node_keypair(),
-            Resp =
-                damage_ae:contract_call(
-                    KeyPair,
-                    ContractId,
-                    State#state.contract_path,
-                    "is_registered",
-                    [Account]
-                ),
-            cache_put(State, Key, Resp),
-            {reply, Resp, State}
-    end;
-handle_call({get_registry, Account0}, _From, State) ->
-    ContractId = require_contract(State),
-    Account = to_bin(Account0),
-    Key = {registry, Account},
-
-    case cache_get(State, Key) of
-        {ok, Val} ->
-            {reply, Val, State};
-        miss ->
-            KeyPair = secrets:node_keypair(),
-            Resp =
-                damage_ae:contract_call(
-                    KeyPair,
-                    ContractId,
-                    State#state.contract_path,
-                    "get_registry",
-                    [Account]
-                ),
-            cache_put(State, Key, Resp),
-            {reply, Resp, State}
-    end;
 handle_call({update_tier, Account0, Tier0}, _From, State) ->
     ContractId = require_contract(State),
     KeyPair = secrets:node_keypair(),
     Account = to_bin(Account0),
     Tier = to_bin(Tier0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "update_tier",
-            [Account, Tier]
-        ),
-    cache_delete(State, {user_info, Account}),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "update_tier",
+        [Account, Tier]
+    ),
+
+    invalidate_account(State, Account),
     {reply, Resp, State};
 handle_call({update_registry, Account0, Registry0}, _From, State) ->
     ContractId = require_contract(State),
@@ -344,145 +282,68 @@ handle_call({update_registry, Account0, Registry0}, _From, State) ->
     Account = to_bin(Account0),
     Registry = to_bin(Registry0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "update_registry",
-            [Account, Registry]
-        ),
-    cache_delete(State, {user_info, Account}),
-    cache_delete(State, {registry, Account}),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "update_registry",
+        [Account, Registry]
+    ),
+
+    invalidate_account(State, Account),
     {reply, Resp, State};
 %% -------------------------
-%% Node-level calls
+%% Account-level reads
+%% -------------------------
+
+handle_call({get_user_info, Account0}, _From, State) ->
+    Account = to_bin(Account0),
+    {reply, cached_contract_call(State, {user_info, Account}, "get_user_info", [Account]), State};
+handle_call({is_registered, Account0}, _From, State) ->
+    Account = to_bin(Account0),
+    {reply, cached_contract_call(State, {is_registered, Account}, "is_registered", [Account]),
+        State};
+handle_call({get_registry, Account0}, _From, State) ->
+    Account = to_bin(Account0),
+    {reply, cached_contract_call(State, {registry, Account}, "get_registry", [Account]), State};
+%% -------------------------
+%% Node-level writes
 %% -------------------------
 
 handle_call({register_node, Owner0, NodeId0, MetaMap0, CfgMap0}, _From, State) ->
     ContractId = require_contract(State),
     KeyPair = secrets:node_keypair(),
-
     Owner = to_bin(Owner0),
     NodeId = to_bin(NodeId0),
     MetaRec = meta_map_to_record(MetaMap0),
     CfgRec = cfg_map_to_record(CfgMap0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "register_node",
-            [Owner, NodeId, MetaRec, CfgRec]
-        ),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "register_node",
+        [Owner, NodeId, MetaRec, CfgRec]
+    ),
 
-    %% invalidate relevant caches
-    cache_delete(State, {node, NodeId}),
-    cache_delete(State, {node_owner, NodeId}),
-    cache_delete(State, {is_node_registered, NodeId}),
-    cache_delete(State, {nodes_for, Owner}),
-    cache_delete(State, {user_info, Owner}),
+    invalidate_node(State, NodeId),
+    invalidate_account(State, Owner),
     {reply, Resp, State};
-handle_call({get_node, NodeId0}, _From, State) ->
-    ContractId = require_contract(State),
-    NodeId = to_bin(NodeId0),
-    Key = {node, NodeId},
-
-    case cache_get(State, Key) of
-        {ok, Val} ->
-            {reply, Val, State};
-        miss ->
-            KeyPair = secrets:node_keypair(),
-            Resp =
-                damage_ae:contract_call(
-                    KeyPair,
-                    ContractId,
-                    State#state.contract_path,
-                    "get_node",
-                    [NodeId]
-                ),
-            cache_put(State, Key, Resp),
-            {reply, Resp, State}
-    end;
-handle_call({get_node_owner, NodeId0}, _From, State) ->
-    ContractId = require_contract(State),
-    NodeId = to_bin(NodeId0),
-    Key = {node_owner, NodeId},
-
-    case cache_get(State, Key) of
-        {ok, Val} ->
-            {reply, Val, State};
-        miss ->
-            KeyPair = secrets:node_keypair(),
-            Resp =
-                damage_ae:contract_call(
-                    KeyPair,
-                    ContractId,
-                    State#state.contract_path,
-                    "get_node_owner",
-                    [NodeId]
-                ),
-            cache_put(State, Key, Resp),
-            {reply, Resp, State}
-    end;
-handle_call({is_node_registered, NodeId0}, _From, State) ->
-    ContractId = require_contract(State),
-    NodeId = to_bin(NodeId0),
-    Key = {is_node_registered, NodeId},
-
-    case cache_get(State, Key) of
-        {ok, Val} ->
-            {reply, Val, State};
-        miss ->
-            KeyPair = secrets:node_keypair(),
-            Resp =
-                damage_ae:contract_call(
-                    KeyPair,
-                    ContractId,
-                    State#state.contract_path,
-                    "is_node_registered",
-                    [NodeId]
-                ),
-            cache_put(State, Key, Resp),
-            {reply, Resp, State}
-    end;
-handle_call({get_nodes_for, Account0}, _From, State) ->
-    ContractId = require_contract(State),
-    Account = to_bin(Account0),
-    Key = {nodes_for, Account},
-
-    case cache_get(State, Key) of
-        {ok, Val} ->
-            {reply, Val, State};
-        miss ->
-            KeyPair = secrets:node_keypair(),
-            Resp =
-                damage_ae:contract_call(
-                    KeyPair,
-                    ContractId,
-                    State#state.contract_path,
-                    "get_nodes_for",
-                    [Account]
-                ),
-            cache_put(State, Key, Resp),
-            {reply, Resp, State}
-    end;
 handle_call({update_node_meta, NodeId0, MetaMap0}, _From, State) ->
     ContractId = require_contract(State),
     KeyPair = secrets:node_keypair(),
     NodeId = to_bin(NodeId0),
     MetaRec = meta_map_to_record(MetaMap0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "update_node_meta",
-            [NodeId, MetaRec]
-        ),
-    cache_delete(State, {node, NodeId}),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "update_node_meta",
+        [NodeId, MetaRec]
+    ),
+
+    invalidate_node(State, NodeId),
     {reply, Resp, State};
 handle_call({update_node_cfg, NodeId0, CfgMap0}, _From, State) ->
     ContractId = require_contract(State),
@@ -490,15 +351,15 @@ handle_call({update_node_cfg, NodeId0, CfgMap0}, _From, State) ->
     NodeId = to_bin(NodeId0),
     CfgRec = cfg_map_to_record(CfgMap0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "update_node_cfg",
-            [NodeId, CfgRec]
-        ),
-    cache_delete(State, {node, NodeId}),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "update_node_cfg",
+        [NodeId, CfgRec]
+    ),
+
+    invalidate_node(State, NodeId),
     {reply, Resp, State};
 handle_call({reassign_node, NodeId0, NewOwner0}, _From, State) ->
     ContractId = require_contract(State),
@@ -506,36 +367,64 @@ handle_call({reassign_node, NodeId0, NewOwner0}, _From, State) ->
     NodeId = to_bin(NodeId0),
     NewOwner = to_bin(NewOwner0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "reassign_node",
-            [NodeId, NewOwner]
-        ),
+    %% fetch old owner before mutation so we can invalidate both sides
+    OldOwnerResp = cached_contract_call(State, {node_owner, NodeId}, "get_node_owner", [NodeId]),
+    OldOwner =
+        case OldOwnerResp of
+            #{"return_type" := "ok", "return_value" := {address, OwnerBin}} ->
+                aeser_api_encoder:encode(account_pubkey, OwnerBin);
+            _ ->
+                undefined
+        end,
 
-    %% invalidate caches: node owner + new owner index
-    cache_delete(State, {node, NodeId}),
-    cache_delete(State, {node_owner, NodeId}),
-    cache_delete(State, {nodes_for, NewOwner}),
-    cache_delete(State, {user_info, NewOwner}),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "reassign_node",
+        [NodeId, NewOwner]
+    ),
+
+    invalidate_node(State, NodeId),
+    invalidate_account(State, NewOwner),
+    case OldOwner of
+        undefined -> ok;
+        _ -> invalidate_account(State, OldOwner)
+    end,
     {reply, Resp, State};
 handle_call({set_node_enabled, NodeId0, Enabled}, _From, State) ->
     ContractId = require_contract(State),
     KeyPair = secrets:node_keypair(),
     NodeId = to_bin(NodeId0),
 
-    Resp =
-        damage_ae:contract_call(
-            KeyPair,
-            ContractId,
-            State#state.contract_path,
-            "set_node_enabled",
-            [NodeId, Enabled]
-        ),
-    cache_delete(State, {node, NodeId}),
+    Resp = damage_ae:contract_call(
+        KeyPair,
+        ContractId,
+        State#state.contract_path,
+        "set_node_enabled",
+        [NodeId, Enabled]
+    ),
+
+    invalidate_node(State, NodeId),
     {reply, Resp, State};
+%% -------------------------
+%% Node-level reads
+%% -------------------------
+
+handle_call({get_node, NodeId0}, _From, State) ->
+    NodeId = to_bin(NodeId0),
+    {reply, cached_contract_call(State, {node, NodeId}, "get_node", [NodeId]), State};
+handle_call({get_node_owner, NodeId0}, _From, State) ->
+    NodeId = to_bin(NodeId0),
+    {reply, cached_contract_call(State, {node_owner, NodeId}, "get_node_owner", [NodeId]), State};
+handle_call({is_node_registered, NodeId0}, _From, State) ->
+    NodeId = to_bin(NodeId0),
+    {reply,
+        cached_contract_call(State, {is_node_registered, NodeId}, "is_node_registered", [NodeId]),
+        State};
+handle_call({get_nodes_for, Account0}, _From, State) ->
+    Account = to_bin(Account0),
+    {reply, cached_contract_call(State, {nodes_for, Account}, "get_nodes_for", [Account]), State};
 handle_call(Other, _From, State) ->
     ?LOG_WARNING("Unhandled call ~p", [Other]),
     {reply, {error, unhandled_call}, State}.
@@ -590,12 +479,48 @@ to_bin(V) when is_list(V) -> list_to_binary(V);
 to_bin(V) when is_atom(V) -> atom_to_binary(V, utf8);
 to_bin(V) -> list_to_binary(io_lib:format("~p", [V])).
 
-%% --- Cache: store {Key, TS, Value}
+cached_contract_call(State, CacheKey, Func, Args) ->
+    case cache_get(State, CacheKey) of
+        {ok, Val} ->
+            Val;
+        miss ->
+            ContractId = require_contract(State),
+            KeyPair = secrets:node_keypair(),
+            Resp = damage_ae:contract_call(
+                KeyPair, ContractId, State#state.contract_path, Func, Args
+            ),
+            maybe_cache_put(State, CacheKey, Resp),
+            Resp
+    end.
 
-cache_get(#state{ets_table = Tab}, Key) ->
+maybe_cache_put(State, Key, Resp) ->
+    case is_cacheable_response(Resp) of
+        true -> cache_put(State, Key, Resp);
+        false -> ok
+    end.
+
+is_cacheable_response(#{"return_type" := "ok"}) ->
+    true;
+is_cacheable_response(_) ->
+    false.
+
+invalidate_account(State, Account) ->
+    cache_delete(State, {user_info, Account}),
+    cache_delete(State, {registry, Account}),
+    cache_delete(State, {is_registered, Account}),
+    cache_delete(State, {nodes_for, Account}),
+    ok.
+
+invalidate_node(State, NodeId) ->
+    cache_delete(State, {node, NodeId}),
+    cache_delete(State, {node_owner, NodeId}),
+    cache_delete(State, {is_node_registered, NodeId}),
+    ok.
+
+cache_get(#state{ets_table = Tab, ttl_ms = TtlMs}, Key) ->
     Now = erlang:monotonic_time(millisecond),
     case ets:lookup(Tab, Key) of
-        [{Key, Ts, Val}] when (Now - Ts) =< ?TTL_MS ->
+        [{Key, Ts, Val}] when (Now - Ts) =< TtlMs ->
             {ok, Val};
         [{Key, _Ts, _Val}] ->
             ets:delete(Tab, Key),
