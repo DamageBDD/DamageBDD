@@ -4,8 +4,6 @@ Feature: NWC Ledger-backed connections
 
   Background:
     Given I am using server "https://run.dev.damagebdd.com"
-    # Provide a real token when running for real.
-    # For local dev, point at localhost and use a dev token.
     And I set "Authorization" header to "Bearer {{{access_token}}}"
     And I set "content-type" header to "application/json"
 
@@ -19,21 +17,18 @@ Feature: NWC Ledger-backed connections
       "expires_height": 0
     }
     """
-    Then the response status must be "204"
-    Then I print the response
+    Then the response status must be "200"
+    Then the json at path "$.status" must be "ok"
     Then I store the JSON at path "$.client_pubkey" in "client_pubkey"
-    Then I store the JSON at path "$.nwc_uri" in "nwc_uri"
 
-    # Balance should be 0 initially
     When I make a POST request to "/api/nwc/ledger/balance"
     """
     {"client_pubkey":"{{client_pubkey}}"}
     """
     Then the response status must be "200"
-    Then the response must contain text "status"
-    Then the response must contain text "ok"
+    Then the json at path "$.status" must be "ok"
+    Then the json at path "$.balance_sat" must be "0"
 
-    # Admin credit for deterministic test
     When I make a POST request to "/api/nwc/ledger/credit"
     """
     {
@@ -44,12 +39,21 @@ Feature: NWC Ledger-backed connections
     }
     """
     Then the response status must be "200"
-    Then the response must contain text "credited_sat"
+    Then the json at path "$.status" must be "ok"
+    Then the json at path "$.credited_sat" must be "2000"
 
-    # Revoke the connection
+    When I make a POST request to "/api/nwc/ledger/balance"
+    """
+    {"client_pubkey":"{{client_pubkey}}"}
+    """
+    Then the response status must be "200"
+    Then the json at path "$.status" must be "ok"
+    Then the json at path "$.balance_sat" must be "2000"
+
     When I make a POST request to "/api/nwc/revoke"
     """
     {"client_pubkey":"{{client_pubkey}}"}
     """
     Then the response status must be "200"
-    Then the response must contain text "\"revoked\":true"
+    Then the json at path "$.status" must be "ok"
+    Then the json at path "$.revoked" must be "true"
