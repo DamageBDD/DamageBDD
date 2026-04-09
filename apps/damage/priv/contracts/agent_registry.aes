@@ -1,0 +1,96 @@
+@compiler >= 6
+
+contract DamageAgentRegistry =
+
+  datatype agent_status = Active | Paused | Revoked
+
+  record agent =
+    { owner           : address
+    , controller      : address
+    , policy_contract : address
+    , treasury_contract : address
+    , metadata_hash   : string
+    , capability_hash : string
+    , status          : agent_status
+    , created_at      : int
+    }
+
+  record state =
+    { owner  : address
+    , nonce  : int
+    , agents : map(string, agent)
+    }
+
+  datatype event =
+    AgentRegistered(string, address, address)
+    | AgentUpdated(string)
+    | AgentPaused(string)
+    | AgentRevoked(string)
+
+  entrypoint init() =
+    { owner = Call.caller, nonce = 0, agents = {} }
+
+  entrypoint get_agent(agent_id : string) : option(agent) =
+    Map.lookup(agent_id, state.agents)
+
+  entrypoint exists(agent_id : string) : bool =
+    switch(Map.lookup(agent_id, state.agents))
+      None => false
+      Some(_) => true
+
+  stateful entrypoint register_agent(
+    agent_id : string,
+    controller : address,
+    policy_contract : address,
+    treasury_contract : address,
+    metadata_hash : string,
+    capability_hash : string) =
+    require(!exists(agent_id), "AGENT_EXISTS")
+    let a =
+      { owner = Call.caller
+      , controller = controller
+      , policy_contract = policy_contract
+      , treasury_contract = treasury_contract
+      , metadata_hash = metadata_hash
+      , capability_hash = capability_hash
+      , status = Active
+      , created_at = Chain.timestamp }
+    put(state{ agents[agent_id] = a, nonce = state.nonce + 1 })
+    Chain.event(AgentRegistered(agent_id, Call.caller, controller))
+
+  stateful entrypoint update_agent(
+    agent_id : string,
+    controller : option(address),
+    policy_contract : option(address),
+    treasury_contract : option(address),
+    metadata_hash : option(string),
+    capability_hash : option(string)) =
+    let a = require_agent_owner(agent_id)
+    let updated =
+      { owner = a.owner
+      , controller = Option.default(a.controller, controller)
+      , policy_contract = Option.default(a.policy_contract, policy_contract)
+      , treasury_contract = Option.default(a.treasury_contract, treasury_contract)
+      , metadata_hash = Option.default(a.metadata_hash, metadata_hash)
+      , capability_hash = Option.default(a.capability_hash, capability_hash)
+      , status = a.status
+      , created_at = a.created_at }
+    put(state{ agents[agent_id] = updated })
+    Chain.event(AgentUpdated(agent_id))
+
+  stateful entrypoint pause_agent(agent_id : string) =
+    let a = require_agent_owner(agent_id)
+    put(state{ agents[agent_id] = a{status = Paused} })
+    Chain.event(AgentPaused(agent_id))
+
+  stateful entrypoint revoke_agent(agent_id : string) =
+    let a = require_agent_owner(agent_id)
+    put(state{ agents[agent_id] = a{status = Revoked} })
+    Chain.event(AgentRevoked(agent_id))
+
+  function require_agent_owner(agent_id : string) : agent =
+    switch(Map.lookup(agent_id, state.agents))
+      None => abort("AGENT_NOT_FOUND")
+      Some(a) =>
+        require(a.owner == Call.caller, "ONLY_AGENT_OWNER")
+        a

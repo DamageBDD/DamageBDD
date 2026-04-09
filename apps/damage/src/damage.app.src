@@ -44,6 +44,7 @@
                 {register_node, []},
                 {setup_essentials, []},
                 {start_vanillae, []},
+                {init_chain, []},
                 {start_sync, []},
                 {start_trails_http, []},
                 {damage, []}

@@ -84,8 +84,6 @@ get_trails() ->
 -spec start_phase(atom(), application:start_type(), []) -> ok.
 start_phase(start_vanillae, _StartType, []) ->
     ?LOG_INFO("Starting vanillae."),
-    %Version = "0.13.9",
-    %true = os:putenv("zx_include", filename:join([os:getenv("HOME"), "/zomp/lib/otpr/zx/",Version,"include"])),
 
     ok = application:ensure_started(base58),
     ok = application:ensure_started(getopt),
@@ -96,14 +94,25 @@ start_phase(start_vanillae, _StartType, []) ->
     ok = application:ensure_started(syntax_tools),
     ok = application:ensure_started(aesophia),
     application:ensure_started(vanillae),
+
     {ok, NetworkId} = application:get_env(damage, ae_network_id),
     vanillae:network_id(NetworkId),
+
     {ok, AeNodes} = application:get_env(damage, ae_nodes),
-    AeTls = application:get_env(damage, ae_tls, true),
     Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
-    vanillae:tls(AeTls),
+
+    Tls0 =
+        case application:get_env(damage, ae_tls) of
+            {ok, Value} ->
+                Value;
+            undefined ->
+                lists:any(fun({_Host, Port}) -> Port =:= 443 end, Nodes)
+        end,
+
+    vanillae:tls(Tls0),
     ok = vanillae:ae_nodes(Nodes),
-    ?LOG_INFO("Started vanillae."),
+
+    ?LOG_INFO("Started vanillae with tls=~p nodes=~p.", [Tls0, Nodes]),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Damage."),
@@ -170,6 +179,16 @@ start_phase(start_sync, _StartType, []) ->
     end,
     ?LOG_INFO("Sync Ready."),
     ok;
+start_phase(init_chain, _StartType, []) ->
+    ?LOG_INFO("Initializing node registry only."),
+    case damage_contract_bootstrap:bootstrap_node_only() of
+        {ok, Info} ->
+            ?LOG_INFO("Node bootstrap initialized: ~p", [Info]),
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR("Node bootstrap failed: ~p", [Reason]),
+            {error, Reason}
+    end;
 %% --- Essentials setup phase (parity with setup.sh) --------------------------
 start_phase(setup_essentials, _StartType, []) ->
     ?LOG_INFO("setup_essentials: starting."),
