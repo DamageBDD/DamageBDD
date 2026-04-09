@@ -61,6 +61,7 @@
     handle_request_event/2,
     send_response/5,
     send_error/5,
+    send_error/6,
 
     resolve_owner_and_ledger_by_client_pubkey/1,
     ledger_balance_msat/3,
@@ -163,7 +164,9 @@ handle_request_json(RequestEventId, ClientPubHex, ReqJson, State) ->
         {ok, Result} ->
             send_response(RequestEventId, ClientPubHex, Method, Result, State);
         {error, Code, Message} ->
-            send_error(RequestEventId, ClientPubHex, Code, Message, State)
+            send_error(RequestEventId, ClientPubHex, Code, Message, State);
+        {error, Code, Message, Data} ->
+            send_error(RequestEventId, ClientPubHex, Code, Message, Data, State)
     end.
 
 dispatch(<<"get_info">>, _ClientPubHex, _Params, State) ->
@@ -338,13 +341,16 @@ send_response(RequestEventId, ClientPubHex, Method, Result, State) ->
     },
     send_payload(RequestEventId, ClientPubHex, Payload, State).
 
--spec send_error(binary(), binary(), binary(), binary(), tuple()) -> ok.
 send_error(RequestEventId, ClientPubHex, Code, Message, State) ->
+    send_error(RequestEventId, ClientPubHex, Code, Message, #{}, State).
+
+send_error(RequestEventId, ClientPubHex, Code, Message, Data, State) ->
     Payload = #{
         result_type => <<"error">>,
         error => #{
             code => Code,
-            message => Message
+            message => Message,
+            data => Data
         },
         result => null
     },
@@ -499,8 +505,13 @@ authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, Height) ->
                                 {ok, BalanceMsat} ->
                                     case MaxTotal > 0 andalso (BalanceMsat < AmountMsat) of
                                         true ->
-                                            {error, <<"INSUFFICIENT_BALANCE">>,
-                                                <<"balance too low">>};
+                                            {error, <<"PAYMENT_REQUIRED">>,
+                                                <<"insufficient ledger balance">>, #{
+                                                    client_pubkey => ClientPubHex,
+                                                    required_amount_msat => AmountMsat,
+                                                    topup_endpoint => <<"/api/nwc/topup_invoice">>,
+                                                    status_endpoint => <<"/api/nwc/topup_status">>
+                                                }};
                                         false ->
                                             ok
                                     end;

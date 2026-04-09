@@ -20,6 +20,7 @@
 ]).
 
 -export([test/0]).
+-import(damage_utils, [to_bin/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -68,6 +69,18 @@ trails() ->
             "/api/nwc/ledger/credit",
             damage_nwc_http,
             #{action => ledger_credit},
+            #{post => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/nwc/topup_invoice",
+            damage_nwc_http,
+            #{action => topup_invoice},
+            #{post => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/nwc/topup_status",
+            damage_nwc_http,
+            #{action => topup_status},
             #{post => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
         )
     ].
@@ -118,45 +131,29 @@ ledger_mode() ->
         %_ -> user_signed
     end.
 
-%% -------------------------------------------------------------------
-%% mint
-%% -------------------------------------------------------------------
 from_json(Req0, State = #{action := mint}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
 
-    %% owner comes from auth (same pattern used throughout Damage)
     Owner = to_bin(maps:get(public_key, State)),
-
     DefaultRelays = nostr_pool:default_relays(#{}),
     Relays = maps:get(<<"relays">>, Json, DefaultRelays),
-
-    %% Ledger policy (contract uses max_total_msat + expires_height)
     MaxSingleSat = maps:get(<<"max_single_sat">>, Json, 10000),
     MaxTotalSat = maps:get(<<"max_total_sat">>, Json, 100000),
     ExpiresHeight = maps:get(<<"expires_height">>, Json, 0),
 
-    %% Generate client secret (private key) and pubkey (NWC client keypair)
     Secret = crypto:strong_rand_bytes(32),
     SecretHex = lower_hex_hex(Secret),
     {ok, ClientPubBin} = nostrlib_schnorr:new_publickey(Secret),
     ClientPubHex = lower_hex_hex(ClientPubBin),
 
-    ?LOG_DEBUG("Resolve ledger ~p", [Owner]),
-    %% Resolve user's ledger ct_id via AccountRegistry
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
-            ?LOG_DEBUG("Got ledger ~p", [LedgerCt0]),
             LedgerCt = to_bin(LedgerCt0),
-
             MaxSingleMsat = MaxSingleSat * 1000,
             MaxTotalMsat = MaxTotalSat * 1000,
-
             Mode = ledger_mode(),
 
-            %% Register client_pubkey policy in ledger (admin-only call)
-            %% - user_signed: return intent
-            %% - server_signed: execute now
             Intents =
                 case Mode of
                     user_signed ->
@@ -173,39 +170,6 @@ from_json(Req0, State = #{action := mint}) ->
                     _ ->
                         []
                 end,
-            ?LOG_DEBUG("ledger mode ~p", [Mode]),
-
-            case Mode of
-                user_signed ->
-                    ok;
-                server_signed ->
-                    ?LOG_DEBUG("ledger register ~p ~p ~p", [
-                        Owner,
-                        LedgerCt,
-                        [
-                            to_s(ClientPubHex),
-                            integer_to_list(MaxSingleMsat),
-                            integer_to_list(MaxTotalMsat),
-                            integer_to_list(ExpiresHeight)
-                        ]
-                    ]),
-                    Results = ledger_call_user(
-                        Owner,
-                        LedgerCt,
-                        "register",
-                        [
-                            to_s(ClientPubHex),
-                            integer_to_list(MaxSingleMsat),
-                            integer_to_list(MaxTotalMsat),
-                            integer_to_list(ExpiresHeight)
-                        ]
-                    ),
-                    ?LOG_DEBUG("ledger register ~p", [Results]),
-                    ok;
-                operator_signed ->
-                    %% register is admin-only; do not execute as operator
-                    ok
-            end,
 
             WalletPubHex = ensure_hex_pubkey(nwc_wallet_pubhex()),
             Relay = pick_first_relay(Relays),
@@ -218,34 +182,88 @@ from_json(Req0, State = #{action := mint}) ->
                 SecretHex
             ]),
 
-            Resp = #{
-                status => <<"ok">>,
-                owner => Owner,
-                ledger_ct => LedgerCt,
-                ledger_mode => atom_to_binary(Mode, utf8),
-
-                client_pubkey => ClientPubHex,
-                %% only show once
-                secret_hex => SecretHex,
-                nwc_uri => NwcUri,
-                wallet_pubkey => WalletPubHex,
-                relay => Relay,
-
-                intents => Intents
-            },
-            ?LOG_DEBUG("Response ledger ~p", [Resp]),
-            Req1 = cowboy_req:reply(
-                200,
-                #{<<"content-type">> => <<"application/json">>},
-                jsx:encode(Resp),
-                Req
-            ),
-            {stop, Req1, State};
+            case Mode of
+                user_signed ->
+                    reply_json_stop(
+                        200,
+                        #{
+                            status => <<"ok">>,
+                            owner => Owner,
+                            ledger_ct => LedgerCt,
+                            ledger_mode => atom_to_binary(Mode, utf8),
+                            client_pubkey => ClientPubHex,
+                            secret_hex => SecretHex,
+                            nwc_uri => NwcUri,
+                            wallet_pubkey => WalletPubHex,
+                            relay => Relay,
+                            intents => Intents
+                        },
+                        Req,
+                        State
+                    );
+                server_signed ->
+                    RegisterResult = ledger_call_admin(
+                        LedgerCt,
+                        "register",
+                        [
+                            to_s(ClientPubHex),
+                            integer_to_list(MaxSingleMsat),
+                            integer_to_list(MaxTotalMsat),
+                            integer_to_list(ExpiresHeight)
+                        ]
+                    ),
+                    case ledger_call_ok(RegisterResult) of
+                        true ->
+                            reply_json_stop(
+                                200,
+                                #{
+                                    status => <<"ok">>,
+                                    owner => Owner,
+                                    ledger_ct => LedgerCt,
+                                    ledger_mode => atom_to_binary(Mode, utf8),
+                                    client_pubkey => ClientPubHex,
+                                    secret_hex => SecretHex,
+                                    nwc_uri => NwcUri,
+                                    wallet_pubkey => WalletPubHex,
+                                    relay => Relay,
+                                    intents => []
+                                },
+                                Req,
+                                State
+                            );
+                        false ->
+                            reply_json_stop(
+                                400,
+                                #{
+                                    status => <<"error">>,
+                                    error => <<"LEDGER_REGISTER_FAILED">>,
+                                    owner => Owner,
+                                    ledger_ct => LedgerCt,
+                                    client_pubkey => ClientPubHex,
+                                    result => normalize_json(RegisterResult)
+                                },
+                                Req,
+                                State
+                            )
+                    end;
+                operator_signed ->
+                    reply_json_stop(
+                        400,
+                        #{
+                            status => <<"error">>,
+                            error => <<"REGISTER_NOT_ALLOWED_IN_OPERATOR_MODE">>,
+                            owner => Owner,
+                            ledger_ct => LedgerCt,
+                            client_pubkey => ClientPubHex
+                        },
+                        Req,
+                        State
+                    )
+            end;
         {error, Why} ->
             Mode = ledger_mode(),
             MaxSingleMsat = MaxSingleSat * 1000,
             MaxTotalMsat = MaxTotalSat * 1000,
-
             WalletPubHex = nwc_wallet_pubhex(),
             Relay = pick_first_relay(Relays),
             NwcUri =
@@ -257,7 +275,6 @@ from_json(Req0, State = #{action := mint}) ->
                     "&secret=",
                     SecretHex/binary
                 >>,
-
             case
                 maybe_setup_missing_ledger(
                     Owner,
@@ -268,60 +285,58 @@ from_json(Req0, State = #{action := mint}) ->
                 )
             of
                 {ok, RegistryCt, LedgerCt} ->
-                    Resp = #{
-                        status => <<"ok">>,
-                        setup_executed => true,
-                        owner => Owner,
-                        account_registry_ct => RegistryCt,
-                        ledger_ct => LedgerCt,
-                        ledger_mode => atom_to_binary(Mode, utf8),
-
-                        client_pubkey => ClientPubHex,
-                        secret_hex => SecretHex,
-                        nwc_uri => NwcUri,
-                        wallet_pubkey => WalletPubHex,
-                        relay => Relay,
-
-                        intents => []
-                    },
-                    Req1 = cowboy_req:reply(
+                    reply_json_stop(
                         200,
-                        #{<<"content-type">> => <<"application/json">>},
-                        jsx:encode(Resp),
-                        Req
-                    ),
-                    {stop, Req1, State};
+                        #{
+                            status => <<"ok">>,
+                            setup_executed => true,
+                            owner => Owner,
+                            account_registry_ct => RegistryCt,
+                            ledger_ct => LedgerCt,
+                            ledger_mode => atom_to_binary(Mode, utf8),
+                            client_pubkey => ClientPubHex,
+                            secret_hex => SecretHex,
+                            nwc_uri => NwcUri,
+                            wallet_pubkey => WalletPubHex,
+                            relay => Relay,
+                            intents => []
+                        },
+                        Req,
+                        State
+                    );
                 {fallback_to_intents, SetupWhy} ->
                     {RegistryCt, DeployAndRegisterIntents} = setup_intents_for_missing_ledger(
                         Owner
                     ),
-
-                    Resp = #{
-                        status => <<"needs_ledger_setup">>,
-                        reason => to_bin(io_lib:format("~p", [{Why, SetupWhy}])),
-                        owner => Owner,
-                        account_registry_ct => RegistryCt,
-                        ledger_mode => atom_to_binary(Mode, utf8),
-
-                        client_pubkey => ClientPubHex,
-                        secret_hex => SecretHex,
-                        nwc_uri => NwcUri,
-                        wallet_pubkey => WalletPubHex,
-                        relay => Relay,
-
-                        intents => DeployAndRegisterIntents ++
-                            [
-                                damage_ledger_intent:ledger_register_intent(
-                                    <<"ct_TBD_FROM_DEPLOY">>,
-                                    ClientPubHex,
-                                    <<"">>,
-                                    MaxSingleMsat,
-                                    MaxTotalMsat,
-                                    ExpiresHeight
-                                )
-                            ]
-                    },
-                    {true, Req, State#{resp_body => Resp}}
+                    {stop,
+                        reply_json(
+                            200,
+                            #{
+                                status => <<"needs_ledger_setup">>,
+                                reason => to_bin(io_lib:format("~p", [{Why, SetupWhy}])),
+                                owner => Owner,
+                                account_registry_ct => RegistryCt,
+                                ledger_mode => atom_to_binary(Mode, utf8),
+                                client_pubkey => ClientPubHex,
+                                secret_hex => SecretHex,
+                                nwc_uri => NwcUri,
+                                wallet_pubkey => WalletPubHex,
+                                relay => Relay,
+                                intents => DeployAndRegisterIntents ++
+                                    [
+                                        damage_ledger_intent:ledger_register_intent(
+                                            <<"ct_TBD_FROM_DEPLOY">>,
+                                            ClientPubHex,
+                                            <<"">>,
+                                            MaxSingleMsat,
+                                            MaxTotalMsat,
+                                            ExpiresHeight
+                                        )
+                                    ]
+                            },
+                            Req
+                        ),
+                        State}
             end
     end;
 %% -------------------------------------------------------------------
@@ -349,32 +364,72 @@ from_json(Req0, State = #{action := revoke}) ->
 
             case Mode of
                 user_signed ->
-                    ok;
+                    reply_json_stop(
+                        200,
+                        #{
+                            status => <<"ok">>,
+                            revoked => false,
+                            client_pubkey => ClientPubHex,
+                            ledger_ct => LedgerCt,
+                            intents => Intents
+                        },
+                        Req,
+                        State
+                    );
                 server_signed ->
-                    _ = ledger_call_user(Owner, LedgerCt, "revoke", [to_s(ClientPubHex)]),
-                    ok;
+                    CallResult = ledger_call_admin(LedgerCt, "revoke", [to_s(ClientPubHex)]),
+                    case ledger_call_ok(CallResult) of
+                        true ->
+                            reply_json_stop(
+                                200,
+                                #{
+                                    status => <<"ok">>,
+                                    revoked => true,
+                                    client_pubkey => ClientPubHex,
+                                    ledger_ct => LedgerCt,
+                                    intents => []
+                                },
+                                Req,
+                                State
+                            );
+                        false ->
+                            reply_json_stop(
+                                400,
+                                #{
+                                    status => <<"error">>,
+                                    error => <<"LEDGER_REVOKE_FAILED">>,
+                                    client_pubkey => ClientPubHex,
+                                    ledger_ct => LedgerCt,
+                                    result => normalize_json(CallResult)
+                                },
+                                Req,
+                                State
+                            )
+                    end;
                 operator_signed ->
-                    %% revoke is admin-only
-                    ok
-            end,
-
-            {true, Req, State#{
-                resp_body => #{
-                    status => <<"ok">>,
-                    revoked => true,
-                    client_pubkey => ClientPubHex,
-                    ledger_ct => LedgerCt,
-                    intents => Intents
-                }
-            }};
+                    reply_json_stop(
+                        400,
+                        #{
+                            status => <<"error">>,
+                            error => <<"REVOKE_NOT_ALLOWED_IN_OPERATOR_MODE">>,
+                            client_pubkey => ClientPubHex,
+                            ledger_ct => LedgerCt
+                        },
+                        Req,
+                        State
+                    )
+            end;
         {error, Why} ->
-            {true, Req, State#{
-                resp_body => #{
+            reply_json_stop(
+                404,
+                #{
                     status => <<"error">>,
                     error => <<"NO_LEDGER">>,
                     reason => to_bin(io_lib:format("~p", [Why]))
-                }
-            }}
+                },
+                Req,
+                State
+            )
     end;
 %% -------------------------------------------------------------------
 %% ledger balance
@@ -389,101 +444,352 @@ from_json(Req0, State = #{action := ledger_balance}) ->
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
             LedgerCt = to_bin(LedgerCt0),
-            Res = ledger_call_user(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]),
-            {true, Req, State#{
-                resp_body => #{
-                    status => <<"ok">>,
-                    owner => Owner,
-                    ledger_ct => LedgerCt,
-                    client_pubkey => ClientPubHex,
-                    result => Res
-                }
-            }};
+            CallResult = ledger_call_user(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]),
+            case ledger_call_ok(CallResult) of
+                true ->
+                    BalanceMsat = ledger_balance_msat_from_result(CallResult),
+                    reply_json_stop(
+                        200,
+                        #{
+                            status => <<"ok">>,
+                            owner => Owner,
+                            ledger_ct => LedgerCt,
+                            client_pubkey => ClientPubHex,
+                            balance_msat => BalanceMsat,
+                            balance_sat => BalanceMsat div 1000
+                        },
+                        Req,
+                        State
+                    );
+                false ->
+                    reply_json_stop(
+                        400,
+                        #{
+                            status => <<"error">>,
+                            error => <<"LEDGER_BALANCE_FAILED">>,
+                            owner => Owner,
+                            ledger_ct => LedgerCt,
+                            client_pubkey => ClientPubHex,
+                            result => normalize_json(CallResult)
+                        },
+                        Req,
+                        State
+                    )
+            end;
         {error, Why} ->
-            {true, Req, State#{
-                resp_body => #{
+            reply_json_stop(
+                404,
+                #{
                     status => <<"error">>,
                     error => <<"NO_LEDGER">>,
                     reason => to_bin(io_lib:format("~p", [Why]))
-                }
-            }}
+                },
+                Req,
+                State
+            )
     end;
 %% -------------------------------------------------------------------
 %% ledger credit (admin-only endpoint)
 %% -------------------------------------------------------------------
-from_json(Req0, State = #{action := ledger_credit, role := Role}) ->
-    case Role of
-        <<"admin">> -> ok;
-        _ -> throw({forbidden, not_admin})
-    end,
+from_json(Req0, State = #{action := ledger_credit}) ->
+    from_json_ledger_credit(Req0, State);
+from_json(Req0, State = #{action := topup_invoice}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
 
     Owner = to_bin(maps:get(public_key, State)),
     ClientPubHex = maps:get(<<"client_pubkey">>, Json),
     AmountSat = maps:get(<<"amount_sat">>, Json, 0),
-    Ref = maps:get(<<"ref">>, Json, <<"">>),
-    Meta = maps:get(<<"meta">>, Json, <<"{}">>),
-
     AmountMsat = AmountSat * 1000,
 
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
             LedgerCt = to_bin(LedgerCt0),
-            Mode = ledger_mode(),
-
-            Intents =
-                case Mode of
-                    user_signed ->
-                        [
-                            damage_ledger_intent:ledger_credit_intent(
-                                LedgerCt, ClientPubHex, AmountMsat, Ref, Meta, <<"">>
+            case damage_nwc_wallet:ledger_policy(Owner, LedgerCt, ClientPubHex) of
+                {ok, _Policy} ->
+                    Label = make_topup_label(Owner, ClientPubHex, AmountSat),
+                    Desc = <<"Damage NWC top-up">>,
+                    case cln:create_invoice(AmountMsat, Desc, Label) of
+                        #{bolt11 := Bolt11, payment_hash := PaymentHash} ->
+                            ok = damage_nwc_topup_store:put(#{
+                                payment_hash => to_bin(PaymentHash),
+                                owner => Owner,
+                                ledger_ct => LedgerCt,
+                                client_pubkey => ClientPubHex,
+                                amount_msat => AmountMsat,
+                                amount_sat => AmountSat,
+                                label => Label,
+                                status => pending,
+                                created_at => erlang:system_time(second)
+                            }),
+                            _ = damage_nwc_invoice_watch_sup:start_child(Label),
+                            reply_json_stop(
+                                200,
+                                #{
+                                    status => <<"ok">>,
+                                    topup => #{
+                                        invoice => to_bin(Bolt11),
+                                        payment_hash => to_bin(PaymentHash),
+                                        amount_sat => AmountSat,
+                                        amount_msat => AmountMsat,
+                                        client_pubkey => ClientPubHex
+                                    }
+                                },
+                                Req,
+                                State
+                            );
+                        {error, Why} ->
+                            reply_json_stop(
+                                400,
+                                #{
+                                    status => <<"error">>,
+                                    error => <<"INVOICE_CREATE_FAILED">>,
+                                    reason => to_bin(io_lib:format("~p", [Why]))
+                                },
+                                Req,
+                                State
                             )
-                        ];
-                    _ ->
-                        []
-                end,
-
-            case Mode of
-                user_signed ->
-                    ok;
-                server_signed ->
-                    _ = ledger_call_user(
-                        Owner,
-                        LedgerCt,
-                        "credit",
-                        [to_s(ClientPubHex), integer_to_list(AmountMsat), to_s(Ref), to_s(Meta)]
-                    ),
-                    ok;
-                operator_signed ->
-                    %% credit is admin-only
-                    ok
-            end,
-
-            {true, Req, State#{
-                resp_body => #{
-                    status => <<"ok">>,
-                    owner => Owner,
-                    ledger_ct => LedgerCt,
-                    credited_sat => AmountSat,
-                    intents => Intents
-                }
-            }};
+                    end;
+                {error, Why} ->
+                    reply_json_stop(
+                        404,
+                        #{
+                            status => <<"error">>,
+                            error => <<"UNKNOWN_CLIENT">>,
+                            reason => to_bin(io_lib:format("~p", [Why]))
+                        },
+                        Req,
+                        State
+                    )
+            end;
         {error, Why} ->
-            {true, Req, State#{
-                resp_body => #{
+            reply_json_stop(
+                404,
+                #{
                     status => <<"error">>,
                     error => <<"NO_LEDGER">>,
                     reason => to_bin(io_lib:format("~p", [Why]))
-                }
-            }}
+                },
+                Req,
+                State
+            )
+    end;
+from_json(Req0, State = #{action := topup_status}) ->
+    {ok, Raw, Req} = cowboy_req:read_body(Req0),
+    Json = jsx:decode(Raw, [return_maps]),
+    PaymentHash = maps:get(<<"payment_hash">>, Json),
+    case damage_nwc_topup_store:get(PaymentHash) of
+        {ok, Topup} ->
+            reply_json_stop(
+                200,
+                #{
+                    status => <<"ok">>,
+                    topup => Topup
+                },
+                Req,
+                State
+            );
+        {error, not_found} ->
+            reply_json_stop(
+                404,
+                #{
+                    status => <<"error">>,
+                    error => <<"NOT_FOUND">>
+                },
+                Req,
+                State
+            )
     end.
 
-%% ---------------- helpers ----------------
+from_json_ledger_credit(Req0, State) ->
+    {ok, Raw, Req} = cowboy_req:read_body(Req0),
+    Json = jsx:decode(Raw, [return_maps]),
 
-to_bin(B) when is_binary(B) -> B;
-to_bin(L) when is_list(L) -> unicode:characters_to_binary(L);
-to_bin(X) -> unicode:characters_to_binary(io_lib:format("~p", [X])).
+    Owner = to_bin(maps:get(public_key, State)),
+
+    case steps_utils:is_admin(Owner) of
+        false ->
+            reply_json_stop(
+                403,
+                #{
+                    status => <<"error">>,
+                    error => <<"FORBIDDEN">>,
+                    reason => <<"not_admin">>
+                },
+                Req,
+                State
+            );
+        true ->
+            ClientPubHex = maps:get(<<"client_pubkey">>, Json),
+            AmountSat = maps:get(<<"amount_sat">>, Json, 0),
+            Ref = maps:get(<<"ref">>, Json, <<"">>),
+            Meta = maps:get(<<"meta">>, Json, <<"{}">>),
+
+            AmountMsat = AmountSat * 1000,
+
+            case resolve_user_ledger_ct(Owner) of
+                {ok, LedgerCt0} ->
+                    LedgerCt = to_bin(LedgerCt0),
+                    Mode = ledger_mode(),
+
+                    Intents =
+                        case Mode of
+                            user_signed ->
+                                [
+                                    damage_ledger_intent:ledger_credit_intent(
+                                        LedgerCt, ClientPubHex, AmountMsat, Ref, Meta, <<"">>
+                                    )
+                                ];
+                            _ ->
+                                []
+                        end,
+
+                    case Mode of
+                        user_signed ->
+                            reply_json_stop(
+                                200,
+                                #{
+                                    status => <<"ok">>,
+                                    owner => Owner,
+                                    ledger_ct => LedgerCt,
+                                    client_pubkey => ClientPubHex,
+                                    credited_sat => AmountSat,
+                                    credited_msat => AmountMsat,
+                                    intents => Intents
+                                },
+                                Req,
+                                State
+                            );
+                        server_signed ->
+                            CallResult = ledger_call_admin(
+                                LedgerCt,
+                                "credit",
+                                [
+                                    to_s(ClientPubHex),
+                                    integer_to_list(AmountMsat),
+                                    to_s(Ref),
+                                    to_s(Meta)
+                                ]
+                            ),
+                            case ledger_call_ok(CallResult) of
+                                true ->
+                                    reply_json_stop(
+                                        200,
+                                        #{
+                                            status => <<"ok">>,
+                                            owner => Owner,
+                                            ledger_ct => LedgerCt,
+                                            client_pubkey => ClientPubHex,
+                                            credited_sat => AmountSat,
+                                            credited_msat => AmountMsat,
+                                            intents => []
+                                        },
+                                        Req,
+                                        State
+                                    );
+                                false ->
+                                    reply_json_stop(
+                                        400,
+                                        #{
+                                            status => <<"error">>,
+                                            error => <<"LEDGER_CREDIT_FAILED">>,
+                                            owner => Owner,
+                                            ledger_ct => LedgerCt,
+                                            client_pubkey => ClientPubHex,
+                                            requested_sat => AmountSat,
+                                            requested_msat => AmountMsat,
+                                            result => normalize_json(CallResult)
+                                        },
+                                        Req,
+                                        State
+                                    )
+                            end;
+                        operator_signed ->
+                            reply_json_stop(
+                                400,
+                                #{
+                                    status => <<"error">>,
+                                    error => <<"CREDIT_NOT_ALLOWED_IN_OPERATOR_MODE">>,
+                                    owner => Owner,
+                                    ledger_ct => LedgerCt,
+                                    client_pubkey => ClientPubHex
+                                },
+                                Req,
+                                State
+                            )
+                    end;
+                {error, Why} ->
+                    reply_json_stop(
+                        404,
+                        #{
+                            status => <<"error">>,
+                            error => <<"NO_LEDGER">>,
+                            reason => to_bin(io_lib:format("~p", [Why]))
+                        },
+                        Req,
+                        State
+                    )
+            end
+    end.
+%% ---------------- helpers ----------------
+reply_json(Status, Body, Req) ->
+    cowboy_req:reply(
+        Status,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(normalize_json(Body)),
+        Req
+    ).
+
+reply_json_stop(Status, Body, Req, State) ->
+    {stop, reply_json(Status, Body, Req), State}.
+
+normalize_json(Map) when is_map(Map) ->
+    maps:from_list([{to_bin(K), normalize_json(V)} || {K, V} <- maps:to_list(Map)]);
+normalize_json(List) when is_list(List) ->
+    [normalize_json(V) || V <- List];
+normalize_json(V) ->
+    V.
+
+ledger_balance_msat_from_result(#{<<"return_value">> := V}) ->
+    ledger_balance_msat_from_result(V);
+ledger_balance_msat_from_result(#{"return_value" := V}) ->
+    ledger_balance_msat_from_result(V);
+ledger_balance_msat_from_result(V) when is_integer(V) ->
+    V;
+ledger_balance_msat_from_result({Balance}) when is_integer(Balance) ->
+    Balance;
+ledger_balance_msat_from_result({variant, [0, 1], 1, {Balance}}) when is_integer(Balance) ->
+    Balance;
+ledger_balance_msat_from_result({variant, [0, 1], 0, {}}) ->
+    0;
+ledger_balance_msat_from_result(Other) ->
+    ?LOG_WARNING("Unexpected ledger balance result shape ~p", [Other]),
+    0.
+
+-spec make_topup_label(binary(), binary(), integer()) -> binary().
+make_topup_label(Owner, ClientPubHex, AmountSat) ->
+    Ts = integer_to_binary(erlang:system_time(millisecond)),
+    Rand = base64:encode(crypto:strong_rand_bytes(6)),
+    <<
+        "nwc_topup:",
+        (short(Owner))/binary,
+        ":",
+        (short(ClientPubHex))/binary,
+        ":",
+        (integer_to_binary(AmountSat))/binary,
+        ":",
+        Ts/binary,
+        ":",
+        Rand/binary
+    >>.
+short(Bin) when is_binary(Bin) ->
+    case byte_size(Bin) of
+        N when N > 12 ->
+            <<Prefix:6/binary, "...", Suffix:6/binary>> = Bin,
+            <<Prefix/binary, Suffix/binary>>;
+        _ ->
+            Bin
+    end.
 
 to_s(B) when is_binary(B) -> binary_to_list(B);
 to_s(L) when is_list(L) -> L.
@@ -571,6 +877,21 @@ user_keypair_from_owner(OwnerAkBin) ->
 ledger_src_path() ->
     damage_ae:contract_path(?NWC_LEDGER_SRC_PATH).
 
+ledger_call_admin(LedgerCt, Fun, Args) ->
+    damage_ae:contract_call(
+        secrets:node_keypair(),
+        to_s(LedgerCt),
+        ledger_src_path(),
+        Fun,
+        Args
+    ).
+
+ledger_call_ok(#{<<"return_type">> := <<"ok">>}) ->
+    true;
+ledger_call_ok(#{"return_type" := "ok"}) ->
+    true;
+ledger_call_ok(_) ->
+    false.
 ledger_call_user(OwnerAkBin, LedgerCt, Fun, Args) ->
     KP = user_keypair_from_owner(OwnerAkBin),
     AeAccount = maps:get(public_key, KP),
@@ -701,10 +1022,8 @@ deploy_and_register_user_ledger(
             LedgerCt = to_bin(LedgerCt0),
             case upsert_registry_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME, LedgerCt) of
                 {ok, true} ->
-                    AeAccount = maps:get(public_key, KP),
                     case
-                        ledger_call_user(
-                            AeAccount,
+                        ledger_call_admin(
                             LedgerCt,
                             "register",
                             [
@@ -715,8 +1034,13 @@ deploy_and_register_user_ledger(
                             ]
                         )
                     of
-                        #{"return_type" := "ok"} ->
-                            {ok, LedgerCt};
+                        Result when is_map(Result) ->
+                            case ledger_call_ok(Result) of
+                                true ->
+                                    {ok, LedgerCt};
+                                false ->
+                                    {error, {ledger_register_failed, Result}}
+                            end;
                         Other ->
                             {error, {ledger_register_failed, Other}}
                     end;

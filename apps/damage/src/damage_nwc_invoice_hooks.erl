@@ -1,6 +1,6 @@
 -module(damage_nwc_invoice_hooks).
 
--export([watch_invoice/1, check_invoice/1, handle_settled_invoice/1]).
+-export([watch_invoice/1, check_invoice/1, handle_settled_invoice/1, handle_topup_invoice_settled/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -68,6 +68,28 @@ handle_settled_invoice(Invoice) ->
             ok
     end.
 
+handle_topup_invoice_settled(PaymentHash) ->
+    case damage_nwc_topup_store:get(PaymentHash) of
+        {ok, #{
+            status := pending,
+            owner := Owner,
+            ledger_ct := LedgerCt,
+            client_pubkey := ClientPubHex,
+            amount_sat := AmountSat
+        }} ->
+            ok = damage_nwc_http:credit_settled_topup(
+                Owner, LedgerCt, ClientPubHex, AmountSat, PaymentHash
+            ),
+            _ = damage_nwc_topup_store:mark_settled(
+                PaymentHash, erlang:system_time(second)
+            ),
+            ok = damage_nwc_balance_cache:invalidate(Owner),
+            ok;
+        {ok, #{status := settled}} ->
+            ok;
+        {error, not_found} ->
+            ok
+    end.
 parse_nwc_label(Label) when is_binary(Label) ->
     case binary:split(Label, <<":">>, [global]) of
         [<<"nwc">>, Wallet, Session, Ref] ->
