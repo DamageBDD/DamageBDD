@@ -1755,13 +1755,14 @@ handle_call(
     #state{
         cln_host = Host,
         cln_port = Port,
-        readonly_rune = ReadonlyRune,
+        readonly_rune = _Rune,
+        rune = Rune,
         options = Options
     } = State
 ) ->
     Query = to_bin(Query0),
     Reply =
-        case {ReadonlyRune, Query} of
+        case {Rune, Query} of
             {undefined, _} ->
                 {error, readonly_rune_not_configured};
             {_, <<>>} ->
@@ -1771,7 +1772,7 @@ handle_call(
                     Host,
                     Port,
                     Options,
-                    ReadonlyRune,
+                    Rune,
                     "/v1/sql",
                     #{query => Query}
                 )
@@ -2100,17 +2101,32 @@ recent_invoices(LabelPrefix, Limit) ->
         "SELECT label, description, status, amount_msat, amount_received_msat, ",
         "expires_at, created_index, updated_index, paid_at, payment_hash, bolt11 ",
         "FROM invoices ",
-        "WHERE label LIKE ", sql_quote(Prefix), " ",
+        "WHERE label LIKE ",
+        sql_quote(Prefix),
+        " ",
         "ORDER BY created_index DESC ",
-        "LIMIT ", sql_limit(Limit)
+        "LIMIT ",
+        sql_limit(Limit)
     ]),
     case sql_rows(Q) of
         {ok, Rows} ->
             {ok,
-             rows_to_maps(
-               [label, description, status, amount_msat, amount_received_msat,
-                expires_at, created_index, updated_index, paid_at, payment_hash, bolt11],
-               Rows)};
+                rows_to_maps(
+                    [
+                        label,
+                        description,
+                        status,
+                        amount_msat,
+                        amount_received_msat,
+                        expires_at,
+                        created_index,
+                        updated_index,
+                        paid_at,
+                        payment_hash,
+                        bolt11
+                    ],
+                    Rows
+                )};
         Error ->
             Error
     end.
@@ -2128,16 +2144,29 @@ unpaid_invoices(LabelPrefix, Limit) ->
         "SELECT label, description, status, amount_msat, expires_at, created_index, payment_hash, bolt11 ",
         "FROM invoices ",
         "WHERE status = 'unpaid' ",
-        "AND label LIKE ", sql_quote(Prefix), " ",
+        "AND label LIKE ",
+        sql_quote(Prefix),
+        " ",
         "ORDER BY created_index DESC ",
-        "LIMIT ", sql_limit(Limit)
+        "LIMIT ",
+        sql_limit(Limit)
     ]),
     case sql_rows(Q) of
         {ok, Rows} ->
             {ok,
-             rows_to_maps(
-               [label, description, status, amount_msat, expires_at, created_index, payment_hash, bolt11],
-               Rows)};
+                rows_to_maps(
+                    [
+                        label,
+                        description,
+                        status,
+                        amount_msat,
+                        expires_at,
+                        created_index,
+                        payment_hash,
+                        bolt11
+                    ],
+                    Rows
+                )};
         Error ->
             Error
     end.
@@ -2148,16 +2177,29 @@ paid_invoices_since(SinceTs, Limit) when is_integer(SinceTs), SinceTs >= 0 ->
         "FROM invoices ",
         "WHERE status = 'paid' ",
         "AND paid_at IS NOT NULL ",
-        "AND paid_at >= ", sql_unix_ts(SinceTs), " ",
+        "AND paid_at >= ",
+        sql_unix_ts(SinceTs),
+        " ",
         "ORDER BY paid_at DESC ",
-        "LIMIT ", sql_limit(Limit)
+        "LIMIT ",
+        sql_limit(Limit)
     ]),
     case sql_rows(Q) of
         {ok, Rows} ->
             {ok,
-             rows_to_maps(
-               [label, description, status, amount_msat, amount_received_msat, paid_at, created_index, payment_hash],
-               Rows)};
+                rows_to_maps(
+                    [
+                        label,
+                        description,
+                        status,
+                        amount_msat,
+                        amount_received_msat,
+                        paid_at,
+                        created_index,
+                        payment_hash
+                    ],
+                    Rows
+                )};
         Error ->
             Error
     end.
@@ -2191,7 +2233,9 @@ recent_account_events(Account0, Tag0, Limit) ->
         "SELECT account, type, tag, credit_msat, debit_msat, fees_msat, currency, ",
         "timestamp, description, outpoint, blockheight, origin, is_rebalance ",
         "FROM bkpr_accountevents ",
-        "WHERE account = ", sql_quote(Account), " "
+        "WHERE account = ",
+        sql_quote(Account),
+        " "
     ],
     TagSql =
         case Tag0 of
@@ -2203,15 +2247,30 @@ recent_account_events(Account0, Tag0, Limit) ->
         Base,
         TagSql,
         "ORDER BY timestamp DESC ",
-        "LIMIT ", sql_limit(Limit)
+        "LIMIT ",
+        sql_limit(Limit)
     ]),
     case sql_rows(Q) of
         {ok, Rows} ->
             {ok,
-             rows_to_maps(
-               [account, type, tag, credit_msat, debit_msat, fees_msat, currency,
-                timestamp, description, outpoint, blockheight, origin, is_rebalance],
-               Rows)};
+                rows_to_maps(
+                    [
+                        account,
+                        type,
+                        tag,
+                        credit_msat,
+                        debit_msat,
+                        fees_msat,
+                        currency,
+                        timestamp,
+                        description,
+                        outpoint,
+                        blockheight,
+                        origin,
+                        is_rebalance
+                    ],
+                    Rows
+                )};
         Error ->
             Error
     end.
@@ -2228,7 +2287,9 @@ account_event_summary(Account0, Tag0) ->
         "COALESCE(SUM(debit_msat), 0) AS total_debit_msat, ",
         "COALESCE(SUM(fees_msat), 0) AS total_fees_msat ",
         "FROM bkpr_accountevents ",
-        "WHERE account = ", sql_quote(Account), " "
+        "WHERE account = ",
+        sql_quote(Account),
+        " "
     ],
     TagSql =
         case Tag0 of
@@ -2240,9 +2301,10 @@ account_event_summary(Account0, Tag0) ->
     case sql_rows(Q) of
         {ok, Rows} ->
             {ok,
-             rows_to_maps(
-               [account, event_count, total_credit_msat, total_debit_msat, total_fees_msat],
-               Rows)};
+                rows_to_maps(
+                    [account, event_count, total_credit_msat, total_debit_msat, total_fees_msat],
+                    Rows
+                )};
         Error ->
             Error
     end.
@@ -2258,14 +2320,16 @@ recent_peerchannels(Limit) ->
         "FROM peerchannels ",
         "INNER JOIN peerchannels_status ON peerchannels_status.row = peerchannels.rowid ",
         "ORDER BY peerchannels.rowid DESC ",
-        "LIMIT ", sql_limit(Limit)
+        "LIMIT ",
+        sql_limit(Limit)
     ]),
     case sql_rows(Q) of
         {ok, Rows} ->
             {ok,
-             rows_to_maps(
-               [peer_id, short_channel_id, to_us_msat, total_msat, status, state_change_cause],
-               Rows)};
+                rows_to_maps(
+                    [peer_id, short_channel_id, to_us_msat, total_msat, status, state_change_cause],
+                    Rows
+                )};
         Error ->
             Error
     end.
@@ -2283,7 +2347,8 @@ peerchannel_summary() ->
     >>,
     case sql_rows(Q) of
         {ok, Rows} ->
-            {ok, rows_to_maps([status, channel_count, total_to_us_msat, total_capacity_msat], Rows)};
+            {ok,
+                rows_to_maps([status, channel_count, total_to_us_msat, total_capacity_msat], Rows)};
         Error ->
             Error
     end.
