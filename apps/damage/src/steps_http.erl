@@ -1082,10 +1082,11 @@ ejsonpath_match(Path, Data, Expected, Context) ->
             <<"true">> ->
                 true;
             Expected1 ->
-                case re:run(Expected1, "^[0-9]*$") of
-                    nomatch -> Expected;
-                    Int when is_list(Int) -> list_to_integer(Int);
-                    Int when is_binary(Int) -> binary_to_integer(Int)
+                case is_integer_string(Expected1) of
+                    true ->
+                        to_integer(Expected1);
+                    false ->
+                        Expected
                 end
         end,
     case catch ejsonpath:q(Path, Data) of
@@ -1097,6 +1098,18 @@ ejsonpath_match(Path, Data, Expected, Context) ->
             ?LOG_INFO(Mesg, Args),
             maps:put(fail, damage_utils:strf(Mesg, Args), Context)
     end.
+
+is_integer_string(B) when is_binary(B) ->
+    re:run(B, <<"^-?[0-9]+$">>, [{capture, none}]) =:= match;
+is_integer_string(L) when is_list(L) ->
+    re:run(L, "^-?[0-9]+$", [{capture, none}]) =:= match;
+is_integer_string(_) ->
+    false.
+
+to_integer(B) when is_binary(B) ->
+    binary_to_integer(B);
+to_integer(L) when is_list(L) ->
+    list_to_integer(L).
 
 build_url(PathOrUrl, DefaultBaseUrl) ->
     case lists:prefix("http", PathOrUrl) of
