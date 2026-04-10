@@ -185,7 +185,7 @@ init([Opts]) ->
         %% Resolve ledger ct_id via AccountRegistry owned by user.
         %% (If this fails, the HTTP layer should return intents for deploy+register;
         %%  here we treat it as init-failed because the client cannot enforce ledger.)
-        {ok, CtId0} = resolve_user_nwc_contract_id(UserAeAccount),
+        {ok, CtId0} = ensure_user_nwc_contract_id(UserAeAccount),
         CtId = to_bin(CtId0),
 
         {ok, #state{
@@ -365,6 +365,72 @@ resolve_user_nwc_contract_id(UserAeAccount) ->
     KP = user_keypair(UserAeAccount),
     account_registry:get_contract(KP, ?NWC_REGISTRY_NAME).
 
+
+ensure_user_nwc_contract_id(UserAeAccount0) ->
+    UserAeAccount = to_bin(UserAeAccount0),
+    case resolve_user_nwc_contract_id(UserAeAccount) of
+        {ok, CtId} ->
+            {ok, to_bin(CtId)};
+        {error, not_found} ->
+            deploy_and_register_user_nwc_contract(UserAeAccount);
+        {error, {unexpected_return_type, "revert", #{"return_value" := <<"Contract not found">>}}} ->
+            deploy_and_register_user_nwc_contract(UserAeAccount);
+        {error, {unexpected_return_type, <<"revert">>, #{"return_value" := <<"Contract not found">>}}} ->
+            deploy_and_register_user_nwc_contract(UserAeAccount);
+        {error, {ledger_not_found_in_account_registry, _RegistryCt, _Reason}} ->
+            deploy_and_register_user_nwc_contract(UserAeAccount);
+        {error, Why} ->
+            {error, Why}
+    end.
+
+deploy_and_register_user_nwc_contract(UserAeAccount0) ->
+    ?LOG_WARNING("nwc_ledger missing for ~p, deploying and registering a new contract", [UserAeAccount0]),
+    UserAeAccount = to_bin(UserAeAccount0),
+    KP = user_keypair(UserAeAccount),
+
+    case ensure_user_registry_ct(UserAeAccount) of
+        {ok, RegistryCt0} ->
+            RegistryCt = to_bin(RegistryCt0),
+            case deploy_nwc_contract(UserAeAccount) of
+                #{"contract_id" := CtId0} ->
+                    CtId = to_bin(CtId0),
+                    case damage_nwc_http:upsert_registry_contract(
+                        KP,
+                        RegistryCt,
+                        ?NWC_REGISTRY_NAME,
+                        CtId
+                    ) of
+                        {ok, true} ->
+                            {ok, CtId};
+                        {error, Why} ->
+                            {error, {registry_upsert_failed, Why}};
+                        Other ->
+                            {error, {registry_upsert_bad_reply, Other}}
+                    end;
+                #{"return_type" := "revert"} = Info ->
+                    {error, {deploy_revert, Info}};
+                Other ->
+                    {error, {deploy_failed, Other}}
+            end;
+        {error, Why} ->
+            {error, {ensure_registry_failed, Why}}
+    end.
+
+ensure_user_registry_ct(UserAeAccount0) ->
+    UserAeAccount = to_bin(UserAeAccount0),
+    case damage_node_registry:ensure_account_registry(UserAeAccount, <<"node">>) of
+        {ok, RegistryCt} when is_binary(RegistryCt); is_list(RegistryCt) ->
+            {ok, to_bin(RegistryCt)};
+        {ok, _} ->
+            case damage_node_registry:get_registry(UserAeAccount) of
+                #{"return_type" := "ok", "return_value" := {address, RegBin}} ->
+                    {ok, aeser_api_encoder:encode(contract_pubkey, RegBin)};
+                Other ->
+                    {error, {get_registry_failed, Other}}
+            end;
+        {error, Why} ->
+            {error, Why}
+    end.
 %% Determine which AE identity is used to sign ledger mutations.
 %% - user_signed: no signing should happen here (HTTP layer returns intents)
 %% - server_signed: sign as user_ae_account (custodial user keys held server-side)
