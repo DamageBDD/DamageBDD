@@ -112,84 +112,104 @@ compute_liquidity_tightness() ->
         undefined ->
             {error, missing_fred_api_key};
         _ ->
-            try
-                {ok, Sofr} = fetch_series("SOFR", FredKey),
-                {ok, Iorb} = fetch_series("IORB", FredKey),
-                {ok, SrfMin} = fetch_series("SRFTSYD", FredKey),
-                {ok, OnRrp} = fetch_series("RRPONTSYD", FredKey),
-                RepoRes = fetch_series("RPONTSYD", FredKey),
-                RepoOps =
-                    case RepoRes of
-                        {ok, R} -> R;
-                        _ -> []
-                    end,
-                %% Align all lists by trimming to same length
-                {Sofr1, Iorb1, Srf1, Rrp1, Repo1} =
-                    align_series([Sofr, Iorb, SrfMin, OnRrp, RepoOps]),
-                %% Compute bases (per index)
-                C1Base = lists:zipwith(fun(S, I) -> S - I end, Sofr1, Iorb1),
-                C2Base = lists:zipwith(fun(Srf, S) -> Srf - S end, Srf1, Sofr1),
-                C3Base = [math:log(1 + max(R, 0.0)) || R <- Rrp1],
-                C4Base =
-                    case sum_abs(Repo1) of
-                        -0.0 -> lists:duplicate(length(Repo1), 0.0);
-                        +0.0 -> lists:duplicate(length(Repo1), 0.0);
-                        _ -> Repo1
-                    end,
-                %% Z-scores
-                C1 = zscore(C1Base),
-                %% -z(...)
-                C2 = zscore_neg(C2Base),
-                %% -z(...)
-                C3 = zscore_neg(C3Base),
-                C4 = zscore(C4Base),
-                %% Raw LTR per index
+            case fetch_required_series(FredKey) of
+                {ok, #{sofr := Sofr, iorb := Iorb, srf := SrfMin, rrp := OnRrp, repo := RepoOps}} ->
+                    try
+                        {Sofr1, Iorb1, Srf1, Rrp1, Repo1} =
+                            align_series([Sofr, Iorb, SrfMin, OnRrp, RepoOps]),
 
-                % [{a,1},{b,2},{c,3}]
-                Zipped12 = lists:zip(C1, C2),
-                % [{x,p},{y,q},{z,r}]
-                Zipped34 = lists:zip(C3, C4),
+                        C1Base = lists:zipwith(fun(S, I) -> S - I end, Sofr1, Iorb1),
+                        C2Base = lists:zipwith(fun(Srf, S) -> Srf - S end, Srf1, Sofr1),
+                        C3Base = [math:log(1 + max(R, 0.0)) || R <- Rrp1],
+                        C4Base =
+                            case sum_abs(Repo1) of
+                                -0.0 -> lists:duplicate(length(Repo1), 0.0);
+                                +0.0 -> lists:duplicate(length(Repo1), 0.0);
+                                _ -> Repo1
+                            end,
 
-                %% Then, zip the resulting lists of 2-tuples into a list of 4-tuples:
-                ZipList = lists:zipwith(
-                    fun({A, B}, {C, D}) -> {A, B, C, D} end, Zipped12, Zipped34
-                ),
-                LTRRawList =
-                    lists:zipwith(
-                        fun({C1v, C2v, C3v, C4v}, _Acc) ->
-                            (0.40 * C1v + 0.25 * C2v + 0.25 * C3v + 0.10 * C4v)
-                        end,
-                        ZipList,
-                        %% dummy, not used; zipwith arity hack
-                        C1
-                    ),
-                ?LOG_DEBUG("LTRRaw ~p", [length(LTRRawList)]),
-                LTRRaw = lists:last(LTRRawList),
-                LTR0 = 50 + 15 * LTRRaw,
-                LTR = clamp(LTR0, 0.0, 100.0),
-                %% last components (for debugging/introspection)
-                C1Last = lists:last(C1),
-                C2Last = lists:last(C2),
-                C3Last = lists:last(C3),
-                C4Last = lists:last(C4),
-                Map = #{
-                    c1_base => C1Base,
-                    c2_base => C2Base,
-                    c3_base => C3Base,
-                    c4_base => C4Base,
-                    c1_last => C1Last,
-                    c2_last => C2Last,
-                    c3_last => C3Last,
-                    c4_last => C4Last,
-                    ltr_raw => LTRRaw,
-                    ltr => LTR
-                },
-                {ok, Map}
-            catch
-                Class:Err:Stack ->
-                    ?LOG_ERROR("LTR computation crashed: ~p ~p ~p", [Class, Err, Stack]),
-                    {error, {Class, Err}}
+                        C1 = zscore(C1Base),
+                        C2 = zscore_neg(C2Base),
+                        C3 = zscore_neg(C3Base),
+                        C4 = zscore(C4Base),
+
+                        Zipped12 = lists:zip(C1, C2),
+                        Zipped34 = lists:zip(C3, C4),
+                        ZipList = lists:zipwith(
+                            fun({A, B}, {C, D}) -> {A, B, C, D} end,
+                            Zipped12,
+                            Zipped34
+                        ),
+                        LTRRawList = lists:zipwith(
+                            fun({C1v, C2v, C3v, C4v}, _Acc) ->
+                                (0.40 * C1v + 0.25 * C2v + 0.25 * C3v + 0.10 * C4v)
+                            end,
+                            ZipList,
+                            C1
+                        ),
+
+                        case LTRRawList of
+                            [] ->
+                                {error, empty_series_after_alignment};
+                            _ ->
+                                LTRRaw = lists:last(LTRRawList),
+                                LTR0 = 50 + 15 * LTRRaw,
+                                LTR = clamp(LTR0, 0.0, 100.0),
+                                {ok, #{
+                                    c1_base => C1Base,
+                                    c2_base => C2Base,
+                                    c3_base => C3Base,
+                                    c4_base => C4Base,
+                                    c1_last => lists:last(C1),
+                                    c2_last => lists:last(C2),
+                                    c3_last => lists:last(C3),
+                                    c4_last => lists:last(C4),
+                                    ltr_raw => LTRRaw,
+                                    ltr => LTR
+                                }}
+                        end
+                    catch
+                        Class:Err:Stack ->
+                            ?LOG_ERROR("LTR computation failed: ~p ~p ~p", [Class, Err, Stack]),
+                            {error, {Class, Err}}
+                    end;
+                {error, Reason} ->
+                    {error, Reason}
             end
+    end.
+
+fetch_required_series(FredKey) ->
+    case fetch_series("SOFR", FredKey) of
+        {ok, Sofr} ->
+            case fetch_series("IORB", FredKey) of
+                {ok, Iorb} ->
+                    case fetch_series("SRFTSYD", FredKey) of
+                        {ok, SrfMin} ->
+                            case fetch_series("RRPONTSYD", FredKey) of
+                                {ok, OnRrp} ->
+                                    RepoOps =
+                                        case fetch_series("RPONTSYD", FredKey) of
+                                            {ok, R} -> R;
+                                            {error, _} -> []
+                                        end,
+                                    {ok, #{
+                                        sofr => Sofr,
+                                        iorb => Iorb,
+                                        srf => SrfMin,
+                                        rrp => OnRrp,
+                                        repo => RepoOps
+                                    }};
+                                {error, Reason} ->
+                                    {error, {fred_series_failed, <<"RRPONTSYD">>, Reason}}
+                            end;
+                        {error, Reason} ->
+                            {error, {fred_series_failed, <<"SRFTSYD">>, Reason}}
+                    end;
+                {error, Reason} ->
+                    {error, {fred_series_failed, <<"IORB">>, Reason}}
+            end;
+        {error, Reason} ->
+            {error, {fred_series_failed, <<"SOFR">>, Reason}}
     end.
 
 %%%===================================================================
