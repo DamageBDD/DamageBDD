@@ -407,6 +407,23 @@ function restoreFeatureDraftFromShareLink() {
 			}
 			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
 			document.addEventListener('tabby', function(event) {
+				if (event.detail.tab.id === 'tabby-toggle_execution-tab') {
+					initDamageBDDPicker({
+						opener: "#open-feature-picker",
+						mount: "#feature-picker-mount",
+						editor: '#damageTextArea',
+						gateway: "/features/",
+						samplesIndexUrl: "/samples/features/index.json"
+					});
+					document.addEventListener("click", (e) => {
+						const btn = e.target.closest("#open-feature-picker");
+						if (!btn) return;
+
+						e.preventDefault();
+						console.log("feature picker clicked");
+						MicroModal.show("feature-picker-modal");
+					});
+				}
 				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
 					// Check if seed phrase was already set
 					const revealBtn = document.getElementById("reveal-seed-phrase-btn");
@@ -505,15 +522,6 @@ function restoreFeatureDraftFromShareLink() {
 		// Optional bridge (no change)
 		window.rememberRecentFeature = rememberRecentFeature;
 
-
-		// Picker init (no change)
-		initDamageBDDPicker({
-			opener: "#open-feature-picker",
-			mount: "#feature-picker-mount",
-			editor: '#damageTextArea',
-			gateway: "/features/",
-			samplesIndexUrl: "/samples/features/index.json"
-		});
 
 
 		// Job modal trigger (likely API → wrap dynamically)

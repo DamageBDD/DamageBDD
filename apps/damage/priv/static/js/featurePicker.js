@@ -147,11 +147,25 @@ export async function initDamageBDDPicker(opts) {
   `;
 
   // Wire modal open (your original file already used MicroModal.show):contentReference[oaicite:6]{index=6}
-  $opener.onclick = (event) => {
-	  debugger;
-    if (window.MicroModal?.show) window.MicroModal.show("feature-picker-modal");
-    event.preventDefault?.();
-  };
+	$opener.addEventListener("click", (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const modal = document.getElementById("feature-picker-modal");
+		console.log("clicked opener", {
+			modal,
+			microModal: typeof window.MicroModal,
+			ariaHidden: modal?.getAttribute("aria-hidden"),
+			className: modal?.className
+		});
+
+		window.MicroModal?.show("feature-picker-modal");
+
+		console.log("after show", {
+			ariaHidden: modal?.getAttribute("aria-hidden"),
+			className: modal?.className
+		});
+	});
 
   const $list    = $root.querySelector(".dbdd-list");
   const $detail  = $root.querySelector(".dbdd-detail");

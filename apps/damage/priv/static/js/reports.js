@@ -4,6 +4,7 @@
  * Requires: filter.js loaded first (window.AccountFilter)
  */
 
+import { fetchJSON, fetchCachedTextFirstLine } from "/static/js/fetch-cache.js";
 (function () {
   "use strict";
 
@@ -27,28 +28,6 @@
     bypassCache: false
   };
 
-  // --- fetch helpers ---
-  async function fetchJSON(url, { retries = 1, backoff = 250 } = {}) {
-    for (let i = 0; ; i++) {
-      try {
-        const res = await fetch(url, {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-            "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
-            Pragma: "no-cache",
-            Expires: "0"
-          }
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-      } catch (e) {
-        if (i >= retries) throw e;
-        await new Promise((r) => setTimeout(r, backoff * (i + 1)));
-      }
-    }
-  }
 
   // --- MDW queries ---
   async function getAccountActivities({ accountId, limit = 10, pagePath = null } = {}) {
@@ -98,49 +77,61 @@
     );
   }
 
-  async function fetchTextFirstLine(url) {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    return (text || "").split(/\r?\n/)[0] || "—";
-  }
 
-  async function normalizeDamageSpend(txFull) {
-    const inner = txFull?.tx?.tx?.tx || txFull?.tx?.tx || txFull?.tx || null;
-    if (!inner) return null;
+	const IPFS_FIRSTLINE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-    if (inner.function !== "spend") return null;
+	function isLikelyCid(value) {
+		const v = String(value || "").trim();
+		return /^Qm[1-9A-HJ-NP-Za-km-z]{44,}$/.test(v) || /^bafy[a-z2-7]+$/i.test(v);
+	}
 
-    const args = extractTxArguments(txFull);
-    const amountRaw = args?.[1]?.value;
-    const featureCid = typeof args?.[2]?.value === "string" ? args[2].value : null;
-    const reportCid = typeof args?.[3]?.value === "string" ? args[3].value : null;
-    if (!featureCid || !reportCid) return null;
+	async function normalizeDamageSpend(txFull) {
+		const inner = txFull?.tx?.tx?.tx || txFull?.tx?.tx || txFull?.tx || null;
+		if (!inner) return null;
 
-    const createdMs = toMsOrNull(txFull?.micro_time || inner?.micro_time);
-    const featureTitle = await fetchTextFirstLine(`/features/${encodeURIComponent(featureCid)}`)
-      .catch(() => "—");
+		if (inner.function !== "spend") return null;
 
-    let reportItems = [];
-    try {
-      const r = await fetch(`/reports/${encodeURIComponent(reportCid)}`, { cache: "no-store" });
-      const t = await r.text();
-      const json = JSON.parse(t || "[]");
-      reportItems = Array.isArray(json) ? json : [];
-    } catch {
-      reportItems = [];
-    }
+		const args = extractTxArguments(txFull);
+		const amountRaw = args?.[1]?.value;
+		const featureCid = typeof args?.[2]?.value === "string" ? args[2].value : null;
+		const reportCid = typeof args?.[3]?.value === "string" ? args[3].value : null;
+		if (!featureCid || !reportCid) return null;
 
-    return {
-      createdMs,
-      createdLabel: createdMs ? new Date(createdMs).toLocaleString() : "—",
-      amountRaw: typeof amountRaw === "number" ? amountRaw : Number(amountRaw),
-      featureCid,
-      featureTitle,
-      reportCid,
-      reportCount: reportItems.length
-    };
-  }
+		const createdMs = toMsOrNull(txFull?.micro_time || inner?.micro_time);
+		const featureIsCid = isLikelyCid(featureCid);
+
+		const featureTitle = await fetchCachedTextFirstLine(
+			`/features/${encodeURIComponent(featureCid)}`,
+			{
+				cacheKey: featureIsCid ? `ipfs:firstline:feature:${featureCid}` : null,
+				ttlMs: IPFS_FIRSTLINE_TTL_MS,
+				retries: featureIsCid ? 1 : 3,
+				backoff: 250,
+				bypassCache: !featureIsCid
+			}
+		).catch(() => "—");
+
+		let reportItems = [];
+		try {
+			const json = await fetchJSON(`/reports/${encodeURIComponent(reportCid)}`, {
+				retries: 1,
+				backoff: 250
+			});
+			reportItems = Array.isArray(json) ? json : [];
+		} catch {
+			reportItems = [];
+		}
+
+		return {
+			createdMs,
+			createdLabel: createdMs ? new Date(createdMs).toLocaleString() : "—",
+			amountRaw: typeof amountRaw === "number" ? amountRaw : Number(amountRaw),
+			featureCid,
+			featureTitle,
+			reportCid,
+			reportCount: reportItems.length
+		};
+	}
 
   function formatTokenAmount(raw, decimals = 8) {
     const n = Number(raw);

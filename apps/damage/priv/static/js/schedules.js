@@ -12,6 +12,7 @@
 //////////////////////////////
 // Auth + headers
 //////////////////////////////
+import { fetchCachedTextFirstLine, fetchJSON } from "/static/js/fetch-cache.js";
 
 function getAccessToken() {
 	try {
@@ -31,74 +32,27 @@ function buildJsonAuthHeaders(token) {
 	return headers;
 }
 
-//////////////////////////////
-// Tiny TTL cache + text fetch
-// (same style/pattern as reports.js / previous update)
-//////////////////////////////
+const IPFS_FIRSTLINE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-const IPFS_FIRSTLINE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-const FirstLineCache = {
-	get(k) {
-		try {
-			const raw = localStorage.getItem(k);
-			if (!raw) return null;
-			const { v, e } = JSON.parse(raw);
-			if (e && Date.now() > e) {
-				localStorage.removeItem(k);
-				return null;
-			}
-			return v;
-		} catch {
-			return null;
-		}
-	},
-	set(k, v, ttlMs) {
-		try {
-			localStorage.setItem(
-				k,
-				JSON.stringify({
-					v,
-					e: ttlMs ? Date.now() + ttlMs : null
-				})
-			);
-		} catch {}
-	}
-};
-
-async function fetchTEXT(url, { headers, retries = 1, backoff = 250 } = {}) {
-	for (let i = 0; ; i++) {
-		try {
-			const res = await fetch(url, {
-				method: "GET",
-				cache: "no-store",
-				credentials: "include",
-				headers
-			});
-			if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-			return await res.text();
-		} catch (e) {
-			if (i >= retries) throw e;
-			await new Promise((r) => setTimeout(r, backoff * (i + 1)));
-		}
-	}
-}
-
-async function fetchTextFirstLine(url, cacheKey, ttlMs, headers) {
-	const cached = FirstLineCache.get(cacheKey);
-	if (cached) return cached;
-
-	const text = await fetchTEXT(url, { headers });
-	const firstLine = (text || "").split(/\r?\n/)[0] || "—";
-	FirstLineCache.set(cacheKey, firstLine, ttlMs);
-	return firstLine;
+function isLikelyCid(value) {
+	const v = String(value || "").trim();
+	return /^Qm[1-9A-HJ-NP-Za-km-z]{44,}$/.test(v) || /^bafy[a-z2-7]+$/i.test(v);
 }
 
 async function fetchFeatureFirstLine(featureHash, headers) {
 	if (!featureHash) return "—";
+
 	const cid = String(featureHash).trim();
-	const cacheKey = `ipfs:firstline:feature:${cid}`;
-	return fetchTextFirstLine(`/features/${encodeURIComponent(cid)}`, cacheKey, IPFS_FIRSTLINE_TTL_MS, headers)
-		.catch(() => cid);
+	const isCid = isLikelyCid(cid);
+
+	return fetchCachedTextFirstLine(`/features/${encodeURIComponent(cid)}`, {
+		cacheKey: isCid ? `ipfs:firstline:feature:${cid}` : null,
+		ttlMs: IPFS_FIRSTLINE_TTL_MS,
+		headers,
+		retries: isCid ? 1 : 3,
+		backoff: 250,
+		bypassCache: !isCid
+	}).catch(() => cid);
 }
 
 //////////////////////////////
@@ -123,10 +77,9 @@ function formatCell(obj, cell, value, type) {
 	}
 
 	if (type === "feature_title") {
-		// This will be set asynchronously (first-line from /features/<hash>)
-		// but we still render a link placeholder now.
+		const featureHash = obj?.feature_hash || obj?.hash || "";
 		const link = document.createElement("a");
-		link.href = obj && obj.hash ? `/features/${obj.hash}` : "#";
+		link.href = featureHash ? `/features/${featureHash}` : "#";
 		link.textContent = value || "…";
 		link.target = "_blank";
 		cell.appendChild(link);
@@ -296,19 +249,24 @@ export async function updateSchedulesTable(opts = {}) {
 			"last_execution_timestamp",
 			"execution_counter",
 			"concurrency",
-			"hash",
+			"feature_hash",
 			"contract_address"
 		];
 
 		const cells = props.map((prop) => {
 			const td = document.createElement("td");
 			// Feature title placeholder: show hash until we fetch first line
-			const v = prop === "feature_title" ? (obj.feature_title || obj.hash || "…") : obj[prop];
+			const featureHash = obj.feature_hash || obj.hash || "";
+			const v =
+				  prop === "feature_title"
+				  ? (obj.feature_title || featureHash || "…")
+				  : obj[prop];
 			const cell = formatCell(obj, td, v, prop);
 
-			// Mark the feature_title cell so we can update it
+
+
 			if (prop === "feature_title") {
-				cell.dataset.featureHash = obj.hash || "";
+				cell.dataset.featureHash = featureHash;
 			}
 			return cell;
 		});
