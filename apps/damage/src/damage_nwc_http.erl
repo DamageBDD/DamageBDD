@@ -963,7 +963,7 @@ nwc_wallet_pubhex() ->
             _ ->
                 %% Generate + persist new nsec
                 NewNsec = damage_nostr:generate_nsec(),
-                ok = secrets:store_encrypt(?NWC_NOSTR_NSEC, NewNsec),
+                ok = secrets:encrypt_store(?NWC_NOSTR_NSEC, NewNsec),
                 ?LOG_WARNING("Generated new NWC wallet nsec - first time setup"),
                 NewNsec
         end,
