@@ -365,7 +365,6 @@ resolve_user_nwc_contract_id(UserAeAccount) ->
     KP = user_keypair(UserAeAccount),
     account_registry:get_contract(KP, ?NWC_REGISTRY_NAME).
 
-
 ensure_user_nwc_contract_id(UserAeAccount0) ->
     UserAeAccount = to_bin(UserAeAccount0),
     case resolve_user_nwc_contract_id(UserAeAccount) of
@@ -375,7 +374,8 @@ ensure_user_nwc_contract_id(UserAeAccount0) ->
             deploy_and_register_user_nwc_contract(UserAeAccount);
         {error, {unexpected_return_type, "revert", #{"return_value" := <<"Contract not found">>}}} ->
             deploy_and_register_user_nwc_contract(UserAeAccount);
-        {error, {unexpected_return_type, <<"revert">>, #{"return_value" := <<"Contract not found">>}}} ->
+        {error,
+            {unexpected_return_type, <<"revert">>, #{"return_value" := <<"Contract not found">>}}} ->
             deploy_and_register_user_nwc_contract(UserAeAccount);
         {error, {ledger_not_found_in_account_registry, _RegistryCt, _Reason}} ->
             deploy_and_register_user_nwc_contract(UserAeAccount);
@@ -384,7 +384,9 @@ ensure_user_nwc_contract_id(UserAeAccount0) ->
     end.
 
 deploy_and_register_user_nwc_contract(UserAeAccount0) ->
-    ?LOG_WARNING("nwc_ledger missing for ~p, deploying and registering a new contract", [UserAeAccount0]),
+    ?LOG_WARNING("nwc_ledger missing for ~p, deploying and registering a new contract", [
+        UserAeAccount0
+    ]),
     UserAeAccount = to_bin(UserAeAccount0),
     KP = user_keypair(UserAeAccount),
 
@@ -394,12 +396,14 @@ deploy_and_register_user_nwc_contract(UserAeAccount0) ->
             case deploy_nwc_contract(UserAeAccount) of
                 #{"contract_id" := CtId0} ->
                     CtId = to_bin(CtId0),
-                    case damage_nwc_http:upsert_registry_contract(
-                        KP,
-                        RegistryCt,
-                        ?NWC_REGISTRY_NAME,
-                        CtId
-                    ) of
+                    case
+                        damage_nwc_http:upsert_registry_contract(
+                            KP,
+                            RegistryCt,
+                            ?NWC_REGISTRY_NAME,
+                            CtId
+                        )
+                    of
                         {ok, true} ->
                             {ok, CtId};
                         {error, Why} ->

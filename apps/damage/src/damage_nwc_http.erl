@@ -947,7 +947,17 @@ setup_intents_for_missing_ledger(OwnerAkBin) ->
     {to_bin(RegistryCt), [Deploy, Upsert]}.
 
 nwc_wallet_pubhex() ->
-    {ok, Nsec} = secrets:retrieve_decrypt(?NWC_NOSTR_NSEC),
+    Nsec =
+        case secrets:retrieve_decrypt(?NWC_NOSTR_NSEC) of
+            {ok, Existing} ->
+                Existing;
+            _ ->
+                %% Generate + persist new nsec
+                NewNsec = damage_nostr:generate_nsec(),
+                ok = secrets:store_encrypt(?NWC_NOSTR_NSEC, NewNsec),
+                ?LOG_WARNING("Generated new NWC wallet nsec - first time setup"),
+                NewNsec
+        end,
     {PublicKey, _PrivateKey} = damage_nostr:nsec_to_npub(Nsec),
     ensure_hex_pubkey(PublicKey).
 

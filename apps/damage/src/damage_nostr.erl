@@ -7,6 +7,7 @@
 -license("Apache-2.0").
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
 -include_lib("damage.hrl").
 
 -behaviour(gen_server).
@@ -73,6 +74,12 @@
     npub_or_hex_to_lower_hex64/1
 ]).
 -export([pp_event/1, pp_event/2, pp_events/1]).
+-export([
+    generate_nsec/0,
+    generate_nostr_keypair/0,
+    generate_nsec_test/0,
+    generate_nostr_keypair_test/0
+]).
 -import(damage_utils, [to_bin/1]).
 
 %% Define the record to store state
@@ -187,7 +194,7 @@ nip46_send(NsecKey, RemoteHexPubKey, Payload) ->
         {nip46_send, RemoteHexPubKey, Payload}
     ).
 nsec_to_npub(Nsec) ->
-    PrivateKey = list_to_binary(decode_nsec(Nsec)),
+    PrivateKey = iolist_to_binary(decode_nsec(Nsec)),
     {ok, <<PublicKey/binary>>} = nostrlib_schnorr:new_publickey(PrivateKey),
     {PublicKey, PrivateKey}.
 
@@ -781,6 +788,25 @@ test_simple() ->
             {ok, Body} = gun:await_body(ConnPid, StreamRef),
             io:format("~s~n", [Body])
     end.
+generate_nsec() ->
+    PrivateKey = crypto:strong_rand_bytes(32),
+    {ok, Data5} = bech32:convertbits(binary_to_list(PrivateKey), 8, 5, [{padding, true}]),
+    {ok, Nsec} = bech32:encode("nsec", Data5),
+    list_to_binary(Nsec).
+
+generate_nostr_keypair() ->
+    Nsec = generate_nsec(),
+    {PublicKey, PrivateKey} = nsec_to_npub(Nsec),
+    #{
+        nsec => Nsec,
+        npub => encode_npub(PublicKey),
+        npub_hex => lower_hex(PublicKey),
+        private_key => PrivateKey
+    }.
+encode_npub(PublicKey) when is_binary(PublicKey) ->
+    {ok, Data5} = bech32:convertbits(binary_to_list(PublicKey), 8, 5, [{padding, true}]),
+    {ok, Npub} = bech32:encode("npub", Data5),
+    list_to_binary(Npub).
 
 decode_nsec(Nsec) ->
     {ok, #{data := Data}} = bech32:decode(Nsec),
@@ -1776,3 +1802,41 @@ filter_events_by_authors(Events, AuthorHexes0) ->
         is_map(E),
         lists:member(event_author_hex(E), AuthorHexes)
     ].
+
+generate_nsec_test() ->
+    %% Generate new key
+    Nsec = generate_nsec(),
+
+    %% Basic shape check
+    ?assertMatch(<<"nsec", _/binary>>, Nsec),
+
+    %% Decode back to private key
+    Priv = iolist_to_binary(decode_nsec(Nsec)),
+    ?assertEqual(32, byte_size(Priv)),
+
+    %% Derive pubkey using existing function
+    {Pub1, Priv1} = nsec_to_npub(Nsec),
+
+    %% Ensure private keys match
+    ?assertEqual(Priv, Priv1),
+
+    %% Derive pubkey directly again (sanity)
+    {Pub2, _} = nsec_to_npub(Nsec),
+    ?assertEqual(Pub1, Pub2),
+
+    ok.
+generate_nostr_keypair_test() ->
+    #{nsec := Nsec, npub := Npub} = generate_nostr_keypair(),
+
+    %% Ensure prefixes
+    ?assertMatch(<<"nsec", _/binary>>, Nsec),
+    ?assertMatch(<<"npub", _/binary>>, Npub),
+
+    %% Decode and re-derive
+    {Pub, _Priv} = nsec_to_npub(Nsec),
+    Npub2 = encode_npub(Pub),
+
+    %% Ensure deterministic encoding
+    ?assertEqual(Npub, Npub2),
+
+    ok.
