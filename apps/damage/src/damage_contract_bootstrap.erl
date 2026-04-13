@@ -51,8 +51,12 @@ secret_ct(Key) ->
             error
     end.
 
+normalize_ct(<<"ct_", _/binary>> = Ct) -> Ct;
+normalize_ct(Ct) when is_list(Ct) -> list_to_binary(Ct).
+
 -spec persist_ct(atom(), binary()) -> ok.
-persist_ct(Key, <<"ct_", _/binary>> = CtId) ->
+persist_ct(Key, CtId0) ->
+    CtId = normalize_ct(CtId0),
     secrets:encrypt_store(Key, CtId).
 
 -spec init_admin_contracts(binary()) -> {ok, map()} | {error, term()}.
@@ -244,7 +248,8 @@ secret_user_ct(UserAccount, NameBin) ->
             error
     end.
 
-persist_user_ct(UserAccount, NameBin, <<"ct_", _/binary>> = CtId) ->
+persist_user_ct(UserAccount, NameBin, <<"ct_", _/binary>> = CtId0) ->
+    CtId = normalize_ct(CtId0),
     secrets:encrypt_store(user_contract_secret_key(UserAccount, NameBin), CtId).
 
 resolve_or_init_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, DeployFun) ->
