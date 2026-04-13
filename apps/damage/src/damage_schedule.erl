@@ -65,7 +65,6 @@
     "ct_hCcHw4hNAkvbadmVrkCRQJxEqvx825hA4gL3gbf4Kh9hpRrwS"
 ).
 
-
 %% Cache keys
 -define(CK_GET_SCHEDULES(AeAccount), {get_schedules, AeAccount}).
 -define(CK_LIST_SCHEDULES(AeAccount), {list_schedules, AeAccount}).
@@ -251,7 +250,6 @@ execute_bdd(
             []
     end.
 
-
 schedule_job(#{error := Reason} = Schedule) ->
     ?LOG_ERROR("Ignoring schedule with error ~p ~p", [Reason, Schedule]),
     ok;
@@ -423,7 +421,7 @@ add_schedule(AeAccount, Name, Cron, FeatureHash, Concurrency) when is_binary(AeA
             ]
         ),
     case Result of
-       #{
+        #{
             "caller_id" := CallerId,
             "gas_price" := GasPrice,
             "gas_used" := GasUsed,
@@ -456,7 +454,6 @@ add_schedule(AeAccount, Name, Cron, FeatureHash, Concurrency) when is_binary(AeA
             ?LOG_ERROR("add_schedule unexpected result ~p", [Other]),
             {error, {unexpected_contract_result, Other}}
     end.
-
 
 load_account_schedules(Account, Schedules0) ->
     Schedules = normalize_schedules(Schedules0),
@@ -493,7 +490,6 @@ normalize_schedule_kv(
 ) ->
     {IdHash, IdPlain, CronEnc, FeatureHashEnc, Concurrency, Created, LastExecutionTs,
         ExecutionCounter};
-
 %% New contract shape with plain id hash
 normalize_schedule_kv(
     {_Key,
@@ -518,7 +514,6 @@ normalize_schedule_kv(
         LastExecutionTs,
         ExecutionCounter
     };
-
 %% Legacy shape: key is schedule hash, value stores only id/hash/plain cron/feature
 normalize_schedule_kv(
     {Key,
@@ -539,7 +534,6 @@ normalize_schedule_kv(
         undefined,
         0
     };
-
 %% Legacy shape: plain id hash inside tuple
 normalize_schedule_kv(
     {Key,
@@ -560,7 +554,6 @@ normalize_schedule_kv(
         undefined,
         0
     };
-
 normalize_schedule_kv(Bad) ->
     error({invalid_schedule_kv_shape, Bad}).
 

@@ -18,15 +18,15 @@
 %% Keep these atoms aligned with however you represent tx tags internally.
 %% If you use different names, adjust these atoms.
 -type tx_tag() ::
-    channel_force_progress_tx |
-    channel_offchain_tx |
-    paying_for_tx |
-    oracle_register_tx |
-    oracle_extend_tx |
-    oracle_query_tx |
-    oracle_response_tx |
-    ga_meta_tx |
-    term().
+    channel_force_progress_tx
+    | channel_offchain_tx
+    | paying_for_tx
+    | oracle_register_tx
+    | oracle_extend_tx
+    | oracle_query_tx
+    | oracle_response_tx
+    | ga_meta_tx
+    | term().
 
 %%--------------------------------------------------------------------
 %% Base gas
@@ -55,18 +55,21 @@ tx_base_gas(_) ->
 %%--------------------------------------------------------------------
 -spec tx_other_gas(tx_tag(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
     non_neg_integer().
-tx_other_gas(Tag, TxSize, RelativeTtl, _InnerTxSize)
-        when Tag =:= oracle_register_tx;
-             Tag =:= oracle_extend_tx;
-             Tag =:= oracle_query_tx;
-             Tag =:= oracle_response_tx ->
-    TxSize * ?GAS_PER_BYTE + ceil_div(
-        32000 * RelativeTtl,
-        ((60 * 24 * 365) div ?KEY_BLOCK_INTERVAL)
-    );
-tx_other_gas(Tag, TxSize, _RelativeTtl, InnerTxSize)
-        when Tag =:= ga_meta_tx;
-             Tag =:= paying_for_tx ->
+tx_other_gas(Tag, TxSize, RelativeTtl, _InnerTxSize) when
+    Tag =:= oracle_register_tx;
+    Tag =:= oracle_extend_tx;
+    Tag =:= oracle_query_tx;
+    Tag =:= oracle_response_tx
+->
+    TxSize * ?GAS_PER_BYTE +
+        ceil_div(
+            32000 * RelativeTtl,
+            ((60 * 24 * 365) div ?KEY_BLOCK_INTERVAL)
+        );
+tx_other_gas(Tag, TxSize, _RelativeTtl, InnerTxSize) when
+    Tag =:= ga_meta_tx;
+    Tag =:= paying_for_tx
+->
     erlang:max(0, TxSize - InnerTxSize) * ?GAS_PER_BYTE;
 tx_other_gas(_Tag, TxSize, _RelativeTtl, _InnerTxSize) ->
     TxSize * ?GAS_PER_BYTE.

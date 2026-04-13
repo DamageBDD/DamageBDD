@@ -20,7 +20,6 @@
 -define(TX_POLL_TIMEOUT, 600000).
 -define(TX_POLL_INTERVAL, 2000).
 
-
 -export([estimate_contract_call_gas/1]).
 
 -export([
@@ -317,7 +316,9 @@ handle_call(
     _From,
     #{public_key := AeAccount, private_key := PrivateKey} = State
 ) ->
-    ?LOG_DEBUG("calling contract_call_payfor_user ~p ~p ~p ~p ~p", [AeAccount, Contract, ContractSource, Func, Args]),
+    ?LOG_DEBUG("calling contract_call_payfor_user ~p ~p ~p ~p ~p", [
+        AeAccount, Contract, ContractSource, Func, Args
+    ]),
     KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
     Result = do_contract_call_payfor_user(
         KeyPair,
@@ -872,7 +873,6 @@ transfer_hits(FromAccount, ToAeAccount, Hits) when is_integer(Hits) ->
     ?LOG_DEBUG("Tokens transfered ~p", [Result]),
     Result.
 
-
 %% Contract create (FATE) gas
 contract_path(Contract0) ->
     PrivDir = code:priv_dir(damage),
@@ -1009,8 +1009,16 @@ do_contract_call_payfor_user(
 
     %% 1) Build dummy inner tx to estimate real contract-call gas
     {ok, ContractCall0} = vanillae:contract_call(
-        AeAccount, AeAccountNonce, DummyGas, GasPrice, InnerFee, Amount,
-        AACI, ContractId, Func, Args
+        AeAccount,
+        AeAccountNonce,
+        DummyGas,
+        GasPrice,
+        InnerFee,
+        Amount,
+        AACI,
+        ContractId,
+        Func,
+        Args
     ),
     Signature0 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall0}),
     SignedTX0 = attach_signature_base58(ContractCall0, Signature0),
@@ -1020,8 +1028,16 @@ do_contract_call_payfor_user(
 
     %% 2) Rebuild inner tx with corrected gas
     {ok, ContractCall1} = vanillae:contract_call(
-        AeAccount, AeAccountNonce, InnerGas, GasPrice, InnerFee, Amount,
-        AACI, ContractId, Func, Args
+        AeAccount,
+        AeAccountNonce,
+        InnerGas,
+        GasPrice,
+        InnerFee,
+        Amount,
+        AACI,
+        ContractId,
+        Func,
+        Args
     ),
     Signature1 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall1}),
     SignedTX1 = attach_signature_base58(ContractCall1, Signature1),
@@ -1105,8 +1121,16 @@ contract_call(
 
     %% 1) Build dummy tx for estimation
     {ok, ContractCall0} = vanillae:contract_call(
-        AeAccount, Nonce, DummyGas, GasPrice, Fee0, Amount,
-        AACI, ContractAddress, Func, Args
+        AeAccount,
+        Nonce,
+        DummyGas,
+        GasPrice,
+        Fee0,
+        Amount,
+        AACI,
+        ContractAddress,
+        Func,
+        Args
     ),
     Signature0 = make_transaction_signature_base58(PrivateKey, ContractCall0),
     SignedTx0 = attach_signature_base58(ContractCall0, Signature0),
@@ -1120,8 +1144,16 @@ contract_call(
 
     %% 3) Rebuild final tx
     {ok, ContractCall} = vanillae:contract_call(
-        AeAccount, Nonce, Gas, GasPrice, Fee, Amount,
-        AACI, ContractAddress, Func, Args
+        AeAccount,
+        Nonce,
+        Gas,
+        GasPrice,
+        Fee,
+        Amount,
+        AACI,
+        ContractAddress,
+        Func,
+        Args
     ),
     Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
     SignedTX = attach_signature_base58(ContractCall, Signature),
@@ -1142,8 +1174,10 @@ contract_call_dry(
 ) ->
     {ok, AccInfo} = vanillae:acc(AeAccount),
     {ok, NextNonce} = vanillae:next_nonce(AeAccount),
-    ?LOG_WARNING("dry-run account=~p acc=~p next_nonce=~p",
-                 [AeAccount, AccInfo, NextNonce]),
+    ?LOG_WARNING(
+        "dry-run account=~p acc=~p next_nonce=~p",
+        [AeAccount, AccInfo, NextNonce]
+    ),
 
     Fee = min_fee(),
     Gas = min_gas(),
@@ -1159,7 +1193,6 @@ contract_call_dry(
         Other ->
             {error, Other}
     end.
-
 
 tx_info_convert_dry_run_result_safe(
     #{"call_obj" := #{"return_value" := Encoded} = CallInfo}
@@ -1462,7 +1495,6 @@ estimate_contract_call_gas(TxBin) when is_binary(TxBin) ->
     GenericGas = damage_ae_gas:build_gas(contract_call_tx, byte_size(TxBin), 0, 0),
     FloorGas = erlang:max(GenericGas, ?CONTRACT_CALL_GAS_FLOOR),
     erlang:max(min_gas(), add_gas_buffer(FloorGas)).
-
 
 tx_info_convert_result(Result) ->
     case Result of
