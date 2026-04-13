@@ -19,7 +19,6 @@
     set_config/0, set_config/2, set_config/3
 ]).
 
-
 -define(DEFAULT_IPFS_DIR, ".ipfs").
 -define(DEFAULT_IPFS_HOME, "/var/lib/ipfs/").
 

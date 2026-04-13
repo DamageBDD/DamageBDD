@@ -149,7 +149,6 @@ trails() ->
     ].
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
-
 is_authorized(Req, #{action := version} = State) ->
     {true, Req, State};
 is_authorized(Req, #{action := tx} = State) ->

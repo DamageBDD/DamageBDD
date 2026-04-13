@@ -33,6 +33,7 @@
 
 -record(state, {
     ipfs_api = ?DEFAULT_IPFS_API :: string(),
+    self_peer_id = undefined,
     peers = [] :: [peer_spec()],
     retry_interval = ?DEFAULT_RETRY_INTERVAL :: non_neg_integer(),
     timer = undefined
@@ -92,13 +93,18 @@ init(Opts) ->
     ),
     Peers0 = proplists:get_value(ipfs_peers, Opts, env(ipfs_peers, [])),
     Peers = normalize_peer_specs(Peers0),
+    SelfPeerId = get_self_peer_id(IpfsApi),
 
-    ?LOG_INFO("damage_ipfs_peers starting with ~p peers via ~p", [length(Peers), IpfsApi]),
+    ?LOG_INFO(
+        "damage_ipfs_peers starting with ~p peers via ~p self=~p",
+        [length(Peers), IpfsApi, SelfPeerId]
+    ),
 
     TRef = erlang:send_after(1000, self(), connect_tick),
 
     {ok, #state{
         ipfs_api = IpfsApi,
+        self_peer_id = SelfPeerId,
         peers = Peers,
         retry_interval = RetryInterval,
         timer = TRef
@@ -124,7 +130,25 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(connect_tick, State = #state{retry_interval = RetryInterval}) ->
-    _ = do_connect_all(State),
+    _ =
+        try
+            do_connect_all(State)
+        catch
+            exit:{shutdown, _} ->
+                {error, shutting_down};
+            exit:shutdown ->
+                {error, shutting_down};
+            exit:{noproc, _} ->
+                {error, dependency_gone};
+            exit:noproc ->
+                {error, dependency_gone};
+            Class:Reason:Stack ->
+                ?LOG_WARNING(
+                    "IPFS connect tick failed during shutdown/restart ~p:~p ~p",
+                    [Class, Reason, Stack]
+                ),
+                {error, {Class, Reason}}
+        end,
     TRef = erlang:send_after(RetryInterval, self(), connect_tick),
     {noreply, State#state{timer = TRef}};
 handle_info(_Info, State) ->
@@ -161,9 +185,29 @@ do_connect_all(#state{peers = Peers} = State) ->
         Peers
     ).
 
-connect_peer(State, PeerSpec) ->
-    Addrs = peer_addrs(PeerSpec),
-    connect_addrs(State, Addrs, PeerSpec).
+connect_peer(State = #state{self_peer_id = SelfPeerId}, PeerSpec) ->
+    Ids = peer_target_ids(PeerSpec),
+
+    case should_skip_self(SelfPeerId, Ids) of
+        true ->
+            %?LOG_DEBUG("Skipping self peer spec ~p", [PeerSpec]),
+            {ok, skipped_self, PeerSpec};
+        false ->
+            connect_peer_addrs(State, PeerSpec)
+    end.
+
+should_skip_self(undefined, _) ->
+    false;
+should_skip_self(Self, Ids) ->
+    lists:member(Self, Ids).
+
+connect_peer_addrs(State, PeerSpec) ->
+    case peer_addrs(PeerSpec) of
+        [] ->
+            {error, invalid_peer_spec};
+        Addrs ->
+            connect_addrs(State, Addrs, PeerSpec)
+    end.
 
 connect_addrs(_State, [], PeerSpec) ->
     {error, no_addrs, PeerSpec};
@@ -181,29 +225,47 @@ connect_addrs(State, [Addr | Rest], PeerSpec) ->
 connect_multiaddr(#state{ipfs_api = ApiBase}, Addr0) ->
     Addr = to_list(Addr0),
     Url = ApiBase ++ "/api/v0/swarm/connect?arg=" ++ uri_string:quote(Addr),
-    case httpc:request(post, {Url, [], "application/x-www-form-urlencoded", ""}, [], []) of
-        {ok, {{_, 200, _}, _Headers, Body}} ->
-            ?LOG_INFO("IPFS connected ~s -> ~s", [Addr, body_to_log(Body)]),
-            ok;
-        {ok, {{_, 500, _}, _Headers, Body}} ->
-            case body_text(Body) of
-                Text when is_list(Text) ->
-                    case is_already_connected(Text) of
-                        true ->
-                            ?LOG_DEBUG("IPFS already connected ~s", [Addr]),
-                            ok;
-                        false ->
-                            ?LOG_WARNING("IPFS connect failed ~s -> ~s", [Addr, Text]),
-                            {error, Text}
-                    end
-            end;
-        {ok, {{_, Code, _}, _Headers, Body}} ->
-            Text = body_text(Body),
-            ?LOG_WARNING("IPFS connect http ~p for ~s -> ~s", [Code, Addr, Text]),
-            {error, {http_error, Code, Text}};
-        Error ->
-            ?LOG_WARNING("IPFS connect transport error ~s -> ~p", [Addr, Error]),
-            {error, Error}
+    try
+        case httpc:request(post, {Url, [], "application/x-www-form-urlencoded", ""}, [], []) of
+            {ok, {{_, 200, _}, _Headers, _Body}} ->
+                ok;
+            {ok, {{_, 500, _}, _Headers, Body}} ->
+                case body_text(Body) of
+                    Text when is_list(Text) ->
+                        case is_already_connected(Text) of
+                            true ->
+                                ok;
+                            false ->
+                                ?LOG_WARNING("IPFS connect failed ~s -> ~s", [Addr, Text]),
+                                {error, Text}
+                        end
+                end;
+            {ok, {{_, Code, _}, _Headers, Body}} ->
+                Text = body_text(Body),
+                ?LOG_WARNING("IPFS connect http ~p for ~s -> ~s", [Code, Addr, Text]),
+                {error, {http_error, Code, Text}};
+            {error, {shutdown, _}} ->
+                {error, shutting_down};
+            {error, shutdown} ->
+                {error, shutting_down};
+            {error, noproc} ->
+                {error, dependency_gone};
+            Error ->
+                ?LOG_WARNING("IPFS connect transport error ~s -> ~p", [Addr, Error]),
+                {error, Error}
+        end
+    catch
+        exit:{shutdown, _} ->
+            {error, shutting_down};
+        exit:shutdown ->
+            {error, shutting_down};
+        exit:{noproc, _} ->
+            {error, dependency_gone};
+        exit:noproc ->
+            {error, dependency_gone};
+        Class:Reason ->
+            ?LOG_WARNING("IPFS connect crashed ~s -> ~p:~p", [Addr, Class, Reason]),
+            {error, {Class, Reason}}
     end.
 
 is_already_connected(Text) ->
@@ -223,9 +285,7 @@ body_text(Body) ->
 
 normalize_peer_specs(Peers) ->
     dedupe_peers(
-        lists:flatten(
-            [normalize_peer_spec(P) || P <- Peers]
-        )
+        lists:append([normalize_peer_spec(P) || P <- Peers])
     ).
 
 normalize_peer_spec(Peer) when is_binary(Peer); is_list(Peer) ->
@@ -234,15 +294,17 @@ normalize_peer_spec(#{peer_id := PeerId, addrs := Addrs}) when is_list(Addrs) ->
     [#{peer_id => PeerId, addrs => Addrs}];
 normalize_peer_spec(#{addrs := Addrs}) when is_list(Addrs) ->
     [#{addrs => Addrs}];
-
 normalize_peer_spec(Other) ->
     ?LOG_WARNING("Ignoring invalid IPFS peer spec: ~p", [Other]),
     [].
 
 peer_addrs(Peer) when is_binary(Peer); is_list(Peer) ->
     [Peer];
-peer_addrs(#{addrs := Addrs}) ->
-    [to_list(A) || A <- Addrs].
+peer_addrs(#{addrs := Addrs}) when is_list(Addrs) ->
+    [to_list(A) || A <- Addrs];
+peer_addrs(Other) ->
+    ?LOG_WARNING("Invalid IPFS peer spec in peer_addrs/1: ~p", [Other]),
+    [].
 
 dedupe_peers(Peers) ->
     lists:reverse(
@@ -260,3 +322,51 @@ dedupe_peers(Peers) ->
 
 to_list(V) when is_binary(V) -> binary_to_list(V);
 to_list(V) when is_list(V) -> V.
+
+get_self_peer_id(ApiBase) ->
+    Url = ApiBase ++ "/api/v0/id",
+    case httpc:request(post, {Url, [], "application/x-www-form-urlencoded", ""}, [], []) of
+        {ok, {{_, 200, _}, _Headers, Body}} ->
+            extract_json_string_field(body_text(Body), "ID");
+        _ ->
+            undefined
+    end.
+
+peer_target_ids(Peer) when is_binary(Peer); is_list(Peer) ->
+    case multiaddr_peer_id(Peer) of
+        undefined -> [];
+        Id -> [Id]
+    end;
+peer_target_ids(#{peer_id := PeerId, addrs := Addrs}) when is_list(Addrs) ->
+    lists:usort([
+        to_list(PeerId) | [Id || Id <- [multiaddr_peer_id(A) || A <- Addrs], Id =/= undefined]
+    ]);
+peer_target_ids(#{addrs := Addrs}) when is_list(Addrs) ->
+    lists:usort([Id || Id <- [multiaddr_peer_id(A) || A <- Addrs], Id =/= undefined]);
+peer_target_ids(_) ->
+    [].
+
+multiaddr_peer_id(Addr0) ->
+    Addr = to_list(Addr0),
+    Parts = string:tokens(Addr, "/"),
+    multiaddr_peer_id_parts(Parts).
+
+multiaddr_peer_id_parts(["p2p", Id]) ->
+    Id;
+multiaddr_peer_id_parts([_, _ | Rest]) ->
+    multiaddr_peer_id_parts(Rest);
+multiaddr_peer_id_parts(_) ->
+    undefined.
+extract_json_string_field(Text, Field) ->
+    Needle = "\"" ++ Field ++ "\":\"",
+    case string:str(Text, Needle) of
+        0 ->
+            undefined;
+        Pos ->
+            Start = Pos + length(Needle),
+            Rest = string:slice(Text, Start - 1),
+            case string:chr(Rest, $") of
+                0 -> undefined;
+                EndPos -> string:slice(Rest, 0, EndPos - 1)
+            end
+    end.
