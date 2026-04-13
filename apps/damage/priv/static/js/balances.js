@@ -1,214 +1,180 @@
 // balances.js
-// Single-endpoint balance loader using /accounts/balance
-//
-// Expected response shape from /accounts/balance:
-// {
-//   status: "ok",
-//   aettos: "1230000000000000000",
-//   hits: "45600000000",
-//   msats: "7890"
-// }
-//
-// Public helpers:
-//   fetchAllBalances(pubkey[, opts])
-//   updateAllBalances([opts])
-
 (function (g) {
-	'use strict';
+  'use strict';
 
-	const DEFAULTS = {
-		apiBase: '',
-		timeoutMs: 10000,
-		credentials: 'include'
-	};
+  const DEFAULTS = {
+    apiBase: '',
+    timeoutMs: 10000,
+    credentials: 'include',
+    preserveAddressText: false
+  };
 
-	const AE_DECIMALS = 18;
-	const DAMAGE_DECIMALS = 8;
-	const MSATS_DECIMALS = 3;
+  const AE_DECIMALS = 18;
+  const DAMAGE_DECIMALS = 8;
+  const MSATS_DECIMALS = 3;
 
-	// ---- utils ---------------------------------------------------------------
+  async function fetchT(url, init = {}, timeoutMs = DEFAULTS.timeoutMs) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, { ...init, signal: ctrl.signal });
+      if (!r.ok) {
+        throw new Error(`${url} → ${r.status} ${r.statusText}`);
+      }
+      return r;
+    } finally {
+      clearTimeout(t);
+    }
+  }
 
-	async function fetchT(url, init = {}, timeoutMs = DEFAULTS.timeoutMs) {
-		const ctrl = new AbortController();
-		const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  function formatUnitsString(bnStr, decimals) {
+    if (bnStr == null) return '0';
 
-		try {
-			const r = await fetch(url, { ...init, signal: ctrl.signal });
-			if (!r.ok) {
-				throw new Error(`${url} → ${r.status} ${r.statusText}`);
-			}
-			return r;
-		} finally {
-			clearTimeout(t);
-		}
-	}
+    const neg = String(bnStr)[0] === '-';
+    let s = neg ? String(bnStr).slice(1) : String(bnStr);
 
-	function formatUnitsString(bnStr, decimals) {
-		if (bnStr == null) return '0';
+    if (!/^\d+$/.test(s)) {
+      s = String(s || '0').replace(/\D/g, '') || '0';
+    }
 
-		const neg = String(bnStr)[0] === '-';
-		let s = neg ? String(bnStr).slice(1) : String(bnStr);
+    const d = Math.max(0, Number(decimals || 0));
+    if (d === 0) return (neg ? '-' : '') + s;
 
-		if (!/^\d+$/.test(s)) {
-			s = String(s || '0').replace(/\D/g, '') || '0';
-		}
+    if (s.length <= d) {
+      s = '0'.repeat(d - s.length + 1) + s;
+    }
 
-		const d = Math.max(0, Number(decimals || 0));
-		if (d === 0) return (neg ? '-' : '') + s;
+    const i = s.slice(0, s.length - d);
+    let f = s.slice(s.length - d);
+    f = f.replace(/0+$/, '');
 
-		if (s.length <= d) {
-			s = '0'.repeat(d - s.length + 1) + s;
-		}
+    return (neg ? '-' : '') + (f ? `${i}.${f}` : i);
+  }
 
-		const i = s.slice(0, s.length - d);
-		let f = s.slice(s.length - d);
-		f = f.replace(/0+$/, '');
+  function toBigIntString(x) {
+    if (typeof x === 'bigint') return x.toString(10);
+    if (typeof x === 'number') return BigInt(Math.trunc(x)).toString(10);
+    if (typeof x === 'string') return x;
+    if (x == null) return '0';
+    return String(x);
+  }
 
-		return (neg ? '-' : '') + (f ? `${i}.${f}` : i);
-	}
+  function normalizeError(err) {
+    if (!err) return { type: 'unknown', message: 'Unknown error' };
+    if (typeof err === 'string') return { type: 'string-error', message: err };
+    if (err.name === 'AbortError') return { type: 'timeout', message: 'Request timed out' };
+    return {
+      type: err.type || 'exception',
+      message: err.message || String(err),
+      stack: err.stack
+    };
+  }
 
-	function toBigIntString(x) {
-		if (typeof x === 'bigint') return x.toString(10);
-		if (typeof x === 'number') return BigInt(Math.trunc(x)).toString(10);
-		if (typeof x === 'string') return x;
-		if (x == null) return '0';
-		return String(x);
-	}
+  const safe = (fn) => async (...args) => {
+    try {
+      return { ok: true, value: await fn(...args) };
+    } catch (err) {
+      return { ok: false, error: normalizeError(err) };
+    }
+  };
 
-	function normalizeError(err) {
-		if (!err) return { type: 'unknown', message: 'Unknown error' };
-		if (typeof err === 'string') return { type: 'string-error', message: err };
-		if (err.name === 'AbortError') return { type: 'timeout', message: 'Request timed out' };
+  const _fetchAllBalances = async (pubkey, opts = {}) => {
+    const {
+      apiBase = DEFAULTS.apiBase,
+      timeoutMs = DEFAULTS.timeoutMs,
+      credentials = DEFAULTS.credentials,
+      headers = {}
+    } = opts;
 
-		return {
-			type: err.type || 'exception',
-			message: err.message || String(err),
-			stack: err.stack
-		};
-	}
+    if (!pubkey) {
+      throw new Error('pubkey required');
+    }
 
-	const safe = (fn) => async (...args) => {
-		try {
-			return { ok: true, value: await fn(...args) };
-		} catch (err) {
-			return { ok: false, error: normalizeError(err) };
-		}
-	};
+    const url = `${String(apiBase).replace(/\/$/, '')}/accounts/balance?pubkey=${encodeURIComponent(pubkey)}`;
 
-	// ---- balance fetch -------------------------------------------------------
+    const r = await fetchT(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        ...headers
+      },
+      credentials
+    }, timeoutMs);
 
-	const _fetchAllBalances = async (pubkey, opts = {}) => {
-		const {
-			apiBase = DEFAULTS.apiBase,
-			timeoutMs = DEFAULTS.timeoutMs,
-			credentials = DEFAULTS.credentials,
-			headers = {}
-		} = opts;
+    const j = await r.json();
 
-		if (!pubkey) {
-			throw new Error('pubkey required');
-		}
+    if (j?.status && j.status !== 'ok') {
+      throw new Error(j?.reason || j?.error || 'balance fetch failed');
+    }
 
-		const url = `${String(apiBase).replace(/\/$/, '')}/accounts/balance?pubkey=${encodeURIComponent(pubkey)}`;
+    const aettos = toBigIntString(j.aettos ?? j.ae_amount ?? '0');
+    const hits = toBigIntString(j.hits ?? j.amount ?? '0');
+    const msats = toBigIntString(j.msats ?? j?.ledger?.balance_msat ?? '0');
 
-		const r = await fetchT(url, {
-			method: 'GET',
-			headers: {
-				'Accept': 'application/json',
-				...headers
-			},
-			credentials
-		}, timeoutMs);
+    return {
+      pubkey,
+      aettos,
+      ae: formatUnitsString(aettos, AE_DECIMALS),
+      hits,
+      damage: formatUnitsString(hits, DAMAGE_DECIMALS),
+      msats,
+      sats: formatUnitsString(msats, MSATS_DECIMALS),
+      raw: j
+    };
+  };
 
-		const j = await r.json();
+  const fetchAllBalances = safe(_fetchAllBalances);
 
-		if (j?.status && j.status !== 'ok') {
-			throw new Error(j?.reason || j?.error || 'balance fetch failed');
-		}
+  async function updateAllBalances(pubkey, opts = {}) {
+    const {
+      preserveAddressText = DEFAULTS.preserveAddressText
+    } = opts;
 
-		// Accept a few possible field names just in case the backend varies.
-		const aettos = toBigIntString(j.aettos ?? j.ae_balance ?? j.balance ?? '0');
-		const hits = toBigIntString(j.hits ?? j.damage_hits ?? j.damage_balance ?? '0');
-		const msats = toBigIntString(j.msats ?? j.sats_msats ?? j.btc_balance ?? '0');
+    const pubkeyEl = document.getElementById('balanceAddress');
+    const aeEl = document.getElementById('aeBalance');
+    const damageEl = document.getElementById('balanceAmount');
+    const satsEl = document.getElementById('satsBalance');
 
-		return {
-			pubkey,
-			aettos,
-			ae: formatUnitsString(aettos, AE_DECIMALS),
-			hits,
-			damage: formatUnitsString(hits, DAMAGE_DECIMALS),
-			msats,
-			sats: formatUnitsString(msats, MSATS_DECIMALS),
-			raw: j
-		};
-	};
+    if (!pubkey || pubkey === 'ak_...') {
+      return {
+        ok: false,
+        error: { type: 'input', message: 'pubkey missing' }
+      };
+    }
 
-	const fetchAllBalances = safe(_fetchAllBalances);
+    if (aeEl) aeEl.textContent = '...';
+    if (damageEl) damageEl.textContent = '...';
+    if (satsEl) satsEl.textContent = '...';
 
-	// ---- single DOM update function -----------------------------------------
+    const result = await fetchAllBalances(pubkey, opts);
 
-	async function updateAllBalances(pubkey) {
-		const pubkeyEl = document.getElementById('balanceAddress');
-		const aeEl = document.getElementById('aeBalanceAmount');
-		const damageEl = document.getElementById('balanceAmount');
-		const satsEl = document.getElementById('satsBalanceAmount');
+    if (!result.ok) {
+      if (aeEl) aeEl.textContent = '0';
+      if (damageEl) damageEl.textContent = '0';
+      if (satsEl) satsEl.textContent = '0';
+      console.warn('updateAllBalances failed:', result.error);
+      return result;
+    }
 
-		if (!pubkey || pubkey === 'ak_...') {
-			return {
-				ok: false,
-				error: { type: 'input', message: 'pubkey missing' }
-			};
-		}
+    const { value } = result;
 
-		if (aeEl) aeEl.textContent = '...';
-		if (damageEl) damageEl.textContent = '...';
-		if (satsEl) satsEl.textContent = '...';
+    if (aeEl) aeEl.textContent = value.ae;
+    if (damageEl) damageEl.textContent = value.damage;
+    if (satsEl) satsEl.textContent = value.sats;
 
-		const result = await fetchAllBalances(pubkey, {});
+    if (pubkeyEl) {
+      const full = value.pubkey;
+      if (full && !preserveAddressText && !pubkeyEl.dataset.keepFullAddress) {
+        pubkeyEl.textContent =
+          full.length > 14 ? `${full.slice(0, 8)}...${full.slice(-6)}` : full;
+      }
+      pubkeyEl.title = full;
+      pubkeyEl.dataset.pubkey = full;
+    }
 
-		if (!result.ok) {
-			if (aeEl) aeEl.textContent = '0';
-			if (damageEl) damageEl.textContent = '0';
-			if (satsEl) satsEl.textContent = '0';
-			console.warn('updateAllBalances failed:', result.error);
-			return result;
-		}
+    return { ok: true, value };
+  }
 
-		const { value } = result;
-
-		if (aeEl) aeEl.textContent = value.ae;
-		if (damageEl) damageEl.textContent = value.damage;
-		if (satsEl) satsEl.textContent = value.sats;
-
-		if (pubkeyEl) {
-			const full = value.pubkey;
-			if (full && !opts.preserveAddressText && !pubkeyEl.dataset.keepFullAddress) {
-				pubkeyEl.textContent =
-					full.length > 14 ? `${full.slice(0, 8)}...${full.slice(-6)}` : full;
-			}
-			pubkeyEl.title = full;
-			if (!pubkeyEl.dataset.pubkey) {
-				pubkeyEl.dataset.pubkey = full;
-			}
-		}
-
-		return {
-			ok: true,
-			value
-		};
-	}
-
-	// ---- exports -------------------------------------------------------------
-
-	g.fetchAllBalances = fetchAllBalances;
-	g.updateAllBalances = updateAllBalances;
-
-	// ---- auto-load -----------------------------------------------------------
-
-	//document.addEventListener('DOMContentLoaded', () => {
-	//	updateAllBalances().catch((err) => {
-	//		console.error('DOMContentLoaded balance update failed:', err);
-	//	});
-	//});
-
+  g.fetchAllBalances = fetchAllBalances;
+  g.updateAllBalances = updateAllBalances;
 })(typeof globalThis !== 'undefined' ? globalThis : window);
