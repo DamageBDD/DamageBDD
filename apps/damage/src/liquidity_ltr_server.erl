@@ -65,14 +65,24 @@ handle_call(_Req, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
 handle_cast(refresh, State) ->
-    {noreply, do_refresh(State)};
+    {noreply, safe_do_refresh(State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(refresh, State) ->
-    {noreply, do_refresh(State)};
+    {noreply, safe_do_refresh(State)};
 handle_info(_Info, State) ->
     {noreply, State}.
+
+safe_do_refresh(State) ->
+    try
+        do_refresh(State)
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING("liquidity_ltr_server refresh failed: ~p:~p ~p", [Class, Reason, Stack]),
+            erlang:send_after(5 * 60 * 1000, self(), refresh),
+            State
+    end.
 
 terminate(Reason, _State) ->
     ?LOG_INFO("liquidity_ltr_server terminating: ~p", [Reason]),
@@ -223,8 +233,6 @@ fred_api_key() ->
         {ok, Key} -> Key
     end.
 
--spec fetch_series(binary() | list(), string()) ->
-    {ok, [float()]} | {error, term()}.
 fetch_series(SeriesId0, ApiKey) when is_list(SeriesId0) ->
     fetch_series(list_to_binary(SeriesId0), ApiKey);
 fetch_series(SeriesId, ApiKey) when is_binary(SeriesId) ->
@@ -232,24 +240,74 @@ fetch_series(SeriesId, ApiKey) when is_binary(SeriesId) ->
     Port = ?FRED_PORT,
     Path = fred_path(SeriesId, ApiKey),
     Opts = #{transport => tls, tls_opts => [{verify, verify_none}]},
-    case gun:open(Host, Port, Opts) of
-        {ok, ConnPid} ->
-            Headers = [{<<"accept">>, <<"application/json">>}],
-            StreamRef = gun:get(ConnPid, Path, Headers),
+    try
+        case gun:open(Host, Port, Opts) of
+            {ok, ConnPid} ->
+                do_fetch_series(ConnPid, Path);
+            Error ->
+                {error, Error}
+        end
+    catch
+        exit:{noproc, _} ->
+            {error, dependency_gone};
+        exit:noproc ->
+            {error, dependency_gone};
+        exit:{shutdown, _} ->
+            {error, shutting_down};
+        exit:shutdown ->
+            {error, shutting_down};
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "FRED fetch crashed for ~p: ~p:~p ~p",
+                [SeriesId, Class, Reason, Stack]
+            ),
+            {error, {Class, Reason}}
+    end.
+
+do_fetch_series(ConnPid, Path) ->
+    Headers = [{<<"accept">>, <<"application/json">>}],
+    try
+        StreamRef = gun:get(ConnPid, Path, Headers),
+        Result =
             case gun:await(ConnPid, StreamRef, ?FRED_TIMEOUT) of
                 {response, nofin, 200, _RespHeaders} ->
-                    {ok, Body} = gun:await_body(ConnPid, StreamRef),
-                    gun:close(ConnPid),
-                    decode_series(Body);
+                    case gun:await_body(ConnPid, StreamRef) of
+                        {ok, Body} ->
+                            decode_series(Body);
+                        Error ->
+                            {error, {await_body_failed, Error}}
+                    end;
                 {response, _Fin, Status, _RespHeaders} ->
-                    gun:close(ConnPid),
                     {error, {http_status, Status}};
                 Other ->
-                    gun:close(ConnPid),
                     {error, {unexpected, Other}}
-            end;
-        Error ->
-            {error, Error}
+            end,
+        safe_gun_close(ConnPid),
+        Result
+    catch
+        exit:{noproc, _} ->
+            safe_gun_close(ConnPid),
+            {error, dependency_gone};
+        exit:noproc ->
+            safe_gun_close(ConnPid),
+            {error, dependency_gone};
+        exit:{shutdown, _} ->
+            safe_gun_close(ConnPid),
+            {error, shutting_down};
+        exit:shutdown ->
+            safe_gun_close(ConnPid),
+            {error, shutting_down};
+        Class:Reason:Stack ->
+            safe_gun_close(ConnPid),
+            ?LOG_WARNING("FRED request failed: ~p:~p ~p", [Class, Reason, Stack]),
+            {error, {Class, Reason}}
+    end.
+
+safe_gun_close(ConnPid) ->
+    try
+        gun:close(ConnPid)
+    catch
+        _:_ -> ok
     end.
 
 fred_path(SeriesId, ApiKey) ->
