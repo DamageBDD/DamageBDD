@@ -783,10 +783,12 @@ make_topup_label(Owner, ClientPubHex, AmountSat) ->
         Rand/binary
     >>.
 short(Bin) when is_binary(Bin) ->
-    case byte_size(Bin) of
-        N when N > 12 ->
-            <<Prefix:6/binary, "...", Suffix:6/binary>> = Bin,
-            <<Prefix/binary, Suffix/binary>>;
+    N = byte_size(Bin),
+    case N of
+        Size when Size > 12 ->
+            Middle = Size - 12,
+            <<Prefix:6/binary, _Skip:Middle/binary, Suffix:6/binary>> = Bin,
+            <<Prefix/binary, "...", Suffix/binary>>;
         _ ->
             Bin
     end.
