@@ -548,10 +548,34 @@ do_post_action(
                             {400, #{status => <<"failed">>, message => Message}};
                         #{email := Email, expiry := Expiry} when Expiry > Now ->
                             case identity_server:register_email(Email, NewPassword) of
-                                {ok, Message, _PubKey, _PrivKey} ->
+                                {ok, Message, PubKey, _PrivKey} ->
+                                    spawn_monitor(fun() ->
+                                        try
+                                            case
+                                                damage_contract_bootstrap:bootstrap_user_account(
+                                                    PubKey
+                                                )
+                                            of
+                                                {ok, _} ->
+                                                    ?LOG_INFO("user bootstrap success ~p", [PubKey]);
+                                                {error, Why} ->
+                                                    ?LOG_ERROR(
+                                                        "user bootstrap failed ~p reason ~p", [
+                                                            PubKey, Why
+                                                        ]
+                                                    )
+                                            end
+                                        catch
+                                            Class:Reason:Stack ->
+                                                ?LOG_ERROR("user bootstrap crash ~p ~p ~p ~p", [
+                                                    PubKey, Class, Reason, Stack
+                                                ])
+                                        end
+                                    end),
                                     {200, #{
                                         status => <<"ok">>,
-                                        message => Message
+                                        message => Message,
+                                        public_key => PubKey
                                     }};
                                 {error, Error} ->
                                     {200, #{
@@ -871,10 +895,19 @@ delete_resource(Req, #{action := invoices} = State) ->
 
 balance(AeAccount) ->
     #{id := AeAccount, balance := BalanceAettos} = damage_ae:get_ae_balance(AeAccount),
+    DamageHits = damage_ae:balance(AeAccount),
     Ledger = damage_nwc:ledger_balance_for_account_cached(AeAccount),
+    Msats = maps:get(balance_msat, Ledger, 0),
+
     #{
-        amount => damage_ae:balance(AeAccount),
+        status => <<"ok">>,
+        aettos => damage_utils:to_bin(BalanceAettos),
+        hits => damage_utils:to_bin(DamageHits),
+        msats => damage_utils:to_bin(Msats),
+
+        %% keep richer fields too for debugging / future UI
         ae_amount => BalanceAettos,
+        amount => DamageHits,
         ledger => Ledger
     }.
 

@@ -8,7 +8,7 @@
 ]).
 
 -define(TABLE, ?MODULE).
--define(TTL_MS, 5000).
+-define(TTL_MS, 60000).
 
 start() ->
     case ets:info(?TABLE) of

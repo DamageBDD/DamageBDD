@@ -810,12 +810,18 @@ pick_first_relay(_) ->
     HostBin = list_to_binary(Host),
     <<"wss://", HostBin/binary>>.
 
-resolve_user_ledger_ct(OwnerAkBin) ->
-    case damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>) of
-        {ok, _} ->
-            resolve_user_ledger_ct_from_registry(OwnerAkBin);
-        {error, Why} ->
-            {error, {ensure_account_registry_failed, Why}}
+resolve_user_ledger_ct(OwnerAkBin0) ->
+    OwnerAkBin = to_bin(OwnerAkBin0),
+    case secret_user_ledger_ct(OwnerAkBin) of
+        {ok, CtId} ->
+            {ok, CtId};
+        error ->
+            case damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>) of
+                {ok, _} ->
+                    resolve_user_ledger_ct_from_registry(OwnerAkBin);
+                {error, Why} ->
+                    {error, {ensure_account_registry_failed, Why}}
+            end
     end.
 
 resolve_user_ledger_ct_from_registry(OwnerAkBin) ->
@@ -824,13 +830,11 @@ resolve_user_ledger_ct_from_registry(OwnerAkBin) ->
             RegistryCt = aeser_api_encoder:encode(contract_pubkey, RegBin),
             case account_registry_reader_keypair(OwnerAkBin) of
                 {ok, KP} ->
-                    %AllContracts = account_registry:get_all_contracts(KP, RegistryCt),
-                    ?LOG_DEBUG("get_contract ~p ~p ~p ", [
-                        KP, RegistryCt, ?NWC_REGISTRY_NAME
-                    ]),
                     case account_registry:get_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME) of
-                        {ok, LedgerCt} ->
-                            {ok, to_bin(LedgerCt)};
+                        {ok, LedgerCt0} ->
+                            LedgerCt = to_bin(LedgerCt0),
+                            ok = persist_user_ledger_ct(OwnerAkBin, LedgerCt),
+                            {ok, LedgerCt};
                         {error, Reason} ->
                             {error, {ledger_not_found_in_account_registry, RegistryCt, Reason}}
                     end;
@@ -847,13 +851,18 @@ resolve_user_ledger_ct_from_registry(OwnerAkBin) ->
 %% - user_signed/operator_signed: use service keypair for read-only lookups
 -spec account_registry_reader_keypair(binary()) -> {ok, map()} | {error, term()}.
 account_registry_reader_keypair(OwnerAkBin) ->
-    case ledger_mode() of
-        server_signed ->
-            maybe_user_keypair_from_owner(OwnerAkBin);
-        user_signed ->
-            {ok, secrets:node_keypair()};
-        operator_signed ->
-            {ok, secrets:node_keypair()}
+    case maybe_user_keypair_from_owner(OwnerAkBin) of
+        {ok, KP} ->
+            {ok, KP};
+        {error, Why} ->
+            case ledger_mode() of
+                user_signed ->
+                    {error, {no_user_registry_reader_key, Why}};
+                server_signed ->
+                    {error, {no_user_registry_reader_key, Why}};
+                operator_signed ->
+                    {error, {no_user_registry_reader_key, Why}}
+            end
     end.
 
 -spec maybe_user_keypair_from_owner(binary()) -> {ok, map()} | {error, term()}.
@@ -990,6 +999,7 @@ maybe_setup_missing_ledger(OwnerAkBin, ClientPubHex, MaxSingleMsat, MaxTotalMsat
                 {ok, RegistryCt} ->
                     case
                         deploy_and_register_user_ledger(
+                            OwnerAkBin,
                             KP,
                             RegistryCt,
                             ClientPubHex,
@@ -1019,10 +1029,12 @@ ensure_registry_ct(OwnerAkBin) ->
             {error, Why}
     end.
 
--spec deploy_and_register_user_ledger(map(), binary(), binary(), integer(), integer(), integer()) ->
+-spec deploy_and_register_user_ledger(
+    binary(), map(), binary(), binary(), integer(), integer(), integer()
+) ->
     {ok, binary()} | {error, term()}.
 deploy_and_register_user_ledger(
-    KP, RegistryCt0, ClientPubHex, MaxSingleMsat, MaxTotalMsat, ExpiresHeight
+    OwnerAkBin, KP, RegistryCt0, ClientPubHex, MaxSingleMsat, MaxTotalMsat, ExpiresHeight
 ) ->
     RegistryCt = to_bin(RegistryCt0),
 
@@ -1032,6 +1044,7 @@ deploy_and_register_user_ledger(
             LedgerCt = to_bin(LedgerCt0),
             case upsert_registry_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME, LedgerCt) of
                 {ok, true} ->
+                    ok = persist_user_ledger_ct(OwnerAkBin, LedgerCt),
                     case
                         ledger_call_admin(
                             LedgerCt,
@@ -1195,6 +1208,25 @@ maybe_set_operator_after_migration(OwnerAkBin, NewLedgerCt, Opts) ->
             end
     end.
 
+user_registry_contract_secret_key(OwnerAkBin) ->
+    binary_to_list(
+      <<"nwc_ledger_ct__", (base64:encode(crypto:hash(sha256, OwnerAkBin)))/binary>>
+     ).
+
+secret_user_ledger_ct(OwnerAkBin) ->
+    Key = user_registry_contract_secret_key(OwnerAkBin),
+    case secrets:retrieve_decrypt(Key) of
+        {ok, <<"ct_", _/binary>> = CtId} ->
+            {ok, CtId};
+        {ok, CtId} when is_list(CtId) ->
+            {ok, list_to_binary(CtId)};
+        _ ->
+            error
+    end.
+
+persist_user_ledger_ct(OwnerAkBin, <<"ct_", _/binary>> = CtId) ->
+    Key = user_registry_contract_secret_key(OwnerAkBin),
+    ok = secrets:encrypt_store(Key, CtId).
 test() ->
     Owner = "ct_4SUjjufRpMD6KmhZwX3sAdih2FTV1Qry11TJpEGdmrdPh8bdy",
     LedgerCt =
