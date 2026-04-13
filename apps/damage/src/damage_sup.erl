@@ -47,7 +47,8 @@ init([]) ->
 
     %% Start order matters: put providers before consumers.
     %% Strategy rest_for_one: if an early child dies, later (dependent) ones restart.
-    SupFlags = {rest_for_one, 10, 10},
+    %SupFlags = {rest_for_one, 10, 10},
+    SupFlags = {one_for_one, 10, 10},
 
     Core =
         [

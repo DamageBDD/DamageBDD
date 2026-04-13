@@ -14,7 +14,7 @@
 -define(BASE_GAS, 15000).
 -define(GAS_PER_BYTE, 20).
 % Time-to-live in seconds
--define(CACHE_TTL_SECONDS, 30).
+-define(CACHE_TTL_SECONDS, 60).
 -define(LN_RECONCILE_MS, 600000).
 -define(LN_SWAP_LEDGER, cln_ln_swap_ledger).
 -define(TX_POLL_TIMEOUT, 600000).

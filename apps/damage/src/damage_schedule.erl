@@ -811,7 +811,8 @@ handle_call({list_schedules, AeAccount}, _From, State) ->
             {reply, Schedules, State};
         miss ->
             Schedules = list_schedules_uncached(AeAccount),
-            {reply, Schedules, cache_put(Key, Schedules, State)}
+            ok = cache_put(Key, Schedules, State),
+            {reply, Schedules, State}
     end;
 handle_call(list_all_schedules, _From, State) ->
     Key = ?CK_LIST_ALL_SCHEDULES,
@@ -820,7 +821,8 @@ handle_call(list_all_schedules, _From, State) ->
             {reply, Schedules, State};
         miss ->
             Schedules = list_all_schedules_uncached(),
-            {reply, Schedules, cache_put(Key, Schedules, State)}
+            ok = cache_put(Key, Schedules, State),
+            {reply, Schedules, State}
     end.
 
 handle_cast({invalidate_cache_keys, Keys}, State) ->

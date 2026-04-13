@@ -62,9 +62,21 @@ init([]) ->
         {id_string, "DamageSSH"}
     ],
 
-    {ok, DaemonPid} = ssh:daemon(ListenAddr, Port, Opts),
-    ?LOG_INFO("Damage SSH daemon listening on ~p:~p (repos ~s)", [ListenAddr, Port, Repos]),
-    {ok, #state{daemon_pid = DaemonPid, repos_root = list_to_binary(Repos), allow_push = AllowPush}}.
+    case ssh:daemon(ListenAddr, Port, Opts) of
+        {ok, DaemonPid} ->
+            ?LOG_INFO("Damage SSH daemon listening on ~p:~p (repos ~s)", [ListenAddr, Port, Repos]),
+            {ok, #state{
+                daemon_pid = DaemonPid,
+                repos_root = list_to_binary(Repos),
+                allow_push = AllowPush
+            }};
+        {error, eaddrinuse} ->
+            ?LOG_ERROR("SSH listener port already in use at ~p:~p", [ListenAddr, Port]),
+            {stop, {ssh_port_in_use, ListenAddr, Port}};
+        {error, Reason} ->
+            ?LOG_ERROR("Failed to start SSH daemon on ~p:~p reason=~p", [ListenAddr, Port, Reason]),
+            {stop, {ssh_daemon_start_failed, Reason}}
+    end.
 
 handle_call(_Req, _From, State) -> {reply, ok, State}.
 handle_cast(_Msg, State) -> {noreply, State}.
