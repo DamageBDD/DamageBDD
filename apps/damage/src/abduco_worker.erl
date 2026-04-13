@@ -64,13 +64,27 @@ init(#{name := Name, cmd := Cmd} = Args) ->
     Env0 = maps:get(env, Args, #{}),
     Env = interpolate_env(Env0),
     process_flag(trap_exit, true),
-    case start_child(Cmd, Env) of
-        {undefined, undefined} ->
-            %% starts but marks dead
-            {ok, #state{name = Name, cmd = Cmd, env = Env}};
-        {ExecPid, OsPid} ->
-            gproc:reg_other({n, l, {?MODULE, Name}}, self()),
-            {ok, #state{name = Name, cmd = Cmd, env = Env, exec_pid = ExecPid, os_pid = OsPid}}
+    try
+        case start_child(Cmd, Env) of
+            {undefined, undefined} ->
+                {ok, #state{name = Name, cmd = Cmd, env = Env}};
+            {ExecPid, OsPid} ->
+                gproc:reg_other({n, l, {?MODULE, Name}}, self()),
+                {ok, #state{
+                    name = Name,
+                    cmd = Cmd,
+                    env = Env,
+                    exec_pid = ExecPid,
+                    os_pid = OsPid
+                }}
+        end
+    catch
+        Class:Reason:Stack ->
+            ?LOG_ERROR(
+                "abduco worker ~p init failed gracefully: ~p:~p ~p",
+                [Name, Class, Reason, Stack]
+            ),
+            {ok, #state{name = Name, cmd = Cmd, env = Env}}
     end.
 
 handle_call(ping, _From, S) ->
@@ -150,14 +164,27 @@ get_run_user() ->
 start_child(Cmd, Env) ->
     RunUser = get_run_user(),
     Opts = [{user, RunUser}, link, monitor, {env, env_list(Env)}, {kill_timeout, 5}],
-
-    case exec:run_link(Cmd, Opts) of
-        {ok, ExecPid, OsPid} ->
-            ?LOG_INFO("started ~p as user=~s os_pid=~p", [Cmd, RunUser, OsPid]),
-            {ExecPid, OsPid};
-        {error, Reason} ->
-            ?LOG_ERROR("failed starting ~p as user=~s => ~p", [Cmd, RunUser, Reason]),
-            %% don't crash the worker
+    try
+        case exec:run_link(Cmd, Opts) of
+            {ok, ExecPid, OsPid} ->
+                ?LOG_INFO("started ~p as user=~s os_pid=~p", [Cmd, RunUser, OsPid]),
+                {ExecPid, OsPid};
+            {error, Reason} ->
+                ?LOG_ERROR("failed starting ~p as user=~s => ~p", [Cmd, RunUser, Reason]),
+                {undefined, undefined}
+        end
+    catch
+        exit:{noproc, _} ->
+            ?LOG_ERROR("exec server not started while starting ~p", [Cmd]),
+            {undefined, undefined};
+        exit:noproc ->
+            ?LOG_ERROR("exec server missing while starting ~p", [Cmd]),
+            {undefined, undefined};
+        Class:Reason0:Stack ->
+            ?LOG_ERROR(
+                "failed starting ~p as user=~s => ~p:~p ~p",
+                [Cmd, RunUser, Class, Reason0, Stack]
+            ),
             {undefined, undefined}
     end.
 
