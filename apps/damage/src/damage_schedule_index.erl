@@ -58,12 +58,13 @@ tick() ->
 %%--------------------------------------------------------------------
 
 init([]) ->
-    %% ETS tables
     ets:new(?SCHED_BY_ID, [set, named_table, protected]),
     ets:new(?NEXT_DUE, [set, named_table, protected]),
     ets:new(?DUE_BUCKET, [bag, named_table, protected]),
     ets:new(?DAMAGE_BAL_CACHE, [set, named_table, protected]),
+    timer:send_interval(1000, tick),
     {ok, #{}}.
+
 
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
@@ -94,9 +95,18 @@ handle_cast(tick, State) ->
     run_tick(),
     {noreply, State}.
 
+handle_info(tick, State) ->
+    run_tick(),
+    {noreply, State};
 handle_info(_, State) ->
     {noreply, State}.
 
+maybe_run(Account, Id, Schedule) ->
+    spawn(fun() ->
+        damage_schedule:execute_bdd(Schedule)
+    end),
+    Cron = maps:get(cron, Schedule),
+    reschedule(Account, Id, Cron).
 %%--------------------------------------------------------------------
 %% Internal logic
 %%--------------------------------------------------------------------
@@ -121,13 +131,6 @@ execute({Account, Id}) ->
             ok
     end.
 
-maybe_run(Account, Id, Schedule) ->
-    %% Concurrency checks go here if needed
-    spawn(fun() ->
-        damage_schedule:execute_schedule(Account, Schedule)
-    end),
-    Cron = maps:get(cron, Schedule),
-    reschedule(Account, Id, Cron).
 
 reschedule(Account, Id, Cron) ->
     NowMin = epoch_minute(),
@@ -181,6 +184,40 @@ is_active(Account) ->
 epoch_minute() ->
     os:system_time(second) div 60.
 
+cron_next([daily, every, Second, sec], FromMin) when is_integer(Second), Second > 0 ->
+    %% minute-resolution index: run on the next minute boundary
+    FromMin + 1;
+
+cron_next([daily, every, Hour, Minute, AMPM], FromMin)
+  when is_integer(Hour), is_integer(Minute), is_atom(AMPM) ->
+    {Date, _Time} = calendar:gregorian_seconds_to_datetime(FromMin * 60),
+    TargetHour24 = to_24h(Hour, AMPM),
+    TodayTargetSecs = calendar:datetime_to_gregorian_seconds({Date, {TargetHour24, Minute, 0}}),
+    FromSecs = FromMin * 60,
+    if
+        TodayTargetSecs > FromSecs ->
+            TodayTargetSecs div 60;
+        true ->
+            TomorrowDate = calendar:gregorian_days_to_date(calendar:date_to_gregorian_days(Date) + 1),
+            calendar:datetime_to_gregorian_seconds({TomorrowDate, {TargetHour24, Minute, 0}}) div 60
+    end;
+cron_next([once, Seconds], FromMin) when is_integer(Seconds), Seconds >= 0 ->
+    FromMin + max(1, Seconds div 60);
+
+cron_next([once, _Hour, _Minute, _Second], FromMin) ->
+    %% one-shot absolute times need proper wall clock conversion;
+    %% for now, schedule the next minute as a placeholder
+    FromMin + 1;
+
+cron_next([once, _Hour, _Minute, _AMPM], FromMin) ->
+    FromMin + 1;
+
 cron_next(CronSpec, FromMin) ->
-    %% Delegate to your existing cron engine
-    damage_cron:next(CronSpec, FromMin).
+    error({unsupported_cron_spec, CronSpec, FromMin}).
+
+to_24h(12, am) -> 0;
+to_24h(12, pm) -> 12;
+to_24h(H, am) when H >= 1, H =< 11 -> H;
+to_24h(H, pm) when H >= 1, H =< 11 -> H + 12.
+
+

@@ -1,14 +1,15 @@
 @compiler >= 6
 
 main contract Schedules =
-  // -----------------------------
-  // Types / State
-  // -----------------------------
   record schedule =
-    { id_hash      : hash        // stable key for events + storage
-    , id_plain     : string      // human id (kept in state)
-    , cron         : string      // encrypted or plain (your choice)
-    , feature_hash : string      // encrypted or plain (your choice)
+    { id_hash                  : hash
+    , id_plain                 : string
+    , cron                     : string
+    , feature_hash             : string
+    , concurrency              : int
+    , created                  : int
+    , last_execution_timestamp : option(int)
+    , execution_counter        : int
     }
 
   record state =
@@ -16,43 +17,38 @@ main contract Schedules =
     , schedules : map(address, map(hash, schedule))
     }
 
-  // -----------------------------
-  // Events (middleware-friendly)
-  // -----------------------------
-  // NOTE: events have an implicit topic = Blake2b(EventName).
-  // Keep fields indexable (address/hash/int/bool) so middleware can filter quickly.
   datatype event =
     ScheduleAdded(address, hash)
     | ScheduleDeleted(address, hash)
+    | ScheduleExecuted(address, hash, int)
 
-  // -----------------------------
-  // Init
-  // -----------------------------
   stateful entrypoint init() : state =
-    { owner = Call.caller,
-      schedules = {}}
+    { owner = Call.caller
+      , schedules = {} }
 
-  // -----------------------------
-  // Helpers
-  // -----------------------------
   function mk_id_hash(id_plain : string) : hash =
     Crypto.blake2b(id_plain)
 
   function get_user_map(who : address) : map(hash, schedule) =
     Map.lookup_default(who, state.schedules, {})
 
-  // -----------------------------
-  // Write API
-  // -----------------------------
-  stateful entrypoint add_schedule(id_plain : string, cron : string, feature_hash : string) : hash =
+  stateful entrypoint add_schedule(
+      id_plain : string,
+      cron : string,
+      feature_hash : string,
+      concurrency : int) : hash =
     let h = mk_id_hash(id_plain)
     let user_map = get_user_map(Call.caller)
     let sch : schedule =
-      { id_hash = h,
-        id_plain = id_plain,
-        cron = cron,
-        feature_hash = feature_hash}
-    put(state{ schedules[Call.caller] = user_map{[h] = sch} })
+      { id_hash = h
+        , id_plain = id_plain
+        , cron = cron
+        , feature_hash = feature_hash
+        , concurrency = concurrency
+        , created = Chain.timestamp
+        , last_execution_timestamp = None
+        , execution_counter = 0 }
+    put(state{ schedules[Call.caller] = user_map{ [h] = sch } })
     Chain.event(ScheduleAdded(Call.caller, h))
     h
 
@@ -61,12 +57,10 @@ main contract Schedules =
     let user_map = get_user_map(Call.caller)
     let existed = Map.member(h, user_map)
     put(state{ schedules[Call.caller] = Map.delete(h, user_map) })
-    // Emit even if missing? Here: only emit when it existed.
     if(existed)
       Chain.event(ScheduleDeleted(Call.caller, h))
     existed
 
-  // Optional: delete by hash directly (handy for middleware-driven UIs)
   stateful entrypoint delete_schedule_by_hash(id_hash : hash) : bool =
     let user_map = get_user_map(Call.caller)
     let existed = Map.member(id_hash, user_map)
@@ -75,9 +69,20 @@ main contract Schedules =
       Chain.event(ScheduleDeleted(Call.caller, id_hash))
     existed
 
-  // -----------------------------
-  // Read API (still useful for direct contract calls)
-  // -----------------------------
+  stateful entrypoint mark_executed(id_hash : hash, ts : int) : bool =
+    let user_map = get_user_map(Call.caller)
+    switch(Map.lookup(id_hash, user_map))
+      None => false
+      Some(sch) =>
+        let updated =
+          sch{
+            last_execution_timestamp = Some(ts),
+            execution_counter = sch.execution_counter + 1
+            }
+        put(state{ schedules[Call.caller] = user_map{ [id_hash] = updated } })
+        Chain.event(ScheduleExecuted(Call.caller, id_hash, updated.execution_counter))
+        true
+
   entrypoint get_schedules() : map(hash, schedule) =
     get_user_map(Call.caller)
 
@@ -86,4 +91,3 @@ main contract Schedules =
 
   entrypoint get_all_schedules() : map(address, map(hash, schedule)) =
     state.schedules
-
