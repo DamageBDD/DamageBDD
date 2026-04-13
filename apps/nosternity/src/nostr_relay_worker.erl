@@ -64,7 +64,8 @@ init(#{relay := Relay0}) ->
         path = maps:get(path, Parsed),
         tls = maps:get(tls, Parsed)
     },
-    {ok, ensure_connected(S0)}.
+    erlang:send_after(0, self(), reconnect),
+    {ok, S0}.
 
 handle_call({req_one, Filter, TimeoutMs}, From, S0) ->
     case S0#state.connected of
