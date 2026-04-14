@@ -935,28 +935,34 @@ ledger_call_user_dry(OwnerAkBin, LedgerCt, Fun, Args) ->
 
 %% When a user has no ledger registered yet:
 %% Return (account_registry_ct, [deploy_intent, upsert_registry_intent])
+%% When a user has no ledger registered yet:
+%% Return {ok, RegistryCt, [deploy_intent, upsert_registry_intent]}
+%%    or {error, Reason}
 setup_intents_for_missing_ledger(OwnerAkBin) ->
-    %% Ensure registry exists and fetch per-user registry ct
     case damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>) of
-        {ok, _} -> ok;
-        {error, E1} -> throw({cannot_ensure_account_registry, E1})
-    end,
+        {ok, _} ->
+            case damage_node_registry:get_registry(OwnerAkBin) of
+                #{"return_type" := "ok", "return_value" := {address, RegBin}} ->
+                    RegistryCt = aeser_api_encoder:encode(contract_pubkey, RegBin),
+                    ?LOG_DEBUG("get registry ~p", [RegistryCt]),
 
-    RegistryCt =
-        case damage_node_registry:get_registry(OwnerAkBin) of
-            #{"return_type" := "ok", "return_value" := {address, RegBin}} ->
-                aeser_api_encoder:encode(contract_pubkey, RegBin);
-            Other ->
-                throw({cannot_get_registry_ct, Other})
-        end,
-    ?LOG_DEBUG("get registry ~p", [RegistryCt]),
+                    Deploy = damage_ledger_intent:deploy_ledger_intent(
+                        OwnerAkBin,
+                        <<"DamageNWCLedger">>
+                    ),
+                    Upsert = damage_ledger_intent:upsert_registry_intent(
+                        to_bin(RegistryCt),
+                        ?NWC_REGISTRY_NAME,
+                        ?NWC_REGISTRY_NAME
+                    ),
 
-    Deploy = damage_ledger_intent:deploy_ledger_intent(OwnerAkBin, <<"DamageNWCLedger">>),
-    Upsert = damage_ledger_intent:upsert_registry_intent(
-        to_bin(RegistryCt), ?NWC_REGISTRY_NAME, ?NWC_REGISTRY_NAME
-    ),
-    {to_bin(RegistryCt), [Deploy, Upsert]}.
-
+                    {ok, to_bin(RegistryCt), [Deploy, Upsert]};
+                Other ->
+                    {error, {cannot_get_registry_ct, Other}}
+            end;
+        {error, E1} ->
+            {error, {cannot_ensure_account_registry, E1}}
+    end.
 nwc_wallet_pubhex() ->
     Nsec =
         case secrets:retrieve_decrypt(?NWC_NOSTR_NSEC) of
@@ -1212,8 +1218,8 @@ maybe_set_operator_after_migration(OwnerAkBin, NewLedgerCt, Opts) ->
 
 user_registry_contract_secret_key(OwnerAkBin) ->
     binary_to_list(
-      <<"nwc_ledger_ct__", (base64:encode(crypto:hash(sha256, OwnerAkBin)))/binary>>
-     ).
+        <<"nwc_ledger_ct__", (base64:encode(crypto:hash(sha256, OwnerAkBin)))/binary>>
+    ).
 
 secret_user_ledger_ct(OwnerAkBin) ->
     Key = user_registry_contract_secret_key(OwnerAkBin),

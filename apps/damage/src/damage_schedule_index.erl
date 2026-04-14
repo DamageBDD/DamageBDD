@@ -166,7 +166,13 @@ is_active(Account) ->
         ->
             Active;
         _ ->
-            Balance = damage_token:balance(Account),
+            Balance =
+                case catch damage_ae:balance(Account) of
+                    B when is_integer(B) -> B;
+                    Err ->
+                        ?LOG_WARNING("balance lookup failed ~p for ~p", [Err, Account]),
+                        0
+                end,
             Active = Balance > 0,
             ets:insert(
                 ?DAMAGE_BAL_CACHE,
@@ -206,8 +212,6 @@ cron_next([once, Seconds], FromMin) when is_integer(Seconds), Seconds >= 0 ->
 cron_next([once, _Hour, _Minute, _Second], FromMin) ->
     %% one-shot absolute times need proper wall clock conversion;
     %% for now, schedule the next minute as a placeholder
-    FromMin + 1;
-cron_next([once, _Hour, _Minute, _AMPM], FromMin) ->
     FromMin + 1;
 cron_next(CronSpec, FromMin) ->
     error({unsupported_cron_spec, CronSpec, FromMin}).
