@@ -37,49 +37,123 @@ ct_id(Opts) ->
                 _ -> ?KNOWLEDGE_NFT_CONTRACT
             end
     end.
+ensure_binary(B) when is_binary(B) -> B;
+ensure_binary(L) when is_list(L) -> list_to_binary(L).
+-spec mint_knowledge(map(), map()) -> {ok, map()} | {error, map()}.
 mint_knowledge(
-    #{public_key := AeAccount, private_key := _PrivateKey} = KeyPair,
+    #{public_key := AeAccount0, private_key := _PrivateKey} = KeyPair0,
     #{subject := Subject, predicate := Predicate, object := Object, context := Context} = Knowledge
 ) ->
-    EncodedKnowledge = encode(Knowledge),
+    AeAccount = ensure_binary(AeAccount0),
+    KeyPair = KeyPair0#{public_key := AeAccount},
+    try
+        EncodedKnowledge = encode(Knowledge),
+        FactKey = crypto:hash(sha256, EncodedKnowledge),
 
-    %% Canonical identity key for this fact/blob (bytes32)
-    FactKey = crypto:hash(sha256, EncodedKnowledge),
+        <<Id64:64/unsigned-big, _/binary>> = FactKey,
+        TokenId =
+            case Id64 of
+                0 -> 1;
+                _ -> Id64
+            end,
 
-    %% Derived token_id: uint64(big-endian) from first 8 bytes of FactKey
-    <<Id64:64/unsigned-big, _/binary>> = FactKey,
-    TokenId0 = Id64,
-    TokenId =
-        case TokenId0 of
-            0 -> 1;
-            _ -> TokenId0
-        end,
+        Point = ecai:hash_to_curve(binary_to_list(EncodedKnowledge)),
+        PointFilename = ecai:point_to_filename_hash(Point),
 
-    %% Curve point (kept for ECAI clients; not required by chain)
-    Point = ecai:hash_to_curve(binary_to_list(EncodedKnowledge)),
+        ?LOG_DEBUG("mint_knowledge derived", [
+            #{
+                account => AeAccount,
+                token_id => TokenId,
+                fact_key_hex => binary:encode_hex(FactKey),
+                point => point_to_loggable(Point),
+                point_filename => PointFilename,
+                knowledge => knowledge_to_loggable(Knowledge)
+            }
+        ]),
 
-    %% Store blob in IPFS (filename hashed from point like you already do)
-    {ok, [
-        #{
-            <<"Hash">> :=
-                IpfsHash,
-            <<"Name">> :=
-                _Name,
-            <<"Size">> := _Size
-        }
-    ]} = damage_ipfs:add({data, EncodedKnowledge, ecai:point_to_filename_hash(Point)}),
-
-    %% Compact bytes32 keys for indexing in middleware topics
-    %% NOTE: these are NOT the curve points; they are 32-byte stable keys.
+        case add_knowledge_blob(EncodedKnowledge, PointFilename) of
+            {ok, IpfsHash} ->
+                do_mint_knowledge_contract_call(
+                    KeyPair,
+                    TokenId,
+                    FactKey,
+                    IpfsHash,
+                    Point,
+                    Subject,
+                    Predicate,
+                    Object,
+                    Context,
+                    Knowledge
+                );
+            {error, _} = Err ->
+                Err
+        end
+    catch
+        Class:Reason:Stack ->
+            Err0 = #{
+                stage => <<"mint_knowledge">>,
+                class => safe_term(Class),
+                reason => safe_term(Reason),
+                stacktrace => safe_stacktrace(Stack),
+                knowledge => knowledge_to_loggable(Knowledge)
+            },
+            ?LOG_ERROR("mint_knowledge crashed: ~p", [Err0]),
+            {error, Err0}
+    end.
+-spec add_knowledge_blob(binary(), binary()) -> {ok, binary()} | {error, map()}.
+add_knowledge_blob(EncodedKnowledge, PointFilename) ->
+    case damage_ipfs:add({data, EncodedKnowledge, PointFilename}) of
+        {ok, [#{<<"Hash">> := IpfsHash} | _]} ->
+            ?LOG_DEBUG("ipfs add ok: ~p", [#{ipfs => IpfsHash, filename => PointFilename}]),
+            {ok, IpfsHash};
+        {error, Reason} ->
+            Err = #{
+                stage => <<"ipfs_add">>,
+                reason => safe_term(Reason),
+                filename => PointFilename
+            },
+            ?LOG_ERROR("ipfs add failed: ~p", [Err]),
+            {error, Err};
+        Other ->
+            Err = #{
+                stage => <<"ipfs_add">>,
+                reason => <<"unexpected_ipfs_response">>,
+                response => safe_term(Other),
+                filename => PointFilename
+            },
+            ?LOG_ERROR("ipfs add unexpected response: ~p", [Err]),
+            {error, Err}
+    end.
+-spec do_mint_knowledge_contract_call(
+    map(),
+    integer(),
+    binary(),
+    binary(),
+    term(),
+    term(),
+    term(),
+    term(),
+    term(),
+    map()
+) -> {ok, map()} | {error, map()}.
+do_mint_knowledge_contract_call(
+    #{public_key := AeAccount, private_key := _PrivateKey} = KeyPair,
+    TokenId,
+    FactKey,
+    IpfsHash,
+    Point,
+    Subject,
+    Predicate,
+    Object,
+    Context,
+    Knowledge
+) ->
     SKey = crypto:hash(sha256, encode_atom(Subject)),
     PKey = crypto:hash(sha256, encode_atom(Predicate)),
     OKey = crypto:hash(sha256, encode_atom(Object)),
     CKey = crypto:hash(sha256, encode_atom(Context)),
     KKey = crypto:hash(sha256, <<"knowledge">>),
 
-    %% Payload bytes (>32) for event payload:
-    %% Put everything you want indexers to decode without contract calls.
-    %% VRLP is fine since you already use it.
     Payload = iolist_to_binary(
         vrlp:encode([
             {ipfs, IpfsHash},
@@ -91,55 +165,120 @@ mint_knowledge(
             {o, OKey},
             {c, CKey},
             {k, KKey}
-            %% optionally include raw strings too (costs bytes, but off-chain only):
-            %% , {subject, Subject}, {predicate, Predicate}, {object, Object}, {context, Context}
         ])
     ),
 
-    %% Optional on-chain metadata (small map). Not required for indexing.
-    %% Keep it tiny: hex strings only, plus ipfs.
-    %% The contract expects KnowledgeNFTs.metadata as a scalar (string),
-    %% not a map. So we JSON-encode a tiny map and pass it as a Sophia string.
-    %% KnowledgeNFTs.metadata is a VARIANT with constructors:
-    %%   MetadataIdentifier | MetadataMap
-    %% Use MetadataMap and provide a map(string,string).
-    MetaDataMap = #{
-        "v" => "3",
-        "ipfs" => IpfsHash,
-        "bh" => binary:encode_hex(FactKey),
-        "s" => binary:encode_hex(SKey),
-        "p" => binary:encode_hex(PKey),
-        "o" => binary:encode_hex(OKey),
-        "c" => binary:encode_hex(CKey),
-        "k" => binary:encode_hex(KKey)
-    },
-    MetaVariant = {"MetadataMap", MetaDataMap},
-    MdOpt = {"Some", MetaVariant},
+    ?LOG_ERROR("mint args debug: ~p", [
+        #{
+            ae_account => AeAccount,
+            token_id => TokenId,
+            token_id_is_integer => is_integer(TokenId),
+            fact_key_size => byte_size(FactKey),
+            s_key_size => byte_size(SKey),
+            p_key_size => byte_size(PKey),
+            o_key_size => byte_size(OKey),
+            c_key_size => byte_size(CKey),
+            k_key_size => byte_size(KKey),
+            payload_size => byte_size(Payload),
+            subject => Subject,
+            object => Object
+        }
+    ]),
+    Args = [AeAccount, TokenId, FactKey, SKey, PKey, OKey, CKey, KKey, Payload],
+    ?LOG_ERROR("mint_derived dry-run raw: ~p", [Args]),
+    %Dry = damage_ae:contract_call_dry(
+    %    KeyPair,
+    %    ct_id(#{}),
+    %    contract_path("knowledge_nft"),
+    %    "mint_derived",
+    %        Args
+    %),
+    %?LOG_ERROR("mint_derived dry-run raw: ~p", [Dry]),
 
-    ?LOG_INFO(
-        "Minting knowledge ~p",
-        [
-            [
-                AeAccount,
-                TokenId,
-                FactKey,
-                SKey,
-                PKey,
-                OKey,
-                CKey,
-                KKey,
-                MdOpt,
-                Payload
-            ]
-        ]
-    ),
-    damage_ae:contract_call(
-        KeyPair,
-        ct_id(#{}),
-        contract_path("knowledge_nft"),
-        "mint_derived",
-        [AeAccount, TokenId, FactKey, SKey, PKey, OKey, CKey, KKey, MdOpt, Payload]
-    ).
+    ?LOG_DEBUG("mint_knowledge contract args", [
+        #{
+            account => AeAccount,
+            ct => ct_id(#{}),
+            token_id => TokenId,
+            fact_key_hex => binary:encode_hex(FactKey),
+            ipfs => IpfsHash,
+            payload_size => byte_size(Payload),
+            point => point_to_loggable(Point)
+        }
+    ]),
+
+    try
+        case
+            damage_ae:contract_call(
+                KeyPair,
+                ct_id(#{}),
+                contract_path("knowledge_nft"),
+                "mint_derived",
+                Args
+            )
+        of
+            {ok, Result} ->
+                Out = #{
+                    stage => <<"contract_call">>,
+                    status => <<"ok">>,
+                    account => AeAccount,
+                    token_id => TokenId,
+                    fact_key => binary:encode_hex(FactKey),
+                    ipfs => IpfsHash,
+                    point => point_to_loggable(Point),
+                    knowledge => knowledge_to_loggable(Knowledge),
+                    result => safe_term(Result)
+                },
+                ?LOG_INFO("mint_knowledge success: ~p", [Out]),
+                {ok, Out};
+            {error, Reason} ->
+                Err = #{
+                    stage => <<"contract_call">>,
+                    status => <<"error">>,
+                    reason => safe_term(Reason),
+                    account => AeAccount,
+                    token_id => TokenId,
+                    fact_key => binary:encode_hex(FactKey),
+                    ipfs => IpfsHash,
+                    point => point_to_loggable(Point),
+                    knowledge => knowledge_to_loggable(Knowledge)
+                },
+                ?LOG_ERROR("mint_knowledge contract error: ~p", [Err]),
+                {error, Err};
+            Other ->
+                Err = #{
+                    stage => <<"contract_call">>,
+                    status => <<"error">>,
+                    reason => <<"unexpected_contract_response">>,
+                    response => safe_term(Other),
+                    account => AeAccount,
+                    token_id => TokenId,
+                    fact_key => binary:encode_hex(FactKey),
+                    ipfs => IpfsHash,
+                    point => point_to_loggable(Point),
+                    knowledge => knowledge_to_loggable(Knowledge)
+                },
+                ?LOG_ERROR("mint_knowledge unexpected contract response: ~p", [Err]),
+                {error, Err}
+        end
+    catch
+        Class:Reason0:Stack ->
+            Err0 = #{
+                stage => <<"contract_call">>,
+                status => <<"crash">>,
+                class => safe_term(Class),
+                reason => safe_term(Reason0),
+                stacktrace => safe_stacktrace(Stack),
+                account => AeAccount,
+                token_id => TokenId,
+                fact_key => binary:encode_hex(FactKey),
+                ipfs => IpfsHash,
+                point => point_to_loggable(Point),
+                knowledge => knowledge_to_loggable(Knowledge)
+            },
+            ?LOG_ERROR("mint_knowledge contract crash: ~p", [Err0]),
+            {error, Err0}
+    end.
 
 encode_atom(X) when is_binary(X) ->
     %% stable encoding for atom text
@@ -150,8 +289,7 @@ encode_atom(X) ->
     vrlp:encode([iolist_to_binary(X)]).
 
 encode(#{subject := Subject, predicate := Predicate, object := Object, context := Context}) ->
-    Timestamp = erlang:system_time(seconds),
-    vrlp:encode([Subject, Predicate, Object, Context, Timestamp]).
+    vrlp:encode([Subject, Predicate, Object, Context]).
 %%% -----------------------------
 %%% SPOC builders with ordinals
 %%% -----------------------------
@@ -264,7 +402,7 @@ deploy_knowledge_nft_contract() ->
     ContractPath = contract_path("knowledge_nft"),
     ?LOG_INFO("Contract ~p", [ContractPath]),
     #{"contract_id" := ContractId} = damage_ae:contract_deploy(
-        ContractPath, ["ECAI Knowledge Fragment", "ecai", "10"]
+        ContractPath, ["ECAI Knowledge NFT", "ecai", "10"]
     ),
 
     ContractId.
@@ -323,8 +461,6 @@ mint_index_job(
         "mint_index_job",
         [AeAccount, TokenId, JobKey, DatasetKey, ChunkKey, KindKey, MetaVariant, Payload]
     ).
-
-
 
 mint_index_jobs_from_chunks(KeyPair, DatasetId, Chunks, Price) ->
     lists:foreach(
@@ -629,12 +765,87 @@ mint_knowledge_image_collection(KeyPair, ManifestCid, Manifest) ->
         object => ManifestCid,
         context => Context
     }).
+knowledge_to_loggable(#{subject := S, predicate := P, object := O, context := C}) ->
+    #{
+        subject => to_loggable(S),
+        predicate => to_loggable(P),
+        object => to_loggable(O),
+        context => to_loggable(C)
+    };
+knowledge_to_loggable(Other) ->
+    safe_term(Other).
 
+point_to_loggable({XBin, YBin, Ctr}) when is_binary(XBin), is_binary(YBin), is_integer(Ctr) ->
+    #{
+        x_hex => binary:encode_hex(XBin),
+        y_hex => binary:encode_hex(YBin),
+        counter => Ctr
+    };
+point_to_loggable({XBin, YBin}) when is_binary(XBin), is_binary(YBin) ->
+    #{
+        x_hex => binary:encode_hex(XBin),
+        y_hex => binary:encode_hex(YBin)
+    };
+point_to_loggable({X, Y, Ctr}) when is_integer(X), is_integer(Y), is_integer(Ctr) ->
+    #{x => X, y => Y, counter => Ctr};
+point_to_loggable({X, Y}) when is_integer(X), is_integer(Y) ->
+    #{x => X, y => Y};
+point_to_loggable(Other) ->
+    safe_term(Other).
+
+to_loggable(V) when is_binary(V) -> V;
+to_loggable(V) when is_integer(V) -> V;
+to_loggable(V) when is_float(V) -> V;
+to_loggable(V) when is_boolean(V) -> V;
+to_loggable(V) when is_atom(V) -> atom_to_binary(V, utf8);
+to_loggable(V) when is_list(V) ->
+    case io_lib:printable_unicode_list(V) of
+        true -> unicode:characters_to_binary(V);
+        false -> iolist_to_binary(io_lib:format("~p", [V]))
+    end;
+to_loggable(V) when is_map(V) ->
+    maps:from_list([{to_loggable(K), to_loggable(Val)} || {K, Val} <- maps:to_list(V)]);
+to_loggable(V) when is_tuple(V) ->
+    iolist_to_binary(io_lib:format("~p", [V]));
+to_loggable(V) ->
+    iolist_to_binary(io_lib:format("~p", [V])).
+
+safe_term(Term) when is_binary(Term) ->
+    Term;
+safe_term(Term) when is_integer(Term); is_float(Term); is_boolean(Term) ->
+    Term;
+safe_term(Term) when is_atom(Term) ->
+    atom_to_binary(Term, utf8);
+safe_term(Term) when is_list(Term) ->
+    case io_lib:printable_unicode_list(Term) of
+        true -> unicode:characters_to_binary(Term);
+        false -> iolist_to_binary(io_lib:format("~p", [Term]))
+    end;
+safe_term(Term) when is_map(Term) ->
+    maps:from_list([{safe_term(K), safe_term(V)} || {K, V} <- maps:to_list(Term)]);
+safe_term(Term) when is_tuple(Term) ->
+    iolist_to_binary(io_lib:format("~p", [Term]));
+safe_term(Term) ->
+    iolist_to_binary(io_lib:format("~p", [Term])).
+
+safe_stacktrace(Stack) when is_list(Stack) ->
+    [safe_term(S) || S <- Stack];
+safe_stacktrace(Other) ->
+    safe_term(Other).
 %% Example execution
+%% Example execution
+-spec test() -> {ok, map()} | {error, map()}.
 test() ->
     NodeKeyPair = secrets:node_keypair(),
-    mint_letters(NodeKeyPair, "abcdefghijklmnopqrstuvwxyz"),
-    mint_digits(NodeKeyPair, "1234567890").
+    Knowledge = #{
+        subject => <<"genesis nft test">>,
+        predicate => <<"is instance of">>,
+        object => <<"knowledge nft">>,
+        context => <<"ecai test">>
+    },
+    mint_knowledge(NodeKeyPair, Knowledge).
+%mint_letters(NodeKeyPair, "abcdefghijklmnopqrstuvwxyz"),
+%mint_digits(NodeKeyPair, "1234567890").
 %% -------------------------------------------------------------------
 %% Test helper: mint a dummy tshirt order NFT.
 %% Uses fake data, but exercises the full pipeline:

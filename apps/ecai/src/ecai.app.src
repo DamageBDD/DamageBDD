@@ -10,7 +10,7 @@
         {mod, {ecai_app, []}},
         {
             applications,
-            [kernel, stdlib, jsx, cowboy, trails, os_mon, cowboy_swagger, gproc, vanillae, damage]
+            [kernel, stdlib, gproc, jsx, cowboy, trails, os_mon, cowboy_swagger, vanillae, damage]
         },
         {env, []},
         {modules, []},

@@ -280,7 +280,6 @@ contract KnowledgeNFTs =
   // - fact_key: bytes32 canonical identity (sha256(encoded knowledge blob))
   // - s/p/o/c/k keys: bytes32 compact keys for indexing (sha256(vrlp([atom])))
   // - payload: bytes > 32 (VRLP/CBOR) containing ipfs hash + optional extras (point, raw strings, etc.)
-  // - md_opt: optional on-chain metadata map (small). Indexing does NOT depend on it.
     stateful entrypoint mint_derived(
         to       : address,
         token_id : int,
@@ -290,7 +289,6 @@ contract KnowledgeNFTs =
         o_key    : bytes(32),
         c_key    : bytes(32),
         k_key    : bytes(32),
-        md_opt   : option(metadata),
         payload  : bytes ) : int =
         require_contract_owner()
         require(token_id > 0, "TOKEN_ID_INVALID")
@@ -318,11 +316,6 @@ contract KnowledgeNFTs =
               , token_fact_key[token_id] = fact_key
               , token_index_keys[token_id] = (s_key, p_key, o_key, c_key, k_key)
                 })
-
-            // optional metadata store
-            switch(md_opt)
-              None => ()
-              Some(md) => put(state{ metadata_store[token_id] = md })
 
             // update on-chain indices (optional but fast)
             index_add_all(token_id, s_key, p_key, o_key, c_key, k_key)

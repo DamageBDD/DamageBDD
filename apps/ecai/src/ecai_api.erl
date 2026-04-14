@@ -201,6 +201,7 @@ from_json(Req, #{action := search} = State) ->
             Ctx =
                 ecai_search_server:get_ctx(),
             %% Free-text → search all fields with prefix matching
+            ?LOG_DEBUG("ecai query ~p", [Q]),
             {Results, Proofs} =
                 ecai_search:search(
                     Ctx,
@@ -219,7 +220,6 @@ from_json(Req, #{action := search} = State) ->
                 <<"results">> => Results,
                 <<"proofs">> => Proofs
             },
-            ?LOG_DEBUG("ecai response ~p", [Resp]),
             {stop,
                 cowboy_req:reply(
                     200,

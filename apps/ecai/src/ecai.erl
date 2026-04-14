@@ -15,6 +15,7 @@
 
 -export([
     point_to_filename_hash/1,
+    hash_to_curve_point/1,
     hash_to_curve/1,
     curve_add/4
 ]).
@@ -42,20 +43,56 @@ init() ->
     case erlang:load_nif(NifPath, 0) of
         ok ->
             ?LOG_INFO("ECAI NIF Loaded");
-        _ ->
-            ?LOG_INFO("ECAI NIF Not Loaded")
+        Err ->
+            ?LOG_INFO("ECAI NIF Not Loaded ~p", [Err])
     end.
 %% Generate a valid point on the elliptic curve
 
 hash_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 
 curve_add(_X1, _Y1, _X2, _Y2) -> erlang:nif_error(nif_library_not_loaded).
--spec point_to_filename_hash({integer(), integer()}) -> binary().
-point_to_filename_hash({X, Y}) ->
-    Bin = term_to_binary({X, Y}),
+hash_to_curve_point(Text) ->
+    {XBin, YBin, Counter} = hash_to_curve(Text),
+    #{
+        x_bin => XBin,
+        y_bin => YBin,
+        x => binary:decode_unsigned(XBin, little),
+        y => binary:decode_unsigned(YBin, little),
+        counter => Counter
+    }.
+-spec point_to_filename_hash(
+    {integer(), integer()}
+    | {binary(), binary()}
+    | {integer(), integer(), non_neg_integer()}
+    | {binary(), binary(), non_neg_integer()}
+) -> binary().
+
+point_to_filename_hash({X, Y}) when is_integer(X), is_integer(Y) ->
+    point_to_filename_hash_ints({X, Y, 0});
+point_to_filename_hash({XBin, YBin}) when is_binary(XBin), is_binary(YBin) ->
+    point_to_filename_hash_bins({XBin, YBin, 0});
+point_to_filename_hash({X, Y, Counter}) when
+    is_integer(X), is_integer(Y), is_integer(Counter), Counter >= 0
+->
+    point_to_filename_hash_ints({X, Y, Counter});
+point_to_filename_hash({XBin, YBin, Counter}) when
+    is_binary(XBin), is_binary(YBin), is_integer(Counter), Counter >= 0
+->
+    point_to_filename_hash_bins({XBin, YBin, Counter}).
+
+point_to_filename_hash_ints({X, Y, Counter}) ->
+    Bin = term_to_binary({X, Y, Counter}),
     Hash = crypto:hash(sha256, Bin),
     Slug = base32:encode(binary:part(Hash, 0, 20)),
     <<"ecai_", Slug/binary>>.
 
+point_to_filename_hash_bins({XBin, YBin, Counter}) ->
+    X = binary:decode_unsigned(XBin, little),
+    Y = binary:decode_unsigned(YBin, little),
+    point_to_filename_hash_ints({X, Y, Counter}).
+
 test() ->
-    {1650075109, 63181} = ecai:hash_to_curve("Hello world!").
+    {XBin, YBin, Counter} = ecai:hash_to_curve("hello"),
+    X = binary:decode_unsigned(XBin, little),
+    Y = binary:decode_unsigned(YBin, little),
+    io:format("X = ~p~nY = ~p~nCounter = ~p~n", [X, Y, Counter]).

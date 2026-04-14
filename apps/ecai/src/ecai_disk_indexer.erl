@@ -3,6 +3,7 @@
 
 -record(st, {
     base_dir,
+    docstore_tab,
     seg_no = 0,
     %% #{TermBin => [DocInt...]}
     batch = #{},
@@ -13,7 +14,8 @@
 
 new(BaseDir) ->
     ok = filelib:ensure_dir(filename:join(BaseDir, "x")),
-    #st{base_dir = BaseDir, seg_no = next_seg_no(BaseDir)}.
+    {ok, Tab} = ecai_disk_docstore:open(BaseDir),
+    #st{base_dir = BaseDir, docstore_tab = Tab, seg_no = next_seg_no(BaseDir)}.
 
 %% add_doc(State, DocInt, RecMap) -> State1
 add_doc(S0 = #st{batch = B0, batch_docs = N0, max_docs = Max}, DocInt, RecMap) ->
@@ -22,6 +24,16 @@ add_doc(S0 = #st{batch = B0, batch_docs = N0, max_docs = Max}, DocInt, RecMap) -
 
     %% you'll create ecai_terms.erl from your current logic :contentReference[oaicite:4]{index=4}
     Terms = ecai_terms:terms_from_record(RecMap),
+    %% Persist chunk metadata on disk (DocInt -> Meta)
+    %% Expected fields in RecMap:
+    %%   cid (binary or list), title (optional), heading (optional), text (binary or list)
+    Meta =
+        maps:with(
+            [cid, title, heading, text, tags, type, ts],
+            RecMap
+        ),
+    ok = ecai_disk_docstore:put(S0#st.docstore_tab, DocInt, normalize_meta(Meta)),
+
     B1 = lists:foldl(
         fun(T, Acc) -> maps:update_with(T, fun(L) -> [DocInt | L] end, [DocInt], Acc) end, B0, Terms
     ),
@@ -45,8 +57,20 @@ flush(S = #st{base_dir = Dir, seg_no = No, batch = Batch, batch_docs = Docs}) ->
 
 close(S) ->
     flush(S),
+    ok = ecai_disk_docstore:close(S#st.docstore_tab),
     ok.
 
+normalize_meta(M) ->
+    maps:map(
+        fun(_K, V) ->
+            case V of
+                Bin when is_binary(Bin) -> Bin;
+                L when is_list(L) -> list_to_binary(L);
+                Other -> Other
+            end
+        end,
+        M
+    ).
 next_seg_no(BaseDir) ->
     Segs = ecai_disk_manifest:list_segments(BaseDir),
     %% simple: parse highest seg_NNNNNN.ecs
