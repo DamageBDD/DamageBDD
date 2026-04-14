@@ -19,11 +19,10 @@
 
 -define(GUARD_TABLE, damage_nwc_invoice_watch_guard).
 -define(RESTORE_PAGE_LIMIT, 100).
-
 -record(state, {
-    %% Wallet => queue:[InvoiceOrPayload]
+    %% RouteKey => queue:[InvoiceOrPayload]
     queues = #{} :: map(),
-    %% MonitorRef => Wallet
+    %% MonitorRef => RouteKey
     in_flight = #{} :: map()
 }).
 
@@ -53,23 +52,23 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({cln_event, invoice_paid, Payload}, State) ->
-    case wallet_from_invoice(Payload) of
-        {ok, Wallet} ->
-            {noreply, enqueue_and_maybe_start(Wallet, Payload, State)};
+    case route_key_from_invoice(Payload) of
+        {ok, RouteKey} ->
+            {noreply, enqueue_and_maybe_start(RouteKey, Payload, State)};
         {error, Why} ->
             ?LOG_INFO("damage_nwc_invoice_watch ignores payload reason=~p payload=~p", [
                 Why, Payload
             ]),
             {noreply, State}
     end;
-handle_info({process_wallet_invoice, Wallet}, State) ->
-    {noreply, maybe_start_next(Wallet, State)};
+handle_info({process_invoice_route, RouteKey}, State) ->
+    {noreply, maybe_start_next(RouteKey, State)};
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{in_flight = InFlight0} = State) ->
     case maps:take(Ref, InFlight0) of
-        {Wallet, InFlight} ->
-            ?LOG_DEBUG("wallet invoice worker done wallet=~p reason=~p", [Wallet, Reason]),
+        {RouteKey, InFlight} ->
+            ?LOG_DEBUG("invoice worker done route=~p reason=~p", [RouteKey, Reason]),
             State1 = State#state{in_flight = InFlight},
-            {noreply, maybe_start_next(Wallet, State1)};
+            {noreply, maybe_start_next(RouteKey, State1)};
         error ->
             {noreply, State}
     end;
@@ -87,30 +86,30 @@ code_change(_OldVsn, State, _Extra) ->
 %% Queueing / sequencing
 %% ------------------------------------------------------------------
 
-enqueue_and_maybe_start(Wallet, InvoiceOrPayload, #state{queues = Queues0} = State) ->
-    Q0 = maps:get(Wallet, Queues0, queue:new()),
+enqueue_and_maybe_start(RouteKey, InvoiceOrPayload, #state{queues = Queues0} = State) ->
+    Q0 = maps:get(RouteKey, Queues0, queue:new()),
     Q1 = queue:in(InvoiceOrPayload, Q0),
-    Queues = Queues0#{Wallet => Q1},
-    maybe_start_next(Wallet, State#state{queues = Queues}).
+    Queues = Queues0#{RouteKey => Q1},
+    maybe_start_next(RouteKey, State#state{queues = Queues}).
 
-maybe_start_next(Wallet, #state{queues = Queues, in_flight = InFlight} = State) ->
-    case wallet_busy(Wallet, InFlight) of
+maybe_start_next(RouteKey, #state{queues = Queues, in_flight = InFlight} = State) ->
+    case route_busy(RouteKey, InFlight) of
         true ->
             State;
         false ->
-            case maps:get(Wallet, Queues, queue:new()) of
+            case maps:get(RouteKey, Queues, queue:new()) of
                 Q ->
                     case queue:out(Q) of
                         {{value, InvoiceOrPayload}, Q2} ->
                             Queues2 =
                                 case queue:is_empty(Q2) of
-                                    true -> maps:remove(Wallet, Queues);
-                                    false -> Queues#{Wallet => Q2}
+                                    true -> maps:remove(RouteKey, Queues);
+                                    false -> Queues#{RouteKey => Q2}
                                 end,
-                            Ref = start_invoice_worker(Wallet, InvoiceOrPayload),
+                            Ref = start_invoice_worker(RouteKey, InvoiceOrPayload),
                             State#state{
                                 queues = Queues2,
-                                in_flight = InFlight#{Ref => Wallet}
+                                in_flight = InFlight#{Ref => RouteKey}
                             };
                         {empty, _} ->
                             State
@@ -118,23 +117,23 @@ maybe_start_next(Wallet, #state{queues = Queues, in_flight = InFlight} = State) 
             end
     end.
 
-wallet_busy(Wallet, InFlight) ->
+route_busy(RouteKey, InFlight) ->
     lists:any(
-        fun({_Ref, W}) -> W =:= Wallet end,
+        fun({_Ref, K}) -> K =:= RouteKey end,
         maps:to_list(InFlight)
     ).
 
-start_invoice_worker(Wallet, InvoiceOrPayload) ->
+start_invoice_worker(RouteKey, InvoiceOrPayload) ->
     Parent = self(),
     {Pid, Ref} =
         spawn_monitor(fun() ->
-            process_invoice_for_wallet(Wallet, InvoiceOrPayload),
-            Parent ! {process_wallet_invoice, Wallet}
+            process_invoice_for_route(RouteKey, InvoiceOrPayload),
+            Parent ! {process_invoice_route, RouteKey}
         end),
     _ = Pid,
     Ref.
 
-process_invoice_for_wallet(_Wallet, InvoiceOrPayload) ->
+process_invoice_for_route(_RouteKey, InvoiceOrPayload) ->
     case resolve_settled_invoice(InvoiceOrPayload) of
         {ok, Invoice} ->
             Label = invoice_label(Invoice),
@@ -162,18 +161,17 @@ restore_open_invoices_into_self() ->
         page_limit => ?RESTORE_PAGE_LIMIT,
         unpaid_only => false,
         paid_only => true,
-        label_prefix => <<"nwc:">>,
         min_expires_at => Now - 7 * 24 * 60 * 60
     },
     case cln:list_all_invoices(Opts) of
         {ok, Invoices} ->
             lists:foreach(
                 fun(Invoice) ->
-                    case wallet_from_invoice(Invoice) of
-                        {ok, Wallet} ->
+                    case route_key_from_invoice(Invoice) of
+                        {ok, RouteKey} ->
                             self() ! {cln_event, invoice_paid, Invoice},
-                            ?LOG_DEBUG("restored settled invoice wallet=~p label=~p", [
-                                Wallet, invoice_label(Invoice)
+                            ?LOG_DEBUG("restored settled invoice route=~p label=~p", [
+                                RouteKey, invoice_label(Invoice)
                             ]);
                         {error, _} ->
                             ok
@@ -193,7 +191,7 @@ restore_open_invoices_into_self() ->
 safe_handle_settled_invoice(Label, Invoice) when is_binary(Label) ->
     case claim_settled(Label) of
         claimed ->
-            try damage_nwc_invoice_hooks:handle_settled_invoice(Invoice) of
+            try dispatch_settled_invoice(Label, Invoice) of
                 ok ->
                     ok = mark_settled_done(Label),
                     ok;
@@ -220,6 +218,24 @@ safe_handle_settled_invoice(Label, Invoice) when is_binary(Label) ->
         in_progress ->
             ok
     end.
+
+dispatch_settled_invoice(<<"nwc_topup:", _/binary>>, Invoice) ->
+    PaymentHash =
+        maps:get(
+            payment_hash,
+            Invoice,
+            maps:get(<<"payment_hash">>, Invoice, <<>>)
+        ),
+    case PaymentHash of
+        <<>> ->
+            {error, missing_payment_hash};
+        _ ->
+            damage_nwc_invoice_hooks:handle_topup_invoice_settled(PaymentHash)
+    end;
+dispatch_settled_invoice(<<"nwc:", _/binary>>, Invoice) ->
+    damage_nwc_invoice_hooks:handle_settled_invoice(Invoice);
+dispatch_settled_invoice(Label, _Invoice) ->
+    {error, {unsupported_label, Label}}.
 
 resolve_settled_invoice(Invoice) when is_map(Invoice) ->
     case is_settled(Invoice) of
@@ -255,25 +271,32 @@ is_settled(#{<<"status">> := <<"paid">>}) -> true;
 is_settled(_) -> false.
 
 %% ------------------------------------------------------------------
-%% Label / wallet parsing
+%% Label / route parsing
 %% ------------------------------------------------------------------
 
-wallet_from_invoice(Invoice) when is_map(Invoice) ->
+route_key_from_invoice(Invoice) when is_map(Invoice) ->
     case invoice_label(Invoice) of
+        <<"nwc_topup:", _/binary>> ->
+            payment_hash_route_key(Invoice);
         Label when is_binary(Label) ->
-            wallet_from_label(Label);
+            route_key_from_label(Label);
         _ ->
             {error, missing_label}
     end.
 
-wallet_from_label(Label) when is_binary(Label) ->
+payment_hash_route_key(Invoice) ->
+    PaymentHash =
+        maps:get(payment_hash, Invoice, maps:get(<<"payment_hash">>, Invoice, <<>>)),
+    case PaymentHash of
+        <<>> -> {error, missing_payment_hash};
+        _ -> {ok, {topup, PaymentHash}}
+    end.
+
+route_key_from_label(Label) when is_binary(Label) ->
     case binary:split(Label, <<":">>, [global]) of
-        [<<"nwc">>, Wallet, _Session, _Ref] ->
-            {ok, Wallet};
-        [<<"nwc">>, Wallet, _Ref] ->
-            {ok, Wallet};
-        Other ->
-            {error, {bad_label, Other}}
+        [<<"nwc">>, Wallet, _Session, _Ref] -> {ok, {wallet, Wallet}};
+        [<<"nwc">>, Wallet, _Ref] -> {ok, {wallet, Wallet}};
+        Other -> {error, {bad_label, Other}}
     end.
 
 invoice_label(#{label := Label}) when is_binary(Label) -> Label;

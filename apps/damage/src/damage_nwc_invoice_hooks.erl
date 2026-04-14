@@ -54,15 +54,15 @@ find_settled_invoice(Invoices) ->
 
 handle_settled_invoice(Invoice) ->
     Label = maps:get(label, Invoice, maps:get(<<"label">>, Invoice, <<>>)),
-    AmountPaidSat = maps:get(
-        amount_received_msat,
-        Invoice,
-        maps:get(<<"amount_received_msat">>, Invoice, 0)
-    ),
+    AmountReceivedMsat = maps:get(
+                           amount_received_msat,
+                           Invoice,
+                           maps:get(<<"amount_received_msat">>, Invoice, 0)
+                          ),
     case parse_nwc_label(Label) of
         {ok, Wallet, Session, Ref} ->
             ?LOG_INFO("NWC invoice settled wallet=~p session=~p ref=~p", [Wallet, Session, Ref]),
-            credit_wallet_bucket(Wallet, Session, Ref, AmountPaidSat);
+            credit_wallet_bucket(Wallet, Session, Ref, AmountReceivedMsat);
         {error, Why} ->
             ?LOG_WARNING("NWC settled invoice label parse failed label=~p why=~p", [Label, Why]),
             ok
