@@ -522,7 +522,6 @@ from_json(Req0, State = #{action := topup_invoice}) ->
                                 status => pending,
                                 created_at => erlang:system_time(second)
                             }),
-                            _ = damage_nwc_invoice_watch_sup:start_child(Label),
                             reply_json_stop(
                                 200,
                                 #{
