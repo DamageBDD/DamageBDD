@@ -93,10 +93,12 @@ update_by_label(Label0, PatchOrFun) ->
 
 -spec mark_settled(binary() | list(), integer()) -> ok | {error, not_found}.
 mark_settled(PaymentHash0, SettledAt) when is_integer(SettledAt) ->
-    case update(PaymentHash0, #{
-        status => settled,
-        settled_at => SettledAt
-    }) of
+    case
+        update(PaymentHash0, #{
+            status => settled,
+            settled_at => SettledAt
+        })
+    of
         {ok, _} ->
             ok;
         {error, not_found} = Error ->

@@ -61,20 +61,17 @@
     handle_request_event/2,
     send_response/5,
     send_error/5,
-    send_error/6,
 
     resolve_owner_and_ledger_by_client_pubkey/1,
     ledger_balance_msat/3,
     ledger_policy/3,
     authorize_amount_msat/4,
     debit_after_payment/6,
-    do_get_balance/1,
+
     wallet_info/1
 ]).
 -import(damage_utils, [to_bin/1]).
 
--define(NWC_LEDGER_SRC_PATH, "contracts/nwc_ledger.aes").
--define(NWC_REGISTRY_NAME, <<"nwc_ledger">>).
 -define(NWC_REQ_KIND, 23194).
 -define(NWC_RESP_KIND, 23195).
 
@@ -123,7 +120,7 @@ handle_request_event(
         event_id := RequestEventId,
         client_pubkey := ClientPubHex,
         content := EncContent
-    } = _Req,
+    },
     State
 ) ->
     WalletPriv = state_private_key(State),
@@ -134,23 +131,11 @@ handle_request_event(
                 {ok, ReqJson} ->
                     handle_request_json(RequestEventId, ClientPubHex, ReqJson, State);
                 {error, Why} ->
-                    send_error(
-                        RequestEventId,
-                        ClientPubHex,
-                        <<"PARSE_ERROR">>,
-                        fmt(Why),
-                        State
-                    )
+                    send_error(RequestEventId, ClientPubHex, <<"PARSE_ERROR">>, fmt(Why), State)
             end;
         {error, Why} ->
             ?LOG_WARNING("NWC decrypt failed ~p", [Why]),
-            send_error(
-                RequestEventId,
-                ClientPubHex,
-                <<"DECRYPT_FAILED">>,
-                fmt(Why),
-                State
-            )
+            send_error(RequestEventId, ClientPubHex, <<"DECRYPT_FAILED">>, fmt(Why), State)
     end.
 
 %%%===================================================================
@@ -164,37 +149,30 @@ handle_request_json(RequestEventId, ClientPubHex, ReqJson, State) ->
         {ok, Result} ->
             send_response(RequestEventId, ClientPubHex, Method, Result, State);
         {error, Code, Message} ->
-            send_error(RequestEventId, ClientPubHex, Code, Message, State);
-        {error, Code, Message, Data} ->
-            send_error(RequestEventId, ClientPubHex, Code, Message, Data, State)
+            send_error(RequestEventId, ClientPubHex, Code, Message, State)
     end.
 
 dispatch(<<"get_info">>, _ClientPubHex, _Params, State) ->
     {ok, wallet_info(State)};
 dispatch(<<"get_balance">>, ClientPubHex, _Params, _State) ->
-    do_get_balance(ClientPubHex);
-dispatch(<<"pay_invoice">>, ClientPubHex, Params, State) ->
-    ?LOG_DEBUG("Pay invoice ~p ~p", [ClientPubHex, Params]),
-    handle_pay_invoice(ClientPubHex, Params, State);
-dispatch(<<"make_invoice">>, _ClientPubHex, Params, _State) ->
-    handle_make_invoice(Params);
-dispatch(Method, _ClientPubHex, _Params, _State) ->
-    {error, <<"NOT_IMPLEMENTED">>, <<Method/binary, " not supported">>}.
-do_get_balance(ClientPubHex) ->
     case resolve_owner_and_ledger_by_client_pubkey(ClientPubHex) of
         {ok, Owner, LedgerCt} ->
             case ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
                 {ok, Msat} ->
-                    {ok, #{
-                        balance => Msat,
-                        currency => <<"msat">>
-                    }};
+                    {ok, #{balance => Msat, currency => <<"msat">>}};
                 {error, Why} ->
                     {error, <<"LEDGER_BALANCE_FAILED">>, fmt(Why)}
             end;
         {error, Why} ->
             {error, <<"UNKNOWN_CLIENT">>, fmt(Why)}
-    end.
+    end;
+dispatch(<<"pay_invoice">>, ClientPubHex, Params, State) ->
+    handle_pay_invoice(ClientPubHex, Params, State);
+dispatch(<<"make_invoice">>, _ClientPubHex, Params, _State) ->
+    handle_make_invoice(Params);
+dispatch(Method, _ClientPubHex, _Params, _State) ->
+    {error, <<"NOT_IMPLEMENTED">>, <<Method/binary, " not supported">>}.
+
 %%%===================================================================
 %%% Method handlers
 %%%===================================================================
@@ -287,30 +265,28 @@ invoice_amount_msat_from_params(Params) ->
 
 invoice_desc_from_params(Params) ->
     case maps:get(<<"description">>, Params, maps:get(description, Params, undefined)) of
-        undefined ->
-            <<"DamageBDD">>;
-        Desc ->
-            normalize_desc(Desc)
+        undefined -> <<"DamageBDD">>;
+        Desc -> normalize_desc(Desc)
     end.
 
 invoice_label_from_params(Params) ->
     case maps:get(<<"label">>, Params, maps:get(label, Params, undefined)) of
         undefined ->
-            <<"DamageBDD">>;
+            Ts = integer_to_binary(erlang:system_time(millisecond)),
+            <<"nwc_", Ts/binary>>;
         Label ->
             normalize_label(Label)
     end.
 
-normalize_label(V) when is_binary(V), V =/= <<>> ->
-    V;
-normalize_label(V) when is_list(V), V =/= [] ->
-    unicode:characters_to_binary(V).
-normalize_desc(V) when is_binary(V) ->
-    V;
-normalize_desc(V) when is_list(V) ->
-    unicode:characters_to_binary(V).
-normalize_nonneg_int(I) when is_integer(I), I >= 0 ->
-    I;
+normalize_label(V) when is_binary(V), V =/= <<>> -> V;
+normalize_label(V) when is_list(V), V =/= [] -> unicode:characters_to_binary(V);
+normalize_label(_) -> <<"DamageBDD">>.
+
+normalize_desc(V) when is_binary(V) -> V;
+normalize_desc(V) when is_list(V) -> unicode:characters_to_binary(V);
+normalize_desc(_) -> <<"DamageBDD">>.
+
+normalize_nonneg_int(I) when is_integer(I), I >= 0 -> I;
 normalize_nonneg_int(B) when is_binary(B) ->
     try binary_to_integer(B) of
         V when V >= 0 -> V;
@@ -334,24 +310,14 @@ normalize_nonneg_int(_) ->
 
 -spec send_response(binary(), binary(), binary(), map(), tuple()) -> ok.
 send_response(RequestEventId, ClientPubHex, Method, Result, State) ->
-    Payload = #{
-        result_type => Method,
-        error => null,
-        result => Result
-    },
+    Payload = #{result_type => Method, error => null, result => Result},
     send_payload(RequestEventId, ClientPubHex, Payload, State).
 
+-spec send_error(binary(), binary(), binary(), binary(), tuple()) -> ok.
 send_error(RequestEventId, ClientPubHex, Code, Message, State) ->
-    send_error(RequestEventId, ClientPubHex, Code, Message, #{}, State).
-
-send_error(RequestEventId, ClientPubHex, Code, Message, Data, State) ->
     Payload = #{
         result_type => <<"error">>,
-        error => #{
-            code => Code,
-            message => Message,
-            data => Data
-        },
+        error => #{code => Code, message => Message},
         result => null
     },
     send_payload(RequestEventId, ClientPubHex, Payload, State).
@@ -363,17 +329,8 @@ send_payload(RequestEventId, ClientPubHex, Payload, State) ->
     case nip04_encrypt_content(Plain, WalletPriv, ClientPubHex) of
         {ok, EncContent} ->
             TS = erlang:system_time(seconds),
-            Tags = [
-                [<<"p">>, ClientPubHex],
-                [<<"e">>, RequestEventId]
-            ],
-            Event0 = damage_nostr:construct_event(
-                WalletPub,
-                ?NWC_RESP_KIND,
-                EncContent,
-                TS,
-                Tags
-            ),
+            Tags = [[<<"p">>, ClientPubHex], [<<"e">>, RequestEventId]],
+            Event0 = damage_nostr:construct_event(WalletPub, ?NWC_RESP_KIND, EncContent, TS, Tags),
             Event = damage_nostr:finalize_event(Event0, WalletPriv),
             EventJson = jsx:encode([<<"EVENT">>, Event]),
             ok = gun:ws_send(state_conn_pid(State), state_streamref(State), {text, EventJson}),
@@ -452,8 +409,7 @@ identity_accounts() ->
             try
                 {ok, identity_server:list_accounts()}
             catch
-                C:R ->
-                    {error, {C, R}}
+                C:R -> {error, {C, R}}
             end;
         false ->
             {error, list_accounts_not_exported}
@@ -470,6 +426,8 @@ ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
     case damage_nwc_http:ledger_call_user(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]) of
         #{"return_type" := "ok", "return_value" := Value} ->
             normalize_int(Value);
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
+            normalize_int(Value);
         Other ->
             {error, {balance_failed, Other}}
     end.
@@ -479,6 +437,8 @@ ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
 ledger_policy(Owner, LedgerCt, ClientPubHex) ->
     case damage_nwc_http:ledger_call_user(Owner, LedgerCt, "policy_of", [to_s(ClientPubHex)]) of
         #{"return_type" := "ok", "return_value" := Value} ->
+            {ok, normalize_policy(Value)};
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
             {ok, normalize_policy(Value)};
         Other ->
             {error, {policy_failed, Other}}
@@ -503,15 +463,10 @@ authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, Height) ->
                         false ->
                             case ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
                                 {ok, BalanceMsat} ->
-                                    case MaxTotal > 0 andalso (BalanceMsat < AmountMsat) of
+                                    case MaxTotal > 0 andalso BalanceMsat < AmountMsat of
                                         true ->
-                                            {error, <<"PAYMENT_REQUIRED">>,
-                                                <<"insufficient ledger balance">>, #{
-                                                    client_pubkey => ClientPubHex,
-                                                    required_amount_msat => AmountMsat,
-                                                    topup_endpoint => <<"/api/nwc/topup_invoice">>,
-                                                    status_endpoint => <<"/api/nwc/topup_status">>
-                                                }};
+                                            {error, <<"INSUFFICIENT_BALANCE">>,
+                                                <<"balance too low">>};
                                         false ->
                                             ok
                                     end;
@@ -525,7 +480,7 @@ authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, Height) ->
     end.
 
 debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
-    case damage_nwc_http:ledger_mode() of
+    case ledger_mode() of
         user_signed ->
             ok;
         server_signed ->
@@ -535,10 +490,18 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
                 "debit",
                 [to_s(ClientPubHex), integer_to_list(AmountMsat), to_s(Ref), to_s(Meta)]
             ),
-            ok = damage_nwc_balance_cache:invalidate(Owner),
             ok;
         operator_signed ->
             ok
+    end.
+
+ledger_mode() ->
+    case application:get_env(damage, nwc_ledger_mode) of
+        {ok, <<"server_signed">>} -> server_signed;
+        {ok, <<"operator_signed">>} -> operator_signed;
+        {ok, server_signed} -> server_signed;
+        {ok, operator_signed} -> operator_signed;
+        _ -> server_signed
     end.
 
 %%%===================================================================
@@ -546,27 +509,19 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
 %%%===================================================================
 
 normalize_policy(#{<<"max_single_msat">> := A, <<"max_total_msat">> := B, <<"expires_height">> := C}) ->
-    #{
-        max_single_msat => intish(A),
-        max_total_msat => intish(B),
-        expires_height => intish(C)
-    };
+    #{max_single_msat => intish(A), max_total_msat => intish(B), expires_height => intish(C)};
 normalize_policy(#{max_single_msat := A, max_total_msat := B, expires_height := C}) ->
-    #{
-        max_single_msat => intish(A),
-        max_total_msat => intish(B),
-        expires_height => intish(C)
-    };
+    #{max_single_msat => intish(A), max_total_msat => intish(B), expires_height => intish(C)};
 normalize_policy({A, B, C}) ->
-    #{
-        max_single_msat => intish(A),
-        max_total_msat => intish(B),
-        expires_height => intish(C)
-    };
+    #{max_single_msat => intish(A), max_total_msat => intish(B), expires_height => intish(C)};
 normalize_policy(Other) ->
     #{raw => Other}.
 
 normalize_int(I) when is_integer(I) -> {ok, I};
+normalize_int({I}) when is_integer(I) -> {ok, I};
+normalize_int({variant, [0, 1], 1, {I}}) when is_integer(I) -> {ok, I};
+normalize_int({variant, [0, 1], 0, {}}) ->
+    {ok, 0};
 normalize_int(B) when is_binary(B) ->
     try
         {ok, binary_to_integer(B)}
@@ -610,20 +565,36 @@ current_height() ->
             0
     end.
 
+ledger_mode() ->
+    case application:get_env(damage, nwc_ledger_mode) of
+        {ok, <<"user_signed">>} -> user_signed;
+        {ok, <<"server_signed">>} -> server_signed;
+        {ok, <<"operator_signed">>} -> operator_signed;
+        {ok, user_signed} -> user_signed;
+        {ok, server_signed} -> server_signed;
+        {ok, operator_signed} -> operator_signed;
+        _ -> server_signed
+    end.
+
+maybe_invalidate_balance_cache(Owner) ->
+    case erlang:function_exported(damage_nwc_balance_cache, invalidate, 1) of
+        true ->
+            catch damage_nwc_balance_cache:invalidate(Owner),
+            ok;
+        false ->
+            ok
+    end.
+
 %%%===================================================================
 %%% CLN normalization helpers
 %%%===================================================================
 
 invoice_amount_msat(Params, Decoded) ->
     case maps:get(<<"amount">>, Params, maps:get(amount, Params, undefined)) of
-        undefined ->
-            decode_msat_from_invoice(Decoded);
-        A when is_integer(A) ->
-            A;
-        A when is_binary(A) ->
-            binary_to_integer(A);
-        A when is_list(A) ->
-            list_to_integer(A)
+        undefined -> decode_msat_from_invoice(Decoded);
+        A when is_integer(A) -> A;
+        A when is_binary(A) -> binary_to_integer(A);
+        A when is_list(A) -> list_to_integer(A)
     end.
 
 decode_msat_from_invoice(Decoded) ->
@@ -652,9 +623,7 @@ pay_fees_msat(#{amount_sent_msat := #{msat := Sent}, amount_msat := #{msat := Am
     Sent - Amt;
 pay_fees_msat(#{
     <<"amount_sent_msat">> := #{<<"msat">> := Sent}, <<"amount_msat">> := #{<<"msat">> := Amt}
-}) when
-    is_integer(Sent), is_integer(Amt), Sent >= Amt
-->
+}) when is_integer(Sent), is_integer(Amt), Sent >= Amt ->
     Sent - Amt;
 pay_fees_msat(_) ->
     0.
@@ -666,10 +635,7 @@ payment_ref(PayRes) ->
     end.
 
 payment_meta(PayRes) ->
-    jsx:encode(#{
-        source => <<"nwc">>,
-        payment_hash => pay_hash(PayRes)
-    }).
+    jsx:encode(#{source => <<"nwc">>, payment_hash => pay_hash(PayRes)}).
 
 invoice_bolt11(#{bolt11 := V}) -> to_bin(V);
 invoice_bolt11(#{<<"bolt11">> := V}) -> to_bin(V);
@@ -685,17 +651,10 @@ invoice_payment_hash(_) -> <<>>.
 %%% damage_nostr state accessors
 %%%===================================================================
 
-state_public_key(State) ->
-    element(state_pos(public_key), State).
-
-state_private_key(State) ->
-    element(state_pos(private_key), State).
-
-state_conn_pid(State) ->
-    element(state_pos(conn_pid), State).
-
-state_streamref(State) ->
-    element(state_pos(streamref), State).
+state_public_key(State) -> element(state_pos(public_key), State).
+state_private_key(State) -> element(state_pos(private_key), State).
+state_conn_pid(State) -> element(state_pos(conn_pid), State).
+state_streamref(State) -> element(state_pos(streamref), State).
 
 state_pos(conn_pid) -> 2;
 state_pos(streamref) -> 3;
@@ -711,24 +670,19 @@ decode_json_map(Bin) ->
         M when is_map(M) -> {ok, M};
         Other -> {error, {not_a_map, Other}}
     catch
-        C:R ->
-            {error, {C, R}}
+        C:R -> {error, {C, R}}
     end.
 
-fmt(Term) ->
-    to_bin(io_lib:format("~p", [Term])).
+fmt(Term) -> to_bin(io_lib:format("~p", [Term])).
 
 to_s(B) when is_binary(B) -> binary_to_list(B);
 to_s(L) when is_list(L) -> L.
 
 hex64(Bin) when is_binary(Bin) ->
     case classify_key(Bin) of
-        {hex, 64} ->
-            lower_hex_ascii64(Bin);
-        {raw, 32} ->
-            lower_hex(Bin);
-        _ ->
-            error({invalid_hex64, Bin})
+        {hex, 64} -> lower_hex_ascii64(Bin);
+        {raw, 32} -> lower_hex(Bin);
+        _ -> error({invalid_hex64, Bin})
     end;
 hex64(List) when is_list(List) ->
     hex64(to_bin(List)).
@@ -738,10 +692,8 @@ lower_hex(Bin) when is_binary(Bin) ->
 
 lower_hex_ascii64(Bin) when is_binary(Bin), byte_size(Bin) =:= 64 ->
     case re:run(Bin, <<"^[0-9a-fA-F]{64}$">>, [{capture, none}]) of
-        match ->
-            list_to_binary(string:lowercase(binary_to_list(Bin)));
-        nomatch ->
-            error({invalid_hex_ascii64, Bin})
+        match -> list_to_binary(string:lowercase(binary_to_list(Bin)));
+        nomatch -> error({invalid_hex_ascii64, Bin})
     end.
 
 classify_key(Bin) when is_binary(Bin) ->

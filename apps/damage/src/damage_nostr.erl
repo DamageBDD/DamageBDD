@@ -481,10 +481,13 @@ handle_call(
         #{kinds => [1], since => Timestamp, '#p' => [WalletPubHex]}
     ]),
 
-    NwcSub = damage_nwc_wallet:subscribe_request(WalletPubHex),
-
-    ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, MentionSub}),
-    ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, NwcSub}),
+    case catch damage_nwc_wallet:subscribe_request(WalletPubHex) of
+        NwcSub when is_list(NwcSub); is_binary(NwcSub) ->
+            ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, MentionSub}),
+            ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, NwcSub});
+        Error ->
+            ?LOG_WARNING("NWC subscription setup failed ~p", [Error])
+    end,
     gun:flush(State#state.conn_pid),
     {reply, ok, State};
 handle_call(
