@@ -380,45 +380,13 @@ network_name() ->
     {ok, binary(), binary()} | {error, term()}.
 resolve_owner_and_ledger_by_client_pubkey(ClientPubHex0) ->
     ClientPubHex = hex64(ClientPubHex0),
-    case identity_accounts() of
-        {ok, Owners} ->
-            find_client_across_owners(ClientPubHex, Owners);
-        {error, Why} ->
-            {error, {identity_accounts_unavailable, Why}}
+    case damage_nwc_session_index:get(ClientPubHex) of
+        {ok, #{owner := Owner, ledger_ct := LedgerCt}} ->
+            {ok, to_bin(Owner), to_bin(LedgerCt)};
+        {error, not_found} ->
+            {error, not_found}
     end.
 
-find_client_across_owners(_ClientPubHex, []) ->
-    {error, not_found};
-find_client_across_owners(ClientPubHex, [Owner | Rest]) ->
-    OwnerBin = owner_pubkey(Owner),
-    case damage_nwc_http:resolve_user_ledger_ct(OwnerBin) of
-        {ok, LedgerCt} ->
-            case ledger_policy(OwnerBin, LedgerCt, ClientPubHex) of
-                {ok, _Policy} ->
-                    {ok, OwnerBin, to_bin(LedgerCt)};
-                {error, _} ->
-                    find_client_across_owners(ClientPubHex, Rest)
-            end;
-        {error, _} ->
-            find_client_across_owners(ClientPubHex, Rest)
-    end.
-
-identity_accounts() ->
-    case erlang:function_exported(identity_server, list_accounts, 0) of
-        true ->
-            try
-                {ok, identity_server:list_accounts()}
-            catch
-                C:R -> {error, {C, R}}
-            end;
-        false ->
-            {error, list_accounts_not_exported}
-    end.
-
-owner_pubkey(#{public_key := Pub}) -> to_bin(Pub);
-owner_pubkey(#{<<"public_key">> := Pub}) -> to_bin(Pub);
-owner_pubkey(Pub) when is_binary(Pub) -> Pub;
-owner_pubkey(Pub) when is_list(Pub) -> to_bin(Pub).
 
 -spec ledger_balance_msat(binary(), binary(), binary()) ->
     {ok, integer()} | {error, term()}.
@@ -495,14 +463,6 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
             ok
     end.
 
-ledger_mode() ->
-    case application:get_env(damage, nwc_ledger_mode) of
-        {ok, <<"server_signed">>} -> server_signed;
-        {ok, <<"operator_signed">>} -> operator_signed;
-        {ok, server_signed} -> server_signed;
-        {ok, operator_signed} -> operator_signed;
-        _ -> server_signed
-    end.
 
 %%%===================================================================
 %%% Normalization helpers
@@ -576,14 +536,6 @@ ledger_mode() ->
         _ -> server_signed
     end.
 
-maybe_invalidate_balance_cache(Owner) ->
-    case erlang:function_exported(damage_nwc_balance_cache, invalidate, 1) of
-        true ->
-            catch damage_nwc_balance_cache:invalidate(Owner),
-            ok;
-        false ->
-            ok
-    end.
 
 %%%===================================================================
 %%% CLN normalization helpers

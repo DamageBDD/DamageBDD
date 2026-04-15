@@ -184,6 +184,7 @@ from_json(Req0, State = #{action := mint}) ->
 
             case Mode of
                 user_signed ->
+                    ok = persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay),
                     reply_json_stop(
                         200,
                         #{
@@ -214,6 +215,8 @@ from_json(Req0, State = #{action := mint}) ->
                     ),
                     case ledger_call_ok(RegisterResult) of
                         true ->
+                            ok = persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay),
+
                             reply_json_stop(
                                 200,
                                 #{
@@ -285,6 +288,7 @@ from_json(Req0, State = #{action := mint}) ->
                 )
             of
                 {ok, RegistryCt, LedgerCt} ->
+                    ok = persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay),
                     reply_json_stop(
                         200,
                         #{
@@ -364,6 +368,7 @@ from_json(Req0, State = #{action := revoke}) ->
 
             case Mode of
                 user_signed ->
+                    ok = damage_nwc_session_index:delete(ClientPubHex),
                     reply_json_stop(
                         200,
                         #{
@@ -380,6 +385,7 @@ from_json(Req0, State = #{action := revoke}) ->
                     CallResult = ledger_call_admin(LedgerCt, "revoke", [to_s(ClientPubHex)]),
                     case ledger_call_ok(CallResult) of
                         true ->
+                            ok = damage_nwc_session_index:delete(ClientPubHex),
                             reply_json_stop(
                                 200,
                                 #{
@@ -1234,6 +1240,17 @@ secret_user_ledger_ct(OwnerAkBin) ->
 persist_user_ledger_ct(OwnerAkBin, <<"ct_", _/binary>> = CtId) ->
     Key = user_registry_contract_secret_key(OwnerAkBin),
     ok = secrets:encrypt_store(Key, CtId).
+persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay) ->
+    damage_nwc_session_index:put(
+        ClientPubHex,
+        Owner,
+        LedgerCt,
+        #{
+            wallet_pubkey => WalletPubHex,
+            relay => Relay,
+            created_at => erlang:system_time(second)
+        }
+    ).
 test() ->
     Owner = "ct_4SUjjufRpMD6KmhZwX3sAdih2FTV1Qry11TJpEGdmrdPh8bdy",
     LedgerCt =
