@@ -10,6 +10,7 @@
 
 -export([step/6]).
 -export([test/0]).
+-import(damage_utils, [to_bin/1]).
 
 -include_lib("kernel/include/logger.hrl").
 step(
@@ -57,7 +58,7 @@ step(
          || E <- Events, is_map(E)
         ],
 
-    maps:put(OutVar, Reports, Context);
+    maps:put(list_to_atom(OutVar), Reports, Context);
 %% Publish NIP-56 reports from monitored events in Context
 %%
 %% Body expects JSON like:
@@ -83,14 +84,14 @@ step(
     Content = map_get_bin(Body, <<"content">>, <<>>),
     Opts = maps:get(<<"opts">>, Body, #{}),
 
-    Events = maps:get(FromVar, Context, []),
+    Events = maps:get(list_to_atom(FromVar), Context, []),
     Responses =
         [
             publish_report_from_event(NsecKey, E, ReportType, Content, Opts)
          || E <- Events, is_map(E)
         ],
 
-    maps:put(OutVar, Responses, Context);
+    maps:put(list_to_atom(OutVar), Responses, Context);
 step(
     _Config,
     Context,
@@ -99,10 +100,9 @@ step(
     ["I parse the NWC URI in", UriVar, "and store it as", OutVar],
     _
 ) ->
-    Uri = maps:get(UriVar, Context),
+    Uri = maps:get(list_to_atom(UriVar), Context),
     Conn = damage_nwc_client:parse_nwc_uri(Uri),
-    maps:put(OutVar, Conn, Context);
-
+    maps:put(list_to_atom(OutVar), Conn, Context);
 step(
     _Config,
     Context,
@@ -111,20 +111,23 @@ step(
     ["I build NWC request", Method, "using", ConnVar, "store as", OutVar],
     Body
 ) ->
-    Conn = maps:get(ConnVar, Context),
+    Conn = maps:get(list_to_atom(ConnVar), Context),
     Params = normalize_body_map(Body),
-    {ok, Event, RequestId} = damage_nwc_client:build_request_event(Conn, Method, Params),
-    maps:put(
-        OutVar,
-        #{
-            event => Event,
-            request_id => RequestId,
-            method => to_bin(Method),
-            conn => Conn
-        },
-        Context
-    );
-
+    case damage_nwc_client:build_request_event(Conn, Method, Params) of
+        {ok, Event, RequestId} ->
+            maps:put(
+                list_to_atom(OutVar),
+                #{
+                    event => Event,
+                    request_id => RequestId,
+                    method => to_bin(Method),
+                    conn => Conn
+                },
+                Context
+            );
+        {error, Reason} ->
+            maps:put(fail, damage_utils:strf("NWC request build failed: ~p", [Reason]), Context)
+    end;
 step(
     _Config,
     Context,
@@ -133,16 +136,17 @@ step(
     ["I publish NWC request in", ReqVar, "store relay ack as", OutVar],
     _
 ) ->
-    Req = maps:get(ReqVar, Context),
+    Req = maps:get(list_to_atom(ReqVar), Context),
     Event = maps:get(event, Req),
     Conn = maps:get(conn, Req),
-    Relay = maps:get(relay, Conn),
-
-    ok = nostr_pool:ensure_started(#{relays => [Relay]}),
-    ok = nostr_pool:publish(Event, [Relay], 5000),
-
-    maps:put(OutVar, #{published => true, relay => Relay}, Context);
-
+    Relays0 = maps:get(relay, Conn, []),
+    Relays = normalize_relays_flat(Relays0),
+    case nostr_pool:publish_sync(Event, Relays, 50000) of
+        ok ->
+            maps:put(list_to_atom(OutVar), ok, Context);
+        Error ->
+            maps:put(fail, damage_utils:strf("publish nwc event ~p", [Error]), Context)
+    end;
 step(
     _Config,
     Context,
@@ -151,11 +155,14 @@ step(
     ["I wait for NWC response to", ReqVar, "using", ConnVar, "store as", OutVar],
     Body
 ) ->
-    Req = maps:get(ReqVar, Context),
-    Conn = maps:get(ConnVar, Context),
+    Req = maps:get(list_to_atom(ReqVar), Context),
+    Conn = maps:get(list_to_atom(ConnVar), Context),
     RequestId = maps:get(request_id, Req),
     WalletPubHex = maps:get(wallet_pubkey, Conn),
-    TimeoutMs = map_get_int(Body, <<"timeout_ms">>, 15000),
+
+    BodyMap = normalize_body_map(Body),
+    TimeoutMs = map_get_int(BodyMap, <<"timeout_ms">>, 65000),
+    PollMs = map_get_int(BodyMap, <<"poll_ms">>, 1000),
 
     Filter = #{
         <<"kinds">> => [23195],
@@ -164,16 +171,23 @@ step(
         <<"limit">> => 1
     },
 
-    Relay = maps:get(relay, Conn),
-    ok = nostr_pool:ensure_started(#{relays => [Relay]}),
-    case nostr_pool:req_one(Filter, [Relay], TimeoutMs, 1) of
-        {ok, Event} ->
-            {ok, RespJson} = damage_nwc_client:decrypt_response_event(Conn, Event),
-            maps:put(OutVar, RespJson, Context);
-        {error, Why} ->
-            maps:put(OutVar, #{error => fmt(Why)}, Context)
-    end.
+    Relays0 = maps:get(relay, Conn, []),
+    Relays = normalize_relays_flat(Relays0),
 
+    ?LOG_DEBUG("wait nwc response relays=~p filter=~p", [Relays, Filter]),
+    ok = nostr_pool:ensure_started(Relays),
+
+    case wait_for_nwc_response(Filter, Relays, Conn, TimeoutMs, PollMs) of
+        {ok, RespJson} ->
+            maps:put(list_to_atom(OutVar), RespJson, Context);
+        {error, Why} ->
+            ?LOG_ERROR("wait nwc response failed ~p filter=~p relays=~p", [Why, Filter, Relays]),
+            maps:put(
+                fail,
+                fmt(Why),
+                maps:put(list_to_atom(OutVar), #{error => fmt(Why)}, Context)
+            )
+    end.
 %% --- helpers ------------------------------------------------------------
 
 mk_report_from_event(Event, ReportType, Content, Opts) ->
@@ -233,15 +247,69 @@ map_get_int(M, K, Default) ->
     case maps:get(K, M, Default) of
         I when is_integer(I) -> I;
         B when is_binary(B) ->
-            try binary_to_integer(B) catch _:_ -> Default end;
+            try
+                binary_to_integer(B)
+            catch
+                _:_ -> Default
+            end;
         L when is_list(L) ->
-            try list_to_integer(L) catch _:_ -> Default end;
+            try
+                list_to_integer(L)
+            catch
+                _:_ -> Default
+            end;
         _ ->
             Default
     end.
 
 fmt(Term) ->
     unicode:characters_to_binary(io_lib:format("~p", [Term])).
+normalize_relays_flat(Rs) when is_list(Rs) ->
+    lists:flatten(
+        [normalize_one_relay(R) || R <- Rs]
+    );
+normalize_relays_flat(R) ->
+    normalize_one_relay(R).
+
+normalize_one_relay(R) when is_binary(R) ->
+    [R];
+normalize_one_relay(R) when is_list(R) ->
+    case io_lib:printable_list(R) of
+        true ->
+            [list_to_binary(R)];
+        false ->
+            lists:flatten([normalize_one_relay(X) || X <- R])
+    end;
+normalize_one_relay(R) ->
+    [to_bin(R)].
+wait_for_nwc_response(Filter, Relays, Conn, TimeoutMs, PollMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    wait_for_nwc_response_loop(Filter, Relays, Conn, Deadline, PollMs).
+
+wait_for_nwc_response_loop(Filter, Relays, Conn, Deadline, PollMs) ->
+    Now = erlang:monotonic_time(millisecond),
+    Remaining = Deadline - Now,
+    case Remaining =< 0 of
+        true ->
+            {error, timeout};
+        false ->
+            ReqTimeout = min(Remaining, PollMs),
+            case nostr_pool:req_one(Filter, Relays, ReqTimeout, 1) of
+                {ok, Event} ->
+                    damage_nwc_client:decrypt_response_event(Conn, Event);
+                {error, {all_failed, [{_, {error, not_found}}]}} ->
+                    timer:sleep(PollMs),
+                    wait_for_nwc_response_loop(Filter, Relays, Conn, Deadline, PollMs);
+                {error, not_found} ->
+                    timer:sleep(PollMs),
+                    wait_for_nwc_response_loop(Filter, Relays, Conn, Deadline, PollMs);
+                {error, timeout} ->
+                    timer:sleep(PollMs),
+                    wait_for_nwc_response_loop(Filter, Relays, Conn, Deadline, PollMs);
+                {error, Why} ->
+                    {error, Why}
+            end
+    end.
 
 test() ->
     ok.

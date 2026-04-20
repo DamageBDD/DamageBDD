@@ -73,10 +73,12 @@
 -define(STEP_SET_BASE_URL,        ["I set base URL to", Server]).
 -define(STEP_STORE_COOKIES,       ["I store cookies"]).
 -define(STEP_SET_HEADER,          ["I set", Header, "header to", Value]).
+-define(STEP_CLEAR_HEADER,          ["I clear header", Header]).
 -define(STEP_NO_VERIFY_SSL,       ["I do not want to verify server certificate"]).
 -define(STEP_GIVEN_BASIC_AUTH,    ["I set BasicAuth username to ", User, "and password to", Password]).
 -define(STEP_GIVEN_OAUTH_QUERY,   ["I use query OAuth with key=", Key, "and secret=", Secret]).
 -define(STEP_GIVEN_OAUTH_HEADER,  ["I use header OAuth with key=", Key, "and secret=", Secret]).
+-define(STEP_RESPONSE_STORE_HEADER, ["I store the response header", Header, "as", Variable]).
 %% erlfmt:ignore-end
 
 %%------------------------------------------------------------------------------
@@ -454,7 +456,7 @@ step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_BODY, _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print the entire response structure (as JSON)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_RESP, _) ->
+step(Config, Context, _, N, ?STEP_RESPONSE_PRINT_RESP, _) ->
     Response = maps:get(response, Context, <<"">>),
     formatter:format(
         Config,
@@ -469,6 +471,12 @@ step(_Config, Context, _Keyword, _N, ?STEP_SET_HEADER, _) ->
     Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
     Headers = maps:to_list(
         maps:put(list_to_binary(string:to_lower(Header)), Value, Headers0)
+    ),
+    maps:put(headers, Headers, Context);
+step(_Config, Context, _Keyword, _N, ?STEP_CLEAR_HEADER, _) ->
+    Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
+    Headers = maps:to_list(
+        maps:remove(list_to_binary(string:to_lower(Header)), Headers0)
     ),
     maps:put(headers, Headers, Context);
 %%------------------------------------------------------------------------------
@@ -494,7 +502,7 @@ step(_Config, Context, <<"Given">>, _N, ?STEP_STORE_COOKIES, _) ->
 step(
     _Config,
     Context,
-    <<"Then">>,
+    _,
     _N,
     ?STEP_RESPONSE_STORE_JSON,
     _
@@ -639,7 +647,32 @@ step(_Config, Context, _, _N, ?STEP_RESPONSE_JSON_SHOULD_BE, Args) ->
 %% (Given/When/Then/And): Assert context variable equals literal JSON value
 %%------------------------------------------------------------------------------
 step(_Config, Context, _, _N, ?STEP_VAR_EQ_JSON_LIT, _) ->
-    Value = maps:get(Variable, Context, none);
+    Actual = maps:get(list_to_atom(Variable), Context, none),
+    case catch jsx:decode(list_to_binary(Value), [return_maps]) of
+        {'EXIT', Reason} ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Invalid JSON literal for variable ~p: ~p (~p)",
+                    [Variable, Value, Reason]
+                ),
+                Context
+            );
+        Expected ->
+            case normalize_jsonish(Actual) =:= normalize_jsonish(Expected) of
+                true ->
+                    Context;
+                false ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "Variable ~p JSON mismatch. Expected ~p, got ~p",
+                            [Variable, Expected, Actual]
+                        ),
+                        Context
+                    )
+            end
+    end;
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Alias for "json at path ... must be ..."
 %%------------------------------------------------------------------------------
@@ -744,6 +777,41 @@ step(
             end;
         Unexpected ->
             maps:put(fail, damage_utils:strf("Unexpected response ~p", [Unexpected]), Context)
+    end;
+%%------------------------------------------------------------------------------
+%% THEN/AND: Store a raw response header value into a variable
+%% Example:
+%%   And I store the response header "invoice" as "invoice_bolt11"
+%%------------------------------------------------------------------------------
+step(
+    _Config,
+    Context,
+    _,
+    _N,
+    ?STEP_RESPONSE_STORE_HEADER,
+    _
+) ->
+    HeaderBin = list_to_binary(string:to_lower(Header)),
+    case maps:get(response, Context, undefined) of
+        [{status_code, _}, {headers, Headers}, {body, _}] ->
+            case lists:keyfind(HeaderBin, 1, Headers) of
+                {HeaderBin, Value} ->
+                    maps:put(list_to_atom(Variable), Value, Context);
+                false ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf("Header ~p not found in response headers ~p", [
+                            HeaderBin, Headers
+                        ]),
+                        Context
+                    )
+            end;
+        Unexpected ->
+            maps:put(
+                fail,
+                damage_utils:strf("Unexpected response format ~p", [Unexpected]),
+                Context
+            )
     end.
 
 get_headers(Context, DefaultHeaders) ->
@@ -805,37 +873,7 @@ get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
     %% ---- NEW: proxy handling (Tor SOCKS5) ----
     %% Tor default is often 127.0.0.1:9050 (system tor) or 127.0.0.1:9150 (Tor Browser).
     {OpenHost, OpenPort, FinalOpts} =
-        case get_proxy(Context, Config0) of
-            {socks5, ProxyHost, ProxyPort} ->
-                ?LOG_INFO("Using proxy ~p:~p", [ProxyHost, ProxyPort]),
-                %% We connect to the proxy, and tell SOCKS where to go.
-                %% Destination transport depends on whether we're doing https (tls) or not.
-                DestTransport = maps:get(transport, BaseOpts1, tcp),
-                SocksOpts0 = #{
-                    host => DestHost,
-                    port => DestPort,
-                    transport => DestTransport
-                },
-                %% If tls is used to the destination, pass through your tls opts.
-                SocksOpts =
-                    case DestTransport of
-                        tls ->
-                            SocksTlsOpts = maps:get(tls_opts, BaseOpts1, []),
-                            maps:put(tls_opts, SocksTlsOpts, SocksOpts0);
-                        tcp ->
-                            SocksOpts0
-                    end,
-                %% IMPORTANT: transport to the proxy itself must be tcp for Tor socks5.
-                %% Protocols must be ONLY socks when transport=tcp.
-                Opts2 = BaseOpts1#{
-                    transport => tcp,
-                    protocols => [{socks, SocksOpts}]
-                },
-                {ProxyHost, ProxyPort, Opts2};
-            none ->
-                ?LOG_INFO("Not Using proxy", []),
-                {DestHost, DestPort, BaseOpts1}
-        end,
+        {DestHost, DestPort, BaseOpts1},
 
     %% Your existing concurrency gating should apply to the *destination host* (not the proxy)
     case lists:keyfind(concurrency, 1, Config0) of
@@ -851,7 +889,7 @@ get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
                     ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [
                         OpenHost, OpenPort, FinalOpts
                     ]),
-                    gun:open(OpenHost, OpenPort, FinalOpts);
+                    damage_gun:open(OpenHost, OpenPort, FinalOpts);
                 _ ->
                     throw(
                         <<"Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html">>
@@ -1120,6 +1158,26 @@ build_url(PathOrUrl, DefaultBaseUrl) ->
             % Otherwise, prepend the base URL to form the complete URL
             DefaultBaseUrl ++ "/" ++ string:trim(PathOrUrl, both, "/")
     end.
+normalize_jsonish(V) when is_map(V) ->
+    maps:from_list(
+        [{normalize_jsonish_key(K), normalize_jsonish(Val)} || {K, Val} <- maps:to_list(V)]
+    );
+normalize_jsonish(V) when is_list(V) ->
+    case io_lib:printable_list(V) of
+        true -> unicode:characters_to_binary(V);
+        false -> [normalize_jsonish(I) || I <- V]
+    end;
+normalize_jsonish(V) when is_atom(V) ->
+    atom_to_binary(V, utf8);
+normalize_jsonish(V) ->
+    V.
+
+normalize_jsonish_key(K) when is_atom(K) ->
+    atom_to_binary(K, utf8);
+normalize_jsonish_key(K) when is_list(K) ->
+    unicode:characters_to_binary(K);
+normalize_jsonish_key(K) ->
+    K.
 
 test_get_headers() ->
     Context =

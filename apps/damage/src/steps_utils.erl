@@ -22,6 +22,7 @@
     run_ok/2
 ]).
 -define(STEP_PRINT, ["I print", Variable]).
+-define(STEP_PRINT_VAR, ["I print variable", Variable]).
 -define(STEP_SET_VAR, ["I set the variable", Variable, "to", Value]).
 -define(STEP_SET_JSON_VAR, ["I set the JSON variable", Variable]).
 -define(STEP_SET_JSON_KEY_IN_VAR, [
@@ -44,6 +45,25 @@ step(_Config, Context, _, _N, ["I wait", Seconds, "seconds"], _) ->
 %%------------------------------------------------------------------------------
 step(_Config, Context, _, _N, ?STEP_SET_VAR, _) ->
     maps:put(Variable, Value, Context);
+step(
+    _Config,
+    Context,
+    _,
+    _N,
+    ["I store the JSON at path", Path, "from", FromVar, "in", OutVar],
+    _
+) ->
+    Json = maps:get(list_to_atom(FromVar), Context),
+    case ejsonpath:q(Path, Json) of
+        {[Value | _], _} ->
+            maps:put(list_to_atom(OutVar), Value, Context);
+        Other ->
+            maps:put(
+                fail,
+                damage_utils:strf("JSON path ~p not found in ~p", [Path, Other]),
+                Context
+            )
+    end;
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Set a variable from JSON docstring body
 %% Example:
@@ -82,6 +102,22 @@ step(
         Variable,
         DateString,
         Context
+    );
+step(
+    Config,
+    Context,
+    K,
+    N,
+    ?STEP_PRINT_VAR,
+    Body
+) ->
+    step(
+        Config,
+        Context,
+        K,
+        N,
+        ?STEP_PRINT,
+        Body
     );
 step(
     Config,

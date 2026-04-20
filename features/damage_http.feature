@@ -45,7 +45,7 @@ phone: "0412345678"
     Given I am using server "https://run.dev.damagebdd.com"
     When I make a GET request to "/execute_feature/"
     Then the response status must be "200"
-    And I set "Content-Type" header to "x-www-form-urlencoded"
+    And I set "Content-Type" header to "application/x-www-form-urlencoded"
     When I make a POST request to "/execute_feature/"
     """
     Feature: For testing an request to google
