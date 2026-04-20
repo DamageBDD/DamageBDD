@@ -659,7 +659,7 @@ damage_for_invoice(
                 ?LIGHTNING_SWAP_REGISTRY_CONTRACT, Result
             ]);
         Err ->
-            ?LOG_INFO("damage_ae ignores label: ~p", [Err])
+            ?LOG_DEBUG("damage_ae ignores label: ~p", [Err])
     end.
 handle_info({cln_event, invoice_paid, Invoice}, State) ->
     damage_for_invoice(Invoice),

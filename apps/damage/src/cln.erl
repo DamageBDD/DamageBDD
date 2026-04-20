@@ -313,7 +313,6 @@ load_runes(State) ->
     end.
 
 init([]) ->
-    ?LOG_INFO("cln started"),
     ensure_cache_table(),
     State0 = get_cln_client_config(),
     case load_runes(State0) of
@@ -327,8 +326,8 @@ init([]) ->
 
 ensure_cache_table() ->
     case catch ets:new(cln_channel_cache, [set, public, named_table, {read_concurrency, true}]) of
-        {badarg, exists} -> ?LOG_INFO("cln_channel_cache exists");
-        _ -> ?LOG_INFO("cln_channel_cache created")
+        {badarg, exists} -> ?LOG_DEBUG("cln_channel_cache exists");
+        _ -> ?LOG_DEBUG("cln_channel_cache created")
     end.
 
 %% ===================================================================
@@ -1915,7 +1914,6 @@ filter_invoices(Invoices, Filters) ->
     [I || I <- Invoices, invoice_matches_filters(I, Filters)].
 
 invoice_matches_filters(Invoice, Filters) ->
-    ?LOG_INFO("invoice filters ~p ~p", [Invoice, Filters]),
     created_index_matches(Invoice, maps:get(min_created_index, Filters, undefined)) andalso
         status_matches(
             Invoice,

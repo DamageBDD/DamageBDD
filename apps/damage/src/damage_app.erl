@@ -169,6 +169,9 @@ start_phase(register_node, _StartType, []) ->
     end;
 start_phase(start_sync, _StartType, []) ->
     ?LOG_INFO("Starting sync."),
+    sync:onsync(fun(Mods) ->
+        io:format("Reloaded Modules: ~p~n", [Mods])
+    end),
     case init:get_plain_arguments() of
         [_, "shell" | _] ->
             ?LOG_INFO("Sourc sync enabled.", []),

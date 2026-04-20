@@ -56,19 +56,16 @@ auth_success_state(State, AeAccount, Extra) ->
             node_admin => is_node_admin_account(AeAccount)
         }
     ),
-    ?LOG_DEBUG("auth_success_state ~p ~p", [Resp, is_node_admin_account(AeAccount)]),
+    %?LOG_DEBUG("auth_success_state ~p ~p", [Resp, is_node_admin_account(AeAccount)]),
     Resp.
 
 with_identity_account(AeAccount, State, Extra) ->
-    ?LOG_DEBUG("with_identity_account 0 ~p ", [State]),
     case identity_server:get_account(AeAccount) of
         #{public_key := AeAccount, private_key := PrivateKey} ->
             damage_ae:set_private_key(AeAccount, PrivateKey),
             AuthState = auth_success_state(State, AeAccount, Extra#{private_key => PrivateKey}),
-            ?LOG_DEBUG("with_identity_account 1 ~p ", [AuthState]),
             {ok, AuthState};
-        Other ->
-            ?LOG_DEBUG("with_identity_account 2 ~p ", [Other]),
+        _Other ->
             {ok, auth_success_state(State, AeAccount, Extra)}
     end.
 
@@ -119,8 +116,7 @@ resolve_nostr(Token, State) ->
 
 resolve_l402(AuthHeader, Req, State) ->
     case damage_l402:verify_authorization(AuthHeader, Req) of
-        {ok, Meta} ->
-            ?LOG_DEBUG("L402 auth ~p", [Meta]),
+        {ok, _Meta} ->
             case application:get_env(damage, l402_account) of
                 {ok, AeAccount0} ->
                     AeAccount = to_bin(AeAccount0),
@@ -170,7 +166,6 @@ authenticate(Req, State0) ->
         {error, no_access_token} ->
             {anonymous, BaseState};
         {error, Reason} ->
-            ?LOG_DEBUG("get_access_token error ~p", [Reason]),
             {error, Reason, BaseState}
     end.
 

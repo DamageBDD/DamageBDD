@@ -875,9 +875,11 @@ from_html(Req0, State) ->
             end,
 
         case execute_bdd(Context, State, ReqRun) of
-            %% STREAM MODE: always finish with a footer + fin
-            {_Status, Resp} when Stream =:= maybe_stream ->
-                Req2 = cowboy_req:stream_body(jsx:encode(Resp), fin, ReqRun),
+            {_Status, Resp} when Stream =:= maybe_stream andalso is_binary(Resp) ->
+                Req2 = cowboy_req:stream_body(Resp, fin, ReqRun),
+                {stop, Req2, State};
+            {_Status, _Resp} when Stream =:= maybe_stream ->
+                Req2 = cowboy_req:stream_body(<<"">>, fin, ReqRun),
                 {stop, Req2, State};
             %% Non-stream OK (JSON)
             {200, Response} ->

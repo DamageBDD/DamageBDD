@@ -154,7 +154,7 @@ format(
   ok = write_file(Config, "\n~s \n\n~s\n", [StepStatement, Args]);
 
 format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address, spend := Spend, tx_hash := TxHash}) ->
-    ok = write_file(Config, "\nSummary: \n Feature: ~s\nReport ~s\nRunId: ~s\nAccount: ~s\nCost: ~p\ntx_hash: ~p", [FeatureHash, ReportDir, RunId, Address, Spend, TxHash]),
+    ok = write_file(Config, "\nSummary: \n Feature: ~s\n Report ~s\n RunId: ~s\n Account: ~s\n Cost: ~p\n tx_hash: ~p", [FeatureHash, ReportDir, RunId, Address, Spend, TxHash]),
     %% new: persist the dictionary beside the report artifacts
     case maps:get(ecai, Config, false) of
         true ->

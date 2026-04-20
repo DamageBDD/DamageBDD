@@ -363,44 +363,116 @@ get_context(AeAccount) when is_binary(AeAccount) ->
     maps:merge(AccountCtx, GlobalCtx).
 
 clean_secrets(#{client_context := ClientContext} = Context0, Body, Args) ->
-    %Password = list_to_binary(maps:get(damage_password, Context, "")),
-    {Body0, Args0} = clean_secrets(Context0, Body, Args),
+    {Body0, Args0} = clean_secrets(maps:remove(client_context, Context0), Body, Args),
     clean_context_secrets(ClientContext, Body0, Args0);
 clean_secrets(Context0, Body, Args) ->
     Context = damage_utils:normalize_context(Context0),
-    AccessToken = maps:get("access_token", Context, <<"null">>),
-    Args0 = binary:replace(Args, AccessToken, ?REDACTED_TEXT_MARKER),
-    Body0 = binary:replace(Body, AccessToken, ?REDACTED_TEXT_MARKER),
-    {Body0, Args0}.
+    redact_known_sensitive_values(Context, Body, Args).
 
-clean_context_secrets(AccountContext, Body, Args) ->
-    %?LOG_DEBUG("clean got context ~p ~p ~p", [AccountContext, Body, Args]),
+clean_context_secrets(AccountContext, Body, Args) when is_map(AccountContext) ->
     maps:fold(
         fun
             (_Key, Value, {Body1, Args1}) when is_map(Value) ->
-                case maps:get(secret, Value) of
+                case maps:get(secret, Value, false) of
                     true ->
-                        {
-                            binary:replace(
-                                Body1,
-                                maps:get(value, Value, <<"">>),
-                                ?REDACTED_TEXT_MARKER
-                            ),
-                            binary:replace(
-                                Args1,
-                                maps:get(value, Value, <<"">>),
-                                ?REDACTED_TEXT_MARKER
-                            )
-                        };
-                    _ ->
-                        {Body1, Args1}
+                        SecretValue = to_bin(maps:get(value, Value, <<"">>)),
+                        redact_value(SecretValue, Body1, Args1);
+                    false ->
+                        clean_nested_sensitive(Value, Body1, Args1)
                 end;
-            (_Key, _Value, {Body1, Args1}) ->
-                {Body1, Args1}
+            (Key, Value, {Body1, Args1}) ->
+                case is_sensitive_key(Key) of
+                    true ->
+                        redact_value(to_bin(Value), Body1, Args1);
+                    false ->
+                        {Body1, Args1}
+                end
         end,
         {Body, Args},
         AccountContext
+    );
+clean_context_secrets(_AccountContext, Body, Args) ->
+    {Body, Args}.
+
+redact_known_sensitive_values(Context, Body, Args) ->
+    maps:fold(
+        fun(Key, Value, {Body1, Args1}) ->
+            case is_sensitive_key(Key) of
+                true ->
+                    redact_value(to_bin(Value), Body1, Args1);
+                false when is_map(Value) ->
+                    clean_nested_sensitive(Value, Body1, Args1);
+                false ->
+                    {Body1, Args1}
+            end
+        end,
+        {Body, Args},
+        Context
     ).
+
+clean_nested_sensitive(Value, Body, Args) when is_map(Value) ->
+    maps:fold(
+        fun(Key, InnerValue, {Body1, Args1}) ->
+            case is_sensitive_key(Key) of
+                true ->
+                    redact_value(to_bin(InnerValue), Body1, Args1);
+                false when is_map(InnerValue) ->
+                    clean_nested_sensitive(InnerValue, Body1, Args1);
+                false ->
+                    {Body1, Args1}
+            end
+        end,
+        {Body, Args},
+        Value
+    );
+clean_nested_sensitive(_Value, Body, Args) ->
+    {Body, Args}.
+
+is_sensitive_key(Key0) ->
+    Key = normalize_key(Key0),
+    lists:member(Key, [
+        <<"access_token">>,
+        <<"authorization">>,
+        <<"auth">>,
+        <<"bearer">>,
+        <<"token">>,
+        <<"api_key">>,
+        <<"apikey">>,
+        <<"secret">>,
+        <<"password">>,
+        <<"macaroon">>,
+        <<"invoice_macaroon">>,
+        <<"payment_preimage">>,
+        <<"preimage">>,
+        <<"payment_hash">>,
+        <<"invoice">>,
+        <<"bolt11">>,
+        <<"rune">>,
+        <<"cookie">>,
+        <<"set-cookie">>,
+        <<"x-preimage">>,
+        <<"x-macaroon">>
+    ]).
+
+normalize_key(K) when is_atom(K) ->
+    normalize_key(atom_to_binary(K, utf8));
+normalize_key(K) when is_list(K) ->
+    normalize_key(unicode:characters_to_binary(K));
+normalize_key(K) when is_binary(K) ->
+    list_to_binary(string:lowercase(binary_to_list(K)));
+normalize_key(K) ->
+    normalize_key(iolist_to_binary(io_lib:format("~p", [K]))).
+
+redact_value(<<>>, Body, Args) ->
+    {Body, Args};
+redact_value(<<"null">>, Body, Args) ->
+    {Body, Args};
+redact_value(Value0, Body, Args) ->
+    Value = to_bin(Value0),
+    {
+        binary:replace(Body, Value, ?REDACTED_TEXT_MARKER, [global]),
+        binary:replace(Args, Value, ?REDACTED_TEXT_MARKER, [global])
+    }.
 
 get_context_proc(<<"ak_", _/binary>> = AeAccount) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of

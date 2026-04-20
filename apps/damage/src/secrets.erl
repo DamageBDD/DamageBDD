@@ -410,10 +410,10 @@ test() ->
     Secret = "Secret something something",
     {IV, CipherText, Tag} =
         encrypt_secret(Secret, PrivateKey),
-    Secret = decrypt_secret({IV, CipherText, Tag}, PrivateKey),
-    StoredSecret = "store secre",
+    Secret = binary_to_list(decrypt_secret({IV, CipherText, Tag}, PrivateKey)),
+    StoredSecret = <<"store secre">>,
     encrypt_store(test, StoredSecret),
-    StoredSecret = retrieve_decrypt(test).
+    {ok, StoredSecret} = retrieve_decrypt(test).
 
 migrate() ->
     {ok, Data} = file:read_file("damage.prod.key"),

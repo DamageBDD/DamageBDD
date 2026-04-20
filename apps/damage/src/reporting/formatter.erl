@@ -27,7 +27,6 @@
 -define(FORMATTER_TIMEOUT, 600000).
 
 start_link(_Args) ->
-  ?LOG_INFO("formater process started ~p~n", [self()]),
   gen_server:start_link(?MODULE, [], []).
 
 

@@ -35,7 +35,6 @@
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    ?LOG_INFO("Server ~p starting.~n", [self()]),
     process_flag(trap_exit, true),
     {ok, undefined}.
 
@@ -88,8 +87,8 @@ handle_cast(_Event, State) ->
 
 handle_info(_Info, State) -> {noreply, State}.
 
-terminate(Reason, _State) ->
-    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+terminate(_Reason, _State) ->
+    %?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
@@ -426,6 +425,7 @@ execute_step_function(
                 [Config, Context, StepKeyWord, LineNo, Body, Args]
             );
         _ ->
+            %?LOG_DEBUG("execute_step_function ~p ~p", [StepModule, Body]),
             apply(
                 StepModule,
                 step,
