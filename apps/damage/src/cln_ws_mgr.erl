@@ -243,7 +243,7 @@ handle_event(
                 paid_at_unix => erlang:system_time(second),
                 status_runtime => <<"paid">>
             },
-            ?LOG_INFO("received broadcast invoice_payment ~p", [PaidInv]),
+            ?LOG_INFO("received broadcast invoice_payment ~p", [Pay]),
             broadcast(invoice_paid, PaidInv);
         _ ->
             %% We didn't create/track this label locally (rare). Still surface a useful payload.

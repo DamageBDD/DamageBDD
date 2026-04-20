@@ -242,7 +242,7 @@ normalize_addr_type("p2tr") -> <<"p2tr">>;
 normalize_addr_type("all") -> <<"all">>;
 normalize_addr_type(_) -> <<"bech32">>.
 
-normalize_positive_int(V, Msg) when is_integer(V), V > 0 ->
+normalize_positive_int(V, _Msg) when is_integer(V), V > 0 ->
     V;
 normalize_positive_int(V, Msg) when is_binary(V) ->
     try binary_to_integer(V) of

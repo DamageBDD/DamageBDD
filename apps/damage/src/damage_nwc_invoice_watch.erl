@@ -55,7 +55,7 @@ handle_info({cln_event, invoice_paid, Payload}, State) ->
     case route_key_from_invoice(Payload) of
         {ok, RouteKey} ->
             {noreply, enqueue_and_maybe_start(RouteKey, Payload, State)};
-        {error, _Why} ->
+        {error, Why} ->
             ?LOG_DEBUG("damage_nwc_invoice_watch ignores payload reason=~p payload=~p", [
                 Why, Payload
             ]),

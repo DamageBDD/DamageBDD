@@ -273,9 +273,6 @@ is_already_connected(Text) ->
     (string:str(Lower, "already connected") > 0) orelse
         (string:str(Lower, "connection already exists") > 0).
 
-body_to_log(Body) ->
-    lists:flatten(body_text(Body)).
-
 body_text(Body) when is_binary(Body) ->
     binary_to_list(Body);
 body_text(Body) when is_list(Body) ->
