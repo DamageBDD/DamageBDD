@@ -11,11 +11,10 @@
     ensure_started/0,
     ensure_started/1,
     stop/0,
-
     publish/3,
     publish/2,
+    publish_sync/3,
     default_relays/1,
-
     req_one/4,
     req_one/3
 ]).
@@ -42,10 +41,10 @@ default_relays(Ctx) ->
                     [to_bin(X) || X <- R2];
                 _ ->
                     [
+                        <<"wss://relay.damus.io">>,
                         <<"wss://nostr-01.yakihonne.com">>,
                         <<"wss://nostr-02.yakihonne.com">>,
                         <<"wss://nos.lol">>
-                        %<<"wss://relay.damus.io">>,
                         %<<"wss://relay.nostr.band">>
                     ]
             end
@@ -61,7 +60,7 @@ start_link(#{relays := Relays0}) ->
 
 -spec ensure_started() -> ok | {error, term()}.
 ensure_started() ->
-    ensure_started(#{relays => default_relays(#{})}).
+    ensure_started(default_relays(#{})).
 -spec ensure_started([binary()]) -> ok | {error, term()}.
 ensure_started(Relays) ->
     case whereis(?SERVER) of
@@ -73,6 +72,7 @@ ensure_started(Relays) ->
             end;
         _Pid ->
             %% Update relay set if needed
+            ?LOG_DEBUG("ensure_started ~p", [Relays]),
             gen_server:cast(?SERVER, {set_relays, normalize_relays(Relays)}),
             ok
     end.
@@ -115,6 +115,15 @@ req_one(Filter, Relays, TimeoutMs, FanoutLimit) ->
     {ok, map()} | {error, term()}.
 req_one(Filter, TimeoutMs, FanoutLimit) ->
     gen_server:call(?SERVER, {req_one_default, Filter, TimeoutMs, FanoutLimit}, TimeoutMs + 2000).
+-spec publish_sync(Event :: map(), Relays :: [binary()], TimeoutMs :: pos_integer()) ->
+    ok | {error, term()}.
+publish_sync(Event, Relays, TimeoutMs) ->
+    ensure_started(Relays),
+    gen_server:call(
+        ?SERVER,
+        {publish_sync, Event, normalize_relays(Relays), TimeoutMs},
+        TimeoutMs + 2000
+    ).
 
 %% ---------------------------
 %% gen_server
@@ -126,35 +135,60 @@ init(#{relays := Relays}) ->
     Workers = start_workers(Relays, #{}),
     {ok, #state{workers = Workers, relays = Relays}}.
 
+handle_call({publish_sync, Event, Relays, TimeoutMs}, _From, S0) ->
+    S = ensure_workers(Relays, S0),
+    Results =
+        [
+            case get_worker(R, S) of
+                {ok, Pid} ->
+                    {R, catch nostr_relay_worker:publish_sync(Pid, Event, TimeoutMs)};
+                Error ->
+                    {R, Error}
+            end
+         || R <- Relays
+        ],
+    Reply =
+        case [ok || {_R, ok} <- Results] of
+            [_ | _] ->
+                ok;
+            [] ->
+                {error, {all_failed, Results}}
+        end,
+    {reply, Reply, S};
 handle_call({req_one_default, Filter, TimeoutMs, FanoutLimit}, _From, S = #state{relays = Relays}) ->
     {reply, do_req_one(Filter, Relays, TimeoutMs, FanoutLimit, S), S};
 handle_call({req_one, Filter, Relays, TimeoutMs, FanoutLimit}, _From, S) ->
     {reply, do_req_one(Filter, Relays, TimeoutMs, FanoutLimit, S), S};
-handle_call(_Req, _From, S) ->
+handle_call(Req, _From, S) ->
+    ?LOG_DEBUG("nostr_pool unhandled handle_call ~p", [Req]),
     {reply, {error, unknown_call}, S}.
 
 handle_cast({set_relays, Relays}, S = #state{workers = Workers0}) ->
     Workers = start_workers(Relays, Workers0),
     {noreply, S#state{relays = Relays, workers = Workers}};
-handle_cast({publish, Event, Relays}, S) ->
-    _ = ensure_workers(Relays, S),
+handle_cast({publish, Event, Relays}, S0) ->
+    S = ensure_workers(Relays, S0),
     lists:foreach(
         fun(R) ->
             case get_worker(R, S) of
-                {ok, Pid} -> nostr_relay_worker:publish(Pid, Event);
-                _ -> ok
+                {ok, Pid} ->
+                    nostr_relay_worker:publish(Pid, Event);
+                _ ->
+                    ok
             end
         end,
         Relays
     ),
     {noreply, S};
-handle_cast({publish_default, Event, _TimeoutMs}, S = #state{relays = Relays}) ->
-    _ = ensure_workers(Relays, S),
+handle_cast({publish_default, Event, _TimeoutMs}, S0 = #state{relays = Relays}) ->
+    S = ensure_workers(Relays, S0),
     lists:foreach(
         fun(R) ->
             case get_worker(R, S) of
-                {ok, Pid} -> nostr_relay_worker:publish(Pid, Event);
-                _ -> ok
+                {ok, Pid} ->
+                    nostr_relay_worker:publish(Pid, Event);
+                _ ->
+                    ok
             end
         end,
         Relays
@@ -163,6 +197,10 @@ handle_cast({publish_default, Event, _TimeoutMs}, S = #state{relays = Relays}) -
 handle_cast(_Msg, S) ->
     {noreply, S}.
 
+handle_info({'EXIT', Pid, normal}, S = #state{workers = Workers0}) ->
+    %% If a worker dies, remove it; it will be restarted on next request/publish
+    Workers = maps:filter(fun(_R, WPid) -> WPid =/= Pid end, Workers0),
+    {noreply, S#state{workers = Workers}};
 handle_info({'EXIT', Pid, Reason}, S = #state{workers = Workers0}) ->
     %% If a worker dies, remove it; it will be restarted on next request/publish
     Workers = maps:filter(fun(_R, WPid) -> WPid =/= Pid end, Workers0),
@@ -191,7 +229,7 @@ do_req_one(Filter, Relays0, TimeoutMs, FanoutLimit, S0) ->
                     case get_worker(R, S) of
                         {ok, Pid} ->
                             %% We let worker handle timeouts; gen_server call gets TimeoutMs
-                            catch gen_server:call(
+                            gen_server:call(
                                 Pid, {req_one, Filter, TimeoutMs}, TimeoutMs + 500
                             );
                         _ ->
@@ -261,7 +299,8 @@ start_workers([R | Rest], Workers0) ->
 
 get_worker(Relay, #state{workers = Workers}) ->
     case maps:get(Relay, Workers, undefined) of
-        undefined -> {error, not_found};
+        undefined ->
+            {error, not_found};
         Pid when is_pid(Pid) -> {ok, Pid}
     end.
 

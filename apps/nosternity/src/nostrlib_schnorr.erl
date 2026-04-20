@@ -76,6 +76,7 @@
 % -export([point_add/2, point_mul/2]).
 % -export([point_to_bitstring/1, bytes_from_int/1, lift_x/1]).
 % -export([integer_to_bitstring/1, bitstring_to_integer/1]).
+-export([point_mul/2, point_to_bitstring/1, lift_x/1]).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/logger.hrl").
 

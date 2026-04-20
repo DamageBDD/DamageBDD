@@ -16,6 +16,13 @@
 
 -export([start_link/1, stop/1]).
 -export([subscribe/1, getinfo/1, reply_event/4]).
+-export([
+    service_pubkey_hex/0,
+    public_key_hex/0,
+    create_signed_event/3,
+    nwc_decode_request/1,
+    nwc_encode_response/3
+]).
 
 %% gen_server callbacks
 
@@ -33,7 +40,8 @@
         test_nip800/0,
         test_get_recent_posts/0,
         test_get_posts_since/0,
-        test_zap_note/0
+        test_zap_note/0,
+        test_nwc_roundtrip/0
     ]
 ).
 -export([get_posts_since/3]).
@@ -76,9 +84,7 @@
 -export([pp_event/1, pp_event/2, pp_events/1]).
 -export([
     generate_nsec/0,
-    generate_nostr_keypair/0,
-    generate_nsec_test/0,
-    generate_nostr_keypair_test/0
+    generate_nostr_keypair/0
 ]).
 -import(damage_utils, [to_bin/1]).
 
@@ -90,13 +96,68 @@
     heartbeat_timer = undefined,
     public_key,
     private_key,
-    npub_cache
+    npub_cache = #{},
+    relay_host = undefined,
+    reconnect_ms = 5000,
+    retry_count = 0,
+    max_retries = 10,
+    stopped = false
 }).
 
 -define(NOSTR_PROC(Nsec), {?MODULE, Nsec}).
 -define(NOSTR_DEFAULT_TIMEOUT, 300000).
 -define(NOSTR_DEFAULT_FANOUT, 3).
 -define(NOSTR_DEFAULT_EVENT_LIMIT, 50).
+-define(SECP256K1_N, 16#FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141).
+-define(SECP256K1_GX, 16#79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798).
+-define(SECP256K1_GY, 16#483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8).
+
+-record(point, {
+    x = 0 :: pos_integer(),
+    y = 0 :: pos_integer()
+}).
+
+has_even_y_local(#point{y = Y}) -> (Y rem 2) =:= 0;
+has_even_y_local(_) -> false.
+
+normalize_bip340_scalar(PrivKey32) ->
+    D0 = binary:decode_unsigned(PrivKey32),
+    G = #point{x = ?SECP256K1_GX, y = ?SECP256K1_GY},
+    case nostrlib_schnorr:point_mul(G, D0) of
+        infinity ->
+            erlang:error(invalid_private_key_point);
+        P ->
+            case has_even_y_local(P) of
+                true -> D0;
+                false -> ?SECP256K1_N - D0
+            end
+    end.
+-spec schnorr_ecdh_xonly(binary(), binary()) -> {ok, binary()} | {error, term()}.
+schnorr_ecdh_xonly(PrivKey32, XOnly32) when
+    is_binary(PrivKey32),
+    byte_size(PrivKey32) =:= 32,
+    is_binary(XOnly32),
+    byte_size(XOnly32) =:= 32
+->
+    try
+        D = normalize_bip340_scalar(PrivKey32),
+        case nostrlib_schnorr:lift_x(binary:decode_unsigned(XOnly32)) of
+            infinity ->
+                {error, invalid_remote_point};
+            RemotePoint ->
+                SharedPoint = nostrlib_schnorr:point_mul(RemotePoint, D),
+                case SharedPoint of
+                    infinity ->
+                        {error, invalid_shared_point};
+                    _ ->
+                        SharedX = nostrlib_schnorr:point_to_bitstring(SharedPoint),
+                        {ok, SharedX}
+                end
+        end
+    catch
+        C:R:S ->
+            {error, {ecdh_failed, C, R, S}}
+    end.
 
 %%% API Functions
 %% Start the gen_server
@@ -202,36 +263,114 @@ nsec_to_npub(Nsec) ->
 %% Initialize the server and open a WebSocket connection
 
 init([NsecKey]) ->
-    {ok, Host} = application:get_env(damage, nostr_relay),
+    {ok, HostRes} = application:get_env(damage, nostr_relay),
+    {ok, Parsed} = nostr_relay_worker:parse_wss_url(HostRes),
+    Host = maps:get(host, Parsed),
     case secrets:retrieve_decrypt(NsecKey) of
         {ok, Nsec} ->
             {PublicKey, PrivateKey} = nsec_to_npub(Nsec),
-            {ok, ConnPid} =
-                gun:open(
-                    Host,
-                    443,
-                    #{transport => tls, tls_opts => [{verify, verify_peer}]}
-                ),
-            StreamRef = gun:ws_upgrade(ConnPid, "/", []),
-            HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+            {ok, DamageApi} = application:get_env(damage, api_url),
             gproc:reg_other({n, l, ?NOSTR_PROC(NsecKey)}, self()),
-            %% <- LISTEN TO CLN EVENTS
             cln:register_listener(invoice_paid),
-            {
-                ok,
-                #state{
-                    conn_pid = ConnPid,
-                    streamref = StreamRef,
-                    heartbeat_timer = HeartbeatTimer,
-                    private_key = PrivateKey,
-                    public_key = PublicKey,
-                    npub_cache = #{}
-                }
-            };
-        _Error ->
+            State0 = #state{
+                public_key = PublicKey,
+                private_key = PrivateKey,
+                npub_cache = #{},
+                relay_host = Host,
+                reconnect_ms = 5000,
+                max_retries = 10
+            },
+            {ok, maybe_connect(State0, DamageApi)};
+        _ ->
             ?LOG_INFO("!!!! Nostr Integration disabled, set `~p` secret.", [NsecKey]),
-            {ok, #state{}}
+            {ok, #state{stopped = true}}
     end.
+maybe_connect(#state{stopped = true} = State, _DamageApi) ->
+    State;
+maybe_connect(#state{conn_pid = ConnPid} = State, _DamageApi) when is_pid(ConnPid) ->
+    State;
+maybe_connect(#state{retry_count = Retry, max_retries = Max} = State, _DamageApi) when
+    Retry >= Max
+->
+    ?LOG_ERROR("Nostr reconnect limit reached (~p/~p). Stopping reconnects.", [Retry, Max]),
+    State#state{stopped = true, conn_pid = undefined, streamref = undefined};
+maybe_connect(#state{relay_host = Host, retry_count = Retry} = State, DamageApi) ->
+    case open_nostr_ws(Host, DamageApi) of
+        {ok, ConnPid, StreamRef} ->
+            HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
+            State#state{
+                conn_pid = ConnPid,
+                streamref = StreamRef,
+                heartbeat_timer = HeartbeatTimer,
+                retry_count = 0,
+                stopped = false
+            };
+        {error, Reason} ->
+            Retry1 = Retry + 1,
+            ?LOG_WARNING("Nostr connect failed host=~p attempt ~p/~p reason=~p", [
+                Host, Retry1, State#state.max_retries, Reason
+            ]),
+            schedule_reconnect(
+                State#state{
+                    conn_pid = undefined,
+                    streamref = undefined,
+                    retry_count = Retry1
+                }
+            )
+    end.
+
+open_nostr_ws(Host, DamageApi) ->
+    case
+        damage_gun:open(
+            Host,
+            443,
+            #{transport => tls, tls_opts => [{verify, verify_none}]}
+        )
+    of
+        {ok, ConnPid} ->
+            case catch gun:await_up(ConnPid) of
+                {ok, _Proto} ->
+                    StreamRef = gun:ws_upgrade(ConnPid, <<"/">>, [
+                        {<<"origin">>, list_to_binary(DamageApi)},
+                        {<<"user-agent">>, <<"damagebdd/1.0">>},
+                        {<<"sec-websocket-protocol">>, <<"nostr">>}
+                    ]),
+                    receive
+                        {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers} ->
+                            {ok, ConnPid, StreamRef};
+                        {gun_response, ConnPid, StreamRef, _Fin, Status, Headers} ->
+                            catch gun:close(ConnPid),
+                            {error, {upgrade_failed, Status, Headers}}
+                    after 100000 ->
+                        catch gun:close(ConnPid),
+                        {error, timeout}
+                    end;
+                {'EXIT', Reason} ->
+                    catch gun:close(ConnPid),
+                    {error, {await_up_exit, Reason}};
+                Error ->
+                    catch gun:close(ConnPid),
+                    {error, {await_up_failed, Error}}
+            end;
+        Error ->
+            Error
+    end.
+
+schedule_reconnect(#state{stopped = true} = State) ->
+    State;
+schedule_reconnect(#state{retry_count = Retry, max_retries = Max} = State) when Retry >= Max ->
+    ?LOG_ERROR("Nostr reconnect suppressed after ~p/~p failures.", [Retry, Max]),
+    State#state{stopped = true};
+schedule_reconnect(#state{reconnect_ms = ReconnectMs} = State) ->
+    erlang:send_after(ReconnectMs, self(), reconnect),
+    State.
+
+clear_connection(State) ->
+    State#state{
+        conn_pid = undefined,
+        streamref = undefined,
+        heartbeat_timer = undefined
+    }.
 
 %% Handle synchronous calls (stop request)
 handle_call(
@@ -533,17 +672,19 @@ handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State) when
     StreamRef == State#state.streamref
 ->
     ?LOG_INFO("nost socket upgraded ~p ", [StreamRef]),
-    handle_call(subscribe, gun, State),
-    {noreply, State#state{conn_pid = ConnPid}};
+    self() ! do_subscribe,
+    {noreply, State#state{conn_pid = ConnPid, retry_count = 0, stopped = false}};
 handle_info({gun_ws, _ConnPid, _, {text, Message}}, State) ->
     ok = handle_event(jsx:decode(Message, [{labels, atom}]), State),
     {noreply, State};
-handle_info({gun_ws, _ConnPid, _, {close, _}}, State) ->
-    ?LOG_INFO("Nostr WebSocket connection closed~n"),
+handle_info(reconnect, #state{stopped = true} = State) ->
     {noreply, State};
-handle_info({gun_down, _ConnPid, _, _, _}, State) ->
-    ?LOG_INFO("Nostr WebSocket connection down~n"),
-    {stop, normal, State};
+handle_info(reconnect, State) ->
+    {ok, DamageApi} = application:get_env(damage, api_url),
+    {noreply, maybe_connect(State, DamageApi)};
+handle_info({gun_down, ConnPid, _, _, _}, #state{conn_pid = ConnPid} = State) ->
+    ?LOG_WARNING("Nostr WebSocket connection down, scheduling reconnect.", []),
+    {noreply, schedule_reconnect(clear_connection(State))};
 handle_info({gun_up, ConnPid, _StreamRef}, State) ->
     ?LOG_INFO("Nostr info gun_up ~p", [ConnPid]),
     {noreply, State};
@@ -551,6 +692,9 @@ handle_info({gun_response, _ConnPid, _, nofin, _, _Headers} = Any, State) ->
     ?LOG_INFO("Nostr gun_response info ~p", [Any]),
     {noreply, State};
 handle_info(reward, State) ->
+    {noreply, State};
+handle_info(do_subscribe, State) ->
+    _ = catch handle_call(subscribe, self(), State),
     {noreply, State};
 handle_info(heartbeat, State) ->
     %% Send a ping message to check the connection
@@ -566,7 +710,7 @@ handle_info(Any, State) ->
 %% Cleanup when the server terminates
 
 terminate(Reason, State) ->
-    ?LOG_INFO("Nostr WebSocket connection terminating~p", [Reason]),
+    ?LOG_INFO("Nostr WebSocket connection terminating ~p", [Reason]),
     maybe_close_gun(State#state.conn_pid),
     ok.
 maybe_close_gun(Conn) when is_pid(Conn) ->
@@ -979,27 +1123,221 @@ parse_kv_query(QsBin) ->
         Pairs
     ).
 
+service_pubkey_hex() ->
+    public_key_hex().
+
+public_key_hex() ->
+    case secrets:retrieve_decrypt(damage_nostr_nsec) of
+        {ok, Nsec} ->
+            {PublicKey, _PrivateKey} = nsec_to_npub(Nsec),
+            npub_or_hex_to_lower_hex64(PublicKey);
+        Error ->
+            erlang:error({nostr_key_unavailable, Error})
+    end.
+
+service_private_key() ->
+    case get(test_service_priv) of
+        Priv when is_binary(Priv), byte_size(Priv) =:= 32 ->
+            Priv;
+        _ ->
+            case secrets:retrieve_decrypt(damage_nostr_nsec) of
+                {ok, Nsec} ->
+                    {_PublicKey, PrivateKey} = nsec_to_npub(Nsec),
+                    PrivateKey;
+                Error ->
+                    erlang:error({nostr_key_unavailable, Error})
+            end
+    end.
+
+create_signed_event(Kind, Content, Tags) ->
+    PrivKey = service_private_key(),
+    PubKey = public_key_hex(),
+    TS = erlang:system_time(seconds),
+    Event0 = construct_event(PubKey, Kind, to_bin(Content), TS, Tags),
+    {ok, finalize_event(Event0, PrivKey)}.
+
+nwc_decode_request(#{<<"content">> := Content, <<"pubkey">> := ClientPubKey} = Event) ->
+    PrivKey = service_private_key(),
+    case nip04_decrypt_content(Content, PrivKey, ClientPubKey) of
+        {ok, Plain} ->
+            try jsx:decode(Plain, [return_maps]) of
+                Req when is_map(Req) ->
+                    {ok,
+                        maps:merge(Req, #{
+                            <<"client_pubkey">> => ClientPubKey,
+                            <<"request_event_id">> => maps:get(<<"id">>, Event, <<>>)
+                        })}
+            catch
+                _:Reason ->
+                    {error, {invalid_request_json, Reason, Plain}}
+            end;
+        Err ->
+            {error, {request_decrypt_failed, Err}}
+    end;
+nwc_decode_request(Other) ->
+    {error, {invalid_request_event, Other}}.
+
+nwc_encode_response(
+    #{<<"pubkey">> := ClientPubKey, <<"id">> := RequestId},
+    Payload,
+    Kind
+) ->
+    PrivKey = service_private_key(),
+    PubKey = public_key_hex(),
+    TS = erlang:system_time(seconds),
+    Plain = jsx:encode(normalize_nwc_payload(Payload)),
+    PeerPubKey = npub_or_hex_to_lower_hex64(ClientPubKey),
+    case nip04_encrypt(Plain, PrivKey, PeerPubKey) of
+        {ok, CipherB64, IvB64} ->
+            Content = <<CipherB64/binary, "?iv=", IvB64/binary>>,
+            Tags = [
+                [<<"e">>, RequestId],
+                [<<"p">>, PeerPubKey]
+            ],
+            Event0 = construct_event(PubKey, Kind, Content, TS, Tags),
+            {ok, finalize_event(Event0, PrivKey)};
+        Error ->
+            Error
+    end;
+nwc_encode_response(Other, _Payload, _Kind) ->
+    {error, {invalid_response_target, Other}}.
+
+normalize_nwc_payload(Map) when is_map(Map) ->
+    maps:from_list([{normalize_nwc_key(K), normalize_nwc_payload(V)} || {K, V} <- maps:to_list(Map)]);
+normalize_nwc_payload(List) when is_list(List) ->
+    case io_lib:printable_list(List) of
+        true -> unicode:characters_to_binary(List);
+        false -> [normalize_nwc_payload(I) || I <- List]
+    end;
+normalize_nwc_payload(V) when is_atom(V) -> atom_to_binary(V, utf8);
+normalize_nwc_payload(V) ->
+    V.
+
+normalize_nwc_key(K) when is_binary(K) -> K;
+normalize_nwc_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
+normalize_nwc_key(K) when is_list(K) -> unicode:characters_to_binary(K);
+normalize_nwc_key(K) -> iolist_to_binary(io_lib:format("~p", [K])).
+
 public_key() ->
     %% Your state keeps PubKey; expose a quick accessor via getinfo if you like.
     %% Here we just return a placeholder. Replace with your own if needed.
     %% Since this helper is called inside gen_server (nip46_send), we pass PubKey there.
     error(not_used).
 
-%% --- NIP-04 encryption (AES-256-CBC with base64 result + iv) ---
+%% --- NIP-04 encryption/decryption key handling -------------------------------
 
-nip04_encrypt(PlainJson, PrivKey, RemoteHex) ->
-    %% Derive shared secret with ECDH(secp256k1).
-    %% RemoteHex is 64-hex x-only. We don't know parity; try 02 then 03.
-    RemoteX = hex_to_bin(RemoteHex),
-    case try_ecdh(RemoteX, PrivKey, 16#02) of
-        {ok, Secret} ->
-            ok_encrypt(Secret, PlainJson);
-        error ->
-            case try_ecdh(RemoteX, PrivKey, 16#03) of
-                {ok, Secret2} -> ok_encrypt(Secret2, PlainJson);
-                error -> {error, ecdh_failed}
-            end
+nip04_encrypt(PlainJson0, PrivKey0, RemotePub0) ->
+    try
+        PlainJson = to_bin(PlainJson0),
+        PrivKey32 = normalize_privkey(PrivKey0),
+        RemotePub = normalize_pubkey(RemotePub0),
+        case ecdh_shared_secret(PrivKey32, RemotePub) of
+            {ok, Secret} ->
+                ok_encrypt(Secret, PlainJson);
+            Error ->
+                Error
+        end
+    catch
+        C:R:S ->
+            {error, {encrypt_crash, C, R, S}}
     end.
+
+-spec nip04_decrypt(binary(), binary(), binary(), binary()) ->
+    {ok, binary()} | {error, term()}.
+nip04_decrypt(CipherB64, IvB64, PrivKey0, RemotePub0) ->
+    try
+        PrivKey32 = normalize_privkey(PrivKey0),
+        case ecdh_shared_secret(PrivKey32, RemotePub0) of
+            {ok, SharedSecret} ->
+                ok_decrypt(SharedSecret, CipherB64, IvB64);
+            Error ->
+                Error
+        end
+    catch
+        C:R:S ->
+            {error, {C, R, S}}
+    end.
+
+normalize_privkey(Bin) when is_binary(Bin), byte_size(Bin) =:= 32 ->
+    Bin;
+normalize_privkey(Bin) when is_binary(Bin), byte_size(Bin) =:= 64 ->
+    case is_hex_ascii(Bin) of
+        true -> binary:decode_hex(Bin);
+        false -> erlang:error({invalid_private_key_hex, Bin})
+    end;
+normalize_privkey(List) when is_list(List) ->
+    normalize_privkey(list_to_binary(List));
+normalize_privkey(Other) ->
+    erlang:error({invalid_private_key, Other}).
+
+-spec ecdh_shared_secret(binary(), binary() | list()) ->
+    {ok, binary()} | {error, term()}.
+ecdh_shared_secret(PrivKey32, RemotePub0) ->
+    try
+        Pub = normalize_pubkey(RemotePub0),
+        case normalize_remote_xonly(Pub) of
+            {ok, XOnly32} ->
+                schnorr_ecdh_xonly(PrivKey32, XOnly32);
+            Error ->
+                Error
+        end
+    catch
+        C:R:S ->
+            {error, {ecdh_shared_secret_failed, C, R, S}}
+    end.
+
+-spec normalize_remote_xonly(binary()) -> {ok, binary()} | {error, term()}.
+normalize_remote_xonly(Pub) when is_binary(Pub) ->
+    case classify_pubkey(Pub) of
+        xonly_hex ->
+            {ok, binary:decode_hex(Pub)};
+        xonly_raw ->
+            {ok, Pub};
+        compressed_hex ->
+            compressed_hex_to_xonly(Pub);
+        compressed_raw ->
+            compressed_raw_to_xonly(Pub);
+        invalid ->
+            {error, {invalid_remote_pubkey, Pub}}
+    end.
+
+-spec classify_pubkey(binary()) ->
+    compressed_hex | compressed_raw | xonly_hex | xonly_raw | invalid.
+classify_pubkey(Pub) when is_binary(Pub) ->
+    case {byte_size(Pub), is_hex_ascii(Pub)} of
+        {66, true} ->
+            case Pub of
+                <<"02", _:64/binary>> -> compressed_hex;
+                <<"03", _:64/binary>> -> compressed_hex;
+                _ -> invalid
+            end;
+        {64, true} ->
+            xonly_hex;
+        {33, false} ->
+            case binary:at(Pub, 0) of
+                16#02 -> compressed_raw;
+                16#03 -> compressed_raw;
+                _ -> invalid
+            end;
+        {32, false} ->
+            xonly_raw;
+        _ ->
+            invalid
+    end.
+
+compressed_hex_to_xonly(<<"02", X:64/binary>>) ->
+    {ok, binary:decode_hex(X)};
+compressed_hex_to_xonly(<<"03", X:64/binary>>) ->
+    {ok, binary:decode_hex(X)};
+compressed_hex_to_xonly(Other) ->
+    {error, {invalid_compressed_hex_pubkey, Other}}.
+
+compressed_raw_to_xonly(<<16#02, X:32/binary>>) ->
+    {ok, X};
+compressed_raw_to_xonly(<<16#03, X:32/binary>>) ->
+    {ok, X};
+compressed_raw_to_xonly(Other) ->
+    {error, {invalid_compressed_raw_pubkey, Other}}.
 
 ok_encrypt(SharedSecret, PlainJson) ->
     %% 32 bytes
@@ -1008,39 +1346,28 @@ ok_encrypt(SharedSecret, PlainJson) ->
     Cipher = crypto:crypto_one_time(aes_256_cbc, Key, Iv, pkcs_padding(PlainJson), true),
     {ok, base64:encode(Cipher), base64:encode(Iv)}.
 
-pkcs_padding(Bin) ->
-    %% crypto:crypto_one_time/5 with 'true' already handles PKCS#7, but some OTPs expect raw block input.
-    %% Keep as-is; Erlang/OTP >= 25 handles pkcs padding with the boolean flag.
-    Bin.
-
-hex_to_bin(Hex) -> list_to_binary(binary:decode_hex(Hex)).
-
-%% Compose a compressed SEC pubkey (02/03 + X) and do ECDH
-try_ecdh(RemoteX32, PrivKey32, Prefix) ->
-    case
-        catch crypto:compute_key(
-            ecdh,
-            <<Prefix, RemoteX32/binary>>,
-            PrivKey32,
-            ec_secp256k1
-        )
-    of
-        Secret when is_binary(Secret) -> {ok, Secret};
-        _ -> error
-    end.
+pkcs_padding(Bin) when is_binary(Bin) ->
+    Block = 16,
+    Rem = byte_size(Bin) rem Block,
+    PadLen =
+        case Rem of
+            0 -> Block;
+            _ -> Block - Rem
+        end,
+    Pad = binary:copy(<<PadLen>>, PadLen),
+    <<Bin/binary, Pad/binary>>.
 
 lower_hex(List) when is_list(List) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(list_to_binary(List)))));
 lower_hex(Binary) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Binary)))).
 
--spec npub_or_hex_to_lower_hex64(binary() | list()) ->
-    {ok, binary()} | {error, term()}.
+-spec npub_or_hex_to_lower_hex64(binary() | list()) -> binary().
 npub_or_hex_to_lower_hex64(In0) ->
     In = to_bin(In0),
     case In of
         <<"npub1", _/binary>> ->
-            Hex0 = to_bin(damage_nostr:decode_npub(In)),
+            Hex0 = to_bin(decode_npub(In)),
             lower_hex_ascii64(Hex0);
         _ ->
             case classify_key(In) of
@@ -1049,7 +1376,7 @@ npub_or_hex_to_lower_hex64(In0) ->
                 {raw, 32} ->
                     lower_hex(In);
                 Other ->
-                    {error, Other}
+                    erlang:error({invalid_pubkey, Other, In})
             end
     end.
 -spec classify_key(binary()) ->
@@ -1507,6 +1834,26 @@ take(0, _) -> [];
 take(_, []) -> [];
 take(N, [H | T]) -> [H | take(N - 1, T)].
 
+normalize_pubkey(Pub0) when is_binary(Pub0); is_list(Pub0) ->
+    Pub = to_bin(Pub0),
+    case Pub of
+        <<"npub1", _/binary>> ->
+            lower_hex_ascii64(npub_to_hex(Pub));
+        _ ->
+            ensure_32byte_hex(lower_hex_ascii64(Pub))
+    end.
+
+-spec bin_to_hex(binary()) -> binary().
+bin_to_hex(Bin) ->
+    list_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= Bin]).
+-spec npub_to_hex(binary()) -> binary().
+npub_to_hex(Npub0) ->
+    list_to_binary(decode_npub(to_bin(Npub0))).
+ensure_32byte_hex(Hex) ->
+    case byte_size(Hex) of
+        64 -> Hex;
+        _ -> error({invalid_pubkey_length, Hex})
+    end.
 %% -------------------------------------------------------------------
 %% NIP-04 decrypt helpers (for NIP-46 / NIP-47)
 %%
@@ -1516,42 +1863,20 @@ take(N, [H | T]) -> [H | take(N - 1, T)].
 %% -------------------------------------------------------------------
 
 -spec nip04_decrypt_content(binary(), binary(), binary()) -> {ok, binary()} | {error, term()}.
-nip04_decrypt_content(Content0, PrivKey32, RemotePubHex) ->
+nip04_decrypt_content(Content0, PrivKey0, RemotePub0) ->
     try
         Content = to_bin(Content0),
+        PrivKey32 = normalize_privkey(PrivKey0),
+        RemotePub = normalize_pubkey(RemotePub0),
         case binary:split(Content, <<"?iv=">>) of
             [CipherB64, IvB64] ->
-                nip04_decrypt(CipherB64, IvB64, PrivKey32, RemotePubHex);
+                nip04_decrypt(CipherB64, IvB64, PrivKey32, RemotePub);
             _ ->
-                {error, {bad_nip04_content, Content}}
+                {error, {bad_content_format, Content}}
         end
     catch
-        C:R ->
-            {error, {C, R}}
-    end.
-
--spec nip04_decrypt(binary(), binary(), binary(), binary()) -> {ok, binary()} | {error, term()}.
-nip04_decrypt(CipherB64, IvB64, PrivKey32, RemotePubHex0) ->
-    try
-        RemotePubHex = to_bin(RemotePubHex0),
-        RemoteX = hex_to_bin(RemotePubHex),
-
-        %% NIP-04: shared secret via ECDH with pubkey parity prefix 02/03.
-        %% Some implementations only provide x coordinate, so we try both.
-        case try_ecdh(RemoteX, PrivKey32, 16#02) of
-            {ok, Shared1} ->
-                ok_decrypt(Shared1, CipherB64, IvB64);
-            error ->
-                case try_ecdh(RemoteX, PrivKey32, 16#03) of
-                    {ok, Shared2} ->
-                        ok_decrypt(Shared2, CipherB64, IvB64);
-                    error ->
-                        {error, ecdh_failed}
-                end
-        end
-    catch
-        C:R ->
-            {error, {C, R}}
+        C:R:S ->
+            {error, {decrypt_crash, C, R, S}}
     end.
 
 ok_decrypt(SharedSecret, CipherB64, IvB64) ->
@@ -1843,3 +2168,68 @@ generate_nostr_keypair_test() ->
     ?assertEqual(Npub, Npub2),
 
     ok.
+
+-spec test_nwc_roundtrip() -> ok | {error, term()}.
+test_nwc_roundtrip() ->
+    try
+        ClientNsec = generate_nsec(),
+        ServiceNsec = generate_nsec(),
+
+        {ClientPub, ClientPriv} = nsec_to_npub(ClientNsec),
+        {ServicePub, ServicePriv} = nsec_to_npub(ServiceNsec),
+
+        ClientPubHex = npub_or_hex_to_lower_hex64(ClientPub),
+        ServicePubHex = npub_or_hex_to_lower_hex64(ServicePub),
+        ?LOG_INFO(
+            "test_nwc_roundtrip ClientPubHex:~p  ServicePubHex: ~p ClientPriv: ~p ServicePriv: ~p",
+            [
+                ClientPubHex,
+                ServicePubHex,
+                ClientPriv,
+                ServicePriv
+            ]
+        ),
+
+        Payload = #{
+            <<"method">> => <<"pay_invoice">>,
+            <<"params">> => #{<<"invoice">> => <<"lnbc1testinvoice">>}
+        },
+        Plain = jsx:encode(Payload),
+
+        {ok, CipherB64, IvB64} =
+            nip04_encrypt(Plain, ClientPriv, ServicePubHex),
+
+        Content = <<CipherB64/binary, "?iv=", IvB64/binary>>,
+
+        Event = #{
+            <<"pubkey">> => ClientPubHex,
+            <<"content">> => Content,
+            <<"kind">> => 23194,
+            <<"created_at">> => erlang:system_time(seconds),
+            <<"tags">> => [[<<"p">>, ServicePubHex]]
+        },
+
+        put(test_service_priv, ServicePriv),
+
+        Res =
+            case nwc_decode_request(Event) of
+                {ok, Decoded} ->
+                    Method = maps:get(<<"method">>, Decoded),
+                    Invoice = maps:get(<<"invoice">>, maps:get(<<"params">>, Decoded)),
+                    case {Method, Invoice} of
+                        {<<"pay_invoice">>, <<"lnbc1testinvoice">>} ->
+                            ok;
+                        Other ->
+                            {error, {mismatch, Other, Decoded}}
+                    end;
+                Error ->
+                    {error, {decode_failed, Error}}
+            end,
+
+        erase(test_service_priv),
+        Res
+    catch
+        C:R:S ->
+            erase(test_service_priv),
+            {error, {crash, C, R, S}}
+    end.

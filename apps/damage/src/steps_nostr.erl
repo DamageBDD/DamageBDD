@@ -90,7 +90,89 @@ step(
          || E <- Events, is_map(E)
         ],
 
-    maps:put(OutVar, Responses, Context).
+    maps:put(OutVar, Responses, Context);
+step(
+    _Config,
+    Context,
+    _,
+    _N,
+    ["I parse the NWC URI in", UriVar, "and store it as", OutVar],
+    _
+) ->
+    Uri = maps:get(UriVar, Context),
+    Conn = damage_nwc_client:parse_nwc_uri(Uri),
+    maps:put(OutVar, Conn, Context);
+
+step(
+    _Config,
+    Context,
+    _,
+    _N,
+    ["I build NWC request", Method, "using", ConnVar, "store as", OutVar],
+    Body
+) ->
+    Conn = maps:get(ConnVar, Context),
+    Params = normalize_body_map(Body),
+    {ok, Event, RequestId} = damage_nwc_client:build_request_event(Conn, Method, Params),
+    maps:put(
+        OutVar,
+        #{
+            event => Event,
+            request_id => RequestId,
+            method => to_bin(Method),
+            conn => Conn
+        },
+        Context
+    );
+
+step(
+    _Config,
+    Context,
+    _,
+    _N,
+    ["I publish NWC request in", ReqVar, "store relay ack as", OutVar],
+    _
+) ->
+    Req = maps:get(ReqVar, Context),
+    Event = maps:get(event, Req),
+    Conn = maps:get(conn, Req),
+    Relay = maps:get(relay, Conn),
+
+    ok = nostr_pool:ensure_started(#{relays => [Relay]}),
+    ok = nostr_pool:publish(Event, [Relay], 5000),
+
+    maps:put(OutVar, #{published => true, relay => Relay}, Context);
+
+step(
+    _Config,
+    Context,
+    _,
+    _N,
+    ["I wait for NWC response to", ReqVar, "using", ConnVar, "store as", OutVar],
+    Body
+) ->
+    Req = maps:get(ReqVar, Context),
+    Conn = maps:get(ConnVar, Context),
+    RequestId = maps:get(request_id, Req),
+    WalletPubHex = maps:get(wallet_pubkey, Conn),
+    TimeoutMs = map_get_int(Body, <<"timeout_ms">>, 15000),
+
+    Filter = #{
+        <<"kinds">> => [23195],
+        <<"authors">> => [WalletPubHex],
+        <<"#e">> => [RequestId],
+        <<"limit">> => 1
+    },
+
+    Relay = maps:get(relay, Conn),
+    ok = nostr_pool:ensure_started(#{relays => [Relay]}),
+    case nostr_pool:req_one(Filter, [Relay], TimeoutMs, 1) of
+        {ok, Event} ->
+            {ok, RespJson} = damage_nwc_client:decrypt_response_event(Conn, Event),
+            maps:put(OutVar, RespJson, Context);
+        {error, Why} ->
+            maps:put(OutVar, #{error => fmt(Why)}, Context)
+    end.
 
 %% --- helpers ------------------------------------------------------------
 
@@ -138,6 +220,28 @@ map_get_atom_or_bin(M, K, DefaultAtom) ->
         L when is_list(L) -> list_to_atom(L);
         _ -> DefaultAtom
     end.
+normalize_body_map(M) when is_map(M) -> M;
+normalize_body_map(Bin) when is_binary(Bin) ->
+    case byte_size(Bin) of
+        0 -> #{};
+        _ -> jsx:decode(Bin, [return_maps])
+    end;
+normalize_body_map(_) ->
+    #{}.
+
+map_get_int(M, K, Default) ->
+    case maps:get(K, M, Default) of
+        I when is_integer(I) -> I;
+        B when is_binary(B) ->
+            try binary_to_integer(B) catch _:_ -> Default end;
+        L when is_list(L) ->
+            try list_to_integer(L) catch _:_ -> Default end;
+        _ ->
+            Default
+    end.
+
+fmt(Term) ->
+    unicode:characters_to_binary(io_lib:format("~p", [Term])).
 
 test() ->
     ok.

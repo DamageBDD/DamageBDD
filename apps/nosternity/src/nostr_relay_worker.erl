@@ -8,7 +8,9 @@
 
 -export([
     start_link/1,
-    publish/2
+    publish/2,
+    publish_sync/3,
+    parse_wss_url/1
 ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
@@ -67,6 +69,20 @@ init(#{relay := Relay0}) ->
     erlang:send_after(0, self(), reconnect),
     {ok, S0}.
 
+handle_call({publish, Event, _TimeoutMs}, _From, S0) ->
+    S = ensure_connected(S0),
+    case S#state.connected of
+        false ->
+            {reply, {error, disconnected}, S};
+        true ->
+            try
+                ok = ws_send_json(S, [<<"EVENT">>, Event]),
+                {reply, ok, S}
+            catch
+                C:R:STrace ->
+                    {reply, {error, {publish_failed, C, R, STrace}}, S}
+            end
+    end;
 handle_call({req_one, Filter, TimeoutMs}, From, S0) ->
     case S0#state.connected of
         false ->
@@ -80,16 +96,20 @@ handle_call({req_one, Filter, TimeoutMs}, From, S0) ->
             Pending1 = maps:put(SubId, #{from => From, timer => TRef}, S0#state.pending),
             {noreply, S0#state{pending = Pending1}}
     end;
-handle_call(_Req, _From, S) ->
+handle_call(Req, _From, S) ->
+    ?LOG_DEBUG("nostr_pool unhandled handle_call ~p", [Req]),
     {reply, {error, unknown_call}, S}.
 
 handle_cast({publish, Event}, S0) ->
+    handle_cast({publish, Event, 5000}, S0);
+handle_cast({publish, Event, _}, S0) ->
     S = ensure_connected(S0),
+    ?LOG_DEBUG("handle_cast publish ~p ~p", [Event, S]),
     case S#state.connected of
         false ->
             {noreply, S};
         true ->
-            %% NIP-01 publish: ["EVENT", <event>]
+            ?LOG_DEBUG("nostr_relay_worker sending ws ~p", [Event]),
             ok = ws_send_json(S, [<<"EVENT">>, Event]),
             {noreply, S}
     end;
@@ -203,6 +223,9 @@ handle_relay_msg(MsgBin, S0 = #state{pending = Pending0}) ->
 close_sub(S, SubId) ->
     %% NIP-01: ["CLOSE", <subid>]
     ws_send_json(S, [<<"CLOSE">>, SubId]).
+-spec publish_sync(pid(), map(), pos_integer()) -> ok | {error, term()}.
+publish_sync(Pid, Event, TimeoutMs) ->
+    gen_server:call(Pid, {publish, Event, TimeoutMs}, TimeoutMs + 500).
 
 %% ---------------------------
 %% Connection management
@@ -228,21 +251,22 @@ connect(S0 = #state{host = Host, port = Port, tls = Tls, path = Path}) ->
             true -> #{transport => tls, tls_opts => [{verify, verify_none}]};
             false -> #{transport => tcp}
         end,
-    case gun:open(Host, Port, Opts) of
+    case damage_gun:open(Host, Port, Opts) of
         {ok, ConnPid} ->
             _ = link(ConnPid),
-            case gun:await_up(ConnPid, 80000) of
+            case catch gun:await_up(ConnPid, 80000) of
                 {ok, _Proto} ->
                     StreamRef = gun:ws_upgrade(ConnPid, Path),
-                    %% Wait for upgrade in handle_info(gun_upgrade...)
-                    %% Store pid/ref now so we can match messages
                     {ok, S0#state{conn_pid = ConnPid, stream_ref = StreamRef, connected = false}};
+                {'EXIT', Reason} ->
+                    catch gun:close(ConnPid),
+                    {error, {await_up_exit, Reason}};
                 Other ->
                     catch gun:close(ConnPid),
                     {error, {await_up_failed, Other}}
             end;
         Error ->
-            {error, Error}
+            Error
     end.
 
 on_disconnect(S0 = #state{pending = Pending0}) ->
@@ -280,6 +304,7 @@ schedule_reconnect(S0 = #state{backoff_ms = Backoff}) ->
     S0#state{reconnect_tref = TRef, backoff_ms = Next}.
 
 ws_send_json(#state{conn_pid = ConnPid, stream_ref = StreamRef}, Term) ->
+    %?LOG_DEBUG("nostr_relay_worker ws_send_json ~p", [Term]),
     gun:ws_send(ConnPid, StreamRef, {text, jsx:encode(Term)}),
     ok.
 

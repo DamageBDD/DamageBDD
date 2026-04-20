@@ -184,7 +184,9 @@ from_json(Req0, State = #{action := mint}) ->
 
             case Mode of
                 user_signed ->
-                    ok = persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay),
+                    ok = persist_nwc_session_index(
+                        ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay
+                    ),
                     reply_json_stop(
                         200,
                         #{
@@ -215,7 +217,9 @@ from_json(Req0, State = #{action := mint}) ->
                     ),
                     case ledger_call_ok(RegisterResult) of
                         true ->
-                            ok = persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay),
+                            ok = persist_nwc_session_index(
+                                ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay
+                            ),
 
                             reply_json_stop(
                                 200,
@@ -288,7 +292,9 @@ from_json(Req0, State = #{action := mint}) ->
                 )
             of
                 {ok, RegistryCt, LedgerCt} ->
-                    ok = persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay),
+                    ok = persist_nwc_session_index(
+                        ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay
+                    ),
                     reply_json_stop(
                         200,
                         #{

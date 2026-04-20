@@ -387,7 +387,6 @@ resolve_owner_and_ledger_by_client_pubkey(ClientPubHex0) ->
             {error, not_found}
     end.
 
-
 -spec ledger_balance_msat(binary(), binary(), binary()) ->
     {ok, integer()} | {error, term()}.
 ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
@@ -463,7 +462,6 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
             ok
     end.
 
-
 %%%===================================================================
 %%% Normalization helpers
 %%%===================================================================
@@ -535,7 +533,6 @@ ledger_mode() ->
         {ok, operator_signed} -> operator_signed;
         _ -> server_signed
     end.
-
 
 %%%===================================================================
 %%% CLN normalization helpers

@@ -53,6 +53,14 @@ init([]) ->
     Core =
         [
             #{
+                id => secrets,
+                start => {secrets, start_link, []},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [secrets]
+            },
+            #{
                 id => damage_schedule,
                 start => {damage_schedule, start_link, []},
                 restart => permanent,
@@ -75,14 +83,6 @@ init([]) ->
                 shutdown => 10000,
                 type => supervisor,
                 modules => [abduco_sup]
-            },
-            #{
-                id => secrets,
-                start => {secrets, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [secrets]
             },
             #{
                 id => identity_server,
@@ -188,7 +188,23 @@ init([]) ->
                 restart => permanent,
                 shutdown => infinity,
                 type => supervisor,
-                modules => [cln, damage_nwc_invoice_watch_sup]
+                modules => [damage_nwc_invoice_watch_sup]
+            },
+            #{
+                id => damage_nostr,
+                start => {damage_nostr, start_link, [damage_nostr_nsec]},
+                restart => transient,
+                shutdown => 60000,
+                type => worker,
+                modules => [damage_nostr]
+            },
+            #{
+                id => damage_nwc_listener,
+                start => {damage_nwc_listener, start_link, []},
+                restart => permanent,
+                shutdown => infinity,
+                type => worker,
+                modules => [damage_nwc_listener, damage_nwc_listener]
             },
             #{
                 id => damage_ipfs_peers,
