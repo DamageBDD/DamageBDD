@@ -49,6 +49,7 @@
 -export([existing_peers/1]).
 -export([
     connect_peer/1,
+    connect_peer/2,
     connect_peers/1,
     connect_best_peers/0,
     connect_best_peers/1,
@@ -61,6 +62,7 @@
     list_funds/0,
     list_pays/0,
     list_sendpays/0,
+    open_channel/3,
     open_channel/2
 ]).
 -export([
@@ -326,8 +328,8 @@ init([]) ->
 
 ensure_cache_table() ->
     case catch ets:new(cln_channel_cache, [set, public, named_table, {read_concurrency, true}]) of
-        {badarg, exists} -> ?LOG_DEBUG("cln_channel_cache exists");
-        _ -> ?LOG_DEBUG("cln_channel_cache created")
+        {badarg, exists} -> ?LOG_DEBUG("cln_channel_cache exists",[]);
+        _ -> ?LOG_DEBUG("cln_channel_cache created",[])
     end.
 
 %% ===================================================================
@@ -678,9 +680,20 @@ list_sendpays() ->
         gen_server:call(Worker, list_sendpays, ?CLN_HTTP_TIMEOUT)
     end).
 
-open_channel(NodeId, AmountSats) ->
+connect_peer(Peer) ->
+    connect_peer(Peer, ?CLN_HTTP_TIMEOUT).
+
+connect_peer(Peer, Timeout) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(Worker, {open_channel, NodeId, AmountSats}, ?CLN_HTTP_TIMEOUT)
+        gen_server:call(Worker, {connect_peer, Peer}, Timeout)
+    end).
+
+open_channel(NodeId, AmountSats) ->
+    open_channel(NodeId, AmountSats, ?CLN_HTTP_TIMEOUT).
+
+open_channel(NodeId, AmountSats, Timeout) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {open_channel, NodeId, AmountSats}, Timeout)
     end).
 %% ===================================================================
 %% Planning helpers
