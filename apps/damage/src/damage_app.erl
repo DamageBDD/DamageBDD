@@ -24,8 +24,12 @@
 start(_StartType, _StartArgs) ->
     io:setopts(standard_io, [{encoding, utf8}]),
     io:setopts(standard_error, [{encoding, utf8}]),
-    Cwd = application:get_env(damage, app_dir, "/opt/damage"),
-    ok = file:set_cwd(Cwd),
+    case application:get_env(damage, app_dir) of
+        undefined ->
+            ok;
+        Cwd ->
+            ok = file:set_cwd(Cwd)
+    end,
     damage_sup:start_link().
 
 get_trails() ->
@@ -172,9 +176,6 @@ start_phase(start_sync, _StartType, []) ->
     case init:get_plain_arguments() of
         [_, "shell" | _] ->
             ?LOG_INFO("Sourc sync enabled.", []),
-            sync:onsync(fun(Mods) ->
-                io:format("Reloaded Modules: ~p~n", [Mods])
-            end),
             sync:go();
         Cause ->
             ?LOG_INFO("Sourc sync disabled. ~p", [Cause]),
