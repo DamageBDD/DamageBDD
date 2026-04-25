@@ -328,8 +328,8 @@ init([]) ->
 
 ensure_cache_table() ->
     case catch ets:new(cln_channel_cache, [set, public, named_table, {read_concurrency, true}]) of
-        {badarg, exists} -> ?LOG_DEBUG("cln_channel_cache exists",[]);
-        _ -> ?LOG_DEBUG("cln_channel_cache created",[])
+        {badarg, exists} -> ?LOG_DEBUG("cln_channel_cache exists", []);
+        _ -> ?LOG_DEBUG("cln_channel_cache created", [])
     end.
 
 %% ===================================================================
@@ -626,14 +626,16 @@ open_channels_with_best_peers(Opts) when is_map(Opts) ->
         gen_server:call(Worker, {open_channels_with_best_peers, Opts}, ?CLN_HTTP_TIMEOUT)
     end).
 
-connect_peer(Peer) ->
-    poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(Worker, {connect_peer, Peer}, ?CLN_HTTP_TIMEOUT)
-    end).
-
 connect_peers(Peers) when is_list(Peers) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {connect_peers, Peers}, ?CLN_HTTP_TIMEOUT)
+    end).
+connect_peer(Peer) ->
+    connect_peer(Peer, ?CLN_HTTP_TIMEOUT).
+
+connect_peer(Peer, Timeout) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, {connect_peer, Peer}, Timeout)
     end).
 
 connect_best_peers() ->
@@ -678,14 +680,6 @@ list_pays() ->
 list_sendpays() ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, list_sendpays, ?CLN_HTTP_TIMEOUT)
-    end).
-
-connect_peer(Peer) ->
-    connect_peer(Peer, ?CLN_HTTP_TIMEOUT).
-
-connect_peer(Peer, Timeout) ->
-    poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(Worker, {connect_peer, Peer}, Timeout)
     end).
 
 open_channel(NodeId, AmountSats) ->

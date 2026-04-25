@@ -27,7 +27,7 @@ start(_StartType, _StartArgs) ->
     case application:get_env(damage, app_dir) of
         undefined ->
             ok;
-        Cwd ->
+        {ok, Cwd} ->
             ok = file:set_cwd(Cwd)
     end,
     damage_sup:start_link().

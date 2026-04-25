@@ -176,12 +176,21 @@ summarize_channels(_) ->
 summarize_channel(Chan, Acc0) when is_map(Chan) ->
     Acc1 = maps:update_with(count, fun(N) -> N + 1 end, 1, Acc0),
     Our = get_msat([our_amount_msat, <<"our_amount_msat">>], Chan, undefined),
-    Total = get_msat([amount_msat, <<"amount_msat">>, total_msat, <<"total_msat">>], Chan, undefined),
+    Total = get_msat(
+        [amount_msat, <<"amount_msat">>, total_msat, <<"total_msat">>], Chan, undefined
+    ),
     case {Our, Total} of
         {O, T} when is_integer(O), is_integer(T), T > 0 ->
             Ratio = O / T,
-            Acc2 = case Ratio < 0.15 of true -> maps:update_with(low_local, fun(N) -> N + 1 end, 1, Acc1); false -> Acc1 end,
-            case Ratio > 0.85 of true -> maps:update_with(high_local, fun(N) -> N + 1 end, 1, Acc2); false -> Acc2 end;
+            Acc2 =
+                case Ratio < 0.15 of
+                    true -> maps:update_with(low_local, fun(N) -> N + 1 end, 1, Acc1);
+                    false -> Acc1
+                end,
+            case Ratio > 0.85 of
+                true -> maps:update_with(high_local, fun(N) -> N + 1 end, 1, Acc2);
+                false -> Acc2
+            end;
         _ ->
             Acc1
     end;
@@ -206,7 +215,11 @@ first_value([K | Rest], Map, Default) ->
 
 parse_msat(Bin0, Default) ->
     Bin = binary:replace(Bin0, <<"msat">>, <<>>, [global]),
-    try binary_to_integer(Bin) catch _:_ -> Default end.
+    try
+        binary_to_integer(Bin)
+    catch
+        _:_ -> Default
+    end.
 
 recent_failures(Pays0, SendPays0, Limit) ->
     Pays = normalize_pay_list(Pays0, pays),
@@ -254,10 +267,14 @@ normalize_status(Other) -> Other.
 failure_reason(P) ->
     first_value(
         [
-            error, <<"error">>,
-            failreason, <<"failreason">>,
-            message, <<"message">>,
-            erroronion, <<"erroronion">>
+            error,
+            <<"error">>,
+            failreason,
+            <<"failreason">>,
+            message,
+            <<"message">>,
+            erroronion,
+            <<"erroronion">>
         ],
         P,
         <<>>
@@ -318,16 +335,18 @@ ask_for_advice(State, Snapshot) ->
     end.
 
 build_prompt(State, Snapshot) ->
-    iolist_to_binary(io_lib:format(
-        "You are advising a Core Lightning node operator.\n"
-        "Return compact JSON only. Do not output shell commands.\n"
-        "Allowed actions: wait, retry_rebalance, raise_max_fee, lower_own_fee, open_channel, do_nothing.\n"
-        "Hard limits: max_ppm=~p, auto_apply=false unless explicitly set.\n"
-        "Classify low-fee, capacity, no-route, and timeout failures.\n"
-        "Recommend safe retry ppm bands and whether to wait for organic flow.\n"
-        "Snapshot:~n~p~n",
-        [State#state.max_ppm, Snapshot]
-    )).
+    iolist_to_binary(
+        io_lib:format(
+            "You are advising a Core Lightning node operator.\n"
+            "Return compact JSON only. Do not output shell commands.\n"
+            "Allowed actions: wait, retry_rebalance, raise_max_fee, lower_own_fee, open_channel, do_nothing.\n"
+            "Hard limits: max_ppm=~p, auto_apply=false unless explicitly set.\n"
+            "Classify low-fee, capacity, no-route, and timeout failures.\n"
+            "Recommend safe retry ppm bands and whether to wait for organic flow.\n"
+            "Snapshot:~n~p~n",
+            [State#state.max_ppm, Snapshot]
+        )
+    ).
 
 ollama_run(Model, Prompt, TimeoutMs) ->
     case os:find_executable("ollama") of
@@ -381,7 +400,8 @@ guard_advice(Raw, State) ->
 
 fallback_advice(Snapshot, State) ->
     FailureSummary = maps:get(failure_summary, Snapshot, #{}),
-    LowFee = maps:get(low_fee_percentage, FailureSummary, 0) + maps:get(fee_too_low, FailureSummary, 0),
+    LowFee =
+        maps:get(low_fee_percentage, FailureSummary, 0) + maps:get(fee_too_low, FailureSummary, 0),
     case LowFee > 0 of
         true ->
             #{
@@ -403,4 +423,4 @@ to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> unicode:characters_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
-to_bin(T) -> iolist_to_binary(io_lib:format("~p", [T])). 
+to_bin(T) -> iolist_to_binary(io_lib:format("~p", [T])).

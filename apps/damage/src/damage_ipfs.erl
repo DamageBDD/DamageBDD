@@ -58,8 +58,8 @@ select_server(Servers, Length) ->
                     Pid;
                 Err ->
                     ?LOG_ERROR(
-                        "Error connecting to ipfs node ~p, index ~p",
-                        [Err, RandomIndex]
+                        "Error connecting to ipfs node ~p ~p, index ~p",
+                        [SelectedServer, Err, RandomIndex]
                     ),
                     % If connection fails, retry with the remaining servers
                     RemainingServers = Servers -- [SelectedServer],
