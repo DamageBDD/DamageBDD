@@ -60,7 +60,31 @@ start_link() -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
     gproc:reg_other({n, l, {?MODULE, secrets}}, self()),
-    {ok, #{}}.
+
+    case ensure_boot_ready() of
+        ok ->
+            {ok, #{}};
+        {error, Reason} ->
+            ?LOG_ERROR("Secrets not initialized, refusing to boot: ~p", [Reason]),
+            {stop, Reason}
+    end.
+ensure_boot_ready() ->
+    case get_env_password() of
+        {error, _} = E -> E;
+        {ok, Pw} ->
+            ensure_keypair_valid(Pw)
+    end.
+get_env_password() ->
+    case os:getenv("DAMAGE_SECRET_KEY") of
+        false ->
+            {error, no_env_password};
+        "" ->
+            {error, empty_env_password};
+        Pw when is_list(Pw) ->
+            {ok, list_to_binary(Pw)};
+        Pw when is_binary(Pw) ->
+            {ok, Pw}
+    end.
 
 clear_cache() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
@@ -226,6 +250,18 @@ has_node_keypair() ->
             false;
         {ok, _EncDataBin} ->
             true
+    end.
+ensure_keypair_valid(NodePassword) ->
+    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+    case file:read_file(Path) of
+        {ok, Enc} ->
+            case catch secrets:decrypt(NodePassword, binary_to_term(Enc)) of
+                {'EXIT', _} -> {error, corrupt_keypair};
+                error -> {error, invalid_password};
+                _ -> ok
+            end;
+        _ ->
+            {error, missing_keypair}
     end.
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
