@@ -264,14 +264,24 @@ open_ws(Host0, Port, Path, Opts0) ->
     ConnectTimeout = maps:get(connect_timeout, Opts0, ?DEFAULT_CONNECT_TIMEOUT),
     Proxy = proxy_policy(Host, maps:get(proxy, Opts0, auto)),
 
-    GunOpts0 = maps:without([headers, ws_headers, connect_timeout, proxy], Opts0),
-    Opts = normalize_opts(Host, Transport, maps:put(transport, Transport, GunOpts0)),
+    GunOpts0 =
+        maps:without([headers, ws_headers, connect_timeout, proxy], Opts0),
+
+    %% WebSocket upgrade must be HTTP/1.1, not HTTP/2.
+    GunOpts1 = maps:put(protocols, [http], GunOpts0),
+
+    Opts = normalize_opts(
+        Host,
+        Transport,
+        maps:put(transport, Transport, GunOpts1)
+    ),
+
     log_ws_open(Host, Port, Transport, Proxy, Headers, Opts),
 
     case open(Host, Port, Opts, Proxy) of
         {ok, ConnPid} ->
             case await_up(ConnPid, ConnectTimeout) of
-                {ok, _Protocol} ->
+                {ok, http} ->
                     case ws_upgrade(ConnPid, Path, Headers) of
                         {ok, StreamRef} ->
                             {ok, ConnPid, StreamRef};
@@ -279,6 +289,9 @@ open_ws(Host0, Port, Path, Opts0) ->
                             catch gun:close(ConnPid),
                             Error
                     end;
+                {ok, Protocol} ->
+                    catch gun:close(ConnPid),
+                    {error, {invalid_ws_protocol, Protocol}};
                 Error ->
                     catch gun:close(ConnPid),
                     Error

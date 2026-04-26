@@ -78,8 +78,9 @@ aemdw_ws_opts(Host, Port) ->
     Transport = aemdw_transport(Host, Port),
     #{
         transport => Transport,
-        proxy => auto,
-        connect_timeout => 15000
+        proxy => direct,
+        connect_timeout => 15000,
+        protocols => [http]
     }.
 
 aemdw_transport(_Host, 443) -> tls;
