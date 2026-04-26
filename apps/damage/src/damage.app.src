@@ -14,6 +14,8 @@
             [
                 kernel,
                 stdlib,
+                ssl,
+                gun,
                 gproc,
                 erlexec,
                 jsx,
@@ -41,13 +43,13 @@
         {
             start_phases,
             [
-                {register_node, []},
-                {setup_essentials, []},
                 {start_vanillae, []},
                 {init_chain, []},
-                {start_sync, []},
                 {start_trails_http, []},
-                {damage, []}
+                {damage, []},
+                {register_node, []},
+                {start_sync, []},
+                {setup_essentials, []}
             ]
         },
         {links, []}

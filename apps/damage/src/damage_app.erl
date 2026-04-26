@@ -22,6 +22,12 @@
 -include_lib("kernel/include/logger.hrl").
 
 start(_StartType, _StartArgs) ->
+    {ok, _} = application:ensure_all_started(crypto),
+    {ok, _} = application:ensure_all_started(public_key),
+    {ok, _} = application:ensure_all_started(ssl),
+    {ok, _} = application:ensure_all_started(cowlib),
+    {ok, _} = application:ensure_all_started(gun),
+    {ok, _} = application:ensure_all_started(inets),
     io:setopts(standard_io, [{encoding, utf8}]),
     io:setopts(standard_error, [{encoding, utf8}]),
     case application:get_env(damage, app_dir) of
@@ -89,38 +95,48 @@ get_trails() ->
 start_phase(start_vanillae, _StartType, []) ->
     ?LOG_INFO("Starting vanillae."),
 
-    ok = application:ensure_started(base58),
-    ok = application:ensure_started(getopt),
-    ok = application:ensure_started(eblake2),
-    ok = application:ensure_started(aeserialization),
-    ok = application:ensure_started(aebytecode),
-    ok = application:ensure_started(ec_utils),
-    ok = application:ensure_started(syntax_tools),
-    ok = application:ensure_started(aesophia),
-    application:ensure_started(vanillae),
+    lists:foreach(
+        fun(App) -> ok = application:ensure_started(App) end,
+        [
+            base58,
+            getopt,
+            eblake2,
+            aeserialization,
+            aebytecode,
+            ec_utils,
+            syntax_tools,
+            aesophia,
+            gun,
+            vanillae
+        ]
+    ),
 
     {ok, NetworkId} = application:get_env(damage, ae_network_id),
     vanillae:network_id(NetworkId),
 
-    {ok, AeNodes} = application:get_env(damage, ae_nodes),
-    Nodes = [{Host, Port} || {Host, Port, _} <- AeNodes],
+    {ok, AeNodes0} = application:get_env(damage, ae_nodes),
+    AeNodes = [{Host, Port} || {Host, Port, _PathPrefix} <- AeNodes0],
+    ok = vanillae:ae_nodes(AeNodes),
 
-    Tls0 =
-        case application:get_env(damage, ae_tls) of
-            {ok, Value} ->
-                Value;
-            undefined ->
-                lists:any(fun({_Host, Port}) -> Port =:= 443 end, Nodes)
-        end,
+    case application:get_env(damage, ae_tls) of
+        {ok, ForceTls} ->
+            vanillae:tls(ForceTls),
+            ?LOG_INFO(
+                "Started vanillae network_id=~p tls_override=~p nodes=~p.",
+                [NetworkId, ForceTls, AeNodes0]
+            );
+        undefined ->
+            Tls0 = lists:any(fun({_Host, Port}) -> Port =:= 443 end, AeNodes),
+            vanillae:tls(Tls0),
+            ?LOG_INFO(
+                "Started vanillae network_id=~p tls=auto_by_port nodes=~p.",
+                [NetworkId, AeNodes0]
+            )
+    end,
 
-    vanillae:tls(Tls0),
-    ok = vanillae:ae_nodes(Nodes),
-
-    ?LOG_INFO("Started vanillae with tls=~p nodes=~p.", [Tls0, Nodes]),
     ok;
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Damage."),
-    {ok, _} = application:ensure_all_started(gun),
     {ok, _} = application:ensure_all_started(yamerl),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
     {ok, _} = application:ensure_all_started(cowboy_telemetry),
@@ -184,25 +200,35 @@ start_phase(start_sync, _StartType, []) ->
     ?LOG_INFO("Sync Ready."),
     ok;
 start_phase(init_chain, _StartType, []) ->
-    ?LOG_INFO("Initializing node registry only."),
-    case damage_contract_bootstrap:bootstrap_node_only() of
-        {ok, Info} ->
-            ?LOG_INFO("Node bootstrap initialized: ~p", [Info]),
-            ok;
-        {error, Reason} ->
-            ?LOG_ERROR("Node bootstrap failed: ~p", [Reason]),
-            {error, Reason}
-    end;
+    ?LOG_INFO("Scheduling async node registry bootstrap."),
+    spawn(fun() ->
+        ?LOG_INFO("Initializing node registry only."),
+        case damage_contract_bootstrap:bootstrap_node_only() of
+            {ok, Info} ->
+                ?LOG_INFO("Node bootstrap initialized: ~p", [Info]);
+            {error, Reason} ->
+                ?LOG_ERROR("Node bootstrap failed: ~p", [Reason])
+        end
+    end),
+    ok;
 %% --- Essentials setup phase (parity with setup.sh) --------------------------
 start_phase(setup_essentials, _StartType, []) ->
-    ?LOG_INFO("setup_essentials: starting."),
-    DataDir = application:get_env(damage, app_dir, "/var/lib/damage"),
-    ok = damage_ipfs:ensure_ipfs_asset(
-        "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
-        filename:join([DataDir, "bin", "lightpanda-x86_64-linux"])
-    ),
-
-    ?LOG_INFO("setup_essentials: done."),
+    ?LOG_INFO("setup_essentials: scheduling async setup."),
+    spawn(fun() ->
+        DataDir =
+            case application:get_env(damage, app_dir) of
+                undefined ->
+                    {ok, Cwd} = file:get_cwd(),
+                    Cwd;
+                {ok, Cwd} ->
+                    Cwd
+            end,
+        _ = damage_ipfs:ensure_ipfs_asset(
+            "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
+            filename:join([DataDir, "bin", "lightpanda-x86_64-linux"])
+        ),
+        ?LOG_INFO("setup_essentials: done.")
+    end),
     ok.
 
 stop(_State) ->

@@ -71,8 +71,7 @@ init([]) ->
 ensure_boot_ready() ->
     case get_env_password() of
         {error, _} = E -> E;
-        {ok, Pw} ->
-            ensure_keypair_valid(Pw)
+        {ok, Pw} -> ensure_keypair_valid(Pw)
     end.
 get_env_password() ->
     case os:getenv("DAMAGE_SECRET_KEY") of

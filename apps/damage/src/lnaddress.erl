@@ -462,8 +462,10 @@ http_get_json(UrlBin) when is_binary(UrlBin) ->
 
     FullPath =
         case Query0 of
-            undefined -> Path;
-            <<>> -> Path;
+            undefined ->
+                Path;
+            <<>> ->
+                Path;
             Q0 ->
                 Q = ensure_binary(Q0),
                 <<Path/binary, "?", Q/binary>>
