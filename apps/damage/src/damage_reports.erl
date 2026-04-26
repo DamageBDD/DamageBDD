@@ -230,7 +230,6 @@ to_html(Req, #{hash := Hash} = State) ->
     case cowboy_req:binding(path, Req) of
         undefined ->
             Body = render_reports_index(Hash),
-            ?LOG_INFO("report html ~p", [Body]),
             {Body, Req, State};
         PathBin ->
             route_report_file(Hash, Req, State, PathBin)

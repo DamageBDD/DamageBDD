@@ -32,7 +32,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 get_prices() ->
-    gen_server:call(?MODULE, get_price).
+    gen_server:call(?MODULE, get_prices).
 
 damage_to_sats(Damage0) ->
     Damage =
@@ -117,23 +117,54 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, #{btc_usdt := float(), damage_usdt := float()}} | {error, term()}.
 fetch_coinstore_prices() ->
     Host = "api.coinstore.com",
-    %% Coinstore REST base is https://api.coinstore.com/api (docs)
-    %% Endpoint: GET /v1/ticker/price (docs)
-    %% We request only the two symbols we need: btcusdt, damageusdt
     Path = "/api/v1/market/tickers?symbol=btcusdt,damageusdt",
-    {ok, ConnPid} = gun:open(Host, 443, #{transport => tls, tls_opts => [{verify, verify_none}]}),
-    StreamRef = gun:get(ConnPid, Path, [{<<"accept">>, <<"application/json">>}]),
-    Res =
-        case gun:await(ConnPid, StreamRef, 600000) of
-            {error, Error} ->
-                {error, Error};
-            {response, nofin, _Status, _Headers0} ->
-                {ok, Body} = gun:await_body(ConnPid, StreamRef),
-                decode_coinstore_price_body(Body)
-        end,
-    gun:close(ConnPid),
-    Res.
+    Timeout = 30000,
 
+    Opts = #{
+        transport => tls,
+        tls_opts => damage_gun:tls_opts(Host),
+        connect_timeout => Timeout
+    },
+
+    case damage_gun:open(Host, 443, Opts, none) of
+        {ok, ConnPid} ->
+            try
+                case damage_gun:await_up(ConnPid, Timeout) of
+                    {ok, _Protocol} ->
+                        Headers = [
+                            {<<"accept">>, <<"application/json">>},
+                            {<<"user-agent">>, <<"damagebdd/price-feed">>}
+                        ],
+                        StreamRef = gun:get(ConnPid, Path, Headers),
+                        await_coinstore_response(ConnPid, StreamRef, Timeout);
+                    Error ->
+                        Error
+                end
+            after
+                catch gun:close(ConnPid)
+            end;
+        Error ->
+            Error
+    end.
+
+await_coinstore_response(ConnPid, StreamRef, Timeout) ->
+    case gun:await(ConnPid, StreamRef, Timeout) of
+        {response, nofin, Status, _Headers} ->
+            case gun:await_body(ConnPid, StreamRef, Timeout) of
+                {ok, Body} when Status >= 200, Status < 300 ->
+                    decode_coinstore_price_body(Body);
+                {ok, Body} ->
+                    {error, {http_status, Status, Body}};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        {response, fin, Status, _Headers} ->
+            {error, {empty_response, Status}};
+        {error, Reason} ->
+            {error, Reason};
+        Other ->
+            {error, {unexpected_gun_response, Other}}
+    end.
 decode_coinstore_price_body(Body) ->
     case catch jsx:decode(Body, [return_maps]) of
         #{<<"code">> := 0, <<"data">> := Data} when is_list(Data) ->

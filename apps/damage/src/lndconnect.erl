@@ -58,18 +58,8 @@ init([]) ->
             ?LOG_DEBUG("State ~p ", [State]),
             % https://github.com/lightningnetwork/lnd/blob/master/docs/rest/websockets.md
             ProtocolString = <<"Grpc-Metadata-Macaroon+", Macaroon/binary>>,
-            Options =
-                case Host of
-                    "localhost" ->
-                        #{};
-                    %#{transport => tls, tls_opts => [{verify, none}, {cacertfile, CertFile}]};
-                    _ ->
-                        #{
-                            transport => tls,
-                            tls_opts => [{verify, verify_peer}, {cacertfile, CertFile}]
-                        }
-                end,
-            {ok, ConnPid} = gun:open(Host, Port, Options),
+
+            {ok, ConnPid} = damage_gun:open(Host, Port),
             gproc:reg_other({n, l, {?MODULE, lnd}}, self()),
             StreamRef =
                 gun:ws_upgrade(

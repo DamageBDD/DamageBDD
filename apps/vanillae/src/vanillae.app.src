@@ -12,6 +12,7 @@
     crypto,
     public_key,
     ssl,
+    gun,
     %% Third‑party/AE libs this library uses (ensure they are available as deps)
     ec_utils,
     aebytecode,

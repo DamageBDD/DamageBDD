@@ -39,7 +39,7 @@
         {pid  = none :: none | pid(),
          mon  = none :: none | reference(),
          time = none :: none | integer(), % nanosecond timestamp
-         node = none :: none | vanilae:ae_node(),
+         node = none :: none | vanillae:ae_node(),
          from = none :: none | gen_server:from(),
          req  = none :: none | binary()}).
 
@@ -253,28 +253,12 @@ do_request(_, From, State = #s{ae_nodes = {[], []}}) ->
     State;
 do_request(Request,
            From,
-           State = #s{tls      = false,
-                      fetchers = Fetchers,
+           State = #s{fetchers = Fetchers,
                       ae_nodes = {[Node | Rest], Used},
-                      timeout  = Timeout}) ->
+                      timeout  = Timeout,
+                      tls      = TLS}) ->
     Now = erlang:system_time(nanosecond),
-    Fetcher = fun() -> vanillae_fetcher:connect(Node, Request, From, Timeout) end,
-    {PID, Mon} = spawn_monitor(Fetcher),
-    New = #fetcher{pid  = PID,
-                   mon  = Mon,
-                   time = Now,
-                   node = Node,
-                   from = From,
-                   req  = Request},
-    State#s{fetchers = [New | Fetchers], ae_nodes = {Rest, [Node | Used]}};
-do_request(Request,
-           From,
-           State = #s{tls      = true,
-                      fetchers = Fetchers,
-                      ae_nodes = {[Node | Rest], Used},
-                      timeout  = Timeout}) ->
-    Now = erlang:system_time(nanosecond),
-    Fetcher = fun() -> vanillae_fetcher:slowly_connect(Node, Request, From, Timeout) end,
+    Fetcher = fun() -> gun_fetch(Node, Request, From, Timeout, TLS) end,
     {PID, Mon} = spawn_monitor(Fetcher),
     New = #fetcher{pid  = PID,
                    mon  = Mon,
@@ -286,3 +270,160 @@ do_request(Request,
 do_request(Request, From, State = #s{ae_nodes = {[], Used}}) ->
     Fresh = lists:reverse(Used),
     do_request(Request, From, State#s{ae_nodes = {Fresh, []}}).
+
+gun_fetch(Node, Request, From, Timeout, TLS) ->
+    Reply =
+        try
+            gun_request(Node, Request, Timeout, TLS)
+        catch
+            Class:Reason:Stack ->
+                {error, {gun_fetch_failed, Class, Reason, Stack}}
+        end,
+    ok = gen_server:reply(From, Reply).
+
+gun_request(Node0, Request, Timeout, TLS) ->
+    {Host, Port, PathPrefix} = normalize_node(Node0),
+    Transport = transport_for_node(Port, TLS),
+    Opts = gun_opts(Host, Transport),
+    case damage_gun:open(Host, Port, Opts, none) of
+        {ok, ConnPid} ->
+            try
+                case damage_gun:await_up(ConnPid, Timeout) of
+                    {ok, _Protocol} ->
+                        Path = request_path(PathPrefix, Request),
+                        StreamRef = send_gun_request(ConnPid, Request, Path),
+                        await_gun_response(ConnPid, StreamRef, Timeout);
+                    Error ->
+                        Error
+                end
+            after
+                catch gun:close(ConnPid)
+            end;
+        Error ->
+            Error
+    end.
+
+normalize_node({Host, Port, PathPrefix}) ->
+    {Host, Port, PathPrefix};
+normalize_node({Host, Port}) ->
+    {Host, Port, "/"}.
+
+transport_for_node(443, _TLS) -> tls;
+transport_for_node(8443, _TLS) -> tls;
+transport_for_node(_Port, true) -> tls;
+transport_for_node(_Port, false) -> tcp.
+
+gun_opts(_Host, tcp) ->
+    #{transport => tcp};
+gun_opts(Host, tls) ->
+    #{transport => tls, tls_opts => damage_gun:tls_opts(Host)}.
+
+request_path(PathPrefix, {get, Path}) ->
+    join_path(PathPrefix, Path);
+request_path(PathPrefix, {post, Path, _Data}) ->
+    join_path(PathPrefix, Path).
+
+send_gun_request(ConnPid, {get, _Path}, Path) ->
+    gun:get(ConnPid, Path, default_headers());
+send_gun_request(ConnPid, {post, _Path, Data}, Path) ->
+    gun:post(ConnPid, Path, default_headers(), Data).
+
+default_headers() ->
+    [
+        {<<"accept">>, <<"application/json">>},
+        {<<"content-type">>, <<"application/json">>},
+        {<<"user-agent">>, <<"vanillae-damagebdd/0.4.1">>}
+    ].
+
+await_gun_response(ConnPid, StreamRef, Timeout) ->
+    case gun:await(ConnPid, StreamRef, Timeout) of
+        {response, fin, Status, _Headers} ->
+            decode_response(Status, <<>>);
+        {response, nofin, Status, _Headers} ->
+            case gun:await_body(ConnPid, StreamRef, Timeout) of
+                {ok, Body} ->
+                    decode_response(Status, Body);
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        {error, Reason} ->
+            {error, Reason};
+        Other ->
+            {error, {unexpected_gun_response, Other}}
+    end.
+
+json_decode(Body) ->
+    normalize_json_decode(catch zj:binary_decode(Body), Body).
+
+normalize_json_decode({ok, {ok, Json}}, _Body) ->
+    {ok, normalize_json(Json)};
+
+normalize_json_decode({ok, Json}, _Body) ->
+    {ok, normalize_json(Json)};
+
+normalize_json_decode(Json, _Body) ->
+    {ok, normalize_json(Json)}.
+
+join_path(Prefix0, Path0) ->
+    Prefix = trim_trailing_slash(to_list(Prefix0)),
+    Path = ensure_leading_slash(to_list(Path0)),
+    case Prefix of
+        "" -> Path;
+        "/" -> Path;
+        _ -> Prefix ++ Path
+    end.
+
+to_list(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+to_list(List) when is_list(List) ->
+    lists:flatten(List).
+
+ensure_leading_slash("/") ->
+    "/";
+ensure_leading_slash([$/ | _] = Path) ->
+    Path;
+ensure_leading_slash(Path) ->
+    "/" ++ Path.
+
+trim_trailing_slash("/") ->
+    "/";
+trim_trailing_slash(Path) ->
+    string:trim(Path, trailing, "/").
+decode_response(Status, Body) when Status >= 200, Status < 300 ->
+    case Body of
+        <<>> ->
+            {ok, #{}};
+        _ ->
+            json_decode(Body)
+    end;
+
+decode_response(Status, Body) ->
+    case json_decode(Body) of
+        {ok, #{"reason" := Reason}} ->
+            {error, Reason};
+        {ok, Json} when is_map(Json) ->
+            {error, Json};
+        {ok, _} ->
+            {error, {http_status, Status, Body}};
+        Error ->
+            Error
+    end.
+normalize_json(Json) when is_map(Json) ->
+    maps:from_list([
+        {normalize_json_key(K), normalize_json(V)}
+        || {K, V} <- maps:to_list(Json)
+    ]);
+
+normalize_json(List) when is_list(List) ->
+    [normalize_json(V) || V <- List];
+
+normalize_json(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+
+normalize_json(V) ->
+    V.
+
+normalize_json_key(K) when is_binary(K) ->
+    binary_to_list(K);
+normalize_json_key(K) ->
+    K.

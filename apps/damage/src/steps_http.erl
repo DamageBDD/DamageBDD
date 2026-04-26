@@ -828,73 +828,59 @@ response_to_list({StatusCode, Headers, Body}) ->
 %% Hardened: SSRF/IP-range blocking + sane TLS verify defaults + keep your concurrency gating.
 %% NOTE: BasicAuth does NOT belong in gun:open opts. Apply it as an Authorization header per request.
 
-%% Add near other helpers (optional)
-get_proxy(Context, Config) ->
-    %% Prefer Context override, fallback to Config proplist
-    case maps:get(proxy, Context, undefined) of
-        undefined ->
-            case lists:keyfind(proxy, 1, Config) of
-                false -> none;
-                {proxy, {socks5, PH, PP}} -> {socks5, PH, PP};
-                {proxy, {PH, PP}} -> {socks5, PH, PP}
-            end;
-        {socks5, PH, PP} ->
-            {socks5, PH, PP};
-        {PH, PP} ->
-            {socks5, PH, PP}
-    end.
-
 get_gun_connection(Config0, #{public_key := AeAccount} = Context) ->
     DestHost = damage_utils:get_context_value(host, Context, Config0),
     DestPort = damage_utils:get_context_value(port, Context, Config0, ?DEFAULT_HTTP_PORT),
     ensure_host_is_public(DestHost),
 
-    %% Keep your existing "443 => tls" behavior (this is about the *destination*)
-    Config =
-        case DestPort of
-            443 -> [{transport, tls} | Config0];
-            _ -> Config0
+    Transport =
+        case {damage_utils:get_context_value(transport, Context, Config0, undefined), DestPort} of
+            {tls, _} -> tls;
+            {tcp, _} -> tcp;
+            {_, 443} -> tls;
+            _ -> tcp
+        end,
+
+    VerifySsl = maps:get(verify_ssl, Context, true),
+
+    TlsOpts =
+        case VerifySsl of
+            false -> [{verify, verify_none}];
+            _ -> [{verify, verify_peer}]
         end,
 
     BaseOpts =
-        case lists:keyfind(transport, 1, Config) of
-            false -> #{transport => tcp};
-            _ -> #{transport => tls, tls_opts => [{verify, verify_none}]}
+        #{
+            transport => Transport,
+            connect_timeout => ?DEFAULT_HTTP_TIMEOUT
+        },
+
+    Opts =
+        case Transport of
+            tls -> BaseOpts#{tls_opts => TlsOpts};
+            tcp -> BaseOpts
         end,
 
-    BaseOpts0 =
-        case maps:get(basic_auth, Context, none) of
-            none -> BaseOpts;
-            {User, Pass} -> maps:put(username, User, maps:put(password, Pass, Context))
-        end,
-
-    BaseOpts1 = maps:put(connect_timeout, ?DEFAULT_HTTP_TIMEOUT, BaseOpts0),
-
-    %% ---- NEW: proxy handling (Tor SOCKS5) ----
-    %% Tor default is often 127.0.0.1:9050 (system tor) or 127.0.0.1:9150 (Tor Browser).
-    {OpenHost, OpenPort, FinalOpts} =
-        {DestHost, DestPort, BaseOpts1},
-
-    %% Your existing concurrency gating should apply to the *destination host* (not the proxy)
     case lists:keyfind(concurrency, 1, Config0) of
-        false ->
-            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [OpenHost, OpenPort, FinalOpts]),
-            gun:open(OpenHost, OpenPort, FinalOpts);
-        {concurrency, 1} ->
-            ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [OpenHost, OpenPort, FinalOpts]),
-            gun:open(OpenHost, OpenPort, FinalOpts);
-        {concurrency, _Concurrency} ->
+        {concurrency, Concurrency} when Concurrency =/= 1 ->
             case damage_domains:is_allowed_domain(DestHost, AeAccount) of
                 true ->
-                    ?LOG_DEBUG("Opening connection Host ~p port ~p opts ~p", [
-                        OpenHost, OpenPort, FinalOpts
-                    ]),
-                    damage_gun:open(OpenHost, OpenPort, FinalOpts);
+                    ?LOG_DEBUG(
+                        "Opening damage_gun connection host=~p port=~p opts=~p",
+                        [DestHost, DestPort, Opts]
+                    ),
+                    damage_gun:open(DestHost, DestPort, Opts);
                 _ ->
                     throw(
                         <<"Host is not allowed to execute tests with concurrency greater than 1, please add dns txt record with dns token from a valid account. Check documentation at https://damagebdd.com/manual.html">>
                     )
-            end
+            end;
+        _ ->
+            ?LOG_DEBUG(
+                "Opening damage_gun connection host=~p port=~p opts=~p",
+                [DestHost, DestPort, Opts]
+            ),
+            damage_gun:open(DestHost, DestPort, Opts)
     end.
 
 %% -------------------------

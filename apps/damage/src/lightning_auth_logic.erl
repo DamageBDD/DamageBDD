@@ -63,47 +63,60 @@ gun_await(ConnPid, StreamRef) ->
 
 %%% --- Gun HTTP Client Request ---
 gun_get(URL) ->
-    %% Parse the URL
     URI = uri_string:parse(URL),
 
     Scheme = maps:get(scheme, URI, <<"https">>),
     Host = maps:get(host, URI),
     Port = maps:get(port, URI, default_port(Scheme)),
-    Path = maps:get(path, URI, <<"/">>),
+    Path0 = maps:get(path, URI, <<"/">>),
+    Query = maps:get(query, URI, undefined),
 
-    Config = #{
-        connect_timeout => ?DEFAULT_HTTP_TIMEOUT,
-        transport => transport(Scheme),
-        tls_opts => [{verify, verify_none}]
-    },
-    %% Open connection
-    {ok, ConnPid} = gun:open(Host, Port, Config),
-    ?LOG_DEBUG("Auth Config ~p ~p", [{Host, Port}, Config]),
-    {ok, OpenResult} = gun:await_up(ConnPid),
-    ?LOG_DEBUG("Auth Connection Opened ~p ~p ~p", [Config, OpenResult, Scheme]),
+    Path =
+        case Query of
+            undefined -> Path0;
+            <<>> -> Path0;
+            Q -> <<Path0/binary, "?", Q/binary>>
+        end,
 
-    %% Send request
-    StreamRef = gun:get(ConnPid, Path, []),
-    ?LOG_DEBUG("Auth Connection ~p ~p ~p", [{Host, Port}, Path, Scheme]),
+    Config =
+        #{
+            connect_timeout => ?DEFAULT_HTTP_TIMEOUT,
+            transport => transport(Scheme)
+        },
 
-    %% Receive response
-    case gun_await(ConnPid, StreamRef) of
-        [
-            {status_code, 200},
-            {headers, [
-                {<<"server">>, _Server},
-                {<<"date">>, _Date},
-                {<<"content-type">>, _ContentType},
-                {<<"content-length">>, _ContentLength},
-                {<<"connection">>, _ConnectionType},
-                {<<"allow">>, _AllowedMethods}
-            ]},
-            {body, Message}
-        ] ->
-            jsx:decode(Message, [return_maps, {labels, atom}]);
-        Other ->
-            ?LOG_DEBUG("Got other mesage ~p", [Other]),
-            Other
+    ?LOG_DEBUG("Auth damage_gun open ~p ~p ~p", [{Host, Port}, Path, Config]),
+
+    case damage_gun:open(Host, Port, Config) of
+        {ok, ConnPid} ->
+            try
+                case damage_gun:await_up(ConnPid, ?DEFAULT_HTTP_TIMEOUT) of
+                    {ok, OpenResult} ->
+                        ?LOG_DEBUG("Auth connection opened ~p", [OpenResult]),
+
+                        StreamRef = gun:get(ConnPid, Path, []),
+                        ?LOG_DEBUG("Auth GET ~p ~p ~p", [{Host, Port}, Path, Scheme]),
+
+                        case gun_await(ConnPid, StreamRef) of
+                            [
+                                {status_code, 200},
+                                {headers, _Headers},
+                                {body, Message}
+                            ] ->
+                                jsx:decode(Message, [return_maps, {labels, atom}]);
+                            Other ->
+                                ?LOG_DEBUG("Got other message ~p", [Other]),
+                                Other
+                        end;
+                    {error, Reason} ->
+                        ?LOG_ERROR("damage_gun await_up failed ~p", [Reason]),
+                        {error, Reason}
+                end
+            after
+                catch gun:close(ConnPid)
+            end;
+        {error, Reason} ->
+            ?LOG_ERROR("damage_gun open failed ~p", [Reason]),
+            {error, Reason}
     end.
 
 %% Helper to determine default port

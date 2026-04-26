@@ -438,18 +438,13 @@ ensure_binary(V) -> list_to_binary(io_lib:format("~p", [V])).
 http_get_json(UrlBin) when is_binary(UrlBin) ->
     Uri = uri_string:parse(UrlBin),
 
-    Scheme0 = maps:get(scheme, Uri, <<"https">>),
-    Host0 = maps:get(host, Uri, <<>>),
-    Path0 = maps:get(path, Uri, <<"/">>),
-    Port0 = maps:get(port, Uri, undefined),
+    Scheme = ensure_binary(maps:get(scheme, Uri, <<"https">>)),
+    Host = ensure_binary(maps:get(host, Uri, <<>>)),
+    Path0 = ensure_binary(maps:get(path, Uri, <<"/">>)),
     Query0 = maps:get(query, Uri, undefined),
 
-    Scheme = ensure_binary(Scheme0),
-    Host = ensure_binary(Host0),
-    Path1 = ensure_binary(Path0),
-
     Port =
-        case Port0 of
+        case maps:get(port, Uri, undefined) of
             undefined ->
                 case Scheme of
                     <<"https">> -> 443;
@@ -460,34 +455,48 @@ http_get_json(UrlBin) when is_binary(UrlBin) ->
         end,
 
     Path =
-        case Path1 of
+        case Path0 of
             <<>> -> <<"/">>;
-            _ -> Path1
+            _ -> Path0
         end,
 
     FullPath =
         case Query0 of
-            undefined ->
-                Path;
-            <<>> ->
-                Path;
+            undefined -> Path;
+            <<>> -> Path;
             Q0 ->
                 Q = ensure_binary(Q0),
                 <<Path/binary, "?", Q/binary>>
         end,
 
-    Opts =
+    Transport =
         case Scheme of
-            <<"https">> -> #{transport => tls, tls_opts => [{verify, verify_none}]};
-            _ -> #{transport => tcp}
+            <<"https">> -> tls;
+            _ -> tcp
         end,
 
-    {ok, ConnPid} = gun:open(binary_to_list(Host), Port, Opts),
-    _ = gun:await_up(ConnPid),
-    StreamRef = gun:get(ConnPid, binary_to_list(FullPath)),
-    Resp = get_json_body(ConnPid, StreamRef),
-    gun:close(ConnPid),
-    {ok, Resp}.
+    Opts =
+        #{
+            transport => Transport,
+            connect_timeout => 15000
+        },
+
+    case damage_gun:open(Host, Port, Opts) of
+        {ok, ConnPid} ->
+            try
+                case damage_gun:await_up(ConnPid, 15000) of
+                    {ok, _Protocol} ->
+                        StreamRef = gun:get(ConnPid, binary_to_list(FullPath)),
+                        {ok, get_json_body(ConnPid, StreamRef)};
+                    {error, Reason} ->
+                        {error, Reason}
+                end
+            after
+                catch gun:close(ConnPid)
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 get_json_body(ConnPid, StreamRef) ->
     receive

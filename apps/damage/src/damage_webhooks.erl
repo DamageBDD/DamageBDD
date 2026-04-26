@@ -184,7 +184,7 @@ trigger_webhook(Url, #{content := Content} = Context) ->
                 {Host, 80, Path}
         end,
     {ok, ConnPid} =
-        gun:open(Host0, Port0, #{tls_opts => [{verify, verify_none}]}),
+        damage_gun:open(Host0, Port0),
     TemplateContext = maps:put(content, damage_utils:json_decode(Content), Context),
     Body =
         case re:run(Url, "https://discord.com.*") of

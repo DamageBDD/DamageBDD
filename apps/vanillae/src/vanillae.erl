@@ -577,24 +577,38 @@ acc_pending_txs(AccountID) ->
 -spec next_nonce(AccountID) -> {ok, Nonce} | {error, Reason}
     when AccountID :: account_id(),
          Nonce     :: non_neg_integer(),
-         Reason    :: ae_error() | string().
+         Reason    :: ae_error() | string() | term().
 %% @doc
 %% Retrieve the next nonce for the given account
 
-next_nonce(AccountID) ->
-%   case request(["/v3/accounts/", AccountID, "/next-nonce"]) of
-%       {ok, #{"next_nonce" := Nonce}}           -> {ok, Nonce};
-%       {ok, #{"reason" := "Account not found"}} -> {ok, 1};
-%       {ok, #{"reason" := Reason}}              -> {error, Reason};
-%       Error                                    -> Error
-%   end.
-    case request(["/v3/accounts/", AccountID]) of
-        {ok, #{"nonce"  := Nonce}}               -> {ok, Nonce + 1};
-        {ok, #{"reason" := "Account not found"}} -> {ok, 1};
-        {ok, #{"reason" := Reason}}              -> {error, Reason};
-        Error                                    -> Error
-    end.
 
+next_nonce(AccountID) ->
+    case request(["/v3/accounts/", AccountID]) of
+
+        %% Binary key (new gun/json path)
+        {ok, Map} when is_map(Map) ->
+            case maps:get(<<"nonce">>, Map, undefined) of
+                N when is_integer(N) ->
+                    {ok, N + 1};
+                _ ->
+                    case maps:get("nonce", Map, undefined) of
+                        N2 when is_integer(N2) ->
+                            {ok, N2 + 1};
+                        _ ->
+                            case maps:get(<<"reason">>, Map, undefined) of
+                                <<"Account not found">> -> {ok, 1};
+                                Reason -> {error, Reason}
+                            end
+                    end
+            end;
+
+        %% Fallback error
+        {error, Reason} ->
+            {error, Reason};
+
+        Other ->
+            {error, {bad_nonce_response, Other}}
+    end.
 
 -spec dry_run(TX) -> {ok, Result} | {error, Reason}
     when TX     :: binary() | string(),

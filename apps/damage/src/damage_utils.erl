@@ -323,19 +323,26 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
                 },
             Email = {From, [To], mimemail:encode(MultipartEmail)},
             %CaCerts = certifi:cacerts(),
+            TlsOptions =
+                [
+                    {versions, ['tlsv1.3', 'tlsv1.2']},
+                    {verify, verify_peer},
+                    {cacerts, public_key:cacerts_get()},
+                    {depth, 4},
+                    {server_name_indication, SmtpHost},
+                    {customize_hostname_check, [
+                        {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+                    ]},
+
+                    %% EXTRA HARDENING
+                    {secure_renegotiate, true},
+                    {reuse_sessions, false}
+                ],
+
             gen_smtp_client:send(
                 Email,
                 [
-                    {
-                        tls_options,
-                        [
-                            {versions, ['tlsv1.2']},
-                            {verify, verify_none},
-                            %,
-                            {depth, 99}
-                            %{cacerts, CaCerts}
-                        ]
-                    },
+                    {tls_options, TlsOptions},
                     {tls, always},
                     {auth, always},
                     {relay, SmtpHost},
@@ -343,8 +350,6 @@ send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
                     {hostname, SmtpHostname},
                     {username, SmtpUser},
                     {password, SmtpPassword}
-                    %,
-                    %       {trace_fun, fun(Format, Args)-> logger:info(Format, Args) end}
                 ]
             );
         Error ->

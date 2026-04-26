@@ -96,9 +96,9 @@ init(Args) ->
     ok = gproc:reg({n, l, {damage_mm, Symbol}}),
     ?LOG_INFO("Starting DAMAGE MM for ~s with rules ~p", [Symbol, Rules]),
 
-    {ok, ConnPid} = gun:open(?COIN_WS, 443, #{transport => tls, tls_opts => [{verify, verify_none}]}),
+    {ok, ConnPid} = damage_gun:open(?COIN_WS, 443),
     {ok, _Protocols} = gun:await_up(ConnPid),
-    Stream = gun:ws_upgrade(ConnPid, ?COIN_PATH, []),
+    Stream = damage_gun:ws_upgrade(ConnPid, ?COIN_PATH, []),
     ?LOG_DEBUG("damage_mm websocket upgrade successful ~p", [Stream]),
 
     SubscribeMsg = jsx:encode(#{
@@ -549,9 +549,9 @@ prepare_signature(Payload0) ->
     {Expires, SignatureHex, Headers}.
 
 start_ws_ticker() ->
-    {ok, ConnPid} = gun:open("stream.coinstore.com", 443, #{transport => tls}),
+    {ok, ConnPid} = damage_gun:open("stream.coinstore.com", 443),
     {ok, _} = gun:await_up(ConnPid),
-    StreamRef = gun:ws_upgrade(ConnPid, "/market"),
+    StreamRef = damage_gun:ws_upgrade(ConnPid, "/market"),
     receive
         {gun_upgrade, ConnPid, StreamRef, [_, _]} ->
             io:format("WebSocket connected for ticker~n"),
