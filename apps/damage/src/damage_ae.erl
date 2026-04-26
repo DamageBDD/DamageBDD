@@ -14,13 +14,7 @@
 -define(BASE_GAS, 15000).
 -define(GAS_PER_BYTE, 20).
 % Time-to-live in seconds
--define(CACHE_TTL_SECONDS, 60).
--define(LN_RECONCILE_MS, 600000).
--define(LN_SWAP_LEDGER, cln_ln_swap_ledger).
--define(TX_POLL_TIMEOUT, 600000).
--define(TX_POLL_INTERVAL, 2000).
-
--export([estimate_contract_call_gas/1]).
+-define(CACHE_TTL_SECONDS, 30).
 
 -export([
     init/1,
@@ -29,6 +23,7 @@
     handle_call/3,
     handle_cast/2,
     handle_info/2,
+    handle_continue/2,
     terminate/2,
     code_change/3
 ]).
@@ -37,16 +32,21 @@
     transfer_damage/3,
     transfer_hits/2,
     transfer_hits/3,
+    transfer_damage_tokens/2,
+    transfer_damage_tokens/3,
+    confirm_spend_all/0,
+    start_batch_spend_timer/0,
     get_reports/1,
     get_reports/2,
     get_domain_token/2,
     add_domain_token/3,
     revoke_domain_token/2,
-    with_ae_node/1,
-    with_ae_mdw_node/1,
+    get_ae_node/0,
+    get_ae_mdw_node/0,
     get_ae_mdw_ws_node/0,
     node_ae_balance/0,
     node_damage_balance/0,
+    wait_tx/1,
     ae_to_aetto/1,
     delete_account/1,
     revoke_token/2,
@@ -57,10 +57,8 @@
     is_custodial/1,
     set_private_key/2,
     get_ae_balance/1,
-    deploy_damage_nft/0,
-    contract_path/1
-]).
--export([
+    contract_path/1,
+    contract_path/2,
     contract_call/4,
     contract_call/5,
     contract_call/6,
@@ -70,22 +68,19 @@
     contract_balance/1,
     contract_deploy_for/3,
     contract_call_payfor_user/5,
-    payfor_tx/1,
-    contract_call_prepare_tx/5,
-    deploy_node_registry/0,
+    contract_call_payfor_tx/1,
     make_transaction_signature_base58/2,
     make_transaction_signature/2,
     attach_signature_base58/2,
-    post_signed_or_payfor/1,
     min_fee/0,
-    wait_tx/1
-]).
--export([
+    payfor_tx/1,
+    contract_call_prepare_tx/5,
+    deploy_account_registry/1,
+    deploy_node_registry/0,
     balance/1,
     invalidate_cache/1,
     spend/2,
     get_spend/1,
-    mint_nft_report/1,
     confirm_spend/2
 ]).
 -export([
@@ -97,49 +92,28 @@
     test_paying_for_tx/0,
     test_contract_deploy_for/0
 ]).
--export([
-    reconcile_swaps/1,
-    deploy_swap_registry/0
-]).
--import(damage_utils, [float_to_full_integer/1]).
-
--define(LIGHTNING_SWAP_OPTION_CONTRACT, "ct_aWMwTaxGRxcjbb11NiVYVM4NHWmTAViteE5Gp2ayrrmrZi3ry").
--define(LIGHTNING_SWAP_REGISTRY_CONTRACT, "ct_2uwLnU149TP8wHDYUZx1KmKYbDCXoZCPwLU4RpJz3B4QR81UG5").
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
 
 ae_to_aetto(Ae) -> Ae * 1000000000000000.
 
+%Ae * 100000000000000000.
 init([]) ->
     process_flag(trap_exit, true),
-    cln:register_listener(invoice_paid),
-    case catch ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
-        {badarg, exists} ->
-            ?LOG_INFO("~p exists", [?LN_SWAP_LEDGER]);
-        _ ->
-            ?LOG_INFO("~p created", [?LN_SWAP_LEDGER])
-    end,
-    ensure_swap_ledger(),
-    TRef2 = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-    maybe_cancel(TRef2),
-    {ok, WS, _Path} = get_ae_mdw_ws_node(),
-    %% Start periodic swap reconciliation (replays missed invoice_paid events)
-    State = #{websocket => WS, ln_reconcile_timer => TRef2},
-    {ok, ensure_reconcile_timer(State)};
+    ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
+    {ok, #{heartbeat_timer => ConfirmSpendTimer}, {continue, init_external}};
 init([AeAccount, PrivateKey]) ->
     process_flag(trap_exit, true),
     {ok, #{public_key => AeAccount, private_key => PrivateKey}}.
-
+find_active_node([]) ->
+    {error, no_active_ae_node};
 find_active_node([{Host, Port, PathPrefix} | Rest]) ->
-    case gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}) of
+    case damage_gun:open(Host, Port) of
         {ok, ConnPid} ->
             {ok, ConnPid, PathPrefix};
         Err ->
-            ?LOG_DEBUG(
-                "Connecing to host ~p port ~p failed with error ~p trying ~p",
-                [Host, Port, Err, Rest]
-            ),
+            ?LOG_WARNING("AE node failed ~p:~p ~p", [Host, Port, Err]),
             find_active_node(Rest)
     end.
 
@@ -237,90 +211,14 @@ extract_feature_hash(Data) ->
     Arguments = maps:get(arguments, Tx),
     %% Find the map in the "arguments" that contains the key "feature_hash"
     extract_arguments(Arguments).
-%% Encode FATE calldata for off-chain contract call using the compiled AACI
--spec encode_call_data(term(), term(), list()) -> {ok, binary()} | {error, term()}.
-encode_call_data(Contract, Fun, Args) ->
-    try
-        {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
-        %% aeb_aaci / aeb_fate_abi are part of ae SDK; adjust if your project uses a wrapper
-        {ok, Calldata} = aeb_fate_abi:encode_call_data(AACI, Fun, Args),
-        {ok, Calldata}
-    catch
-        C:R:S ->
-            {error, {calldata_encode_failed, {C, R, S}}}
-    end.
 
-handle_call(
-    {channel_contract_call, CtId, Contract, Fun, Args, Gas, Amount, Meta},
-    _From,
-    #{
-        public_key := _AeAccount,
-        private_key := _PrivateKey,
-        initiator := Initiator,
-        responder := Responder,
-        round := Round,
-        state_hash := StateHash
-    } = State
-) ->
-    GasPrice = min_gas_price(),
-    case encode_call_data(Contract, Fun, Args) of
-        {ok, Calldata} ->
-            %% Build the off-chain update payload
-            Update = #{
-                type => contract_call,
-                %% <<"ct_...">>
-                ct_id => CtId,
-                "fun" => Fun,
-                %% calldata (FATE)
-                args_cd => Calldata,
-                gas => Gas,
-                gas_price => GasPrice,
-                %% aetto to send
-                amount => Amount,
-                %% initiator pays by default
-                from => Initiator,
-                %% responder executes
-                to => Responder,
-                meta => Meta,
-                round => Round + 1
-            },
-
-            %% TODO: wire to the real channel FSM: send 'update', await 'update_ack'
-            Round1 = Round + 1,
-            Root1 = crypto:hash(sha256, term_to_binary({Update, Round1, StateHash})),
-
-            Ch1 = #{
-                round => Round1,
-                state_hash => Root1,
-                last_payload => Update,
-                pending_updates => []
-            },
-
-            Receipt = #{
-                kind => contract_call,
-                ct_id => CtId,
-                "fun" => Fun,
-                round => Round1,
-                state_hash => Root1,
-                gas => Gas,
-                gas_price => GasPrice,
-                amount => Amount,
-                meta => Meta
-            },
-            {reply, {ok, Receipt}, maps:merge(Ch1, State)};
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
-    end;
 handle_call(
     {contract_call_payfor_user, Contract, ContractSource, Func, Args},
     _From,
     #{public_key := AeAccount, private_key := PrivateKey} = State
 ) ->
-    ?LOG_DEBUG("calling contract_call_payfor_user ~p ~p ~p ~p ~p", [
-        AeAccount, Contract, ContractSource, Func, Args
-    ]),
     KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
-    Result = do_contract_call_payfor_user(
+    Result = contract_call_payfor_user(
         KeyPair,
         Contract,
         ContractSource,
@@ -343,110 +241,127 @@ handle_call(
     ),
     {reply, Result, State};
 handle_call({get_published, AeAccount}, _From, Cache) ->
-    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
-        Path =
-            PathPrefix ++ "v3/accounts/" ++ AeAccount ++ "activities?type=aex141",
-        StreamRef = gun:get(ConnPid, Path),
-        Balance =
-            case read_stream(ConnPid, StreamRef) of
-                #{amount := null} -> 0;
-                #{amount := Balance0} -> Balance0
-            end,
-        {reply, Balance, Cache}
-    end);
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path =
+                PathPrefix ++ "v3/accounts/" ++ AeAccount ++ "activities?type=aex141",
+            StreamRef = gun:get(ConnPid, Path),
+            Balance =
+                case read_stream(ConnPid, StreamRef) of
+                    #{amount := null} -> 0;
+                    #{amount := Balance0} -> Balance0
+                end,
+            {reply, Balance, Cache};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
 handle_call(
     {get_last_test_status, AeAccount, FeatureHash, _Hours},
     _From,
     Cache
 ) ->
-    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
-        %BlockHeight = get_block_height_since(Hours, ConnPid),
-        %?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
-        Path =
-            PathPrefix ++
-                "v3/accounts/" ++
-                binary_to_list(AeAccount) ++
-                "/activities?owned_only=true&direction=backward&type=transactions&limit=100",
-        %++
-        %integer_to_list(BlockHeight),
-        ?LOG_DEBUG("Path ~p", [Path]),
-        StreamRef = gun:get(ConnPid, Path),
-        case read_stream(ConnPid, StreamRef) of
-            #{data := null} ->
-                {reply, undefined, Cache};
-            #{data := Results} ->
-                TxData = [extract_feature_hash(Result) || Result <- Results],
-                case find_latest_record_with_feature_hash(TxData, FeatureHash) of
-                    #{
-                        <<"result_status">> :=
-                            <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>
-                    } ->
-                        {reply, "success", Cache};
-                    #{
-                        <<"result_status">> :=
-                            <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>
-                    } ->
-                        {reply, "failed", Cache};
-                    {error, not_found} ->
-                        {reply, "not_found", Cache};
-                    #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
-                        {reply, Result, Cache}
-                end
-        end
-    end);
-handle_call({events, ContractId, Limit}, _From, Cache) ->
-    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
-        Path =
-            PathPrefix ++
-                "v3/contracts/logs?direction=forward&contract_id=" ++
-                ContractId ++
-                "&limit=" ++ integer_to_list(Limit),
-        StreamRef = gun:get(ConnPid, Path),
-
-        Events =
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            %BlockHeight = get_block_height_since(Hours, ConnPid),
+            %?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
+            Path =
+                PathPrefix ++
+                    "v3/accounts/" ++
+                    binary_to_list(AeAccount) ++
+                    "/activities?owned_only=true&direction=backward&type=transactions&limit=100",
+            %++
+            %integer_to_list(BlockHeight),
+            ?LOG_DEBUG("Path ~p", [Path]),
+            StreamRef = gun:get(ConnPid, Path),
             case read_stream(ConnPid, StreamRef) of
-                #{data := Data} ->
-                    Data;
-                Other ->
-                    ?LOG_ERROR("Invalid response from events endpoint ~p", [Other]),
-                    []
-            end,
-        {reply, Events, Cache}
-    end);
+                #{data := null} ->
+                    {reply, undefined, Cache};
+                #{data := Results} ->
+                    TxData = [extract_feature_hash(Result) || Result <- Results],
+                    case find_latest_record_with_feature_hash(TxData, FeatureHash) of
+                        #{
+                            <<"result_status">> :=
+                                <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>
+                        } ->
+                            {reply, "success", Cache};
+                        #{
+                            <<"result_status">> :=
+                                <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>
+                        } ->
+                            {reply, "failed", Cache};
+                        {error, not_found} ->
+                            {reply, "not_found", Cache};
+                        #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
+                            {reply, Result, Cache}
+                    end
+            end;
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
+handle_call({events, ContractId, Limit}, _From, Cache) ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path =
+                PathPrefix ++
+                    "v3/contracts/logs?direction=forward&contract_id=" ++
+                    ContractId ++
+                    "&limit=" ++ integer_to_list(Limit),
+            StreamRef = gun:get(ConnPid, Path),
+
+            Events =
+                case read_stream(ConnPid, StreamRef) of
+                    #{data := Data} ->
+                        Data;
+                    Other ->
+                        ?LOG_ERROR("Invalid response from events endpoint ~p", [Other]),
+                        []
+                end,
+            {reply, Events, Cache};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
 handle_call({reports, AeAccount}, _From, Cache) ->
-    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
-        %TODO use events
-        Path =
-            PathPrefix ++
-                "v3/accounts/" ++
-                binary_to_list(AeAccount) ++
-                "/activities?" ++
-                "direction=backward" ++
-                "&type=aex9" ++
-                "&limit=10",
-        %?DAMAGE_TOKEN_CONTRACT ++
-        ?LOG_DEBUG("Path ~p", [Path]),
-        StreamRef = gun:get(ConnPid, Path),
-        catch gun:close(ConnPid),
-        {reply, read_stream(ConnPid, StreamRef), Cache}
-    end);
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            %TODO use events
+            Path =
+                PathPrefix ++
+                    "v3/accounts/" ++
+                    binary_to_list(AeAccount) ++
+                    "/activities?" ++
+                    "direction=backward" ++
+                    "&type=aex9" ++
+                    "&limit=10",
+            %?DAMAGE_TOKEN_CONTRACT ++
+            ?LOG_DEBUG("Path ~p", [Path]),
+            StreamRef = gun:get(ConnPid, Path),
+            {reply, read_stream(ConnPid, StreamRef), Cache};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
 handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
     Now = erlang:monotonic_time(second),
     case maps:get({balance, AeAccount}, Cache, none) of
         {Balance, Expiry} when is_integer(Balance), Now < Expiry ->
             {reply, Balance, Cache};
         _ ->
-            %case contract_balance(AeAccount) of
-            case middleware_balance(AeAccount) of
+            case contract_balance(AeAccount) of
                 ContractBalance when is_integer(ContractBalance) ->
                     ExpiryTime = Now + ?CACHE_TTL_SECONDS,
                     NewCache = maps:put({balance, AeAccount}, {ContractBalance, ExpiryTime}, Cache),
                     {reply, ContractBalance, NewCache};
                 Err ->
-                    ?LOG_DEBUG("Balance fetch failed ~p", [Err]),
+                    ?LOG_DEBUG("ContractBalance failed ~p", [Err]),
                     {reply, error, Cache}
             end
     end;
+handle_call({confirm_spend_all}, _From, Cache) ->
+    ?LOG_DEBUG("handle_call confirm_spend_all/0 : ~p", [Cache]),
+    {reply, ok, Cache};
 handle_call(
     {is_custodial, AeAccount},
     _From,
@@ -523,15 +438,16 @@ handle_call(
     #{public_key := AeAccount, private_key := PrivateKey} = Cache
 ) ->
     KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
+    SpendRecord = #{"report_hash" => binary_to_list(ReportHash)},
     AccountCache = maps:get(AeAccount, Cache, #{}),
     case maps:get(spent_balance, AccountCache, {0, 0}) of
         {_, Amount} when Amount > 0 ->
-            ?LOG_INFO("confirm spend ~p ~p ~p ~p", [Amount, AeAccount, ReportHash, FeatureHash]),
+            ?LOG_INFO("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
             case
-                do_contract_call_payfor_user(
+                contract_call_payfor_user(
                     KeyPair,
                     ?DAMAGE_TOKEN_CONTRACT,
-                    "contracts/token.aes",
+                    contract_path(damage, "contracts/token.aes"),
                     "spend",
                     [
                         binary_to_list(NodePublicKey),
@@ -572,6 +488,21 @@ handle_call(
             ?LOG_DEBUG("Amount 0: ~p", [Amount]),
             {reply, Amount, Cache}
     end.
+
+handle_cast(
+    {
+        confirm_spend,
+        #{
+            public_key := AeAccount,
+            feature_hash := FeatureHash,
+            report_hash := _ReportHash,
+            node_public_key := _NodePublicKey
+        } = _RunRecord
+    },
+    #{public_key := AeAccount, private_key := none, username := <<"wallet">>} = Cache
+) ->
+    ?LOG_DEBUG("confirm spend on wallet account ~p ~p", [AeAccount, FeatureHash]),
+    {noreply, Cache};
 handle_cast({spend, AeAccount, Amount}, Cache) when is_list(AeAccount) ->
     handle_cast({spend, list_to_binary(AeAccount), Amount}, Cache);
 handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
@@ -584,110 +515,40 @@ handle_cast({invalidate_cache, _AeAccount}, _Cache) ->
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
-ensure_reconcile_timer(State = #{ln_reconcile_timer := undefined}) ->
-    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-    State#{ln_reconcile_timer => TRef};
-ensure_reconcile_timer(State) ->
-    State.
-reconcile_swaps(State) ->
-    %% Scan recent invoices and replay any paid 'damage:' ones we haven't seen (idempotent via ETS).
-    Params = #{index => <<"created">>, limit => 500},
-    case catch list_invoices_http(Params, State) of
-        #{invoices := Invoices} when is_list(Invoices) ->
-            lists:foreach(
-                fun(Inv) ->
-                    try
-                        case is_damage_label(Inv) andalso is_paid_invoice(Inv) of
-                            true ->
-                                Key = swap_key(Inv),
-                                case Key =/= undefined andalso not already_reconciled(Key) of
-                                    true ->
-                                        mark_reconciled(Key, #{replayed => true}),
-                                        ?LOG_INFO("paid invoice reconciled ~p", [Inv], invoice);
-                                    %broadcast(invoice_paid, Inv);
-                                    false ->
-                                        ok
-                                end;
-                            false ->
-                                ok
-                        end
-                    catch
-                        _:Reason ->
-                            ?LOG_WARNING(
-                                "LN reconcile failed invoice=~p reason=~p", [Inv, Reason], invoice
-                            )
-                    end
-                end,
-                Invoices
-            ),
-            ok;
-        Other ->
-            ?LOG_WARNING("LN reconcile: list_invoices returned ~p", [Other]),
-            ok
-    end.
 
-deploy_swap_registry() ->
-    damage_ae:contract_deploy(
-        damage_ae:contract_path("contracts/ln_swap_registry.aes"), []
-    ).
-
-ln_swap_registry(mark_reconciled, Recipient, Amount, AeTxHash, PaymentHash) ->
-    damage_ae:contract_call(
-        secrets:node_keypair(),
-        ?LIGHTNING_SWAP_REGISTRY_CONTRACT,
-        "contracts/ln_swap_registry.aes",
-        "mark_reconciled",
-        [
-            PaymentHash, Recipient, Amount, AeTxHash
-        ]
-    ).
-damage_for_invoice(
-    #{label := Label, amount_msat := _AmountMsat, payment_hash := PaymentHash} = PaidInv
-) ->
+damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
     case binary:split(Label, <<":">>, [global]) of
-        [<<"damage">>, AeAccount, AmountDamageBin, _Timestamp] ->
-            AmountDamage = binary_to_integer(AmountDamageBin),
+        [<<"damage">>, AeAccount, AmountDamage, _Timestamp] ->
             ?LOG_INFO("Transfering ~p damage to ~p", [AmountDamage, AeAccount]),
-            #{"tx_hash" := AeTxHash} = transfer_damage(
-                AeAccount, AmountDamage
-            ),
-            maybe_mark_reconciled(PaidInv),
-            Result = ln_swap_registry(
-                mark_reconciled, AeAccount, AmountDamage, AeTxHash, PaymentHash
-            ),
-            ?LOG_INFO("damage_ae ln_swap_registry ~p updated : ~p", [
-                ?LIGHTNING_SWAP_REGISTRY_CONTRACT, Result
-            ]);
+            transfer_damage_tokens(
+                AeAccount, trunc(binary_to_integer(AmountDamage) * math:pow(10, ?DAMAGE_DECIMALS))
+            );
         Err ->
             ?LOG_DEBUG("damage_ae ignores label: ~p", [Err])
     end.
+
+handle_continue(init_external, State) ->
+    _ = catch cln:register_listener(invoice_paid),
+    case get_ae_mdw_node() of
+        {ok, WS, _Path} ->
+            {noreply, maps:put(websocket, WS, State)};
+        Error ->
+            ?LOG_WARNING("damage_ae external init failed: ~p", [Error]),
+            {noreply, maps:put(ae_mdw_error, Error, State)}
+    end.
 handle_info({cln_event, invoice_paid, Invoice}, State) ->
-    damage_for_invoice(Invoice),
+    try
+        damage_for_invoice(Invoice)
+    catch
+        _:Reason ->
+            ?LOG_WARNING("Failed to send damage for invoice: ~p", [Reason])
+    end,
     {noreply, State};
-handle_info(reconcile_swaps, State0 = #{secrets_ready := true}) ->
-    %% Safety net: periodically scan for paid 'damage:' invoices and replay invoice_paid events
-    catch reconcile_swaps(State0),
-    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-    {noreply, State0#{ln_reconcile_timer => TRef}};
-handle_info(reconcile_swaps, State) ->
-    %% Not ready yet; try again later
-    TRef = erlang:send_after(?LN_RECONCILE_MS, self(), reconcile_swaps),
-    {noreply, State#{ln_reconcile_timer => TRef}};
-handle_info({gun_up, _, _} = _Info, State) ->
-    {noreply, State};
-handle_info({gun_down, _, _} = _Info, State) ->
-    {noreply, State};
-handle_info({gun_down, _, http2, {error, closed}, []} = _Info, State) ->
-    {noreply, State};
-handle_info({gun_down, _, http2, normal, []} = _Info, State) ->
-    {noreply, State};
-handle_info(Info, State) ->
-    ?LOG_DEBUG("damage_ae: Unhandled info ~p", [Info]),
+handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #{ln_reconcile_timer := LnTref} = _State) ->
-    %?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
-    maybe_cancel(LnTref),
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
@@ -726,6 +587,7 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
                     gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
                     AePid;
                 {error, {already_started, AePid}} ->
+                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
                     AePid
             end;
         Pid ->
@@ -744,6 +606,7 @@ restart_wallet_proc(AeAccount) ->
 balance(AeAccount) when is_list(AeAccount) ->
     balance(list_to_binary(AeAccount));
 balance(AeAccount) ->
+    ?LOG_DEBUG("Check balance ~p", [AeAccount]),
     DamageAEPid = get_wallet_proc(admin),
     gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
 
@@ -770,14 +633,22 @@ get_spend(AeAccount) ->
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {get_spend, AeAccount}).
+confirm_spend_all() ->
+    DamageAEPid = get_wallet_proc(admin),
+    gen_server:cast(DamageAEPid, {confirm_spend_all}).
+
+start_batch_spend_timer() ->
+    ?LOG_INFO("Starting batch spend timer."),
+    erlcron:cron(
+        <<"batch_spend_timer">>,
+        {{daily, {every, {3600, sec}}}, {damage_ae, confirm_spend_all, []}}
+    ).
+
 confirm_spend(Config, #{public_key := AeAccount} = Context) ->
     DamageAEPid = get_wallet_proc(AeAccount),
-    ?LOG_INFO("confirm_spend ~p", [proplists:get_value(dry_run, Config, none)]),
     case proplists:get_value(dry_run, Config, none) of
         true ->
-            gen_server:call(
-                DamageAEPid, {confirm_spend, maps:put(dry_run, true, Context)}, ?AE_TIMEOUT
-            );
+            gen_server:call(DamageAEPid, {confirm_spend, maps:put(dry_run, true, Context)});
         _ ->
             gen_server:call(DamageAEPid, {confirm_spend, Context}, ?AE_TIMEOUT)
     end.
@@ -791,8 +662,6 @@ is_custodial(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {is_custodial, AeAccount}, ?AE_TIMEOUT).
 
-set_private_key(AeAccount, PrivateKey) when is_list(AeAccount) ->
-    set_private_key(list_to_binary(AeAccount), PrivateKey);
 set_private_key(AeAccount, PrivateKey) ->
     % temporary storage to commit after feature execution
     DamageAEPid = get_wallet_proc(AeAccount),
@@ -827,68 +696,71 @@ read_stream(ConnPid, StreamRef) ->
             ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
             Default
     end.
-with_ae_node(Fun) ->
-    {ok, ConnPid, PathPrefix} = get_ae_node(),
-    try
-        Fun(ConnPid, PathPrefix)
-    after
-        catch gun:close(ConnPid)
-    end.
 
 get_ae_balance(AeAccount) when is_binary(AeAccount) ->
     get_ae_balance(binary_to_list(AeAccount));
 get_ae_balance(AeAccount) ->
-    with_ae_node(fun(ConnPid, PathPrefix) ->
-        Path = PathPrefix ++ "v3/accounts/" ++ AeAccount,
-        StreamRef = gun:get(ConnPid, Path),
-        read_stream(ConnPid, StreamRef)
-    end).
+    {ok, ConnPid, PathPrefix} = get_ae_node(),
+    Path = PathPrefix ++ "v3/accounts/" ++ AeAccount,
+    StreamRef = gun:get(ConnPid, Path),
+    read_stream(ConnPid, StreamRef).
 
-transfer_damage(AeAccount, Damage) when is_integer(Damage) ->
-    transfer_hits(AeAccount, trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))).
-transfer_hits(AeAccount, Hits) when is_integer(Hits) ->
+transfer_damage_tokens(AeAccount, Amount) ->
     % transfer damage tokens from admin account to to account
     ContractCall =
         contract_call(
             secrets:node_keypair(),
             ?DAMAGE_TOKEN_CONTRACT,
-            "contracts/token.aes",
+            contract_path(damage, "contracts/token.aes"),
             "transfer",
-            [AeAccount, Hits]
+            [AeAccount, Amount]
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
     ContractCall.
 
-transfer_damage(FromAccount, ToAeAccount, Damage) when is_integer(Damage) ->
-    transfer_hits(FromAccount, ToAeAccount, trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))).
-transfer_hits(FromAccount, ToAeAccount, Hits) when is_integer(Hits) ->
+transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
     Result =
         contract_call(
             identity_server:get_account(FromAccount),
             ?DAMAGE_TOKEN_CONTRACT,
-            "contracts/token.aes",
+            contract_path(damage, "contracts/token.aes"),
             "transfer",
-            [ToAeAccount, Hits]
+            [ToAeAccount, Amount]
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [Result]),
     Result.
+%% Compatibility wrappers
+transfer_damage(AeAccount, Damage) when is_integer(Damage) ->
+    transfer_damage_tokens(AeAccount, trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))).
+
+transfer_damage(FromAccount, ToAeAccount, Damage) when is_integer(Damage) ->
+    transfer_damage_tokens(
+        FromAccount,
+        ToAeAccount,
+        trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))
+    ).
+
+transfer_hits(AeAccount, Hits) when is_integer(Hits) ->
+    transfer_damage_tokens(AeAccount, Hits).
+
+transfer_hits(FromAccount, ToAeAccount, Hits) when is_integer(Hits) ->
+    transfer_damage_tokens(FromAccount, ToAeAccount, Hits).
+
+%% Generic base function
+-spec calculate_gas(non_neg_integer(), binary()) -> non_neg_integer().
+calculate_gas(BaseMultiplier, TxBin) ->
+    Base = BaseMultiplier * ?BASE_GAS,
+    SizeFee = byte_size(TxBin) * ?GAS_PER_BYTE,
+    Base + SizeFee.
 
 %% Contract create (FATE) gas
-contract_path(Contract0) ->
-    PrivDir = code:priv_dir(damage),
-    %% Strip "contracts/" prefix if present
-    Contract1 =
-        case string:prefix(Contract0, "contracts/") of
-            nomatch -> Contract0;
-            Name -> Name
-        end,
-    %% Ensure it ends with ".aes"
-    Contract2 =
-        case filename:extension(Contract1) of
-            ".aes" -> Contract1;
-            _ -> Contract1 ++ ".aes"
-        end,
-    filename:join([PrivDir, "contracts", Contract2]).
+-spec gas_for_contract_create_fate(binary()) -> non_neg_integer().
+gas_for_contract_create_fate(TxBin) ->
+    calculate_gas(5, TxBin).
+%% Contract call (FATE) gas
+-spec gas_for_contract_call_fate(binary()) -> non_neg_integer().
+gas_for_contract_call_fate(TxBin) ->
+    calculate_gas(12, TxBin).
 
 %paying_for(PayerId, Tx) ->
 %    {ok, Nonce} = vanillae:next_nonce(PayerId),
@@ -934,14 +806,18 @@ paying_for(PK, Nonce, Fee, Tx) ->
     catch
         error:Reason -> {error, Reason}
     end.
-min_gas_price() ->
-    vanillae:min_gas_price() * ?GAS_PRICE_MULTIPLIER.
+-spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
+calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
+    BaseGas = 26000,
+    GasPerByte = 20,
+    SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
+    BaseGas + (SizeDiff * GasPerByte).
 min_fee() ->
     %TODO some fine tuning
-    vanillae:min_fee() * ?FEE_MULTIPLIER.
+    vanillae:min_fee() * 2.
 min_gas() ->
     %TODO some fine tuning
-    vanillae:min_gas() * ?GAS_MULTIPLIER.
+    vanillae:min_gas() * 2.
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->
@@ -949,36 +825,36 @@ contract_call_prepare_tx(
     Fee = min_fee(),
     Gas = min_gas(),
     Amount = 0,
-    GasPrice = min_gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
+    GasPrice = vanillae:min_gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(ContractSource),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
     ContractCall.
-payfor_tx(
+payfor_tx(SignedTx) ->
+    contract_call_payfor_tx(SignedTx).
+contract_call_payfor_tx(
     SignedTX
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    Fee = min_fee(),
+    Fee = vanillae:min_fee(),
     %Gas = vanillae:min_gas(),
     %Amount = 0,
-    GasPrice = min_gas_price(),
+    GasPrice = vanillae:min_gas_price(),
 
     {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
-    ?LOG_DEBUG("payfor_tx ~p", [InnerTxBin]),
-    %{ok,_} = vanillae:dry_run(InnerTxBin),
 
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(list_to_binary(NodeAeAccount), NodeNonce, Fee, InnerTxBin),
+    {ok, PayingForTx} = paying_for(NodeAeAccount, NodeNonce, Fee, InnerTxBin),
     {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
 
-    CorrectGas = damage_ae_gas:calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
+    CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
     CorrectFee = CorrectGas * GasPrice,
     % Regenerate the paying_for tx with correct gas/fee
 
     {ok, PayingForTxFinal} = paying_for(
-        list_to_binary(NodeAeAccount), NodeNonce, CorrectFee, InnerTxBin
+        NodeAeAccount, NodeNonce, CorrectFee, InnerTxBin
     ),
     PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
@@ -990,69 +866,41 @@ payfor_tx(
             Error
     end.
 
-do_contract_call_payfor_user(
-    #{public_key := AeAccount, private_key := PrivateKey},
-    ContractId,
-    ContractSource,
-    Func,
-    Args
-) when is_binary(PrivateKey) ->
+contract_call_payfor_user(
+    #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
+) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-
+    Fee = vanillae:min_fee(),
+    Gas = vanillae:min_gas(),
     Amount = 0,
-    GasPrice = min_gas_price(),
-    InnerFee = min_fee(),
-    DummyGas = min_gas(),
-
-    {ok, AACI} = vanillae:prepare_contract(contract_path(ContractSource)),
-
-    %% 1) Build dummy inner tx to estimate real contract-call gas
-    {ok, ContractCall0} = vanillae:contract_call(
-        AeAccount,
-        AeAccountNonce,
-        DummyGas,
-        GasPrice,
-        InnerFee,
-        Amount,
-        AACI,
-        ContractId,
-        Func,
-        Args
+    GasPrice = vanillae:min_gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(ContractSource),
+    {ok, ContractCall} = vanillae:contract_call(
+        AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
     ),
+
+    Signature = make_transaction_signature_base58(PrivateKey, {inner, ContractCall}),
+    SignedTX = attach_signature_base58(ContractCall, Signature),
+    {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
+
+    {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
+    {ok, PayingForTx} = paying_for(NodeAeAccount, NodeNonce, Fee, InnerTxBin),
+    {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
+
+    CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
+    CorrectFee = CorrectGas * GasPrice,
+    % Regenerate the paying_for tx with correct gas/fee
+    {ok, ContractCall0} = vanillae:contract_call(
+        AeAccount, AeAccountNonce, CorrectGas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+    ),
+
     Signature0 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall0}),
     SignedTX0 = attach_signature_base58(ContractCall0, Signature0),
     {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedTX0),
 
-    InnerGas = estimate_contract_call_gas(InnerTxBin0),
-
-    %% 2) Rebuild inner tx with corrected gas
-    {ok, ContractCall1} = vanillae:contract_call(
-        AeAccount,
-        AeAccountNonce,
-        InnerGas,
-        GasPrice,
-        InnerFee,
-        Amount,
-        AACI,
-        ContractId,
-        Func,
-        Args
-    ),
-    Signature1 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall1}),
-    SignedTX1 = attach_signature_base58(ContractCall1, Signature1),
-    {transaction, InnerTxBin1} = aeser_api_encoder:decode(SignedTX1),
-
-    %% 3) Build outer PayingForTx and estimate ONLY wrapper fee
-    {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx0} = paying_for(NodeAeAccount, NodeNonce, InnerFee, InnerTxBin1),
-    {transaction, PayingForTxBin0} = aeser_api_encoder:decode(PayingForTx0),
-
-    OuterGas = damage_ae_gas:calculate_paying_for_gas(PayingForTxBin0, InnerTxBin1),
-    OuterFee = OuterGas * GasPrice,
-
     {ok, PayingForTxFinal} = paying_for(
-        NodeAeAccount, NodeNonce, OuterFee, InnerTxBin1
+        NodeAeAccount, NodeNonce, CorrectFee, InnerTxBin0
     ),
     PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
@@ -1062,17 +910,54 @@ do_contract_call_payfor_user(
             maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
         Error ->
             Error
-    end.
-contract_call_payfor_user(
-    AeAccount, Contract, ContractSource, Func, Args
-) when is_binary(AeAccount) ->
+    end;
+contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(
         DamageAEPid,
         {contract_call_payfor_user, Contract, ContractSource, Func, Args},
         ?AE_TIMEOUT
     ).
+contract_path(Contract) ->
+    contract_path(damage, Contract).
 
+contract_path(App, Contract0) ->
+    PrivDir = priv_dir_source_first(App),
+    Contract = normalize_contract_path(Contract0),
+    filename:join([PrivDir, "contracts", Contract]).
+
+priv_dir_source_first(App) ->
+    %% 1. Running from source / rebar3 shell:
+    SourcePriv = filename:join(["apps", atom_to_list(App), "priv"]),
+
+    case filelib:is_dir(SourcePriv) of
+        true ->
+            SourcePriv;
+        false ->
+            priv_dir_fallback(App)
+    end.
+
+priv_dir_fallback(App) ->
+    case code:priv_dir(App) of
+        {error, bad_name} ->
+            beam_relative_priv();
+        {error, enoent} ->
+            beam_relative_priv();
+        Path ->
+            Path
+    end.
+
+normalize_contract_path(Contract) ->
+    Clean = filename:join(filename:split(Contract)),
+    case filename:split(Clean) of
+        ["contracts" | Rest] ->
+            filename:join(Rest);
+        _ ->
+            Clean
+    end.
+beam_relative_priv() ->
+    EbinDir = filename:dirname(code:which(?MODULE)),
+    filename:join(filename:dirname(EbinDir), "priv").
 contract_call(
     ContractAddress,
     Contract,
@@ -1113,56 +998,37 @@ contract_call(
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
 
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    GasPrice = min_gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
+    GasPrice = vanillae:min_gas_price(),
 
-    DummyGas = min_gas(),
-    Fee0 = min_fee(),
+    {ok, AACI} = vanillae:prepare_contract(Contract),
 
-    %% 1) Build dummy tx for estimation
+    %% First build raw tx with dummy values to estimate gas
+    DummyGas = vanillae:min_gas(),
+    DummyFee = vanillae:min_fee(),
+
     {ok, ContractCall0} = vanillae:contract_call(
-        AeAccount,
-        Nonce,
-        DummyGas,
-        GasPrice,
-        Fee0,
-        Amount,
-        AACI,
-        ContractAddress,
-        Func,
-        Args
+        AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args
     ),
     Signature0 = make_transaction_signature_base58(PrivateKey, ContractCall0),
     SignedTx0 = attach_signature_base58(ContractCall0, Signature0),
-    {transaction, TxBin0} = aeser_api_encoder:decode(SignedTx0),
+    {transaction, TxBin} = aeser_api_encoder:decode(SignedTx0),
 
-    %% 2) Estimate inner contract execution gas with floor + headroom
-    Gas = estimate_contract_call_gas(TxBin0),
-
-    %% keep current fee style for now
+    %% Calculate correct gas + fee
+    Gas = gas_for_contract_call_fate(TxBin),
     Fee = Gas * GasPrice,
 
-    %% 3) Rebuild final tx
+    %% Rebuild final tx with correct gas and fee
     {ok, ContractCall} = vanillae:contract_call(
-        AeAccount,
-        Nonce,
-        Gas,
-        GasPrice,
-        Fee,
-        Amount,
-        AACI,
-        ContractAddress,
-        Func,
-        Args
+        AeAccount, Nonce, Gas, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
     ),
     Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
     SignedTX = attach_signature_base58(ContractCall, Signature),
 
     case vanillae:post_tx(SignedTX) of
         {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
+            wait_tx(ContractCallTxHash);
         Error ->
-            throw(Error)
+            Error
     end.
 
 contract_call_dry(
@@ -1172,38 +1038,22 @@ contract_call_dry(
     Func,
     Args
 ) ->
-    {ok, AccInfo} = vanillae:acc(AeAccount),
-    {ok, NextNonce} = vanillae:next_nonce(AeAccount),
-    ?LOG_WARNING(
-        "dry-run account=~p acc=~p next_nonce=~p",
-        [AeAccount, AccInfo, NextNonce]
-    ),
-
-    Fee = min_fee(),
-    Gas = min_gas(),
-    GasPrice = min_gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(contract_path(Contract)),
+    ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
+    {ok, Nonce} = vanillae:next_nonce(AeAccount),
+    Fee = vanillae:min_fee(),
+    Gas = 100000,
+    GasPrice = vanillae:min_gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(Contract),
     {ok, ContractCall} = vanillae:contract_call(
-        AeAccount, NextNonce, Gas, GasPrice, Fee, 0, AACI, ContractAddress, Func, Args
+        AeAccount, Nonce, Gas, GasPrice, Fee, 0, AACI, ContractAddress, Func, Args
     ),
-    ?LOG_WARNING("dry-run tx built with nonce=~p", [NextNonce]),
-    case vanillae:dry_run(ContractCall) of
-        {ok, #{"results" := [Result | _]}} ->
-            tx_info_convert_dry_run_result_safe(Result);
-        Other ->
-            {error, Other}
-    end.
-
-tx_info_convert_dry_run_result_safe(
-    #{"call_obj" := #{"return_value" := Encoded} = CallInfo}
-) ->
-    case vanillae:decode_bytearray_fate(Encoded) of
-        {ok, {tuple, ReturnValue}} -> {ok, maps:put("return_value", ReturnValue, CallInfo)};
-        {ok, ReturnValue} -> {ok, maps:put("return_value", ReturnValue, CallInfo)};
-        ReturnValue -> {ok, maps:put("return_value", ReturnValue, CallInfo)}
-    end;
-tx_info_convert_dry_run_result_safe(Error) ->
-    {error, Error}.
+    {ok, #{
+        "results" :=
+            [Result | _],
+        "tx_events" := []
+    }} =
+        vanillae:dry_run(ContractCall),
+    tx_info_convert_dry_run_result(Result).
 
 contract_deploy(Contract, Args) ->
     Keypair = secrets:node_keypair(),
@@ -1211,38 +1061,22 @@ contract_deploy(Contract, Args) ->
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Amount = 0,
-    GasPrice = min_gas_price(),
+    GasPrice = vanillae:min_gas_price() * 2,
     %% First build raw tx with dummy values to estimate gas
-    DummyGas = min_gas(),
+    DummyGas = vanillae:min_gas(),
     DummyFee = vanillae:min_fee(),
 
     {ok, ContractData} = vanillae:contract_create(
-        AeAccount,
-        AeAccountNonce,
-        Amount,
-        DummyGas,
-        GasPrice,
-        DummyFee,
-        Contract,
-        Args
+        AeAccount, AeAccountNonce, Amount, DummyGas, GasPrice, DummyFee, Contract, Args
     ),
-    ?LOG_INFO("Contract create ~p:~p ~p", [Contract, ContractData, Args]),
 
     SignedContract = sign_transaction_base58(PrivateKey, ContractData),
     {transaction, TxBin} = aeser_api_encoder:decode(SignedContract),
-    %CorrectGas = gas_for_contract_create_fate(TxBin),
-    CorrectGas = damage_ae_gas:build_gas(contract_deploy_tx, byte_size(TxBin), 0, 0),
+    CorrectGas = gas_for_contract_create_fate(TxBin),
     CorrectFee = CorrectGas * GasPrice,
     ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
     {ok, ContractData0} = vanillae:contract_create(
-        AeAccount,
-        AeAccountNonce,
-        Amount,
-        CorrectGas,
-        GasPrice,
-        CorrectFee,
-        Contract,
-        Args
+        AeAccount, AeAccountNonce, Amount, CorrectGas, GasPrice, CorrectFee, Contract, Args
     ),
     SignedContract0 = sign_transaction_base58(PrivateKey, ContractData0),
 
@@ -1265,10 +1099,10 @@ contract_deploy_for(
     Args
 ) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    DummyGas = min_gas(),
-    DummyFee = min_fee(),
+    DummyGas = vanillae:min_gas(),
+    DummyFee = vanillae:min_fee(),
     Amount = 0,
-    GasPrice = min_gas_price() * ?CONTRACT_CALL_GAS_MULTIPLIER,
+    GasPrice = vanillae:min_gas_price() * 4,
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
 
@@ -1286,7 +1120,7 @@ contract_deploy_for(
     {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
     %?LOG_INFO("Paying for tx ~p ~p ~p", [NodeAeAccount, NodeNonce, PayingForTx]),
 
-    CorrectGas = damage_ae_gas:calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
+    CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
     CorrectFee = CorrectGas * GasPrice,
 
     ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
@@ -1306,33 +1140,17 @@ contract_deploy_for(
     ?LOG_INFO("Paying for ~p", [PayingSignedTX]),
     case vanillae:post_tx(PayingSignedTX) of
         {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
+            wait_tx(ContractCallTxHash);
         Error ->
             Error
     end.
 
-with_ae_mdw_node(Fun) ->
-    {ok, ConnPid, PathPrefix} = get_ae_mdw_node(),
-    try
-        Fun(ConnPid, PathPrefix)
-    after
-        catch gun:close(ConnPid)
-    end.
-
-middleware_balance(Account) when is_binary(Account) ->
-    middleware_balance(binary_to_list(Account));
-middleware_balance(Account) ->
-    with_ae_mdw_node(fun(ConnPid, PathPrefix) ->
-        Path = PathPrefix ++ "v3/aex9/" ++ ?DAMAGE_TOKEN_CONTRACT ++ "/balances/" ++ Account,
-        StreamRef = gun:get(ConnPid, Path),
-        #{amount := Amount} = read_stream(ConnPid, StreamRef),
-        Amount
-    end).
 contract_balance(Account) ->
     #{public_key := NodeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
+
+    NodeAccountStr = binary_to_list(NodeAccount),
     #{
-        "caller_id" :=
-            NodeAccount,
+        "caller_id" := NodeAccountStr,
         "caller_nonce" := _,
         "contract_id" :=
             ?DAMAGE_TOKEN_CONTRACT,
@@ -1345,7 +1163,7 @@ contract_balance(Account) ->
     } = contract_call(
         KeyPair,
         ?DAMAGE_TOKEN_CONTRACT,
-        "contracts/token.aes",
+        contract_path(damage, "contracts/token.aes"),
         "balance",
         [Account]
     ),
@@ -1451,8 +1269,8 @@ make_transaction_signature_base58(Priv, {inner, EncodedTX}) ->
     aeser_api_encoder:encode(signature, Sig);
 make_transaction_signature_base58(Priv, EncodedTX) ->
     {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
-    Sig = make_transaction_signature(Priv, TX),
-    aeser_api_encoder:encode(signature, Sig).
+    Signature = make_transaction_signature(Priv, TX),
+    aeser_api_encoder:encode(signature, Signature).
 
 make_transaction_signature(Priv, {inner, TX}) ->
     Id = list_to_binary(vanillae:network_id() ++ "-inner_tx"),
@@ -1483,18 +1301,29 @@ sign_transaction_base58(Priv, EncodedTX) ->
     SignedTX = sign_transaction(Priv, TX),
     aeser_api_encoder:encode(transaction, SignedTX).
 
-%% -------------------------------------------------------------------
-%% helpers
-%% -------------------------------------------------------------------
-
-add_gas_buffer(Gas) when is_integer(Gas), Gas >= 0 ->
-    %% ceil(Gas * 1.20)
-    (Gas * (100 + ?CONTRACT_CALL_GAS_BUFFER_PCT) + 99) div 100.
-
-estimate_contract_call_gas(TxBin) when is_binary(TxBin) ->
-    GenericGas = damage_ae_gas:build_gas(contract_call_tx, byte_size(TxBin), 0, 0),
-    FloorGas = erlang:max(GenericGas, ?CONTRACT_CALL_GAS_FLOOR),
-    erlang:max(min_gas(), add_gas_buffer(FloorGas)).
+tx_info_convert_dry_run_result(Result) ->
+    case Result of
+        #{
+            "call_obj" := #{
+                "caller_id" := _CallerId,
+                "caller_nonce" := _CallerNonce,
+                "contract_id" := _ContractId,
+                "gas_price" := _GasPrice,
+                "gas_used" := _GasUsed,
+                "height" := _Height,
+                "log" := _log,
+                "return_type" := _ReturnType,
+                "return_value" := Encoded
+            } = CallInfo
+        } ->
+            case vanillae:decode_bytearray_fate(Encoded) of
+                {ok, {tuple, ReturnValue}} -> maps:put("return_value", ReturnValue, CallInfo);
+                {ok, ReturnValue} -> maps:put("return_value", ReturnValue, CallInfo);
+                ReturnValue -> maps:put("return_value", ReturnValue, CallInfo)
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 tx_info_convert_result(Result) ->
     case Result of
@@ -1540,7 +1369,7 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     end.
 
 wait_tx(ConId) ->
-    poll_tx(fun vanillae:tx_info/1, [ConId], ?TX_POLL_INTERVAL, ?TX_POLL_TIMEOUT).
+    poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 55000).
 
 node_ae_balance() ->
     case secrets:node_keypair() of
@@ -1562,153 +1391,28 @@ node_ae_balance() ->
 
 node_damage_balance() ->
     #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
-    case balance(AeAccount) of
-        null -> 0;
-        0 -> 0;
-        Balance -> Balance / math:pow(10, ?DAMAGE_DECIMALS)
-    end.
+    Balance = balance(AeAccount),
+    Balance / math:pow(10, ?DAMAGE_DECIMALS).
 
-%% Post the already-signed tx, with optional paying_for wrapper
-%-spec post_signed_or_payfor(binary(), boolean()) -> {ok, map()} | {error, term()}.
-%post_signed_or_payfor(SignedTx, true) ->
-%    %% Node pays the fee; inner must be signed by initiator.
-%
-%    %% your existing helper that wraps+posts
-%    payfor_tx(SignedTx);
-%post_signed_or_payfor(SignedTx, false) ->
-%    vanillae:post_tx(SignedTx).
-
-%% Post already-signed tx, or wrap in paying_for if you prefer node-paid fees
-post_signed_or_payfor(SignedTx) ->
-    %% Option A: direct post (tx must be signed by initiator)
-    %% vanillae:post_tx(SignedTx).
-
-    %% Option B: node pays fee, inner must be signed by initiator:
-
-    %% your existing helper; returns {ok, #{ "tx_hash" := ...}} or {error, ...}
-    payfor_tx(SignedTx).
-maybe_cancel(undefined) ->
-    ok;
-maybe_cancel(TRef) ->
-    _ = erlang:cancel_timer(TRef),
-    ok.
-%% -------- LN swap reconciliation helpers (contained to cln) --------
-
-swap_key(Inv) when is_map(Inv) ->
-    case maps:get(payment_hash, Inv, undefined) of
-        undefined -> maps:get(label, Inv, undefined);
-        PH -> PH
-    end.
-
-is_paid_invoice(Inv) when is_map(Inv) ->
-    %% Accept either the native CLN listinvoices status or our runtime-enriched status field.
-    case maps:get(status, Inv, undefined) of
-        <<"paid">> ->
-            true;
-        paid ->
-            true;
-        _ ->
-            case maps:get(status_runtime, Inv, undefined) of
-                <<"paid">> -> true;
-                paid -> true;
-                _ -> false
-            end
-    end.
-
-is_damage_label(Inv) when is_map(Inv) ->
-    case maps:get(label, Inv, undefined) of
-        <<"damage:", _/binary>> -> true;
-        _ -> false
-    end.
-
-already_reconciled(Key) ->
-    ensure_swap_ledger(),
-    case ets:lookup(?LN_SWAP_LEDGER, Key) of
-        [{_, _, _}] -> true;
-        _ -> false
-    end.
-
-mark_reconciled(Key, Meta) ->
-    %% Ensure ledger exists in case owner process restarted.
-    ensure_swap_ledger(),
-    true = ets:insert(?LN_SWAP_LEDGER, {Key, Meta, erlang:system_time(second)}),
-    ok.
-
-maybe_mark_reconciled(Inv) when is_map(Inv) ->
-    Key = swap_key(Inv),
-    case Key of
-        undefined -> ok;
-        _ -> mark_reconciled(Key, Inv)
-    end;
-maybe_mark_reconciled(_) ->
-    ok.
-ensure_swap_ledger() ->
-    case ets:info(?LN_SWAP_LEDGER) of
-        undefined ->
-            %% Create the table in the websocket worker (so it stays alive as long as ws stays alive).
-            %% Named table allows other processes to read it by name.
-            try ets:new(?LN_SWAP_LEDGER, [set, public, named_table, {read_concurrency, true}]) of
-                _Tid ->
-                    ?LOG_INFO("~p created", [?LN_SWAP_LEDGER]),
-                    ok
-            catch
-                error:badarg ->
-                    %% Race: another process created it between info/1 and new/2
-                    ok
-            end;
-        _ ->
-            ok
-    end.
-
-list_invoices_http(Params, #{cln_host := Host, cln_port := Port, rune := Rune, options := Options}) ->
-    {ok, Rune} =
-        secrets:retrieve_decrypt(cln_rune),
-    Headers = [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}],
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    Path = "/v1/listinvoices",
-    ReqJson = jsx:encode(Params),
-    StreamRef = gun:post(ConnPid, Path, Headers, ReqJson),
-    Resp =
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-            {response, fin, _Status, _RespHeaders} ->
-                no_data;
-            {response, nofin, _Status, _RespHeaders} ->
-                gun:await_body(ConnPid, StreamRef);
-            {response, nofin, _RespHeaders} ->
-                gun:await_body(ConnPid, StreamRef);
-            Default ->
-                {error, Default}
-        end,
-    _ = gun:cancel(ConnPid, StreamRef),
-    _ = gun:close(ConnPid),
-    case Resp of
-        {ok, Body} ->
-            jsx:decode(Body, [return_maps, {labels, atom}]);
-        no_data ->
-            #{};
-        {error, _} = Err ->
-            Err
-    end.
+deploy_account_registry(AccountKeypair) ->
+    #{"contract_id" := ContractId} = contract_deploy_for(
+        AccountKeypair, contract_path(damage, "contracts/AccountRegistry.aes"), []
+    ),
+    ContractId.
 deploy_node_registry() ->
     AccountKeypair = secrets:node_keypair(),
     #{"contract_id" := ContractId} = contract_deploy_for(
-        AccountKeypair, "contracts/AccountRegistry.aes", []
+        AccountKeypair, contract_path(damage, "contracts/AccountRegistry.aes"), []
     ),
     ContractId.
-
-deploy_damage_nft() ->
-    AccountKeypair = secrets:node_keypair(),
-    #{"contract_id" := ContractId} = contract_deploy_for(
-        AccountKeypair, "contracts/AccountRegistry.aes", []
-    ),
-    ContractId.
-
-mint_nft_report(_TestTx) ->
-    ok.
-
+-spec float_to_full_integer(float()) -> integer().
+float_to_full_integer(F) when is_float(F) ->
+    round(F).
 test_contract_deploy() ->
     KeyPair = secrets:node_keypair(),
-    #{"contract_id" := ContractId} = contract_deploy(KeyPair, "contracts/test.aes", []),
+    #{"contract_id" := ContractId} = contract_deploy(
+        KeyPair, contract_path(damage, "contracts/test.aes"), []
+    ),
     ContractId.
 test_contract_deploy_for() ->
     {ok, TestUserEmail} = application:get_env(damage, test_user),
@@ -1717,7 +1421,7 @@ test_contract_deploy_for() ->
     ),
     #{"contract_id" := ContractId} = contract_deploy_for(
         #{public_key => PubKey, private_key => PrivateKey},
-        "contracts/test.aes",
+        contract_path(damage, "contracts/test.aes"),
         []
     ),
     ContractId.
@@ -1726,7 +1430,7 @@ test_contract_call() ->
     #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
     ContractId = test_contract_deploy(),
     ?LOG_DEBUG("contract account ~p", [ContractId]),
-    contract_call(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
+    contract_call(KeyPair, ContractId, contract_path(damage, "contracts/test.aes"), "f", [2]).
 %contract_call_dry(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
 
 test_paying_for_tx() ->
@@ -1747,7 +1451,7 @@ test_paying_for_tx() ->
     contract_call_payfor_user(
         #{public_key => PubKey, private_key => PrivateKey},
         ?DAMAGE_TOKEN_CONTRACT,
-        "contracts/token.aes",
+        contract_path(damage, "contracts/token.aes"),
         %"balance",
         %[PubKey]
         "spend",
@@ -1758,20 +1462,27 @@ test_find_block() ->
     {Today, _Now} = calendar:local_time(),
     Yesterday = date_util:subtract(Today, {days, 1}),
     ADayAgo = date_util:date_to_epoch(Yesterday),
-    with_ae_mdw_node(fun(ConnPid, _PathPrefix) ->
-        case find_block_at_timestamp(ADayAgo * 1000, ConnPid) of
-            {ok, Block, Mblocks} ->
-                ?LOG_INFO("Found block ~p ~p", [Block, Mblocks]);
-            Error ->
-                ?LOG_ERROR("block not found ~p", [Error])
-        end
-    end).
+    case get_ae_mdw_node() of
+        {ok, ConnPid, _PathPrefix} ->
+            case find_block_at_timestamp(ADayAgo * 1000, ConnPid) of
+                {ok, Block, Mblocks} ->
+                    ?LOG_INFO("Found block ~p ~p", [Block, Mblocks]);
+                Error ->
+                    ?LOG_ERROR("block not found ~p", [Error])
+            end;
+        Error ->
+            ?LOG_ERROR("Failed to find block timestamp ~p", [Error])
+    end.
+
 test_get_block_height_since() ->
-    with_ae_mdw_node(fun(ConnPid, _PathPrefix) ->
-        Result = get_block_height_since(36, ConnPid),
-        ?LOG_INFO("block height ~p", [Result]),
-        Result
-    end).
+    case get_ae_mdw_node() of
+        {ok, ConnPid, _PathPrefix} ->
+            Result = get_block_height_since(36, ConnPid),
+            ?LOG_INFO("block height ~p", [Result]),
+            Result;
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err])
+    end.
 
 test_verify_message() ->
     #{public_key := PubKey, private_key := PrivateKey} = secret:node_keypair(),

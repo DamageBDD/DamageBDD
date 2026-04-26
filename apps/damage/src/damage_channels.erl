@@ -47,7 +47,6 @@
 
 -export([snapshot_solo/2]).
 -export([force_progress_contract_call/2]).
--import(damage_ae, [contract_path/1]).
 -import(damage_utils, [ct_id/2, to_bin/1, to_int/1]).
 
 %%===================================================================
@@ -184,7 +183,9 @@ init_job(ChannelId, _Meta) ->
 
     case
         channel_contract_call(
-            ChanPid, CtId, contract_path(Src), "create_job", Args, Gas, 0, #{job_id => JobId}
+            ChanPid, CtId, contract_path(damage, Src), "create_job", Args, Gas, 0, #{
+                job_id => JobId
+            }
         )
     of
         {ok, Receipt} ->
@@ -270,29 +271,6 @@ get_channel(ChannelId) ->
             {error, Reason}
     end.
 
-get_mdw_transaction(TxId) ->
-    damage_ae:with_ae_mdw_node(fun(ConnPid, Prefix) ->
-        PathBin =
-            Prefix ++
-                "v3/transactions/" ++
-                TxId,
-        Headers = [{<<"accept">>, <<"application/json">>}],
-        StreamRef = gun:get(ConnPid, PathBin, Headers),
-        case gun:await(ConnPid, StreamRef, 50000) of
-            {response, _Fin, 200, _RespHeaders} ->
-                {ok, Body} = gun:await_body(ConnPid, StreamRef),
-                ?LOG_DEBUG("chanel Data ~p", [Body]),
-                case jsx:decode(Body, [{labels, atom}, return_maps]) of
-                    Acts when is_map(Acts) ->
-                        {ok, Acts};
-                    _ ->
-                        {error, ae_invalid_reply}
-                end;
-            Other ->
-                ?LOG_DEBUG("chanel path ~s", [PathBin]),
-                {error, {ae_http_error, Other}}
-        end
-    end).
 get_existing_channel(ChannelId) ->
     case damage_ae:get_ae_mdw_node() of
         {ok, ConnPid, Prefix} ->
@@ -495,7 +473,7 @@ handle_call({force_progress_contract_call, Opts}, _From, S = #state{}) ->
     {ok, Signed} = signer:sign_tx(FromId, Unsigned),
 
     %% Post (optionally paying_for wrapper if node covers fee)
-    Res = damage_ae:post_signed_or_payfor(Signed, false),
+    Res = post_signed_or_payfor(Signed, false),
     {reply, Res, S};
 %% 4) handler (add to handle_call/3)
 handle_call(
@@ -506,47 +484,48 @@ handle_call(
     GasPrice = vanillae:min_gas_price(),
     %Fun = to_bin(Fun0),
     try
-        {ok, AACI} = vanillae:prepare_contract(Source),
-        ?LOG_DEBUG("Contract prepared ~p ~p", [Source, AACI]),
-        {ok, Calldata} = vanillae:encode_call_data(AACI, Fun, Args),
+        case encode_call_data(Source, Fun, Args) of
+            {ok, Calldata} ->
+                %% Off-chain update payload (two-phase; we auto-ack since node is responder)
+                Update = #{
+                    type => contract_call,
+                    ct_id => CtId,
+                    function => Fun,
+                    calldata => Calldata,
+                    gas => Gas,
+                    gas_price => GasPrice,
+                    amount => Amount,
+                    from => Ch0#ch.initiator,
+                    to => Ch0#ch.responder,
+                    meta => Meta,
+                    round => Ch0#ch.round + 1
+                },
 
-        %% Off-chain update payload (two-phase; we auto-ack since node is responder)
-        Update = #{
-            type => contract_call,
-            ct_id => CtId,
-            function => Fun,
-            calldata => Calldata,
-            gas => Gas,
-            gas_price => GasPrice,
-            amount => Amount,
-            from => Ch0#ch.initiator,
-            to => Ch0#ch.responder,
-            meta => Meta,
-            round => Ch0#ch.round + 1
-        },
+                Round1 = Ch0#ch.round + 1,
+                Root1 = crypto:hash(sha256, term_to_binary({Update, Round1, Ch0#ch.state_hash})),
 
-        Round1 = Ch0#ch.round + 1,
-        Root1 = crypto:hash(sha256, term_to_binary({Update, Round1, Ch0#ch.state_hash})),
+                Ch1 = Ch0#ch{
+                    round = Round1,
+                    state_hash = Root1,
+                    last_payload = Update,
+                    pending_updates = []
+                },
 
-        Ch1 = Ch0#ch{
-            round = Round1,
-            state_hash = Root1,
-            last_payload = Update,
-            pending_updates = []
-        },
-
-        Receipt = #{
-            kind => contract_call,
-            ct_id => CtId,
-            "fun" => Fun,
-            round => Round1,
-            state_hash => Root1,
-            gas => Gas,
-            gas_price => GasPrice,
-            amount => Amount,
-            meta => Meta
-        },
-        {reply, {ok, Receipt}, S0#state{ch = Ch1}}
+                Receipt = #{
+                    kind => contract_call,
+                    ct_id => CtId,
+                    "fun" => Fun,
+                    round => Round1,
+                    state_hash => Root1,
+                    gas => Gas,
+                    gas_price => GasPrice,
+                    amount => Amount,
+                    meta => Meta
+                },
+                {reply, {ok, Receipt}, S0#state{ch = Ch1}};
+            {error, Reason} ->
+                {reply, {error, Reason}, S0}
+        end
     catch
         C:R:S ->
             {reply, {error, {C, R, S}}, S0}
@@ -917,7 +896,77 @@ channel_create_tx(
             ?LOG_ERROR("channel_create_tx failed: ~p:~p~n~p", [C, R, S]),
             {error, {C, R}}
     end.
+contract_path(App, Contract0) ->
+    PrivDir = priv_dir_source_first(App),
+    Contract = normalize_contract_path(Contract0),
+    filename:join([PrivDir, "contracts", Contract]).
 
+priv_dir_source_first(App) ->
+    SourcePriv = filename:join(["apps", atom_to_list(App), "priv"]),
+    case filelib:is_dir(SourcePriv) of
+        true -> SourcePriv;
+        false -> priv_dir_fallback(App)
+    end.
+
+priv_dir_fallback(App) ->
+    case code:priv_dir(App) of
+        {error, _} -> beam_relative_priv();
+        Path -> Path
+    end.
+
+beam_relative_priv() ->
+    EbinDir = filename:dirname(code:which(?MODULE)),
+    filename:join(filename:dirname(EbinDir), "priv").
+
+normalize_contract_path(Contract) ->
+    Clean = filename:join(filename:split(Contract)),
+    case filename:split(Clean) of
+        ["contracts" | Rest] -> filename:join(Rest);
+        _ -> Clean
+    end.
+
+min_fee() ->
+    vanillae:min_fee() * 2.
+
+post_signed_or_payfor(SignedTx, false) ->
+    vanillae:post_tx(SignedTx);
+post_signed_or_payfor(SignedTx, true) ->
+    damage_ae:contract_call_payfor_tx(SignedTx).
+
+encode_call_data(Source, Fun0, Args) ->
+    Fun =
+        case Fun0 of
+            A when is_atom(A) -> atom_to_binary(A, utf8);
+            B when is_binary(B) -> B;
+            L when is_list(L) -> list_to_binary(L)
+        end,
+    try
+        {ok, AACI} = vanillae:prepare_contract(Source),
+        aeb_fate_abi:encode_call_data(AACI, Fun, Args)
+    catch
+        C:R:S ->
+            {error, {calldata_encode_failed, {C, R, S}}}
+    end.
+
+get_mdw_transaction(TxId) ->
+    case damage_ae:get_ae_mdw_node() of
+        {ok, ConnPid, Prefix} ->
+            PathBin = Prefix ++ "v3/transactions/" ++ TxId,
+            Headers = [{<<"accept">>, <<"application/json">>}],
+            StreamRef = gun:get(ConnPid, PathBin, Headers),
+            case gun:await(ConnPid, StreamRef, 50000) of
+                {response, _Fin, 200, _RespHeaders} ->
+                    {ok, Body} = gun:await_body(ConnPid, StreamRef),
+                    case jsx:decode(Body, [{labels, atom}, return_maps]) of
+                        Acts when is_map(Acts) -> {ok, Acts};
+                        _ -> {error, ae_invalid_reply}
+                    end;
+                Other ->
+                    {error, {ae_http_error, Other}}
+            end;
+        Error ->
+            Error
+    end.
 test() ->
     {ok, TestUserEmail} = application:get_env(damage, test_user),
     {TestPubKey, _Password, UserPrivateKey} = identity_server:get_account_by_email(
@@ -947,7 +996,7 @@ test() ->
             10,
             144,
             0,
-            damage_ae:min_fee()
+            min_fee()
         ),
     ?LOG_INFO("Channel opening privkey ~p ", [UserPrivateKey]),
     Sig = damage_ae:make_transaction_signature_base58(UserPrivateKey, Tx),
@@ -984,7 +1033,7 @@ test() ->
             to_bin(NodePublicKey),
             StateHash,
             0,
-            damage_ae:min_fee()
+            min_fee()
         ),
     SnapSig = damage_ae:make_transaction_signature_base58(NodePrivateKey, SnapTx),
     SignedSnapTx = damage_ae:attach_signature_base58(SnapTx, SnapSig),
