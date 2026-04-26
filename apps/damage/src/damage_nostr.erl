@@ -2239,8 +2239,6 @@ relay_ws_headers(Relay0, ExtraHeaders) ->
         case relay_profile(Relay0) of
             cloudflare_browser ->
                 [
-                    {<<"host">>, list_to_binary(Host)},
-                    {<<"origin">>, <<"https://damus.io">>},
                     {<<"user-agent">>,
                         <<"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36">>},
                     {<<"accept">>, <<"*/*">>},
@@ -2250,22 +2248,17 @@ relay_ws_headers(Relay0, ExtraHeaders) ->
                 ];
             primal ->
                 [
-                    {<<"host">>, list_to_binary(Host)},
-                    {<<"origin">>, <<"https://primal.net">>},
                     {<<"user-agent">>,
                         <<"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36">>},
                     {<<"accept">>, <<"*/*">>}
                 ];
             yakihonne ->
                 [
-                    {<<"host">>, list_to_binary(Host)},
-                    {<<"origin">>, <<"https://yakihonne.com">>},
                     {<<"user-agent">>, <<"damagebdd/1.0">>},
                     {<<"accept">>, <<"*/*">>}
                 ];
             _ ->
                 [
-                    {<<"host">>, list_to_binary(Host)},
                     {<<"user-agent">>, <<"damagebdd/1.0">>},
                     {<<"accept">>, <<"*/*">>}
                 ]

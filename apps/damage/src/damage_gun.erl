@@ -302,18 +302,47 @@ await_up(ConnPid, Timeout) ->
         Other ->
             {error, {await_up_failed, Other}}
     end.
+normalize_ws_path(Path0) ->
+    Path = normalize_path(Path0),
+    case uri_string:parse(Path) of
+        #{scheme := Scheme} when Scheme =:= "ws"; Scheme =:= "wss" ->
+            error({invalid_ws_upgrade_path_full_url, Path});
+        #{scheme := Scheme} when Scheme =:= <<"ws">>; Scheme =:= <<"wss">> ->
+            error({invalid_ws_upgrade_path_full_url, Path});
+        _ ->
+            Path
+    end.
 
+sanitize_ws_headers(Headers) ->
+    lists:filter(
+        fun({K, _}) ->
+            not lists:member(K, [
+                <<"host">>,
+                <<"connection">>,
+                <<"upgrade">>,
+                <<"sec-websocket-key">>,
+                <<"sec-websocket-version">>
+            ])
+        end,
+        Headers
+    ).
 ws_upgrade(ConnPid, Path) ->
     ws_upgrade(ConnPid, Path, []).
 
-ws_upgrade(ConnPid, Path0, Headers) ->
-    Path = normalize_path(Path0),
-    StreamRef = gun:ws_upgrade(ConnPid, Path, Headers),
+ws_upgrade(ConnPid, Path0, WsHeaders) ->
+    Path = normalize_ws_path(Path0),
+    SafeHeaders = sanitize_ws_headers(WsHeaders),
+    ?LOG_INFO("WS upgrade ~p ~p", [Path, SafeHeaders]),
+    StreamRef = gun:ws_upgrade(ConnPid, Path, SafeHeaders),
     receive
         {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _RespHeaders} ->
             {ok, StreamRef};
         {gun_response, ConnPid, StreamRef, Fin, Status, RespHeaders} ->
             maybe_drain_http_body(ConnPid, StreamRef, Fin),
+            ?LOG_ERROR(
+    "WS upgrade failed status=~p resp_headers=~p sent_headers=~p",
+    [Status, RespHeaders, SafeHeaders]
+),
             {error, {upgrade_failed, Status, RespHeaders}};
         {gun_ws, ConnPid, StreamRef, close} ->
             {error, {ws_closed, close}};
