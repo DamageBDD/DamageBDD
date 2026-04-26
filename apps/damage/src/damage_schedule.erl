@@ -956,7 +956,7 @@ contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
     damage_ae:contract_call_payfor_user(
         AeAccount,
         get_schedules_contract(),
-        "contracts/schedules.aes",
+        damage_ae:contract_path(damage, "contracts/schedules.aes"),
         Func,
         Args
     ).

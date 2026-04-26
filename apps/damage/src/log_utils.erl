@@ -10,7 +10,11 @@
     tail_file/3,
     query_journald/4,
     match_lines/2,
-    filter_by_module/2
+    filter_by_module/2,
+    summarize/1,
+    summarize/2,
+    summarize_fmt/1,
+    summarize_fmt/2
 ]).
 
 -define(REGEX_OPTS, [unicode, dotall, multiline]).
@@ -159,3 +163,90 @@ filter_by_module(LogEvent = #{meta := Meta}, Module) ->
     end;
 filter_by_module(_, _) ->
     stop.
+%% ------------------------------------------------------------------
+%% Safe bounded term summarisation for logs
+%% ------------------------------------------------------------------
+
+summarize(Term) ->
+    summarize(Term, #{}).
+
+summarize(Term, Opts0) ->
+    Opts = maps:merge(
+        #{
+            depth => 5,
+            max_binary => 96,
+            max_list => 20,
+            max_map => 20,
+            max_tuple => 20
+        },
+        Opts0
+    ),
+    summarize_1(Term, maps:get(depth, Opts), Opts).
+
+summarize_fmt(Term) ->
+    summarize_fmt(Term, #{}).
+
+summarize_fmt(Term, Opts) ->
+    io_lib:format("~p", [summarize(Term, Opts)]).
+
+summarize_1(Term, 0, _Opts) ->
+    summarize_marker(Term);
+summarize_1(Bin, _Depth, Opts) when is_binary(Bin) ->
+    Max = maps:get(max_binary, Opts),
+    Size = byte_size(Bin),
+    case Size > Max of
+        true ->
+            Head = binary:part(Bin, 0, Max),
+            #{type => binary, bytes => Size, head => Head};
+        false ->
+            Bin
+    end;
+summarize_1(Map, Depth, Opts) when is_map(Map) ->
+    Max = maps:get(max_map, Opts),
+    Pairs = lists:sublist(maps:to_list(Map), Max),
+    #{
+        type => map,
+        size => maps:size(Map),
+        sample => maps:from_list([
+            {summarize_1(K, Depth - 1, Opts), summarize_1(V, Depth - 1, Opts)}
+         || {K, V} <- Pairs
+        ])
+    };
+summarize_1(List, Depth, Opts) when is_list(List) ->
+    Max = maps:get(max_list, Opts),
+    Sample = lists:sublist(List, Max),
+    #{
+        type => list,
+        length => safe_list_length(List),
+        sample => [summarize_1(X, Depth - 1, Opts) || X <- Sample]
+    };
+summarize_1(Tuple, Depth, Opts) when is_tuple(Tuple) ->
+    Max = maps:get(max_tuple, Opts),
+    Size = tuple_size(Tuple),
+    Sample = lists:sublist(tuple_to_list(Tuple), Max),
+    list_to_tuple(
+        [
+            {tuple_size, Size}
+            | [summarize_1(X, Depth - 1, Opts) || X <- Sample]
+        ]
+    );
+summarize_1(Term, _Depth, _Opts) ->
+    Term.
+
+safe_list_length(List) ->
+    try
+        length(List)
+    catch
+        _:_ -> unknown
+    end.
+
+summarize_marker(Map) when is_map(Map) ->
+    #{type => map, size => maps:size(Map)};
+summarize_marker(List) when is_list(List) ->
+    #{type => list, length => safe_list_length(List)};
+summarize_marker(Tuple) when is_tuple(Tuple) ->
+    #{type => tuple, size => tuple_size(Tuple)};
+summarize_marker(Bin) when is_binary(Bin) ->
+    #{type => binary, bytes => byte_size(Bin)};
+summarize_marker(Term) ->
+    Term.

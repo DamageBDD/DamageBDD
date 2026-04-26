@@ -244,7 +244,14 @@ ensure_connected(S0) ->
         {ok, S1} ->
             S1;
         {error, Reason} ->
-            ?LOG_WARNING("Relay connect failed relay=~p reason=~p", [S0#state.relay, Reason]),
+            ?LOG_WARNING(
+                "Relay connect failed relay=~p reason=~p state=~p",
+                [
+                    log_utils:summarize(S0#state.relay),
+                    log_utils:summarize(Reason),
+                    log_utils:summarize(S0, #{depth => 3})
+                ]
+            ),
             schedule_reconnect(S0)
     end.
 

@@ -353,9 +353,9 @@ ws_upgrade(ConnPid, Path0, WsHeaders) ->
         {gun_response, ConnPid, StreamRef, Fin, Status, RespHeaders} ->
             maybe_drain_http_body(ConnPid, StreamRef, Fin),
             ?LOG_ERROR(
-    "WS upgrade failed status=~p resp_headers=~p sent_headers=~p",
-    [Status, RespHeaders, SafeHeaders]
-),
+                "WS upgrade failed status=~p resp_headers=~p sent_headers=~p",
+                [Status, RespHeaders, SafeHeaders]
+            ),
             {error, {upgrade_failed, Status, RespHeaders}};
         {gun_ws, ConnPid, StreamRef, close} ->
             {error, {ws_closed, close}};
