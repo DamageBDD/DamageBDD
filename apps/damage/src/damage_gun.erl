@@ -259,7 +259,7 @@ open_ws(Host, Port, Path) ->
 
 open_ws(Host0, Port, Path, Opts0) ->
     Host = normalize_open_host(Host0),
-    Transport = transport_for(Host, Port, maps:put_new(transport, tls, Opts0)),
+    Transport = transport_for(Host, Port, put_new(transport, tls, Opts0)),
     Headers = maps:get(headers, Opts0, maps:get(ws_headers, Opts0, [])),
     ConnectTimeout = maps:get(connect_timeout, Opts0, ?DEFAULT_CONNECT_TIMEOUT),
     Proxy = proxy_policy(Host, maps:get(proxy, Opts0, auto)),
@@ -400,6 +400,8 @@ match_host(Host, Pattern0) ->
 %% Internal helpers
 %% ===================================================================
 
+normalize_opts(Host, auto, Opts0) ->
+    normalize_opts(Host, transport_for(Host, maps:get(port, Opts0, 443), Opts0), Opts0);
 normalize_opts(Host, tls, Opts0) ->
     TlsOpts0 = maps:get(tls_opts, Opts0, []),
     TlsOpts = merge_tls_opts(Host, TlsOpts0),
@@ -531,3 +533,9 @@ truncate(Bin, Max) when is_binary(Bin) ->
 redact_proxy(none) -> none;
 redact_proxy(direct) -> none;
 redact_proxy({socks5, Host, Port}) -> {socks5, normalize_open_host(Host), Port}.
+
+put_new(Key, Val, Map) ->
+    case maps:is_key(Key, Map) of
+        true -> Map;
+        false -> maps:put(Key, Val, Map)
+    end.
