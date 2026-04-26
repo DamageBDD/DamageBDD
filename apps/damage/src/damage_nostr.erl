@@ -16,6 +16,7 @@
 
 -export([start_link/1, stop/1]).
 -export([subscribe/1, getinfo/1, reply_event/4]).
+-export([handle_continue/2]).
 -export([
     service_pubkey_hex/0,
     public_key_hex/0,
@@ -86,6 +87,22 @@
     generate_nsec/0,
     generate_nostr_keypair/0
 ]).
+-export([
+    relay_profile/1,
+    relay_ws_headers/2,
+    open_relay_ws/2,
+    open_best_relay_ws/2,
+    default_relays/0,
+    configured_relays/0,
+    normalize_relay/1,
+    normalize_relays/1
+]).
+-export([
+    score_relays/1,
+    parse_ws_url/1,
+    relay_score/1
+]).
+-export([relay_proxy/1]).
 -import(damage_utils, [to_bin/1]).
 
 %% Define the record to store state
@@ -97,10 +114,10 @@
     public_key,
     private_key,
     npub_cache = #{},
-    relay_host = undefined,
     reconnect_ms = 5000,
     retry_count = 0,
     max_retries = 10,
+    relay = undefined,
     stopped = false
 }).
 
@@ -263,27 +280,56 @@ nsec_to_npub(Nsec) ->
 %% Initialize the server and open a WebSocket connection
 
 init([NsecKey]) ->
-    {ok, HostRes} = application:get_env(damage, nostr_relay),
-    {ok, Parsed} = nostr_relay_worker:parse_wss_url(HostRes),
-    Host = maps:get(host, Parsed),
+    Relay = first_configured_relay(),
     case secrets:retrieve_decrypt(NsecKey) of
         {ok, Nsec} ->
             {PublicKey, PrivateKey} = nsec_to_npub(Nsec),
-            {ok, DamageApi} = application:get_env(damage, api_url),
             gproc:reg_other({n, l, ?NOSTR_PROC(NsecKey)}, self()),
             cln:register_listener(invoice_paid),
             State0 = #state{
                 public_key = PublicKey,
                 private_key = PrivateKey,
                 npub_cache = #{},
-                relay_host = Host,
+                relay = Relay,
                 reconnect_ms = 5000,
                 max_retries = 10
             },
-            {ok, maybe_connect(State0, DamageApi)};
+            {ok, State0, {continue, connect}};
         _ ->
             ?LOG_INFO("!!!! Nostr Integration disabled, set `~p` secret.", [NsecKey]),
             {ok, #state{stopped = true}}
+    end.
+handle_continue(connect, State) ->
+    case application:get_env(damage, api_url) of
+        {ok, DamageApi} ->
+            NewState =
+                try
+                    maybe_connect(State, DamageApi)
+                catch
+                    C:R:S ->
+                        ?LOG_ERROR("nostr connect crash ~p", [
+                            #{class => C, reason => R, stack => S}
+                        ]),
+                        schedule_reconnect(State)
+                end,
+            {noreply, NewState};
+        _ ->
+            {noreply, State}
+    end.
+open_nostr_ws(Relay, DamageApi) ->
+    Headers = [
+        {<<"origin">>, list_to_binary(DamageApi)}
+    ],
+    case open_relay_ws(Relay, #{ws_headers => Headers, connect_timeout => 15000}) of
+        {ok, ConnPid, StreamRef} ->
+            {ok, ConnPid, StreamRef};
+        {error, Reason} ->
+            ?LOG_ERROR("Nostr websocket open failed relay=~p proxy=~p reason=~p", [
+                Relay,
+                damage_gun:proxy(),
+                Reason
+            ]),
+            {error, Reason}
     end.
 maybe_connect(#state{stopped = true} = State, _DamageApi) ->
     State;
@@ -294,8 +340,8 @@ maybe_connect(#state{retry_count = Retry, max_retries = Max} = State, _DamageApi
 ->
     ?LOG_ERROR("Nostr reconnect limit reached (~p/~p). Stopping reconnects.", [Retry, Max]),
     State#state{stopped = true, conn_pid = undefined, streamref = undefined};
-maybe_connect(#state{relay_host = Host, retry_count = Retry} = State, DamageApi) ->
-    case open_nostr_ws(Host, DamageApi) of
+maybe_connect(#state{relay = Relay, retry_count = Retry} = State, DamageApi) ->
+    case open_nostr_ws(Relay, DamageApi) of
         {ok, ConnPid, StreamRef} ->
             HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
             State#state{
@@ -308,7 +354,7 @@ maybe_connect(#state{relay_host = Host, retry_count = Retry} = State, DamageApi)
         {error, Reason} ->
             Retry1 = Retry + 1,
             ?LOG_WARNING("Nostr connect failed host=~p attempt ~p/~p reason=~p", [
-                Host, Retry1, State#state.max_retries, Reason
+                Relay, Retry1, State#state.max_retries, Reason
             ]),
             schedule_reconnect(
                 State#state{
@@ -317,43 +363,6 @@ maybe_connect(#state{relay_host = Host, retry_count = Retry} = State, DamageApi)
                     retry_count = Retry1
                 }
             )
-    end.
-
-open_nostr_ws(Host, DamageApi) ->
-    case
-        damage_gun:open(
-            Host,
-            443,
-            #{transport => tls, tls_opts => [{verify, verify_none}]}
-        )
-    of
-        {ok, ConnPid} ->
-            case catch gun:await_up(ConnPid) of
-                {ok, _Proto} ->
-                    StreamRef = gun:ws_upgrade(ConnPid, <<"/">>, [
-                        {<<"origin">>, list_to_binary(DamageApi)},
-                        {<<"user-agent">>, <<"damagebdd/1.0">>},
-                        {<<"sec-websocket-protocol">>, <<"nostr">>}
-                    ]),
-                    receive
-                        {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers} ->
-                            {ok, ConnPid, StreamRef};
-                        {gun_response, ConnPid, StreamRef, _Fin, Status, Headers} ->
-                            catch gun:close(ConnPid),
-                            {error, {upgrade_failed, Status, Headers}}
-                    after 100000 ->
-                        catch gun:close(ConnPid),
-                        {error, timeout}
-                    end;
-                {'EXIT', Reason} ->
-                    catch gun:close(ConnPid),
-                    {error, {await_up_exit, Reason}};
-                Error ->
-                    catch gun:close(ConnPid),
-                    {error, {await_up_failed, Error}}
-            end;
-        Error ->
-            Error
     end.
 
 schedule_reconnect(#state{stopped = true} = State) ->
@@ -497,7 +506,7 @@ handle_call(
     %{ok, Lud} = fetch_author_lud_ws(ConnPid, StreamRef, OriginalAuthorPubKey),
 
     %% however you store it
-    DefaultRelays = nostr_pool:default_relays(#{}),
+    DefaultRelays = default_relays(),
 
     AuthorRelays = fetch_author_relays(OriginalAuthorPubKey),
     ?LOG_DEBUG("AuthorRelays ~p", [AuthorRelays]),
@@ -659,7 +668,7 @@ handle_cast(Any, State) ->
     {noreply, State}.
 
 handle_info({cln_event, invoice_paid, Invoice}, State) ->
-    ?LOG_DEBUG("Nostr invoice_paid message: ~s~n", [Invoice]),
+    ?LOG_DEBUG("Nostr invoice_paid message: ~p~n", [Invoice]),
     try
         zap_receipt_for_invoice(Invoice, State)
     catch
@@ -1559,7 +1568,7 @@ zap_receipt_for_invoice(Invoice, #state{public_key = PubKey, private_key = PrivK
             publish_zap_receipt(State, Signed, ZapReq),
             ok;
         {error, Reason} ->
-            ?LOG_WARNING("Invoice paid but no valid zap request in description: ~p", [Reason]),
+            ?LOG_DEBUG("Invoice paid but no valid zap request in description: ~p", [Reason]),
             ok
     end.
 %% -------------------------------------------------------------------
@@ -1843,9 +1852,6 @@ normalize_pubkey(Pub0) when is_binary(Pub0); is_list(Pub0) ->
             ensure_32byte_hex(lower_hex_ascii64(Pub))
     end.
 
--spec bin_to_hex(binary()) -> binary().
-bin_to_hex(Bin) ->
-    list_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= Bin]).
 -spec npub_to_hex(binary()) -> binary().
 npub_to_hex(Npub0) ->
     list_to_binary(decode_npub(to_bin(Npub0))).
@@ -2168,7 +2174,293 @@ generate_nostr_keypair_test() ->
     ?assertEqual(Npub, Npub2),
 
     ok.
+relay_profile(#{profile := P}) ->
+    P;
+relay_profile(Relay0) ->
+    Relay = normalize_relay(Relay0),
+    Url = maps:get(url, Relay),
+    Host = relay_host(Url),
+    case Host of
+        "relay.damus.io" -> cloudflare_browser;
+        "relay.primal.net" -> primal;
+        "nostr-01.yakihonne.com" -> yakihonne;
+        "nostr-02.yakihonne.com" -> yakihonne;
+        _ -> default
+    end.
 
+open_relay_ws(Relay0, ExtraOpts0) ->
+    Relay = normalize_relay(Relay0),
+    Url = maps:get(url, Relay),
+
+    {Host, Port, Path, Tls} = parse_ws_url(Url),
+
+    BaseOpts =
+        case Tls of
+            true ->
+                #{
+                    transport => tls,
+                    protocols => [http],
+                    tls_opts => damage_gun:tls_opts(Host)
+                };
+            false ->
+                #{
+                    transport => tcp,
+                    protocols => [http]
+                }
+        end,
+
+    Proxy = relay_proxy(Relay),
+    ExtraHeaders = maps:get(ws_headers, ExtraOpts0, []),
+    Headers = relay_ws_headers(Relay, ExtraHeaders),
+
+    ExtraOpts = maps:without([ws_headers], ExtraOpts0),
+
+    Opts =
+        maps:merge(
+            BaseOpts,
+            ExtraOpts#{
+                proxy => Proxy,
+                ws_headers => Headers,
+                connect_timeout => maps:get(connect_timeout, ExtraOpts0, 15000)
+            }
+        ),
+
+    ?LOG_INFO("Opening relay url=~p profile=~p proxy=~p score=~p", [
+        Url,
+        relay_profile(Relay),
+        Proxy,
+        relay_score(Relay)
+    ]),
+
+    damage_gun:open_ws(Host, Port, Path, Opts).
+relay_ws_headers(Relay0, ExtraHeaders) ->
+    Host = relay_host(Relay0),
+    Base =
+        case relay_profile(Relay0) of
+            cloudflare_browser ->
+                [
+                    {<<"host">>, list_to_binary(Host)},
+                    {<<"origin">>, <<"https://damus.io">>},
+                    {<<"user-agent">>,
+                        <<"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36">>},
+                    {<<"accept">>, <<"*/*">>},
+                    {<<"accept-language">>, <<"en-US,en;q=0.9">>},
+                    {<<"cache-control">>, <<"no-cache">>},
+                    {<<"pragma">>, <<"no-cache">>}
+                ];
+            primal ->
+                [
+                    {<<"host">>, list_to_binary(Host)},
+                    {<<"origin">>, <<"https://primal.net">>},
+                    {<<"user-agent">>,
+                        <<"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36">>},
+                    {<<"accept">>, <<"*/*">>}
+                ];
+            yakihonne ->
+                [
+                    {<<"host">>, list_to_binary(Host)},
+                    {<<"origin">>, <<"https://yakihonne.com">>},
+                    {<<"user-agent">>, <<"damagebdd/1.0">>},
+                    {<<"accept">>, <<"*/*">>}
+                ];
+            _ ->
+                [
+                    {<<"host">>, list_to_binary(Host)},
+                    {<<"user-agent">>, <<"damagebdd/1.0">>},
+                    {<<"accept">>, <<"*/*">>}
+                ]
+        end,
+    merge_headers(Base, ExtraHeaders).
+relay_proxy(#{proxy := direct}) ->
+    none;
+relay_proxy(#{proxy := none}) ->
+    none;
+relay_proxy(#{proxy := proxy}) ->
+    damage_gun:proxy();
+relay_proxy(#{proxy := auto}) ->
+    damage_gun:proxy();
+relay_proxy(Relay0) ->
+    Relay = normalize_relay(Relay0),
+    case maps:get(proxy, Relay, undefined) of
+        direct -> none;
+        none -> none;
+        false -> none;
+        proxy -> damage_gun:proxy();
+        auto -> damage_gun:proxy();
+        undefined -> relay_proxy_from_policy(relay_profile(Relay));
+        _ -> relay_proxy_from_policy(relay_profile(Relay))
+    end.
+
+relay_proxy_from_policy(Profile) ->
+    Policy =
+        case application:get_env(damage, nostr_relay_proxy_policy) of
+            {ok, M} when is_map(M) ->
+                maps:get(Profile, M, maps:get(default, M, auto));
+            _ ->
+                auto
+        end,
+    case Policy of
+        direct -> none;
+        none -> none;
+        false -> none;
+        proxy -> damage_gun:proxy();
+        auto -> damage_gun:proxy();
+        _ -> damage_gun:proxy()
+    end.
+
+open_best_relay_ws(Relays, ExtraOpts) ->
+    Sorted = score_relays(normalize_relays(Relays)),
+    try_relays(Sorted, ExtraOpts, []).
+
+try_relays([], _ExtraOpts, Errors) ->
+    {error, {all_relays_failed, lists:reverse(Errors)}};
+try_relays([Relay | Rest], ExtraOpts, Errors) ->
+    case open_relay_ws(Relay, ExtraOpts) of
+        {ok, ConnPid, StreamRef} ->
+            {ok, Relay, ConnPid, StreamRef};
+        {error, Reason} ->
+            ?LOG_WARNING("Relay failed relay=~p score=~p reason=~p", [
+                Relay,
+                relay_score(Relay),
+                Reason
+            ]),
+            try_relays(Rest, ExtraOpts, [{Relay, Reason} | Errors])
+    end.
+
+score_relays(Relays) ->
+    lists:sort(
+        fun(A, B) -> relay_score(A) >= relay_score(B) end,
+        damage_nostr:normalize_relays(Relays)
+    ).
+
+relay_score(Relay0) ->
+    Relay = normalize_relay(Relay0),
+    Url = maps:get(url, Relay),
+
+    Profile = relay_profile(Relay),
+
+    Base =
+        case Profile of
+            plain -> 100;
+            yakihonne -> 90;
+            default -> 80;
+            cloudflare_browser -> 65;
+            primal -> 60;
+            _ -> 50
+        end,
+
+    HostPenalty =
+        case relay_host(Url) of
+            "relay.damus.io" -> 20;
+            "relay.primal.net" -> 10;
+            _ -> 0
+        end,
+
+    ProxyPenalty =
+        case {relay_proxy(Relay), Profile} of
+            {none, cloudflare_browser} -> 0;
+            {none, primal} -> 0;
+            {_, cloudflare_browser} -> 80;
+            {_, primal} -> 80;
+            _ -> 0
+        end,
+
+    Base - HostPenalty - ProxyPenalty.
+
+relay_host(Relay0) ->
+    Relay = normalize_relay(Relay0),
+    Url = maps:get(url, Relay),
+    case nostr_relay_worker:parse_wss_url(to_bin(Url)) of
+        {ok, #{host := Host}} ->
+            host_to_list(Host);
+        _ ->
+            {Host, _Port, _Path, _Tls} = parse_ws_url(Url),
+            host_to_list(Host)
+    end.
+
+host_to_list(H) when is_binary(H) ->
+    binary_to_list(H);
+host_to_list(H) when is_list(H) ->
+    H.
+merge_headers(Base, Extra) ->
+    maps:to_list(
+        maps:merge(
+            maps:from_list(Base),
+            maps:from_list(Extra)
+        )
+    ).
+default_relays() ->
+    normalize_relays([
+        #{url => "wss://relay.damus.io", profile => cloudflare_browser, proxy => direct},
+        #{url => "wss://relay.primal.net", profile => primal, proxy => direct},
+        #{url => "wss://nostr-01.yakihonne.com", profile => yakihonne},
+        #{url => "wss://nos.lol"},
+        #{url => "wss://offchain.pub"}
+    ]).
+
+first_configured_relay() ->
+    case configured_relays() of
+        [Relay | _] -> Relay;
+        [] -> hd(default_relays())
+    end.
+-spec configured_relays() -> [map()].
+configured_relays() ->
+    case application:get_env(damage, nostr_relays) of
+        {ok, Relays} when is_list(Relays), Relays =/= [] ->
+            normalize_relays(Relays);
+        _ ->
+            default_relays()
+    end.
+normalize_relays(Relays) when is_list(Relays) ->
+    lists:filtermap(
+        fun(R) ->
+            case normalize_relay(R) of
+                #{url := Url} = Relay when is_binary(Url), Url =/= <<>> ->
+                    {true, Relay};
+                _ ->
+                    false
+            end
+        end,
+        Relays
+    ).
+
+normalize_relay(#{url := #{url := _} = Nested} = M) ->
+    maps:merge(normalize_relay(Nested), maps:remove(url, M));
+normalize_relay(#{<<"url">> := Url} = M) ->
+    normalize_relay(maps:put(url, Url, maps:remove(<<"url">>, M)));
+normalize_relay(#{url := Url} = M0) when is_list(Url); is_binary(Url) ->
+    M1 = M0#{url => to_bin(Url)},
+    M2 = normalize_relay_key(<<"proxy">>, proxy, M1),
+    M3 = normalize_relay_key(<<"profile">>, profile, M2),
+    M4 =
+        case maps:get(proxy, M3, undefined) of
+            <<"direct">> -> M3#{proxy => direct};
+            "direct" -> M3#{proxy => direct};
+            <<"none">> -> M3#{proxy => none};
+            "none" -> M3#{proxy => none};
+            <<"proxy">> -> M3#{proxy => proxy};
+            "proxy" -> M3#{proxy => proxy};
+            <<"auto">> -> M3#{proxy => auto};
+            "auto" -> M3#{proxy => auto};
+            Other -> M3#{proxy => Other}
+        end,
+    case maps:get(profile, M4, undefined) of
+        <<"cloudflare_browser">> -> M4#{profile => cloudflare_browser};
+        <<"primal">> -> M4#{profile => primal};
+        <<"yakihonne">> -> M4#{profile => yakihonne};
+        <<"default">> -> M4#{profile => default};
+        _ -> M4
+    end;
+normalize_relay(Url) when is_list(Url); is_binary(Url) ->
+    #{url => to_bin(Url)};
+normalize_relay(Other) ->
+    erlang:error({bad_relay_spec, Other}).
+
+normalize_relay_key(Old, New, M) ->
+    case maps:take(Old, M) of
+        {V, M1} -> M1#{New => V};
+        error -> M
+    end.
 -spec test_nwc_roundtrip() -> ok | {error, term()}.
 test_nwc_roundtrip() ->
     try
@@ -2232,4 +2524,39 @@ test_nwc_roundtrip() ->
         C:R:S ->
             erase(test_service_priv),
             {error, {crash, C, R, S}}
+    end.
+
+-spec parse_ws_url(binary() | list()) ->
+    {string(), inet:port_number(), string(), boolean()}.
+
+parse_ws_url(#{url := Url}) ->
+    parse_ws_url(Url);
+parse_ws_url(#{<<"url">> := Url}) ->
+    parse_ws_url(Url);
+parse_ws_url(Url0) ->
+    Url = binary_to_list(to_bin(Url0)),
+    case uri_string:parse(Url) of
+        #{host := Host} = M ->
+            Scheme = maps:get(scheme, M, "wss"),
+            Tls = (Scheme =:= "wss") orelse (Scheme =:= "https"),
+            Port =
+                case maps:get(port, M, undefined) of
+                    undefined when Tls -> 443;
+                    undefined -> 80;
+                    P -> P
+                end,
+            Path0 =
+                case maps:get(path, M, "/") of
+                    "" -> "/";
+                    P0 -> P0
+                end,
+            Path =
+                case maps:get(query, M, undefined) of
+                    undefined -> Path0;
+                    "" -> Path0;
+                    Q -> Path0 ++ "?" ++ Q
+                end,
+            {Host, Port, Path, Tls};
+        Bad ->
+            erlang:error({bad_relay_url, Url0, Bad})
     end.

@@ -57,14 +57,15 @@ publish(Pid, Event) ->
 
 init(#{relay := Relay0}) ->
     process_flag(trap_exit, true),
-    Relay = to_bin(Relay0),
-    {ok, Parsed} = parse_wss_url(Relay),
+    Relay = damage_nostr:normalize_relay(Relay0),
+    Url = maps:get(url, Relay),
+    {Host, Port, Path, Tls} = damage_nostr:parse_ws_url(Url),
     S0 = #state{
-        relay = Relay,
-        host = maps:get(host, Parsed),
-        port = maps:get(port, Parsed),
-        path = maps:get(path, Parsed),
-        tls = maps:get(tls, Parsed)
+        relay = Url,
+        host = Host,
+        port = Port,
+        path = Path,
+        tls = Tls
     },
     erlang:send_after(0, self(), reconnect),
     {ok, S0}.
@@ -153,9 +154,11 @@ handle_info({'EXIT', Pid, Reason}, S0) ->
 %% gun websocket traffic
 handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, S0) ->
     S1 = S0#state{
-        conn_pid = ConnPid, stream_ref = StreamRef, connected = true, backoff_ms = ?RECONNECT_MIN_MS
+        conn_pid = ConnPid,
+        stream_ref = StreamRef,
+        connected = true,
+        backoff_ms = ?RECONNECT_MIN_MS
     },
-    ?LOG_DEBUG("Relay WS upgraded relay=~p", [S1#state.relay]),
     {noreply, schedule_ping(S1)};
 handle_info({gun_ws, ConnPid, StreamRef, {pong, _Data}}, S0) when
     ConnPid =:= S0#state.conn_pid, StreamRef =:= S0#state.stream_ref
@@ -245,28 +248,18 @@ ensure_connected(S0) ->
             schedule_reconnect(S0)
     end.
 
-connect(S0 = #state{host = Host, port = Port, tls = Tls, path = Path}) ->
-    Opts =
-        case Tls of
-            true -> #{transport => tls, tls_opts => [{verify, verify_none}]};
-            false -> #{transport => tcp}
-        end,
-    case damage_gun:open(Host, Port, Opts) of
-        {ok, ConnPid} ->
-            _ = link(ConnPid),
-            case catch gun:await_up(ConnPid, 80000) of
-                {ok, _Proto} ->
-                    StreamRef = gun:ws_upgrade(ConnPid, Path),
-                    {ok, S0#state{conn_pid = ConnPid, stream_ref = StreamRef, connected = false}};
-                {'EXIT', Reason} ->
-                    catch gun:close(ConnPid),
-                    {error, {await_up_exit, Reason}};
-                Other ->
-                    catch gun:close(ConnPid),
-                    {error, {await_up_failed, Other}}
-            end;
-        Error ->
-            Error
+connect(S0 = #state{relay = Relay}) ->
+    case damage_nostr:open_relay_ws(Relay, #{connect_timeout => 80000}) of
+        {ok, ConnPid, StreamRef} ->
+            link(ConnPid),
+            {ok, S0#state{
+                conn_pid = ConnPid,
+                stream_ref = StreamRef,
+                connected = true,
+                backoff_ms = ?RECONNECT_MIN_MS
+            }};
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 on_disconnect(S0 = #state{pending = Pending0}) ->
@@ -324,10 +317,17 @@ parse_wss_url(UrlBin) ->
         M = uri_string:parse(Url),
         Scheme = maps:get(scheme, M, "wss"),
         Host = maps:get(host, M, ""),
-        Path =
+        Path0 =
             case maps:get(path, M, "/") of
                 "" -> "/";
                 P -> P
+            end,
+
+        Path =
+            case maps:get(query, M, undefined) of
+                undefined -> Path0;
+                "" -> Path0;
+                Q -> Path0 ++ "?" ++ Q
             end,
         Port0 = maps:get(port, M, undefined),
         Tls = (Scheme =:= "wss") orelse (Scheme =:= "https"),

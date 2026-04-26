@@ -139,13 +139,18 @@ step(
     Req = maps:get(list_to_atom(ReqVar), Context),
     Event = maps:get(event, Req),
     Conn = maps:get(conn, Req),
-    Relays0 = maps:get(relay, Conn, []),
-    Relays = normalize_relays_flat(Relays0),
-    case nostr_pool:publish_sync(Event, Relays, 50000) of
+    Relays = damage_nwc_client:relays_for_conn(Conn),
+
+    ?LOG_INFO("NWC publish using relays=~p", [Relays]),
+    case damage_nwc_client:publish(Event, Relays) of
         ok ->
             maps:put(list_to_atom(OutVar), ok, Context);
-        Error ->
-            maps:put(fail, damage_utils:strf("publish nwc event ~p", [Error]), Context)
+        {error, Reason} ->
+            maps:put(
+                fail,
+                damage_utils:strf("publish nwc event ~p", [Reason]),
+                Context
+            )
     end;
 step(
     _Config,
@@ -171,9 +176,7 @@ step(
         <<"limit">> => 1
     },
 
-    Relays0 = maps:get(relay, Conn, []),
-    Relays = normalize_relays_flat(Relays0),
-
+    Relays = damage_nwc_client:relays_for_conn(Conn),
     ?LOG_DEBUG("wait nwc response relays=~p filter=~p", [Relays, Filter]),
     ok = nostr_pool:ensure_started(Relays),
 
@@ -264,24 +267,6 @@ map_get_int(M, K, Default) ->
 
 fmt(Term) ->
     unicode:characters_to_binary(io_lib:format("~p", [Term])).
-normalize_relays_flat(Rs) when is_list(Rs) ->
-    lists:flatten(
-        [normalize_one_relay(R) || R <- Rs]
-    );
-normalize_relays_flat(R) ->
-    normalize_one_relay(R).
-
-normalize_one_relay(R) when is_binary(R) ->
-    [R];
-normalize_one_relay(R) when is_list(R) ->
-    case io_lib:printable_list(R) of
-        true ->
-            [list_to_binary(R)];
-        false ->
-            lists:flatten([normalize_one_relay(X) || X <- R])
-    end;
-normalize_one_relay(R) ->
-    [to_bin(R)].
 wait_for_nwc_response(Filter, Relays, Conn, TimeoutMs, PollMs) ->
     Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
     wait_for_nwc_response_loop(Filter, Relays, Conn, Deadline, PollMs).

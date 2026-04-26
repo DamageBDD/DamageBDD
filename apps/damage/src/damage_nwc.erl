@@ -345,13 +345,20 @@ parse_nwc_uri(Uri0) ->
     Uri = to_bin(Uri0),
     <<"nostr+walletconnect://", Rest/binary>> = Uri,
     [WalletPubKeyBin, QueryBin] = binary:split(Rest, <<"?">>),
+
     Params = damage_nostr:parse_kv_query(QueryBin),
+    Relays0 = maps:get(<<"relay">>, Params, []),
+    Relays =
+        case Relays0 of
+            R when is_binary(R) -> [R];
+            Rs when is_list(Rs) -> lists:reverse(Rs);
+            _ -> []
+        end,
     #{
         wallet_pubkey => WalletPubKeyBin,
         secret => maps:get(<<"secret">>, Params),
-        relays => maps:get(<<"relay">>, Params, [])
+        relays => damage_nostr:normalize_relays(Relays)
     }.
-
 %% -------------------------------------------------------------------
 %% Ledger resolution + calls
 %% -------------------------------------------------------------------

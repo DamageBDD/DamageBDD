@@ -130,7 +130,19 @@ ledger_mode() ->
         _ -> server_signed
         %_ -> user_signed
     end.
-
+relay_query(Relays0) ->
+    Relays =
+        case damage_nostr:normalize_relays(Relays0) of
+            [] -> damage_nostr:configured_relays();
+            Rs -> Rs
+        end,
+    string:join(
+        [
+            "relay=" ++ uri_string:quote(binary_to_list(maps:get(url, R)))
+         || R <- Relays
+        ],
+        "&"
+    ).
 from_json(Req0, State = #{action := mint}) ->
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
@@ -172,12 +184,14 @@ from_json(Req0, State = #{action := mint}) ->
                 end,
 
             WalletPubHex = ensure_hex_pubkey(nwc_wallet_pubhex()),
-            Relay = pick_first_relay(Relays),
+            NormalizedRelays = damage_nostr:normalize_relays(Relays),
+            RelayQuery = relay_query(NormalizedRelays),
+
             NwcUri = iolist_to_binary([
                 <<"nostr+walletconnect://">>,
                 WalletPubHex,
-                <<"?relay=">>,
-                Relay,
+                <<"?">>,
+                RelayQuery,
                 <<"&secret=">>,
                 SecretHex
             ]),
@@ -185,8 +199,9 @@ from_json(Req0, State = #{action := mint}) ->
             case Mode of
                 user_signed ->
                     ok = persist_nwc_session_index(
-                        ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay
+                        ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
                     ),
+                    ok = notify_nwc_listener_relays(NormalizedRelays),
                     reply_json_stop(
                         200,
                         #{
@@ -198,7 +213,7 @@ from_json(Req0, State = #{action := mint}) ->
                             secret_hex => SecretHex,
                             nwc_uri => NwcUri,
                             wallet_pubkey => WalletPubHex,
-                            relay => Relay,
+                            relays => NormalizedRelays,
                             intents => Intents
                         },
                         Req,
@@ -218,8 +233,9 @@ from_json(Req0, State = #{action := mint}) ->
                     case ledger_call_ok(RegisterResult) of
                         true ->
                             ok = persist_nwc_session_index(
-                                ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay
+                                ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
                             ),
+                            ok = notify_nwc_listener_relays(NormalizedRelays),
 
                             reply_json_stop(
                                 200,
@@ -232,7 +248,7 @@ from_json(Req0, State = #{action := mint}) ->
                                     secret_hex => SecretHex,
                                     nwc_uri => NwcUri,
                                     wallet_pubkey => WalletPubHex,
-                                    relay => Relay,
+                                    relays => NormalizedRelays,
                                     intents => []
                                 },
                                 Req,
@@ -271,17 +287,18 @@ from_json(Req0, State = #{action := mint}) ->
             Mode = ledger_mode(),
             MaxSingleMsat = MaxSingleSat * 1000,
             MaxTotalMsat = MaxTotalSat * 1000,
-            WalletPubHex = nwc_wallet_pubhex(),
-            Relay = pick_first_relay(Relays),
-            NwcUri =
-                <<
-                    "nostr+walletconnect://",
-                    WalletPubHex/binary,
-                    "?relay=",
-                    Relay/binary,
-                    "&secret=",
-                    SecretHex/binary
-                >>,
+            WalletPubHex = ensure_hex_pubkey(nwc_wallet_pubhex()),
+            NormalizedRelays = damage_nostr:normalize_relays(Relays),
+            RelayQuery = relay_query(NormalizedRelays),
+
+            NwcUri = iolist_to_binary([
+                <<"nostr+walletconnect://">>,
+                WalletPubHex,
+                <<"?">>,
+                RelayQuery,
+                <<"&secret=">>,
+                SecretHex
+            ]),
             case
                 maybe_setup_missing_ledger(
                     Owner,
@@ -293,8 +310,9 @@ from_json(Req0, State = #{action := mint}) ->
             of
                 {ok, RegistryCt, LedgerCt} ->
                     ok = persist_nwc_session_index(
-                        ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay
+                        ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
                     ),
+                    ok = notify_nwc_listener_relays(NormalizedRelays),
                     reply_json_stop(
                         200,
                         #{
@@ -308,7 +326,7 @@ from_json(Req0, State = #{action := mint}) ->
                             secret_hex => SecretHex,
                             nwc_uri => NwcUri,
                             wallet_pubkey => WalletPubHex,
-                            relay => Relay,
+                            relays => NormalizedRelays,
                             intents => []
                         },
                         Req,
@@ -331,7 +349,7 @@ from_json(Req0, State = #{action := mint}) ->
                                 secret_hex => SecretHex,
                                 nwc_uri => NwcUri,
                                 wallet_pubkey => WalletPubHex,
-                                relay => Relay,
+                                relays => NormalizedRelays,
                                 intents => DeployAndRegisterIntents ++
                                     [
                                         damage_ledger_intent:ledger_register_intent(
@@ -810,19 +828,6 @@ to_s(L) when is_list(L) -> L.
 lower_hex_hex(Bin) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Bin)))).
 
-pick_first_relay([R | _]) when is_binary(R) ->
-    R;
-pick_first_relay([R | _]) when is_list(R) ->
-    unicode:characters_to_binary(R);
-pick_first_relay(R) when is_binary(R) ->
-    R;
-pick_first_relay(R) when is_list(R) ->
-    unicode:characters_to_binary(R);
-pick_first_relay(_) ->
-    {ok, Host} = application:get_env(damage, nostr_relay),
-    HostBin = list_to_binary(Host),
-    <<"wss://", HostBin/binary>>.
-
 resolve_user_ledger_ct(OwnerAkBin0) ->
     OwnerAkBin = to_bin(OwnerAkBin0),
     case secret_user_ledger_ct(OwnerAkBin) of
@@ -897,7 +902,7 @@ user_keypair_from_owner(OwnerAkBin) ->
     #{public_key => to_bin(Pub0), private_key => Priv}.
 
 ledger_src_path() ->
-    damage_ae:contract_path(?NWC_LEDGER_SRC_PATH).
+    damage_ae:contract_path(damage, ?NWC_LEDGER_SRC_PATH).
 
 ledger_call_admin(LedgerCt, Fun, Args) ->
     damage_ae:contract_call(
@@ -1246,17 +1251,28 @@ secret_user_ledger_ct(OwnerAkBin) ->
 persist_user_ledger_ct(OwnerAkBin, <<"ct_", _/binary>> = CtId) ->
     Key = user_registry_contract_secret_key(OwnerAkBin),
     ok = secrets:encrypt_store(Key, CtId).
-persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relay) ->
+
+persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays) ->
     damage_nwc_session_index:put(
         ClientPubHex,
         Owner,
         LedgerCt,
         #{
             wallet_pubkey => WalletPubHex,
-            relay => Relay,
+            relays => Relays,
             created_at => erlang:system_time(second)
         }
     ).
+notify_nwc_listener_relays(Relays0) ->
+    Relays = damage_nostr:normalize_relays(Relays0),
+    case whereis(damage_nwc_listener) of
+        undefined ->
+            ?LOG_WARNING("damage_nwc_listener not running; relays persisted only: ~p", [Relays]),
+            ok;
+        _Pid ->
+            gen_server:cast(damage_nwc_listener, {add_relays, Relays}),
+            ok
+    end.
 test() ->
     Owner = "ct_4SUjjufRpMD6KmhZwX3sAdih2FTV1Qry11TJpEGdmrdPh8bdy",
     LedgerCt =

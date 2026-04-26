@@ -18,6 +18,11 @@
     req_one/4,
     req_one/3
 ]).
+-export([
+    reset/0,
+    reset/1,
+    kill_worker/1
+]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -import(damage_utils, [to_bin/1]).
@@ -30,32 +35,36 @@
     relays = [] :: [binary()]
 }).
 
--spec default_relays(map()) -> [binary()].
+-spec default_relays(map()) -> [map()].
 default_relays(Ctx) ->
     case maps:get(nostr_relays, Ctx, undefined) of
         R when is_list(R), R =/= [] ->
-            [to_bin(X) || X <- R];
+            damage_nostr:normalize_relays(R);
         _ ->
-            case application:get_env(damage, nostr_relays) of
-                {ok, R2} when is_list(R2), R2 =/= [] ->
-                    [to_bin(X) || X <- R2];
-                _ ->
-                    [
-                        <<"wss://relay.damus.io">>,
-                        <<"wss://nostr-01.yakihonne.com">>,
-                        <<"wss://nostr-02.yakihonne.com">>,
-                        <<"wss://nos.lol">>
-                        %<<"wss://relay.nostr.band">>
-                    ]
-            end
+            damage_nostr:configured_relays()
     end.
 %% ---------------------------
 %% Public API
 %% ---------------------------
+-spec reset() -> ok.
+reset() ->
+    case whereis(?SERVER) of
+        undefined -> ok;
+        _ -> gen_server:call(?SERVER, reset)
+    end.
 
--spec start_link([binary()]) -> {ok, pid()} | {error, term()}.
+-spec reset([binary()]) -> ok.
+reset(Relays) ->
+    case whereis(?SERVER) of
+        undefined -> ok;
+        _ -> gen_server:call(?SERVER, {reset_relays, damage_nostr:normalize_relays(Relays)})
+    end.
+
+start_link(Relays0) when is_list(Relays0) ->
+    Relays = damage_nostr:normalize_relays(Relays0),
+    gen_server:start_link({local, ?SERVER}, ?MODULE, #{relays => Relays}, []);
 start_link(#{relays := Relays0}) ->
-    Relays = normalize_relays(Relays0),
+    Relays = damage_nostr:normalize_relays(Relays0),
     gen_server:start_link({local, ?SERVER}, ?MODULE, #{relays => Relays}, []).
 
 -spec ensure_started() -> ok | {error, term()}.
@@ -73,7 +82,7 @@ ensure_started(Relays) ->
         _Pid ->
             %% Update relay set if needed
             ?LOG_DEBUG("ensure_started ~p", [Relays]),
-            gen_server:cast(?SERVER, {set_relays, normalize_relays(Relays)}),
+            gen_server:cast(?SERVER, {set_relays, damage_nostr:normalize_relays(Relays)}),
             ok
     end.
 
@@ -88,7 +97,7 @@ stop() ->
 -spec publish(Event :: map(), Relays :: [binary()], TimeoutMs :: pos_integer()) -> ok.
 publish(Event, Relays, _TimeoutMs) ->
     ensure_started(Relays),
-    gen_server:cast(?SERVER, {publish, Event, normalize_relays(Relays)}),
+    gen_server:cast(?SERVER, {publish, Event, damage_nostr:normalize_relays(Relays)}),
     ok.
 
 %% Publish to whatever relays pool has configured
@@ -106,7 +115,7 @@ req_one(Filter, Relays, TimeoutMs, FanoutLimit) ->
     %ensure_started(Relays),
     gen_server:call(
         ?SERVER,
-        {req_one, Filter, normalize_relays(Relays), TimeoutMs, FanoutLimit},
+        {req_one, Filter, damage_nostr:normalize_relays(Relays), TimeoutMs, FanoutLimit},
         TimeoutMs + 2000
     ).
 
@@ -121,9 +130,12 @@ publish_sync(Event, Relays, TimeoutMs) ->
     ensure_started(Relays),
     gen_server:call(
         ?SERVER,
-        {publish_sync, Event, normalize_relays(Relays), TimeoutMs},
+        {publish_sync, Event, damage_nostr:normalize_relays(Relays), TimeoutMs},
         TimeoutMs + 2000
     ).
+-spec kill_worker(binary()) -> ok.
+kill_worker(Relay) ->
+    gen_server:call(?SERVER, {kill_worker, Relay}).
 
 %% ---------------------------
 %% gen_server
@@ -135,6 +147,41 @@ init(#{relays := Relays}) ->
     Workers = start_workers(Relays, #{}),
     {ok, #state{workers = Workers, relays = Relays}}.
 
+handle_call(reset, _From, S = #state{workers = Workers}) ->
+    ?LOG_WARNING("nostr_pool reset: killing all workers (~p)", [maps:size(Workers)]),
+
+    lists:foreach(
+        fun({_R, Pid}) ->
+            catch exit(Pid, kill)
+        end,
+        maps:to_list(Workers)
+    ),
+
+    {reply, ok, S#state{workers = #{}}};
+handle_call({reset_relays, Relays}, _From, S = #state{workers = Workers0}) ->
+    ?LOG_WARNING("nostr_pool reset_relays: ~p", [Relays]),
+
+    %% kill all existing workers
+    lists:foreach(
+        fun({_R, Pid}) ->
+            catch exit(Pid, kill)
+        end,
+        maps:to_list(Workers0)
+    ),
+
+    %% restart fresh
+    Workers = start_workers(Relays, #{}),
+
+    {reply, ok, S#state{workers = Workers, relays = Relays}};
+handle_call({kill_worker, Relay}, _From, S = #state{workers = Workers}) ->
+    Key = relay_key(Relay),
+    case maps:get(Key, Workers, undefined) of
+        Pid when is_pid(Pid) ->
+            catch exit(Pid, kill),
+            {reply, ok, S#state{workers = maps:remove(Key, Workers)}};
+        _ ->
+            {reply, ok, S}
+    end;
 handle_call({publish_sync, Event, Relays, TimeoutMs}, _From, S0) ->
     S = ensure_workers(Relays, S0),
     Results =
@@ -217,7 +264,7 @@ terminate(_Reason, _S) ->
 %% ---------------------------
 
 do_req_one(Filter, Relays0, TimeoutMs, FanoutLimit, S0) ->
-    Relays = take_first(FanoutLimit, normalize_relays(Relays0)),
+    Relays = take_first(FanoutLimit, damage_nostr:normalize_relays(Relays0)),
     S = ensure_workers(Relays, S0),
 
     %% Fan out concurrently; first {ok, Event} wins.
@@ -279,15 +326,17 @@ ensure_workers(Relays, S = #state{workers = Workers0}) ->
 
 start_workers([], Workers) ->
     Workers;
-start_workers([R | Rest], Workers0) ->
+start_workers([R0 | Rest], Workers0) ->
+    R = damage_nostr:normalize_relay(R0),
+    Key = relay_key(R),
     Workers =
-        case maps:get(R, Workers0, undefined) of
+        case maps:get(Key, Workers0, undefined) of
             undefined ->
                 case nostr_relay_worker:start_link(R) of
                     {ok, Pid} ->
-                        maps:put(R, Pid, Workers0);
+                        maps:put(Key, Pid, Workers0);
                     {error, {already_started, Pid}} ->
-                        maps:put(R, Pid, Workers0);
+                        maps:put(Key, Pid, Workers0);
                     {error, Reason} ->
                         ?LOG_WARNING("Failed starting worker relay=~p reason=~p", [R, Reason]),
                         Workers0
@@ -297,16 +346,16 @@ start_workers([R | Rest], Workers0) ->
         end,
     start_workers(Rest, Workers).
 
-get_worker(Relay, #state{workers = Workers}) ->
-    case maps:get(Relay, Workers, undefined) of
-        undefined ->
-            {error, not_found};
+get_worker(Relay0, #state{workers = Workers}) ->
+    Key = relay_key(Relay0),
+    case maps:get(Key, Workers, undefined) of
+        undefined -> {error, not_found};
         Pid when is_pid(Pid) -> {ok, Pid}
     end.
 
-normalize_relays(Relays) when is_list(Relays) ->
-    [to_bin(R) || R <- Relays, is_binary(to_bin(R))].
-
+relay_key(Relay0) ->
+    Relay = damage_nostr:normalize_relay(Relay0),
+    maps:get(url, Relay).
 take_first(N, _L) when N =< 0 -> [];
 take_first(_N, []) -> [];
 take_first(N, [H | T]) -> [H | take_first(N - 1, T)].

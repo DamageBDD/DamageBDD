@@ -11,6 +11,7 @@
     build_request_event/3,
     decrypt_response_event/2,
     publish/2,
+    relays_for_conn/1,
     test/0
 ]).
 
@@ -25,9 +26,21 @@ parse_nwc_uri(Uri0) ->
     <<"nostr+walletconnect://", Rest/binary>> = Uri,
     [WalletPubKeyBin, QueryBin] = binary:split(Rest, <<"?">>),
     Params = damage_nostr:parse_kv_query(QueryBin),
+    Relays0 = maps:get(<<"relay">>, Params, []),
+    Relays =
+        case Relays0 of
+            R when is_binary(R) -> [R];
+            Rs when is_list(Rs) -> lists:reverse(Rs);
+            _ -> []
+        end,
     #{
         wallet_pubkey => WalletPubKeyBin,
-        relay => maps:get(<<"relay">>, Params),
+        relay =>
+            case Relays of
+                [R0 | _] -> R0;
+                [] -> undefined
+            end,
+        relays => damage_nostr:normalize_relays(Relays),
         secret_hex => maps:get(<<"secret">>, Params),
         raw_uri => Uri
     }.
@@ -95,10 +108,51 @@ decrypt_response_event(Conn, Event) ->
 
 lower_hex(Bin) when is_binary(Bin) ->
     list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Bin)))).
-publish(Event, Relays) ->
-    ?LOG_DEBUG("publish nwc event ~p ~p", [Event, Relays]),
-    ok = nostr_pool:ensure_started(Relays),
-    ok = nostr_pool:publish_sync(Event, Relays, 50000).
+publish(Event, Relays0) when is_map(Event), is_list(Relays0) ->
+    Relays = damage_nostr:normalize_relays(Relays0),
+    Sorted = damage_nostr:score_relays(Relays),
+
+    ?LOG_INFO("Publishing NWC event id=~p relays=~p", [
+        maps:get(<<"id">>, Event, undefined),
+        Sorted
+    ]),
+
+    ok = nostr_pool:ensure_started(Sorted),
+
+    case nostr_pool:publish_sync(Event, Sorted, 50000) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "NWC publish failed relays=~p reason=~p; resetting pool and retrying fallback",
+                [Sorted, Reason]
+            ),
+            nostr_pool:reset(Sorted),
+            timer:sleep(500),
+            retry_publish(Event, Sorted, Reason)
+    end;
+publish(BadEvent, BadRelays) ->
+    ?LOG_ERROR("Invalid publish args event=~p relays=~p", [BadEvent, BadRelays]),
+    {error, {invalid_publish_args, BadEvent, BadRelays}}.
+
+retry_publish(Event, Relays, FirstReason) ->
+    case nostr_pool:publish_sync(Event, Relays, 50000) of
+        ok ->
+            ok;
+        {error, Reason2} ->
+            {error, {publish_failed_after_reset, FirstReason, Reason2}}
+    end.
+relays_for_conn(#{relays := Relays}) when is_list(Relays), Relays =/= [] ->
+    damage_nostr:normalize_relays(Relays);
+relays_for_conn(#{relay := Relays}) when is_list(Relays), Relays =/= [] ->
+    damage_nostr:normalize_relays(Relays);
+relays_for_conn(Conn) ->
+    Relay0 = maps:get(relay, Conn, undefined),
+    case Relay0 of
+        undefined -> damage_nostr:configured_relays();
+        <<>> -> damage_nostr:configured_relays();
+        Relay -> damage_nostr:normalize_relays([Relay | damage_nostr:configured_relays()])
+    end.
 test() ->
     Event =
         #{
@@ -120,7 +174,4 @@ test() ->
                     ]
                 ]
         },
-    publish(Event, [
-        %<<"wss://relay.damus.io">>
-        <<"wss://nostr-01.yakihonne.com">>
-    ]).
+    publish(Event, damage_nostr:configured_relays()).
