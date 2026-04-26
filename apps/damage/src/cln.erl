@@ -281,22 +281,9 @@ get_cln_client_config() ->
     {ok, Host} = application:get_env(damage, cln_host),
     {ok, Port} = application:get_env(damage, cln_port),
     {ok, Path} = application:get_env(damage, cln_wspath),
-    {ok, CaCertFile} = application:get_env(damage, cln_cacertfile),
     {ok, CertFile} = application:get_env(damage, cln_certfile),
     {ok, KeyFile} = application:get_env(damage, cln_keyfile),
-    TLSOptions = [
-        {certfile, CertFile},
-        {keyfile, KeyFile},
-        {cacertfile, CaCertFile},
-        {verify, verify_peer},
-        {versions, ['tlsv1.2', 'tlsv1.3']},
-        {alpn_protocols, ['http/1.1', h2]}
-    ],
-    Options =
-        case Host of
-            "localhost" -> #{};
-            _ -> #{transport => tls, tls_opts => TLSOptions}
-        end,
+    Options = #{},
     #state{
         cln_host = Host,
         cln_port = Port,
@@ -327,9 +314,12 @@ init([]) ->
     end.
 
 ensure_cache_table() ->
-    case catch ets:new(cln_channel_cache, [set, public, named_table, {read_concurrency, true}]) of
-        {badarg, exists} -> ?LOG_DEBUG("cln_channel_cache exists", []);
-        _ -> ?LOG_DEBUG("cln_channel_cache created", [])
+    case ets:info(cln_channel_cache) of
+        undefined ->
+            ets:new(cln_channel_cache, [set, public, named_table, {read_concurrency, true}]),
+            ?LOG_DEBUG("cln_channel_cache created");
+        _ ->
+            ok
     end.
 
 %% ===================================================================
@@ -373,35 +363,124 @@ get_cache(Key, DefaultTTL) ->
 %% Generic HTTP helpers
 %% ===================================================================
 
+%% ===================================================================
+%% Generic HTTP helpers
+%% ===================================================================
+
 headers(Rune) ->
-    [{"Rune", Rune}, {<<"content-type">>, <<"application/json">>}].
+    [{<<"Rune">>, Rune}, {<<"content-type">>, <<"application/json">>}].
 
 cln_post_json(Host, Port, Options, Rune, Path, ReqMap) ->
     cln_post_json_with_headers(Host, Port, Options, headers(Rune), Path, ReqMap).
 
-cln_post_json_with_headers(Host, Port, Options, Headers, Path, ReqMap) ->
-    {ok, ConnPid} = gun:open(Host, Port, Options),
-    StreamRef = gun:post(ConnPid, Path, Headers, jsx:encode(ReqMap)),
-    Reply =
-        case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
-            {response, fin, _Status, _RespHeaders} ->
-                no_data;
-            {response, nofin, _Status, _RespHeaders} ->
-                case gun:await_body(ConnPid, StreamRef) of
-                    {ok, Body} -> jsx:decode(Body, [return_maps, {labels, atom}]);
-                    Error -> Error
-                end;
-            {response, nofin, _RespHeaders} ->
-                case gun:await_body(ConnPid, StreamRef) of
-                    {ok, Body2} -> jsx:decode(Body2, [return_maps, {labels, atom}]);
-                    Error2 -> Error2
-                end;
-            Other ->
-                {error, Other}
-        end,
-    catch gun:cancel(ConnPid, StreamRef),
-    catch gun:close(ConnPid),
-    Reply.
+cln_post_json_with_headers(Host, Port, Options0, Headers, Path, ReqMap) ->
+    Options = cln_gun_opts(Host, Port, Options0),
+
+    case cln_open(Host, Port, Options) of
+        {ok, ConnPid} ->
+            try
+                StreamRef = gun:post(ConnPid, Path, Headers, jsx:encode(ReqMap)),
+                Reply = await_cln_json(ConnPid, StreamRef),
+                catch gun:cancel(ConnPid, StreamRef),
+                Reply
+            after
+                catch gun:close(ConnPid)
+            end;
+        {error, Reason} ->
+            {error, {cln_gun_open_failed, Reason}}
+    end.
+
+cln_open(Host, Port, Options0) ->
+    ProxyPolicy = maps:get(proxy, Options0, auto),
+    GunOptions = maps:without([proxy], Options0),
+
+    case ProxyPolicy of
+        none ->
+            damage_gun:open(Host, Port, GunOptions, none);
+        direct ->
+            damage_gun:open(Host, Port, GunOptions, none);
+        auto ->
+            damage_gun:open(Host, Port, GunOptions);
+        undefined ->
+            damage_gun:open(Host, Port, GunOptions);
+        {socks5, _, _} = Proxy ->
+            damage_gun:open(Host, Port, GunOptions, Proxy)
+    end.
+
+await_cln_json(ConnPid, StreamRef) ->
+    case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
+        {response, fin, Status, RespHeaders} ->
+            decode_empty_or_error(Status, RespHeaders);
+        {response, nofin, Status, RespHeaders} ->
+            decode_cln_body(ConnPid, StreamRef, Status, RespHeaders);
+        Other ->
+            {error, {cln_http_failed, Other}}
+    end.
+
+decode_empty_or_error(Status, _RespHeaders) when Status >= 200, Status < 300 ->
+    #{};
+decode_empty_or_error(Status, RespHeaders) ->
+    {error, #{status => Status, headers => RespHeaders, body => <<>>}}.
+
+decode_cln_body(ConnPid, StreamRef, Status, RespHeaders) ->
+    case gun:await_body(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
+        {ok, Body} when Status >= 200, Status < 300 ->
+            decode_cln_json_body(Body);
+        {ok, Body} ->
+            case decode_cln_json_body(Body) of
+                Decoded when is_map(Decoded) ->
+                    Decoded;
+                _ ->
+                    {error, #{status => Status, headers => RespHeaders, body => Body}}
+            end;
+        Error ->
+            {error, {cln_body_failed, Error}}
+    end.
+
+decode_cln_json_body(<<>>) ->
+    #{};
+decode_cln_json_body(Body) ->
+    try jsx:decode(Body, [return_maps, {labels, atom}])
+    catch
+        _:Reason ->
+            {error, {invalid_cln_json, Reason, Body}}
+    end.
+
+cln_gun_opts(Host, Port, Options0) ->
+    Transport = cln_transport(Host, Port, Options0),
+    ProxyPolicy = cln_proxy_policy(Host, Transport, Options0),
+    Options0#{
+        transport => Transport,
+        proxy => ProxyPolicy,
+        http_opts => #{keepalive => infinity},
+        protocols => [http]
+    }.
+
+cln_transport(_Host, _Port, #{transport := Transport}) ->
+    Transport;
+cln_transport(Host, Port, _Options) ->
+    case {normalize_host(Host), Port} of
+        {"localhost", _} -> tcp;
+        {"127.0.0.1", _} -> tcp;
+        {"::1", _} -> tcp;
+        {_, 3010} -> tcp;
+        {_, 80} -> tcp;
+        _ -> tls
+    end.
+
+cln_proxy_policy(_Host, _Transport, #{proxy := Proxy}) ->
+    Proxy;
+cln_proxy_policy(_Host, tcp, _Options) ->
+    none;
+cln_proxy_policy(Host, tls, _Options) ->
+    %% Let damage_gun apply damage.proxy + damage.proxy_exclude.
+    case damage_gun:proxy_for_host(Host) of
+        none -> none;
+        Proxy -> Proxy
+    end.
+
+normalize_host(H) when is_list(H) -> H;
+normalize_host(H) when is_binary(H) -> binary_to_list(H).
 
 maybe_close_gun(Conn) when is_pid(Conn) ->
     catch gun:close(Conn),

@@ -30,10 +30,13 @@
 }).
 
 -define(CLN_HTTP_TIMEOUT, 300000).
--define(SECRETS_RETRY_MS, 60000).
+-define(SECRETS_RETRY_MS, 10000).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
+-export([
+    get_cln_client_config/0
+]).
 
 get_cln_client_config() ->
     {ok, Host} = application:get_env(damage, cln_host),
@@ -270,8 +273,8 @@ load_runes(State) ->
 start_ws(
     #state{cln_host = Host, cln_port = Port, options = Opts, readonly_rune = ReadOnly} = State
 ) ->
-    {ok, ConnPid} = gun:open(Host, Port, Opts),
-    StreamRef = gun:ws_upgrade(ConnPid, "/socket.io/?EIO=4&transport=websocket", [
+    {ok, ConnPid} = damage_gun:open(Host, Port, Opts),
+    {ok, StreamRef} = damage_gun:ws_upgrade(ConnPid, "/socket.io/?EIO=4&transport=websocket", [
         {<<"rune">>, ReadOnly}
     ]),
     {ok, State#state{conn_pid = ConnPid, streamref = StreamRef}}.
