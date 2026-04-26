@@ -27,7 +27,6 @@
                 cowboy_swagger,
                 bech32,
                 erlcron,
-                gun,
                 zx,
                 zj,
                 vanillae,

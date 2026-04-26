@@ -2234,7 +2234,6 @@ open_relay_ws(Relay0, ExtraOpts0) ->
 
     damage_gun:open_ws(Host, Port, Path, Opts).
 relay_ws_headers(Relay0, ExtraHeaders) ->
-    Host = relay_host(Relay0),
     Base =
         case relay_profile(Relay0) of
             cloudflare_browser ->
