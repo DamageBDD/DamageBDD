@@ -15,9 +15,24 @@
 
 -export([start_link/1, get_or_start/1]).
 -export([init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2, code_change/3]).
+-export([
+    ensure_tmux_terminal/1,
+    ensure_tmux_terminal/2,
+    window_exists/2,
+    launch_st_tmux/1
+]).
 -export([test/0]).
 
--record(state, {port, hooks = #{}, events = [], max_events = 256}).
+-record(state, {
+    port,
+    hooks = #{},
+    events = [],
+    max_events = 256,
+    %% WinId => #{title := ..., class := ..., instance := ...}
+    clients = #{},
+    %% names to launch once hlwm is ready
+    pending_windows = []
+}).
 notify_dunst(Msg) ->
     RunOpts = [sync, stderr],
     {ok, []} = exec:run(
@@ -34,28 +49,37 @@ notify_dunst(Msg) ->
         RunOpts
     ).
 
-%% in init/1, after you build Port and register with gproc:
-init([_Ctx]) ->
+init([Ctx]) ->
     process_flag(trap_exit, true),
+
     Port = open_port(
         {spawn, "herbstclient --idle"},
         [{line, 1024}, exit_status, use_stdio, stderr_to_stdout]
     ),
+
     gproc:reg({n, l, {hlwm_events, monitor}}),
 
-    %% Default hook: desktop (tag) switch notifications via dunst
-    DeskHook = fun(Evt) ->
-        case maps:get(type, Evt, undefined) of
-            "tag_changed" ->
-                Name = maps:get(name, Evt, ""),
-                {ok, []} = notify_dunst(io_lib:format("Workspace: ~s", [Name])),
-                ok;
-            _ ->
-                ok
-        end
-    end,
+    DeskHook =
+        fun(Evt) ->
+            case maps:get(type, Evt, undefined) of
+                "tag_changed" ->
+                    Name = maps:get(name, Evt, ""),
+                    notify_dunst(io_lib:format("Workspace: ~s", [Name])),
+                    ok;
+                _ ->
+                    ok
+            end
+        end,
 
-    {ok, #state{port = Port, hooks = #{desktop_notify => DeskHook}}}.
+    Pending = maps:get(start_windows, Ctx, []),
+    Clients = refresh_clients(),
+
+    {ok, #state{
+        port = Port,
+        hooks = #{desktop_notify => DeskHook},
+        clients = Clients,
+        pending_windows = Pending
+    }}.
 
 get_or_start(Context) ->
     case gproc:where({n, l, {hlwm_events, monitor}}) of
@@ -66,8 +90,32 @@ get_or_start(Context) ->
             Pid
     end.
 
+ensure_tmux_terminal(Name) ->
+    Pid = get_or_start(#{start_windows => [to_list(Name)]}),
+    ensure_tmux_terminal(Pid, Name).
+
+ensure_tmux_terminal(Pid, Name0) ->
+    Name = to_list(Name0),
+    gen_server:call(Pid, {ensure_tmux_terminal, Name}).
+
+window_exists(Pid, Name0) ->
+    Name = to_list(Name0),
+    gen_server:call(Pid, {window_exists, Name}).
 start_link(Context) -> gen_server:start_link(?MODULE, [Context], []).
 
+handle_call({ensure_tmux_terminal, Name}, _From, S = #state{clients = Clients}) ->
+    case client_exists(Name, Clients) of
+        true ->
+            {reply, ok, S};
+        false ->
+            Reply = launch_st_tmux(Name),
+            {reply, Reply, S}
+    end;
+handle_call({window_exists, Name}, _From, S = #state{clients = Clients}) ->
+    {reply, client_exists(Name, Clients), S};
+handle_call(refresh_clients, _From, S) ->
+    Clients = refresh_clients(),
+    {reply, {ok, Clients}, S#state{clients = Clients}};
 handle_call({add_hook, Id, Fun}, _From, S = #state{hooks = H}) when is_function(Fun, 1) ->
     {reply, ok, S#state{hooks = maps:put(Id, Fun, H)}};
 handle_call({get, events}, _From, S = #state{events = E}) ->
@@ -79,7 +127,17 @@ handle_call(_Any, _From, S) ->
     {reply, ok, S}.
 
 handle_cast(_Msg, S) -> {noreply, S}.
-
+handle_info({Port, {data, {eol, Line}}}, S0 = #state{port = Port}) ->
+    case parse_event(Line) of
+        {ok, Evt} ->
+            S1 = update_client_cache(Evt, S0),
+            S2 = maybe_start_pending_windows(S1),
+            S3 = push_event(Evt, S2),
+            broadcast(Evt, S3),
+            {noreply, S3};
+        _ ->
+            {noreply, S0}
+    end;
 handle_info({Port, {data, {eol, Line}}}, S = #state{port = Port}) ->
     case parse_event(Line) of
         {ok, Evt} ->
@@ -134,5 +192,116 @@ parse_event(Line) ->
         _ ->
             {error, nomatch}
     end.
+update_client_cache(
+    #{type := "window_title_changed", win_id := WinId, title := Title},
+    S = #state{clients = Clients}
+) ->
+    Client0 = maps:get(WinId, Clients, #{}),
+    Client1 = maps:put(title, Title, Client0),
+    S#state{clients = maps:put(WinId, Client1, Clients)};
+update_client_cache(
+    #{type := "focus_changed", win_id := WinId},
+    S = #state{clients = Clients}
+) ->
+    %% Focus event proves client exists; fill metadata lazily if missing.
+    case maps:is_key(WinId, Clients) of
+        true ->
+            S;
+        false ->
+            Client = read_client(WinId),
+            S#state{clients = maps:put(WinId, Client, Clients)}
+    end;
+update_client_cache(_, S) ->
+    S.
+
+client_exists(Name, Clients) ->
+    Needle = string:lowercase(to_list(Name)),
+    lists:any(
+        fun({_WinId, Client}) ->
+            Haystack =
+                string:lowercase(
+                    string:join(
+                        [
+                            maps:get(title, Client, ""),
+                            maps:get(class, Client, ""),
+                            maps:get(instance, Client, "")
+                        ],
+                        " "
+                    )
+                ),
+            string:find(Haystack, Needle) =/= nomatch
+        end,
+        maps:to_list(Clients)
+    ).
+refresh_clients() ->
+    Ids0 = string:tokens(os:cmd("herbstclient list_clients"), "\n\r"),
+    lists:foldl(
+        fun(WinId, Acc) ->
+            maps:put(WinId, read_client(WinId), Acc)
+        end,
+        #{},
+        Ids0
+    ).
+
+read_client(WinId) ->
+    #{
+        title => hc_attr(["clients.", WinId, ".title"]),
+        class => hc_attr(["clients.", WinId, ".class"]),
+        instance => hc_attr(["clients.", WinId, ".instance"])
+    }.
+
+hc_attr(PathIo) ->
+    string:trim(os:cmd(iolist_to_binary(["herbstclient attr ", PathIo, " 2>/dev/null"]))).
+maybe_start_pending_windows(S = #state{pending_windows = []}) ->
+    S;
+maybe_start_pending_windows(S = #state{pending_windows = Names, clients = Clients}) ->
+    lists:foreach(
+        fun(Name) ->
+            case client_exists(Name, Clients) of
+                true -> ok;
+                false -> launch_st_tmux(Name)
+            end
+        end,
+        Names
+    ),
+    S#state{pending_windows = []}.
+launch_st_tmux(Name0) ->
+    Name = to_list(Name0),
+    Cmd = [
+        "st",
+        " -f ",
+        shell("Hack:size=12"),
+        " -T ",
+        shell(Name),
+        " -t ",
+        shell(Name),
+        " -c ",
+        shell(Name),
+        " -e tmux",
+        " -f ",
+        shell(expand("~/.tmux/outer.conf")),
+        " -L outer",
+        " new-session -A -t ",
+        shell(Name)
+    ],
+    case exec:run(iolist_to_binary(Cmd), [{shell, "/bin/sh"}]) of
+        {ok, _Pid, _OsPid} -> ok;
+        Error -> Error
+    end.
+to_list(B) when is_binary(B) -> binary_to_list(B);
+to_list(A) when is_atom(A) -> atom_to_list(A);
+to_list(L) when is_list(L) -> L.
+
+expand([$~, $/ | Rest]) ->
+    filename:join(os:getenv("HOME"), Rest);
+expand(Path) when is_binary(Path) ->
+    expand(binary_to_list(Path));
+expand(Path) ->
+    Path.
+
+shell(S) when is_binary(S) ->
+    shell(binary_to_list(S));
+shell(S) ->
+    "'" ++ string:replace(S, "'", "'\"'\"'", all) ++ "'".
 test() ->
     notify_dunst("test erm notification").

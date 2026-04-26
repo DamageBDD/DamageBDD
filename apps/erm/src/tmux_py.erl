@@ -112,10 +112,13 @@ attach(Server0, Session0, Opts0) ->
 
     %% tmux attach must replace the foreground process like Python os.execvpe.
     Args = [
-        "-f", TmuxConfig,
-        "-S", Socket,
+        "-f",
+        TmuxConfig,
+        "-S",
+        Socket,
         "attach-session",
-        "-t", Session
+        "-t",
+        Session
     ],
     os:cmd(string:join([Tmux | lists:map(fun shell/1, Args)], " ")).
 
@@ -135,22 +138,33 @@ build_windows(Ctl, Session, Windows) ->
             Name = maps:get(window_name, W, Session),
             StartDir = maps:get(start_directory, W, "~/"),
             Cmd = first_pane_cmd(W),
-            tmux_control:cmd(Ctl, [
-                "new-window -t ", shell(Session),
-                " -n ", shell(Name),
-                " -c ", shell(expand(StartDir))
-            ], 5000),
+            tmux_control:cmd(
+                Ctl,
+                [
+                    "new-window -t ",
+                    shell(Session),
+                    " -n ",
+                    shell(Name),
+                    " -c ",
+                    shell(expand(StartDir))
+                ],
+                5000
+            ),
             case Cmd of
                 undefined ->
                     ok;
                 _ ->
-                    tmux_control:cmd(Ctl, [
-                        "send-keys -t ",
-                        shell(Session ++ ":" ++ Name),
-                        " ",
-                        shell(Cmd),
-                        " C-m"
-                    ], 5000),
+                    tmux_control:cmd(
+                        Ctl,
+                        [
+                            "send-keys -t ",
+                            shell(Session ++ ":" ++ Name),
+                            " ",
+                            shell(Cmd),
+                            " C-m"
+                        ],
+                        5000
+                    ),
                     ok
             end
         end,
@@ -246,16 +260,17 @@ session_config(Session, HostConfig) ->
 pad_windows(Session, SConf) ->
     Windows0 = maps:get(windows, SConf, []),
     Need = max(0, 10 - length(Windows0)),
-    Windows0 ++ [
-        #{
-            window_name => Session,
-            start_directory => maps:get(start_directory, SConf, "~/"),
-            panes => [
-                #{shell_command => []}
-            ]
-        }
-     || _ <- lists:seq(1, Need)
-    ].
+    Windows0 ++
+        [
+            #{
+                window_name => Session,
+                start_directory => maps:get(start_directory, SConf, "~/"),
+                panes => [
+                    #{shell_command => []}
+                ]
+            }
+         || _ <- lists:seq(1, Need)
+        ].
 
 first_pane_cmd(W) ->
     case maps:get(panes, W, []) of
