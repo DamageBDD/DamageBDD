@@ -371,79 +371,37 @@ headers(Rune) ->
     [{<<"Rune">>, Rune}, {<<"content-type">>, <<"application/json">>}].
 
 cln_post_json(Host, Port, Options, Rune, Path, ReqMap) ->
-    cln_post_json_with_headers(Host, Port, Options, headers(Rune), Path, ReqMap).
+    cln_post_json_with_headers(
+        Host,
+        Port,
+        Options,
+        headers(Rune),
+        Path,
+        ReqMap
+    ).
 
 cln_post_json_with_headers(Host, Port, Options0, Headers, Path, ReqMap) ->
-    Options = cln_gun_opts(Host, Port, Options0),
+    Opts = cln_gun_opts(Host, Port, Options0),
 
-    case cln_open(Host, Port, Options) of
-        {ok, ConnPid} ->
-            try
-                StreamRef = gun:post(ConnPid, Path, Headers, jsx:encode(ReqMap)),
-                Reply = await_cln_json(ConnPid, StreamRef),
-                catch gun:cancel(ConnPid, StreamRef),
-                Reply
-            after
-                catch gun:close(ConnPid)
-            end;
+    case
+        damage_gun:post(
+            Host,
+            Port,
+            Path,
+            Headers,
+            jsx:encode(ReqMap),
+            Opts#{
+                decode => json,
+                close => true
+            }
+        )
+    of
+        {ok, #{json := Json}} ->
+            Json;
+        {error, #{body := Body, error := {invalid_json, _}}} ->
+            {error, {invalid_cln_json, Body}};
         {error, Reason} ->
-            {error, {cln_gun_open_failed, Reason}}
-    end.
-
-cln_open(Host, Port, Options0) ->
-    ProxyPolicy = maps:get(proxy, Options0, auto),
-    GunOptions = maps:without([proxy], Options0),
-
-    case ProxyPolicy of
-        none ->
-            damage_gun:open(Host, Port, GunOptions, none);
-        direct ->
-            damage_gun:open(Host, Port, GunOptions, none);
-        auto ->
-            damage_gun:open(Host, Port, GunOptions);
-        undefined ->
-            damage_gun:open(Host, Port, GunOptions);
-        {socks5, _, _} = Proxy ->
-            damage_gun:open(Host, Port, GunOptions, Proxy)
-    end.
-
-await_cln_json(ConnPid, StreamRef) ->
-    case gun:await(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
-        {response, fin, Status, RespHeaders} ->
-            decode_empty_or_error(Status, RespHeaders);
-        {response, nofin, Status, RespHeaders} ->
-            decode_cln_body(ConnPid, StreamRef, Status, RespHeaders);
-        Other ->
-            {error, {cln_http_failed, Other}}
-    end.
-
-decode_empty_or_error(Status, _RespHeaders) when Status >= 200, Status < 300 ->
-    #{};
-decode_empty_or_error(Status, RespHeaders) ->
-    {error, #{status => Status, headers => RespHeaders, body => <<>>}}.
-
-decode_cln_body(ConnPid, StreamRef, Status, RespHeaders) ->
-    case gun:await_body(ConnPid, StreamRef, ?CLN_HTTP_TIMEOUT) of
-        {ok, Body} when Status >= 200, Status < 300 ->
-            decode_cln_json_body(Body);
-        {ok, Body} ->
-            case decode_cln_json_body(Body) of
-                Decoded when is_map(Decoded) ->
-                    Decoded;
-                _ ->
-                    {error, #{status => Status, headers => RespHeaders, body => Body}}
-            end;
-        Error ->
-            {error, {cln_body_failed, Error}}
-    end.
-
-decode_cln_json_body(<<>>) ->
-    #{};
-decode_cln_json_body(Body) ->
-    try jsx:decode(Body, [return_maps, {labels, atom}])
-    catch
-        _:Reason ->
-            {error, {invalid_cln_json, Reason, Body}}
+            {error, {cln_http_failed, Reason}}
     end.
 
 cln_gun_opts(Host, Port, Options0) ->
@@ -452,8 +410,7 @@ cln_gun_opts(Host, Port, Options0) ->
     Options0#{
         transport => Transport,
         proxy => ProxyPolicy,
-        http_opts => #{keepalive => infinity},
-        protocols => [http]
+        http_opts => #{keepalive => infinity}
     }.
 
 cln_transport(_Host, _Port, #{transport := Transport}) ->
