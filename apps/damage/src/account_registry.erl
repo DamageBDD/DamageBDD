@@ -115,7 +115,7 @@ deploy_account_registry(AeAccount) when is_binary(AeAccount) ->
     deploy_account_registry(Keypair);
 deploy_account_registry(AccountKeypair) when is_map(AccountKeypair) ->
     #{"contract_id" := ContractId} = damage_ae:contract_deploy_for(
-        AccountKeypair, damage_ae:contract_path(?CONTRACT_PATH), []
+        AccountKeypair, damage_ae:contract_path(damage, ?CONTRACT_PATH), []
     ),
     ContractId.
 
@@ -242,7 +242,7 @@ call_value(#{public_key := AeAccount, private_key := PrivateKey} = KeyPair, Regi
     ?LOG_DEBUG("call_value ~p ~p ~p ~p ~p", [
         KeyPair,
         ContractIdStr,
-        damage_ae:contract_path(?CONTRACT_PATH),
+        damage_ae:contract_path(damage, ?CONTRACT_PATH),
         Fun,
         Args
     ]),
@@ -250,7 +250,7 @@ call_value(#{public_key := AeAccount, private_key := PrivateKey} = KeyPair, Regi
         damage_ae:contract_call_payfor_user(
             to_bin(AeAccount),
             ContractIdStr,
-            damage_ae:contract_path(?CONTRACT_PATH),
+            damage_ae:contract_path(damage, ?CONTRACT_PATH),
             Fun,
             Args
         )

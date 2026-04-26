@@ -169,7 +169,7 @@ deploy_agent_registry(KeyPair) ->
     #{"contract_id" := CtId} =
         damage_ae:contract_deploy_for(
             KeyPair,
-            damage_ae:contract_path("contracts/agent_registry.aes"),
+            damage_ae:contract_path(damage, "contracts/agent_registry.aes"),
             []
         ),
     CtId.
@@ -178,7 +178,7 @@ deploy_agent_policy(KeyPair) ->
     #{"contract_id" := CtId} =
         damage_ae:contract_deploy_for(
             KeyPair,
-            damage_ae:contract_path("contracts/agent_policy.aes"),
+            damage_ae:contract_path(damage, "contracts/agent_policy.aes"),
             []
         ),
     CtId.
@@ -187,7 +187,7 @@ deploy_agent_treasury(KeyPair) ->
     #{"contract_id" := CtId} =
         damage_ae:contract_deploy_for(
             KeyPair,
-            damage_ae:contract_path("contracts/agent_treasury.aes"),
+            damage_ae:contract_path(damage, "contracts/agent_treasury.aes"),
             []
         ),
     CtId.
@@ -196,7 +196,7 @@ deploy_agent_execution_ledger(KeyPair) ->
     #{"contract_id" := CtId} =
         damage_ae:contract_deploy_for(
             KeyPair,
-            damage_ae:contract_path("contracts/agent_execution_ledger.aes"),
+            damage_ae:contract_path(damage, "contracts/agent_execution_ledger.aes"),
             []
         ),
     CtId.
@@ -205,7 +205,7 @@ deploy_nwc_session_registry(KeyPair) ->
     #{"contract_id" := CtId} =
         damage_ae:contract_deploy_for(
             KeyPair,
-            damage_ae:contract_path("contracts/nwc_session_registry.aes"),
+            damage_ae:contract_path(damage, "contracts/nwc_session_registry.aes"),
             []
         ),
     CtId.

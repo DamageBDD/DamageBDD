@@ -565,7 +565,7 @@ cfg_map_to_record(M) when is_map(M) ->
 %% Deploy using the node (service) keypair (server-owned deployment)
 -spec deploy_node_registry() -> binary().
 deploy_node_registry() ->
-    DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
+    DeployPath = damage_ae:contract_path(damage, ?DEFAULT_CONTRACT_PATH),
     KeyPair = secrets:node_keypair(),
     case damage_ae:contract_deploy(KeyPair, DeployPath, []) of
         #{"contract_id" := ContractId} ->
@@ -587,7 +587,7 @@ deploy_node_registry(KeyPair) when is_map(KeyPair) ->
     %% - contract_path here should point at the NodeRegistry Sophia file
     %% - you already keep State#state.contract_path as "contracts/node_registry.aes"
     %%   but deploy needs the on-disk path (same pattern as AccountRegistry)
-    DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
+    DeployPath = damage_ae:contract_path(damage, ?DEFAULT_CONTRACT_PATH),
 
     %% If your deploy fn is named differently (contract_deploy_for vs contract_deploy),
     %% swap this call to match your damage_ae API.

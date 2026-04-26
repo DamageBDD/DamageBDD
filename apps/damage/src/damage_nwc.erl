@@ -480,14 +480,14 @@ ledger_call_dry(#state{nwc_contract_id = CtId}, Fun, Args) ->
 
 %% Legacy: deploy using whatever default key is configured inside damage_ae (kept for compatibility).
 deploy_nwc_contract() ->
-    damage_ae:contract_deploy(damage_ae:contract_path(?NWC_CONTRACT_PATH), []).
+    damage_ae:contract_deploy(damage_ae:contract_path(damage, ?NWC_CONTRACT_PATH), []).
 
 %% Deploy FOR USER: admin = user's AE address; requires custodial access to user keypair in identity_server.
 deploy_nwc_contract(UserAeAccount0) ->
     UserAeAccount = to_bin(UserAeAccount0),
     KP = user_keypair(UserAeAccount),
     %% init(admin' : address) expects an address string; use the public_key as admin
-    damage_ae:contract_deploy_for(KP, damage_ae:contract_path(?NWC_CONTRACT_PATH), [
+    damage_ae:contract_deploy_for(KP, damage_ae:contract_path(damage, ?NWC_CONTRACT_PATH), [
         to_s(maps:get(public_key, KP))
     ]).
 

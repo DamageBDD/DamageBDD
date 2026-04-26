@@ -108,7 +108,7 @@ handle_call({get_account, PublicKey}, _From, #{ets_table := Table} = State) ->
             case
                 damage_ae:contract_call(
                     get_email_registry_contract(),
-                    "contracts/email_registry.aes",
+                    damage_ae:contract_path(damage, "contracts/email_registry.aes"),
                     "get_email",
                     [
                         PublicKey
@@ -141,7 +141,7 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
     Response = damage_ae:contract_call(
         KeyPair,
         get_email_registry_contract(),
-        "contracts/email_registry.aes",
+        damage_ae:contract_path(damage, "contracts/email_registry.aes"),
         % TODO update contract
         ?AE_INITIAL_AETTOS + 1,
         "register_email",
@@ -167,7 +167,7 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
                 damage_ae:contract_call(
                     KeyPair,
                     get_email_registry_contract(),
-                    "contracts/email_registry.aes",
+                    damage_ae:contract_path(damage, "contracts/email_registry.aes"),
                     "get_account",
                     [
                         binary_to_list(secrets:salted_hash(Email))
@@ -207,7 +207,7 @@ handle_call({set_email_password, Email, Password}, _From, #{ets_table := Table} 
     Response = damage_ae:contract_call(
         KeyPair,
         get_email_registry_contract(),
-        "contracts/email_registry.aes",
+        damage_ae:contract_path(damage, "contracts/email_registry.aes"),
         "set_password",
         [
             binary_to_list(secrets:salted_hash(Email)),
@@ -222,7 +222,7 @@ handle_call({register_npub, Npub, PublicKey}, _From, State) ->
     Response = damage_ae:contract_call(
         KeyPair,
         get_npub_registry_contract(),
-        "contracts/nostr_registry.aes",
+        damage_ae:contract_path(damage, "contracts/nostr_registry.aes"),
         "register_npub",
         [
             get_email_registry_contract(),
@@ -236,7 +236,7 @@ handle_call({register_lightning, AuthKey, PublicKey}, _From, State) ->
     Response = damage_ae:contract_call(
         KeyPair,
         get_npub_registry_contract(),
-        "contracts/lightning_registry.aes",
+        damage_ae:contract_path(damage, "contracts/lightning_registry.aes"),
         "register_lightning",
         [
             get_email_registry_contract(),
@@ -251,7 +251,7 @@ handle_call({get_account_by_npub, Npub}, _From, State) ->
         damage_ae:contract_call(
             KeyPair,
             get_npub_registry_contract(),
-            "contracts/npub_registry.aes",
+            damage_ae:contract_path(damage, "contracts/npub_registry.aes"),
             "get_account",
             [
                 get_email_registry_contract(),
@@ -265,7 +265,7 @@ handle_call({get_account_by_lightning, AuthKey}, _From, State) ->
         damage_ae:contract_call(
             KeyPair,
             get_lightning_registry_contract(),
-            "contracts/lightning_registry.aes",
+            damage_ae:contract_path(damage, "contracts/lightning_registry.aes"),
             "get_account",
             [
                 get_email_registry_contract(),
@@ -285,19 +285,25 @@ deploy_contracts() ->
         "contract_id" :=
             EmailContractId,
         "return_type" := "ok"
-    } = damage_ae:contract_deploy("contracts/email_registry.aes", []),
+    } = damage_ae:contract_deploy(
+        damage_ae:contract_path(damage, "contracts/email_registry.aes"), []
+    ),
     ?LOG_INFO("email_registry contract id ~p", [EmailContractId]),
     #{
         "contract_id" :=
             NostrContractId,
         "return_type" := "ok"
-    } = damage_ae:contract_deploy("contracts/nostr_registry.aes", []),
+    } = damage_ae:contract_deploy(
+        damage_ae:contract_path(damage, "contracts/nostr_registry.aes"), []
+    ),
     ?LOG_INFO("nostr_registry contract id ~p", [NostrContractId]),
     #{
         "contract_id" :=
             LightningContractId,
         "return_type" := "ok"
-    } = damage_ae:contract_deploy("contracts/lightning_registry.aes", []),
+    } = damage_ae:contract_deploy(
+        damage_ae:contract_path(damage, "contracts/lightning_registry.aes"), []
+    ),
     ?LOG_INFO("lightning_registry contract id ~p", [LightningContractId]).
 
 test() ->
@@ -324,7 +330,9 @@ test_email_contract() ->
         "log" := [],
         "return_type" := "ok",
         "return_value" := none
-    } = damage_ae:contract_deploy("contracts/email_registry.aes", []),
+    } = damage_ae:contract_deploy(
+        damage_ae:contract_path(damage, "contracts/email_registry.aes"), []
+    ),
     KeyPair = secrets:node_keypair(),
     ?LOG_DEBUG("contract account ~p", [ContractId]),
     Args = [
@@ -338,5 +346,10 @@ test_email_contract() ->
     ],
     ?LOG_DEBUG("contaract call args ~p", [Args]),
     damage_ae:contract_call(
-        KeyPair, ContractId, "contracts/email_registry.aes", 10000, "register_email", Args
+        KeyPair,
+        ContractId,
+        damage_ae:contract_path(damage, "contracts/email_registry.aes"),
+        10000,
+        "register_email",
+        Args
     ).

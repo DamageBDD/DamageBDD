@@ -340,7 +340,7 @@ list_all_schedules_uncached() ->
     case
         damage_ae:contract_call(
             get_schedules_contract(),
-            "contracts/schedules.aes",
+            damage_ae:contract_path(damage, "contracts/schedules.aes"),
             "get_all_schedules",
             []
         )

@@ -15,7 +15,7 @@
     deploy_contract/1
 ]).
 
--import(damage_ae, [contract_path/1]).
+-import(damage_ae, [contract_path/2]).
 
 %% #{ NpubBin => LimitInt }
 -define(CTX_ZAP_LIMITS, nostr_zap_limits).
@@ -1137,7 +1137,7 @@ deploy_contract(AeAccount) ->
             ContractId;
         _ ->
             #{"contract_id" := ContractId} = damage_ae:contract_deploy(
-                contract_path("contracts/nostr_zap_registry.aes"), [AeAccount]
+                contract_path(damage, "contracts/nostr_zap_registry.aes"), [AeAccount]
             ),
             ?LOG_DEBUG("nostr_zap_registry ~p ~p", [Keypair, ContractId]),
             account_registry:register_contract(Keypair, "nostr_zap_registry", ContractId)
