@@ -143,7 +143,8 @@ relay_query(Relays0) ->
         ],
         "&"
     ).
-from_json(Req0, State = #{action := mint}) ->
+from_json_mint(Req0, State = #{action := mint}) ->
+    %% existing mint body goes here
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
 
@@ -333,39 +334,79 @@ from_json(Req0, State = #{action := mint}) ->
                         State
                     );
                 {fallback_to_intents, SetupWhy} ->
-                    {RegistryCt, DeployAndRegisterIntents} = setup_intents_for_missing_ledger(
-                        Owner
-                    ),
-                    {stop,
-                        reply_json(
-                            200,
-                            #{
-                                status => <<"needs_ledger_setup">>,
-                                reason => to_bin(io_lib:format("~p", [{Why, SetupWhy}])),
-                                owner => Owner,
-                                account_registry_ct => RegistryCt,
-                                ledger_mode => atom_to_binary(Mode, utf8),
-                                client_pubkey => ClientPubHex,
-                                secret_hex => SecretHex,
-                                nwc_uri => NwcUri,
-                                wallet_pubkey => WalletPubHex,
-                                relays => NormalizedRelays,
-                                intents => DeployAndRegisterIntents ++
-                                    [
-                                        damage_ledger_intent:ledger_register_intent(
-                                            <<"ct_TBD_FROM_DEPLOY">>,
-                                            ClientPubHex,
-                                            <<"">>,
-                                            MaxSingleMsat,
-                                            MaxTotalMsat,
-                                            ExpiresHeight
-                                        )
-                                    ]
-                            },
-                            Req
-                        ),
-                        State}
+                    case setup_intents_for_missing_ledger(Owner) of
+                        {ok, RegistryCt, DeployAndRegisterIntents} ->
+                            reply_json_stop(
+                                200,
+                                #{
+                                    status => <<"needs_ledger_setup">>,
+                                    reason => to_bin(io_lib:format("~p", [{Why, SetupWhy}])),
+                                    owner => Owner,
+                                    account_registry_ct => RegistryCt,
+                                    ledger_mode => atom_to_binary(Mode, utf8),
+                                    client_pubkey => ClientPubHex,
+                                    secret_hex => SecretHex,
+                                    nwc_uri => NwcUri,
+                                    wallet_pubkey => WalletPubHex,
+                                    relays => NormalizedRelays,
+                                    intents => DeployAndRegisterIntents ++
+                                        [
+                                            damage_ledger_intent:ledger_register_intent(
+                                                <<"ct_TBD_FROM_DEPLOY">>,
+                                                ClientPubHex,
+                                                <<"">>,
+                                                MaxSingleMsat,
+                                                MaxTotalMsat,
+                                                ExpiresHeight
+                                            )
+                                        ]
+                                },
+                                Req,
+                                State
+                            );
+                        {error, SetupIntentWhy} ->
+                            reply_json_stop(
+                                400,
+                                #{
+                                    status => <<"error">>,
+                                    error => <<"LEDGER_SETUP_INTENTS_FAILED">>,
+                                    reason => to_bin(
+                                        io_lib:format("~p", [{Why, SetupWhy, SetupIntentWhy}])
+                                    ),
+                                    owner => Owner,
+                                    ledger_mode => atom_to_binary(Mode, utf8),
+                                    client_pubkey => ClientPubHex,
+                                    nwc_uri => NwcUri,
+                                    wallet_pubkey => WalletPubHex,
+                                    relays => NormalizedRelays
+                                },
+                                Req,
+                                State
+                            )
+                    end
             end
+    end.
+from_json(Req0, State = #{action := mint}) ->
+    ?LOG_ERROR("from_json_mint ", []),
+    try
+
+        from_json_mint(Req0, State)
+    catch
+        Class:Reason:Stack ->
+            ?LOG_ERROR(
+                "NWC mint crashed class=~p reason=~p stack=~p state_keys=~p",
+                [Class, Reason, Stack, maps:keys(State)]
+            ),
+            reply_json_stop(
+                500,
+                #{
+                    status => <<"error">>,
+                    error => <<"NWC_MINT_CRASH">>,
+                    reason => to_bin(io_lib:format("~p:~p", [Class, Reason]))
+                },
+                Req0,
+                State
+            )
     end;
 %% -------------------------------------------------------------------
 %% revoke
@@ -1270,7 +1311,7 @@ notify_nwc_listener_relays(Relays0) ->
             ?LOG_WARNING("damage_nwc_listener not running; relays persisted only: ~p", [Relays]),
             ok;
         _Pid ->
-            gen_server:cast(damage_nwc_listener, {add_relays, Relays}),
+            damage_nwc_listener:add_relays(Relays),
             ok
     end.
 test() ->

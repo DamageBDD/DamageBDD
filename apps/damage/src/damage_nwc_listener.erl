@@ -11,7 +11,10 @@
     start_link/0,
     start_link/1,
     publish_info/0,
-    supported_methods/0
+    supported_methods/0,
+    get_state/0,
+    state_summary/0,
+    add_relays/1
 ]).
 
 -export([
@@ -29,8 +32,6 @@
 -define(INFO_KIND, 13194).
 -define(REQUEST_KIND, 23194).
 -define(RESPONSE_KIND, 23195).
--define(NOTIFICATION_KIND, 23197).
--define(BACKCOMPAT_NOTIFICATION_KIND, 23196).
 
 -record(state, {
     relays = [],
@@ -104,11 +105,23 @@ init(Opts0) ->
     },
 
     {ok, State0, {continue, connect}}.
+
+get_state() ->
+    gen_server:call(?MODULE, get_state).
+
+state_summary() ->
+    gen_server:call(?MODULE, state_summary).
+
+add_relays(Relays) ->
+    gen_server:cast(?MODULE, {add_relays, Relays}).
+
 handle_continue(connect, State) ->
     {noreply, maybe_connect(State)}.
 
 handle_call(get_state, _From, State) ->
     {reply, State, State};
+handle_call(state_summary, _From, State) ->
+    {reply, summarize_state(State), State};
 handle_call(_Call, _From, State) ->
     {reply, ok, State}.
 
@@ -118,13 +131,16 @@ handle_cast({add_relays, NewRelays0}, State = #state{relays = Relays0}) ->
     ?LOG_INFO("NWC listener adding relays ~p merged=~p", [NewRelays, Relays]),
     {noreply, maybe_connect(State#state{relays = Relays, stopped = false})};
 handle_cast(restart, State) ->
+    close_all_conns(State),
     {noreply,
         maybe_connect(State#state{
             stopped = false,
             retry_count = 0,
             conn_pid = undefined,
             stream_ref = undefined,
-            sub_id = undefined
+            sub_id = undefined,
+            conns = #{},
+            seen = #{}
         })};
 handle_cast(publish_info, State) ->
     {noreply, publish_info_event(State)};
@@ -148,17 +164,19 @@ handle_info(
 ) ->
     ?LOG_WARNING("NWC relay HTTP body before/without WS upgrade: ~ts", [Data]),
     {noreply, State};
-handle_info(
-    {gun_error, ConnPid, StreamRef, Reason},
-    #state{conn_pid = ConnPid, stream_ref = StreamRef} = State
-) ->
-    ?LOG_WARNING("NWC relay gun_error ~p", [Reason]),
-    {noreply,
-        schedule_reconnect(State#state{
-            conn_pid = undefined,
-            stream_ref = undefined,
-            sub_id = undefined
-        })};
+handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
+    case conn_known(ConnPid, StreamRef, State) of
+        true ->
+            ?LOG_WARNING("NWC relay gun_error conn=~p stream=~p reason=~p", [
+                ConnPid, StreamRef, Reason
+            ]),
+            {noreply, schedule_reconnect(remove_conn(ConnPid, State))};
+        false ->
+            ?LOG_DEBUG("Ignoring gun_error from unknown relay conn=~p stream=~p reason=~p", [
+                ConnPid, StreamRef, Reason
+            ]),
+            {noreply, State}
+    end;
 handle_info({gun_ws, ConnPid, StreamRef, {text, Msg}}, State) ->
     case conn_known(ConnPid, StreamRef, State) of
         true ->
@@ -168,8 +186,16 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, Msg}}, State) ->
             {noreply, State}
     end;
 handle_info({gun_down, ConnPid, _Protocol, Reason, _KilledStreams, _Unprocessed}, State) ->
-    ?LOG_WARNING("NWC relay connection down conn=~p reason=~p", [ConnPid, Reason]),
-    {noreply, schedule_reconnect(remove_conn(ConnPid, State))};
+    case conn_known_pid(ConnPid, State) of
+        true ->
+            ?LOG_WARNING("NWC relay connection down conn=~p reason=~p", [ConnPid, Reason]),
+            {noreply, schedule_reconnect(remove_conn(ConnPid, State))};
+        false ->
+            ?LOG_DEBUG("Ignoring gun_down from unknown relay conn=~p reason=~p", [
+                ConnPid, Reason
+            ]),
+            {noreply, State}
+    end;
 handle_info({'EXIT', ConnPid, Reason}, State) ->
     case remove_conn(ConnPid, State) of
         State ->
@@ -183,10 +209,8 @@ handle_info(Info, State) ->
     ?LOG_DEBUG("Ignoring unhandled info ~p", [Info]),
     {noreply, State}.
 
-terminate(_Reason, #state{conn_pid = undefined}) ->
-    ok;
-terminate(_Reason, #state{conn_pid = ConnPid}) ->
-    catch gun:close(ConnPid),
+terminate(_Reason, State) ->
+    close_all_conns(State),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -213,14 +237,14 @@ resolve_service_pubkey(CryptoHandler) ->
             end
     end.
 
-maybe_connect(#state{stopped = true} = State) ->
-    State;
-maybe_connect(#state{relays = []} = State) ->
-    ?LOG_WARNING("No NWC relays configured, listener is idle.", []),
-    State;
-maybe_connect(State = #state{relays = Relays0, conns = _Conns0}) ->
+maybe_connect(State0 = #state{relays = Relays0, conns = _Conns0}) ->
+    State = ensure_service_pubkey(State0),
     Relays = damage_nostr:normalize_relays(Relays0),
-    lists:foldl(fun ensure_relay_connected/2, State#state{relays = Relays}, Relays).
+    State1 = lists:foldl(fun ensure_relay_connected/2, State#state{relays = Relays}, Relays),
+    case missing_relay_count(State1) of
+        0 -> State1;
+        _ -> schedule_reconnect(State1)
+    end.
 
 restart() ->
     gen_server:cast(?MODULE, restart).
@@ -301,24 +325,67 @@ schedule_reconnect(#state{retry_count = Retry, max_retries = Max} = State) when 
     State#state{stopped = true};
 schedule_reconnect(#state{reconnect_ms = ReconnectMs} = State) ->
     erlang:send_after(ReconnectMs, self(), connect),
-    State.
+    State#state{retry_count = State#state.retry_count + 1}.
 
-publish_info_event(#state{conn_pid = undefined} = State) ->
+publish_info_event(#state{conns = Conns} = State) when map_size(Conns) =:= 0 ->
     State;
 publish_info_event(#state{service_pubkey = undefined} = State) ->
     State;
-publish_info_event(
-    #state{crypto_handler = CryptoHandler, conn_pid = ConnPid, stream_ref = StreamRef} = State
-) ->
+publish_info_event(#state{conns = Conns} = State) ->
+    case create_info_event_msg(State) of
+        {ok, Msg, EventId} ->
+            case fanout_ws_text(Conns, Msg) of
+                {ok, OkUrls, Results} ->
+                    ?LOG_INFO(
+                        "Published NWC info event id=~p ok_relays=~p results=~p",
+                        [EventId, OkUrls, Results]
+                    ),
+                    State;
+                {error, Results} ->
+                    ?LOG_WARNING(
+                        "Failed to publish NWC info event to any relay results=~p",
+                        [Results]
+                    ),
+                    State
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING("Failed to build NWC info event: ~p", [Reason]),
+            State
+    end.
+
+publish_info_event_to_conn(_ConnPid, _StreamRef, #state{service_pubkey = undefined} = State) ->
+    State;
+publish_info_event_to_conn(ConnPid, StreamRef, State) ->
+    case create_info_event_msg(State) of
+        {ok, Msg, EventId} ->
+            case safe_send_ws_text(ConnPid, StreamRef, Msg) of
+                ok ->
+                    ?LOG_INFO(
+                        "Published NWC info event id=~p conn=~p stream=~p",
+                        [EventId, ConnPid, StreamRef]
+                    ),
+                    State;
+                Error ->
+                    ?LOG_WARNING(
+                        "Failed to publish NWC info event id=~p conn=~p stream=~p error=~p",
+                        [EventId, ConnPid, StreamRef, Error]
+                    ),
+                    State
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING("Failed to build NWC info event: ~p", [Reason]),
+            State
+    end.
+
+create_info_event_msg(#state{crypto_handler = CryptoHandler}) ->
     Content = iolist_to_binary(string:join([binary_to_list(M) || M <- supported_methods()], " ")),
     Tags = [],
     case create_signed_event(CryptoHandler, ?INFO_KIND, Content, Tags) of
         {ok, Event} ->
-            ok = send_ws_text(ConnPid, StreamRef, jsx:encode([<<"EVENT">>, Event])),
-            State;
-        {error, Reason} ->
-            ?LOG_WARNING("Failed to publish NWC info event: ~p", [Reason]),
-            State
+            EventId = maps:get(<<"id">>, Event, maps:get(id, Event, undefined)),
+            {ok, jsx:encode([<<"EVENT">>, Event]), EventId};
+        Error ->
+            Error
     end.
 
 handle_ws_message(Msg, State) when is_binary(Msg) ->
@@ -423,14 +490,9 @@ send_response(Event, Payload, _State = #state{crypto_handler = CryptoHandler, co
     case encode_response(CryptoHandler, Event, Payload) of
         {ok, ResponseEvent} ->
             Msg = jsx:encode([<<"EVENT">>, ResponseEvent]),
-            Results =
-                [
-                    send_ws_text(Pid, Ref, Msg)
-                 || #{conn_pid := Pid, stream_ref := Ref} <- maps:values(Conns)
-                ],
-            case lists:member(ok, Results) of
-                true -> ok;
-                false -> {error, Results}
+            case fanout_ws_text(Conns, Msg) of
+                {ok, _OkUrls, _Results} -> ok;
+                {error, Results} -> {error, Results}
             end;
         {error, Reason} ->
             ?LOG_WARNING("Failed to encode NIP-47 response: ~p", [Reason]),
@@ -457,10 +519,35 @@ create_signed_event(CryptoHandler, Kind, Content, Tags) ->
             {error, Error}
     end.
 
+fanout_ws_text(Conns, Msg) ->
+    Results =
+        maps:fold(
+            fun
+                (Url, #{conn_pid := Pid, stream_ref := Ref}, Acc) ->
+                    [{Url, safe_send_ws_text(Pid, Ref, Msg)} | Acc];
+                (Url, Entry, Acc) ->
+                    [{Url, {error, {bad_conn_entry, Entry}}} | Acc]
+            end,
+            [],
+            Conns
+        ),
+    OkUrls = [Url || {Url, ok} <- Results],
+    case OkUrls of
+        [] -> {error, Results};
+        _ -> {ok, OkUrls, Results}
+    end.
+
+safe_send_ws_text(ConnPid, StreamRef, Msg) ->
+    try send_ws_text(ConnPid, StreamRef, Msg) of
+        ok -> ok;
+        Other -> {error, Other}
+    catch
+        Class:Reason ->
+            {error, {Class, Reason}}
+    end.
 send_ws_text(ConnPid, StreamRef, Msg) ->
     ?LOG_DEBUG("send_ws_text ~p", [Msg]),
-    _ = gun:ws_send(ConnPid, StreamRef, {text, Msg}),
-    ok.
+    gun:ws_send(ConnPid, StreamRef, {text, Msg}).
 
 subscription_id() ->
     iolist_to_binary(io_lib:format("nwc-~p", [erlang:unique_integer([positive])])).
@@ -519,12 +606,19 @@ merge_relays(Old0, New0) ->
 ensure_relay_connected(Relay, State = #state{conns = Conns}) ->
     Url = maps:get(url, Relay),
     case maps:get(Url, Conns, undefined) of
-        #{conn_pid := Pid} when is_pid(Pid) ->
+        #{conn_pid := Pid, subscribed := true} when is_pid(Pid) ->
             State;
+        #{conn_pid := Pid, stream_ref := Ref} when is_pid(Pid) ->
+            subscribe_requests_for(Pid, Ref, State);
         _ ->
             case open_ws(Relay) of
                 {ok, ConnPid, StreamRef} ->
-                    Entry = #{relay => Relay, conn_pid => ConnPid, stream_ref => StreamRef},
+                    Entry = #{
+                        relay => Relay,
+                        conn_pid => ConnPid,
+                        stream_ref => StreamRef,
+                        subscribed => false
+                    },
                     State1 = State#state{
                         conns = maps:put(Url, Entry, Conns),
 
@@ -543,7 +637,8 @@ ensure_relay_connected(Relay, State = #state{conns = Conns}) ->
                         stopped = false,
                         retry_count = 0
                     },
-                    publish_info_event(subscribe_requests_for(ConnPid, StreamRef, State1));
+                    State2 = subscribe_requests_for(ConnPid, StreamRef, State1),
+                    publish_info_event_to_conn(ConnPid, StreamRef, State2);
                 {error, Reason} ->
                     ?LOG_WARNING("NWC listener failed relay=~p reason=~p", [Relay, Reason]),
                     State
@@ -560,7 +655,25 @@ subscribe_requests_for(ConnPid, StreamRef, #state{service_pubkey = PubKey} = Sta
     },
     Msg = jsx:encode([<<"REQ">>, SubId, Filter]),
     ok = send_ws_text(ConnPid, StreamRef, Msg),
-    State#state{sub_id = SubId}.
+    ?LOG_INFO("NWC listener subscribed conn=~p stream=~p sub_id=~p pubkey=~p filter=~p", [
+        ConnPid, StreamRef, SubId, PubKey, Filter
+    ]),
+    mark_subscribed(ConnPid, StreamRef, SubId, State).
+
+mark_subscribed(ConnPid, StreamRef, SubId, State = #state{conns = Conns}) ->
+    Conns1 =
+        maps:map(
+            fun
+                (_Url, #{conn_pid := ConnPid0, stream_ref := StreamRef0} = Entry) when
+                    ConnPid0 =:= ConnPid, StreamRef0 =:= StreamRef
+                ->
+                    Entry#{subscribed => true, sub_id => SubId};
+                (_Url, Entry) ->
+                    Entry
+            end,
+            Conns
+        ),
+    State#state{conns = Conns1, sub_id = SubId}.
 conn_known(ConnPid, StreamRef, #state{conn_pid = ConnPid, stream_ref = StreamRef}) ->
     true;
 conn_known(ConnPid, StreamRef, #state{conns = Conns}) ->
@@ -590,3 +703,77 @@ remove_conn(ConnPid, State = #state{conns = Conns, conn_pid = Primary}) ->
         false ->
             State1
     end.
+
+close_all_conns(#state{conns = Conns, conn_pid = ConnPid}) ->
+    lists:foreach(
+        fun
+            (#{conn_pid := Pid}) when is_pid(Pid) ->
+                catch gun:close(Pid);
+            (_) ->
+                ok
+        end,
+        maps:values(Conns)
+    ),
+    case ConnPid of
+        undefined -> ok;
+        P when is_pid(P) -> catch gun:close(P)
+    end,
+    ok.
+summarize_state(#state{
+    relays = Relays,
+    service_pubkey = ServicePubKey,
+    sub_id = SubId,
+    conns = Conns,
+    stopped = Stopped,
+    retry_count = RetryCount,
+    max_retries = MaxRetries
+}) ->
+    #{
+        relays => Relays,
+        service_pubkey => ServicePubKey,
+        sub_id => SubId,
+        stopped => Stopped,
+        retry_count => RetryCount,
+        max_retries => MaxRetries,
+        connected_count => map_size(Conns),
+        connected_relays =>
+            [
+                #{
+                    url => Url,
+                    subscribed => maps:get(subscribed, Entry, false),
+                    sub_id => maps:get(sub_id, Entry, undefined),
+                    conn_pid => maps:get(conn_pid, Entry, undefined),
+                    stream_ref => maps:get(stream_ref, Entry, undefined)
+                }
+             || {Url, Entry} <- maps:to_list(Conns)
+            ]
+    }.
+ensure_service_pubkey(#state{service_pubkey = undefined, crypto_handler = CryptoHandler} = State) ->
+    case resolve_service_pubkey(CryptoHandler) of
+        PubKey when is_binary(PubKey) ->
+            ?LOG_INFO("NWC listener resolved service pubkey ~p", [PubKey]),
+            State#state{service_pubkey = PubKey};
+        _ ->
+            State
+    end;
+ensure_service_pubkey(State) ->
+    State.
+missing_relay_count(#state{relays = Relays, conns = Conns}) ->
+    Wanted =
+        maps:from_list([{maps:get(url, R), true} || R <- damage_nostr:normalize_relays(Relays)]),
+    Have =
+        maps:from_list([
+            {Url, true}
+         || {Url, #{subscribed := true}} <- maps:to_list(Conns)
+        ]),
+    length([Url || Url <- maps:keys(Wanted), not maps:is_key(Url, Have)]).
+conn_known_pid(ConnPid, #state{conn_pid = ConnPid}) ->
+    true;
+conn_known_pid(ConnPid, #state{conns = Conns}) ->
+    lists:any(
+        fun
+            (#{conn_pid := P}) -> P =:= ConnPid;
+            (_) -> false
+        end,
+        maps:values(Conns)
+    ).
