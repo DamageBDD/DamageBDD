@@ -305,8 +305,8 @@ await_up(ConnPid) ->
 
 await_up(ConnPid, Timeout) ->
     case catch gun:await_up(ConnPid, Timeout) of
-        {ok, Protocol} = Ok ->
-            ?LOG_DEBUG("gun connection up protocol=~p", [Protocol]),
+        {ok, _Protocol} = Ok ->
+            %?LOG_DEBUG("gun connection up protocol=~p", [Protocol]),
             Ok;
         {error, Reason} ->
             {error, {await_up_failed, Reason}};

@@ -387,9 +387,7 @@ from_json_mint(Req0, State = #{action := mint}) ->
             end
     end.
 from_json(Req0, State = #{action := mint}) ->
-    ?LOG_ERROR("from_json_mint ", []),
     try
-
         from_json_mint(Req0, State)
     catch
         Class:Reason:Stack ->

@@ -111,37 +111,87 @@ lower_hex(Bin) when is_binary(Bin) ->
 publish(Event, Relays0) when is_map(Event), is_list(Relays0) ->
     Relays = damage_nostr:normalize_relays(Relays0),
     Sorted = damage_nostr:score_relays(Relays),
+    EventId = maps:get(<<"id">>, Event, undefined),
 
-    ?LOG_INFO("Publishing NWC event id=~p relays=~p", [
-        maps:get(<<"id">>, Event, undefined),
-        Sorted
-    ]),
+    ?LOG_INFO("Publishing NWC event id=~p relays=~p", [EventId, Sorted]),
 
-    ok = nostr_pool:ensure_started(Sorted),
-
-    case nostr_pool:publish_sync(Event, Sorted, 50000) of
+    case safe_ensure_pool(Sorted) of
         ok ->
-            ok;
-        {error, Reason} ->
-            ?LOG_WARNING(
-                "NWC publish failed relays=~p reason=~p; resetting pool and retrying fallback",
-                [Sorted, Reason]
-            ),
-            nostr_pool:reset(Sorted),
-            timer:sleep(500),
-            retry_publish(Event, Sorted, Reason)
+            case safe_publish_sync(Event, Sorted, 35000) of
+                ok ->
+                    ok;
+                {error, FirstReason} ->
+                    ?LOG_WARNING(
+                        "NWC publish failed id=~p reason=~p; resetting pool and retrying",
+                        [EventId, FirstReason]
+                    ),
+                    _ = catch nostr_pool:reset(Sorted),
+                    timer:sleep(300),
+                    retry_publish(Event, Sorted, FirstReason)
+            end;
+        Error ->
+            Error
     end;
 publish(BadEvent, BadRelays) ->
-    ?LOG_ERROR("Invalid publish args event=~p relays=~p", [BadEvent, BadRelays]),
-    {error, {invalid_publish_args, BadEvent, BadRelays}}.
+    ?LOG_ERROR("Invalid publish args event_shape=~p relays_shape=~p", [
+        term_shape(BadEvent),
+        term_shape(BadRelays)
+    ]),
+    {error, {invalid_publish_args, term_shape(BadEvent), term_shape(BadRelays)}}.
 
 retry_publish(Event, Relays, FirstReason) ->
-    case nostr_pool:publish_sync(Event, Relays, 50000) of
+    case safe_publish_sync(Event, Relays, 15000) of
         ok ->
             ok;
         {error, Reason2} ->
             {error, {publish_failed_after_reset, FirstReason, Reason2}}
     end.
+
+safe_ensure_pool(Relays) ->
+    try nostr_pool:ensure_started(Relays) of
+        ok -> ok;
+        Other -> {error, {ensure_started_failed, Other}}
+    catch
+        Class:Reason:Stack ->
+            {error, {ensure_started_crashed, Class, Reason, stack_top(Stack)}}
+    end.
+
+safe_publish_sync(Event, Relays, TimeoutMs) ->
+    try nostr_pool:publish_sync(Event, Relays, TimeoutMs) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            {error, Reason};
+        Other ->
+            {error, {unexpected_publish_result, Other}}
+    catch
+        exit:{timeout, _} ->
+            {error,
+                {publish_timeout, maps:get(<<"id">>, Event, undefined), TimeoutMs,
+                    relay_urls(Relays)}};
+        exit:Reason ->
+            {error, {publish_exit, Reason}};
+        Class:Reason:Stack ->
+            {error, {publish_crash, Class, Reason, stack_top(Stack)}}
+    end.
+
+relay_urls(Relays) ->
+    [maps:get(url, R, R) || R <- Relays].
+
+stack_top([{M, F, A, _} | _]) -> {M, F, A};
+stack_top(_) -> undefined.
+
+term_shape(Term) when is_map(Term) ->
+    #{type => map, size => map_size(Term), keys => maps:keys(Term)};
+term_shape(Term) when is_list(Term) ->
+    #{type => list, length => length(Term)};
+term_shape(Term) when is_tuple(Term) ->
+    #{type => tuple, size => tuple_size(Term), tag => element(1, Term)};
+term_shape(Term) when is_binary(Term) ->
+    #{type => binary, bytes => byte_size(Term)};
+term_shape(Term) ->
+    Term.
+
 relays_for_conn(#{relays := Relays}) when is_list(Relays), Relays =/= [] ->
     damage_nostr:normalize_relays(Relays);
 relays_for_conn(#{relay := Relays}) when is_list(Relays), Relays =/= [] ->

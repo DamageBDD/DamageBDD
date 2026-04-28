@@ -71,9 +71,8 @@ Feature: L402 payment via NIP-47 and execute_feature
         "invoice": "{{invoice_bolt11}}"
     }
     """
-    And I publish NWC request in "req_pay" store relay ack as "pub_pay"
-    And I wait for NWC response to "req_pay" using "conn" store as "resp_pay"
-    And I store the JSON at path "$.preimage" from "resp_pay" in "payment_preimage"
+    And I publish NWC request in "req_pay" using "conn" and wait for response store as "resp_pay"
+    And I store the JSON at path "$.response.preimage" from "resp_pay" in "payment_preimage"
 
     ############################################
     # 4. Retry request with L402 auth

@@ -29,7 +29,6 @@
     ]
 ).
 -import(damage_utils, [to_bin/1]).
-
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/logger.hrl").
 

@@ -111,6 +111,8 @@
     conn_pid = undefined,
     streamref = undefined,
     heartbeat_timer = undefined,
+    reconnect_timer = undefined,
+
     public_key,
     private_key,
     npub_cache = #{},
@@ -148,32 +150,6 @@ normalize_bip340_scalar(PrivKey32) ->
                 true -> D0;
                 false -> ?SECP256K1_N - D0
             end
-    end.
--spec schnorr_ecdh_xonly(binary(), binary()) -> {ok, binary()} | {error, term()}.
-schnorr_ecdh_xonly(PrivKey32, XOnly32) when
-    is_binary(PrivKey32),
-    byte_size(PrivKey32) =:= 32,
-    is_binary(XOnly32),
-    byte_size(XOnly32) =:= 32
-->
-    try
-        D = normalize_bip340_scalar(PrivKey32),
-        case nostrlib_schnorr:lift_x(binary:decode_unsigned(XOnly32)) of
-            infinity ->
-                {error, invalid_remote_point};
-            RemotePoint ->
-                SharedPoint = nostrlib_schnorr:point_mul(RemotePoint, D),
-                case SharedPoint of
-                    infinity ->
-                        {error, invalid_shared_point};
-                    _ ->
-                        SharedX = nostrlib_schnorr:point_to_bitstring(SharedPoint),
-                        {ok, SharedX}
-                end
-        end
-    catch
-        C:R:S ->
-            {error, {ecdh_failed, C, R, S}}
     end.
 
 %%% API Functions
@@ -331,15 +307,8 @@ open_nostr_ws(Relay, DamageApi) ->
             ]),
             {error, Reason}
     end.
-maybe_connect(#state{stopped = true} = State, _DamageApi) ->
-    State;
 maybe_connect(#state{conn_pid = ConnPid} = State, _DamageApi) when is_pid(ConnPid) ->
     State;
-maybe_connect(#state{retry_count = Retry, max_retries = Max} = State, _DamageApi) when
-    Retry >= Max
-->
-    ?LOG_ERROR("Nostr reconnect limit reached (~p/~p). Stopping reconnects.", [Retry, Max]),
-    State#state{stopped = true, conn_pid = undefined, streamref = undefined};
 maybe_connect(#state{relay = Relay, retry_count = Retry} = State, DamageApi) ->
     case open_nostr_ws(Relay, DamageApi) of
         {ok, ConnPid, StreamRef} ->
@@ -365,16 +334,44 @@ maybe_connect(#state{relay = Relay, retry_count = Retry} = State, DamageApi) ->
             )
     end.
 
-schedule_reconnect(#state{stopped = true} = State) ->
+schedule_reconnect(#state{reconnect_timer = Timer} = State) when is_reference(Timer) ->
     State;
-schedule_reconnect(#state{retry_count = Retry, max_retries = Max} = State) when Retry >= Max ->
-    ?LOG_ERROR("Nostr reconnect suppressed after ~p/~p failures.", [Retry, Max]),
-    State#state{stopped = true};
-schedule_reconnect(#state{reconnect_ms = ReconnectMs} = State) ->
-    erlang:send_after(ReconnectMs, self(), reconnect),
-    State.
+schedule_reconnect(#state{reconnect_ms = BaseMs, retry_count = Retry} = State) ->
+    DelayMs = backoff_ms(BaseMs, 60000, Retry),
+    Timer = erlang:send_after(DelayMs, self(), reconnect),
+    ?LOG_WARNING("Nostr reconnect scheduled delay_ms=~p attempt=~p", [
+        DelayMs,
+        Retry + 1
+    ]),
+    State#state{
+        reconnect_timer = Timer,
+        retry_count = Retry + 1,
+        stopped = false
+    }.
 
-clear_connection(State) ->
+backoff_ms(BaseMs, MaxMs, Attempt) ->
+    Mult = 1 bsl min_int(Attempt, 6),
+    min_int(MaxMs, BaseMs * Mult).
+
+min_int(A, B) when A =< B -> A;
+min_int(_, B) -> B.
+
+clear_connection(#state{conn_pid = ConnPid, heartbeat_timer = HeartbeatTimer} = State) ->
+    case ConnPid of
+        Pid when is_pid(Pid) ->
+            catch gun:close(Pid);
+        _ ->
+            ok
+    end,
+
+    case HeartbeatTimer of
+        T when is_reference(T) ->
+            _ = erlang:cancel_timer(T),
+            ok;
+        _ ->
+            ok
+    end,
+
     State#state{
         conn_pid = undefined,
         streamref = undefined,
@@ -686,19 +683,45 @@ handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State) when
 handle_info({gun_ws, _ConnPid, _, {text, Message}}, State) ->
     ok = handle_event(jsx:decode(Message, [{labels, atom}]), State),
     {noreply, State};
-handle_info(reconnect, #state{stopped = true} = State) ->
-    {noreply, State};
-handle_info(reconnect, State) ->
-    {ok, DamageApi} = application:get_env(damage, api_url),
-    {noreply, maybe_connect(State, DamageApi)};
-handle_info({gun_down, ConnPid, _, _, _}, #state{conn_pid = ConnPid} = State) ->
-    ?LOG_WARNING("Nostr WebSocket connection down, scheduling reconnect.", []),
-    {noreply, schedule_reconnect(clear_connection(State))};
-handle_info({gun_up, ConnPid, _StreamRef}, State) ->
-    ?LOG_INFO("Nostr info gun_up ~p", [ConnPid]),
+handle_info(reconnect, State0) ->
+    State = State0#state{reconnect_timer = undefined, stopped = false},
+    case application:get_env(damage, api_url) of
+        {ok, DamageApi} ->
+            {noreply, maybe_connect(State, DamageApi)};
+        _ ->
+            {noreply, schedule_reconnect(State)}
+    end;
+%% Gun versions may emit 5-tuple gun_down.
+handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams}, State) ->
+    handle_gun_down(ConnPid, Protocol, Reason, KilledStreams, [], State);
+%% Some Gun versions/configs emit 6-tuple gun_down.
+handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams}, State) ->
+    handle_gun_down(ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams, State);
+handle_info({gun_up, _ConnPid, _StreamRef}, State) ->
+    %?LOG_INFO("Nostr info gun_up ~p", [ConnPid]),
     {noreply, State};
 handle_info({gun_response, _ConnPid, _, nofin, _, _Headers} = Any, State) ->
     ?LOG_INFO("Nostr gun_response info ~p", [Any]),
+    {noreply, State};
+handle_info(
+    {gun_error, ConnPid, StreamRef, Reason},
+    #state{
+        conn_pid = ConnPid,
+        streamref = StreamRef
+    } = State
+) ->
+    ?LOG_WARNING("Nostr relay gun_error conn=~p stream=~p reason=~p", [
+        ConnPid,
+        StreamRef,
+        Reason
+    ]),
+    {noreply, schedule_reconnect(clear_connection(State))};
+handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
+    ?LOG_DEBUG("Ignoring gun_error from old/unknown conn=~p stream=~p reason=~p", [
+        ConnPid,
+        StreamRef,
+        Reason
+    ]),
     {noreply, State};
 handle_info(reward, State) ->
     {noreply, State};
@@ -713,7 +736,7 @@ handle_info(heartbeat, State) ->
     HeartbeatTimer = erlang:send_after(10000, self(), heartbeat),
     {noreply, State#state{heartbeat_timer = HeartbeatTimer}};
 handle_info(Any, State) ->
-    ?LOG_INFO("Nostr any info ~p", [Any]),
+    ?LOG_DEBUG("Nostr ignored info shape=~p", [term_shape(Any)]),
     {noreply, State}.
 
 %% Cleanup when the server terminates
@@ -1233,16 +1256,23 @@ public_key() ->
     %% Since this helper is called inside gen_server (nip46_send), we pass PubKey there.
     error(not_used).
 
-%% --- NIP-04 encryption/decryption key handling -------------------------------
+%% -------------------------------------------------------------------
+%% NIP-04 standard crypto
+%%
+%% Standard NIP-04:
+%%   shared = X(priv * remote_pub)
+%%   AES key = shared X directly
+%%   do NOT sha256(shared)
+%%   do NOT BIP340-negate/normalize priv scalar for ECDH
+%% -------------------------------------------------------------------
 
 nip04_encrypt(PlainJson0, PrivKey0, RemotePub0) ->
     try
         PlainJson = to_bin(PlainJson0),
         PrivKey32 = normalize_privkey(PrivKey0),
-        RemotePub = normalize_pubkey(RemotePub0),
-        case ecdh_shared_secret(PrivKey32, RemotePub) of
-            {ok, Secret} ->
-                ok_encrypt(Secret, PlainJson);
+        case ecdh_shared_secret_standard(PrivKey32, RemotePub0) of
+            {ok, SecretX32} ->
+                ok_encrypt_nip04(SecretX32, PlainJson);
             Error ->
                 Error
         end
@@ -1251,21 +1281,163 @@ nip04_encrypt(PlainJson0, PrivKey0, RemotePub0) ->
             {error, {encrypt_crash, C, R, S}}
     end.
 
--spec nip04_decrypt(binary(), binary(), binary(), binary()) ->
-    {ok, binary()} | {error, term()}.
 nip04_decrypt(CipherB64, IvB64, PrivKey0, RemotePub0) ->
     try
         PrivKey32 = normalize_privkey(PrivKey0),
-        case ecdh_shared_secret(PrivKey32, RemotePub0) of
-            {ok, SharedSecret} ->
-                ok_decrypt(SharedSecret, CipherB64, IvB64);
+
+        %% First try interoperable NIP-04.
+        case ecdh_shared_secret_standard(PrivKey32, RemotePub0) of
+            {ok, SecretX32} ->
+                case ok_decrypt_nip04(SecretX32, CipherB64, IvB64) of
+                    {ok, _Plain} = Ok ->
+                        Ok;
+                    StdErr ->
+                        %% Fallback only for old DamageBDD events created with
+                        %% BIP340 scalar normalization + sha256(shared_x).
+                        case ecdh_shared_secret_legacy_bip340(PrivKey32, RemotePub0) of
+                            {ok, LegacySecretX32} ->
+                                case ok_decrypt_legacy_hashed(LegacySecretX32, CipherB64, IvB64) of
+                                    {ok, _Plain} = LegacyOk ->
+                                        LegacyOk;
+                                    LegacyErr ->
+                                        {error,
+                                            {nip04_decrypt_failed, #{
+                                                standard => StdErr,
+                                                legacy => LegacyErr
+                                            }}}
+                                end;
+                            LegacySecretErr ->
+                                {error,
+                                    {nip04_decrypt_failed, #{
+                                        standard => StdErr,
+                                        legacy_secret => LegacySecretErr
+                                    }}}
+                        end
+                end;
             Error ->
                 Error
         end
     catch
         C:R:S ->
-            {error, {C, R, S}}
+            {error, {decrypt_crash, C, R, stack_top(S)}}
     end.
+
+ecdh_shared_secret_standard(PrivKey32, RemotePub0) ->
+    try
+        Pub = normalize_pubkey(RemotePub0),
+        case normalize_remote_xonly(Pub) of
+            {ok, XOnly32} ->
+                schnorr_ecdh_xonly_raw(PrivKey32, XOnly32);
+            Error ->
+                Error
+        end
+    catch
+        C:R:S ->
+            {error, {ecdh_shared_secret_failed, C, R, stack_top(S)}}
+    end.
+
+ecdh_shared_secret_legacy_bip340(PrivKey32, RemotePub0) ->
+    try
+        Pub = normalize_pubkey(RemotePub0),
+        case normalize_remote_xonly(Pub) of
+            {ok, XOnly32} ->
+                schnorr_ecdh_xonly_bip340(PrivKey32, XOnly32);
+            Error ->
+                Error
+        end
+    catch
+        C:R:S ->
+            {error, {legacy_ecdh_shared_secret_failed, C, R, stack_top(S)}}
+    end.
+
+schnorr_ecdh_xonly_raw(PrivKey32, XOnly32) when
+    is_binary(PrivKey32),
+    byte_size(PrivKey32) =:= 32,
+    is_binary(XOnly32),
+    byte_size(XOnly32) =:= 32
+->
+    try
+        D = binary:decode_unsigned(PrivKey32),
+        case nostrlib_schnorr:lift_x(binary:decode_unsigned(XOnly32)) of
+            infinity ->
+                {error, invalid_remote_point};
+            RemotePoint ->
+                case nostrlib_schnorr:point_mul(RemotePoint, D) of
+                    infinity ->
+                        {error, invalid_shared_point};
+                    SharedPoint ->
+                        {ok, nostrlib_schnorr:point_to_bitstring(SharedPoint)}
+                end
+        end
+    catch
+        C:R:S ->
+            {error, {ecdh_failed, C, R, stack_top(S)}}
+    end.
+
+schnorr_ecdh_xonly_bip340(PrivKey32, XOnly32) when
+    is_binary(PrivKey32),
+    byte_size(PrivKey32) =:= 32,
+    is_binary(XOnly32),
+    byte_size(XOnly32) =:= 32
+->
+    try
+        D = normalize_bip340_scalar(PrivKey32),
+        case nostrlib_schnorr:lift_x(binary:decode_unsigned(XOnly32)) of
+            infinity ->
+                {error, invalid_remote_point};
+            RemotePoint ->
+                case nostrlib_schnorr:point_mul(RemotePoint, D) of
+                    infinity ->
+                        {error, invalid_shared_point};
+                    SharedPoint ->
+                        {ok, nostrlib_schnorr:point_to_bitstring(SharedPoint)}
+                end
+        end
+    catch
+        C:R:S ->
+            {error, {legacy_ecdh_failed, C, R, stack_top(S)}}
+    end.
+
+ok_encrypt_nip04(SecretX32, PlainJson) ->
+    Key = ensure_32byte_key(SecretX32),
+    Iv = crypto:strong_rand_bytes(16),
+    Cipher = crypto:crypto_one_time(
+        aes_256_cbc,
+        Key,
+        Iv,
+        pkcs_padding(PlainJson),
+        true
+    ),
+    {ok, base64:encode(Cipher), base64:encode(Iv)}.
+
+ok_decrypt_nip04(SecretX32, CipherB64, IvB64) ->
+    Key = ensure_32byte_key(SecretX32),
+    Iv = base64:decode(to_bin(IvB64)),
+    Cipher = base64:decode(to_bin(CipherB64)),
+    PlainPadded = crypto:crypto_one_time(aes_256_cbc, Key, Iv, Cipher, false),
+    pkcs7_unpad(PlainPadded).
+
+ok_decrypt_legacy_hashed(SecretX32, CipherB64, IvB64) ->
+    Key = crypto:hash(sha256, ensure_32byte_key(SecretX32)),
+    Iv = base64:decode(to_bin(IvB64)),
+    Cipher = base64:decode(to_bin(CipherB64)),
+    PlainPadded = crypto:crypto_one_time(aes_256_cbc, Key, Iv, Cipher, false),
+    pkcs7_unpad(PlainPadded).
+
+ensure_32byte_key(Bin) when is_binary(Bin), byte_size(Bin) =:= 32 ->
+    Bin;
+ensure_32byte_key(Bin) when is_binary(Bin), byte_size(Bin) > 32 ->
+    <<Key:32/binary, _/binary>> = Bin,
+    Key;
+ensure_32byte_key(Bin) when is_binary(Bin) ->
+    error({invalid_shared_secret_size, byte_size(Bin)});
+ensure_32byte_key(Other) ->
+    error({invalid_shared_secret, Other}).
+
+stack_top([{M, F, A, _} | _]) ->
+    {M, F, A};
+stack_top(_) ->
+    undefined.
 
 normalize_privkey(Bin) when is_binary(Bin), byte_size(Bin) =:= 32 ->
     Bin;
@@ -1278,22 +1450,6 @@ normalize_privkey(List) when is_list(List) ->
     normalize_privkey(list_to_binary(List));
 normalize_privkey(Other) ->
     erlang:error({invalid_private_key, Other}).
-
--spec ecdh_shared_secret(binary(), binary() | list()) ->
-    {ok, binary()} | {error, term()}.
-ecdh_shared_secret(PrivKey32, RemotePub0) ->
-    try
-        Pub = normalize_pubkey(RemotePub0),
-        case normalize_remote_xonly(Pub) of
-            {ok, XOnly32} ->
-                schnorr_ecdh_xonly(PrivKey32, XOnly32);
-            Error ->
-                Error
-        end
-    catch
-        C:R:S ->
-            {error, {ecdh_shared_secret_failed, C, R, S}}
-    end.
 
 -spec normalize_remote_xonly(binary()) -> {ok, binary()} | {error, term()}.
 normalize_remote_xonly(Pub) when is_binary(Pub) ->
@@ -1347,13 +1503,6 @@ compressed_raw_to_xonly(<<16#03, X:32/binary>>) ->
     {ok, X};
 compressed_raw_to_xonly(Other) ->
     {error, {invalid_compressed_raw_pubkey, Other}}.
-
-ok_encrypt(SharedSecret, PlainJson) ->
-    %% 32 bytes
-    Key = crypto:hash(sha256, SharedSecret),
-    Iv = crypto:strong_rand_bytes(16),
-    Cipher = crypto:crypto_one_time(aes_256_cbc, Key, Iv, pkcs_padding(PlainJson), true),
-    {ok, base64:encode(Cipher), base64:encode(Iv)}.
 
 pkcs_padding(Bin) when is_binary(Bin) ->
     Block = 16,
@@ -1885,16 +2034,6 @@ nip04_decrypt_content(Content0, PrivKey0, RemotePub0) ->
             {error, {decrypt_crash, C, R, S}}
     end.
 
-ok_decrypt(SharedSecret, CipherB64, IvB64) ->
-    Key = crypto:hash(sha256, SharedSecret),
-    Iv = base64:decode(to_bin(IvB64)),
-    Cipher = base64:decode(to_bin(CipherB64)),
-    PlainPadded = crypto:crypto_one_time(aes_256_cbc, Key, Iv, Cipher, false),
-    case pkcs7_unpad(PlainPadded) of
-        {ok, Plain} -> {ok, Plain};
-        {error, Why} -> {error, Why}
-    end.
-
 %% PKCS7 unpad (block size 16)
 pkcs7_unpad(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     PadLen = binary:last(Bin),
@@ -2072,9 +2211,6 @@ mget_int(K, M, D) ->
 to_ts(V) ->
     %% for io:format "~ts"
     to_bin(V).
-
-safe_len(L) when is_list(L) -> length(L);
-safe_len(_) -> 0.
 
 maybe_truncate(Bin, Max) when is_integer(Max), Max > 0, is_binary(Bin) ->
     case byte_size(Bin) =< Max of
@@ -2552,3 +2688,50 @@ parse_ws_url(Url0) ->
         Bad ->
             erlang:error({bad_relay_url, Url0, Bad})
     end.
+handle_gun_down(
+    ConnPid,
+    Protocol,
+    Reason,
+    KilledStreams,
+    UnprocessedStreams,
+    #state{conn_pid = ConnPid} = State
+) when is_pid(ConnPid) ->
+    ?LOG_WARNING(
+        "Nostr relay connection down conn=~p protocol=~p reason=~p killed_streams=~p unprocessed_streams=~p",
+        [
+            ConnPid,
+            Protocol,
+            Reason,
+            safe_len(KilledStreams),
+            safe_len(UnprocessedStreams)
+        ]
+    ),
+    {noreply, schedule_reconnect(clear_connection(State))};
+handle_gun_down(ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams, State) ->
+    %% Old/stale Gun connection. Do not spam INFO.
+    ?LOG_DEBUG(
+        "Ignoring gun_down from old/unknown conn=~p protocol=~p reason=~p killed_streams=~p unprocessed_streams=~p",
+        [
+            ConnPid,
+            Protocol,
+            Reason,
+            safe_len(KilledStreams),
+            safe_len(UnprocessedStreams)
+        ]
+    ),
+    {noreply, State}.
+
+safe_len(L) when is_list(L) ->
+    length(L);
+safe_len(_) ->
+    0.
+term_shape(Term) when is_tuple(Term) ->
+    #{type => tuple, size => tuple_size(Term), tag => element(1, Term)};
+term_shape(Term) when is_map(Term) ->
+    #{type => map, size => map_size(Term), keys => maps:keys(Term)};
+term_shape(Term) when is_list(Term) ->
+    #{type => list, length => length(Term)};
+term_shape(Term) when is_binary(Term) ->
+    #{type => binary, bytes => byte_size(Term)};
+term_shape(Term) ->
+    Term.
