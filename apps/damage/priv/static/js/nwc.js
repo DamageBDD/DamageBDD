@@ -1,39 +1,158 @@
 // /static/js/nwc.js
 // NWC Connect dialog glue for DamageBDD.
-// Requires: MicroModal, QRCode, TokenManager (already in your app).
+// Requires: MicroModal, QRCode, TokenManager.
+
+const NWC_MAX_RELAYS = 5;
+const NWC_CACHE_KEY = "damage.nwc.last";
+
+function relayCheckboxes() {
+  return Array.from(
+    document.querySelectorAll(".nwc-relay-preset, .nwc-relay-checkbox")
+  );
+}
+
+function relaySummaryEl() {
+  return (
+    document.getElementById("nwc-relay-count") ||
+    document.getElementById("nwc-relay-summary")
+  );
+}
+
+function canonicalRelayUrl(url) {
+  if (!url) return "";
+
+  let out = String(url).trim();
+
+  while (out.endsWith("/")) {
+    out = out.slice(0, -1);
+  }
+
+  return out.toLowerCase();
+}
+
+function selectedNwcRelays() {
+  const checked = relayCheckboxes()
+    .filter((el) => el.checked)
+    .map((el) => canonicalRelayUrl(el.value));
+
+  const customRaw = document.getElementById("nwc-custom-relays")?.value || "";
+  const custom = customRaw
+    .split(/\r?\n/)
+    .map(canonicalRelayUrl)
+    .filter(Boolean);
+
+  const relays = [];
+  const seen = new Set();
+
+  for (const relay of [...checked, ...custom]) {
+    if (!relay.startsWith("wss://") && !relay.startsWith("ws://")) continue;
+    if (seen.has(relay)) continue;
+
+    seen.add(relay);
+    relays.push(relay);
+
+    if (relays.length >= NWC_MAX_RELAYS) break;
+  }
+
+  return relays;
+}
+
+function updateRelaySummary() {
+  const relays = selectedNwcRelays();
+  const el = relaySummaryEl();
+  const hiddenRelay = document.getElementById("nwc-relay");
+
+  if (hiddenRelay) {
+    hiddenRelay.value = relays[0] || "";
+  }
+
+  if (!el) return;
+
+  if (relays.length === 0) {
+    el.textContent = "Select at least one relay.";
+    el.classList.add("is-error");
+    return;
+  }
+
+  el.textContent = `Using ${relays.length} relay${relays.length === 1 ? "" : "s"}.`;
+  el.title = relays.join(", ");
+  el.classList.remove("is-error");
+}
+
+function setRelaySelections(relays) {
+  const canonical = new Set((relays || []).map(canonicalRelayUrl));
+
+  for (const checkbox of relayCheckboxes()) {
+    checkbox.checked = canonical.has(canonicalRelayUrl(checkbox.value));
+  }
+
+  updateRelaySummary();
+}
+
+function setResultVisible(visible) {
+  const empty = document.getElementById("nwc-empty-state");
+  const body = document.getElementById("nwc-result-body");
+
+  if (empty) empty.hidden = visible;
+  if (body) body.hidden = !visible;
+}
 
 function authHeaders() {
-  const token = window.TokenManager && window.TokenManager.getToken ? window.TokenManager.getToken() : null;
+  const token =
+    window.TokenManager && window.TokenManager.getToken
+      ? window.TokenManager.getToken()
+      : null;
+
   const headers = new Headers();
   headers.set("content-type", "application/json");
-  if (token) headers.set("Authorization", "Bearer " + token);
+  headers.set("accept", "application/json");
+
+  if (token) {
+    headers.set("Authorization", "Bearer " + token);
+  }
+
   return headers;
 }
 
 function qs(id) {
   const el = document.getElementById(id);
-  if (!el) throw new Error(`Missing element #${id}`);
+
+  if (!el) {
+    throw new Error(`Missing element #${id}`);
+  }
+
   return el;
 }
 
 function setStatus(msg, isError = false) {
   const el = document.getElementById("nwc-status");
+
   if (!el) return;
+
   el.textContent = msg || "";
   el.style.color = isError ? "#ffb4b4" : "";
 }
 
 function clearQr() {
   const qr = document.getElementById("nwc-qr");
-  if (qr) qr.innerHTML = "";
+
+  if (qr) {
+    qr.innerHTML = "";
+  }
 }
 
 function renderQr(text) {
   clearQr();
+
   const mount = document.getElementById("nwc-qr");
+
   if (!mount || !text) return;
-  // QRCode is loaded globally from /static/js/qrcode.min.js
-  // eslint-disable-next-line no-undef
+
+  if (!window.QRCode) {
+    mount.textContent = "QR library missing";
+    return;
+  }
+
   new QRCode(mount, {
     text,
     width: 180,
@@ -42,23 +161,72 @@ function renderQr(text) {
   });
 }
 
-function storeLastConnection(data) {
+function clearConnectionView() {
+  const uri = document.getElementById("nwc-uri");
+  const pubkey = document.getElementById("nwc-client-pubkey");
+
+  if (uri) uri.value = "";
+  if (pubkey) pubkey.value = "";
+
+  clearQr();
+  setResultVisible(false);
+}
+
+function showConnectionView(data) {
+  qs("nwc-uri").value = data.nwc_uri || "";
+  qs("nwc-client-pubkey").value = data.client_pubkey || "";
+
+  renderQr(data.nwc_uri || "");
+  setResultVisible(true);
+}
+
+function clearLastConnection() {
   try {
-    localStorage.setItem("damage.nwc.last", JSON.stringify({
-      ts: Date.now(),
-      client_pubkey: data.client_pubkey,
-      nwc_uri: data.nwc_uri,
-      relay: data.relay,
-      wallet_pubkey: data.wallet_pubkey
-    }));
-  } catch (_) {}
+    localStorage.removeItem(NWC_CACHE_KEY);
+  } catch (_) {
+    // ignore localStorage failures
+  }
+}
+
+function storeLastConnection(data) {
+  if (!data || data.status !== "ok" || data.usable !== true || !data.nwc_uri) {
+    return;
+  }
+
+  try {
+    localStorage.setItem(
+      NWC_CACHE_KEY,
+      JSON.stringify({
+        ts: Date.now(),
+        status: data.status,
+        usable: data.usable,
+        client_pubkey: data.client_pubkey,
+        wallet_pubkey: data.wallet_pubkey,
+        nwc_uri: data.nwc_uri,
+        relays: data.relays || []
+      })
+    );
+  } catch (_) {
+    // ignore localStorage failures
+  }
 }
 
 function loadLastConnection() {
   try {
-    const raw = localStorage.getItem("damage.nwc.last");
-    return raw ? JSON.parse(raw) : null;
+    const raw = localStorage.getItem(NWC_CACHE_KEY);
+
+    if (!raw) return null;
+
+    const data = JSON.parse(raw);
+
+    if (!data || data.status !== "ok" || data.usable !== true || !data.nwc_uri) {
+      clearLastConnection();
+      return null;
+    }
+
+    return data;
   } catch (_) {
+    clearLastConnection();
     return null;
   }
 }
@@ -71,123 +239,247 @@ async function postJson(url, bodyObj) {
   });
 
   const text = await resp.text();
+
   let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch (_) {}
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (_) {
+    data = null;
+  }
 
   if (!resp.ok) {
-    const msg = (data && (data.error || data.message)) ? JSON.stringify(data) : text || resp.statusText;
-    throw new Error(`HTTP ${resp.status}: ${msg}`);
+    const msg =
+      data && (data.error || data.message || data.status)
+        ? JSON.stringify(data)
+        : text || resp.statusText;
+
+    const err = new Error(`HTTP ${resp.status}: ${msg}`);
+    err.status = resp.status;
+    err.data = data;
+    throw err;
   }
+
   return data;
 }
 
 export function openNwcModal() {
-  // Load last minted connection (nice UX)
   const last = loadLastConnection();
-  if (last) {
-    try {
-      qs("nwc-uri").value = last.nwc_uri || "";
-      qs("nwc-client-pubkey").value = last.client_pubkey || "";
-      renderQr(last.nwc_uri || "");
-    } catch (_) {}
+
+  if (last?.relays?.length) {
+    setRelaySelections(last.relays);
+  } else {
+    updateRelaySummary();
   }
-  setStatus("");
-  if (window.MicroModal) window.MicroModal.show("nwc-modal");
+
+  if (last?.nwc_uri) {
+    showConnectionView(last);
+    setStatus("Loaded cached usable NWC URI.");
+  } else {
+    clearConnectionView();
+    setStatus("");
+  }
+
+  if (window.MicroModal) {
+    window.MicroModal.show("nwc-modal");
+  }
 }
 
 export function closeNwcModal() {
-  if (window.MicroModal) window.MicroModal.close("nwc-modal");
+  if (window.MicroModal) {
+    window.MicroModal.close("nwc-modal");
+  }
 }
 
 export async function mintNwc() {
-  setStatus("Minting…");
-  const relay = qs("nwc-relay").value.trim();
-  const maxSingleSat = Number(qs("nwc-max-single").value || "0");
-  const maxTotalSat = Number(qs("nwc-max-total").value || "0");
-  const expiresHeight = Number(qs("nwc-expires-height").value || "0");
+  const btn = document.getElementById("nwc-mint-btn");
 
-  if (!relay.startsWith("ws")) {
-    setStatus("Relay must start with ws:// or wss://", true);
-    return;
+  try {
+    if (btn) btn.disabled = true;
+
+    setStatus("Minting…");
+    clearConnectionView();
+
+    const maxSingleSat = Number(qs("nwc-max-single").value || "0");
+    const maxTotalSat = Number(qs("nwc-max-total").value || "0");
+    const expiresHeight = Number(qs("nwc-expires-height").value || "0");
+
+    const relays = selectedNwcRelays();
+
+    if (relays.length === 0) {
+      setStatus("Select at least one relay.", true);
+      return;
+    }
+
+    if (relays.length > NWC_MAX_RELAYS) {
+      setStatus(`Use at most ${NWC_MAX_RELAYS} relays.`, true);
+      return;
+    }
+
+    if (maxTotalSat > 0 && maxSingleSat > maxTotalSat) {
+      setStatus("Max single cannot exceed max total.", true);
+      return;
+    }
+
+    const data = await postJson("/api/nwc/mint", {
+      relays,
+      relay: relays[0],
+
+      // Current backend spelling
+      max_single_sat: maxSingleSat,
+      max_total_sat: maxTotalSat,
+
+      // Probe / compatibility spelling
+      max_single_sats: maxSingleSat,
+      max_total_sats: maxTotalSat,
+
+      expires_height: expiresHeight
+    });
+
+    if (!data || data.status !== "ok" || data.usable !== true || !data.nwc_uri) {
+      clearLastConnection();
+      clearConnectionView();
+
+      const reason = data?.error || data?.status || "mint_not_ready";
+      setStatus(`NWC mint not usable yet: ${reason}`, true);
+      console.warn("NWC mint returned non-usable response", data);
+      return;
+    }
+
+    showConnectionView(data);
+    storeLastConnection(data);
+
+    setStatus("Minted. Scan QR or copy the URI.");
+  } finally {
+    if (btn) btn.disabled = false;
   }
-
-  const data = await postJson("/api/nwc/mint", {
-    relays: [relay],
-    max_single_sat: maxSingleSat,
-    max_total_sat: maxTotalSat,
-    expires_height: expiresHeight
-  });
-
-  qs("nwc-uri").value = data.nwc_uri || "";
-  qs("nwc-client-pubkey").value = data.client_pubkey || "";
-  renderQr(data.nwc_uri || "");
-  storeLastConnection(data);
-
-  setStatus("Minted. Scan the QR / copy the URI into Damus/Amethyst/etc.");
 }
 
 export async function revokeNwc() {
   const clientPubkey = qs("nwc-client-pubkey").value.trim();
-  if (!clientPubkey || clientPubkey.length < 64) {
-    setStatus("Enter client pubkey (64-hex) to revoke.", true);
+
+  if (!/^[0-9a-fA-F]{64}$/.test(clientPubkey)) {
+    setStatus("Enter a valid 64-character client pubkey hex to revoke.", true);
     return;
   }
+
   setStatus("Revoking…");
-  await postJson("/api/nwc/revoke", { client_pubkey: clientPubkey });
+
+  await postJson("/api/nwc/revoke", {
+    client_pubkey: clientPubkey
+  });
+
+  clearLastConnection();
+  clearConnectionView();
+
   setStatus("Revoked.");
 }
 
 export async function copyUri() {
   const uri = qs("nwc-uri").value.trim();
+
   if (!uri) {
     setStatus("Nothing to copy.", true);
     return;
   }
+
   await navigator.clipboard.writeText(uri);
   setStatus("Copied URI to clipboard.");
 }
 
 export function openInApp() {
   const uri = qs("nwc-uri").value.trim();
+
   if (!uri) {
     setStatus("No URI to open.", true);
     return;
   }
-  // On mobile this often hands off to the wallet/client that registered the scheme.
+
   window.location.href = uri;
 }
 
 export function clearForm() {
-  qs("nwc-uri").value = "";
-  qs("nwc-client-pubkey").value = "";
+  clearConnectionView();
+  clearLastConnection();
   setStatus("");
-  clearQr();
+
+  const customRelays = document.getElementById("nwc-custom-relays");
+  if (customRelays) {
+    customRelays.value = "";
+  }
+
+  for (const checkbox of relayCheckboxes()) {
+    const relay = canonicalRelayUrl(checkbox.value);
+    checkbox.checked =
+      relay === "wss://relay.damus.io" ||
+      relay === "wss://relay.primal.net" ||
+      relay === "wss://nos.lol";
+  }
+
+  const maxSingle = document.getElementById("nwc-max-single");
+  if (maxSingle) maxSingle.value = "10";
+
+  const maxTotal = document.getElementById("nwc-max-total");
+  if (maxTotal) maxTotal.value = "50";
+
+  const expiresHeight = document.getElementById("nwc-expires-height");
+  if (expiresHeight) expiresHeight.value = "0";
+
+  updateRelaySummary();
 }
 
 export function bindNwcUi() {
-  // Safe binding (only if modal exists on this page)
   const modal = document.getElementById("nwc-modal");
-  if (!modal) return;
+
+  if (!modal || modal.dataset.nwcBound === "true") {
+    return;
+  }
 
   qs("nwc-mint-btn").addEventListener("click", async (e) => {
     e.preventDefault();
-    try { await mintNwc(); } catch (err) { setStatus(err.message || String(err), true); }
+
+    try {
+      await mintNwc();
+    } catch (err) {
+      setStatus(err.message || String(err), true);
+      console.error(err);
+    }
   });
 
   qs("nwc-revoke-btn").addEventListener("click", async (e) => {
     e.preventDefault();
-    if (!confirm("Revoke this NWC connection? Clients using the URI will stop working.")) return;
-    try { await revokeNwc(); } catch (err) { setStatus(err.message || String(err), true); }
+
+    if (!confirm("Revoke this NWC connection? Clients using the URI will stop working.")) {
+      return;
+    }
+
+    try {
+      await revokeNwc();
+    } catch (err) {
+      setStatus(err.message || String(err), true);
+      console.error(err);
+    }
   });
 
   qs("nwc-copy-btn").addEventListener("click", async (e) => {
     e.preventDefault();
-    try { await copyUri(); } catch (err) { setStatus(err.message || String(err), true); }
+
+    try {
+      await copyUri();
+    } catch (err) {
+      setStatus(err.message || String(err), true);
+      console.error(err);
+    }
   });
 
   qs("nwc-open-btn").addEventListener("click", (e) => {
     e.preventDefault();
-    try { openInApp(); } catch (err) { setStatus(err.message || String(err), true); }
+
+    try {
+      openInApp();
+    } catch (err) {
+      setStatus(err.message || String(err), true);
+      console.error(err);
+    }
   });
 
   qs("nwc-clear-btn").addEventListener("click", (e) => {
@@ -195,11 +487,37 @@ export function bindNwcUi() {
     clearForm();
   });
 
-  // When modal opens, repaint QR (useful after page navigation)
+  for (const checkbox of relayCheckboxes()) {
+    checkbox.addEventListener("change", updateRelaySummary);
+  }
+
+  const customRelays = document.getElementById("nwc-custom-relays");
+  if (customRelays) {
+    customRelays.addEventListener("input", updateRelaySummary);
+  }
+
+  updateRelaySummary();
+
+  const uri = (document.getElementById("nwc-uri")?.value || "").trim();
+  setResultVisible(Boolean(uri));
+
   document.addEventListener("micromodal:show", (event) => {
-    if (event.detail && event.detail.content && event.detail.content.id === "nwc-modal") {
-      const uri = (document.getElementById("nwc-uri")?.value || "").trim();
-      if (uri) renderQr(uri);
+    if (
+      event.detail &&
+      event.detail.content &&
+      event.detail.content.id === "nwc-modal"
+    ) {
+      const currentUri = (document.getElementById("nwc-uri")?.value || "").trim();
+      setResultVisible(Boolean(currentUri));
+      if (currentUri) renderQr(currentUri);
     }
   });
+
+  modal.dataset.nwcBound = "true";
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (document.getElementById("nwc-modal")) {
+    bindNwcUi();
+  }
+});

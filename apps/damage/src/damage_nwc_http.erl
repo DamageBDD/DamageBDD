@@ -144,79 +144,67 @@ relay_query(Relays0) ->
         "&"
     ).
 from_json_mint(Req0, State = #{action := mint}) ->
-    %% existing mint body goes here
     {ok, Raw, Req} = cowboy_req:read_body(Req0),
     Json = jsx:decode(Raw, [return_maps]),
 
     Owner = to_bin(maps:get(public_key, State)),
-    DefaultRelays = nostr_pool:default_relays(#{}),
-    Relays = maps:get(<<"relays">>, Json, DefaultRelays),
-    MaxSingleSat = maps:get(<<"max_single_sat">>, Json, 10000),
-    MaxTotalSat = maps:get(<<"max_total_sat">>, Json, 100000),
-    ExpiresHeight = maps:get(<<"expires_height">>, Json, 0),
+    Relays = mint_relays(Json),
+    MaxSingleSat = mint_int(Json, [<<"max_single_sat">>, <<"max_single_sats">>], 10000),
+    MaxTotalSat = mint_int(Json, [<<"max_total_sat">>, <<"max_total_sats">>], 100000),
+    ExpiresHeight = mint_int(Json, [<<"expires_height">>, <<"expires_at_height">>], 0),
 
     Secret = crypto:strong_rand_bytes(32),
     SecretHex = lower_hex_hex(Secret),
     {ok, ClientPubBin} = nostrlib_schnorr:new_publickey(Secret),
     ClientPubHex = lower_hex_hex(ClientPubBin),
 
+    Mode = ledger_mode(),
+    MaxSingleMsat = MaxSingleSat * 1000,
+    MaxTotalMsat = MaxTotalSat * 1000,
+    WalletPubHex = ensure_hex_pubkey(nwc_wallet_pubhex()),
+    NormalizedRelays = sanitize_nwc_relays(Relays),
+    RelayQuery = relay_query(NormalizedRelays),
+    NwcUri = build_nwc_uri(WalletPubHex, RelayQuery, SecretHex),
+
+    ?LOG_INFO(
+        "NWC mint auth owner=~p mode=~p client_pubkey=~p relays=~p",
+        [Owner, Mode, ClientPubHex, NormalizedRelays]
+    ),
+
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
             LedgerCt = to_bin(LedgerCt0),
-            MaxSingleMsat = MaxSingleSat * 1000,
-            MaxTotalMsat = MaxTotalSat * 1000,
-            Mode = ledger_mode(),
-
-            Intents =
-                case Mode of
-                    user_signed ->
-                        [
-                            damage_ledger_intent:ledger_register_intent(
-                                LedgerCt,
-                                ClientPubHex,
-                                <<"">>,
-                                MaxSingleMsat,
-                                MaxTotalMsat,
-                                ExpiresHeight
-                            )
-                        ];
-                    _ ->
-                        []
-                end,
-
-            WalletPubHex = ensure_hex_pubkey(nwc_wallet_pubhex()),
-            NormalizedRelays = damage_nostr:normalize_relays(Relays),
-            RelayQuery = relay_query(NormalizedRelays),
-
-            NwcUri = iolist_to_binary([
-                <<"nostr+walletconnect://">>,
-                WalletPubHex,
-                <<"?">>,
-                RelayQuery,
-                <<"&secret=">>,
-                SecretHex
-            ]),
-
             case Mode of
                 user_signed ->
-                    ok = persist_nwc_session_index(
-                        ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
+                    %% Do not return a scannable URI for an unsigned registration
+                    %% intent. A client/probe would treat it as usable while the
+                    %% ledger policy may still reject it.
+                    Intents = [
+                        damage_ledger_intent:ledger_register_intent(
+                            LedgerCt,
+                            ClientPubHex,
+                            <<"">>,
+                            MaxSingleMsat,
+                            MaxTotalMsat,
+                            ExpiresHeight
+                        )
+                    ],
+                    log_mint_not_usable(
+                        Owner, ClientPubHex, Mode, {registration_requires_user_signature, LedgerCt}
                     ),
-                    ok = notify_nwc_listener_relays(NormalizedRelays),
                     reply_json_stop(
-                        200,
-                        #{
-                            status => <<"ok">>,
+                        409,
+                        mint_not_usable_body(#{
+                            status => <<"registration_required">>,
+                            error => <<"NWC_REGISTRATION_REQUIRES_SIGNATURE">>,
                             owner => Owner,
                             ledger_ct => LedgerCt,
                             ledger_mode => atom_to_binary(Mode, utf8),
                             client_pubkey => ClientPubHex,
-                            secret_hex => SecretHex,
-                            nwc_uri => NwcUri,
                             wallet_pubkey => WalletPubHex,
                             relays => NormalizedRelays,
                             intents => Intents
-                        },
+                        }),
                         Req,
                         State
                     );
@@ -237,11 +225,10 @@ from_json_mint(Req0, State = #{action := mint}) ->
                                 ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
                             ),
                             ok = notify_nwc_listener_relays(NormalizedRelays),
-
+                            log_mint_usable(Owner, ClientPubHex, LedgerCt, Mode, NormalizedRelays),
                             reply_json_stop(
                                 200,
-                                #{
-                                    status => <<"ok">>,
+                                mint_usable_body(#{
                                     owner => Owner,
                                     ledger_ct => LedgerCt,
                                     ledger_mode => atom_to_binary(Mode, utf8),
@@ -251,55 +238,50 @@ from_json_mint(Req0, State = #{action := mint}) ->
                                     wallet_pubkey => WalletPubHex,
                                     relays => NormalizedRelays,
                                     intents => []
-                                },
+                                }),
                                 Req,
                                 State
                             );
                         false ->
+                            log_mint_not_usable(
+                                Owner, ClientPubHex, Mode, {ledger_register_failed, RegisterResult}
+                            ),
                             reply_json_stop(
                                 400,
-                                #{
+                                mint_not_usable_body(#{
                                     status => <<"error">>,
                                     error => <<"LEDGER_REGISTER_FAILED">>,
                                     owner => Owner,
                                     ledger_ct => LedgerCt,
                                     client_pubkey => ClientPubHex,
+                                    wallet_pubkey => WalletPubHex,
+                                    relays => NormalizedRelays,
                                     result => normalize_json(RegisterResult)
-                                },
+                                }),
                                 Req,
                                 State
                             )
                     end;
                 operator_signed ->
+                    log_mint_not_usable(
+                        Owner, ClientPubHex, Mode, operator_mode_register_not_allowed
+                    ),
                     reply_json_stop(
                         400,
-                        #{
+                        mint_not_usable_body(#{
                             status => <<"error">>,
                             error => <<"REGISTER_NOT_ALLOWED_IN_OPERATOR_MODE">>,
                             owner => Owner,
                             ledger_ct => LedgerCt,
-                            client_pubkey => ClientPubHex
-                        },
+                            client_pubkey => ClientPubHex,
+                            wallet_pubkey => WalletPubHex,
+                            relays => NormalizedRelays
+                        }),
                         Req,
                         State
                     )
             end;
         {error, Why} ->
-            Mode = ledger_mode(),
-            MaxSingleMsat = MaxSingleSat * 1000,
-            MaxTotalMsat = MaxTotalSat * 1000,
-            WalletPubHex = ensure_hex_pubkey(nwc_wallet_pubhex()),
-            NormalizedRelays = damage_nostr:normalize_relays(Relays),
-            RelayQuery = relay_query(NormalizedRelays),
-
-            NwcUri = iolist_to_binary([
-                <<"nostr+walletconnect://">>,
-                WalletPubHex,
-                <<"?">>,
-                RelayQuery,
-                <<"&secret=">>,
-                SecretHex
-            ]),
             case
                 maybe_setup_missing_ledger(
                     Owner,
@@ -314,10 +296,10 @@ from_json_mint(Req0, State = #{action := mint}) ->
                         ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
                     ),
                     ok = notify_nwc_listener_relays(NormalizedRelays),
+                    log_mint_usable(Owner, ClientPubHex, LedgerCt, Mode, NormalizedRelays),
                     reply_json_stop(
                         200,
-                        #{
-                            status => <<"ok">>,
+                        mint_usable_body(#{
                             setup_executed => true,
                             owner => Owner,
                             account_registry_ct => RegistryCt,
@@ -329,45 +311,50 @@ from_json_mint(Req0, State = #{action := mint}) ->
                             wallet_pubkey => WalletPubHex,
                             relays => NormalizedRelays,
                             intents => []
-                        },
+                        }),
                         Req,
                         State
                     );
                 {fallback_to_intents, SetupWhy} ->
                     case setup_intents_for_missing_ledger(Owner) of
                         {ok, RegistryCt, DeployAndRegisterIntents} ->
+                            Intents =
+                                DeployAndRegisterIntents ++
+                                    [
+                                        damage_ledger_intent:ledger_register_intent(
+                                            <<"ct_TBD_FROM_DEPLOY">>,
+                                            ClientPubHex,
+                                            <<"">>,
+                                            MaxSingleMsat,
+                                            MaxTotalMsat,
+                                            ExpiresHeight
+                                        )
+                                    ],
+                            log_mint_not_usable(Owner, ClientPubHex, Mode, {Why, SetupWhy}),
                             reply_json_stop(
-                                200,
-                                #{
+                                409,
+                                mint_not_usable_body(#{
                                     status => <<"needs_ledger_setup">>,
+                                    error => <<"NWC_LEDGER_SETUP_REQUIRED">>,
                                     reason => to_bin(io_lib:format("~p", [{Why, SetupWhy}])),
                                     owner => Owner,
                                     account_registry_ct => RegistryCt,
                                     ledger_mode => atom_to_binary(Mode, utf8),
                                     client_pubkey => ClientPubHex,
-                                    secret_hex => SecretHex,
-                                    nwc_uri => NwcUri,
                                     wallet_pubkey => WalletPubHex,
                                     relays => NormalizedRelays,
-                                    intents => DeployAndRegisterIntents ++
-                                        [
-                                            damage_ledger_intent:ledger_register_intent(
-                                                <<"ct_TBD_FROM_DEPLOY">>,
-                                                ClientPubHex,
-                                                <<"">>,
-                                                MaxSingleMsat,
-                                                MaxTotalMsat,
-                                                ExpiresHeight
-                                            )
-                                        ]
-                                },
+                                    intents => Intents
+                                }),
                                 Req,
                                 State
                             );
                         {error, SetupIntentWhy} ->
+                            log_mint_not_usable(
+                                Owner, ClientPubHex, Mode, {Why, SetupWhy, SetupIntentWhy}
+                            ),
                             reply_json_stop(
                                 400,
-                                #{
+                                mint_not_usable_body(#{
                                     status => <<"error">>,
                                     error => <<"LEDGER_SETUP_INTENTS_FAILED">>,
                                     reason => to_bin(
@@ -376,15 +363,138 @@ from_json_mint(Req0, State = #{action := mint}) ->
                                     owner => Owner,
                                     ledger_mode => atom_to_binary(Mode, utf8),
                                     client_pubkey => ClientPubHex,
-                                    nwc_uri => NwcUri,
                                     wallet_pubkey => WalletPubHex,
                                     relays => NormalizedRelays
-                                },
+                                }),
                                 Req,
                                 State
                             )
                     end
             end
+    end.
+
+build_nwc_uri(WalletPubHex, RelayQuery, SecretHex) ->
+    iolist_to_binary([
+        <<"nostr+walletconnect://">>,
+        WalletPubHex,
+        <<"?">>,
+        RelayQuery,
+        <<"&secret=">>,
+        SecretHex
+    ]).
+
+mint_usable_body(Body0) ->
+    Body0#{status => <<"ok">>, usable => true}.
+
+mint_not_usable_body(Body0) ->
+    Body0#{usable => false}.
+
+log_mint_usable(Owner, ClientPubHex, LedgerCt, Mode, Relays) ->
+    ?LOG_INFO(
+        "NWC mint usable owner=~p client_pubkey=~p ledger_ct=~p mode=~p relays=~p",
+        [Owner, ClientPubHex, LedgerCt, Mode, Relays]
+    ).
+
+log_mint_not_usable(Owner, ClientPubHex, Mode, Reason) ->
+    ?LOG_WARNING(
+        "NWC mint not usable yet owner=~p client_pubkey=~p mode=~p reason=~p",
+        [Owner, ClientPubHex, Mode, Reason]
+    ).
+
+mint_relays(Json) ->
+    DefaultRelays = nostr_pool:default_relays(#{}),
+    case maps:get(<<"relays">>, Json, undefined) of
+        Rs when is_list(Rs), Rs =/= [] -> Rs;
+        _ ->
+            case maps:get(<<"relay">>, Json, undefined) of
+                R when is_binary(R); is_list(R) -> [R];
+                _ -> DefaultRelays
+            end
+    end.
+
+mint_int(Json, Keys, Default) ->
+    case [maps:get(K, Json, undefined) || K <- Keys, maps:is_key(K, Json)] of
+        [V | _] -> to_nonneg_int(V, Default);
+        [] -> Default
+    end.
+
+to_nonneg_int(V, _Default) when is_integer(V), V >= 0 ->
+    V;
+to_nonneg_int(V, Default) when is_integer(V) ->
+    Default;
+to_nonneg_int(V, Default) when is_binary(V) ->
+    try
+        I = binary_to_integer(V),
+        case I >= 0 of
+            true -> I;
+            false -> Default
+        end
+    catch
+        _:_ -> Default
+    end;
+to_nonneg_int(V, Default) when is_list(V) ->
+    try
+        I = list_to_integer(V),
+        case I >= 0 of
+            true -> I;
+            false -> Default
+        end
+    catch
+        _:_ -> Default
+    end;
+to_nonneg_int(_, Default) ->
+    Default.
+
+sanitize_nwc_relays(Relays0) ->
+    Relays1 = damage_nostr:normalize_relays(Relays0),
+    Allowed = maps:from_list([{canonical_url(U), true} || U <- nwc_relay_allowlist()]),
+    Relays2 =
+        [
+            R#{url => canonical_url(maps:get(url, R)), proxy => direct}
+         || R <- Relays1,
+            maps:is_key(canonical_url(maps:get(url, R)), Allowed)
+        ],
+    Relays3 =
+        case Relays2 of
+            [] -> [#{url => canonical_url(U), proxy => direct} || U <- nwc_relay_allowlist()];
+            _ -> Relays2
+        end,
+    take_unique_relays(5, Relays3).
+
+nwc_relay_allowlist() ->
+    [
+        <<"wss://nos.lol">>,
+        <<"wss://offchain.pub">>,
+        <<"wss://relay.primal.net">>,
+        <<"wss://relay.damus.io">>,
+        <<"wss://nostr-01.yakihonne.com">>
+    ].
+
+canonical_url(Url0) ->
+    Url1 = to_bin(Url0),
+    Url2 =
+        case byte_size(Url1) of
+            0 ->
+                Url1;
+            N ->
+                case binary:at(Url1, N - 1) of
+                    $/ -> binary:part(Url1, 0, N - 1);
+                    _ -> Url1
+                end
+        end,
+    list_to_binary(string:lowercase(binary_to_list(Url2))).
+
+take_unique_relays(Max, Relays) ->
+    take_unique_relays(Max, Relays, #{}, []).
+
+take_unique_relays(0, _Relays, _Seen, Acc) ->
+    lists:reverse(Acc);
+take_unique_relays(_Max, [], _Seen, Acc) ->
+    lists:reverse(Acc);
+take_unique_relays(Max, [#{url := Url} = R | Rest], Seen, Acc) ->
+    case maps:is_key(Url, Seen) of
+        true -> take_unique_relays(Max, Rest, Seen, Acc);
+        false -> take_unique_relays(Max - 1, Rest, Seen#{Url => true}, [R | Acc])
     end.
 from_json(Req0, State = #{action := mint}) ->
     try

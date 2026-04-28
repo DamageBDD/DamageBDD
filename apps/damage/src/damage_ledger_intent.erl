@@ -45,7 +45,7 @@ deploy_ledger_intent(AdminAk, Label) ->
     #{
         kind => <<"ae_contract_deploy">>,
         label => to_bin(Label),
-        source_path => to_bin(?LEDGER_SRC_PATH),
+        source_path => to_bin(damage_ae:contract_path(damage, ?LEDGER_SRC_PATH)),
         init_args => [to_str(AdminAk)]
     }.
 
