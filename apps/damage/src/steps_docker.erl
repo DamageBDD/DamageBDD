@@ -10,6 +10,7 @@
 -include_lib("damage.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -export([step/6]).
 
@@ -569,6 +570,7 @@ copy_file_from_container_to_ipfs(Config, Ctx0, Path0, Var0) ->
     StageDir = filename:join(StageRoot, unique_stage_id()),
     ok = ensure_dir(StageDir),
 
+    %% Direct copy (no docker exec)
     CpCmd =
         iolist_to_binary([
             "docker cp ",
@@ -579,10 +581,70 @@ copy_file_from_container_to_ipfs(Config, Ctx0, Path0, Var0) ->
 
     Ctx1 = run_cmd_in_docker_dir(Config, CpCmd, Ctx0),
 
-    Hash =
-        ipfs_add_dir_and_get_hash(StageDir),
+    Hash = ipfs_add_path_and_get_hash(StageDir),
 
     maps:put(Var, Hash, Ctx1).
+
+ipfs_add_path_and_get_hash(Path0) ->
+    Path = normalize_filename(Path0),
+    assert_upload_target(Path),
+
+    AddResult =
+        case filelib:is_dir(binary_to_list(Path)) of
+            true ->
+                damage_ipfs:add({directory, Path});
+            false ->
+                damage_ipfs:add({file, Path})
+        end,
+
+    case AddResult of
+        {ok, HashList} ->
+            RootName = filename:basename(binary_to_list(Path)),
+            pick_ipfs_root_hash(HashList, RootName);
+        Error ->
+            erlang:error({ipfs_add_failed, Path, Error})
+    end.
+
+pick_ipfs_root_hash(HashList, RootName0) ->
+    RootName =
+        case RootName0 of
+            B when is_binary(B) -> B;
+            L when is_list(L) -> list_to_binary(L)
+        end,
+
+    case
+        [
+            Cid
+         || #{<<"Name">> := Name, <<"Hash">> := Cid} <- HashList,
+            to_binary(Name) =:= RootName
+        ]
+    of
+        [Cid0 | _] ->
+            Cid0;
+        [] ->
+            %% fallback: for file adds or some directory adds, root CID is last
+            case lists:reverse(HashList) of
+                [#{<<"Hash">> := Cid0} | _] ->
+                    Cid0;
+                _ ->
+                    erlang:error({ipfs_add_no_hash_returned, HashList})
+            end
+    end.
+
+assert_upload_target(Path0) ->
+    Path = normalize_filename(Path0),
+    case file:read_file_info(Path) of
+        {ok, Info} ->
+            ?LOG_INFO(
+                "IPFS upload target path=~p type=~p size=~p",
+                [Path, Info#file_info.type, Info#file_info.size]
+            ),
+            ok;
+        Error ->
+            ?LOG_ERROR("IPFS upload target missing path=~p error=~p", [Path, Error]),
+            erlang:error({ipfs_upload_target_missing, Path, Error})
+    end.
+
 
 docker_container_id(Ctx) ->
     case
@@ -613,42 +675,17 @@ first_defined([K | Ks], Ctx) ->
         V -> V
     end.
 
-parse_lines(Bin) when is_binary(Bin) ->
-    [
-        list_to_binary(string:trim(Line))
-     || Line <- string:split(binary_to_list(Bin), "\n", all),
-        string:trim(Line) =/= ""
-    ].
 
 unique_stage_id() ->
     Enc = base64:encode(crypto:strong_rand_bytes(12)),
-    binary_to_list(binary:replace(Enc, <<"/">>, <<"_">>, [global])).
+    Safe0 = binary:replace(Enc, <<"/">>, <<"_">>, [global]),
+    Safe1 = binary:replace(Safe0, <<"+">>, <<"-">>, [global]),
+    Safe2 = binary:replace(Safe1, <<"=">>, <<>>, [global]),
+    binary_to_list(Safe2).
 
-ipfs_add_file_and_get_hash(Path) ->
-    case damage_ipfs:add({file, Path}) of
-        {ok, Entries} ->
-            case [H || #{<<"Hash">> := H} <- Entries] of
-                [Hash | _] -> Hash;
-                [] -> erlang:error({unexpected_ipfs_add_result, Entries})
-            end;
-        Error ->
-            erlang:error({ipfs_add_failed, Path, Error})
-    end.
-
-ipfs_add_dir_and_get_hash(Dir) ->
-    DirBase = list_to_binary(filename:basename(Dir)),
-    case damage_ipfs:add({directory, Dir}) of
-        {ok, Entries} ->
-            case [H || #{<<"Hash">> := H, <<"Name">> := N} <- Entries, to_binary(N) =:= DirBase] of
-                [Hash | _] ->
-                    Hash;
-                [] ->
-                    %% fallback: directory hash is usually the last entry
-                    case [H || #{<<"Hash">> := H} <- Entries] of
-                        [] -> erlang:error({unexpected_ipfs_add_result, Entries});
-                        Hashes -> lists:last(Hashes)
-                    end
-            end;
-        Error ->
-            erlang:error({ipfs_add_failed, Dir, Error})
-    end.
+normalize_filename(Bin) when is_binary(Bin) ->
+    Bin;
+normalize_filename(List) when is_list(List) ->
+    unicode:characters_to_binary(List);
+normalize_filename(Atom) when is_atom(Atom) ->
+    atom_to_binary(Atom, utf8).
