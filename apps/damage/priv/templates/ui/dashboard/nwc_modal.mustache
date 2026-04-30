@@ -2,110 +2,157 @@
 <div id="nwc-modal" class="modal micromodal-slide" aria-hidden="true">
   <div class="modal__overlay" tabindex="-1" data-micromodal-close>
     <div class="modal__container nwc-modal" role="dialog" aria-modal="true" aria-labelledby="nwc-title">
-      <header class="modal__header">
-        <div>
-          <h2 id="nwc-title" class="modal__title">Nostr Wallet Connect</h2>
-          <p class="nwc-subtitle">Mint a wallet connection URI for Amethyst, Damus, or other NWC clients.</p>
+      <header class="modal__header nwc-modal-header">
+        <div class="nwc-modal-header-copy">
+          <h2 id="nwc-title" class="nwc-title">Nostr Wallet Connect</h2>
+          <p class="nwc-subtitle">
+            Mint a wallet connection URI for Amethyst, Damus, Primal, and other NWC clients.
+          </p>
         </div>
-        <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+
+        <button class="modal__close nwc-close" data-micromodal-close type="button">&times;</button>
       </header>
 
-      <div class="nwc-status-row">
-        <div id="nwc-status" class="nwc-status" aria-live="polite"></div>
-      </div>
+      <div id="nwc-status" class="nwc-status" role="status" aria-live="polite"></div>
 
-      <div class="nwc-grid">
-        <!-- Left: configuration -->
-        <section class="nwc-card">
-          <div class="nwc-card-header">
-            <h3>1. Configure connection</h3>
-            <p>Pick 3–5 relays and set optional spending limits.</p>
-          </div>
-
-          <div class="nwc-field">
-            <label class="nwc-label">Preset relays</label>
-            <div class="nwc-relay-chips">
-              <label class="nwc-chip"><input type="checkbox" class="nwc-relay-preset" value="wss://relay.damus.io" checked> <span>Damus</span></label>
-              <label class="nwc-chip"><input type="checkbox" class="nwc-relay-preset" value="wss://relay.primal.net" checked> <span>Primal</span></label>
-              <label class="nwc-chip"><input type="checkbox" class="nwc-relay-preset" value="wss://nos.lol" checked> <span>nos.lol</span></label>
-              <label class="nwc-chip"><input type="checkbox" class="nwc-relay-preset" value="wss://nostr-01.yakihonne.com"> <span>YakiHonne 01</span></label>
-              <label class="nwc-chip"><input type="checkbox" class="nwc-relay-preset" value="wss://offchain.pub"> <span>Offchain</span></label>
-            </div>
-            <div id="nwc-relay-count" class="nwc-help">Using 3 relays.</div>
-          </div>
-          <input id="nwc-relay" type="hidden" value="wss://relay.damus.io">
-
-          <div class="nwc-field">
-            <label for="nwc-custom-relays" class="nwc-label">Custom relays</label>
-            <textarea id="nwc-custom-relays" class="nwc-textarea" rows="4" placeholder="One relay per line&#10;wss://relay.example.com"></textarea>
-            <div class="nwc-help">Optional. One relay URL per line.</div>
-          </div>
-
-          <div class="nwc-limits">
-            <div class="nwc-field">
-              <label for="nwc-max-single" class="nwc-label">Max single (sats)</label>
-              <input id="nwc-max-single" type="number" min="0" value="10" class="nwc-input">
-            </div>
-            <div class="nwc-field">
-              <label for="nwc-max-total" class="nwc-label">Max total (sats)</label>
-              <input id="nwc-max-total" type="number" min="0" value="50" class="nwc-input">
-            </div>
-            <div class="nwc-field">
-              <label for="nwc-expires-height" class="nwc-label">Expires height</label>
-              <input id="nwc-expires-height" type="number" min="0" value="0" class="nwc-input">
-              <div class="nwc-help">0 = never expires</div>
-            </div>
-          </div>
-
-          <div class="nwc-actions">
-            <button id="nwc-mint-btn" class="btn btn-primary" type="button">Mint NWC</button>
-            <button id="nwc-clear-btn" class="btn btn-secondary" type="button">Clear</button>
-          </div>
-        </section>
-
-        <!-- Right: connection result -->
-        <section class="nwc-card nwc-result-card">
-          <div class="nwc-card-header">
-            <h3>2. Use connection</h3>
-            <p>Scan the QR code or copy the URI into your NWC-compatible client.</p>
-          </div>
-
-          <div id="nwc-empty-state" class="nwc-empty-state">
-            <div class="nwc-empty-icon">⚡</div>
-            <p>No connection minted yet.</p>
-          </div>
-          <div id="nwc-result-body" class="nwc-result-body" hidden>
-            <div class="nwc-qr-wrap">
-              <div id="nwc-qr" class="nwc-qr"></div>
+      <main class="nwc-modal-main">
+        <div class="nwc-grid">
+          <section class="nwc-card nwc-config-card" aria-labelledby="nwc-config-title">
+            <div class="nwc-card-header">
+              <span class="nwc-step-badge">1</span>
+              <div>
+                <h3 id="nwc-config-title">Configure connection</h3>
+                <p>Pick 3–5 relays and set optional spending limits.</p>
+              </div>
             </div>
 
-            <div class="nwc-field">
-              <label for="nwc-uri" class="nwc-label">Connection URI</label>
-              <textarea id="nwc-uri" class="nwc-textarea nwc-uri-box" rows="5" readonly></textarea>
-            </div>
+            <div class="nwc-config-body">
+              <div class="nwc-field">
+                <label class="nwc-label">Session relays</label>
 
-            <div class="nwc-inline-actions">
-              <button id="nwc-copy-btn" class="btn btn-primary" type="button">Copy URI</button>
-              <button id="nwc-open-btn" class="btn btn-secondary" type="button">Open in app</button>
-            </div>
+                <div class="nwc-relay-chips" id="nwc-relay-chips">
+                  <label class="nwc-chip">
+                    <input type="checkbox" class="nwc-relay-preset" value="wss://relay.damus.io" checked>
+                    <span>Damus</span>
+                  </label>
 
-            <div class="nwc-field">
-              <label for="nwc-client-pubkey" class="nwc-label">Client pubkey</label>
-              <input id="nwc-client-pubkey" class="nwc-input" readonly>
+                  <label class="nwc-chip">
+                    <input type="checkbox" class="nwc-relay-preset" value="wss://relay.primal.net" checked>
+                    <span>Primal</span>
+                  </label>
+
+                  <label class="nwc-chip">
+                    <input type="checkbox" class="nwc-relay-preset" value="wss://nos.lol" checked>
+                    <span>nos.lol</span>
+                  </label>
+
+                  <label class="nwc-chip">
+                    <input type="checkbox" class="nwc-relay-preset" value="wss://nostr-01.yakihonne.com">
+                    <span>YakiHonne 01</span>
+                  </label>
+
+                  <label class="nwc-chip">
+                    <input type="checkbox" class="nwc-relay-preset" value="wss://offchain.pub">
+                    <span>Offchain</span>
+                  </label>
+                </div>
+
+                <div id="nwc-relay-count" class="nwc-help">Using 3 relays.</div>
+              </div>
+
+              <div class="nwc-field">
+                <label for="nwc-custom-relays" class="nwc-label">Custom relays</label>
+                <textarea
+                  id="nwc-custom-relays"
+                  class="nwc-textarea nwc-custom-relays"
+                  rows="3"
+                  placeholder="One relay per line&#10;wss://relay.example.com"></textarea>
+                <div class="nwc-help">Optional. These are added to the selected preset relays.</div>
+              </div>
+
+              <div class="nwc-limits">
+                <div class="nwc-field">
+                  <label for="nwc-max-single" class="nwc-label">Max single</label>
+                  <div class="nwc-input-affix">
+                    <input id="nwc-max-single" type="number" min="0" value="10" class="nwc-input">
+                    <span>sats</span>
+                  </div>
+                </div>
+
+                <div class="nwc-field">
+                  <label for="nwc-max-total" class="nwc-label">Max total</label>
+                  <div class="nwc-input-affix">
+                    <input id="nwc-max-total" type="number" min="0" value="50" class="nwc-input">
+                    <span>sats</span>
+                  </div>
+                </div>
+
+                <div class="nwc-field">
+                  <label for="nwc-expires-height" class="nwc-label">Expires height</label>
+                  <input id="nwc-expires-height" type="number" min="0" value="0" class="nwc-input">
+                  <div class="nwc-help">0 = never</div>
+                </div>
+              </div>
+
+              <div class="nwc-actions">
+                <button id="nwc-mint-btn" class="nwc-btn nwc-btn-primary" type="button">Mint NWC</button>
+                <button id="nwc-clear-btn" class="nwc-btn nwc-btn-secondary" type="button">Clear</button>
+              </div>
             </div>
+          </section>
+
+          <div class="nwc-result-column">
+            <section class="nwc-card nwc-result-card" aria-labelledby="nwc-result-title">
+              <div class="nwc-card-header">
+                <span class="nwc-step-badge">2</span>
+                <div>
+                  <h3 id="nwc-result-title">Use connection</h3>
+                  <p>Scan the QR or copy the URI into your wallet client.</p>
+                </div>
+              </div>
+
+              <div id="nwc-empty-state" class="nwc-empty-state">
+                <div class="nwc-empty-icon">⚡</div>
+                <strong>No connection minted yet</strong>
+                <p>Configure the limits and mint a fresh NWC URI.</p>
+              </div>
+
+              <div id="nwc-result-body" class="nwc-result-body" hidden>
+                <div class="nwc-qr-wrap">
+                  <div id="nwc-qr" class="nwc-qr"></div>
+                </div>
+
+                <div class="nwc-field">
+                  <label for="nwc-uri" class="nwc-label">Connection URI</label>
+                  <textarea id="nwc-uri" class="nwc-textarea nwc-uri-box" rows="4" readonly></textarea>
+                </div>
+
+                <div class="nwc-inline-actions">
+                  <button id="nwc-copy-btn" class="nwc-btn nwc-btn-primary" type="button">Copy URI</button>
+                  <button id="nwc-open-btn" class="nwc-btn nwc-btn-secondary" type="button">Open in app</button>
+                </div>
+
+                <div class="nwc-field nwc-client-field">
+                  <label for="nwc-client-pubkey" class="nwc-label">Client pubkey</label>
+                  <input id="nwc-client-pubkey" class="nwc-input nwc-mono" readonly>
+                </div>
+              </div>
+            </section>
+
+            <section class="nwc-card nwc-revoke-card" aria-labelledby="nwc-revoke-title">
+              <div class="nwc-card-header nwc-card-header-compact">
+                <span class="nwc-step-badge nwc-step-danger">3</span>
+                <div>
+                  <h3 id="nwc-revoke-title">Revoke connection</h3>
+                  <p>Disable the currently displayed client pubkey.</p>
+                </div>
+              </div>
+
+              <button id="nwc-revoke-btn" class="nwc-btn nwc-btn-danger" type="button">Revoke</button>
+            </section>
           </div>
-        </section>
-      </div>
-
-      <section class="nwc-card nwc-revoke-card">
-        <div class="nwc-card-header">
-          <h3>3. Revoke connection</h3>
-          <p>Disable a previously minted client connection.</p>
         </div>
-        <div class="nwc-inline-actions">
-          <button id="nwc-revoke-btn" class="btn btn-danger" type="button">Revoke</button>
-        </div>
-      </section>
+      </main>
     </div>
   </div>
 </div>

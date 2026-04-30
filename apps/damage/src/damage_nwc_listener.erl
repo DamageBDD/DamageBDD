@@ -265,7 +265,6 @@ handle_info({gun_data, ConnPid, StreamRef, _Fin, Data}, State) ->
                 [ConnPid, StreamRef, bin_len(Data)]
             ),
             {noreply, schedule_reconnect(drop_conn(ConnPid, State))};
-
         false ->
             ?LOG_DEBUG("Ignoring gun_data from unknown conn=~p stream=~p bytes=~p", [
                 ConnPid, StreamRef, bin_len(Data)
