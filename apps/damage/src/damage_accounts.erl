@@ -892,24 +892,26 @@ delete_resource(Req, #{action := invoices} = State) ->
                 State
             }
     end.
-
 balance(AeAccount) ->
-    #{id := AeAccount, balance := BalanceAettos} = damage_ae:get_ae_balance(AeAccount),
-    DamageHits = damage_ae:balance(AeAccount),
-    Ledger = damage_nwc:ledger_balance_for_account_cached(AeAccount),
-    Msats = maps:get(balance_msat, Ledger, 0),
+    damage_balance_cache:snapshot(AeAccount).
 
-    #{
-        status => <<"ok">>,
-        aettos => damage_utils:to_bin(BalanceAettos),
-        hits => damage_utils:to_bin(DamageHits),
-        msats => damage_utils:to_bin(Msats),
-
-        %% keep richer fields too for debugging / future UI
-        ae_amount => BalanceAettos,
-        amount => DamageHits,
-        ledger => Ledger
-    }.
+%balance(AeAccount) ->
+%    #{id := AeAccount, balance := BalanceAettos} = damage_ae:get_ae_balance(AeAccount),
+%    DamageHits = damage_ae:balance(AeAccount),
+%    Ledger = damage_nwc:ledger_balance_for_account_cached(AeAccount),
+%    Msats = maps:get(balance_msat, Ledger, 0),
+%
+%    #{
+%        status => <<"ok">>,
+%        aettos => damage_utils:to_bin(BalanceAettos),
+%        hits => damage_utils:to_bin(DamageHits),
+%        msats => damage_utils:to_bin(Msats),
+%
+%        %% keep richer fields too for debugging / future UI
+%        ae_amount => BalanceAettos,
+%        amount => DamageHits,
+%        ledger => Ledger
+%    }.
 
 delete_account(Email) ->
     case damage_ae:delete_account(Email) of

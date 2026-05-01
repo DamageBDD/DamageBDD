@@ -268,24 +268,26 @@ fetch_snapshot(AeAccount) ->
     }}.
 
 fetch_damage_balance_mdw(AeAccount) ->
+    Contract = token_contract(),
     case
         mdw_get_json(fun(PathPrefix) ->
             PathPrefix ++
-                "v3/aex9/" ++ token_contract() ++
+                "v3/aex9/" ++ Contract ++
                 "/balances/" ++ binary_to_list(AeAccount) ++
                 mdw_top_query()
         end)
     of
         {ok, Json} ->
-            extract_damage_amount(Json);
+            extract_damage_amount(Json, Contract);
         {error, Reason} ->
-            ?LOG_WARNING("mdw direct aex9 balance failed account=~p reason=~p", [
-                AeAccount, Reason
-            ]),
-            fetch_damage_balance_from_account_list(AeAccount)
+            ?LOG_WARNING(
+                "mdw damage contract balance failed account=~p contract=~s reason=~p",
+                [AeAccount, Contract, Reason]
+            ),
+            fetch_damage_balance_from_account_list(AeAccount, Contract)
     end.
 
-fetch_damage_balance_from_account_list(AeAccount) ->
+fetch_damage_balance_from_account_list(AeAccount, Contract) ->
     case
         mdw_get_json(fun(PathPrefix) ->
             PathPrefix ++
@@ -294,11 +296,12 @@ fetch_damage_balance_from_account_list(AeAccount) ->
         end)
     of
         {ok, Json} ->
-            extract_damage_amount(Json);
+            extract_damage_amount(Json, Contract);
         {error, Reason} ->
-            ?LOG_WARNING("mdw account aex9 balances failed account=~p reason=~p", [
-                AeAccount, Reason
-            ]),
+            ?LOG_WARNING(
+                "mdw account aex9 fallback failed account=~p contract=~s reason=~p",
+                [AeAccount, Contract, Reason]
+            ),
             0
     end.
 
@@ -318,11 +321,29 @@ fetch_ae_balance_fast(AeAccount) ->
     end.
 
 fetch_sats_ledger(AeAccount) ->
-    case catch damage_nwc:ledger_balance_for_account_cached(AeAccount) of
-        Ledger when is_map(Ledger) ->
+    try damage_nwc:ledger_balance_for_account_cached(AeAccount) of
+        #{balance_msat := _} = Ledger ->
             Ledger;
-        _ ->
-            #{balance_msat => 0}
+        #{<<"balance_msat">> := Msats} = Ledger ->
+            maps:put(balance_msat, to_integer(Msats), Ledger);
+        Msats when is_integer(Msats) ->
+            #{balance_msat => Msats};
+        Other ->
+            ?LOG_DEBUG("NWC ledger balance unavailable for account=~p result=~p", [
+                AeAccount, Other
+            ]),
+            #{balance_msat => 0, nwc_status => <<"unavailable">>}
+    catch
+        _:{invalid_hex64, _} ->
+            #{balance_msat => 0, nwc_status => <<"not_nwc_client">>};
+        _:{{invalid_hex64, _}, _} ->
+            #{balance_msat => 0, nwc_status => <<"not_nwc_client">>};
+        Class:Reason:Stack ->
+            ?LOG_DEBUG("NWC ledger balance failed account=~p error=~p", [
+                AeAccount,
+                #{class => Class, reason => Reason, stack => Stack}
+            ]),
+            #{balance_msat => 0, nwc_status => <<"error">>}
     end.
 
 %%====================================================================
@@ -383,8 +404,6 @@ decode_json(Body) ->
 %% Cache internals
 %%====================================================================
 
-stale_ms() ->
-    env_int(balance_cache_stale_ms, ?DEFAULT_STALE_MS).
 store_snapshot(AeAccount, Snap) ->
     ensure_table(),
     Now = now_ms(),
@@ -393,7 +412,7 @@ store_snapshot(AeAccount, Snap) ->
         Snap,
         Now,
         Now + fresh_ms(),
-        Now + stale_ms()
+        Now + hard_ms()
     }),
     ok.
 
@@ -464,32 +483,31 @@ default_snapshot(AeAccount, Reason) ->
 ensure_table() ->
     case ets:info(?TAB) of
         undefined ->
-            ensure_server(),
-            case ets:info(?TAB) of
-                undefined ->
-                    exit({balance_cache_table_not_started, ?TAB});
-                _ ->
-                    ok
+            try
+                ets:new(?TAB, [
+                    named_table,
+                    public,
+                    set,
+                    {read_concurrency, true},
+                    {write_concurrency, true}
+                ]),
+                ok
+            catch
+                error:badarg ->
+                    case ets:info(?TAB, protection) of
+                        public ->
+                            ok;
+                        Protection ->
+                            exit({balance_cache_bad_ets_protection, ?TAB, Protection})
+                    end
             end;
         _ ->
-            ok
-    end.
-
-ensure_server() ->
-    case whereis(?MODULE) of
-        undefined ->
-            case gen_server:start({local, ?MODULE}, ?MODULE, [], []) of
-                {ok, _Pid} ->
+            case ets:info(?TAB, protection) of
+                public ->
                     ok;
-                {error, {already_started, _Pid}} ->
-                    ok;
-                {error, {already_registered, _Pid}} ->
-                    ok;
-                Error ->
-                    exit({balance_cache_start_failed, Error})
-            end;
-        _Pid ->
-            ok
+                Protection ->
+                    exit({balance_cache_bad_ets_protection, ?TAB, Protection})
+            end
     end.
 
 create_table() ->
@@ -511,37 +529,56 @@ create_table() ->
 %% JSON shape handling
 %%====================================================================
 
-extract_damage_amount(#{amount := null}) ->
+extract_damage_amount(#{amount := null}, _Contract) ->
     0;
-extract_damage_amount(#{amount := Amount}) ->
+extract_damage_amount(#{<<"amount">> := null}, _Contract) ->
+    0;
+%% Direct endpoint:
+%% /v3/aex9/<contract>/balances/<account>
+extract_damage_amount(#{contract := Contract0, amount := Amount}, Contract) ->
+    case to_list(Contract0) =:= Contract of
+        true -> to_integer(Amount);
+        false -> 0
+    end;
+extract_damage_amount(#{<<"contract">> := Contract0, <<"amount">> := Amount}, Contract) ->
+    case to_list(Contract0) =:= Contract of
+        true -> to_integer(Amount);
+        false -> 0
+    end;
+%% Some MDW/client shapes use contract_id.
+extract_damage_amount(#{contract_id := Contract0, amount := Amount}, Contract) ->
+    case to_list(Contract0) =:= Contract of
+        true -> to_integer(Amount);
+        false -> 0
+    end;
+extract_damage_amount(#{<<"contract_id">> := Contract0, <<"amount">> := Amount}, Contract) ->
+    case to_list(Contract0) =:= Contract of
+        true -> to_integer(Amount);
+        false -> 0
+    end;
+%% Fallback list endpoint.
+extract_damage_amount(#{data := Data}, Contract) when is_list(Data) ->
+    extract_damage_amount_from_list(Data, Contract);
+extract_damage_amount(#{<<"data">> := Data}, Contract) when is_list(Data) ->
+    extract_damage_amount_from_list(Data, Contract);
+%% If direct endpoint returns only amount, trust it because the path already
+%% included the DAMAGE contract.
+extract_damage_amount(#{amount := Amount}, _Contract) ->
     to_integer(Amount);
-extract_damage_amount(#{balance := Amount}) ->
+extract_damage_amount(#{<<"amount">> := Amount}, _Contract) ->
     to_integer(Amount);
-extract_damage_amount(#{<<"amount">> := Amount}) ->
-    to_integer(Amount);
-extract_damage_amount(#{<<"balance">> := Amount}) ->
-    to_integer(Amount);
-extract_damage_amount(#{data := Data}) when is_list(Data) ->
-    extract_damage_amount_from_list(Data);
-extract_damage_amount(#{<<"data">> := Data}) when is_list(Data) ->
-    extract_damage_amount_from_list(Data);
-extract_damage_amount(_) ->
+extract_damage_amount(_, _Contract) ->
     0.
 
-extract_damage_amount_from_list([]) ->
+extract_damage_amount_from_list([], _Contract) ->
     0;
-extract_damage_amount_from_list([#{contract_id := Contract, amount := Amount} | Rest]) ->
-    case to_list(Contract) =:= token_contract() of
-        true -> to_integer(Amount);
-        false -> extract_damage_amount_from_list(Rest)
+extract_damage_amount_from_list([Item | Rest], Contract) when is_map(Item) ->
+    case extract_damage_amount(Item, Contract) of
+        0 -> extract_damage_amount_from_list(Rest, Contract);
+        Amount -> Amount
     end;
-extract_damage_amount_from_list([#{<<"contract_id">> := Contract, <<"amount">> := Amount} | Rest]) ->
-    case to_list(Contract) =:= token_contract() of
-        true -> to_integer(Amount);
-        false -> extract_damage_amount_from_list(Rest)
-    end;
-extract_damage_amount_from_list([_ | Rest]) ->
-    extract_damage_amount_from_list(Rest).
+extract_damage_amount_from_list([_ | Rest], Contract) ->
+    extract_damage_amount_from_list(Rest, Contract).
 
 %%====================================================================
 %% Config/helpers
@@ -590,7 +627,12 @@ env_bool(Key, Default) ->
     end.
 
 token_contract() ->
-    to_list(?DAMAGE_TOKEN_CONTRACT).
+    case application:get_env(damage, damage_token_contract) of
+        {ok, Contract} ->
+            to_list(Contract);
+        _ ->
+            to_list(?DAMAGE_TOKEN_CONTRACT)
+    end.
 
 normalize_account(AeAccount) when is_binary(AeAccount) ->
     AeAccount;
