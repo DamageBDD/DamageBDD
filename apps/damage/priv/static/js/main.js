@@ -4,6 +4,7 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 import { ensureChannel } from '/static/js/ensureChannel.js';
 import { updateSchedulesTable } from '/static/js/schedules.js';
 import { initDamageBDDPicker, rememberRecentFeature } from "./featurePicker.js";
+import "/static/js/balances.js";
 
 
 
@@ -84,6 +85,7 @@ function wrapApiButton(btn, handler, delay = 800) {
 
 	btn.addEventListener('click', wrapped);
 }
+
 function wrapApiForm(form, button, handler) {
   if (!form) return;
 
@@ -103,6 +105,41 @@ function wrapApiForm(form, button, handler) {
     }
   });
 }
+function getCurrentDashboardAddress() {
+	try {
+		const address = window.TokenManager?.getAddress?.();
+		if (address && address.startsWith("ak_")) return address;
+	} catch (_e) {}
+
+	const balanceAddress = document.getElementById("balanceAddress");
+	const fromDataset = balanceAddress?.dataset?.pubkey;
+	const fromTitle = balanceAddress?.title;
+
+	if (fromDataset && fromDataset.startsWith("ak_")) return fromDataset;
+	if (fromTitle && fromTitle.startsWith("ak_")) return fromTitle;
+
+	return null;
+}
+
+async function refreshDashboardBalances() {
+	const address = getCurrentDashboardAddress();
+
+	if (!address) {
+		console.debug("Dashboard balance refresh skipped: no ak_ address");
+		return { ok: false, error: "missing_address" };
+	}
+
+	if (typeof window.updateAllBalances !== "function") {
+		console.warn("balances.js not loaded: window.updateAllBalances missing");
+		return { ok: false, error: "balances_js_missing" };
+	}
+
+	return window.updateAllBalances(address, {
+		preserveAddressText: false
+	});
+}
+
+window.refreshDashboardBalances = refreshDashboardBalances;
 
 function restoreFeatureDraftFromShareLink() {
 	const ta = document.getElementById("damageTextArea");
@@ -167,6 +204,11 @@ function restoreFeatureDraftFromShareLink() {
 		}
 
 		try {
+			await refreshDashboardBalances();
+		} catch (err) {
+			console.warn("auth-changed balance refresh failed:", err);
+		}
+		try {
 			if (window.TokenManager.getToken()) {
 				updateSchedulesTable();
 			}
@@ -221,66 +263,73 @@ function restoreFeatureDraftFromShareLink() {
 		);
 
 		document.getElementById("loginSubmitBtn").addEventListener("click",(event) => {
-		
 			event.preventDefault();
-		});
+			});
 
-		document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
-			event.preventDefault();
-		});
-
-		/*document.getElementById("signup-modal").addEventListener("keydown", function(event){
-		  if (event.keyCode === 13) {
-		  submitSignUpForm(event);
-		  }
-		  });*/
-		document.getElementById("signupForm").addEventListener("submit", (event) => {
-			event.preventDefault();
-		});
-		document.getElementById("signup-username").addEventListener("keydown", (event) => {
-			if (event.key === "Enter") {
-				submitSignUpForm(event);
-			}
-		});
-		wrapApiButton(
-			document.getElementById("signupSubmitBtn"),
-			submitSignUpForm);
-		wrapApiButton(
-			document.getElementById("loginResetPasswdBtn"),
-			submitForgotPasswordForm);
-		//document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
-		//	event.preventDefault();
-		//	MicroModal.close("signup-modal");
-		//	MicroModal.show("login-modal");
-		//});
-		const logoutSubmitBtn = document.getElementById("logoutSubmitBtn");
-
-		wrapApiButton(logoutSubmitBtn, async (event) => {
-			event.preventDefault();
-
-			try {
-				if (typeof window.logoutActiveSession === "function") {
-					await window.logoutActiveSession();
-				} else {
-					window.TokenManager.logout(window.TokenManager.getMode());
-				}
-			} finally {
-				try { MicroModal.close("logout-modal"); } catch (_e) {}
-				window.location.reload();
-			}
-		});
-
-
-		const logoutBtn = document.getElementById("logoutBtn");
-
-		if (logoutBtn) {
-			logoutBtn.addEventListener("click", (event) => {
+			document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
 				event.preventDefault();
-				MicroModal.show("logout-modal");
+			});
+
+			/*document.getElementById("signup-modal").addEventListener("keydown", function(event){
+				if (event.keyCode === 13) {
+				submitSignUpForm(event);
+				}
+				});*/
+			document.getElementById("signupForm").addEventListener("submit", (event) => {
+				event.preventDefault();
+			});
+			document.getElementById("signup-username").addEventListener("keydown", (event) => {
+				if (event.key === "Enter") {
+					submitSignUpForm(event);
+				}
+			});
+			wrapApiButton(
+				document.getElementById("signupSubmitBtn"),
+				submitSignUpForm);
+			wrapApiButton(
+				document.getElementById("loginResetPasswdBtn"),
+				submitForgotPasswordForm);
+			//document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
+			//	event.preventDefault();
+			//	MicroModal.close("signup-modal");
+			//	MicroModal.show("login-modal");
+			//});
+			const logoutSubmitBtn = document.getElementById("logoutSubmitBtn");
+
+			wrapApiButton(logoutSubmitBtn, async (event) => {
+				event.preventDefault();
+
+				try {
+					if (typeof window.logoutActiveSession === "function") {
+						await window.logoutActiveSession();
+					} else {
+						window.TokenManager.logout(window.TokenManager.getMode());
+					}
+				} finally {
+					try { MicroModal.close("logout-modal"); } catch (_e) {}
+					window.location.reload();
+				}
+			});
+
+
+			const logoutBtn = document.getElementById("logoutBtn");
+
+			if (logoutBtn) {
+				logoutBtn.addEventListener("click", (event) => {
+					event.preventDefault();
+					MicroModal.show("logout-modal");
 			});
 		}
 
 		showHideLoginButton();
+
+		setTimeout(() => {
+			refreshDashboardBalances();
+			document.dispatchEvent(new CustomEvent("damage:dashboard-loaded", {
+				detail: { address: getCurrentDashboardAddress() }
+			}));
+		}, 0);
+
 		Tabby('[data-node-wallet-tabs]');
 		MicroModal.init({
 			onShow: modal => {
@@ -337,7 +386,7 @@ function restoreFeatureDraftFromShareLink() {
 			async (event) => {
 				event.preventDefault();
 				await generateInvoice();
-					MicroModal.close("wallet-modal");
+				MicroModal.close("wallet-modal");
 			}
 		);
 		wrapApiForm(
@@ -448,7 +497,7 @@ function restoreFeatureDraftFromShareLink() {
 		if (balanceRefreshBtn) {
 			wrapApiButton(balanceRefreshBtn, async (event) => {
 				event.preventDefault();
-				updateAllBalances(window.TokenManager.getAddress());
+				await refreshDashboardBalances();
 			}, 0);
 		}
 
@@ -961,7 +1010,7 @@ function restoreFeatureDraftFromShareLink() {
 		const liEl = document.createElement('li');
 		const aEl = document.createElement('a');
 		aEl.href=`#run-${runDateTime}`;
-	    aEl.innerHTML = label;
+	  aEl.innerHTML = label;
 		liEl.role = "presentation";
 		liEl.appendChild(aEl);
 		ulEl.appendChild(liEl);
@@ -990,10 +1039,10 @@ function restoreFeatureDraftFromShareLink() {
 	}
 	function replaceMarkers(el) {
 		const html = el.innerHTML
-			  .replace(/line:(\d+)/g, '<span class="gherkin-line">line:$1</span>')
-			  .replace(/\bsuccess\b/g, '<span class="gherkin-success">success</span>')
-			  .replace(/\bfail:(.+)\b/g, '<span class="gherkin-fail">fail:$1</span>')
-			  .replace(/\bskip\b/g, '<span class="gherkin-skip">skip</span>')
+					.replace(/line:(\d+)/g, '<span class="gherkin-line">line:$1</span>')
+					.replace(/\bsuccess\b/g, '<span class="gherkin-success">success</span>')
+					.replace(/\bfail:(.+)\b/g, '<span class="gherkin-fail">fail:$1</span>')
+					.replace(/\bskip\b/g, '<span class="gherkin-skip">skip</span>')
 		;
 
 		el.innerHTML = html;
@@ -1271,6 +1320,7 @@ function restoreFeatureDraftFromShareLink() {
 
 		try {
 			await streamResponseToDOM(response, reportElement);
+			await refreshDashboardBalances();
 		} catch (err) {
 			console.error("Error streaming response to DOM:", err);
 			reportElement.innerText =
@@ -1380,8 +1430,8 @@ function restoreFeatureDraftFromShareLink() {
 
 		if (!signature || !signature.ok) {
 			const errorMsg =
-				  (signature && signature.error && signature.error.message) ||
-				  "Unknown signing error";
+						(signature && signature.error && signature.error.message) ||
+						"Unknown signing error";
 			reportElement.innerText = "Failed to sign: " + errorMsg;
 			return;
 		}
@@ -1529,7 +1579,7 @@ function restoreFeatureDraftFromShareLink() {
 				renderNodeWalletModal(data);
 			}
 			
-			updateAllBalances(window.TokenManager.getAddress());
+			await refreshDashboardBalances();
 		} catch (err) {
 			console.warn("version refresh failed:", err);
 		}
@@ -1811,8 +1861,8 @@ function restoreFeatureDraftFromShareLink() {
 			method: 'POST',
 			credentials: 'include',
 			headers: { 'Content-Type': 'application/json',
-					   'Authorization': 'Bearer ' + window.TokenManager.getToken()
-					 },
+								 'Authorization': 'Bearer ' + window.TokenManager.getToken()
+							 },
 			body: JSON.stringify({
 				amount_sats: parseInt(amount)
 			})
@@ -1831,10 +1881,10 @@ function restoreFeatureDraftFromShareLink() {
 					document.getElementById("qrcode-lightning").innerText = "";
 					document.getElementById("lightning-invoice-input").value = "lightning:" + data.invoice.payment_request;
 					showLightningQR({containerId : "qrcode-lightning",
-									 paymentRequest:  data.invoice.payment_request,
-									 address: window.TokenManager.getAddress(),
-									 logo: "/static/img/logo.png"
-									});
+													 paymentRequest:  data.invoice.payment_request,
+													 address: window.TokenManager.getAddress(),
+													 logo: "/static/img/logo.png"
+													});
 				} else {
 					console.error("Error Invoice fetching failed: ", data);
 					showDialog({
@@ -2019,11 +2069,11 @@ function restoreFeatureDraftFromShareLink() {
 			const data = await r.json();
 
 			const address =
-				  data?.bech32 ||
-				  data?.p2tr ||
-				  data?.all?.bech32 ||
-				  data?.all?.p2tr ||
-				  "";
+						data?.bech32 ||
+						data?.p2tr ||
+						data?.all?.bech32 ||
+						data?.all?.p2tr ||
+						"";
 
 			if (input) input.value = address || "No address returned";
 			if (raw) raw.textContent = JSON.stringify(data, null, 2);
@@ -2048,7 +2098,7 @@ function restoreFeatureDraftFromShareLink() {
 	async function createNodeLiquidityInvoice() {
 		const amount = Number(document.getElementById("node-liquidity-invoice-amount")?.value || 0);
 		const description =
-			  document.getElementById("node-liquidity-invoice-description")?.value || "Inbound liquidity topup";
+					document.getElementById("node-liquidity-invoice-description")?.value || "Inbound liquidity topup";
 		const expiry = Number(document.getElementById("node-liquidity-invoice-expiry")?.value || 3600);
 
 		const bolt11El = document.getElementById("node-liquidity-bolt11");
