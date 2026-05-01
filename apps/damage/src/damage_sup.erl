@@ -117,12 +117,20 @@ init([]) ->
                 modules => [cln, cln_ws_mgr]
             },
             #{
-                id => damage_ssh,
-                start => {damage_ssh, start_link, []},
+                id => damage_ssh_tunnel_listener,
+                start => {damage_ssh_tunnel_listener, start_link, []},
                 restart => permanent,
-                shutdown => 60000,
+                shutdown => 5000,
                 type => worker,
-                modules => [damage_ssh]
+                modules => [damage_ssh_tunnel_listener]
+            },
+            #{
+                id => damage_ssh_git_listener,
+                start => {damage_ssh_git_listener, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [damage_ssh_git_listener]
             },
             #{
                 id => damage_ae,
@@ -213,8 +221,7 @@ init([]) ->
                 shutdown => 5000,
                 type => worker,
                 modules => [damage_ipfs_peers]
-            },
-            git_ssh_listener:child_spec()
+            }
         ],
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
