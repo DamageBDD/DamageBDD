@@ -390,7 +390,7 @@ resolve_owner_and_ledger_by_client_pubkey(ClientPubHex0) ->
 -spec ledger_balance_msat(binary(), binary(), binary()) ->
     {ok, integer()} | {error, term()}.
 ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
-    case damage_nwc_http:ledger_call_user(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]) of
+    case damage_nwc_http:ledger_call_view(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]) of
         #{"return_type" := "ok", "return_value" := Value} ->
             normalize_int(Value);
         #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
@@ -402,7 +402,7 @@ ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
 -spec ledger_policy(binary(), binary(), binary()) ->
     {ok, map()} | {error, term()}.
 ledger_policy(Owner, LedgerCt, ClientPubHex) ->
-    case damage_nwc_http:ledger_call_user(Owner, LedgerCt, "policy_of", [to_s(ClientPubHex)]) of
+    case damage_nwc_http:ledger_call_view(Owner, LedgerCt, "policy_of", [to_s(ClientPubHex)]) of
         #{"return_type" := "ok", "return_value" := Value} ->
             {ok, normalize_policy(Value)};
         #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
@@ -451,8 +451,11 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
         user_signed ->
             ok;
         server_signed ->
-            _ = damage_nwc_http:ledger_call_user(
-                Owner,
+            %% The deployed DamageNWCLedger admin is the node account in the
+            %% automatic setup path, so debits after CLN payment must be signed
+            %% by the node/admin, not by the user wallet process.
+            _ = Owner,
+            _ = damage_nwc_http:ledger_call_admin(
                 LedgerCt,
                 "debit",
                 [to_s(ClientPubHex), integer_to_list(AmountMsat), to_s(Ref), to_s(Meta)]

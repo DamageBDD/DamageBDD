@@ -12,6 +12,8 @@
 -export([resolve_user_ledger_ct/1]).
 -export([ledger_src_path/0]).
 -export([ledger_call_user_dry/4]).
+-export([ledger_call_view/4]).
+-export([ledger_call_admin/3]).
 -export([ledger_call_user/4]).
 -export([
     migrate_user_ledger/1,
@@ -623,7 +625,7 @@ from_json(Req0, State = #{action := ledger_balance}) ->
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
             LedgerCt = to_bin(LedgerCt0),
-            CallResult = ledger_call_user(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]),
+            CallResult = ledger_call_view(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]),
             case ledger_call_ok(CallResult) of
                 true ->
                     BalanceMsat = ledger_balance_msat_from_result(CallResult),
@@ -1044,11 +1046,6 @@ maybe_user_keypair_from_owner(OwnerAkBin) ->
         Other ->
             {error, {unexpected_identity_result, Other}}
     end.
-user_keypair_from_owner(OwnerAkBin) ->
-    %% Custodial path: user key is present server-side.
-    %% Future noncustodial: this is the seam where you detect "no key" and return intents only.
-    #{public_key := Pub0, private_key := Priv} = identity_server:get_account(OwnerAkBin),
-    #{public_key => to_bin(Pub0), private_key => Priv}.
 
 ledger_src_path() ->
     damage_ae:contract_path(damage, ?NWC_LEDGER_SRC_PATH).
@@ -1068,35 +1065,52 @@ ledger_call_ok(#{"return_type" := "ok"}) ->
     true;
 ledger_call_ok(_) ->
     false.
+ledger_call_view(_OwnerAkBin, LedgerCt, Fun, Args) ->
+    %% Read-only ledger calls must not require the owner private key.
+    %% balance/1, policy_of/1, can_debit/2, totals/0 etc. are dry-run safe.
+    %% Use the node account only as the dry-run caller.
+    case secrets:node_keypair() of
+        #{public_key := _Pub, private_key := _Priv} = KP ->
+            damage_ae:contract_call_dry(
+                KP,
+                to_s(LedgerCt),
+                ledger_src_path(),
+                Fun,
+                Args
+            );
+        Error ->
+            Error
+    end.
+
 ledger_call_user(OwnerAkBin, LedgerCt, Fun, Args) ->
-    KP = user_keypair_from_owner(OwnerAkBin),
-    AeAccount = maps:get(public_key, KP),
-    PrivateKey = maps:get(private_key, KP),
-    damage_ae:set_private_key(to_s(AeAccount), PrivateKey),
-    ?LOG_DEBUG("ledger_call_user ~p, ~p ~p ~p ~p", [
-        AeAccount,
-        to_s(LedgerCt),
-        ledger_src_path(),
-        Fun,
-        Args
-    ]),
-    damage_ae:contract_call_payfor_user(
-        AeAccount,
-        to_s(LedgerCt),
-        ledger_src_path(),
-        Fun,
-        Args
-    ).
+    %% State-changing user-signed path. Keep this only for operations that
+    %% genuinely require the user's AE signature.
+    case maybe_user_keypair_from_owner(OwnerAkBin) of
+        {ok, KP} ->
+            AeAccount = maps:get(public_key, KP),
+            PrivateKey = maps:get(private_key, KP),
+            _ = damage_ae:set_private_key(AeAccount, PrivateKey),
+            ?LOG_DEBUG("ledger_call_user ~p, ~p ~p ~p ~p", [
+                AeAccount,
+                to_s(LedgerCt),
+                ledger_src_path(),
+                Fun,
+                Args
+            ]),
+            damage_ae:contract_call_payfor_user(
+                AeAccount,
+                to_s(LedgerCt),
+                ledger_src_path(),
+                Fun,
+                Args
+            );
+        {error, Why} ->
+            {error, {no_user_private_key, Why}}
+    end.
 
 ledger_call_user_dry(OwnerAkBin, LedgerCt, Fun, Args) ->
-    KP = user_keypair_from_owner(OwnerAkBin),
-    damage_ae:contract_call_dry(
-        KP,
-        to_s(LedgerCt),
-        ledger_src_path(),
-        Fun,
-        Args
-    ).
+    %% Backwards-compatible name; dry calls do not need the user key.
+    ledger_call_view(OwnerAkBin, LedgerCt, Fun, Args).
 
 %% When a user has no ledger registered yet:
 %% Return (account_registry_ct, [deploy_intent, upsert_registry_intent])
