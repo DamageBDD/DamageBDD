@@ -77,6 +77,10 @@
     sort_peerchannels_desc/1,
     sort_outputs_desc/1
 ]).
+-export([
+    multifund_channels_with_best_peers/0,
+    multifund_channels_with_best_peers/1
+]).
 %% -------------------------------------------------------------------
 %% SQL-backed canned queries for CLN
 %% Read-only, safe, parameterized-by-construction
@@ -725,6 +729,20 @@ open_channel(NodeId, AmountSats, Timeout) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {open_channel, NodeId, AmountSats}, Timeout)
     end).
+multifund_channels_with_best_peers() ->
+    DefaultOpts = default_open_opts(),
+    multifund_channels_with_best_peers(DefaultOpts#{
+        use_multifund => true
+    }).
+
+multifund_channels_with_best_peers(Opts) when is_map(Opts) ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(
+            Worker,
+            {multifund_channels_with_best_peers, Opts},
+            ?CLN_HTTP_TIMEOUT
+        )
+    end).
 %% ===================================================================
 %% Planning helpers
 %% ===================================================================
@@ -733,6 +751,10 @@ default_open_opts() ->
     #{
         dry_run => false,
         verbose => true,
+        use_multifund => true,
+        multifund_min_channels => 2,
+        multifund_feerate => <<"normal">>,
+        multifund_fee_buffer_sats => 5000,
         inbound_mode => soft_boost,
         inbound_boost_weight => ?DEFAULT_INBOUND_BOOST_WEIGHT,
         min_inbound_ratio => ?DEFAULT_MIN_INBOUND_RATIO,
@@ -1551,6 +1573,16 @@ handle_call(
     BalanceSats = get_node_balance(Host, Port, Options, Rune),
     {reply, BalanceSats, State};
 handle_call(
+    {multifund_channels_with_best_peers, UserOpts},
+    From,
+    State
+) ->
+    handle_call(
+        {open_channels_with_best_peers, UserOpts#{use_multifund => true}},
+        From,
+        State
+    );
+handle_call(
     {open_channels_with_best_peers, UserOpts},
     From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
@@ -1577,7 +1609,16 @@ handle_call(
                     {reply, {error, no_suitable_peers}, State};
                 _ ->
                     {OpenedPeers, OpenResults, RemainingSpendableMsat} =
-                        try_ranked_peers_until_exhausted(PlanCtx, Sorted, SpendableMsat),
+                        maybe_multifund_or_open_one_by_one(
+                            Host,
+                            Port,
+                            Options,
+                            Rune,
+                            PlanCtx,
+                            Sorted,
+                            SpendableMsat,
+                            Opts
+                        ),
                     Aliases = [
                         {NodeId, get_node_alias(Host, Port, Options, Rune, NodeId)}
                      || NodeId <- OpenedPeers
@@ -2444,3 +2485,279 @@ do_find_best_peer_to_open(
     ),
     Top5 = lists:sublist(Sorted, 5),
     {reply, Top5, State}.
+maybe_multifund_or_open_one_by_one(
+    Host,
+    Port,
+    Options,
+    Rune,
+    PlanCtx,
+    Sorted,
+    SpendableMsat,
+    Opts
+) ->
+    UseMultifund = maps:get(use_multifund, Opts, true),
+    MinChannels = maps:get(multifund_min_channels, Opts, 2),
+    DryRun = maps:get(dry_run, Opts, false),
+
+    Destinations0 = build_multifund_destinations(PlanCtx, Sorted, SpendableMsat, Opts),
+    Destinations = dedupe_multifund_destinations(Destinations0),
+
+    case {UseMultifund, length(Destinations) >= MinChannels} of
+        {true, true} ->
+            case DryRun of
+                true ->
+                    multifund_dryrun_reply(Destinations, SpendableMsat);
+                false ->
+                    case
+                        ensure_multifund_peers_connected(
+                            Host, Port, Options, Rune, Destinations, Opts
+                        )
+                    of
+                        ok ->
+                            do_multifundchannel_or_fallback(
+                                Host,
+                                Port,
+                                Options,
+                                Rune,
+                                PlanCtx,
+                                Sorted,
+                                Destinations,
+                                SpendableMsat,
+                                Opts
+                            );
+                        {error, Reason} ->
+                            {
+                                [],
+                                [#{ok => false, action => multifund_preflight, error => Reason}],
+                                SpendableMsat
+                            }
+                    end
+            end;
+        _ ->
+            try_ranked_peers_until_exhausted(PlanCtx, Sorted, SpendableMsat)
+    end.
+
+build_multifund_destinations(PlanCtx, Sorted, SpendableMsat, Opts) ->
+    TargetMsat = PlanCtx#plan_ctx.target_msat,
+    MinPerMsat = PlanCtx#plan_ctx.min_per_channel_msat,
+    MaxSuccesses = maps:get(max_open_successes, Opts, 2),
+    InMode = maps:get(inbound_mode, Opts, soft_boost),
+    MinRatio = maps:get(min_inbound_ratio, Opts, 1.0),
+    FeeBufferMsat = sats_to_msat(maps:get(multifund_fee_buffer_sats, Opts, 5000)),
+    SpendableAfterReserveMsat = max(0, SpendableMsat - FeeBufferMsat),
+
+    build_multifund_destinations(
+        Sorted,
+        SpendableAfterReserveMsat,
+        TargetMsat,
+        MinPerMsat,
+        MaxSuccesses,
+        InMode,
+        MinRatio,
+        []
+    ).
+
+build_multifund_destinations(
+    _, _SpendableMsat, _TargetMsat, _MinPerMsat, 0, _InMode, _MinRatio, Acc
+) ->
+    lists:reverse(Acc);
+build_multifund_destinations(
+    [], _SpendableMsat, _TargetMsat, _MinPerMsat, _Left, _InMode, _MinRatio, Acc
+) ->
+    lists:reverse(Acc);
+build_multifund_destinations(
+    [{NodeId, _Score, InboundMsat, MinOpenMsat} | Rest],
+    SpendableMsat,
+    TargetMsat,
+    MinPerMsat,
+    Left,
+    InMode,
+    MinRatio,
+    Acc
+) ->
+    RequiredMsat = lists:max([TargetMsat, MinPerMsat, MinOpenMsat]),
+
+    InboundOk =
+        case InMode of
+            hard_gate -> InboundMsat >= trunc(RequiredMsat * MinRatio);
+            _ -> true
+        end,
+
+    case SpendableMsat >= RequiredMsat andalso InboundOk of
+        true ->
+            Dest = #{
+                id => NodeId,
+                amount => msat_to_sats(RequiredMsat)
+            },
+            build_multifund_destinations(
+                Rest,
+                SpendableMsat - RequiredMsat,
+                TargetMsat,
+                MinPerMsat,
+                Left - 1,
+                InMode,
+                MinRatio,
+                [Dest | Acc]
+            );
+        false ->
+            build_multifund_destinations(
+                Rest,
+                SpendableMsat,
+                TargetMsat,
+                MinPerMsat,
+                Left,
+                InMode,
+                MinRatio,
+                Acc
+            )
+    end.
+
+multifund_dryrun_reply(Destinations, SpendableMsat) ->
+    Peers = [maps:get(id, D) || D <- Destinations],
+    Results = [
+        #{
+            peer => maps:get(id, D),
+            ok => true,
+            dry_run => true,
+            action => would_multifund,
+            amount_sats => maps:get(amount, D),
+            amount_msat => sats_to_msat(maps:get(amount, D))
+        }
+     || D <- Destinations
+    ],
+    TotalMsat = lists:sum([sats_to_msat(maps:get(amount, D)) || D <- Destinations]),
+    {Peers, Results, SpendableMsat - TotalMsat}.
+dedupe_multifund_destinations(Destinations) ->
+    dedupe_multifund_destinations(Destinations, #{}, []).
+
+dedupe_multifund_destinations([], _Seen, Acc) ->
+    lists:reverse(Acc);
+dedupe_multifund_destinations([D | Rest], Seen, Acc) ->
+    NodeId = maps:get(id, D),
+    case maps:is_key(NodeId, Seen) of
+        true ->
+            dedupe_multifund_destinations(Rest, Seen, Acc);
+        false ->
+            dedupe_multifund_destinations(Rest, Seen#{NodeId => true}, [D | Acc])
+    end.
+
+ensure_multifund_peers_connected(_Host, _Port, _Options, _Rune, _Destinations, #{
+    connect_before_open := false
+}) ->
+    ok;
+ensure_multifund_peers_connected(Host, Port, Options, Rune, Destinations, _Opts) ->
+    Results = [
+        begin
+            NodeId = maps:get(id, D),
+            case connect_peer_if_needed(Host, Port, Options, Rune, NodeId) of
+                ok -> ok;
+                {error, Reason} -> {error, NodeId, Reason};
+                Other -> {error, NodeId, Other}
+            end
+        end
+     || D <- Destinations
+    ],
+    case [E || E = {error, _, _} <- Results] of
+        [] -> ok;
+        Errors -> {error, #{connect_failed => Errors}}
+    end.
+
+do_multifundchannel_or_fallback(
+    Host,
+    Port,
+    Options,
+    Rune,
+    PlanCtx,
+    Sorted,
+    Destinations,
+    SpendableMsat,
+    Opts
+) ->
+    case do_multifundchannel(Host, Port, Options, Rune, Destinations, SpendableMsat, Opts) of
+        {[], [#{ok := false} = Error], _} ->
+            {OpenedPeers, OpenResults, RemainingSpendableMsat} =
+                try_ranked_peers_until_exhausted(PlanCtx, Sorted, SpendableMsat),
+            {
+                OpenedPeers,
+                [
+                    Error#{
+                        fallback => sequential_fundchannel
+                    }
+                    | OpenResults
+                ],
+                RemainingSpendableMsat
+            };
+        Result ->
+            Result
+    end.
+
+do_multifundchannel(Host, Port, Options, Rune, Destinations, SpendableMsat, Opts) ->
+    Feerate = maps:get(multifund_feerate, Opts, <<"normal">>),
+
+    Req0 = #{
+        destinations => Destinations,
+        feerate => Feerate
+    },
+
+    Req =
+        case maps:get(minconf, Opts, undefined) of
+            undefined -> Req0;
+            MinConf -> Req0#{minconf => MinConf}
+        end,
+
+    TotalMsat = lists:sum([sats_to_msat(maps:get(amount, D)) || D <- Destinations]),
+    Peers = [maps:get(id, D) || D <- Destinations],
+
+    case cln_post_json(Host, Port, Options, Rune, "/v1/multifundchannel", Req) of
+        #{code := _, message := Message} = Error ->
+            {
+                [],
+                [
+                    #{
+                        ok => false,
+                        action => multifundchannel,
+                        error => Message,
+                        result => Error,
+                        destinations => Destinations
+                    }
+                ],
+                SpendableMsat
+            };
+        Body when is_map(Body) ->
+            Results = [
+                #{
+                    peer => maps:get(id, D),
+                    ok => true,
+                    action => multifundchannel,
+                    amount_sats => maps:get(amount, D),
+                    amount_msat => sats_to_msat(maps:get(amount, D)),
+                    result => Body
+                }
+             || D <- Destinations
+            ],
+            {Peers, Results, SpendableMsat - TotalMsat};
+        Other ->
+            {
+                [],
+                [
+                    #{
+                        ok => false,
+                        action => multifundchannel,
+                        error => to_bin(Other),
+                        destinations => Destinations
+                    }
+                ],
+                SpendableMsat
+            }
+    end.
+connect_peer_if_needed(Host, Port, Options, Rune, NodeId) ->
+    case cln_post_json(Host, Port, Options, Rune, "/v1/listpeers", #{id => NodeId}) of
+        #{peers := [#{connected := true} | _]} ->
+            ok;
+        _ ->
+            case cln_post_json(Host, Port, Options, Rune, "/v1/connect", #{id => NodeId}) of
+                #{id := _} -> ok;
+                #{code := _, message := Message} -> {error, Message};
+                Other -> {error, Other}
+            end
+    end.
