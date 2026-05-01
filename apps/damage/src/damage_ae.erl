@@ -738,8 +738,8 @@ transfer_damage_tokens(AeAccount, Amount) ->
             "transfer",
             [AeAccount, Amount]
         ),
-    ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
-    maybe_credit_damage(ToAeAccount, Amount, Result).
+    ?LOG_DEBUG("Tokens transfered ~p", [Result]),
+    maybe_credit_damage(AeAccount, Amount, Result).
 
 transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
     Result =

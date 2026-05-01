@@ -149,6 +149,14 @@ init([]) ->
                 modules => [damage_aemdw]
             },
             #{
+                id => damage_balance_cache,
+                start => {damage_balance_cache, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [damage_balance_cache]
+            },
+            #{
                 id => damage_l402,
                 start => {damage_l402, start_link, []},
                 restart => permanent,

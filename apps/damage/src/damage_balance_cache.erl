@@ -15,6 +15,17 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
+-behaviour(gen_server).
+
+-export([
+    start_link/0,
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 -export([
     snapshot/1,
     snapshot/2,
@@ -28,7 +39,7 @@
     credit_damage/2
 ]).
 
--define(TAB, ?MODULE).
+-define(TAB, damage_balance_cache_ets).
 
 -define(DEFAULT_FRESH_MS, 5000).
 -define(DEFAULT_STALE_MS, 60000).
@@ -36,6 +47,27 @@
 -define(DEFAULT_REQUEST_TIMEOUT_MS, 1500).
 -define(DEFAULT_REFRESH_DELAY_MS, 2500).
 
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+init([]) ->
+    create_table(),
+    {ok, #{}}.
+
+handle_call(_Call, _From, State) ->
+    {reply, ok, State}.
+
+handle_cast(_Cast, State) ->
+    {noreply, State}.
+
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 %%====================================================================
 %% Public API
 %%====================================================================
@@ -115,12 +147,12 @@ refresh_async(AeAccount0) ->
                             ])
                     end
                 catch
-                    Class:Reason:Stack ->
+                    Class:Reason0:Stack ->
                         ?LOG_ERROR("balance async refresh crashed ~p", [
                             #{
                                 account => AeAccount,
                                 class => Class,
-                                reason => Reason,
+                                reason => Reason0,
                                 stack => Stack
                             }
                         ])
@@ -357,12 +389,12 @@ store_snapshot(AeAccount, Snap) ->
     ensure_table(),
     Now = now_ms(),
     ets:insert(?TAB, {
-    {snapshot, AeAccount},
-    Snap,
-    Now,
-    Now + fresh_ms(),
-    Now + stale_ms()
-}),
+        {snapshot, AeAccount},
+        Snap,
+        Now,
+        Now + fresh_ms(),
+        Now + stale_ms()
+    }),
     ok.
 
 optimistic_damage_delta(AeAccount0, Delta0) ->
@@ -432,19 +464,45 @@ default_snapshot(AeAccount, Reason) ->
 ensure_table() ->
     case ets:info(?TAB) of
         undefined ->
-            try
-                ets:new(?TAB, [
-                    named_table,
-                    public,
-                    set,
-                    {read_concurrency, true},
-                    {write_concurrency, true}
-                ]),
-                ok
-            catch
-                error:badarg ->
+            ensure_server(),
+            case ets:info(?TAB) of
+                undefined ->
+                    exit({balance_cache_table_not_started, ?TAB});
+                _ ->
                     ok
             end;
+        _ ->
+            ok
+    end.
+
+ensure_server() ->
+    case whereis(?MODULE) of
+        undefined ->
+            case gen_server:start({local, ?MODULE}, ?MODULE, [], []) of
+                {ok, _Pid} ->
+                    ok;
+                {error, {already_started, _Pid}} ->
+                    ok;
+                {error, {already_registered, _Pid}} ->
+                    ok;
+                Error ->
+                    exit({balance_cache_start_failed, Error})
+            end;
+        _Pid ->
+            ok
+    end.
+
+create_table() ->
+    case ets:info(?TAB) of
+        undefined ->
+            ets:new(?TAB, [
+                named_table,
+                public,
+                set,
+                {read_concurrency, true},
+                {write_concurrency, true}
+            ]),
+            ok;
         _ ->
             ok
     end.
@@ -568,4 +626,4 @@ format_error(Reason) ->
     list_to_binary(lists:flatten(io_lib:format("~p", [Reason]))).
 
 now_ms() ->
-    erlang:monotonic_time(millisecond).
+    erlang:system_time(millisecond).
