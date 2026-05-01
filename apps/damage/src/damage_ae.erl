@@ -66,6 +66,7 @@
     contract_deploy/3,
     contract_deploy/2,
     contract_balance/1,
+    contract_balance_chain/1,
     contract_deploy_for/3,
     contract_call_payfor_user/5,
     contract_call_payfor_tx/1,
@@ -93,6 +94,8 @@
     test_contract_deploy_for/0
 ]).
 
+-export([gas_price/0, fee_multiplier/0, gas_multiplier/0]).
+
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
 
@@ -117,6 +120,28 @@ find_active_node([{Host, Port, PathPrefix} | Rest]) ->
             find_active_node(Rest)
     end.
 
+fee_multiplier() ->
+    env_int(ae_fee_multiplier, 2).
+
+gas_multiplier() ->
+    env_int(ae_gas_multiplier, 2).
+
+gas_price() ->
+    vanillae:min_gas_price() * env_int(ae_gas_price_multiplier, 3).
+
+min_fee() ->
+    vanillae:min_fee() * fee_multiplier().
+
+min_gas() ->
+    vanillae:min_gas() * gas_multiplier().
+
+env_int(Key, Default) ->
+    case application:get_env(damage, Key) of
+        {ok, V} when is_integer(V) -> V;
+        {ok, V} when is_binary(V) -> binary_to_integer(V);
+        {ok, V} when is_list(V) -> list_to_integer(V);
+        _ -> Default
+    end.
 get_ae_node() ->
     {ok, AENodes} = application:get_env(damage, ae_nodes),
     find_active_node(AENodes).
@@ -344,21 +369,7 @@ handle_call({reports, AeAccount}, _From, Cache) ->
             {reply, {error, not_found}, Cache}
     end;
 handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
-    Now = erlang:monotonic_time(second),
-    case maps:get({balance, AeAccount}, Cache, none) of
-        {Balance, Expiry} when is_integer(Balance), Now < Expiry ->
-            {reply, Balance, Cache};
-        _ ->
-            case contract_balance(AeAccount) of
-                ContractBalance when is_integer(ContractBalance) ->
-                    ExpiryTime = Now + ?CACHE_TTL_SECONDS,
-                    NewCache = maps:put({balance, AeAccount}, {ContractBalance, ExpiryTime}, Cache),
-                    {reply, ContractBalance, NewCache};
-                Err ->
-                    ?LOG_DEBUG("ContractBalance failed ~p", [Err]),
-                    {reply, error, Cache}
-            end
-    end;
+    {reply, damage_balance_cache:damage_balance(AeAccount), Cache};
 handle_call({confirm_spend_all}, _From, Cache) ->
     ?LOG_DEBUG("handle_call confirm_spend_all/0 : ~p", [Cache]),
     {reply, ok, Cache};
@@ -375,11 +386,17 @@ handle_call(
 ) ->
     {reply, false, Cache};
 handle_call(
-    {set_private_key, AeAccount, PrivateKey},
+    {set_private_key, AeAccount0, PrivateKey},
     _From,
-    #{public_key := AeAccount} = State
+    #{public_key := StateAccount} = State
 ) ->
-    {reply, false, maps:put(private_key, PrivateKey, State)};
+    AeAccount = normalize_ae_account(AeAccount0),
+    case AeAccount of
+        StateAccount ->
+            {reply, ok, maps:put(private_key, PrivateKey, State)};
+        _ ->
+            {reply, {error, {wrong_wallet_proc, AeAccount, StateAccount}}, State}
+    end;
 handle_call({transaction, Data}, _From, State) ->
     ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
     {reply, ok, State};
@@ -478,6 +495,7 @@ handle_call(
                             maps:put(spent_balance, {Amount, 0}, AccountCache),
                             Cache
                         ),
+                    damage_balance_cache:debit_damage(AeAccount, Amount),
                     ?LOG_DEBUG("confirm spend cached ~p", [NewCache]),
                     {reply, {ok, Amount, TxHash}, maps:put({balance, AeAccount}, none, NewCache)};
                 #{status := <<"fail">>} ->
@@ -605,10 +623,8 @@ restart_wallet_proc(AeAccount) ->
 
 balance(AeAccount) when is_list(AeAccount) ->
     balance(list_to_binary(AeAccount));
-balance(AeAccount) ->
-    ?LOG_DEBUG("Check balance ~p", [AeAccount]),
-    DamageAEPid = get_wallet_proc(admin),
-    gen_server:call(DamageAEPid, {balance, AeAccount}, ?AE_TIMEOUT).
+balance(AeAccount) when is_binary(AeAccount) ->
+    damage_balance_cache:damage_balance(AeAccount).
 
 get_reports(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
@@ -662,12 +678,19 @@ is_custodial(AeAccount) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {is_custodial, AeAccount}, ?AE_TIMEOUT).
 
-set_private_key(AeAccount, PrivateKey) ->
+set_private_key(AeAccount0, PrivateKey) ->
     % temporary storage to commit after feature execution
+    AeAccount = normalize_ae_account(AeAccount0),
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {set_private_key, AeAccount, PrivateKey}, ?AE_TIMEOUT).
 
+normalize_ae_account(AeAccount) when is_binary(AeAccount) ->
+    AeAccount;
+normalize_ae_account(AeAccount) when is_list(AeAccount) ->
+    list_to_binary(AeAccount).
+
 invalidate_cache(AeAccount) ->
+    damage_balance_cache:invalidate(AeAccount),
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:cast(DamageAEPid, {invalidate_cache, AeAccount}).
 
@@ -707,7 +730,7 @@ get_ae_balance(AeAccount) ->
 
 transfer_damage_tokens(AeAccount, Amount) ->
     % transfer damage tokens from admin account to to account
-    ContractCall =
+    Result =
         contract_call(
             secrets:node_keypair(),
             ?DAMAGE_TOKEN_CONTRACT,
@@ -716,7 +739,7 @@ transfer_damage_tokens(AeAccount, Amount) ->
             [AeAccount, Amount]
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [ContractCall]),
-    ContractCall.
+    maybe_credit_damage(ToAeAccount, Amount, Result).
 
 transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
     Result =
@@ -728,7 +751,7 @@ transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
             [ToAeAccount, Amount]
         ),
     ?LOG_DEBUG("Tokens transfered ~p", [Result]),
-    Result.
+    maybe_credit_damage(ToAeAccount, Amount, Result).
 %% Compatibility wrappers
 transfer_damage(AeAccount, Damage) when is_integer(Damage) ->
     transfer_damage_tokens(AeAccount, trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))).
@@ -745,6 +768,11 @@ transfer_hits(AeAccount, Hits) when is_integer(Hits) ->
 
 transfer_hits(FromAccount, ToAeAccount, Hits) when is_integer(Hits) ->
     transfer_damage_tokens(FromAccount, ToAeAccount, Hits).
+maybe_credit_damage(AeAccount, Amount, #{"return_type" := "ok"} = Result) ->
+    damage_balance_cache:credit_damage(AeAccount, Amount),
+    Result;
+maybe_credit_damage(_AeAccount, _Amount, Result) ->
+    Result.
 
 %% Generic base function
 -spec calculate_gas(non_neg_integer(), binary()) -> non_neg_integer().
@@ -806,18 +834,8 @@ paying_for(PK, Nonce, Fee, Tx) ->
     catch
         error:Reason -> {error, Reason}
     end.
--spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
 calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
-    BaseGas = 26000,
-    GasPerByte = 20,
-    SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
-    BaseGas + (SizeDiff * GasPerByte).
-min_fee() ->
-    %TODO some fine tuning
-    vanillae:min_fee() * 2.
-min_gas() ->
-    %TODO some fine tuning
-    vanillae:min_gas() * 2.
+    damage_ae_gas:calculate_paying_for_gas(PayingForTxBin, InnerTxBin).
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->
@@ -825,7 +843,7 @@ contract_call_prepare_tx(
     Fee = min_fee(),
     Gas = min_gas(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
@@ -838,10 +856,8 @@ contract_call_payfor_tx(
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    Fee = vanillae:min_fee(),
-    %Gas = vanillae:min_gas(),
-    %Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = gas_price(),
+    Fee = min_fee(),
 
     {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
 
@@ -871,10 +887,10 @@ contract_call_payfor_user(
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
-    Gas = vanillae:min_gas(),
+    Fee = min_fee(),
+    Gas = min_gas(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
@@ -998,13 +1014,13 @@ contract_call(
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
 
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = gas_price(),
 
     {ok, AACI} = vanillae:prepare_contract(Contract),
 
     %% First build raw tx with dummy values to estimate gas
-    DummyGas = vanillae:min_gas(),
-    DummyFee = vanillae:min_fee(),
+    DummyGas = min_gas(),
+    DummyFee = min_fee(),
 
     {ok, ContractCall0} = vanillae:contract_call(
         AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args
@@ -1040,9 +1056,9 @@ contract_call_dry(
 ) ->
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
-    Fee = vanillae:min_fee(),
+    Fee = min_fee(),
     Gas = 100000,
-    GasPrice = vanillae:min_gas_price(),
+    GasPrice = gas_price(),
     {ok, AACI} = vanillae:prepare_contract(Contract),
     {ok, ContractCall} = vanillae:contract_call(
         AeAccount, Nonce, Gas, GasPrice, Fee, 0, AACI, ContractAddress, Func, Args
@@ -1061,10 +1077,10 @@ contract_deploy(Contract, Args) ->
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price() * 2,
+    GasPrice = gas_price() * 2,
     %% First build raw tx with dummy values to estimate gas
-    DummyGas = vanillae:min_gas(),
-    DummyFee = vanillae:min_fee(),
+    DummyGas = min_gas(),
+    DummyFee = min_fee(),
 
     {ok, ContractData} = vanillae:contract_create(
         AeAccount, AeAccountNonce, Amount, DummyGas, GasPrice, DummyFee, Contract, Args
@@ -1099,10 +1115,10 @@ contract_deploy_for(
     Args
 ) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    DummyGas = vanillae:min_gas(),
-    DummyFee = vanillae:min_fee(),
+    DummyGas = min_gas(),
+    DummyFee = min_fee(),
     Amount = 0,
-    GasPrice = vanillae:min_gas_price() * 4,
+    GasPrice = gas_price() * 4,
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
 
@@ -1146,32 +1162,25 @@ contract_deploy_for(
     end.
 
 contract_balance(Account) ->
-    #{public_key := NodeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
+    damage_balance_cache:damage_balance(Account).
 
-    NodeAccountStr = binary_to_list(NodeAccount),
+contract_balance_chain(Account) ->
+    KeyPair = secrets:node_keypair(),
     #{
-        "caller_id" := NodeAccountStr,
-        "caller_nonce" := _,
-        "contract_id" :=
-            ?DAMAGE_TOKEN_CONTRACT,
-        "gas_price" := _,
-        "gas_used" := _,
-        "height" := _,
-        "log" := [],
+        "caller_id" := _CallerId,
+        "contract_id" := ?DAMAGE_TOKEN_CONTRACT,
         "return_type" := "ok",
         "return_value" := ReturnValue
     } = contract_call(
         KeyPair,
         ?DAMAGE_TOKEN_CONTRACT,
-        contract_path(damage, "contracts/token.aes"),
+        "contracts/token.aes",
         "balance",
         [Account]
     ),
     case ReturnValue of
-        {variant, [0, 1], 1, {Balance}} ->
-            Balance;
-        {variant, [0, 1], 0, {}} ->
-            0
+        {variant, [0, 1], 1, {Balance}} -> Balance;
+        {variant, [0, 1], 0, {}} -> 0
     end.
 
 %% Main function to find the block height at or near the given timestamp.
