@@ -14,7 +14,9 @@
     summarize/1,
     summarize/2,
     summarize_fmt/1,
-    summarize_fmt/2
+    summarize_fmt/2,
+    summarize_log_event/1,
+    summarize_log_event/2
 ]).
 
 -define(REGEX_OPTS, [unicode, dotall, multiline]).
@@ -163,7 +165,7 @@ filter_by_module(LogEvent = #{meta := Meta}, Module) ->
     end;
 filter_by_module(_, _) ->
     stop.
-%% ------------------------------------------------------------------
+
 %% Safe bounded term summarisation for logs
 %% ------------------------------------------------------------------
 
@@ -171,16 +173,7 @@ summarize(Term) ->
     summarize(Term, #{}).
 
 summarize(Term, Opts0) ->
-    Opts = maps:merge(
-        #{
-            depth => 5,
-            max_binary => 96,
-            max_list => 20,
-            max_map => 20,
-            max_tuple => 20
-        },
-        Opts0
-    ),
+    Opts = normalize_summarize_opts(Opts0),
     summarize_1(Term, maps:get(depth, Opts), Opts).
 
 summarize_fmt(Term) ->
@@ -188,6 +181,29 @@ summarize_fmt(Term) ->
 
 summarize_fmt(Term, Opts) ->
     io_lib:format("~p", [summarize(Term, Opts)]).
+
+%% Logger-event convenience wrapper. Useful from custom formatters/filters.
+summarize_log_event(Event) ->
+    summarize_log_event(Event, #{}).
+
+summarize_log_event(Event, Opts0) ->
+    Opts = normalize_summarize_opts(Opts0),
+    summarize_1(Event, maps:get(depth, Opts), Opts).
+
+normalize_summarize_opts(Opts0) when is_map(Opts0) ->
+    maps:merge(
+        #{
+            depth => 6,
+            max_binary => 128,
+            max_string => 512,
+            max_list => 24,
+            max_map => 32,
+            max_tuple => 24
+        },
+        Opts0
+    );
+normalize_summarize_opts(_) ->
+    normalize_summarize_opts(#{}).
 
 summarize_1(Term, 0, _Opts) ->
     summarize_marker(Term);
@@ -203,35 +219,62 @@ summarize_1(Bin, _Depth, Opts) when is_binary(Bin) ->
     end;
 summarize_1(Map, Depth, Opts) when is_map(Map) ->
     Max = maps:get(max_map, Opts),
-    Pairs = lists:sublist(maps:to_list(Map), Max),
-    #{
-        type => map,
-        size => maps:size(Map),
-        sample => maps:from_list([
-            {summarize_1(K, Depth - 1, Opts), summarize_1(V, Depth - 1, Opts)}
-         || {K, V} <- Pairs
-        ])
-    };
+    Size = maps:size(Map),
+    Pairs0 = maps:to_list(Map),
+    Pairs = lists:sublist(Pairs0, Max),
+    Sample = maps:from_list([
+        {summarize_key(K, Depth - 1, Opts), summarize_1(V, Depth - 1, Opts)}
+     || {K, V} <- Pairs
+    ]),
+    case Size > Max of
+        true ->
+            #{type => map, size => Size, sample => Sample};
+        false ->
+            Sample
+    end;
 summarize_1(List, Depth, Opts) when is_list(List) ->
-    Max = maps:get(max_list, Opts),
-    Sample = lists:sublist(List, Max),
-    #{
-        type => list,
-        length => safe_list_length(List),
-        sample => [summarize_1(X, Depth - 1, Opts) || X <- Sample]
-    };
+    summarize_list(List, Depth, Opts);
 summarize_1(Tuple, Depth, Opts) when is_tuple(Tuple) ->
     Max = maps:get(max_tuple, Opts),
     Size = tuple_size(Tuple),
-    Sample = lists:sublist(tuple_to_list(Tuple), Max),
-    list_to_tuple(
-        [
-            {tuple_size, Size}
-            | [summarize_1(X, Depth - 1, Opts) || X <- Sample]
-        ]
-    );
+    Sample0 = lists:sublist(tuple_to_list(Tuple), Max),
+    Sample = [summarize_1(X, Depth - 1, Opts) || X <- Sample0],
+    case Size > Max of
+        true ->
+            #{type => tuple, size => Size, sample => list_to_tuple(Sample)};
+        false ->
+            list_to_tuple(Sample)
+    end;
 summarize_1(Term, _Depth, _Opts) ->
     Term.
+
+summarize_key(K, _Depth, _Opts) when is_atom(K); is_integer(K); is_binary(K) ->
+    K;
+summarize_key(K, Depth, Opts) ->
+    summarize_1(K, Depth, Opts).
+
+summarize_list(List, Depth, Opts) ->
+    Len = safe_list_length(List),
+    MaxList = maps:get(max_list, Opts),
+    MaxString = maps:get(max_string, Opts),
+    case {Len, safe_printable_list(List), safe_byte_list(List)} of
+        {N, true, _} when is_integer(N), N > MaxString ->
+            #{type => string, chars => N, head => lists:sublist(List, MaxString)};
+        {N, true, _} when is_integer(N) ->
+            List;
+        {N, _, true} when is_integer(N), N > MaxList ->
+            #{type => byte_list, length => N, head => lists:sublist(List, MaxList)};
+        {N, _, _} when is_integer(N), N > MaxList ->
+            #{
+                type => list,
+                length => N,
+                sample => [summarize_1(X, Depth - 1, Opts) || X <- lists:sublist(List, MaxList)]
+            };
+        {N, _, _} when is_integer(N) ->
+            [summarize_1(X, Depth - 1, Opts) || X <- List];
+        _ ->
+            #{type => improper_list, head => safe_improper_head(List, MaxList, Depth, Opts)}
+    end.
 
 safe_list_length(List) ->
     try
@@ -240,10 +283,37 @@ safe_list_length(List) ->
         _:_ -> unknown
     end.
 
+safe_printable_list(List) ->
+    try
+        io_lib:printable_list(List)
+    catch
+        _:_ -> false
+    end.
+
+safe_byte_list(List) ->
+    try
+        lists:all(fun(I) -> is_integer(I) andalso I >= 0 andalso I =< 255 end, List)
+    catch
+        _:_ -> false
+    end.
+
+safe_improper_head(List, Max, Depth, Opts) ->
+    safe_improper_head(List, Max, Depth, Opts, []).
+
+safe_improper_head(_List, 0, _Depth, _Opts, Acc) ->
+    lists:reverse(Acc);
+safe_improper_head([H | T], N, Depth, Opts, Acc) ->
+    safe_improper_head(T, N - 1, Depth, Opts, [summarize_1(H, Depth - 1, Opts) | Acc]);
+safe_improper_head(Tail, _N, Depth, Opts, Acc) ->
+    lists:reverse([{tail, summarize_1(Tail, Depth - 1, Opts)} | Acc]).
+
 summarize_marker(Map) when is_map(Map) ->
     #{type => map, size => maps:size(Map)};
 summarize_marker(List) when is_list(List) ->
-    #{type => list, length => safe_list_length(List)};
+    case safe_printable_list(List) of
+        true -> #{type => string, chars => safe_list_length(List)};
+        false -> #{type => list, length => safe_list_length(List)}
+    end;
 summarize_marker(Tuple) when is_tuple(Tuple) ->
     #{type => tuple, size => tuple_size(Tuple)};
 summarize_marker(Bin) when is_binary(Bin) ->

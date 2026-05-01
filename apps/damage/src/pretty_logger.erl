@@ -12,17 +12,43 @@
 %% ===================== PUBLIC =====================
 
 format(LogEvent, Cfg) ->
+    Cfg1 = normalize_cfg(Cfg),
     try
-        finalize(build(LogEvent, normalize_cfg(Cfg)))
+        finalize(build(LogEvent, Cfg1), Cfg1)
     catch
         Class:Reason:Stack ->
             fallback(LogEvent, Class, Reason, Stack)
     end.
 
 normalize_cfg(Cfg) when is_map(Cfg) ->
-    maps:merge(#{color => auto, icons => emoji}, Cfg);
+    maps:merge(
+        #{
+            color => auto,
+            icons => emoji,
+            max_event_chars => 12000,
+            max_text_chars => 4096,
+            max_binary => 128,
+            max_string => 512,
+            max_list => 24,
+            max_map => 32,
+            max_tuple => 24,
+            depth => 6
+        },
+        Cfg
+    );
 normalize_cfg(_) ->
-    #{color => auto, icons => emoji}.
+    #{
+        color => auto,
+        icons => emoji,
+        max_event_chars => 12000,
+        max_text_chars => 4096,
+        max_binary => 128,
+        max_string => 512,
+        max_list => 24,
+        max_map => 32,
+        max_tuple => 24,
+        depth => 6
+    }.
 
 fallback(LogEvent, Class, Reason, Stack) ->
     Meta = safe_meta(LogEvent),
@@ -30,7 +56,7 @@ fallback(LogEvent, Class, Reason, Stack) ->
     MFA = safe_current_function(self()),
     Line = io_lib:format(
         "~ts | logger_formatter_failed | ~p:~p | current=~p | stack_top=~p~n",
-        [TimeS, Class, Reason, MFA, stack_top(Stack)]
+        [TimeS, Class, Reason, MFA, log_utils:summarize(stack_top(Stack), summarize_opts(#{}))]
     ),
     safe_unicode(Line).
 
@@ -52,28 +78,28 @@ safe_current_function(_) ->
 
 build(#{level := Level, msg := {string, Msg}} = LogEvent, Cfg) ->
     Meta = safe_meta(LogEvent),
-    [header(Level, Meta, Cfg), $\n, body_text(Msg), tail_meta(Meta, Cfg)];
+    [header(Level, Meta, Cfg), $\n, body_text(Msg, Cfg), tail_meta(Meta, Cfg)];
 build(#{level := Level, msg := {report, Report}} = LogEvent, Cfg) ->
     Meta = safe_meta(LogEvent),
     [
         header(Level, Meta, Cfg),
         $\n,
-        indent_iolist(format_report_safe(Report, Meta), 1),
+        indent_iolist(format_report_safe(Report, Meta, Cfg), 1),
         tail_meta(Meta, Cfg)
     ];
 build(#{level := Level} = LogEvent, Cfg) ->
     Meta = safe_meta(LogEvent),
     Msg0 = maps:get(msg, LogEvent, <<>>),
-    [header(Level, Meta, Cfg), $\n, body_term(Msg0), tail_meta(Meta, Cfg)];
+    [header(Level, Meta, Cfg), $\n, body_term(Msg0, Cfg), tail_meta(Meta, Cfg)];
 build(Other, Cfg) ->
     Meta = #{},
-    [header(info, Meta, Cfg), $\n, body_term(Other)].
+    [header(info, Meta, Cfg), $\n, body_term(Other, Cfg)].
 
 safe_meta(#{meta := Meta}) when is_map(Meta) -> Meta;
 safe_meta(_) -> #{}.
 
-finalize(IoData) ->
-    safe_unicode(IoData).
+finalize(IoData, Cfg) ->
+    cap_binary(safe_unicode(IoData), maps:get(max_event_chars, Cfg, 12000)).
 
 safe_unicode(IoData) ->
     try unicode:characters_to_binary(IoData) of
@@ -105,18 +131,19 @@ tail_meta(Meta, Cfg) ->
         Crumbs -> ansi(dim, io_lib:format("~n└─ ~ts~n", [Crumbs]), Cfg)
     end.
 
-body_text(Msg) -> prefix_block(Msg).
+body_text(Msg, Cfg) ->
+    prefix_block(truncate_iolist(Msg, Cfg)).
 
-body_term(Msg0) ->
-    prefix_block(
+body_term(Msg0, Cfg) ->
+    Rendered =
         case Msg0 of
-            B when is_binary(B) -> B;
-            L when is_list(L) -> L;
-            {F, P} when is_list(F), is_list(P) -> io_lib:format(F, P);
-            {F, P} when is_binary(F), is_list(P) -> io_lib:format(binary_to_list(F), P);
-            T -> io_lib:format("~p", [T])
-        end
-    ).
+            B when is_binary(B) -> truncate_iolist(B, Cfg);
+            L when is_list(L) -> truncate_iolist(L, Cfg);
+            {F, P} when is_list(F), is_list(P) -> safe_fmt(F, P, Cfg);
+            {F, P} when is_binary(F), is_list(P) -> safe_fmt(binary_to_list(F), P, Cfg);
+            T -> io_lib:format("~p", [summarize_term(T, Cfg)])
+        end,
+    prefix_block(Rendered).
 
 indent_iolist(Io, Levels) ->
     Prefix = lists:duplicate(Levels, $\s) ++ "│ ",
@@ -268,19 +295,90 @@ timestamp_iso(Meta) ->
 
 %% ===================== REPORT HANDLING =====================
 
-format_report_safe(Report, Meta) ->
+format_report_safe(Report, Meta, Cfg) ->
     try
-        format_report(Report, Meta)
+        format_report(Report, Meta, Cfg)
     catch
-        C:R -> io_lib:format("report_cb_failed ~p:~p report=~p", [C, R, Report])
+        C:R ->
+            io_lib:format("report_cb_failed ~p:~p report=~p", [
+                C, R, summarize_term(Report, Cfg)
+            ])
     end.
 
-format_report(Report, Meta) ->
+format_report(Report, Meta, Cfg) ->
     case maps:get(report_cb, Meta, undefined) of
-        Fun when is_function(Fun, 2) -> Fun(Report, #{});
-        Fun when is_function(Fun, 1) -> Fun(Report);
-        _ -> io_lib:format("~p", [Report])
+        Fun when is_function(Fun, 2) -> truncate_iolist(Fun(Report, #{}), Cfg);
+        Fun when is_function(Fun, 1) -> truncate_iolist(Fun(Report), Cfg);
+        _ -> format_report_default(Report, Cfg)
     end.
+
+format_report_default(#{label := Label, report := Rep}, Cfg) ->
+    ["label=", io_lib:format("~p", [Label]), "\n", format_report_default(Rep, Cfg)];
+format_report_default({Fmt0, Args}, Cfg) when is_list(Fmt0), is_list(Args) ->
+    safe_fmt(Fmt0, Args, Cfg);
+format_report_default({Fmt0, Args}, Cfg) when is_binary(Fmt0), is_list(Args) ->
+    safe_fmt(binary_to_list(Fmt0), Args, Cfg);
+format_report_default([Fmt0, Args], Cfg) when is_list(Fmt0), is_list(Args) ->
+    safe_fmt(Fmt0, Args, Cfg);
+format_report_default([Fmt0, Args], Cfg) when is_binary(Fmt0), is_list(Args) ->
+    safe_fmt(binary_to_list(Fmt0), Args, Cfg);
+format_report_default(Report, Cfg) ->
+    io_lib:format("~p", [summarize_term(Report, Cfg)]).
+
+safe_fmt(Fmt0, Args0, Cfg) ->
+    Args = summarize_args(Args0, Cfg),
+    Fmt = normalize_format(Fmt0),
+    try
+        truncate_iolist(io_lib:format(Fmt, Args), Cfg)
+    catch
+        C:R ->
+            io_lib:format("format_failed ~p:~p fmt=~p args=~p", [
+                C, R, truncate_iolist(Fmt, Cfg), Args
+            ])
+    end.
+
+normalize_format(Fmt) when is_binary(Fmt) -> binary_to_list(Fmt);
+normalize_format(Fmt) when is_list(Fmt) -> Fmt;
+normalize_format(Fmt) -> io_lib:format("~p", [Fmt]).
+
+summarize_args(Args, Cfg) when is_list(Args) ->
+    [summarize_term(A, Cfg) || A <- Args];
+summarize_args(Args, Cfg) ->
+    summarize_term(Args, Cfg).
+
+summarize_term(Term, Cfg) ->
+    try
+        log_utils:summarize(Term, summarize_opts(Cfg))
+    catch
+        _:_ -> Term
+    end.
+
+summarize_opts(Cfg) ->
+    #{
+        depth => maps:get(depth, Cfg, 6),
+        max_binary => maps:get(max_binary, Cfg, 128),
+        max_string => maps:get(max_string, Cfg, 512),
+        max_list => maps:get(max_list, Cfg, 24),
+        max_map => maps:get(max_map, Cfg, 32),
+        max_tuple => maps:get(max_tuple, Cfg, 24)
+    }.
+
+truncate_iolist(Io, Cfg) ->
+    cap_binary(safe_unicode(Io), maps:get(max_text_chars, Cfg, 4096)).
+
+cap_binary(Bin, Max) when is_binary(Bin), is_integer(Max), Max > 0 ->
+    Size = byte_size(Bin),
+    case Size > Max of
+        true ->
+            Omitted = Size - Max,
+            Head = binary:part(Bin, 0, Max),
+            Suffix = iolist_to_binary(io_lib:format("\n... <truncated ~B bytes>", [Omitted])),
+            <<Head/binary, Suffix/binary>>;
+        false ->
+            Bin
+    end;
+cap_binary(Bin, _Max) ->
+    Bin.
 
 %% ===================== COLOR =====================
 
