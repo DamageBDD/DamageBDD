@@ -359,6 +359,20 @@ list_all_schedules_uncached() ->
 %%--------------------------------------------------------------------
 %% Decrypt schedules returned by the schedules contract.
 %%--------------------------------------------------------------------
+decrypt_schedules(undefined) ->
+    [];
+decrypt_schedules(none) ->
+    [];
+decrypt_schedules(null) ->
+    [];
+decrypt_schedules({option, none}) ->
+    [];
+decrypt_schedules({option, {some, Schedules}}) ->
+    decrypt_schedules(Schedules);
+decrypt_schedules({variant, [0, 1], 0, {}}) ->
+    [];
+decrypt_schedules({variant, [0, 1], 1, {Schedules}}) ->
+    decrypt_schedules(Schedules);
 decrypt_schedules(EncryptedSchedules) when is_map(EncryptedSchedules) ->
     maps:fold(
         fun(AccountKey, SchedulesMap, Acc) ->
@@ -464,15 +478,43 @@ load_account_schedules(Account, Schedules0) ->
                 ?LOG_ERROR("Skipping invalid schedule row for ~p: ~p", [Account, Bad]),
                 false;
             (Entry) ->
-                {true, parse_schedule_entry(Account, Entry)}
+                try
+                    {true, parse_schedule_entry(Account, Entry)}
+                catch
+                    Class:Reason:Stacktrace ->
+                        ?LOG_ERROR(
+                            "Skipping schedule row for ~p: entry=~p class=~p reason=~p stack=~p",
+                            [Account, Entry, Class, Reason, Stacktrace]
+                        ),
+                        false
+                end
         end,
         Schedules
     ).
 
+%% Contract reads may legitimately return an empty/none value when the account
+%% has no schedules. Treat that as an empty list instead of crashing Cowboy.
+normalize_schedules(undefined) ->
+    [];
+normalize_schedules(none) ->
+    [];
+normalize_schedules(null) ->
+    [];
+normalize_schedules({option, none}) ->
+    [];
+normalize_schedules({option, {some, Schedules}}) ->
+    normalize_schedules(Schedules);
+normalize_schedules({variant, [0, 1], 0, {}}) ->
+    [];
+normalize_schedules({variant, [0, 1], 1, {Schedules}}) ->
+    normalize_schedules(Schedules);
 normalize_schedules(Schedules) when is_list(Schedules) ->
     Schedules;
 normalize_schedules(Schedules) when is_map(Schedules) ->
-    lists:map(fun normalize_schedule_kv/1, maps:to_list(Schedules)).
+    lists:map(fun normalize_schedule_kv/1, maps:to_list(Schedules));
+normalize_schedules(Bad) ->
+    ?LOG_ERROR("Invalid schedules collection shape: ~p", [Bad]),
+    [#{error => {invalid_schedules_collection_shape, Bad}}].
 
 %% New contract shape with wrapped id hash
 normalize_schedule_kv(
@@ -555,7 +597,7 @@ normalize_schedule_kv(
         0
     };
 normalize_schedule_kv(Bad) ->
-    error({invalid_schedule_kv_shape, Bad}).
+    #{error => {invalid_schedule_kv_shape, Bad}}.
 
 normalize_id({bytes, Bin}) -> Bin;
 normalize_id(Bin) when is_binary(Bin) -> Bin;
@@ -727,35 +769,9 @@ handle_call({get_schedules, AeAccount}, _From, State) ->
         {hit, Schedules} ->
             {reply, Schedules, State};
         miss ->
-            #{decodedResult := Results} =
-                damage_ae:contract_call_user_account(AeAccount, "get_schedules", []),
-            Schedules =
-                case Results of
-                    M when is_map(M) ->
-                        maps:from_list(
-                            [
-                                begin
-                                    {tuple, {_Id, CronEnc, FeatureHashEnc}} = V,
-                                    {
-                                        secrets:decrypt(FeatureHashEnc),
-                                        secrets:decrypt(CronEnc)
-                                    }
-                                end
-                             || {_K, V} <- maps:to_list(M)
-                            ]
-                        );
-                    L when is_list(L) ->
-                        maps:from_list(
-                            [
-                                {
-                                    secrets:decrypt(FeatureHashEncrypted),
-                                    secrets:decrypt(CronEncrypted)
-                                }
-                             || [FeatureHashEncrypted, CronEncrypted] <- L
-                            ]
-                        )
-                end,
-            {reply, Schedules, cache_put(Key, Schedules, State)}
+            Schedules = list_schedules_uncached(AeAccount),
+            ok = cache_put(Key, Schedules, State),
+            {reply, Schedules, State}
     end;
 handle_call({set_contract, ContractId0}, _From, State) ->
     ContractId = to_bin(ContractId0),
@@ -888,7 +904,7 @@ contract_call_admin(State, Func, Args) ->
     damage_ae:contract_call(
         secrets:node_keypair(),
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(damage, State#state.contract_path),
         Func,
         Args
     ).
@@ -901,7 +917,7 @@ contract_call_for_user(State, AeAccount, Func, Args) ->
     damage_ae:contract_call_payfor_user(
         AeAccount,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(damage, State#state.contract_path),
         Func,
         Args
     ).
@@ -973,6 +989,20 @@ decode_result_map(#{decoded_result := Results}) ->
 decode_result_map(#{<<"return_value">> := Results}) ->
     Results;
 decode_result_map(#{"return_value" := Results}) ->
+    Results;
+decode_result_map(none) ->
+    [];
+decode_result_map(undefined) ->
+    [];
+decode_result_map(null) ->
+    [];
+decode_result_map({option, none}) ->
+    [];
+decode_result_map({option, {some, Results}}) ->
+    Results;
+decode_result_map({variant, [0, 1], 0, {}}) ->
+    [];
+decode_result_map({variant, [0, 1], 1, {Results}}) ->
     Results;
 decode_result_map(Other) ->
     error({invalid_contract_result, Other}).
