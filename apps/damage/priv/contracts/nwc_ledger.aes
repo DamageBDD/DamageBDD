@@ -46,7 +46,7 @@ contract DamageNWCLedger =
   datatype event =
     LedgerEvent(hash, int, string)
     // LedgerEvent(client_pubkey_hash, kind, payload)
-    // kind: 0 = credit, 1 = debit
+    // kind: 0 = credit, 1 = debit, 2 = register, 3 = revoke, 4 = set_limits
 
   function client_pubkey_hash(client_pubkey : string) : hash =
     Crypto.sha256(client_pubkey)
@@ -191,6 +191,7 @@ contract DamageNWCLedger =
         , expires_height  = expires_height
         }
     put(state{ policies[client_pubkey] = p })
+    emit_policy_event(client_pubkey, 2, max_single_msat, max_total_msat, expires_height, Chain.block_height, balance(client_pubkey))
     true
 
   stateful entrypoint revoke(client_pubkey : string) : bool =
@@ -198,6 +199,7 @@ contract DamageNWCLedger =
     let old = policy_of(client_pubkey)
     let p = old{ revoked = true }
     put(state{ policies[client_pubkey] = p })
+    emit_policy_event(client_pubkey, 3, old.max_single_msat, old.max_total_msat, old.expires_height, Chain.block_height, balance(client_pubkey))
     true
 
   stateful entrypoint set_limits(
@@ -216,6 +218,7 @@ contract DamageNWCLedger =
         expires_height  = expires_height
         }
     put(state{ policies[client_pubkey] = p })
+    emit_policy_event(client_pubkey, 4, max_single_msat, max_total_msat, expires_height, Chain.block_height, balance(client_pubkey))
     true
 
   stateful entrypoint credit(
@@ -326,6 +329,40 @@ contract DamageNWCLedger =
             tx_count[client_pubkey] = n0 + 1,
             txs[client_pubkey] = m1
         })
+
+  stateful function emit_policy_event(
+    client_pubkey   : string,
+    kind            : int,
+    max_single_msat : int,
+    max_total_msat  : int,
+    expires_height  : int,
+    height          : int,
+    balance_after   : int
+    ) =
+    let payload =
+      String.concat(
+        Int.to_str(max_single_msat),
+        String.concat(
+          "|",
+          String.concat(
+            Int.to_str(max_total_msat),
+            String.concat(
+              "|",
+              String.concat(
+                Int.to_str(expires_height),
+                String.concat(
+                  "|",
+                  String.concat(
+                    Int.to_str(height),
+                    String.concat("|", Int.to_str(balance_after))
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+    Chain.event(LedgerEvent(client_pubkey_hash(client_pubkey), kind, payload))
 
   stateful function emit_ledger_event(
     client_pubkey : string,

@@ -65,6 +65,7 @@
     resolve_owner_and_ledger_by_client_pubkey/1,
     ledger_balance_msat/3,
     ledger_policy/3,
+    ledger_transactions/5,
     authorize_amount_msat/4,
     debit_after_payment/6,
 
@@ -359,7 +360,14 @@ wallet_info(State) ->
         color => <<"#1d4ed8">>,
         pubkey => hex64(state_public_key(State)),
         network => network_name(),
-        methods => [<<"get_info">>, <<"get_balance">>, <<"pay_invoice">>, <<"make_invoice">>],
+        methods => [
+            <<"get_info">>,
+            <<"get_balance">>,
+            <<"pay_invoice">>,
+            <<"make_invoice">>,
+            <<"lookup_invoice">>,
+            <<"list_transactions">>
+        ],
         notifications => []
     }.
 
@@ -389,27 +397,22 @@ resolve_owner_and_ledger_by_client_pubkey(ClientPubHex0) ->
 
 -spec ledger_balance_msat(binary(), binary(), binary()) ->
     {ok, integer()} | {error, term()}.
-ledger_balance_msat(Owner, LedgerCt, ClientPubHex) ->
-    case damage_nwc_http:ledger_call_view(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]) of
-        #{"return_type" := "ok", "return_value" := Value} ->
-            normalize_int(Value);
-        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
-            normalize_int(Value);
-        Other ->
-            {error, {balance_failed, Other}}
-    end.
+ledger_balance_msat(_Owner, LedgerCt, ClientPubHex) ->
+    %% Read NWC balance from public middleware LedgerEvent logs, not dry-run.
+    %% The contract emits balance_after on credit/debit/register/revoke/limit events.
+    damage_nwc_ledger_events:client_balance_msat(LedgerCt, ClientPubHex).
 
 -spec ledger_policy(binary(), binary(), binary()) ->
     {ok, map()} | {error, term()}.
-ledger_policy(Owner, LedgerCt, ClientPubHex) ->
-    case damage_nwc_http:ledger_call_view(Owner, LedgerCt, "policy_of", [to_s(ClientPubHex)]) of
-        #{"return_type" := "ok", "return_value" := Value} ->
-            {ok, normalize_policy(Value)};
-        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
-            {ok, normalize_policy(Value)};
-        Other ->
-            {error, {policy_failed, Other}}
-    end.
+ledger_policy(_Owner, LedgerCt, ClientPubHex) ->
+    %% Policy is reconstructed from local mint metadata plus public policy events.
+    %% This keeps Amethyst/NIP-47 hot path free of private-key reads and dry-run.
+    damage_nwc_ledger_events:client_policy(LedgerCt, ClientPubHex).
+
+-spec ledger_transactions(binary(), binary(), binary(), integer(), integer()) ->
+    {ok, [map()]} | {error, term()}.
+ledger_transactions(_Owner, LedgerCt, ClientPubHex, Limit, Offset) ->
+    damage_nwc_ledger_events:client_transactions(LedgerCt, ClientPubHex, Limit, Offset).
 
 authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat) ->
     authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, current_height()).
@@ -417,28 +420,40 @@ authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat) ->
 authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, Height) ->
     case ledger_policy(Owner, LedgerCt, ClientPubHex) of
         {ok, Policy} ->
+            Revoked = maps:get(revoked, Policy, false),
             MaxSingle = maps:get(max_single_msat, Policy, 0),
             MaxTotal = maps:get(max_total_msat, Policy, 0),
+            Spent = maps:get(spent_msat, Policy, 0),
             Expires = maps:get(expires_height, Policy, 0),
-            case MaxSingle > 0 andalso AmountMsat > MaxSingle of
+            case Revoked of
                 true ->
-                    {error, <<"QUOTA_EXCEEDED">>, <<"amount exceeds max_single_msat">>};
+                    {error, <<"REVOKED">>, <<"NWC session is revoked">>};
                 false ->
-                    case Expires > 0 andalso Height > Expires of
+                    case MaxSingle > 0 andalso AmountMsat > MaxSingle of
                         true ->
-                            {error, <<"EXPIRED">>, <<"policy expired">>};
+                            {error, <<"QUOTA_EXCEEDED">>, <<"amount exceeds max_single_msat">>};
                         false ->
-                            case ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
-                                {ok, BalanceMsat} ->
-                                    case MaxTotal > 0 andalso BalanceMsat < AmountMsat of
+                            case MaxTotal > 0 andalso (Spent + AmountMsat) > MaxTotal of
+                                true ->
+                                    {error, <<"QUOTA_EXCEEDED">>,
+                                        <<"amount exceeds max_total_msat">>};
+                                false ->
+                                    case Expires > 0 andalso Height > Expires of
                                         true ->
-                                            {error, <<"INSUFFICIENT_BALANCE">>,
-                                                <<"balance too low">>};
+                                            {error, <<"EXPIRED">>, <<"policy expired">>};
                                         false ->
-                                            ok
-                                    end;
-                                {error, Why} ->
-                                    {error, <<"LEDGER_BALANCE_FAILED">>, fmt(Why)}
+                                            case
+                                                ledger_balance_msat(Owner, LedgerCt, ClientPubHex)
+                                            of
+                                                {ok, BalanceMsat} when BalanceMsat >= AmountMsat ->
+                                                    ok;
+                                                {ok, _BalanceMsat} ->
+                                                    {error, <<"INSUFFICIENT_BALANCE">>,
+                                                        <<"balance too low">>};
+                                                {error, Why} ->
+                                                    {error, <<"LEDGER_BALANCE_FAILED">>, fmt(Why)}
+                                            end
+                                    end
                             end
                     end
             end;
@@ -451,9 +466,8 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
         user_signed ->
             ok;
         server_signed ->
-            %% The deployed DamageNWCLedger admin is the node account in the
-            %% automatic setup path, so debits after CLN payment must be signed
-            %% by the node/admin, not by the user wallet process.
+            %% Server-signed mode uses the ledger admin/operator path. It must not
+            %% require the user's custodial private key after CLN payment succeeds.
             _ = Owner,
             _ = damage_nwc_http:ledger_call_admin(
                 LedgerCt,

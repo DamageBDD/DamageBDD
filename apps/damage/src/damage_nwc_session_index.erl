@@ -8,6 +8,7 @@
     put/4,
     get/1,
     delete/1,
+    mark_revoked/1,
     secret_key/1
 ]).
 
@@ -71,6 +72,26 @@ delete(ClientPubHex0) ->
     Key = secret_key(ClientPubHex),
     %% if your secrets module has delete, use that instead
     ok = secrets:encrypt_store(Key, <<"deleted">>).
+
+-spec mark_revoked(binary() | list()) -> ok.
+mark_revoked(ClientPubHex0) ->
+    ClientPubHex = to_bin(ClientPubHex0),
+    case get(ClientPubHex) of
+        {ok, #{meta := Meta0} = Session} ->
+            Meta = normalize_meta(Meta0),
+            Policy0 =
+                case maps:get(<<"policy">>, Meta, #{}) of
+                    P when is_map(P) -> P;
+                    _ -> #{}
+                end,
+            Policy = maps:put(<<"revoked">>, true, Policy0),
+            NewMeta = maps:put(<<"policy">>, Policy, maps:put(<<"revoked">>, true, Meta)),
+            Key = secret_key(ClientPubHex),
+            Value = term_to_binary(Session#{meta => NewMeta}),
+            ok = secrets:encrypt_store(Key, Value);
+        {error, not_found} ->
+            ok
+    end.
 
 -spec secret_key(binary() | list()) -> string().
 secret_key(ClientPubHex0) ->

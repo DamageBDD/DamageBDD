@@ -12,9 +12,9 @@
 -export([resolve_user_ledger_ct/1]).
 -export([ledger_src_path/0]).
 -export([ledger_call_user_dry/4]).
--export([ledger_call_view/4]).
--export([ledger_call_admin/3]).
 -export([ledger_call_user/4]).
+-export([ledger_call_admin/3]).
+-export([ledger_events/2, ledger_events/3]).
 -export([
     migrate_user_ledger/1,
     migrate_user_ledger/2,
@@ -60,6 +60,12 @@ trails() ->
                         produces => ["application/json"]
                     }
             }
+        ),
+        trails:trail(
+            "/api/nwc/sessions",
+            damage_nwc_http,
+            #{action => sessions},
+            #{post => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
         ),
         trails:trail(
             "/api/nwc/ledger/balance",
@@ -224,7 +230,17 @@ from_json_mint(Req0, State = #{action := mint}) ->
                     case ledger_call_ok(RegisterResult) of
                         true ->
                             ok = persist_nwc_session_index(
-                                ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
+                                ClientPubHex,
+                                Owner,
+                                LedgerCt,
+                                WalletPubHex,
+                                NormalizedRelays,
+                                #{
+                                    max_single_msat => MaxSingleMsat,
+                                    max_total_msat => MaxTotalMsat,
+                                    expires_height => ExpiresHeight,
+                                    revoked => false
+                                }
                             ),
                             ok = notify_nwc_listener_relays(NormalizedRelays),
                             log_mint_usable(Owner, ClientPubHex, LedgerCt, Mode, NormalizedRelays),
@@ -295,7 +311,17 @@ from_json_mint(Req0, State = #{action := mint}) ->
             of
                 {ok, RegistryCt, LedgerCt} ->
                     ok = persist_nwc_session_index(
-                        ClientPubHex, Owner, LedgerCt, WalletPubHex, NormalizedRelays
+                        ClientPubHex,
+                        Owner,
+                        LedgerCt,
+                        WalletPubHex,
+                        NormalizedRelays,
+                        #{
+                            max_single_msat => MaxSingleMsat,
+                            max_total_msat => MaxTotalMsat,
+                            expires_height => ExpiresHeight,
+                            revoked => false
+                        }
                     ),
                     ok = notify_nwc_listener_relays(NormalizedRelays),
                     log_mint_usable(Owner, ClientPubHex, LedgerCt, Mode, NormalizedRelays),
@@ -543,7 +569,7 @@ from_json(Req0, State = #{action := revoke}) ->
 
             case Mode of
                 user_signed ->
-                    ok = damage_nwc_session_index:delete(ClientPubHex),
+                    ok = mark_nwc_session_revoked(ClientPubHex),
                     reply_json_stop(
                         200,
                         #{
@@ -560,7 +586,7 @@ from_json(Req0, State = #{action := revoke}) ->
                     CallResult = ledger_call_admin(LedgerCt, "revoke", [to_s(ClientPubHex)]),
                     case ledger_call_ok(CallResult) of
                         true ->
-                            ok = damage_nwc_session_index:delete(ClientPubHex),
+                            ok = mark_nwc_session_revoked(ClientPubHex),
                             reply_json_stop(
                                 200,
                                 #{
@@ -625,10 +651,8 @@ from_json(Req0, State = #{action := ledger_balance}) ->
     case resolve_user_ledger_ct(Owner) of
         {ok, LedgerCt0} ->
             LedgerCt = to_bin(LedgerCt0),
-            CallResult = ledger_call_view(Owner, LedgerCt, "balance", [to_s(ClientPubHex)]),
-            case ledger_call_ok(CallResult) of
-                true ->
-                    BalanceMsat = ledger_balance_msat_from_result(CallResult),
+            case damage_nwc_wallet:ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
+                {ok, BalanceMsat} ->
                     reply_json_stop(
                         200,
                         #{
@@ -636,13 +660,14 @@ from_json(Req0, State = #{action := ledger_balance}) ->
                             owner => Owner,
                             ledger_ct => LedgerCt,
                             client_pubkey => ClientPubHex,
+                            source => <<"aeternity_middleware_contract_logs">>,
                             balance_msat => BalanceMsat,
                             balance_sat => BalanceMsat div 1000
                         },
                         Req,
                         State
                     );
-                false ->
+                {error, WhyBalance} ->
                     reply_json_stop(
                         400,
                         #{
@@ -651,7 +676,7 @@ from_json(Req0, State = #{action := ledger_balance}) ->
                             owner => Owner,
                             ledger_ct => LedgerCt,
                             client_pubkey => ClientPubHex,
-                            result => normalize_json(CallResult)
+                            reason => to_bin(io_lib:format("~p", [WhyBalance]))
                         },
                         Req,
                         State
@@ -664,6 +689,60 @@ from_json(Req0, State = #{action := ledger_balance}) ->
                     status => <<"error">>,
                     error => <<"NO_LEDGER">>,
                     reason => to_bin(io_lib:format("~p", [Why]))
+                },
+                Req,
+                State
+            )
+    end;
+%% -------------------------------------------------------------------
+%% session history: reconstructed from public ledger events
+%% -------------------------------------------------------------------
+from_json(Req0, State = #{action := sessions}) ->
+    {ok, Raw, Req} = cowboy_req:read_body(Req0),
+    Json = decode_json_body(Raw),
+    Owner = to_bin(maps:get(public_key, State)),
+    Limit = clamp_int(json_int(Json, [<<"limit">>], 200), 1, 1000),
+    case resolve_user_ledger_ct(Owner) of
+        {ok, LedgerCt0} ->
+            LedgerCt = to_bin(LedgerCt0),
+            case damage_nwc_ledger_events:sessions(LedgerCt, Limit) of
+                {ok, Sessions} ->
+                    AccountBalanceMsat = lists:sum([maps:get(balance_msat, S, 0) || S <- Sessions]),
+                    reply_json_stop(
+                        200,
+                        #{
+                            status => <<"ok">>,
+                            owner => Owner,
+                            ledger_ct => LedgerCt,
+                            source => <<"aeternity_middleware_contract_logs">>,
+                            account_balance_msat => AccountBalanceMsat,
+                            account_balance_sat => AccountBalanceMsat div 1000,
+                            sessions => Sessions
+                        },
+                        Req,
+                        State
+                    );
+                {error, WhyEvents} ->
+                    reply_json_stop(
+                        502,
+                        #{
+                            status => <<"error">>,
+                            error => <<"LEDGER_EVENTS_FAILED">>,
+                            reason => to_bin(io_lib:format("~p", [WhyEvents])),
+                            sessions => []
+                        },
+                        Req,
+                        State
+                    )
+            end;
+        {error, Why} ->
+            reply_json_stop(
+                404,
+                #{
+                    status => <<"error">>,
+                    error => <<"NO_LEDGER">>,
+                    reason => to_bin(io_lib:format("~p", [Why])),
+                    sessions => []
                 },
                 Req,
                 State
@@ -911,6 +990,61 @@ from_json_ledger_credit(Req0, State) ->
                     )
             end
     end.
+%% ---------------- JSON / event helpers ----------------
+decode_json_body(<<>>) ->
+    #{};
+decode_json_body(Raw) ->
+    case catch jsx:decode(Raw, [return_maps]) of
+        {'EXIT', _} -> #{};
+        Map when is_map(Map) -> Map;
+        _ -> #{}
+    end.
+
+json_int(Map, Keys, Default) ->
+    int_value(get_any(Map, Keys, Default), Default).
+
+get_any(_Map, [], Default) ->
+    Default;
+get_any(Map, [K | Rest], Default) when is_map(Map) ->
+    case maps:find(K, Map) of
+        {ok, V} -> V;
+        error -> get_any(Map, Rest, Default)
+    end;
+get_any(_Other, _Keys, Default) ->
+    Default.
+
+int_value(V, _Default) when is_integer(V) -> V;
+int_value(V, _Default) when is_float(V) -> trunc(V);
+int_value(V, Default) when is_binary(V) ->
+    case catch binary_to_integer(V) of
+        I when is_integer(I) -> I;
+        _ -> Default
+    end;
+int_value(V, Default) when is_list(V) ->
+    case catch list_to_integer(V) of
+        I when is_integer(I) -> I;
+        _ -> Default
+    end;
+int_value(_, Default) ->
+    Default.
+
+clamp_int(I, Min, _Max) when is_integer(I), I < Min -> Min;
+clamp_int(I, _Min, Max) when is_integer(I), I > Max -> Max;
+clamp_int(I, _Min, _Max) when is_integer(I) -> I;
+clamp_int(_, Min, _Max) -> Min.
+
+ledger_events(LedgerCt, Limit) ->
+    damage_nwc_ledger_events:ledger_events(LedgerCt, Limit).
+
+ledger_events(LedgerCt, Limit, Direction) ->
+    damage_nwc_ledger_events:ledger_events(LedgerCt, Limit, Direction).
+
+mark_nwc_session_revoked(ClientPubHex) ->
+    case erlang:function_exported(damage_nwc_session_index, mark_revoked, 1) of
+        true -> damage_nwc_session_index:mark_revoked(ClientPubHex);
+        false -> damage_nwc_session_index:delete(ClientPubHex)
+    end.
+
 %% ---------------- helpers ----------------
 reply_json(Status, Body, Req) ->
     cowboy_req:reply(
@@ -1046,6 +1180,11 @@ maybe_user_keypair_from_owner(OwnerAkBin) ->
         Other ->
             {error, {unexpected_identity_result, Other}}
     end.
+user_keypair_from_owner(OwnerAkBin) ->
+    %% Custodial path: user key is present server-side.
+    %% Future noncustodial: this is the seam where you detect "no key" and return intents only.
+    #{public_key := Pub0, private_key := Priv} = identity_server:get_account(OwnerAkBin),
+    #{public_key => to_bin(Pub0), private_key => Priv}.
 
 ledger_src_path() ->
     damage_ae:contract_path(damage, ?NWC_LEDGER_SRC_PATH).
@@ -1065,52 +1204,35 @@ ledger_call_ok(#{"return_type" := "ok"}) ->
     true;
 ledger_call_ok(_) ->
     false.
-ledger_call_view(_OwnerAkBin, LedgerCt, Fun, Args) ->
-    %% Read-only ledger calls must not require the owner private key.
-    %% balance/1, policy_of/1, can_debit/2, totals/0 etc. are dry-run safe.
-    %% Use the node account only as the dry-run caller.
-    case secrets:node_keypair() of
-        #{public_key := _Pub, private_key := _Priv} = KP ->
-            damage_ae:contract_call_dry(
-                KP,
-                to_s(LedgerCt),
-                ledger_src_path(),
-                Fun,
-                Args
-            );
-        Error ->
-            Error
-    end.
-
 ledger_call_user(OwnerAkBin, LedgerCt, Fun, Args) ->
-    %% State-changing user-signed path. Keep this only for operations that
-    %% genuinely require the user's AE signature.
-    case maybe_user_keypair_from_owner(OwnerAkBin) of
-        {ok, KP} ->
-            AeAccount = maps:get(public_key, KP),
-            PrivateKey = maps:get(private_key, KP),
-            _ = damage_ae:set_private_key(AeAccount, PrivateKey),
-            ?LOG_DEBUG("ledger_call_user ~p, ~p ~p ~p ~p", [
-                AeAccount,
-                to_s(LedgerCt),
-                ledger_src_path(),
-                Fun,
-                Args
-            ]),
-            damage_ae:contract_call_payfor_user(
-                AeAccount,
-                to_s(LedgerCt),
-                ledger_src_path(),
-                Fun,
-                Args
-            );
-        {error, Why} ->
-            {error, {no_user_private_key, Why}}
-    end.
+    KP = user_keypair_from_owner(OwnerAkBin),
+    AeAccount = maps:get(public_key, KP),
+    PrivateKey = maps:get(private_key, KP),
+    damage_ae:set_private_key(to_s(AeAccount), PrivateKey),
+    ?LOG_DEBUG("ledger_call_user ~p, ~p ~p ~p ~p", [
+        AeAccount,
+        to_s(LedgerCt),
+        ledger_src_path(),
+        Fun,
+        Args
+    ]),
+    damage_ae:contract_call_payfor_user(
+        AeAccount,
+        to_s(LedgerCt),
+        ledger_src_path(),
+        Fun,
+        Args
+    ).
 
 ledger_call_user_dry(OwnerAkBin, LedgerCt, Fun, Args) ->
-    %% Backwards-compatible name; dry calls do not need the user key.
-    ledger_call_view(OwnerAkBin, LedgerCt, Fun, Args).
+    KP = user_keypair_from_owner(OwnerAkBin),
+    damage_ae:contract_call_dry(
+        KP,
+        to_s(LedgerCt),
+        ledger_src_path(),
+        Fun,
+        Args
+    ).
 
 %% When a user has no ledger registered yet:
 %% Return (account_registry_ct, [deploy_intent, upsert_registry_intent])
@@ -1416,6 +1538,13 @@ persist_user_ledger_ct(OwnerAkBin, <<"ct_", _/binary>> = CtId) ->
     ok = secrets:encrypt_store(Key, CtId).
 
 persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays) ->
+    persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays, #{}).
+
+persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays, PolicyMeta0) ->
+    PolicyMeta = maps:merge(
+        #{revoked => false, max_single_msat => 0, max_total_msat => 0, expires_height => 0},
+        PolicyMeta0
+    ),
     damage_nwc_session_index:put(
         ClientPubHex,
         Owner,
@@ -1423,7 +1552,11 @@ persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays) -
         #{
             wallet_pubkey => WalletPubHex,
             relays => Relays,
-            created_at => erlang:system_time(second)
+            created_at => erlang:system_time(second),
+            policy => PolicyMeta,
+            max_single_msat => maps:get(max_single_msat, PolicyMeta, 0),
+            max_total_msat => maps:get(max_total_msat, PolicyMeta, 0),
+            expires_height => maps:get(expires_height, PolicyMeta, 0)
         }
     ).
 notify_nwc_listener_relays(Relays0) ->

@@ -693,9 +693,10 @@ nwc_error_summary(Reason) ->
     compact_term(Reason).
 
 decode_request(CryptoHandler, Event) ->
+    ClientPub = maps:get(<<"pubkey">>, Event, undefined),
     case catch apply(CryptoHandler, nwc_decode_request, [Event]) of
         {ok, Req0} when is_map(Req0) ->
-            {ok, ensure_client_pubkey(Req0, maps:get(<<"pubkey">>, Event, undefined))};
+            {ok, ensure_client_pubkey(Req0, ClientPub)};
         {ok, _Req} = Ok ->
             Ok;
         {'EXIT', Reason} ->
@@ -711,6 +712,8 @@ ensure_client_pubkey(Req = #{<<"client_pubkey">> := _}, _ClientPub) ->
 ensure_client_pubkey(Req = #{client_pubkey := _}, _ClientPub) ->
     Req;
 ensure_client_pubkey(Req, ClientPub) ->
+    %% NIP-47 plaintext usually contains method/params only. The nostr event
+    %% pubkey is the client key and is required for ledger-event filtering.
     maps:put(<<"client_pubkey">>, ClientPub, Req).
 
 send_response(_Event, _Payload, #state{conns = Conns}) when map_size(Conns) =:= 0 ->

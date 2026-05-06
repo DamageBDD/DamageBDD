@@ -4,7 +4,10 @@
     <div class="modal__container nwc-modal" role="dialog" aria-modal="true" aria-labelledby="nwc-title">
       <header class="modal__header nwc-modal-header">
         <div class="nwc-modal-header-copy">
-          <h2 id="nwc-title" class="nwc-title">Nostr Wallet Connect</h2>
+          <div class="nwc-title-row">
+            <h2 id="nwc-title" class="nwc-title">Nostr Wallet Connect</h2>
+            <span id="nwc-account-chip" class="nwc-account-chip" title="Current AE account">Account loading…</span>
+          </div>
           <p class="nwc-subtitle">
             Mint a wallet connection URI for Amethyst, Damus, Primal, and other NWC clients.
           </p>
@@ -151,8 +154,695 @@
               <button id="nwc-revoke-btn" class="nwc-btn nwc-btn-danger" type="button">Revoke</button>
             </section>
           </div>
+
+          <section class="nwc-card nwc-history-card" aria-labelledby="nwc-history-title">
+            <div class="nwc-card-header nwc-card-header-compact nwc-history-header">
+              <span class="nwc-step-badge">4</span>
+              <div>
+                <h3 id="nwc-history-title">Session history</h3>
+                <p>Minted sessions and remaining sats allowance for this AE account.</p>
+              </div>
+              <button id="nwc-history-refresh-btn" class="nwc-btn nwc-btn-secondary nwc-refresh-small" type="button">Refresh</button>
+            </div>
+
+            <div id="nwc-session-summary" class="nwc-session-summary" aria-live="polite">
+              <div class="nwc-summary-pill">
+                <span>Account sats</span>
+                <strong id="nwc-summary-account-balance">—</strong>
+              </div>
+              <div class="nwc-summary-pill">
+                <span>Active sessions</span>
+                <strong id="nwc-summary-active">—</strong>
+              </div>
+              <div class="nwc-summary-pill">
+                <span>Session allowance</span>
+                <strong id="nwc-summary-remaining">—</strong>
+              </div>
+            </div>
+
+            <div class="nwc-history-toolbar" role="tablist" aria-label="NWC session filters">
+              <button class="nwc-filter active" data-nwc-filter="active" type="button">Active</button>
+              <button class="nwc-filter" data-nwc-filter="all" type="button">All</button>
+              <button class="nwc-filter" data-nwc-filter="revoked" type="button">Revoked</button>
+              <button class="nwc-filter" data-nwc-filter="expired" type="button">Expired</button>
+              <button class="nwc-filter" data-nwc-filter="low" type="button">Low balance</button>
+            </div>
+
+            <div id="nwc-history-empty" class="nwc-history-empty" hidden>
+              No minted NWC sessions found for this account yet.
+            </div>
+
+            <div id="nwc-history-error" class="nwc-history-error" hidden></div>
+            <div id="nwc-session-timeline" class="nwc-session-timeline"></div>
+          </section>
         </div>
       </main>
     </div>
   </div>
 </div>
+
+<style>
+  #nwc-modal .nwc-title-row {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
+
+  #nwc-modal .nwc-account-chip {
+    display: inline-flex;
+    align-items: center;
+    max-width: min(34rem, 68vw);
+    padding: .25rem .6rem;
+    border: 1px solid rgba(93, 151, 255, .28);
+    border-radius: 999px;
+    background: rgba(9, 15, 36, .65);
+    color: #aebdff;
+    font-size: .82rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #nwc-modal .nwc-history-card {
+    grid-column: 1 / -1;
+  }
+
+  #nwc-modal .nwc-history-header {
+    align-items: flex-start;
+  }
+
+  #nwc-modal .nwc-history-header > div {
+    flex: 1 1 auto;
+  }
+
+  #nwc-modal .nwc-refresh-small {
+    padding: .55rem .8rem;
+    min-width: auto;
+  }
+
+  #nwc-modal .nwc-session-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .75rem;
+    margin: .85rem 0 1rem;
+  }
+
+  #nwc-modal .nwc-summary-pill {
+    padding: .75rem .85rem;
+    border: 1px solid rgba(120, 150, 255, .16);
+    border-radius: 14px;
+    background: rgba(8, 12, 30, .55);
+  }
+
+  #nwc-modal .nwc-summary-pill span {
+    display: block;
+    color: #93a2d0;
+    font-size: .78rem;
+    margin-bottom: .25rem;
+  }
+
+  #nwc-modal .nwc-summary-pill strong {
+    color: #eef3ff;
+    font-size: 1.02rem;
+  }
+
+  #nwc-modal .nwc-history-toolbar {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+    margin: 0 0 1rem;
+  }
+
+  #nwc-modal .nwc-filter {
+    border: 1px solid rgba(120, 150, 255, .25);
+    background: rgba(15, 20, 45, .85);
+    color: #cfd7ff;
+    border-radius: 999px;
+    padding: .45rem .75rem;
+    cursor: pointer;
+  }
+
+  #nwc-modal .nwc-filter.active {
+    background: rgba(40, 130, 255, .25);
+    border-color: rgba(70, 150, 255, .7);
+  }
+
+  #nwc-modal .nwc-session-timeline {
+    display: grid;
+    gap: .75rem;
+  }
+
+  #nwc-modal .nwc-session-card {
+    border: 1px solid rgba(120, 150, 255, .18);
+    background: rgba(12, 16, 36, .72);
+    border-radius: 14px;
+    padding: 1rem;
+  }
+
+  #nwc-modal .nwc-session-head,
+  #nwc-modal .nwc-session-metrics,
+  #nwc-modal .nwc-session-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
+
+  #nwc-modal .nwc-session-head strong {
+    display: block;
+    color: #f3f6ff;
+    font-size: 1rem;
+  }
+
+  #nwc-modal .nwc-session-head code,
+  #nwc-modal .nwc-session-meta code {
+    color: #afbef5;
+    font-size: .83rem;
+  }
+
+  #nwc-modal .nwc-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: .25rem .55rem;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    border: 1px solid transparent;
+  }
+
+  #nwc-modal .nwc-badge-active {
+    color: #a8f4c4;
+    background: rgba(34, 197, 94, .12);
+    border-color: rgba(34, 197, 94, .32);
+  }
+
+  #nwc-modal .nwc-badge-low {
+    color: #ffe0a6;
+    background: rgba(245, 158, 11, .13);
+    border-color: rgba(245, 158, 11, .34);
+  }
+
+  #nwc-modal .nwc-badge-revoked,
+  #nwc-modal .nwc-badge-expired {
+    color: #ffc2c2;
+    background: rgba(239, 68, 68, .12);
+    border-color: rgba(239, 68, 68, .32);
+  }
+
+  #nwc-modal .nwc-balance-bar {
+    height: 8px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, .08);
+    margin: .8rem 0;
+  }
+
+  #nwc-modal .nwc-balance-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #2388ff, #64d2ff);
+  }
+
+  #nwc-modal .nwc-session-metrics span,
+  #nwc-modal .nwc-session-meta {
+    color: #97a5d2;
+    font-size: .86rem;
+  }
+
+  #nwc-modal .nwc-session-metrics strong {
+    color: #eef3ff;
+  }
+
+  #nwc-modal .nwc-session-meta {
+    margin-top: .65rem;
+    display: flex;
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
+
+  #nwc-modal .nwc-mini-timeline {
+    margin: .8rem 0 0;
+    padding-left: 0;
+    list-style: none;
+    display: grid;
+    gap: .45rem;
+  }
+
+  #nwc-modal .nwc-mini-timeline li {
+    display: grid;
+    grid-template-columns: 5.25rem 1fr auto;
+    gap: .75rem;
+    color: #cfd7ff;
+    border-top: 1px solid rgba(255, 255, 255, .06);
+    padding-top: .45rem;
+  }
+
+  #nwc-modal .nwc-mini-timeline time {
+    color: #8ea0d8;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #nwc-modal .nwc-session-actions {
+    margin-top: .85rem;
+    justify-content: flex-end;
+  }
+
+  #nwc-modal .nwc-history-empty,
+  #nwc-modal .nwc-history-error {
+    padding: .9rem;
+    border-radius: 12px;
+    background: rgba(8, 12, 30, .55);
+    color: #adb9e5;
+  }
+
+  #nwc-modal .nwc-history-error {
+    border: 1px solid rgba(239, 68, 68, .32);
+    color: #ffc2c2;
+    margin-bottom: .75rem;
+  }
+
+  @media (max-width: 760px) {
+    #nwc-modal .nwc-session-summary {
+      grid-template-columns: 1fr;
+    }
+
+    #nwc-modal .nwc-mini-timeline li {
+      grid-template-columns: 4.5rem 1fr;
+    }
+
+    #nwc-modal .nwc-mini-timeline li b {
+      grid-column: 2;
+    }
+  }
+</style>
+
+<script>
+(function () {
+  if (window.DamageNwcHistory && window.DamageNwcHistory.initialized) return;
+
+  const state = {
+    filter: 'active',
+    sessions: [],
+    accountBalanceSat: null,
+    endpoint: '/api/nwc/sessions'
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const number = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
+  const escapeHtml = (value) => String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  function currentAccount() {
+    const selectors = [
+      '#damage-address',
+      '#wallet-address',
+      '[data-wallet-address]',
+      '[data-ae-account]'
+    ];
+
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (!el) continue;
+      const value = el.value || el.dataset.walletAddress || el.dataset.aeAccount || el.textContent;
+      if (value && value.trim().startsWith('ak_')) return value.trim();
+    }
+
+    if (window.damageAccount && String(window.damageAccount).startsWith('ak_')) {
+      return String(window.damageAccount);
+    }
+
+    return 'unknown-account';
+  }
+
+  function shortId(value, left = 8, right = 6) {
+    const text = String(value || '');
+    if (!text) return 'unknown';
+    if (text.length <= left + right + 3) return text;
+    return `${text.slice(0, left)}…${text.slice(-right)}`;
+  }
+
+  function storageKey() {
+    return `damage:nwc:sessions:${currentAccount()}`;
+  }
+
+  function readLocalSessions() {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey()) || '[]');
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function writeLocalSessions(sessions) {
+    try {
+      localStorage.setItem(storageKey(), JSON.stringify(sessions.slice(0, 100)));
+    } catch (_err) {
+      // Ignore storage errors; backend history remains the source of truth.
+    }
+  }
+
+  function selectedRelays() {
+    const presets = Array.from(document.querySelectorAll('.nwc-relay-preset:checked')).map((el) => el.value);
+    const custom = (($('nwc-custom-relays') || {}).value || '')
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return Array.from(new Set([...presets, ...custom]));
+  }
+
+  function normalizeSession(raw) {
+    const maxTotal = number(raw.max_total_sat ?? raw.max_total ?? raw.maxTotalSat, 0);
+    const spent = number(raw.spent_sat ?? raw.spent ?? 0, 0);
+    const remaining = number(raw.remaining_sat ?? raw.remaining ?? (maxTotal > 0 ? Math.max(maxTotal - spent, 0) : 0), 0);
+    const status0 = String(raw.status || (remaining > 0 ? 'active' : 'expired')).toLowerCase();
+    const status = status0 === 'low' ? 'active' : status0;
+    const events = Array.isArray(raw.events) ? raw.events : [];
+
+    return {
+      owner: raw.owner || currentAccount(),
+      ledger_ct: raw.ledger_ct || raw.ledger || raw.ledgerContract || '',
+      client_pubkey: raw.client_pubkey || raw.clientPubkey || raw.pubkey || raw.client || '',
+      wallet_pubkey: raw.wallet_pubkey || raw.walletPubkey || '',
+      relays: Array.isArray(raw.relays) ? raw.relays : (raw.relay ? [raw.relay] : []),
+      status,
+      created_at: number(raw.created_at || raw.createdAt || Date.now() / 1000),
+      last_used_at: number(raw.last_used_at || raw.lastUsedAt || raw.updated_at || raw.created_at || Date.now() / 1000),
+      max_single_sat: number(raw.max_single_sat ?? raw.max_single ?? raw.maxSingleSat, 0),
+      max_total_sat: maxTotal,
+      spent_sat: spent,
+      remaining_sat: remaining,
+      expires_height: number(raw.expires_height ?? raw.expiresHeight ?? 0),
+      events: events.length ? events : [{ type: 'minted', at: raw.created_at || Date.now() / 1000, delta_sat: 0, balance_after_sat: remaining || maxTotal }]
+    };
+  }
+
+  function saveMintedFromDom() {
+    const uriEl = $('nwc-uri');
+    const clientEl = $('nwc-client-pubkey');
+    const uri = uriEl && uriEl.value ? uriEl.value.trim() : '';
+    const clientPubkey = clientEl && clientEl.value ? clientEl.value.trim() : '';
+    if (!uri || !clientPubkey) return;
+
+    const maxTotal = number(($('nwc-max-total') || {}).value, 0);
+    const minted = normalizeSession({
+      owner: currentAccount(),
+      client_pubkey: clientPubkey,
+      status: 'active',
+      created_at: Date.now() / 1000,
+      last_used_at: Date.now() / 1000,
+      relays: selectedRelays(),
+      max_single_sat: number(($('nwc-max-single') || {}).value, 0),
+      max_total_sat: maxTotal,
+      spent_sat: 0,
+      remaining_sat: maxTotal,
+      expires_height: number(($('nwc-expires-height') || {}).value, 0),
+      events: [{ type: 'minted', at: Date.now() / 1000, delta_sat: 0, balance_after_sat: maxTotal }]
+    });
+
+    const sessions = readLocalSessions().filter((s) => s.client_pubkey !== clientPubkey);
+    writeLocalSessions([minted, ...sessions]);
+    state.sessions = mergeSessions([minted], state.sessions);
+    render();
+  }
+
+  function markCurrentRevoked() {
+    const clientPubkey = (($('nwc-client-pubkey') || {}).value || '').trim();
+    if (!clientPubkey) return;
+
+    const sessions = readLocalSessions().map((session) => {
+      if (session.client_pubkey !== clientPubkey) return session;
+      return {
+        ...session,
+        status: 'revoked',
+        last_used_at: Date.now() / 1000,
+        events: [
+          ...(session.events || []),
+          { type: 'revoked', at: Date.now() / 1000, delta_sat: 0, balance_after_sat: number(session.remaining_sat, 0) }
+        ]
+      };
+    });
+
+    writeLocalSessions(sessions);
+    setTimeout(load, 800);
+  }
+
+  function mergeSessions(primary, fallback) {
+    const byKey = new Map();
+    [...fallback, ...primary].forEach((session) => {
+      const normalized = normalizeSession(session);
+      const key = normalized.client_pubkey || `${normalized.created_at}:${normalized.wallet_pubkey}`;
+      byKey.set(key, normalized);
+    });
+    return Array.from(byKey.values()).sort((a, b) => b.last_used_at - a.last_used_at);
+  }
+
+  async function fetchSessions() {
+    const response = await fetch(state.endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'accept': 'application/json' },
+      body: JSON.stringify({ limit: 50, include_events: true })
+    });
+
+    if (!response.ok) throw new Error(`history endpoint returned ${response.status}`);
+    const payload = await response.json();
+    return {
+      accountBalanceSat: payload.account_balance_sat ?? payload.balance_sat ?? null,
+      sessions: Array.isArray(payload.sessions) ? payload.sessions.map(normalizeSession) : []
+    };
+  }
+
+  async function load() {
+    const accountChip = $('nwc-account-chip');
+    if (accountChip) {
+      const account = currentAccount();
+      accountChip.textContent = account === 'unknown-account' ? 'Account unknown' : shortId(account, 10, 8);
+      accountChip.title = account;
+    }
+
+    const errorEl = $('nwc-history-error');
+    if (errorEl) errorEl.hidden = true;
+
+    const localSessions = readLocalSessions().map(normalizeSession);
+
+    try {
+      const remote = await fetchSessions();
+      state.accountBalanceSat = remote.accountBalanceSat;
+      state.sessions = mergeSessions(remote.sessions, localSessions);
+      writeLocalSessions(state.sessions);
+    } catch (err) {
+      state.sessions = localSessions;
+      if (errorEl && !localSessions.length) {
+        errorEl.textContent = `Session history backend unavailable: ${err.message}.`;
+        errorEl.hidden = false;
+      }
+    }
+
+    render();
+  }
+
+  function sessionBadge(session) {
+    const pct = session.max_total_sat > 0 ? (session.remaining_sat / session.max_total_sat) : 0;
+    if (session.status === 'revoked') return ['REVOKED', 'nwc-badge-revoked'];
+    if (session.status === 'expired') return ['EXPIRED', 'nwc-badge-expired'];
+    if (pct > 0 && pct <= .2) return ['LOW FUNDS', 'nwc-badge-low'];
+    return ['ACTIVE', 'nwc-badge-active'];
+  }
+
+  function formatSats(value) {
+    const n = number(value, 0);
+    return `${n.toLocaleString()} sats`;
+  }
+
+  function formatTime(seconds) {
+    if (!seconds) return '—';
+    const date = new Date(seconds * 1000);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function formatDateTime(seconds) {
+    if (!seconds) return '—';
+    const date = new Date(seconds * 1000);
+    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function eventLabel(event) {
+    const type = String(event.type || event.event || '').replace(/_/g, ' ');
+    if (!type) return 'Event';
+    return type.charAt(0).toUpperCase() + type.slice(1);
+  }
+
+  function visibleSessions() {
+    return state.sessions.filter((session) => {
+      if (state.filter === 'all') return true;
+      if (state.filter === 'low') {
+        return session.status === 'active' && session.max_total_sat > 0 && (session.remaining_sat / session.max_total_sat) <= .2;
+      }
+      return session.status === state.filter;
+    });
+  }
+
+  function renderSummary() {
+    const active = state.sessions.filter((s) => s.status === 'active');
+    const remaining = active.reduce((sum, s) => sum + number(s.remaining_sat, 0), 0);
+
+    const balanceEl = $('nwc-summary-account-balance');
+    const activeEl = $('nwc-summary-active');
+    const remainingEl = $('nwc-summary-remaining');
+
+    if (balanceEl) balanceEl.textContent = state.accountBalanceSat == null ? '—' : formatSats(state.accountBalanceSat);
+    if (activeEl) activeEl.textContent = String(active.length);
+    if (remainingEl) remainingEl.textContent = formatSats(remaining);
+  }
+
+  function renderSession(session) {
+    const [badgeText, badgeClass] = sessionBadge(session);
+    const maxTotal = number(session.max_total_sat, 0);
+    const remaining = number(session.remaining_sat, 0);
+    const spent = number(session.spent_sat, 0);
+    const pct = maxTotal > 0 ? Math.max(0, Math.min(100, Math.round((remaining / maxTotal) * 100))) : 0;
+    const relays = session.relays.length ? session.relays.map((r) => r.replace('wss://', '')).join(', ') : 'no relays recorded';
+    const events = session.events.slice(-5).reverse();
+
+    return `
+      <article class="nwc-session-card" data-client-pubkey="${escapeHtml(session.client_pubkey)}">
+        <div class="nwc-session-head">
+          <div>
+            <strong>${escapeHtml(badgeText === 'ACTIVE' ? 'Active session' : badgeText.toLowerCase().replace(/^./, (c) => c.toUpperCase()) + ' session')}</strong>
+            <code title="${escapeHtml(session.client_pubkey)}">${escapeHtml(shortId(session.client_pubkey, 12, 8))}</code>
+          </div>
+          <span class="nwc-badge ${badgeClass}">${badgeText}</span>
+        </div>
+
+        <div class="nwc-balance-bar" title="${escapeHtml(formatSats(remaining))} remaining from ${escapeHtml(formatSats(maxTotal))}">
+          <div class="nwc-balance-fill" style="width:${pct}%"></div>
+        </div>
+
+        <div class="nwc-session-metrics">
+          <span>Remaining <strong>${escapeHtml(formatSats(remaining))}</strong></span>
+          <span>Used <strong>${escapeHtml(formatSats(spent))} / ${escapeHtml(formatSats(maxTotal))}</strong></span>
+          <span>Max single <strong>${escapeHtml(formatSats(session.max_single_sat))}</strong></span>
+        </div>
+
+        <div class="nwc-session-meta">
+          <span>Created <strong>${escapeHtml(formatDateTime(session.created_at))}</strong></span>
+          <span>Last activity <strong>${escapeHtml(formatDateTime(session.last_used_at))}</strong></span>
+          <span>Relays <code>${escapeHtml(relays)}</code></span>
+          ${session.ledger_ct ? `<span>Ledger <code title="${escapeHtml(session.ledger_ct)}">${escapeHtml(shortId(session.ledger_ct, 8, 6))}</code></span>` : ''}
+        </div>
+
+        <ol class="nwc-mini-timeline">
+          ${events.map((event) => `
+            <li>
+              <time>${escapeHtml(formatTime(number(event.at || event.created_at || session.created_at)))}</time>
+              <span>${escapeHtml(eventLabel(event))}</span>
+              <b>${event.delta_sat == null ? escapeHtml(formatSats(event.balance_after_sat ?? remaining)) : escapeHtml(`${number(event.delta_sat) > 0 ? '+' : ''}${number(event.delta_sat)} sats`)}</b>
+            </li>`).join('')}
+        </ol>
+
+        <div class="nwc-session-actions">
+          <button class="nwc-btn nwc-btn-secondary" type="button" data-copy-client="${escapeHtml(session.client_pubkey)}">Copy client pubkey</button>
+          ${session.status === 'active' ? `<button class="nwc-btn nwc-btn-danger" type="button" data-revoke-client="${escapeHtml(session.client_pubkey)}">Revoke</button>` : ''}
+        </div>
+      </article>`;
+  }
+
+  function render() {
+    renderSummary();
+    const list = visibleSessions();
+    const timeline = $('nwc-session-timeline');
+    const empty = $('nwc-history-empty');
+
+    if (!timeline || !empty) return;
+
+    if (!list.length) {
+      timeline.innerHTML = '';
+      empty.hidden = false;
+      return;
+    }
+
+    empty.hidden = true;
+    timeline.innerHTML = list.map(renderSession).join('');
+  }
+
+  function setFilter(filter) {
+    state.filter = filter;
+    document.querySelectorAll('#nwc-modal .nwc-filter').forEach((button) => {
+      button.classList.toggle('active', button.dataset.nwcFilter === filter);
+    });
+    render();
+  }
+
+  function bindEvents() {
+    document.querySelectorAll('#nwc-modal .nwc-filter').forEach((button) => {
+      button.addEventListener('click', () => setFilter(button.dataset.nwcFilter || 'active'));
+    });
+
+    const refresh = $('nwc-history-refresh-btn');
+    if (refresh) refresh.addEventListener('click', load);
+
+    const open = $('open-nwc-modal-btn');
+    if (open) open.addEventListener('click', () => setTimeout(load, 120));
+
+    const mint = $('nwc-mint-btn');
+    if (mint) mint.addEventListener('click', () => setTimeout(saveMintedFromDom, 900));
+
+    const revoke = $('nwc-revoke-btn');
+    if (revoke) revoke.addEventListener('click', markCurrentRevoked);
+
+    const uri = $('nwc-uri');
+    const client = $('nwc-client-pubkey');
+    [uri, client].filter(Boolean).forEach((el) => {
+      el.addEventListener('change', saveMintedFromDom);
+      el.addEventListener('input', saveMintedFromDom);
+      new MutationObserver(saveMintedFromDom).observe(el, { attributes: true, childList: true, characterData: true, subtree: true });
+    });
+
+    const timeline = $('nwc-session-timeline');
+    if (timeline) {
+      timeline.addEventListener('click', async (event) => {
+        const copyButton = event.target.closest('[data-copy-client]');
+        if (copyButton) {
+          await navigator.clipboard.writeText(copyButton.dataset.copyClient || '');
+          copyButton.textContent = 'Copied';
+          setTimeout(() => { copyButton.textContent = 'Copy client pubkey'; }, 1000);
+          return;
+        }
+
+        const revokeButton = event.target.closest('[data-revoke-client]');
+        if (revokeButton) {
+          const clientPubkey = revokeButton.dataset.revokeClient;
+          const currentClient = $('nwc-client-pubkey');
+          if (currentClient) currentClient.value = clientPubkey;
+          const mainRevoke = $('nwc-revoke-btn');
+          if (mainRevoke) mainRevoke.click();
+        }
+      });
+    }
+  }
+
+  window.DamageNwcHistory = {
+    initialized: true,
+    load,
+    render,
+    rememberMintedSession: saveMintedFromDom,
+    markCurrentRevoked,
+    setFilter
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { bindEvents(); load(); });
+  } else {
+    bindEvents();
+    load();
+  }
+})();
+</script>
