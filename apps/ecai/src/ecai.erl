@@ -51,8 +51,11 @@ init() ->
 hash_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 
 curve_add(_X1, _Y1, _X2, _Y2) -> erlang:nif_error(nif_library_not_loaded).
-hash_to_curve_point(Text) ->
-    {XBin, YBin, Counter} = hash_to_curve(Text),
+
+hash_to_curve_point(Data) when is_binary(Data) ->
+    hash_to_curve_point(binary_to_list(binary:encode_hex(crypto:hash(sha256, Data))));
+hash_to_curve_point(Data) when is_list(Data) ->
+    {XBin, YBin, Counter} = hash_to_curve(Data),
     #{
         x_bin => XBin,
         y_bin => YBin,

@@ -10,6 +10,10 @@
 
 -export([
     mint_knowledge/2,
+    mint_knowledge_to/3,
+    mint_verified_pqc_knowledge/4,
+    build_verified_pqc_manifest/7,
+    decrypt_verified_pqc_payload/2,
     mint_alphanumerics_with_ordinals/0,
     deploy_knowledge_nft_contract/0,
     encode/1
@@ -42,9 +46,19 @@ ensure_binary(L) when is_list(L) -> list_to_binary(L).
 -spec mint_knowledge(map(), map()) -> {ok, map()} | {error, map()}.
 mint_knowledge(
     #{public_key := AeAccount0, private_key := _PrivateKey} = KeyPair0,
+    #{subject := _Subject, predicate := _Predicate, object := _Object, context := _Context} =
+        Knowledge
+) ->
+    mint_knowledge_to(KeyPair0, AeAccount0, Knowledge).
+
+-spec mint_knowledge_to(map(), binary() | list(), map()) -> {ok, map()} | {error, map()}.
+mint_knowledge_to(
+    #{public_key := AeAccount0, private_key := _PrivateKey} = KeyPair0,
+    ToAccount0,
     #{subject := Subject, predicate := Predicate, object := Object, context := Context} = Knowledge
 ) ->
     AeAccount = ensure_binary(AeAccount0),
+    ToAccount = ensure_binary(ToAccount0),
     KeyPair = KeyPair0#{public_key := AeAccount},
     try
         EncodedKnowledge = encode(Knowledge),
@@ -62,7 +76,8 @@ mint_knowledge(
 
         ?LOG_DEBUG("mint_knowledge derived", [
             #{
-                account => AeAccount,
+                signer_account => AeAccount,
+                owner_account => ToAccount,
                 token_id => TokenId,
                 fact_key_hex => binary:encode_hex(FactKey),
                 point => point_to_loggable(Point),
@@ -75,6 +90,7 @@ mint_knowledge(
             {ok, IpfsHash} ->
                 do_mint_knowledge_contract_call(
                     KeyPair,
+                    ToAccount,
                     TokenId,
                     FactKey,
                     IpfsHash,
@@ -100,6 +116,269 @@ mint_knowledge(
             ?LOG_ERROR("mint_knowledge crashed: ~p", [Err0]),
             {error, Err0}
     end.
+
+%% -------------------------------------------------------------------
+%% Verified PQC ECAI NFT model
+%%
+%% AE NFT says:          "Who owns this object?"
+%% PQC envelope says:    "Who can read this object?"
+%% DamageBDD report says:"What behaviour verified this object?"
+%% ECAI index says:      "What knowledge structure does this object contain?"
+%%
+%% This keeps ownership, confidentiality, verification and structure as
+%% separate layers. They are tied together by hashes and by the public
+%% manifest CID, but the AE account key is not used as the PQC data key.
+%% -------------------------------------------------------------------
+
+-spec mint_verified_pqc_knowledge(map(), binary() | list(), binary(), map()) ->
+    {ok, map()} | {error, map()}.
+mint_verified_pqc_knowledge(KeyPair, ToAccount0, PQPublicKey, Spec0) when
+    is_map(KeyPair), is_binary(PQPublicKey), is_map(Spec0)
+->
+    ToAccount = ensure_binary(ToAccount0),
+    try
+        Spec = normalize_verified_spec(Spec0),
+        EcaiIndex = maps:get(ecai_index, Spec),
+        DamageBDD = maps:get(damagebdd, Spec),
+        PrivatePayload = verified_private_payload(Spec),
+        PayloadHash = crypto:hash(sha256, PrivatePayload),
+        Envelope = secrets_pqc:encrypt(PrivatePayload, PQPublicKey),
+        ContractId = ct_id(Spec),
+        PublicManifest = build_verified_pqc_manifest(
+            ToAccount,
+            ContractId,
+            EcaiIndex,
+            DamageBDD,
+            PQPublicKey,
+            PayloadHash,
+            Envelope
+        ),
+        ManifestJson = jsx:encode(PublicManifest),
+        ManifestFilename = verified_manifest_filename(PublicManifest),
+        case damage_ipfs:add({data, ManifestJson, ManifestFilename}) of
+            {ok, [#{<<"Hash">> := ManifestCid} | _]} ->
+                Knowledge = public_manifest_knowledge(EcaiIndex, ManifestCid, Spec),
+                case mint_knowledge_to(KeyPair, ToAccount, Knowledge) of
+                    {ok, MintResult} ->
+                        {ok, #{
+                            model => <<"damagebdd:ecai:pqc-nft:v1">>,
+                            contract_id => ContractId,
+                            owner_account => ToAccount,
+                            manifest_cid => ManifestCid,
+                            payload_sha256 => binary:encode_hex(PayloadHash),
+                            recipient_pqpk_sha256 => binary:encode_hex(
+                                crypto:hash(sha256, PQPublicKey)
+                            ),
+                            knowledge => Knowledge,
+                            manifest => PublicManifest,
+                            mint_result => MintResult
+                        }};
+                    {error, _} = Err ->
+                        Err
+                end;
+            {error, Reason} ->
+                {error, #{stage => <<"verified_manifest_ipfs_add">>, reason => safe_term(Reason)}};
+            Other ->
+                {error, #{
+                    stage => <<"verified_manifest_ipfs_add">>,
+                    reason => <<"unexpected_ipfs_response">>,
+                    response => safe_term(Other)
+                }}
+        end
+    catch
+        Class:Reason0:Stack ->
+            Err0 = #{
+                stage => <<"mint_verified_pqc_knowledge">>,
+                class => safe_term(Class),
+                reason => safe_term(Reason0),
+                stacktrace => safe_stacktrace(Stack),
+                spec => safe_term(Spec0)
+            },
+            ?LOG_ERROR("mint_verified_pqc_knowledge crashed: ~p", [Err0]),
+            {error, Err0}
+    end.
+
+-spec build_verified_pqc_manifest(
+    binary(), binary(), map(), map(), binary(), binary(), map()
+) -> map().
+build_verified_pqc_manifest(
+    ToAccount,
+    ContractId,
+    EcaiIndex,
+    DamageBDD,
+    PQPublicKey,
+    PayloadHash,
+    Envelope
+) ->
+    #{
+        <<"model">> => <<"damagebdd:ecai:pqc-nft:v1">>,
+        <<"aeternity_nft">> => #{
+            <<"says">> => <<"Who owns this object?">>,
+            <<"chain">> => <<"aeternity">>,
+            <<"standard">> => <<"aex141">>,
+            <<"contract_id">> => ContractId,
+            <<"owner_at_mint">> => ToAccount
+        },
+        <<"pqc_envelope">> => maps:merge(
+            #{
+                <<"says">> => <<"Who can read this object?">>,
+                <<"domain">> => <<"damagebdd:ecai:pqc:nft-payload:v1">>,
+                <<"recipient_pqpk_sha256">> => binary:encode_hex(
+                    crypto:hash(sha256, PQPublicKey)
+                ),
+                <<"payload_sha256">> => binary:encode_hex(PayloadHash),
+                <<"envelope_sha256">> => binary:encode_hex(
+                    crypto:hash(sha256, term_to_binary(Envelope))
+                )
+            },
+            pqc_envelope_to_json(Envelope)
+        ),
+        <<"damagebdd_report">> => maps:merge(
+            #{<<"says">> => <<"What behaviour verified this object?">>},
+            jsonable_map(DamageBDD)
+        ),
+        <<"ecai_index">> => maps:merge(
+            #{<<"says">> => <<"What knowledge structure does this object contain?">>},
+            jsonable_map(EcaiIndex)
+        )
+    }.
+
+-spec decrypt_verified_pqc_payload(map(), binary()) -> {ok, map() | binary()} | {error, term()}.
+decrypt_verified_pqc_payload(PublicManifest, PQPrivateKey) when
+    is_map(PublicManifest), is_binary(PQPrivateKey)
+->
+    try
+        Envelope = pqc_envelope_from_verified_manifest(PublicManifest),
+        Plaintext = secrets_pqc:decrypt(Envelope, PQPrivateKey),
+        case catch jsx:decode(Plaintext, [return_maps]) of
+            {'EXIT', _} -> {ok, Plaintext};
+            Json -> {ok, Json}
+        end
+    catch
+        Class:Reason:Stack ->
+            {error, #{class => Class, reason => Reason, stacktrace => Stack}}
+    end.
+
+normalize_verified_spec(Spec0) ->
+    EcaiIndex0 = maps:get(ecai_index, Spec0, maps:get(ecai, Spec0, #{})),
+    EcaiIndex = normalize_ecai_index(Spec0, EcaiIndex0),
+    DamageBDD0 = maps:get(damagebdd, Spec0, #{}),
+    DamageBDD = normalize_damagebdd_report(Spec0, DamageBDD0),
+    Payload = maps:get(plaintext, Spec0, maps:get(payload, Spec0, #{})),
+    Spec0#{ecai_index => EcaiIndex, damagebdd => DamageBDD, plaintext => Payload}.
+
+normalize_ecai_index(Spec, EcaiIndex0) ->
+    EcaiIndex1 = jsonable_map(EcaiIndex0),
+    Defaults = #{
+        <<"subject">> => to_bin(
+            maps:get(subject, Spec, maps:get(<<"subject">>, EcaiIndex1, <<"ecai">>))
+        ),
+        <<"predicate">> => to_bin(
+            maps:get(predicate, Spec, maps:get(<<"predicate">>, EcaiIndex1, <<"contains">>))
+        ),
+        <<"object">> => to_bin(
+            maps:get(object, Spec, maps:get(<<"object">>, EcaiIndex1, <<"knowledge">>))
+        ),
+        <<"context">> => to_bin(
+            maps:get(context, Spec, maps:get(<<"context">>, EcaiIndex1, <<"damagebdd:ecai">>))
+        )
+    },
+    maps:merge(Defaults, EcaiIndex1).
+
+normalize_damagebdd_report(Spec, DamageBDD0) ->
+    DamageBDD1 = jsonable_map(DamageBDD0),
+    Optional = optional_public_fields(
+        Spec,
+        [
+            {feature_hash, <<"feature_hash">>},
+            {report_hash, <<"report_hash">>},
+            {run_id, <<"run_id">>},
+            {result_status, <<"result_status">>},
+            {schedule_id, <<"schedule_id">>}
+        ]
+    ),
+    maps:merge(Optional, DamageBDD1).
+
+optional_public_fields(_Spec, []) ->
+    #{};
+optional_public_fields(Spec, [{AtomKey, BinKey} | Rest]) ->
+    Tail = optional_public_fields(Spec, Rest),
+    case maps:get(AtomKey, Spec, maps:get(BinKey, Spec, undefined)) of
+        undefined -> Tail;
+        Value -> maps:put(BinKey, jsonable(Value), Tail)
+    end.
+
+verified_private_payload(Spec) ->
+    jsx:encode(#{
+        <<"model">> => <<"damagebdd:ecai:pqc-nft-private-payload:v1">>,
+        <<"pqc_envelope_says">> => <<"Who can read this object?">>,
+        <<"damagebdd_report">> => maps:get(damagebdd, Spec),
+        <<"ecai_index">> => maps:get(ecai_index, Spec),
+        <<"payload">> => jsonable(maps:get(plaintext, Spec))
+    }).
+
+public_manifest_knowledge(EcaiIndex, ManifestCid, Spec) ->
+    Subject = maps:get(<<"subject">>, EcaiIndex),
+    Predicate = maps:get(public_predicate, Spec, <<"is sealed as">>),
+    Context = maps:get(public_context, Spec, <<"damagebdd:ecai:pqc-nft:v1">>),
+    #{
+        subject => Subject,
+        predicate => to_bin(Predicate),
+        object => ManifestCid,
+        context => to_bin(Context)
+    }.
+
+pqc_envelope_to_json(#{
+    v := V,
+    alg := Alg,
+    kem := Kem,
+    kem_ct := KemCiphertext,
+    iv := IV,
+    tag := Tag,
+    ct := Ciphertext
+}) ->
+    #{
+        <<"v">> => V,
+        <<"alg">> => atom_to_binary(Alg, utf8),
+        <<"kem">> => atom_to_binary(Kem, utf8),
+        <<"kem_ct">> => base64:encode(KemCiphertext),
+        <<"iv">> => base64:encode(IV),
+        <<"tag">> => base64:encode(Tag),
+        <<"ct">> => base64:encode(Ciphertext)
+    }.
+
+parse_alg(<<"pqc_hybrid_aes_256_gcm">>) -> pqc_hybrid_aes_256_gcm;
+parse_alg("pqc_hybrid_aes_256_gcm") -> pqc_hybrid_aes_256_gcm;
+parse_alg(pqc_hybrid_aes_256_gcm) -> pqc_hybrid_aes_256_gcm.
+
+parse_kem(<<"ml_kem_768">>) -> ml_kem_768;
+parse_kem("ml_kem_768") -> ml_kem_768;
+parse_kem(ml_kem_768) -> ml_kem_768.
+
+pqc_envelope_from_verified_manifest(PublicManifest) ->
+    PQC = map_get_any([<<"pqc_envelope">>, "pqc_envelope", pqc_envelope], PublicManifest),
+    #{
+        v => map_get_any([<<"v">>, "v", v], PQC),
+        alg => parse_alg(map_get_any([<<"alg">>, "alg", alg], PQC)),
+        kem => parse_kem(map_get_any([<<"kem">>, "kem", kem], PQC)),
+        kem_ct => base64:decode(to_bin(map_get_any([<<"kem_ct">>, "kem_ct", kem_ct], PQC))),
+        iv => base64:decode(to_bin(map_get_any([<<"iv">>, "iv", iv], PQC))),
+        tag => base64:decode(to_bin(map_get_any([<<"tag">>, "tag", tag], PQC))),
+        ct => base64:decode(to_bin(map_get_any([<<"ct">>, "ct", ct], PQC)))
+    }.
+
+map_get_any([Key | Rest], Map) when is_map(Map) ->
+    case maps:get(Key, Map, undefined) of
+        undefined -> map_get_any(Rest, Map);
+        Value -> Value
+    end;
+map_get_any([], Map) ->
+    error({missing_key, Map}).
+
+verified_manifest_filename(PublicManifest) ->
+    Hash = crypto:hash(sha256, jsx:encode(PublicManifest)),
+    <<"ecai_pqc_nft_", (binary:encode_hex(Hash))/binary, ".json">>.
+
 -spec add_knowledge_blob(binary(), binary()) -> {ok, binary()} | {error, map()}.
 add_knowledge_blob(EncodedKnowledge, PointFilename) ->
     case damage_ipfs:add({data, EncodedKnowledge, PointFilename}) of
@@ -126,6 +405,7 @@ add_knowledge_blob(EncodedKnowledge, PointFilename) ->
     end.
 -spec do_mint_knowledge_contract_call(
     map(),
+    binary(),
     integer(),
     binary(),
     binary(),
@@ -138,6 +418,7 @@ add_knowledge_blob(EncodedKnowledge, PointFilename) ->
 ) -> {ok, map()} | {error, map()}.
 do_mint_knowledge_contract_call(
     #{public_key := AeAccount, private_key := _PrivateKey} = KeyPair,
+    ToAccount,
     TokenId,
     FactKey,
     IpfsHash,
@@ -170,7 +451,8 @@ do_mint_knowledge_contract_call(
 
     ?LOG_ERROR("mint args debug: ~p", [
         #{
-            ae_account => AeAccount,
+            signer_account => AeAccount,
+            owner_account => ToAccount,
             token_id => TokenId,
             token_id_is_integer => is_integer(TokenId),
             fact_key_size => byte_size(FactKey),
@@ -184,7 +466,7 @@ do_mint_knowledge_contract_call(
             object => Object
         }
     ]),
-    Args = [AeAccount, TokenId, FactKey, SKey, PKey, OKey, CKey, KKey, Payload],
+    Args = [ToAccount, TokenId, FactKey, SKey, PKey, OKey, CKey, KKey, Payload],
     ?LOG_ERROR("mint_derived dry-run raw: ~p", [Args]),
     %Dry = damage_ae:contract_call_dry(
     %    KeyPair,
@@ -197,7 +479,8 @@ do_mint_knowledge_contract_call(
 
     ?LOG_DEBUG("mint_knowledge contract args", [
         #{
-            account => AeAccount,
+            signer_account => AeAccount,
+            owner_account => ToAccount,
             ct => ct_id(#{}),
             token_id => TokenId,
             fact_key_hex => binary:encode_hex(FactKey),
@@ -221,7 +504,8 @@ do_mint_knowledge_contract_call(
                 Out = #{
                     stage => <<"contract_call">>,
                     status => <<"ok">>,
-                    account => AeAccount,
+                    signer_account => AeAccount,
+                    owner_account => ToAccount,
                     token_id => TokenId,
                     fact_key => binary:encode_hex(FactKey),
                     ipfs => IpfsHash,
@@ -236,7 +520,8 @@ do_mint_knowledge_contract_call(
                     stage => <<"contract_call">>,
                     status => <<"error">>,
                     reason => safe_term(Reason),
-                    account => AeAccount,
+                    signer_account => AeAccount,
+                    owner_account => ToAccount,
                     token_id => TokenId,
                     fact_key => binary:encode_hex(FactKey),
                     ipfs => IpfsHash,
@@ -251,7 +536,8 @@ do_mint_knowledge_contract_call(
                     status => <<"error">>,
                     reason => <<"unexpected_contract_response">>,
                     response => safe_term(Other),
-                    account => AeAccount,
+                    signer_account => AeAccount,
+                    owner_account => ToAccount,
                     token_id => TokenId,
                     fact_key => binary:encode_hex(FactKey),
                     ipfs => IpfsHash,
@@ -269,7 +555,8 @@ do_mint_knowledge_contract_call(
                 class => safe_term(Class),
                 reason => safe_term(Reason0),
                 stacktrace => safe_stacktrace(Stack),
-                account => AeAccount,
+                signer_account => AeAccount,
+                owner_account => ToAccount,
                 token_id => TokenId,
                 fact_key => binary:encode_hex(FactKey),
                 ipfs => IpfsHash,
@@ -808,6 +1095,25 @@ to_loggable(V) when is_map(V) ->
 to_loggable(V) when is_tuple(V) ->
     iolist_to_binary(io_lib:format("~p", [V]));
 to_loggable(V) ->
+    iolist_to_binary(io_lib:format("~p", [V])).
+
+jsonable_map(M) when is_map(M) ->
+    maps:from_list([{to_bin(K), jsonable(V)} || {K, V} <- maps:to_list(M)]);
+jsonable_map(undefined) ->
+    #{}.
+
+jsonable(V) when is_binary(V) -> V;
+jsonable(V) when is_integer(V); is_float(V); is_boolean(V) -> V;
+jsonable(V) when is_atom(V) -> atom_to_binary(V, utf8);
+jsonable(V) when is_map(V) -> jsonable_map(V);
+jsonable(V) when is_list(V) ->
+    case io_lib:printable_unicode_list(V) of
+        true -> unicode:characters_to_binary(V);
+        false -> [jsonable(X) || X <- V]
+    end;
+jsonable(V) when is_tuple(V) ->
+    iolist_to_binary(io_lib:format("~p", [V]));
+jsonable(V) ->
     iolist_to_binary(io_lib:format("~p", [V])).
 
 safe_term(Term) when is_binary(Term) ->
