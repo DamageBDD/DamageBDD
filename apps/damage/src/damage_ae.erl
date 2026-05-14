@@ -34,7 +34,6 @@
     transfer_hits/3,
     transfer_damage_tokens/2,
     transfer_damage_tokens/3,
-    confirm_spend_all/0,
     start_batch_spend_timer/0,
     get_reports/1,
     get_reports/2,
@@ -82,6 +81,7 @@
     invalidate_cache/1,
     spend/2,
     get_spend/1,
+    confirm_spend_all/0,
     confirm_spend/2
 ]).
 -export([
@@ -925,6 +925,7 @@ contract_call_payfor_user(
         {ok, #{"tx_hash" := ContractCallTxHash}} ->
             maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
         Error ->
+            ?LOG_ERROR("contract_call_payfor_user ~p", [Error]),
             Error
     end;
 contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
@@ -1118,7 +1119,7 @@ contract_deploy_for(
     DummyGas = min_gas(),
     DummyFee = min_fee(),
     Amount = 0,
-    GasPrice = gas_price() * 4,
+    GasPrice = gas_price(),
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
 

@@ -88,14 +88,20 @@ build_gas(Tag, TxSize, RelativeTtl, InnerTxSize) ->
 %%   base = BASE_GAS/5
 %%   other = (outer_size - inner_size) * GAS_PER_BYTE
 %%--------------------------------------------------------------------
+%-spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
+%calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
+%    build_gas(
+%        paying_for_tx,
+%        byte_size(PayingForTxBin),
+%        0,
+%        byte_size(InnerTxBin)
+%    ).
 -spec calculate_paying_for_gas(binary(), binary()) -> non_neg_integer().
 calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
-    build_gas(
-        paying_for_tx,
-        byte_size(PayingForTxBin),
-        0,
-        byte_size(InnerTxBin)
-    ).
+    BaseGas = 26000,
+    GasPerByte = ?GAS_PER_BYTE,
+    SizeDiff = byte_size(PayingForTxBin) - byte_size(InnerTxBin),
+    BaseGas + (SizeDiff * GasPerByte).
 
 %%--------------------------------------------------------------------
 %% Helpers
