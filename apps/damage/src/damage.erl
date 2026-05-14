@@ -396,18 +396,80 @@ execute_feature(
     deinit_logging(Config),
     FinalContext.
 
+
 execute_scenario(Config, Context, undefined, Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);
 execute_scenario(Config, Context, [], Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);
-execute_scenario(Config, Context, {_, BackGroundSteps}, Scenario) ->
-    {LineNo, ScenarioName, Tags, Steps} = Scenario,
+
+execute_scenario(
+    Config,
+    Context,
+    {_, BackGroundSteps} = BackGround,
+    {LineNo, ScenarioName, Tags, Steps, {datatable, Rows}}
+) ->
+    case Rows of
+        [] ->
+            Context;
+        [Header | DataRows] ->
+            lists:foldl(
+                fun(Row, AccContext) ->
+                    Vars = maps:from_list(lists:zip(Header, Row)),
+                    ScenarioName0 = expand_outline_value(ScenarioName, Vars),
+                    Steps0 = expand_outline_steps(Steps, Vars),
+                    execute_scenario(
+                        Config,
+                        AccContext,
+                        BackGround,
+                        {LineNo, ScenarioName0, Tags, Steps0}
+                    )
+                end,
+                Context,
+                DataRows
+            )
+    end;
+
+execute_scenario(Config, Context, {_, BackGroundSteps}, {LineNo, ScenarioName, Tags, Steps}) ->
     formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
     lists:foldl(
         fun(S, C) -> execute_step(Config, S, C) end,
         Context,
         lists:append(BackGroundSteps, Steps)
+    );
+
+execute_scenario(_Config, Context, _BackGround, Scenario) ->
+    maps:put(
+        fail,
+        damage_utils:strf("Unsupported scenario shape: ~p", [Scenario]),
+        Context
     ).
+
+expand_outline_steps(Steps, Vars) ->
+    [expand_outline_step(Step, Vars) || Step <- Steps].
+
+expand_outline_step({LineNo, Keyword, Body}, Vars) ->
+    {LineNo, Keyword, expand_outline_body(Body, Vars)};
+expand_outline_step({LineNo, Keyword, Body, Args}, Vars) ->
+    {LineNo, Keyword, expand_outline_body(Body, Vars), expand_outline_value(Args, Vars)}.
+
+expand_outline_body(Body, Vars) when is_list(Body) ->
+    [expand_outline_value(Part, Vars) || Part <- Body];
+expand_outline_body(Body, Vars) ->
+    expand_outline_value(Body, Vars).
+
+expand_outline_value(Value, Vars) when is_binary(Value) ->
+    maps:fold(
+        fun(Key, Replacement, Acc) ->
+            Pattern = <<"<", Key/binary, ">">>,
+            binary:replace(Acc, Pattern, Replacement, [global])
+        end,
+        Value,
+        Vars
+    );
+expand_outline_value(Value, Vars) when is_list(Value) ->
+    binary_to_list(expand_outline_value(unicode:characters_to_binary(Value), Vars));
+expand_outline_value(Value, _Vars) ->
+    Value.
 
 % step execution: should execution output be passed in state and then
 % handled OR should the handling happen withing the execution function
@@ -482,7 +544,7 @@ execute_step_module(
             );
         {'EXIT', {function_clause, Err0}} ->
             case Err0 of
-                [{_, step, _, _Loc} | _] ->
+                [{_, F, _, _Loc} | _] when F =:= step; F =:= step_dry ->
                     maps:put(
                         step_found,
                         false,
