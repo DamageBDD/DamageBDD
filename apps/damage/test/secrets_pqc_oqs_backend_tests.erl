@@ -29,6 +29,7 @@ secrets_pqc_oqs_backend_test_() ->
                     fun oqs_wrong_private_key_does_not_match/0,
                     fun secrets_pqc_roundtrip_using_oqs_backend/0,
                     fun secrets_pqc_b64_roundtrip_using_oqs_backend/0,
+                    fun secrets_pqc_context_bound_roundtrip_using_oqs_backend/0,
                     fun secrets_pqc_tampered_payload_fails/0,
                     fun unsupported_kem_errors/0
                 ]}
@@ -93,10 +94,10 @@ oqs_keypair_shape() ->
     ?assert(byte_size(PublicKey) > 0),
     ?assert(byte_size(PrivateKey) > 0),
 
-    %% ML-KEM-768 raw liboqs sizes. If your NIF intentionally wraps or
-    %% encodes keys, remove these strict assertions.
-    ?assertEqual(1184, byte_size(PublicKey)),
-    ?assertEqual(2400, byte_size(PrivateKey)).
+    %% ML-KEM-768 raw liboqs sizes. Keep strict size checks opt-in so
+    %% wrapped/encoded NIF key formats can still pass backend integration.
+    maybe_assert_raw_size(public_key, PublicKey, 1184),
+    maybe_assert_raw_size(private_key, PrivateKey, 2400).
 
 oqs_kem_roundtrip() ->
     #{public_key := PublicKey, private_key := PrivateKey} =
@@ -121,8 +122,9 @@ oqs_kem_roundtrip() ->
     ?assert(is_binary(SharedSecret1)),
     ?assert(is_binary(SharedSecret2)),
 
-    %% ML-KEM-768 raw liboqs sizes.
-    ?assertEqual(1088, byte_size(Ciphertext)),
+    %% ML-KEM-768 raw liboqs ciphertext size is opt-in because some NIFs
+    %% may wrap or encode ciphertexts. The shared secret must remain raw.
+    maybe_assert_raw_size(ciphertext, Ciphertext, 1088),
     ?assertEqual(32, byte_size(SharedSecret1)),
     ?assertEqual(SharedSecret1, SharedSecret2).
 
@@ -173,6 +175,30 @@ secrets_pqc_b64_roundtrip_using_oqs_backend() ->
         secrets_pqc:decrypt_b64(?KEM, EncodedEnvelope, PrivateKey)
     ).
 
+secrets_pqc_context_bound_roundtrip_using_oqs_backend() ->
+    #{public_key := PublicKey, private_key := PrivateKey} =
+        secrets_pqc:generate_keypair(?KEM),
+
+    Plaintext = <<"DamageBDD context-bound OQS payload">>,
+    AADContext = #{
+        <<"domain">> => <<"damagebdd:test:oqs:aad:v1">>,
+        <<"contract_id">> => <<"ct_test">>,
+        <<"owner_at_mint">> => <<"ak_test">>,
+        <<"payload_sha256">> => binary:encode_hex(crypto:hash(sha256, Plaintext)),
+        <<"recipient_pqpk_sha256">> => binary:encode_hex(crypto:hash(sha256, PublicKey))
+    },
+    Envelope = secrets_pqc:encrypt(?KEM, Plaintext, PublicKey, AADContext),
+
+    ?assert(is_binary(maps:get(aad_sha256, Envelope))),
+    ?assertEqual(
+        Plaintext,
+        secrets_pqc:decrypt(?KEM, Envelope, PrivateKey, AADContext)
+    ),
+
+    WrongAADContext = AADContext#{<<"contract_id">> := <<"ct_wrong">>},
+    WrongResult = catch secrets_pqc:decrypt(?KEM, Envelope, PrivateKey, WrongAADContext),
+    ?assertNotEqual(Plaintext, WrongResult).
+
 secrets_pqc_tampered_payload_fails() ->
     #{public_key := PublicKey, private_key := PrivateKey} =
         secrets_pqc:generate_keypair(?KEM),
@@ -204,6 +230,14 @@ unsupported_kem_errors() ->
             <<"priv">>
         )
     ).
+
+maybe_assert_raw_size(Label, Bin, ExpectedSize) ->
+    case application:get_env(damage, pqc_oqs_assert_raw_sizes, false) of
+        true ->
+            ?assertEqual({Label, ExpectedSize}, {Label, byte_size(Bin)});
+        _ ->
+            ok
+    end.
 
 flip_first_byte(<<Byte:8, Rest/binary>>) ->
     <<(Byte bxor 16#01):8, Rest/binary>>;

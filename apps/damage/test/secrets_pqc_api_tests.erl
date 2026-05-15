@@ -35,10 +35,14 @@ pqc_exports() ->
     [
         {generate_keypair, 0},
         {generate_keypair, 1},
+        {encrypt, 4},
+        {decrypt, 4},
         {encrypt_b64, 2},
         {encrypt_b64, 3},
+        {encrypt_b64, 4},
         {decrypt_b64, 2},
         {decrypt_b64, 3},
+        {decrypt_b64, 4},
         {is_pqc_envelope, 1}
     ].
 
@@ -55,6 +59,7 @@ secrets_pqc_api_test_() ->
             fun encrypt_decrypt_list_roundtrip/0,
             fun explicit_kem_roundtrip/0,
             fun b64_roundtrip/0,
+            fun aad_context_roundtrip/0,
             fun envelope_shape_and_authentication/0,
             fun ciphertexts_are_randomized/0,
             fun unsupported_kem_errors/0
@@ -138,6 +143,41 @@ b64_roundtrip() ->
         Plaintext,
         secrets_pqc:decrypt_b64(EncodedEnvelope, PrivateKey)
     ).
+
+aad_context_roundtrip() ->
+    #{public_key := PublicKey, private_key := PrivateKey} =
+        secrets_pqc:generate_keypair(),
+
+    Plaintext = <<"context-bound payload">>,
+    AADContext = #{
+        <<"domain">> => <<"damagebdd:test:pqc:aad:v1">>,
+        <<"contract_id">> => <<"ct_test">>,
+        <<"owner_at_mint">> => <<"ak_test">>,
+        <<"payload_sha256">> => binary:encode_hex(crypto:hash(sha256, Plaintext)),
+        <<"recipient_pqpk_sha256">> => binary:encode_hex(crypto:hash(sha256, PublicKey))
+    },
+
+    %% Critical: use explicit context-bound API.
+    Envelope =
+        secrets_pqc:encrypt(?DEFAULT_KEM, Plaintext, PublicKey, AADContext),
+
+    ?assertMatch(#{aad_sha256 := _}, Envelope),
+    ?assert(is_binary(maps:get(aad_sha256, Envelope))),
+
+    ?assertEqual(
+        Plaintext,
+        secrets_pqc:decrypt(?DEFAULT_KEM, Envelope, PrivateKey, AADContext)
+    ),
+
+    WrongAADContext = AADContext#{<<"owner_at_mint">> := <<"ak_wrong">>},
+
+    WrongContextResult =
+        catch secrets_pqc:decrypt(?DEFAULT_KEM, Envelope, PrivateKey, WrongAADContext),
+    ?assertNotEqual(Plaintext, WrongContextResult),
+
+    MissingContextResult =
+        catch secrets_pqc:decrypt(?DEFAULT_KEM, Envelope, PrivateKey),
+    ?assertNotEqual(Plaintext, MissingContextResult).
 
 ciphertexts_are_randomized() ->
     #{public_key := PublicKey, private_key := PrivateKey} =

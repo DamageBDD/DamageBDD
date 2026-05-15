@@ -9,9 +9,16 @@
 %%% - This sits cleanly on top of your existing infra without replacing
 %%%   node_keypair() or existing secrets:encrypt/decrypt paths.
 %%%
-%%% What you need to adapt:
-%%% - The 3 backend_* functions at the bottom.
-%%% - Wire them to your actual liboqs / ex_oqs / NIF module.
+%%% AAD/context binding:
+%%% - All envelopes use AES-GCM AAD v2.
+%%% - encrypt/4 and decrypt/4 bind an explicit public context into AES-GCM AAD.
+%%% - encrypt/2 and decrypt/2 use the explicit no-context value: none.
+%%% - encrypt/3 supports either:
+%%%     encrypt(Kem, Plaintext, PQPublicKey)
+%%%     encrypt(Plaintext, PQPublicKey, AADContext)
+%%% - decrypt/3 supports either:
+%%%     decrypt(KemDefault, Envelope, PQPrivateKey)
+%%%     decrypt(Envelope, PQPrivateKey, AADContext)
 %%%
 %%% Expected backend contract:
 %%%   backend_keypair(Kem) ->
@@ -33,21 +40,24 @@
     generate_keypair/1,
     encrypt/2,
     encrypt/3,
+    encrypt/4,
     decrypt/2,
     decrypt/3,
+    decrypt/4,
     encrypt_b64/2,
     encrypt_b64/3,
+    encrypt_b64/4,
     decrypt_b64/2,
     decrypt_b64/3,
+    decrypt_b64/4,
     is_pqc_envelope/1
 ]).
 
 -define(DEFAULT_KEM, ml_kem_768).
 -define(AES_KEY_BYTES, 32).
 -define(AES_GCM_IV_BYTES, 12).
--define(AES_GCM_TAG_BYTES, 16).
 -define(INFO_KEY, <<"damagebdd:secrets_pqc:aes-key:v1">>).
--define(INFO_AAD, <<"damagebdd:secrets_pqc:aad:v1">>).
+-define(INFO_AAD, <<"damagebdd:secrets_pqc:aad:v2">>).
 
 %% ------------------------------------------------------------------
 %% Public API
@@ -58,19 +68,33 @@ generate_keypair() ->
 
 generate_keypair(Kem) ->
     backend_keypair(Kem).
-
 encrypt(Plaintext, PQPublicKey) ->
-    encrypt(?DEFAULT_KEM, Plaintext, PQPublicKey).
+    encrypt(?DEFAULT_KEM, Plaintext, PQPublicKey, none).
 
-encrypt(Kem, Plaintext, PQPublicKey) when is_list(Plaintext) ->
-    encrypt(Kem, unicode:characters_to_binary(Plaintext), PQPublicKey);
-encrypt(Kem, Plaintext, PQPublicKey) when is_binary(Plaintext), is_binary(PQPublicKey) ->
+encrypt(Kem, Plaintext, PQPublicKey) when is_atom(Kem) ->
+    encrypt(Kem, Plaintext, PQPublicKey, none);
+encrypt(Plaintext, PQPublicKey, AADContext) when
+    (is_binary(Plaintext) orelse is_list(Plaintext)),
+    is_binary(PQPublicKey)
+->
+    encrypt(?DEFAULT_KEM, Plaintext, PQPublicKey, AADContext).
+encrypt(Kem, Plaintext0, PQPublicKey, AADContext) when
+    is_atom(Kem),
+    is_binary(PQPublicKey),
+    is_binary(Plaintext0) orelse is_list(Plaintext0)
+->
+    Plaintext =
+        case Plaintext0 of
+            B when is_binary(B) -> B;
+            L when is_list(L) -> unicode:characters_to_binary(L)
+        end,
+
     #{ciphertext := KemCiphertext, shared_secret := SharedSecret} =
         backend_encapsulate(Kem, PQPublicKey),
 
     DataKey = kdf(SharedSecret, ?INFO_KEY, ?AES_KEY_BYTES),
     IV = crypto:strong_rand_bytes(?AES_GCM_IV_BYTES),
-    AAD = aad(Kem, KemCiphertext),
+    AAD = aad(Kem, KemCiphertext, AADContext),
 
     {Ciphertext, Tag} =
         crypto:crypto_one_time_aead(
@@ -82,7 +106,7 @@ encrypt(Kem, Plaintext, PQPublicKey) when is_binary(Plaintext), is_binary(PQPubl
             true
         ),
 
-    #{
+    Envelope0 = #{
         v => 1,
         alg => pqc_hybrid_aes_256_gcm,
         kem => Kem,
@@ -90,12 +114,23 @@ encrypt(Kem, Plaintext, PQPublicKey) when is_binary(Plaintext), is_binary(PQPubl
         iv => IV,
         tag => Tag,
         ct => Ciphertext
-    }.
+    },
+
+    Envelope0#{aad_sha256 => aad_context_hash(AADContext)}.
 
 decrypt(Envelope, PQPrivateKey) ->
-    decrypt(?DEFAULT_KEM, Envelope, PQPrivateKey).
+    decrypt(?DEFAULT_KEM, Envelope, PQPrivateKey, none).
 
-decrypt(_KemDefault, Envelope, PQPrivateKey) when is_map(Envelope), is_binary(PQPrivateKey) ->
+%% Default-KEM context-bound shape.
+decrypt(Envelope, PQPrivateKey, AADContext) when is_map(Envelope), is_binary(PQPrivateKey) ->
+    decrypt(?DEFAULT_KEM, Envelope, PQPrivateKey, AADContext);
+%% Explicit-KEM shape. The KEM is still taken from the envelope.
+decrypt(KemDefault, Envelope, PQPrivateKey) ->
+    decrypt(KemDefault, Envelope, PQPrivateKey, none).
+
+decrypt(_KemDefault, Envelope, PQPrivateKey, AADContext) when
+    is_map(Envelope), is_binary(PQPrivateKey)
+->
     case Envelope of
         #{
             v := 1,
@@ -106,9 +141,10 @@ decrypt(_KemDefault, Envelope, PQPrivateKey) when is_map(Envelope), is_binary(PQ
             tag := Tag,
             ct := Ciphertext
         } ->
+            assert_aad_hash(Envelope, AADContext),
             SharedSecret = backend_decapsulate(Kem, KemCiphertext, PQPrivateKey),
             DataKey = kdf(SharedSecret, ?INFO_KEY, ?AES_KEY_BYTES),
-            AAD = aad(Kem, KemCiphertext),
+            AAD = aad(Kem, KemCiphertext, AADContext),
             crypto:crypto_one_time_aead(
                 aes_256_gcm,
                 DataKey,
@@ -123,25 +159,41 @@ decrypt(_KemDefault, Envelope, PQPrivateKey) when is_map(Envelope), is_binary(PQ
     end.
 
 encrypt_b64(Plaintext, PQPublicKey) ->
-    encrypt_b64(?DEFAULT_KEM, Plaintext, PQPublicKey).
+    encrypt_b64(?DEFAULT_KEM, Plaintext, PQPublicKey, none).
 
-encrypt_b64(Kem, Plaintext, PQPublicKey) ->
-    base64:encode(term_to_binary(encrypt(Kem, Plaintext, PQPublicKey))).
+encrypt_b64(Kem, Plaintext, PQPublicKey) when is_atom(Kem) ->
+    encrypt_b64(Kem, Plaintext, PQPublicKey, none);
+encrypt_b64(Plaintext, PQPublicKey, AADContext) when
+    (is_binary(Plaintext) orelse is_list(Plaintext)), is_binary(PQPublicKey)
+->
+    encrypt_b64(?DEFAULT_KEM, Plaintext, PQPublicKey, AADContext).
+
+encrypt_b64(Kem, Plaintext, PQPublicKey, AADContext) ->
+    base64:encode(term_to_binary(encrypt(Kem, Plaintext, PQPublicKey, AADContext))).
 
 decrypt_b64(Base64Envelope, PQPrivateKey) ->
-    decrypt_b64(?DEFAULT_KEM, Base64Envelope, PQPrivateKey).
+    decrypt_b64(?DEFAULT_KEM, Base64Envelope, PQPrivateKey, none).
 
-decrypt_b64(KemDefault, Base64Envelope, PQPrivateKey) when is_binary(Base64Envelope) ->
-    decrypt(KemDefault, binary_to_term(base64:decode(Base64Envelope)), PQPrivateKey).
+decrypt_b64(Base64Envelope, PQPrivateKey, AADContext) when
+    is_binary(Base64Envelope), is_binary(PQPrivateKey)
+->
+    decrypt_b64(?DEFAULT_KEM, Base64Envelope, PQPrivateKey, AADContext);
+decrypt_b64(KemDefault, Base64Envelope, PQPrivateKey) ->
+    decrypt_b64(KemDefault, Base64Envelope, PQPrivateKey, none).
+
+decrypt_b64(KemDefault, Base64Envelope, PQPrivateKey, AADContext) when is_binary(Base64Envelope) ->
+    Envelope = binary_to_term(base64:decode(Base64Envelope), [safe]),
+    decrypt(KemDefault, Envelope, PQPrivateKey, AADContext).
 
 is_pqc_envelope(#{
     v := 1,
     alg := pqc_hybrid_aes_256_gcm,
-    kem := _,
-    kem_ct := _,
-    iv := _,
-    tag := _,
-    ct := _
+    kem := _Kem,
+    kem_ct := _KemCiphertext,
+    iv := _IV,
+    tag := _Tag,
+    ct := _Ciphertext,
+    aad_sha256 := _AADHash
 }) ->
     true;
 is_pqc_envelope(_) ->
@@ -151,12 +203,56 @@ is_pqc_envelope(_) ->
 %% Internal helpers
 %% ------------------------------------------------------------------
 
-aad(Kem, KemCiphertext) ->
-    KemBin = to_binary(atom_to_list(Kem)),
-    <<?INFO_AAD/binary, 0, KemBin/binary, 0, KemCiphertext/binary>>.
+assert_aad_hash(Envelope, AADContext) ->
+    Expected = maps:get(aad_sha256, Envelope),
+    Actual = aad_context_hash(AADContext),
+    case Expected of
+        Actual ->
+            ok;
+        _ ->
+            error({pqc_aad_context_mismatch, #{expected => Expected, actual => Actual}})
+    end.
+
+aad(Kem, KemCiphertext, AADContext) ->
+    KemBin = to_binary(Kem),
+    ContextHash = aad_context_hash(AADContext),
+    <<?INFO_AAD/binary, 0, KemBin/binary, 0, KemCiphertext/binary, 0, ContextHash/binary>>.
+
+aad_context_hash(AADContext) ->
+    crypto:hash(sha256, aad_context_bin(AADContext)).
+
+aad_context_bin(AADContext) ->
+    term_to_binary(normalize_aad_context(AADContext)).
+
+
+normalize_aad_context(undefined) ->
+    none;
+normalize_aad_context(none) ->
+    none;
+normalize_aad_context(B) when is_binary(B) -> B;
+normalize_aad_context(B) when is_boolean(B) -> B;
+normalize_aad_context(A) when is_atom(A) -> atom_to_binary(A, utf8);
+normalize_aad_context(I) when is_integer(I) -> I;
+normalize_aad_context(F) when is_float(F) -> F;
+normalize_aad_context(L) when is_list(L) ->
+    case io_lib:printable_unicode_list(L) of
+        true -> unicode:characters_to_binary(L);
+        false -> [normalize_aad_context(X) || X <- L]
+    end;
+normalize_aad_context(M) when is_map(M) ->
+    lists:sort(
+        [
+            {to_binary(K), normalize_aad_context(V)}
+         || {K, V} <- maps:to_list(M)
+        ]
+    );
+normalize_aad_context(T) when is_tuple(T) ->
+    {tuple, [normalize_aad_context(X) || X <- tuple_to_list(T)]};
+normalize_aad_context(Other) ->
+    iolist_to_binary(io_lib:format("~p", [Other])).
 
 kdf(SharedSecret, Info, Length) when is_binary(SharedSecret), is_integer(Length), Length > 0 ->
-    %% HKDF-SHA256
+    %% HKDF-SHA256. Current key size is 32 bytes, so one expand block is enough.
     Salt = <<"damagebdd:secrets_pqc:hkdf-salt:v1">>,
     PRK = crypto:mac(hmac, sha256, Salt, SharedSecret),
     T1 = crypto:mac(hmac, sha256, PRK, <<Info/binary, 1>>),
@@ -165,25 +261,13 @@ kdf(SharedSecret, Info, Length) when is_binary(SharedSecret), is_integer(Length)
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
-to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8).
+to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
+to_binary(I) when is_integer(I) -> integer_to_binary(I);
+to_binary(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
 
 %% ------------------------------------------------------------------
 %% Backend adapter
 %% ------------------------------------------------------------------
-%%
-%% Replace ONLY these 3 functions to match your PQC binding.
-%%
-%% Example expected semantics:
-%%   backend_keypair(ml_kem_768) ->
-%%       #{public_key => Pub, private_key => Priv}.
-%%
-%%   backend_encapsulate(ml_kem_768, Pub) ->
-%%       #{ciphertext => KemCt, shared_secret => Ss}.
-%%
-%%   backend_decapsulate(ml_kem_768, KemCt, Priv) ->
-%%       Ss.
-%%
-%% Keeping the adapter tiny makes the module easy to drop in.
 
 backend_keypair(Kem) ->
     case application:get_env(damage, pqc_backend_module) of
