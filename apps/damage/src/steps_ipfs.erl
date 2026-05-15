@@ -39,53 +39,172 @@ get_headers(Context, DefaultHeaders) ->
 response_to_list({StatusCode, Headers, Body}) ->
     [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
-get_conn(Url) ->
-    {Host0, Port0} =
-        case uri_string:parse(Url) of
-            #{scheme := "https", host := Host} ->
-                {Host, 443};
-            #{scheme := "http", host := Host, port := Port} ->
-                {Host, Port};
-            #{scheme := "http", host := Host} ->
-                {Host, 80};
-            #{host := Host, port := Port} ->
-                {Host, Port}
-        end,
-    Opts =
-        case Port0 of
-            443 -> #{transport => tls, tls_opts => [{verify, verify_none}]};
-            _ -> #{transport => tcp}
-        end,
-    ?LOG_DEBUG("open connection ~p ~p", [Host0, Port0]),
-    gun:open(Host0, Port0, Opts#{connect_timeout => ?DEFAULT_HTTP_TIMEOUT}).
+%% -------------------------------------------------------------------
+%% damage_gun-backed IPFS connection/request helpers
+%% -------------------------------------------------------------------
+%% Uniform POST to IPFS API. IPFS API endpoints usually expect POST.
+ipfs_post(undefined, _Path, _Headers, Context) ->
+    maps:put(fail, <<"IPFS API URL not set">>, Context);
+ipfs_post(ApiUrl, Path, Headers, Context) ->
+    ipfs_request(post, ApiUrl, Path, Headers, <<>>, Context).
 
-await(ConnPid, StreamRef, Context) ->
-    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-        {response, fin, Status, Headers} ->
-            maps:put(response, response_to_list({Status, Headers, <<"">>}), Context);
-        {response, nofin, Status, Headers} ->
-            {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            maps:put(response, response_to_list({Status, Headers, Body}), Context);
-        Other ->
-            maps:put(fail, damage_utils:strf("Gun request failed: ~p", [Other]), Context)
+%% Uniform GET for gateways or API GET-compatible calls.
+ipfs_get(undefined, _Path, _Headers, Context) ->
+    maps:put(fail, <<"IPFS gateway URL not set">>, Context);
+ipfs_get(GatewayUrl, Path, Headers, Context) ->
+    ipfs_request(get, GatewayUrl, Path, Headers, <<>>, Context).
+
+ipfs_request(Method, BaseUrl, Path0, Headers, Body, Context) ->
+    case ipfs_endpoint(BaseUrl, Path0) of
+        {ok, #{host := Host, port := Port, path := Path, transport := Transport} = Ep} ->
+            Opts = ipfs_damage_gun_opts(Host, Transport),
+
+            ?LOG_DEBUG(
+                "IPFS damage_gun request method=~p endpoint=~p headers=~p",
+                [Method, Ep, Headers]
+            ),
+
+            Result =
+                case Method of
+                    get ->
+                        damage_gun:get(Host, Port, Path, Headers, Opts);
+                    post ->
+                        damage_gun:post(Host, Port, Path, Headers, Body, Opts)
+                end,
+
+            case Result of
+                {ok, #{status := Status, headers := RespHeaders, body := RespBody}} ->
+                    maps:put(
+                        response,
+                        response_to_list({Status, RespHeaders, RespBody}),
+                        Context
+                    );
+                {ok, #{status := Status, headers := RespHeaders}} ->
+                    maps:put(
+                        response,
+                        response_to_list({Status, RespHeaders, <<>>}),
+                        Context
+                    );
+                {error, Reason} ->
+                    ?LOG_ERROR(
+                        "IPFS damage_gun request failed method=~p base=~p path=~p reason=~p",
+                        [Method, BaseUrl, Path, Reason]
+                    ),
+                    maps:put(
+                        fail,
+                        damage_utils:strf("IPFS request failed: ~p", [Reason]),
+                        Context
+                    )
+            end;
+        {error, Reason} ->
+            ?LOG_ERROR(
+                "Invalid IPFS endpoint base=~p path=~p reason=~p",
+                [BaseUrl, Path0, Reason]
+            ),
+            maps:put(
+                fail,
+                damage_utils:strf("Invalid IPFS endpoint: ~p", [Reason]),
+                Context
+            )
     end.
 
+ipfs_damage_gun_opts(Host, Transport) ->
+    Base = #{
+        transport => Transport,
+        proxy => direct,
+        protocols => [http],
+        connect_timeout => ?DEFAULT_HTTP_TIMEOUT,
+        timeout => ?DEFAULT_HTTP_TIMEOUT,
+        close => true,
+        decode => raw
+    },
+
+    case Transport of
+        tls ->
+            Base#{tls_opts => damage_gun:tls_opts(Host)};
+        tcp ->
+            Base
+    end.
+
+ipfs_endpoint(BaseUrl0, Path0) ->
+    BaseUrl = normalize_url(BaseUrl0),
+    Path = normalize_path_list(Path0),
+
+    case uri_string:parse(BaseUrl) of
+        #{scheme := Scheme0, host := Host0} = Parsed ->
+            case normalize_scheme(Scheme0) of
+                "http" = Scheme ->
+                    ipfs_endpoint_from_parsed(Scheme, Host0, Parsed, Path);
+                "https" = Scheme ->
+                    ipfs_endpoint_from_parsed(Scheme, Host0, Parsed, Path);
+                OtherScheme ->
+                    {error, {unsupported_scheme, OtherScheme}}
+            end;
+        Other ->
+            {error, {bad_url, BaseUrl, Other}}
+    end.
+ipfs_endpoint_from_parsed(Scheme, Host0, Parsed, Path) ->
+    Host = normalize_host(Host0),
+    Port = maps:get(port, Parsed, default_port(Scheme)),
+    BasePath = maps:get(path, Parsed, ""),
+    ReqPath = join_url_paths(BasePath, Path),
+    {ok, #{
+        scheme => Scheme,
+        host => Host,
+        port => Port,
+        path => ReqPath,
+        transport => transport_for_scheme(Scheme)
+    }}.
+
+normalize_url(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+normalize_url(List) when is_list(List) ->
+    List.
+
+normalize_scheme(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+normalize_scheme(List) when is_list(List) ->
+    List.
+
+normalize_host(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+normalize_host(List) when is_list(List) ->
+    List.
+
+normalize_path_list(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+normalize_path_list(List) when is_list(List) ->
+    List.
+
+default_port("https") -> 443;
+default_port("http") -> 80.
+
+transport_for_scheme("https") -> tls;
+transport_for_scheme("http") -> tcp.
+
+join_url_paths(BasePath0, Path0) ->
+    BasePath = normalize_path_list(BasePath0),
+    Path = ensure_leading_slash(normalize_path_list(Path0)),
+
+    case BasePath of
+        "" ->
+            Path;
+        "/" ->
+            Path;
+        _ ->
+            string:trim(BasePath, trailing, "/") ++ Path
+    end.
+
+ensure_leading_slash("/" ++ _ = Path) ->
+    Path;
+ensure_leading_slash(Path) ->
+    "/" ++ Path.
 %%% --------------------------- IPFS conveniences ------------------------------
 
 %% Compose /api/v0/<cmd>?arg=<cid>&<k>=<v>...
 ipfs_api_url(Cmd, Params0) ->
     Q = uri_string:compose_query(Params0),
     "/api/v0/" ++ Cmd ++ "?" ++ Q.
-
-%% Uniform POST to IPFS API (some endpoints expect POST)
-ipfs_post(GateWay, Path, Headers, Context) ->
-    {ok, ConnPid} = get_conn(GateWay),
-    await(ConnPid, gun:post(ConnPid, Path, Headers, <<>>), Context).
-
-%% Uniform GET (for gateways or API GET-compatible calls)
-ipfs_get(GateWay, Path, Headers, Context) ->
-    {ok, ConnPid} = get_conn(GateWay),
-    await(ConnPid, gun:get(ConnPid, Path, Headers), Context).
 
 %%% ------------------------------- Steps --------------------------------------
 

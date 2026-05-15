@@ -253,7 +253,7 @@ handle_call({register_account, Account0, Registry0, Tier0}, _From, State) ->
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "register_account",
         [Account, Registry, Tier]
     ),
@@ -269,7 +269,7 @@ handle_call({update_tier, Account0, Tier0}, _From, State) ->
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "update_tier",
         [Account, Tier]
     ),
@@ -285,7 +285,7 @@ handle_call({update_registry, Account0, Registry0}, _From, State) ->
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "update_registry",
         [Account, Registry]
     ),
@@ -321,7 +321,7 @@ handle_call({register_node, Owner0, NodeId0, MetaMap0, CfgMap0}, _From, State) -
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "register_node",
         [Owner, NodeId, MetaRec, CfgRec]
     ),
@@ -338,7 +338,7 @@ handle_call({update_node_meta, NodeId0, MetaMap0}, _From, State) ->
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "update_node_meta",
         [NodeId, MetaRec]
     ),
@@ -354,7 +354,7 @@ handle_call({update_node_cfg, NodeId0, CfgMap0}, _From, State) ->
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "update_node_cfg",
         [NodeId, CfgRec]
     ),
@@ -380,7 +380,7 @@ handle_call({reassign_node, NodeId0, NewOwner0}, _From, State) ->
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "reassign_node",
         [NodeId, NewOwner]
     ),
@@ -400,7 +400,7 @@ handle_call({set_node_enabled, NodeId0, Enabled}, _From, State) ->
     Resp = damage_ae:contract_call(
         KeyPair,
         ContractId,
-        State#state.contract_path,
+        damage_ae:contract_path(State#state.contract_path),
         "set_node_enabled",
         [NodeId, Enabled]
     ),
@@ -487,7 +487,11 @@ cached_contract_call(State, CacheKey, Func, Args) ->
             ContractId = require_contract(State),
             KeyPair = secrets:node_keypair(),
             Resp = damage_ae:contract_call(
-                KeyPair, ContractId, State#state.contract_path, Func, Args
+                KeyPair,
+                ContractId,
+                damage_ae:contract_path(State#state.contract_path),
+                Func,
+                Args
             ),
             maybe_cache_put(State, CacheKey, Resp),
             Resp
@@ -565,7 +569,7 @@ cfg_map_to_record(M) when is_map(M) ->
 %% Deploy using the node (service) keypair (server-owned deployment)
 -spec deploy_node_registry() -> binary().
 deploy_node_registry() ->
-    DeployPath = damage_ae:contract_path(damage, ?DEFAULT_CONTRACT_PATH),
+    DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
     KeyPair = secrets:node_keypair(),
     case damage_ae:contract_deploy(KeyPair, DeployPath, []) of
         #{"contract_id" := ContractId} ->
@@ -587,7 +591,7 @@ deploy_node_registry(KeyPair) when is_map(KeyPair) ->
     %% - contract_path here should point at the NodeRegistry Sophia file
     %% - you already keep State#state.contract_path as "contracts/node_registry.aes"
     %%   but deploy needs the on-disk path (same pattern as AccountRegistry)
-    DeployPath = damage_ae:contract_path(damage, ?DEFAULT_CONTRACT_PATH),
+    DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
 
     %% If your deploy fn is named differently (contract_deploy_for vs contract_deploy),
     %% swap this call to match your damage_ae API.

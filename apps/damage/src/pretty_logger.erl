@@ -17,7 +17,7 @@ format(LogEvent, Cfg) ->
         finalize(build(LogEvent, Cfg1), Cfg1)
     catch
         Class:Reason:Stack ->
-            fallback(LogEvent, Class, Reason, Stack)
+            fallback(LogEvent, Class, Reason, Stack, Cfg1)
     end.
 
 normalize_cfg(Cfg) when is_map(Cfg) ->
@@ -50,18 +50,55 @@ normalize_cfg(_) ->
         depth => 6
     }.
 
-fallback(LogEvent, Class, Reason, Stack) ->
+fallback(LogEvent, Class, Reason, Stack, Cfg) ->
+    %% This path must be boring and tiny.  Do not call report callbacks here and
+    %% do not render raw stack frames: they can contain the same huge terms that
+    %% broke the formatter in the first place.
     Meta = safe_meta(LogEvent),
     TimeS = safe_timestamp_iso(Meta),
     MFA = safe_current_function(self()),
-    Line = io_lib:format(
-        "~ts | logger_formatter_failed | ~p:~p | current=~p | stack_top=~p~n",
-        [TimeS, Class, Reason, MFA, log_utils:summarize(stack_top(Stack), summarize_opts(#{}))]
+    StackTop = summarize_stack_top(Stack, Cfg),
+    Event = summarize_term(
+        LogEvent,
+        maps:merge(Cfg, #{
+            depth => 3,
+            max_list => 8,
+            max_map => 12,
+            max_tuple => 8,
+            max_string => 160,
+            max_binary => 64
+        })
     ),
-    safe_unicode(Line).
+    Line = io_lib:format(
+        "~s | logger_formatter_failed | ~p:~p | current=~p | stack_top=~p | event=~p~n",
+        [TimeS, Class, Reason, MFA, StackTop, Event]
+    ),
+    cap_binary(safe_unicode(Line), maps:get(max_event_chars, Cfg, 12000)).
 
-stack_top([H | _]) -> H;
-stack_top(_) -> undefined.
+summarize_stack_top([Frame | _], Cfg) ->
+    SmallCfg = maps:merge(Cfg, #{
+        depth => 3,
+        max_list => 8,
+        max_map => 12,
+        max_tuple => 8,
+        max_string => 160,
+        max_binary => 64
+    }),
+    case Frame of
+        {M, F, Args, Loc} when is_list(Args) ->
+            #{
+                m => M,
+                f => F,
+                args => summarize_args(Args, SmallCfg),
+                loc => summarize_term(Loc, SmallCfg)
+            };
+        {M, F, Arity, Loc} ->
+            #{m => M, f => F, arity => Arity, loc => summarize_term(Loc, SmallCfg)};
+        Other ->
+            summarize_term(Other, SmallCfg)
+    end;
+summarize_stack_top(_, _Cfg) ->
+    undefined.
 
 safe_current_function(Pid) when is_pid(Pid) ->
     try erlang:process_info(Pid, current_function) of
@@ -326,14 +363,17 @@ format_report_default(Report, Cfg) ->
     io_lib:format("~p", [summarize_term(Report, Cfg)]).
 
 safe_fmt(Fmt0, Args0, Cfg) ->
-    Args = summarize_args(Args0, Cfg),
     Fmt = normalize_format(Fmt0),
+    Args = summarize_args_for_format(Fmt, Args0, Cfg),
     try
         truncate_iolist(io_lib:format(Fmt, Args), Cfg)
     catch
         C:R ->
+            %% Last-resort rendering.  Never reuse the original format string here;
+            %% it may contain ~s/~ts controls that are incompatible with summarized
+            %% replacement terms, or with Unicode charlists produced by upstream logs.
             io_lib:format("format_failed ~p:~p fmt=~p args=~p", [
-                C, R, truncate_iolist(Fmt, Cfg), Args
+                C, R, truncate_iolist(Fmt, Cfg), summarize_args(Args0, Cfg)
             ])
     end.
 
@@ -345,6 +385,90 @@ summarize_args(Args, Cfg) when is_list(Args) ->
     [summarize_term(A, Cfg) || A <- Args];
 summarize_args(Args, Cfg) ->
     summarize_term(Args, Cfg).
+
+summarize_args_for_format(Fmt, Args, Cfg) when is_list(Args) ->
+    Specs = format_arg_specs(Fmt),
+    summarize_args_for_format_1(Args, Specs, Cfg);
+summarize_args_for_format(_Fmt, Args, Cfg) ->
+    summarize_term(Args, Cfg).
+
+summarize_args_for_format_1([], _Specs, _Cfg) ->
+    [];
+summarize_args_for_format_1([Arg | Rest], [Spec | Specs], Cfg) ->
+    [summarize_arg_for_spec(Spec, Arg, Cfg) | summarize_args_for_format_1(Rest, Specs, Cfg)];
+summarize_args_for_format_1([Arg | Rest], [], Cfg) ->
+    [summarize_term(Arg, Cfg) | summarize_args_for_format_1(Rest, [], Cfg)].
+
+%% Extract one argument-consuming control char per directive. This is intentionally
+%% conservative: it only needs enough knowledge to keep ~s/~ts arguments as
+%% strings/binaries while allowing ~p/~w terms to be summarized aggressively.
+format_arg_specs(Fmt) ->
+    format_arg_specs(Fmt, []).
+
+format_arg_specs([], Acc) ->
+    lists:reverse(Acc);
+format_arg_specs([$~, $~ | T], Acc) ->
+    format_arg_specs(T, Acc);
+format_arg_specs([$~, $n | T], Acc) ->
+    format_arg_specs(T, Acc);
+format_arg_specs([$~, $i | T], Acc) ->
+    format_arg_specs(T, Acc);
+format_arg_specs([$~ | T], Acc) ->
+    {Spec, Rest} = take_format_spec(T),
+    case Spec of
+        none -> format_arg_specs(Rest, Acc);
+        _ -> format_arg_specs(Rest, [Spec | Acc])
+    end;
+format_arg_specs([_ | T], Acc) ->
+    format_arg_specs(T, Acc).
+
+take_format_spec([]) ->
+    {none, []};
+take_format_spec([$t, C | Rest]) when C =:= $s; C =:= $p; C =:= $w -> {C, Rest};
+take_format_spec([C | Rest]) when
+    C =:= $s;
+    C =:= $p;
+    C =:= $w;
+    C =:= $W;
+    C =:= $P;
+    C =:= $c;
+    C =:= $f;
+    C =:= $e;
+    C =:= $g;
+    C =:= $b;
+    C =:= $B;
+    C =:= $x;
+    C =:= $X;
+    C =:= $+;
+    C =:= $#
+->
+    {C, Rest};
+take_format_spec([_ | Rest]) ->
+    take_format_spec(Rest).
+
+summarize_arg_for_spec($s, Arg, Cfg) ->
+    string_arg(Arg, Cfg);
+summarize_arg_for_spec($c, Arg, _Cfg) when is_integer(Arg) ->
+    Arg;
+summarize_arg_for_spec(_Spec, Arg, Cfg) ->
+    summarize_term(Arg, Cfg).
+
+string_arg(Bin, Cfg) when is_binary(Bin) ->
+    cap_binary(Bin, maps:get(max_string, Cfg, 512));
+string_arg(List, Cfg) when is_list(List) ->
+    Max = maps:get(max_string, Cfg, 512),
+    %% Plain ~s is Latin-1 oriented.  Unicode charlists such as [9888] can crash
+    %% io_lib:format/2 with badarg.  Convert to UTF-8 binary and cap bytes.
+    case safe_unicode(List) of
+        Bin when byte_size(Bin) > Max ->
+            Suffix = <<"...">>,
+            Head = binary:part(Bin, 0, Max),
+            <<Head/binary, Suffix/binary>>;
+        Bin ->
+            Bin
+    end;
+string_arg(Other, Cfg) ->
+    string_arg(io_lib:format("~p", [summarize_term(Other, Cfg)]), Cfg).
 
 summarize_term(Term, Cfg) ->
     try
