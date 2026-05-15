@@ -100,10 +100,11 @@ init([]) ->
             ?LOG_ERROR("Git SSH listener port already in use at ~p:~p", [ListenAddr, Port]),
             {stop, {ssh_port_in_use, ListenAddr, Port}};
         {error, Reason} ->
-            ?LOG_ERROR("Failed to start Git SSH daemon on ~p:~p reason=~p", [ListenAddr, Port, Reason]),
+            ?LOG_ERROR("Failed to start Git SSH daemon on ~p:~p reason=~p", [
+                ListenAddr, Port, Reason
+            ]),
             {stop, {ssh_daemon_start_failed, Reason}}
     end;
-
 %% ssh_server_channel callback for {ssh_cli, {?MODULE, [git_cli]}}
 init([git_cli]) ->
     {ok, #git_channel_state{}}.
@@ -126,21 +127,30 @@ fail_fun(User, Peer, Reason) ->
 
 handle_msg({ssh_channel_up, ChannelId, CM}, State) ->
     {ok, State#git_channel_state{cm = CM, channel_id = ChannelId}};
-handle_msg({Port, {data, Bin}}, #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State) ->
+handle_msg(
+    {Port, {data, Bin}}, #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State
+) ->
     _ = ssh_connection:send(CM, ChannelId, 0, Bin),
     {ok, State};
-handle_msg({Port, {exit_status, Code}}, #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State) ->
+handle_msg(
+    {Port, {exit_status, Code}},
+    #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State
+) ->
     cancel_timer(State#git_channel_state.timer_ref),
     _ = ssh_connection:send_eof(CM, ChannelId),
     _ = ssh_connection:exit_status(CM, ChannelId, Code),
     {stop, ChannelId, State#git_channel_state{port = undefined, timer_ref = undefined}};
-handle_msg({'EXIT', Port, Reason}, #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State) ->
+handle_msg(
+    {'EXIT', Port, Reason}, #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State
+) ->
     cancel_timer(State#git_channel_state.timer_ref),
     ?LOG_WARNING("Git helper port exited reason=~p", [Reason]),
     _ = ssh_connection:send(CM, ChannelId, 1, io_lib:format("git helper exited: ~p~n", [Reason])),
     _ = ssh_connection:exit_status(CM, ChannelId, 1),
     {stop, ChannelId, State#git_channel_state{port = undefined, timer_ref = undefined}};
-handle_msg(git_timeout, #git_channel_state{port = Port, cm = CM, channel_id = ChannelId} = State) when is_port(Port) ->
+handle_msg(
+    git_timeout, #git_channel_state{port = Port, cm = CM, channel_id = ChannelId} = State
+) when is_port(Port) ->
     port_close(Port),
     _ = ssh_connection:send(CM, ChannelId, 1, <<"git helper timed out\n">>),
     _ = ssh_connection:exit_status(CM, ChannelId, 124),
@@ -150,8 +160,11 @@ handle_msg(_Msg, State) ->
 
 handle_ssh_msg({ssh_cm, CM, {exec, ChannelId, WantReply, Command}}, State) ->
     start_git_exec(CM, ChannelId, WantReply, Command, State);
-handle_ssh_msg({ssh_cm, _CM, {data, _ChannelId, 0, Data}}, #git_channel_state{port = Port} = State)
-    when is_port(Port) ->
+handle_ssh_msg(
+    {ssh_cm, _CM, {data, _ChannelId, 0, Data}}, #git_channel_state{port = Port} = State
+) when
+    is_port(Port)
+->
     true = port_command(Port, Data),
     {ok, State};
 handle_ssh_msg({ssh_cm, _CM, {data, _ChannelId, 1, _Data}}, State) ->
@@ -173,7 +186,9 @@ handle_ssh_msg({ssh_cm, CM, {env, ChannelId, WantReply, _Var, _Value}}, State) -
     %% Allow harmless env requests from Git clients.
     _ = ssh_connection:reply_request(CM, WantReply, success, ChannelId),
     {ok, State};
-handle_ssh_msg({ssh_cm, _CM, {window_change, _ChannelId, _Width, _Height, _PixWidth, _PixHeight}}, State) ->
+handle_ssh_msg(
+    {ssh_cm, _CM, {window_change, _ChannelId, _Width, _Height, _PixWidth, _PixHeight}}, State
+) ->
     {ok, State};
 handle_ssh_msg({ssh_cm, _CM, {signal, _ChannelId, _SignalName}}, State) ->
     {ok, State};
@@ -259,13 +274,25 @@ parse_git_cmd(Command0) ->
 start_git_exec(CM, ChannelId, WantReply, Command, State) ->
     case parse_git_cmd(Command) of
         {upload_pack, Repo} ->
-            start_git_helper(CM, ChannelId, WantReply, "/usr/bin/git-upload-pack", Repo, upload_pack, State);
+            start_git_helper(
+                CM, ChannelId, WantReply, "/usr/bin/git-upload-pack", Repo, upload_pack, State
+            );
         {receive_pack, Repo} ->
             case authorize_push(Repo, CM) of
                 ok ->
-                    start_git_helper(CM, ChannelId, WantReply, "/usr/bin/git-receive-pack", Repo, receive_pack, State);
+                    start_git_helper(
+                        CM,
+                        ChannelId,
+                        WantReply,
+                        "/usr/bin/git-receive-pack",
+                        Repo,
+                        receive_pack,
+                        State
+                    );
                 {error, E} ->
-                    fail_exec(CM, ChannelId, WantReply, 1, io_lib:format("unauthorized: ~p~n", [E]), State)
+                    fail_exec(
+                        CM, ChannelId, WantReply, 1, io_lib:format("unauthorized: ~p~n", [E]), State
+                    )
             end;
         unknown ->
             fail_exec(CM, ChannelId, WantReply, 1, <<"forbidden\n">>, State)

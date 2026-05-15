@@ -40,8 +40,12 @@
 -define(S_ANY_CLIENT_ANY_SIGNING, ["any client requests any signing operation"]).
 -define(S_ANY_CLIENT_REQUESTS_METHODS, ["any client requests", MethodA, "or", _MethodB]).
 -define(S_WRITE_AUDIT_ROW, ["the bunker writes an audit row"]).
--define(S_SAME_CLIENT_SUBMITS_REPLAY, ["the same client submits request id", RequestId, "for payload hash", PayloadHash, "again"]).
--define(S_SAME_CLIENT_SUBMITS_CONFLICT, ["the same client submits request id", RequestId, "for payload hash", PayloadHash]).
+-define(S_SAME_CLIENT_SUBMITS_REPLAY, [
+    "the same client submits request id", RequestId, "for payload hash", PayloadHash, "again"
+]).
+-define(S_SAME_CLIENT_SUBMITS_CONFLICT, [
+    "the same client submits request id", RequestId, "for payload hash", PayloadHash
+]).
 
 %% Given state
 -define(S_BUNKER_TIME, ["bunker time is 1778000000"]).
@@ -51,12 +55,20 @@
 -define(S_OVERSIZED_KIND1, ["an unsigned kind 1 event larger than 4096 bytes"]).
 -define(S_OVERSIZED_KIND30023, ["an unsigned kind 30023 event larger than 131072 bytes"]).
 -define(S_UNSIGNED_KIND30023, ["an unsigned kind 30023 event"]).
--define(S_UNSIGNED_KIND30023_MIN_TAGS, ["an unsigned kind 30023 event with the required minimal tags"]).
+-define(S_UNSIGNED_KIND30023_MIN_TAGS, [
+    "an unsigned kind 30023 event with the required minimal tags"
+]).
 -define(S_EVENT_MISSING_TAGS, ["the event does not contain tags", _Tags]).
--define(S_EVENT_PASSES_POLICY, ["the event passes stale, size, HTML, kind, and client policy checks"]).
+-define(S_EVENT_PASSES_POLICY, [
+    "the event passes stale, size, HTML, kind, and client policy checks"
+]).
 -define(S_EVENT_SCRIPT, ["an unsigned kind 30023 event whose content contains", Script]).
--define(S_REPLAY_SEED, ["authorised client", Client, "submitted request id", RequestId, "for payload hash", PayloadHash]).
--define(S_RATE_EXCEEDED, ["authorised client", Client, "has exceeded 30 requests in a 60 second window"]).
+-define(S_REPLAY_SEED, [
+    "authorised client", Client, "submitted request id", RequestId, "for payload hash", PayloadHash
+]).
+-define(S_RATE_EXCEEDED, [
+    "authorised client", Client, "has exceeded 30 requests in a 60 second window"
+]).
 -define(S_TIMEOUT, ["a signing request cannot complete within 10000 milliseconds"]).
 -define(S_VAULT_CORRUPT, ["the vault fails integrity verification"]).
 -define(S_VAULT_MISMATCH, ["the vault unseals to a public key other than", Pubkey]).
@@ -64,8 +76,12 @@
 
 %% Then
 -define(S_RESPONSE_CONTAINS, ["the bunker response MUST contain", Pubkey]).
--define(S_RETURNED_EQUALS_RECORD, ["the returned public key MUST equal the public key recorded in the deployment identity record"]).
--define(S_NO_ROTATION, ["no identity rotation may occur without a separate ratified identity-rotation record"]).
+-define(S_RETURNED_EQUALS_RECORD, [
+    "the returned public key MUST equal the public key recorded in the deployment identity record"
+]).
+-define(S_NO_ROTATION, [
+    "no identity rotation may occur without a separate ratified identity-rotation record"
+]).
 -define(S_AUDIT_WRITTEN, ["the decision MUST be written to the deterministic audit log"]).
 -define(S_METHOD_DECISION, ["the method decision MUST be", Decision]).
 -define(S_REQUEST_REJECTED_BEFORE_SIGNING, ["the request MUST be rejected before signing"]).
@@ -75,26 +91,40 @@
 -define(S_SIGNING_DECISION, ["the signing decision MUST be", Decision]).
 -define(S_NO_SIGNATURE, ["no signature MUST be produced"]).
 -define(S_NOT_REJECT_DTAG, ["the bunker MUST NOT reject merely because of the d-tag naming scheme"]).
--define(S_NOT_REJECT_IPFS, ["the bunker MUST NOT reject merely because of the IPFS CID tag namespace"]).
+-define(S_NOT_REJECT_IPFS, [
+    "the bunker MUST NOT reject merely because of the IPFS CID tag namespace"
+]).
 -define(S_NOT_PUBLISH, ["the bunker MUST NOT publish the event to any relay"]).
--define(S_GEOMETRY_OUTSIDE, ["publication geometry MUST remain owned by configured publication tooling"]).
+-define(S_GEOMETRY_OUTSIDE, [
+    "publication geometry MUST remain owned by configured publication tooling"
+]).
 -define(S_NO_DIVERGENT_SIG, ["the bunker MUST NOT produce a divergent signature"]).
 -define(S_REPLAY_MAY_BE, ["the replay decision MAY be", Decision]).
 -define(S_FAIL_CLOSED, ["the request MUST fail closed"]).
 -define(S_NO_PARTIAL_SIG, ["no partial signature material MUST be exposed"]).
 -define(S_NO_SIGNING_BACKEND, ["no signing backend MUST be invoked"]).
--define(S_ROTATION_REQUIRES_RECORD, ["identity rotation MUST require a separate ratified identity-rotation record"]).
+-define(S_ROTATION_REQUIRES_RECORD, [
+    "identity rotation MUST require a separate ratified identity-rotation record"
+]).
 -define(S_ROW_ORDER, ["the row MUST use deterministic field order"]).
--define(S_ROW_INCLUDE_FIELDS, ["the row MUST include schema_version, ts_unix, requester_pubkey, request_id, method, decision, deny_reason, event_kind, event_id, payload_sha256, bunker_pubkey, and contract_sha"]).
--define(S_ROW_NO_SECRETS, ["the row MUST NOT include nsec, plaintext NIP-46 payload, unsigned event content, or signature nonce material"]).
--define(S_SIGNER_INDEPENDENT_RELAYS, ["the bunker signing decision MUST be independent of the relay vector"]).
+-define(S_ROW_INCLUDE_FIELDS, [
+    "the row MUST include schema_version, ts_unix, requester_pubkey, request_id, method, decision, deny_reason, event_kind, event_id, payload_sha256, bunker_pubkey, and contract_sha"
+]).
+-define(S_ROW_NO_SECRETS, [
+    "the row MUST NOT include nsec, plaintext NIP-46 payload, unsigned event content, or signature nonce material"
+]).
+-define(S_SIGNER_INDEPENDENT_RELAYS, [
+    "the bunker signing decision MUST be independent of the relay vector"
+]).
 -define(S_RELAY_OUTSIDE, ["relay publication MUST remain outside bunker scope"]).
 
--spec step(proplists:proplist(), map(), binary() | documentation, integer(), [term()], term()) -> map().
--spec step_dry(proplists:proplist(), map(), binary() | documentation, integer(), [term()], term()) -> map().
+-spec step(proplists:proplist(), map(), binary() | documentation, integer(), [term()], term()) ->
+    map().
+-spec step_dry(proplists:proplist(), map(), binary() | documentation, integer(), [term()], term()) ->
+    map().
 
 step_dry(Config, Context, Keyword, LineNo, Body, Args) ->
-    step(Config, Context, Keyword, LineNo, Body, Args).
+    steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args).
 
 %% ===== Background ===========================================================
 step(_Config, Context, _Keyword, _N, ?S_VAULT_GENERATED, _Args) ->
@@ -156,7 +186,6 @@ step(_Config, Context, _Keyword, _N, ?S_SIGNS_ONLY, _Args) ->
         update_ns(Context, fun(NS) -> NS#{bunker_publishes => false} end),
         fun(P) -> P#{bunker_publishes => false} end
     );
-
 %% ===== Scenario setup =======================================================
 step(_Config, Context, _Keyword, _N, ?S_BUNKER_TIME, _Args) ->
     update_ns(Context, fun(NS) -> NS#{now => 1778000000} end);
@@ -179,12 +208,14 @@ step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND30023, _Args) ->
     update_event(Context, valid_event(30023, now(Context)));
 step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND30023_MIN_TAGS, _Args) ->
     Event0 = valid_event(30023, now(Context)),
-    Event = Event0#{tags => [
-        [<<"d">>, <<"deployment/v1/custom-dtag">>],
-        [<<"title">>, <<"Custody Deployment">>],
-        [<<"published_at">>, integer_to_binary(now(Context))],
-        [<<"ipfs-cid-v1">>, <<"bafybeigdyrzt-example">>]
-    ]},
+    Event = Event0#{
+        tags => [
+            [<<"d">>, <<"deployment/v1/custom-dtag">>],
+            [<<"title">>, <<"Custody Deployment">>],
+            [<<"published_at">>, integer_to_binary(now(Context))],
+            [<<"ipfs-cid-v1">>, <<"bafybeigdyrzt-example">>]
+        ]
+    },
     update_event(Context, Event);
 step(_Config, Context, _Keyword, _N, ?S_EVENT_MISSING_TAGS, _Args) ->
     Event0 = event(Context),
@@ -198,14 +229,20 @@ step(_Config, Context, _Keyword, _N, ?S_EVENT_SCRIPT, _Args) ->
     update_event(Context, Event);
 step(_Config, Context, _Keyword, _N, ?S_REPLAY_SEED, _Args) ->
     ensure_servers(),
-    ok = damage_nsecbunker_replay:check_and_mark(to_bin(Client), to_bin(RequestId), to_bin(PayloadHash)),
-    update_ns(Context, fun(NS) -> NS#{last_replay_seed => {to_bin(Client), to_bin(RequestId), to_bin(PayloadHash)}} end);
+    ok = damage_nsecbunker_replay:check_and_mark(
+        to_bin(Client), to_bin(RequestId), to_bin(PayloadHash)
+    ),
+    update_ns(Context, fun(NS) ->
+        NS#{last_replay_seed => {to_bin(Client), to_bin(RequestId), to_bin(PayloadHash)}}
+    end);
 step(_Config, Context, _Keyword, _N, ?S_RATE_EXCEEDED, _Args) ->
     ensure_servers(),
     ok = damage_nsecbunker_rate:seed(to_bin(Client), now(Context), 30),
     update_ns(Context, fun(NS) -> NS#{rate_limited_client => to_bin(Client)} end);
 step(_Config, Context, _Keyword, _N, ?S_TIMEOUT, _Args) ->
-    update_ns(Context, fun(NS) -> NS#{force_signing_timeout => true, simulated_elapsed_ms => 10001} end);
+    update_ns(Context, fun(NS) ->
+        NS#{force_signing_timeout => true, simulated_elapsed_ms => 10001}
+    end);
 step(_Config, Context, _Keyword, _N, ?S_VAULT_CORRUPT, _Args) ->
     update_ns(Context, fun(NS0) ->
         Vault0 = vault(NS0),
@@ -214,12 +251,16 @@ step(_Config, Context, _Keyword, _N, ?S_VAULT_CORRUPT, _Args) ->
 step(_Config, Context, _Keyword, _N, ?S_VAULT_MISMATCH, _Args) ->
     update_ns(Context, fun(NS0) ->
         Vault0 = vault(NS0),
-        NS0#{vault_state => Vault0#{pubkey_hex => <<"DIFFERENT_PUBKEY_HEX">>}, mismatch_target => to_bin(Pubkey)}
+        NS0#{
+            vault_state => Vault0#{pubkey_hex => <<"DIFFERENT_PUBKEY_HEX">>},
+            mismatch_target => to_bin(Pubkey)
+        }
     end);
 step(_Config, Context, _Keyword, _N, ?S_RELAY_DRIFT, _Args) ->
-    update_ns(Context, fun(NS) -> NS#{relay_vector => [<<"wss://replacement.example">>], relay_drifted => true} end);
-
-%% ===== Actions ============================================================== 
+    update_ns(Context, fun(NS) ->
+        NS#{relay_vector => [<<"wss://replacement.example">>], relay_drifted => true}
+    end);
+%% ===== Actions ==============================================================
 step(_Config, Context, _Keyword, _N, ?S_AUTH_CALLS, _Args) ->
     method_call(Context, to_bin(Client), to_bin(Method));
 step(_Config, Context, _Keyword, _N, ?S_CLIENT_CALLS, _Args) ->
@@ -238,21 +279,39 @@ step(_Config, Context, _Keyword, _N, ?S_SAME_CLIENT_SUBMITS_REPLAY, _Args) ->
 step(_Config, Context, _Keyword, _N, ?S_SAME_CLIENT_SUBMITS_CONFLICT, _Args) ->
     replay_submit(Context, to_bin(RequestId), to_bin(PayloadHash));
 step(_Config, Context, _Keyword, _N, ?S_WRITE_AUDIT_ROW, _Args) ->
-    Audit = audit_line(Context, <<"CLIENT">>, <<"REQ-AUDIT">>, <<"sign_event">>, <<"rejected">>, <<"method_not_allowed">>, 30023),
+    Audit = audit_line(
+        Context,
+        <<"CLIENT">>,
+        <<"REQ-AUDIT">>,
+        <<"sign_event">>,
+        <<"rejected">>,
+        <<"method_not_allowed">>,
+        30023
+    ),
     append_audit(set_last(Context, rejected, method_not_allowed, #{audit_line => Audit}), Audit);
-
 %% ===== Assertions ===========================================================
 step(_Config, Context, _Keyword, _N, ?S_RESPONSE_CONTAINS, _Args) ->
     Expected = to_bin(Pubkey),
     case binary:match(maps:get(last_response, ns(Context), <<>>), Expected) of
-        nomatch -> fail(Context, damage_utils:strf("bunker response does not contain ~p", [Expected]));
-        _ -> Context
+        nomatch ->
+            fail(Context, damage_utils:strf("bunker response does not contain ~p", [Expected]));
+        _ ->
+            Context
     end;
 step(_Config, Context, _Keyword, _N, ?S_RETURNED_EQUALS_RECORD, _Args) ->
     NS = ns(Context),
-    assert_equal(Context, maps:get(last_returned_pubkey, NS, undefined), maps:get(identity_record_pubkey, NS, undefined), "returned public key does not match deployment identity record");
+    assert_equal(
+        Context,
+        maps:get(last_returned_pubkey, NS, undefined),
+        maps:get(identity_record_pubkey, NS, undefined),
+        "returned public key does not match deployment identity record"
+    );
 step(_Config, Context, _Keyword, _N, ?S_NO_ROTATION, _Args) ->
-    assert_false(Context, maps:get(identity_rotation_allowed, ns(Context), false), "identity rotation was allowed");
+    assert_false(
+        Context,
+        maps:get(identity_rotation_allowed, ns(Context), false),
+        "identity rotation was allowed"
+    );
 step(_Config, Context, _Keyword, _N, ?S_AUDIT_WRITTEN, _Args) ->
     case maps:get(audit_log, ns(Context), []) of
         [] -> fail(Context, <<"deterministic audit log is empty">>);
@@ -273,33 +332,61 @@ step(_Config, Context, _Keyword, _N, ?S_DENIAL_SHOULD, _Args) ->
 step(_Config, Context, _Keyword, _N, ?S_SIGNING_DECISION, _Args) ->
     assert_decision(Context, signing_decision, Decision);
 step(_Config, Context, _Keyword, _N, ?S_NO_SIGNATURE, _Args) ->
-    assert_false(Context, maps:get(signature_produced, ns(Context), false), "signature was produced");
+    assert_false(
+        Context, maps:get(signature_produced, ns(Context), false), "signature was produced"
+    );
 step(_Config, Context, _Keyword, _N, ?S_NOT_REJECT_DTAG, _Args) ->
     assert_not_reason(Context, dtag_scheme_not_allowed);
 step(_Config, Context, _Keyword, _N, ?S_NOT_REJECT_IPFS, _Args) ->
     assert_not_reason(Context, ipfs_cid_tag_namespace_not_allowed);
 step(_Config, Context, _Keyword, _N, ?S_NOT_PUBLISH, _Args) ->
-    assert_false(Context, maps:get(published_to_relay, ns(Context), false), "bunker published to relay");
+    assert_false(
+        Context, maps:get(published_to_relay, ns(Context), false), "bunker published to relay"
+    );
 step(_Config, Context, _Keyword, _N, ?S_GEOMETRY_OUTSIDE, _Args) ->
-    assert_equal(Context, maps:get(publication_geometry_owner, ns(Context), <<"publication_tooling">>), <<"publication_tooling">>, "publication geometry owner changed");
+    assert_equal(
+        Context,
+        maps:get(publication_geometry_owner, ns(Context), <<"publication_tooling">>),
+        <<"publication_tooling">>,
+        "publication geometry owner changed"
+    );
 step(_Config, Context, _Keyword, _N, ?S_NO_DIVERGENT_SIG, _Args) ->
-    assert_false(Context, maps:get(divergent_signature, ns(Context), false), "divergent signature was produced");
+    assert_false(
+        Context,
+        maps:get(divergent_signature, ns(Context), false),
+        "divergent signature was produced"
+    );
 step(_Config, Context, _Keyword, _N, ?S_REPLAY_MAY_BE, _Args) ->
     Expected = to_bin(Decision),
     Actual = maps:get(replay_decision, ns(Context), <<>>),
     case Actual =:= Expected orelse Actual =:= <<>> of
-        true -> Context;
-        false -> fail(Context, damage_utils:strf("replay decision ~p is not acceptable as ~p", [Actual, Expected]))
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                damage_utils:strf("replay decision ~p is not acceptable as ~p", [Actual, Expected])
+            )
     end;
 step(_Config, Context, _Keyword, _N, ?S_FAIL_CLOSED, _Args) ->
     C1 = assert_decision(Context, last_decision, <<"rejected">>),
     assert_false(C1, maps:get(signer_invoked, ns(C1), false), "request did not fail closed");
 step(_Config, Context, _Keyword, _N, ?S_NO_PARTIAL_SIG, _Args) ->
-    assert_false(Context, maps:get(partial_signature_exposed, ns(Context), false), "partial signature material was exposed");
+    assert_false(
+        Context,
+        maps:get(partial_signature_exposed, ns(Context), false),
+        "partial signature material was exposed"
+    );
 step(_Config, Context, _Keyword, _N, ?S_NO_SIGNING_BACKEND, _Args) ->
-    assert_false(Context, maps:get(signer_invoked, ns(Context), false), "signing backend was invoked");
+    assert_false(
+        Context, maps:get(signer_invoked, ns(Context), false), "signing backend was invoked"
+    );
 step(_Config, Context, _Keyword, _N, ?S_ROTATION_REQUIRES_RECORD, _Args) ->
-    assert_false(Context, maps:get(identity_rotation_allowed, ns(Context), false), "identity rotation allowed without ratified identity-rotation record");
+    assert_false(
+        Context,
+        maps:get(identity_rotation_allowed, ns(Context), false),
+        "identity rotation allowed without ratified identity-rotation record"
+    );
 step(_Config, Context, _Keyword, _N, ?S_ROW_ORDER, _Args) ->
     Line = last_audit_line(Context),
     Prefix = <<"{\"schema_version\":1,\"ts_unix\":">>,
@@ -310,19 +397,38 @@ step(_Config, Context, _Keyword, _N, ?S_ROW_ORDER, _Args) ->
 step(_Config, Context, _Keyword, _N, ?S_ROW_INCLUDE_FIELDS, _Args) ->
     Line = last_audit_line(Context),
     Fields = [
-        <<"schema_version">>, <<"ts_unix">>, <<"requester_pubkey">>, <<"request_id">>,
-        <<"method">>, <<"decision">>, <<"deny_reason">>, <<"event_kind">>,
-        <<"event_id">>, <<"payload_sha256">>, <<"bunker_pubkey">>, <<"contract_sha">>
+        <<"schema_version">>,
+        <<"ts_unix">>,
+        <<"requester_pubkey">>,
+        <<"request_id">>,
+        <<"method">>,
+        <<"decision">>,
+        <<"deny_reason">>,
+        <<"event_kind">>,
+        <<"event_id">>,
+        <<"payload_sha256">>,
+        <<"bunker_pubkey">>,
+        <<"contract_sha">>
     ],
     assert_fields_present(Context, Line, Fields);
 step(_Config, Context, _Keyword, _N, ?S_ROW_NO_SECRETS, _Args) ->
     Line = last_audit_line(Context),
-    Forbidden = [<<"nsec">>, <<"plaintext">>, <<"unsigned event content">>, <<"signature nonce">>, <<"nonce material">>],
+    Forbidden = [
+        <<"nsec">>,
+        <<"plaintext">>,
+        <<"unsigned event content">>,
+        <<"signature nonce">>,
+        <<"nonce material">>
+    ],
     assert_forbidden_absent(Context, Line, Forbidden);
 step(_Config, Context, _Keyword, _N, ?S_SIGNER_INDEPENDENT_RELAYS, _Args) ->
     assert_decision(Context, signing_decision, <<"allowed">>);
 step(_Config, Context, _Keyword, _N, ?S_RELAY_OUTSIDE, _Args) ->
-    assert_false(Context, maps:get(published_to_relay, ns(Context), false), "relay publication leaked into bunker scope").
+    assert_false(
+        Context,
+        maps:get(published_to_relay, ns(Context), false),
+        "relay publication leaked into bunker scope"
+    ).
 
 %% ===== Step actions =========================================================
 set_allowed_methods(Context, Args) ->
@@ -350,12 +456,26 @@ method_call(Context, Client, Method) ->
     Audit0 = audit_line(Context, Client, <<"REQ-METHOD">>, Method, <<"rejected">>, <<>>, null),
     case damage_nsecbunker_vault_guard:assert_ready(Vault, maps:get(bunker_pubkey_hex, Policy)) of
         {error, Reason0} ->
-            Audit = audit_line(Context, Client, <<"REQ-METHOD">>, Method, <<"rejected">>, atom_to_binary(Reason0, utf8), null),
-            append_audit(set_last(Context, rejected, Reason0, #{method_decision => <<"rejected">>, signer_invoked => false, audit_line => Audit}), Audit);
+            Audit = audit_line(
+                Context,
+                Client,
+                <<"REQ-METHOD">>,
+                Method,
+                <<"rejected">>,
+                atom_to_binary(Reason0, utf8),
+                null
+            ),
+            append_audit(
+                set_last(Context, rejected, Reason0, #{
+                    method_decision => <<"rejected">>, signer_invoked => false, audit_line => Audit
+                }),
+                Audit
+            );
         ok ->
             Decision =
                 case lists:member(Client, maps:get(authorized_clients, Policy, [])) of
-                    false -> {rejected, client_not_authorized};
+                    false ->
+                        {rejected, client_not_authorized};
                     true ->
                         case lists:member(Method, maps:get(allowed_methods, Policy, [])) of
                             true -> {allowed, <<>>};
@@ -365,17 +485,37 @@ method_call(Context, Client, Method) ->
             case Decision of
                 {allowed, <<>>} ->
                     Response = method_response(Method, maps:get(bunker_pubkey_hex, Policy)),
-                    Audit = audit_line(Context, Client, <<"REQ-METHOD">>, Method, <<"allowed">>, <<>>, null),
-                    append_audit(set_last(Context, allowed, <<>>, #{
-                        method_decision => <<"allowed">>,
-                        last_response => Response,
-                        last_returned_pubkey => maps:get(bunker_pubkey_hex, Policy),
-                        signer_invoked => false,
-                        audit_line => Audit0
-                    }), Audit);
+                    Audit = audit_line(
+                        Context, Client, <<"REQ-METHOD">>, Method, <<"allowed">>, <<>>, null
+                    ),
+                    append_audit(
+                        set_last(Context, allowed, <<>>, #{
+                            method_decision => <<"allowed">>,
+                            last_response => Response,
+                            last_returned_pubkey => maps:get(bunker_pubkey_hex, Policy),
+                            signer_invoked => false,
+                            audit_line => Audit0
+                        }),
+                        Audit
+                    );
                 {rejected, Reason} ->
-                    Audit = audit_line(Context, Client, <<"REQ-METHOD">>, Method, <<"rejected">>, atom_to_binary(Reason, utf8), null),
-                    append_audit(set_last(Context, rejected, Reason, #{method_decision => <<"rejected">>, signer_invoked => false, audit_line => Audit}), Audit)
+                    Audit = audit_line(
+                        Context,
+                        Client,
+                        <<"REQ-METHOD">>,
+                        Method,
+                        <<"rejected">>,
+                        atom_to_binary(Reason, utf8),
+                        null
+                    ),
+                    append_audit(
+                        set_last(Context, rejected, Reason, #{
+                            method_decision => <<"rejected">>,
+                            signer_invoked => false,
+                            audit_line => Audit
+                        }),
+                        Audit
+                    )
             end
     end.
 
@@ -388,14 +528,25 @@ request_signing(Context, Client) ->
             Elapsed = maps:get(simulated_elapsed_ms, NS, TimeoutMs + 1),
             case damage_nsecbunker_signing_guard:classify_elapsed(Elapsed, TimeoutMs) of
                 {error, signing_timeout} ->
-                    Audit = audit_line(Context, Client, <<"REQ-SIGN">>, <<"sign_event">>, <<"rejected">>, <<"signing_timeout">>, maps:get(kind, event(Context), null)),
-                    append_audit(set_last(Context, rejected, signing_timeout, #{
-                        signing_decision => <<"rejected">>,
-                        signature_produced => false,
-                        signer_invoked => false,
-                        partial_signature_exposed => false,
-                        audit_line => Audit
-                    }), Audit);
+                    Audit = audit_line(
+                        Context,
+                        Client,
+                        <<"REQ-SIGN">>,
+                        <<"sign_event">>,
+                        <<"rejected">>,
+                        <<"signing_timeout">>,
+                        maps:get(kind, event(Context), null)
+                    ),
+                    append_audit(
+                        set_last(Context, rejected, signing_timeout, #{
+                            signing_decision => <<"rejected">>,
+                            signature_produced => false,
+                            signer_invoked => false,
+                            partial_signature_exposed => false,
+                            audit_line => Audit
+                        }),
+                        Audit
+                    );
                 ok ->
                     run_gate(Context, Client)
             end;
@@ -409,42 +560,54 @@ run_gate(Context, Client) ->
     Request0 = maps:get(request, NS, #{}),
     Event = maps:get(event, NS, valid_event(30023, Now)),
     CreatedAt = maps:get(created_at, Request0, maps:get(created_at, Event, Now)),
-    Request = maps:merge(#{
-        requester_pubkey => Client,
-        request_id => maps:get(request_id, Request0, <<"REQ-SIGN">>),
-        method => <<"sign_event">>,
-        created_at => CreatedAt,
-        event => Event
-    }, Request0#{requester_pubkey => Client, method => <<"sign_event">>, event => Event}),
+    Request = maps:merge(
+        #{
+            requester_pubkey => Client,
+            request_id => maps:get(request_id, Request0, <<"REQ-SIGN">>),
+            method => <<"sign_event">>,
+            created_at => CreatedAt,
+            event => Event
+        },
+        Request0#{requester_pubkey => Client, method => <<"sign_event">>, event => Event}
+    ),
     case damage_nsecbunker_gate:preflight(Request, vault(NS), policy(NS), Now) of
         {ok, #{audit_line := Audit}} ->
-            append_audit(set_last(Context, allowed, <<>>, #{
-                request => Request,
-                signing_decision => <<"allowed">>,
-                signer_invoked => true,
-                signature_produced => true,
-                published_to_relay => false,
-                publication_geometry_owner => <<"publication_tooling">>,
-                audit_line => Audit
-            }), Audit);
+            append_audit(
+                set_last(Context, allowed, <<>>, #{
+                    request => Request,
+                    signing_decision => <<"allowed">>,
+                    signer_invoked => true,
+                    signature_produced => true,
+                    published_to_relay => false,
+                    publication_geometry_owner => <<"publication_tooling">>,
+                    audit_line => Audit
+                }),
+                Audit
+            );
         {duplicate_same_payload, #{audit_line := Audit}} ->
-            append_audit(set_last(Context, allowed, <<>>, #{
-                request => Request,
-                signing_decision => <<"allowed">>,
-                replay_decision => <<"duplicate_same_payload">>,
-                signer_invoked => false,
-                signature_produced => false,
-                divergent_signature => false,
-                audit_line => Audit
-            }), Audit);
+            append_audit(
+                set_last(Context, allowed, <<>>, #{
+                    request => Request,
+                    signing_decision => <<"allowed">>,
+                    replay_decision => <<"duplicate_same_payload">>,
+                    signer_invoked => false,
+                    signature_produced => false,
+                    divergent_signature => false,
+                    audit_line => Audit
+                }),
+                Audit
+            );
         {error, Reason, Audit} ->
-            append_audit(set_last(Context, rejected, Reason, #{
-                request => Request,
-                signing_decision => <<"rejected">>,
-                signer_invoked => false,
-                signature_produced => false,
-                audit_line => Audit
-            }), Audit)
+            append_audit(
+                set_last(Context, rejected, Reason, #{
+                    request => Request,
+                    signing_decision => <<"rejected">>,
+                    signer_invoked => false,
+                    signature_produced => false,
+                    audit_line => Audit
+                }),
+                Audit
+            )
     end.
 
 replay_submit(Context, RequestId, PayloadHash) ->
@@ -452,11 +615,22 @@ replay_submit(Context, RequestId, PayloadHash) ->
     Client = first_authorized_client(Context),
     case damage_nsecbunker_replay:check_and_mark(Client, RequestId, PayloadHash) of
         ok ->
-            set_last(Context, allowed, <<>>, #{replay_decision => <<"allowed">>, divergent_signature => false});
+            set_last(Context, allowed, <<>>, #{
+                replay_decision => <<"allowed">>, divergent_signature => false
+            });
         {ok, duplicate_same_payload} ->
-            set_last(Context, allowed, <<>>, #{replay_decision => <<"duplicate_same_payload">>, divergent_signature => false, signer_invoked => false});
+            set_last(Context, allowed, <<>>, #{
+                replay_decision => <<"duplicate_same_payload">>,
+                divergent_signature => false,
+                signer_invoked => false
+            });
         {error, Reason} ->
-            set_last(Context, rejected, Reason, #{replay_decision => <<"rejected">>, divergent_signature => false, signer_invoked => false, signature_produced => false})
+            set_last(Context, rejected, Reason, #{
+                replay_decision => <<"rejected">>,
+                divergent_signature => false,
+                signer_invoked => false,
+                signature_produced => false
+            })
     end.
 
 %% ===== Context helpers ======================================================
@@ -499,11 +673,17 @@ set_last(Context, Decision, Reason, Extra) ->
     DecisionBin = decision_bin(Decision),
     ReasonBin = reason_bin(Reason),
     update_ns(Context, fun(NS) ->
-        maps:merge(NS, maps:merge(#{
-            last_decision => DecisionBin,
-            denial_reason => ReasonBin,
-            last_reason => ReasonBin
-        }, Extra))
+        maps:merge(
+            NS,
+            maps:merge(
+                #{
+                    last_decision => DecisionBin,
+                    denial_reason => ReasonBin,
+                    last_reason => ReasonBin
+                },
+                Extra
+            )
+        )
     end).
 
 append_audit(Context, AuditLine) ->
@@ -539,7 +719,11 @@ valid_event(30023, Now) ->
     #{
         kind => 30023,
         created_at => Now,
-        tags => [[<<"d">>, <<"deployment">>], [<<"title">>, <<"Deployment Record">>], [<<"published_at">>, integer_to_binary(Now)]],
+        tags => [
+            [<<"d">>, <<"deployment">>],
+            [<<"title">>, <<"Deployment Record">>],
+            [<<"published_at">>, integer_to_binary(Now)]
+        ],
         content => <<"# Deployment Record\n\nMarkdown only.">>
     };
 valid_event(Kind, Now) ->
@@ -565,7 +749,9 @@ audit_line(Context, Client, RequestId, Method, Decision, Reason, EventKind) ->
         deny_reason => Reason,
         event_kind => EventKind,
         event_id => <<>>,
-        payload_sha256 => hex(crypto:hash(sha256, <<Client/binary, RequestId/binary, Method/binary>>)),
+        payload_sha256 => hex(
+            crypto:hash(sha256, <<Client/binary, RequestId/binary, Method/binary>>)
+        ),
         bunker_pubkey => maps:get(bunker_pubkey_hex, Policy, <<>>),
         contract_sha => maps:get(contract_sha, Policy, <<>>)
     }).
@@ -583,9 +769,14 @@ assert_reason(Context, Expected0, Mode) ->
     Expected = to_bin(Expected0),
     Actual = maps:get(denial_reason, ns(Context), <<>>),
     case {Mode, Expected, Actual} of
-        {should, <<>>, _} -> Context;
-        {_, Expected, Expected} -> Context;
-        _ -> fail(Context, damage_utils:strf("denial reason was ~p, expected ~p", [Actual, Expected]))
+        {should, <<>>, _} ->
+            Context;
+        {_, Expected, Expected} ->
+            Context;
+        _ ->
+            fail(
+                Context, damage_utils:strf("denial reason was ~p, expected ~p", [Actual, Expected])
+            )
     end.
 
 assert_not_reason(Context, Reason) ->
@@ -596,12 +787,15 @@ assert_not_reason(Context, Reason) ->
         false -> Context
     end.
 
-assert_equal(Context, A, A, _Message) -> Context;
+assert_equal(Context, A, A, _Message) ->
+    Context;
 assert_equal(Context, A, B, Message) ->
     fail(Context, damage_utils:strf("~s: ~p /= ~p", [Message, A, B])).
 
-assert_false(Context, false, _Message) -> Context;
-assert_false(Context, undefined, _Message) -> Context;
+assert_false(Context, false, _Message) ->
+    Context;
+assert_false(Context, undefined, _Message) ->
+    Context;
 assert_false(Context, Value, Message) ->
     fail(Context, damage_utils:strf("~s: ~p", [Message, Value])).
 
@@ -629,7 +823,8 @@ fail(Context, Reason) ->
 table_column(Args, Column) ->
     Rows = table_rows(Args),
     case Rows of
-        [] -> [];
+        [] ->
+            [];
         [Header | DataRows] ->
             Index = column_index(Header, Column),
             [to_bin(nth_or_empty(Index, Row)) || Row <- DataRows, nth_or_empty(Index, Row) =/= <<>>]
@@ -639,7 +834,8 @@ table_rows(Args) when is_binary(Args) ->
     parse_table_binary(Args);
 table_rows(Args) when is_map(Args) ->
     case maps:find(rows, Args) of
-        {ok, Rows} -> table_rows(Rows);
+        {ok, Rows} ->
+            table_rows(Rows);
         error ->
             case maps:find(<<"rows">>, Args) of
                 {ok, Rows} -> table_rows(Rows);
@@ -648,7 +844,8 @@ table_rows(Args) when is_map(Args) ->
     end;
 table_rows(Args) when is_list(Args) ->
     case Args of
-        [] -> [];
+        [] ->
+            [];
         [M | _] when is_map(M) ->
             maps_to_rows(Args);
         [[_ | _] | _] ->
@@ -735,5 +932,6 @@ ensure_server(Module) ->
                 {'EXIT', {already_started, _Pid}} -> ok;
                 _Other -> ok
             end;
-        _Pid -> ok
+        _Pid ->
+            ok
     end.

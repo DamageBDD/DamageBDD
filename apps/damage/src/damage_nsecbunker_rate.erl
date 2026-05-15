@@ -20,7 +20,9 @@ check_and_mark(RequesterPubkey, NowUnix, MaxRequests, WindowSeconds) ->
         throttle ->
             check_throttle(RequesterPubkey);
         ets ->
-            gen_server:call(?SERVER, {check_and_mark, RequesterPubkey, NowUnix, MaxRequests, WindowSeconds})
+            gen_server:call(
+                ?SERVER, {check_and_mark, RequesterPubkey, NowUnix, MaxRequests, WindowSeconds}
+            )
     end.
 
 check_throttle(RequesterPubkey) ->
@@ -63,16 +65,13 @@ handle_call(
         end,
 
     {reply, Reply, State};
-
 handle_call({seed, RequesterPubkey, NowUnix, Count}, _From, #{table := Table} = State) ->
     ets:delete(Table, RequesterPubkey),
     [ets:insert(Table, {RequesterPubkey, NowUnix}) || _ <- lists:seq(1, Count)],
     {reply, ok, State};
-
 handle_call(reset, _From, #{table := Table} = State) ->
     ets:delete_all_objects(Table),
     {reply, ok, State};
-
 handle_call(_Other, _From, State) ->
     {reply, {error, bad_call}, State}.
 
@@ -90,4 +89,3 @@ code_change(_OldVsn, State, _Extra) ->
 
 backend() ->
     application:get_env(damage, nsecbunker_rate_backend, ets).
-

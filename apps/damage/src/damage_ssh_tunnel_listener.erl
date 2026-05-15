@@ -253,7 +253,9 @@ ensure_dir(D0) ->
 normalize_port({ok, Port}) ->
     normalize_port(Port);
 normalize_port(0) ->
-    ?LOG_WARNING("damage_ssh_tunnel_listener port 0 requested; using fixed loopback port 2223 instead", []),
+    ?LOG_WARNING(
+        "damage_ssh_tunnel_listener port 0 requested; using fixed loopback port 2223 instead", []
+    ),
     2223;
 normalize_port(Port) when is_integer(Port), Port > 0, Port =< 65535 ->
     Port;
@@ -342,7 +344,9 @@ start_ssh_daemon() ->
     case ssh:daemon(Ip, Port, ssh_daemon_options(SystemDir, UserDir)) of
         {ok, SSHPid} ->
             DaemonInfo = ssh:daemon_info(SSHPid),
-            ?LOG_INFO("damage_ssh_tunnel_listener daemon started ip=~p port=~p info=~p", [Ip, Port, DaemonInfo]),
+            ?LOG_INFO("damage_ssh_tunnel_listener daemon started ip=~p port=~p info=~p", [
+                Ip, Port, DaemonInfo
+            ]),
             {ok, SSHPid};
         {error, Reason} = Error ->
             ?LOG_ERROR(

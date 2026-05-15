@@ -645,7 +645,6 @@ assert_upload_target(Path0) ->
             erlang:error({ipfs_upload_target_missing, Path, Error})
     end.
 
-
 docker_container_id(Ctx) ->
     case
         first_defined(
@@ -674,7 +673,6 @@ first_defined([K | Ks], Ctx) ->
         undefined -> first_defined(Ks, Ctx);
         V -> V
     end.
-
 
 unique_stage_id() ->
     Enc = base64:encode(crypto:strong_rand_bytes(12)),

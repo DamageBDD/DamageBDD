@@ -58,7 +58,8 @@ default_policy() ->
 %%    created_at := UnixSeconds,
 %%    event => #{kind := 30023, created_at := UnixSeconds, tags := [...], content := <<>>}
 %% }
--spec authorize(request(), policy(), non_neg_integer(), binary()) -> {ok, audit_hints()} | {error, atom()}.
+-spec authorize(request(), policy(), non_neg_integer(), binary()) ->
+    {ok, audit_hints()} | {error, atom()}.
 authorize(Request, Policy, NowUnix, VaultPubkeyHex) ->
     Checks = [
         fun() -> ensure_vault_pubkey_stable(Policy, VaultPubkeyHex) end,
@@ -73,7 +74,8 @@ authorize(Request, Policy, NowUnix, VaultPubkeyHex) ->
         {error, Reason} -> {error, Reason}
     end.
 
-run_checks([]) -> ok;
+run_checks([]) ->
+    ok;
 run_checks([Check | Rest]) ->
     case Check() of
         ok -> run_checks(Rest);
@@ -105,7 +107,8 @@ ensure_method_allowed(Request, Policy) ->
 
 ensure_request_time(Request, Policy, NowUnix) ->
     case maps:find(created_at, Request) of
-        error -> ok;
+        error ->
+            ok;
         {ok, CreatedAt} when is_integer(CreatedAt) ->
             Skew = maps:get(created_at_skew_seconds, Policy, ?DEFAULT_SKEW_SECONDS),
             Delta = CreatedAt - NowUnix,
@@ -114,7 +117,8 @@ ensure_request_time(Request, Policy, NowUnix) ->
                 Delta > Skew -> {error, request_from_future};
                 true -> ok
             end;
-        {ok, _Bad} -> {error, invalid_request_created_at}
+        {ok, _Bad} ->
+            {error, invalid_request_created_at}
     end.
 
 ensure_not_publishing(Request, Policy) ->
@@ -155,7 +159,8 @@ ensure_event_time(Event, Policy, NowUnix) ->
     CreatedAt = maps:get(created_at, Event, undefined),
     Skew = maps:get(created_at_skew_seconds, Policy, ?DEFAULT_SKEW_SECONDS),
     case is_integer(CreatedAt) of
-        false -> {error, invalid_event_created_at};
+        false ->
+            {error, invalid_event_created_at};
         true ->
             Delta = CreatedAt - NowUnix,
             if
@@ -170,7 +175,8 @@ ensure_event_size(Event, Policy) ->
     MaxByKind = maps:get(max_event_bytes, Policy, #{}),
     Max = maps:get(Kind, MaxByKind, undefined),
     case Max of
-        undefined -> {error, kind_not_allowed};
+        undefined ->
+            {error, kind_not_allowed};
         _ when is_integer(Max) ->
             Size = event_size(Event),
             case Size =< Max of
@@ -234,7 +240,7 @@ contains_active_content(_) ->
     true.
 
 lower_ascii(Bin) ->
-    << <<(lower_char(C))>> || <<C>> <= Bin >>.
+    <<<<(lower_char(C))>> || <<C>> <= Bin>>.
 
 lower_char(C) when C >= $A, C =< $Z -> C + 32;
 lower_char(C) -> C.

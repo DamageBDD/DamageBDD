@@ -224,7 +224,6 @@ aad_context_hash(AADContext) ->
 aad_context_bin(AADContext) ->
     term_to_binary(normalize_aad_context(AADContext)).
 
-
 normalize_aad_context(undefined) ->
     none;
 normalize_aad_context(none) ->

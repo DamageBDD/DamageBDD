@@ -14,7 +14,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
--spec check_and_mark(binary(), binary(), binary()) -> ok | {ok, duplicate_same_payload} | {error, replay_conflict}.
+-spec check_and_mark(binary(), binary(), binary()) ->
+    ok | {ok, duplicate_same_payload} | {error, replay_conflict}.
 check_and_mark(RequesterPubkey, RequestId, PayloadSha256) ->
     gen_server:call(?SERVER, {check_and_mark, RequesterPubkey, RequestId, PayloadSha256}).
 
@@ -25,7 +26,9 @@ init([]) ->
     Table = ets:new(?MODULE, [set, private]),
     {ok, #{table => Table}}.
 
-handle_call({check_and_mark, RequesterPubkey, RequestId, PayloadSha256}, _From, #{table := Table} = State) ->
+handle_call(
+    {check_and_mark, RequesterPubkey, RequestId, PayloadSha256}, _From, #{table := Table} = State
+) ->
     Key = {RequesterPubkey, RequestId},
     Reply =
         case ets:lookup(Table, Key) of

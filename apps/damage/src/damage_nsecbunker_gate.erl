@@ -63,7 +63,8 @@ normalize_reason(Reason) when is_atom(Reason) ->
 normalize_reason(_) ->
     preflight_failed.
 
-with_ok([]) -> ok;
+with_ok([]) ->
+    ok;
 with_ok([Fun | Rest]) ->
     case Fun() of
         ok -> with_ok(Rest);
@@ -90,21 +91,34 @@ replay_check(Request, PayloadHash) ->
 
 request_payload_hash(Request) ->
     Event = maps:get(event, Request, #{}),
-    crypto:hash(sha256, iolist_to_binary([
-        maps:get(requester_pubkey, Request, <<>>), <<":">>,
-        maps:get(request_id, Request, <<>>), <<":">>,
-        maps:get(method, Request, <<>>), <<":">>,
-        integer_to_binary(maps:get(created_at, Request, 0)), <<":">>,
-        hex(canonical_event_hash(Event))
-    ])).
+    crypto:hash(
+        sha256,
+        iolist_to_binary([
+            maps:get(requester_pubkey, Request, <<>>),
+            <<":">>,
+            maps:get(request_id, Request, <<>>),
+            <<":">>,
+            maps:get(method, Request, <<>>),
+            <<":">>,
+            integer_to_binary(maps:get(created_at, Request, 0)),
+            <<":">>,
+            hex(canonical_event_hash(Event))
+        ])
+    ).
 
 canonical_event_hash(Event) ->
-    crypto:hash(sha256, iolist_to_binary([
-        integer_to_binary(maps:get(kind, Event, 0)), <<":">>,
-        integer_to_binary(maps:get(created_at, Event, 0)), <<":">>,
-        jsx:encode(maps:get(tags, Event, [])), <<":">>,
-        maps:get(content, Event, <<>>)
-    ])).
+    crypto:hash(
+        sha256,
+        iolist_to_binary([
+            integer_to_binary(maps:get(kind, Event, 0)),
+            <<":">>,
+            integer_to_binary(maps:get(created_at, Event, 0)),
+            <<":">>,
+            jsx:encode(maps:get(tags, Event, [])),
+            <<":">>,
+            maps:get(content, Event, <<>>)
+        ])
+    ).
 
 base_audit(Request, Policy, NowUnix, PayloadHash) ->
     Event = maps:get(event, Request, #{}),

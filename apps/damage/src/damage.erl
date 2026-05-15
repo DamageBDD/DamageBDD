@@ -396,12 +396,10 @@ execute_feature(
     deinit_logging(Config),
     FinalContext.
 
-
 execute_scenario(Config, Context, undefined, Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);
 execute_scenario(Config, Context, [], Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);
-
 execute_scenario(
     Config,
     Context,
@@ -428,7 +426,6 @@ execute_scenario(
                 DataRows
             )
     end;
-
 execute_scenario(Config, Context, {_, BackGroundSteps}, {LineNo, ScenarioName, Tags, Steps}) ->
     formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
     lists:foldl(
@@ -436,7 +433,6 @@ execute_scenario(Config, Context, {_, BackGroundSteps}, {LineNo, ScenarioName, T
         Context,
         lists:append(BackGroundSteps, Steps)
     );
-
 execute_scenario(_Config, Context, _BackGround, Scenario) ->
     maps:put(
         fail,
