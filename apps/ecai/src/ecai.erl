@@ -16,7 +16,10 @@
 -export([
     point_to_filename_hash/1,
     hash_to_curve_point/1,
+    hash_binary_to_curve_point/1,
+    hash_raw_binary_to_curve_point/1,
     hash_to_curve/1,
+    hash_to_curve/2,
     curve_add/4
 ]).
 -nifs([
@@ -52,17 +55,36 @@ hash_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
 
 curve_add(_X1, _Y1, _X2, _Y2) -> erlang:nif_error(nif_library_not_loaded).
 
+%% Backward-compatible curve mapping.
+%%
+%% Historically, callers that passed binary data were first SHA256 hashed,
+%% hex encoded, then mapped to a curve point. Keep that behaviour because the
+%% resulting point feeds deterministic NFT token IDs/fact keys. Changing this
+%% function would remap existing knowledge artifacts.
 hash_to_curve_point(Data) when is_binary(Data) ->
-    hash_to_curve_point(binary_to_list(binary:encode_hex(crypto:hash(sha256, Data))));
+    hash_binary_to_curve_point(Data);
 hash_to_curve_point(Data) when is_list(Data) ->
-    {XBin, YBin, Counter} = hash_to_curve(Data),
-    #{
-        x_bin => XBin,
-        y_bin => YBin,
-        x => binary:decode_unsigned(XBin, little),
-        y => binary:decode_unsigned(YBin, little),
-        counter => Counter
-    }.
+    case hash_to_curve(Data) of
+        {XBin, YBin, Counter} ->
+            #{
+                x_bin => XBin,
+                y_bin => YBin,
+                x => binary:decode_unsigned(XBin, little),
+                y => binary:decode_unsigned(YBin, little),
+                counter => Counter
+            };
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+%% Explicit hash-first mapping for binary payloads.
+hash_binary_to_curve_point(Data) when is_binary(Data) ->
+    hash_to_curve_point(binary_to_list(binary:encode_hex(crypto:hash(sha256, Data)))).
+
+%% Explicit raw binary/list mapping for new callers that intentionally want
+%% raw payload bytes to feed the NIF.
+hash_raw_binary_to_curve_point(Data) when is_binary(Data) ->
+    hash_to_curve_point(binary_to_list(Data)).
 -spec point_to_filename_hash(
     {integer(), integer()}
     | {binary(), binary()}

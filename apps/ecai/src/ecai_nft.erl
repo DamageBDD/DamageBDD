@@ -142,8 +142,9 @@ mint_verified_pqc_knowledge(KeyPair, ToAccount0, PQPublicKey, Spec0) when
         DamageBDD = maps:get(damagebdd, Spec),
         PrivatePayload = verified_private_payload(Spec),
         PayloadHash = crypto:hash(sha256, PrivatePayload),
-        Envelope = secrets_pqc:encrypt(PrivatePayload, PQPublicKey),
         ContractId = ct_id(Spec),
+        AADContext = verified_aad_context(ToAccount, ContractId, PQPublicKey, PayloadHash),
+        Envelope = secrets_pqc:encrypt(PrivatePayload, PQPublicKey, AADContext),
         PublicManifest = build_verified_pqc_manifest(
             ToAccount,
             ContractId,
@@ -223,13 +224,15 @@ build_verified_pqc_manifest(
             #{
                 <<"says">> => <<"Who can read this object?">>,
                 <<"domain">> => <<"damagebdd:ecai:pqc:nft-payload:v1">>,
+                <<"aad_context">> => jsonable_map(
+                    verified_aad_context(ToAccount, ContractId, PQPublicKey, PayloadHash)
+                ),
                 <<"recipient_pqpk_sha256">> => binary:encode_hex(
                     crypto:hash(sha256, PQPublicKey)
                 ),
                 <<"payload_sha256">> => binary:encode_hex(PayloadHash),
-                <<"envelope_sha256">> => binary:encode_hex(
-                    crypto:hash(sha256, term_to_binary(Envelope))
-                )
+                <<"envelope_sha256">> =>
+                  binary:encode_hex(pqc_envelope_hash(Envelope))
             },
             pqc_envelope_to_json(Envelope)
         ),
@@ -249,7 +252,14 @@ decrypt_verified_pqc_payload(PublicManifest, PQPrivateKey) when
 ->
     try
         Envelope = pqc_envelope_from_verified_manifest(PublicManifest),
-        Plaintext = secrets_pqc:decrypt(Envelope, PQPrivateKey),
+        ok = verify_verified_envelope_hash(PublicManifest, Envelope),
+        AADContext = aad_context_from_verified_manifest(PublicManifest),
+        Plaintext =
+            case AADContext of
+                none -> secrets_pqc:decrypt(Envelope, PQPrivateKey);
+                _ -> secrets_pqc:decrypt(Envelope, PQPrivateKey, AADContext)
+            end,
+        ok = verify_verified_payload_hash(PublicManifest, Plaintext),
         case catch jsx:decode(Plaintext, [return_maps]) of
             {'EXIT', _} -> {ok, Plaintext};
             Json -> {ok, Json}
@@ -328,16 +338,18 @@ public_manifest_knowledge(EcaiIndex, ManifestCid, Spec) ->
         context => to_bin(Context)
     }.
 
-pqc_envelope_to_json(#{
-    v := V,
-    alg := Alg,
-    kem := Kem,
-    kem_ct := KemCiphertext,
-    iv := IV,
-    tag := Tag,
-    ct := Ciphertext
-}) ->
+pqc_envelope_to_json(
     #{
+        v := V,
+        alg := Alg,
+        kem := Kem,
+        kem_ct := KemCiphertext,
+        iv := IV,
+        tag := Tag,
+        ct := Ciphertext
+    } = Envelope
+) ->
+    EnvelopeJson0 = #{
         <<"v">> => V,
         <<"alg">> => atom_to_binary(Alg, utf8),
         <<"kem">> => atom_to_binary(Kem, utf8),
@@ -345,7 +357,11 @@ pqc_envelope_to_json(#{
         <<"iv">> => base64:encode(IV),
         <<"tag">> => base64:encode(Tag),
         <<"ct">> => base64:encode(Ciphertext)
-    }.
+    },
+    case maps:get(aad_sha256, Envelope, undefined) of
+        undefined -> EnvelopeJson0;
+        AADHash -> maps:put(<<"aad_sha256">>, binary:encode_hex(AADHash), EnvelopeJson0)
+    end.
 
 parse_alg(<<"pqc_hybrid_aes_256_gcm">>) -> pqc_hybrid_aes_256_gcm;
 parse_alg("pqc_hybrid_aes_256_gcm") -> pqc_hybrid_aes_256_gcm;
@@ -357,7 +373,7 @@ parse_kem(ml_kem_768) -> ml_kem_768.
 
 pqc_envelope_from_verified_manifest(PublicManifest) ->
     PQC = map_get_any([<<"pqc_envelope">>, "pqc_envelope", pqc_envelope], PublicManifest),
-    #{
+    Envelope0 = #{
         v => map_get_any([<<"v">>, "v", v], PQC),
         alg => parse_alg(map_get_any([<<"alg">>, "alg", alg], PQC)),
         kem => parse_kem(map_get_any([<<"kem">>, "kem", kem], PQC)),
@@ -365,7 +381,61 @@ pqc_envelope_from_verified_manifest(PublicManifest) ->
         iv => base64:decode(to_bin(map_get_any([<<"iv">>, "iv", iv], PQC))),
         tag => base64:decode(to_bin(map_get_any([<<"tag">>, "tag", tag], PQC))),
         ct => base64:decode(to_bin(map_get_any([<<"ct">>, "ct", ct], PQC)))
+    },
+    case map_get_optional([<<"aad_sha256">>, "aad_sha256", aad_sha256], PQC) of
+        undefined -> Envelope0;
+        AADHashHex -> maps:put(aad_sha256, hex_to_bin(to_bin(AADHashHex)), Envelope0)
+    end.
+
+verified_aad_context(ToAccount, ContractId, PQPublicKey, PayloadHash) ->
+    #{
+        <<"domain">> => <<"damagebdd:ecai:pqc:nft-payload:aad:v1">>,
+        <<"chain">> => <<"aeternity">>,
+        <<"standard">> => <<"aex141">>,
+        <<"contract_id">> => to_bin(ContractId),
+        <<"owner_at_mint">> => to_bin(ToAccount),
+        <<"payload_sha256">> => binary:encode_hex(PayloadHash),
+        <<"recipient_pqpk_sha256">> => binary:encode_hex(crypto:hash(sha256, PQPublicKey))
     }.
+
+aad_context_from_verified_manifest(PublicManifest) ->
+    PQC = map_get_any([<<"pqc_envelope">>, "pqc_envelope", pqc_envelope], PublicManifest),
+    case map_get_optional([<<"aad_context">>, "aad_context", aad_context], PQC) of
+        undefined ->
+            none;
+        AADContext when is_map(AADContext) ->
+            jsonable_map(AADContext);
+        AADContext ->
+            AADContext
+    end.
+
+verify_verified_envelope_hash(PublicManifest, Envelope) ->
+    PQC = map_get_any([<<"pqc_envelope">>, "pqc_envelope", pqc_envelope], PublicManifest),
+    Expected = to_bin(
+        map_get_any([<<"envelope_sha256">>, "envelope_sha256", envelope_sha256], PQC)
+    ),
+    Actual = binary:encode_hex(pqc_envelope_hash(Envelope)),
+    case hex_equal(Expected, Actual) of
+        true -> ok;
+        false -> error({envelope_sha256_mismatch, #{expected => Expected, actual => Actual}})
+    end.
+
+verify_verified_payload_hash(PublicManifest, Plaintext) ->
+    PQC = map_get_any([<<"pqc_envelope">>, "pqc_envelope", pqc_envelope], PublicManifest),
+    Expected = to_bin(map_get_any([<<"payload_sha256">>, "payload_sha256", payload_sha256], PQC)),
+    Actual = binary:encode_hex(crypto:hash(sha256, Plaintext)),
+    case hex_equal(Expected, Actual) of
+        true -> ok;
+        false -> error({payload_sha256_mismatch, #{expected => Expected, actual => Actual}})
+    end.
+
+map_get_optional([Key | Rest], Map) when is_map(Map) ->
+    case maps:get(Key, Map, undefined) of
+        undefined -> map_get_optional(Rest, Map);
+        Value -> Value
+    end;
+map_get_optional([], _Map) ->
+    undefined.
 
 map_get_any([Key | Rest], Map) when is_map(Map) ->
     case maps:get(Key, Map, undefined) of
@@ -1116,6 +1186,58 @@ jsonable(V) when is_tuple(V) ->
 jsonable(V) ->
     iolist_to_binary(io_lib:format("~p", [V])).
 
+%% Canonical envelope hashing.
+%%
+%% Do not hash the raw map directly. The envelope crosses a JSON boundary,
+%% so hash a fixed-order tuple/list structure instead.
+pqc_envelope_hash(Envelope) ->
+    crypto:hash(sha256, term_to_binary(canonical_pqc_envelope(Envelope))).
+
+canonical_pqc_envelope(
+    #{
+        v := V,
+        alg := Alg,
+        kem := Kem,
+        kem_ct := KemCiphertext,
+        iv := IV,
+        tag := Tag,
+        ct := Ciphertext
+    } = Envelope
+) ->
+    Base = [
+        {v, V},
+        {alg, parse_alg(Alg)},
+        {kem, parse_kem(Kem)},
+        {kem_ct, KemCiphertext},
+        {iv, IV},
+        {tag, Tag},
+        {ct, Ciphertext}
+    ],
+    case maps:get(aad_sha256, Envelope, undefined) of
+        undefined -> Base;
+        AADHash -> Base ++ [{aad_sha256, AADHash}]
+    end.
+
+hex_equal(A, B) ->
+    string:lowercase(binary_to_list(to_bin(A))) =:=
+        string:lowercase(binary_to_list(to_bin(B))).
+
+hex_to_bin(Hex0) ->
+    Hex = string:lowercase(binary_to_list(to_bin(Hex0))),
+    case length(Hex) rem 2 of
+        0 -> hex_to_bin(Hex, <<>>);
+        1 -> error({invalid_hex, Hex0})
+    end.
+
+hex_to_bin([], Acc) ->
+    Acc;
+hex_to_bin([Hi, Lo | Rest], Acc) ->
+    Byte = (hex_nibble(Hi) bsl 4) bor hex_nibble(Lo),
+    hex_to_bin(Rest, <<Acc/binary, Byte:8>>).
+
+hex_nibble(C) when C >= $0, C =< $9 -> C - $0;
+hex_nibble(C) when C >= $a, C =< $f -> 10 + C - $a;
+hex_nibble(C) -> error({invalid_hex_char, C}).
 safe_term(Term) when is_binary(Term) ->
     Term;
 safe_term(Term) when is_integer(Term); is_float(Term); is_boolean(Term) ->

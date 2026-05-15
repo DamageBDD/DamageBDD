@@ -34,7 +34,9 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
-    {ok, Pools} = application:get_env(ecai, pools),
+    Pools0 = application:get_env(ecai, pools, []),
+    Pools = maybe_ensure_ecai_chat_pool(Pools0),
+
     ?LOG_DEBUG("Starting workers ~p~n", [Pools]),
     SupFlags = {one_for_one, 10, 10},
     PoolSpecs =
@@ -99,3 +101,37 @@ init([]) ->
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
+
+maybe_ensure_ecai_chat_pool(Pools) ->
+    case application:get_env(ecai, ecai_chat_enabled, true) of
+        true -> ensure_ecai_chat_pool(Pools);
+        false -> Pools
+    end.
+
+ensure_ecai_chat_pool(Pools) ->
+    case lists:keymember(ecai_chat, 1, Pools) of
+        true ->
+            Pools;
+        false ->
+            Pools ++ [default_ecai_chat_pool()]
+    end.
+
+default_ecai_chat_pool() ->
+    Host = application:get_env(ecai, ecai_chat_ollama_host, "localhost"),
+    Port = application:get_env(ecai, ecai_chat_ollama_port, 11434),
+    Model = application:get_env(ecai, ecai_chat_ollama_model, <<"qwen3-coder:30b">>),
+    TopK = application:get_env(ecai, ecai_chat_top_k, 8),
+
+    {
+        ecai_chat,
+        [
+            {size, 1},
+            {max_overflow, 0}
+        ],
+        [
+            {ollama_host, Host},
+            {ollama_port, Port},
+            {ollama_model, Model},
+            {top_k, TopK}
+        ]
+    }.
