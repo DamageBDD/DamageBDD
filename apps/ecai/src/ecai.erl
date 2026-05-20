@@ -24,12 +24,15 @@
 ]).
 -nifs([
     hash_to_curve/1,
+    hash_to_curve/2,
     curve_add/4
 ]).
 
+-on_load(init/0).
 -include_lib("kernel/include/logger.hrl").
 
--on_load(init/0).
+
+
 
 %% Elliptic curve parameters (y^2 = x^3 + ax + b over prime field P)
 -define(A, -1).
@@ -51,7 +54,11 @@ init() ->
     end.
 %% Generate a valid point on the elliptic curve
 
-hash_to_curve(_Arg) -> erlang:nif_error(nif_library_not_loaded).
+hash_to_curve(_Arg) ->
+    erlang:nif_error(nif_library_not_loaded).
+
+hash_to_curve(_Domain, _Arg) ->
+    erlang:nif_error(nif_library_not_loaded).
 
 curve_add(_X1, _Y1, _X2, _Y2) -> erlang:nif_error(nif_library_not_loaded).
 

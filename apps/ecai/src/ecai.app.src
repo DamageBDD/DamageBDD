@@ -8,10 +8,24 @@
         {vsn, "0.1.0"},
         {registered, []},
         {mod, {ecai_app, []}},
-        {
-            applications,
-            [kernel, stdlib, gproc, jsx, cowboy, trails, os_mon, cowboy_swagger, vanillae, damage]
-        },
+        {applications, [
+            kernel,
+            stdlib,
+            crypto,
+            public_key,
+            ssl,
+            ranch,
+            cowlib,
+            cowboy,
+            gun,
+            poolboy,
+            jsx,
+            trails,
+            os_mon,
+            cowboy_swagger,
+            vanillae,
+            damage
+        ]},
         {env, []},
         {modules, []},
         {licenses, ["Apache 2.0"]},

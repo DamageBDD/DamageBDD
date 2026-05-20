@@ -232,7 +232,7 @@ build_verified_pqc_manifest(
                 ),
                 <<"payload_sha256">> => binary:encode_hex(PayloadHash),
                 <<"envelope_sha256">> =>
-                  binary:encode_hex(pqc_envelope_hash(Envelope))
+                    binary:encode_hex(pqc_envelope_hash(Envelope))
             },
             pqc_envelope_to_json(Envelope)
         ),
