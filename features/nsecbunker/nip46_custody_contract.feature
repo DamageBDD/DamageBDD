@@ -10,15 +10,15 @@ Feature: Generic NIP-46 custody contract
     And the bunker expected public key is recorded as "BUNKER_PUBKEY_HEX"
     And the authorised client pubkey allowlist contains "AUTHORISED_CLIENT_PUBKEY_HEX"
     And the allowed NIP-46 methods are exactly:
-      | method         |
-      | connect        |
-      | ping           |
-      | get_public_key |
-      | sign_event     |
+     | method         |
+     | connect        |
+     | ping           |
+     | get_public_key |
+     | sign_event     |
     And the allowed event kinds are exactly:
-      | kind  |
-      | 1     |
-      | 30023 |
+     | kind  |
+     | 1     |
+     | 30023 |
     And the stale event skew window is 600 seconds relative to bunker time
     And the maximum byte size for kind 1 is 4096 bytes
     And the maximum byte size for kind 30023 is 131072 bytes
@@ -36,11 +36,11 @@ Feature: Generic NIP-46 custody contract
     Then the method decision MUST be "allowed"
 
     Examples:
-      | method         |
-      | connect        |
-      | ping           |
-      | get_public_key |
-      | sign_event     |
+     | method         |
+     | connect        |
+     | ping           |
+     | get_public_key |
+     | sign_event     |
 
   Scenario Outline: Unknown or misspelled methods are rejected
     When authorised client "AUTHORISED_CLIENT_PUBKEY_HEX" calls "<method>"
@@ -49,12 +49,13 @@ Feature: Generic NIP-46 custody contract
     And the decision MUST be written to the deterministic audit log
 
     Examples:
-      | method          |
-      | SIGN_EVENT      |
-      | sign-event      |
-      | nip04_decrypt   |
-      | publish_event   |
-      | get_relays      |
+     | method          |
+     | SIGN_EVENT      |
+     | sign-event      |
+     | nip04_decrypt   |
+     | publish_event   |
+     | get_relays      |
+
 
   Scenario: Unauthorised client cannot use the bunker
     When client "UNAUTHORISED_CLIENT_PUBKEY_HEX" calls "sign_event"
@@ -85,13 +86,13 @@ Feature: Generic NIP-46 custody contract
     And the denial reason SHOULD be "<reason>"
 
     Examples:
-      | kind  | decision | reason           |
-      | 1     | allowed  |                  |
-      | 30023 | allowed  |                  |
-      | 0     | rejected | kind_not_allowed |
-      | 3     | rejected | kind_not_allowed |
-      | 4     | rejected | kind_not_allowed |
-      | 9735  | rejected | kind_not_allowed |
+   | kind  | decision | reason           |
+   | 1     | allowed  | none             |
+   | 30023 | allowed  | none             |
+   | 0     | rejected | kind_not_allowed |
+   | 3     | rejected | kind_not_allowed |
+   | 4     | rejected | kind_not_allowed |
+   | 9735  | rejected | kind_not_allowed |
 
   Scenario: Oversized kind 1 event is rejected
     Given an unsigned kind 1 event larger than 4096 bytes

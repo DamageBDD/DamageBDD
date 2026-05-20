@@ -27,9 +27,10 @@
 -define(S_ALLOWED_METHODS, ["the allowed NIP-46 methods are exactly"]).
 -define(S_ALLOWED_KINDS_COLON, ["the allowed event kinds are exactly:"]).
 -define(S_ALLOWED_KINDS, ["the allowed event kinds are exactly"]).
--define(S_STALE_WINDOW, ["the stale event skew window is 600 seconds relative to bunker time"]).
--define(S_MAX_KIND1, ["the maximum byte size for kind 1 is 4096 bytes"]).
--define(S_MAX_KIND30023, ["the maximum byte size for kind 30023 is 131072 bytes"]).
+-define(S_STALE_WINDOW, [
+    "the stale event skew window is", SkewSecs, "seconds relative to bunker time"
+]).
+-define(S_MAX_KIND, ["the maximum byte size for kind", Kind, "is", MaxBytes, "bytes"]).
 -define(S_SIGNS_ONLY, ["the bunker signs only and never publishes to relays"]).
 
 %% When
@@ -48,15 +49,12 @@
 ]).
 
 %% Given state
--define(S_BUNKER_TIME, ["bunker time is 1778000000"]).
--define(S_SIGNING_REQ_CREATED_AT, ["a signing request has created_at 1777999000"]).
--define(S_SIGNING_REQ_FUTURE, ["a signing request has created_at 1778001000"]).
+-define(S_BUNKER_TIME, ["bunker time is", BunkerTime]).
+-define(S_SIGNING_REQ_CREATED_AT, ["a signing request has created_at", CreatedAt]).
 -define(S_UNSIGNED_KIND, ["an unsigned event of kind", Kind]).
--define(S_OVERSIZED_KIND1, ["an unsigned kind 1 event larger than 4096 bytes"]).
--define(S_OVERSIZED_KIND30023, ["an unsigned kind 30023 event larger than 131072 bytes"]).
--define(S_UNSIGNED_KIND30023, ["an unsigned kind 30023 event"]).
--define(S_UNSIGNED_KIND30023_MIN_TAGS, [
-    "an unsigned kind 30023 event with the required minimal tags"
+-define(S_OVERSIZED_KIND, ["an unsigned kind", Kind, "event larger than", MaxSize, "bytes"]).
+-define(S_UNSIGNED_KIND_MIN_TAGS, [
+    "an unsigned kind", Kind, "event with the required minimal tags"
 ]).
 -define(S_EVENT_MISSING_TAGS, ["the event does not contain tags", _Tags]).
 -define(S_EVENT_PASSES_POLICY, [
@@ -67,9 +65,15 @@
     "authorised client", Client, "submitted request id", RequestId, "for payload hash", PayloadHash
 ]).
 -define(S_RATE_EXCEEDED, [
-    "authorised client", Client, "has exceeded 30 requests in a 60 second window"
+    "authorised client",
+    Client,
+    "has exceeded",
+    MaxRequests,
+    "requests in a",
+    _WindowSecs,
+    "second window"
 ]).
--define(S_TIMEOUT, ["a signing request cannot complete within 10000 milliseconds"]).
+-define(S_TIMEOUT, ["a signing request cannot complete within", TimeoutMs, "milliseconds"]).
 -define(S_VAULT_CORRUPT, ["the vault fails integrity verification"]).
 -define(S_VAULT_MISMATCH, ["the vault unseals to a public key other than", Pubkey]).
 -define(S_RELAY_DRIFT, ["the configured publication relay vector changes after initial publication"]).
@@ -170,16 +174,11 @@ step(_Config, Context, _Keyword, _N, ?S_ALLOWED_KINDS_COLON, Args) ->
 step(_Config, Context, _Keyword, _N, ?S_ALLOWED_KINDS, Args) ->
     set_allowed_kinds(Context, Args);
 step(_Config, Context, _Keyword, _N, ?S_STALE_WINDOW, _Args) ->
-    update_policy(Context, fun(P) -> P#{created_at_skew_seconds => 600} end);
-step(_Config, Context, _Keyword, _N, ?S_MAX_KIND1, _Args) ->
+    update_policy(Context, fun(P) -> P#{created_at_skew_seconds => SkewSecs} end);
+step(_Config, Context, _Keyword, _N, ?S_MAX_KIND, _Args) ->
     update_policy(Context, fun(P0) ->
         Max0 = maps:get(max_event_bytes, P0, #{}),
-        P0#{max_event_bytes => Max0#{1 => 4096}}
-    end);
-step(_Config, Context, _Keyword, _N, ?S_MAX_KIND30023, _Args) ->
-    update_policy(Context, fun(P0) ->
-        Max0 = maps:get(max_event_bytes, P0, #{}),
-        P0#{max_event_bytes => Max0#{30023 => 131072}}
+        P0#{max_event_bytes => Max0#{Kind => MaxBytes}}
     end);
 step(_Config, Context, _Keyword, _N, ?S_SIGNS_ONLY, _Args) ->
     update_policy(
@@ -188,26 +187,18 @@ step(_Config, Context, _Keyword, _N, ?S_SIGNS_ONLY, _Args) ->
     );
 %% ===== Scenario setup =======================================================
 step(_Config, Context, _Keyword, _N, ?S_BUNKER_TIME, _Args) ->
-    update_ns(Context, fun(NS) -> NS#{now => 1778000000} end);
+    update_ns(Context, fun(NS) -> NS#{now => to_int(BunkerTime)} end);
+
 step(_Config, Context, _Keyword, _N, ?S_SIGNING_REQ_CREATED_AT, _Args) ->
-    update_request_time(Context, 1777999000);
-step(_Config, Context, _Keyword, _N, ?S_SIGNING_REQ_FUTURE, _Args) ->
-    update_request_time(Context, 1778001000);
+    update_request_time(Context, to_int( CreatedAt));
 step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND, _Args) ->
     KindInt = to_int(Kind),
     update_event(Context, valid_event(KindInt, now(Context)));
-step(_Config, Context, _Keyword, _N, ?S_OVERSIZED_KIND1, _Args) ->
-    Max = max_bytes(Context, 1),
-    Event = (valid_event(1, now(Context)))#{content => binary:copy(<<"x">>, Max + 512)},
+step(_Config, Context, _Keyword, _N, ?S_OVERSIZED_KIND, _Args) ->
+    Event = (valid_event(Kind, now(Context)))#{content => binary:copy(<<"x">>, MaxSize + 512)},
     update_event(Context, Event);
-step(_Config, Context, _Keyword, _N, ?S_OVERSIZED_KIND30023, _Args) ->
-    Max = max_bytes(Context, 30023),
-    Event = (valid_event(30023, now(Context)))#{content => binary:copy(<<"x">>, Max + 512)},
-    update_event(Context, Event);
-step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND30023, _Args) ->
-    update_event(Context, valid_event(30023, now(Context)));
-step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND30023_MIN_TAGS, _Args) ->
-    Event0 = valid_event(30023, now(Context)),
+step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND_MIN_TAGS, _Args) ->
+    Event0 = valid_event(Kind, now(Context)),
     Event = Event0#{
         tags => [
             [<<"d">>, <<"deployment/v1/custom-dtag">>],
@@ -237,11 +228,11 @@ step(_Config, Context, _Keyword, _N, ?S_REPLAY_SEED, _Args) ->
     end);
 step(_Config, Context, _Keyword, _N, ?S_RATE_EXCEEDED, _Args) ->
     ensure_servers(),
-    ok = damage_nsecbunker_rate:seed(to_bin(Client), now(Context), 30),
+    ok = damage_nsecbunker_rate:seed(to_bin(Client), now(Context), MaxRequests),
     update_ns(Context, fun(NS) -> NS#{rate_limited_client => to_bin(Client)} end);
 step(_Config, Context, _Keyword, _N, ?S_TIMEOUT, _Args) ->
     update_ns(Context, fun(NS) ->
-        NS#{force_signing_timeout => true, simulated_elapsed_ms => 10001}
+        NS#{force_signing_timeout => true, simulated_elapsed_ms => TimeoutMs + 1}
     end);
 step(_Config, Context, _Keyword, _N, ?S_VAULT_CORRUPT, _Args) ->
     update_ns(Context, fun(NS0) ->
@@ -702,11 +693,6 @@ first_authorized_client(Context) ->
         [] -> <<"AUTHORISED_CLIENT_PUBKEY_HEX">>
     end.
 
-max_bytes(Context, Kind) ->
-    Policy = policy(ns(Context)),
-    MaxByKind = maps:get(max_event_bytes, Policy, #{}),
-    maps:get(Kind, MaxByKind).
-
 %% ===== Domain helpers =======================================================
 valid_event(1, Now) ->
     #{
@@ -726,6 +712,8 @@ valid_event(30023, Now) ->
         ],
         content => <<"# Deployment Record\n\nMarkdown only.">>
     };
+valid_event(Kind, Now) when not is_integer(Kind); not is_integer(Now) ->
+    valid_event(to_int(Kind), to_int(Now));
 valid_event(Kind, Now) ->
     #{kind => Kind, created_at => Now, tags => [], content => <<"unsupported kind">>}.
 
@@ -897,9 +885,14 @@ to_bin(V) when is_integer(V) -> integer_to_binary(V);
 to_bin(V) when is_list(V) -> unicode:characters_to_binary(V);
 to_bin(V) -> iolist_to_binary(io_lib:format("~p", [V])).
 
-to_int(V) when is_integer(V) -> V;
-to_int(V) when is_binary(V) -> binary_to_integer(V);
-to_int(V) when is_list(V) -> list_to_integer(V).
+to_int(V) when is_integer(V) ->
+    V;
+to_int(V) when is_binary(V) ->
+    binary_to_integer(string:trim(V));
+to_int([V]) when is_binary(V); is_list(V) ->
+    to_int(V);
+to_int(V) when is_list(V) ->
+    list_to_integer(string:trim(V)).
 
 decision_bin(allowed) -> <<"allowed">>;
 decision_bin(rejected) -> <<"rejected">>;
