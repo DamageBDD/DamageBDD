@@ -196,7 +196,15 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
     Concurrency = proplists:get_value(concurrency, Config, 1),
     StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
-    case catch parse_file(Filename) of
+    Parsed =
+        try parse_file(Filename) of
+            {ok, AST} -> AST;
+            Other -> Other
+        catch
+            Class:Reason:Stack ->
+                {parse_crashed, Class, Reason, Stack}
+        end,
+    case Parsed of
         {failed, LineNo, _Message, MessagePretty} ->
             ?LOG_DEBUG("parse file ~p", [Config]),
             formatter:format(Config, error, {LineNo, MessagePretty}),
@@ -340,6 +348,12 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
         {error, enont} = Err ->
             ?LOG_ERROR("Feature file ~p not found.", [Filename]),
             Err;
+        {parse_crashed, Class0, Reason0, Stack0} ->
+            ?LOG_ERROR(
+                "Feature parsing crashed for file ~p: ~p:~p ~p",
+                [Filename, Class0, Reason0, Stack0]
+            ),
+            {error, {parse_crashed, Class0, Reason0}};
         Err ->
             ?LOG_ERROR("Feature parsing error file ~p .", [Filename]),
             Err
