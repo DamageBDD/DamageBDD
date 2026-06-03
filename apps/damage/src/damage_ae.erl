@@ -546,7 +546,12 @@ damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
     end.
 
 handle_continue(init_external, State) ->
-    _ = catch cln:register_listener(invoice_paid),
+    _ =
+        try
+            cln:register_listener(invoice_paid)
+        catch
+            _:Reason -> {error, Reason}
+        end,
     case get_ae_mdw_node() of
         {ok, WS, _Path} ->
             {noreply, maps:put(websocket, WS, State)};
@@ -939,9 +944,21 @@ contract_path(Contract) ->
     contract_path(damage, Contract).
 
 contract_path(App, Contract0) ->
-    PrivDir = priv_dir_source_first(App),
+    ContractsDir = contracts_dir(App),
     Contract = normalize_contract_path(Contract0),
-    filename:join([PrivDir, "contracts", Contract]).
+    filename:join([ContractsDir, Contract]).
+
+contracts_dir(App) ->
+    case application:get_env(App, contracts_dir) of
+        {ok, Dir} when is_list(Dir) ->
+            Dir;
+        {ok, Dir} when is_binary(Dir) ->
+            binary_to_list(Dir);
+        undefined ->
+            %% Fallback for old behaviour
+            PrivDir = priv_dir_source_first(App),
+            filename:join([PrivDir, "contracts"])
+    end.
 
 priv_dir_source_first(App) ->
     %% 1. Running from source / rebar3 shell:
