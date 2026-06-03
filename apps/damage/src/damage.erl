@@ -11,7 +11,6 @@
 -include_lib("damage.hrl").
 
 -behaviour(gen_server).
--behaviour(poolboy_worker).
 
 -export([start_link/1]).
 -export(
@@ -262,7 +261,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     start_time_hires => StartTimestamp,
                     end_time_hires => EndTimestamp,
                     execution_time_hires => (EndTimestamp - StartTimestamp),
-                    result => Result
+                    result => fmt(Result)
                 }
             ),
 
@@ -401,8 +400,24 @@ execute_feature(
     formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
     FinalContext =
         lists:foldl(
-            fun(Scenario, Context) ->
-                execute_scenario(Config, Context, BackGround, Scenario)
+            fun(Scenario, AccContext) ->
+                ScenarioBase = clear_step_control(AccContext),
+                ScenarioContext = execute_scenario(Config, ScenarioBase, BackGround, Scenario),
+
+                case maps:get(fail, ScenarioContext, none) of
+                    none ->
+                        maps:merge(AccContext, clear_step_control(ScenarioContext));
+                    Fail ->
+                        maps:put(
+                            fail,
+                            Fail,
+                            maps:put(
+                                failing_step,
+                                maps:get(failing_step, ScenarioContext, undefined),
+                                AccContext
+                            )
+                        )
+                end
             end,
             FeatureContext,
             Scenarios
@@ -414,72 +429,343 @@ execute_scenario(Config, Context, undefined, Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);
 execute_scenario(Config, Context, [], Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);
-execute_scenario(
-    Config,
-    Context,
-    {_, BackGroundSteps} = BackGround,
-    {LineNo, ScenarioName, Tags, Steps, {datatable, Rows}}
+execute_scenario(Config, Context, BackGround, Scenario0) ->
+    BackGroundSteps = background_steps(BackGround),
+    case normalize_scenario(Scenario0) of
+        {ok, LineNo, ScenarioName, Tags, Steps0, ScenarioExamples} ->
+            Steps = normalize_steps(Steps0),
+            case extract_outline_examples(ScenarioName, Steps, ScenarioExamples) of
+                {outline, Steps1, Rows} ->
+                    execute_scenario_outline(
+                        Config,
+                        Context,
+                        BackGroundSteps,
+                        LineNo,
+                        ScenarioName,
+                        Tags,
+                        Steps1,
+                        Rows
+                    );
+                normal ->
+                    formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
+                    lists:foldl(
+                        fun(S, C) -> execute_step(Config, S, C) end,
+                        Context,
+                        lists:append(BackGroundSteps, Steps)
+                    )
+            end;
+        {error, Reason} ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Unsupported scenario/background shape: scenario=~p background=~p reason=~p",
+                    [Scenario0, BackGround, Reason]
+                ),
+                Context
+            )
+    end.
+
+normalize_scenario([Scenario]) ->
+    normalize_scenario(Scenario);
+normalize_scenario(Scenario) when is_tuple(Scenario) ->
+    normalize_scenario_tuple(tuple_to_list(Scenario));
+normalize_scenario(Other) ->
+    {error, {unsupported_scenario_term, Other}}.
+
+normalize_scenario_tuple([LineNo, ScenarioName, Tags, Steps | Rest]) when is_integer(LineNo) ->
+    {Steps0, ScenarioExamples} = split_scenario_tail([Steps | Rest]),
+    {ok, LineNo, ScenarioName, normalize_tags(Tags), Steps0, ScenarioExamples};
+normalize_scenario_tuple([LineNo, ScenarioName, Steps]) when is_integer(LineNo) ->
+    {ok, LineNo, ScenarioName, [], Steps, none};
+normalize_scenario_tuple(Other) ->
+    {error, {unsupported_scenario_tuple, Other}}.
+
+normalize_tags(Tags) when is_list(Tags) ->
+    Tags;
+normalize_tags(undefined) ->
+    [];
+normalize_tags(Tag) ->
+    [Tag].
+
+split_scenario_tail(Tail) ->
+    {Examples, StepPartsRev} =
+        lists:foldl(
+            fun
+                ({datatable, _Rows} = Table, {none, Acc}) ->
+                    {Table, Acc};
+                ({datatable, _Rows}, {Seen, Acc}) ->
+                    {Seen, Acc};
+                (Part, {Seen, Acc}) ->
+                    {Seen, [Part | Acc]}
+            end,
+            {none, []},
+            Tail
+        ),
+    StepParts = lists:reverse(StepPartsRev),
+    Steps =
+        case StepParts of
+            [Only] -> Only;
+            _ -> StepParts
+        end,
+    {Steps, Examples}.
+
+background_steps(undefined) ->
+    [];
+background_steps([]) ->
+    [];
+background_steps({none, Steps}) ->
+    normalize_steps(Steps);
+background_steps({_LineNo, Steps}) ->
+    normalize_steps(Steps);
+background_steps({_LineNo, _Name, Steps}) ->
+    normalize_steps(Steps);
+background_steps({_LineNo, _Name, _Tags, Steps}) ->
+    normalize_steps(Steps);
+background_steps(BackGround) when is_tuple(BackGround) ->
+    background_steps_from_tuple(tuple_to_list(BackGround));
+background_steps(Steps) when is_list(Steps) ->
+    normalize_steps(Steps);
+background_steps(_Other) ->
+    [].
+
+background_steps_from_tuple([]) ->
+    [];
+background_steps_from_tuple(Parts) ->
+    case lists:reverse(Parts) of
+        [Steps | _] -> normalize_steps(Steps);
+        [] -> []
+    end.
+
+normalize_steps(Steps) when is_list(Steps) ->
+    normalize_steps(Steps, []);
+normalize_steps(Other) ->
+    [Other].
+
+normalize_steps([], Acc) ->
+    lists:reverse(Acc);
+%% egherkin can emit a datatable as the next AST item after the step it belongs
+%% to. Attach it to the previous step instead of letting table rows be executed
+%% as steps by the formatter/runner.
+normalize_steps([{LineNo, Keyword, Body}, {datatable, Rows} | Rest], Acc) ->
+    normalize_steps(Rest, [{LineNo, Keyword, Body, {datatable, normalize_table_rows(Rows)}} | Acc]);
+normalize_steps([{LineNo, Keyword, Body, Args0}, {datatable, Rows} | Rest], Acc) ->
+    Args =
+        case normalize_step_args(Args0) of
+            [] -> {datatable, normalize_table_rows(Rows)};
+            <<>> -> {datatable, normalize_table_rows(Rows)};
+            _ -> Args0
+        end,
+    normalize_steps(Rest, [{LineNo, Keyword, Body, Args} | Acc]);
+normalize_steps([{LineNo, Keyword, Body, {datatable, Rows}} | Rest], Acc) ->
+    normalize_steps(Rest, [{LineNo, Keyword, Body, {datatable, normalize_table_rows(Rows)}} | Acc]);
+normalize_steps([{_LineNo, _Keyword, _Body, _Args} = Step | Rest], Acc) ->
+    normalize_steps(Rest, [Step | Acc]);
+normalize_steps([{datatable, Rows} | Rest], Acc) ->
+    normalize_steps(Rest, [{datatable, normalize_table_rows(Rows)} | Acc]);
+normalize_steps([Nested | Rest], Acc) when is_list(Nested) ->
+    case {outline_charlist(Nested), contains_step_ast(Nested)} of
+        {true, _} ->
+            %% A charlist is text, not a nested step list. It should not normally
+            %% appear at step-list level, but preserve it rather than exploding.
+            normalize_steps(Rest, [Nested | Acc]);
+        {false, true} ->
+            normalize_steps(Rest, lists:reverse(normalize_steps(Nested)) ++ Acc);
+        {false, false} ->
+            %% This is most commonly a raw datatable row/list. Do not execute it
+            %% as a step.
+            normalize_steps(Rest, Acc)
+    end;
+normalize_steps([Other | Rest], Acc) ->
+    normalize_steps(Rest, [Other | Acc]).
+
+extract_outline_examples(ScenarioName, Steps, ScenarioExamples) ->
+    case normalize_datatable(ScenarioExamples) of
+        {datatable, [Header | _] = Rows} ->
+            case outline_placeholders_present(ScenarioName, Steps, Header) of
+                true -> {outline, Steps, Rows};
+                false -> normal
+            end;
+        none ->
+            extract_outline_examples_from_steps(ScenarioName, normalize_steps(Steps))
+    end.
+
+extract_outline_examples_from_steps(ScenarioName, Steps) ->
+    case lists:reverse(Steps) of
+        [{LineNo, Keyword, Body, {datatable, Rows0}} | RevRest] ->
+            Rows = normalize_table_rows(Rows0),
+            case Rows of
+                [Header | _] ->
+                    Steps1 = lists:reverse([{LineNo, Keyword, Body} | RevRest]),
+                    case outline_placeholders_present(ScenarioName, Steps1, Header) of
+                        true -> {outline, Steps1, Rows};
+                        false -> normal
+                    end;
+                [] ->
+                    normal
+            end;
+        [{datatable, Rows0} | RevRest] ->
+            Rows = normalize_table_rows(Rows0),
+            case Rows of
+                [Header | _] ->
+                    Steps1 = lists:reverse(RevRest),
+                    case outline_placeholders_present(ScenarioName, Steps1, Header) of
+                        true -> {outline, Steps1, Rows};
+                        false -> normal
+                    end;
+                [] ->
+                    normal
+            end;
+        _ ->
+            normal
+    end.
+
+normalize_datatable({datatable, Rows}) ->
+    {datatable, normalize_table_rows(Rows)};
+normalize_datatable(_) ->
+    none.
+
+normalize_table_rows({datatable, Rows}) ->
+    normalize_table_rows(Rows);
+normalize_table_rows([Header0, Rows0]) when is_list(Header0), is_list(Rows0) ->
+    Header = normalize_table_row(Header0),
+    case table_rows_list(Rows0, length(Header)) of
+        true ->
+            [Header | [normalize_table_row(Row) || Row <- Rows0]];
+        false ->
+            [Header, normalize_table_row(Rows0)]
+    end;
+normalize_table_rows(Rows) when is_list(Rows) ->
+    [normalize_table_row(Row) || Row <- Rows];
+normalize_table_rows(_Other) ->
+    [].
+
+table_rows_list([First | _], HeaderLen) when is_list(First) ->
+    case outline_charlist(First) of
+        true -> false;
+        false -> length(normalize_table_row(First)) =:= HeaderLen
+    end;
+table_rows_list(_Rows, _HeaderLen) ->
+    false.
+
+normalize_table_row(Row) when is_list(Row) ->
+    case outline_charlist(Row) of
+        true ->
+            [normalize_table_cell(Row)];
+        false ->
+            [normalize_table_cell(Cell) || Cell <- Row]
+    end;
+normalize_table_row(Cell) ->
+    [normalize_table_cell(Cell)].
+
+normalize_table_cell([Value]) ->
+    normalize_table_cell(Value);
+normalize_table_cell(Value) when is_binary(Value) ->
+    Value;
+normalize_table_cell(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+normalize_table_cell(Value) when is_integer(Value) ->
+    integer_to_binary(Value);
+normalize_table_cell(Value) when is_float(Value) ->
+    list_to_binary(io_lib:format("~p", [Value]));
+normalize_table_cell(Value) when is_list(Value) ->
+    case outline_charlist(Value) of
+        true -> unicode:characters_to_binary(Value);
+        false -> iolist_to_binary([normalize_table_cell(V) || V <- Value])
+    end;
+normalize_table_cell(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value])).
+
+execute_scenario_outline(_Config, Context, _BackGroundSteps, _LineNo, _Name, _Tags, _Steps, []) ->
+    Context;
+execute_scenario_outline(
+    Config, Context, BackGroundSteps, LineNo, ScenarioName, Tags, Steps, Rows0
 ) ->
-    case Rows of
+    case normalize_table_rows(Rows0) of
         [] ->
             Context;
         [Header | DataRows] ->
             lists:foldl(
-                fun(Row, AccContext) ->
-                    Vars = maps:from_list(lists:zip(Header, Row)),
-                    ScenarioName0 = expand_outline_value(ScenarioName, Vars),
-                    Steps0 = expand_outline_steps(Steps, Vars),
-                    execute_scenario(
-                        Config,
-                        AccContext,
-                        BackGround,
-                        {LineNo, ScenarioName0, Tags, Steps0}
+                fun(Row, ContextAcc) ->
+                    Vars = scenario_outline_vars(Header, Row),
+                    ScenarioName0 = scenario_outline_replace(ScenarioName, Vars),
+                    Steps0 = scenario_outline_replace(Steps, Vars),
+                    formatter:format(Config, scenario, {ScenarioName0, LineNo, Tags}),
+                    lists:foldl(
+                        fun(S, C) -> execute_step(Config, S, C) end,
+                        ContextAcc,
+                        lists:append(BackGroundSteps, Steps0)
                     )
                 end,
                 Context,
                 DataRows
             )
-    end;
-execute_scenario(Config, Context, {_, BackGroundSteps}, {LineNo, ScenarioName, Tags, Steps}) ->
-    formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
-    lists:foldl(
-        fun(S, C) -> execute_step(Config, S, C) end,
-        Context,
-        lists:append(BackGroundSteps, Steps)
-    );
-execute_scenario(_Config, Context, _BackGround, Scenario) ->
-    maps:put(
-        fail,
-        damage_utils:strf("Unsupported scenario shape: ~p", [Scenario]),
-        Context
+    end.
+
+scenario_outline_vars(Header, Row) ->
+    maps:from_list(
+        [
+            {outline_bin(K), outline_bin(V)}
+         || {K, V} <- lists:zip(normalize_table_row(Header), normalize_table_row(Row))
+        ]
     ).
 
-expand_outline_steps(Steps, Vars) ->
-    [expand_outline_step(Step, Vars) || Step <- Steps].
-
-expand_outline_step({LineNo, Keyword, Body}, Vars) ->
-    {LineNo, Keyword, expand_outline_body(Body, Vars)};
-expand_outline_step({LineNo, Keyword, Body, Args}, Vars) ->
-    {LineNo, Keyword, expand_outline_body(Body, Vars), expand_outline_value(Args, Vars)}.
-
-expand_outline_body(Body, Vars) when is_list(Body) ->
-    [expand_outline_value(Part, Vars) || Part <- Body];
-expand_outline_body(Body, Vars) ->
-    expand_outline_value(Body, Vars).
-
-expand_outline_value(Value, Vars) when is_binary(Value) ->
-    maps:fold(
-        fun(Key, Replacement, Acc) ->
-            Pattern = <<"<", Key/binary, ">">>,
-            binary:replace(Acc, Pattern, Replacement, [global])
+outline_placeholders_present(ScenarioName, Steps, Header) ->
+    lists:any(
+        fun(Key) ->
+            Pattern = <<"<", (outline_bin(Key))/binary, ">">>,
+            outline_term_has_placeholder(ScenarioName, Pattern) orelse
+                outline_term_has_placeholder(Steps, Pattern)
         end,
-        Value,
+        normalize_table_row(Header)
+    ).
+
+outline_term_has_placeholder(Bin, Pattern) when is_binary(Bin) ->
+    binary:match(Bin, Pattern) =/= nomatch;
+outline_term_has_placeholder(List, Pattern) when is_list(List) ->
+    case outline_charlist(List) of
+        true ->
+            outline_term_has_placeholder(outline_bin(List), Pattern);
+        false ->
+            lists:any(fun(Item) -> outline_term_has_placeholder(Item, Pattern) end, List)
+    end;
+outline_term_has_placeholder(Tuple, Pattern) when is_tuple(Tuple) ->
+    lists:any(fun(Item) -> outline_term_has_placeholder(Item, Pattern) end, tuple_to_list(Tuple));
+outline_term_has_placeholder(_Other, _Pattern) ->
+    false.
+
+scenario_outline_replace(Bin, Vars) when is_binary(Bin) ->
+    maps:fold(
+        fun(Key, Value, Acc) ->
+            binary:replace(Acc, <<"<", Key/binary, ">">>, Value, [global])
+        end,
+        Bin,
         Vars
     );
-expand_outline_value(Value, Vars) when is_list(Value) ->
-    binary_to_list(expand_outline_value(unicode:characters_to_binary(Value), Vars));
-expand_outline_value(Value, _Vars) ->
-    Value.
+scenario_outline_replace(List, Vars) when is_list(List) ->
+    case outline_charlist(List) of
+        true ->
+            binary_to_list(scenario_outline_replace(outline_bin(List), Vars));
+        false ->
+            [scenario_outline_replace(Item, Vars) || Item <- List]
+    end;
+scenario_outline_replace(Tuple, Vars) when is_tuple(Tuple) ->
+    list_to_tuple([scenario_outline_replace(Item, Vars) || Item <- tuple_to_list(Tuple)]);
+scenario_outline_replace(Other, _Vars) ->
+    Other.
+
+outline_bin(V) when is_binary(V) -> V;
+outline_bin(V) when is_atom(V) -> atom_to_binary(V, utf8);
+outline_bin(V) when is_integer(V) -> integer_to_binary(V);
+outline_bin(V) when is_float(V) -> list_to_binary(io_lib:format("~p", [V]));
+outline_bin(V) when is_list(V) -> normalize_table_cell(V);
+outline_bin(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+outline_charlist([]) ->
+    true;
+outline_charlist([H | T]) when is_integer(H) ->
+    outline_charlist(T);
+outline_charlist(_) ->
+    false.
 
 % step execution: should execution output be passed in state and then
 % handled OR should the handling happen withing the execution function
@@ -489,35 +775,38 @@ execute_step_function(
     {StepKeyWord, LineNo, Body, Args} = _Step,
     StepModule
 ) ->
+    StepModule0 = normalize_step_module(StepModule),
     case proplists:get_value(dry_run, Config) of
         true ->
             apply(
-                StepModule,
+                StepModule0,
                 step_dry,
                 [Config, Context, StepKeyWord, LineNo, Body, Args]
             );
         _ ->
-            %?LOG_DEBUG("execute_step_function ~p ~p", [StepModule, Body]),
+            %?LOG_DEBUG("execute_step_function ~p ~p", [StepModule0, Body]),
             apply(
-                StepModule,
+                StepModule0,
                 step,
                 [Config, Context, StepKeyWord, LineNo, Body, Args]
             )
     end.
+
+normalize_step_module(M) when is_atom(M) ->
+    M;
+normalize_step_module(M) when is_binary(M) ->
+    binary_to_atom(M, utf8);
+normalize_step_module(M) when is_list(M) ->
+    list_to_atom(M).
 execute_step_module(
     Config,
     #{public_key := AeAccount} = ContextIn,
     {StepKeyWord, LineNo, Body, Args} = Step,
     StepModule
 ) ->
-    case catch execute_step_function(Config, ContextIn, Step, StepModule) of
+    try execute_step_function(Config, ContextIn, Step, StepModule) of
         Context when is_map(Context) ->
-            Context0 =
-                maps:put(
-                    step_found,
-                    true,
-                    Context
-                ),
+            Context0 = maps:put(step_found, true, Context),
             metrics:update(success, AeAccount),
             Context0;
         {throw, Reason, Stack} ->
@@ -540,48 +829,6 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
-        {'EXIT', {undef, [{_Module, step_dry, _, []} | _]}} ->
-            maps:put(
-                step_found,
-                false,
-                ContextIn
-            );
-        {'EXIT', {undef, [{_Module, step, _, []} | _]}} ->
-            maps:put(
-                step_found,
-                false,
-                ContextIn
-            );
-        {'EXIT', {function_clause, Err0}} ->
-            case Err0 of
-                [{_, F, _, _Loc} | _] when F =:= step; F =:= step_dry ->
-                    maps:put(
-                        step_found,
-                        false,
-                        ContextIn
-                    );
-                Err ->
-                    Reason = <<"Step error">>,
-                    ?LOG_ERROR("Step execution failed! ~p", [
-                        #{
-                            reason => Reason,
-                            stacktrace => Err,
-                            step => Step,
-                            step_module => StepModule
-                        }
-                    ]),
-                    metrics:update(fail, AeAccount),
-                    formatter:format(
-                        Config,
-                        step,
-                        {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, Reason}}
-                    ),
-                    maps:put(
-                        step_found,
-                        false,
-                        maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
-                    )
-            end;
         {error, Reason, Stacktrace} ->
             metrics:update(fail, AeAccount),
             ?LOG_ERROR("Step execution failed! ~p", [Stacktrace]),
@@ -595,7 +842,7 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
-        {Error, Reason, Stacktrace} ->
+        {Error, _Reason0, Stacktrace} ->
             Reason = damage_utils:strf(<<"invalid context from ~p ~p ~p">>, [
                 StepModule, Step, Error
             ]),
@@ -642,6 +889,84 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             )
+    catch
+        error:undef:Stacktrace ->
+            case Stacktrace of
+                [{_Module, step_dry, _, _} | _] ->
+                    maps:put(step_found, false, ContextIn);
+                [{_Module, step, _, _} | _] ->
+                    maps:put(step_found, false, ContextIn);
+                _ ->
+                    Reason = <<"Step undef error">>,
+                    ?LOG_ERROR("Step execution undef! ~p", [
+                        #{
+                            reason => Reason,
+                            stacktrace => Stacktrace,
+                            step => Step,
+                            step_module => StepModule
+                        }
+                    ]),
+                    metrics:update(fail, AeAccount),
+                    formatter:format(
+                        Config,
+                        step,
+                        {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, Reason}}
+                    ),
+                    maps:put(
+                        step_found,
+                        false,
+                        maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
+                    )
+            end;
+        error:function_clause:Stacktrace ->
+            case Stacktrace of
+                [{_Module, step_dry, _, _Loc} | _] ->
+                    maps:put(step_found, false, ContextIn);
+                [{_Module, step, _, _Loc} | _] ->
+                    maps:put(step_found, false, ContextIn);
+                _ ->
+                    Reason = <<"Step error">>,
+                    ?LOG_ERROR("Step execution failed! ~p", [
+                        #{
+                            reason => Reason,
+                            stacktrace => Stacktrace,
+                            step => Step,
+                            step_module => StepModule
+                        }
+                    ]),
+                    metrics:update(fail, AeAccount),
+                    formatter:format(
+                        Config,
+                        step,
+                        {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, Reason}}
+                    ),
+                    maps:put(
+                        step_found,
+                        false,
+                        maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
+                    )
+            end;
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR("Step execution crashed! ~p", [
+                #{
+                    class => Class,
+                    reason => Reason,
+                    stacktrace => Stacktrace,
+                    step => Step,
+                    step_module => StepModule
+                }
+            ]),
+            metrics:update(fail, AeAccount),
+            formatter:format(
+                Config,
+                step,
+                {StepKeyWord, LineNo, Body, Args, ContextIn, {fail, Reason}}
+            ),
+            maps:put(
+                step_found,
+                true,
+                maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
+            )
     end.
 
 hits_to_damage(Hits) ->
@@ -650,45 +975,84 @@ step_spend(Context) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
     damage_ae:spend(maps:get(public_key, Context), Spend),
     maps:remove(step_spend, Context).
+normalize_step({LineNo, StepKeyWord, Body}) ->
+    {LineNo, StepKeyWord, Body, []};
+normalize_step({LineNo, StepKeyWord, Body, Args}) ->
+    {LineNo, StepKeyWord, Body, normalize_step_args(Args)}.
+
+contains_step_ast([]) ->
+    false;
+contains_step_ast([{datatable, _Rows} | _]) ->
+    true;
+contains_step_ast([{LineNo, _Keyword, _Body} | _]) when is_integer(LineNo) ->
+    true;
+contains_step_ast([{LineNo, _Keyword, _Body, _Args} | _]) when is_integer(LineNo) ->
+    true;
+contains_step_ast([Nested | Rest]) when is_list(Nested) ->
+    contains_step_ast(Nested) orelse contains_step_ast(Rest);
+contains_step_ast([_Other | Rest]) ->
+    contains_step_ast(Rest).
+
+normalize_step_args({datatable, Rows}) ->
+    normalize_table_rows(Rows);
+normalize_step_args({docstring, Body}) ->
+    Body;
+normalize_step_args({text, Body}) ->
+    Body;
+normalize_step_args(undefined) ->
+    [];
+normalize_step_args(Args) ->
+    Args.
+
+merge_step_args(RenderedArgs, StepArgs0) ->
+    case normalize_step_args(StepArgs0) of
+        [] -> RenderedArgs;
+        <<>> -> RenderedArgs;
+        StepArgs -> StepArgs
+    end.
 
 execute_step(Config, Step, [Context]) ->
     execute_step(Config, Step, Context);
 execute_step(Config, Step, #{fail := _} = Context) ->
-    {LineNo, StepKeyWord, Body} = Step,
+    {LineNo, StepKeyWord, Body, StepArgs} = normalize_step(Step),
     case damage_context:render_body_args(Body, Context) of
         {error, {Body1, Args1}, Reason} ->
-            ?LOG_DEBUG("execute_step fail error: ~p, ~p.", [Body1, Args1]),
+            Args2 = merge_step_args(Args1, StepArgs),
+            ?LOG_DEBUG("execute_step fail error: ~p, ~p.", [Body1, Args2]),
             formatter:format(
                 Config,
                 step,
-                {StepKeyWord, LineNo, Body1, Args1, Context, {fail, Reason}}
+                {StepKeyWord, LineNo, Body1, Args2, Context, {fail, Reason}}
             ),
             Context;
         {ok, {Body1, Args1}} ->
+            Args2 = merge_step_args(Args1, StepArgs),
             formatter:format(
                 Config,
                 step,
-                {StepKeyWord, LineNo, Body1, Args1, Context, skip}
+                {StepKeyWord, LineNo, Body1, Args2, Context, skip}
             ),
             Context
     end;
 execute_step(Config, Step, Context) ->
-    {LineNo, StepKeyWord, Body} = Step,
+    {LineNo, StepKeyWord, Body, StepArgs} = normalize_step(Step),
     case damage_context:render_body_args(Body, Context) of
         {error, {Body1, Args1}, Reason} ->
+            Args2 = merge_step_args(Args1, StepArgs),
             formatter:format(
                 Config,
                 step,
-                {StepKeyWord, LineNo, Body1, Args1, Context, {fail, Reason}}
+                {StepKeyWord, LineNo, Body1, Args2, Context, {fail, Reason}}
             ),
             metrics:update(fail, maps:get(public_key, Context)),
             maps:put(failing_step, tuple_to_list(Step), Context);
         {ok, {Body1, Args1}} ->
+            Args2 = merge_step_args(Args1, StepArgs),
             case
                 lists:foldl(
                     fun
                         (StepModule, #{step_found := false} = ContextIn) ->
-                            Step0 = {StepKeyWord, LineNo, Body1, Args1},
+                            Step0 = {StepKeyWord, LineNo, Body1, Args2},
                             case execute_step_module(Config, ContextIn, Step0, StepModule) of
                                 #{failing_step := _} = Context1 ->
                                     Context1;
@@ -696,7 +1060,7 @@ execute_step(Config, Step, Context) ->
                                     formatter:format(
                                         Config,
                                         step,
-                                        {StepKeyWord, LineNo, Body1, Args1, Context1, {fail, Err}}
+                                        {StepKeyWord, LineNo, Body1, Args2, Context1, {fail, Err}}
                                     ),
                                     maps:put(failing_step, Step0, Context1);
                                 #{step_found := false} = Context1 ->
@@ -710,7 +1074,7 @@ execute_step(Config, Step, Context) ->
                                     formatter:format(
                                         Config,
                                         step,
-                                        {StepKeyWord, LineNo, Body1, Args1, Context1, Success}
+                                        {StepKeyWord, LineNo, Body1, Args2, Context1, Success}
                                     ),
                                     Context1
                             end;
@@ -723,15 +1087,21 @@ execute_step(Config, Step, Context) ->
             of
                 Context2 when is_map(Context2) ->
                     Context0 = step_spend(Context2),
+
                     case maps:get(step_found, Context0) of
                         false ->
+                            ?LOG_ERROR("execute_step notfound :~p ~p ", [StepKeyWord, Body1]),
                             formatter:format(
                                 Config,
                                 step,
-                                {StepKeyWord, LineNo, Body1, Args1, Context, notfound}
+                                {StepKeyWord, LineNo, Body1, Args2, Context, notfound}
                             ),
                             metrics:update(notfound, maps:get(public_key, Context)),
-                            maps:put(failing_step, Step, Context);
+                            maps:put(
+                                fail,
+                                {step_not_found, StepKeyWord, Body1},
+                                maps:put(failing_step, Step, Context)
+                            );
                         true ->
                             Context0
                     end;
@@ -740,13 +1110,21 @@ execute_step(Config, Step, Context) ->
                     formatter:format(
                         Config,
                         step,
-                        {StepKeyWord, LineNo, Body1, Args1, Context, invalid_context}
+                        {StepKeyWord, LineNo, Body1, Args2, Context, invalid_context}
                     ),
                     metrics:update(notfound, maps:get(public_key, Context)),
                     maps:put(failing_step, Step, Context)
             end
     end.
 
+clear_step_control(Context) ->
+    maps:remove(
+        step_found,
+        maps:remove(
+            failing_step,
+            maps:remove(fail, Context)
+        )
+    ).
 check_setup() ->
     ok =
         case secrets:retrieve_decrypt(nostr_nsec) of
@@ -824,11 +1202,14 @@ check_setup() ->
                         ok = secrets:encrypt_store(smtp_pass, SmtpPassword)
                 end
         end.
-%% Write run metadata into the run directory so it becomes part of the IPFS report hash.
 write_run_meta(RunDir, MetaMap) ->
     %% Keep it stable + easy to parse.
     Bin = jsx:encode(MetaMap),
     file:write_file(filename:join(RunDir, "run.meta"), Bin).
+
+fmt(T) ->
+    iolist_to_binary(io_lib:format("~p", [T])).
+
 %% -------------------------------------------------------------------
 %% Catch-all step ban (no fallbacks / catchalls allowed)
 %% -------------------------------------------------------------------
