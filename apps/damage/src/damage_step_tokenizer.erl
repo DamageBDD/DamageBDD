@@ -33,27 +33,13 @@ tokenize_scan([$" | Rest], in_quote, Acc, Out) ->
 tokenize_scan([C | Rest], in_quote, Acc, Out) ->
     tokenize_scan(Rest, in_quote, [C | Acc], Out);
 tokenize_scan([C | Rest], outside, Acc, Out) ->
-    case is_num_start(C, Rest) of
+    case is_num_start(C, Rest, Acc) of
         true ->
             Out1 = flush_acc(Acc, Out),
             {NumTok, Rest1} = read_number([C | Rest]),
             tokenize_scan(Rest1, outside, [], [NumTok | Out1]);
         false ->
-            %% fallthrough to arg-word / normal char handling
-            tokenize_scan_outside_nonnum([C | Rest], Acc, Out)
-    end.
-
-tokenize_scan_outside_nonnum(Rest, Acc, Out) ->
-    case read_arg_word(Rest) of
-        {none} ->
-            [C | Rest1] = Rest,
-            tokenize_scan(Rest1, outside, [C | Acc], Out);
-        {arg, ArgWord, Rest1, true} ->
-            Out1 = flush_acc(Acc, Out),
-            tokenize_scan(Rest1, outside, [], [ArgWord | Out1]);
-        {arg, _ArgWord, _Rest1, false} ->
-            [C | Rest1] = Rest,
-            tokenize_scan(Rest1, outside, [C | Acc], Out)
+            tokenize_scan(Rest, outside, [C | Acc], Out)
     end.
 
 %% -------------------------------------------------------------------
@@ -72,13 +58,25 @@ flush_acc(Acc, Out) ->
 strip(S) ->
     string:strip(S).
 
-%% Start of numeric:
-%% - digit
-%% - '-' followed by digit
-%% - '.' followed by digit (allows .5)
-is_num_start($-, [Nxt | _]) -> is_digit(Nxt);
-is_num_start($., [Nxt | _]) -> is_digit(Nxt);
-is_num_start(C, _) -> is_digit(C).
+is_num_start(C, Rest, Acc) ->
+    is_number_boundary_before(Acc) andalso is_num_start_char(C, Rest).
+
+is_num_start_char($-, [Nxt | _]) -> is_digit(Nxt);
+is_num_start_char($., [Nxt | _]) -> is_digit(Nxt);
+is_num_start_char(C, _) -> is_digit(C).
+
+is_number_boundary_before([]) ->
+    true;
+is_number_boundary_before([Prev | _]) ->
+    is_space(Prev) orelse is_open_boundary(Prev).
+
+is_space(C) ->
+    C =:= $\s orelse C =:= $\t orelse C =:= $\n orelse C =:= $\r.
+
+is_open_boundary(C) ->
+    C =:= $( orelse C =:= $[ orelse C =:= ${ orelse
+        C =:= $= orelse C =:= $: orelse C =:= $, orelse
+        C =:= $; orelse C =:= $+ orelse C =:= $< orelse C =:= $>.
 
 is_digit(C) -> C >= $0 andalso C =< $9.
 
