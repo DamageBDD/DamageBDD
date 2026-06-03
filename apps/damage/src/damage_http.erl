@@ -326,6 +326,7 @@ execute_bdd_once(Config, Context, FeatureData) ->
             }
             | _
         ] ->
+            ?LOG_ERROR("Fail ~p", [FailReason]),
             {200, #{
                 status => <<"notok">>,
                 line => Line,
@@ -333,10 +334,38 @@ execute_bdd_once(Config, Context, FeatureData) ->
                     list_to_binary(damage_utils:lists_concat(Step, " ")),
                 reason => FailReason
             }};
+        %% Failed run map. This must come before report_hash success,
+        %% because damage:execute_data/3 may still return hashes for failed runs.
+        #{fail := FailReason, failing_step := {_KeyWord, Line, Step, _Args}} ->
+            {400, #{
+                status => <<"notok">>,
+                line => Line,
+                failing_step =>
+                    list_to_binary(damage_utils:lists_concat(Step, " ")),
+                reason => FailReason
+            }};
+        #{fail := FailReason} = Result ->
+            {400,
+                maps:merge(Result, #{
+                    status => <<"notok">>,
+                    reason => FailReason
+                })};
+        %% Current RunRecord may carry result instead of fail.
+        #{result := Result0} = Result when
+            Result0 =/= <<"success">>,
+            Result0 =/= "success",
+            Result0 =/= success
+        ->
+            {400,
+                maps:merge(Result, #{
+                    status => <<"notok">>,
+                    reason => Result0
+                })};
         %% Parser/lexer error with pretty message
         {parse_error, LineNo, MessagePretty} ->
             formatter:format(Config, error, {LineNo, MessagePretty}),
-            {200, #{
+            ?LOG_ERROR("Fail parse_error ~p ~p", [LineNo, MessagePretty]),
+            {400, #{
                 status => <<"notok">>,
                 message => MessagePretty,
                 line => LineNo
@@ -457,6 +486,30 @@ effective_context(Context0, State) ->
 -spec dry_run_only(proplists:proplist()) -> boolean().
 dry_run_only(Overrides) ->
     proplists:get_value(dry_run, Overrides, false) =:= true.
+decode_json(Data) ->
+    try
+        {ok, jsx:decode(Data, [{labels, atom}, return_maps])}
+    catch
+        Class:Reason:Stack ->
+            {error, {Class, Reason, Stack}}
+    end.
+
+json_decode_failed(Req, State, Prefix, {Class, Reason, Stack}) ->
+    ?LOG_ERROR("~s ~p:~p ~p", [Prefix, Class, Reason, Stack]),
+    Req1 = cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"text/plain">>},
+        <<"Json decoding failed.">>,
+        Req
+    ),
+    {stop, Req1, State}.
+
+stream_final_body(Status, Resp) when is_binary(Resp) ->
+    Resp;
+stream_final_body(Status, Resp) when is_map(Resp) ->
+    jsx:encode(maps:put(http_status, Status, Resp));
+stream_final_body(Status, Resp) ->
+    iolist_to_binary(io_lib:format("~p~n", [#{http_status => Status, response => Resp}])).
 
 do_action_tx_throttled(Json, State, Req) ->
     IP = damage_utils:get_ip(Req),
@@ -716,8 +769,8 @@ do_action_tx(
 do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, _State, _Req) ->
     case vanillae:verify_signature(Sig, Message, PubKey) of
         {ok, _Result} ->
-            case catch jsx:decode(Message, [{labels, atom}, return_maps]) of
-                #{amount := Amount} ->
+            case decode_json(Message) of
+                {ok, #{amount := Amount}} ->
                     Description = <<"Pay amount for amount of DAMAGE">>,
                     {ok, Timestamp} = datestring:format(
                         "YmdHMS", erlang:localtime()
@@ -740,13 +793,16 @@ do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, 
                         200,
                         #{payment_request => Bolt11}
                     };
-                Reason ->
+                {ok, DecodeOther} ->
                     {
                         400,
-                        #{
-                            message =>
-                                Reason
-                        }
+                        #{message => DecodeOther}
+                    };
+                {error, {Class, DecodeReason, Stack}} ->
+                    ?LOG_ERROR("Json decoding failed ~p:~p ~p", [Class, DecodeReason, Stack]),
+                    {
+                        400,
+                        #{message => <<"Json decoding failed.">>}
                     }
             end;
         {error, Reason} ->
@@ -758,43 +814,36 @@ do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, 
                 }
             }
     end.
-from_json(Req, #{action := tx} = State) ->
-    {ok, Data, _Req2} = cowboy_req:read_body(Req),
-    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
-        {'EXIT', {badarg, Trace}} ->
-            ?LOG_ERROR("Json decoding failed ~p", [Trace]),
-            {
-                cowboy_req:reply(
-                    400,
-                    cowboy_req:set_resp_body(<<"Json decoding failed.">>, Req)
-                ),
-                Req,
-                State
-            };
-        Json when is_map(Json) ->
-            {Status0, Response0} = do_action_tx_throttled(Json, State, Req),
+from_json(Req0, #{action := tx} = State) ->
+    {ok, Data, Req1} = cowboy_req:read_body(Req0),
+    case decode_json(Data) of
+        {error, DecodeError} ->
+            json_decode_failed(Req1, State, "Json decoding failed", DecodeError);
+        {ok, Json} when is_map(Json) ->
+            {Status0, Response0} = do_action_tx_throttled(Json, State, Req1),
             {
                 stop,
                 cowboy_req:reply(
                     Status0,
-                    cowboy_req:set_resp_body(jsx:encode(Response0), Req)
+                    cowboy_req:set_resp_body(jsx:encode(Response0), Req1)
                 ),
                 State
-            }
-    end;
-from_json(Req0, State) ->
-    {ok, Data, Req1} = cowboy_req:read_body(Req0),
-    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
-        {'EXIT', {badarg, Trace}} ->
-            ?LOG_ERROR("JSON decoding failed ~p", [Trace]),
+            };
+        {ok, _Other} ->
             Req2 = cowboy_req:reply(
                 400,
                 #{<<"content-type">> => <<"text/plain">>},
-                <<"Json decoding failed.">>,
+                <<"Missing or invalid JSON payload.">>,
                 Req1
             ),
-            {stop, Req2, State};
-        Json0 when is_map(Json0) ->
+            {stop, Req2, State}
+    end;
+from_json(Req0, State) ->
+    {ok, Data, Req1} = cowboy_req:read_body(Req0),
+    case decode_json(Data) of
+        {error, DecodeError} ->
+            json_decode_failed(Req1, State, "JSON decoding failed", DecodeError);
+        {ok, Json0} when is_map(Json0) ->
             %% Support IPFS-hosted feature execution
             Json =
                 case maps:is_key(feature_cid, Json0) of
@@ -875,11 +924,8 @@ from_html(Req0, State) ->
             end,
 
         case execute_bdd(Context, State, ReqRun) of
-            {_Status, Resp} when Stream =:= maybe_stream andalso is_binary(Resp) ->
-                Req2 = cowboy_req:stream_body(Resp, fin, ReqRun),
-                {stop, Req2, State};
-            {_Status, _Resp} when Stream =:= maybe_stream ->
-                Req2 = cowboy_req:stream_body(<<"">>, fin, ReqRun),
+            {Status, Resp} when Stream =:= maybe_stream ->
+                Req2 = cowboy_req:stream_body(stream_final_body(Status, Resp), fin, ReqRun),
                 {stop, Req2, State};
             %% Non-stream OK (JSON)
             {200, Response} ->
@@ -907,9 +953,13 @@ from_html(Req0, State) ->
             ?LOG_ERROR("from_html crashed ~p:~p ~p", [Class, Reason, Stack]),
             %% Best effort: stream a 500 if we were streaming, else JSON 500
             Concurrency0 =
-                catch binary_to_integer(
-                    cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
-                ),
+                try
+                    binary_to_integer(
+                        cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
+                    )
+                catch
+                    _:_ -> 1
+                end,
             Stream0 = stream_mode(Req0, Concurrency0),
             case Stream0 of
                 maybe_stream ->
