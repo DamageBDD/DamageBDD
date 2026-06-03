@@ -80,7 +80,7 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
--define(DEFAULT_CONTRACT_PATH, "contracts/node_registry.aes").
+-define(DEFAULT_CONTRACT_PATH, "node_registry.aes").
 -define(ETS_TABLE, node_registry_cache).
 -define(DEFAULT_TTL_MS, 30_000).
 
@@ -239,6 +239,25 @@ handle_call({set_contract, ContractId0}, _From, State) ->
     erlang:put(node_registry_contract_id, ContractId),
     ets:delete_all_objects(State#state.ets_table),
     {reply, ok, State#state{contract_id = ContractId}};
+handle_call({set_contract, ContractId0}, _From, State) ->
+    ContractId = to_bin(ContractId0),
+    erlang:put(node_registry_contract_id, ContractId),
+    ets:delete_all_objects(State#state.ets_table),
+    {reply, ok, State#state{contract_id = ContractId}};
+handle_call(clear_cache, _From, State) ->
+    ets:delete_all_objects(State#state.ets_table),
+    {reply, ok, State};
+handle_call({clear_cache, {account, Account0}}, _From, State) ->
+    Account = to_bin(Account0),
+    invalidate_account(State, Account),
+    {reply, ok, State};
+handle_call({clear_cache, {node, NodeId0}}, _From, State) ->
+    NodeId = to_bin(NodeId0),
+    invalidate_node(State, NodeId),
+    {reply, ok, State};
+handle_call({clear_cache, Key}, _From, State) ->
+    cache_delete(State, normalize_cache_key(Key)),
+    {reply, ok, State};
 %% -------------------------
 %% Account-level calls
 %% -------------------------
@@ -541,6 +560,22 @@ cache_put(#state{ets_table = Tab}, Key, Val) ->
 cache_delete(#state{ets_table = Tab}, Key) ->
     ets:delete(Tab, Key),
     ok.
+normalize_cache_key({user_info, Account}) ->
+    {user_info, to_bin(Account)};
+normalize_cache_key({registry, Account}) ->
+    {registry, to_bin(Account)};
+normalize_cache_key({is_registered, Account}) ->
+    {is_registered, to_bin(Account)};
+normalize_cache_key({nodes_for, Account}) ->
+    {nodes_for, to_bin(Account)};
+normalize_cache_key({node, NodeId}) ->
+    {node, to_bin(NodeId)};
+normalize_cache_key({node_owner, NodeId}) ->
+    {node_owner, to_bin(NodeId)};
+normalize_cache_key({is_node_registered, NodeId}) ->
+    {is_node_registered, to_bin(NodeId)};
+normalize_cache_key(Key) ->
+    Key.
 
 %% Convert Erlang maps into Sophia records-as-maps expected by your contract_call encoder.
 %% This assumes your damage_ae encoder supports nested record maps in the usual style:
