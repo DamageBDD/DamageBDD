@@ -240,13 +240,10 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
             EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
             {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
 
-            %% Decide Result early (you already do this later)
-            Result =
-                case maps:get(fail, FinalContext0, none) of
-                    none -> <<"success">>;
-                    R0 when is_list(R0) -> list_to_binary(R0);
-                    R1 -> R1
-                end,
+            %% Decide Result early. Keep it JSON-safe because it is later
+            %% included in run metadata and HTTP response maps.
+            FailReason = maps:get(fail, FinalContext0, none),
+            Result = result_value(FailReason),
 
             %% Use a stable “completed_at” in seconds for reaping
             CompletedAtSec = round(date_util:now_to_seconds(os:timestamp())),
@@ -261,7 +258,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     start_time_hires => StartTimestamp,
                     end_time_hires => EndTimestamp,
                     execution_time_hires => (EndTimestamp - StartTimestamp),
-                    result => fmt(Result)
+                    result => Result
                 }
             ),
 
@@ -970,7 +967,7 @@ execute_step_module(
         {throw, Reason, Stack} ->
             ?LOG_ERROR("Step execution failed! ~p", [
                 #{
-                    reason => Reason,
+                    reason => result_reason(Reason),
                     stacktrace => Stack,
                     step => Step,
                     step_module => StepModule
@@ -1058,7 +1055,7 @@ execute_step_module(
                     Reason = <<"Step undef error">>,
                     ?LOG_ERROR("Step execution undef! ~p", [
                         #{
-                            reason => Reason,
+                    reason => result_reason(Reason),
                             stacktrace => Stacktrace,
                             step => Step,
                             step_module => StepModule
@@ -1086,7 +1083,7 @@ execute_step_module(
                     Reason = <<"Step error">>,
                     ?LOG_ERROR("Step execution failed! ~p", [
                         #{
-                            reason => Reason,
+                    reason => result_reason(Reason),
                             stacktrace => Stacktrace,
                             step => Step,
                             step_module => StepModule
@@ -1108,7 +1105,7 @@ execute_step_module(
             ?LOG_ERROR("Step execution crashed! ~p", [
                 #{
                     class => Class,
-                    reason => Reason,
+                    reason => result_reason(Reason),
                     stacktrace => Stacktrace,
                     step => Step,
                     step_module => StepModule
@@ -1377,6 +1374,15 @@ write_run_meta(RunDir, MetaMap) ->
     Bin = jsx:encode(MetaMap),
     file:write_file(filename:join(RunDir, "run.meta"), Bin).
 
+result_value(none) ->
+    <<"success">>;
+result_value(FailReason) ->
+    fmt(FailReason).
+
+result_reason(none) ->
+    <<>>;
+result_reason(FailReason) ->
+    fmt(FailReason).
 fmt(T) ->
     iolist_to_binary(io_lib:format("~p", [T])).
 
