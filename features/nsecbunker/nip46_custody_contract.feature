@@ -80,7 +80,7 @@ Feature: Generic NIP-46 custody contract
     And the decision MUST be written to the deterministic audit log
 
   Scenario Outline: Only configured event kinds are signable
-    Given an unsigned event of kind <kind>
+    Given an unsigned event of kind "<kind>"
     When authorised client "AUTHORISED_CLIENT_PUBKEY_HEX" requests signing
     Then the signing decision MUST be "<decision>"
     And the denial reason SHOULD be "<reason>"

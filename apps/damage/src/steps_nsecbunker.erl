@@ -37,6 +37,10 @@
 -define(S_AUTH_CALLS, ["authorised client", Client, "calls", Method]).
 -define(S_CLIENT_CALLS, ["client", Client, "calls", Method]).
 -define(S_AUTH_REQUESTS_SIGNING, ["authorised client", Client, "requests signing"]).
+-define(S_AUTH_REQUESTS_SIGNING_VALID_EVENT,
+     ["authorised client",
+      Client,
+      "requests signing for an otherwise valid event"]).
 -define(S_CLIENT_REQUESTS_SIGNING, ["the client requests signing"]).
 -define(S_ANY_CLIENT_ANY_SIGNING, ["any client requests any signing operation"]).
 -define(S_ANY_CLIENT_REQUESTS_METHODS, ["any client requests", MethodA, "or", _MethodB]).
@@ -52,15 +56,22 @@
 -define(S_BUNKER_TIME, ["bunker time is", BunkerTime]).
 -define(S_SIGNING_REQ_CREATED_AT, ["a signing request has created_at", CreatedAt]).
 -define(S_UNSIGNED_KIND, ["an unsigned event of kind", Kind]).
+-define(S_UNSIGNED_KIND_ALT, ["an unsigned kind", Kind, "event"]).
 -define(S_OVERSIZED_KIND, ["an unsigned kind", Kind, "event larger than", MaxSize, "bytes"]).
 -define(S_UNSIGNED_KIND_MIN_TAGS, [
     "an unsigned kind", Kind, "event with the required minimal tags"
 ]).
 -define(S_EVENT_MISSING_TAGS, ["the event does not contain tags", _Tags]).
+-define(S_EVENT_MISSING_TAGS_3, [
+    "the event does not contain tags", _D, ",", _Title, ", and", _PublishedAt
+]).
 -define(S_EVENT_PASSES_POLICY, [
     "the event passes stale, size, HTML, kind, and client policy checks"
 ]).
 -define(S_EVENT_SCRIPT, ["an unsigned kind 30023 event whose content contains", Script]).
+-define(S_EVENT_SCRIPT_SPLIT, [
+    "an unsigned kind", Kind, "event whose content contains", Script
+]).
 -define(S_REPLAY_SEED, [
     "authorised client", Client, "submitted request id", RequestId, "for payload hash", PayloadHash
 ]).
@@ -175,11 +186,11 @@ step(_Config, Context, _Keyword, _N, ?S_ALLOWED_KINDS_COLON, Args) ->
 step(_Config, Context, _Keyword, _N, ?S_ALLOWED_KINDS, Args) ->
     set_allowed_kinds(Context, Args);
 step(_Config, Context, _Keyword, _N, ?S_STALE_WINDOW, _Args) ->
-    update_policy(Context, fun(P) -> P#{created_at_skew_seconds => SkewSecs} end);
+    update_policy(Context, fun(P) -> P#{created_at_skew_seconds => to_int(SkewSecs)} end);
 step(_Config, Context, _Keyword, _N, ?S_MAX_KIND, _Args) ->
     update_policy(Context, fun(P0) ->
         Max0 = maps:get(max_event_bytes, P0, #{}),
-        P0#{max_event_bytes => Max0#{Kind => MaxBytes}}
+        P0#{max_event_bytes => Max0#{to_int(Kind) => to_int(MaxBytes)}}
     end);
 step(_Config, Context, _Keyword, _N, ?S_SIGNS_ONLY, _Args) ->
     update_policy(
@@ -192,6 +203,9 @@ step(_Config, Context, _Keyword, _N, ?S_BUNKER_TIME, _Args) ->
 step(_Config, Context, _Keyword, _N, ?S_SIGNING_REQ_CREATED_AT, _Args) ->
     update_request_time(Context, to_int(CreatedAt));
 step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND, _Args) ->
+    KindInt = to_int(Kind),
+    update_event(Context, valid_event(KindInt, now(Context)));
+step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND_ALT, _Args) ->
     KindInt = to_int(Kind),
     update_event(Context, valid_event(KindInt, now(Context)));
 step(_Config, Context, _Keyword, _N, ?S_OVERSIZED_KIND, _Args) ->
@@ -214,11 +228,19 @@ step(_Config, Context, _Keyword, _N, ?S_EVENT_MISSING_TAGS, _Args) ->
     Event0 = event(Context),
     Event = Event0#{tags => [[<<"d">>, <<"deployment">>]]},
     update_event(Context, Event);
+step(_Config, Context, _Keyword, _N, ?S_EVENT_MISSING_TAGS_3, _Args) ->
+    Event0 = event(Context),
+    Event = Event0#{tags => []},
+    update_event(Context, Event);
 step(_Config, Context, _Keyword, _N, ?S_EVENT_PASSES_POLICY, _Args) ->
     update_ns(Context, fun(NS) -> NS#{event_policy_expected_valid => true} end);
 step(_Config, Context, _Keyword, _N, ?S_EVENT_SCRIPT, _Args) ->
     Content = <<"# Bad\n", (to_bin(Script))/binary, ">alert(1)</script>">>,
     Event = (valid_event(30023, now(Context)))#{content => Content},
+    update_event(Context, Event);
+step(_Config, Context, _Keyword, _N, ?S_EVENT_SCRIPT_SPLIT, _Args) ->
+    Content = <<"# Bad\n", (to_bin(Script))/binary, ">alert(1)</script>">>,
+    Event = (valid_event(to_int(Kind), now(Context)))#{content => Content},
     update_event(Context, Event);
 step(_Config, Context, _Keyword, _N, ?S_REPLAY_SEED, _Args) ->
     ensure_servers(),
@@ -230,6 +252,8 @@ step(_Config, Context, _Keyword, _N, ?S_REPLAY_SEED, _Args) ->
     end);
 step(_Config, Context, _Keyword, _N, ?S_RATE_EXCEEDED, _Args) ->
     ensure_servers(),
+    application:set_env(damage, nsecbunker_rate_backend, ets),
+
     ok = damage_nsecbunker_rate:seed(to_bin(Client), now(Context), to_int(MaxRequests)),
     update_ns(Context, fun(NS) -> NS#{rate_limited_client => to_bin(Client)} end);
 step(_Config, Context, _Keyword, _N, ?S_TIMEOUT, _Args) ->
@@ -259,6 +283,10 @@ step(_Config, Context, _Keyword, _N, ?S_AUTH_CALLS, _Args) ->
 step(_Config, Context, _Keyword, _N, ?S_CLIENT_CALLS, _Args) ->
     method_call(Context, to_bin(Client), to_bin(Method));
 step(_Config, Context, _Keyword, _N, ?S_AUTH_REQUESTS_SIGNING, _Args) ->
+    request_signing(Context, to_bin(Client));
+
+step(_Config, Context, _Keyword, _N,
+     ?S_AUTH_REQUESTS_SIGNING_VALID_EVENT, _Args) ->
     request_signing(Context, to_bin(Client));
 step(_Config, Context, _Keyword, _N, ?S_CLIENT_REQUESTS_SIGNING, _Args) ->
     Client = maps:get(rate_limited_client, ns(Context), first_authorized_client(Context)),
@@ -551,8 +579,9 @@ run_gate(Context, Client) ->
     NS = ns(Context),
     Now = maps:get(now, NS, ?DEFAULT_NOW),
     Request0 = maps:get(request, NS, #{}),
-    Event = maps:get(event, NS, valid_event(30023, Now)),
-    CreatedAt = maps:get(created_at, Request0, maps:get(created_at, Event, Now)),
+    Event0 = maps:get(event, NS, valid_event(30023, Now)),
+    CreatedAt = to_int(maps:get(created_at, Request0, maps:get(created_at, Event0, Now))),
+    Event = Event0#{created_at => CreatedAt},
     Request = maps:merge(
         #{
             requester_pubkey => Client,
@@ -769,6 +798,8 @@ assert_reason(Context, Expected0, Mode) ->
     Actual = maps:get(denial_reason, ns(Context), <<>>),
     case {Mode, Expected, Actual} of
         {should, <<>>, _} ->
+            Context;
+        {should, <<"none">>, <<>>} ->
             Context;
         {_, Expected, Expected} ->
             Context;
