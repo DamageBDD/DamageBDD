@@ -132,6 +132,7 @@ step_dry(Config, Context, Keyword, LineNo, Body, Args) ->
 
 %% ===== Background ===========================================================
 step(_Config, Context, _Keyword, _N, ?S_VAULT_GENERATED, _Args) ->
+    ?LOG_INFO("S_VAULT_GENERATED ~p", [Context]),
     ensure_servers(),
     ok = damage_nsecbunker_replay:reset(),
     ok = damage_nsecbunker_rate:reset(),
@@ -188,14 +189,15 @@ step(_Config, Context, _Keyword, _N, ?S_SIGNS_ONLY, _Args) ->
 %% ===== Scenario setup =======================================================
 step(_Config, Context, _Keyword, _N, ?S_BUNKER_TIME, _Args) ->
     update_ns(Context, fun(NS) -> NS#{now => to_int(BunkerTime)} end);
-
 step(_Config, Context, _Keyword, _N, ?S_SIGNING_REQ_CREATED_AT, _Args) ->
-    update_request_time(Context, to_int( CreatedAt));
+    update_request_time(Context, to_int(CreatedAt));
 step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND, _Args) ->
     KindInt = to_int(Kind),
     update_event(Context, valid_event(KindInt, now(Context)));
 step(_Config, Context, _Keyword, _N, ?S_OVERSIZED_KIND, _Args) ->
-    Event = (valid_event(Kind, now(Context)))#{content => binary:copy(<<"x">>, MaxSize + 512)},
+    Event = (valid_event(Kind, now(Context)))#{
+        content => binary:copy(<<"x">>, to_int(MaxSize) + 512)
+    },
     update_event(Context, Event);
 step(_Config, Context, _Keyword, _N, ?S_UNSIGNED_KIND_MIN_TAGS, _Args) ->
     Event0 = valid_event(Kind, now(Context)),
@@ -228,11 +230,11 @@ step(_Config, Context, _Keyword, _N, ?S_REPLAY_SEED, _Args) ->
     end);
 step(_Config, Context, _Keyword, _N, ?S_RATE_EXCEEDED, _Args) ->
     ensure_servers(),
-    ok = damage_nsecbunker_rate:seed(to_bin(Client), now(Context), MaxRequests),
+    ok = damage_nsecbunker_rate:seed(to_bin(Client), now(Context), to_int(MaxRequests)),
     update_ns(Context, fun(NS) -> NS#{rate_limited_client => to_bin(Client)} end);
 step(_Config, Context, _Keyword, _N, ?S_TIMEOUT, _Args) ->
     update_ns(Context, fun(NS) ->
-        NS#{force_signing_timeout => true, simulated_elapsed_ms => TimeoutMs + 1}
+        NS#{force_signing_timeout => true, simulated_elapsed_ms => to_int(TimeoutMs) + 1}
     end);
 step(_Config, Context, _Keyword, _N, ?S_VAULT_CORRUPT, _Args) ->
     update_ns(Context, fun(NS0) ->
@@ -749,10 +751,19 @@ assert_decision(Context, Key, Expected0) ->
     Expected = to_bin(Expected0),
     Actual = maps:get(Key, ns(Context), <<>>),
     case Actual =:= Expected of
-        true -> Context;
-        false -> fail(Context, damage_utils:strf("~p was ~p, expected ~p", [Key, Actual, Expected]))
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                damage_utils:strf("~p was ~p, expected ~p, reason ~p", [
+                    Key,
+                    Actual,
+                    Expected,
+                    maps:get(denial_reason, ns(Context), <<>>)
+                ])
+            )
     end.
-
 assert_reason(Context, Expected0, Mode) ->
     Expected = to_bin(Expected0),
     Actual = maps:get(denial_reason, ns(Context), <<>>),
@@ -814,8 +825,23 @@ table_column(Args, Column) ->
         [] ->
             [];
         [Header | DataRows] ->
-            Index = column_index(Header, Column),
-            [to_bin(nth_or_empty(Index, Row)) || Row <- DataRows, nth_or_empty(Index, Row) =/= <<>>]
+            Header0 = [to_bin(H) || H <- Header],
+            case lists:member(Column, Header0) of
+                true ->
+                    Index = column_index(Header0, Column),
+                    [
+                        to_bin(nth_or_empty(Index, Row))
+                     || Row <- DataRows,
+                        nth_or_empty(Index, Row) =/= <<>>
+                    ];
+                false ->
+                    %% No header: treat first column of every row as values.
+                    [
+                        to_bin(nth_or_empty(1, Row))
+                     || Row <- Rows,
+                        nth_or_empty(1, Row) =/= <<>>
+                    ]
+            end
     end.
 
 table_rows(Args) when is_binary(Args) ->
@@ -919,11 +945,18 @@ ensure_servers() ->
 ensure_server(Module) ->
     case whereis(Module) of
         undefined ->
-            case catch Module:start_link() of
-                {ok, _Pid} -> ok;
-                {error, {already_started, _Pid}} -> ok;
-                {'EXIT', {already_started, _Pid}} -> ok;
-                _Other -> ok
+            try Module:start_link() of
+                {ok, _Pid} ->
+                    ok;
+                {error, {already_started, _Pid}} ->
+                    ok;
+                Other ->
+                    {error, {unexpected_start_result, Other}}
+            catch
+                exit:{already_started, _Pid}:_Stacktrace ->
+                    ok;
+                Class:Reason:Stacktrace ->
+                    {error, {start_failed, Class, Reason, Stacktrace}}
             end;
         _Pid ->
             ok

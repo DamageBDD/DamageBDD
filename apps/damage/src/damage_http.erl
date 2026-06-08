@@ -288,13 +288,28 @@ get_stream_config(Config, Context, Req) ->
         }}
     ],
     AeAccount = maps:get(public_key, Context, undefined),
+    ContinueOnFail =
+        maps:get(
+            continue_on_fail,
+            Context,
+            proplists:get_value(continue_on_fail, Config, false)
+        ),
+    RunnerOpts = [{continue_on_fail, ContinueOnFail}],
     Config0 = damage_config:get_default_config(
-        [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
+        RunnerOpts ++
+            [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
     ),
     Config0.
 get_config(Config, Context, Req0) ->
     Concurrency = maps:get(concurrency, Context, 1),
     StreamFlag = maps:get(stream, Context, true),
+    ContinueOnFail =
+        maps:get(
+            continue_on_fail,
+            Context,
+            proplists:get_value(continue_on_fail, Config, false)
+        ),
+    RunnerOpts = [{continue_on_fail, ContinueOnFail}],
     case {Concurrency, StreamFlag} of
         {1, maybe_stream} ->
             get_stream_config(Config, Context, Req0);
@@ -305,7 +320,8 @@ get_config(Config, Context, Req0) ->
             AeAccount = maps:get(public_key, Context, maps:get(address, Context, undefined)),
             Concurrency1 = damage_utils:get_concurrency_level(Concurrency),
             damage_config:get_default_config(
-                [{public_key, AeAccount}, {concurrency, Concurrency1} | Config]
+                RunnerOpts ++
+                    [{public_key, AeAccount}, {concurrency, Concurrency1} | Config]
             )
     end.
 
@@ -896,6 +912,12 @@ from_html(Req0, State) ->
                 #{color := <<"true">>} -> true;
                 _ -> false
             end,
+        ContinueOnFail =
+            case cowboy_req:header(<<"x-damage-continue-on-fail">>, Req1, <<"false">>) of
+                <<"true">> -> true;
+                <<"1">> -> true;
+                _ -> false
+            end,
         Stream = stream_mode(Req1, Concurrency),
 
         %% Own the stream lifecycle here (DON'T guess using resp_headers).
@@ -912,6 +934,8 @@ from_html(Req0, State) ->
                         feature => Body,
                         concurrency => Concurrency,
                         stream => maybe_stream,
+                        continue_on_fail => ContinueOnFail,
+
                         color_formatter => ColorFormatter
                     }};
                 _ ->
@@ -919,6 +943,7 @@ from_html(Req0, State) ->
                         feature => Body,
                         concurrency => Concurrency,
                         stream => Stream,
+                        continue_on_fail => ContinueOnFail,
                         color_formatter => ColorFormatter
                     }}
             end,

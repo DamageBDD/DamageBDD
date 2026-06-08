@@ -399,7 +399,8 @@ execute_feature(
 
     formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
     FinalContext =
-        lists:foldl(
+        run_fold(
+            Config,
             fun(Scenario, AccContext) ->
                 ScenarioBase = clear_step_control(AccContext),
                 ScenarioContext = execute_scenario(Config, ScenarioBase, BackGround, Scenario),
@@ -425,6 +426,39 @@ execute_feature(
     deinit_logging(Config),
     FinalContext.
 
+continue_on_fail(Config) ->
+    proplists:get_value(continue_on_fail, Config, false) =:= true.
+
+run_fold(Config, Fun, Acc, Items) ->
+    case continue_on_fail(Config) of
+        true ->
+            lists:foldl(Fun, Acc, Items);
+        false ->
+            fold_until_fail(Fun, Acc, Items)
+    end.
+
+fold_until_fail(_Fun, #{fail := _} = Context, _Items) ->
+    Context;
+fold_until_fail(_Fun, Context, []) ->
+    Context;
+fold_until_fail(Fun, Context, [Item | Rest]) ->
+    case Fun(Item, Context) of
+        #{fail := _} = Failed ->
+            Failed;
+        NextContext ->
+            fold_until_fail(Fun, NextContext, Rest)
+    end.
+
+execute_steps(Config, Context, Steps) ->
+    run_fold(
+        Config,
+        fun(Step, AccContext) ->
+            execute_step(Config, Step, AccContext)
+        end,
+        Context,
+        Steps
+    ).
+
 execute_scenario(Config, Context, undefined, Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);
 execute_scenario(Config, Context, [], Scenario) ->
@@ -448,8 +482,8 @@ execute_scenario(Config, Context, BackGround, Scenario0) ->
                     );
                 normal ->
                     formatter:format(Config, scenario, {ScenarioName, LineNo, Tags}),
-                    lists:foldl(
-                        fun(S, C) -> execute_step(Config, S, C) end,
+                    execute_steps(
+                        Config,
                         Context,
                         lists:append(BackGroundSteps, Steps)
                     )
@@ -578,46 +612,136 @@ normalize_steps([Nested | Rest], Acc) when is_list(Nested) ->
 normalize_steps([Other | Rest], Acc) ->
     normalize_steps(Rest, [Other | Acc]).
 
-extract_outline_examples(ScenarioName, Steps, ScenarioExamples) ->
+extract_outline_examples(ScenarioName, Steps0, ScenarioExamples) ->
+    Steps = normalize_steps(Steps0),
+    Keys = placeholder_keys({ScenarioName, Steps}),
     case normalize_datatable(ScenarioExamples) of
-        {datatable, [Header | _] = Rows} ->
-            case outline_placeholders_present(ScenarioName, Steps, Header) of
-                true -> {outline, Steps, Rows};
-                false -> normal
+        {datatable, Rows0} ->
+            case outline_rows(Keys, normalize_table_rows(Rows0)) of
+                {ok, Header, DataRows} ->
+                    {outline, Steps, [Header | DataRows]};
+                none ->
+                    normal
             end;
         none ->
-            extract_outline_examples_from_steps(ScenarioName, normalize_steps(Steps))
+            extract_outline_examples_from_steps(ScenarioName, Steps)
     end.
 
-extract_outline_examples_from_steps(ScenarioName, Steps) ->
-    case lists:reverse(Steps) of
-        [{LineNo, Keyword, Body, {datatable, Rows0}} | RevRest] ->
-            Rows = normalize_table_rows(Rows0),
-            case Rows of
-                [Header | _] ->
-                    Steps1 = lists:reverse([{LineNo, Keyword, Body} | RevRest]),
-                    case outline_placeholders_present(ScenarioName, Steps1, Header) of
-                        true -> {outline, Steps1, Rows};
-                        false -> normal
-                    end;
-                [] ->
+extract_outline_examples_from_steps(ScenarioName, Steps0) ->
+    Steps = normalize_steps(Steps0),
+    Keys = placeholder_keys({ScenarioName, Steps}),
+    case split_outline_datatable(Keys, Steps) of
+        {Steps1, Rows0} ->
+            case outline_rows(Keys, normalize_table_rows(Rows0)) of
+                {ok, Header, DataRows} ->
+                    {outline, Steps1, [Header | DataRows]};
+                none ->
                     normal
             end;
-        [{datatable, Rows0} | RevRest] ->
-            Rows = normalize_table_rows(Rows0),
-            case Rows of
-                [Header | _] ->
-                    Steps1 = lists:reverse(RevRest),
-                    case outline_placeholders_present(ScenarioName, Steps1, Header) of
-                        true -> {outline, Steps1, Rows};
-                        false -> normal
-                    end;
-                [] ->
-                    normal
-            end;
-        _ ->
+        none ->
             normal
     end.
+
+split_outline_datatable(Keys, Steps) ->
+    split_outline_datatable(Keys, Steps, []).
+
+split_outline_datatable(_Keys, [], _Acc) ->
+    none;
+
+%% Examples attached as explicit datatable arg.
+split_outline_datatable(_Keys, [{LineNo, Keyword, Body, {datatable, Rows}} | Rest], Acc) ->
+    Steps = lists:reverse(Acc) ++ [{LineNo, Keyword, Body} | Rest],
+    {Steps, Rows};
+
+%% Examples already decoded as plain step args/table rows.
+%% Only steal these args when they can actually bind the scenario placeholders.
+split_outline_datatable(Keys, [{LineNo, Keyword, Body, Args0} = Step | Rest], Acc) ->
+    case outline_arg_rows(Keys, Args0) of
+        {ok, Rows} ->
+            Steps = lists:reverse(Acc) ++ [{LineNo, Keyword, Body} | Rest],
+            {Steps, Rows};
+        none ->
+            split_outline_datatable(Keys, Rest, [Step | Acc])
+    end;
+
+%% Examples emitted as standalone datatable item.
+split_outline_datatable(_Keys, [{datatable, Rows} | Rest], Acc) ->
+    Steps = lists:reverse(Acc) ++ Rest,
+    {Steps, Rows};
+
+split_outline_datatable(Keys, [Step | Rest], Acc) ->
+    split_outline_datatable(Keys, Rest, [Step | Acc]).
+
+outline_arg_rows([], _Args) ->
+    none;
+outline_arg_rows(Keys, Args0) ->
+    Rows = normalize_table_rows(Args0),
+    case outline_rows(Keys, Rows) of
+        {ok, Header, DataRows} ->
+            {ok, [Header | DataRows]};
+        none ->
+            none
+    end.
+
+placeholder_keys(Term) ->
+    ordsets:from_list(placeholder_keys(Term, [])).
+
+placeholder_keys(Bin, Acc) when is_binary(Bin) ->
+    placeholder_keys_from_binary(Bin, Acc);
+placeholder_keys(List, Acc) when is_list(List) ->
+    case outline_charlist(List) of
+        true ->
+            placeholder_keys_from_binary(outline_bin(List), Acc);
+        false ->
+            lists:foldl(fun placeholder_keys/2, Acc, List)
+    end;
+placeholder_keys(Tuple, Acc) when is_tuple(Tuple) ->
+    lists:foldl(fun placeholder_keys/2, Acc, tuple_to_list(Tuple));
+placeholder_keys(_Other, Acc) ->
+    Acc.
+
+placeholder_keys_from_binary(Bin, Acc) ->
+    case binary:split(Bin, <<"<">>) of
+        [_] ->
+            Acc;
+        [_Before, Rest0] ->
+            case binary:split(Rest0, <<">">>) of
+                [Key0, Rest] ->
+                    placeholder_keys_from_binary(Rest, [outline_key(Key0) | Acc]);
+                _ ->
+                    Acc
+            end
+    end.
+
+outline_rows([], _Rows) ->
+    none;
+outline_rows(Keys, [First | Rest] = Rows) ->
+    Header = [outline_key(K) || K <- normalize_table_row(First)],
+    case header_matches(Keys, Header) of
+        true ->
+            {ok, Header, Rest};
+        false ->
+            case {Keys, one_column_rows(Rows)} of
+                {[OnlyKey], true} ->
+                    %% No-header examples table for one placeholder.
+                    {ok, [OnlyKey], Rows};
+                _ ->
+                    none
+            end
+    end;
+outline_rows(_Keys, []) ->
+    none.
+
+header_matches(Keys, Header) ->
+    lists:all(fun(K) -> lists:member(K, Header) end, Keys).
+
+one_column_rows(Rows) ->
+    lists:all(
+        fun(Row) ->
+            length(normalize_table_row(Row)) =:= 1
+        end,
+        Rows
+    ).
 
 normalize_datatable({datatable, Rows}) ->
     {datatable, normalize_table_rows(Rows)};
@@ -680,58 +804,73 @@ execute_scenario_outline(_Config, Context, _BackGroundSteps, _LineNo, _Name, _Ta
 execute_scenario_outline(
     Config, Context, BackGroundSteps, LineNo, ScenarioName, Tags, Steps, Rows0
 ) ->
+    Keys = placeholder_keys({ScenarioName, Steps}),
     case normalize_table_rows(Rows0) of
         [] ->
             Context;
         [Header | DataRows] ->
-            lists:foldl(
+            run_fold(
+                Config,
                 fun(Row, ContextAcc) ->
-                    Vars = scenario_outline_vars(Header, Row),
+                    RowBase = clear_step_control(ContextAcc),
+                    Vars0 = scenario_outline_vars(Header, Row),
+                    Vars = complete_outline_vars(Keys, Vars0, Row),
                     ScenarioName0 = scenario_outline_replace(ScenarioName, Vars),
                     Steps0 = scenario_outline_replace(Steps, Vars),
-                    formatter:format(Config, scenario, {ScenarioName0, LineNo, Tags}),
-                    lists:foldl(
-                        fun(S, C) -> execute_step(Config, S, C) end,
-                        ContextAcc,
-                        lists:append(BackGroundSteps, Steps0)
-                    )
+
+                    case placeholder_keys({ScenarioName0, Steps0}) of
+                        [] ->
+                            formatter:format(Config, scenario, {ScenarioName0, LineNo, Tags}),
+                            RowContext =
+                                execute_steps(
+                                    Config,
+                                    RowBase,
+                                    lists:append(BackGroundSteps, Steps0)
+                                ),
+
+                            case maps:get(fail, RowContext, none) of
+                                none ->
+                                    maps:merge(ContextAcc, clear_step_control(RowContext));
+                                Fail ->
+                                    maps:put(
+                                        fail,
+                                        Fail,
+                                        maps:put(
+                                            failing_step,
+                                            maps:get(failing_step, RowContext, undefined),
+                                            ContextAcc
+                                        )
+                                    )
+                            end;
+                        Left ->
+                            maps:put(
+                                fail,
+                                {outline_placeholder_unresolved, Left, Vars, Header, Row},
+                                ContextAcc
+                            )
+                    end
                 end,
                 Context,
                 DataRows
             )
     end.
-
+complete_outline_vars(Keys, Vars0, Row) ->
+    Missing = [K || K <- Keys, not maps:is_key(K, Vars0)],
+    Row0 = normalize_table_row(Row),
+    case {Missing, Row0} of
+        {[OnlyKey], [OnlyValue]} ->
+            maps:put(OnlyKey, outline_bin(OnlyValue), Vars0);
+        _ ->
+            Vars0
+    end.
 scenario_outline_vars(Header, Row) ->
     maps:from_list(
         [
-            {outline_bin(K), outline_bin(V)}
+            {outline_key(K), outline_bin(V)}
          || {K, V} <- lists:zip(normalize_table_row(Header), normalize_table_row(Row))
         ]
     ).
 
-outline_placeholders_present(ScenarioName, Steps, Header) ->
-    lists:any(
-        fun(Key) ->
-            Pattern = <<"<", (outline_bin(Key))/binary, ">">>,
-            outline_term_has_placeholder(ScenarioName, Pattern) orelse
-                outline_term_has_placeholder(Steps, Pattern)
-        end,
-        normalize_table_row(Header)
-    ).
-
-outline_term_has_placeholder(Bin, Pattern) when is_binary(Bin) ->
-    binary:match(Bin, Pattern) =/= nomatch;
-outline_term_has_placeholder(List, Pattern) when is_list(List) ->
-    case outline_charlist(List) of
-        true ->
-            outline_term_has_placeholder(outline_bin(List), Pattern);
-        false ->
-            lists:any(fun(Item) -> outline_term_has_placeholder(Item, Pattern) end, List)
-    end;
-outline_term_has_placeholder(Tuple, Pattern) when is_tuple(Tuple) ->
-    lists:any(fun(Item) -> outline_term_has_placeholder(Item, Pattern) end, tuple_to_list(Tuple));
-outline_term_has_placeholder(_Other, _Pattern) ->
-    false.
 
 scenario_outline_replace(Bin, Vars) when is_binary(Bin) ->
     maps:fold(
@@ -759,6 +898,25 @@ outline_bin(V) when is_integer(V) -> integer_to_binary(V);
 outline_bin(V) when is_float(V) -> list_to_binary(io_lib:format("~p", [V]));
 outline_bin(V) when is_list(V) -> normalize_table_cell(V);
 outline_bin(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+outline_key(V) ->
+    K0 = string:trim(outline_bin(V)),
+    K1 = strip_wrapping(K0, <<"\"">>, <<"\"">>),
+    K2 = strip_wrapping(K1, <<"'">>, <<"'">>),
+    strip_wrapping(K2, <<"<">>, <<">">>).
+
+strip_wrapping(Bin, Left, Right) when is_binary(Bin) ->
+    L = byte_size(Left),
+    R = byte_size(Right),
+    Size = byte_size(Bin),
+    case
+        Size >= L + R andalso
+            binary:part(Bin, 0, L) =:= Left andalso
+            binary:part(Bin, Size - R, R) =:= Right
+    of
+        true -> binary:part(Bin, L, Size - L - R);
+        false -> Bin
+    end.
 
 outline_charlist([]) ->
     true;
@@ -1048,7 +1206,20 @@ execute_step(Config, Step, Context) ->
             maps:put(failing_step, tuple_to_list(Step), Context);
         {ok, {Body1, Args1}} ->
             Args2 = merge_step_args(Args1, StepArgs),
-            case
+            case placeholder_keys({Body1, Args2}) of
+                [] ->
+                    execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2);
+                Left ->
+                    maps:put(
+                        fail,
+                        {unresolved_step_placeholder, Left, StepKeyWord, Body1, Args2},
+                        maps:put(failing_step, Step, Context)
+                    )
+            end
+    end.
+
+execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) ->
+    case
                 lists:foldl(
                     fun
                         (StepModule, #{step_found := false} = ContextIn) ->
@@ -1114,7 +1285,6 @@ execute_step(Config, Step, Context) ->
                     ),
                     metrics:update(notfound, maps:get(public_key, Context)),
                     maps:put(failing_step, Step, Context)
-            end
     end.
 
 clear_step_control(Context) ->
@@ -1328,3 +1498,4 @@ is_var_pat({var, _, '_'}) -> true;
 %% any variable
 is_var_pat({var, _, _Name}) -> true;
 is_var_pat(_) -> false.
+
