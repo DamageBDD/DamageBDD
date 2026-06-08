@@ -15,7 +15,7 @@
 %% erlfmt:ignore-begin
 -define(STEP_RESPONSE_STORE_L402_INVOICE, ["I store the L","402","invoice in", Variable]). %TODO fix parser
 -define(STEP_RESPONSE_STORE_L402_INVOICE0, ["I store the L402 invoice in", Variable]).
--define(STEP_RESPONSE_STORE_L402_MACAROON, ["I store the L", "402", "macaroon in", Variable]).
+-define(STEP_RESPONSE_STORE_L402_MACAROON, ["I store the L402 macaroon in", Variable]).
 -define(STEP_RESPONSE_STORE_L402_MACAROON0, ["I store the 402 macaroon in", Variable]).
 %% erlfmt:ignore-end
 
