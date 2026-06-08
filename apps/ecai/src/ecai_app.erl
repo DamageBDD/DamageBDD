@@ -14,13 +14,20 @@
 
 -include_lib("kernel/include/logger.hrl").
 
-start(_StartType, _StartArgs) -> ecai_sup:start_link().
+start(_StartType, _StartArgs) ->
+    {ok, _} = application:ensure_all_started(gun),
+    {ok, _} = application:ensure_all_started(poolboy),
+    ecai_sup:start_link().
+
 get_trails() ->
+    {ok, _} = application:ensure_all_started(poolboy),
+
     Handlers =
         [
             ecai_api,
             ecai_yelp_admin,
-            ecai_dashboard
+            ecai_dashboard,
+            ecai_chat_http_handler
         ],
     Trails =
         [
@@ -34,7 +41,6 @@ get_trails() ->
 
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Ecai."),
-    {ok, _} = application:ensure_all_started(gun),
     {ok, _} = application:ensure_all_started(yamerl),
     {ok, _} = application:ensure_all_started(prometheus_cowboy),
     {ok, _} = application:ensure_all_started(cowboy_telemetry),
@@ -64,8 +70,9 @@ start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Started ECAI cowboy.").
 
 stop(_State) ->
-    ok = cowboy:stop_listener(http),
+    ok = cowboy:stop_listener(http_ecai),
     application:stop(gun),
+
     ok.
 
 %% internal functions
