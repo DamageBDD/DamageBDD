@@ -297,7 +297,10 @@ gun_request(Node0, Request, Timeout, TLS) ->
                         Error
                 end
             after
-                catch gun:close(ConnPid)
+                try gun:close(ConnPid)
+                catch
+                    _:_ -> ok
+                end
             end;
         Error ->
             Error
@@ -353,8 +356,16 @@ await_gun_response(ConnPid, StreamRef, Timeout) ->
     end.
 
 json_decode(Body) ->
-    normalize_json_decode(catch zj:binary_decode(Body), Body).
+    Decoded =
+        try zj:binary_decode(Body)
+        catch
+            Class:Reason:Stack ->
+                {error, {json_decode_failed, Class, Reason, Stack}}
+        end,
+    normalize_json_decode(Decoded, Body).
 
+normalize_json_decode({error, Reason}, _Body) ->
+    {error, Reason};
 normalize_json_decode({ok, {ok, Json}}, _Body) ->
     {ok, normalize_json(Json)};
 
