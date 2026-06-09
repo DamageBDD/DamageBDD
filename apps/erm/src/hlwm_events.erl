@@ -208,7 +208,11 @@ update_client_cache(
         true ->
             S;
         false ->
-            Client = read_client(WinId),
+            Client =
+                case read_client_safe(WinId) of
+                    {ok, C} -> C;
+                    error -> #{title => "", class => "", instance => ""}
+                end,
             S#state{clients = maps:put(WinId, Client, Clients)}
     end;
 update_client_cache(_, S) ->
@@ -234,14 +238,31 @@ client_exists(Name, Clients) ->
         maps:to_list(Clients)
     ).
 refresh_clients() ->
-    Ids0 = string:tokens(os:cmd("herbstclient list_clients"), "\n\r"),
+    Ids0 = string:tokens(os:cmd("herbstclient list_clients 2>/dev/null"), "\n\r"),
     lists:foldl(
         fun(WinId, Acc) ->
-            maps:put(WinId, read_client(WinId), Acc)
+            case read_client_safe(WinId) of
+                {ok, Client} ->
+                    maps:put(WinId, Client, Acc);
+                error ->
+                    Acc
+            end
         end,
         #{},
         Ids0
     ).
+
+read_client_safe(WinId) ->
+    try
+        {ok, read_client(WinId)}
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "failed to read hlwm client winid=~p class=~p reason=~p stack=~p",
+                [WinId, Class, Reason, Stack]
+            ),
+            error
+    end.
 
 read_client(WinId) ->
     #{
@@ -251,7 +272,8 @@ read_client(WinId) ->
     }.
 
 hc_attr(PathIo) ->
-    string:trim(os:cmd(iolist_to_binary(["herbstclient attr ", PathIo, " 2>/dev/null"]))).
+    Cmd = lists:flatten(["herbstclient attr ", PathIo, " 2>/dev/null"]),
+    string:trim(os:cmd(Cmd)).
 maybe_start_pending_windows(S = #state{pending_windows = []}) ->
     S;
 maybe_start_pending_windows(S = #state{pending_windows = Names, clients = Clients}) ->

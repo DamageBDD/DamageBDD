@@ -71,6 +71,38 @@ init([]) ->
                         %    modules => [erm_tray]
                     },
                     #{
+                        id => playlist,
+                        start => {playlist, start_link, []},
+                        restart => permanent,
+                        shutdown => 5000,
+                        type => worker,
+                        modules => [playlist]
+                    },
+                    #{
+                        id => erm_mpv,
+                        start => {erm_mpv, start_link, []},
+                        restart => permanent,
+                        shutdown => 5000,
+                        type => worker,
+                        modules => [erm_mpv]
+                    },
+                    #{
+                        id => erm_mpv_proc,
+                        start => {erm_mpv_proc, start_link, []},
+                        restart => permanent,
+                        shutdown => 5000,
+                        type => worker,
+                        modules => [erm_mpv_proc]
+                    },
+                    #{
+                        id => erm_media_autoplay,
+                        start => {erm_media_autoplay, start_link, []},
+                        restart => permanent,
+                        shutdown => 5000,
+                        type => worker,
+                        modules => [erm_media_autoplay]
+                    },
+                    #{
                         id => gtknode4,
                         start => {gtknode4, start_link, []},
                         restart => permanent,

@@ -7,7 +7,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2, code_change/3]).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("erm.hrl").
+-include_lib("erm_playlist.hrl").
 
 -record(cfg, {
     %% env DISCORD_WEBHOOK_URL
