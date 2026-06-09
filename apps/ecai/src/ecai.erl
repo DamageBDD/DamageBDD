@@ -31,9 +31,6 @@
 -on_load(init/0).
 -include_lib("kernel/include/logger.hrl").
 
-
-
-
 %% Elliptic curve parameters (y^2 = x^3 + ax + b over prime field P)
 -define(A, -1).
 -define(B, 1).
