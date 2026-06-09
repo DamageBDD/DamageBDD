@@ -26,6 +26,7 @@
 -behaviour(wx_object).
 -include_lib("wx/include/wx.hrl").
 -include_lib("erm.hrl").
+-include("erm_playlist.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 -export([show/0]).
@@ -60,8 +61,8 @@
 }).
 
 -define(APP_TITLE, "ECAI MPV Front").
--define(IPC_PATH, os:getenv("MPV_IPC", "/tmp/mpv.sock")).
--define(IPFS_API, os:getenv("IPFS_API", "http://127.0.0.1:5001")).
+-define(IPC_PATH, ipc_path()).
+-define(IPFS_API, ipfs_api()).
 -define(BTN_STYLE, ?wxBU_EXACTFIT bor ?wxBU_AUTODRAW).
 
 start(Config) -> wx_object:start_link(?MODULE, Config, []).
@@ -72,13 +73,13 @@ init([]) ->
     Env = persistent_term:get(erm_wx_env),
     wx:set_env(Env),
 
-    mpv_ipc:ensure_started(),
-    media_scan:ensure_started(),
-    ipfs_client:ensure_started(?IPFS_API),
-    playlist_sup:ensure_started(),
-    {ok, Ply} = playlist:start_link(),
-    social_reporter:ensure_started(),
-    {ok, Ipc} = mpv_ipc:connect(?IPC_PATH),
+    safe_apply(mpv_ipc, ensure_started, []),
+    safe_apply(media_scan, ensure_started, []),
+    safe_apply(ipfs_client, ensure_started, [?IPFS_API]),
+    maybe_ensure_started(playlist_sup),
+    {ok, Ply} = ensure_playlist_started(),
+    maybe_ensure_started(social_reporter),
+    Ipc = safe_mpv_connect(?IPC_PATH),
     %% Register a gproc local name so other processes can find us
     Frame = wxFrame:new(wx:null(), ?wxID_ANY, ?APP_TITLE, [{size, {1100, 720}}]),
     Panel = wxPanel:new(Frame, []),
@@ -142,6 +143,7 @@ init([]) ->
     wxSlider:connect(Seek, command_slider_updated, []),
     wxListCtrl:connect(List, command_list_item_selected, []),
     gproc:reg_other({n, l, {?MODULE, erm_mpv}}, self()),
+    erlang:send_after(1000, self(), refresh_playlist),
 
     {Frame, #state{
         frame = Frame,
@@ -182,13 +184,13 @@ handle_event(
     Btn = wx:typeCast(B0, wxButton),
     case wxButton:getLabel(Btn) of
         "⏮" ->
-            playlist:prev(),
+            play_selected(playlist:prev(), S),
             {noreply, S};
         "⏯" ->
             mpv_ipc:toggle_pause(),
             {noreply, S};
         "⏭" ->
-            playlist:next(),
+            play_selected(playlist:next(), S),
             {noreply, S};
         "☆ Like" ->
             playlist:toggle_like_current(),
@@ -233,9 +235,7 @@ handle_event(
 handle_event(#wx{event = #wxList{type = command_list_item_selected, itemIndex = Idx}}, S) ->
     case playlist:get_by_index(Idx) of
         {ok, Track} ->
-            mpv_ipc:load_file(Track#track.path),
-            playlist:set_current(Track#track.id),
-            update_status(S, Track),
+            play_track(Track, S),
             {noreply, S};
         error ->
             {noreply, S}
@@ -247,12 +247,26 @@ handle_event(E, S) ->
 handle_info({mpv, status, Map}, S) ->
     maybe_update_seek(S, Map),
     {noreply, S};
+handle_info(refresh_playlist, S) ->
+    refresh_playlist(S),
+    {noreply, S};
 handle_info(_Msg, S) ->
     {noreply, S}.
 
-handle_call(_Req, _From, S) -> {reply, ok, S}.
+handle_call(close, _From, S = #state{frame = F}) ->
+    catch wxFrame:close(F),
+    {reply, ok, S};
+handle_call(show, _From, S = #state{frame = F}) ->
+    catch wxFrame:show(F),
+    {reply, ok, S};
+handle_call(_Req, _From, S) ->
+    {reply, ok, S}.
 handle_cast(_Msg, S) -> {noreply, S}.
-terminate(_Reason, _S) -> ok.
+terminate(_Reason, #state{frame = F}) ->
+    catch wxFrame:destroy(F),
+    ok;
+terminate(_Reason, _S) ->
+    ok.
 code_change(_V, S, _Extra) -> {ok, S}.
 
 %% Helpers
@@ -263,7 +277,7 @@ add_folder(S = #state{list = _List}) ->
     case wxDirDialog:showModal(Dlg) of
         ?wxID_OK ->
             Dir = wxDirDialog:getPath(Dlg),
-            spawn(fun() -> media_scan:scan_and_index(Dir) end),
+            _ = playlist:add_files(Dir, true),
             refresh_playlist(S),
             ok;
         _ ->
@@ -310,7 +324,7 @@ refresh_playlist(_S = #state{list = List}) ->
                 1,
                 case T#track.cid of
                     undefined -> "-";
-                    C -> C
+                    C -> to_text(C)
                 end
             ),
             wxListCtrl:setItem(
@@ -333,15 +347,98 @@ update_status(S, T = #track{}) ->
 
 display_title(T) -> filename:basename(T#track.path).
 
+play_selected({ok, Track}, S) ->
+    play_track(Track, S);
+play_selected(error, _S) ->
+    ok;
+play_selected(_, _S) ->
+    ok.
+
+play_track(Track, S) ->
+    case catch mpv_ipc:load_file(Track#track.path) of
+        {'EXIT', Reason} ->
+            ?LOG_WARNING("MPV load_file failed for ~p: ~p", [Track#track.path, Reason]),
+            update_status(S, io_lib:format("MPV load failed: ~p", [Reason]));
+        _ ->
+            playlist:set_current(Track#track.id),
+            update_status(S, Track)
+    end,
+    ok.
+
+safe_mpv_connect(Path) ->
+    case catch mpv_ipc:connect(Path) of
+        {ok, Ipc} ->
+            Ipc;
+        {'EXIT', Reason} ->
+            ?LOG_WARNING("MPV IPC connect failed: ~p", [Reason]),
+            undefined;
+        Other ->
+            ?LOG_DEBUG("MPV IPC connect returned ~p", [Other]),
+            Other
+    end.
+
+safe_apply(Module, Function, Args) ->
+    _ = code:ensure_loaded(Module),
+    case erlang:function_exported(Module, Function, length(Args)) of
+        true ->
+            catch apply(Module, Function, Args);
+        false ->
+            ok
+    end.
+
+ensure_playlist_started() ->
+    case whereis(playlist) of
+        undefined ->
+            case playlist:start_link() of
+                {ok, Pid} -> {ok, Pid};
+                {error, {already_started, Pid}} -> {ok, Pid};
+                Error -> Error
+            end;
+        Pid ->
+            {ok, Pid}
+    end.
+
+maybe_ensure_started(Module) ->
+    _ = code:ensure_loaded(Module),
+    case erlang:function_exported(Module, ensure_started, 0) of
+        true -> catch Module:ensure_started();
+        false -> ok
+    end.
+
+to_text(Bin) when is_binary(Bin) -> binary_to_list(Bin);
+to_text(Atom) when is_atom(Atom) -> atom_to_list(Atom);
+to_text(Text) when is_list(Text) -> Text;
+to_text(Other) -> io_lib:format("~p", [Other]).
+
 maybe_update_seek(#state{seek_slider = Seek}, Map) ->
     case {maps:get("percent-pos", Map, undefined)} of
         {P} when is_number(P) -> wxSlider:setValue(Seek, trunc(P * 10));
         _ -> ok
     end.
 
+ipc_path() ->
+    getenv_default("MPV_IPC", "/tmp/mpv.sock").
+
+ipfs_api() ->
+    getenv_default("IPFS_API", "http://127.0.0.1:5001").
+
+getenv_default(Name, Default) ->
+    case os:getenv(Name) of
+        false -> Default;
+        "" -> Default;
+        Value -> Value
+    end.
+
 copy_to_clipboard(Str) ->
-    %% Simple X11 copy fallback via xclip; no-op if missing
-    Cmd = io_lib:format(
-        "bash -lc 'command -v xclip >/dev/null && printf %s ~s | xclip -selection clipboard'", [Str]
-    ),
-    os:cmd(lists:flatten(Cmd)).
+    %% Simple X11 copy fallback via xclip; no-op if missing.
+    case os:find_executable("xclip") of
+        false ->
+            ok;
+        Xclip ->
+            Port = open_port({spawn_executable, Xclip}, [
+                binary, exit_status, {args, ["-selection", "clipboard"]}
+            ]),
+            port_command(Port, unicode:characters_to_binary(Str)),
+            port_close(Port),
+            ok
+    end.
