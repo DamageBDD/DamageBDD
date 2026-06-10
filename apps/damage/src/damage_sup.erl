@@ -214,6 +214,7 @@ init([]) ->
                 type => worker,
                 modules => [damage_nostr]
             },
+            damage_nsecbunker_sup:child_spec(),
             #{
                 id => damage_nwc_listener,
                 start => {damage_nwc_listener, start_link, []},
