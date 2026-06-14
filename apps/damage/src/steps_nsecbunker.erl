@@ -37,11 +37,10 @@
 -define(S_AUTH_CALLS, ["authorised client", Client, "calls", Method]).
 -define(S_CLIENT_CALLS, ["client", Client, "calls", Method]).
 -define(S_AUTH_REQUESTS_SIGNING, ["authorised client", Client, "requests signing"]).
--define(S_AUTH_REQUESTS_SIGNING_VALID_EVENT, [
-    "authorised client",
-    Client,
-    "requests signing for an otherwise valid event"
-]).
+-define(S_AUTH_REQUESTS_SIGNING_VALID_EVENT,
+     ["authorised client",
+      Client,
+      "requests signing for an otherwise valid event"]).
 -define(S_CLIENT_REQUESTS_SIGNING, ["the client requests signing"]).
 -define(S_ANY_CLIENT_ANY_SIGNING, ["any client requests any signing operation"]).
 -define(S_ANY_CLIENT_REQUESTS_METHODS, ["any client requests", MethodA, "or", _MethodB]).
@@ -285,14 +284,9 @@ step(_Config, Context, _Keyword, _N, ?S_CLIENT_CALLS, _Args) ->
     method_call(Context, to_bin(Client), to_bin(Method));
 step(_Config, Context, _Keyword, _N, ?S_AUTH_REQUESTS_SIGNING, _Args) ->
     request_signing(Context, to_bin(Client));
-step(
-    _Config,
-    Context,
-    _Keyword,
-    _N,
-    ?S_AUTH_REQUESTS_SIGNING_VALID_EVENT,
-    _Args
-) ->
+
+step(_Config, Context, _Keyword, _N,
+     ?S_AUTH_REQUESTS_SIGNING_VALID_EVENT, _Args) ->
     request_signing(Context, to_bin(Client));
 step(_Config, Context, _Keyword, _N, ?S_CLIENT_REQUESTS_SIGNING, _Args) ->
     Client = maps:get(rate_limited_client, ns(Context), first_authorized_client(Context)),
