@@ -204,27 +204,38 @@ static_l402(Req, State, Scope) ->
     {stop, Req1, State}.
 
 dry_run_cost_msat(FeatureBin, State, Req) ->
-    #{public_key := NodePublicKey, private_key := _PrivateKey} = secrets:node_keypair(),
-    Context0 = #{
-        feature => FeatureBin,
-        stream => nostream,
-        concurrency => 1,
-        color_formatter => false,
-        public_key => to_bin(NodePublicKey)
-    },
+    case l402_execution_account() of
+        {ok, L402Account} ->
+            %% Price the protected execution using the same account that will
+            %% execute after payment: the node's configured l402_account.
+            Context0 = #{
+                feature => FeatureBin,
+                stream => nostream,
+                concurrency => 1,
+                color_formatter => false,
+                public_key => L402Account
+            },
+            dry_run_cost_msat_for_context(Context0, State, Req);
+        {error, _Why} = Error ->
+            Error
+    end.
+
+dry_run_cost_msat_for_context(Context0, State, Req) ->
     case execute_bdd(Context0, State, Req, [{dry_run, true}]) of
         {200, #{status := <<"ok">>, cost := Cost, feature_hash := FeatureHash} = DryRec} ->
-            %% Convert DAMAGE cost -> sats -> msat
-            ?LOG_DEBUG("cost ~p", [Cost / ?DAMAGE_DECIMALS]),
-            Sats = price_feed:damage_to_sats(damage:hits_to_damage(Cost)),
+            %% Convert DAMAGE cost hits -> whole DAMAGE -> sats -> msat.
+            CostDamage = ceil_damage(cost_hits_to_damage(Cost)),
+            ?LOG_DEBUG("cost_hits=~p cost_damage=~p", [Cost, CostDamage]),
+            Sats = price_feed:damage_to_sats(CostDamage),
             MinSats = application:get_env(damage, l402_min_sats, 1),
             Sats1 = max(MinSats, Sats),
-            AmountMsat = Sats1,
+            AmountMsat = Sats1 * 1000,
 
             %% Return dry-run + explicit keys client wants
             DryOut =
                 DryRec#{
-                    cost_damage => Cost,
+                    cost_hits => Cost,
+                    cost_damage => CostDamage,
                     feature_hash => FeatureHash,
                     sats => Sats1,
                     amount_msat => AmountMsat
@@ -235,6 +246,15 @@ dry_run_cost_msat(FeatureBin, State, Req) ->
             {error, {dry_run_not_ok, Other}};
         {Code, Err} ->
             {error, {dry_run_failed, Code, Err}}
+    end.
+
+l402_execution_account() ->
+    case application:get_env(damage, l402_account) of
+        {ok, AeAccount0} ->
+            {ok, to_bin(AeAccount0)};
+        Other ->
+            ?LOG_INFO("L402 not enabled ~p", [Other]),
+            {error, l402_not_enabled}
     end.
 
 content_types_provided(Req, State) ->
@@ -456,34 +476,36 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                             _ -> undefined
                         end,
 
+                    Charge = Cost,
                     Balance = damage_ae:balance(AeAccount),
 
-                    case Balance >= Cost of
+                    case Balance >= Charge of
                         true ->
-                            %% --- 2) COSTED RUN --------------------------------
+                            %% Original execution path for both normal auth and
+                            %% L402 auth. L402 auth has already mapped State to
+                            %% the configured l402_account in damage_auth.
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
-                            {_, Result} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
+                            {_, Result0} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
                             {ok, Spend, TxHash} = damage_ae:confirm_spend(
                                 RunConfig,
-                                Result
+                                Result0
                             ),
                             ?LOG_INFO("Result ~p", [Spend]),
-                            formatter:format(
-                                RunConfig,
-                                summary,
+                            Result1 =
                                 maps:put(
                                     tx_hash,
                                     TxHash,
-                                    maps:put(spend, Spend, Result)
-                                )
-                            ),
+                                    maps:put(spend, Spend, Result0)
+                                ),
+                            Result = maybe_l402_result_meta(ContextIn, Result1),
+                            formatter:format(RunConfig, summary, Result),
                             {200, Result};
                         false ->
                             {200, #{
                                 status => <<"notok">>,
-                                message =>
-                                    <<"Insufficient balance, please top up at `/api/accounts/topup`">>,
-                                balance => Balance
+                                message => insufficient_balance_message(ContextIn),
+                                balance => Balance,
+                                required => Charge
                             }}
                     end
             end;
@@ -502,6 +524,38 @@ effective_context(Context0, State) ->
 -spec dry_run_only(proplists:proplist()) -> boolean().
 dry_run_only(Overrides) ->
     proplists:get_value(dry_run, Overrides, false) =:= true.
+
+maybe_l402_result_meta(#{auth_type := l402} = Context, Result) ->
+    maps:merge(
+        Result,
+        #{
+            payment_type => <<"l402">>,
+            l402_payment_hash_hex => maps:get(l402_payment_hash_hex, Context, <<>>)
+        }
+    );
+maybe_l402_result_meta(_Context, Result) ->
+    Result.
+
+insufficient_balance_message(#{auth_type := l402}) ->
+    <<"Configured l402_account has insufficient DAMAGE balance for execution">>;
+insufficient_balance_message(_Context) ->
+    <<"Insufficient balance, please top up at `/api/accounts/topup`">>.
+cost_hits_to_damage(CostHits) when is_integer(CostHits); is_float(CostHits) ->
+    CostHits / math:pow(10, ?DAMAGE_DECIMALS);
+cost_hits_to_damage(_) ->
+    0.
+
+ceil_damage(Value) when is_integer(Value) ->
+    Value;
+ceil_damage(Value) when is_float(Value) ->
+    Trunc = trunc(Value),
+    case Value > Trunc of
+        true -> Trunc + 1;
+        false -> Trunc
+    end;
+ceil_damage(_) ->
+    0.
+
 decode_json(Data) ->
     try
         {ok, jsx:decode(Data, [{labels, atom}, return_maps])}
@@ -520,12 +574,119 @@ json_decode_failed(Req, State, Prefix, {Class, Reason, Stack}) ->
     ),
     {stop, Req1, State}.
 
-stream_final_body(Status, Resp) when is_binary(Resp) ->
-    Resp;
+%% Streaming responses already emit human-readable formatter output while the
+%% run executes. Do not append the full JSON result map. Always append a compact
+%% text/plain footer so nested DamageBDD HTTP steps receive a useful body.
 stream_final_body(Status, Resp) when is_map(Resp) ->
-    jsx:encode(maps:put(http_status, Status, Resp));
+    stream_map_footer(Status, Resp);
+stream_final_body(Status, Resp) when is_binary(Resp) ->
+    case stream_blank(Resp) of
+        true ->
+            stream_map_footer(Status, #{});
+        false ->
+            Resp
+    end;
 stream_final_body(Status, Resp) ->
-    iolist_to_binary(io_lib:format("~p~n", [#{http_status => Status, response => Resp}])).
+    stream_map_footer(Status, #{response => Resp}).
+
+stream_map_footer(Status, Resp) ->
+    iolist_to_binary([
+        "\n---\n",
+        "status: ",
+        printable_stream_value(stream_status_value(Status, Resp)),
+        "\n",
+        "http_status: ",
+        status_to_iodata(Status),
+        "\n",
+        stream_line("message: ", stream_map_get([message, <<"message">>], Resp)),
+        stream_line("reason: ", stream_map_get([reason, <<"reason">>], Resp)),
+        stream_line("error: ", stream_map_get([error, <<"error">>], Resp)),
+        stream_line("failing_step: ", stream_map_get([failing_step, <<"failing_step">>], Resp)),
+        stream_line("line: ", stream_map_get([line, <<"line">>], Resp)),
+        stream_line("result: ", stream_map_get([result, <<"result">>, result_status, <<"result_status">>], Resp)),
+        stream_line("run_id: ", stream_map_get([run_id, <<"run_id">>], Resp)),
+        stream_line("feature_hash: ", stream_map_get([feature_hash, <<"feature_hash">>], Resp)),
+        stream_line("report_hash: ", stream_map_get([report_hash, <<"report_hash">>], Resp)),
+        stream_line("report: ", stream_map_get([report_dir, <<"report_dir">>], Resp)),
+        stream_line("tx_hash: ", stream_map_get([tx_hash, <<"tx_hash">>], Resp)),
+        stream_line("balance: ", stream_map_get([balance, <<"balance">>], Resp)),
+        stream_line("required: ", stream_map_get([required, <<"required">>], Resp)),
+        stream_line("cost: ", stream_map_get([cost, <<"cost">>], Resp)),
+        stream_line("spend: ", stream_map_get([spend, <<"spend">>], Resp)),
+        stream_line("response: ", stream_map_get([response, <<"response">>], Resp)),
+        "\n"
+    ]).
+
+stream_status_value(Status, Resp) ->
+    case stream_map_get([status, <<"status">>], Resp) of
+        {ok, Value} ->
+            Value;
+        none ->
+            case status_success(Status) of
+                true -> <<"ok">>;
+                false -> <<"notok">>
+            end
+    end.
+
+stream_line(_Label, none) ->
+    [];
+stream_line(Label, {ok, Value}) ->
+    [Label, printable_stream_value(Value), "\n"].
+
+stream_map_get([], _Map) ->
+    none;
+stream_map_get([Key | Rest], Map) ->
+    case maps:find(Key, Map) of
+        {ok, Value} ->
+            case stream_blank(Value) of
+                true -> stream_map_get(Rest, Map);
+                false -> {ok, Value}
+            end;
+        error ->
+            stream_map_get(Rest, Map)
+    end.
+
+stream_blank(undefined) ->
+    true;
+stream_blank(null) ->
+    true;
+stream_blank(false) ->
+    true;
+stream_blank(<<>>) ->
+    true;
+stream_blank("") ->
+    true;
+stream_blank(_) ->
+    false.
+
+status_success(Status) when is_integer(Status), Status >= 200, Status < 300 ->
+    true;
+status_success(_Status) ->
+    false.
+
+status_to_iodata(Status) when is_integer(Status) ->
+    integer_to_list(Status);
+status_to_iodata(Status) ->
+    io_lib:format("~p", [Status]).
+
+printable_stream_value(Value) when is_binary(Value) ->
+    Value;
+printable_stream_value(Value) when is_integer(Value) ->
+    integer_to_binary(Value);
+printable_stream_value(Value) when is_float(Value) ->
+    list_to_binary(io_lib:format("~p", [Value]));
+printable_stream_value(Value) when is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Bin when is_binary(Bin) ->
+            Bin
+    catch
+        _:_ ->
+            iolist_to_binary(io_lib:format("~p", [Value]))
+    end;
+printable_stream_value(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+printable_stream_value(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value])).
 
 do_action_tx_throttled(Json, State, Req) ->
     IP = damage_utils:get_ip(Req),

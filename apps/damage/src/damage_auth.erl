@@ -116,7 +116,7 @@ resolve_nostr(Token, State) ->
 
 resolve_l402(AuthHeader, Req, State) ->
     case damage_l402:verify_authorization(AuthHeader, Req) of
-        {ok, _Meta} ->
+        {ok, Meta} ->
             case application:get_env(damage, l402_account) of
                 {ok, AeAccount0} ->
                     AeAccount = to_bin(AeAccount0),
@@ -125,7 +125,16 @@ resolve_l402(AuthHeader, Req, State) ->
                             ?LOG_ERROR("Refusing L402 auth for node admin account ~p", [AeAccount]),
                             {error, l402_account_cannot_be_node_admin};
                         false ->
-                            with_identity_account(AeAccount, State, #{})
+                            with_identity_account(
+                                AeAccount,
+                                State,
+                                #{
+                                    auth_type => l402,
+                                    l402 => Meta,
+                                    l402_macaroon => maps:get(macaroon, Meta, <<>>),
+                                    l402_payment_hash_hex => maps:get(payment_hash_hex, Meta, <<>>)
+                                }
+                            )
                     end;
                 Other ->
                     ?LOG_INFO("L402 not enabled ~p", [Other]),

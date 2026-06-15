@@ -238,18 +238,37 @@ handle_invoice_paid_event(Ev0) ->
 mark_paid(MacB64, _PH, PaidMsat) ->
     case ets:lookup(?TAB, MacB64) of
         [{_, Meta0}] ->
-            Sats = cln:msat_to_sats(PaidMsat),
-            Damage = price_feed:sats_to_damage(Sats),
-            Meta =
-                Meta0#{
-                    paid => true,
-                    paid_msat => PaidMsat,
-                    sats_paid => Sats,
-                    damage_available => maps:get(damage_available, Meta0, 0) + Damage
-                },
-            ets:insert(?TAB, {MacB64, Meta}),
-            ?LOG_INFO("L402 paid macaroon=~p sats=~p damage=~p", [MacB64, Sats, Damage]),
-            ok;
+            case maps:get(paid, Meta0, false) of
+                true ->
+                    ?LOG_DEBUG("Ignoring duplicate L402 paid event macaroon=~p", [MacB64]),
+                    ok;
+                false ->
+                    PaidMsat1 = to_int(PaidMsat),
+                    case PaidMsat1 > 0 of
+                        true ->
+                            Sats = PaidMsat1 div 1000,
+                            Damage = price_feed:sats_to_damage(Sats),
+                            Meta =
+                                Meta0#{
+                                    paid => true,
+                                    paid_msat => PaidMsat1,
+                                    sats_paid => Sats,
+                                    damage_available =>
+                                        maps:get(damage_available, Meta0, 0) + Damage
+                                },
+                            ets:insert(?TAB, {MacB64, Meta}),
+                            ?LOG_INFO(
+                                "L402 paid macaroon=~p sats=~p damage=~p",
+                                [MacB64, Sats, Damage]
+                            ),
+                            ok;
+                        false ->
+                            ?LOG_WARNING("Ignoring L402 paid event with zero msat macaroon=~p", [
+                                MacB64
+                            ]),
+                            ok
+                    end
+            end;
         [] ->
             ok
     end.
@@ -279,11 +298,16 @@ normalize_ev(_) ->
 
 to_int(I) when is_integer(I) -> I;
 to_int(B) when is_binary(B) ->
-    %% could be "123msat" in some encodings — strip non-digits if you need later
-    try
-        binary_to_integer(B)
-    catch
-        _:_ -> 0
+    Digits = <<<<C>> || <<C>> <= B, C >= $0, C =< $9>>,
+    case Digits of
+        <<>> ->
+            0;
+        _ ->
+            try binary_to_integer(Digits) of
+                I -> I
+            catch
+                _:_ -> 0
+            end
     end;
 to_int(_) ->
     0.
@@ -297,7 +321,7 @@ verify_token(MacB64, PreimageHex, _Req) ->
         [{_, Meta0}] ->
             case is_expired(Meta0) of
                 true ->
-                    ets:delete(?TAB, MacB64),
+                    drop_token(MacB64, Meta0),
                     {error, expired};
                 false ->
                     case maps:get(uses_left, Meta0, 0) of
@@ -325,6 +349,12 @@ verify_token(MacB64, PreimageHex, _Req) ->
 
 is_expired(#{expires_at := ExpiresAt}) ->
     erlang:system_time(second) > ExpiresAt.
+
+drop_token(MacB64, Meta) ->
+    ets:delete(?TAB, MacB64),
+    ets:delete(?TAB_HASH, maps:get(payment_hash_hex, Meta, <<>>)),
+    ets:delete(?TAB_INV, maps:get(invoice, Meta, <<>>)),
+    ok.
 
 dec_uses(MacB64, Meta0) ->
     N0 = maps:get(uses_left, Meta0, 0),
