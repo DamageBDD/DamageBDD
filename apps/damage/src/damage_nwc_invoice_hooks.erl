@@ -59,10 +59,11 @@ handle_settled_invoice(Invoice) ->
         Invoice,
         maps:get(<<"amount_received_msat">>, Invoice, 0)
     ),
+    AmountMsat = msat_to_int(AmountReceivedMsat),
     case parse_nwc_label(Label) of
         {ok, Wallet, Session, Ref} ->
             ?LOG_INFO("NWC invoice settled wallet=~p session=~p ref=~p", [Wallet, Session, Ref]),
-            credit_wallet_bucket(Wallet, Session, Ref, AmountReceivedMsat);
+            credit_wallet_bucket(Wallet, Session, Ref, AmountMsat);
         {error, Why} ->
             ?LOG_WARNING("NWC settled invoice label parse failed label=~p why=~p", [Label, Why]),
             ok
@@ -77,14 +78,24 @@ handle_topup_invoice_settled(PaymentHash) ->
             client_pubkey := ClientPubHex,
             amount_sat := AmountSat
         }} ->
-            ok = damage_nwc_http:credit_settled_topup(
-                Owner, LedgerCt, ClientPubHex, AmountSat, PaymentHash
-            ),
-            _ = damage_nwc_topup_store:mark_settled(
-                PaymentHash, erlang:system_time(second)
-            ),
-            ok = damage_nwc_balance_cache:invalidate(Owner),
-            ok;
+            case
+                damage_nwc_http:credit_settled_topup(
+                    Owner, LedgerCt, ClientPubHex, AmountSat, PaymentHash
+                )
+            of
+                ok ->
+                    _ = damage_nwc_topup_store:mark_settled(
+                        PaymentHash, erlang:system_time(second)
+                    ),
+                    ok = damage_nwc_balance_cache:invalidate(Owner),
+                    ok;
+                {error, Why} = Error ->
+                    ?LOG_WARNING(
+                        "NWC topup credit failed payment_hash=~p reason=~p",
+                        [PaymentHash, Why]
+                    ),
+                    Error
+            end;
         {ok, #{status := settled}} ->
             ok;
         {error, not_found} ->
@@ -106,8 +117,34 @@ credit_wallet_bucket(Wallet, Session, Ref, AmountReceivedMsat) ->
             damage_nwc_ledger:credit(
                 Owner, LedgerCt, ClientPubHex, AmountReceivedMsat, Ref, Session
             ),
-            ok = damage_nwc_balance_cache:invalidate(Wallet);
+            _ = damage_nwc_ledger_cache:apply_local_credit(
+                LedgerCt,
+                ClientPubHex,
+                AmountReceivedMsat,
+                Ref,
+                #{source => nwc_invoice, session => Session}
+            ),
+            ok = damage_nwc_balance_cache:invalidate(Owner);
         Error ->
             ?LOG_WARNING("wallet resolution failed wallet=~p error=~p", [Wallet, Error]),
             ok
     end.
+
+msat_to_int(I) when is_integer(I) ->
+    I;
+msat_to_int(B) when is_binary(B) ->
+    Digits = <<<<C>> || <<C>> <= B, C >= $0, C =< $9>>,
+    case Digits of
+        <<>> ->
+            0;
+        _ ->
+            try binary_to_integer(Digits) of
+                V -> V
+            catch
+                _:_ -> 0
+            end
+    end;
+msat_to_int(L) when is_list(L) ->
+    msat_to_int(unicode:characters_to_binary(L));
+msat_to_int(_) ->
+    0.

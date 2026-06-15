@@ -544,7 +544,7 @@ deploy_nwc_contract(UserAeAccount0) ->
     ?LOG_INFO("contract path ~p admin_pubkey=~p", [ContractPath, Pubkey]),
     %% init(admin' : address) expects an address string; use the public_key as admin
     damage_ae:contract_deploy_for(KP, ContractPath, [
-       Pubkey 
+        Pubkey
     ]).
 
 %% -------------------------------------------------------------------

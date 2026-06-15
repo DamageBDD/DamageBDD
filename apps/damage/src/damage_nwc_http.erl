@@ -14,6 +14,7 @@
 -export([ledger_call_user_dry/4]).
 -export([ledger_call_user/4]).
 -export([ledger_call_admin/3]).
+-export([credit_settled_topup/5]).
 -export([ledger_events/2, ledger_events/3]).
 -export([
     migrate_user_ledger/1,
@@ -932,6 +933,14 @@ from_json_ledger_credit(Req0, State) ->
                             ),
                             case ledger_call_ok(CallResult) of
                                 true ->
+                                    ok = record_local_credit(
+                                        Owner,
+                                        LedgerCt,
+                                        ClientPubHex,
+                                        AmountMsat,
+                                        Ref,
+                                        #{source => http_ledger_credit, meta => to_bin(Meta)}
+                                    ),
                                     reply_json_stop(
                                         200,
                                         #{
@@ -990,14 +999,86 @@ from_json_ledger_credit(Req0, State) ->
                     )
             end
     end.
+
+credit_settled_topup(Owner0, LedgerCt0, ClientPubHex0, AmountSat0, PaymentHash0) ->
+    Owner = to_bin(Owner0),
+    LedgerCt = to_bin(LedgerCt0),
+    ClientPubHex = to_bin(ClientPubHex0),
+    AmountSat = int_value(AmountSat0, 0),
+    AmountMsat = AmountSat * 1000,
+    Ref = to_bin(PaymentHash0),
+    MetaMap = #{
+        source => nwc_topup,
+        payment_hash => Ref
+    },
+    Meta = jsx:encode(MetaMap),
+
+    case AmountMsat > 0 of
+        false ->
+            {error, bad_topup_amount};
+        true ->
+            CallResult =
+                ledger_call_admin(
+                    LedgerCt,
+                    "credit",
+                    [
+                        to_s(ClientPubHex),
+                        integer_to_list(AmountMsat),
+                        to_s(Ref),
+                        to_s(Meta)
+                    ]
+                ),
+            case ledger_call_ok(CallResult) of
+                true ->
+                    ok = record_local_credit(
+                        Owner,
+                        LedgerCt,
+                        ClientPubHex,
+                        AmountMsat,
+                        Ref,
+                        MetaMap
+                    ),
+                    ok;
+                false ->
+                    {error, {ledger_credit_failed, CallResult}}
+            end
+    end.
+
+record_local_credit(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
+    ignore_cache_effect(
+        fun() ->
+            damage_nwc_ledger_cache:apply_local_credit(
+                LedgerCt, ClientPubHex, AmountMsat, Ref, Meta
+            )
+        end,
+        nwc_ledger_cache_local_credit
+    ),
+    ignore_cache_effect(
+        fun() -> damage_nwc_balance_cache:invalidate(Owner) end, nwc_balance_cache_invalidate
+    ),
+    ok.
+
+ignore_cache_effect(Fun, Label) ->
+    try Fun() of
+        _ -> ok
+    catch
+        Class:Reason:Stack ->
+            ?LOG_DEBUG(
+                "Ignoring cache side effect label=~p class=~p reason=~p stack=~p",
+                [Label, Class, Reason, Stack]
+            ),
+            ok
+    end.
+
 %% ---------------- JSON / event helpers ----------------
 decode_json_body(<<>>) ->
     #{};
 decode_json_body(Raw) ->
-    case catch jsx:decode(Raw, [return_maps]) of
-        {'EXIT', _} -> #{};
+    try jsx:decode(Raw, [return_maps]) of
         Map when is_map(Map) -> Map;
         _ -> #{}
+    catch
+        _:_ -> #{}
     end.
 
 json_int(Map, Keys, Default) ->
@@ -1016,14 +1097,16 @@ get_any(_Other, _Keys, Default) ->
 int_value(V, _Default) when is_integer(V) -> V;
 int_value(V, _Default) when is_float(V) -> trunc(V);
 int_value(V, Default) when is_binary(V) ->
-    case catch binary_to_integer(V) of
-        I when is_integer(I) -> I;
-        _ -> Default
+    try binary_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
     end;
 int_value(V, Default) when is_list(V) ->
-    case catch list_to_integer(V) of
-        I when is_integer(I) -> I;
-        _ -> Default
+    try list_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
     end;
 int_value(_, Default) ->
     Default.
@@ -1063,22 +1146,6 @@ normalize_json(List) when is_list(List) ->
     [normalize_json(V) || V <- List];
 normalize_json(V) ->
     V.
-
-ledger_balance_msat_from_result(#{<<"return_value">> := V}) ->
-    ledger_balance_msat_from_result(V);
-ledger_balance_msat_from_result(#{"return_value" := V}) ->
-    ledger_balance_msat_from_result(V);
-ledger_balance_msat_from_result(V) when is_integer(V) ->
-    V;
-ledger_balance_msat_from_result({Balance}) when is_integer(Balance) ->
-    Balance;
-ledger_balance_msat_from_result({variant, [0, 1], 1, {Balance}}) when is_integer(Balance) ->
-    Balance;
-ledger_balance_msat_from_result({variant, [0, 1], 0, {}}) ->
-    0;
-ledger_balance_msat_from_result(Other) ->
-    ?LOG_WARNING("Unexpected ledger balance result shape ~p", [Other]),
-    0.
 
 -spec make_topup_label(binary(), binary(), integer()) -> binary().
 make_topup_label(Owner, ClientPubHex, AmountSat) ->
@@ -1170,16 +1237,18 @@ account_registry_reader_keypair(OwnerAkBin) ->
 
 -spec maybe_user_keypair_from_owner(binary()) -> {ok, map()} | {error, term()}.
 maybe_user_keypair_from_owner(OwnerAkBin) ->
-    case catch identity_server:get_account(OwnerAkBin) of
+    try identity_server:get_account(OwnerAkBin) of
         #{public_key := Pub0, private_key := Priv} when Priv =/= undefined ->
             {ok, #{public_key => to_bin(Pub0), private_key => Priv}};
         notfound ->
             {error, notfound};
-        {'EXIT', Why} ->
-            {error, Why};
         Other ->
             {error, {unexpected_identity_result, Other}}
+    catch
+        _:Why ->
+            {error, Why}
     end.
+
 user_keypair_from_owner(OwnerAkBin) ->
     %% Custodial path: user key is present server-side.
     %% Future noncustodial: this is the seam where you detect "no key" and return intents only.
@@ -1536,9 +1605,6 @@ secret_user_ledger_ct(OwnerAkBin) ->
 persist_user_ledger_ct(OwnerAkBin, <<"ct_", _/binary>> = CtId) ->
     Key = user_registry_contract_secret_key(OwnerAkBin),
     ok = secrets:encrypt_store(Key, CtId).
-
-persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays) ->
-    persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays, #{}).
 
 persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays, PolicyMeta0) ->
     PolicyMeta = maps:merge(

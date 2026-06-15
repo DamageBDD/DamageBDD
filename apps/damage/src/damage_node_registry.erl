@@ -655,15 +655,15 @@ deploy_node_registry() ->
                 catch
                     Class:Reason:Stack ->
                         ?LOG_DEBUG(
-                           "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
-                           [ContractId, Class, Reason, Stack]
-                          ),
+                            "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
+                            [ContractId, Class, Reason, Stack]
+                        ),
                         {error, {Class, Reason, Stack}}
                 end,
             ?LOG_DEBUG(
-               "set_contract result contract_id=~p result=~p",
-               [ContractId, SetContractResult]
-              ),
+                "set_contract result contract_id=~p result=~p",
+                [ContractId, SetContractResult]
+            ),
             ContractId;
         #{"return_type" := "revert"} = Info ->
             error({node_registry_deploy_revert, Info});
@@ -694,15 +694,15 @@ deploy_node_registry(KeyPair) when is_map(KeyPair) ->
                 catch
                     Class:Reason:Stack ->
                         ?LOG_DEBUG(
-                           "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
-                           [ContractId, Class, Reason, Stack]
-                          ),
+                            "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
+                            [ContractId, Class, Reason, Stack]
+                        ),
                         {error, {Class, Reason, Stack}}
                 end,
             ?LOG_DEBUG(
-               "set_contract result contract_id=~p result=~p",
-               [ContractId, SetContractResult]
-              ),
+                "set_contract result contract_id=~p result=~p",
+                [ContractId, SetContractResult]
+            ),
             ContractId;
         #{"return_type" := "revert"} = Info ->
             error({node_registry_deploy_revert, Info});

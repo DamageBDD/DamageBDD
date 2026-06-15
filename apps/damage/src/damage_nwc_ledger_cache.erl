@@ -76,16 +76,12 @@ stop() ->
     end.
 
 ensure_started() ->
-    case ets:info(?BAL_TAB) of
-        undefined ->
-            case start() of
-                {ok, _Pid} -> ok;
-                {error, {already_started, _Pid}} -> ok;
-                {error, Why} -> {error, Why}
-            end;
-        _ ->
-            ok
-    end.
+    case start() of
+        {ok, _Pid} -> ok;
+        {error, {already_started, _Pid}} -> ok;
+        {error, Why} -> {error, Why}
+    end,
+    create_tables().
 
 init([]) ->
     create_tables(),
