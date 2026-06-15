@@ -2,7 +2,6 @@
 %% DamageBDD steps for Arch Linux AUR/eBPF supply-chain compromise checks.
 %% Uses erlexec for OS command execution, following steps_cmd.erl style.
 %%--------------------------------------------------------------------
-
 -module(steps_arch_aur_ebpf).
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
@@ -14,10 +13,24 @@
 
 -define(NS, arch_aur_ebpf).
 -define(DEFAULT_SINCE, <<"2026-06-11">>).
+-define(DEFAULT_AFFECTED_LIST_URL, <<"https://md.archlinux.org/s/SxbqukK6IA">>).
 
 %% erlfmt:ignore-begin
 -define(S_AUDIT_WINDOW, ["the Arch AUR audit window starts at", Since]).
 -define(S_AFFECTED_FILE, ["the affected AUR package list file is", Path]).
+-define(S_AFFECTED_URL, ["the affected AUR package list URL is", Url]).
+-define(S_FETCH_LATEST_AFFECTED_TO_IPFS, ["I fetch the latest affected AUR package list and store it in IPFS"]).
+-define(S_FETCH_LATEST_AFFECTED_TO_IPFS_VAR, ["I fetch the latest affected AUR package list and store IPFS hash in", Variable]).
+-define(S_FETCH_LATEST_AFFECTED_URL_TO_IPFS, ["I fetch the latest affected AUR package list from", Url, "and store it in IPFS"]).
+-define(S_FETCH_LATEST_AFFECTED_URL_TO_IPFS_VAR, ["I fetch the latest affected AUR package list from", Url, "and store IPFS hash in", Variable]).
+-define(S_STORE_LATEST_AFFECTED_CID, ["the affected AUR package list IPFS hash should be stored in", Variable]).
+-define(S_AFFECTED_IPFS_LIST, ["the affected AUR package list IPFS hash is", Hash]).
+-define(S_IPFS_BUNDLE_HASH, ["the Arch AUR eBPF artifact bundle IPFS hash is", Hash]).
+-define(S_FETCH_IPFS_BUNDLE, ["I fetch the Arch AUR eBPF artifact bundle to", Directory]).
+-define(S_FETCH_IPFS_HASH_TO_PATH, ["I fetch IPFS hash", Hash, "to Arch AUR artifact path", Path]).
+-define(S_WRITE_REPORT_ARTIFACT, ["I write the Arch AUR eBPF vulnerability report artifact to", Path]).
+-define(S_PUT_ARTIFACTS, ["I put the Arch AUR eBPF vulnerability artifacts from", Path, "to IPFS and store hash in", Variable]).
+-define(S_PIN_IPFS_HASH, ["I pin the Arch AUR eBPF vulnerability IPFS hash", Hash]).
 -define(S_ADD_AUR_SCAN_DIR, ["I add Arch AUR scan directory", Path]).
 -define(S_ADD_CACHE_SCAN_DIR, ["I add npm or bun cache scan directory", Path]).
 -define(S_COLLECT, ["I collect Arch AUR eBPF vulnerability evidence"]).
@@ -54,6 +67,133 @@ step(_Config, Context, _Keyword, _N, ?S_AFFECTED_FILE, _Body) ->
         {error, Reason} ->
             fail(Context, "Affected AUR package list file ~p is unreadable: ~p", [PathBin, Reason])
     end;
+step(_Config, Context, _Keyword, _N, ?S_AFFECTED_URL, _Body) ->
+    UrlBin = trim_quotes(to_bin(Url)),
+    update_ns(Context, fun(NS) -> NS#{affected_packages_url => UrlBin} end);
+step(_Config, Context, _Keyword, _N, ?S_FETCH_LATEST_AFFECTED_TO_IPFS, _Body) ->
+    UrlBin = maps:get(affected_packages_url, ns(Context), ?DEFAULT_AFFECTED_LIST_URL),
+    fetch_latest_affected_list_to_ipfs(Context, UrlBin, undefined);
+step(_Config, Context, _Keyword, _N, ?S_FETCH_LATEST_AFFECTED_TO_IPFS_VAR, _Body) ->
+    UrlBin = maps:get(affected_packages_url, ns(Context), ?DEFAULT_AFFECTED_LIST_URL),
+    VariableBin = trim_quotes(to_bin(Variable)),
+    fetch_latest_affected_list_to_ipfs(Context, UrlBin, VariableBin);
+step(_Config, Context, _Keyword, _N, ?S_FETCH_LATEST_AFFECTED_URL_TO_IPFS, _Body) ->
+    UrlBin = trim_quotes(to_bin(Url)),
+    fetch_latest_affected_list_to_ipfs(Context, UrlBin, undefined);
+step(_Config, Context, _Keyword, _N, ?S_FETCH_LATEST_AFFECTED_URL_TO_IPFS_VAR, _Body) ->
+    UrlBin = trim_quotes(to_bin(Url)),
+    VariableBin = trim_quotes(to_bin(Variable)),
+    fetch_latest_affected_list_to_ipfs(Context, UrlBin, VariableBin);
+step(_Config, Context, _Keyword, _N, ?S_STORE_LATEST_AFFECTED_CID, _Body) ->
+    VariableBin = trim_quotes(to_bin(Variable)),
+    case maps:get(affected_packages_ipfs_hash, ns(Context), undefined) of
+        undefined ->
+            fail(Context, "No affected AUR package list IPFS hash has been stored", []);
+        HashBin ->
+            store_var(VariableBin, HashBin, Context)
+    end;
+step(_Config, Context, _Keyword, _N, ?S_AFFECTED_IPFS_LIST, _Body) ->
+    HashBin = trim_quotes(to_bin(Hash)),
+    case ipfs_cat(HashBin) of
+        {ok, Bin} ->
+            Packages = parse_package_lines(Bin),
+            update_ns(Context, fun(NS) ->
+                NS#{
+                    affected_packages => Packages,
+                    affected_packages_ipfs_hash => HashBin
+                }
+            end);
+        {error, Reason} ->
+            fail(Context, "Affected AUR package list IPFS hash ~p could not be read: ~p", [
+                HashBin, Reason
+            ])
+    end;
+step(_Config, Context, _Keyword, _N, ?S_IPFS_BUNDLE_HASH, _Body) ->
+    HashBin = trim_quotes(to_bin(Hash)),
+    update_ns(Context, fun(NS) -> NS#{ipfs_bundle_hash => HashBin} end);
+step(_Config, Context, _Keyword, _N, ?S_FETCH_IPFS_BUNDLE, _Body) ->
+    DirectoryBin = trim_quotes(to_bin(Directory)),
+    DirectoryPath = to_s(DirectoryBin),
+    NS0 = ns(Context),
+    case maps:get(ipfs_bundle_hash, NS0, undefined) of
+        undefined ->
+            fail(Context, "Arch AUR eBPF artifact bundle IPFS hash was not configured", []);
+        HashBin ->
+            case ipfs_fetch_to(HashBin, DirectoryPath) of
+                {ok, _} ->
+                    update_ns(Context, fun(NS1) ->
+                        load_package_list_from_artifact_dir(
+                            DirectoryPath,
+                            NS1#{
+                                artifact_dir => DirectoryPath,
+                                ipfs_bundle_fetch => #{hash => HashBin, path => DirectoryBin}
+                            }
+                        )
+                    end);
+                {error, Reason} ->
+                    fail(Context, "IPFS bundle fetch failed hash=~p path=~p reason=~p", [
+                        HashBin, DirectoryBin, Reason
+                    ])
+            end
+    end;
+step(_Config, Context, _Keyword, _N, ?S_FETCH_IPFS_HASH_TO_PATH, _Body) ->
+    HashBin = trim_quotes(to_bin(Hash)),
+    PathBin = trim_quotes(to_bin(Path)),
+    case ipfs_fetch_to(HashBin, to_s(PathBin)) of
+        {ok, _} ->
+            update_ns(Context, fun(NS) ->
+                Artifacts0 = maps:get(ipfs_fetched_artifacts, NS, []),
+                NS#{ipfs_fetched_artifacts => [#{hash => HashBin, path => PathBin} | Artifacts0]}
+            end);
+        {error, Reason} ->
+            fail(Context, "IPFS artifact fetch failed hash=~p path=~p reason=~p", [
+                HashBin, PathBin, Reason
+            ])
+    end;
+step(_Config, Context, _Keyword, _N, ?S_WRITE_REPORT_ARTIFACT, _Body) ->
+    PathBin = trim_quotes(to_bin(Path)),
+    PathString = to_s(PathBin),
+    Report = report(ensure_collected(Context)),
+    case write_artifact(PathString, Report) of
+        ok ->
+            update_ns(Context, fun(NS) ->
+                Artifacts0 = maps:get(local_artifacts, NS, []),
+                NS#{local_artifacts => [PathBin | Artifacts0]}
+            end);
+        {error, Reason} ->
+            fail(Context, "Could not write Arch AUR eBPF report artifact ~p: ~p", [
+                PathBin, Reason
+            ])
+    end;
+step(_Config, Context, _Keyword, _N, ?S_PUT_ARTIFACTS, _Body) ->
+    PathBin = trim_quotes(to_bin(Path)),
+    VariableName = trim_quotes(to_bin(Variable)),
+    case ipfs_add_path(PathBin) of
+        {ok, HashBin, AddResult} ->
+            Context1 =
+                update_ns(Context, fun(NS) ->
+                    Published0 = maps:get(ipfs_published_artifacts, NS, []),
+                    NS#{
+                        ipfs_published_artifacts =>
+                            [#{path => PathBin, hash => HashBin, result => AddResult} | Published0]
+                    }
+                end),
+            store_var(VariableName, HashBin, Context1);
+        {error, Reason} ->
+            fail(Context, "Could not put Arch AUR eBPF artifacts to IPFS from ~p: ~p", [
+                PathBin, Reason
+            ])
+    end;
+step(_Config, Context, _Keyword, _N, ?S_PIN_IPFS_HASH, _Body) ->
+    HashBin = trim_quotes(to_bin(Hash)),
+    case ipfs_pin(HashBin) of
+        ok ->
+            Context;
+        {ok, _} ->
+            Context;
+        {error, Reason} ->
+            fail(Context, "Could not pin Arch AUR eBPF IPFS hash ~p: ~p", [HashBin, Reason])
+    end;
 step(_Config, Context, _Keyword, _N, ?S_ADD_AUR_SCAN_DIR, _Body) ->
     PathBin = trim_quotes(to_bin(Path)),
     update_ns(Context, fun(NS) ->
@@ -85,6 +225,208 @@ step(_Config, Context, _Keyword, _N, ?S_PRINT_REPORT, _Body) ->
     Context.
 
 %% --------------------------------------------------------------------
+%% IPFS artifact/list helpers
+%% --------------------------------------------------------------------
+
+fetch_latest_affected_list_to_ipfs(Context, UrlBin0, StoreVar) ->
+    UrlBin = trim_quotes(to_bin(UrlBin0)),
+    FetchCmd = fetch_url(UrlBin),
+    case cmd_ok(FetchCmd) of
+        false ->
+            fail(Context, "Could not fetch affected AUR package list from ~p: ~p", [
+                UrlBin, summarize_cmd(FetchCmd)
+            ]);
+        true ->
+            Raw = maps:get(stdout, FetchCmd, <<>>),
+            Packages = parse_affected_packages_report(Raw),
+            case Packages of
+                [] ->
+                    fail(
+                        Context,
+                        "Fetched affected AUR package list from ~p but parsed 0 packages",
+                        [UrlBin]
+                    );
+                _ ->
+                    Canonical = canonical_package_list(Packages),
+                    FileName = "arch-aur-affected-packages.txt",
+                    case ipfs_add_data(Canonical, FileName) of
+                        {ok, HashBin, AddResult} ->
+                            Context1 = update_ns(Context, fun(NS) ->
+                                NS#{
+                                    affected_packages => Packages,
+                                    affected_packages_url => UrlBin,
+                                    affected_packages_fetch_cmd => FetchCmd,
+                                    affected_packages_count => length(Packages),
+                                    affected_packages_sha256 => sha256_hex(Canonical),
+                                    affected_packages_ipfs_hash => HashBin,
+                                    affected_packages_ipfs_add => AddResult
+                                }
+                            end),
+                            case StoreVar of
+                                undefined -> Context1;
+                                _ -> store_var(StoreVar, HashBin, Context1)
+                            end;
+                        {error, Reason} ->
+                            fail(Context, "Fetched affected AUR package list but IPFS add failed: ~p", [
+                                Reason
+                            ])
+                    end
+            end
+    end.
+
+fetch_url(UrlBin) ->
+    run_cmd("curl", ["-fsSL", to_s(UrlBin)]).
+
+ipfs_add_data(Data, FileName) ->
+    try damage_ipfs:add({data, Data, FileName}) of
+        AddResult ->
+            case extract_ipfs_hash(AddResult, FileName) of
+                {ok, HashBin} -> {ok, HashBin, AddResult};
+                {error, _} = Error -> Error
+            end
+    catch
+        Class:Reason:Stack ->
+            {error, {Class, Reason, Stack}}
+    end.
+
+ipfs_cat(HashBin) ->
+    try damage_ipfs:cat(HashBin) of
+        {ok, Bin} when is_binary(Bin) ->
+            {ok, Bin};
+        Bin when is_binary(Bin) ->
+            {ok, Bin};
+        Other ->
+            {error, Other}
+    catch
+        Class:Reason:Stack ->
+            {error, {Class, Reason, Stack}}
+    end.
+
+ipfs_fetch_to(HashBin, OutPath0) ->
+    OutPath = to_s(OutPath0),
+    ok = damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
+    try damage_ipfs:fetch_to(HashBin, OutPath) of
+        ok ->
+            {ok, OutPath};
+        {ok, _} = Ok ->
+            Ok;
+        Other ->
+            {error, Other}
+    catch
+        Class:Reason:Stack ->
+            {error, {Class, Reason, Stack}}
+    end.
+
+ipfs_pin(HashBin) ->
+    try damage_ipfs:pin([HashBin]) of
+        ok ->
+            ok;
+        {ok, _} = Ok ->
+            Ok;
+        Other ->
+            {error, Other}
+    catch
+        Class:Reason:Stack ->
+            {error, {Class, Reason, Stack}}
+    end.
+
+ipfs_add_path(PathBin) ->
+    Path = to_s(PathBin),
+    AddArg =
+        case filelib:is_dir(Path) of
+            true ->
+                {directory, Path};
+            false ->
+                case filelib:is_file(Path) of
+                    true -> {file, Path};
+                    false -> {missing, Path}
+                end
+        end,
+    case AddArg of
+        {missing, _} ->
+            {error, {missing_path, PathBin}};
+        _ ->
+            try damage_ipfs:add(AddArg) of
+                AddResult ->
+                    case extract_ipfs_hash(AddResult, Path) of
+                        {ok, HashBin} -> {ok, HashBin, AddResult};
+                        {error, _} = Error -> Error
+                    end
+            catch
+                Class:Reason:Stack ->
+                    {error, {Class, Reason, Stack}}
+            end
+    end.
+
+extract_ipfs_hash({ok, #{<<"Hash">> := Hash}}, _Path) ->
+    {ok, to_bin(Hash)};
+extract_ipfs_hash({ok, #{hash := Hash}}, _Path) ->
+    {ok, to_bin(Hash)};
+extract_ipfs_hash({ok, List}, Path) when is_list(List) ->
+    Base = to_bin(filename:basename(Path)),
+    Maps = [M || M <- List, is_map(M)],
+    NamedHashes = [
+        to_bin(maps:get(<<"Hash">>, M))
+     || M <- Maps,
+        maps:is_key(<<"Hash">>, M),
+        maps:get(<<"Name">>, M, undefined) =:= Base
+    ],
+    AllHashes = [to_bin(maps:get(<<"Hash">>, M)) || M <- Maps, maps:is_key(<<"Hash">>, M)],
+    case {NamedHashes, AllHashes} of
+        {[Hash | _], _} -> {ok, Hash};
+        {[], []} -> {error, {no_hash_in_ipfs_add_result, List}};
+        {[], Hashes} -> {ok, lists:last(Hashes)}
+    end;
+extract_ipfs_hash(#{<<"Hash">> := Hash}, _Path) ->
+    {ok, to_bin(Hash)};
+extract_ipfs_hash(#{hash := Hash}, _Path) ->
+    {ok, to_bin(Hash)};
+extract_ipfs_hash(Other, _Path) ->
+    {error, {bad_ipfs_add_result, Other}}.
+
+load_package_list_from_artifact_dir(DirectoryPath, NS0) ->
+    case first_existing_file(package_list_candidates(DirectoryPath)) of
+        {ok, Path} ->
+            case file:read_file(Path) of
+                {ok, Bin} ->
+                    NS0#{
+                        affected_packages => parse_package_lines(Bin),
+                        affected_packages_file => to_bin(Path)
+                    };
+                {error, _} ->
+                    NS0
+            end;
+        not_found ->
+            NS0
+    end.
+
+package_list_candidates(DirectoryPath) ->
+    [
+        filename:join(DirectoryPath, "affected-aur-packages.txt"),
+        filename:join(DirectoryPath, "affected_packages.txt"),
+        filename:join(DirectoryPath, "aur-affected-packages.txt"),
+        filename:join(DirectoryPath, "packages.txt"),
+        filename:join(DirectoryPath, "list.txt")
+    ].
+
+first_existing_file([]) ->
+    not_found;
+first_existing_file([Path | Rest]) ->
+    case filelib:is_file(Path) of
+        true -> {ok, Path};
+        false -> first_existing_file(Rest)
+    end.
+
+write_artifact(Path, Data) ->
+    case damage_utils:ensure_dir(filename:dirname(Path) ++ "/") of
+        ok -> file:write_file(Path, Data);
+        Error -> Error
+    end.
+
+store_var(VariableNameBin, Value, Context) ->
+    maps:put(list_to_atom(to_s(VariableNameBin)), Value, Context).
+
+%% --------------------------------------------------------------------
 %% Collection
 %% --------------------------------------------------------------------
 
@@ -111,6 +453,10 @@ collect(Context0) ->
     Evidence = #{
         since => Since,
         affected_packages => maps:get(affected_packages, NS0, []),
+        affected_packages_url => maps:get(affected_packages_url, NS0, ?DEFAULT_AFFECTED_LIST_URL),
+        affected_packages_count => length(maps:get(affected_packages, NS0, [])),
+        affected_packages_ipfs_hash => maps:get(affected_packages_ipfs_hash, NS0, undefined),
+        affected_packages_sha256 => maps:get(affected_packages_sha256, NS0, undefined),
         foreign_packages_cmd => PacmanCmd,
         foreign_packages => ForeignPackages,
         pacman_events_since => pacman_events_since(Since),
@@ -423,6 +769,7 @@ evidence(Context) ->
 default_ns() ->
     #{
         since => ?DEFAULT_SINCE,
+        affected_packages_url => ?DEFAULT_AFFECTED_LIST_URL,
         affected_packages => [],
         aur_dirs => default_aur_dirs(),
         cache_dirs => default_cache_dirs(),
@@ -444,7 +791,11 @@ report(Context) ->
         "bpf_pin_findings=~p~n"
         "bpf_prog_findings=~p~n"
         "bpf_map_findings=~p~n"
-        "bpf_hardening=~p~n",
+        "bpf_hardening=~p~n"
+        "affected_packages_url=~p~n"
+        "affected_packages_count=~p~n"
+        "affected_packages_ipfs_hash=~p~n"
+        "affected_packages_sha256=~p~n",
         [
             maps:get(since, E, undefined),
             maps:get(foreign_packages, E, []),
@@ -455,7 +806,11 @@ report(Context) ->
             maps:get(bpf_pin_findings, E, []),
             maps:get(bpf_prog_findings, E, []),
             maps:get(bpf_map_findings, E, []),
-            maps:get(bpf_hardening, E, undefined)
+            maps:get(bpf_hardening, E, undefined),
+            maps:get(affected_packages_url, ns(Ctx), undefined),
+            length(maps:get(affected_packages, E, [])),
+            maps:get(affected_packages_ipfs_hash, ns(Ctx), undefined),
+            maps:get(affected_packages_sha256, ns(Ctx), undefined)
         ]
     )).
 
@@ -484,7 +839,7 @@ default_systemd_dirs() ->
     ["/etc/systemd/system", filename:join([Home, ".config", "systemd", "user"])].
 
 existing_dirs(Dirs) ->
-    [D || D0 <- Dirs, D = to_s(D0), filelib:is_dir(D)].
+    [D || D <- [to_s(D0) || D0 <- Dirs], filelib:is_dir(D)].
 
 home_dir() ->
     case os:getenv("HOME") of
@@ -495,6 +850,30 @@ home_dir() ->
 parse_package_lines(Bin) ->
     [Line || Line <- split_lines(Bin), Line =/= <<>>, not starts_with(Line, <<"#">>)].
 
+parse_affected_packages_report(Raw) ->
+    %% Matches the shell reference:
+    %%   sed 's/<[^>]*>//g' | grep -E '^[a-z0-9][a-z0-9_.+-]*[a-z0-9]$' | sort -u
+    Stripped = strip_html(Raw),
+    lists:usort([Line || Line <- split_lines(Stripped), sane_pkgname(Line)]).
+
+strip_html(Bin) ->
+    re:replace(to_bin(Bin), <<"<[^>]*>">>, <<>>, [global, {return, binary}]).
+
+sane_pkgname(Line) ->
+    case re:run(Line, <<"^[a-z0-9][a-z0-9_.+-]*[a-z0-9]$">>, [{capture, none}]) of
+        match -> true;
+        nomatch -> false
+    end.
+
+canonical_package_list(Packages) ->
+    iolist_to_binary([[Pkg, <<"\n">>] || Pkg <- lists:usort(Packages)]).
+
+sha256_hex(Bin) ->
+    lower_hex(crypto:hash(sha256, to_bin(Bin))).
+
+lower_hex(Bin) ->
+    iolist_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= Bin]).
+
 valid_date(Bin) ->
     case re:run(Bin, <<"^[0-9]{4}-[0-9]{2}-[0-9]{2}$">>, [{capture, none}]) of
         match -> true;
@@ -502,7 +881,7 @@ valid_date(Bin) ->
     end.
 
 split_lines(Bin) when is_binary(Bin) ->
-    [Line || Line0 <- binary:split(Bin, <<"\n">>, [global]), Line = trim(Line0), Line =/= <<>>].
+    [Line || Line <- [trim(Line0) || Line0 <- binary:split(Bin, <<"\n">>, [global])], Line =/= <<>>].
 
 contains(Haystack, Needle) ->
     binary:match(to_bin(Haystack), to_bin(Needle)) =/= nomatch.
