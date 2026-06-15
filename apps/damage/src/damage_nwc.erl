@@ -61,7 +61,7 @@
 
 -import(damage_utils, [to_bin/1]).
 
--define(NWC_CONTRACT_PATH, "contracts/nwc_ledger.aes").
+-define(NWC_CONTRACT_PATH, "nwc_ledger.aes").
 -define(NWC_REGISTRY_NAME, <<"nwc_ledger">>).
 -define(DEFAULT_TIMEOUT, 30000).
 -define(DEFAULT_FANOUT, 3).
@@ -493,9 +493,12 @@ deploy_nwc_contract() ->
 deploy_nwc_contract(UserAeAccount0) ->
     UserAeAccount = to_bin(UserAeAccount0),
     KP = user_keypair(UserAeAccount),
+    ContractPath = damage_ae:contract_path(damage, ?NWC_CONTRACT_PATH),
+    Pubkey = to_s(maps:get(public_key, KP)),
+    ?LOG_INFO("conract path ~p ~p ~p", [ContractPath, Pubkey, KP]),
     %% init(admin' : address) expects an address string; use the public_key as admin
-    damage_ae:contract_deploy_for(KP, damage_ae:contract_path(damage, ?NWC_CONTRACT_PATH), [
-        to_s(maps:get(public_key, KP))
+    damage_ae:contract_deploy_for(KP, ContractPath, [
+       Pubkey 
     ]).
 
 %% -------------------------------------------------------------------

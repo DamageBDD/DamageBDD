@@ -142,6 +142,23 @@ env_int(Key, Default) ->
         {ok, V} when is_list(V) -> list_to_integer(V);
         _ -> Default
     end.
+env_pos_int(Key, Default) ->
+    try env_int(Key, Default) of
+        V when is_integer(V), V > 0 ->
+            V;
+        _ ->
+            Default
+    catch
+        _:_ ->
+            Default
+    end.
+
+tx_poll_interval_ms() ->
+    env_pos_int(ae_tx_poll_interval_ms, 2000).
+
+tx_poll_timeout_ms() ->
+    env_pos_int(ae_tx_poll_timeout_ms, 55000).
+
 get_ae_node() ->
     {ok, AENodes} = application:get_env(damage, ae_nodes),
     find_active_node(AENodes).
@@ -944,9 +961,14 @@ contract_path(Contract) ->
     contract_path(damage, Contract).
 
 contract_path(App, Contract0) ->
-    ContractsDir = contracts_dir(App),
-    Contract = normalize_contract_path(Contract0),
-    filename:join([ContractsDir, Contract]).
+    ContractsDir = normalize_filename(contracts_dir(App)),
+    Contract = normalize_filename(Contract0),
+    case contract_path_is_resolved(ContractsDir, Contract) of
+        true ->
+            Contract;
+        false ->
+            filename:join([ContractsDir, normalize_contract_path(Contract)])
+    end.
 
 contracts_dir(App) ->
     case application:get_env(App, contracts_dir) of
@@ -981,8 +1003,20 @@ priv_dir_fallback(App) ->
             Path
     end.
 
-normalize_contract_path(Contract) ->
-    Clean = filename:join(filename:split(Contract)),
+normalize_filename(Path) when is_binary(Path) ->
+    normalize_filename(binary_to_list(Path));
+normalize_filename(Path) when is_list(Path) ->
+    filename:join(filename:split(Path)).
+
+contract_path_is_resolved(ContractsDir, Contract) ->
+    filename:pathtype(Contract) =:= absolute orelse
+        lists:prefix(
+            filename:split(ContractsDir),
+            filename:split(Contract)
+        ).
+
+normalize_contract_path(Contract0) ->
+    Clean = normalize_filename(Contract0),
     case filename:split(Clean) of
         ["contracts" | Rest] ->
             filename:join(Rest);
@@ -1136,7 +1170,7 @@ contract_deploy_for(
     DummyGas = min_gas(),
     DummyFee = min_fee(),
     Amount = 0,
-    GasPrice = gas_price(),
+    GasPrice = gas_price() * 2,
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
 
@@ -1396,7 +1430,10 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     end.
 
 wait_tx(ConId) ->
-    poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 55000).
+    Interval = tx_poll_interval_ms(),
+    Timeout = tx_poll_timeout_ms(),
+    ?LOG_DEBUG("Waiting for AE tx ~p interval_ms=~p timeout_ms=~p", [ConId, Interval, Timeout]),
+    poll_tx(fun vanillae:tx_info/1, [ConId], Interval, Timeout).
 
 node_ae_balance() ->
     case secrets:node_keypair() of
@@ -1448,7 +1485,7 @@ test_contract_deploy_for() ->
     ),
     #{"contract_id" := ContractId} = contract_deploy_for(
         #{public_key => PubKey, private_key => PrivateKey},
-        contract_path(damage, "contracts/test.aes"),
+        contract_path(damage, contract_path(damage, "contracts/test.aes")),
         []
     ),
     ContractId.
