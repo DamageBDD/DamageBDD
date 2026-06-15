@@ -210,7 +210,6 @@
                     {formatter, [{size, 3}, {max_overflow, 500}], []},
                     {lnd, [{size, 1}, {max_overflow, 0}], []},
                     {cln, [{size, 1}, {max_overflow, 0}], []},
-                    %{damage_ssh, [{size, 1}, {max_overflow, 0}], []},
                     {
                         damage_ipfs,
                         [{size, 2}, {max_overflow, 5}],
@@ -236,15 +235,22 @@
                 {"DAMAGEUSDT", [{price_precision, 4}, {min_qty, 100.0}]},
                 {"BTCUSDT", [{price_precision, 4}, {min_qty, 100.0}]}
             ]},
-            {
-                ssh, [
-                    {user_dir, "/var/lib/damage/sshtest_user/.ssh"},
-                    {system_dir, "/var/lib/damage/ssh_daemon/"},
-                    {allow_push, true},
-                    {port, 2223},
-                    {root, "/var/lib/damage/repos/"}
-                ]
-            },
+            {ssh_git, [
+                {enabled, true},
+                {listen_addr, {127, 0, 0, 1}},
+                {port, 2222},
+                {system_dir, "/var/lib/damage/ssh/git/system"},
+                {user_dir, "/var/lib/damage/ssh/git/user"},
+                {repos_root, "/var/lib/damage/git"}
+            ]},
+
+            {ssh_tunnel, [
+                {enabled, false},
+                {ip, {127, 0, 0, 1}},
+                {port, 2223},
+                {system_dir, "/var/lib/damage/ssh/tunnel/system"},
+                {user_dir, "/var/lib/damage/ssh/tunnel/user"}
+            ]},
             {
                 systemd,
                 [
