@@ -412,7 +412,7 @@ deploy_and_register_user_nwc_contract(UserAeAccount0) ->
                         )
                     of
                         {ok, true} ->
-                            {ok, CtId};
+                            verify_user_nwc_registry_after_deploy(UserAeAccount, RegistryCt, CtId);
                         {error, Why} ->
                             {error, {registry_upsert_failed, Why}};
                         Other ->
@@ -427,6 +427,52 @@ deploy_and_register_user_nwc_contract(UserAeAccount0) ->
             {error, {ensure_registry_failed, Why}}
     end.
 
+verify_user_nwc_registry_after_deploy(UserAeAccount, RegistryCt, CtId) ->
+    %% The deployment path is not complete until the AccountRegistry read path
+    %% resolves the ledger we just deployed.  Clear dependent caches before the
+    %% verification read so stale not_found/balance entries cannot survive the
+    %% deploy+upsert transaction.
+    invalidate_user_nwc_deploy_caches(UserAeAccount, RegistryCt, CtId),
+    case resolve_user_nwc_contract_id(UserAeAccount) of
+        {ok, CtId} ->
+            ?LOG_INFO(
+                "nwc_ledger deployed and registered user=~p registry_ct=~p ledger_ct=~p",
+                [UserAeAccount, RegistryCt, CtId]
+            ),
+            {ok, CtId};
+        {ok, OtherCtId} ->
+            {error, {registry_verify_mismatch, #{expected => CtId, got => OtherCtId}}};
+        {error, Why} ->
+            {error, {registry_verify_failed, Why}}
+    end.
+
+invalidate_user_nwc_deploy_caches(UserAeAccount, _RegistryCt, CtId) ->
+    ignore_deploy_side_effect(
+        fun() -> damage_nwc_balance_cache:invalidate(UserAeAccount) end,
+        nwc_balance_cache_invalidate
+    ),
+    ignore_deploy_side_effect(
+        fun() -> damage_nwc_ledger_cache:invalidate(CtId) end,
+        nwc_ledger_cache_invalidate
+    ),
+    ignore_deploy_side_effect(
+        fun() -> damage_node_registry:clear_cache({account, UserAeAccount}) end,
+        node_registry_account_cache_clear
+    ),
+    ok.
+
+ignore_deploy_side_effect(Fun, Label) when is_function(Fun, 0) ->
+    try Fun() of
+        _ ->
+            ok
+    catch
+        Class:Reason:Stack ->
+            ?LOG_DEBUG(
+                "Ignoring NWC deploy side-effect failure label=~p class=~p reason=~p stack=~p",
+                [Label, Class, Reason, Stack]
+            ),
+            ok
+    end.
 ensure_user_registry_ct(UserAeAccount0) ->
     UserAeAccount = to_bin(UserAeAccount0),
     case damage_node_registry:ensure_account_registry(UserAeAccount, <<"node">>) of
@@ -495,7 +541,7 @@ deploy_nwc_contract(UserAeAccount0) ->
     KP = user_keypair(UserAeAccount),
     ContractPath = damage_ae:contract_path(damage, ?NWC_CONTRACT_PATH),
     Pubkey = to_s(maps:get(public_key, KP)),
-    ?LOG_INFO("conract path ~p ~p ~p", [ContractPath, Pubkey, KP]),
+    ?LOG_INFO("contract path ~p admin_pubkey=~p", [ContractPath, Pubkey]),
     %% init(admin' : address) expects an address string; use the public_key as admin
     damage_ae:contract_deploy_for(KP, ContractPath, [
        Pubkey 

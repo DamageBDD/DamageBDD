@@ -180,8 +180,11 @@ ensure_account_registry(AeAccount0, Tier0, _RegistryLabel0) ->
 
                     %% 3) Record in NodeRegistry (admin-owned NodeRegistry call)
                     case ensure_registered_account(AeAccount, RegistryCt, Tier) of
-                        {ok, true} -> {ok, RegistryCt};
-                        {error, E2} -> {error, {node_registry_register_failed, E2}}
+                        {ok, true} ->
+                            after_account_registry_deploy(AeAccount, RegistryCt),
+                            {ok, RegistryCt};
+                        {error, E2} ->
+                            {error, {node_registry_register_failed, E2}}
                     end;
                 Other ->
                     {error, {no_identity_account, AeAccount, Other}}
@@ -217,14 +220,54 @@ ensure_registered_account(AeAccount, RegistryCt, Tier) ->
         #{"return_type" := "ok", "return_value" := true} ->
             {ok, true};
         #{"return_type" := "revert", "return_value" := <<"Already registered">>} ->
-            %% At minimum keep tier fresh.
-            _ = damage_node_registry:update_tier(AeAccount, Tier),
-            %% If you added NodeRegistry.update_registry/2, also refresh registry here:
-            %% _ = damage_node_registry:update_registry(AeAccount, RegistryCt),
-            {ok, true};
+            refresh_registered_account(AeAccount, RegistryCt, Tier);
         Other ->
             {error, {register_account_failed, Other}}
     end.
+
+refresh_registered_account(AeAccount, RegistryCt, Tier) ->
+    %% A deploy race or retry can hit an existing NodeRegistry row.  Treat the
+    %% deployment path as authoritative and refresh both registry and tier so
+    %% subsequent reads resolve the contract that was just deployed.
+    RegistryResp = damage_node_registry:update_registry(AeAccount, RegistryCt),
+    TierResp = damage_node_registry:update_tier(AeAccount, Tier),
+    after_account_registry_deploy(AeAccount, RegistryCt),
+    case {contract_call_ok(RegistryResp), contract_call_ok(TierResp)} of
+        {true, true} -> {ok, true};
+        _ -> {error, {refresh_registered_account_failed, RegistryResp, TierResp}}
+    end.
+
+after_account_registry_deploy(AeAccount, RegistryCt) ->
+    ?LOG_INFO("account registry deployed/registered account=~p registry_ct=~p", [
+        AeAccount, RegistryCt
+    ]),
+    ignore_deploy_side_effect(
+        fun() -> damage_node_registry:clear_cache({account, AeAccount}) end,
+        node_registry_account_cache_clear
+    ),
+    ignore_deploy_side_effect(
+        fun() -> damage_nwc_balance_cache:invalidate(AeAccount) end,
+        nwc_balance_cache_invalidate
+    ),
+    ok.
+
+ignore_deploy_side_effect(Fun, Label) when is_function(Fun, 0) ->
+    try Fun() of
+        _ ->
+            ok
+    catch
+        Class:Reason:Stack ->
+            ?LOG_DEBUG(
+                "Ignoring deploy side-effect failure label=~p class=~p reason=~p stack=~p",
+                [Label, Class, Reason, Stack]
+            ),
+            ok
+    end.
+
+contract_call_ok(#{"return_type" := "ok"}) -> true;
+contract_call_ok(#{<<"return_type">> := <<"ok">>}) -> true;
+contract_call_ok({ok, true}) -> true;
+contract_call_ok(_) -> false.
 
 %%% =========================
 %%% gen_server CALLBACKS
@@ -234,11 +277,6 @@ init([]) ->
     Tab = ets:new(?ETS_TABLE, [named_table, set, private]),
     {ok, #state{ets_table = Tab, contract_id = ?NODE_REGISTRY_CONTRACT}}.
 
-handle_call({set_contract, ContractId0}, _From, State) ->
-    ContractId = to_bin(ContractId0),
-    erlang:put(node_registry_contract_id, ContractId),
-    ets:delete_all_objects(State#state.ets_table),
-    {reply, ok, State#state{contract_id = ContractId}};
 handle_call({set_contract, ContractId0}, _From, State) ->
     ContractId = to_bin(ContractId0),
     erlang:put(node_registry_contract_id, ContractId),
@@ -610,7 +648,22 @@ deploy_node_registry() ->
         #{"contract_id" := ContractId} ->
             %% Optional: remember + hot-set for this runtime
             erlang:put(node_registry_contract_id, ContractId),
-            catch gen_server:call(?MODULE, {set_contract, ContractId}),
+            SetContractResult =
+                try gen_server:call(?MODULE, {set_contract, ContractId}) of
+                    Result ->
+                        {ok, Result}
+                catch
+                    Class:Reason:Stack ->
+                        ?LOG_DEBUG(
+                           "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
+                           [ContractId, Class, Reason, Stack]
+                          ),
+                        {error, {Class, Reason, Stack}}
+                end,
+            ?LOG_DEBUG(
+               "set_contract result contract_id=~p result=~p",
+               [ContractId, SetContractResult]
+              ),
             ContractId;
         #{"return_type" := "revert"} = Info ->
             error({node_registry_deploy_revert, Info});
@@ -634,7 +687,22 @@ deploy_node_registry(KeyPair) when is_map(KeyPair) ->
         #{"contract_id" := ContractId} ->
             %% Optional: remember + hot-set for this runtime
             erlang:put(node_registry_contract_id, ContractId),
-            catch gen_server:call(?MODULE, {set_contract, ContractId}),
+            SetContractResult =
+                try gen_server:call(?MODULE, {set_contract, ContractId}) of
+                    Result ->
+                        {ok, Result}
+                catch
+                    Class:Reason:Stack ->
+                        ?LOG_DEBUG(
+                           "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
+                           [ContractId, Class, Reason, Stack]
+                          ),
+                        {error, {Class, Reason, Stack}}
+                end,
+            ?LOG_DEBUG(
+               "set_contract result contract_id=~p result=~p",
+               [ContractId, SetContractResult]
+              ),
             ContractId;
         #{"return_type" := "revert"} = Info ->
             error({node_registry_deploy_revert, Info});
