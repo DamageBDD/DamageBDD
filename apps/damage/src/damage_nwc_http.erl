@@ -19,7 +19,8 @@
 -export([
     migrate_user_ledger/1,
     migrate_user_ledger/2,
-    upsert_registry_contract/4
+    upsert_registry_contract/4,
+    resolve_user_ledger_ct_from_registry/1
 ]).
 
 -export([test/0]).
@@ -1186,9 +1187,9 @@ resolve_user_ledger_ct(OwnerAkBin0) ->
         {ok, CtId} ->
             {ok, CtId};
         error ->
-            case damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>) of
-                {ok, _} ->
-                    resolve_user_ledger_ct_from_registry(OwnerAkBin);
+            case ensure_registry_ct(OwnerAkBin) of
+                {ok, RegistryCt} ->
+                    resolve_user_ledger_ct_from_registry(OwnerAkBin, RegistryCt);
                 {error, Why} ->
                     {error, {ensure_account_registry_failed, Why}}
             end
@@ -1198,24 +1199,29 @@ resolve_user_ledger_ct_from_registry(OwnerAkBin) ->
     case damage_node_registry:get_registry(OwnerAkBin) of
         #{"return_type" := "ok", "return_value" := {address, RegBin}} ->
             RegistryCt = aeser_api_encoder:encode(contract_pubkey, RegBin),
-            case account_registry_reader_keypair(OwnerAkBin) of
-                {ok, KP} ->
-                    case account_registry:get_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME) of
-                        {ok, LedgerCt0} ->
-                            LedgerCt = to_bin(LedgerCt0),
-                            ok = persist_user_ledger_ct(OwnerAkBin, LedgerCt),
-                            {ok, LedgerCt};
-                        {error, Reason} ->
-                            {error, {ledger_not_found_in_account_registry, RegistryCt, Reason}}
-                    end;
-                {error, Why} ->
-                    {error, {account_registry_reader_keypair_failed, Why}}
-            end;
+            resolve_user_ledger_ct_from_registry(OwnerAkBin, RegistryCt);
         #{"return_type" := "revert", "return_value" := Msg} ->
             {error, {node_registry_revert, Msg}};
         Other ->
             {error, {node_registry_bad_reply, Other}}
     end.
+
+resolve_user_ledger_ct_from_registry(OwnerAkBin, RegistryCt0) ->
+    RegistryCt = to_bin(RegistryCt0),
+    case account_registry_reader_keypair(OwnerAkBin) of
+        {ok, KP} ->
+            case account_registry:get_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME) of
+                {ok, LedgerCt0} ->
+                    LedgerCt = to_bin(LedgerCt0),
+                    ok = persist_user_ledger_ct(OwnerAkBin, LedgerCt),
+                    {ok, LedgerCt};
+                {error, Reason} ->
+                    {error, {ledger_not_found_in_account_registry, RegistryCt, Reason}}
+            end;
+        {error, Why} ->
+            {error, {account_registry_reader_keypair_failed, Why}}
+    end.
+
 %% Select how we read from AccountRegistry based on execution mode.
 %% - server_signed: prefer user's custodial keypair
 %% - user_signed/operator_signed: use service keypair for read-only lookups
@@ -1401,11 +1407,81 @@ maybe_setup_missing_ledger(OwnerAkBin, ClientPubHex, MaxSingleMsat, MaxTotalMsat
 -spec ensure_registry_ct(binary()) -> {ok, binary()} | {error, term()}.
 ensure_registry_ct(OwnerAkBin) ->
     case damage_node_registry:ensure_account_registry(OwnerAkBin, <<"node">>) of
-        {ok, RegistryCt} ->
-            {ok, to_bin(RegistryCt)};
+        {ok, RegistryCt0} ->
+            RegistryCt = to_bin(RegistryCt0),
+            ensure_registry_ct_live(OwnerAkBin, RegistryCt);
         {error, Why} ->
             {error, Why}
     end.
+ensure_registry_ct_live(OwnerAkBin, RegistryCt) ->
+    case account_registry_reader_keypair(OwnerAkBin) of
+        {ok, KP} ->
+            case account_registry:get_contract(KP, RegistryCt, ?NWC_REGISTRY_NAME) of
+                {ok, _LedgerCt} ->
+                    {ok, RegistryCt};
+                {error, Reason} ->
+                    case account_registry_contract_missing(Reason) of
+                        true ->
+                            repair_stale_account_registry(OwnerAkBin, KP, RegistryCt, Reason);
+                        false ->
+                            %% Registry is reachable. The nwc_ledger entry may
+                            %% simply be absent, which is handled by mint/setup.
+                            {ok, RegistryCt}
+                    end
+            end;
+        {error, Why} ->
+            %% Preserve old non-custodial behaviour: callers can still return
+            %% intents when no local key is available for validation/repair.
+            ?LOG_WARNING(
+                "Cannot validate AccountRegistry owner=~p registry=~p reason=~p",
+                [OwnerAkBin, RegistryCt, Why]
+            ),
+            {ok, RegistryCt}
+    end.
+
+repair_stale_account_registry(OwnerAkBin, KP, OldRegistryCt, Reason) ->
+    ?LOG_WARNING(
+        "Repairing stale AccountRegistry owner=~p old_registry=~p reason=~p",
+        [OwnerAkBin, OldRegistryCt, Reason]
+    ),
+    NewRegistryCt = to_bin(account_registry:deploy_account_registry(KP)),
+    case damage_node_registry:ensure_registered_account(OwnerAkBin, NewRegistryCt, <<"node">>) of
+        {ok, true} ->
+            _ = damage_node_registry:clear_cache({account, OwnerAkBin}),
+            ?LOG_WARNING(
+                "Repaired AccountRegistry owner=~p old_registry=~p new_registry=~p",
+                [OwnerAkBin, OldRegistryCt, NewRegistryCt]
+            ),
+            {ok, NewRegistryCt};
+        {error, Why} ->
+            {error, {stale_account_registry_repair_failed, OldRegistryCt, NewRegistryCt, Why}}
+    end.
+
+account_registry_contract_missing({unexpected_return_type, _Type, Info}) when is_map(Info) ->
+    contract_not_found_value(
+        get_any(Info, [<<"return_value">>, "return_value", return_value], undefined)
+    );
+account_registry_contract_missing({error, Reason}) ->
+    account_registry_contract_missing(Reason);
+account_registry_contract_missing(#{<<"return_value">> := Value}) ->
+    contract_not_found_value(Value);
+account_registry_contract_missing(#{"return_value" := Value}) ->
+    contract_not_found_value(Value);
+account_registry_contract_missing(#{return_value := Value}) ->
+    contract_not_found_value(Value);
+account_registry_contract_missing(<<"Contract not found">>) ->
+    true;
+account_registry_contract_missing("Contract not found") ->
+    true;
+account_registry_contract_missing(_) ->
+    false.
+
+contract_not_found_value(Value) when is_binary(Value) ->
+    binary:match(Value, <<"Contract not found">>) =/= nomatch;
+contract_not_found_value(Value) when is_list(Value) ->
+    string:str(Value, "Contract not found") > 0;
+contract_not_found_value(_) ->
+    false.
 
 -spec deploy_and_register_user_ledger(
     binary(), map(), binary(), binary(), integer(), integer(), integer()

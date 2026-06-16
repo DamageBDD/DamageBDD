@@ -219,22 +219,33 @@ ensure_registered_account(AeAccount, RegistryCt, Tier) ->
     case damage_node_registry:register_account(AeAccount, RegistryCt, Tier) of
         #{"return_type" := "ok", "return_value" := true} ->
             {ok, true};
+        #{"return_type" := <<"ok">>, "return_value" := true} ->
+            {ok, true};
         #{"return_type" := "revert", "return_value" := <<"Already registered">>} ->
+            refresh_registered_account(AeAccount, RegistryCt, Tier);
+        #{"return_type" := <<"revert">>, "return_value" := <<"Already registered">>} ->
             refresh_registered_account(AeAccount, RegistryCt, Tier);
         Other ->
             {error, {register_account_failed, Other}}
     end.
 
 refresh_registered_account(AeAccount, RegistryCt, Tier) ->
-    %% A deploy race or retry can hit an existing NodeRegistry row.  Treat the
-    %% deployment path as authoritative and refresh both registry and tier so
-    %% subsequent reads resolve the contract that was just deployed.
+    %% A deploy race or retry can hit an existing NodeRegistry row. Treat the
+    %% freshly deployed AccountRegistry as authoritative and refresh both the
+    %% registry pointer and tier. This also repairs stale NodeRegistry rows that
+    %% point at AccountRegistry contracts that no longer exist.
     RegistryResp = damage_node_registry:update_registry(AeAccount, RegistryCt),
     TierResp = damage_node_registry:update_tier(AeAccount, Tier),
-    after_account_registry_deploy(AeAccount, RegistryCt),
     case {contract_call_ok(RegistryResp), contract_call_ok(TierResp)} of
-        {true, true} -> {ok, true};
-        _ -> {error, {refresh_registered_account_failed, RegistryResp, TierResp}}
+        {true, true} ->
+            after_account_registry_deploy(AeAccount, RegistryCt),
+            {ok, true};
+        _ ->
+            ?LOG_WARNING(
+                "NodeRegistry account refresh failed account=~p registry=~p tier=~p registry_result=~p tier_result=~p",
+                [AeAccount, RegistryCt, Tier, RegistryResp, TierResp]
+            ),
+            {error, {refresh_registered_account_failed, RegistryResp, TierResp}}
     end.
 
 after_account_registry_deploy(AeAccount, RegistryCt) ->
