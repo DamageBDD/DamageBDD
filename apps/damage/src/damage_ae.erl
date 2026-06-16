@@ -11,8 +11,8 @@
 
 -behaviour(gen_server).
 
--define(BASE_GAS, 15000).
--define(GAS_PER_BYTE, 20).
+-define(DEFAULT_GAS_MAX, 6000000).
+-define(MAX_FEE_ITERATIONS, 6).
 % Time-to-live in seconds
 -define(CACHE_TTL_SECONDS, 30).
 
@@ -121,19 +121,44 @@ find_active_node([{Host, Port, PathPrefix} | Rest]) ->
     end.
 
 fee_multiplier() ->
-    env_int(ae_fee_multiplier, 2).
-
-gas_multiplier() ->
-    env_int(ae_gas_multiplier, 2).
+    env_pos_int(ae_fee_multiplier, 1).
 
 gas_price() ->
-    vanillae:min_gas_price() * env_int(ae_gas_price_multiplier, 3).
+    Base = vanillae:min_gas_price(),
+    Price0 =
+        case env_bool(ae_dynamic_gas_price, true) of
+            true ->
+                case recent_gas_price(Base) of
+                    {ok, Price} -> Price;
+                    _ -> Base
+                end;
+            false ->
+                Base
+        end,
+    erlang:max(Base, Price0) * env_pos_int(ae_gas_price_multiplier, 1).
 
 min_fee() ->
     vanillae:min_fee() * fee_multiplier().
 
-min_gas() ->
-    vanillae:min_gas() * gas_multiplier().
+gas_max() ->
+    env_pos_int(ae_gas_max, ?DEFAULT_GAS_MAX).
+
+contract_call_gas_limit() ->
+    %% Keep the default call budget below the microblock cap.  The estimator
+    %% normally tightens this from dry-run gas_used; this value is only fallback.
+    env_pos_int(ae_contract_call_gas_limit, env_pos_int(ae_contract_default_call_gas, 500000)).
+
+contract_create_gas_limit() ->
+    env_pos_int(ae_contract_create_gas_limit, gas_max()).
+
+contract_gas_estimation() ->
+    env_bool(ae_contract_gas_estimation, true).
+
+contract_gas_margin_percent() ->
+    env_pos_int(ae_contract_gas_margin_percent, 25).
+
+contract_gas_margin_min() ->
+    env_pos_int(ae_contract_gas_margin_min, 50000).
 
 env_int(Key, Default) ->
     case application:get_env(damage, Key) of
@@ -153,12 +178,133 @@ env_pos_int(Key, Default) ->
             Default
     end.
 
-tx_poll_interval_ms() ->
-    env_pos_int(ae_tx_poll_interval_ms, 2000).
+paying_for_gas_multiplier() ->
+    env_pos_int(ae_paying_for_gas_multiplier, 4).
 
-tx_poll_timeout_ms() ->
-    env_pos_int(ae_tx_poll_timeout_ms, 55000).
+env_bool(Key, Default) ->
+    case application:get_env(damage, Key) of
+        {ok, true} -> true;
+        {ok, false} -> false;
+        {ok, <<"true">>} -> true;
+        {ok, <<"false">>} -> false;
+        {ok, "true"} -> true;
+        {ok, "false"} -> false;
+        _ -> Default
+    end.
 
+recent_gas_price(Fallback) ->
+    case get_ae_node() of
+        {ok, ConnPid, PathPrefix} ->
+            try recent_gas_price_paths(ConnPid, recent_gas_price_paths(PathPrefix), Fallback)
+            after
+                safe_gun_close(ConnPid)
+            end;
+        Error ->
+            {error, Error}
+    end.
+
+safe_gun_close(ConnPid) ->
+    try gun:close(ConnPid) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
+
+recent_gas_price_paths(PathPrefix) ->
+    [join_ae_path(PathPrefix, "recent-gas-prices")].
+
+recent_gas_price_paths(_ConnPid, [], _Fallback) ->
+    {error, recent_gas_price_unavailable};
+recent_gas_price_paths(ConnPid, [Path | Rest], Fallback) ->
+    StreamRef = gun:get(ConnPid, Path),
+    try read_stream(ConnPid, StreamRef) of
+        Json ->
+            case recent_gas_price_from_json(Json, Fallback) of
+                {ok, _Price} = Ok -> Ok;
+                _ -> recent_gas_price_paths(ConnPid, Rest, Fallback)
+            end
+    catch
+        _:_ ->
+            recent_gas_price_paths(ConnPid, Rest, Fallback)
+    end.
+
+recent_gas_price_from_json(#{data := Data}, Fallback) ->
+    recent_gas_price_from_json(Data, Fallback);
+recent_gas_price_from_json(#{<<"data">> := Data}, Fallback) ->
+    recent_gas_price_from_json(Data, Fallback);
+recent_gas_price_from_json(Prices, Fallback) when is_list(Prices) ->
+    %% The node returns newest/relevant buckets first; follow aepp-sdk-js and use
+    %% the first sample rather than maxing the whole window.
+    case Prices of
+        [First | _] -> recent_gas_price_from_json(First, Fallback);
+        [] -> {error, no_price}
+    end;
+recent_gas_price_from_json(Json, Fallback) when is_map(Json) ->
+    case map_int([min_gas_price, <<"min_gas_price">>, minGasPrice, <<"minGasPrice">>, gas_price, <<"gas_price">>, price, <<"price">>], Json) of
+        undefined ->
+            {error, no_price};
+        Price ->
+            Utilization = map_int([utilization, <<"utilization">>, utilization_pct, <<"utilization_pct">>], Json, 0),
+            Adjusted =
+                case Utilization >= 70 of
+                    true -> ceil_percent(Price, 101);
+                    false -> Fallback
+                end,
+            {ok, erlang:max(Fallback, Adjusted)}
+    end;
+recent_gas_price_from_json(_Other, _Fallback) ->
+    {error, bad_recent_gas_price}.
+
+map_int(Keys, Map) ->
+    map_int(Keys, Map, undefined).
+
+map_int([], _Map, Default) ->
+    Default;
+map_int([Key | Rest], Map, Default) ->
+    case maps:find(Key, Map) of
+        {ok, Value} -> int_value(Value, Default);
+        error -> map_int(Rest, Map, Default)
+    end.
+
+int_value(V, _Default) when is_integer(V) ->
+    V;
+int_value(V, Default) when is_binary(V) ->
+    try binary_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
+    end;
+int_value(V, Default) when is_list(V) ->
+    try list_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
+    end;
+int_value(_V, Default) ->
+    Default.
+
+ceil_percent(Value, Percent) ->
+    (Value * Percent + 99) div 100.
+
+join_ae_path(PathPrefix0, RelPath0) ->
+    PathPrefix = to_s(PathPrefix0),
+    RelPath = string:trim(to_s(RelPath0), leading, "/"),
+    case PathPrefix of
+        "" -> "/" ++ RelPath;
+        _ -> ensure_trailing_slash(PathPrefix) ++ RelPath
+    end.
+
+ensure_trailing_slash([]) ->
+    "/";
+ensure_trailing_slash(Path) ->
+    case lists:last(Path) of
+        $/ -> Path;
+        _ -> Path ++ "/"
+    end.
+
+to_s(Bin) when is_binary(Bin) -> binary_to_list(Bin);
+to_s(List) when is_list(List) -> List;
+to_s(Other) -> io_lib:format("~p", [Other]).
 get_ae_node() ->
     {ok, AENodes} = application:get_env(damage, ae_nodes),
     find_active_node(AENodes).
@@ -796,21 +942,85 @@ maybe_credit_damage(AeAccount, Amount, #{"return_type" := "ok"} = Result) ->
 maybe_credit_damage(_AeAccount, _Amount, Result) ->
     Result.
 
-%% Generic base function
--spec calculate_gas(non_neg_integer(), binary()) -> non_neg_integer().
-calculate_gas(BaseMultiplier, TxBin) ->
-    Base = BaseMultiplier * ?BASE_GAS,
-    SizeFee = byte_size(TxBin) * ?GAS_PER_BYTE,
-    Base + SizeFee.
+%% Static transaction fee-gas helpers.  These operate on the serialized
+%% unsigned transaction.  They do not estimate contract VM execution cost.
+tx_bin(EncodedTx) ->
+    {transaction, TxBin} = aeser_api_encoder:decode(EncodedTx),
+    TxBin.
 
-%% Contract create (FATE) gas
--spec gas_for_contract_create_fate(binary()) -> non_neg_integer().
-gas_for_contract_create_fate(TxBin) ->
-    calculate_gas(5, TxBin).
-%% Contract call (FATE) gas
--spec gas_for_contract_call_fate(binary()) -> non_neg_integer().
-gas_for_contract_call_fate(TxBin) ->
-    calculate_gas(12, TxBin).
+-spec tx_fee_from_gas(non_neg_integer(), pos_integer()) -> non_neg_integer().
+tx_fee_from_gas(FeeGas, GasPrice) ->
+    damage_ae_gas:gas_to_fee(FeeGas, GasPrice) * fee_multiplier().
+
+clamp_contract_gas_limit(WantedGas, _StaticFeeGas) ->
+    GasMax = gas_max(),
+    erlang:min(erlang:max(1, WantedGas), GasMax).
+
+build_contract_tx(Tag, BuildFun, GasLimit0, GasPrice) ->
+    build_contract_tx(Tag, BuildFun, GasLimit0, min_fee(), GasPrice, 0).
+
+build_contract_tx(Tag, BuildFun, GasLimit0, Fee0, GasPrice, Iteration) ->
+    case BuildFun(GasLimit0, Fee0) of
+        {ok, Tx0} ->
+            TxBin0 = tx_bin(Tx0),
+            StaticFeeGas = damage_ae_gas:tx_fee_gas(Tag, TxBin0),
+            GasLimit = clamp_contract_gas_limit(GasLimit0, StaticFeeGas),
+            FeeGas = damage_ae_gas:contract_tx_fee_gas(Tag, TxBin0, GasLimit),
+            Fee = tx_fee_from_gas(FeeGas, GasPrice),
+            case GasLimit =:= GasLimit0 andalso Fee =:= Fee0 of
+                true ->
+                    {ok, #{
+                        tx => Tx0,
+                        fee => Fee,
+                        fee_gas => FeeGas,
+                        static_fee_gas => StaticFeeGas,
+                        gas_limit => GasLimit
+                    }};
+                false when Iteration < ?MAX_FEE_ITERATIONS ->
+                    build_contract_tx(Tag, BuildFun, GasLimit, Fee, GasPrice, Iteration + 1);
+                false ->
+                    case BuildFun(GasLimit, Fee) of
+                        {ok, Tx} ->
+                            {ok, #{
+                                tx => Tx,
+                                fee => Fee,
+                                fee_gas => FeeGas,
+                                static_fee_gas => StaticFeeGas,
+                                gas_limit => GasLimit
+                            }};
+                        Error ->
+                            Error
+                    end
+            end;
+        Error ->
+            Error
+    end.
+
+build_paying_for_tx(Payer, Nonce, InnerTxBin, GasPrice) ->
+    build_paying_for_tx(Payer, Nonce, InnerTxBin, min_fee(), GasPrice, 0).
+
+build_paying_for_tx(Payer, Nonce, InnerTxBin, Fee0, GasPrice, Iteration) ->
+    case paying_for(Payer, Nonce, Fee0, InnerTxBin) of
+        {ok, Tx0} ->
+            TxBin0 = tx_bin(Tx0),
+            FeeGas = calculate_paying_for_gas(TxBin0, InnerTxBin),
+            Fee = tx_fee_from_gas(FeeGas, GasPrice),
+            case Fee =:= Fee0 of
+                true ->
+                    {ok, #{tx => Tx0, fee => Fee, fee_gas => FeeGas}};
+                false when Iteration < ?MAX_FEE_ITERATIONS ->
+                    build_paying_for_tx(Payer, Nonce, InnerTxBin, Fee, GasPrice, Iteration + 1);
+                false ->
+                    case paying_for(Payer, Nonce, Fee, InnerTxBin) of
+                        {ok, Tx} ->
+                            {ok, #{tx => Tx, fee => Fee, fee_gas => FeeGas}};
+                        Error ->
+                            Error
+                    end
+            end;
+        Error ->
+            Error
+    end.
 
 %paying_for(PayerId, Tx) ->
 %    {ok, Nonce} = vanillae:next_nonce(PayerId),
@@ -857,49 +1067,136 @@ paying_for(PK, Nonce, Fee, Tx) ->
         error:Reason -> {error, Reason}
     end.
 calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
-    damage_ae_gas:calculate_paying_for_gas(PayingForTxBin, InnerTxBin).
+    BaseGas = damage_ae_gas:calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
+    Multiplier = paying_for_gas_multiplier(),
+    Gas = BaseGas * Multiplier,
+    ?LOG_INFO(
+        "PayingFor gas base=~p multiplier=~p gas=~p outer_bytes=~p inner_bytes=~p",
+        [BaseGas, Multiplier, Gas, byte_size(PayingForTxBin), byte_size(InnerTxBin)]
+    ),
+    Gas.
+
+resolve_contract_gas_limit(Tag, BuildFun, DefaultGas, GasPrice) ->
+    case contract_gas_estimation() of
+        true -> estimate_contract_gas_limit(Tag, BuildFun, DefaultGas, GasPrice);
+        false -> clamp_contract_gas_limit(DefaultGas, 0)
+    end.
+
+estimate_contract_gas_limit(Tag, BuildFun, DefaultGas, _GasPrice) ->
+    DefaultGas1 = clamp_contract_gas_limit(DefaultGas, 0),
+    case dry_run_contract_gas(BuildFun, DefaultGas1) of
+        {ok, GasUsed} when is_integer(GasUsed), GasUsed > 0 ->
+            Estimated = clamp_contract_gas_limit(add_contract_gas_margin(GasUsed), 0),
+            ?LOG_INFO(
+                "Estimated contract gas tag=~p gas_used=~p gas_limit=~p default_gas=~p",
+                [Tag, GasUsed, Estimated, DefaultGas1]
+            ),
+            Estimated;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "Contract gas estimation failed tag=~p reason=~p using_default_gas=~p",
+                [Tag, Reason, DefaultGas1]
+            ),
+            DefaultGas1
+    end.
+
+add_contract_gas_margin(GasUsed) ->
+    MarginByPercent = ceil_percent(GasUsed, contract_gas_margin_percent()) - GasUsed,
+    GasUsed + erlang:max(contract_gas_margin_min(), MarginByPercent).
+
+dry_run_contract_gas(BuildFun, GasLimit) ->
+    try BuildFun(GasLimit, min_fee()) of
+        {ok, Tx} ->
+            try vanillae:dry_run(Tx) of
+                {ok, DryRunResult} -> extract_dry_run_gas_used(DryRunResult);
+                Other -> {error, {bad_dry_run_result, Other}}
+            catch
+                Class:Reason -> {error, {dry_run_failed, Class, Reason}}
+            end;
+        Error ->
+            {error, {build_failed, Error}}
+    catch
+        Class:Reason -> {error, {build_failed, Class, Reason}}
+    end.
+
+extract_dry_run_gas_used(#{"results" := Results}) ->
+    extract_dry_run_gas_used_from_results(Results);
+extract_dry_run_gas_used(#{results := Results}) ->
+    extract_dry_run_gas_used_from_results(Results);
+extract_dry_run_gas_used(#{<<"results">> := Results}) ->
+    extract_dry_run_gas_used_from_results(Results);
+extract_dry_run_gas_used(Other) ->
+    extract_dry_run_gas_used_from_result(Other).
+
+extract_dry_run_gas_used_from_results([Result | _]) ->
+    extract_dry_run_gas_used_from_result(Result);
+extract_dry_run_gas_used_from_results([]) ->
+    {error, no_dry_run_results};
+extract_dry_run_gas_used_from_results(Other) ->
+    extract_dry_run_gas_used_from_result(Other).
+
+extract_dry_run_gas_used_from_result(#{"call_obj" := CallObj}) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(#{call_obj := CallObj}) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(#{<<"call_obj">> := CallObj}) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(CallObj) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(Other) ->
+    {error, {gas_used_not_found, Other}}.
+
+gas_used_from_call_obj(CallObj) ->
+    case map_int([gas_used, <<"gas_used">>, gasUsed, <<"gasUsed">>], CallObj, undefined) of
+        GasUsed when is_integer(GasUsed), GasUsed > 0 -> {ok, GasUsed};
+        _ -> {error, {gas_used_not_found, CallObj}}
+    end.
+
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    Fee = min_fee(),
-    Gas = min_gas(),
     Amount = 0,
     GasPrice = gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
-    {ok, ContractCall} = vanillae:contract_call(
-        AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+    BuildFun = fun(GasLimit, Fee) ->
+        vanillae:contract_call(
+            AeAccount, AeAccountNonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+        )
+    end,
+    GasLimitWanted = resolve_contract_gas_limit(
+        contract_call_tx, BuildFun, contract_call_gas_limit(), GasPrice
     ),
-    ContractCall.
+    case build_contract_tx(contract_call_tx, BuildFun, GasLimitWanted, GasPrice) of
+        {ok, #{tx := ContractCall, fee := Fee, fee_gas := FeeGas, gas_limit := GasLimit}} ->
+            ?LOG_DEBUG(
+                "Prepared contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                [GasLimit, FeeGas, Fee, GasPrice]
+            ),
+            ContractCall;
+        Error ->
+            Error
+    end.
 payfor_tx(SignedTx) ->
     contract_call_payfor_tx(SignedTx).
 contract_call_payfor_tx(
     SignedTX
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
-    {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
     GasPrice = gas_price(),
-    Fee = min_fee(),
-
-    {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
-
+    InnerTxBin = tx_bin(SignedTX),
     {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(NodeAeAccount, NodeNonce, Fee, InnerTxBin),
-    {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
-
-    CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
-    CorrectFee = CorrectGas * GasPrice,
-    % Regenerate the paying_for tx with correct gas/fee
-
-    {ok, PayingForTxFinal} = paying_for(
-        NodeAeAccount, NodeNonce, CorrectFee, InnerTxBin
-    ),
-    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
-    PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
-
-    case vanillae:post_tx(PayingSignedTX) of
-        {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
+    case build_paying_for_tx(NodeAeAccount, NodeNonce, InnerTxBin, GasPrice) of
+        {ok, #{tx := PayingForTxFinal, fee := Fee, fee_gas := FeeGas}} ->
+            ?LOG_INFO("PayingFor fee_gas=~p fee=~p gas_price=~p", [FeeGas, Fee, GasPrice]),
+            PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
+            PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
+            case vanillae:post_tx(PayingSignedTX) of
+                {ok, #{"tx_hash" := ContractCallTxHash}} ->
+                    wait_tx(ContractCallTxHash);
+                Error ->
+                    Error
+            end;
         Error ->
             Error
     end.
@@ -909,45 +1206,48 @@ contract_call_payfor_user(
 ) ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    Fee = min_fee(),
-    Gas = min_gas(),
     Amount = 0,
     GasPrice = gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
-    {ok, ContractCall} = vanillae:contract_call(
-        AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+    BuildFun = fun(GasLimit, Fee) ->
+        vanillae:contract_call(
+            AeAccount, AeAccountNonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+        )
+    end,
+    GasLimitWanted = resolve_contract_gas_limit(
+        contract_call_tx, BuildFun, contract_call_gas_limit(), GasPrice
     ),
-
-    Signature = make_transaction_signature_base58(PrivateKey, {inner, ContractCall}),
-    SignedTX = attach_signature_base58(ContractCall, Signature),
-    {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
-
-    {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(NodeAeAccount, NodeNonce, Fee, InnerTxBin),
-    {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
-
-    CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
-    CorrectFee = CorrectGas * GasPrice,
-    % Regenerate the paying_for tx with correct gas/fee
-    {ok, ContractCall0} = vanillae:contract_call(
-        AeAccount, AeAccountNonce, CorrectGas, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
-    ),
-
-    Signature0 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall0}),
-    SignedTX0 = attach_signature_base58(ContractCall0, Signature0),
-    {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedTX0),
-
-    {ok, PayingForTxFinal} = paying_for(
-        NodeAeAccount, NodeNonce, CorrectFee, InnerTxBin0
-    ),
-    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
-    PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
-
-    case vanillae:post_tx(PayingSignedTX) of
-        {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
+    case build_contract_tx(contract_call_tx, BuildFun, GasLimitWanted, GasPrice) of
+        {ok, #{tx := ContractCall, fee := InnerFee, fee_gas := InnerFeeGas, gas_limit := GasLimit}} ->
+            ?LOG_INFO(
+                "Inner contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                [GasLimit, InnerFeeGas, InnerFee, GasPrice]
+            ),
+            Signature = make_transaction_signature_base58(PrivateKey, {inner, ContractCall}),
+            SignedTX = attach_signature_base58(ContractCall, Signature),
+            InnerTxBin = tx_bin(SignedTX),
+            {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
+            case build_paying_for_tx(NodeAeAccount, NodeNonce, InnerTxBin, GasPrice) of
+                {ok, #{tx := PayingForTxFinal, fee := PayFee, fee_gas := PayFeeGas}} ->
+                    ?LOG_INFO(
+                        "PayingFor wrapper fee_gas=~p fee=~p gas_price=~p",
+                        [PayFeeGas, PayFee, GasPrice]
+                    ),
+                    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
+                    PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
+                    case vanillae:post_tx(PayingSignedTX) of
+                        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+                            maps:put("tx_hash", ContractCallTxHash, wait_tx(ContractCallTxHash));
+                        Error ->
+                            ?LOG_ERROR("contract_call_payfor_user ~p", [Error]),
+                            Error
+                    end;
+                Error ->
+                    ?LOG_ERROR("contract_call_payfor_user paying_for build failed ~p", [Error]),
+                    Error
+            end;
         Error ->
-            ?LOG_ERROR("contract_call_payfor_user ~p", [Error]),
+            ?LOG_ERROR("contract_call_payfor_user inner build failed ~p", [Error]),
             Error
     end;
 contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
@@ -961,14 +1261,9 @@ contract_path(Contract) ->
     contract_path(damage, Contract).
 
 contract_path(App, Contract0) ->
-    ContractsDir = normalize_filename(contracts_dir(App)),
-    Contract = normalize_filename(Contract0),
-    case contract_path_is_resolved(ContractsDir, Contract) of
-        true ->
-            Contract;
-        false ->
-            filename:join([ContractsDir, normalize_contract_path(Contract)])
-    end.
+    ContractsDir = contracts_dir(App),
+    Contract = normalize_contract_path(Contract0),
+    filename:join([ContractsDir, Contract]).
 
 contracts_dir(App) ->
     case application:get_env(App, contracts_dir) of
@@ -1003,20 +1298,8 @@ priv_dir_fallback(App) ->
             Path
     end.
 
-normalize_filename(Path) when is_binary(Path) ->
-    normalize_filename(binary_to_list(Path));
-normalize_filename(Path) when is_list(Path) ->
-    filename:join(filename:split(Path)).
-
-contract_path_is_resolved(ContractsDir, Contract) ->
-    filename:pathtype(Contract) =:= absolute orelse
-        lists:prefix(
-            filename:split(ContractsDir),
-            filename:split(Contract)
-        ).
-
-normalize_contract_path(Contract0) ->
-    Clean = normalize_filename(Contract0),
+normalize_contract_path(Contract) ->
+    Clean = filename:join(filename:split(Contract)),
     case filename:split(Clean) of
         ["contracts" | Rest] ->
             filename:join(Rest);
@@ -1067,34 +1350,29 @@ contract_call(
 
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
     GasPrice = gas_price(),
-
     {ok, AACI} = vanillae:prepare_contract(Contract),
-
-    %% First build raw tx with dummy values to estimate gas
-    DummyGas = min_gas(),
-    DummyFee = min_fee(),
-
-    {ok, ContractCall0} = vanillae:contract_call(
-        AeAccount, Nonce, DummyGas, GasPrice, DummyFee, Amount, AACI, ContractAddress, Func, Args
+    BuildFun = fun(GasLimit, Fee) ->
+        vanillae:contract_call(
+            AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
+        )
+    end,
+    GasLimitWanted = resolve_contract_gas_limit(
+        contract_call_tx, BuildFun, contract_call_gas_limit(), GasPrice
     ),
-    Signature0 = make_transaction_signature_base58(PrivateKey, ContractCall0),
-    SignedTx0 = attach_signature_base58(ContractCall0, Signature0),
-    {transaction, TxBin} = aeser_api_encoder:decode(SignedTx0),
-
-    %% Calculate correct gas + fee
-    Gas = gas_for_contract_call_fate(TxBin),
-    Fee = Gas * GasPrice,
-
-    %% Rebuild final tx with correct gas and fee
-    {ok, ContractCall} = vanillae:contract_call(
-        AeAccount, Nonce, Gas, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
-    ),
-    Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
-    SignedTX = attach_signature_base58(ContractCall, Signature),
-
-    case vanillae:post_tx(SignedTX) of
-        {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
+    case build_contract_tx(contract_call_tx, BuildFun, GasLimitWanted, GasPrice) of
+        {ok, #{tx := ContractCall, fee := Fee, fee_gas := FeeGas, gas_limit := GasLimit}} ->
+            ?LOG_INFO(
+                "Contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                [GasLimit, FeeGas, Fee, GasPrice]
+            ),
+            Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
+            SignedTX = attach_signature_base58(ContractCall, Signature),
+            case vanillae:post_tx(SignedTX) of
+                {ok, #{"tx_hash" := ContractCallTxHash}} ->
+                    wait_tx(ContractCallTxHash);
+                Error ->
+                    Error
+            end;
         Error ->
             Error
     end.
@@ -1109,7 +1387,7 @@ contract_call_dry(
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     {ok, Nonce} = vanillae:next_nonce(AeAccount),
     Fee = min_fee(),
-    Gas = 100000,
+    Gas = contract_call_gas_limit(),
     GasPrice = gas_price(),
     {ok, AACI} = vanillae:prepare_contract(Contract),
     {ok, ContractCall} = vanillae:contract_call(
@@ -1129,28 +1407,28 @@ contract_deploy(Contract, Args) ->
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
     Amount = 0,
-    GasPrice = gas_price() * 2,
-    %% First build raw tx with dummy values to estimate gas
-    DummyGas = min_gas(),
-    DummyFee = min_fee(),
-
-    {ok, ContractData} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, DummyGas, GasPrice, DummyFee, Contract, Args
+    GasPrice = gas_price(),
+    BuildFun = fun(GasLimit, Fee) ->
+        vanillae:contract_create(
+            AeAccount, AeAccountNonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
+        )
+    end,
+    GasLimitWanted = resolve_contract_gas_limit(
+        contract_create_tx, BuildFun, contract_create_gas_limit(), GasPrice
     ),
-
-    SignedContract = sign_transaction_base58(PrivateKey, ContractData),
-    {transaction, TxBin} = aeser_api_encoder:decode(SignedContract),
-    CorrectGas = gas_for_contract_create_fate(TxBin),
-    CorrectFee = CorrectGas * GasPrice,
-    ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
-    {ok, ContractData0} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, CorrectGas, GasPrice, CorrectFee, Contract, Args
-    ),
-    SignedContract0 = sign_transaction_base58(PrivateKey, ContractData0),
-
-    case vanillae:post_tx(SignedContract0) of
-        {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
+    case build_contract_tx(contract_create_tx, BuildFun, GasLimitWanted, GasPrice) of
+        {ok, #{tx := ContractData, fee := Fee, fee_gas := FeeGas, gas_limit := GasLimit}} ->
+            ?LOG_INFO(
+                "Contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                [GasLimit, FeeGas, Fee, GasPrice]
+            ),
+            SignedContract = sign_transaction_base58(PrivateKey, ContractData),
+            case vanillae:post_tx(SignedContract) of
+                {ok, #{"tx_hash" := ContractCallTxHash}} ->
+                    wait_tx(ContractCallTxHash);
+                Error ->
+                    Error
+            end;
         Error ->
             Error
     end.
@@ -1167,48 +1445,44 @@ contract_deploy_for(
     Args
 ) ->
     {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-    DummyGas = min_gas(),
-    DummyFee = min_fee(),
     Amount = 0,
-    GasPrice = gas_price() * 2,
+    GasPrice = gas_price(),
     %% Node keypair (payer)
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
-
-    %% 1. Create unsigned contract creation tx
-    {ok, ContractData} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, DummyGas, GasPrice, DummyFee, Contract, Args
+    BuildFun = fun(GasLimit, Fee) ->
+        vanillae:contract_create(
+            AeAccount, AeAccountNonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
+        )
+    end,
+    GasLimitWanted = resolve_contract_gas_limit(
+        contract_create_tx, BuildFun, contract_create_gas_limit(), GasPrice
     ),
-
-    %% 2. Sign with user's private key
-    SignedContract = sign_transaction_base58(PrivateKey, {inner, ContractData}),
-    {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedContract),
-
-    {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-    {ok, PayingForTx} = paying_for(NodeAeAccount, NodeNonce, DummyFee, InnerTxBin),
-    {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
-    %?LOG_INFO("Paying for tx ~p ~p ~p", [NodeAeAccount, NodeNonce, PayingForTx]),
-
-    CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
-    CorrectFee = CorrectGas * GasPrice,
-
-    ?LOG_INFO("Correct gas ~p and Fee ~p", [CorrectGas, CorrectFee]),
-
-    {ok, ContractData0} = vanillae:contract_create(
-        AeAccount, AeAccountNonce, Amount, CorrectGas, GasPrice, CorrectFee, Contract, Args
-    ),
-    SignedContract0 = sign_transaction_base58(PrivateKey, {inner, ContractData0}),
-    {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedContract0),
-
-    {ok, PayingForTxFinal} = paying_for(
-        NodeAeAccount, NodeNonce, CorrectFee, InnerTxBin0
-    ),
-    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
-    PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
-
-    ?LOG_INFO("Paying for ~p", [PayingSignedTX]),
-    case vanillae:post_tx(PayingSignedTX) of
-        {ok, #{"tx_hash" := ContractCallTxHash}} ->
-            wait_tx(ContractCallTxHash);
+    case build_contract_tx(contract_create_tx, BuildFun, GasLimitWanted, GasPrice) of
+        {ok, #{tx := ContractData, fee := InnerFee, fee_gas := InnerFeeGas, gas_limit := GasLimit}} ->
+            ?LOG_INFO(
+                "Inner contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                [GasLimit, InnerFeeGas, InnerFee, GasPrice]
+            ),
+            SignedContract = sign_transaction_base58(PrivateKey, {inner, ContractData}),
+            InnerTxBin = tx_bin(SignedContract),
+            {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
+            case build_paying_for_tx(NodeAeAccount, NodeNonce, InnerTxBin, GasPrice) of
+                {ok, #{tx := PayingForTxFinal, fee := PayFee, fee_gas := PayFeeGas}} ->
+                    ?LOG_INFO(
+                        "PayingFor deploy wrapper fee_gas=~p fee=~p gas_price=~p",
+                        [PayFeeGas, PayFee, GasPrice]
+                    ),
+                    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
+                    PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
+                    case vanillae:post_tx(PayingSignedTX) of
+                        {ok, #{"tx_hash" := ContractCallTxHash}} ->
+                            wait_tx(ContractCallTxHash);
+                        Error ->
+                            Error
+                    end;
+                Error ->
+                    Error
+            end;
         Error ->
             Error
     end.
@@ -1430,10 +1704,7 @@ poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
     end.
 
 wait_tx(ConId) ->
-    Interval = tx_poll_interval_ms(),
-    Timeout = tx_poll_timeout_ms(),
-    ?LOG_DEBUG("Waiting for AE tx ~p interval_ms=~p timeout_ms=~p", [ConId, Interval, Timeout]),
-    poll_tx(fun vanillae:tx_info/1, [ConId], Interval, Timeout).
+    poll_tx(fun vanillae:tx_info/1, [ConId], 2000, 55000).
 
 node_ae_balance() ->
     case secrets:node_keypair() of
@@ -1485,7 +1756,7 @@ test_contract_deploy_for() ->
     ),
     #{"contract_id" := ContractId} = contract_deploy_for(
         #{public_key => PubKey, private_key => PrivateKey},
-        contract_path(damage, contract_path(damage, "contracts/test.aes")),
+        contract_path(damage, "contracts/test.aes"),
         []
     ),
     ContractId.
