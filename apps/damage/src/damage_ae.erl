@@ -94,7 +94,7 @@
     test_contract_deploy_for/0
 ]).
 
--export([gas_price/0, fee_multiplier/0, gas_multiplier/0]).
+-export([gas_price/0, fee_multiplier/0 ]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
