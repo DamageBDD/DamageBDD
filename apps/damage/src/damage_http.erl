@@ -603,7 +603,10 @@ stream_map_footer(Status, Resp) ->
         stream_line("error: ", stream_map_get([error, <<"error">>], Resp)),
         stream_line("failing_step: ", stream_map_get([failing_step, <<"failing_step">>], Resp)),
         stream_line("line: ", stream_map_get([line, <<"line">>], Resp)),
-        stream_line("result: ", stream_map_get([result, <<"result">>, result_status, <<"result_status">>], Resp)),
+        stream_line(
+            "result: ",
+            stream_map_get([result, <<"result">>, result_status, <<"result_status">>], Resp)
+        ),
         stream_line("run_id: ", stream_map_get([run_id, <<"run_id">>], Resp)),
         stream_line("feature_hash: ", stream_map_get([feature_hash, <<"feature_hash">>], Resp)),
         stream_line("report_hash: ", stream_map_get([report_hash, <<"report_hash">>], Resp)),

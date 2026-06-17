@@ -94,7 +94,7 @@
     test_contract_deploy_for/0
 ]).
 
--export([gas_price/0, fee_multiplier/0 ]).
+-export([gas_price/0, fee_multiplier/0]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -195,7 +195,8 @@ env_bool(Key, Default) ->
 recent_gas_price(Fallback) ->
     case get_ae_node() of
         {ok, ConnPid, PathPrefix} ->
-            try recent_gas_price_paths(ConnPid, recent_gas_price_paths(PathPrefix), Fallback)
+            try
+                recent_gas_price_paths(ConnPid, recent_gas_price_paths(PathPrefix), Fallback)
             after
                 safe_gun_close(ConnPid)
             end;
@@ -240,11 +241,27 @@ recent_gas_price_from_json(Prices, Fallback) when is_list(Prices) ->
         [] -> {error, no_price}
     end;
 recent_gas_price_from_json(Json, Fallback) when is_map(Json) ->
-    case map_int([min_gas_price, <<"min_gas_price">>, minGasPrice, <<"minGasPrice">>, gas_price, <<"gas_price">>, price, <<"price">>], Json) of
+    case
+        map_int(
+            [
+                min_gas_price,
+                <<"min_gas_price">>,
+                minGasPrice,
+                <<"minGasPrice">>,
+                gas_price,
+                <<"gas_price">>,
+                price,
+                <<"price">>
+            ],
+            Json
+        )
+    of
         undefined ->
             {error, no_price};
         Price ->
-            Utilization = map_int([utilization, <<"utilization">>, utilization_pct, <<"utilization_pct">>], Json, 0),
+            Utilization = map_int(
+                [utilization, <<"utilization">>, utilization_pct, <<"utilization_pct">>], Json, 0
+            ),
             Adjusted =
                 case Utilization >= 70 of
                     true -> ceil_percent(Price, 101);
@@ -1092,9 +1109,17 @@ estimate_contract_gas_limit(Tag, BuildFun, DefaultGas, _GasPrice) ->
                 [Tag, GasUsed, Estimated, DefaultGas1]
             ),
             Estimated;
+
+        {fallback, Reason} ->
+            ?LOG_WARNING(
+                "Contract gas estimation soft-failed tag=~p reason=~p fallback_gas=~p",
+                [Tag, Reason, DefaultGas1]
+            ),
+            DefaultGas1;
+
         {error, Reason} ->
             ?LOG_WARNING(
-                "Contract gas estimation failed tag=~p reason=~p using_default_gas=~p",
+                "Contract gas estimation failed tag=~p reason=~p fallback_gas=~p",
                 [Tag, Reason, DefaultGas1]
             ),
             DefaultGas1
@@ -1107,33 +1132,66 @@ add_contract_gas_margin(GasUsed) ->
 dry_run_contract_gas(BuildFun, GasLimit) ->
     try BuildFun(GasLimit, min_fee()) of
         {ok, Tx} ->
-            try vanillae:dry_run(Tx) of
-                {ok, DryRunResult} -> extract_dry_run_gas_used(DryRunResult);
-                Other -> {error, {bad_dry_run_result, Other}}
-            catch
-                Class:Reason -> {error, {dry_run_failed, Class, Reason}}
-            end;
+            dry_run_tx_gas(Tx);
         Error ->
-            {error, {build_failed, Error}}
+            {fallback, {build_failed_for_estimation, Error}}
     catch
-        Class:Reason -> {error, {build_failed, Class, Reason}}
+        Class:Reason ->
+            {fallback, {build_failed_for_estimation, Class, Reason}}
     end.
 
-extract_dry_run_gas_used(#{"results" := Results}) ->
-    extract_dry_run_gas_used_from_results(Results);
-extract_dry_run_gas_used(#{results := Results}) ->
-    extract_dry_run_gas_used_from_results(Results);
-extract_dry_run_gas_used(#{<<"results">> := Results}) ->
-    extract_dry_run_gas_used_from_results(Results);
+dry_run_tx_gas(Tx) ->
+    try vanillae:dry_run(Tx) of
+        {ok, DryRunResult} ->
+            normalize_dry_run_gas_result(DryRunResult);
+        {error, Reason} ->
+            {fallback, {dry_run_error, Reason}};
+        Other ->
+            normalize_dry_run_gas_result(Other)
+    catch
+        Class:Reason ->
+            {fallback, {dry_run_failed, Class, Reason}}
+    end.
+
+normalize_dry_run_gas_result(DryRunResult) ->
+    case extract_dry_run_gas_used(DryRunResult) of
+        {ok, _GasUsed} = Ok ->
+            Ok;
+        {fallback, _Reason} = Fallback ->
+            Fallback;
+        {error, Reason} ->
+            {fallback, Reason}
+    end.
+
+extract_dry_run_gas_used(#{"result" := "error", "reason" := Reason}) ->
+    {fallback, classify_dry_run_reason(Reason)};
+extract_dry_run_gas_used(#{<<"result">> := <<"error">>, <<"reason">> := Reason}) ->
+    {fallback, classify_dry_run_reason(Reason)};
+extract_dry_run_gas_used(#{result := error, reason := Reason}) ->
+    {fallback, classify_dry_run_reason(Reason)};
+extract_dry_run_gas_used(#{result := <<"error">>, reason := Reason}) ->
+    {fallback, classify_dry_run_reason(Reason)};
 extract_dry_run_gas_used(Other) ->
     extract_dry_run_gas_used_from_result(Other).
 
-extract_dry_run_gas_used_from_results([Result | _]) ->
-    extract_dry_run_gas_used_from_result(Result);
-extract_dry_run_gas_used_from_results([]) ->
-    {error, no_dry_run_results};
-extract_dry_run_gas_used_from_results(Other) ->
-    extract_dry_run_gas_used_from_result(Other).
+classify_dry_run_reason(Reason0) ->
+    Reason = reason_to_binary(Reason0),
+    case binary:match(Reason, <<"insufficient_funds">>) of
+        nomatch ->
+            {dry_run_contract_error, Reason};
+        _ ->
+            dry_run_insufficient_funds
+    end.
+
+reason_to_binary(Reason) when is_binary(Reason) ->
+    Reason;
+reason_to_binary(Reason) when is_list(Reason) ->
+    unicode:characters_to_binary(Reason);
+reason_to_binary(Reason) when is_atom(Reason) ->
+    atom_to_binary(Reason, utf8);
+reason_to_binary(Reason) ->
+    iolist_to_binary(io_lib:format("~p", [Reason])).
+
 
 extract_dry_run_gas_used_from_result(#{"call_obj" := CallObj}) when is_map(CallObj) ->
     gas_used_from_call_obj(CallObj);
@@ -1233,7 +1291,9 @@ contract_call_payfor_user(
                         "PayingFor wrapper fee_gas=~p fee=~p gas_price=~p",
                         [PayFeeGas, PayFee, GasPrice]
                     ),
-                    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
+                    PayingSignature = make_transaction_signature_base58(
+                        NodePrivateKey, PayingForTxFinal
+                    ),
                     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
                     case vanillae:post_tx(PayingSignedTX) of
                         {ok, #{"tx_hash" := ContractCallTxHash}} ->
@@ -1472,7 +1532,9 @@ contract_deploy_for(
                         "PayingFor deploy wrapper fee_gas=~p fee=~p gas_price=~p",
                         [PayFeeGas, PayFee, GasPrice]
                     ),
-                    PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
+                    PayingSignature = make_transaction_signature_base58(
+                        NodePrivateKey, PayingForTxFinal
+                    ),
                     PayingSignedTX = attach_signature_base58(PayingForTxFinal, PayingSignature),
                     case vanillae:post_tx(PayingSignedTX) of
                         {ok, #{"tx_hash" := ContractCallTxHash}} ->
