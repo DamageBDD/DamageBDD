@@ -640,19 +640,19 @@ handle_call(
     case maps:get(spent_balance, AccountCache, {0, 0}) of
         {_, Amount} when Amount > 0 ->
             ?LOG_INFO("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
-            case
-                contract_call_payfor_user(
-                    KeyPair,
-                    ?DAMAGE_TOKEN_CONTRACT,
-                    contract_path(damage, "contracts/token.aes"),
-                    "spend",
-                    [
-                        binary_to_list(NodePublicKey),
-                        integer_to_list(float_to_full_integer(Amount)),
-                        FeatureHash,
-                        ReportHash
-                    ]
-                )
+            SpendResult = contract_call_payfor_user(
+                KeyPair,
+                ?DAMAGE_TOKEN_CONTRACT,
+                contract_path(damage, "contracts/token.aes"),
+                "spend",
+                [
+                    binary_to_list(NodePublicKey),
+                    integer_to_list(float_to_full_integer(Amount)),
+                    FeatureHash,
+                    ReportHash
+                ]
+            ),
+            case SpendResult
             of
                 #{
                     "caller_id" :=
@@ -678,15 +678,66 @@ handle_call(
                     damage_balance_cache:debit_damage(AeAccount, Amount),
                     ?LOG_DEBUG("confirm spend cached ~p", [NewCache]),
                     {reply, {ok, Amount, TxHash}, maps:put({balance, AeAccount}, none, NewCache)};
-                #{status := <<"fail">>} ->
-                    ?LOG_DEBUG("confirm spend failed ~p", [Cache]),
-                    {reply, {error, Amount}, Cache}
+                #{"return_type" := ReturnType, "return_value" := ReturnValue} = Error when
+                    (ReturnType =:= "revert" orelse ReturnType =:= <<"revert">>),
+                    (ReturnValue =:= "ACCOUNT_INSUFFICIENT_BALANCE" orelse
+                        ReturnValue =:= <<"ACCOUNT_INSUFFICIENT_BALANCE">>)
+                ->
+                    ?LOG_WARNING(
+                        "confirm spend insufficient balance account=~p amount=~p error=~p",
+                        [AeAccount, Amount, Error]
+                    ),
+                        safe_invalidate_damage_balance(AeAccount),
+                    {reply,
+                        {error, insufficient_balance, Amount, Error},
+                        maps:put({balance, AeAccount}, none, Cache)};
+                #{"return_type" := ReturnType, "return_value" := ReturnValue} = Error when
+                    ReturnType =:= "revert" orelse ReturnType =:= <<"revert">>
+                ->
+                    ?LOG_WARNING(
+                        "confirm spend reverted account=~p amount=~p reason=~p error=~p",
+                        [AeAccount, Amount, ReturnValue, Error]
+                    ),
+                    {reply, {error, contract_revert, Amount, Error}, Cache};
+                #{status := <<"fail">>} = Error ->
+                    ?LOG_WARNING(
+                        "confirm spend failed account=~p amount=~p error=~p",
+                        [AeAccount, Amount, Error]
+                    ),
+                    {reply, {error, confirm_spend_failed, Amount, Error}, Cache};
+                Error ->
+                    ?LOG_WARNING(
+                        "confirm spend returned unexpected result account=~p amount=~p error=~p",
+                        [AeAccount, Amount, Error]
+                    ),
+                    {reply, {error, confirm_spend_failed, Amount, Error}, Cache}
             end;
         {_, Amount} ->
             ?LOG_DEBUG("Amount 0: ~p", [Amount]),
             {reply, Amount, Cache}
     end.
 
+safe_invalidate_damage_balance(AeAccount) ->
+    try
+        case code:ensure_loaded(damage_balance_cache) of
+            {module, damage_balance_cache} ->
+                case erlang:function_exported(damage_balance_cache, invalidate, 1) of
+                    true ->
+                        damage_balance_cache:invalidate(AeAccount);
+                    false ->
+                        ok
+                end;
+            _ ->
+                ok
+        end
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "balance cache invalidate failed account=~p class=~p reason=~p stack=~p",
+                [AeAccount, Class, Reason, Stacktrace]
+            ),
+            ok
+    end.
 handle_cast(
     {
         confirm_spend,
@@ -1802,7 +1853,9 @@ deploy_node_registry() ->
         AccountKeypair, contract_path(damage, "contracts/AccountRegistry.aes"), []
     ),
     ContractId.
--spec float_to_full_integer(float()) -> integer().
+-spec float_to_full_integer(float() | integer()) -> integer().
+float_to_full_integer(I) when is_integer(I) ->
+    I;
 float_to_full_integer(F) when is_float(F) ->
     round(F).
 test_contract_deploy() ->

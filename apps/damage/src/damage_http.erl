@@ -479,29 +479,63 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                     Charge = Cost,
                     Balance = damage_ae:balance(AeAccount),
 
-                    case Balance >= Charge of
+                    case can_cover_balance(Balance, Charge) of
                         true ->
                             %% Original execution path for both normal auth and
                             %% L402 auth. L402 auth has already mapped State to
                             %% the configured l402_account in damage_auth.
                             RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
                             {_, Result0} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
-                            {ok, Spend, TxHash} = damage_ae:confirm_spend(
-                                RunConfig,
-                                Result0
-                            ),
-                            ?LOG_INFO("Result ~p", [Spend]),
-                            Result1 =
-                                maps:put(
-                                    tx_hash,
-                                    TxHash,
-                                    maps:put(spend, Spend, Result0)
-                                ),
-                            Result = maybe_l402_result_meta(ContextIn, Result1),
-                            formatter:format(RunConfig, summary, Result),
-                            {200, Result};
+                            case damage_ae:confirm_spend(RunConfig, Result0) of
+                                {ok, Spend, TxHash} ->
+                                    ?LOG_INFO("Result ~p", [Spend]),
+                                    Result1 =
+                                        maps:put(
+                                            tx_hash,
+                                            TxHash,
+                                            maps:put(spend, Spend, Result0)
+                                        ),
+                                    Result = maybe_l402_result_meta(ContextIn, Result1),
+                                    formatter:format(RunConfig, summary, Result),
+                                    {200, Result};
+                                {error, insufficient_balance, Spend, ChainError} ->
+                                    ?LOG_WARNING(
+                                        "confirm spend insufficient balance account=~p spend=~p error=~p",
+                                        [AeAccount, Spend, ChainError]
+                                    ),
+                                    {402, #{
+                                        status => <<"notok">>,
+                                        error => <<"ACCOUNT_INSUFFICIENT_BALANCE">>,
+                                        message => insufficient_balance_message(ContextIn),
+                                        balance => damage_ae:balance(AeAccount),
+                                        required => Spend,
+                                        chain_reason => confirm_spend_reason(ChainError)
+                                    }};
+                                {error, Reason, Spend, ChainError} ->
+                                    ?LOG_ERROR(
+                                        "confirm spend failed account=~p spend=~p reason=~p error=~p",
+                                        [AeAccount, Spend, Reason, ChainError]
+                                    ),
+                                    {500, #{
+                                        status => <<"notok">>,
+                                        error => <<"CONFIRM_SPEND_FAILED">>,
+                                        reason => confirm_spend_reason(Reason),
+                                        required => Spend,
+                                        chain_reason => confirm_spend_reason(ChainError)
+                                    }};
+                                Other ->
+                                    ?LOG_ERROR(
+                                        "confirm spend unexpected result account=~p result=~p",
+                                        [AeAccount, Other]
+                                    ),
+                                    {500, #{
+                                        status => <<"notok">>,
+                                        error => <<"CONFIRM_SPEND_UNEXPECTED_RESULT">>,
+                                        reason => confirm_spend_reason(Other)
+                                    }}
+                            end;
                         false ->
-                            {200, #{
+                            {402, #{
                                 status => <<"notok">>,
                                 message => insufficient_balance_message(ContextIn),
                                 balance => Balance,
@@ -540,6 +574,30 @@ insufficient_balance_message(#{auth_type := l402}) ->
     <<"Configured l402_account has insufficient DAMAGE balance for execution">>;
 insufficient_balance_message(_Context) ->
     <<"Insufficient balance, please top up at `/api/accounts/topup`">>.
+
+can_cover_balance(Balance, Charge) when is_number(Balance), is_number(Charge) ->
+    Balance >= Charge;
+can_cover_balance(_Balance, _Charge) ->
+    false.
+
+confirm_spend_reason(#{"return_value" := Reason}) ->
+    confirm_spend_reason(Reason);
+confirm_spend_reason(#{<<"return_value">> := Reason}) ->
+    confirm_spend_reason(Reason);
+confirm_spend_reason(Value) when is_binary(Value) ->
+    Value;
+confirm_spend_reason(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+confirm_spend_reason(Value) when is_integer(Value) ->
+    integer_to_binary(Value);
+confirm_spend_reason(Value) when is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Bin when is_binary(Bin) -> Bin
+    catch
+        _:_ -> iolist_to_binary(io_lib:format("~p", [Value]))
+    end;
+confirm_spend_reason(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value])).
 cost_hits_to_damage(CostHits) when is_integer(CostHits); is_float(CostHits) ->
     CostHits / math:pow(10, ?DAMAGE_DECIMALS);
 cost_hits_to_damage(_) ->
