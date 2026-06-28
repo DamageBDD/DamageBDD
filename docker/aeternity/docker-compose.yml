@@ -17,7 +17,7 @@ services:
       - /var/lib/aeternity/mdw.db:/home/aeternity/node/local/rel/aeternity/data/mdw.db
 
       # 📜 Config (read-only)
-      - ${PWD}/docker/aeternity.yaml:/home/aeternity/aeternity.yaml:ro
+      - ${PWD}/aeternity.yaml:/home/aeternity/aeternity.yaml:ro
 
     environment:
       AETERNITY_CONFIG: /home/aeternity/aeternity.yaml
