@@ -16,13 +16,13 @@ websocket:
 
 chain:
     persist: true
+    # strongly recommended: explicit persistent DB path
+    db_path: /home/aeternity/node/data/mnesia
     garbage_collection:
-        enabled: true
-        interval: 3
-        history: 500
+        enabled: false
 
 fork_management:
     network_id: ae_mainnet
 
 logging:
-  level: warning
+    level: warning

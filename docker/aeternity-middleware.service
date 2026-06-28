@@ -1,0 +1,28 @@
+[Unit]
+Description=Aeternity Middleware
+
+[Service]
+WorkingDirectory=/opt/damage/
+Environment=PWD=/opt/damage/
+Restart=always
+
+# Start containers detached. Docker restart policies then keep them alive.
+
+ExecStart=/usr/bin/docker compose -f docker/docker-compose.yml up
+# -d --remove-orphans
+
+# Do not use "down" here. Stop keeps the container definition and avoids destructive habits.
+
+ExecStop=/usr/bin/docker compose -f docker/docker-compose.yml stop
+
+# Re-apply compose changes safely.
+
+ExecReload=/usr/bin/docker compose -f docker/docker-compose.yml up -d --remove-orphans
+
+TimeoutStartSec=0
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target
+
+

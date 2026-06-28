@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   ae_mdw:
     image: aeternity/ae_mdw:latest
