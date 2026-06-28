@@ -1,0 +1,397 @@
+# docker-compose.yml
+#
+# Standalone DamageBDD node stack:
+#   - damagebdd: DamageBDD API / runner
+#   - ipfs: report/artifact storage
+#   - ae_mdw: Aeternity middleware + node stack
+#   - bitcoin: Bitcoin Core
+#   - lightning: Core Lightning
+#
+# Operator rule:
+#   - Public HTTP ports are explicitly bound.
+#   - RPC/control ports are localhost-only unless they must be reachable by another container.
+#   - Persistent state lives in named Docker volumes.
+#   - Secrets should come from .env or mounted secret files, not committed config.
+
+name: damagebdd-standalone
+
+services:
+  damagebdd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: damagebdd:local
+    container_name: damagebdd
+    restart: unless-stopped
+
+    depends_on:
+      ipfs:
+        condition: service_started
+      ae_mdw:
+        condition: service_started
+      bitcoin:
+        condition: service_started
+      lightning:
+        condition: service_started
+
+    ports:
+      # DamageBDD public API.
+      # Keep this public if this node accepts external runs.
+      - "0.0.0.0:4888:4888"
+
+    environment:
+      # -----------------------------------------------------------------------
+      # DamageBDD public URL
+      # -----------------------------------------------------------------------
+      # Used in account emails, report URLs, callbacks, and externally visible links.
+      # In production this should be your HTTPS URL, for example:
+      #   https://node.damagebdd.com/api
+      DAMAGE_API_URL: "${DAMAGE_API_URL:-http://localhost:4888/api}"
+
+      # If your Erlang config reads api_url directly from env, keep this alias.
+      API_URL: "${DAMAGE_API_URL:-http://localhost:4888/api}"
+
+      # Port the DamageBDD release should listen on.
+      # Make sure your sys.config / application env maps this to Cowboy.
+      DAMAGE_HTTP_PORT: "4888"
+      PORT: "4888"
+
+      # -----------------------------------------------------------------------
+      # DamageBDD runtime paths
+      # -----------------------------------------------------------------------
+      # Runs, reports, logs, and generated feature execution data persist here.
+      DAMAGE_DATA_DIR: "/var/lib/damage"
+      DAMAGE_RUN_DIR: "/var/lib/damage/runs"
+      DAMAGE_REPORT_DIR: "/var/lib/damage/reports"
+      DAMAGE_LOG_DIR: "/var/log/damage"
+
+      # -----------------------------------------------------------------------
+      # IPFS sidecar
+      # -----------------------------------------------------------------------
+      # DamageBDD publishes report directories/assets to IPFS.
+      IPFS_API_URL: "http://ipfs:5001"
+      IPFS_GATEWAY_URL: "http://ipfs:8080"
+
+      # -----------------------------------------------------------------------
+      # Aeternity node / middleware wiring
+      # -----------------------------------------------------------------------
+      # Internal Docker service names are used here.
+      #
+      # AE_NODE_* points to the Aeternity node external API.
+      # AE_MDW_* points to Aeternity middleware REST / websocket.
+      AE_NODE_HOST: "ae_mdw"
+      AE_NODE_PORT: "3013"
+      AE_NODE_PATH_PREFIX: "/"
+
+      AE_MDW_HOST: "ae_mdw"
+      AE_MDW_PORT: "4000"
+      AE_MDW_PATH_PREFIX: "/"
+
+      AE_MDW_WS_HOST: "ae_mdw"
+      AE_MDW_WS_PORT: "4001"
+      AE_MDW_WS_PATH_PREFIX: "/"
+
+      # Gas / fee safety multipliers.
+      # Increase these if contract calls fail due to fee/gas underestimation.
+      AE_FEE_MULTIPLIER: "${AE_FEE_MULTIPLIER:-2}"
+      AE_GAS_MULTIPLIER: "${AE_GAS_MULTIPLIER:-2}"
+      AE_GAS_PRICE_MULTIPLIER: "${AE_GAS_PRICE_MULTIPLIER:-3}"
+
+      # -----------------------------------------------------------------------
+      # Bitcoin Core RPC
+      # -----------------------------------------------------------------------
+      # DamageBDD / CLN use Bitcoin Core as the chain backend.
+      BITCOIN_RPC_HOST: "bitcoin"
+      BITCOIN_RPC_PORT: "8332"
+      BITCOIN_RPC_USER: "${BITCOIN_RPC_USER:-damage}"
+      BITCOIN_RPC_PASSWORD: "${BITCOIN_RPC_PASSWORD:-change_me_do_not_use_in_prod}"
+
+      # -----------------------------------------------------------------------
+      # Core Lightning
+      # -----------------------------------------------------------------------
+      # DamageBDD code paths use CLN-style invoice creation/payment/event flows.
+      # The RPC socket is shared through the lightning_data volume.
+      CLN_NETWORK: "${CLN_NETWORK:-bitcoin}"
+      CLN_RPC_SOCKET: "/root/.lightning/bitcoin/lightning-rpc"
+      CLN_RUNE: "${CLN_RUNE:-}"
+
+      # -----------------------------------------------------------------------
+      # Proxy bypass
+      # -----------------------------------------------------------------------
+      # Prevent local service traffic from being sent through SOCKS/HTTP proxies.
+      NO_PROXY: "localhost,127.0.0.1,ipfs,ae_mdw,bitcoin,lightning"
+      no_proxy: "localhost,127.0.0.1,ipfs,ae_mdw,bitcoin,lightning"
+
+    volumes:
+      # DamageBDD persistent state.
+      - damage_data:/var/lib/damage
+      - damage_logs:/var/log/damage
+
+      # Source-mounted operator content.
+      # Keep features/contracts read-only unless this node is meant to mutate them.
+      - ./features:/opt/damage/features:ro
+      - ./contracts:/opt/damage/contracts:ro
+
+      # Shared CLN volume so DamageBDD can reach lightning-rpc.
+      - lightning_data:/root/.lightning:rw
+
+      # Mount your real DamageBDD config if the release uses sys.config.
+      # Adjust the target path to match your release layout.
+      # - ./config/docker.sys.config:/opt/damage/releases/sys.config:ro
+
+      # Mount secrets only if the node is expected to sign/spend.
+      # Do not commit this directory.
+      # - ./secrets:/run/secrets/damage:ro
+
+    command: ["/opt/damage/bin/damage", "foreground"]
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:4888/version/ >/dev/null 2>&1 || curl -fsS http://localhost:4888/version/ >/dev/null 2>&1 || exit 1"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    networks:
+      - damage_net
+
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: damagebdd-ipfs
+    restart: unless-stopped
+
+    ports:
+      # IPFS API is powerful. Keep it bound to localhost.
+      - "127.0.0.1:5001:5001"
+
+      # Gateway exposed on localhost for local inspection.
+      # DamageBDD containers use http://ipfs:8080 internally.
+      - "127.0.0.1:8081:8080"
+
+      # Optional swarm port. Expose only if this IPFS node should participate publicly.
+      # - "4001:4001/tcp"
+      # - "4001:4001/udp"
+
+    volumes:
+      - ipfs_data:/data/ipfs
+
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs id >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+    networks:
+      - damage_net
+
+  ae_mdw:
+    image: aeternity/ae_mdw:latest
+    container_name: ae_mdw
+    restart: unless-stopped
+
+    ports:
+      # Aeternity middleware REST API.
+      - "0.0.0.0:4000:4000"
+
+      # Middleware websocket.
+      # External 4002 maps to container 4001 to avoid clashing with other local services.
+      - "0.0.0.0:4002:4001"
+
+      # Aeternity node internal API.
+      # Bind publicly only if you know you need it.
+      - "127.0.0.1:3113:3113"
+
+      # Aeternity node external API.
+      - "0.0.0.0:3013:3013"
+
+      # Aeternity channels websocket.
+      - "0.0.0.0:3014:3014"
+
+    volumes:
+      # Critical: without this, Aeternity middleware/node data may redownload after container recreation.
+      - ae_mdw_data:/home/aeternity/node/local/rel/aeternity/data
+
+    networks:
+      - damage_net
+
+  bitcoin:
+    image: bitcoin/bitcoin:latest
+    container_name: damagebdd-bitcoin
+    restart: unless-stopped
+
+    command:
+      # -----------------------------------------------------------------------
+      # Chain selection
+      # -----------------------------------------------------------------------
+      # mainnet:  BITCOIN_CHAIN=main
+      # testnet:  BITCOIN_CHAIN=test
+      # signet:   BITCOIN_CHAIN=signet
+      # regtest:  BITCOIN_CHAIN=regtest
+      - "-chain=${BITCOIN_CHAIN:-main}"
+
+      # -----------------------------------------------------------------------
+      # Server / RPC
+      # -----------------------------------------------------------------------
+      - "-server=1"
+      - "-printtoconsole"
+      - "-rpcbind=0.0.0.0"
+      - "-rpcallowip=172.16.0.0/12"
+      - "-rpcallowip=192.168.0.0/16"
+      - "-rpcuser=${BITCOIN_RPC_USER:-damage}"
+      - "-rpcpassword=${BITCOIN_RPC_PASSWORD:-change_me_do_not_use_in_prod}"
+
+      # -----------------------------------------------------------------------
+      # ZMQ for Lightning
+      # -----------------------------------------------------------------------
+      - "-zmqpubrawblock=tcp://0.0.0.0:28332"
+      - "-zmqpubrawtx=tcp://0.0.0.0:28333"
+
+      # -----------------------------------------------------------------------
+      # Useful indexes
+      # -----------------------------------------------------------------------
+      # Required by some wallet/light-client flows.
+      - "-blockfilterindex=1"
+      - "-peerblockfilters=1"
+
+      # -----------------------------------------------------------------------
+      # Storage knob
+      # -----------------------------------------------------------------------
+      # For full archival node, set BITCOIN_PRUNE=0.
+      # For smaller disk, set something like BITCOIN_PRUNE=55000.
+      - "-prune=${BITCOIN_PRUNE:-0}"
+
+    ports:
+      # Bitcoin P2P. Public if you want inbound peers.
+      - "8333:8333"
+
+      # Bitcoin RPC. Keep localhost-only.
+      - "127.0.0.1:8332:8332"
+
+      # ZMQ is only needed inside Docker by CLN.
+      # Expose to host only for debugging.
+      # - "127.0.0.1:28332:28332"
+      # - "127.0.0.1:28333:28333"
+
+    volumes:
+      - bitcoin_data:/home/bitcoin/.bitcoin
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bitcoin-cli -chain=${BITCOIN_CHAIN:-main} -rpcconnect=127.0.0.1 -rpcuser=${BITCOIN_RPC_USER:-damage} -rpcpassword=${BITCOIN_RPC_PASSWORD:-change_me_do_not_use_in_prod} getblockchaininfo >/dev/null 2>&1 || exit 1"
+        ]
+      interval: 60s
+      timeout: 15s
+      retries: 20
+      start_period: 60s
+
+    networks:
+      - damage_net
+
+  lightning:
+    image: elementsproject/lightningd:latest
+    container_name: damagebdd-lightning
+    restart: unless-stopped
+
+    depends_on:
+      bitcoin:
+        condition: service_started
+
+    command:
+      # -----------------------------------------------------------------------
+      # CLN network
+      # -----------------------------------------------------------------------
+      # Use:
+      #   CLN_NETWORK=bitcoin for mainnet
+      #   CLN_NETWORK=testnet for testnet
+      #   CLN_NETWORK=signet  for signet
+      #   CLN_NETWORK=regtest for regtest
+      #
+      # Keep this aligned with BITCOIN_CHAIN.
+      - "--network=${CLN_NETWORK:-bitcoin}"
+
+      # -----------------------------------------------------------------------
+      # Bitcoin Core backend
+      # -----------------------------------------------------------------------
+      - "--bitcoin-rpcconnect=bitcoin"
+      - "--bitcoin-rpcport=8332"
+      - "--bitcoin-rpcuser=${BITCOIN_RPC_USER:-damage}"
+      - "--bitcoin-rpcpassword=${BITCOIN_RPC_PASSWORD:-change_me_do_not_use_in_prod}"
+
+      # -----------------------------------------------------------------------
+      # Lightning P2P
+      # -----------------------------------------------------------------------
+      - "--addr=0.0.0.0:9735"
+      - "--bind-addr=0.0.0.0:9735"
+
+      # -----------------------------------------------------------------------
+      # Logging
+      # -----------------------------------------------------------------------
+      - "--log-level=${CLN_LOG_LEVEL:-info}"
+
+      # -----------------------------------------------------------------------
+      # Optional operator knobs
+      # -----------------------------------------------------------------------
+      # Uncomment when you have a public DNS name:
+      # - "--announce-addr=${CLN_ANNOUNCE_ADDR}:9735"
+      #
+      # Uncomment if you want plugins:
+      # - "--plugin=/root/.lightning/plugins/some-plugin.py"
+
+    ports:
+      # Lightning P2P. Public if this node should accept channels.
+      - "9735:9735"
+
+    volumes:
+      # CLN wallet, channel DB, hsm_secret, lightning-rpc socket.
+      # Backup this volume before serious use.
+      - lightning_data:/root/.lightning
+
+      # Optional read-only access to Bitcoin datadir.
+      # CLN mainly talks over RPC, but this can help some operational flows.
+      - bitcoin_data:/root/.bitcoin:ro
+
+      # Optional plugin mount.
+      # - ./cln-plugins:/root/.lightning/plugins:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "lightning-cli --network=${CLN_NETWORK:-bitcoin} getinfo >/dev/null 2>&1 || exit 1"
+        ]
+      interval: 60s
+      timeout: 15s
+      retries: 20
+      start_period: 60s
+
+    networks:
+      - damage_net
+
+volumes:
+  # DamageBDD persistent runtime.
+  damage_data:
+  damage_logs:
+
+  # IPFS repo.
+  ipfs_data:
+
+  # Aeternity middleware/node chain DB.
+  ae_mdw_data:
+
+  # Bitcoin Core blockchain/wallet state.
+  bitcoin_data:
+
+  # Core Lightning wallet/channel state.
+  # Treat this as critical funds-bearing state.
+  lightning_data:
+
+networks:
+  damage_net:
+    driver: bridge

@@ -1,0 +1,51 @@
+# Build outputs
+_build/
+rebar3.crashdump
+*.beam
+*.ez
+
+# Git/editor noise
+.git/
+.gitignore
+.github/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Runtime data
+data/
+log/
+logs/
+run/
+runs/
+reports/
+tmp/
+
+# Docker / node state
+docker/data/
+bitcoin_data/
+lightning_data/
+ipfs_data/
+ae_mdw_data/
+
+# Secrets / keys / tokens
+secrets/
+*.key
+*.pem
+*.crt
+*.p12
+*.aes
+token.aes
+.env
+.env.*
+
+# Large local artifacts
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.deb
+*.rpm
+*.pkg.tar.zst
