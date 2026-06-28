@@ -476,11 +476,11 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                             _ -> undefined
                         end,
 
-                    Charge = Cost,
-                    Balance = damage_ae:balance(AeAccount),
+                    Charge = charge_hits(Cost),
 
-                    case can_cover_balance(Balance, Charge) of
-                        true ->
+                    ?LOG_INFO("has_enough_damage ~p ~p", [AeAccount, Charge]),
+                    case damage_balance_cache:has_enough_damage(AeAccount, Charge) of
+                        {ok, _Balance, _BalanceSnapshot} ->
                             %% Original execution path for both normal auth and
                             %% L402 auth. L402 auth has already mapped State to
                             %% the configured l402_account in damage_auth.
@@ -507,7 +507,7 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                         status => <<"notok">>,
                                         error => <<"ACCOUNT_INSUFFICIENT_BALANCE">>,
                                         message => insufficient_balance_message(ContextIn),
-                                        balance => damage_ae:balance(AeAccount),
+                                        balance => damage_balance_cache:execution_damage_balance(AeAccount),
                                         required => Spend,
                                         chain_reason => confirm_spend_reason(ChainError)
                                     }};
@@ -534,7 +534,7 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                         reason => confirm_spend_reason(Other)
                                     }}
                             end;
-                        false ->
+                        {error, insufficient_damage, Balance, _BalanceSnapshot} ->
                             {402, #{
                                 status => <<"notok">>,
                                 message => insufficient_balance_message(ContextIn),
@@ -575,10 +575,16 @@ insufficient_balance_message(#{auth_type := l402}) ->
 insufficient_balance_message(_Context) ->
     <<"Insufficient balance, please top up at `/api/accounts/topup`">>.
 
-can_cover_balance(Balance, Charge) when is_number(Balance), is_number(Charge) ->
-    Balance >= Charge;
-can_cover_balance(_Balance, _Charge) ->
-    false.
+charge_hits(Value) when is_integer(Value) ->
+    Value;
+charge_hits(Value) when is_float(Value) ->
+    ceil_damage(Value);
+charge_hits(Value) when is_binary(Value) ->
+    binary_to_integer(Value);
+charge_hits(Value) when is_list(Value) ->
+    list_to_integer(Value);
+charge_hits(_) ->
+    0.
 
 confirm_spend_reason(#{"return_value" := Reason}) ->
     confirm_spend_reason(Reason);

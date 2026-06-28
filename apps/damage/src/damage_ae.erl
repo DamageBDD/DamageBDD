@@ -1256,7 +1256,7 @@ extract_dry_run_gas_used_from_result(Other) ->
     {error, {gas_used_not_found, Other}}.
 
 gas_used_from_call_obj(CallObj) ->
-    case map_int([gas_used, <<"gas_used">>, gasUsed, <<"gasUsed">>], CallObj, undefined) of
+    case map_int([gas_used,"gas_used", <<"gas_used">>, gasUsed, <<"gasUsed">>], CallObj, undefined) of
         GasUsed when is_integer(GasUsed), GasUsed > 0 -> {ok, GasUsed};
         _ -> {error, {gas_used_not_found, CallObj}}
     end.

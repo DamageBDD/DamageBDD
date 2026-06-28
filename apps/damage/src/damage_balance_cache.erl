@@ -36,7 +36,11 @@
     invalidate/1,
     mark_dirty/1,
     debit_damage/2,
-    credit_damage/2
+    credit_damage/2,
+    execution_damage_balance/1,
+    has_enough_damage/2,
+    fetch_sats_ledger/1,
+         fetch_damage_balance_mdw/1
 ]).
 
 -define(TAB, damage_balance_cache_ets).
@@ -44,7 +48,7 @@
 -define(DEFAULT_FRESH_MS, 5000).
 -define(DEFAULT_STALE_MS, 60000).
 -define(DEFAULT_HARD_MS, 300000).
--define(DEFAULT_REQUEST_TIMEOUT_MS, 30000).
+-define(DEFAULT_REQUEST_TIMEOUT_MS, 60000).
 -define(DEFAULT_REFRESH_DELAY_MS, 2500).
 
 start_link() ->
@@ -116,13 +120,53 @@ snapshot(AeAccount0, _Opts) ->
     end.
 
 damage_balance(AeAccount) ->
-    Snap = snapshot(AeAccount),
-    maps:get(damage, Snap, maps:get(amount, Snap, 0)).
+    execution_damage_balance(AeAccount).
+
+%% Execution billing must look only at the DAMAGE token balance.
+%% AE balance and sats/NWC ledger balance are dashboard fields only and must
+%% never make an execution pass or fail.
+execution_damage_balance(AeAccount) ->
+    damage_from_snapshot(snapshot(AeAccount)).
+
+%% Return a DAMAGE-only balance decision.  On an apparent miss/low balance,
+%% force one foreground refresh before rejecting so a stale cache cannot create
+%% a false 402 for a funded account.
+has_enough_damage(AeAccount0, Required0) ->
+    AeAccount = normalize_account(AeAccount0),
+    Required = to_integer_ceil(Required0),
+    Snap0 = snapshot(AeAccount),
+    Balance0 = damage_from_snapshot(Snap0),
+    case Balance0 >= Required of
+        true ->
+            {ok, Balance0, Snap0};
+        false ->
+            case refresh_execution(AeAccount) of
+                {ok, Snap1} ->
+                    Balance1 = damage_from_snapshot(Snap1),
+                    case Balance1 >= Required of
+                        true -> {ok, Balance1, Snap1};
+                        false -> {error, insufficient_damage, Balance1, Snap1}
+                    end;
+                {error, Reason} ->
+                    {error, insufficient_damage, Balance0, maps:put(error, format_error(Reason), Snap0)}
+            end
+    end.
 
 refresh(AeAccount0) ->
     AeAccount = normalize_account(AeAccount0),
     ensure_table(),
     case fetch_with_timeout(AeAccount, request_timeout_ms()) of
+        {ok, Snap} ->
+            store_snapshot(AeAccount, Snap),
+            {ok, Snap};
+        Error ->
+            Error
+    end.
+
+refresh_execution(AeAccount0) ->
+    AeAccount = normalize_account(AeAccount0),
+    ensure_table(),
+    case fetch_with_timeout(AeAccount, request_timeout_ms(), true) of
         {ok, Snap} ->
             store_snapshot(AeAccount, Snap),
             {ok, Snap};
@@ -218,11 +262,21 @@ credit_damage(AeAccount0, Amount0) ->
 %%====================================================================
 
 fetch_with_timeout(AeAccount, TimeoutMs) ->
+    fetch_with_timeout(AeAccount, TimeoutMs, false).
+
+fetch_with_timeout(AeAccount, TimeoutMs, ForceTop) ->
     Parent = self(),
     Ref = make_ref(),
     Pid =
         spawn(fun() ->
-            Parent ! {Ref, catch fetch_snapshot(AeAccount)}
+            Parent ! {Ref, 
+try fetch_snapshot(AeAccount, ForceTop) of
+    Result -> Result
+catch
+    Class:Reason:Stack ->
+        {error, {Class, Reason, Stack}}
+end
+}
         end),
     receive
         {Ref, {ok, Snap}} ->
@@ -239,7 +293,10 @@ fetch_with_timeout(AeAccount, TimeoutMs) ->
     end.
 
 fetch_snapshot(AeAccount) ->
-    Damage = fetch_damage_balance_mdw(AeAccount),
+    fetch_snapshot(AeAccount, false).
+
+fetch_snapshot(AeAccount, ForceTop) ->
+    Damage = fetch_damage_balance_mdw(AeAccount, ForceTop),
     Ae = fetch_ae_balance_fast(AeAccount),
     Ledger = fetch_sats_ledger(AeAccount),
     Msats = maps:get(balance_msat, Ledger, 0),
@@ -268,13 +325,16 @@ fetch_snapshot(AeAccount) ->
     }}.
 
 fetch_damage_balance_mdw(AeAccount) ->
+    fetch_damage_balance_mdw(AeAccount, false).
+
+fetch_damage_balance_mdw(AeAccount, ForceTop) ->
     Contract = token_contract(),
     case
         mdw_get_json(fun(PathPrefix) ->
             PathPrefix ++
                 "v3/aex9/" ++ Contract ++
                 "/balances/" ++ binary_to_list(AeAccount) ++
-                mdw_top_query()
+                mdw_top_query(ForceTop)
         end)
     of
         {ok, Json} ->
@@ -306,7 +366,7 @@ fetch_damage_balance_from_account_list(AeAccount, Contract) ->
     end.
 
 fetch_ae_balance_fast(AeAccount) ->
-    case catch damage_ae:get_ae_balance(AeAccount) of
+    try damage_ae:get_ae_balance(AeAccount) of
         #{balance := Balance} ->
             to_integer(Balance);
         #{<<"balance">> := Balance} ->
@@ -314,11 +374,12 @@ fetch_ae_balance_fast(AeAccount) ->
         #{amount := Balance} ->
             to_integer(Balance);
         #{<<"amount">> := Balance} ->
-            to_integer(Balance);
-        Error ->
-            ?LOG_DEBUG("ae balance fallback account=~p error=~p", [AeAccount, Error]),
+            to_integer(Balance)
+catch
+    _Class:Reason:_Stack ->
+            ?LOG_DEBUG("ae balance fallback account=~p error=~p", [AeAccount, Reason]),
             0
-    end.
+end.
 
 fetch_sats_ledger(AeAccount) ->
     try damage_nwc:ledger_balance_for_account_cached(AeAccount) of
@@ -359,7 +420,11 @@ mdw_get_json(PathFun) ->
                 StreamRef = gun:get(ConnPid, Path, Headers),
                 await_json(ConnPid, StreamRef, request_timeout_ms())
             after
-                catch gun:close(ConnPid)
+                try
+    gun:close(ConnPid)
+catch
+    _Class:_Reason:_Stack -> ok
+end
             end;
         Error ->
             {error, Error}
@@ -393,11 +458,12 @@ await_json(ConnPid, StreamRef, TimeoutMs) ->
     end.
 
 decode_json(Body) ->
-    case catch jsx:decode(Body, [return_maps, {labels, atom}]) of
-        {'EXIT', Reason} ->
-            {error, {json_decode_failed, Reason, Body}};
+    try jsx:decode(Body, [return_maps, {labels, atom}]) of
         Json ->
             {ok, Json}
+    catch
+        Class:Reason:_Stack ->
+            {error, {json_decode_failed, {Class, Reason}, Body}}
     end.
 
 %%====================================================================
@@ -584,6 +650,12 @@ extract_damage_amount_from_list([_ | Rest], Contract) ->
 %% Config/helpers
 %%====================================================================
 
+mdw_top_query(ForceTop) ->
+    case ForceTop of
+        true -> "?top=true";
+        false -> mdw_top_query()
+    end.
+
 mdw_top_query() ->
     %% Dashboard default should be MDW cache. Set true only for admin/debug.
     case env_bool(balance_cache_mdw_top, false) of
@@ -658,6 +730,30 @@ to_integer(V) when is_binary(V) ->
     binary_to_integer(V);
 to_integer(V) when is_list(V) ->
     list_to_integer(V).
+
+to_integer_ceil(V) when is_integer(V) ->
+    V;
+to_integer_ceil(V) when is_float(V) ->
+    T = trunc(V),
+    case V > T of
+        true -> T + 1;
+        false -> T
+    end;
+to_integer_ceil(V) when is_binary(V) ->
+    to_integer_ceil(binary_to_integer(V));
+to_integer_ceil(V) when is_list(V) ->
+    to_integer_ceil(list_to_integer(V));
+to_integer_ceil(null) ->
+    0;
+to_integer_ceil(undefined) ->
+    0.
+
+damage_from_snapshot(#{damage := Damage}) ->
+    to_integer(Damage);
+damage_from_snapshot(#{<<"damage">> := Damage}) ->
+    to_integer(Damage);
+damage_from_snapshot(_Snap) ->
+    0.
 
 units(Amount, Decimals) ->
     Amount / math:pow(10, Decimals).

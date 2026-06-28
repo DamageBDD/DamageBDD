@@ -324,6 +324,11 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                         )
                 end,
             PublicKey = maps:get(public_key, Context),
+            RunCost =
+                case proplists:get_value(dry_run, Config, false) of
+                    true -> maps:get(cost, FinalContext, 0);
+                    false -> damage_ae:get_spend(PublicKey)
+                end,
             RunRecord =
                 #{
                     run_id => list_to_binary(RunId),
@@ -345,7 +350,7 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     token_contract => maps:get(token_contract, FinalContext),
                     node_public_key => maps:get(node_public_key, FinalContext),
                     dry_run => proplists:get_value(dry_run, Config, false),
-                    cost => damage_ae:get_spend(PublicKey),
+                    cost => RunCost,
                     spend => maps:get(step_spend, FinalContext, 0)
                 },
             damage_webhooks:trigger_webhooks(FinalContext),
@@ -1294,10 +1299,16 @@ execute_step_module(
 
 hits_to_damage(Hits) ->
     Hits / 100000000.
-step_spend(Context) ->
+step_spend(Config, Context) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
-    damage_ae:spend(maps:get(public_key, Context), Spend),
-    maps:remove(step_spend, Context).
+    Context0 = maps:remove(step_spend, Context),
+    case proplists:get_value(dry_run, Config, false) of
+        true ->
+            maps:put(cost, maps:get(cost, Context0, 0) + Spend, Context0);
+        false ->
+            damage_ae:spend(maps:get(public_key, Context), Spend),
+            Context0
+    end.
 normalize_step({LineNo, StepKeyWord, Body}) ->
     {LineNo, StepKeyWord, Body, []};
 normalize_step({LineNo, StepKeyWord, Body, Args}) ->
@@ -1422,7 +1433,7 @@ execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) 
         )
     of
         Context2 when is_map(Context2) ->
-            Context0 = step_spend(Context2),
+            Context0 = step_spend(Config, Context2),
 
             case maps:get(step_found, Context0) of
                 false ->
