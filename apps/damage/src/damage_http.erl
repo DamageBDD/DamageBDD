@@ -507,7 +507,9 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                         status => <<"notok">>,
                                         error => <<"ACCOUNT_INSUFFICIENT_BALANCE">>,
                                         message => insufficient_balance_message(ContextIn),
-                                        balance => damage_balance_cache:execution_damage_balance(AeAccount),
+                                        balance => damage_balance_cache:execution_damage_balance(
+                                            AeAccount
+                                        ),
                                         required => Spend,
                                         chain_reason => confirm_spend_reason(ChainError)
                                     }};

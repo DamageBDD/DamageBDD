@@ -24,7 +24,9 @@
 -define(STEP_GET_PATH, ["I GET LinkedIn path", Path]).
 -define(STEP_POST_PATH, ["I POST LinkedIn path", Path]).
 -define(STEP_CREATE_TEXT_POST_AUTHOR, ["I create a LinkedIn text post for author", AuthorUrn]).
--define(STEP_CREATE_TEXT_POST_CONFIGURED, ["I create a LinkedIn text post from the configured author"]).
+-define(STEP_CREATE_TEXT_POST_CONFIGURED, [
+    "I create a LinkedIn text post from the configured author"
+]).
 -define(STEP_LOOKUP_ORG_VANITY, ["I lookup LinkedIn organization by vanity name", VanityName]).
 -define(STEP_STATUS_MUST, ["the LinkedIn response status must be", Status]).
 -define(STEP_STORE_HEADER, ["I store the LinkedIn response header", Header, "in", Variable]).
@@ -80,7 +82,6 @@ step(_Config, Context, _Keyword, _N, ?STEP_SET_TOKEN_SECRET, _Body) ->
     end;
 step(_Config, Context, _Keyword, _N, ?STEP_SET_AUTHOR, _Body) ->
     maps:put(linkedin_author_urn, to_bin(AuthorUrn), Context);
-
 %% -------------------------------------------------------------------
 %% When: LinkedIn API calls
 %% -------------------------------------------------------------------
@@ -101,7 +102,6 @@ step(_Config, Context, <<"When">>, _N, ?STEP_LOOKUP_ORG_VANITY, _Body) ->
     Vanity = uri_string:quote(to_list(resolve_value(Context, VanityName))),
     Path = "/rest/organization?q=vanityName&vanityName=" ++ Vanity,
     linkedin_get(Context, Path, []);
-
 %% -------------------------------------------------------------------
 %% Then: LinkedIn assertions and extraction
 %% -------------------------------------------------------------------
@@ -113,7 +113,9 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_STATUS_MUST, _Body) ->
         [{status_code, Actual}, _Headers, {body, Body}] ->
             fail(Context, "LinkedIn response status is not ~p, got ~p: ~s", [Expected, Actual, Body]);
         Unexpected ->
-            fail(Context, "Unexpected LinkedIn response while checking status ~p: ~p", [Expected, Unexpected])
+            fail(Context, "Unexpected LinkedIn response while checking status ~p: ~p", [
+                Expected, Unexpected
+            ])
     end;
 step(_Config, Context, <<"Then">>, _N, ?STEP_STORE_HEADER, _Body) ->
     case maps:get(response, Context, undefined) of
@@ -140,9 +142,12 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_JSON_MUST, _Body) ->
         {ok, Json} ->
             ExpectedValue = expected_json_value(Expected),
             case json_path(JsonPath, Json) of
-                {ok, ExpectedValue} -> Context;
+                {ok, ExpectedValue} ->
+                    Context;
                 {ok, Actual} ->
-                    fail(Context, "LinkedIn JSON at path ~p is not ~p, got ~p", [JsonPath, ExpectedValue, Actual]);
+                    fail(Context, "LinkedIn JSON at path ~p is not ~p, got ~p", [
+                        JsonPath, ExpectedValue, Actual
+                    ]);
                 {error, Reason} ->
                     fail(Context, "LinkedIn JSON path lookup failed: ~p", [Reason])
             end;
@@ -154,7 +159,8 @@ step(Config, Context, <<"Then">>, N, ?STEP_PRINT_RESPONSE, _Body) ->
     formatter:format(
         Config,
         print,
-        {<<"Then">>, N, ["LinkedIn response:"], jsx:encode(normalize_json(Response)), Context, success}
+        {<<"Then">>, N, ["LinkedIn response:"], jsx:encode(normalize_json(Response)), Context,
+            success}
     ),
     Context.
 
@@ -290,9 +296,12 @@ json_path(Path, Json) ->
 expected_json_value(Value0) ->
     Value = to_bin(Value0),
     case Value of
-        <<"true">> -> true;
-        <<"false">> -> false;
-        <<"null">> -> null;
+        <<"true">> ->
+            true;
+        <<"false">> ->
+            false;
+        <<"null">> ->
+            null;
         _ ->
             case catch jsx:decode(Value, [return_maps]) of
                 {'EXIT', _} -> maybe_int(Value);
@@ -389,7 +398,7 @@ to_bin(V) when is_binary(V) -> V;
 to_bin(V) when is_list(V) -> unicode:characters_to_binary(V);
 to_bin(V) when is_atom(V) -> atom_to_binary(V, utf8);
 to_bin(V) when is_integer(V) -> integer_to_binary(V);
-to_bin(V) -> unicode:characters_to_binary(io_lib:format("~p", [V])). 
+to_bin(V) -> unicode:characters_to_binary(io_lib:format("~p", [V])).
 
 to_list(V) when is_list(V) -> V;
 to_list(V) when is_binary(V) -> binary_to_list(V);

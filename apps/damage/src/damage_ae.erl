@@ -652,8 +652,7 @@ handle_call(
                     ReportHash
                 ]
             ),
-            case SpendResult
-            of
+            case SpendResult of
                 #{
                     "caller_id" :=
                         _UserAeAccount,
@@ -687,9 +686,8 @@ handle_call(
                         "confirm spend insufficient balance account=~p amount=~p error=~p",
                         [AeAccount, Amount, Error]
                     ),
-                        safe_invalidate_damage_balance(AeAccount),
-                    {reply,
-                        {error, insufficient_balance, Amount, Error},
+                    safe_invalidate_damage_balance(AeAccount),
+                    {reply, {error, insufficient_balance, Amount, Error},
                         maps:put({balance, AeAccount}, none, Cache)};
                 #{"return_type" := ReturnType, "return_value" := ReturnValue} = Error when
                     ReturnType =:= "revert" orelse ReturnType =:= <<"revert">>
@@ -1160,14 +1158,12 @@ estimate_contract_gas_limit(Tag, BuildFun, DefaultGas, _GasPrice) ->
                 [Tag, GasUsed, Estimated, DefaultGas1]
             ),
             Estimated;
-
         {fallback, Reason} ->
             ?LOG_WARNING(
                 "Contract gas estimation soft-failed tag=~p reason=~p fallback_gas=~p",
                 [Tag, Reason, DefaultGas1]
             ),
             DefaultGas1;
-
         {error, Reason} ->
             ?LOG_WARNING(
                 "Contract gas estimation failed tag=~p reason=~p fallback_gas=~p",
@@ -1243,7 +1239,6 @@ reason_to_binary(Reason) when is_atom(Reason) ->
 reason_to_binary(Reason) ->
     iolist_to_binary(io_lib:format("~p", [Reason])).
 
-
 extract_dry_run_gas_used_from_result(#{"call_obj" := CallObj}) when is_map(CallObj) ->
     gas_used_from_call_obj(CallObj);
 extract_dry_run_gas_used_from_result(#{call_obj := CallObj}) when is_map(CallObj) ->
@@ -1256,7 +1251,9 @@ extract_dry_run_gas_used_from_result(Other) ->
     {error, {gas_used_not_found, Other}}.
 
 gas_used_from_call_obj(CallObj) ->
-    case map_int([gas_used,"gas_used", <<"gas_used">>, gasUsed, <<"gasUsed">>], CallObj, undefined) of
+    case
+        map_int([gas_used, "gas_used", <<"gas_used">>, gasUsed, <<"gasUsed">>], CallObj, undefined)
+    of
         GasUsed when is_integer(GasUsed), GasUsed > 0 -> {ok, GasUsed};
         _ -> {error, {gas_used_not_found, CallObj}}
     end.

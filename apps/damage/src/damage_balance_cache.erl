@@ -40,7 +40,7 @@
     execution_damage_balance/1,
     has_enough_damage/2,
     fetch_sats_ledger/1,
-         fetch_damage_balance_mdw/1
+    fetch_damage_balance_mdw/1
 ]).
 
 -define(TAB, damage_balance_cache_ets).
@@ -148,7 +148,8 @@ has_enough_damage(AeAccount0, Required0) ->
                         false -> {error, insufficient_damage, Balance1, Snap1}
                     end;
                 {error, Reason} ->
-                    {error, insufficient_damage, Balance0, maps:put(error, format_error(Reason), Snap0)}
+                    {error, insufficient_damage, Balance0,
+                        maps:put(error, format_error(Reason), Snap0)}
             end
     end.
 
@@ -269,14 +270,14 @@ fetch_with_timeout(AeAccount, TimeoutMs, ForceTop) ->
     Ref = make_ref(),
     Pid =
         spawn(fun() ->
-            Parent ! {Ref, 
-try fetch_snapshot(AeAccount, ForceTop) of
-    Result -> Result
-catch
-    Class:Reason:Stack ->
-        {error, {Class, Reason, Stack}}
-end
-}
+            Parent !
+                {Ref,
+                    try fetch_snapshot(AeAccount, ForceTop) of
+                        Result -> Result
+                    catch
+                        Class:Reason:Stack ->
+                            {error, {Class, Reason, Stack}}
+                    end}
         end),
     receive
         {Ref, {ok, Snap}} ->
@@ -375,11 +376,11 @@ fetch_ae_balance_fast(AeAccount) ->
             to_integer(Balance);
         #{<<"amount">> := Balance} ->
             to_integer(Balance)
-catch
-    _Class:Reason:_Stack ->
+    catch
+        _Class:Reason:_Stack ->
             ?LOG_DEBUG("ae balance fallback account=~p error=~p", [AeAccount, Reason]),
             0
-end.
+    end.
 
 fetch_sats_ledger(AeAccount) ->
     try damage_nwc:ledger_balance_for_account_cached(AeAccount) of
@@ -421,10 +422,10 @@ mdw_get_json(PathFun) ->
                 await_json(ConnPid, StreamRef, request_timeout_ms())
             after
                 try
-    gun:close(ConnPid)
-catch
-    _Class:_Reason:_Stack -> ok
-end
+                    gun:close(ConnPid)
+                catch
+                    _Class:_Reason:_Stack -> ok
+                end
             end;
         Error ->
             {error, Error}

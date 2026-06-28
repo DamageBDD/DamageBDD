@@ -202,18 +202,28 @@ step(_Config, Context, _Keyword, _N, ?S_ADD_AUR_SCAN_DIR, _Body) ->
 step(_Config, Context, _Keyword, _N, ?S_ADD_CACHE_SCAN_DIR, _Body) ->
     PathBin = trim_quotes(to_bin(Path)),
     update_ns(Context, fun(NS) ->
-        NS#{cache_dirs => lists:usort([to_s(PathBin) | maps:get(cache_dirs, NS, default_cache_dirs())])}
+        NS#{
+            cache_dirs => lists:usort([
+                to_s(PathBin) | maps:get(cache_dirs, NS, default_cache_dirs())
+            ])
+        }
     end);
 step(_Config, Context, _Keyword, _N, ?S_COLLECT, _Body) ->
     collect(Context);
 step(_Config, Context, _Keyword, _N, ?S_NO_AFFECTED, _Body) ->
     assert_no_affected_package(ensure_collected(Context));
 step(_Config, Context, _Keyword, _N, ?S_NO_AUR_IOC, _Body) ->
-    assert_empty_findings(ensure_collected(Context), aur_findings, "Atomic Arch IOC found in AUR build files");
+    assert_empty_findings(
+        ensure_collected(Context), aur_findings, "Atomic Arch IOC found in AUR build files"
+    );
 step(_Config, Context, _Keyword, _N, ?S_NO_CACHE_IOC, _Body) ->
-    assert_empty_findings(ensure_collected(Context), cache_findings, "Atomic Arch IOC found in npm/bun caches");
+    assert_empty_findings(
+        ensure_collected(Context), cache_findings, "Atomic Arch IOC found in npm/bun caches"
+    );
 step(_Config, Context, _Keyword, _N, ?S_NO_SYSTEMD, _Body) ->
-    assert_empty_findings(ensure_collected(Context), systemd_findings, "Suspicious systemd persistence found");
+    assert_empty_findings(
+        ensure_collected(Context), systemd_findings, "Suspicious systemd persistence found"
+    );
 step(_Config, Context, _Keyword, _N, ?S_NO_EBPF, _Body) ->
     assert_no_ebpf_artifacts(ensure_collected(Context));
 step(_Config, Context, _Keyword, _N, ?S_BPF_DISABLED, _Body) ->
@@ -267,9 +277,13 @@ fetch_latest_affected_list_to_ipfs(Context, UrlBin0, StoreVar) ->
                                 _ -> store_var(StoreVar, HashBin, Context1)
                             end;
                         {error, Reason} ->
-                            fail(Context, "Fetched affected AUR package list but IPFS add failed: ~p", [
-                                Reason
-                            ])
+                            fail(
+                                Context,
+                                "Fetched affected AUR package list but IPFS add failed: ~p",
+                                [
+                                    Reason
+                                ]
+                            )
                     end
             end
     end.
@@ -552,10 +566,16 @@ assert_bpf_hardened(Context) ->
             fail(Context, "Could not read kernel.unprivileged_bpf_disabled: ~p", [Cmd]);
         true ->
             case maps:get(bpf_hardening, E, undefined) of
-                <<"1">> -> Context;
-                <<"2">> -> Context;
+                <<"1">> ->
+                    Context;
+                <<"2">> ->
+                    Context;
                 <<"0">> ->
-                    fail(Context, "kernel.unprivileged_bpf_disabled is 0; unprivileged BPF loading is enabled", []);
+                    fail(
+                        Context,
+                        "kernel.unprivileged_bpf_disabled is 0; unprivileged BPF loading is enabled",
+                        []
+                    );
                 Other ->
                     fail(Context, "Unexpected kernel.unprivileged_bpf_disabled value: ~p", [Other])
             end
@@ -564,9 +584,15 @@ assert_bpf_hardened(Context) ->
 assert_full_pass(Context0) ->
     Checks = [
         fun assert_no_affected_package/1,
-        fun(C) -> assert_empty_findings(C, aur_findings, "Atomic Arch IOC found in AUR build files") end,
-        fun(C) -> assert_empty_findings(C, cache_findings, "Atomic Arch IOC found in npm/bun caches") end,
-        fun(C) -> assert_empty_findings(C, systemd_findings, "Suspicious systemd persistence found") end,
+        fun(C) ->
+            assert_empty_findings(C, aur_findings, "Atomic Arch IOC found in AUR build files")
+        end,
+        fun(C) ->
+            assert_empty_findings(C, cache_findings, "Atomic Arch IOC found in npm/bun caches")
+        end,
+        fun(C) ->
+            assert_empty_findings(C, systemd_findings, "Suspicious systemd persistence found")
+        end,
         fun assert_no_ebpf_artifacts/1,
         fun assert_bpf_hardened/1
     ],
@@ -587,13 +613,21 @@ run_cmd(Name, Args) ->
     case resolve_exe(Name) of
         {ok, Exe} ->
             Res =
-                try exec:run([Exe | [to_s(A) || A <- Args]], [sync, stdout, stderr, {cd, "/"}])
-                catch Class:Reason:Stack -> {exec_crash, Class, Reason, Stack}
+                try
+                    exec:run([Exe | [to_s(A) || A <- Args]], [sync, stdout, stderr, {cd, "/"}])
+                catch
+                    Class:Reason:Stack -> {exec_crash, Class, Reason, Stack}
                 end,
             normalize_exec(Name, Args, Res);
         {error, Reason} ->
-            #{ok => false, name => to_bin(Name), args => [to_bin(A) || A <- Args], status => 127,
-                stdout => <<>>, stderr => to_bin(Reason)}
+            #{
+                ok => false,
+                name => to_bin(Name),
+                args => [to_bin(A) || A <- Args],
+                status => 127,
+                stdout => <<>>,
+                stderr => to_bin(Reason)
+            }
     end.
 
 sudo_run_cmd(Name, Args) ->
@@ -601,28 +635,60 @@ sudo_run_cmd(Name, Args) ->
         {{ok, Sudo}, {ok, Exe}} ->
             FullArgs = ["-n", Exe | [to_s(A) || A <- Args]],
             Res =
-                try exec:run([Sudo | FullArgs], [sync, stdout, stderr, {cd, "/"}])
-                catch Class:Reason:Stack -> {exec_crash, Class, Reason, Stack}
+                try
+                    exec:run([Sudo | FullArgs], [sync, stdout, stderr, {cd, "/"}])
+                catch
+                    Class:Reason:Stack -> {exec_crash, Class, Reason, Stack}
                 end,
             normalize_exec("sudo", FullArgs, Res);
         {{error, Reason}, _} ->
-            #{ok => false, name => <<"sudo">>, args => [to_bin(Name) | [to_bin(A) || A <- Args]],
-                status => 127, stdout => <<>>, stderr => to_bin(Reason)};
+            #{
+                ok => false,
+                name => <<"sudo">>,
+                args => [to_bin(Name) | [to_bin(A) || A <- Args]],
+                status => 127,
+                stdout => <<>>,
+                stderr => to_bin(Reason)
+            };
         {_, {error, Reason}} ->
-            #{ok => false, name => to_bin(Name), args => [to_bin(A) || A <- Args],
-                status => 127, stdout => <<>>, stderr => to_bin(Reason)}
+            #{
+                ok => false,
+                name => to_bin(Name),
+                args => [to_bin(A) || A <- Args],
+                status => 127,
+                stdout => <<>>,
+                stderr => to_bin(Reason)
+            }
     end.
 
 normalize_exec(Name, Args, {ok, Props}) ->
-    #{ok => true, name => to_bin(Name), args => [to_bin(A) || A <- Args], status => 0,
-        stdout => prop_iolist(stdout, Props), stderr => prop_iolist(stderr, Props)};
+    #{
+        ok => true,
+        name => to_bin(Name),
+        args => [to_bin(A) || A <- Args],
+        status => 0,
+        stdout => prop_iolist(stdout, Props),
+        stderr => prop_iolist(stderr, Props)
+    };
 normalize_exec(Name, Args, {error, Props}) when is_list(Props) ->
     Status = proplists:get_value(exit_status, Props, 1),
-    #{ok => false, name => to_bin(Name), args => [to_bin(A) || A <- Args], status => Status,
-        stdout => prop_iolist(stdout, Props), stderr => prop_iolist(stderr, Props)};
+    #{
+        ok => false,
+        name => to_bin(Name),
+        args => [to_bin(A) || A <- Args],
+        status => Status,
+        stdout => prop_iolist(stdout, Props),
+        stderr => prop_iolist(stderr, Props)
+    };
 normalize_exec(Name, Args, Other) ->
-    #{ok => false, name => to_bin(Name), args => [to_bin(A) || A <- Args], status => unknown,
-        stdout => <<>>, stderr => to_bin(io_lib:format("~p", [Other]))}.
+    #{
+        ok => false,
+        name => to_bin(Name),
+        args => [to_bin(A) || A <- Args],
+        status => unknown,
+        stdout => <<>>,
+        stderr => to_bin(io_lib:format("~p", [Other]))
+    }.
 
 prop_iolist(Key, Props) ->
     iolist_to_binary(proplists:get_value(Key, Props, [])).
@@ -667,16 +733,34 @@ grep_iocs([], _Mode) ->
     #{cmd => #{ok => true, status => skipped, stdout => <<>>, stderr => <<>>}, findings => []};
 grep_iocs(Dirs, aur) ->
     Args =
-        ["-RInE", aur_regex(), "--include=PKGBUILD", "--include=*.install", "--include=package.json",
-            "--include=package-lock.json", "--include=bun.lock", "--"] ++ Dirs,
+        [
+            "-RInE",
+            aur_regex(),
+            "--include=PKGBUILD",
+            "--include=*.install",
+            "--include=package.json",
+            "--include=package-lock.json",
+            "--include=bun.lock",
+            "--"
+        ] ++ Dirs,
     Cmd = run_cmd("grep", Args),
     #{cmd => Cmd, findings => grep_findings(Cmd)};
 grep_iocs(Dirs, cache) ->
     Cmd = run_cmd("grep", ["-RInE", cache_regex(), "--"] ++ Dirs),
     #{cmd => Cmd, findings => grep_findings(Cmd)};
 grep_iocs(Dirs, systemd) ->
-    Cmd = run_cmd("grep", ["-RInE", systemd_regex(), "--include=*.service", "--include=*.timer",
-        "--include=*.socket", "--include=*.path", "--"] ++ Dirs),
+    Cmd = run_cmd(
+        "grep",
+        [
+            "-RInE",
+            systemd_regex(),
+            "--include=*.service",
+            "--include=*.timer",
+            "--include=*.socket",
+            "--include=*.path",
+            "--"
+        ] ++ Dirs
+    ),
     #{cmd => Cmd, findings => grep_findings(Cmd)}.
 
 grep_findings(Cmd) ->
@@ -721,8 +805,12 @@ ebpf_tool_errors(E) ->
     [summarize_cmd(C) || C <- Errors0].
 
 summarize_cmd(Cmd) ->
-    #{name => maps:get(name, Cmd, undefined), args => maps:get(args, Cmd, []), status => maps:get(status, Cmd, undefined),
-        stderr => maps:get(stderr, Cmd, <<>>)}.
+    #{
+        name => maps:get(name, Cmd, undefined),
+        args => maps:get(args, Cmd, []),
+        status => maps:get(status, Cmd, undefined),
+        stderr => maps:get(stderr, Cmd, <<>>)
+    }.
 
 %% --------------------------------------------------------------------
 %% Pacman log helpers
@@ -731,7 +819,12 @@ summarize_cmd(Cmd) ->
 pacman_events_since(Since) ->
     case file:read_file("/var/log/pacman.log") of
         {ok, Bin} ->
-            [Line || Line <- split_lines(Bin), pacman_line_since(Line, Since), pacman_install_or_upgrade(Line)];
+            [
+                Line
+             || Line <- split_lines(Bin),
+                pacman_line_since(Line, Since),
+                pacman_install_or_upgrade(Line)
+            ];
         {error, _} ->
             []
     end.
@@ -780,39 +873,41 @@ default_ns() ->
 report(Context) ->
     Ctx = ensure_collected(Context),
     E = evidence(Ctx),
-    iolist_to_binary(io_lib:format(
-        "Arch AUR/eBPF vulnerability report~n"
-        "since=~p~n"
-        "foreign_packages=~p~n"
-        "pacman_events_since=~p~n"
-        "aur_findings=~p~n"
-        "cache_findings=~p~n"
-        "systemd_findings=~p~n"
-        "bpf_pin_findings=~p~n"
-        "bpf_prog_findings=~p~n"
-        "bpf_map_findings=~p~n"
-        "bpf_hardening=~p~n"
-        "affected_packages_url=~p~n"
-        "affected_packages_count=~p~n"
-        "affected_packages_ipfs_hash=~p~n"
-        "affected_packages_sha256=~p~n",
-        [
-            maps:get(since, E, undefined),
-            maps:get(foreign_packages, E, []),
-            maps:get(pacman_events_since, E, []),
-            maps:get(aur_findings, E, []),
-            maps:get(cache_findings, E, []),
-            maps:get(systemd_findings, E, []),
-            maps:get(bpf_pin_findings, E, []),
-            maps:get(bpf_prog_findings, E, []),
-            maps:get(bpf_map_findings, E, []),
-            maps:get(bpf_hardening, E, undefined),
-            maps:get(affected_packages_url, ns(Ctx), undefined),
-            length(maps:get(affected_packages, E, [])),
-            maps:get(affected_packages_ipfs_hash, ns(Ctx), undefined),
-            maps:get(affected_packages_sha256, ns(Ctx), undefined)
-        ]
-    )).
+    iolist_to_binary(
+        io_lib:format(
+            "Arch AUR/eBPF vulnerability report~n"
+            "since=~p~n"
+            "foreign_packages=~p~n"
+            "pacman_events_since=~p~n"
+            "aur_findings=~p~n"
+            "cache_findings=~p~n"
+            "systemd_findings=~p~n"
+            "bpf_pin_findings=~p~n"
+            "bpf_prog_findings=~p~n"
+            "bpf_map_findings=~p~n"
+            "bpf_hardening=~p~n"
+            "affected_packages_url=~p~n"
+            "affected_packages_count=~p~n"
+            "affected_packages_ipfs_hash=~p~n"
+            "affected_packages_sha256=~p~n",
+            [
+                maps:get(since, E, undefined),
+                maps:get(foreign_packages, E, []),
+                maps:get(pacman_events_since, E, []),
+                maps:get(aur_findings, E, []),
+                maps:get(cache_findings, E, []),
+                maps:get(systemd_findings, E, []),
+                maps:get(bpf_pin_findings, E, []),
+                maps:get(bpf_prog_findings, E, []),
+                maps:get(bpf_map_findings, E, []),
+                maps:get(bpf_hardening, E, undefined),
+                maps:get(affected_packages_url, ns(Ctx), undefined),
+                length(maps:get(affected_packages, E, [])),
+                maps:get(affected_packages_ipfs_hash, ns(Ctx), undefined),
+                maps:get(affected_packages_sha256, ns(Ctx), undefined)
+            ]
+        )
+    ).
 
 fail(Context, Fmt, Args) ->
     maps:put(fail, damage_utils:strf(Fmt, Args), Context).
@@ -881,7 +976,10 @@ valid_date(Bin) ->
     end.
 
 split_lines(Bin) when is_binary(Bin) ->
-    [Line || Line <- [trim(Line0) || Line0 <- binary:split(Bin, <<"\n">>, [global])], Line =/= <<>>].
+    [
+        Line
+     || Line <- [trim(Line0) || Line0 <- binary:split(Bin, <<"\n">>, [global])], Line =/= <<>>
+    ].
 
 contains(Haystack, Needle) ->
     binary:match(to_bin(Haystack), to_bin(Needle)) =/= nomatch.
