@@ -37,13 +37,18 @@
 -define(S_AUTH_CALLS, ["authorised client", Client, "calls", Method]).
 -define(S_CLIENT_CALLS, ["client", Client, "calls", Method]).
 -define(S_AUTH_REQUESTS_SIGNING, ["authorised client", Client, "requests signing"]).
--define(S_AUTH_REQUESTS_SIGNING_VALID_EVENT,
-     ["authorised client",
-      Client,
-      "requests signing for an otherwise valid event"]).
+-define(S_AUTH_REQUESTS_SIGNING_VALID_EVENT, [
+    "authorised client",
+    Client,
+    "requests signing for an otherwise valid event"
+]).
 -define(S_CLIENT_REQUESTS_SIGNING, ["the client requests signing"]).
+-define(S_AUTH_REQUESTS_SIGNING_DEFAULT_RENDERED, [
+    "authorised client AUTHORISED_CLIENT_PUBKEY_HEX requests signing"
+]).
 -define(S_ANY_CLIENT_ANY_SIGNING, ["any client requests any signing operation"]).
 -define(S_ANY_CLIENT_REQUESTS_METHODS, ["any client requests", MethodA, "or", _MethodB]).
+-define(S_ANY_CLIENT_REQUESTS_METHODS_RENDERED, ["any client requests", Methods]).
 -define(S_WRITE_AUDIT_ROW, ["the bunker writes an audit row"]).
 -define(S_SAME_CLIENT_SUBMITS_REPLAY, [
     "the same client submits request id", RequestId, "for payload hash", PayloadHash, "again"
@@ -51,6 +56,7 @@
 -define(S_SAME_CLIENT_SUBMITS_CONFLICT, [
     "the same client submits request id", RequestId, "for payload hash", PayloadHash
 ]).
+-define(S_SAME_CLIENT_SUBMITS_RENDERED, ["the same client submits request id ", RequestPayloadHash]).
 
 %% Given state
 -define(S_BUNKER_TIME, ["bunker time is", BunkerTime]).
@@ -62,23 +68,31 @@
     "an unsigned kind", Kind, "event with the required minimal tags"
 ]).
 -define(S_EVENT_MISSING_TAGS, ["the event does not contain tags", _Tags]).
+-define(S_EVENT_MISSING_TAGS_RENDERED, ["the event does not contain tags ", _Tags]).
 -define(S_EVENT_MISSING_TAGS_3, [
     "the event does not contain tags", _D, ",", _Title, ", and", _PublishedAt
 ]).
 -define(S_EVENT_PASSES_POLICY, [
     "the event passes stale, size, HTML, kind, and client policy checks"
 ]).
--define(S_EVENT_SCRIPT, ["an unsigned kind 30023 event whose content contains", Script]).
--define(S_EVENT_SCRIPT_SPLIT, [
-    "an unsigned kind", Kind, "event whose content contains", Script
-]).
+-define(S_EVENT_SCRIPT, ["an unsigned kind", Kind,  "event whose content contains", Script]).
 -define(S_REPLAY_SEED, [
     "authorised client", Client, "submitted request id", RequestId, "for payload hash", PayloadHash
+]).
+-define(S_REPLAY_SEED_RENDERED, [
+    "authorised client", Client, "submitted request id", RequestPayloadHash
 ]).
 -define(S_RATE_EXCEEDED, [
     "authorised client",
     Client,
     "has exceeded",
+    MaxRequests,
+    "requests in a",
+    _WindowSecs,
+    "second window"
+]).
+-define(S_RATE_EXCEEDED_RENDERED, [
+    "authorised client " ++ ClientHasExceeded,
     MaxRequests,
     "requests in a",
     _WindowSecs,
@@ -115,6 +129,8 @@
 ]).
 -define(S_NO_DIVERGENT_SIG, ["the bunker MUST NOT produce a divergent signature"]).
 -define(S_REPLAY_MAY_BE, ["the replay decision MAY be", Decision]).
+%% Rendered/tokenizer assertion variants with retained parameters.
+%% These use string-list prefix patterns so the match is readable and exact.
 -define(S_FAIL_CLOSED, ["the request MUST fail closed"]).
 -define(S_NO_PARTIAL_SIG, ["no partial signature material MUST be exposed"]).
 -define(S_NO_SIGNING_BACKEND, ["no signing backend MUST be invoked"]).
@@ -232,30 +248,27 @@ step(_Config, Context, _Keyword, _N, ?S_EVENT_MISSING_TAGS_3, _Args) ->
     Event0 = event(Context),
     Event = Event0#{tags => []},
     update_event(Context, Event);
+step(_Config, Context, _Keyword, _N, ?S_EVENT_MISSING_TAGS_RENDERED, _Args) ->
+    Event0 = event(Context),
+    Event = Event0#{tags => []},
+    update_event(Context, Event);
 step(_Config, Context, _Keyword, _N, ?S_EVENT_PASSES_POLICY, _Args) ->
     update_ns(Context, fun(NS) -> NS#{event_policy_expected_valid => true} end);
 step(_Config, Context, _Keyword, _N, ?S_EVENT_SCRIPT, _Args) ->
     Content = <<"# Bad\n", (to_bin(Script))/binary, ">alert(1)</script>">>,
-    Event = (valid_event(30023, now(Context)))#{content => Content},
-    update_event(Context, Event);
-step(_Config, Context, _Keyword, _N, ?S_EVENT_SCRIPT_SPLIT, _Args) ->
-    Content = <<"# Bad\n", (to_bin(Script))/binary, ">alert(1)</script>">>,
     Event = (valid_event(to_int(Kind), now(Context)))#{content => Content},
     update_event(Context, Event);
 step(_Config, Context, _Keyword, _N, ?S_REPLAY_SEED, _Args) ->
-    ensure_servers(),
-    ok = damage_nsecbunker_replay:check_and_mark(
-        to_bin(Client), to_bin(RequestId), to_bin(PayloadHash)
-    ),
-    update_ns(Context, fun(NS) ->
-        NS#{last_replay_seed => {to_bin(Client), to_bin(RequestId), to_bin(PayloadHash)}}
-    end);
+    seed_replay(Context, to_bin(Client), to_bin(RequestId), to_bin(PayloadHash));
+step(_Config, Context, _Keyword, _N, ?S_REPLAY_SEED_RENDERED, _Args) ->
+    {RequestId, PayloadHash} = request_payload_hash_parts(RequestPayloadHash),
+    seed_replay(Context, to_bin(Client), RequestId, PayloadHash);
 step(_Config, Context, _Keyword, _N, ?S_RATE_EXCEEDED, _Args) ->
-    ensure_servers(),
-    application:set_env(damage, nsecbunker_rate_backend, ets),
-
-    ok = damage_nsecbunker_rate:seed(to_bin(Client), now(Context), to_int(MaxRequests)),
-    update_ns(Context, fun(NS) -> NS#{rate_limited_client => to_bin(Client)} end);
+    rate_exceeded(Context, to_bin(Client), MaxRequests);
+step(_Config, Context, _Keyword, _N, ?S_RATE_EXCEEDED_RENDERED, _Args) ->
+    rate_exceeded(
+        Context, strip_required_suffix(ClientHasExceeded, <<" has exceeded">>), MaxRequests
+    );
 step(_Config, Context, _Keyword, _N, ?S_TIMEOUT, _Args) ->
     update_ns(Context, fun(NS) ->
         NS#{force_signing_timeout => true, simulated_elapsed_ms => to_int(TimeoutMs) + 1}
@@ -266,13 +279,7 @@ step(_Config, Context, _Keyword, _N, ?S_VAULT_CORRUPT, _Args) ->
         NS0#{vault_state => Vault0#{integrity => failed}}
     end);
 step(_Config, Context, _Keyword, _N, ?S_VAULT_MISMATCH, _Args) ->
-    update_ns(Context, fun(NS0) ->
-        Vault0 = vault(NS0),
-        NS0#{
-            vault_state => Vault0#{pubkey_hex => <<"DIFFERENT_PUBKEY_HEX">>},
-            mismatch_target => to_bin(Pubkey)
-        }
-    end);
+    vault_mismatch(Context, to_bin(Pubkey));
 step(_Config, Context, _Keyword, _N, ?S_RELAY_DRIFT, _Args) ->
     update_ns(Context, fun(NS) ->
         NS#{relay_vector => [<<"wss://replacement.example">>], relay_drifted => true}
@@ -284,9 +291,14 @@ step(_Config, Context, _Keyword, _N, ?S_CLIENT_CALLS, _Args) ->
     method_call(Context, to_bin(Client), to_bin(Method));
 step(_Config, Context, _Keyword, _N, ?S_AUTH_REQUESTS_SIGNING, _Args) ->
     request_signing(Context, to_bin(Client));
-
-step(_Config, Context, _Keyword, _N,
-     ?S_AUTH_REQUESTS_SIGNING_VALID_EVENT, _Args) ->
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _N,
+    ?S_AUTH_REQUESTS_SIGNING_VALID_EVENT,
+    _Args
+) ->
     request_signing(Context, to_bin(Client));
 step(_Config, Context, _Keyword, _N, ?S_CLIENT_REQUESTS_SIGNING, _Args) ->
     Client = maps:get(rate_limited_client, ns(Context), first_authorized_client(Context)),
@@ -295,10 +307,15 @@ step(_Config, Context, _Keyword, _N, ?S_ANY_CLIENT_ANY_SIGNING, _Args) ->
     request_signing(Context, <<"ANY_CLIENT_PUBKEY_HEX">>);
 step(_Config, Context, _Keyword, _N, ?S_ANY_CLIENT_REQUESTS_METHODS, _Args) ->
     method_call(Context, first_authorized_client(Context), to_bin(MethodA));
+step(_Config, Context, _Keyword, _N, ?S_ANY_CLIENT_REQUESTS_METHODS_RENDERED, _Args) ->
+    method_call(Context, first_authorized_client(Context), first_or_method(Methods));
 step(_Config, Context, _Keyword, _N, ?S_SAME_CLIENT_SUBMITS_REPLAY, _Args) ->
     replay_submit(Context, to_bin(RequestId), to_bin(PayloadHash));
 step(_Config, Context, _Keyword, _N, ?S_SAME_CLIENT_SUBMITS_CONFLICT, _Args) ->
     replay_submit(Context, to_bin(RequestId), to_bin(PayloadHash));
+step(_Config, Context, _Keyword, _N, ?S_SAME_CLIENT_SUBMITS_RENDERED, _Args) ->
+    {RequestId, PayloadHash} = request_payload_hash_parts(RequestPayloadHash),
+    replay_submit(Context, RequestId, PayloadHash);
 step(_Config, Context, _Keyword, _N, ?S_WRITE_AUDIT_ROW, _Args) ->
     Audit = audit_line(
         Context,
@@ -378,17 +395,7 @@ step(_Config, Context, _Keyword, _N, ?S_NO_DIVERGENT_SIG, _Args) ->
         "divergent signature was produced"
     );
 step(_Config, Context, _Keyword, _N, ?S_REPLAY_MAY_BE, _Args) ->
-    Expected = to_bin(Decision),
-    Actual = maps:get(replay_decision, ns(Context), <<>>),
-    case Actual =:= Expected orelse Actual =:= <<>> of
-        true ->
-            Context;
-        false ->
-            fail(
-                Context,
-                damage_utils:strf("replay decision ~p is not acceptable as ~p", [Actual, Expected])
-            )
-    end;
+    assert_replay_may_be(Context, Decision);
 step(_Config, Context, _Keyword, _N, ?S_FAIL_CLOSED, _Args) ->
     C1 = assert_decision(Context, last_decision, <<"rejected">>),
     assert_false(C1, maps:get(signer_invoked, ns(C1), false), "request did not fail closed");
@@ -450,6 +457,87 @@ step(_Config, Context, _Keyword, _N, ?S_RELAY_OUTSIDE, _Args) ->
         maps:get(published_to_relay, ns(Context), false),
         "relay publication leaked into bunker scope"
     ).
+
+%% ===== Rendered parameter helpers ==========================================
+first_or_method(Methods0) ->
+    Methods = to_bin(Methods0),
+    case binary:split(Methods, <<" or ">>) of
+        [Method, _Rest] when Method =/= <<>> -> Method;
+        [Method] -> Method
+    end.
+
+request_payload_hash_parts(RequestPayloadHash0) ->
+    RequestPayloadHash = maybe_strip_suffix(<<" again">>, to_bin(RequestPayloadHash0)),
+    case binary:split(RequestPayloadHash, <<" for payload hash ">>) of
+        [RequestId, PayloadHash] when RequestId =/= <<>>, PayloadHash =/= <<>> ->
+            {RequestId, PayloadHash};
+        _ ->
+            {RequestPayloadHash, <<>>}
+    end.
+
+strip_required_suffix(Value0, Suffix) ->
+    Value = to_bin(Value0),
+    case strip_suffix(Suffix, Value) of
+        {ok, Head} -> Head;
+        error -> Value
+    end.
+
+strip_suffix(<<>>, Bin) when is_binary(Bin) ->
+    {ok, Bin};
+strip_suffix(Suffix, Bin) when is_binary(Suffix), is_binary(Bin) ->
+    SuffixSize = byte_size(Suffix),
+    BinSize = byte_size(Bin),
+    case BinSize >= SuffixSize of
+        true ->
+            HeadSize = BinSize - SuffixSize,
+            case Bin of
+                <<Head:HeadSize/binary, Suffix:SuffixSize/binary>> -> {ok, Head};
+                _ -> error
+            end;
+        false ->
+            error
+    end.
+
+maybe_strip_suffix(Suffix, Bin) ->
+    case strip_suffix(Suffix, Bin) of
+        {ok, Head} -> Head;
+        error -> Bin
+    end.
+
+rate_exceeded(Context, ClientBin, MaxRequests) ->
+    ensure_servers(),
+    application:set_env(damage, nsecbunker_rate_backend, ets),
+    ok = damage_nsecbunker_rate:seed(ClientBin, now(Context), to_int(MaxRequests)),
+    update_ns(Context, fun(NS) -> NS#{rate_limited_client => ClientBin} end).
+
+seed_replay(Context, ClientBin, RequestId, PayloadHash) ->
+    ensure_servers(),
+    ok = damage_nsecbunker_replay:check_and_mark(ClientBin, RequestId, PayloadHash),
+    update_ns(Context, fun(NS) ->
+        NS#{last_replay_seed => {ClientBin, RequestId, PayloadHash}}
+    end).
+
+vault_mismatch(Context, Pubkey) ->
+    update_ns(Context, fun(NS0) ->
+        Vault0 = vault(NS0),
+        NS0#{
+            vault_state => Vault0#{pubkey_hex => <<"DIFFERENT_PUBKEY_HEX">>},
+            mismatch_target => Pubkey
+        }
+    end).
+
+assert_replay_may_be(Context, Decision) ->
+    Expected = to_bin(Decision),
+    Actual = maps:get(replay_decision, ns(Context), <<>>),
+    case Actual =:= Expected orelse Actual =:= <<>> of
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                damage_utils:strf("replay decision ~p is not acceptable as ~p", [Actual, Expected])
+            )
+    end.
 
 %% ===== Step actions =========================================================
 set_allowed_methods(Context, Args) ->
