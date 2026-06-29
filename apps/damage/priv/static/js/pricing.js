@@ -175,7 +175,7 @@
 
 	document.addEventListener("DOMContentLoaded", async function() {
 		pendingConverterRecalc = bindConverter();
-		tick();
+		//tick();
 		setInterval(tick, 60000);
 	});
 
