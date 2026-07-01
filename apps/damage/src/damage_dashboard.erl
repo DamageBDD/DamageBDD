@@ -30,13 +30,11 @@ allowed_methods(Req, State) -> {[<<"GET">>], Req, State}.
 content_types_provided(Req, State) -> {[{{<<"text">>, <<"html">>, '*'}, to_html}], Req, State}.
 is_authorized(Req, State0) ->
     Resp = damage_auth:maybe_authenticate(Req, State0),
-    ?LOG_DEBUG("is_authorized 2 ~p ", [Resp]),
     Resp.
 
 to_html(Req, #{action := index} = State) ->
     Ctx0 = maps:merge(base_context(Req), State),
     #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
-    ?LOG_DEBUG("node admin state ~p ~p ~p", [maps:get(node_admin, Ctx0, false), Ctx0, State]),
     case Comp0 of
         undefined ->
             {render_full_page(Ctx0), Req, State};

@@ -492,7 +492,7 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                     Result1 =
                                         maps:put(
                                             tx_hash,
-                                            TxHash,
+                                            to_bin(TxHash),
                                             maps:put(spend, Spend, Result0)
                                         ),
                                     Result = maybe_l402_result_meta(ContextIn, Result1),
@@ -804,7 +804,7 @@ do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
     of
         {ok, #{tx := Unsigned, tx_hash := TxHash}} ->
             Reply = #{
-                status => <<"ok">>, tx => Unsigned, tx_hash => TxHash, responder => Responder
+                status => <<"ok">>, tx => Unsigned, tx_hash => to_bin(TxHash), responder => Responder
             },
             {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
         {error, Reason} ->
