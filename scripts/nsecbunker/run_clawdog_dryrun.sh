@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-DAMAGE_URL="${DAMAGE_URL:-http://localhost:8080}"
+DAMAGE_URL="${DAMAGE_URL:-http://localhost:4888}"
 FEATURE="${FEATURE:-features/nsecbunker/clawdog_nsecbunker_contract.feature}"
 OUT="${OUT:-/tmp/nsecbunker-clawdog-dryrun.json}"
 
@@ -22,6 +22,7 @@ PY
 curl -sS \
   -X PUT \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer "$AUTH_TOKEN \
   --data-binary @/tmp/nsecbunker-feature-payload.json \
   "$DAMAGE_URL/execute_feature/" | tee "$OUT"
 

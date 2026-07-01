@@ -2,6 +2,7 @@
 %% damage_nsecbunker_vault
 %%
 %% Vault/crypto boundary for the in-tree Damage NIP-46 bunker.
+%% Phase 2B C backend patch: every backend call carries vault_path.
 %% This module never returns nsec material. Until a crypto backend executable
 %% is configured, every identity/sign/encrypt/decrypt operation fails closed.
 %%--------------------------------------------------------------------
@@ -80,11 +81,11 @@ export_identity(Vault, Config, Policy) ->
             {error, Reason}
     end.
 
-public_key(#vault{policy = Policy} = Vault) ->
+public_key(#vault{policy = Policy, path = Path} = Vault) ->
     Expected = maps:get(bunker_pubkey_hex, Policy, undefined),
     case valid_pubkey(Expected) of
         true -> {ok, Expected};
-        false -> call_backend_field(Vault, #{op => <<"get_public_key">>}, pubkey_hex)
+        false -> call_backend_field(Vault, #{op => <<"get_public_key">>, vault_path => Path}, pubkey_hex)
     end.
 
 bunker_uri_pattern(Vault, Config) ->
@@ -93,26 +94,26 @@ bunker_uri_pattern(Vault, Config) ->
         {error, Reason} -> {error, Reason}
     end.
 
-sign_event(Vault, Event0) ->
+sign_event(#vault{path = Path} = Vault, Event0) ->
     case public_key(Vault) of
         {ok, Pubkey} ->
             Event = damage_nostr_event:ensure_event_id(Event0#{pubkey => Pubkey}),
-            call_backend_field(Vault, #{op => <<"sign_event">>, event => Event}, event);
+            call_backend_field(Vault, #{op => <<"sign_event">>, vault_path => Path, event => Event}, event);
         {error, Reason} ->
             {error, Reason}
     end.
 
-nip44_decrypt(Vault, ClientPubkey, Ciphertext) ->
+nip44_decrypt(#vault{path = Path} = Vault, ClientPubkey, Ciphertext) ->
     call_backend_field(
         Vault,
-        #{op => <<"nip44_decrypt">>, client_pubkey => ClientPubkey, ciphertext => Ciphertext},
+        #{op => <<"nip44_decrypt">>, vault_path => Path, client_pubkey => ClientPubkey, ciphertext => Ciphertext},
         plaintext
     ).
 
-nip44_encrypt(Vault, ClientPubkey, Plaintext) ->
+nip44_encrypt(#vault{path = Path} = Vault, ClientPubkey, Plaintext) ->
     call_backend_field(
         Vault,
-        #{op => <<"nip44_encrypt">>, client_pubkey => ClientPubkey, plaintext => Plaintext},
+        #{op => <<"nip44_encrypt">>, vault_path => Path, client_pubkey => ClientPubkey, plaintext => Plaintext},
         ciphertext
     ).
 
@@ -178,7 +179,8 @@ collect_port(Port, Timeout, Acc) ->
         {Port, {exit_status, Status}} ->
             {error, {crypto_backend_exit, Status, Acc}}
     after Timeout ->
-        safe_port_close(Port)
+        safe_port_close(Port),
+        {error, crypto_backend_timeout}
     end.
 
 safe_port_close(Port) ->

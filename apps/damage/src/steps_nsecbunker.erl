@@ -75,7 +75,7 @@
 -define(S_EVENT_PASSES_POLICY, [
     "the event passes stale, size, HTML, kind, and client policy checks"
 ]).
--define(S_EVENT_SCRIPT, ["an unsigned kind", Kind,  "event whose content contains", Script]).
+-define(S_EVENT_SCRIPT, ["an unsigned kind", Kind, "event whose content contains", Script]).
 -define(S_REPLAY_SEED, [
     "authorised client", Client, "submitted request id", RequestId, "for payload hash", PayloadHash
 ]).
