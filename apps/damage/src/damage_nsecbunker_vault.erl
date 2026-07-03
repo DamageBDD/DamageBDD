@@ -8,6 +8,7 @@
 %%--------------------------------------------------------------------
 -module(damage_nsecbunker_vault).
 
+-include_lib("kernel/include/file.hrl").
 -export([
     init/2,
     status/1,
@@ -128,12 +129,25 @@ backend_cmd(Config) ->
             {error, crypto_backend_not_configured};
         Cmd when is_binary(Cmd) -> backend_cmd(Config#{crypto_backend_cmd => binary_to_list(Cmd)});
         Cmd when is_list(Cmd) ->
-            case filelib:is_executable(Cmd) of
+            case executable_file(Cmd) of
                 true -> {ok, Cmd};
                 false -> {error, {crypto_backend_not_executable, Cmd}}
             end;
         Other ->
             {error, {invalid_crypto_backend_cmd, Other}}
+    end.
+
+executable_file(Cmd) when is_list(Cmd) ->
+    case file:read_file_info(Cmd) of
+        {ok, #file_info{type = regular, mode = Mode}} ->
+            (Mode band 8#111) =/= 0;
+        {ok, #file_info{type = symlink}} ->
+            case file:read_link(Cmd) of
+                {ok, LinkTarget} -> executable_file(filename:absname(LinkTarget, filename:dirname(Cmd)));
+                {error, _} -> false
+            end;
+        _ ->
+            false
     end.
 
 backend_status({ok, Cmd}) ->

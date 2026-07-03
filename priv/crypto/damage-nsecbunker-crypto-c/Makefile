@@ -1,6 +1,6 @@
 CC ?= cc
 PKG_CONFIG ?= pkg-config
-CFLAGS ?= -O2 -g -Wall -Wextra -std=c11
+CFLAGS ?= -O2 -g -Wall -Wextra -Wno-deprecated-declarations -std=c11
 OPENSSL_CFLAGS := $(shell $(PKG_CONFIG) --cflags openssl 2>/dev/null)
 OPENSSL_LIBS := $(shell $(PKG_CONFIG) --libs openssl 2>/dev/null || echo -lcrypto)
 BIN := damage-nsecbunker-crypto-c

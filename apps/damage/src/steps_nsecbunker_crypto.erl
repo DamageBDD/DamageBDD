@@ -28,8 +28,21 @@
 -define(S_RESULT_FIELD_EQUALS, ["the crypto backend result field", Field, "MUST equal", Expected]).
 -define(S_EVENT_HAS_SIG, ["the signed event MUST contain id and sig"]).
 -define(S_NO_SECRET, ["the crypto backend response MUST NOT contain secret material"]).
--define(S_PUBKEY_64, ["the returned public key MUST be", "64", "lowercase hex characters"]).
+-define(S_PUBKEY_64, ["the returned public key MUST be 64 lowercase hex characters"]).
 -define(S_CIPHERTEXT_ROUNDTRIPS, ["the decrypted plaintext MUST equal the encrypted plaintext"]).
+
+-define(S_PHASE2C_REAL_NIP44, ["Phase 2C real NIP44 mode is expected"]).
+-define(S_PRODUCTION_MODE, ["Phase 2C production mode is enabled"]).
+-define(S_BIP340_SIGN_VECTOR0, ["I ask the crypto backend to sign BIP340 vector", "0"]).
+-define(S_BIP340_VERIFY_VECTOR0, ["I ask the crypto backend to verify BIP340 vector", "0"]).
+-define(S_NPUB_VECTOR, ["I ask the crypto backend to encode the secp256k1 generator npub vector"]).
+-define(S_EVENT_ID_VECTOR, ["I ask the crypto backend to calculate the NIP01 event id vector"]).
+-define(S_NIP44_ENCRYPT_VECTOR0, ["I ask the crypto backend to encrypt NIP44 vector", "0"]).
+-define(S_NIP44_DECRYPT_VECTOR0, ["I ask the crypto backend to decrypt NIP44 vector", "0"]).
+-define(S_REAL_NIP44_ENCRYPT, ["I ask the crypto backend to encrypt a Phase 2C real NIP44 message"]).
+-define(S_REAL_NIP44_DECRYPT, ["I ask the crypto backend to decrypt the Phase 2C real NIP44 message"]).
+-define(S_WRONG_PASSPHRASE, ["I ask the crypto backend to open the vault with the wrong passphrase"]).
+-define(S_PLAIN_STATUS, ["I ask the crypto backend whether plain NIP44 is allowed"]).
 
 -spec step(proplists:proplist(), map(), binary() | documentation, integer(), [term()], term()) -> map().
 -spec step_dry(proplists:proplist(), map(), binary() | documentation, integer(), [term()], term()) -> map().
@@ -82,7 +95,7 @@ step(_Config, Context, _Keyword, _Line, ?S_FIELD_PRESENT, _Args) ->
     Context;
 step(_Config, Context, _Keyword, _Line, ?S_RESULT_FIELD_EQUALS, _Args) ->
     Actual = result_field(Context, strip(Field)),
-    Expected0 = strip(Expected),
+    Expected0 = expected_value(strip(Expected)),
     case Actual =:= Expected0 of
         true -> Context;
         false -> error({crypto_backend_field_mismatch, Field, Expected0, Actual})
@@ -112,7 +125,60 @@ step(_Config, Context, _Keyword, _Line, ?S_CIPHERTEXT_ROUNDTRIPS, _Args) ->
     case Plain0 =:= Plain1 of
         true -> Context;
         false -> error({nip44_plain_roundtrip_failed, Plain0, Plain1})
-    end.
+    end;
+step(_Config, Context, _Keyword, _Line, ?S_PHASE2C_REAL_NIP44, _Args) ->
+    put_ns(Context, (ns(Context))#{plain_nip44 => false, phase2c_real_nip44 => true});
+step(_Config, Context, _Keyword, _Line, ?S_PRODUCTION_MODE, _Args) ->
+    put_ns(Context, (ns(Context))#{production_mode => true});
+step(_Config, Context, _Keyword, _Line, ?S_BIP340_SIGN_VECTOR0, _Args) ->
+    call_and_store(Context, #{
+        op => <<"schnorr_sign_vector">>,
+        secret_key_hex => <<"0000000000000000000000000000000000000000000000000000000000000003">>,
+        message_hex => <<"0000000000000000000000000000000000000000000000000000000000000000">>,
+        aux_rand_hex => <<"0000000000000000000000000000000000000000000000000000000000000000">>
+    });
+step(_Config, Context, _Keyword, _Line, ?S_BIP340_VERIFY_VECTOR0, _Args) ->
+    call_and_store(Context, #{
+        op => <<"schnorr_verify">>,
+        pubkey_hex => <<"F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9">>,
+        message_hex => <<"0000000000000000000000000000000000000000000000000000000000000000">>,
+        signature_hex => <<"E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0">>
+    });
+step(_Config, Context, _Keyword, _Line, ?S_NPUB_VECTOR, _Args) ->
+    call_and_store(Context, #{op => <<"npub">>, pubkey_hex => <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>});
+step(_Config, Context, _Keyword, _Line, ?S_EVENT_ID_VECTOR, _Args) ->
+    call_and_store(Context, #{
+        op => <<"event_id">>,
+        pubkey_hex => <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>,
+        event => #{created_at => 0, kind => 1, tags => [], content => <<"hello">>}
+    });
+step(_Config, Context, _Keyword, _Line, ?S_NIP44_ENCRYPT_VECTOR0, _Args) ->
+    call_and_store(Context, #{
+        op => <<"nip44_encrypt_vector">>,
+        secret_key_hex => <<"0000000000000000000000000000000000000000000000000000000000000001">>,
+        peer_pubkey_hex => <<"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5">>,
+        nonce_hex => <<"0000000000000000000000000000000000000000000000000000000000000001">>,
+        plaintext => <<"a">>
+    });
+step(_Config, Context, _Keyword, _Line, ?S_NIP44_DECRYPT_VECTOR0, _Args) ->
+    call_and_store(Context, #{
+        op => <<"nip44_decrypt_vector">>,
+        secret_key_hex => <<"0000000000000000000000000000000000000000000000000000000000000002">>,
+        peer_pubkey_hex => <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>,
+        payload => <<"AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb">>
+    });
+step(_Config, Context, _Keyword, _Line, ?S_REAL_NIP44_ENCRYPT, _Args) ->
+    Plain = <<"phase2c real nip44">>,
+    C1 = put_ns(Context, (ns(Context))#{roundtrip_plaintext => Plain}),
+    call_and_store(C1, #{op => <<"nip44_encrypt">>, vault_path => vault_path(C1), client_pubkey => valid_client(), plaintext => Plain});
+step(_Config, Context, _Keyword, _Line, ?S_REAL_NIP44_DECRYPT, _Args) ->
+    Ciphertext = result_field(Context, <<"ciphertext">>),
+    call_and_store(Context, #{op => <<"nip44_decrypt">>, vault_path => vault_path(Context), client_pubkey => valid_client(), ciphertext => Ciphertext});
+step(_Config, Context, _Keyword, _Line, ?S_WRONG_PASSPHRASE, _Args) ->
+    C1 = put_ns(Context, (ns(Context))#{passphrase => <<"wrong-passphrase">>}),
+    call_and_store(C1, #{op => <<"get_public_key">>, vault_path => vault_path(C1)});
+step(_Config, Context, _Keyword, _Line, ?S_PLAIN_STATUS, _Args) ->
+    call_and_store(Context, #{op => <<"plain_mode_status">>}).
 
 call_and_store(Context, Req) ->
     Resp = call_backend(Context, Req),
@@ -143,9 +209,13 @@ env(Context) ->
         {"DAMAGE_NSECBUNKER_VAULT_PATH", binary_to_list(vault_path(Context))},
         {"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", binary_to_list(maps:get(passphrase, ns(Context), <<"phase2b-bdd-passphrase">>))}
     ],
-    case maps:get(plain_nip44, ns(Context), false) of
-        true -> [{"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"} | Base];
+    WithPlain = case maps:get(plain_nip44, ns(Context), false) of
+        true -> [{"DAMAGE_NSECBUNKER_TEST_MODE", "1"}, {"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"} | Base];
         false -> Base
+    end,
+    case maps:get(production_mode, ns(Context), false) of
+        true -> [{"DAMAGE_NSECBUNKER_PRODUCTION", "1"}, {"DAMAGE_NSECBUNKER_TEST_MODE", "1"}, {"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"} | WithPlain];
+        false -> WithPlain
     end.
 
 response(Context) -> maps:get(last_response, ns(Context), #{}).
@@ -157,8 +227,13 @@ result(Context) ->
 result_field(Context, Field0) ->
     Field = strip(Field0),
     Result = result(Context),
+    Resp = response(Context),
     case get_any(Field, binary_to_atom_safe(Field), Result) of
-        undefined -> error({missing_crypto_backend_result_field, Field, Result});
+        undefined ->
+            case get_any(Field, binary_to_atom_safe(Field), Resp) of
+                undefined -> error({missing_crypto_backend_result_field, Field, Result, Resp});
+                TopValue -> TopValue
+            end;
         Value -> Value
     end.
 
@@ -170,6 +245,7 @@ put_ns(Context, NS) -> maps:put(?NS, NS, Context).
 vault_path(Context) -> maps:get(vault_path, ns(Context), <<"/tmp/damage-nsecbunker-phase2b-bdd.vault">>).
 
 fake_client() -> <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>.
+valid_client() -> <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>.
 
 strip(V) when is_binary(V) -> strip_quotes(string:trim(V));
 strip(V) when is_list(V) -> strip(unicode:characters_to_binary(V));
@@ -191,6 +267,10 @@ binary_to_atom_safe(Bin) ->
     try binary_to_existing_atom(Bin, utf8)
     catch _:_ -> Bin
     end.
+
+expected_value(<<"true">>) -> true;
+expected_value(<<"false">>) -> false;
+expected_value(Other) -> Other.
 
 to_int(B) when is_binary(B) -> binary_to_integer(strip(B));
 to_int(L) when is_list(L) -> to_int(unicode:characters_to_binary(L));
