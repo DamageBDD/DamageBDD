@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -eu
+sha256sum \
+  apps/damage/src/damage_nostr_relay_client.erl \
+  apps/damage/src/steps_nsecbunker_phase3.erl \
+  apps/damage/test/damage_nsecbunker_phase3_relay_tests.erl \
+  features/nsecbunker/phase3_relay_nip46_path.feature \
+  config/sys.config.nsecbunker.phase3.fragment.config \
+  doc/nsecbunker/PHASE3_RELAY_NIP46_COMPLETION.md \
+  doc/nsecbunker/PHASE3_CLAWDOG_REVIEW_NOTES.md \
+  scripts/nsecbunker/run_phase3_relay_eunit.sh \
+  scripts/nsecbunker/run_phase3_relay_feature.sh \
+  scripts/nsecbunker/hash_phase3_relay_artifacts.sh \
+  > MANIFEST.phase3.sha256
+cat MANIFEST.phase3.sha256
