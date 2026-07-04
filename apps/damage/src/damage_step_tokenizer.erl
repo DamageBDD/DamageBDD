@@ -35,9 +35,14 @@ tokenize_scan([C | Rest], in_quote, Acc, Out) ->
 tokenize_scan([C | Rest], outside, Acc, Out) ->
     case is_num_start(C, Rest, Acc) of
         true ->
-            Out1 = flush_acc(Acc, Out),
             {NumTok, Rest1} = read_number([C | Rest]),
-            tokenize_scan(Rest1, outside, [], [NumTok | Out1]);
+            case is_number_boundary_after(Rest1) of
+                true ->
+                    Out1 = flush_acc(Acc, Out),
+                    tokenize_scan(Rest1, outside, [], [NumTok | Out1]);
+                false ->
+                    tokenize_scan(Rest, outside, [C | Acc], Out)
+            end;
         false ->
             tokenize_scan(Rest, outside, [C | Acc], Out)
     end.
@@ -45,6 +50,10 @@ tokenize_scan([C | Rest], outside, Acc, Out) ->
 %% -------------------------------------------------------------------
 %% helpers
 %% -------------------------------------------------------------------
+is_number_boundary_after([]) ->
+    true;
+is_number_boundary_after([Next | _]) ->
+    is_space(Next) orelse is_boundary(Next).
 
 flush_acc([], Out) ->
     Out;
