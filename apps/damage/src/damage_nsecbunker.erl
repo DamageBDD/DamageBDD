@@ -2,7 +2,9 @@
 %% damage_nsecbunker
 %%
 %% Public API and gen_server for the in-tree Damage NIP-46 signer.
-%% Config is read from application:get_env(damage, nsecbunker, #{}).
+%% Config is read from application:get_env(damage, nsecbunker).
+%% sys.config input should be a normal Erlang proplist with strings.
+%% This module canonicalises that to internal maps/binaries at runtime.
 %% Fail-closed until an external crypto backend is configured.
 %%--------------------------------------------------------------------
 -module(damage_nsecbunker).
@@ -64,10 +66,23 @@ policy(Config0) ->
     Limits = maps:get(limits, Config, #{}),
     Kind30023 = maps:get(kind_30023, Config, #{}),
     RateLimit = rate_limit(Config, Limits, Default),
-    MaxEventBytes = #{
-        1 => first_int([max_kind_1_bytes], Limits, 4096),
-        30023 => first_int([max_kind_30023_bytes], Limits, 131072)
-    },
+    MaxEventBytes = max_event_bytes_map(
+        maps:get(
+            max_event_bytes,
+            Config,
+            #{
+                1 => first_int([max_kind_1_bytes], Limits, 4096),
+                30023 => first_int([max_kind_30023_bytes], Limits, 131072)
+            }
+        )
+    ),
+    RequiredTags = required_tags_map(
+        maps:get(
+            required_tags,
+            Config,
+            #{30023 => maps:get(require_tags, Kind30023, ["d", "title", "published_at"])}
+        )
+    ),
     Default#{
         bunker_pubkey_hex => bin(
             first_defined(
@@ -89,10 +104,8 @@ policy(Config0) ->
             Limits,
             maps:get(created_at_skew_seconds, Default)
         ),
-        max_event_bytes => maps:get(max_event_bytes, Config, MaxEventBytes),
-        required_tags => maps:get(required_tags, Config, #{
-            30023 => maps:get(require_tags, Kind30023, [<<"d">>, <<"title">>, <<"published_at">>])
-        }),
+        max_event_bytes => MaxEventBytes,
+        required_tags => RequiredTags,
         reject_active_content => maps:get(
             reject_active_content, Config, maps:get(reject_html, Kind30023, true)
         ),
@@ -274,11 +287,63 @@ execute_request(Request, _State) ->
 %%====================================================================
 
 normalize_config(Config) when is_map(Config) ->
-    Config;
+    normalize_config_map(Config);
 normalize_config(Config) when is_list(Config) ->
-    maps:from_list(Config);
+    case is_kv_list(Config) of
+        true -> normalize_config_map(maps:from_list(Config));
+        false -> #{}
+    end;
 normalize_config(_) ->
     #{}.
+
+normalize_config_map(Map) when is_map(Map) ->
+    maps:fold(
+        fun(K, V, Acc) ->
+            Acc#{normalize_config_key(K) => normalize_config_value(V)}
+        end,
+        #{},
+        Map
+    ).
+
+normalize_config_value(Map) when is_map(Map) ->
+    normalize_config_map(Map);
+normalize_config_value(List) when is_list(List) ->
+    case {is_string(List), is_kv_list(List)} of
+        {true, _} -> List;
+        {false, true} -> normalize_config_map(maps:from_list(List));
+        {false, false} -> [normalize_config_value(V) || V <- List]
+    end;
+normalize_config_value(Value) ->
+    Value.
+
+normalize_config_key(Key) when is_binary(Key) ->
+    try
+        binary_to_existing_atom(Key, utf8)
+    catch
+        _:_ -> Key
+    end;
+normalize_config_key(Key) ->
+    Key.
+
+is_kv_list([]) ->
+    false;
+is_kv_list(List) when is_list(List) ->
+    lists:all(
+        fun
+            ({K, _V}) when is_atom(K); is_integer(K); is_binary(K) -> true;
+            (_) -> false
+        end,
+        List
+    );
+is_kv_list(_) ->
+    false.
+
+is_string([]) ->
+    false;
+is_string(List) when is_list(List) ->
+    lists:all(fun(C) -> is_integer(C) andalso C >= 0 andalso C =< 16#10FFFF end, List);
+is_string(_) ->
+    false.
 
 first_defined([], _Config, Default) ->
     Default;
@@ -313,6 +378,69 @@ rate_limit(Config, Limits, Default) ->
                 )
             }
     end.
+
+
+max_event_bytes_map(Map) when is_map(Map) ->
+    maps:fold(
+        fun(K, V, Acc) ->
+            Acc#{event_kind_key(K) => int_or_default(V, 0)}
+        end,
+        #{},
+        Map
+    );
+max_event_bytes_map(List) when is_list(List) ->
+    case is_kv_list(List) of
+        true -> max_event_bytes_map(maps:from_list(List));
+        false -> #{}
+    end;
+max_event_bytes_map(_) ->
+    #{}.
+
+required_tags_map(Map) when is_map(Map) ->
+    maps:fold(
+        fun(K, V, Acc) ->
+            Acc#{event_kind_key(K) => bins(V)}
+        end,
+        #{},
+        Map
+    );
+required_tags_map(List) when is_list(List) ->
+    case is_kv_list(List) of
+        true -> required_tags_map(maps:from_list(List));
+        false -> #{30023 => bins(List)}
+    end;
+required_tags_map(_) ->
+    #{}.
+
+event_kind_key(K) when is_integer(K) -> K;
+event_kind_key(K) when is_binary(K) ->
+    case catch binary_to_integer(K) of
+        I when is_integer(I) -> I;
+        _ -> K
+    end;
+event_kind_key(K) when is_list(K) ->
+    case catch list_to_integer(K) of
+        I when is_integer(I) -> I;
+        _ -> K
+    end;
+event_kind_key(K) -> K.
+
+int_or_default(I, _Default) when is_integer(I) -> I;
+int_or_default(B, Default) when is_binary(B) ->
+    case catch binary_to_integer(B) of
+        I when is_integer(I) -> I;
+        _ -> Default
+    end;
+int_or_default(L, Default) when is_list(L) ->
+    case is_string(L) of
+        true ->
+            case catch list_to_integer(L) of
+                I when is_integer(I) -> I;
+                _ -> Default
+            end;
+        false -> Default
+    end;
+int_or_default(_, Default) -> Default.
 
 method_bins(Methods) ->
     [method_bin(M) || M <- Methods].
