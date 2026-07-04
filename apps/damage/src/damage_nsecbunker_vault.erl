@@ -85,8 +85,10 @@ export_identity(Vault, Config, Policy) ->
 public_key(#vault{policy = Policy, path = Path} = Vault) ->
     Expected = maps:get(bunker_pubkey_hex, Policy, undefined),
     case valid_pubkey(Expected) of
-        true -> {ok, Expected};
-        false -> call_backend_field(Vault, #{op => <<"get_public_key">>, vault_path => Path}, pubkey_hex)
+        true ->
+            {ok, Expected};
+        false ->
+            call_backend_field(Vault, #{op => <<"get_public_key">>, vault_path => Path}, pubkey_hex)
     end.
 
 bunker_uri_pattern(Vault, Config) ->
@@ -99,7 +101,9 @@ sign_event(#vault{path = Path} = Vault, Event0) ->
     case public_key(Vault) of
         {ok, Pubkey} ->
             Event = damage_nostr_event:ensure_event_id(Event0#{pubkey => Pubkey}),
-            call_backend_field(Vault, #{op => <<"sign_event">>, vault_path => Path, event => Event}, event);
+            call_backend_field(
+                Vault, #{op => <<"sign_event">>, vault_path => Path, event => Event}, event
+            );
         {error, Reason} ->
             {error, Reason}
     end.
@@ -107,14 +111,24 @@ sign_event(#vault{path = Path} = Vault, Event0) ->
 nip44_decrypt(#vault{path = Path} = Vault, ClientPubkey, Ciphertext) ->
     call_backend_field(
         Vault,
-        #{op => <<"nip44_decrypt">>, vault_path => Path, client_pubkey => ClientPubkey, ciphertext => Ciphertext},
+        #{
+            op => <<"nip44_decrypt">>,
+            vault_path => Path,
+            client_pubkey => ClientPubkey,
+            ciphertext => Ciphertext
+        },
         plaintext
     ).
 
 nip44_encrypt(#vault{path = Path} = Vault, ClientPubkey, Plaintext) ->
     call_backend_field(
         Vault,
-        #{op => <<"nip44_encrypt">>, vault_path => Path, client_pubkey => ClientPubkey, plaintext => Plaintext},
+        #{
+            op => <<"nip44_encrypt">>,
+            vault_path => Path,
+            client_pubkey => ClientPubkey,
+            plaintext => Plaintext
+        },
         ciphertext
     ).
 
@@ -143,8 +157,10 @@ executable_file(Cmd) when is_list(Cmd) ->
             (Mode band 8#111) =/= 0;
         {ok, #file_info{type = symlink}} ->
             case file:read_link(Cmd) of
-                {ok, LinkTarget} -> executable_file(filename:absname(LinkTarget, filename:dirname(Cmd)));
-                {error, _} -> false
+                {ok, LinkTarget} ->
+                    executable_file(filename:absname(LinkTarget, filename:dirname(Cmd)));
+                {error, _} ->
+                    false
             end;
         _ ->
             false

@@ -88,11 +88,24 @@ init([]) ->
         end,
     {ok, #state{config = Config, started_at = erlang:system_time(second), subscribed = Subscribed}}.
 
-handle_call(status, _From, State = #state{config = Config, started_at = StartedAt, subscribed = Subscribed}) ->
-    {reply, #{running => true, started_at => StartedAt, subscribed => Subscribed, config => safe_config(Config)}, State};
+handle_call(
+    status, _From, State = #state{config = Config, started_at = StartedAt, subscribed = Subscribed}
+) ->
+    {reply,
+        #{
+            running => true,
+            started_at => StartedAt,
+            subscribed => Subscribed,
+            config => safe_config(Config)
+        },
+        State};
 handle_call(subscribe, _From, State = #state{config = Config}) ->
     Reply = subscribe(Config),
-    Subscribed = case Reply of {ok, _} -> true; _ -> false end,
+    Subscribed =
+        case Reply of
+            {ok, _} -> true;
+            _ -> false
+        end,
     {reply, Reply, State#state{subscribed = Subscribed}};
 handle_call({inbound_event, Event}, _From, State = #state{config = Config}) ->
     {reply, handle_inbound_event(Event, Config), State};
@@ -152,11 +165,13 @@ validate_p_tag(Event, Config) ->
     %% If bunker pubkey is configured, inbound events should be p-tagged to it.
     %% Keep this validation optional for direct tests and early relay bring-up.
     case maps:get(require_inbound_p_tag, Config, true) of
-        false -> ok;
+        false ->
+            ok;
         true ->
             BunkerPubkey = bunker_pubkey(Config),
             case BunkerPubkey of
-                <<>> -> ok;
+                <<>> ->
+                    ok;
                 _ ->
                     Values = damage_nostr_event:tag_values(Event, <<"p">>),
                     case lists:member(BunkerPubkey, Values) of
@@ -178,9 +193,14 @@ subscribe(Config0) ->
 publish_event(Event, Config0) when is_map(Event) ->
     Config = normalize_config(Config0),
     case maps:get(relay_publication_mode, Config, normal) of
-        return_only -> {ok, #{publication => skipped_return_only, event_kind => maps:get(kind, Event, undefined)}};
-        test_fail -> {error, relay_publish_test_failure};
-        _ -> call_configured_relay_publish(Event, Config)
+        return_only ->
+            {ok, #{
+                publication => skipped_return_only, event_kind => maps:get(kind, Event, undefined)
+            }};
+        test_fail ->
+            {error, relay_publish_test_failure};
+        _ ->
+            call_configured_relay_publish(Event, Config)
     end.
 
 nip46_filter(Config) ->
@@ -214,7 +234,8 @@ try_known_subscribe(Filter) ->
 try_known_publish(Event, Config) ->
     Relays = maps:get(relays, Config, []),
     case erlang:function_exported(nosternity_relay, publish_event, 1) of
-        true -> safe_apply(nosternity_relay, publish_event, [Event]);
+        true ->
+            safe_apply(nosternity_relay, publish_event, [Event]);
         false ->
             case erlang:function_exported(nosternity_relay, broadcast_event, 2) of
                 true -> safe_apply(nosternity_relay, broadcast_event, [Relays, Event]);
@@ -246,7 +267,8 @@ normalize_config(_) -> #{}.
 bunker_pubkey(Config) ->
     bin(first_defined([bunker_pubkey_hex, bunker_pubkey], Config, <<>>)).
 
-first_defined([], _Config, Default) -> Default;
+first_defined([], _Config, Default) ->
+    Default;
 first_defined([Key | Rest], Config, Default) ->
     case maps:get(Key, Config, undefined) of
         undefined -> first_defined(Rest, Config, Default);
@@ -261,4 +283,4 @@ bin(B) when is_binary(B) -> B;
 bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 bin(L) when is_list(L) -> unicode:characters_to_binary(L);
 bin(I) when is_integer(I) -> integer_to_binary(I);
-bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])). 
+bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])).

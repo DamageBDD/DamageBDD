@@ -18,7 +18,9 @@
 -define(S_RESPONSE_PRESENT, ["the Phase", "3", "relay result MUST contain a response event"]).
 -define(S_PUBLISH_OK, ["the Phase", "3", "publication result MUST be ok"]).
 -define(S_PUBLISH_FAIL, ["the Phase", "3", "publication result MUST be failure"]).
--define(S_SIGNING_SURVIVES, ["the Phase", "3", "signing decision MUST survive relay publication failure"]).
+-define(S_SIGNING_SURVIVES, [
+    "the Phase", "3", "signing decision MUST survive relay publication failure"
+]).
 -define(S_FILTER, ["the Phase", "3", "subscription filter is created"]).
 -define(S_FILTER_KIND, ["the Phase", "3", "subscription filter MUST include kind", "24133"]).
 -define(S_FILTER_PTAG, ["the Phase", "3", "subscription filter MUST be p tagged to the bunker"]).
@@ -121,7 +123,6 @@ unquote(Bin) ->
 %% Keep this local. Some deployed OTP versions do not expose binary:trim/3.
 trim(Bin) when is_binary(Bin) ->
     trim_right(trim_left(Bin)).
-
 
 trim_left(<<C, Rest/binary>>) when C =:= 32; C =:= 9; C =:= 10; C =:= 13 ->
     trim_left(Rest);

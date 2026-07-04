@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+set -eu
+sha256sum \
+  scripts/nsecbunker/phase4a_create_dev_damagebdd_key.sh \
+  config/sys.config.nsecbunker.phase4a.dev.fragment.config \
+  doc/nsecbunker/PHASE4A_DEV_KEY_REHEARSAL.md \
+  features/nsecbunker/phase4a_dev_key_rehearsal.feature \
+  > MANIFEST.phase4a.dev_key.sha256
+cat MANIFEST.phase4a.dev_key.sha256

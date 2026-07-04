@@ -3,22 +3,21 @@
 -include_lib("eunit/include/eunit.hrl").
 
 crypto_backend_smoke_test_() ->
-    {setup,
-        fun setup/0,
-        fun cleanup/1,
-        fun(State) ->
-            [
-                {timeout, 60, ?_test(health(State))},
-                {timeout, 60, ?_test(generate_identity(State))},
-                {timeout, 60, ?_test(get_public_key(State))},
-                {timeout, 60, ?_test(sign_event(State))},
-                {timeout, 60, ?_test(plain_nip44_roundtrip(State))}
-            ]
-        end}.
+    {setup, fun setup/0, fun cleanup/1, fun(State) ->
+        [
+            {timeout, 60, ?_test(health(State))},
+            {timeout, 60, ?_test(generate_identity(State))},
+            {timeout, 60, ?_test(get_public_key(State))},
+            {timeout, 60, ?_test(sign_event(State))},
+            {timeout, 60, ?_test(plain_nip44_roundtrip(State))}
+        ]
+    end}.
 
 setup() ->
     Cmd = getenv_required("DAMAGE_NSECBUNKER_CRYPTO_CMD"),
-    Vault = getenv_default("DAMAGE_NSECBUNKER_TEST_VAULT", "/tmp/damage-nsecbunker-phase2b-eunit.vault"),
+    Vault = getenv_default(
+        "DAMAGE_NSECBUNKER_TEST_VAULT", "/tmp/damage-nsecbunker-phase2b-eunit.vault"
+    ),
     Pass = getenv_default("DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase2b-eunit-passphrase"),
     _ = file:delete(Vault),
     ok = filelib:ensure_dir(Vault ++ ".dummy"),
@@ -64,10 +63,28 @@ sign_event(State) ->
 plain_nip44_roundtrip(State) ->
     _ = call(State, #{op => <<"generate_identity">>, vault_path => vault(State)}),
     Plain = <<"{\"id\":\"eunit\",\"result\":\"pong\",\"error\":\"\"}">>,
-    Enc = call(State, #{op => <<"nip44_encrypt">>, vault_path => vault(State), client_pubkey => fake_client(), plaintext => Plain}, true),
+    Enc = call(
+        State,
+        #{
+            op => <<"nip44_encrypt">>,
+            vault_path => vault(State),
+            client_pubkey => fake_client(),
+            plaintext => Plain
+        },
+        true
+    ),
     ?assertEqual(true, ok_field(Enc)),
     Cipher = result_field(Enc, <<"ciphertext">>),
-    Dec = call(State, #{op => <<"nip44_decrypt">>, vault_path => vault(State), client_pubkey => fake_client(), ciphertext => Cipher}, true),
+    Dec = call(
+        State,
+        #{
+            op => <<"nip44_decrypt">>,
+            vault_path => vault(State),
+            client_pubkey => fake_client(),
+            ciphertext => Cipher
+        },
+        true
+    ),
     ?assertEqual(true, ok_field(Dec)),
     ?assertEqual(Plain, result_field(Dec, <<"plaintext">>)),
     assert_no_secret(Dec).
@@ -77,8 +94,14 @@ call(State, Req) ->
 
 call(#{cmd := Cmd, vault := Vault, pass := Pass}, Req, PlainNip44) ->
     Env0 = [{"DAMAGE_NSECBUNKER_VAULT_PATH", Vault}, {"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", Pass}],
-    Env = case PlainNip44 of true -> [{"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"} | Env0]; false -> Env0 end,
-    Port = open_port({spawn_executable, Cmd}, [binary, use_stdio, exit_status, stderr_to_stdout, {env, Env}]),
+    Env =
+        case PlainNip44 of
+            true -> [{"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"} | Env0];
+            false -> Env0
+        end,
+    Port = open_port({spawn_executable, Cmd}, [
+        binary, use_stdio, exit_status, stderr_to_stdout, {env, Env}
+    ]),
     Json = jsx:encode(Req),
     true = port_command(Port, <<Json/binary, "\n">>),
     collect(Port, <<>>).
@@ -101,8 +124,10 @@ result_field(Resp, Field) ->
 field(Map, Field) -> maps:get(Field, Map, maps:get(binary_to_atom_safe(Field), Map, undefined)).
 
 binary_to_atom_safe(Bin) ->
-    try binary_to_existing_atom(Bin, utf8)
-    catch _:_ -> Bin
+    try
+        binary_to_existing_atom(Bin, utf8)
+    catch
+        _:_ -> Bin
     end.
 
 assert_no_secret(Resp) ->
@@ -131,7 +156,8 @@ secret_leak_pairs([], _Path) ->
     false;
 secret_leak_pairs([{K, V} | Rest], Path) ->
     case secret_key_name(K) of
-        true -> {secret_key, lists:reverse([K | Path]), <<"[REDACTED]">>};
+        true ->
+            {secret_key, lists:reverse([K | Path]), <<"[REDACTED]">>};
         false ->
             case secret_leak(V, [K | Path]) of
                 false -> secret_leak_pairs(Rest, Path);
@@ -183,7 +209,13 @@ vault(#{vault := Vault}) -> unicode:characters_to_binary(Vault).
 fake_client() -> <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>.
 
 getenv_required(Name) ->
-    case os:getenv(Name) of false -> error({missing_required_env, Name}); Value -> Value end.
+    case os:getenv(Name) of
+        false -> error({missing_required_env, Name});
+        Value -> Value
+    end.
 
 getenv_default(Name, Default) ->
-    case os:getenv(Name) of false -> Default; Value -> Value end.
+    case os:getenv(Name) of
+        false -> Default;
+        Value -> Value
+    end.
