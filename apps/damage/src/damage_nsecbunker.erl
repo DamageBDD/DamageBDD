@@ -379,7 +379,6 @@ rate_limit(Config, Limits, Default) ->
             }
     end.
 
-
 max_event_bytes_map(Map) when is_map(Map) ->
     maps:fold(
         fun(K, V, Acc) ->
@@ -423,7 +422,8 @@ event_kind_key(K) when is_list(K) ->
         I when is_integer(I) -> I;
         _ -> K
     end;
-event_kind_key(K) -> K.
+event_kind_key(K) ->
+    K.
 
 int_or_default(I, _Default) when is_integer(I) -> I;
 int_or_default(B, Default) when is_binary(B) ->
@@ -438,9 +438,11 @@ int_or_default(L, Default) when is_list(L) ->
                 I when is_integer(I) -> I;
                 _ -> Default
             end;
-        false -> Default
+        false ->
+            Default
     end;
-int_or_default(_, Default) -> Default.
+int_or_default(_, Default) ->
+    Default.
 
 method_bins(Methods) ->
     [method_bin(M) || M <- Methods].
