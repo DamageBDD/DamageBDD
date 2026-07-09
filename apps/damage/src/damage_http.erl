@@ -804,7 +804,10 @@ do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
     of
         {ok, #{tx := Unsigned, tx_hash := TxHash}} ->
             Reply = #{
-                status => <<"ok">>, tx => Unsigned, tx_hash => to_bin(TxHash), responder => Responder
+                status => <<"ok">>,
+                tx => Unsigned,
+                tx_hash => to_bin(TxHash),
+                responder => Responder
             },
             {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
         {error, Reason} ->
