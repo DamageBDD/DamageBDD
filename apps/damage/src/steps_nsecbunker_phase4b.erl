@@ -180,9 +180,7 @@ phase4b_env(Context) ->
     Passphrase = env_or("DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4b-bdd-production-passphrase"),
     Backend = env_or(
         "DAMAGE_NSECBUNKER_CRYPTO_CMD",
-        filename:join([
-            Root, "priv", "crypto", "damage-nsecbunker-crypto-c", "damage-nsecbunker-crypto-c"
-        ])
+        default_crypto_backend(Root)
     ),
     [
         {"DAMAGE_ROOT", Root},
@@ -263,9 +261,12 @@ configured_script_path() ->
     end.
 
 config_get(Key, Config) when is_map(Config) ->
-    maps:get(Key, Config, undefined);
+    maps:get(Key, Config, maps:get(atom_to_binary(Key, utf8), Config, undefined));
 config_get(Key, Config) when is_list(Config) ->
-    proplists:get_value(Key, Config, undefined);
+    case proplists:get_value(Key, Config, undefined) of
+        undefined -> proplists:get_value(atom_to_list(Key), Config, undefined);
+        Value -> Value
+    end;
 config_get(_Key, _Config) ->
     undefined.
 
@@ -285,8 +286,19 @@ first_defined([Value | _Rest]) ->
 default_script_path() ->
     Root = repo_root(),
     filename:absname(
-        filename:join([Root, "scripts", "nsecbunker", "phase4b_create_dev_damagebdd_key.sh"])
+        filename:join([Root, "scripts", "nsecbunker", "phase4b_create_production_damagebdd_node_key.sh"])
     ).
+
+default_crypto_backend(Root) ->
+    ReleaseBackend = "/opt/damage/bin/damage-nsecbunker-crypto-c",
+    case executable_file(ReleaseBackend) of
+        true ->
+            ReleaseBackend;
+        false ->
+            filename:join([
+                Root, "priv", "crypto", "damage-nsecbunker-crypto-c", "damage-nsecbunker-crypto-c"
+            ])
+    end.
 
 abs_script_path(Path0) when is_binary(Path0) ->
     abs_script_path(binary_to_list(Path0));

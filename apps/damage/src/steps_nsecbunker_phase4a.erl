@@ -210,10 +210,63 @@ get_report_field(BinKey, AtomKey, Map) when is_map(Map) ->
     end.
 
 script_path() ->
+    case configured_script_path() of
+        undefined -> default_script_path();
+        Path -> abs_script_path(Path)
+    end.
+
+configured_script_path() ->
+    case application:get_env(damage, nsecbunker) of
+        {ok, Config} ->
+            first_defined([
+                config_get(phase4a_dev_key_script, Config),
+                config_get(dev_key_script, Config),
+                config_get(key_ceremony_script, Config),
+                config_get(ceremony_script_path, Config)
+            ]);
+        undefined ->
+            undefined
+    end.
+
+config_get(Key, Config) when is_map(Config) ->
+    maps:get(Key, Config, maps:get(atom_to_binary(Key, utf8), Config, undefined));
+config_get(Key, Config) when is_list(Config) ->
+    case proplists:get_value(Key, Config, undefined) of
+        undefined -> proplists:get_value(atom_to_list(Key), Config, undefined);
+        Value -> Value
+    end;
+config_get(_Key, _Config) ->
+    undefined.
+
+first_defined([]) ->
+    undefined;
+first_defined([undefined | Rest]) ->
+    first_defined(Rest);
+first_defined([false | Rest]) ->
+    first_defined(Rest);
+first_defined([<<>> | Rest]) ->
+    first_defined(Rest);
+first_defined([[] | Rest]) ->
+    first_defined(Rest);
+first_defined([Value | _Rest]) ->
+    Value.
+
+default_script_path() ->
     Root = repo_root(),
     filename:absname(
         filename:join([Root, "scripts", "nsecbunker", "phase4a_create_dev_damagebdd_key.sh"])
     ).
+
+abs_script_path(Path0) when is_binary(Path0) ->
+    abs_script_path(binary_to_list(Path0));
+abs_script_path(Path0) when is_atom(Path0) ->
+    abs_script_path(atom_to_list(Path0));
+abs_script_path(Path0) when is_list(Path0) ->
+    Path = filename:flatten(Path0),
+    case filename:pathtype(Path) of
+        absolute -> filename:absname(Path);
+        _ -> filename:absname(filename:join(repo_root(), Path))
+    end.
 
 repo_root() ->
     case os:getenv("DAMAGE_ROOT") of

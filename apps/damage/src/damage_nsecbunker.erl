@@ -322,6 +322,17 @@ normalize_config_key(Key) when is_binary(Key) ->
     catch
         _:_ -> Key
     end;
+normalize_config_key(Key) when is_list(Key) ->
+    case is_string(Key) of
+        true ->
+            try
+                list_to_existing_atom(Key)
+            catch
+                _:_ -> Key
+            end;
+        false ->
+            Key
+    end;
 normalize_config_key(Key) ->
     Key.
 
