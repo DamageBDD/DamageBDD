@@ -1,7 +1,7 @@
 Feature: Phase 2B C crypto backend boundary
 
   Scenario: C backend can generate and reopen an encrypted vault
-    Given the Phase 2B crypto backend command is "priv/crypto/damage-nsecbunker-crypto-c/damage-nsecbunker-crypto-c"
+    Given the Phase 2B crypto backend command is "/opt/damage/bin/damage-nsecbunker-crypto-c"
     And the Phase 2B test vault path is "/tmp/damage-nsecbunker-phase2b-c-bdd.vault"
     And the Phase 2B test vault is reset
     And the Phase 2B test vault passphrase is "phase2b-c-bdd-passphrase"
@@ -14,7 +14,7 @@ Feature: Phase 2B C crypto backend boundary
     And the crypto backend result field "pubkey_hex" MUST be present
 
   Scenario: C backend can sign an event through the port contract
-    Given the Phase 2B crypto backend command is "priv/crypto/damage-nsecbunker-crypto-c/damage-nsecbunker-crypto-c"
+    Given the Phase 2B crypto backend command is "/opt/damage/bin/damage-nsecbunker-crypto-c"
     And the Phase 2B test vault path is "/tmp/damage-nsecbunker-phase2b-c-bdd.vault"
     And the Phase 2B test vault is reset
     And the Phase 2B test vault passphrase is "phase2b-c-bdd-passphrase"
@@ -28,7 +28,7 @@ Feature: Phase 2B C crypto backend boundary
     And the crypto backend response MUST NOT contain secret material
 
   Scenario: C backend supports Phase 2B plain NIP44 loopback only when enabled
-    Given the Phase 2B crypto backend command is "priv/crypto/damage-nsecbunker-crypto-c/damage-nsecbunker-crypto-c"
+    Given the Phase 2B crypto backend command is "/opt/damage/bin/damage-nsecbunker-crypto-c"
     And the Phase 2B test vault path is "/tmp/damage-nsecbunker-phase2b-c-bdd.vault"
     And the Phase 2B test vault passphrase is "phase2b-c-bdd-passphrase"
     And Phase 2B plain NIP44 loopback is enabled

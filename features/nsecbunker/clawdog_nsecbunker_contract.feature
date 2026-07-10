@@ -149,7 +149,7 @@ Feature: LodgeiT Genesis NIP-46 bunker custody contract
     Given bunker time is 1778000000
     And an unsigned event of kind 1
     And a signing request cannot complete within 10000 milliseconds
-    When authorised client AUTHORISED_CLIENT_PUBKEY_HEX requests signing
+    When authorised client "AUTHORISED_CLIENT_PUBKEY_HEX" requests signing
     Then the request MUST fail closed
     And the denial reason MUST be "signing_timeout"
     And no partial signature material MUST be exposed
@@ -179,7 +179,7 @@ Feature: LodgeiT Genesis NIP-46 bunker custody contract
     Given bunker time is 1778000000
     And an unsigned kind "30023" event with the required minimal tags
     And the configured publication relay vector changes after initial publication
-    When authorised client AUTHORISED_CLIENT_PUBKEY_HEX requests signing
+    When authorised client "AUTHORISED_CLIENT_PUBKEY_HEX" requests signing
     Then the signing decision MUST be "allowed"
     And the bunker signing decision MUST be independent of the relay vector
     And relay publication MUST remain outside bunker scope

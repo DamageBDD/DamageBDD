@@ -28,7 +28,7 @@
 -define(S_RESULT_FIELD_EQUALS, ["the crypto backend result field", Field, "MUST equal", Expected]).
 -define(S_EVENT_HAS_SIG, ["the signed event MUST contain id and sig"]).
 -define(S_NO_SECRET, ["the crypto backend response MUST NOT contain secret material"]).
--define(S_PUBKEY_64, ["the returned public key MUST be 64 lowercase hex characters"]).
+-define(S_PUBKEY_64, ["the returned public key MUST be", "64", "lowercase hex characters"]).
 -define(S_CIPHERTEXT_ROUNDTRIPS, ["the decrypted plaintext MUST equal the encrypted plaintext"]).
 
 -define(S_PHASE2C_REAL_NIP44, ["Phase 2C real NIP44 mode is expected"]).
