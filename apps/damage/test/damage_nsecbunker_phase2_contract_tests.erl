@@ -5,7 +5,7 @@
 -define(NOW, 1778000000).
 
 setup() ->
-    application:set_env(damage, nsecbunker_rate_backend, ets),
+    set_nsecbunker_config(rate_backend, ets),
     ensure_server(damage_nsecbunker_replay),
     ensure_server(damage_nsecbunker_rate),
     ok = damage_nsecbunker_replay:reset(),
@@ -204,6 +204,30 @@ audit_line_is_ordered_and_redacted_test() ->
     ?assert(binary:match(Line, <<"\"contract_sha\":">>) =/= nomatch),
     ?assertEqual(nomatch, binary:match(Line, <<"SHOULD_NOT_APPEAR">>)),
     ?assertEqual(nomatch, binary:match(Line, <<"nsec">>)).
+
+set_nsecbunker_config(Key, Value) ->
+    Raw0 =
+        case application:get_env(damage, nsecbunker) of
+            {ok, Existing} -> Existing;
+            undefined -> []
+        end,
+    Raw = nsecbunker_config_proplist(Raw0),
+    application:set_env(damage, nsecbunker, lists:keystore(Key, 1, Raw, {Key, Value})).
+
+nsecbunker_config_proplist(Map) when is_map(Map) ->
+    maps:to_list(Map);
+nsecbunker_config_proplist(List) when is_list(List) ->
+    case lists:all(fun is_nsecbunker_config_entry/1, List) of
+        true -> List;
+        false -> []
+    end;
+nsecbunker_config_proplist(_) ->
+    [].
+
+is_nsecbunker_config_entry({K, _V}) when is_atom(K); is_binary(K); is_list(K) ->
+    true;
+is_nsecbunker_config_entry(_) ->
+    false.
 
 ensure_server(Module) ->
     case whereis(Module) of

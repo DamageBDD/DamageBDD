@@ -88,4 +88,44 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 backend() ->
-    application:get_env(damage, nsecbunker_rate_backend, ets).
+    normalize_backend(configured_backend(damage_nsecbunker:config())).
+
+configured_backend(Config) when is_map(Config) ->
+    RateLimit = maps:get(rate_limit, Config, #{}),
+    first_defined(
+        [
+            maps:get(rate_backend, Config, undefined),
+            maps:get(rate_limit_backend, Config, undefined),
+            nested_backend(RateLimit)
+        ],
+        ets
+    );
+configured_backend(_) ->
+    ets.
+
+nested_backend(M) when is_map(M) ->
+    first_defined(
+        [
+            maps:get(backend, M, undefined),
+            maps:get(rate_backend, M, undefined),
+            maps:get(rate_limit_backend, M, undefined)
+        ],
+        undefined
+    );
+nested_backend(_) ->
+    undefined.
+
+first_defined([], Default) ->
+    Default;
+first_defined([undefined | Rest], Default) ->
+    first_defined(Rest, Default);
+first_defined([Value | _Rest], _Default) ->
+    Value.
+
+normalize_backend(ets) -> ets;
+normalize_backend(<<"ets">>) -> ets;
+normalize_backend("ets") -> ets;
+normalize_backend(throttle) -> throttle;
+normalize_backend(<<"throttle">>) -> throttle;
+normalize_backend("throttle") -> throttle;
+normalize_backend(_Other) -> ets.

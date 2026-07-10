@@ -506,9 +506,33 @@ maybe_strip_suffix(Suffix, Bin) ->
 
 rate_exceeded(Context, ClientBin, MaxRequests) ->
     ensure_servers(),
-    application:set_env(damage, nsecbunker_rate_backend, ets),
+    set_nsecbunker_config(rate_backend, ets),
     ok = damage_nsecbunker_rate:seed(ClientBin, now(Context), to_int(MaxRequests)),
     update_ns(Context, fun(NS) -> NS#{rate_limited_client => ClientBin} end).
+
+set_nsecbunker_config(Key, Value) ->
+    Raw0 =
+        case application:get_env(damage, nsecbunker) of
+            {ok, Existing} -> Existing;
+            undefined -> []
+        end,
+    Raw = nsecbunker_config_proplist(Raw0),
+    application:set_env(damage, nsecbunker, lists:keystore(Key, 1, Raw, {Key, Value})).
+
+nsecbunker_config_proplist(Map) when is_map(Map) ->
+    maps:to_list(Map);
+nsecbunker_config_proplist(List) when is_list(List) ->
+    case lists:all(fun is_nsecbunker_config_entry/1, List) of
+        true -> List;
+        false -> []
+    end;
+nsecbunker_config_proplist(_) ->
+    [].
+
+is_nsecbunker_config_entry({K, _V}) when is_atom(K); is_binary(K); is_list(K) ->
+    true;
+is_nsecbunker_config_entry(_) ->
+    false.
 
 seed_replay(Context, ClientBin, RequestId, PayloadHash) ->
     ensure_servers(),
