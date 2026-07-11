@@ -153,8 +153,40 @@ format(
 ) ->
   ok = write_file(Config, "\n~s \n\n~s\n", [StepStatement, Args]);
 
-format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address, spend := Spend, tx_hash := TxHash}) ->
-    ok = write_file(Config, "\nSummary: \n Feature: ~s\n Report ~s\n RunId: ~s\n Account: ~s\n Cost: ~p\n tx_hash: ~p", [FeatureHash, ReportDir, RunId, Address, Spend, TxHash]),
+format(
+    Config,
+    summary,
+    #{
+        report_dir := ReportDir,
+        run_id := RunId,
+        feature_hash := FeatureHash,
+        public_key := Address
+    } = Summary
+) ->
+    CostHits = maps:get(cost_hits, Summary, maps:get(cost, Summary, maps:get(spend, Summary, 0))),
+    CostDamage = maps:get(cost_damage, Summary, undefined),
+    CostBtc = maps:get(cost_btc, Summary, undefined),
+    CostSats = maps:get(cost_sats, Summary, undefined),
+    CostAe = maps:get(cost_ae, Summary, undefined),
+    TxHash = maps:get(tx_hash, Summary, undefined),
+    ok = write_file(
+        Config,
+        "\nSummary: \n Feature: ~s\n Report: ~s\n RunId: ~s\n Account: ~s"
+        "\n Cost DAMAGE: ~p\n Cost hits: ~p\n Cost BTC: ~p\n Cost sats: ~p\n Cost AE: ~p"
+        "\n tx_hash: ~p",
+        [
+            FeatureHash,
+            ReportDir,
+            RunId,
+            Address,
+            CostDamage,
+            CostHits,
+            CostBtc,
+            CostSats,
+            CostAe,
+            TxHash
+        ]
+    ),
     %% new: persist the dictionary beside the report artifacts
     case maps:get(ecai, Config, false) of
         true ->

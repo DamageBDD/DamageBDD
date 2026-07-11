@@ -496,11 +496,15 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                             maps:put(spend, Spend, Result0)
                                         ),
                                     Result2 = maps:put(cost, Cost, Result1),
-                                    Result = add_cost_units(
+                                    Summary = add_cost_units(
                                         maybe_l402_result_meta(ContextIn, Result2)
                                     ),
-                                    formatter:format(RunConfig, summary, Result),
-                                    {200, Result};
+                                    formatter:format(
+                                        RunConfig,
+                                        summary,
+                                        Summary
+                                    ),
+                                    {200, Summary};
                                 {error, insufficient_balance, Spend, ChainError} ->
                                     ?LOG_WARNING(
                                         "confirm spend insufficient balance account=~p spend=~p error=~p",
@@ -634,12 +638,47 @@ cost_hits_to_sats(CostHits) ->
     end.
 
 add_cost_units(#{cost := Cost} = Result) ->
+    CostDamage = cost_hits_to_damage(Cost),
+    CostSats = cost_hits_to_sats(Cost),
     Result#{
-        cost_damage => cost_hits_to_damage(Cost),
-        cost_sats => cost_hits_to_sats(Cost)
+        cost_hits => Cost,
+        cost_damage => CostDamage,
+        cost_sats => CostSats,
+        cost_btc => sats_to_btc(CostSats),
+        cost_ae => damage_to_ae(CostDamage)
     };
+add_cost_units(#{spend := Spend} = Result) ->
+    add_cost_units(maps:put(cost, Spend, Result));
 add_cost_units(Result) ->
     Result.
+
+sats_to_btc(Sats) when is_integer(Sats); is_float(Sats) ->
+    Sats / 100000000;
+sats_to_btc(_) ->
+    undefined.
+
+damage_to_ae(Damage) when is_integer(Damage); is_float(Damage) ->
+    try price_feed:damage_to_ae(Damage) of
+        Ae when is_integer(Ae); is_float(Ae) ->
+            Ae;
+        Unexpected ->
+            ?LOG_WARNING(
+                "Unexpected DAMAGE to AE conversion result damage=~p result=~p",
+                [Damage, Unexpected]
+            ),
+            undefined
+    catch
+        error:undef ->
+            undefined;
+        Class:Reason ->
+            ?LOG_WARNING(
+                "Failed to convert DAMAGE cost to AE damage=~p error=~p:~p",
+                [Damage, Class, Reason]
+            ),
+            undefined
+    end;
+damage_to_ae(_) ->
+    undefined.
 
 ceil_damage(Value) when is_integer(Value) ->
     Value;
@@ -671,14 +710,22 @@ json_decode_failed(Req, State, Prefix, {Class, Reason, Stack}) ->
     {stop, Req1, State}.
 
 %% Streaming responses already emit human-readable formatter output while the
-%% run executes. Do not append the full JSON result map. Always append a compact
-%% text/plain footer so nested DamageBDD HTTP steps receive a useful body.
+%% run executes. Successful executions already end with the formatted summary,
+%% so do not append the result map or another summary-like footer.
+%%
+%% Structured results are still returned by the non-streaming JSON response
+%% path. Failed streamed executions retain a compact diagnostic footer.
+stream_final_body(Status, Resp) when is_map(Resp), Status >= 200, Status < 300 ->
+    <<>>;
 stream_final_body(Status, Resp) when is_map(Resp) ->
     stream_map_footer(Status, Resp);
 stream_final_body(Status, Resp) when is_binary(Resp) ->
     case stream_blank(Resp) of
         true ->
-            stream_map_footer(Status, #{});
+            case status_success(Status) of
+                true -> <<>>;
+                false -> stream_map_footer(Status, #{})
+            end;
         false ->
             Resp
     end;
@@ -710,9 +757,10 @@ stream_map_footer(Status, Resp) ->
         stream_line("tx_hash: ", stream_map_get([tx_hash, <<"tx_hash">>], Resp)),
         stream_line("balance: ", stream_map_get([balance, <<"balance">>], Resp)),
         stream_line("required: ", stream_map_get([required, <<"required">>], Resp)),
-        stream_line("cost_damage: ", stream_map_get([cost_damage, <<"cost_damage">>], Resp)),
-        stream_line("cost_sats: ", stream_map_get([cost_sats, <<"cost_sats">>], Resp)),
-        stream_line("cost_hits: ", stream_map_get([cost, <<"cost">>], Resp)),
+        stream_line(
+            "required_damage: ", stream_map_get([required_damage, <<"required_damage">>], Resp)
+        ),
+        stream_line("required_sats: ", stream_map_get([required_sats, <<"required_sats">>], Resp)),
         stream_line("spend: ", stream_map_get([spend, <<"spend">>], Resp)),
         stream_line("response: ", stream_map_get([response, <<"response">>], Resp)),
         "\n"

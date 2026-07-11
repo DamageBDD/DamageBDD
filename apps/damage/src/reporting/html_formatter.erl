@@ -89,10 +89,28 @@ format(
 ) ->
   ok = write_file(Config, "<tr><td>~s</td></tr>", [format_args(Args)]);
 
-format(Config, summary, #{report_dir := ReportDir, run_id := RunId, feature_hash := FeatureHash, public_key :=Address, spend := Spend, tx_hash := TxHash}) ->
+format(
+  Config,
+  summary,
+  #{
+    report_dir := ReportDir,
+    run_id := RunId,
+    feature_hash := FeatureHash,
+    public_key := Address
+  } = Summary
+) ->
+  CostHits = maps:get(cost_hits, Summary, maps:get(cost, Summary, maps:get(spend, Summary, 0))),
+  CostDamage = maps:get(cost_damage, Summary, undefined),
+  CostBtc = maps:get(cost_btc, Summary, undefined),
+  CostSats = maps:get(cost_sats, Summary, undefined),
+  CostAe = maps:get(cost_ae, Summary, undefined),
+  TxHash = maps:get(tx_hash, Summary, undefined),
   ok = write_file(
          Config,
-         "<h2>Summary</h2> <br> Feature: ~s<br>Report ~s<br>RunId: ~s<br><br>Address: ~s<br>Cost: ~p<br>tx_hash: ~p <br>", [FeatureHash, ReportDir, RunId, Address, Spend, TxHash]).
+         "<h2>Summary</h2><br>Feature: ~s<br>Report: ~s<br>RunId: ~s<br><br>Address: ~s"
+         "<br>Cost DAMAGE: ~p<br>Cost hits: ~p<br>Cost BTC: ~p<br>Cost sats: ~p<br>Cost AE: ~p"
+         "<br>tx_hash: ~p<br>",
+         [FeatureHash, ReportDir, RunId, Address, CostDamage, CostHits, CostBtc, CostSats, CostAe, TxHash]).
 
 format_args([]) -> <<"\n">>;
 format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p<br>">>, [Reason]);
