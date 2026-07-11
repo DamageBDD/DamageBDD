@@ -286,7 +286,9 @@ first_defined([Value | _Rest]) ->
 default_script_path() ->
     Root = repo_root(),
     filename:absname(
-        filename:join([Root, "scripts", "nsecbunker", "phase4b_create_production_damagebdd_node_key.sh"])
+        filename:join([
+            Root, "scripts", "nsecbunker", "phase4b_create_production_damagebdd_node_key.sh"
+        ])
     ).
 
 default_crypto_backend(Root) ->
