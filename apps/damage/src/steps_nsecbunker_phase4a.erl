@@ -35,10 +35,13 @@ step_dry(Config, Context, Keyword, LineNo, Body, Args) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args).
 
 step(_Config, Context, _Keyword, _Line, ?S_SCRIPT_EXISTS, _Args) ->
-    Script = script_path(),
-    case executable_file(Script) of
-        true -> put_ns(Context, (ns(Context))#{script => unicode:characters_to_binary(Script)});
-        false -> error({phase4a_dev_key_script_missing_or_not_executable, Script})
+    %% The historical step text says "script", but the ceremony is now an
+    %% Erlang operation. Passing this step means the release-installed C
+    %% crypto backend is available and damage_nsecbunker_ops can run the
+    %% ceremony without /bin/sh, Python, curl, or sha256sum.
+    case damage_nsecbunker_ops:phase4a_ceremony_available() of
+        true -> put_ns(Context, (ns(Context))#{ceremony => damage_nsecbunker_ops});
+        false -> error({phase4a_crypto_backend_missing_or_not_executable, damage_nsecbunker_ops:crypto_backend_path()})
     end;
 step(_Config, Context, _Keyword, _Line, ?S_VAULT_CONFIGURED, _Args) ->
     Root = repo_root(),
@@ -64,12 +67,23 @@ step(_Config, Context, _Keyword, _Line, ?S_VAULT_CONFIGURED, _Args) ->
     });
 step(_Config, Context0, _Keyword, _Line, ?S_RUN_CEREMONY, _Args) ->
     Context = ensure_phase4a_defaults(Context0),
-    Script = binary_to_list(maps:get(script, ns(Context))),
     Root = binary_to_list(maps:get(root, ns(Context))),
-    Cmd = "cd " ++ shell_quote(Root) ++ " && " ++ shell_quote(Script),
-    Env = phase4a_env(Context),
-    Output = run_shell(Cmd, Env, 120000),
-    put_ns(Context, (ns(Context))#{last_output => Output});
+    Vault = binary_to_list(maps:get(vault_path, ns(Context))),
+    ReportDir = binary_to_list(maps:get(report_dir, ns(Context))),
+    Passphrase = env_or("DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4a-bdd-dev-passphrase"),
+    Backend = env_or("DAMAGE_NSECBUNKER_CRYPTO_CMD", default_crypto_backend(Root)),
+    Reset = env_or("RESET_DEV_VAULT", "1"),
+    case damage_nsecbunker_ops:phase4a_create_dev_key(#{
+        root => Root,
+        vault_path => Vault,
+        report_dir => ReportDir,
+        passphrase => Passphrase,
+        backend => Backend,
+        reset => Reset
+    }) of
+        {ok, Report} -> put_ns(Context, (ns(Context))#{last_output => iolist_to_binary(jsx:encode(Report))});
+        {error, Reason} -> error({phase4a_dev_key_ceremony_failed, Reason})
+    end;
 step(_Config, Context0, _Keyword, _Line, ?S_REPORT_EXISTS, _Args) ->
     Context = ensure_phase4a_defaults(Context0),
     Json = binary_to_list(maps:get(json_report, ns(Context))),
@@ -210,63 +224,10 @@ get_report_field(BinKey, AtomKey, Map) when is_map(Map) ->
     end.
 
 script_path() ->
-    case configured_script_path() of
-        undefined -> default_script_path();
-        Path -> abs_script_path(Path)
-    end.
-
-configured_script_path() ->
-    case application:get_env(damage, nsecbunker) of
-        {ok, Config} ->
-            first_defined([
-                config_get(phase4a_dev_key_script, Config),
-                config_get(dev_key_script, Config),
-                config_get(key_ceremony_script, Config),
-                config_get(ceremony_script_path, Config)
-            ]);
-        undefined ->
-            undefined
-    end.
-
-config_get(Key, Config) when is_map(Config) ->
-    maps:get(Key, Config, maps:get(atom_to_binary(Key, utf8), Config, undefined));
-config_get(Key, Config) when is_list(Config) ->
-    case proplists:get_value(Key, Config, undefined) of
-        undefined -> proplists:get_value(atom_to_list(Key), Config, undefined);
-        Value -> Value
-    end;
-config_get(_Key, _Config) ->
-    undefined.
-
-first_defined([]) ->
-    undefined;
-first_defined([undefined | Rest]) ->
-    first_defined(Rest);
-first_defined([false | Rest]) ->
-    first_defined(Rest);
-first_defined([<<>> | Rest]) ->
-    first_defined(Rest);
-first_defined([[] | Rest]) ->
-    first_defined(Rest);
-first_defined([Value | _Rest]) ->
-    Value.
-
-default_script_path() ->
     Root = repo_root(),
     filename:absname(
         filename:join([Root, "scripts", "nsecbunker", "phase4a_create_dev_damagebdd_key.sh"])
     ).
-
-abs_script_path(Path0) when is_binary(Path0) ->
-    abs_script_path(binary_to_list(Path0));
-abs_script_path(Path0) when is_atom(Path0) ->
-    abs_script_path(atom_to_list(Path0));
-abs_script_path(Path0) when is_list(Path0) ->
-    Path = filename:flatten(Path0),
-    case filename:pathtype(Path) of
-        absolute -> filename:absname(Path);
-        _ -> filename:absname(filename:join(repo_root(), Path))
-    end.
 
 repo_root() ->
     case os:getenv("DAMAGE_ROOT") of
