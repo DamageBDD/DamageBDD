@@ -43,8 +43,13 @@ step(_Config, Context, _Keyword, _Line, ?S_SCRIPT_EXISTS, _Args) ->
     %% crypto backend is available and damage_nsecbunker_ops can run the
     %% production ceremony without /bin/sh, Python, curl, or sha256sum.
     case damage_nsecbunker_ops:phase4b_ceremony_available() of
-        true -> put_ns(Context, (ns(Context))#{ceremony => damage_nsecbunker_ops});
-        false -> error({phase4b_crypto_backend_missing_or_not_executable, damage_nsecbunker_ops:crypto_backend_path()})
+        true ->
+            put_ns(Context, (ns(Context))#{ceremony => damage_nsecbunker_ops});
+        false ->
+            error(
+                {phase4b_crypto_backend_missing_or_not_executable,
+                    damage_nsecbunker_ops:crypto_backend_path()}
+            )
     end;
 step(_Config, Context, _Keyword, _Line, ?S_VAULT_CONFIGURED, _Args) ->
     Root = repo_root(),
@@ -77,16 +82,20 @@ step(_Config, Context0, _Keyword, _Line, ?S_RUN_CEREMONY, _Args) ->
     ReportDir = binary_to_list(maps:get(report_dir, ns(Context))),
     Passphrase = env_or("DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4b-bdd-production-passphrase"),
     Backend = env_or("DAMAGE_NSECBUNKER_CRYPTO_CMD", default_crypto_backend(Root)),
-    case damage_nsecbunker_ops:phase4b_create_production_damagebdd_node_key(#{
-        root => Root,
-        prod_vault_path => Vault,
-        report_dir => ReportDir,
-        passphrase => Passphrase,
-        backend => Backend,
-        approved => true
-    }) of
-        {ok, Report} -> put_ns(Context, (ns(Context))#{last_output => iolist_to_binary(jsx:encode(Report))});
-        {error, Reason} -> error({phase4b_production_key_ceremony_failed, Reason})
+    case
+        damage_nsecbunker_ops:phase4b_create_production_damagebdd_node_key(#{
+            root => Root,
+            prod_vault_path => Vault,
+            report_dir => ReportDir,
+            passphrase => Passphrase,
+            backend => Backend,
+            approved => true
+        })
+    of
+        {ok, Report} ->
+            put_ns(Context, (ns(Context))#{last_output => iolist_to_binary(jsx:encode(Report))});
+        {error, Reason} ->
+            error({phase4b_production_key_ceremony_failed, Reason})
     end;
 step(_Config, Context0, _Keyword, _Line, ?S_REPORT_EXISTS, _Args) ->
     Context = ensure_phase4b_defaults(Context0),
@@ -298,7 +307,9 @@ first_defined([Value | _Rest]) ->
 default_script_path() ->
     Root = repo_root(),
     filename:absname(
-        filename:join([Root, "scripts", "nsecbunker", "phase4b_create_production_damagebdd_node_key.sh"])
+        filename:join([
+            Root, "scripts", "nsecbunker", "phase4b_create_production_damagebdd_node_key.sh"
+        ])
     ).
 
 abs_script_path(Path0) when is_binary(Path0) ->

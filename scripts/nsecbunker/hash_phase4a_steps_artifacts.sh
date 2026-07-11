@@ -1,9 +1,0 @@
-#!/usr/bin/env sh
-set -eu
-sha256sum \
-  apps/damage/src/steps_nsecbunker_phase4a.erl \
-  features/nsecbunker/phase4a_dev_key_rehearsal.feature \
-  scripts/nsecbunker/run_phase4a_dev_key_feature.sh \
-  doc/nsecbunker/PHASE4A_DEV_KEY_STEPS.md \
-  > MANIFEST.phase4a.steps.sha256
-cat MANIFEST.phase4a.steps.sha256

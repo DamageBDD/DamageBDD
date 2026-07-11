@@ -77,32 +77,59 @@ phase4a_create_dev_key(Opts0) ->
     ReportDir = report_dir(Opts),
     JsonReport = filename:join(ReportDir, "PHASE4A_DEV_DAMAGEBDD_KEY.json"),
     MdReport = filename:join(ReportDir, "PHASE4A_DEV_DAMAGEBDD_KEY.md"),
-    Passphrase = opt_env(Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4a-bdd-dev-passphrase"),
+    Passphrase = opt_env(
+        Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4a-bdd-dev-passphrase"
+    ),
     Reset = truthy(opt_env(Opts, reset, "RESET_DEV_VAULT", "1")),
     ok = ensure_parent(Vault),
     ok = ensure_dir(ReportDir),
     case Reset of
-        true -> _ = file:delete(Vault), ok;
-        false -> ok
+        true ->
+            _ = file:delete(Vault),
+            ok;
+        false ->
+            ok
     end,
     Env = backend_env(Opts, Passphrase),
-    Gen = backend_call(#{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, Opts#{backend => Backend, env => Env}),
-    Pub = backend_call(#{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)}, Opts#{backend => Backend, env => Env}),
-    Pubkey = require_pubkey(first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])),
-    Npub = require_npub(first_present([field(<<"npub">>, Gen), npub_for(Pubkey, Opts#{backend => Backend, env => Env})])),
+    Gen = backend_call(
+        #{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, Opts#{
+            backend => Backend, env => Env
+        }
+    ),
+    Pub = backend_call(#{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)}, Opts#{
+        backend => Backend, env => Env
+    }),
+    Pubkey = require_pubkey(
+        first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])
+    ),
+    Npub = require_npub(
+        first_present([
+            field(<<"npub">>, Gen), npub_for(Pubkey, Opts#{backend => Backend, env => Env})
+        ])
+    ),
     _ = file:change_mode(Vault, 8#600),
     Created = iso8601_now(),
-    Report = #{}
-        #{<<"phase">> => <<"4A">>}
-        #{<<"purpose">> => <<"dev_damagebdd_key_rehearsal">>}
-        #{<<"status">> => <<"generated">>}
-        #{<<"created_at_utc">> => Created}
-        #{<<"backend">> => bin(Backend)}
-        #{<<"vault_path">> => bin(Vault)}
-        #{<<"pubkey_hex">> => Pubkey}
-        #{<<"npub">> => Npub}
-        #{<<"secret_exported">> => false}
-        #{<<"scope">> => <<"DEV/DISPOSABLE ONLY - not LodgeiT production custody">>},
+    Report = #{}#{
+        <<"phase">> => <<"4A">>
+    }#{
+        <<"purpose">> => <<"dev_damagebdd_key_rehearsal">>
+    }#{
+        <<"status">> => <<"generated">>
+    }#{
+        <<"created_at_utc">> => Created
+    }#{
+        <<"backend">> => bin(Backend)
+    }#{
+        <<"vault_path">> => bin(Vault)
+    }#{
+        <<"pubkey_hex">> => Pubkey
+    }#{
+        <<"npub">> => Npub
+    }#{
+        <<"secret_exported">> => false
+    }#{
+        <<"scope">> => <<"DEV/DISPOSABLE ONLY - not LodgeiT production custody">>
+    },
     ok = assert_no_secret_material(Report),
     ok = write_json(JsonReport, Report),
     ok = write_file(MdReport, phase4a_markdown(Report)),
@@ -133,44 +160,84 @@ phase4b_create_production_damagebdd_node_key_0(Opts) ->
     MdReport = filename:join(ReportDir, "PHASE4B_DAMAGEBDD_NODE_PRODUCTION_KEY.md"),
     Passphrase = opt_env(Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", undefined),
     case Passphrase of
-        undefined -> {error, production_vault_passphrase_required};
-        [] -> {error, production_vault_passphrase_required};
-        <<>> -> {error, production_vault_passphrase_required};
-        _ -> phase4b_create_production_damagebdd_node_key_1(Opts, Backend, Vault, ReportDir, JsonReport, MdReport, Passphrase)
+        undefined ->
+            {error, production_vault_passphrase_required};
+        [] ->
+            {error, production_vault_passphrase_required};
+        <<>> ->
+            {error, production_vault_passphrase_required};
+        _ ->
+            phase4b_create_production_damagebdd_node_key_1(
+                Opts, Backend, Vault, ReportDir, JsonReport, MdReport, Passphrase
+            )
     end.
 
-phase4b_create_production_damagebdd_node_key_1(Opts, Backend, Vault, _ReportDir, JsonReport, MdReport, Passphrase) ->
+phase4b_create_production_damagebdd_node_key_1(
+    Opts, Backend, Vault, _ReportDir, JsonReport, MdReport, Passphrase
+) ->
     ok = ensure_parent(Vault),
     ok = ensure_parent(JsonReport),
     VaultExistsBefore = filelib:is_regular(Vault),
     Env = backend_env(Opts, Passphrase),
     Gen =
         case VaultExistsBefore of
-            true -> #{};
-            false -> backend_call(#{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, Opts#{backend => Backend, env => Env})
+            true ->
+                #{};
+            false ->
+                backend_call(
+                    #{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, Opts#{
+                        backend => Backend, env => Env
+                    }
+                )
         end,
-    Pub = backend_call(#{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)}, Opts#{backend => Backend, env => Env}),
-    Pubkey = require_pubkey(first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])),
-    Npub = require_npub(first_present([field(<<"npub">>, Gen), npub_for(Pubkey, Opts#{backend => Backend, env => Env})])),
+    Pub = backend_call(#{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)}, Opts#{
+        backend => Backend, env => Env
+    }),
+    Pubkey = require_pubkey(
+        first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])
+    ),
+    Npub = require_npub(
+        first_present([
+            field(<<"npub">>, Gen), npub_for(Pubkey, Opts#{backend => Backend, env => Env})
+        ])
+    ),
     ok = file_mode_private(Vault),
     VaultMode = file_mode_octal(Vault),
     BackendSha = lower_hex_sha256_file(Backend),
     Created = iso8601_now(),
-    Status = case VaultExistsBefore of true -> <<"existing_vault_public_identity_exported">>; false -> <<"generated">> end,
-    Report = #{}
-        #{<<"phase">> => <<"4B">>}
-        #{<<"purpose">> => <<"production_damagebdd_node_key">>}
-        #{<<"status">> => Status}
-        #{<<"created_at_utc">> => Created}
-        #{<<"backend">> => bin(Backend)}
-        #{<<"backend_sha256">> => BackendSha}
-        #{<<"vault_path">> => bin(Vault)}
-        #{<<"vault_exists_before">> => VaultExistsBefore}
-        #{<<"vault_mode_octal">> => bin(VaultMode)}
-        #{<<"pubkey_hex">> => Pubkey}
-        #{<<"npub">> => Npub}
-        #{<<"secret_exported">> => false}
-        #{<<"scope">> => <<"PRODUCTION DamageBDD node nsecbunker identity - not LodgeiT publisher identity">>},
+    Status =
+        case VaultExistsBefore of
+            true -> <<"existing_vault_public_identity_exported">>;
+            false -> <<"generated">>
+        end,
+    Report = #{}#{
+        <<"phase">> => <<"4B">>
+    }#{
+        <<"purpose">> => <<"production_damagebdd_node_key">>
+    }#{
+        <<"status">> => Status
+    }#{
+        <<"created_at_utc">> => Created
+    }#{
+        <<"backend">> => bin(Backend)
+    }#{
+        <<"backend_sha256">> => BackendSha
+    }#{
+        <<"vault_path">> => bin(Vault)
+    }#{
+        <<"vault_exists_before">> => VaultExistsBefore
+    }#{
+        <<"vault_mode_octal">> => bin(VaultMode)
+    }#{
+        <<"pubkey_hex">> => Pubkey
+    }#{
+        <<"npub">> => Npub
+    }#{
+        <<"secret_exported">> => false
+    }#{
+        <<"scope">> =>
+            <<"PRODUCTION DamageBDD node nsecbunker identity - not LodgeiT publisher identity">>
+    },
     ok = assert_no_secret_material(Report),
     ok = write_json(JsonReport, Report),
     ok = write_file(MdReport, phase4b_markdown(Report)),
@@ -203,7 +270,11 @@ backend_call_executable(Backend, Payload, Opts) ->
     Timeout = opt(crypto_timeout_ms, Opts, config_get(crypto_timeout_ms, 45000)),
     Env = opt(env, Opts, []),
     PortOpts0 = [binary, use_stdio, exit_status, stderr_to_stdout],
-    PortOpts = case Env of [] -> PortOpts0; _ -> PortOpts0 ++ [{env, Env}] end,
+    PortOpts =
+        case Env of
+            [] -> PortOpts0;
+            _ -> PortOpts0 ++ [{env, Env}]
+        end,
     try open_port({spawn_executable, Backend}, PortOpts) of
         Port ->
             Json = jsx:encode(Payload),
@@ -227,7 +298,11 @@ collect_port(Port, Timeout, Acc) ->
     end.
 
 safe_port_close(Port) ->
-    try erlang:port_close(Port) of _ -> ok catch _:_ -> ok end.
+    try erlang:port_close(Port) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
 
 decode_backend(Bin) ->
     try jsx:decode(Bin, [return_maps]) of
@@ -244,109 +319,260 @@ smoke_phase2b_crypto_c_backend() ->
 
 smoke_phase2b_crypto_c_backend(Opts0) ->
     Opts = opts(Opts0),
-    Vault = opt_env(Opts, vault_path, "DAMAGE_NSECBUNKER_TEST_VAULT", "/tmp/damage-nsecbunker-phase2b-c.vault"),
-    Passphrase = opt_env(Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase2b-c-local-test-passphrase"),
+    Vault = opt_env(
+        Opts, vault_path, "DAMAGE_NSECBUNKER_TEST_VAULT", "/tmp/damage-nsecbunker-phase2b-c.vault"
+    ),
+    Passphrase = opt_env(
+        Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase2b-c-local-test-passphrase"
+    ),
     _ = file:delete(Vault),
     Env = backend_env(Opts, Passphrase) ++ [{"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"}],
     O = Opts#{env => Env},
     Health = backend_call(#{<<"op">> => <<"health">>}, O),
     Gen = backend_call(#{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, O),
     Pub = backend_call(#{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)}, O),
-    Pubkey = require_pubkey(first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])),
+    Pubkey = require_pubkey(
+        first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])
+    ),
     Npub = backend_call(#{<<"op">> => <<"npub">>, <<"pubkey_hex">> => Pubkey}, O),
-    Sign = backend_call(#{}
-        #{<<"op">> => <<"sign_event">>}
-        #{<<"vault_path">> => bin(Vault)}
-        #{<<"event">> => #{}
-            #{<<"pubkey">> => Pubkey}
-            #{<<"created_at">> => 1778000000}
-            #{<<"kind">> => 1}
-            #{<<"tags">> => []}
-            #{<<"content">> => <<"phase2b c backend smoke">>}}, O),
+    Sign = backend_call(
+        #{}#{
+            <<"op">> => <<"sign_event">>
+        }#{
+            <<"vault_path">> => bin(Vault)
+        }#{
+            <<"event">> => #{}#{
+                <<"pubkey">> => Pubkey
+            }#{
+                <<"created_at">> => 1778000000
+            }#{
+                <<"kind">> => 1
+            }#{
+                <<"tags">> => []
+            }#{
+                <<"content">> => <<"phase2b c backend smoke">>
+            }
+        },
+        O
+    ),
     Event = field(<<"event">>, Sign),
     ok = require_signed_event(Event),
-    Enc = backend_call(#{<<"op">> => <<"nip44_encrypt">>, <<"plaintext">> => <<"{\"id\":\"phase2b\",\"result\":\"pong\"}">>}, O),
+    Enc = backend_call(
+        #{
+            <<"op">> => <<"nip44_encrypt">>,
+            <<"plaintext">> => <<"{\"id\":\"phase2b\",\"result\":\"pong\"}">>
+        },
+        O
+    ),
     Ct = require_binary(field(<<"ciphertext">>, Enc), ciphertext),
     Dec = backend_call(#{<<"op">> => <<"nip44_decrypt">>, <<"ciphertext">> => Ct}, O),
-    #{health => Health, generated => Gen, public => Pub, npub => Npub, signed_event => Event, decrypted => Dec}.
+    #{
+        health => Health,
+        generated => Gen,
+        public => Pub,
+        npub => Npub,
+        signed_event => Event,
+        decrypted => Dec
+    }.
 
 smoke_phase2c_crypto_vectors() ->
     smoke_phase2c_crypto_vectors(#{}).
 
 smoke_phase2c_crypto_vectors(Opts0) ->
     Opts = opts(Opts0),
-    Vault = opt_env(Opts, vault_path, "DAMAGE_NSECBUNKER_TEST_VAULT", "/tmp/damage-nsecbunker-phase2c-smoke.vault"),
-    Passphrase = opt_env(Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase2c-smoke-passphrase"),
+    Vault = opt_env(
+        Opts,
+        vault_path,
+        "DAMAGE_NSECBUNKER_TEST_VAULT",
+        "/tmp/damage-nsecbunker-phase2c-smoke.vault"
+    ),
+    Passphrase = opt_env(
+        Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase2c-smoke-passphrase"
+    ),
     _ = file:delete(Vault),
     Base = Opts#{env => backend_env(Opts, Passphrase)},
-    assert_fields(health, backend_call(#{<<"op">> => <<"health">>}, Base), #{<<"phase">> => <<"2c">>, <<"nip44">> => <<"v2">>}),
-    assert_fields(bip340_sign,
-        backend_call(#{}
-            #{<<"op">> => <<"schnorr_sign_vector">>}
-            #{<<"secret_key_hex">> => <<"0000000000000000000000000000000000000000000000000000000000000003">>}
-            #{<<"message_hex">> => <<"0000000000000000000000000000000000000000000000000000000000000000">>}
-            #{<<"aux_rand_hex">> => <<"0000000000000000000000000000000000000000000000000000000000000000">>}, Base),
+    assert_fields(health, backend_call(#{<<"op">> => <<"health">>}, Base), #{
+        <<"phase">> => <<"2c">>, <<"nip44">> => <<"v2">>
+    }),
+    assert_fields(
+        bip340_sign,
+        backend_call(
+            #{}#{
+                <<"op">> => <<"schnorr_sign_vector">>
+            }#{
+                <<"secret_key_hex">> =>
+                    <<"0000000000000000000000000000000000000000000000000000000000000003">>
+            }#{
+                <<"message_hex">> =>
+                    <<"0000000000000000000000000000000000000000000000000000000000000000">>
+            }#{
+                <<"aux_rand_hex">> =>
+                    <<"0000000000000000000000000000000000000000000000000000000000000000">>
+            },
+            Base
+        ),
         #{
-            <<"pubkey_hex">> => <<"f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9">>,
-            <<"signature_hex">> => <<"e907831f80848d1069a5371b402410364bdf1c5f8307b0084c55f1ce2dca821525f66a4a85ea8b71e482a74f382d2ce5ebeee8fdb2172f477df4900d310536c0">>
-        }),
-    assert_fields(bip340_verify,
-        backend_call(#{}
-            #{<<"op">> => <<"schnorr_verify">>}
-            #{<<"pubkey_hex">> => <<"F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9">>}
-            #{<<"message_hex">> => <<"0000000000000000000000000000000000000000000000000000000000000000">>}
-            #{<<"signature_hex">> => <<"E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0">>}, Base),
-        #{<<"valid">> => true}),
-    assert_fields(npub_vector,
-        backend_call(#{<<"op">> => <<"npub">>, <<"pubkey_hex">> => <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>}, Base),
-        #{<<"npub">> => <<"npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d">>}),
-    assert_fields(event_id_vector,
-        backend_call(#{}
-            #{<<"op">> => <<"event_id">>}
-            #{<<"pubkey_hex">> => <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>}
-            #{<<"event">> => #{<<"created_at">> => 0, <<"kind">> => 1, <<"tags">> => [], <<"content">> => <<"hello">>}}, Base),
-        #{<<"id">> => <<"5a25a8422478717a983475e3ab77edeb1b72775dde3d2e2dffb054aa98c5cc45">>}),
-    assert_fields(nip44_encrypt_vector,
-        backend_call(#{}
-            #{<<"op">> => <<"nip44_encrypt_vector">>}
-            #{<<"secret_key_hex">> => <<"0000000000000000000000000000000000000000000000000000000000000001">>}
-            #{<<"peer_pubkey_hex">> => <<"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5">>}
-            #{<<"nonce_hex">> => <<"0000000000000000000000000000000000000000000000000000000000000001">>}
-            #{<<"plaintext">> => <<"a">>}, Base),
+            <<"pubkey_hex">> =>
+                <<"f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9">>,
+            <<"signature_hex">> =>
+                <<"e907831f80848d1069a5371b402410364bdf1c5f8307b0084c55f1ce2dca821525f66a4a85ea8b71e482a74f382d2ce5ebeee8fdb2172f477df4900d310536c0">>
+        }
+    ),
+    assert_fields(
+        bip340_verify,
+        backend_call(
+            #{}#{
+                <<"op">> => <<"schnorr_verify">>
+            }#{
+                <<"pubkey_hex">> =>
+                    <<"F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9">>
+            }#{
+                <<"message_hex">> =>
+                    <<"0000000000000000000000000000000000000000000000000000000000000000">>
+            }#{
+                <<"signature_hex">> =>
+                    <<"E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0">>
+            },
+            Base
+        ),
+        #{<<"valid">> => true}
+    ),
+    assert_fields(
+        npub_vector,
+        backend_call(
+            #{
+                <<"op">> => <<"npub">>,
+                <<"pubkey_hex">> =>
+                    <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>
+            },
+            Base
+        ),
+        #{<<"npub">> => <<"npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d">>}
+    ),
+    assert_fields(
+        event_id_vector,
+        backend_call(
+            #{}#{
+                <<"op">> => <<"event_id">>
+            }#{
+                <<"pubkey_hex">> =>
+                    <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>
+            }#{
+                <<"event">> => #{
+                    <<"created_at">> => 0,
+                    <<"kind">> => 1,
+                    <<"tags">> => [],
+                    <<"content">> => <<"hello">>
+                }
+            },
+            Base
+        ),
+        #{<<"id">> => <<"5a25a8422478717a983475e3ab77edeb1b72775dde3d2e2dffb054aa98c5cc45">>}
+    ),
+    assert_fields(
+        nip44_encrypt_vector,
+        backend_call(
+            #{}#{
+                <<"op">> => <<"nip44_encrypt_vector">>
+            }#{
+                <<"secret_key_hex">> =>
+                    <<"0000000000000000000000000000000000000000000000000000000000000001">>
+            }#{
+                <<"peer_pubkey_hex">> =>
+                    <<"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5">>
+            }#{
+                <<"nonce_hex">> =>
+                    <<"0000000000000000000000000000000000000000000000000000000000000001">>
+            }#{
+                <<"plaintext">> => <<"a">>
+            },
+            Base
+        ),
         #{
-            <<"conversation_key">> => <<"c41c775356fd92eadc63ff5a0dc1da211b268cbea22316767095b2871ea1412d">>,
-            <<"payload">> => <<"AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb">>
-        }),
-    assert_fields(nip44_decrypt_vector,
-        backend_call(#{}
-            #{<<"op">> => <<"nip44_decrypt_vector">>}
-            #{<<"secret_key_hex">> => <<"0000000000000000000000000000000000000000000000000000000000000002">>}
-            #{<<"peer_pubkey_hex">> => <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>}
-            #{<<"payload">> => <<"AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb">>}, Base),
-        #{<<"conversation_key">> => <<"c41c775356fd92eadc63ff5a0dc1da211b268cbea22316767095b2871ea1412d">>, <<"plaintext">> => <<"a">>}),
-    Gen = backend_call(#{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, Base),
+            <<"conversation_key">> =>
+                <<"c41c775356fd92eadc63ff5a0dc1da211b268cbea22316767095b2871ea1412d">>,
+            <<"payload">> =>
+                <<"AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb">>
+        }
+    ),
+    assert_fields(
+        nip44_decrypt_vector,
+        backend_call(
+            #{}#{
+                <<"op">> => <<"nip44_decrypt_vector">>
+            }#{
+                <<"secret_key_hex">> =>
+                    <<"0000000000000000000000000000000000000000000000000000000000000002">>
+            }#{
+                <<"peer_pubkey_hex">> =>
+                    <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>
+            }#{
+                <<"payload">> =>
+                    <<"AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb">>
+            },
+            Base
+        ),
+        #{
+            <<"conversation_key">> =>
+                <<"c41c775356fd92eadc63ff5a0dc1da211b268cbea22316767095b2871ea1412d">>,
+            <<"plaintext">> => <<"a">>
+        }
+    ),
+    Gen = backend_call(
+        #{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, Base
+    ),
     Pubkey = require_pubkey(field(<<"pubkey_hex">>, Gen)),
     Client = <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>,
-    Enc = backend_call(#{<<"op">> => <<"nip44_encrypt">>, <<"vault_path">> => bin(Vault), <<"client_pubkey">> => Client, <<"plaintext">> => <<"phase2c real nip44">>}, Base),
+    Enc = backend_call(
+        #{
+            <<"op">> => <<"nip44_encrypt">>,
+            <<"vault_path">> => bin(Vault),
+            <<"client_pubkey">> => Client,
+            <<"plaintext">> => <<"phase2c real nip44">>
+        },
+        Base
+    ),
     Ct = require_binary(field(<<"ciphertext">>, Enc), ciphertext),
-    assert_fields(real_nip44_roundtrip,
-        backend_call(#{<<"op">> => <<"nip44_decrypt">>, <<"vault_path">> => bin(Vault), <<"client_pubkey">> => Client, <<"ciphertext">> => Ct}, Base),
-        #{<<"plaintext">> => <<"phase2c real nip44">>, <<"nip44">> => <<"v2">>}),
-    ok = assert_backend_fails(wrong_passphrase,
+    assert_fields(
+        real_nip44_roundtrip,
+        backend_call(
+            #{
+                <<"op">> => <<"nip44_decrypt">>,
+                <<"vault_path">> => bin(Vault),
+                <<"client_pubkey">> => Client,
+                <<"ciphertext">> => Ct
+            },
+            Base
+        ),
+        #{<<"plaintext">> => <<"phase2c real nip44">>, <<"nip44">> => <<"v2">>}
+    ),
+    ok = assert_backend_fails(
+        wrong_passphrase,
         #{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)},
         Opts#{env => backend_env(Opts, "wrong-passphrase")},
-        <<"vault_decrypt_failed">>),
-    assert_fields(production_blocks_plain,
-        backend_call(#{<<"op">> => <<"plain_mode_status">>}, Opts#{env => [{"DAMAGE_NSECBUNKER_TEST_MODE", "1"}, {"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"}, {"DAMAGE_NSECBUNKER_PRODUCTION", "1"}]}),
-        #{<<"plain_allowed">> => false, <<"production">> => true}),
+        <<"vault_decrypt_failed">>
+    ),
+    assert_fields(
+        production_blocks_plain,
+        backend_call(#{<<"op">> => <<"plain_mode_status">>}, Opts#{
+            env => [
+                {"DAMAGE_NSECBUNKER_TEST_MODE", "1"},
+                {"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"},
+                {"DAMAGE_NSECBUNKER_PRODUCTION", "1"}
+            ]
+        }),
+        #{<<"plain_allowed">> => false, <<"production">> => true}
+    ),
     #{status => pass, vault => bin(Vault), pubkey_hex => Pubkey}.
 
 assert_backend_fails(Label, Payload, Opts, ExpectedError) ->
     try backend_call(Payload, Opts) of
         Result -> error({Label, expected_failure, Result})
     catch
-        error:{crypto_backend_not_ok, ExpectedError} -> ok;
-        error:{crypto_backend_not_ok, Other} -> error({Label, unexpected_backend_error, Other, ExpectedError})
+        error:{crypto_backend_not_ok, ExpectedError} ->
+            ok;
+        error:{crypto_backend_not_ok, Other} ->
+            error({Label, unexpected_backend_error, Other, ExpectedError})
     end.
 
 assert_fields(Label, Map, Expected) ->
@@ -397,8 +623,14 @@ check_release_artifacts(ReleaseRoot0) ->
     MissingDirs = [P || P <- RequiredDirs, not filelib:is_dir(filename:join(ReleaseRoot, P))],
     ExecutableOk = executable_file(filename:join(ReleaseRoot, "bin/damage-nsecbunker-crypto-c")),
     case {MissingFiles, MissingDirs, ExecutableOk} of
-        {[], [], true} -> {ok, #{release_root => bin(ReleaseRoot), checked => RequiredFiles ++ RequiredDirs}};
-        _ -> {error, #{missing_files => MissingFiles, missing_dirs => MissingDirs, backend_executable => ExecutableOk}}
+        {[], [], true} ->
+            {ok, #{release_root => bin(ReleaseRoot), checked => RequiredFiles ++ RequiredDirs}};
+        _ ->
+            {error, #{
+                missing_files => MissingFiles,
+                missing_dirs => MissingDirs,
+                backend_executable => ExecutableOk
+            }}
     end.
 
 hash_phase4a_artifacts() ->
@@ -457,11 +689,14 @@ crypto_backend_path(Opts0) ->
                                 true -> ?DEFAULT_BACKEND;
                                 false -> filename:join(Root, ?LOCAL_BACKEND)
                             end;
-                        Cmd -> str(Cmd)
+                        Cmd ->
+                            str(Cmd)
                     end;
-                Cmd -> Cmd
+                Cmd ->
+                    Cmd
             end;
-        Backend -> str(Backend)
+        Backend ->
+            str(Backend)
     end.
 
 root() -> root(#{}).
@@ -476,15 +711,23 @@ root(Opts0) ->
                         {ok, Cwd} -> Cwd;
                         _ -> "."
                     end;
-                Root -> Root
+                Root ->
+                    Root
             end;
-        Root -> str(Root)
+        Root ->
+            str(Root)
     end.
 
 report_dir(Opts0) ->
     Opts = opts(Opts0),
     Root = root(Opts),
-    opt_env_config(Opts, report_dir, "DAMAGE_NSECBUNKER_REPORT_DIR", [report_dir], filename:join([Root, "doc", "nsecbunker", "reports"])).
+    opt_env_config(
+        Opts,
+        report_dir,
+        "DAMAGE_NSECBUNKER_REPORT_DIR",
+        [report_dir],
+        filename:join([Root, "doc", "nsecbunker", "reports"])
+    ).
 
 config() ->
     try damage_nsecbunker:config() of
@@ -507,10 +750,19 @@ canonical_config(_) ->
 
 canon_key(K) when is_atom(K) -> K;
 canon_key(K) when is_binary(K) ->
-    try binary_to_existing_atom(K, utf8) catch _:_ -> K end;
+    try
+        binary_to_existing_atom(K, utf8)
+    catch
+        _:_ -> K
+    end;
 canon_key(K) when is_list(K) ->
-    try list_to_existing_atom(K) catch _:_ -> K end;
-canon_key(K) -> K.
+    try
+        list_to_existing_atom(K)
+    catch
+        _:_ -> K
+    end;
+canon_key(K) ->
+    K.
 
 config_get(Key, Default) ->
     maps:get(Key, config(), Default).
@@ -525,7 +777,8 @@ opt_env_config(Opts, OptKey, EnvName, ConfigKeys, Default) ->
                 false -> str(config_first(ConfigKeys, Default));
                 Val -> Val
             end;
-        Val -> str(Val)
+        Val ->
+            str(Val)
     end.
 
 opt_env(Opts, OptKey, EnvName, Default) ->
@@ -535,7 +788,8 @@ opt_env(Opts, OptKey, EnvName, Default) ->
                 false -> Default;
                 Val -> Val
             end;
-        Val -> Val
+        Val ->
+            Val
     end.
 
 opts(Map) when is_map(Map) -> Map;
@@ -547,13 +801,14 @@ opt(Key, Opts, Default) ->
 
 backend_env(Opts, Passphrase) ->
     Extra = opt(env, Opts, []),
-    Base = case Passphrase of
-        undefined -> [];
-        false -> [];
-        <<>> -> [];
-        [] -> [];
-        _ -> [{"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", str(Passphrase)}]
-    end,
+    Base =
+        case Passphrase of
+            undefined -> [];
+            false -> [];
+            <<>> -> [];
+            [] -> [];
+            _ -> [{"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", str(Passphrase)}]
+        end,
     Base ++ Extra.
 
 require_phase4b_approval(Opts) ->
@@ -577,12 +832,22 @@ phase4a_markdown(Report) ->
     iolist_to_binary([
         "# Phase 4A dev DamageBDD key rehearsal\n\n",
         "Status: generated\n\n",
-        "Created UTC: ", Created, "\n\n",
-        "Backend: `", Backend, "`\n",
-        "Vault path: `", Vault, "`\n\n",
+        "Created UTC: ",
+        Created,
+        "\n\n",
+        "Backend: `",
+        Backend,
+        "`\n",
+        "Vault path: `",
+        Vault,
+        "`\n\n",
         "Public identity:\n\n```text\n",
-        "pubkey_hex: ", Pubkey, "\n",
-        "npub: ", Npub, "\n",
+        "pubkey_hex: ",
+        Pubkey,
+        "\n",
+        "npub: ",
+        Npub,
+        "\n",
         "```\n\n",
         "Scope:\n\n```text\nDEV / DISPOSABLE ONLY\nNot the real LodgeiT publisher identity.\nDo not reuse for Phase 4B.\n```\n\n",
         "Secret handling:\n\n```text\nnsec exported: no\nprivate key printed: no\nsecret-shaped fields in report: no\n```\n"
@@ -599,15 +864,31 @@ phase4b_markdown(Report) ->
     VaultMode = field(<<"vault_mode_octal">>, Report),
     iolist_to_binary([
         "# Phase 4B production DamageBDD node key ceremony\n\n",
-        "Status: ", Status, "\n\n",
-        "Created UTC: ", Created, "\n\n",
-        "Backend: `", Backend, "`\n",
-        "Backend sha256: `", BackendSha, "`\n",
-        "Vault path: `", Vault, "`\n",
-        "Vault mode: `", VaultMode, "`\n\n",
+        "Status: ",
+        Status,
+        "\n\n",
+        "Created UTC: ",
+        Created,
+        "\n\n",
+        "Backend: `",
+        Backend,
+        "`\n",
+        "Backend sha256: `",
+        BackendSha,
+        "`\n",
+        "Vault path: `",
+        Vault,
+        "`\n",
+        "Vault mode: `",
+        VaultMode,
+        "`\n\n",
         "Public identity:\n\n```text\n",
-        "pubkey_hex: ", Pubkey, "\n",
-        "npub: ", Npub, "\n",
+        "pubkey_hex: ",
+        Pubkey,
+        "\n",
+        "npub: ",
+        Npub,
+        "\n",
         "```\n\n",
         "Scope:\n\n```text\nPRODUCTION DamageBDD node nsecbunker identity.\nNot the LodgeiT publisher identity.\n```\n\n",
         "Secret handling:\n\n```text\nnsec exported: no\nprivate key printed: no\nsecret-shaped fields in report: no\nproduction vault overwritten: no\n```\n"
@@ -642,7 +923,8 @@ file_mode_private(Path) ->
                 true -> ok;
                 false -> error({vault_permissions_too_open, Path, file_mode_octal(Mode)})
             end;
-        {error, Reason} -> error({vault_stat_failed, Path, Reason})
+        {error, Reason} ->
+            error({vault_stat_failed, Path, Reason})
     end.
 
 file_mode_octal(Path) when is_list(Path); is_binary(Path) ->
@@ -684,19 +966,28 @@ require_binary(Other, Name) -> error({invalid_binary_field, Name, Other}).
 require_signed_event(Event) when is_map(Event) ->
     Id = require_binary(field(<<"id">>, Event), event_id),
     Sig = require_binary(field(<<"sig">>, Event), event_sig),
-    case {re:run(Id, <<"^[0-9a-f]{64}$">>, [{capture, none}]), re:run(Sig, <<"^[0-9a-f]{128}$">>, [{capture, none}])} of
+    case
+        {
+            re:run(Id, <<"^[0-9a-f]{64}$">>, [{capture, none}]),
+            re:run(Sig, <<"^[0-9a-f]{128}$">>, [{capture, none}])
+        }
+    of
         {match, match} -> ok;
         _ -> error({invalid_signed_event_shape, Event})
     end;
-require_signed_event(Other) -> error({invalid_signed_event, Other}).
+require_signed_event(Other) ->
+    error({invalid_signed_event, Other}).
 
 field(Key, Map) when is_map(Map), is_binary(Key) ->
     case maps:get(Key, Map, undefined) of
         undefined ->
-            try maps:get(binary_to_existing_atom(Key, utf8), Map, undefined)
-            catch _:_ -> undefined
+            try
+                maps:get(binary_to_existing_atom(Key, utf8), Map, undefined)
+            catch
+                _:_ -> undefined
             end;
-        Value -> Value
+        Value ->
+            Value
     end;
 field(Key, Map) when is_map(Map), is_atom(Key) ->
     case maps:get(Key, Map, undefined) of
@@ -722,7 +1013,8 @@ assert_no_secret_material(Term) ->
                 false -> ok;
                 true -> error({secret_value_leaked, <<"[REDACTED]">>})
             end;
-        Leak -> error({secret_key_leaked, Leak})
+        Leak ->
+            error({secret_key_leaked, Leak})
     end.
 
 secret_leak(Map) when is_map(Map) ->
@@ -734,27 +1026,48 @@ secret_leak(Map) when is_map(Map) ->
                         true -> {secret_key, K};
                         false -> secret_leak(V)
                     end;
-                _ -> Acc
+                _ ->
+                    Acc
             end
         end,
         false,
         Map
     );
 secret_leak(List) when is_list(List) ->
-    lists:foldl(fun(V, Acc) -> case Acc of false -> secret_leak(V); _ -> Acc end end, false, List);
-secret_leak(_) -> false.
+    lists:foldl(
+        fun(V, Acc) ->
+            case Acc of
+                false -> secret_leak(V);
+                _ -> Acc
+            end
+        end,
+        false,
+        List
+    );
+secret_leak(_) ->
+    false.
 
 secret_key(K) ->
     Lower = lower(bin(K)),
     lists:member(Lower, [
-        <<"nsec">>, <<"private_key">>, <<"private_key_hex">>, <<"privkey">>, <<"privkey_hex">>,
-        <<"secret_key">>, <<"secret_key_hex">>, <<"mnemonic">>, <<"seed">>, <<"seed_hex">>, <<"sk">>
+        <<"nsec">>,
+        <<"private_key">>,
+        <<"private_key_hex">>,
+        <<"privkey">>,
+        <<"privkey_hex">>,
+        <<"secret_key">>,
+        <<"secret_key_hex">>,
+        <<"mnemonic">>,
+        <<"seed">>,
+        <<"seed_hex">>,
+        <<"sk">>
     ]).
 
 secret_value(Bin0) ->
     Bin = bin(Bin0),
     case re:run(Bin, <<"nsec1[02-9ac-hj-np-z]+">>, [caseless, {capture, none}]) of
-        match -> true;
+        match ->
+            true;
         nomatch ->
             case re:run(Bin, <<"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----">>, [{capture, none}]) of
                 match -> true;
@@ -763,18 +1076,20 @@ secret_value(Bin0) ->
     end.
 
 term_to_binary_safe(B) when is_binary(B) -> B;
-term_to_binary_safe(Term) -> unicode:characters_to_binary(io_lib:format("~p", [Term])). 
+term_to_binary_safe(Term) -> unicode:characters_to_binary(io_lib:format("~p", [Term])).
 
 executable_file(Path0) ->
     Path = str(Path0),
     case file:read_file_info(Path) of
-        {ok, #file_info{type = regular, mode = Mode}} -> (Mode band 8#111) =/= 0;
+        {ok, #file_info{type = regular, mode = Mode}} ->
+            (Mode band 8#111) =/= 0;
         {ok, #file_info{type = symlink}} ->
             case file:read_link(Path) of
                 {ok, Target} -> executable_file(filename:absname(Target, filename:dirname(Path)));
                 {error, _} -> false
             end;
-        _ -> false
+        _ ->
+            false
     end.
 
 truthy(true) -> true;
@@ -805,13 +1120,15 @@ rel_path(Path0, Root0) ->
 
 iso8601_now() ->
     {{Y, Mo, D}, {H, Mi, S}} = calendar:universal_time(),
-    list_to_binary(io_lib:format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ", [Y, Mo, D, H, Mi, S])).
+    list_to_binary(
+        io_lib:format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ", [Y, Mo, D, H, Mi, S])
+    ).
 
 lower_hex(Bin) when is_binary(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [X]) || <<X>> <= Bin]).
 
 lower(Bin) when is_binary(Bin) ->
-    << <<(lower_char(C))>> || <<C>> <= Bin >>.
+    <<<<(lower_char(C))>> || <<C>> <= Bin>>.
 
 lower_char(C) when C >= $A, C =< $Z -> C + 32;
 lower_char(C) -> C.
@@ -820,10 +1137,10 @@ str(B) when is_binary(B) -> binary_to_list(B);
 str(A) when is_atom(A) -> atom_to_list(A);
 str(L) when is_list(L) -> L;
 str(I) when is_integer(I) -> integer_to_list(I);
-str(Other) -> lists:flatten(io_lib:format("~p", [Other])). 
+str(Other) -> lists:flatten(io_lib:format("~p", [Other])).
 
 bin(B) when is_binary(B) -> B;
 bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 bin(L) when is_list(L) -> unicode:characters_to_binary(L);
 bin(I) when is_integer(I) -> integer_to_binary(I);
-bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])). 
+bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])).

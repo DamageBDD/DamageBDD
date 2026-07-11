@@ -40,8 +40,13 @@ step(_Config, Context, _Keyword, _Line, ?S_SCRIPT_EXISTS, _Args) ->
     %% crypto backend is available and damage_nsecbunker_ops can run the
     %% ceremony without /bin/sh, Python, curl, or sha256sum.
     case damage_nsecbunker_ops:phase4a_ceremony_available() of
-        true -> put_ns(Context, (ns(Context))#{ceremony => damage_nsecbunker_ops});
-        false -> error({phase4a_crypto_backend_missing_or_not_executable, damage_nsecbunker_ops:crypto_backend_path()})
+        true ->
+            put_ns(Context, (ns(Context))#{ceremony => damage_nsecbunker_ops});
+        false ->
+            error(
+                {phase4a_crypto_backend_missing_or_not_executable,
+                    damage_nsecbunker_ops:crypto_backend_path()}
+            )
     end;
 step(_Config, Context, _Keyword, _Line, ?S_VAULT_CONFIGURED, _Args) ->
     Root = repo_root(),
@@ -73,16 +78,20 @@ step(_Config, Context0, _Keyword, _Line, ?S_RUN_CEREMONY, _Args) ->
     Passphrase = env_or("DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4a-bdd-dev-passphrase"),
     Backend = env_or("DAMAGE_NSECBUNKER_CRYPTO_CMD", default_crypto_backend(Root)),
     Reset = env_or("RESET_DEV_VAULT", "1"),
-    case damage_nsecbunker_ops:phase4a_create_dev_key(#{
-        root => Root,
-        vault_path => Vault,
-        report_dir => ReportDir,
-        passphrase => Passphrase,
-        backend => Backend,
-        reset => Reset
-    }) of
-        {ok, Report} -> put_ns(Context, (ns(Context))#{last_output => iolist_to_binary(jsx:encode(Report))});
-        {error, Reason} -> error({phase4a_dev_key_ceremony_failed, Reason})
+    case
+        damage_nsecbunker_ops:phase4a_create_dev_key(#{
+            root => Root,
+            vault_path => Vault,
+            report_dir => ReportDir,
+            passphrase => Passphrase,
+            backend => Backend,
+            reset => Reset
+        })
+    of
+        {ok, Report} ->
+            put_ns(Context, (ns(Context))#{last_output => iolist_to_binary(jsx:encode(Report))});
+        {error, Reason} ->
+            error({phase4a_dev_key_ceremony_failed, Reason})
     end;
 step(_Config, Context0, _Keyword, _Line, ?S_REPORT_EXISTS, _Args) ->
     Context = ensure_phase4a_defaults(Context0),
