@@ -408,7 +408,7 @@ execute_bdd_once(Config, Context, FeatureData) ->
             }};
         %% Dry run success (explicit match on dry_run := true)
         #{dry_run := true, report_hash := _, cost := Cost} = Result ->
-            {200, maps:merge(Result, #{status => <<"ok">>, cost => Cost})};
+            {200, add_cost_units(maps:merge(Result, #{status => <<"ok">>, cost => Cost}))};
         %% Successful run (non-dry). We don't guard; the dry-run clause above
         %% already caught the dry-run case.
         #{report_hash := _} = Result ->
@@ -463,7 +463,7 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
             %% If caller wanted only dry-run, return immediately
             case dry_run_only(ConfigOverrides) of
                 true ->
-                    {200, DryRes};
+                    {200, add_cost_units(DryRes)};
                 false ->
                     %% Must have a cost in dry-run success
                     Cost = maps:get(cost, DryRes, 0),
@@ -495,7 +495,10 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                             to_bin(TxHash),
                                             maps:put(spend, Spend, Result0)
                                         ),
-                                    Result = maybe_l402_result_meta(ContextIn, Result1),
+                                    Result2 = maps:put(cost, Cost, Result1),
+                                    Result = add_cost_units(
+                                        maybe_l402_result_meta(ContextIn, Result2)
+                                    ),
                                     formatter:format(RunConfig, summary, Result),
                                     {200, Result};
                                 {error, insufficient_balance, Spend, ChainError} ->
@@ -511,6 +514,8 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                             AeAccount
                                         ),
                                         required => Spend,
+                                        required_damage => cost_hits_to_damage(Spend),
+                                        required_sats => cost_hits_to_sats(Spend),
                                         chain_reason => confirm_spend_reason(ChainError)
                                     }};
                                 {error, Reason, Spend, ChainError} ->
@@ -523,6 +528,8 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                         error => <<"CONFIRM_SPEND_FAILED">>,
                                         reason => confirm_spend_reason(Reason),
                                         required => Spend,
+                                        required_damage => cost_hits_to_damage(Spend),
+                                        required_sats => cost_hits_to_sats(Spend),
                                         chain_reason => confirm_spend_reason(ChainError)
                                     }};
                                 Other ->
@@ -541,7 +548,9 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                 status => <<"notok">>,
                                 message => insufficient_balance_message(ContextIn),
                                 balance => Balance,
-                                required => Charge
+                                required => Charge,
+                                required_damage => cost_hits_to_damage(Charge),
+                                required_sats => cost_hits_to_sats(Charge)
                             }}
                     end
             end;
@@ -610,6 +619,27 @@ cost_hits_to_damage(CostHits) when is_integer(CostHits); is_float(CostHits) ->
     CostHits / math:pow(10, ?DAMAGE_DECIMALS);
 cost_hits_to_damage(_) ->
     0.
+
+cost_hits_to_sats(CostHits) ->
+    Damage = cost_hits_to_damage(CostHits),
+    try price_feed:damage_to_sats(Damage) of
+        Sats -> Sats
+    catch
+        Class:Reason ->
+            ?LOG_WARNING(
+                "Failed to convert cost to sats cost_hits=~p damage=~p error=~p:~p",
+                [CostHits, Damage, Class, Reason]
+            ),
+            undefined
+    end.
+
+add_cost_units(#{cost := Cost} = Result) ->
+    Result#{
+        cost_damage => cost_hits_to_damage(Cost),
+        cost_sats => cost_hits_to_sats(Cost)
+    };
+add_cost_units(Result) ->
+    Result.
 
 ceil_damage(Value) when is_integer(Value) ->
     Value;
@@ -680,7 +710,9 @@ stream_map_footer(Status, Resp) ->
         stream_line("tx_hash: ", stream_map_get([tx_hash, <<"tx_hash">>], Resp)),
         stream_line("balance: ", stream_map_get([balance, <<"balance">>], Resp)),
         stream_line("required: ", stream_map_get([required, <<"required">>], Resp)),
-        stream_line("cost: ", stream_map_get([cost, <<"cost">>], Resp)),
+        stream_line("cost_damage: ", stream_map_get([cost_damage, <<"cost_damage">>], Resp)),
+        stream_line("cost_sats: ", stream_map_get([cost_sats, <<"cost_sats">>], Resp)),
+        stream_line("cost_hits: ", stream_map_get([cost, <<"cost">>], Resp)),
         stream_line("spend: ", stream_map_get([spend, <<"spend">>], Resp)),
         stream_line("response: ", stream_map_get([response, <<"response">>], Resp)),
         "\n"
