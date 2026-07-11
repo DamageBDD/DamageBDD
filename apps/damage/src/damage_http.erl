@@ -484,7 +484,8 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                             %% Original execution path for both normal auth and
                             %% L402 auth. L402 auth has already mapped State to
                             %% the configured l402_account in damage_auth.
-                            RunConfig = get_config(ConfigOverrides, ContextIn, Req0),
+                            RunConfig0 = get_config(ConfigOverrides, ContextIn, Req0),
+                            RunConfig = [{defer_summary, true} | RunConfig0],
                             {_, Result0} = execute_bdd_once(RunConfig, ContextIn, FeatureData),
                             case damage_ae:confirm_spend(RunConfig, Result0) of
                                 {ok, Spend, TxHash} ->
@@ -496,9 +497,13 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                             maps:put(spend, Spend, Result0)
                                         ),
                                     Result2 = maps:put(cost, Cost, Result1),
-                                    Summary = add_cost_units(
+                                    Summary0 = add_cost_units(
                                         maybe_l402_result_meta(ContextIn, Result2)
                                     ),
+                                    Summary = Summary0#{
+                                        status => maps:get(status, Summary0, <<"ok">>),
+                                        result => maps:get(result, Summary0, <<"success">>)
+                                    },
                                     formatter:format(
                                         RunConfig,
                                         summary,
@@ -645,7 +650,7 @@ add_cost_units(#{cost := Cost} = Result) ->
         cost_damage => CostDamage,
         cost_sats => CostSats,
         cost_btc => sats_to_btc(CostSats),
-        cost_ae => damage_to_ae(CostDamage)
+        cost_ae => cost_to_ae(CostDamage, CostSats)
     };
 add_cost_units(#{spend := Spend} = Result) ->
     add_cost_units(maps:put(cost, Spend, Result));
@@ -657,28 +662,94 @@ sats_to_btc(Sats) when is_integer(Sats); is_float(Sats) ->
 sats_to_btc(_) ->
     undefined.
 
-damage_to_ae(Damage) when is_integer(Damage); is_float(Damage) ->
-    try price_feed:damage_to_ae(Damage) of
-        Ae when is_integer(Ae); is_float(Ae) ->
-            Ae;
-        Unexpected ->
+cost_to_ae(Damage, Sats) when
+    (is_integer(Damage) orelse is_float(Damage)),
+    (is_integer(Sats) orelse is_float(Sats))
+->
+    case code:ensure_loaded(price_feed) of
+        {module, price_feed} ->
+            cost_to_ae_loaded(Damage, Sats);
+        Error ->
             ?LOG_WARNING(
-                "Unexpected DAMAGE to AE conversion result damage=~p result=~p",
-                [Damage, Unexpected]
-            ),
-            undefined
-    catch
-        error:undef ->
-            undefined;
-        Class:Reason ->
-            ?LOG_WARNING(
-                "Failed to convert DAMAGE cost to AE damage=~p error=~p:~p",
-                [Damage, Class, Reason]
+                "Cannot convert execution cost to AE: price_feed unavailable error=~p",
+                [Error]
             ),
             undefined
     end;
-damage_to_ae(_) ->
+cost_to_ae(_, _) ->
     undefined.
+
+cost_to_ae_loaded(Damage, Sats) ->
+    case erlang:function_exported(price_feed, damage_to_ae, 1) of
+        true ->
+            safe_ae_conversion(
+                fun() -> price_feed:damage_to_ae(Damage) end,
+                damage_to_ae
+            );
+        false ->
+            cost_sats_to_ae(Sats)
+    end.
+
+cost_sats_to_ae(Sats) ->
+    case erlang:function_exported(price_feed, sats_to_ae, 1) of
+        true ->
+            safe_ae_conversion(
+                fun() -> price_feed:sats_to_ae(Sats) end,
+                sats_to_ae
+            );
+        false ->
+            cost_sats_to_ae_using_unit_price(Sats)
+    end.
+
+cost_sats_to_ae_using_unit_price(Sats) ->
+    case erlang:function_exported(price_feed, ae_to_sats, 1) of
+        true ->
+            safe_ae_conversion(
+                fun() ->
+                    case price_feed:ae_to_sats(1) of
+                        AeSats when is_integer(AeSats), AeSats > 0 ->
+                            Sats / AeSats;
+                        AeSats when is_float(AeSats), AeSats > 0 ->
+                            Sats / AeSats;
+                        Unexpected ->
+                            {error, {invalid_ae_sats_price, Unexpected}}
+                    end
+                end,
+                ae_to_sats
+            );
+        false ->
+            ?LOG_WARNING(
+                "Cannot convert execution cost to AE: price_feed exports none of "
+                "damage_to_ae/1, sats_to_ae/1 or ae_to_sats/1",
+                []
+            ),
+            undefined
+    end.
+
+safe_ae_conversion(Fun, Conversion) ->
+    try Fun() of
+        Ae when is_integer(Ae); is_float(Ae) ->
+            Ae;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "AE cost conversion failed conversion=~p reason=~p",
+                [Conversion, Reason]
+            ),
+            undefined;
+        Unexpected ->
+            ?LOG_WARNING(
+                "Unexpected AE cost conversion result conversion=~p result=~p",
+                [Conversion, Unexpected]
+            ),
+            undefined
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "AE cost conversion crashed conversion=~p error=~p:~p stack=~p",
+                [Conversion, Class, Reason, Stack]
+            ),
+            undefined
+    end.
 
 ceil_damage(Value) when is_integer(Value) ->
     Value;

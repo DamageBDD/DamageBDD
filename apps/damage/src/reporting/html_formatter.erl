@@ -104,14 +104,31 @@ format(
   CostBtc = maps:get(cost_btc, Summary, undefined),
   CostSats = maps:get(cost_sats, Summary, undefined),
   CostAe = maps:get(cost_ae, Summary, undefined),
-  TxHash = maps:get(tx_hash, Summary, undefined),
+  TxHash = summary_value(maps:get(tx_hash, Summary, undefined)),
+  RunStatus = summary_value(maps:get(status, Summary, undefined)),
+  RunResult = summary_value(
+    maps:get(result, Summary, maps:get(result_status, Summary, undefined))
+  ),
   ok = write_file(
          Config,
          "<h2>Summary</h2><br>Feature: ~s<br>Report: ~s<br>RunId: ~s<br><br>Address: ~s"
+         "<br>Run status: ~s<br>Run result: ~s"
          "<br>Cost DAMAGE: ~p<br>Cost hits: ~p<br>Cost BTC: ~p<br>Cost sats: ~p<br>Cost AE: ~p"
-         "<br>tx_hash: ~p<br>",
-         [FeatureHash, ReportDir, RunId, Address, CostDamage, CostHits, CostBtc, CostSats, CostAe, TxHash]).
+         "<br>tx_hash: ~s<br>",
+         [
+           FeatureHash, ReportDir, RunId, Address,
+           RunStatus, RunResult,
+           CostDamage, CostHits, CostBtc, CostSats, CostAe, TxHash
+         ]).
 
+summary_value(undefined) -> "unknown";
+summary_value(Value) when is_binary(Value) -> binary_to_list(Value);
+summary_value(Value) when is_list(Value) -> Value;
+summary_value(Value) when is_atom(Value) -> atom_to_list(Value);
+summary_value(Value) when is_integer(Value) -> integer_to_list(Value);
+summary_value(Value) when is_float(Value) ->
+  lists:flatten(io_lib:format("~p", [Value]));
+summary_value(Value) -> lists:flatten(io_lib:format("~p", [Value])).
 format_args([]) -> <<"\n">>;
 format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p<br>">>, [Reason]);
 

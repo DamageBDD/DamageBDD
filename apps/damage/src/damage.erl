@@ -294,6 +294,22 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     end,
                     HashList
                 ),
+            case proplists:get_value(defer_summary, Config, false) of
+                true ->
+                    ok;
+                false ->
+                    formatter:format(
+                        Config,
+                        summary,
+                        #{
+                            report_dir =>
+                                string:join([DamageApi, "reports", ReportHash], "/"),
+                            run_id => RunId,
+                            public_key => maps:get(public_key, Context, <<"">>),
+                            feature_hash => FeatureHash
+                        }
+                    )
+            end,
             FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
             FinalContext =
                 maps:merge(
