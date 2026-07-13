@@ -8,9 +8,8 @@
 %% This module still calls the process-isolated C crypto backend via
 %% open_port({spawn_executable, Cmd}, ...). That is intentional: the C
 %% backend remains the custody/crypto boundary. The module does not invoke
-%% /bin/sh and does not require Python/curl/sha256sum for ceremony, artifact
-%% hashing or release checks. DamageBDD feature submission is intentionally
-%% kept outside the production release environment.
+%% /bin/sh and does not require Python/curl/sha256sum for ceremony,
+%% artifact hashing or release checks.
 %%--------------------------------------------------------------------
 -module(damage_nsecbunker_ops).
 
@@ -32,7 +31,6 @@
     smoke_phase2b_crypto_c_backend/1,
     smoke_phase2c_crypto_vectors/0,
     smoke_phase2c_crypto_vectors/1,
-
     %% Release/deployment helpers
     install_crypto_backend/0,
     install_crypto_backend/2,
@@ -109,26 +107,17 @@ phase4a_create_dev_key(Opts0) ->
     ),
     _ = file:change_mode(Vault, 8#600),
     Created = iso8601_now(),
-    Report = #{}#{
-        <<"phase">> => <<"4A">>
-    }#{
-        <<"purpose">> => <<"dev_damagebdd_key_rehearsal">>
-    }#{
-        <<"status">> => <<"generated">>
-    }#{
-        <<"created_at_utc">> => Created
-    }#{
-        <<"backend">> => bin(Backend)
-    }#{
-        <<"vault_path">> => bin(Vault)
-    }#{
-        <<"pubkey_hex">> => Pubkey
-    }#{
-        <<"npub">> => Npub
-    }#{
-        <<"secret_exported">> => false
-    }#{
-        <<"scope">> => <<"DEV/DISPOSABLE ONLY - not LodgeiT production custody">>
+    Report = #{
+        <<"phase">> => <<"4A">>,
+        <<"purpose">> => <<"dev_damagebdd_key_rehearsal">>,
+        <<"status">> => <<"generated">>,
+        <<"created_at_utc">> => Created,
+        <<"backend">> => bin(Backend),
+        <<"vault_path">> => bin(Vault),
+        <<"pubkey_hex">> => Pubkey,
+        <<"npub">> => Npub,
+        <<"secret_exported">> => false,
+        <<"scope">> => <<"DEV/DISPOSABLE ONLY - not production custody">>
     },
     ok = assert_no_secret_material(Report),
     ok = write_json(JsonReport, Report),
@@ -210,33 +199,20 @@ phase4b_create_production_damagebdd_node_key_1(
             true -> <<"existing_vault_public_identity_exported">>;
             false -> <<"generated">>
         end,
-    Report = #{}#{
-        <<"phase">> => <<"4B">>
-    }#{
-        <<"purpose">> => <<"production_damagebdd_node_key">>
-    }#{
-        <<"status">> => Status
-    }#{
-        <<"created_at_utc">> => Created
-    }#{
-        <<"backend">> => bin(Backend)
-    }#{
-        <<"backend_sha256">> => BackendSha
-    }#{
-        <<"vault_path">> => bin(Vault)
-    }#{
-        <<"vault_exists_before">> => VaultExistsBefore
-    }#{
-        <<"vault_mode_octal">> => bin(VaultMode)
-    }#{
-        <<"pubkey_hex">> => Pubkey
-    }#{
-        <<"npub">> => Npub
-    }#{
-        <<"secret_exported">> => false
-    }#{
-        <<"scope">> =>
-            <<"PRODUCTION DamageBDD node nsecbunker identity - not LodgeiT publisher identity">>
+    Report = #{
+        <<"phase">> => <<"4B">>,
+        <<"purpose">> => <<"production_damagebdd_node_key">>,
+        <<"status">> => Status,
+        <<"created_at_utc">> => Created,
+        <<"backend">> => bin(Backend),
+        <<"backend_sha256">> => BackendSha,
+        <<"vault_path">> => bin(Vault),
+        <<"vault_exists_before">> => VaultExistsBefore,
+        <<"vault_mode_octal">> => bin(VaultMode),
+        <<"pubkey_hex">> => Pubkey,
+        <<"npub">> => Npub,
+        <<"secret_exported">> => false,
+        <<"scope">> => <<"PRODUCTION Damage node nsecbunker identity">>
     },
     ok = assert_no_secret_material(Report),
     ok = write_json(JsonReport, Report),
@@ -320,58 +296,128 @@ smoke_phase2b_crypto_c_backend() ->
 smoke_phase2b_crypto_c_backend(Opts0) ->
     Opts = opts(Opts0),
     Vault = opt_env(
-        Opts, vault_path, "DAMAGE_NSECBUNKER_TEST_VAULT", "/tmp/damage-nsecbunker-phase2b-c.vault"
+        Opts,
+        vault_path,
+        "DAMAGE_NSECBUNKER_TEST_VAULT",
+        "/tmp/damage-nsecbunker-phase2b-c.vault"
     ),
     Passphrase = opt_env(
-        Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase2b-c-local-test-passphrase"
+        Opts,
+        passphrase,
+        "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE",
+        "phase2b-c-local-test-passphrase"
     ),
     _ = file:delete(Vault),
     Env = backend_env(Opts, Passphrase) ++ [{"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"}],
     O = Opts#{env => Env},
+
     Health = backend_call(#{<<"op">> => <<"health">>}, O),
-    Gen = backend_call(#{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, O),
-    Pub = backend_call(#{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)}, O),
+
+    Gen = backend_call(
+        #{
+            <<"op">> => <<"generate_identity">>,
+            <<"vault_path">> => bin(Vault)
+        },
+        O
+    ),
+
+    Pub = backend_call(
+        #{
+            <<"op">> => <<"get_public_key">>,
+            <<"vault_path">> => bin(Vault)
+        },
+        O
+    ),
+
     Pubkey = require_pubkey(
         first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])
     ),
-    Npub = backend_call(#{<<"op">> => <<"npub">>, <<"pubkey_hex">> => Pubkey}, O),
+
+    Npub = backend_call(
+        #{
+            <<"op">> => <<"npub">>,
+            <<"pubkey_hex">> => Pubkey
+        },
+        O
+    ),
+
     Sign = backend_call(
-        #{}#{
-            <<"op">> => <<"sign_event">>
-        }#{
-            <<"vault_path">> => bin(Vault)
-        }#{
-            <<"event">> => #{}#{
-                <<"pubkey">> => Pubkey
-            }#{
-                <<"created_at">> => 1778000000
-            }#{
-                <<"kind">> => 1
-            }#{
-                <<"tags">> => []
-            }#{
+        #{
+            <<"op">> => <<"sign_event">>,
+            <<"vault_path">> => bin(Vault),
+            <<"event">> => #{
+                <<"pubkey">> => Pubkey,
+                <<"created_at">> => 1778000000,
+                <<"kind">> => 1,
+                <<"tags">> => [],
                 <<"content">> => <<"phase2b c backend smoke">>
             }
         },
         O
     ),
+
     Event = field(<<"event">>, Sign),
     ok = require_signed_event(Event),
+
+    ClientPubkey0 = opt_env(
+        Opts,
+        client_pubkey,
+        "DAMAGE_NSECBUNKER_TEST_CLIENT_PUBKEY",
+        "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    ),
+    ClientPubkey = bin(ClientPubkey0),
+
+    Plaintext0 = opt_env(
+        Opts,
+        plaintext,
+        "DAMAGE_NSECBUNKER_TEST_PLAINTEXT",
+        "{\"id\":\"phase2b\",\"result\":\"pong\"}"
+    ),
+    Plaintext = bin(Plaintext0),
+
     Enc = backend_call(
         #{
             <<"op">> => <<"nip44_encrypt">>,
-            <<"plaintext">> => <<"{\"id\":\"phase2b\",\"result\":\"pong\"}">>
+            <<"vault_path">> => bin(Vault),
+            <<"client_pubkey">> => ClientPubkey,
+            <<"plaintext">> => Plaintext
         },
         O
     ),
+
     Ct = require_binary(field(<<"ciphertext">>, Enc), ciphertext),
-    Dec = backend_call(#{<<"op">> => <<"nip44_decrypt">>, <<"ciphertext">> => Ct}, O),
+
+    Dec = backend_call(
+        #{
+            <<"op">> => <<"nip44_decrypt">>,
+            <<"vault_path">> => bin(Vault),
+            <<"client_pubkey">> => ClientPubkey,
+            <<"ciphertext">> => Ct
+        },
+        O
+    ),
+
+    PlainRoundtrip = field(<<"plaintext">>, Dec),
+    case PlainRoundtrip =:= Plaintext of
+        true ->
+            ok;
+        false ->
+            error(
+                {phase2b_plaintext_roundtrip_failed, #{
+                    expected => Plaintext,
+                    got => PlainRoundtrip,
+                    decrypted => Dec
+                }}
+            )
+    end,
+
     #{
         health => Health,
         generated => Gen,
         public => Pub,
         npub => Npub,
         signed_event => Event,
+        encrypted => Enc,
         decrypted => Dec
     }.
 
@@ -397,15 +443,12 @@ smoke_phase2c_crypto_vectors(Opts0) ->
     assert_fields(
         bip340_sign,
         backend_call(
-            #{}#{
-                <<"op">> => <<"schnorr_sign_vector">>
-            }#{
+            #{
+                <<"op">> => <<"schnorr_sign_vector">>,
                 <<"secret_key_hex">> =>
-                    <<"0000000000000000000000000000000000000000000000000000000000000003">>
-            }#{
+                    <<"0000000000000000000000000000000000000000000000000000000000000003">>,
                 <<"message_hex">> =>
-                    <<"0000000000000000000000000000000000000000000000000000000000000000">>
-            }#{
+                    <<"0000000000000000000000000000000000000000000000000000000000000000">>,
                 <<"aux_rand_hex">> =>
                     <<"0000000000000000000000000000000000000000000000000000000000000000">>
             },
@@ -421,15 +464,12 @@ smoke_phase2c_crypto_vectors(Opts0) ->
     assert_fields(
         bip340_verify,
         backend_call(
-            #{}#{
-                <<"op">> => <<"schnorr_verify">>
-            }#{
+            #{
+                <<"op">> => <<"schnorr_verify">>,
                 <<"pubkey_hex">> =>
-                    <<"F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9">>
-            }#{
+                    <<"F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9">>,
                 <<"message_hex">> =>
-                    <<"0000000000000000000000000000000000000000000000000000000000000000">>
-            }#{
+                    <<"0000000000000000000000000000000000000000000000000000000000000000">>,
                 <<"signature_hex">> =>
                     <<"E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0">>
             },
@@ -452,12 +492,10 @@ smoke_phase2c_crypto_vectors(Opts0) ->
     assert_fields(
         event_id_vector,
         backend_call(
-            #{}#{
-                <<"op">> => <<"event_id">>
-            }#{
+            #{
+                <<"op">> => <<"event_id">>,
                 <<"pubkey_hex">> =>
-                    <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>
-            }#{
+                    <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>,
                 <<"event">> => #{
                     <<"created_at">> => 0,
                     <<"kind">> => 1,
@@ -472,18 +510,14 @@ smoke_phase2c_crypto_vectors(Opts0) ->
     assert_fields(
         nip44_encrypt_vector,
         backend_call(
-            #{}#{
-                <<"op">> => <<"nip44_encrypt_vector">>
-            }#{
+            #{
+                <<"op">> => <<"nip44_encrypt_vector">>,
                 <<"secret_key_hex">> =>
-                    <<"0000000000000000000000000000000000000000000000000000000000000001">>
-            }#{
+                    <<"0000000000000000000000000000000000000000000000000000000000000001">>,
                 <<"peer_pubkey_hex">> =>
-                    <<"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5">>
-            }#{
+                    <<"c6047f9441ed7d6d3045406e95c07cd85c778e4bcef3ca7abac09b95c709ee5">>,
                 <<"nonce_hex">> =>
-                    <<"0000000000000000000000000000000000000000000000000000000000000001">>
-            }#{
+                    <<"0000000000000000000000000000000000000000000000000000000000000001">>,
                 <<"plaintext">> => <<"a">>
             },
             Base
@@ -498,15 +532,12 @@ smoke_phase2c_crypto_vectors(Opts0) ->
     assert_fields(
         nip44_decrypt_vector,
         backend_call(
-            #{}#{
-                <<"op">> => <<"nip44_decrypt_vector">>
-            }#{
+            #{
+                <<"op">> => <<"nip44_decrypt_vector">>,
                 <<"secret_key_hex">> =>
-                    <<"0000000000000000000000000000000000000000000000000000000000000002">>
-            }#{
+                    <<"0000000000000000000000000000000000000000000000000000000000000002">>,
                 <<"peer_pubkey_hex">> =>
-                    <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>
-            }#{
+                    <<"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798">>,
                 <<"payload">> =>
                     <<"AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABee0G5VSK0/9YypIObAtDKfYEAjD35uVkHyB0F4DwrcNaCXlCWZKaArsGrY6M9wnuTMxWfp1RTN9Xga8no+kF5Vsb">>
             },
@@ -615,9 +646,7 @@ check_release_artifacts() ->
 
 check_release_artifacts(ReleaseRoot0) ->
     ReleaseRoot = str(ReleaseRoot0),
-    RequiredFiles = [
-        "bin/damage-nsecbunker-crypto-c"
-    ],
+    RequiredFiles = ["bin/damage-nsecbunker-crypto-c"],
     RequiredDirs = ["doc/nsecbunker"],
     MissingFiles = [P || P <- RequiredFiles, not filelib:is_regular(filename:join(ReleaseRoot, P))],
     MissingDirs = [P || P <- RequiredDirs, not filelib:is_dir(filename:join(ReleaseRoot, P))],
@@ -830,7 +859,7 @@ phase4a_markdown(Report) ->
     Backend = field(<<"backend">>, Report),
     Vault = field(<<"vault_path">>, Report),
     iolist_to_binary([
-        "# Phase 4A dev DamageBDD key rehearsal\n\n",
+        "# Phase 4A dev nsecbunker key rehearsal\n\n",
         "Status: generated\n\n",
         "Created UTC: ",
         Created,
@@ -849,7 +878,7 @@ phase4a_markdown(Report) ->
         Npub,
         "\n",
         "```\n\n",
-        "Scope:\n\n```text\nDEV / DISPOSABLE ONLY\nNot the real LodgeiT publisher identity.\nDo not reuse for Phase 4B.\n```\n\n",
+        "Scope:\n\n```text\nDEV / DISPOSABLE ONLY\nNot a production identity.\nDo not reuse for production ceremonies.\n```\n\n",
         "Secret handling:\n\n```text\nnsec exported: no\nprivate key printed: no\nsecret-shaped fields in report: no\n```\n"
     ]).
 
@@ -863,7 +892,7 @@ phase4b_markdown(Report) ->
     Vault = field(<<"vault_path">>, Report),
     VaultMode = field(<<"vault_mode_octal">>, Report),
     iolist_to_binary([
-        "# Phase 4B production DamageBDD node key ceremony\n\n",
+        "# Phase 4B production Damage node key ceremony\n\n",
         "Status: ",
         Status,
         "\n\n",
@@ -890,7 +919,7 @@ phase4b_markdown(Report) ->
         Npub,
         "\n",
         "```\n\n",
-        "Scope:\n\n```text\nPRODUCTION DamageBDD node nsecbunker identity.\nNot the LodgeiT publisher identity.\n```\n\n",
+        "Scope:\n\n```text\nPRODUCTION Damage node nsecbunker identity.\n```\n\n",
         "Secret handling:\n\n```text\nnsec exported: no\nprivate key printed: no\nsecret-shaped fields in report: no\nproduction vault overwritten: no\n```\n"
     ]).
 
