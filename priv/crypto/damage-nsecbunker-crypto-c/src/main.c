@@ -1,6 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
 #include <limits.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
 #include <openssl/ec.h>
@@ -100,13 +103,25 @@ static char *slurp_file(const char *path, size_t *out_len) {
     *out_len = n;
   return b;
 }
-static bool write_file(const char *path, const char *data, size_t len) {
-  FILE *f = fopen(path, "wb");
-  if (!f)
+static bool file_exists(const char *path) {
+  struct stat st;
+  return path && stat(path, &st) == 0;
+}
+static bool write_file_private(const char *path, const char *data, size_t len) {
+  int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0)
     return false;
-  size_t n = fwrite(data, 1, len, f);
-  int rc = fclose(f);
-  return n == len && rc == 0;
+  size_t off = 0;
+  while (off < len) {
+    ssize_t n = write(fd, data + off, len - off);
+    if (n <= 0) {
+      close(fd);
+      return false;
+    }
+    off += (size_t)n;
+  }
+  (void)fsync(fd);
+  return close(fd) == 0;
 }
 
 static char *json_escape(const char *s) {
@@ -1271,7 +1286,7 @@ static bool save_vault(const char *path, struct vault *v) {
            "\"aes-256-gcm\",\"salt\":\"%s\",\"iv\":\"%s\",\"tag\":\"%s\","
            "\"ciphertext\":\"%s\"}\n",
            VAULT_ITERATIONS, sh, ih, th, ch);
-  bool ok = write_file(path, out, strlen(out));
+  bool ok = write_file_private(path, out, strlen(out));
   if (!ok)
     err_msg("vault_write_failed");
   cleanse(key, KEY_LEN);
@@ -1401,6 +1416,11 @@ static bool op_generate(char *json) {
   char *path = vault_path(json);
   if (!path) {
     err_msg("missing_vault_path");
+    return false;
+  }
+  if (file_exists(path)) {
+    free(path);
+    err_msg("vault_already_exists");
     return false;
   }
   struct vault v;

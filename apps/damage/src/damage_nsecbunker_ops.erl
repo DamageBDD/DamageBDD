@@ -251,16 +251,17 @@ backend_call_executable(Backend, Payload, Opts) ->
             [] -> PortOpts0;
             _ -> PortOpts0 ++ [{env, Env}]
         end,
-    try open_port({spawn_executable, Backend}, PortOpts) of
-        Port ->
-            Json = jsx:encode(Payload),
-            true = port_command(Port, <<Json/binary, "\n">>),
-            case collect_port(Port, Timeout, <<>>) of
-                {ok, Bin} -> decode_backend(Bin);
-                {error, Reason} -> error(Reason)
-            end
-    catch
-        Class:Reason -> error({crypto_backend_open_failed, Class, Reason})
+    Port =
+        try open_port({spawn_executable, Backend}, PortOpts) of
+            P -> P
+        catch
+            Class:Reason -> error({crypto_backend_open_failed, Class, Reason})
+        end,
+    Json = jsx:encode(Payload),
+    true = port_command(Port, <<Json/binary, "\n">>),
+    case collect_port(Port, Timeout, <<>>) of
+        {ok, Bin} -> decode_backend(Bin);
+        {error, Reason0} -> error(Reason0)
     end.
 
 collect_port(Port, Timeout, Acc) ->
@@ -281,11 +282,20 @@ safe_port_close(Port) ->
     end.
 
 decode_backend(Bin) ->
+    case decode_backend_json(Bin) of
+        #{<<"ok">> := true, <<"result">> := Result} when is_map(Result) ->
+            Result;
+        #{<<"ok">> := true, <<"result">> := Result} ->
+            #{<<"value">> => Result};
+        #{<<"ok">> := false, <<"error">> := Error} ->
+            error({crypto_backend_not_ok, Error});
+        Other ->
+            error({crypto_backend_bad_envelope, Other})
+    end.
+
+decode_backend_json(Bin) ->
     try jsx:decode(Bin, [return_maps]) of
-        #{<<"ok">> := true, <<"result">> := Result} when is_map(Result) -> Result;
-        #{<<"ok">> := true, <<"result">> := Result} -> #{<<"value">> => Result};
-        #{<<"ok">> := false, <<"error">> := Error} -> error({crypto_backend_not_ok, Error});
-        Other -> error({crypto_backend_bad_envelope, Other})
+        Json -> Json
     catch
         Class:Reason -> error({crypto_backend_invalid_json, Class, Reason, Bin})
     end.
@@ -515,7 +525,7 @@ smoke_phase2c_crypto_vectors(Opts0) ->
                 <<"secret_key_hex">> =>
                     <<"0000000000000000000000000000000000000000000000000000000000000001">>,
                 <<"peer_pubkey_hex">> =>
-                    <<"c6047f9441ed7d6d3045406e95c07cd85c778e4bcef3ca7abac09b95c709ee5">>,
+                    <<"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5">>,
                 <<"nonce_hex">> =>
                     <<"0000000000000000000000000000000000000000000000000000000000000001">>,
                 <<"plaintext">> => <<"a">>
@@ -598,12 +608,35 @@ smoke_phase2c_crypto_vectors(Opts0) ->
 
 assert_backend_fails(Label, Payload, Opts, ExpectedError) ->
     try backend_call(Payload, Opts) of
-        Result -> error({Label, expected_failure, Result})
+        Result ->
+            error({Label, expected_failure, Result})
     catch
         error:{crypto_backend_not_ok, ExpectedError} ->
             ok;
         error:{crypto_backend_not_ok, Other} ->
-            error({Label, unexpected_backend_error, Other, ExpectedError})
+            error({Label, unexpected_backend_error, Other, ExpectedError});
+        error:{crypto_backend_exit, _Status, Bin} ->
+            assert_backend_error_bin(Label, Bin, ExpectedError);
+        error:{crypto_backend_open_failed, error, {crypto_backend_exit, _Status, Bin}} ->
+            assert_backend_error_bin(Label, Bin, ExpectedError);
+        error:Other ->
+            error({Label, unexpected_failure_shape, Other, ExpectedError})
+    end.
+
+assert_backend_error_bin(Label, Bin, ExpectedError) ->
+    case backend_error_from_bin(Bin) of
+        ExpectedError ->
+            ok;
+        Other ->
+            error({Label, unexpected_backend_error, Other, ExpectedError, Bin})
+    end.
+
+backend_error_from_bin(Bin) ->
+    try jsx:decode(Bin, [return_maps]) of
+        #{<<"ok">> := false, <<"error">> := Error} -> Error;
+        Other -> {bad_backend_error_envelope, Other}
+    catch
+        Class:Reason -> {invalid_backend_error_json, Class, Reason, Bin}
     end.
 
 assert_fields(Label, Map, Expected) ->
