@@ -62,6 +62,9 @@ phase4a_create_dev_key() ->
     phase4a_create_dev_key(#{}).
 
 phase4a_create_dev_key(Opts0) ->
+    with_file_access_errors(fun() -> phase4a_create_dev_key_unsafe(Opts0) end).
+
+phase4a_create_dev_key_unsafe(Opts0) ->
     Opts = opts(Opts0),
     Root = root(Opts),
     Backend = crypto_backend_path(Opts),
@@ -83,7 +86,7 @@ phase4a_create_dev_key(Opts0) ->
     ok = ensure_dir(ReportDir),
     case Reset of
         true ->
-            _ = file:delete(Vault),
+            ok = delete_if_exists(Vault),
             ok;
         false ->
             ok
@@ -105,7 +108,7 @@ phase4a_create_dev_key(Opts0) ->
             field(<<"npub">>, Gen), npub_for(Pubkey, Opts#{backend => Backend, env => Env})
         ])
     ),
-    _ = file:change_mode(Vault, 8#600),
+    ok = change_mode(Vault, 8#600),
     Created = iso8601_now(),
     Report = #{
         <<"phase">> => <<"4A">>,
@@ -128,11 +131,13 @@ phase4b_create_production_damagebdd_node_key() ->
     phase4b_create_production_damagebdd_node_key(#{}).
 
 phase4b_create_production_damagebdd_node_key(Opts0) ->
-    Opts = opts(Opts0),
-    case require_phase4b_approval(Opts) of
-        ok -> phase4b_create_production_damagebdd_node_key_0(Opts);
-        {error, _} = Error -> Error
-    end.
+    with_file_access_errors(fun() ->
+        Opts = opts(Opts0),
+        case require_phase4b_approval(Opts) of
+            ok -> phase4b_create_production_damagebdd_node_key_0(Opts);
+            {error, _} = Error -> Error
+        end
+    end).
 
 phase4b_create_production_damagebdd_node_key_0(Opts) ->
     Root = root(Opts),
@@ -217,8 +222,8 @@ phase4b_create_production_damagebdd_node_key_1(
     ok = assert_no_secret_material(Report),
     ok = write_json(JsonReport, Report),
     ok = write_file(MdReport, phase4b_markdown(Report)),
-    _ = file:change_mode(JsonReport, 8#644),
-    _ = file:change_mode(MdReport, 8#644),
+    ok = change_mode(JsonReport, 8#644),
+    ok = change_mode(MdReport, 8#644),
     {ok, Report#{<<"json_report">> => bin(JsonReport), <<"markdown_report">> => bin(MdReport)}}.
 
 phase4a_ceremony_available() ->
@@ -671,7 +676,7 @@ install_crypto_backend(Source0, Dest0) ->
         {ok, _Bytes} -> ok;
         {error, Reason} -> error({backend_install_copy_failed, Source, Dest, Reason})
     end,
-    ok = file:change_mode(Dest, 8#755),
+    ok = change_mode(Dest, 8#755),
     {ok, Dest}.
 
 check_release_artifacts() ->
@@ -963,22 +968,85 @@ write_json(Path, Map) ->
 write_file(Path0, Data) ->
     Path = str(Path0),
     ok = ensure_parent(Path),
-    file:write_file(Path, Data).
+    expect_file_ok(write_file, Path, file:write_file(Path, Data)).
 
 ensure_parent(Path0) ->
     Path = str(Path0),
-    filelib:ensure_dir(filename:join(filename:dirname(Path), ".keep")).
+    Parent = filename:dirname(Path),
+    expect_file_ok(ensure_parent, Parent, filelib:ensure_dir(filename:join(Parent, ".keep"))).
 
 ensure_dir(Dir0) ->
     Dir = str(Dir0),
-    filelib:ensure_dir(filename:join(Dir, ".keep")).
+    expect_file_ok(ensure_dir, Dir, filelib:ensure_dir(filename:join(Dir, ".keep"))).
+
+delete_if_exists(Path0) ->
+    Path = str(Path0),
+    case file:delete(Path) of
+        ok -> ok;
+        {error, enoent} -> ok;
+        {error, Reason} -> file_access_error(delete_file, Path, Reason)
+    end.
+
+change_mode(Path0, Mode) ->
+    Path = str(Path0),
+    expect_file_ok(change_mode, Path, file:change_mode(Path, Mode)).
+
+expect_file_ok(_Operation, _Path, ok) ->
+    ok;
+expect_file_ok(Operation, Path, {error, Reason}) ->
+    file_access_error(Operation, Path, Reason).
+
+with_file_access_errors(Fun) ->
+    try Fun() of
+        Result -> Result
+    catch
+        error:{nsecbunker_file_access_error, ErrorMap} ->
+            {error, ErrorMap};
+        error:{badmatch, {error, Reason}} ->
+            {error, #{
+                reason => file_access_failed,
+                operation => unknown_file_operation,
+                os_reason => Reason,
+                hint => file_access_hint(unknown_file_operation, undefined, Reason)
+            }}
+    end.
+
+file_access_error(Operation, Path, Reason) ->
+    error({nsecbunker_file_access_error, #{
+        reason => file_access_failed,
+        operation => Operation,
+        path => bin(Path),
+        os_reason => Reason,
+        hint => file_access_hint(Operation, Path, Reason)
+    }}).
+
+file_access_hint(_Operation, Path, enoent) ->
+    iolist_to_binary([
+        <<"Missing directory or file for path: ">>,
+        bin(first_present([Path], "<unknown>")),
+        <<". Create the parent directory and ensure the Damage runtime user can access it.">>
+    ]);
+file_access_hint(_Operation, Path, eacces) ->
+    iolist_to_binary([
+        <<"Permission denied for path: ">>,
+        bin(first_present([Path], "<unknown>")),
+        <<". Fix ownership/mode for the Damage runtime user, for example /var/lib/damage/nsecbunker should be private and report_dir writable.">>
+    ]);
+file_access_hint(_Operation, Path, Reason) ->
+    iolist_to_binary([
+        <<"File operation failed for path: ">>,
+        bin(first_present([Path], "<unknown>")),
+        <<" with reason ">>,
+        bin(Reason),
+        <<".">>
+    ]).
 
 file_mode_private(Path) ->
     case filelib:is_regular(Path) of
         true -> ok;
         false -> error({vault_missing, Path})
     end,
-    _ = file:change_mode(Path, 8#600),
+    ok = change_mode(Path, 8#600),
     case file:read_file_info(Path) of
         {ok, #file_info{mode = Mode}} ->
             case (Mode band 8#077) =:= 0 of
