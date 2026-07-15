@@ -3,7 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 policy() ->
-    (damage_nsecbunker_policy:default_lodgeit_policy())#{
+    (damage_nsecbunker_policy:default_policy())#{
         bunker_pubkey_hex => <<"BUNKER">>,
         authorized_clients => [<<"CLIENT">>],
         contract_sha => <<"CONTRACT">>

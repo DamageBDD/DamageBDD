@@ -30,7 +30,7 @@
 }).
 
 init(Config, Policy) ->
-    Path = bin(maps:get(vault_path, Config, "/var/lib/damage/nsecbunker/lodgeit_genesis.vault")),
+    Path = bin(maps:get(vault_path, Config, "/var/lib/damage/nsecbunker/genesis.vault")),
     #vault{config = Config, policy = Policy, path = Path, backend = backend_cmd(Config)}.
 
 status(Vault = #vault{path = Path, backend = Backend}) ->
