@@ -5,7 +5,8 @@
     add_doc/3,
     add_records/2,
     flush/1,
-    close/1
+    close/1,
+    abort/1
 ]).
 
 -record(st, {
@@ -100,14 +101,12 @@ add_doc(_State, _DocInt, _Record) ->
 
 flush(State = #st{batch_docs = 0}) ->
     State;
-flush(
-    State = #st{
-        base_dir = BaseDir,
-        docstore_tab = Docstore,
-        seg_no = SegmentNo,
-        batch = Batch
-    }
-) ->
+flush(State = #st{
+    base_dir = BaseDir,
+    docstore_tab = Docstore,
+    seg_no = SegmentNo,
+    batch = Batch
+}) ->
     %% Document metadata must be durable before the segment becomes visible in
     %% the manifest.
     ok = ecai_disk_docstore:sync(Docstore),
@@ -132,6 +131,12 @@ close(State = #st{docstore_tab = Docstore}) ->
         %% publication fails.
         _ = ecai_disk_docstore:close(Docstore)
     end.
+
+%% Close the metadata table without publishing the current in-memory batch.
+%% Segments already flushed before an error remain immutable and visible; this
+%% function only prevents the unfinished batch from being published on cleanup.
+abort(#st{docstore_tab = Docstore}) ->
+    ecai_disk_docstore:close(Docstore).
 
 normalize_meta(Meta) ->
     maps:fold(

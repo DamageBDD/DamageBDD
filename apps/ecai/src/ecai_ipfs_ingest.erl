@@ -15,6 +15,7 @@
 -export([
     ingest_cid/3,
     ingest_cid/4,
+    ingest_cid_result/4,
     ingest_manifest/2,
     ingest_live_cid/2,
     ingest_live_cid/3,
@@ -43,17 +44,23 @@ ingest_cid(BaseDir, Cid0, Title0) ->
     end.
 
 ingest_cid(BaseDir, SourceKey0, Cid0, Title0) ->
+    case ingest_cid_result(BaseDir, SourceKey0, Cid0, Title0) of
+        {ok, _Stats} -> ok;
+        {error, _Reason} = Error -> Error
+    end.
+
+%% Searchable one-shot ingest with explicit indexing statistics for the job
+%% queue. The historical ingest_cid/4 wrapper continues to return ok.
+ingest_cid_result(BaseDir, SourceKey0, Cid0, Title0) ->
     with_legacy_index_lock(BaseDir, fun(AbsoluteBaseDir) ->
         case normalize_source_args(SourceKey0, Cid0, Title0) of
             {ok, SourceKey, Cid, Title} ->
-                case
-                    fetch_and_build(
-                        SourceKey,
-                        Cid,
-                        Title,
-                        configured_max_source_chunks()
-                    )
-                of
+                case fetch_and_build(
+                    SourceKey,
+                    Cid,
+                    Title,
+                    configured_max_source_chunks()
+                ) of
                     {ok, Records} ->
                         persist_searchable_records(AbsoluteBaseDir, Records);
                     {error, _Reason} = Error ->
@@ -93,30 +100,60 @@ ingest_manifest(BaseDir, ManifestCid0) ->
     end).
 
 persist_searchable_records(BaseDir, Records) ->
-    try
-        Index0 = ecai_disk_indexer:new(BaseDir),
-        Index1 = ecai_disk_indexer:add_records(Index0, Records),
-        ok = ecai_disk_indexer:close(Index1),
-        ok
+    try ecai_disk_indexer:new(BaseDir) of
+        Index0 ->
+            case safe_add_records(Index0, Records) of
+                {ok, Index1} ->
+                    case safe_close_index(Index1) of
+                        ok ->
+                            {ok, #{
+                                documents_indexed => 1,
+                                records_indexed => length(Records),
+                                duplicates => 0
+                            }};
+                        {error, _Reason} = Error ->
+                            Error
+                    end;
+                {error, _Reason} = Error ->
+                    _ = ecai_disk_indexer:abort(Index0),
+                    Error
+            end
     catch
         Class:Reason:Stacktrace ->
             {error, {searchable_ingest_failed, Class, Reason, Stacktrace}}
     end.
 
 persist_searchable_manifest(BaseDir, Docs) ->
-    try
-        Index0 = ecai_disk_indexer:new(BaseDir),
-        case add_manifest_docs_to_index(Index0, Docs, 1) of
-            {ok, Index1} ->
-                ok = ecai_disk_indexer:close(Index1),
-                ok;
-            {error, Reason, Index1} ->
-                _ = ecai_disk_indexer:close(Index1),
-                {error, Reason}
-        end
+    try ecai_disk_indexer:new(BaseDir) of
+        Index0 ->
+            case add_manifest_docs_to_index(Index0, Docs, 1) of
+                {ok, Index1} ->
+                    safe_close_index(Index1);
+                {error, Reason, Index1} ->
+                    _ = ecai_disk_indexer:abort(Index1),
+                    {error, Reason}
+            end
     catch
         Class:Reason:Stacktrace ->
             {error, {searchable_manifest_ingest_failed, Class, Reason, Stacktrace}}
+    end.
+
+safe_add_records(Index, Records) ->
+    try ecai_disk_indexer:add_records(Index, Records) of
+        Index1 -> {ok, Index1}
+    catch
+        Class:Reason:Stacktrace ->
+            {error, {searchable_ingest_failed, Class, Reason, Stacktrace}}
+    end.
+
+safe_close_index(Index) ->
+    try ecai_disk_indexer:close(Index) of
+        ok -> ok;
+        {error, Reason} -> {error, {index_close_failed, Reason}};
+        Other -> {error, {unexpected_index_close_result, Other}}
+    catch
+        Class:Reason:Stacktrace ->
+            {error, {index_close_failed, Class, Reason, Stacktrace}}
     end.
 
 add_manifest_docs_to_index(Index, [], _Ordinal) ->
@@ -124,17 +161,19 @@ add_manifest_docs_to_index(Index, [], _Ordinal) ->
 add_manifest_docs_to_index(Index0, [Doc | Rest], Ordinal) when is_map(Doc) ->
     case manifest_doc_fields(Doc) of
         {ok, SourceKey, Cid, Title} ->
-            case
-                fetch_and_build(
-                    SourceKey,
-                    Cid,
-                    Title,
-                    configured_max_source_chunks()
-                )
-            of
+            case fetch_and_build(
+                SourceKey,
+                Cid,
+                Title,
+                configured_max_source_chunks()
+            ) of
                 {ok, Records} ->
-                    Index1 = ecai_disk_indexer:add_records(Index0, Records),
-                    add_manifest_docs_to_index(Index1, Rest, Ordinal + 1);
+                    case safe_add_records(Index0, Records) of
+                        {ok, Index1} ->
+                            add_manifest_docs_to_index(Index1, Rest, Ordinal + 1);
+                        {error, Reason} ->
+                            {error, {manifest_document_failed, Ordinal, Reason}, Index0}
+                    end;
                 {error, Reason} ->
                     {error, {manifest_document_failed, Ordinal, Reason}, Index0}
             end;
@@ -293,14 +332,12 @@ build_record(SourceKey, Cid, Title, ChunkInfo) ->
         type => <<"ipfs">>,
         tags => []
     },
-    case
-        ecai_ingest_event:new_upsert_chunk(
-            SourceKey,
-            Cid,
-            ChunkInfo,
-            IndexFields0
-        )
-    of
+    case ecai_ingest_event:new_upsert_chunk(
+        SourceKey,
+        Cid,
+        ChunkInfo,
+        IndexFields0
+    ) of
         {ok, Event} ->
             IndexFields = maps:get(index_fields, Event),
             Record0 = #{
@@ -414,12 +451,10 @@ sum_ack_field(Acks, Key) ->
 manifest_doc_fields(Doc) ->
     case normalize_binary(cid, maps:get(<<"cid">>, Doc, undefined)) of
         {ok, Cid} ->
-            case
-                normalize_optional_binary(
-                    title,
-                    maps:get(<<"title">>, Doc, <<>>)
-                )
-            of
+            case normalize_optional_binary(
+                title,
+                maps:get(<<"title">>, Doc, <<>>)
+            ) of
                 {ok, Title} ->
                     SourceKey0 = maps:get(
                         <<"source_key">>,
@@ -446,11 +481,9 @@ normalize_source_args(SourceKey0, Cid0, Title0) ->
                         {ok, Title} -> {ok, SourceKey, Cid, Title};
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error ->
-                    Error
+                {error, _Reason} = Error -> Error
             end;
-        {error, _Reason} = Error ->
-            Error
+        {error, _Reason} = Error -> Error
     end.
 
 normalize_binary(Name, Value) ->

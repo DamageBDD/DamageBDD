@@ -17,7 +17,43 @@
 start(_StartType, _StartArgs) ->
     {ok, _} = application:ensure_all_started(gun),
     {ok, _} = application:ensure_all_started(poolboy),
-    ecai_sup:start_link().
+    case ecai_sup:start_link() of
+        {ok, SupPid} ->
+            ok = maybe_start_index_jobs(SupPid),
+            {ok, SupPid};
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+maybe_start_index_jobs(SupPid) ->
+    case application:get_env(ecai, index_jobs_enabled, false) of
+        true ->
+            ChildSpec = #{
+                id => ecai_index_jobs_sup,
+                start => {ecai_index_jobs_sup, start_link, []},
+                restart => permanent,
+                shutdown => infinity,
+                type => supervisor,
+                modules => [ecai_index_jobs_sup]
+            },
+            case supervisor:start_child(SupPid, ChildSpec) of
+                {ok, _Pid} -> ok;
+                {ok, _Pid, _Info} -> ok;
+                {error, {already_started, _Pid}} -> ok;
+                {error, already_present} ->
+                    case supervisor:restart_child(SupPid, ecai_index_jobs_sup) of
+                        {ok, _Pid} -> ok;
+                        {ok, _Pid, _Info} -> ok;
+                        {error, running} -> ok;
+                        {error, Reason} -> error({index_jobs_restart_failed, Reason})
+                    end;
+                {error, Reason} -> error({index_jobs_start_failed, Reason})
+            end;
+        false ->
+            ok;
+        Invalid ->
+            error({invalid_configuration, index_jobs_enabled, Invalid})
+    end.
 
 get_trails() ->
     {ok, _} = application:ensure_all_started(poolboy),
@@ -25,6 +61,7 @@ get_trails() ->
     Handlers =
         [
             ecai_api,
+            ecai_index_jobs_http,
             ecai_yelp_admin,
             ecai_dashboard,
             ecai_chat_http_handler

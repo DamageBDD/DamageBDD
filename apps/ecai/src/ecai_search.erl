@@ -37,8 +37,10 @@
     term_df/2,
     set_opts/2,
     get_opts/1,
-    % rebuild all roots (for bulk loads)
+    % rebuild roots and optionally refresh a GPU snapshot
     finalize/1,
+    % rebuild roots only; safe for callers that do not own the context record
+    finalize_roots/1,
 
     % diagnostics
     size/1,
@@ -170,9 +172,8 @@ new() ->
 %%% Public mutators
 %%%===================================================================
 
-add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record) when
-    is_binary(DocId), is_map(Record)
-->
+add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record)
+        when is_binary(DocId), is_map(Record) ->
     %% Derive terms before reserving an ID so invalid records cannot leave a
     %% half-created document mapping.
     Terms = ecai_terms:terms_from_record(Record),
@@ -977,6 +978,12 @@ finalize(Ctx0 = #ctx{backend = gpu}) ->
 finalize(Ctx = #ctx{}) ->
     rebuild_all_roots(Ctx).
 
+%% Rebuild proof roots without changing backend state. Artifact finalization
+%% often receives a borrowed context from ecai_search_server and must not free
+%% or replace a GPU handle owned by that server.
+finalize_roots(Ctx = #ctx{}) ->
+    rebuild_all_roots(Ctx).
+
 rebuild_all_roots(Ctx) ->
     Terms = [Term || {Term, _Df} <- ets:tab2list(Ctx#ctx.df_tab)],
     lists:foreach(
@@ -1077,12 +1084,11 @@ enable_gpu(Ctx0 = #ctx{}) ->
 disable_gpu(Ctx = #ctx{backend = ets}) ->
     Ctx;
 disable_gpu(Ctx = #ctx{backend = gpu, gpu = H}) ->
-    _ =
-        try ecai_gpu:free(H) of
-            Result -> Result
-        catch
-            _Class:_Reason -> ok
-        end,
+    _ = try ecai_gpu:free(H) of
+        Result -> Result
+    catch
+        _Class:_Reason -> ok
+    end,
     Ctx#ctx{backend = ets, gpu = undefined, term_ids = #{}}.
 
 %% Rebuild device snapshot (call after a bulk index or finalize/1)

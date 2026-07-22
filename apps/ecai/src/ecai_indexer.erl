@@ -1,167 +1,225 @@
 %%%-------------------------------------------------------------------
-%%% ecai_indexer: singleton async index job with progress + locking
+%%% ecai_indexer compatibility facade.
+%%%
+%%% Legacy Yelp admin callers retain start/3, status/0 and cancel/0 while the
+%%% actual work is executed by the durable ecai_index_jobs_srv queue.
 %%%-------------------------------------------------------------------
 -module(ecai_indexer).
--author("Steven Joseph <steven@stevenjoseph.in>").
-
--copyright("Steven Joseph <steven@stevenjoseph.in>").
-
--license("Apache-2.0").
 -behaviour(gen_server).
 
 -export([start_link/0, start/3, status/0, cancel/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--include_lib("kernel/include/logger.hrl").
-
 -record(state, {
-    status = idle :: idle | running | done | canceled | error,
-    job_id = undefined :: binary() | undefined,
-    started_at = 0 :: integer(),
-    finished_at = 0 :: integer(),
-    ctx :: term() | undefined,
-    paths = [] :: [binary()],
-    limit = infinity :: pos_integer() | infinity,
-    total = 0 :: non_neg_integer(),
-    done = 0 :: non_neg_integer(),
-    docs_done = 0 :: non_neg_integer(),
-    err :: term() | undefined
+    last_job_id = undefined
 }).
-
-%%% ===== Public API ==================================================
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% Start an async job, returns {ok, JobId} | {error,busy}
 start(Ctx, Paths, Limit) ->
-    gen_server:call(?MODULE, {start, Ctx, Paths, Limit}, infinity).
+    gen_server:call(?MODULE, {start, Ctx, Paths, Limit}, 30000).
 
-%% Status map (safe to call often)
 status() ->
-    gen_server:call(?MODULE, status).
+    gen_server:call(?MODULE, status, 30000).
 
-%% Cancel current job, if any
 cancel() ->
-    gen_server:call(?MODULE, cancel).
-
-%%% ===== gen_server ==================================================
+    gen_server:call(?MODULE, cancel, 30000).
 
 init([]) ->
     {ok, #state{}}.
 
-handle_call(status, _From, S) ->
-    {reply, to_map(S), S};
-handle_call(cancel, _From, S = #state{status = running}) ->
-    %% cooperative cancel: switch flag; worker loop checks status again via server state
-    New = S#state{status = canceled},
-    {reply, ok, New};
-handle_call(cancel, _From, S) ->
-    {reply, {error, nojob}, S};
-handle_call({start, _Ctx, _Paths, _Limit}, _From, S = #state{status = running}) ->
-    {reply, {error, busy}, S};
-handle_call({start, Ctx, Paths0, Limit}, _From, State = #state{}) ->
-    case normalize_paths(Paths0) of
-        {ok, Paths} ->
-            JobId = iolist_to_binary(
-                io_lib:format("job-~B", [erlang:unique_integer([monotonic, positive])])
-            ),
-            Next = #state{
-                status = running,
-                job_id = JobId,
-                started_at = erlang:system_time(millisecond),
-                ctx = Ctx,
-                paths = Paths,
-                limit = Limit,
-                total = length(Paths),
-                done = 0,
-                docs_done = 0
-            },
-            Self = self(),
-            _Pid = spawn_link(fun() -> run_index(Self, Next) end),
-            {reply, {ok, JobId}, Next};
-        {error, _Reason} = Error ->
-            {reply, Error, State}
+handle_call({start, _Ctx, Paths0, Limit0}, _From, State0) ->
+    case active_legacy_job(State0) of
+        {ok, _Job} ->
+            {reply, {error, busy}, State0};
+        not_found ->
+            case normalize_request(Paths0, Limit0) of
+                {ok, Paths, Limit} ->
+                    Spec = #{
+                        schema => <<"ecai-index-job/v1">>,
+                        kind => yelp_ndjson,
+                        owner => <<"legacy-yelp-admin">>,
+                        source => #{paths => Paths},
+                        target => #{mode => live_search},
+                        options => #{
+                            priority => 100,
+                            max_retries => 3,
+                            batch_size => 1,
+                            limit_per_chunk => Limit
+                        },
+                        finalize => #{
+                            build_nft_manifest => true,
+                            publish_ipfs => false,
+                            auto_mint => false
+                        }
+                    },
+                    case safe_enqueue(Spec) of
+                        {ok, Job} ->
+                            JobId = maps:get(<<"id">>, Job),
+                            {reply, {ok, JobId}, State0#state{last_job_id = JobId}};
+                        {error, _Reason} = Error ->
+                            {reply, Error, State0}
+                    end;
+                {error, _Reason} = Error ->
+                    {reply, Error, State0}
+            end
+    end;
+handle_call(status, _From, State0) ->
+    case current_legacy_job(State0) of
+        {ok, Job, State1} ->
+            {reply, legacy_status(Job), State1};
+        not_found ->
+            {reply, idle_status(), State0}
+    end;
+handle_call(cancel, _From, State0) ->
+    case current_legacy_job(State0) of
+        {ok, Job, State1} ->
+            JobId = maps:get(<<"id">>, Job),
+            case safe_control(cancel, JobId) of
+                {ok, _Updated} -> {reply, ok, State1};
+                {error, _Reason} = Error -> {reply, Error, State1}
+            end;
+        not_found ->
+            {reply, {error, nojob}, State0}
+    end;
+handle_call(_Request, _From, State) ->
+    {reply, {error, unhandled}, State}.
+
+handle_cast(_Message, State) ->
+    {noreply, State}.
+
+handle_info(_Message, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) -> ok.
+code_change(_OldVersion, State, _Extra) -> {ok, State}.
+
+active_legacy_job(State) ->
+    case current_legacy_job(State) of
+        {ok, Job, _State1} ->
+            case is_active_state(maps:get(<<"state">>, Job)) of
+                true -> {ok, Job};
+                false -> not_found
+            end;
+        not_found -> not_found
     end.
 
-handle_cast(_Msg, S) -> {noreply, S}.
+current_legacy_job(State = #state{last_job_id = JobId}) when is_binary(JobId) ->
+    case safe_get(JobId) of
+        {ok, Job} -> {ok, Job, State};
+        {error, _Reason} -> latest_legacy_job(State)
+    end;
+current_legacy_job(State) ->
+    latest_legacy_job(State).
 
-handle_info(
-    {progress, FileInc, DocsInc}, S = #state{status = running, done = D0, docs_done = Doc0}
-) ->
-    {noreply, S#state{done = D0 + FileInc, docs_done = Doc0 + DocsInc}};
-handle_info({finished, ok}, S = #state{status = running}) ->
-    {noreply, S#state{status = done, finished_at = now_ms()}};
-handle_info({finished, {error, Why}}, S = #state{status = running}) ->
-    ?LOG_WARNING(#{what => index_failed, reason => Why}),
-    {noreply, S#state{status = error, err = Why, finished_at = now_ms()}};
-handle_info(_Other, S) ->
-    {noreply, S}.
-
-terminate(_, _) -> ok.
-code_change(_, S, _) -> {ok, S}.
-
-%%% ===== Worker ======================================================
-
-run_index(Server, _S0 = #state{ctx = Ctx, paths = Paths, limit = Limit}) ->
-    try
-        %% Iterate by file so we can report progress & respect cancel
-        lists:foreach(
-            fun(Path) ->
-                %% Check cancel/busy before each file
-                case gen_server:call(?MODULE, status) of
-                    #{status := canceled} -> throw(canceled);
-                    _ -> ok
-                end,
-                DocsBefore = get_docs(Ctx),
-                ok = ecai_yelp_loader:index_chunks(Ctx, [Path], Limit),
-                DocsAfter = get_docs(Ctx),
-                %% no-op, keep mailbox flowing
-                gen_server:cast(?MODULE, {set, dummy}),
-                Server ! {progress, 1, DocsAfter - DocsBefore}
-            end,
-            Paths
-        ),
-        Server ! {finished, ok}
+latest_legacy_job(State) ->
+    try ecai_index_jobs_srv:list(#{
+        kind => <<"yelp_ndjson">>,
+        owner => <<"legacy-yelp-admin">>
+    }) of
+        {ok, [Job | _]} ->
+            JobId = maps:get(<<"id">>, Job),
+            {ok, Job, State#state{last_job_id = JobId}};
+        {ok, []} -> not_found;
+        _ -> not_found
     catch
-        throw:canceled -> Server ! {finished, {error, canceled}};
-        C:R -> Server ! {finished, {error, {C, R}}}
+        _Class:_Reason -> not_found
     end.
 
-get_docs(Ctx) ->
-    case ecai_search:size(Ctx) of
-        #{docs := N} -> N;
-        _ -> 0
-    end.
+legacy_status(Job) ->
+    Progress = map_or_empty(maps:get(<<"progress">>, Job, #{})),
+    State = maps:get(<<"state">>, Job, <<"failed">>),
+    #{
+        status => legacy_state(State),
+        job_id => maps:get(<<"id">>, Job),
+        started_at => maps:get(<<"started_at_ms">>, Job, 0),
+        finished_at => maps:get(<<"finished_at_ms">>, Job, 0),
+        files_total => maps:get(<<"sources_total">>, Progress, maps:get(<<"total">>, Progress, 0)),
+        files_done => maps:get(<<"sources_completed">>, Progress, maps:get(<<"completed">>, Progress, 0)),
+        docs_done => maps:get(<<"records_indexed">>, Progress, 0),
+        percent => maps:get(<<"percent">>, Progress, null),
+        rate_per_second => maps:get(<<"rate_per_second">>, Progress, 0.0),
+        eta_ms => maps:get(<<"eta_ms">>, Progress, null),
+        phase => maps:get(<<"phase">>, Progress, State),
+        error => maps:get(<<"error">>, Job, null)
+    }.
 
-normalize_paths(Paths) when is_list(Paths) ->
+legacy_state(<<"queued">>) -> running;
+legacy_state(<<"preparing">>) -> running;
+legacy_state(<<"running">>) -> running;
+legacy_state(<<"pause_requested">>) -> running;
+legacy_state(<<"paused">>) -> canceled;
+legacy_state(<<"cancel_requested">>) -> running;
+legacy_state(<<"canceled">>) -> canceled;
+legacy_state(<<"finalizing">>) -> running;
+legacy_state(<<"completed">>) -> done;
+legacy_state(<<"ready_to_mint">>) -> done;
+legacy_state(<<"minted">>) -> done;
+legacy_state(<<"failed">>) -> error;
+legacy_state(_) -> error.
+
+idle_status() ->
+    #{
+        status => idle,
+        job_id => undefined,
+        started_at => 0,
+        finished_at => 0,
+        files_total => 0,
+        files_done => 0,
+        docs_done => 0,
+        percent => 0.0,
+        rate_per_second => 0.0,
+        eta_ms => undefined,
+        phase => idle,
+        error => undefined
+    }.
+
+normalize_request(Paths0, Limit0) when is_list(Paths0) ->
     try
-        {ok, [ecai_chunker:chunk_path(Path) || Path <- Paths]}
+        Paths = [ecai_chunker:chunk_path(Path) || Path <- Paths0],
+        case Paths of
+            [] -> {error, empty_paths};
+            _ -> {ok, Paths, normalize_limit(Limit0)}
+        end
     catch
         error:badarg -> {error, badarg}
     end;
-normalize_paths(_Other) ->
+normalize_request(_Paths, _Limit) ->
     {error, badarg}.
 
-now_ms() -> erlang:system_time(millisecond).
+normalize_limit(infinity) -> infinity;
+normalize_limit(N) when is_integer(N), N > 0 -> N;
+normalize_limit(_Other) -> erlang:error(badarg).
 
-to_map(#state{
-    status = St,
-    job_id = Id,
-    started_at = T0,
-    finished_at = T1,
-    total = Tot,
-    done = Done,
-    docs_done = Docs,
-    err = Err
-}) ->
-    #{
-        status => St,
-        job_id => Id,
-        started_at => T0,
-        finished_at => T1,
-        files_total => Tot,
-        files_done => Done,
-        docs_done => Docs,
-        error => Err
-    }.
+safe_enqueue(Spec) ->
+    try ecai_index_jobs_srv:enqueue(Spec) of
+        Result -> Result
+    catch
+        exit:Reason -> {error, {index_jobs_unavailable, Reason}}
+    end.
+
+safe_get(JobId) ->
+    try ecai_index_jobs_srv:get(JobId) of
+        Result -> Result
+    catch
+        exit:Reason -> {error, {index_jobs_unavailable, Reason}}
+    end.
+
+safe_control(cancel, JobId) ->
+    try ecai_index_jobs_srv:cancel(JobId) of
+        Result -> Result
+    catch
+        exit:Reason -> {error, {index_jobs_unavailable, Reason}}
+    end.
+
+is_active_state(<<"queued">>) -> true;
+is_active_state(<<"preparing">>) -> true;
+is_active_state(<<"running">>) -> true;
+is_active_state(<<"pause_requested">>) -> true;
+is_active_state(<<"cancel_requested">>) -> true;
+is_active_state(<<"finalizing">>) -> true;
+is_active_state(_) -> false.
+
+map_or_empty(Map) when is_map(Map) -> Map;
+map_or_empty(_Other) -> #{}.

@@ -13,22 +13,19 @@
 ]).
 
 -define(NEXT_KEY, '$next_id').
+-define(CREATOR_TABLE, ecai_disk_docstore_creator).
 
-open(BaseDir) ->
-    ok = filelib:ensure_dir(filename:join(BaseDir, "docstore/x")),
-    Path = filename:join([BaseDir, "docstore", "ecai_docstore.dets"]),
-    Name = table_name(BaseDir),
-    case dets:open_file(Name, [{file, Path}, {type, set}]) of
-        {ok, Tab} ->
-            case ensure_next(Tab) of
-                ok ->
-                    {ok, Tab};
-                {error, _Reason} = Error ->
-                    _ = dets:close(Tab),
-                    Error
-            end;
-        Error ->
-            Error
+open(BaseDir0) ->
+    try
+        BaseDir = path_list(BaseDir0),
+        ok = filelib:ensure_dir(filename:join(BaseDir, "docstore/x")),
+        Path = filename:join([BaseDir, "docstore", "ecai_docstore.dets"]),
+        case ensure_table_file(Path) of
+            ok -> open_existing(Path);
+            {error, _Reason} = Error -> Error
+        end
+    catch
+        error:badarg -> {error, invalid_base_dir}
     end.
 
 close(Tab) ->
@@ -61,6 +58,57 @@ next_id(Tab) ->
         error:Reason -> {error, {next_id_failed, Reason}}
     end.
 
+open_existing(Path) ->
+    %% open_file/1 returns an anonymous table reference and therefore avoids
+    %% allocating one permanent VM atom for every operator-selected BaseDir.
+    case dets:open_file(Path) of
+        {ok, Tab} ->
+            case ensure_next(Tab) of
+                ok -> {ok, Tab};
+                {error, _Reason} = Error ->
+                    _ = dets:close(Tab),
+                    Error
+            end;
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+ensure_table_file(Path) ->
+    case filelib:is_regular(Path) of
+        true ->
+            ok;
+        false ->
+            LockId = {{?MODULE, create_table_file}, self()},
+            case global:trans(LockId, fun() -> create_table_file_if_missing(Path) end) of
+                aborted -> {error, docstore_create_lock_aborted};
+                Result -> Result
+            end
+    end.
+
+create_table_file_if_missing(Path) ->
+    case filelib:is_regular(Path) of
+        true ->
+            ok;
+        false ->
+            case dets:open_file(?CREATOR_TABLE, [
+                {file, Path},
+                {type, set},
+                {repair, true}
+            ]) of
+                {ok, Tab} ->
+                    try
+                        case ensure_next(Tab) of
+                            ok -> dets:sync(Tab);
+                            {error, _Reason} = Error -> Error
+                        end
+                    after
+                        _ = dets:close(Tab)
+                    end;
+                {error, _Reason} = Error ->
+                    Error
+            end
+    end.
+
 ensure_next(Tab) ->
     case dets:lookup(Tab, ?NEXT_KEY) of
         [] -> dets:insert(Tab, {?NEXT_KEY, 1});
@@ -68,9 +116,12 @@ ensure_next(Tab) ->
         Other -> {error, {invalid_next_id_record, Other}}
     end.
 
-table_name(BaseDir) ->
-    %% Compatibility with the existing store layout. Operators should keep the
-    %% number of simultaneously opened BaseDirs bounded because DETS names are
-    %% atoms and atoms are not garbage collected.
-    Hash = erlang:phash2(filename:absname(BaseDir), 1000000),
-    list_to_atom("ecai_docstore_" ++ integer_to_list(Hash)).
+path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
+    case unicode:characters_to_list(Bin) of
+        List when is_list(List) -> List;
+        _Invalid -> erlang:error(badarg)
+    end;
+path_list(List) when is_list(List), List =/= [] ->
+    List;
+path_list(_Other) ->
+    erlang:error(badarg).
