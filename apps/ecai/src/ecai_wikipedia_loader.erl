@@ -23,6 +23,8 @@
     load/1,
     load/2,
     load_auto/1,
+    load_chunks/1,
+    load_chunks/2,
     tune_memory_opts/1,
     system_memory/0,
     get_wikipedia_job/1
@@ -98,7 +100,7 @@ ct_id(Opts) ->
             end
     end.
 
-load(FilePath) ->
+load(SourceRef) ->
     %% Defaults:
     %%  - auto_tune=true: thresholds are derived from *system* memory (moderate profile)
     %%  - backpressure is based on erlang:memory/0, but tuned against host capacity
@@ -107,17 +109,30 @@ load(FilePath) ->
         mem_profile => moderate,
         snooze_ms => ?SNOOZE_MS
     }),
-    load(FilePath, Opts).
+    load(SourceRef, Opts).
 
-%% Convenience: always auto-tune with the moderate profile
-load_auto(FilePath) ->
-    load(FilePath, #{auto_tune => true, mem_profile => moderate}).
+%% Convenience: always auto-tune with the moderate profile.
+load_auto(SourceRef) ->
+    load(SourceRef, #{auto_tune => true, mem_profile => moderate}).
+
+%% Directly consume the descriptor maps returned by
+%% ecai_wikipedia_chunker:make_chunks_ndjson/3 while still accepting paths.
+load_chunks(ChunkRefs) when is_list(ChunkRefs) ->
+    load_chunks(ChunkRefs, #{auto_tune => true, mem_profile => moderate}).
+
+load_chunks(ChunkRefs, Opts) when is_list(ChunkRefs), is_map(Opts) ->
+    load_chunk_refs(ChunkRefs, Opts);
+load_chunks(_ChunkRefs, _Opts) ->
+    {error, badarg}.
 
 %% Opts may include:
 %%  #{mem_high:=Bytes, mem_low:=Bytes, bin_high:=Bytes, snooze_ms:=Ms,
 %%    checkpoint_dir:=Path, checkpoint_every:=N}
-load(FilePath, Opts0) when is_list(FilePath); is_binary(FilePath) ->
-    File = to_list(FilePath),
+load(SourceRef, Opts0) when
+    (is_list(SourceRef) orelse is_binary(SourceRef) orelse is_map(SourceRef)),
+    is_map(Opts0)
+->
+    File = source_path(SourceRef),
     %% merge defaults
     Opts1 = maps:merge(
         #{
@@ -139,7 +154,7 @@ load(FilePath, Opts0) when is_list(FilePath); is_binary(FilePath) ->
     ok = ensure_dir(ChkDir),
     CkptPath = checkpoint_path(ChkDir, File),
 
-    case file:open(File, [read]) of
+    case file:open(File, [read, raw, binary]) of
         {ok, IoDevice} ->
             %% resume if we have a checkpoint
             case read_checkpoint(CkptPath) of
@@ -150,28 +165,28 @@ load(FilePath, Opts0) when is_list(FilePath); is_binary(FilePath) ->
                         read_lines(IoDevice, File, Opts, CkptPath, LinesDone)
                     after
                         file:close(IoDevice)
-                    end,
-                    ok;
+                    end;
                 not_found ->
                     ?LOG_INFO("Starting fresh: ~s", [File]),
                     try
                         read_lines(IoDevice, File, Opts, CkptPath, 0)
                     after
                         file:close(IoDevice)
-                    end,
-                    ok
+                    end
             end;
         {error, Reason} ->
             ?LOG_ERROR("Error opening ~s: ~p", [File, Reason]),
             {error, Reason}
-    end.
+    end;
+load(_SourceRef, _Opts) ->
+    {error, badarg}.
 
 %% ---------------- Streaming (line-by-line) with checkpointing --------
 
 read_lines(IoDevice, _File, Opts0, CkptPath, Lines0) ->
     %% Backpressure check (and optional retune) before each read
     Opts = maybe_backpressure(Opts0),
-    case io:get_line(IoDevice, '') of
+    case file:read_line(IoDevice) of
         eof ->
             %% success: remove checkpoint
             _ = file:delete(CkptPath),
@@ -179,7 +194,7 @@ read_lines(IoDevice, _File, Opts0, CkptPath, Lines0) ->
         {error, Reason} ->
             ?LOG_ERROR("Error reading line: ~p", [Reason]),
             {error, Reason};
-        Line ->
+        {ok, Line} ->
             case safe_decode(Line) of
                 skip ->
                     read_lines(IoDevice, _File, Opts, CkptPath, Lines0);
@@ -202,21 +217,52 @@ read_lines(IoDevice, _File, Opts0, CkptPath, Lines0) ->
             end
     end.
 
-safe_decode(Line) ->
-    %% Trim CR/LF and skip blanks; tolerate occasional bad lines
-    %Bin = trim_nl(list_to_binary(Line)),
-    case Line of
-        <<>> ->
+safe_decode(Line0) ->
+    %% Validate before decoding so malformed UTF-8 never reaches the index.
+    case line_binary(Line0) of
+        {ok, <<>>} ->
             skip;
-        _ ->
-            try simdjson:decode(Line) of
-                %try jsx:decode(Bin) of
-                M when is_map(M) -> M;
-                _ -> skip
-            catch
-                _:_ -> skip
-            end
+        {ok, <<"\n">>} ->
+            skip;
+        {ok, <<"\r\n">>} ->
+            skip;
+        {ok, Line} ->
+            case ecai_chunker:validate_utf8(Line) of
+                ok ->
+                    try simdjson:decode(Line) of
+                        M when is_map(M) -> M;
+                        _ -> skip
+                    catch
+                        _:_ -> skip
+                    end;
+                {error, _Reason} ->
+                    skip
+            end;
+        error ->
+            skip
     end.
+
+load_chunk_refs([], _Opts) ->
+    ok;
+load_chunk_refs([ChunkRef | Rest], Opts) ->
+    case load(ChunkRef, Opts) of
+        ok -> load_chunk_refs(Rest, Opts);
+        {error, _Reason} = Error -> Error
+    end.
+
+source_path(SourceRef) ->
+    to_list(ecai_chunker:chunk_path(SourceRef)).
+
+line_binary(Bin) when is_binary(Bin) ->
+    {ok, Bin};
+line_binary(List) when is_list(List) ->
+    try
+        {ok, unicode:characters_to_binary(List)}
+    catch
+        _:_ -> error
+    end;
+line_binary(_Other) ->
+    error.
 
 checkpoint_path(Dir, FilePath) ->
     %% content-address the *path* to avoid clashes

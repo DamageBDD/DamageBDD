@@ -13,8 +13,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile(warn_export_all).
 
--include_lib("kernel/include/logger.hrl").
-
 %% Public API
 -export([
     % (InputNdjsonPath, OutDir, ChunkSize) -> [ChunkPaths]
@@ -32,65 +30,32 @@
     % ([CIDBin]) -> <<32 bytes>>
     manifest_root/1
 ]).
--import(damage_utils, [ensure_dir/1]).
 
 %%%===================================================================
-%%% 1) CHUNK NDJSON (streaming, memory-safe)
+%%% 1) CHUNK NDJSON (shared implementation)
 %%%===================================================================
 
+%% Compatibility API. The unified ecai_chunker retains Yelp's historical
+%% chunk_000001.ndjson naming and path-list result.
 -spec make_chunks_ndjson(file:filename_all(), file:filename_all(), pos_integer()) -> [binary()].
-make_chunks_ndjson(InPath, OutDir, ChunkSize) when ChunkSize > 0 ->
-    ok = ensure_dir(OutDir),
-    ?LOG_DEBUG("Yelp in ~p", [InPath]),
-    {ok, Fd} = file:open(InPath, [read, raw, binary]),
-    Paths = chunk_loop(Fd, OutDir, ChunkSize, 1, 0, []),
-    ok = file:close(Fd),
-    ?LOG_INFO("Wrote ~p chunks to ~ts~n", [length(Paths), OutDir]),
+make_chunks_ndjson(InPath, OutDir, ChunkSize) ->
+    Paths = ecai_chunker:make_chunks_ndjson(InPath, OutDir, ChunkSize),
+    ?LOG_INFO("Wrote ~p Yelp chunks to ~ts~n", [length(Paths), OutDir]),
     Paths.
-
-chunk_loop(Fd, OutDir, K, ChunkIdx, CountInChunk, AccPaths) ->
-    case file:read_line(Fd) of
-        eof ->
-            %% finish last partial chunk file if any lines were written already
-            finalize_open_chunk(OutDir, ChunkIdx, CountInChunk, AccPaths);
-        {ok, Line} ->
-            case CountInChunk of
-                0 ->
-                    Path = chunk_path(OutDir, ChunkIdx),
-                    {ok, W} = file:open(Path, [write, raw, binary]),
-                    ok = file:write(W, Line),
-                    ok = file:close(W),
-                    chunk_loop(Fd, OutDir, K, ChunkIdx, 1, [Path | AccPaths]);
-                N when N < K ->
-                    Path = chunk_path(OutDir, ChunkIdx),
-                    ok = file:write_file(Path, Line, [append]),
-                    chunk_loop(Fd, OutDir, K, ChunkIdx, N + 1, AccPaths);
-                _N when _N >= K ->
-                    %% complete current, start new with this line
-                    NextIdx = ChunkIdx + 1,
-                    Path2 = chunk_path(OutDir, NextIdx),
-                    {ok, W2} = file:open(Path2, [write, raw, binary]),
-                    ok = file:write(W2, Line),
-                    ok = file:close(W2),
-                    chunk_loop(Fd, OutDir, K, NextIdx, 1, [Path2 | AccPaths])
-            end
-    end.
-
-finalize_open_chunk(_OutDir, _Idx, 0, AccPaths) ->
-    lists:reverse([iolist_to_binary(P) || P <- AccPaths]);
-finalize_open_chunk(_OutDir, _Idx, _N, AccPaths) ->
-    lists:reverse([iolist_to_binary(P) || P <- AccPaths]).
-
-chunk_path(OutDir, Idx) ->
-    filename:join(OutDir, iolist_to_binary(io_lib:format("chunk_~6..0B.ndjson", [Idx]))).
 
 %%%===================================================================
 %%% 2) IPFS: add chunks → CIDs
 %%%===================================================================
 
--spec ipfs_add_chunks([binary() | list()]) -> [{binary(), binary()}].
-ipfs_add_chunks(Paths) ->
-    [{to_bin(P), ipfs_add(to_bin(P))} || P <- Paths].
+-spec ipfs_add_chunks([term()]) -> [{binary(), binary()}].
+ipfs_add_chunks(ChunkRefs) ->
+    [
+        begin
+            Path = ecai_chunker:chunk_path(ChunkRef),
+            {Path, ipfs_add(Path)}
+        end
+     || ChunkRef <- ChunkRefs
+    ].
 
 ipfs_add(Path) ->
     %% CIDv1, quiet output
@@ -102,32 +67,48 @@ ipfs_add(Path) ->
 %%% 3) SHARDING: deterministic assignment by path hash (or CID later)
 %%%===================================================================
 
--spec assign_chunks([binary()], non_neg_integer(), pos_integer()) -> [binary()].
-assign_chunks(ChunkPaths, ClusterId, ClusterSize) when
+-spec assign_chunks([term()], non_neg_integer(), pos_integer()) -> [term()].
+assign_chunks(ChunkRefs, ClusterId, ClusterSize) when
+    is_integer(ClusterSize),
     ClusterSize > 0
 ->
-    [P || P <- ChunkPaths, (erlang:phash2(P) rem ClusterSize) =:= ClusterId].
+    [
+        ChunkRef
+     || ChunkRef <- ChunkRefs,
+        (erlang:phash2(ecai_chunker:chunk_path(ChunkRef)) rem ClusterSize) =:= ClusterId
+    ].
 
 %%%===================================================================
 %%% 4) INDEX chunks into ecai_search (streaming)
 %%%===================================================================
 
--spec index_chunks(term(), [binary()], pos_integer() | infinity) -> ok.
-index_chunks(Ctx, ChunkPaths, LimitPerChunk) ->
-    [index_one(Ctx, to_bin(P), LimitPerChunk) || P <- ChunkPaths],
+-spec index_chunks(term(), [term()], pos_integer() | infinity) -> ok.
+index_chunks(Ctx, ChunkRefs, LimitPerChunk) ->
+    lists:foreach(
+        fun(ChunkRef) ->
+            index_one(Ctx, ecai_chunker:chunk_path(ChunkRef), LimitPerChunk)
+        end,
+        ChunkRefs
+    ),
     ok.
 
 index_one(Ctx, Path, Limit) ->
-    {ok, Fd} = file:open(Path, [read, raw, binary]),
     Lim =
         case Limit of
             infinity -> infinity;
             N when is_integer(N), N > 0 -> N
         end,
     ?LOG_INFO("Indexing ~ts (~p limit)~n", [Path, Lim]),
-    ok = index_lines(Ctx, Fd, Lim, 0),
-    ok = file:close(Fd),
-    ok.
+    case file:open(Path, [read, raw, binary]) of
+        {ok, Fd} ->
+            try
+                index_lines(Ctx, Fd, Lim, 0)
+            after
+                ok = file:close(Fd)
+            end;
+        {error, Reason} ->
+            erlang:error({cannot_open_chunk, Path, Reason})
+    end.
 
 index_lines(_Ctx, _Fd, N, Cnt) when N =/= infinity, Cnt >= N -> ok;
 index_lines(Ctx, Fd, N, Cnt) ->
@@ -171,13 +152,20 @@ index_lines(Ctx, Fd, N, Cnt) ->
             index_lines(Ctx, Fd, N, Cnt + 1)
     end.
 
-safe_decode(Bin) ->
-    try jsx:decode(Bin, [return_maps]) of
-        M when is_map(M) -> {ok, M};
-        _ -> error
-    catch
-        _:_ -> error
-    end.
+safe_decode(Bin) when is_binary(Bin) ->
+    case ecai_chunker:validate_utf8(Bin) of
+        ok ->
+            try jsx:decode(Bin, [return_maps]) of
+                M when is_map(M) -> {ok, M};
+                _ -> error
+            catch
+                _:_ -> error
+            end;
+        {error, _Reason} ->
+            error
+    end;
+safe_decode(_Other) ->
+    error.
 
 %%%===================================================================
 %%% 5) PROJECT Yelp → ECAI record (using ecai_tokenizer)
@@ -250,9 +238,10 @@ cat_items(Cats) ->
 
 to_int(I) when is_integer(I) -> I;
 to_int(B) when is_binary(B) ->
-    case catch erlang:binary_to_integer(B) of
-        V when is_integer(V) -> V;
-        _ -> 0
+    try erlang:binary_to_integer(B) of
+        V -> V
+    catch
+        error:badarg -> 0
     end;
 to_int(_) ->
     0.

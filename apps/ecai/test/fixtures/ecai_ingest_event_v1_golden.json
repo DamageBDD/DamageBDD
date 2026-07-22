@@ -1,0 +1,35 @@
+{
+  "schema": "ecai-ingest-event/v1",
+  "operation": "upsert_chunk",
+  "pipeline": "ecai-terms/v1",
+  "source_key": "org.damagebdd.docs/manual/install",
+  "source_version": "bafy-version-001",
+  "chunk": {
+    "chunker": "ecai-utf8-window/v1",
+    "ordinal": 7,
+    "byte_start": 100,
+    "byte_end": 137,
+    "text_utf8": "ECAI retrieves a deterministic state.",
+    "content_sha256_hex": "9f770d8fbf2f57711bb5b0c2c13f8a36b554f8d34f8fc9a62907d3fa909c0da9"
+  },
+  "index_fields": {
+    "title": "Operator guide",
+    "heading": "Atomic identity",
+    "type": "ipfs",
+    "tags_input": ["production", "ecai"],
+    "tags_canonical": ["ecai", "production"]
+  },
+  "expected": {
+    "index_fields_sha256_hex": "add57b4edb07335eb67420546c40235cc34e0334bdffd2dcc30be0577c8b66c3",
+    "chunk_id_hex": "28d1d7e349fcbcebd30bff835bedfc2ad06008d4451bc9d9f9c8252698a3ed0a",
+    "event_id_hex": "06ff09f9f6722334b4da5561cfc884ac094edbd7262b515eb27ccb2d046946d3"
+  },
+  "canonical_encoding": {
+    "integers": "unsigned big-endian",
+    "binary_length_prefix": "uint32 byte length",
+    "ordinal_and_offsets": "uint64",
+    "tags": "UTF-8 binaries sorted bytewise and deduplicated",
+    "hash": "SHA-256",
+    "domain_terminator_hex": "00"
+  }
+}

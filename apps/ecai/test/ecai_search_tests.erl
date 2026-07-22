@@ -8,93 +8,96 @@
 
 -license("Apache-2.0").
 
--include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% assumes ecai_search.erl and ecai_context_demo.erl are in code path
-%% run via: rebar3 eunit -m ecai_search_tests
+%% Run with one selector at a time, for example:
+%%   rebar3 eunit --module=ecai_search_tests
 
 ecai_index_basic_test() ->
-    Ctx = ecai_search:new(),
+    %% Two contexts are intentional: deterministic rebuilds must coexist in
+    %% one VM without globally named ETS tables colliding.
+    Ctx1 = ecai_search:new(),
+    Ctx2 = ecai_search:new(),
+    try
+        Records = sample_records(),
+        ok = add_records(Ctx1, Records),
 
-    %% Add sample businesses
-    ok = ecai_search:add_record(Ctx, <<"biz:001">>, #{
-        name => <<"Acme Plumbing Co">>,
-        category => <<"plumber">>,
-        city => <<"Sydney NSW">>,
-        tags => [<<"24x7">>, <<"emergency">>],
-        phone => <<"+61 2 9123 4567">>
-    }),
+        %% --- Structural checks ---
+        Sz = ecai_search:size(Ctx1),
+        ?assertEqual(3, maps:get(docs, Sz)),
 
-    ok = ecai_search:add_record(Ctx, <<"biz:002">>, #{
-        name => <<"Acme Electrical">>,
-        category => <<"electrician">>,
-        city => <<"Sydney">>,
-        tags => [<<"licensed">>],
-        phone => <<"0298761234">>
-    }),
+        %% --- Term existence ---
+        Info = ecai_search:info_term(Ctx1, <<"pfx:name:acm">>),
+        ?assert(maps:get(df, Info) > 0),
 
-    ok = ecai_search:add_record(Ctx, <<"biz:003">>, #{
-        name => <<"Baker Bros">>,
-        category => <<"bakery">>,
-        city => <<"Melbourne">>,
-        tags => [<<"artisan">>],
-        phone => <<"0398761234">>
-    }),
+        %% --- Search (prefix "acm") should yield biz:001 & biz:002 ---
+        {Results, _Proofs} = ecai_search:search(
+            Ctx1,
+            #{name => <<"acm">>, prefix => true},
+            5
+        ),
+        DocIds = [maps:get(doc_id, Result) || Result <- Results],
+        ?assert(lists:member(<<"biz:001">>, DocIds)),
+        ?assert(lists:member(<<"biz:002">>, DocIds)),
+        ?assertNot(lists:member(<<"biz:003">>, DocIds)),
 
-    %% --- Structural checks ---
-    Sz = ecai_search:size(Ctx),
-    ?assertEqual(3, maps:get(docs, Sz)),
+        %% Search results use the public enriched-map shape.
+        [First | _] = Results,
+        ?assert(maps:is_key(score, First)),
+        ?assert(maps:is_key(record, First)),
+        ?assert(maps:is_key(preview, First)),
 
-    %% --- Term existence ---
-    Info = ecai_search:info_term(Ctx, <<"pfx:name:acm">>),
-    ?assert(maps:get(df, Info) > 0),
+        %% --- Deterministic root for term ---
+        Root1 = ecai_search:term_root(Ctx1, <<"pfx:name:acm">>),
+        Root2 = ecai_search:term_root(Ctx1, <<"pfx:name:acm">>),
+        ?assertEqual(Root1, Root2),
 
-    %% --- Search (prefix "acm") should yield biz:001 & biz:002 ---
-    {Res, _Proofs} = ecai_search:search(Ctx, #{name => <<"acm">>, prefix => true}, 5),
-    DocIds = [Doc || {Doc, _} <- Res],
-    ?assert(lists:member(<<"biz:001">>, DocIds)),
-    ?assert(lists:member(<<"biz:002">>, DocIds)),
-    ?assertNot(lists:member(<<"biz:003">>, DocIds)),
+        %% --- Membership proof should exist for (term, doc) pair ---
+        Proof = ecai_search:proof_for(
+            Ctx1,
+            <<"pfx:name:acm">>,
+            <<"biz:001">>
+        ),
+        ?assertMatch({ok, _Path, _Dirs}, Proof),
 
-    %% --- Deterministic root for term ---
-    Root1 = ecai_search:term_root(Ctx, <<"pfx:name:acm">>),
-    Root2 = ecai_search:term_root(Ctx, <<"pfx:name:acm">>),
-    ?assertEqual(Root1, Root2),
+        %% --- Rebuild in a second live context; root must match ---
+        ok = add_records(Ctx2, Records),
+        RootAgain = ecai_search:term_root(Ctx2, <<"pfx:name:acm">>),
+        ?assertEqual(Root1, RootAgain)
+    after
+        ok = ecai_search:wipe(Ctx1),
+        ok = ecai_search:wipe(Ctx2)
+    end.
 
-    %% --- Membership proof should exist for (term, doc) pair ---
-    Proof = ecai_search:proof_for(Ctx, <<"pfx:name:acm">>, <<"biz:001">>),
-    ?assertMatch({ok, _Path, _Dirs}, Proof),
+add_records(Ctx, Records) ->
+    lists:foreach(
+        fun({DocId, Record}) ->
+            ok = ecai_search:add_record(Ctx, DocId, Record)
+        end,
+        Records
+    ).
 
-    %% --- Re-add same data should yield same root (deterministic) ---
-    C2 = ecai_search:new(),
+sample_records() ->
     [
-        ecai_search:add_record(C2, Id, M)
-     || {Id, M} <- [
-            {<<"biz:001">>, #{
-                name => <<"Acme Plumbing Co">>,
-                category => <<"plumber">>,
-                city => <<"Sydney NSW">>,
-                tags => [<<"24x7">>, <<"emergency">>],
-                phone => <<"+61 2 9123 4567">>
-            }},
-            {<<"biz:002">>, #{
-                name => <<"Acme Electrical">>,
-                category => <<"electrician">>,
-                city => <<"Sydney">>,
-                tags => [<<"licensed">>],
-                phone => <<"0298761234">>
-            }},
-            {<<"biz:003">>, #{
-                name => <<"Baker Bros">>,
-                category => <<"bakery">>,
-                city => <<"Melbourne">>,
-                tags => [<<"artisan">>],
-                phone => <<"0398761234">>
-            }}
-        ]
-    ],
-    RootAgain = ecai_search:term_root(C2, <<"pfx:name:acm">>),
-    ?assertEqual(Root1, RootAgain),
-
-    ok.
+        {<<"biz:001">>, #{
+            name => <<"Acme Plumbing Co">>,
+            category => <<"plumber">>,
+            city => <<"Sydney NSW">>,
+            tags => [<<"24x7">>, <<"emergency">>],
+            phone => <<"+61 2 9123 4567">>
+        }},
+        {<<"biz:002">>, #{
+            name => <<"Acme Electrical">>,
+            category => <<"electrician">>,
+            city => <<"Sydney">>,
+            tags => [<<"licensed">>],
+            phone => <<"0298761234">>
+        }},
+        {<<"biz:003">>, #{
+            name => <<"Baker Bros">>,
+            category => <<"bakery">>,
+            city => <<"Melbourne">>,
+            tags => [<<"artisan">>],
+            phone => <<"0398761234">>
+        }}
+    ].

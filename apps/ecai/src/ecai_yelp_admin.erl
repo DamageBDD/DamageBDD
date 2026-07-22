@@ -295,27 +295,49 @@ handle_chunk(Req, State) ->
     with_json(Req, fun(#{<<"in">> := In, <<"out_dir">> := Out, <<"chunk_size">> := K}) ->
         InAbs = filename:join([?ECAI_YELP_DATA_DIR, "in", In]),
         OutAbs = filename:join([?ECAI_YELP_DATA_DIR, "out", Out]),
-        case ecai_chunker:start(InAbs, OutAbs, K) of
+        case ecai_chunker:start(yelp, InAbs, OutAbs, K) of
             {ok, JobId} ->
                 Body = jsx:encode(#{ok => true, job_id => JobId, status => running}),
                 {ok, cowboy_req:reply(202, #{<<"content-type">> => ?JSON}, Body, Req), State};
             {error, busy} ->
-                %% If a chunk job is already running, return its status
+                %% If a chunk job is already running, return its status.
                 S = ecai_chunker:status(),
-                reply_json(Req, 200, maps:merge(#{ok => true}, S), State)
+                reply_json(Req, 200, maps:merge(#{ok => true}, S), State);
+            {error, Reason} ->
+                reply_json(
+                    Req,
+                    400,
+                    #{
+                        ok => false,
+                        error => <<"invalid_chunk_request">>,
+                        reason => reason_binary(Reason)
+                    },
+                    State
+                )
         end
     end).
 handle_chunk_async(Req, State) ->
     with_json(Req, fun(#{<<"in">> := In, <<"out_dir">> := Out, <<"chunk_size">> := K}) ->
         InAbs = filename:join([?ECAI_YELP_DATA_DIR, "in", In]),
         OutAbs = filename:join([?ECAI_YELP_DATA_DIR, "out", Out]),
-        case ecai_chunker:start(InAbs, OutAbs, K) of
+        case ecai_chunker:start(yelp, InAbs, OutAbs, K) of
             {ok, JobId} ->
                 Body = jsx:encode(#{ok => true, job_id => JobId, status => running}),
                 {ok, cowboy_req:reply(202, #{<<"content-type">> => ?JSON}, Body, Req), State};
             {error, busy} ->
                 S = ecai_chunker:status(),
-                reply_json(Req, 200, maps:merge(#{ok => true}, S), State)
+                reply_json(Req, 200, maps:merge(#{ok => true}, S), State);
+            {error, Reason} ->
+                reply_json(
+                    Req,
+                    400,
+                    #{
+                        ok => false,
+                        error => <<"invalid_chunk_request">>,
+                        reason => reason_binary(Reason)
+                    },
+                    State
+                )
         end
     end).
 
@@ -423,15 +445,15 @@ handle_manifest(Req, State) ->
 %%%-------------------------------------------------------------------
 handle_status(Req, State) ->
     Resp =
-        case catch ecai_search_server:get_ctx() of
-            undefined ->
+        case safe_get_ctx() of
+            {ok, undefined} ->
                 #{docs => 0, terms => 0, postings => 0};
-            {'EXIT', _Error} ->
+            {error, _Reason} ->
                 #{
                     ok => false,
                     message => <<"index not ready">>
                 };
-            Ctx ->
+            {ok, Ctx} ->
                 Sz =
                     ecai_search:size(Ctx),
                 #{
@@ -482,24 +504,42 @@ handle_index_cancel(Req, State) ->
 ensure_ctx() ->
     ecai_search_server:get_ctx().
 
+safe_get_ctx() ->
+    try ecai_search_server:get_ctx() of
+        Ctx -> {ok, Ctx}
+    catch
+        Class:Reason -> {error, {Class, Reason}}
+    end.
+
 get_pt(Key, Default) ->
     persistent_term:get(Key, Default).
 
 with_json(Req, Fun) ->
     case cowboy_req:read_body(Req) of
         {ok, Body, Req1} ->
-            case catch jsx:decode(Body, [return_maps]) of
-                M when is_map(M) -> Fun(M);
-                _ -> reply_json(Req1, 400, #{ok => false, error => <<"bad_json">>}, #{})
+            case decode_json_map(Body) of
+                {ok, M} -> Fun(M);
+                error -> reply_json(Req1, 400, #{ok => false, error => <<"bad_json">>}, #{})
             end;
         {more, _Data, Req1} ->
             reply_json(Req1, 413, #{ok => false, error => <<"payload_too_large">>}, #{})
+    end.
+
+decode_json_map(Body) ->
+    try jsx:decode(Body, [return_maps]) of
+        M when is_map(M) -> {ok, M};
+        _Other -> error
+    catch
+        _Class:_Reason -> error
     end.
 
 reply_json(Req, Code, Map, State) ->
     Body = jsx:encode(Map),
     Headers = #{<<"content-type">> => ?JSON},
     {ok, cowboy_req:reply(Code, Headers, Body, Req), State}.
+
+reason_binary(Reason) ->
+    unicode:characters_to_binary(io_lib:format("~p", [Reason])).
 
 to_hex(Bin) when is_binary(Bin) ->
     lists:flatten([io_lib:format("~2.16.0B", [X]) || <<X:8>> <= Bin]).

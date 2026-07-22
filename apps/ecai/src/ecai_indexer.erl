@@ -60,26 +60,29 @@ handle_call(cancel, _From, S) ->
     {reply, {error, nojob}, S};
 handle_call({start, _Ctx, _Paths, _Limit}, _From, S = #state{status = running}) ->
     {reply, {error, busy}, S};
-handle_call({start, Ctx, Paths0, Limit}, _From, _S = #state{}) ->
-    Paths = [unicode:characters_to_binary(P) || P <- Paths0],
-    JobId = iolist_to_binary(
-        io_lib:format("job-~B", [erlang:unique_integer([monotonic, positive])])
-    ),
-
-    S1 = #state{
-        status = running,
-        job_id = JobId,
-        started_at = erlang:system_time(millisecond),
-        ctx = Ctx,
-        paths = Paths,
-        limit = Limit,
-        total = length(Paths),
-        done = 0,
-        docs_done = 0
-    },
-    Self = self(),
-    _Pid = spawn_link(fun() -> run_index(Self, S1) end),
-    {reply, {ok, JobId}, S1}.
+handle_call({start, Ctx, Paths0, Limit}, _From, State = #state{}) ->
+    case normalize_paths(Paths0) of
+        {ok, Paths} ->
+            JobId = iolist_to_binary(
+                io_lib:format("job-~B", [erlang:unique_integer([monotonic, positive])])
+            ),
+            Next = #state{
+                status = running,
+                job_id = JobId,
+                started_at = erlang:system_time(millisecond),
+                ctx = Ctx,
+                paths = Paths,
+                limit = Limit,
+                total = length(Paths),
+                done = 0,
+                docs_done = 0
+            },
+            Self = self(),
+            _Pid = spawn_link(fun() -> run_index(Self, Next) end),
+            {reply, {ok, JobId}, Next};
+        {error, _Reason} = Error ->
+            {reply, Error, State}
+    end.
 
 handle_cast(_Msg, S) -> {noreply, S}.
 
@@ -130,6 +133,15 @@ get_docs(Ctx) ->
         #{docs := N} -> N;
         _ -> 0
     end.
+
+normalize_paths(Paths) when is_list(Paths) ->
+    try
+        {ok, [ecai_chunker:chunk_path(Path) || Path <- Paths]}
+    catch
+        error:badarg -> {error, badarg}
+    end;
+normalize_paths(_Other) ->
+    {error, badarg}.
 
 now_ms() -> erlang:system_time(millisecond).
 

@@ -1,0 +1,26 @@
+{
+  "schema": "ecai-wal-golden/v1",
+  "source_event_fixture": "ecai_ingest_event_v1_golden.json",
+  "record_codec": {
+    "magic": "ECAIREC1",
+    "version": 1,
+    "encoded_bytes": 431,
+    "encoded_sha256_hex": "1de6f1ba3bd0c44b50d01cf4a8b28535e37c9420b28c3a4bda22958a48e76a00"
+  },
+  "single_event_batch": {
+    "batch_id_hex": "a3ff3659967604fa5ec36994327e5f823fa2392c9cd7541facd3569b67a76e08",
+    "begin_frame_bytes": 60,
+    "event_frame_offset": 60,
+    "event_frame_bytes": 523,
+    "commit_frame_offset": 583,
+    "commit_frame_bytes": 60,
+    "wal_bytes": 643,
+    "wal_sha256_hex": "4739f6b1c458b19961d062fabf3feabc51d5d9a53e7deb8248da0788d280a91a"
+  },
+  "encoding": {
+    "integers": "unsigned big-endian",
+    "frame_header_bytes": 24,
+    "header_crc": "CRC32 over header bytes 0 through 15",
+    "payload_crc": "CRC32 over the exact payload bytes"
+  }
+}

@@ -66,14 +66,19 @@
 
 -define(WEIGHTS, #{
     <<"name">> => 3,
+    <<"title">> => 3,
+    <<"heading">> => 2,
     <<"cat">> => 2,
     <<"city">> => 2,
     <<"tag">> => 1,
-    <<"phone">> => 4
+    <<"phone">> => 4,
+    <<"text">> => 1,
+    <<"abstract">> => 1,
+    <<"type">> => 1,
+    <<"language">> => 1,
+    <<"wikidata">> => 2,
+    <<"rev">> => 1
 }).
-
--define(P_MIN, 2).
--define(P_MAX, 8).
 
 set_opts(Ctx = #ctx{}, OptsMap) when is_map(OptsMap) ->
     Ctx#ctx{opts = maps:merge(Ctx#ctx.opts, OptsMap)}.
@@ -87,6 +92,10 @@ get_opts(#ctx{opts = O}) -> O.
 new() ->
     application:ensure_all_started(crypto),
 
+    %% Every context owns private, unnamed ETS tables. The atom passed to
+    %% ets:new/2 is only a diagnostic label unless named_table is present.
+    %% This allows multiple independent contexts in tests, rebuilds and
+    %% blue/green index swaps without global table-name collisions.
     PostTab = ets:new(ecai_postings, [
         ordered_set,
         public,
@@ -103,44 +112,44 @@ new() ->
     ]),
     RecTab = ets:new(ecai_rec, [
         set,
-        named_table,
         public,
         compressed,
+        {read_concurrency, true},
         {write_concurrency, true}
     ]),
     DfTab = ets:new(ecai_df, [
         set,
-        named_table,
         public,
         compressed,
+        {read_concurrency, true},
         {write_concurrency, true}
     ]),
     TagTab = ets:new(ecai_tag, [
         set,
-        named_table,
         public,
         compressed,
+        {read_concurrency, true},
         {write_concurrency, true}
     ]),
     I2DTab = ets:new(ecai_i2d, [
         set,
-        named_table,
         public,
         compressed,
+        {read_concurrency, true},
         {write_concurrency, true}
     ]),
     D2ITab = ets:new(ecai_d2i, [
         set,
-        named_table,
         public,
         compressed,
+        {read_concurrency, true},
         {write_concurrency, true}
     ]),
     SeqTab = ets:new(ecai_seq, [
         set,
-        named_table,
         public,
         compressed,
+        {read_concurrency, true},
         {write_concurrency, true}
     ]),
 
@@ -161,25 +170,39 @@ new() ->
 %%% Public mutators
 %%%===================================================================
 
-add_record(Ctx = #ctx{doc2id_tab = DocT}, DocId, Rec) ->
-    case ets:insert_new(DocT, {DocId, Rec}) of
+add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record)
+        when is_binary(DocId), is_map(Record) ->
+    %% Derive terms before reserving an ID so invalid records cannot leave a
+    %% half-created document mapping.
+    Terms = ecai_terms:terms_from_record(Record),
+    DocInt = next_id(Ctx),
+    case ets:insert_new(DocTable, {DocId, DocInt}) of
         true ->
-            do_add(Ctx, DocId, Rec),
-            ok;
+            try
+                do_add(Ctx, DocId, DocInt, Record, Terms),
+                ok
+            catch
+                Class:Reason:Stacktrace ->
+                    rollback_add(Ctx, DocId, DocInt, Terms),
+                    erlang:raise(Class, Reason, Stacktrace)
+            end;
         false ->
             %% already present – do NOT crash
             {error, exists}
-    end.
+    end;
+add_record(_Ctx, _DocId, _Record) ->
+    {error, badarg}.
 
-upsert_record(Ctx, DocId, Map) ->
+upsert_record(Ctx, DocId, Record) when is_binary(DocId), is_map(Record) ->
     case ets:lookup(Ctx#ctx.doc2id_tab, DocId) of
         [] ->
-            do_add(Ctx, DocId, Map);
+            add_record(Ctx, DocId, Record);
         _ ->
-            remove_record(Ctx, DocId),
-            do_add(Ctx, DocId, Map)
-    end,
-    ok.
+            ok = remove_record(Ctx, DocId),
+            add_record(Ctx, DocId, Record)
+    end;
+upsert_record(_Ctx, _DocId, _Record) ->
+    {error, badarg}.
 
 remove_record(Ctx, DocId) ->
     case ets:lookup(Ctx#ctx.rec_tab, DocId) of
@@ -188,7 +211,10 @@ remove_record(Ctx, DocId) ->
         [{DocId, Rec}] ->
             DocInt = maps:get(int, Rec),
             Terms = maps:get(terms, Rec, []),
-            [remove_posting(Ctx, T, DocInt) || T <- Terms],
+            lists:foreach(
+                fun(Term) -> remove_posting(Ctx, Term, DocInt) end,
+                Terms
+            ),
             ets:delete(Ctx#ctx.rec_tab, DocId),
             ets:delete(Ctx#ctx.doc2id_tab, DocId),
             ets:delete(Ctx#ctx.id2doc_tab, DocInt),
@@ -271,9 +297,10 @@ get_review_stats(Ctx, DocId) ->
 
 to_int(I) when is_integer(I) -> I;
 to_int(B) when is_binary(B) ->
-    case catch erlang:binary_to_integer(B) of
-        V when is_integer(V) -> V;
-        _ -> 0
+    try erlang:binary_to_integer(B) of
+        V -> V
+    catch
+        error:badarg -> 0
     end;
 to_int(_) ->
     0.
@@ -315,7 +342,7 @@ index_text(Ctx, DocIdBin, FieldBin, TextBin, CapN) ->
 %%    phone => <<"0291">>, prefix => true}
 %search(Ctx, Q, Limit) when is_map(Q) ->
 %    Prefix = maps:get(prefix, Q, true),
-%    Terms = terms_from_query(Q, Prefix),
+%    Terms = ecai_terms:terms_from_query(Q, Prefix),
 %    %% Collect candidates per term (doc-int lists)
 %    TermDocs = [{T, postings(Ctx, T)} || T <- Terms],
 %    %% Simple weighted score: +W per term hit
@@ -338,7 +365,7 @@ search(Ctx = #ctx{}, QueryMap, Limit0) ->
         end,
 
     %% 1) expand the structured query into index terms
-    Terms = terms_from_query(QueryMap, true),
+    Terms = ecai_terms:terms_from_query(QueryMap, true),
 
     %% 2) fetch postings per term
     TermDocs = [{T, postings(Ctx, T)} || T <- Terms],
@@ -507,23 +534,29 @@ wipe(Ctx) ->
 %%% Internals: add/remove + indexing
 %%%===================================================================
 
-do_add(Ctx, DocId, Map) ->
-    DocInt = next_id(Ctx),
-    ets:insert(Ctx#ctx.doc2id_tab, {DocId, DocInt}),
-    ets:insert(Ctx#ctx.id2doc_tab, {DocInt, DocId}),
-    Terms = terms_from_record(Map),
+do_add(Ctx, DocId, DocInt, Record, Terms) ->
+    true = ets:insert(Ctx#ctx.id2doc_tab, {DocInt, DocId}),
     Touched = add_terms(Ctx, Terms, DocInt),
-    ets:insert(
+    true = ets:insert(
         Ctx#ctx.rec_tab,
         {DocId, #{
             int => DocInt,
-            data => Map,
+            data => Record,
             terms => Terms,
             reviews => #{count => 0, sum_stars => 0.0, useful => 0, funny => 0, cool => 0}
         }}
     ),
-
     recompute_roots(Ctx, Touched),
+    ok.
+
+rollback_add(Ctx, DocId, DocInt, Terms) ->
+    lists:foreach(
+        fun(Term) -> remove_posting(Ctx, Term, DocInt) end,
+        Terms
+    ),
+    ets:delete(Ctx#ctx.rec_tab, DocId),
+    ets:delete(Ctx#ctx.doc2id_tab, DocId),
+    ets:delete(Ctx#ctx.id2doc_tab, DocInt),
     ok.
 
 add_terms(Ctx0, Terms, DocInt) ->
@@ -558,227 +591,64 @@ remove_posting(Ctx, Term, DocInt) ->
             ok
     end.
 
-bump_df(Ctx, Term, Delta) ->
-    case ets:lookup(Ctx#ctx.df_tab, Term) of
-        [] when Delta > 0 ->
-            ets:insert(Ctx#ctx.df_tab, {Term, 1});
-        [{Term, N}] ->
-            N1 = N + Delta,
-            if
-                N1 =< 0 ->
-                    ets:delete(Ctx#ctx.df_tab, Term),
-                    ets:delete(Ctx#ctx.root_tab, Term),
-                    ets:delete(Ctx#ctx.tag_tab, Term);
-                true ->
-                    ets:insert(Ctx#ctx.df_tab, {Term, N1})
-            end;
-        _ ->
+bump_df(Ctx, Term, Delta) when is_integer(Delta), Delta =/= 0 ->
+    NewValue = ets:update_counter(
+        Ctx#ctx.df_tab,
+        Term,
+        {2, Delta},
+        {Term, 0}
+    ),
+    case NewValue =< 0 of
+        true ->
+            ets:delete(Ctx#ctx.df_tab, Term),
+            ets:delete(Ctx#ctx.root_tab, Term),
+            ets:delete(Ctx#ctx.tag_tab, Term),
+            ok;
+        false ->
             ok
     end.
 
 recompute_roots(Ctx, Terms) ->
-    [recompute_root(Ctx, T) || T <- lists:usort(lists:sublist(Terms, 500))],
+    case root_mode(Ctx) of
+        immediate ->
+            lists:foreach(
+                fun(Term) -> recompute_root(Ctx, Term) end,
+                lists:usort(lists:sublist(Terms, 500))
+            ),
+            ok;
+        deferred ->
+            %% Bulk loaders call finalize/1 once after their batch. This avoids
+            %% rebuilding popular posting-list roots after every record.
+            ok
+    end.
+
+root_mode(#ctx{opts = Opts}) ->
+    case maps:get(root_mode, Opts, immediate) of
+        deferred -> deferred;
+        _ -> immediate
+    end.
+
+recompute_root(Ctx, Term) ->
+    Docs = postings(Ctx, Term),
+    Root = compute_root_intlist(Docs),
+    true = ets:insert(Ctx#ctx.root_tab, {Term, Root}),
+    _ = term_tag(Ctx, Term),
     ok.
 
-recompute_root(Ctx, T) ->
-    spawn(fun() ->
-        Docs = postings(Ctx, T),
-        Root = compute_root_intlist(Docs),
-        ets:insert(Ctx#ctx.root_tab, {T, Root}),
-        _ = term_tag(Ctx, T)
-    end).
-
 next_id(Ctx) ->
-    [{seq, N}] = ets:lookup(Ctx#ctx.next_id_tab, seq),
-    ets:insert(Ctx#ctx.next_id_tab, {seq, N + 1}),
-    N.
+    %% The table stores the next unallocated ID. update_counter/3 makes
+    %% allocation atomic when multiple loader workers share one context.
+    ets:update_counter(Ctx#ctx.next_id_tab, seq, {2, 1}) - 1.
 
 %%%===================================================================
-%%% Term extraction
+%%% Shared term extraction
 %%%===================================================================
 
-terms_from_record(Map) ->
-    %% normalize fields
-    Name = ecai_tokenizer:normalize(maps:get(name, Map, <<>>)),
-    City = ecai_tokenizer:normalize(maps:get(city, Map, <<>>)),
-    Cat = ecai_tokenizer:lower_ascii(maps:get(category, Map, <<>>)),
-    Tags = [ecai_tokenizer:lower_ascii(T) || T <- maps:get(tags, Map, [])],
-    Phone = ecai_tokenizer:digits_only(maps:get(phone, Map, <<>>)),
-
-    %% tokenize to lowercase binaries
-    NameTokens = ecai_tokenizer:tokens(Name),
-    CityTokens = ecai_tokenizer:tokens(City),
-
-    %% read opts once
-    %% (we don't have Ctx here; we assume default full features for popular fields)
-    %% -> if you want strict runtime toggles, move this function to accept Ctx.
-    PMin = ?P_MIN,
-    PMax = ?P_MAX,
-    % default off (record-only version); query path also handles ng
-    NGN = 0,
-    %% name
-    TermName = [term_key(<<"name">>, T) || T <- NameTokens],
-    PfxName = [term_pfx(<<"name">>, P) || P <- prefixes_many(NameTokens, PMin, PMax)],
-    SfxName = [term_sfx(<<"name">>, reverse_bin(S)) || S <- suffixes_many(NameTokens, PMin, PMax)],
-    NGName = [term_ng(<<"name">>, Ng) || Ng <- ngrams_many(NameTokens, NGN)],
-    %% category
-    TermCat =
-        if
-            Cat =:= <<>> -> [];
-            true -> [term_key(<<"cat">>, Cat)]
-        end,
-    %% city
-    TermCity = [term_key(<<"city">>, T) || T <- CityTokens],
-    PfxCity = [term_pfx(<<"city">>, P) || P <- prefixes_many(CityTokens, PMin, 6)],
-    %% tags
-    TermTags = [term_key(<<"tag">>, T) || T <- Tags],
-    %% phone (exact + prefix)
-    TermPhone =
-        if
-            Phone =:= <<>> ->
-                [];
-            true ->
-                [term_key(<<"phone">>, Phone)] ++
-                    [term_pfx(<<"phone">>, P) || P <- pfx1(Phone, 3, 8)]
-        end,
-
-    lists:usort(
-        TermName ++ PfxName ++ SfxName ++ NGName ++
-            TermCat ++ TermCity ++ PfxCity ++ TermTags ++ TermPhone
-    ).
-
-%% helpers to fan out across word lists
-suffixes_many(Toks, Min, Max) ->
-    lists:usort(lists:append([suffixes(T, Min, Max) || T <- Toks])).
-
-ngrams_many(_Toks, 0) -> [];
-ngrams_many(Toks, N) -> lists:usort(lists:append([ngrams(T, N) || T <- Toks])).
-
-terms_from_query(Q, PrefixDefault) ->
-    Prefix = maps:get(prefix, Q, PrefixDefault),
-    Suffix = maps:get(suffix, Q, false),
-    InfixN = maps:get(infix_n, Q, 0),
-
-    %% NAME
-    AccName =
-        case maps:get(name, Q, undefined) of
-            undefined ->
-                [];
-            N ->
-                Ns = ecai_tokenizer:tokens(ecai_tokenizer:normalize(N)),
-                Exact = [term_key(<<"name">>, T) || T <- Ns],
-                Pfx =
-                    case Prefix of
-                        true -> [term_pfx(<<"name">>, P) || P <- prefixes_many(Ns, ?P_MIN, ?P_MAX)];
-                        _ -> []
-                    end,
-                Sfx =
-                    case Suffix of
-                        true ->
-                            [
-                                term_sfx(<<"name">>, reverse_bin(S))
-                             || S <- suffixes_many(Ns, ?P_MIN, ?P_MAX)
-                            ];
-                        _ ->
-                            []
-                    end,
-                NG =
-                    case InfixN of
-                        0 -> [];
-                        Nn -> [term_ng(<<"name">>, Ng) || Ng <- ngrams_many(Ns, Nn)]
-                    end,
-                Exact ++ Pfx ++ Sfx ++ NG
-        end,
-
-    %% CATEGORY
-    AccCat =
-        case maps:get(category, Q, undefined) of
-            undefined -> [];
-            C -> [term_key(<<"cat">>, ecai_tokenizer:lower_ascii(C))]
-        end,
-
-    %% CITY
-    AccCity =
-        case maps:get(city, Q, undefined) of
-            undefined ->
-                [];
-            Cty ->
-                Cs = ecai_tokenizer:tokens(ecai_tokenizer:normalize(Cty)),
-                Exact0 = [term_key(<<"city">>, T) || T <- Cs],
-                Pfx0 =
-                    case Prefix of
-                        true -> [term_pfx(<<"city">>, P) || P <- prefixes_many(Cs, ?P_MIN, 6)];
-                        _ -> []
-                    end,
-                Exact0 ++ Pfx0
-        end,
-
-    %% TAGS
-    AccTags =
-        case maps:get(tags, Q, undefined) of
-            undefined -> [];
-            L when is_list(L) -> [term_key(<<"tag">>, ecai_tokenizer:lower_ascii(T)) || T <- L]
-        end,
-
-    %% PHONE
-    AccPhone =
-        case maps:get(phone, Q, undefined) of
-            undefined ->
-                [];
-            P ->
-                case ecai_tokenizer:digits_only(P) of
-                    <<>> ->
-                        [];
-                    D ->
-                        Exact1 = [term_key(<<"phone">>, D)],
-                        ?LOG_DEBUG("pfx phone ~p", [D]),
-                        Pfx1 =
-                            case Prefix of
-                                true ->
-                                    [term_pfx(<<"phone">>, Pfx) || Pfx <- pfx1(D, 3, 8)];
-                                _ ->
-                                    []
-                            end,
-                        Exact1 ++ Pfx1
-                end
-        end,
-
-    lists:usort(AccName ++ AccCat ++ AccCity ++ AccTags ++ AccPhone).
+%% Review and ad-hoc field indexing still need the canonical exact-term wire
+%% format. Record/query expansion itself lives in ecai_terms.
 term_key(Namespace, Token0) ->
     Token = binary:copy(Token0),
     <<Namespace/binary, $:, Token/binary>>.
-term_pfx(Namespace, Prefix0) ->
-    Prefix = binary:copy(Prefix0),
-    <<"pfx:", Namespace/binary, $:, Prefix/binary>>.
-term_sfx(Field, Suffix0) ->
-    Suffix = binary:copy(Suffix0),
-    <<"sfx:", Field/binary, $:, Suffix/binary>>.
-term_ng(Field, Ng0) ->
-    Ng = binary:copy(Ng0),
-    <<"ng:", Field/binary, $:, Ng/binary>>.
-
-reverse_bin(B) ->
-    <<<<C>> || C <- lists:reverse(binary:bin_to_list(B))>>.
-
-suffixes(Bin, Min, Max) ->
-    Len = byte_size(Bin),
-    From = min(Len, Max),
-    [binary:part(Bin, Len - N, N) || N <- lists:seq(Min, From)].
-
-ngrams(Bin, N) when N >= 1 ->
-    L = byte_size(Bin),
-    if
-        L < N -> [];
-        true -> [binary:part(Bin, I, N) || I <- lists:seq(0, L - N)]
-    end.
-
-prefixes_many(Tokens, Min, Max) ->
-    lists:usort(lists:append([pfx1(T, Min, Max) || T <- Tokens])).
-
-pfx1(Bin, Min, Max) ->
-    Len = byte_size(Bin),
-    To = min(Max, Len),
-    [binary:part(Bin, 0, N) || N <- lists:seq(Min, To)].
 
 %%%===================================================================
 %%% Posting access (exact + prefix)
@@ -936,13 +806,21 @@ idf(N, DF) ->
     %% natural log; tiny stabilizer to avoid log(0)
     math:log(((float(N) - float(DF) + 0.5) / (float(DF) + 0.5)) + 1.0e-12).
 
+kind_field(<<"pfx:", Rest/binary>>) ->
+    {pfx, term_field(Rest)};
+kind_field(<<"sfx:", Rest/binary>>) ->
+    {sfx, term_field(Rest)};
+kind_field(<<"ng:", Rest/binary>>) ->
+    {ng, term_field(Rest)};
 kind_field(Term) ->
-    case binary:split(Term, <<":">>, [global]) of
-        [F, _Tok] -> {exact, F};
-        [<<"pfx">>, F, _Tok] -> {pfx, F};
-        [<<"sfx">>, F, _Tok] -> {sfx, F};
-        [<<"ng">>, F, _Tok] -> {ng, F};
-        _ -> {exact, <<"">>}
+    {exact, term_field(Term)}.
+
+term_field(Term) ->
+    %% Split only at the field separator. Tokens themselves may contain ':',
+    %% for example tag:wikidata:q7259.
+    case binary:split(Term, <<":">>) of
+        [Field, _Token] -> Field;
+        _ -> <<>>
     end.
 
 kind_weight(exact) -> 1.00;
@@ -1092,24 +970,18 @@ h2c_tag(TermBin) ->
     hash_to_curve(TermBin).
 
 finalize(Ctx0 = #ctx{backend = gpu}) ->
-    %% your existing root rebuild loop…
-
-    %% (keep your existing code)
-    Ctx1 = Ctx0,
-    %% swap GPU snapshot
-    enable_gpu(Ctx1);
+    Ctx1 = disable_gpu(Ctx0),
+    Ctx2 = rebuild_all_roots(Ctx1),
+    enable_gpu(Ctx2);
 finalize(Ctx = #ctx{}) ->
-    Terms = [T || {T, _} <- ets:tab2list(Ctx#ctx.df_tab)],
-    %% rebuild roots (can parallelize trivially)
-    [
-        begin
-            Docs = postings(Ctx, T),
-            Root = compute_root_intlist(Docs),
-            ets:insert(Ctx#ctx.root_tab, {T, Root}),
-            _ = term_tag(Ctx, T)
-        end
-     || T <- Terms
-    ],
+    rebuild_all_roots(Ctx).
+
+rebuild_all_roots(Ctx) ->
+    Terms = [Term || {Term, _Df} <- ets:tab2list(Ctx#ctx.df_tab)],
+    lists:foreach(
+        fun(Term) -> recompute_root(Ctx, Term) end,
+        lists:sort(Terms)
+    ),
     Ctx.
 %% ---------------------------------------------------------------
 %% Snapshot the entire index to disk (single compressed term)
@@ -1118,6 +990,9 @@ save(File) ->
     save(ecai_search_server:get_ctx(), File).
 save(Ctx = #ctx{}, File) ->
     try
+        %% A persisted snapshot must never contain roots stale from deferred
+        %% bulk indexing.
+        _ = rebuild_all_roots(Ctx),
         %% Optional: for very large tables you can fixtable (omitted for simplicity)
         Data = #{
             version => 1,
@@ -1201,7 +1076,11 @@ enable_gpu(Ctx0 = #ctx{}) ->
 disable_gpu(Ctx = #ctx{backend = ets}) ->
     Ctx;
 disable_gpu(Ctx = #ctx{backend = gpu, gpu = H}) ->
-    catch ecai_gpu:free(H),
+    _ = try ecai_gpu:free(H) of
+        Result -> Result
+    catch
+        _Class:_Reason -> ok
+    end,
     Ctx#ctx{backend = ets, gpu = undefined, term_ids = #{}}.
 
 %% Rebuild device snapshot (call after a bulk index or finalize/1)

@@ -1,4 +1,5 @@
 -module(damage_ipfs).
+-compile({no_auto_import, [get/1]}).
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -20,8 +21,10 @@
         test/0,
         pin/1,
         add/1,
+        get/1,
         get/2,
         cat/1,
+        cat_binary/1,
         ls/1,
         fetch_to/2,
         ensure_ipfs_asset/2,
@@ -38,47 +41,70 @@
 
 start_link(Members) -> gen_server:start_link(?MODULE, Members, []).
 
-% Entry function to select a server
+% Entry function to select a server.
 select_server(Servers) when is_list(Servers) ->
     select_server(Servers, length(Servers)).
 
-% Internal function to handle selection and connection attempts
+% Internal function to handle selection and connection attempts.
 select_server([], _Length) ->
     {error, no_available_servers};
 select_server(Servers, Length) ->
-    % Select a random server
     RandomIndex = rand:uniform(Length),
     SelectedServer = lists:nth(RandomIndex, Servers),
-    % Attempt to connect to the selected server
-    case catch ipfs:start_link(SelectedServer) of
+    case safe_ipfs_start_link(SelectedServer) of
         {ok, Pid} ->
-            case catch ipfs:version(Pid) of
+            case safe_ipfs_version(Pid) of
                 {ok, _VersionInfo} ->
                     Pid;
-                Err ->
+                {error, Reason} ->
                     ?LOG_ERROR(
-                        "Error connecting to ipfs node ~p ~p, index ~p",
-                        [SelectedServer, Err, RandomIndex]
+                        "Error connecting to ipfs node ~p: ~p, index ~p",
+                        [SelectedServer, Reason, RandomIndex]
                     ),
-                    % If connection fails, retry with the remaining servers
+                    stop_failed_connection(Pid),
                     RemainingServers = Servers -- [SelectedServer],
                     select_server(RemainingServers, Length - 1)
             end;
-        Err ->
+        {error, Reason} ->
             ?LOG_ERROR(
-                "Error connecting to ipfs node ~p, index ~p",
-                [Err, RandomIndex]
+                "Error starting ipfs node ~p: ~p, index ~p",
+                [SelectedServer, Reason, RandomIndex]
             ),
-            % If connection fails, retry with the remaining servers
             RemainingServers = Servers -- [SelectedServer],
             select_server(RemainingServers, Length - 1)
     end.
 
+safe_ipfs_start_link(Server) ->
+    try ipfs:start_link(Server) of
+        {ok, Pid} when is_pid(Pid) -> {ok, Pid};
+        {error, _Reason} = Error -> Error;
+        Other -> {error, {invalid_start_response, Other}}
+    catch
+        Class:Reason -> {error, {Class, Reason}}
+    end.
+
+safe_ipfs_version(Pid) ->
+    try ipfs:version(Pid) of
+        {ok, _VersionInfo} = Ok -> Ok;
+        {error, _Reason} = Error -> Error;
+        Other -> {error, {invalid_version_response, Other}}
+    catch
+        Class:Reason -> {error, {Class, Reason}}
+    end.
+
+stop_failed_connection(Pid) when is_pid(Pid) ->
+    unlink(Pid),
+    exit(Pid, shutdown),
+    ok.
+
 init(Members) ->
     {ok, _} = application:ensure_all_started(gun),
-    Connection =
-        select_server([#{ip => Host, port => Port} || {Host, Port} <- Members]),
-    {ok, #{connection => Connection}}.
+    case select_server([#{ip => Host, port => Port} || {Host, Port} <- Members]) of
+        Connection when is_pid(Connection) ->
+            {ok, #{connection => Connection}};
+        {error, Reason} ->
+            {stop, {ipfs_unavailable, Reason}}
+    end.
 
 handle_call(
     {add, {data, Data, FileName}},
@@ -166,6 +192,11 @@ ls(Hash) ->
         fun(Worker) -> gen_server:call(Worker, {ls, Hash}, ?DEFAULT_IPFS_TIMEOUT) end
     ).
 
+%% Compatibility content-read API. get/2 still writes to a file; get/1
+%% returns normalized content bytes.
+get(Hash) ->
+    cat_binary(Hash).
+
 get(Hash, FileName) ->
     poolboy:transaction(
         ?MODULE,
@@ -180,6 +211,23 @@ cat(Hash) ->
         fun(Worker) -> gen_server:call(Worker, {cat, Hash}, ?DEFAULT_IPFS_TIMEOUT) end
     ).
 
+-spec cat_binary(term()) -> {ok, binary()} | {error, term()}.
+cat_binary(Hash) ->
+    try cat(Hash) of
+        Response -> normalize_cat_response(Response)
+    catch
+        Class:Reason -> {error, {ipfs_cat_failed, Class, Reason}}
+    end.
+
+normalize_cat_response({ok, Bin}) when is_binary(Bin) ->
+    {ok, Bin};
+normalize_cat_response(Bin) when is_binary(Bin) ->
+    {ok, Bin};
+normalize_cat_response({error, _Reason} = Error) ->
+    Error;
+normalize_cat_response(Other) ->
+    {error, {invalid_ipfs_cat_response, Other}}.
+
 fetch_to(Hash, OutPath) ->
     ok = damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
     get(Hash, OutPath).
@@ -190,8 +238,8 @@ hydrate_feature_from_ipfs(Json0) ->
             {error, missing_feature_cid};
         Cid0 ->
             Cid = to_bin(Cid0),
-            case damage_ipfs:cat(Cid) of
-                {ok, FeatureBin} when is_binary(FeatureBin) ->
+            case damage_ipfs:cat_binary(Cid) of
+                {ok, FeatureBin} ->
                     Vars0 = maps:get(vars, Json0, #{}),
                     Vars =
                         case Vars0 of
@@ -206,16 +254,6 @@ hydrate_feature_from_ipfs(Json0) ->
                             Vars,
                             maps:remove(vars, Json0#{feature => FeatureBin})
                         ),
-                    {ok, Json1};
-                FeatureBin when is_binary(FeatureBin) ->
-                    %% support cat returning raw binary
-                    Vars0 = maps:get(vars, Json0, #{}),
-                    Vars =
-                        case Vars0 of
-                            M when is_map(M) -> M;
-                            _ -> #{}
-                        end,
-                    Json1 = maps:merge(Vars, maps:remove(vars, Json0#{feature => FeatureBin})),
                     {ok, Json1};
                 Err ->
                     {error, {ipfs_cat_failed, Cid, Err}}

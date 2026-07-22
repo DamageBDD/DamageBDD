@@ -53,54 +53,74 @@ init([]) ->
     ),
     Interval = application:get_env(ecai, index_snapshot_ms, 60000),
     PoolSpecs0 =
-        [
-            #{
-                id => ecai_index_snapshot,
-                start =>
-                    {ecai_index_snapshot, start_link, [
-                        fun ecai_search_server:get_ctx/0, SnapPath, Interval
-                    ]},
-                restart => permanent,
-                shutdown => 60,
-                type => worker,
-                modules => []
-            },
-            #{
-                id => ecai_search_server,
-                start => {ecai_search_server, start_link, []},
-                restart => permanent,
-                shutdown => 60,
-                type => worker,
-                modules => []
-            },
-            #{
-                id => ecai_indexer,
-                start => {ecai_indexer, start_link, []},
-                restart => permanent,
-                shutdown => 60,
-                type => worker,
-                modules => []
-            },
-            #{
-                id => ecai_blender,
-                start => {ecai_blender, start_link, []},
-                restart => permanent,
-                shutdown => 60,
-                type => worker,
-                modules => []
-            },
-            #{
-                id => wikipedia_loader,
-                start => {ecai_wikipedia_loader, start_link, []},
-                restart => permanent,
-                shutdown => 60,
-                type => worker,
-                modules => []
-            }
-        ] ++
+        maybe_ingest_specs() ++
+            [
+                #{
+                    id => ecai_index_snapshot,
+                    start =>
+                        {ecai_index_snapshot, start_link, [
+                            fun ecai_search_server:get_ctx/0, SnapPath, Interval
+                        ]},
+                    restart => permanent,
+                    shutdown => 60,
+                    type => worker,
+                    modules => []
+                },
+                #{
+                    id => ecai_search_server,
+                    start => {ecai_search_server, start_link, []},
+                    restart => permanent,
+                    shutdown => 60,
+                    type => worker,
+                    modules => []
+                },
+                #{
+                    id => ecai_indexer,
+                    start => {ecai_indexer, start_link, []},
+                    restart => permanent,
+                    shutdown => 60,
+                    type => worker,
+                    modules => []
+                },
+                #{
+                    id => ecai_blender,
+                    start => {ecai_blender, start_link, []},
+                    restart => permanent,
+                    shutdown => 60,
+                    type => worker,
+                    modules => []
+                },
+                #{
+                    id => wikipedia_loader,
+                    start => {ecai_wikipedia_loader, start_link, []},
+                    restart => permanent,
+                    shutdown => 60,
+                    type => worker,
+                    modules => []
+                }
+            ] ++
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
+
+maybe_ingest_specs() ->
+    case application:get_env(ecai, ingest_wal_enabled, false) of
+        true ->
+            [
+                #{
+                    id => ecai_ingest_sup,
+                    start => {ecai_ingest_sup, start_link, []},
+                    restart => permanent,
+                    shutdown => infinity,
+                    type => supervisor,
+                    modules => [ecai_ingest_sup]
+                }
+            ];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, ingest_wal_enabled, Invalid})
+    end.
 
 maybe_ensure_ecai_chat_pool(Pools) ->
     case application:get_env(ecai, ecai_chat_enabled, true) of

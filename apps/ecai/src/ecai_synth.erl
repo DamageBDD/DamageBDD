@@ -9,8 +9,14 @@
 ]).
 -export([
     maxwell_soundscape/3,
-    maxwell_test/0
+    maxwell_demo/0
 ]).
+
+%% Keep the historical manual-demo name in production builds, but do not
+%% expose a *_test/0 function to EUnit. Rebar3 defines TEST for eunit builds.
+-ifndef(TEST).
+-export([maxwell_test/0]).
+-endif.
 
 -define(DEFAULT_SR, 44100).
 
@@ -26,16 +32,30 @@
 }).
 
 %% API: deterministic soundscape from prompt
-maxwell_soundscape(Prompt, Seconds, SampleRate) ->
+maxwell_soundscape(Prompt, Seconds, SampleRate)
+        when (is_list(Prompt) orelse is_binary(Prompt)),
+             is_number(Seconds),
+             Seconds >= 0,
+             is_integer(SampleRate),
+             SampleRate > 0 ->
     SeedPoints = init_maxwell_points(Prompt),
     State0 = init_maxwell_state(Prompt),
     N = trunc(Seconds * SampleRate),
-    loop_samples(0, N, SampleRate, State0, SeedPoints, []).
+    loop_samples(0, N, SampleRate, State0, SeedPoints, []);
+maxwell_soundscape(_Prompt, _Seconds, _SampleRate) ->
+    erlang:error(badarg).
 
 %% ---- init: hash -> curve points per equation ----
-init_maxwell_points(Prompt) ->
+init_maxwell_points(Prompt0) ->
+    Prompt = prompt_list(Prompt0),
     Tags = ["GaussE", "GaussB", "Faraday", "Ampere", "Continuity", "Lorentz"],
-    [ecai:hash_to_curve(Prompt ++ Tag) || Tag <- Tags].
+    [normalize_curve_point(ecai:hash_to_curve(Prompt ++ Tag)) || Tag <- Tags].
+
+prompt_list(Prompt) ->
+    case unicode:characters_to_list(Prompt) of
+        List when is_list(List) -> List;
+        _InvalidUnicode -> erlang:error(badarg)
+    end.
 
 init_maxwell_state(_Prompt) ->
     #mx_state{}.
@@ -47,7 +67,7 @@ loop_samples(I, N, Fs, St0, Pts, Acc) ->
     Dt = 1.0 / Fs,
     St1 = mx_step(Dt, St0),
     Params = mx_isogeny_params(St1, Pts),
-    Sample = ecai_voice_mix(Params),
+    Sample = ecai_voice_mix(Params, I / Fs),
     loop_samples(I + 1, N, Fs, St1, Pts, [Sample | Acc]).
 
 %% ---- Maxwell step (very simple discrete update) ----
@@ -63,7 +83,12 @@ mx_step(Dt, #mx_state{e = E0, b = B0, rho = R0, j = J0, v = V0} = St) ->
 
     St#mx_state{e = E1, b = B1, rho = R1, v = V1}.
 
-%% ---- derive multipliers & curve points ----
+%% ---- derive deterministic voice parameters from field state + points ----
+%%
+%% The previous prototype referenced ecai_curve, ecai_pitch, ecai_amp,
+%% ecai_pan and ecai_osc modules that are not part of the application. This
+%% projection keeps the prompt-derived curve coordinates as deterministic
+%% seeds while implementing the audio mapping locally.
 mx_isogeny_params(#mx_state{e = E, b = B, rho = _R, j = J, v = V}, Points) ->
     Ue = vec_norm2(E),
     Ub = vec_norm2(B),
@@ -72,15 +97,18 @@ mx_isogeny_params(#mx_state{e = E, b = B, rho = _R, j = J, v = V}, Points) ->
     Jm = vec_norm(J),
     Vm = vec_norm(V),
 
-    [P0, P1, P2, P3, P4, P5] = Points,
-
+    Scalars = [
+        round(alpha(0) * Ue),
+        round(alpha(1) * Ub),
+        round(alpha(2) * S),
+        round(alpha(3) * U),
+        round(alpha(4) * Jm),
+        round(alpha(5) * Vm)
+    ],
     [
-        point_to_voice(ecai_curve:mul(round(alpha(0) * Ue), P0)),
-        point_to_voice(ecai_curve:mul(round(alpha(1) * Ub), P1)),
-        point_to_voice(ecai_curve:mul(round(alpha(2) * S), P2)),
-        point_to_voice(ecai_curve:mul(round(alpha(3) * U), P3)),
-        point_to_voice(ecai_curve:mul(round(alpha(4) * Jm), P4)),
-        point_to_voice(ecai_curve:mul(round(alpha(5) * Vm), P5))
+        point_to_voice(Scalar, Point, VoiceIndex)
+     || {Scalar, Point, VoiceIndex} <-
+            lists:zip3(Scalars, Points, lists:seq(0, 5))
     ].
 
 alpha(0) -> 10.0;
@@ -90,16 +118,64 @@ alpha(3) -> 5.0;
 alpha(4) -> 20.0;
 alpha(5) -> 15.0.
 
-%% Convert point -> oscillator params
-point_to_voice({X, Y}) ->
-    Freq = ecai_pitch:from_x(X),
-    Amp = ecai_amp:from_y(Y),
-    Pan = ecai_pan:from_x(X),
-    #{freq => Freq, amp => Amp, pan => Pan}.
+normalize_curve_point({XBin, YBin, Counter})
+        when is_binary(XBin), is_binary(YBin), is_integer(Counter) ->
+    {
+        binary:decode_unsigned(XBin, little),
+        binary:decode_unsigned(YBin, little),
+        Counter
+    };
+normalize_curve_point({X, Y, Counter})
+        when is_integer(X), is_integer(Y), is_integer(Counter) ->
+    {X, Y, Counter};
+normalize_curve_point({XBin, YBin}) when is_binary(XBin), is_binary(YBin) ->
+    {
+        binary:decode_unsigned(XBin, little),
+        binary:decode_unsigned(YBin, little),
+        0
+    };
+normalize_curve_point({X, Y}) when is_integer(X), is_integer(Y) ->
+    {X, Y, 0};
+normalize_curve_point({error, Reason}) ->
+    erlang:error({hash_to_curve_failed, Reason});
+normalize_curve_point(Other) ->
+    erlang:error({invalid_curve_point, Other}).
 
-%% Mix all 6 voices for one sample
-ecai_voice_mix(Voices) ->
-    lists:sum([ecai_osc:sample(V) || V <- Voices]).
+%% Convert a prompt-derived point and a bounded field scalar into oscillator
+%% parameters. This is a deterministic audio projection, not EC scalar
+%% multiplication; the curve point remains the stable seed.
+point_to_voice(Scalar0, {X, Y, Counter}, VoiceIndex) ->
+    Scalar = clamp_int(Scalar0, 0, 1000000),
+    PitchStep = positive_mod(X + Scalar * 17 + VoiceIndex * 11 + Counter, 60),
+    Freq = 55.0 * math:pow(2.0, PitchStep / 12.0),
+    AmpBucket = positive_mod(Y + Scalar * 31 + VoiceIndex * 97, 1000),
+    Amp = 0.035 + 0.065 * (AmpBucket / 999.0),
+    PanBucket = positive_mod(X bxor Y bxor (VoiceIndex * 257), 2001),
+    Pan = (PanBucket / 1000.0) - 1.0,
+    PhaseBucket = positive_mod(X + Y + Counter + VoiceIndex * 4099, 65536),
+    Phase = 2.0 * math:pi() * (PhaseBucket / 65536.0),
+    #{freq => Freq, amp => Amp, pan => Pan, phase => Phase}.
+
+clamp_int(Value, Min, _Max) when Value < Min -> Min;
+clamp_int(Value, _Min, Max) when Value > Max -> Max;
+clamp_int(Value, _Min, _Max) -> Value.
+
+positive_mod(Value, Modulus) ->
+    ((Value rem Modulus) + Modulus) rem Modulus.
+
+%% Mix all six voices into the mono sample used by write_wav/5. Pan remains
+%% available in the voice map for a future stereo renderer.
+ecai_voice_mix([], _Time) ->
+    0.0;
+ecai_voice_mix(Voices, Time) ->
+    Sum = lists:sum([voice_sample(Voice, Time) || Voice <- Voices]),
+    Sum / length(Voices).
+
+voice_sample(Voice, Time) ->
+    Freq = maps:get(freq, Voice),
+    Amp = maps:get(amp, Voice),
+    Phase = maps:get(phase, Voice, 0.0),
+    Amp * math:sin(2.0 * math:pi() * Freq * Time + Phase).
 
 %% LoopSpec map:
 %%  #{
@@ -623,9 +699,9 @@ test() ->
 
     {ok, MixPath}.
 %% -------------------------------------------------------------------
-%% Maxwell soundscape test
+%% Maxwell soundscape manual demo
 %% -------------------------------------------------------------------
-maxwell_test() ->
+maxwell_demo() ->
     Prompt = "Rachmaninoff + Maxwell + ECAI",
     Seconds = 12.0,
     SR = 44100,
@@ -634,7 +710,7 @@ maxwell_test() ->
     Samples = maxwell_soundscape(Prompt, Seconds, SR),
 
     %% 2. Peak-normalise to avoid clipping
-    MaxAbs = lists:max([math:abs(S) || S <- Samples] ++ [1.0]),
+    MaxAbs = lists:max([erlang:abs(S) || S <- Samples] ++ [1.0]),
     Factor = 0.95 / MaxAbs,
     Scaled = [S * Factor || S <- Samples],
 
@@ -647,3 +723,11 @@ maxwell_test() ->
     Path = "/tmp/ecai_maxwell.wav",
     ok = write_wav(Path, SR, 1, 16, PCM),
     {ok, Path}.
+
+%% Production compatibility for callers that used the old manual-demo name.
+%% It is omitted from EUnit builds so the 12-second WAV render is not
+%% auto-discovered as an application unit test.
+-ifndef(TEST).
+maxwell_test() ->
+    maxwell_demo().
+-endif.
