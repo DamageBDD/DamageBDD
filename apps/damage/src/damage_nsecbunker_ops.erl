@@ -1012,13 +1012,15 @@ with_file_access_errors(Fun) ->
     end.
 
 file_access_error(Operation, Path, Reason) ->
-    error({nsecbunker_file_access_error, #{
-        reason => file_access_failed,
-        operation => Operation,
-        path => bin(Path),
-        os_reason => Reason,
-        hint => file_access_hint(Operation, Path, Reason)
-    }}).
+    error(
+        {nsecbunker_file_access_error, #{
+            reason => file_access_failed,
+            operation => Operation,
+            path => bin(Path),
+            os_reason => Reason,
+            hint => file_access_hint(Operation, Path, Reason)
+        }}
+    ).
 
 file_access_hint(_Operation, Path, enoent) ->
     iolist_to_binary([
