@@ -46,12 +46,14 @@ ingest_cid(BaseDir, SourceKey0, Cid0, Title0) ->
     with_legacy_index_lock(BaseDir, fun(AbsoluteBaseDir) ->
         case normalize_source_args(SourceKey0, Cid0, Title0) of
             {ok, SourceKey, Cid, Title} ->
-                case fetch_and_build(
-                    SourceKey,
-                    Cid,
-                    Title,
-                    configured_max_source_chunks()
-                ) of
+                case
+                    fetch_and_build(
+                        SourceKey,
+                        Cid,
+                        Title,
+                        configured_max_source_chunks()
+                    )
+                of
                     {ok, Records} ->
                         persist_searchable_records(AbsoluteBaseDir, Records);
                     {error, _Reason} = Error ->
@@ -122,12 +124,14 @@ add_manifest_docs_to_index(Index, [], _Ordinal) ->
 add_manifest_docs_to_index(Index0, [Doc | Rest], Ordinal) when is_map(Doc) ->
     case manifest_doc_fields(Doc) of
         {ok, SourceKey, Cid, Title} ->
-            case fetch_and_build(
-                SourceKey,
-                Cid,
-                Title,
-                configured_max_source_chunks()
-            ) of
+            case
+                fetch_and_build(
+                    SourceKey,
+                    Cid,
+                    Title,
+                    configured_max_source_chunks()
+                )
+            of
                 {ok, Records} ->
                     Index1 = ecai_disk_indexer:add_records(Index0, Records),
                     add_manifest_docs_to_index(Index1, Rest, Ordinal + 1);
@@ -289,12 +293,14 @@ build_record(SourceKey, Cid, Title, ChunkInfo) ->
         type => <<"ipfs">>,
         tags => []
     },
-    case ecai_ingest_event:new_upsert_chunk(
-        SourceKey,
-        Cid,
-        ChunkInfo,
-        IndexFields0
-    ) of
+    case
+        ecai_ingest_event:new_upsert_chunk(
+            SourceKey,
+            Cid,
+            ChunkInfo,
+            IndexFields0
+        )
+    of
         {ok, Event} ->
             IndexFields = maps:get(index_fields, Event),
             Record0 = #{
@@ -408,10 +414,12 @@ sum_ack_field(Acks, Key) ->
 manifest_doc_fields(Doc) ->
     case normalize_binary(cid, maps:get(<<"cid">>, Doc, undefined)) of
         {ok, Cid} ->
-            case normalize_optional_binary(
-                title,
-                maps:get(<<"title">>, Doc, <<>>)
-            ) of
+            case
+                normalize_optional_binary(
+                    title,
+                    maps:get(<<"title">>, Doc, <<>>)
+                )
+            of
                 {ok, Title} ->
                     SourceKey0 = maps:get(
                         <<"source_key">>,
@@ -438,9 +446,11 @@ normalize_source_args(SourceKey0, Cid0, Title0) ->
                         {ok, Title} -> {ok, SourceKey, Cid, Title};
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 normalize_binary(Name, Value) ->

@@ -32,12 +32,13 @@
 }).
 
 %% API: deterministic soundscape from prompt
-maxwell_soundscape(Prompt, Seconds, SampleRate)
-        when (is_list(Prompt) orelse is_binary(Prompt)),
-             is_number(Seconds),
-             Seconds >= 0,
-             is_integer(SampleRate),
-             SampleRate > 0 ->
+maxwell_soundscape(Prompt, Seconds, SampleRate) when
+    (is_list(Prompt) orelse is_binary(Prompt)),
+    is_number(Seconds),
+    Seconds >= 0,
+    is_integer(SampleRate),
+    SampleRate > 0
+->
     SeedPoints = init_maxwell_points(Prompt),
     State0 = init_maxwell_state(Prompt),
     N = trunc(Seconds * SampleRate),
@@ -118,15 +119,17 @@ alpha(3) -> 5.0;
 alpha(4) -> 20.0;
 alpha(5) -> 15.0.
 
-normalize_curve_point({XBin, YBin, Counter})
-        when is_binary(XBin), is_binary(YBin), is_integer(Counter) ->
+normalize_curve_point({XBin, YBin, Counter}) when
+    is_binary(XBin), is_binary(YBin), is_integer(Counter)
+->
     {
         binary:decode_unsigned(XBin, little),
         binary:decode_unsigned(YBin, little),
         Counter
     };
-normalize_curve_point({X, Y, Counter})
-        when is_integer(X), is_integer(Y), is_integer(Counter) ->
+normalize_curve_point({X, Y, Counter}) when
+    is_integer(X), is_integer(Y), is_integer(Counter)
+->
     {X, Y, Counter};
 normalize_curve_point({XBin, YBin}) when is_binary(XBin), is_binary(YBin) ->
     {

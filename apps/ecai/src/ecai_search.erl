@@ -170,8 +170,9 @@ new() ->
 %%% Public mutators
 %%%===================================================================
 
-add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record)
-        when is_binary(DocId), is_map(Record) ->
+add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record) when
+    is_binary(DocId), is_map(Record)
+->
     %% Derive terms before reserving an ID so invalid records cannot leave a
     %% half-created document mapping.
     Terms = ecai_terms:terms_from_record(Record),
@@ -1076,11 +1077,12 @@ enable_gpu(Ctx0 = #ctx{}) ->
 disable_gpu(Ctx = #ctx{backend = ets}) ->
     Ctx;
 disable_gpu(Ctx = #ctx{backend = gpu, gpu = H}) ->
-    _ = try ecai_gpu:free(H) of
-        Result -> Result
-    catch
-        _Class:_Reason -> ok
-    end,
+    _ =
+        try ecai_gpu:free(H) of
+            Result -> Result
+        catch
+            _Class:_Reason -> ok
+        end,
     Ctx#ctx{backend = ets, gpu = undefined, term_ids = #{}}.
 
 %% Rebuild device snapshot (call after a bulk index or finalize/1)

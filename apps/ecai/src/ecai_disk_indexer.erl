@@ -100,12 +100,14 @@ add_doc(_State, _DocInt, _Record) ->
 
 flush(State = #st{batch_docs = 0}) ->
     State;
-flush(State = #st{
-    base_dir = BaseDir,
-    docstore_tab = Docstore,
-    seg_no = SegmentNo,
-    batch = Batch
-}) ->
+flush(
+    State = #st{
+        base_dir = BaseDir,
+        docstore_tab = Docstore,
+        seg_no = SegmentNo,
+        batch = Batch
+    }
+) ->
     %% Document metadata must be durable before the segment becomes visible in
     %% the manifest.
     ok = ecai_disk_docstore:sync(Docstore),

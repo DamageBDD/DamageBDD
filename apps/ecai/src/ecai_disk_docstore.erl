@@ -21,7 +21,8 @@ open(BaseDir) ->
     case dets:open_file(Name, [{file, Path}, {type, set}]) of
         {ok, Tab} ->
             case ensure_next(Tab) of
-                ok -> {ok, Tab};
+                ok ->
+                    {ok, Tab};
                 {error, _Reason} = Error ->
                     _ = dets:close(Tab),
                     Error
