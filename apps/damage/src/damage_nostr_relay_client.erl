@@ -226,20 +226,32 @@ call_configured_relay_publish(Event, Config) ->
     end.
 
 try_known_subscribe(Filter) ->
-    case erlang:function_exported(nosternity_relay, subscribe, 1) of
-        true -> safe_apply(nosternity_relay, subscribe, [Filter]);
-        false -> {error, relay_subscribe_not_wired}
+    %% Prefer the in-tree damage_nsecbunker live relay adapter. The historical
+    %% nosternity_relay fallback is kept only for older deployments.
+    case erlang:function_exported(damage_nsecbunker_relay, subscribe, 1) of
+        true ->
+            safe_apply(damage_nsecbunker_relay, subscribe, [Filter]);
+        false ->
+            case erlang:function_exported(nosternity_relay, subscribe, 1) of
+                true -> safe_apply(nosternity_relay, subscribe, [Filter]);
+                false -> {error, relay_subscribe_not_wired}
+            end
     end.
 
 try_known_publish(Event, Config) ->
     Relays = maps:get(relays, Config, []),
-    case erlang:function_exported(nosternity_relay, publish_event, 1) of
+    case erlang:function_exported(damage_nsecbunker_relay, publish_event, 1) of
         true ->
-            safe_apply(nosternity_relay, publish_event, [Event]);
+            safe_apply(damage_nsecbunker_relay, publish_event, [Event]);
         false ->
-            case erlang:function_exported(nosternity_relay, broadcast_event, 2) of
-                true -> safe_apply(nosternity_relay, broadcast_event, [Relays, Event]);
-                false -> {error, relay_publish_not_wired}
+            case erlang:function_exported(nosternity_relay, publish_event, 1) of
+                true ->
+                    safe_apply(nosternity_relay, publish_event, [Event]);
+                false ->
+                    case erlang:function_exported(nosternity_relay, broadcast_event, 2) of
+                        true -> safe_apply(nosternity_relay, broadcast_event, [Relays, Event]);
+                        false -> {error, relay_publish_not_wired}
+                    end
             end
     end.
 
