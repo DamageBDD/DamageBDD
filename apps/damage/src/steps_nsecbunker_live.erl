@@ -526,11 +526,8 @@ step(
     case lists:any(fun(Line) -> binary:match(Line, Needle) =/= nomatch end, Lines) of
         true -> Context;
         false -> fail(Context, {audit_log_missing_decision_for_test_run, Decision, Lines})
-    end;
+    end.
 
-%% Fallback
-step(_Config, Context, _Keyword, _Line, StepTokens, _Args) ->
-    fail(Context, {unmatched_nsecbunker_live_step, StepTokens}).
 
 %% ====================================================================
 %% Core action helpers
