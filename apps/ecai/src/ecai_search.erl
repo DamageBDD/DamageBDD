@@ -375,7 +375,8 @@ search(Ctx = #ctx{}, QueryMap, Limit0) ->
     %% 3) score & rank
     Scores0 = score_candidates(Ctx, TermDocs),
     Scores1 = boost_multi_term_field(TermDocs, Scores0),
-    Scores = apply_review_signals(Ctx, Scores1),
+    Scores2 = apply_review_signals(Ctx, Scores1),
+    Scores = apply_visibility_signals(Ctx, Scores2),
     TopInts = take_top(Scores, Limit),
 
     %% 4) enrich each doc with its stored record and a human preview
@@ -410,26 +411,49 @@ lookup_record(Ctx, DocId) ->
             #{}
     end.
 
-%% Replace your current preview_text/1 with this:
 preview_text(RecMap) when is_map(RecMap) ->
-    N = maps:get(name, RecMap, <<>>),
-    C = maps:get(city, RecMap, <<>>),
-    K = maps:get(category, RecMap, <<>>),
-
-    iolist_to_binary(
-        case {N =/= <<>>, C =/= <<>>, K =/= <<>>} of
-            {true, false, false} -> [N];
-            {true, true, false} -> [N, <<" — ">>, C];
-            {true, true, true} -> [N, <<" — ">>, C, <<" (">>, K, <<")">>];
-            {true, false, true} -> [N, <<" (">>, K, <<")">>];
-            {false, true, true} -> [C, <<" (">>, K, <<")">>];
-            {false, true, false} -> [C];
-            {false, false, true} -> [K];
-            _ -> <<>>
-        end
-    );
+    Name = first_nonempty_record_field(RecMap, [name, title]),
+    Abstract = first_nonempty_record_field(RecMap, [abstract, text]),
+    City = maps:get(city, RecMap, <<>>),
+    Category = maps:get(category, RecMap, <<>>),
+    case {Name, Abstract, City, Category} of
+        {N, A, _C, <<"wikipedia">>} when N =/= <<>>, A =/= <<>> ->
+            <<N/binary, " — ", (preview_prefix(A, 220))/binary>>;
+        {N, _A, C, K} ->
+            iolist_to_binary(
+                case {N =/= <<>>, C =/= <<>>, K =/= <<>>} of
+                    {true, false, false} -> [N];
+                    {true, true, false} -> [N, <<" — ">>, C];
+                    {true, true, true} -> [N, <<" — ">>, C, <<" (">>, K, <<")">>];
+                    {true, false, true} -> [N, <<" (">>, K, <<")">>];
+                    {false, true, true} -> [C, <<" (">>, K, <<")">>];
+                    {false, true, false} -> [C];
+                    {false, false, true} -> [K];
+                    _ -> <<>>
+                end
+            )
+    end;
 preview_text(_) ->
     <<>>.
+
+first_nonempty_record_field(_Map, []) -> <<>>;
+first_nonempty_record_field(Map, [Key | Rest]) ->
+    case maps:get(Key, Map, <<>>) of
+        Bin when is_binary(Bin), byte_size(Bin) > 0 -> Bin;
+        _ -> first_nonempty_record_field(Map, Rest)
+    end.
+
+preview_prefix(Bin, MaxBytes) when byte_size(Bin) =< MaxBytes -> Bin;
+preview_prefix(Bin, MaxBytes) ->
+    preview_prefix_valid(Bin, MaxBytes).
+
+preview_prefix_valid(_Bin, Size) when Size =< 0 -> <<>>;
+preview_prefix_valid(Bin, Size) ->
+    Prefix = binary:part(Bin, 0, Size),
+    case ecai_chunker:validate_utf8(Prefix) of
+        ok -> Prefix;
+        {error, _Reason} -> preview_prefix_valid(Bin, Size - 1)
+    end.
 
 info_term(Ctx, Term) ->
     #{
@@ -466,6 +490,32 @@ apply_review_signals(Ctx, ScoreMap) ->
         end,
         ScoreMap
     ).
+
+
+%% Apply a bounded popularity signal to visibility-ranked corpora. The
+%% logarithm prevents high-traffic pages from overwhelming textual relevance.
+apply_visibility_signals(Ctx, ScoreMap) ->
+    maps:map(
+        fun(DocInt, Score0) ->
+            DocId = docid(Ctx, DocInt),
+            Record = lookup_record(Ctx, DocId),
+            Pageviews = nonnegative_number(maps:get(pageviews, Record, 0)),
+            ActiveMonths = nonnegative_number(maps:get(active_months, Record, 0)),
+            Rank = nonnegative_number(maps:get(visibility_rank, Record, 0)),
+            ViewBoost = 0.08 * math:log(1.0 + Pageviews),
+            StabilityBoost = 0.02 * erlang:min(ActiveMonths, 12),
+            RankBoost = case Rank > 0 of
+                true -> 0.10 / math:sqrt(Rank);
+                false -> 0.0
+            end,
+            Score0 + ViewBoost + StabilityBoost + RankBoost
+        end,
+        ScoreMap
+    ).
+
+nonnegative_number(Value) when is_integer(Value), Value >= 0 -> float(Value);
+nonnegative_number(Value) when is_float(Value), Value >= 0.0 -> Value;
+nonnegative_number(_) -> 0.0.
 
 %%%===================================================================
 %%% Proof / headers
@@ -1042,7 +1092,7 @@ load(Ctx0, File) ->
     case file:read_file(File) of
         {ok, Bin} ->
             try
-                Map = binary_to_term(Bin),
+                Map = binary_to_term(Bin, [safe]),
                 %% Restore opts first
                 Ctx1 = Ctx0#ctx{opts = maps:get(opts, Map, Ctx0#ctx.opts)},
                 %% Bulk insert into ETS

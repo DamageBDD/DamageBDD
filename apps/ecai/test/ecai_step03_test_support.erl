@@ -19,11 +19,10 @@
 ]).
 
 temp_dir() ->
-    Root =
-        case os:getenv("TMPDIR") of
-            false -> "/tmp";
-            Value -> Value
-        end,
+    Root = case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        Value -> Value
+    end,
     Suffix = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Dir = filename:join(Root, "ecai-step03-" ++ Suffix),
     ok = filelib:ensure_dir(filename:join(Dir, "placeholder")),
@@ -34,7 +33,13 @@ cleanup(Path) ->
 
 record(N) when is_integer(N), N > 0 ->
     Number = integer_to_binary(N),
-    Text = <<"durable ECAI event ", Number/binary, " — IPFS">>,
+    Text = <<
+        "durable ECAI event ",
+        Number/binary,
+        " ",
+        16#2014/utf8,
+        " IPFS"
+    >>,
     SourceKey = <<"org.damagebdd.step03/document/", Number/binary>>,
     SourceVersion = <<"bafy-step03-version-", Number/binary>>,
     Chunk = #{
@@ -172,8 +177,7 @@ remove_path(Path) ->
                                 Names
                             ),
                             ok = file:del_dir(Path);
-                        {error, enoent} ->
-                            ok
+                        {error, enoent} -> ok
                     end;
                 _ ->
                     ok = file:delete(Path)

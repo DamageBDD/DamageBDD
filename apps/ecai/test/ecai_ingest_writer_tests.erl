@@ -110,7 +110,12 @@ supervisor_recovers_commit_after_crash_before_ets_apply_test() ->
         {ok, W1} = ecai_ingest_sup:writer(Sup),
         Monitor = erlang:monitor(process, W1),
         R1 = ecai_step03_test_support:record(1),
-        _CallResult = catch ecai_ingest_writer:submit_batch(W1, [R1]),
+        _CallResult =
+            try ecai_ingest_writer:submit_batch(W1, [R1]) of
+                Reply -> Reply
+            catch
+                exit:Reason -> {exit, Reason}
+            end,
         receive
             after_wal_sync -> ok
         after 5000 ->
@@ -169,8 +174,7 @@ wait_for_restarted_writer(Sup, Previous, Attempts) ->
 
 with_tmp(Fun) ->
     BaseDir = ecai_step03_test_support:temp_dir(),
-    try
-        Fun(BaseDir)
+    try Fun(BaseDir)
     after
         ok = ecai_step03_test_support:cleanup(BaseDir)
     end.

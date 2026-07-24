@@ -38,11 +38,11 @@
 %% not used in line-mode; keep if you switch to slab mode
 -define(SLAB, 256 * 1024).
 %% 8 GiB  (pause when over this)
--define(MEM_HIGH, 94 bsl 30).
+-define(MEM_HIGH, 4 bsl 30).
 %% 6 GiB  (resume when below this)
--define(MEM_LOW, 32 bsl 30).
+-define(MEM_LOW, 3 bsl 30).
 %% 1 GiB  (binary heap backpressure)
--define(BIN_HIGH, 6 bsl 30).
+-define(BIN_HIGH, 1 bsl 30).
 %% polling interval during pause
 -define(SNOOZE_MS, 200).
 %% Defaults (tweak as you like)
@@ -128,16 +128,16 @@ load_chunks(_ChunkRefs, _Opts) ->
 %% Opts may include:
 %%  #{mem_high:=Bytes, mem_low:=Bytes, bin_high:=Bytes, snooze_ms:=Ms,
 %%    checkpoint_dir:=Path, checkpoint_every:=N}
-load(SourceRef, Opts0) when
-    (is_list(SourceRef) orelse is_binary(SourceRef) orelse is_map(SourceRef)),
-    is_map(Opts0)
-->
+load(SourceRef, Opts0)
+        when (is_list(SourceRef) orelse is_binary(SourceRef) orelse is_map(SourceRef)),
+             is_map(Opts0) ->
     File = source_path(SourceRef),
     %% merge defaults
     Opts1 = maps:merge(
         #{
             checkpoint_dir => ?CHK_DIR,
             checkpoint_every => ?CHK_EVERY,
+            checkpoint_enabled => true,
             auto_tune => false,
             mem_profile => moderate,
             tune_every_ms => 2000,
@@ -156,8 +156,10 @@ load(SourceRef, Opts0) when
 
     case file:open(File, [read, raw, binary]) of
         {ok, IoDevice} ->
-            %% resume if we have a checkpoint
-            case read_checkpoint(CkptPath) of
+            %% A durable live-search snapshot is not committed together with
+            %% this local offset. Pipeline jobs therefore disable loader
+            %% checkpoints and replay their bounded index-input file safely.
+            case initial_checkpoint(Opts, CkptPath) of
                 {ok, Off, LinesDone} ->
                     _ = file:position(IoDevice, Off),
                     ?LOG_INFO("Resuming ~s at offset ~B (lines ~B)", [File, Off, LinesDone]),
@@ -199,19 +201,18 @@ read_lines(IoDevice, _File, Opts0, CkptPath, Lines0) ->
                 skip ->
                     read_lines(IoDevice, _File, Opts, CkptPath, Lines0);
                 DecodedJson ->
-                    ok = default_index(DecodedJson),
+                    ok = default_index(DecodedJson, Opts),
                     Lines1 = Lines0 + 1,
                     %% periodic checkpoint
-                    N = maps:get(checkpoint_every, Opts, ?CHK_EVERY),
-                    case Lines1 rem N of
-                        0 ->
+                    case checkpoint_due(Opts, Lines1) of
+                        true ->
                             {ok, CurOff} = file:position(IoDevice, cur),
                             ?LOG_INFO("write_checkpoint current offset: ~p read lines ~p", [
                                 CurOff, Lines1
                             ]),
                             ok = write_checkpoint(CkptPath, CurOff, Lines1),
                             read_lines(IoDevice, _File, Opts, CkptPath, Lines1);
-                        _ ->
+                        false ->
                             read_lines(IoDevice, _File, Opts, CkptPath, Lines1)
                     end
             end
@@ -264,6 +265,24 @@ line_binary(List) when is_list(List) ->
 line_binary(_Other) ->
     error.
 
+initial_checkpoint(Opts, CkptPath) ->
+    case maps:get(checkpoint_enabled, Opts, true) of
+        true -> read_checkpoint(CkptPath);
+        false ->
+            _ = file:delete(CkptPath),
+            not_found
+    end.
+
+checkpoint_due(Opts, Lines) ->
+    case maps:get(checkpoint_enabled, Opts, true) of
+        false -> false;
+        true ->
+            case maps:get(checkpoint_every, Opts, ?CHK_EVERY) of
+                N when is_integer(N), N > 0 -> Lines rem N =:= 0;
+                _ -> false
+            end
+    end.
+
 checkpoint_path(Dir, FilePath) ->
     %% content-address the *path* to avoid clashes
     Hash = ecai_utils:hex(crypto:hash(sha256, list_to_binary(FilePath))),
@@ -272,18 +291,25 @@ checkpoint_path(Dir, FilePath) ->
 write_checkpoint(Path, Offset, Lines) ->
     Term = {offset, Offset, lines, Lines},
     Tmp = Path ++ ".tmp",
-    ok = file:write_file(Tmp, term_to_binary(Term), [raw, binary]),
+    ok = file:write_file(Tmp, term_to_binary(Term), [raw, binary, sync]),
     ok = file:rename(Tmp, Path),
     ok.
 
 read_checkpoint(Path) ->
     case file:read_file(Path) of
         {ok, Bin} ->
-            case binary_to_term(Bin) of
-                {offset, Off, lines, N} when is_integer(Off), is_integer(N) ->
+            try binary_to_term(Bin, [safe]) of
+                {offset, Off, lines, N} when
+                    is_integer(Off),
+                    Off >= 0,
+                    is_integer(N),
+                    N >= 0
+                ->
                     {ok, Off, N};
                 _ ->
                     not_found
+            catch
+                error:badarg -> not_found
             end;
         _ ->
             not_found
@@ -387,13 +413,15 @@ tuned_thresholds(Profile, #{total := Total, available := Avail}) ->
     High1 = min(High0, trunc(Avail * 0.85)),
     Low1 = min(Low0, trunc(Avail * 0.75)),
 
-    %% Floors and ordering
-
-    %% >= 1 GiB
-    High = max(High1, 1024 bsl 20),
-    %% >= 512 MiB
-    Low = max(min(Low1, High - (256 bsl 20)), 512 bsl 20),
-    BinHigh = max(min(Bin0, High div 3), 256 bsl 20),
+    %% Floors must scale down on small operators. The previous 1 GiB floor
+    %% could disable backpressure entirely on a sub-GiB host.
+    MinHigh = erlang:min(256 bsl 20, erlang:max(64 bsl 20, Avail div 2)),
+    High = erlang:max(High1, MinHigh),
+    Low = erlang:max(
+        32 bsl 20,
+        erlang:min(Low1, erlang:max(32 bsl 20, High - (32 bsl 20)))
+    ),
+    BinHigh = erlang:max(32 bsl 20, erlang:min(Bin0, High div 3)),
 
     #{mem_high => High, mem_low => Low, bin_high => BinHigh}.
 
@@ -423,21 +451,21 @@ system_memory_memsup() ->
             try
                 _ = application:ensure_all_started(os_mon),
                 Data = memsup:get_system_memory_data(),
-                %% Values are typically in kB.
-                TotalKB = proplists:get_value(total_memory, Data, undefined),
-                AvailKB =
+                %% memsup reports byte counts. Do not scale these values again.
+                TotalBytes = proplists:get_value(total_memory, Data, undefined),
+                AvailableBytes =
                     case proplists:get_value(available_memory, Data, undefined) of
                         undefined ->
                             Free = proplists:get_value(free_memory, Data, 0),
                             Cached = proplists:get_value(cached_memory, Data, 0),
-                            Buff = proplists:get_value(buffered_memory, Data, 0),
-                            Free + Cached + Buff;
-                        X ->
-                            X
+                            Buffered = proplists:get_value(buffered_memory, Data, 0),
+                            Free + Cached + Buffered;
+                        Value ->
+                            Value
                     end,
-                case TotalKB of
+                case TotalBytes of
                     undefined -> {error, no_total};
-                    _ -> {ok, #{total => TotalKB * 1024, available => AvailKB * 1024}}
+                    _ -> {ok, #{total => TotalBytes, available => AvailableBytes}}
                 end
             catch
                 _:_ -> {error, memsup_failed}
@@ -475,13 +503,19 @@ meminfo_kb(Lines, Key) ->
 
 %% ---------------- Default indexer (unchanged) ----------------
 
-default_index(Json) when is_map(Json) ->
-    Ctx = ecai_search_server:get_ctx(),
+default_index(Json, Opts) when is_map(Json), is_map(Opts) ->
+    Ctx = index_context(Opts),
     {DocId, Rec} = wiki_to_search_record(Json),
     ok = ecai_search:upsert_record(Ctx, DocId, Rec),
     Abstract = maps:get(<<"abstract">>, Json, <<>>),
     ecai_search:index_text(Ctx, DocId, <<"abstract">>, Abstract, 120),
     ok.
+
+index_context(Opts) ->
+    case maps:find(ctx, Opts) of
+        {ok, Ctx} -> Ctx;
+        error -> ecai_search_server:get_ctx()
+    end.
 
 wiki_to_search_record(J) ->
     Name = b(maps:get(<<"name">>, J, <<>>)),
@@ -497,18 +531,32 @@ wiki_to_search_record(J) ->
         end,
     Image = get_in(J, [<<"image">>, <<"content_url">>], <<>>),
     WikiData = get_in(J, [<<"main_entity">>, <<"identifier">>], <<>>),
+    Visibility = maps:get(<<"visibility">>, J, #{}),
+    Pageviews = map_int(Visibility, <<"pageviews">>, 0),
+    ActiveMonths = map_int(Visibility, <<"active_months">>, 0),
+    VisibilityRank = map_int(Visibility, <<"rank">>, 0),
+    Categories = binary_list(maps:get(<<"categories">>, J, [])),
+    Redirects = binary_list(maps:get(<<"redirects">>, J, [])),
     Data = #{
         name => Name,
+        title => Name,
         category => <<"wikipedia">>,
-        tags => wiki_tags(LangId, WikiData),
+        tags => wiki_tags(LangId, WikiData, Categories),
         link => Url,
         url => Url,
         abstract => Abs,
+        text => Abs,
         language => LangId,
         image => Image,
         wikidata_id => WikiData,
         date_modified => b(maps:get(<<"date_modified">>, J, <<>>)),
-        license => wiki_license_list(J)
+        license => wiki_license_list(J),
+        pageviews => Pageviews,
+        active_months => ActiveMonths,
+        visibility_rank => VisibilityRank,
+        redirects => Redirects,
+        categories => Categories,
+        ecai_source => maps:get(<<"ecai_source">>, J, #{})
     },
     {PageId, Data}.
 
@@ -530,12 +578,27 @@ get_in(Map, [K | Ks], Default) when is_map(Map) ->
 get_in(_, _, Default) ->
     Default.
 
-wiki_tags(LangId, WD) ->
-    Base = [<<"wiki">>, LangId],
-    case WD of
-        <<>> -> Base;
-        _ -> [damage_utils:binarystr_join([<<"wikidata:">>, b(WD)]) | Base]
-    end.
+wiki_tags(LangId, WD, Categories) ->
+    Base0 = [<<"wiki">>, LangId],
+    Base = case WD of
+        <<>> -> Base0;
+        _ -> [damage_utils:binarystr_join([<<"wikidata:">>, b(WD)]) | Base0]
+    end,
+    lists:usort(Base ++ [<<"category:", Category/binary>> || Category <- Categories]).
+
+map_int(Map, Key, Default) when is_map(Map) ->
+    case maps:get(Key, Map, Default) of
+        Value when is_integer(Value) -> Value;
+        Bin when is_binary(Bin) ->
+            try binary_to_integer(Bin) catch error:badarg -> Default end;
+        _ -> Default
+    end;
+map_int(_Map, _Key, Default) -> Default.
+
+binary_list(List) when is_list(List) ->
+    lists:usort([b(Value) || Value <- List]);
+binary_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> [Bin];
+binary_list(_Other) -> [].
 
 wiki_license_list(J) ->
     case maps:get(<<"license">>, J, []) of

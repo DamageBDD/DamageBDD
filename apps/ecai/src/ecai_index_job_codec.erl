@@ -47,8 +47,9 @@ normalize_spec(Spec0) when is_map(Spec0) ->
         Finalize0 = optional_map(finalize, field(finalize, Spec0, #{})),
         Source = normalize_source(Kind, Source0),
         Target = normalize_target(Kind, Target0),
-        Options = normalize_options(Options0),
+        Options = normalize_options(Kind, Options0),
         Finalize = normalize_finalize(Finalize0),
+        ok = validate_kind_source_options(Kind, Source, Options),
         ok = validate_combination(Kind, Target, Finalize),
         {ok, #{
             schema => ?SCHEMA,
@@ -128,14 +129,17 @@ normalize_kind(yelp_ndjson) -> yelp_ndjson;
 normalize_kind(wikipedia_jsonl) -> wikipedia_jsonl;
 normalize_kind(ipfs_cid) -> ipfs_cid;
 normalize_kind(ipfs_manifest) -> ipfs_manifest;
+normalize_kind(wikimedia_visibility) -> wikimedia_visibility;
 normalize_kind(<<"yelp_ndjson">>) -> yelp_ndjson;
 normalize_kind(<<"wikipedia_jsonl">>) -> wikipedia_jsonl;
 normalize_kind(<<"ipfs_cid">>) -> ipfs_cid;
 normalize_kind(<<"ipfs_manifest">>) -> ipfs_manifest;
+normalize_kind(<<"wikimedia_visibility">>) -> wikimedia_visibility;
 normalize_kind("yelp_ndjson") -> yelp_ndjson;
 normalize_kind("wikipedia_jsonl") -> wikipedia_jsonl;
 normalize_kind("ipfs_cid") -> ipfs_cid;
 normalize_kind("ipfs_manifest") -> ipfs_manifest;
+normalize_kind("wikimedia_visibility") -> wikimedia_visibility;
 normalize_kind(undefined) -> validation_error({missing_field, kind});
 normalize_kind(Other) -> validation_error({unsupported_job_kind, Other}).
 
@@ -155,7 +159,75 @@ normalize_source(ipfs_manifest, Source) ->
     #{manifest_cid => required_binary(
         manifest_cid,
         field(manifest_cid, Source, undefined)
-    )}.
+    )};
+normalize_source(wikimedia_visibility, Source) ->
+    Project = token_binary(project, field(project, Source, <<"enwiki">>)),
+    PageviewProject = token_binary(
+        pageview_project,
+        field(pageview_project, Source, <<"en.wikipedia">>)
+    ),
+    Release = normalize_content_release(
+        field(content_release, Source, <<"latest">>)
+    ),
+    Months = normalize_months(
+        field(pageview_months, Source, ecai_wikimedia_catalog:default_months(12))
+    ),
+    CatalogCid = optional_reference(
+        catalog_cid,
+        field(catalog_cid, Source, undefined)
+    ),
+    CatalogPath = case field(catalog_path, Source, undefined) of
+        undefined -> undefined;
+        null -> undefined;
+        Value -> optional_path(catalog_path, Value)
+    end,
+    #{
+        project => Project,
+        pageview_project => PageviewProject,
+        content_release => Release,
+        pageview_months => Months,
+        catalog_cid => CatalogCid,
+        catalog_path => CatalogPath
+    }.
+
+normalize_content_release(latest) -> <<"latest">>;
+normalize_content_release(<<"latest">>) -> <<"latest">>;
+normalize_content_release("latest") -> <<"latest">>;
+normalize_content_release(Value) ->
+    Release = required_binary(content_release, Value),
+    case re:run(Release, <<"^[0-9]{8}$">>, [{capture, none}]) of
+        match -> Release;
+        _ -> validation_error({invalid_field, content_release, Release})
+    end.
+
+normalize_months(Months) when is_list(Months), Months =/= [], length(Months) =< 64 ->
+    [normalize_month(Month) || Month <- Months];
+normalize_months([]) -> validation_error({empty_field, pageview_months});
+normalize_months(Months) when is_list(Months) ->
+    validation_error({too_many_pageview_months, length(Months), 64});
+normalize_months(_Other) -> validation_error({invalid_field, pageview_months}).
+
+normalize_month(Value) ->
+    Month = required_binary(pageview_month, Value),
+    case re:run(Month, <<"^([0-9]{4})-([0-9]{2})$">>, [{capture, [1, 2], binary}]) of
+        {match, [YearBin, MonthBin]} ->
+            Year = binary_to_integer(YearBin),
+            MonthNo = binary_to_integer(MonthBin),
+            case Year >= 2015 andalso MonthNo >= 1 andalso MonthNo =< 12 of
+                true -> Month;
+                false -> validation_error({invalid_month, Month})
+            end;
+        _ -> validation_error({invalid_month, Month})
+    end.
+
+token_binary(Name, Value) ->
+    Token = required_binary(Name, Value),
+    case byte_size(Token) =< 128 andalso
+        re:run(Token, <<"^[A-Za-z0-9._-]+$">>, [{capture, none}]) =:= match
+    of
+        true -> Token;
+        false -> validation_error({invalid_field, Name})
+    end.
 
 normalize_paths(Source) ->
     Paths0 =
@@ -195,7 +267,7 @@ normalize_target(Kind, Target) ->
         previous_manifest_cid => PreviousManifestCid
     }.
 
-normalize_options(Options) ->
+normalize_options(Kind, Options) ->
     Priority = bounded_integer(
         priority,
         field(priority, Options, 100),
@@ -215,12 +287,98 @@ normalize_options(Options) ->
         ?MAX_BATCH_SIZE
     ),
     LimitPerChunk = normalize_limit(field(limit_per_chunk, Options, infinity)),
-    #{
+    Base = #{
         priority => Priority,
         max_retries => MaxRetries,
         batch_size => BatchSize,
         limit_per_chunk => LimitPerChunk
-    }.
+    },
+    normalize_kind_options(Kind, Options, Base).
+
+normalize_kind_options(wikimedia_visibility, Options, Base) ->
+    Base#{
+        limit => bounded_integer(
+            limit,
+            field(limit, Options, 250000),
+            1,
+            10000000
+        ),
+        minimum_active_months => bounded_integer(
+            minimum_active_months,
+            field(minimum_active_months, Options, 6),
+            1,
+            64
+        ),
+        selection_shards => bounded_integer(
+            selection_shards,
+            field(selection_shards, Options, 128),
+            8,
+            1024
+        ),
+        oversample_percent => bounded_integer(
+            oversample_percent,
+            field(oversample_percent, Options, 125),
+            100,
+            1000
+        ),
+        partition_buffer_bytes => bounded_integer(
+            partition_buffer_bytes,
+            field(partition_buffer_bytes, Options, 262144),
+            4096,
+            16777216
+        ),
+        abstract_max_bytes => bounded_integer(
+            abstract_max_bytes,
+            field(abstract_max_bytes, Options, 16384),
+            1024,
+            16777216
+        ),
+        cirrus_max_line_bytes => bounded_integer(
+            cirrus_max_line_bytes,
+            field(cirrus_max_line_bytes, Options, 67108864),
+            1048576,
+            268435456
+        ),
+        index_chunk_lines => bounded_integer(
+            index_chunk_lines,
+            field(index_chunk_lines, Options, 5000),
+            100,
+            100000
+        ),
+        keep_downloads => boolean_field(
+            keep_downloads,
+            field(keep_downloads, Options, false)
+        ),
+        keep_intermediates => boolean_field(
+            keep_intermediates,
+            field(keep_intermediates, Options, false)
+        ),
+        publish_activity_ipfs => boolean_field(
+            publish_activity_ipfs,
+            field(publish_activity_ipfs, Options, true)
+        ),
+        publish_extracted_ipfs => boolean_field(
+            publish_extracted_ipfs,
+            field(publish_extracted_ipfs, Options, false)
+        )
+    };
+normalize_kind_options(_Kind, _Options, Base) -> Base.
+
+
+validate_kind_source_options(wikimedia_visibility, Source, Options) ->
+    MonthCount = length(maps:get(pageview_months, Source)),
+    MinimumActiveMonths = maps:get(minimum_active_months, Options),
+    case MinimumActiveMonths =< MonthCount of
+        true -> ok;
+        false ->
+            validation_error({
+                minimum_active_months_exceeds_window,
+                MinimumActiveMonths,
+                MonthCount
+            })
+    end;
+validate_kind_source_options(_Kind, _Source, _Options) ->
+    ok.
 
 normalize_finalize(Finalize) ->
     BuildManifest = boolean_field(
@@ -262,6 +420,7 @@ validate_combination(_Kind, _Target, _Finalize) ->
 
 normalize_index_mode(yelp_ndjson, live_search) -> live_search;
 normalize_index_mode(wikipedia_jsonl, live_search) -> live_search;
+normalize_index_mode(wikimedia_visibility, live_search) -> live_search;
 normalize_index_mode(ipfs_cid, searchable_disk) -> searchable_disk;
 normalize_index_mode(ipfs_manifest, searchable_disk) -> searchable_disk;
 normalize_index_mode(ipfs_cid, ledger_only) -> ledger_only;
@@ -277,6 +436,7 @@ normalize_index_mode(Kind, Mode) ->
 
 default_mode(yelp_ndjson) -> live_search;
 default_mode(wikipedia_jsonl) -> live_search;
+default_mode(wikimedia_visibility) -> live_search;
 default_mode(ipfs_cid) -> searchable_disk;
 default_mode(ipfs_manifest) -> searchable_disk.
 

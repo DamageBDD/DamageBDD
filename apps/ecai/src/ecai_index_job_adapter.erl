@@ -26,4 +26,5 @@ module_for(yelp_ndjson) -> {ok, ecai_index_job_yelp};
 module_for(wikipedia_jsonl) -> {ok, ecai_index_job_wikipedia};
 module_for(ipfs_cid) -> {ok, ecai_index_job_ipfs};
 module_for(ipfs_manifest) -> {ok, ecai_index_job_ipfs};
+module_for(wikimedia_visibility) -> {ok, ecai_index_job_wikimedia};
 module_for(Other) -> {error, {unsupported_job_kind, Other}}.
