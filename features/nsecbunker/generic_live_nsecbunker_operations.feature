@@ -24,6 +24,43 @@ Feature: Live damage nsecbunker operations using the node damage_nostr identity
     And the live NIP-46 subscription filter MUST be p-tagged to the bunker pubkey
     And no live test context MUST contain secret material
 
+  Scenario: Live relay adapter receives a black-box ingress canary
+    When I publish a black-box live NIP-46 canary event from a separate relay connection
+    Then the black-box NIP-46 request MUST be accepted by at least one relay
+    And the live relay adapter inbound counter MUST increase
+    And the live relay adapter dispatch counter MUST increase
+    And the live relay adapter MUST observe the black-box event id
+    And no live test context MUST contain secret material
+
+  Scenario: Black-box live NIP-46 full relay loop responds to ping
+    When I publish a black-box live NIP-46 "ping" request from a separate relay connection
+    Then the black-box NIP-46 request MUST be accepted by at least one relay
+    And the live relay adapter inbound counter MUST increase
+    And the live relay adapter dispatch counter MUST increase
+    And the live relay adapter MUST observe the black-box event id
+    And a live NIP-46 reply MUST be received
+    And the live NIP-46 reply MUST be kind 24133
+    And the live NIP-46 reply MUST be authored by the bunker pubkey
+    And the live NIP-46 reply MUST be p-tagged to the damage_nostr client pubkey
+    And the decrypted live NIP-46 response result MUST be "pong"
+    And the live bunker audit log MUST contain the test run id
+    And no live test context MUST contain secret material
+
+  Scenario: Black-box live NIP-46 full relay loop signs an allowed addressable article
+    When I publish a black-box live NIP-46 "sign_event" request for allowed kind 30023 from a separate relay connection
+    Then the black-box NIP-46 request MUST be accepted by at least one relay
+    And the live relay adapter inbound counter MUST increase
+    And the live relay adapter dispatch counter MUST increase
+    And the live relay adapter MUST observe the black-box event id
+    And a live NIP-46 reply MUST be received
+    And the decrypted live NIP-46 response MUST be accepted
+    And the signed live NIP-46 event MUST be kind 30023
+    And the signed live NIP-46 event MUST be authored by the bunker pubkey
+    And the signed live NIP-46 event MUST contain the test run id
+    And the signed live NIP-46 event MUST NOT be published by the bunker relays
+    And the live bunker audit log MUST contain the test run id
+    And no live test context MUST contain secret material
+
   Scenario: Live local bunker core accepts the damage_nostr client
     When I call the live bunker plain request method "ping" as the damage_nostr client
     Then the live bunker plain response MUST be accepted

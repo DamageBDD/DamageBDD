@@ -57,12 +57,18 @@ step(_Config, Context, _Keyword, _Line, ["the live damage nsecbunker server is r
 step(_Config, Context, _Keyword, _Line, ["the live damage nsecbunker vault is ready"], _Args) ->
     case get_status(Context) of
         #{vault := #{guard_state := Guard}} ->
-            case maps:get(sealed, Guard, true) =:= false andalso maps:get(integrity, Guard, failed) =:= ok of
+            case
+                maps:get(sealed, Guard, true) =:= false andalso
+                    maps:get(integrity, Guard, failed) =:= ok
+            of
                 true -> put_live(Context, #{vault_guard => Guard});
                 false -> fail(Context, {live_vault_not_ready, Guard})
             end;
         #{vault := #{"guard_state" := Guard}} ->
-            case maps:get(sealed, Guard, true) =:= false andalso maps:get(integrity, Guard, failed) =:= ok of
+            case
+                maps:get(sealed, Guard, true) =:= false andalso
+                    maps:get(integrity, Guard, failed) =:= ok
+            of
                 true -> put_live(Context, #{vault_guard => Guard});
                 false -> fail(Context, {live_vault_not_ready, Guard})
             end;
@@ -94,8 +100,12 @@ step(
     try
         ClientPub = lower_hex_bin(damage_nostr:public_key_hex()),
         case is_lower_hex_64(ClientPub) of
-            true -> put_live(Context, #{client_pubkey_hex => ClientPub, client_identity => damage_nostr_nsec});
-            false -> fail(Context, {invalid_damage_nostr_client_pubkey, ClientPub})
+            true ->
+                put_live(Context, #{
+                    client_pubkey_hex => ClientPub, client_identity => damage_nostr_nsec
+                });
+            false ->
+                fail(Context, {invalid_damage_nostr_client_pubkey, ClientPub})
         end
     catch
         C:R:S -> fail(Context, {damage_nostr_identity_unavailable, C, R, stack_top(S)})
@@ -112,8 +122,15 @@ step(
     Policy = get_policy(Context),
     Allowed = [lower_hex_bin(C) || C <- maps:get(authorized_clients, Policy, [])],
     case lists:member(Client, Allowed) of
-        true -> Context;
-        false -> fail(Context, {live_client_not_authorised, #{client => Client, authorised_count => length(Allowed)}})
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                {live_client_not_authorised, #{
+                    client => Client, authorised_count => length(Allowed)
+                }}
+            )
     end;
 step(
     _Config,
@@ -142,22 +159,31 @@ step(
     ["the live NIP-46 relay bridge is running and subscribed"],
     _Args
 ) ->
-    %% Subscribe through the existing bridge.  In Option B this routes to
-    %% damage_nsecbunker_relay via relay_subscribe_mfa.
-    _ = catch damage_nostr_relay_client:subscribe(),
-    timer:sleep(250),
-    RelayClientStatus = catch damage_nostr_relay_client:status(),
-    RelayAdapterStatus = catch damage_nsecbunker_relay:status(),
-    case {is_status_running(RelayClientStatus), is_status_subscribed(RelayClientStatus), is_status_running(RelayAdapterStatus), is_status_subscribed(RelayAdapterStatus)} of
-        {true, true, true, true} ->
+    %% Subscribe through the existing bridge. In Option B this routes to
+    %% damage_nsecbunker_relay via relay_subscribe_mfa. Do not trust the
+    %% immediate subscribe/0 return as proof: the relay adapter only becomes
+    %% live after websocket upgrade and REQ subscription. Poll for adapter
+    %% subscribed=true so the BDD cannot false-green on a merely-open socket.
+    case wait_for_relay_bridge_subscribed(Context, ?DEFAULT_TIMEOUT_MS) of
+        {ok, RelayClientStatus, RelayAdapterStatus} ->
             Filter = first_present([
                 map_get_any(filter, RelayAdapterStatus),
                 map_get_any(<<"filter">>, RelayAdapterStatus),
                 return_only_filter(Context)
             ]),
-            put_live(Context, #{relay_client_status => safe_public(RelayClientStatus), relay_adapter_status => safe_public(RelayAdapterStatus), subscription_filter => Filter});
-        _ ->
-            fail(Context, {live_relay_bridge_not_subscribed, #{relay_client => safe_public(RelayClientStatus), relay_adapter => safe_public(RelayAdapterStatus)}})
+            put_live(Context, #{
+                relay_client_status => safe_public(RelayClientStatus),
+                relay_adapter_status => safe_public(RelayAdapterStatus),
+                subscription_filter => Filter
+            });
+        {error, RelayClientStatus, RelayAdapterStatus} ->
+            fail(
+                Context,
+                {live_relay_bridge_not_subscribed, #{
+                    relay_client => safe_public(RelayClientStatus),
+                    relay_adapter => safe_public(RelayAdapterStatus)
+                }}
+            )
     end;
 step(
     _Config,
@@ -169,7 +195,6 @@ step(
 ) ->
     RunId = make_run_id(),
     put_live(Context, #{test_run_id => RunId});
-
 %% ====================================================================
 %% Identity / filter assertions
 %% ====================================================================
@@ -243,7 +268,6 @@ step(
         false -> Context;
         true -> fail(Context, live_test_context_contains_secret_material)
     end;
-
 %% ====================================================================
 %% Plain/local bunker request steps
 %% ====================================================================
@@ -260,7 +284,11 @@ step(
     RequestId = make_request_id(Context, <<"plain">>, Method),
     Request = base_plain_request(Context, RequestId, Method),
     Reply = damage_nsecbunker:handle_plain_request(Request),
-    put_live(Context, #{last_plain_request => public_request(Request), last_plain_response => Reply, last_request_id => RequestId});
+    put_live(Context, #{
+        last_plain_request => public_request(Request),
+        last_plain_response => Reply,
+        last_request_id => RequestId
+    });
 step(
     _Config,
     Context,
@@ -280,7 +308,12 @@ step(
     _Args
 ) ->
     Reply = plain_response_map(require_live(last_plain_response, Context)),
-    assert_equal(Context, response_result_bin(Reply), strip(Expected0), {plain_response_result_mismatch, Reply});
+    assert_equal(
+        Context,
+        response_result_bin(Reply),
+        strip(Expected0),
+        {plain_response_result_mismatch, Reply}
+    );
 step(
     _Config,
     Context,
@@ -290,8 +323,12 @@ step(
     _Args
 ) ->
     Reply = plain_response_map(require_live(last_plain_response, Context)),
-    assert_equal(Context, lower_hex_bin(response_result_bin(Reply)), require_live(bunker_pubkey_hex, Context), {plain_response_pubkey_mismatch, Reply});
-
+    assert_equal(
+        Context,
+        lower_hex_bin(response_result_bin(Reply)),
+        require_live(bunker_pubkey_hex, Context),
+        {plain_response_pubkey_mismatch, Reply}
+    );
 %% ====================================================================
 %% Live relay/NIP-46 actions
 %% ====================================================================
@@ -310,7 +347,11 @@ step(
     Context,
     _Keyword,
     _Line,
-    ["I publish a live NIP-46", Method0, "request for a kind not allowed by the running bunker policy from the damage_nostr client"],
+    [
+        "I publish a live NIP-46",
+        Method0,
+        "request for a kind not allowed by the running bunker policy from the damage_nostr client"
+    ],
     _Args
 ) ->
     Kind = first_disallowed_kind(get_policy(Context)),
@@ -320,7 +361,13 @@ step(
     Context,
     _Keyword,
     _Line,
-    ["I publish a live NIP-46", Method0, "request for allowed kind", Kind0, "from the damage_nostr client"],
+    [
+        "I publish a live NIP-46",
+        Method0,
+        "request for allowed kind",
+        Kind0,
+        "from the damage_nostr client"
+    ],
     _Args
 ) ->
     publish_live_nip46(Context, strip(Method0), [{event_kind, to_int(Kind0)}]);
@@ -358,7 +405,9 @@ step(
     _Args
 ) ->
     Event = normalize_event(require_live(last_nip46_reply_event, Context)),
-    assert_equal(Context, maps:get(kind, Event, undefined), to_int(Kind0), {live_reply_kind_mismatch, Event});
+    assert_equal(
+        Context, maps:get(kind, Event, undefined), to_int(Kind0), {live_reply_kind_mismatch, Event}
+    );
 step(
     _Config,
     Context,
@@ -368,7 +417,12 @@ step(
     _Args
 ) ->
     Event = normalize_event(require_live(last_nip46_reply_event, Context)),
-    assert_equal(Context, lower_hex_bin(maps:get(pubkey, Event, <<>>)), require_live(bunker_pubkey_hex, Context), {live_reply_author_mismatch, Event});
+    assert_equal(
+        Context,
+        lower_hex_bin(maps:get(pubkey, Event, <<>>)),
+        require_live(bunker_pubkey_hex, Context),
+        {live_reply_author_mismatch, Event}
+    );
 step(
     _Config,
     Context,
@@ -393,7 +447,9 @@ step(
     _Args
 ) ->
     Resp = require_live(last_nip46_response, Context),
-    assert_equal(Context, response_result_bin(Resp), strip(Expected0), {live_nip46_result_mismatch, Resp});
+    assert_equal(
+        Context, response_result_bin(Resp), strip(Expected0), {live_nip46_result_mismatch, Resp}
+    );
 step(
     _Config,
     Context,
@@ -403,7 +459,12 @@ step(
     _Args
 ) ->
     Resp = require_live(last_nip46_response, Context),
-    assert_equal(Context, lower_hex_bin(response_result_bin(Resp)), require_live(bunker_pubkey_hex, Context), {live_nip46_pubkey_result_mismatch, Resp});
+    assert_equal(
+        Context,
+        lower_hex_bin(response_result_bin(Resp)),
+        require_live(bunker_pubkey_hex, Context),
+        {live_nip46_pubkey_result_mismatch, Resp}
+    );
 step(
     _Config,
     Context,
@@ -429,8 +490,15 @@ step(
     Expected = strip(Expected0),
     Got = response_error_reason(Resp),
     case Got =:= Expected orelse binary:match(Got, Expected) =/= nomatch of
-        true -> Context;
-        false -> fail(Context, {live_nip46_error_reason_mismatch, #{expected => Expected, got => Got, response => Resp}})
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                {live_nip46_error_reason_mismatch, #{
+                    expected => Expected, got => Got, response => Resp
+                }}
+            )
     end;
 step(
     _Config,
@@ -451,7 +519,12 @@ step(
     _Args
 ) ->
     Event = signed_event_from_context(Context),
-    assert_equal(Context, maps:get(kind, Event, undefined), to_int(Kind0), {live_signed_event_kind_mismatch, Event});
+    assert_equal(
+        Context,
+        maps:get(kind, Event, undefined),
+        to_int(Kind0),
+        {live_signed_event_kind_mismatch, Event}
+    );
 step(
     _Config,
     Context,
@@ -461,7 +534,12 @@ step(
     _Args
 ) ->
     Event = signed_event_from_context(Context),
-    assert_equal(Context, lower_hex_bin(maps:get(pubkey, Event, <<>>)), require_live(bunker_pubkey_hex, Context), {live_signed_event_author_mismatch, Event});
+    assert_equal(
+        Context,
+        lower_hex_bin(maps:get(pubkey, Event, <<>>)),
+        require_live(bunker_pubkey_hex, Context),
+        {live_signed_event_author_mismatch, Event}
+    );
 step(
     _Config,
     Context,
@@ -474,8 +552,10 @@ step(
     RunId = require_live(test_run_id, Context),
     Content = bin(maps:get(content, Event, <<>>)),
     case binary:match(Content, RunId) of
-        nomatch -> fail(Context, {live_signed_event_missing_run_id, #{run_id => RunId, event => Event}});
-        _ -> Context
+        nomatch ->
+            fail(Context, {live_signed_event_missing_run_id, #{run_id => RunId, event => Event}});
+        _ ->
+            Context
     end;
 step(
     _Config,
@@ -488,13 +568,149 @@ step(
     Event = signed_event_from_context(Context),
     EventId = event_id(Event),
     Relays = require_live(relays, Context),
-    case find_event_on_relays(EventId, maps:get(kind, Event, ?NIP46_KIND), require_live(bunker_pubkey_hex, Context), Relays, 5000) of
+    case
+        find_event_on_relays(
+            EventId,
+            maps:get(kind, Event, ?NIP46_KIND),
+            require_live(bunker_pubkey_hex, Context),
+            Relays,
+            5000
+        )
+    of
         not_found -> Context;
         {found, FoundEvent} -> fail(Context, {signed_event_was_published_by_bunker, FoundEvent});
         {error, timeout} -> Context;
         {error, _Reason} -> Context
     end;
+%% ====================================================================
+%% Black-box relay ingress/full-loop steps
+%% ====================================================================
 
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["I publish a black-box live NIP-46 canary event from a separate relay connection"],
+    _Args
+) ->
+    publish_black_box_canary(Context);
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["I publish a black-box live NIP-46", Method0, "request from a separate relay connection"],
+    _Args
+) ->
+    publish_black_box_live_nip46(Context, strip(Method0), []);
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    [
+        "I publish a black-box live NIP-46",
+        Method0,
+        "request for a kind not allowed by the running bunker policy from a separate relay connection"
+    ],
+    _Args
+) ->
+    Kind = first_disallowed_kind(get_policy(Context)),
+    publish_black_box_live_nip46(Context, strip(Method0), [{event_kind, Kind}]);
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    [
+        "I publish a black-box live NIP-46",
+        Method0,
+        "request for allowed kind",
+        Kind0,
+        "from a separate relay connection"
+    ],
+    _Args
+) ->
+    publish_black_box_live_nip46(Context, strip(Method0), [{event_kind, to_int(Kind0)}]);
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["the black-box NIP-46 request MUST be accepted by at least one relay"],
+    _Args
+) ->
+    Publish = require_live(last_black_box_publish_result, Context),
+    case relay_publish_accepted(Publish) of
+        true ->
+            Context;
+        false ->
+            fail(Context, {black_box_nip46_request_not_accepted_by_any_relay, compact(Publish)})
+    end;
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["the live relay adapter inbound counter MUST increase"],
+    _Args
+) ->
+    Before = require_live(black_box_relay_adapter_status_before, Context),
+    After = require_live(black_box_relay_adapter_status_after, Context),
+    case status_counter(inbound_events, After) > status_counter(inbound_events, Before) of
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                {live_relay_adapter_inbound_counter_did_not_increase, #{
+                    before_status => safe_public(Before), after_status => safe_public(After)
+                }}
+            )
+    end;
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["the live relay adapter dispatch counter MUST increase"],
+    _Args
+) ->
+    Before = require_live(black_box_relay_adapter_status_before, Context),
+    After = require_live(black_box_relay_adapter_status_after, Context),
+    case status_counter(dispatched_events, After) > status_counter(dispatched_events, Before) of
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                {live_relay_adapter_dispatch_counter_did_not_increase, #{
+                    before_status => safe_public(Before), after_status => safe_public(After)
+                }}
+            )
+    end;
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["the live relay adapter MUST observe the black-box event id"],
+    _Args
+) ->
+    EventId = require_live(last_black_box_event_id, Context),
+    After = require_live(black_box_relay_adapter_status_after, Context),
+    case status_observed_event_id(EventId, After) of
+        true ->
+            Context;
+        false ->
+            fail(
+                Context,
+                {live_relay_adapter_did_not_observe_black_box_event_id, #{
+                    event_id => EventId, status => safe_public(After)
+                }}
+            )
+    end;
 %% ====================================================================
 %% Audit assertions
 %% ====================================================================
@@ -528,31 +744,90 @@ step(
         false -> fail(Context, {audit_log_missing_decision_for_test_run, Decision, Lines})
     end.
 
-
 %% ====================================================================
 %% Core action helpers
 %% ====================================================================
 
-publish_live_nip46(Context, Method, Opts) ->
-    RequestId = make_request_id(Context, <<"nip46">>, Method),
+publish_black_box_canary(Context) ->
+    RunId = require_live(test_run_id, Context),
+    BunkerPub = require_live(bunker_pubkey_hex, Context),
+    ClientPubHex = require_live(client_pubkey_hex, Context),
+    {_ClientPubRaw, ClientPriv} = damage_nostr_client_keypair(),
+    Content = <<"black-box-nip46-ingress-canary run_id=", RunId/binary>>,
+    Event0 = damage_nostr:construct_event(
+        ClientPubHex,
+        ?NIP46_KIND,
+        Content,
+        erlang:system_time(second),
+        [[<<"p">>, BunkerPub], [<<"t">>, <<"damagebdd-black-box-ingress">>]]
+    ),
+    Event = damage_nostr:finalize_event(Event0, ClientPriv),
+    publish_black_box_event_and_wait_for_ingress(Context, Event, undefined, undefined, undefined).
+
+publish_black_box_live_nip46(Context, Method, Opts) ->
+    RequestId = make_request_id(Context, <<"blackbox-nip46">>, Method),
     {Payload, MaybeUnsignedEvent} = nip46_payload(Context, RequestId, Method, Opts),
     Since = max(0, erlang:system_time(second) - 5),
     case build_signed_nip46_request(Context, Payload) of
         {ok, Event} ->
-            Relays = require_live(relays, Context),
-            PublishResult = damage_nsecbunker_relay:publish_event(Event, Relays),
-            Context1 = put_live(Context, #{last_nip46_request_event => public_event(Event), last_request_id => RequestId, last_nip46_publish_result => PublishResult, last_unsigned_event => MaybeUnsignedEvent}),
-            case wait_for_matching_nip46_reply(Context1, RequestId, Since, ?DEFAULT_TIMEOUT_MS) of
-                {ok, ReplyEvent, Response} ->
-                    put_live(Context1, #{last_nip46_reply_event => ReplyEvent, last_nip46_response => Response});
-                {error, Reason} ->
-                    %% Keep publish_result available so the next assertion can give
-                    %% the precise boundary: relay accepted but no bunker reply.
-                    fail(Context1, {live_nip46_reply_wait_failed, Reason, compact(PublishResult)})
+            Context1 = publish_black_box_event_and_wait_for_ingress(
+                Context, Event, RequestId, Since, MaybeUnsignedEvent
+            ),
+            case maps:is_key(fail, Context1) of
+                true ->
+                    Context1;
+                false ->
+                    case
+                        wait_for_matching_nip46_reply(
+                            Context1, RequestId, Since, ?DEFAULT_TIMEOUT_MS
+                        )
+                    of
+                        {ok, ReplyEvent, Response} ->
+                            put_live(Context1, #{
+                                last_nip46_reply_event => ReplyEvent,
+                                last_nip46_response => Response
+                            });
+                        {error, Reason} ->
+                            put_live(Context1, #{last_nip46_reply_error => Reason})
+                    end
             end;
         {error, Reason} ->
             fail(Context, Reason)
     end.
+
+publish_black_box_event_and_wait_for_ingress(
+    Context, Event, MaybeRequestId, MaybeSince, MaybeUnsignedEvent
+) ->
+    Relays = require_live(relays, Context),
+    Before = relay_adapter_status(),
+    PublishResult = black_box_publish_event(Event, Relays, ?DEFAULT_TIMEOUT_MS),
+    EventId = event_id(Event),
+    Context1 = put_live(Context, #{
+        last_black_box_request_event => public_event(Event),
+        last_black_box_event_id => EventId,
+        last_black_box_publish_result => PublishResult,
+        black_box_relay_adapter_status_before => safe_public(Before),
+        last_nip46_request_event => public_event(Event),
+        last_nip46_publish_result => PublishResult,
+        last_request_id => MaybeRequestId,
+        last_unsigned_event => MaybeUnsignedEvent
+    }),
+    case wait_for_relay_adapter_observation(EventId, Before, 10000) of
+        {ok, After} ->
+            put_live(Context1, #{black_box_relay_adapter_status_after => safe_public(After)});
+        {error, Reason, After} ->
+            put_live(Context1, #{
+                black_box_relay_adapter_observation_error => Reason,
+                black_box_relay_adapter_status_after => safe_public(After),
+                black_box_reply_since => MaybeSince
+            })
+    end.
+
+publish_live_nip46(Context, Method, Opts) ->
+    %% Keep the legacy live step names, but force them through the black-box
+    %% ingress path so the test proves external relay delivery as well as the
+    %% bunker response loop.
+    publish_black_box_live_nip46(Context, Method, Opts).
 
 base_plain_request(Context, RequestId, Method) ->
     #{
@@ -640,7 +915,8 @@ wait_for_matching_nip46_reply(Context, RequestId, Since, TimeoutMs) ->
 wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, SeenErrors) ->
     Now = erlang:monotonic_time(millisecond),
     case Deadline =< Now of
-        true -> {error, {timeout_waiting_for_reply, lists:reverse(SeenErrors)}};
+        true ->
+            {error, {timeout_waiting_for_reply, lists:reverse(SeenErrors)}};
         false ->
             Remaining = max(1000, min(5000, Deadline - Now)),
             Filter = nip46_reply_filter(Context, Since),
@@ -648,14 +924,19 @@ wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, SeenErro
             case fetch_reply_events(Filter, Relays, Remaining) of
                 {ok, Events} ->
                     case find_matching_decrypted_reply(Events, RequestId, Context) of
-                        {ok, Event, Resp} -> {ok, Event, Resp};
+                        {ok, Event, Resp} ->
+                            {ok, Event, Resp};
                         {error, Why} ->
                             timer:sleep(500),
-                            wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, [Why | SeenErrors])
+                            wait_for_matching_nip46_reply_loop(
+                                Context, RequestId, Since, Deadline, [Why | SeenErrors]
+                            )
                     end;
                 {error, Why} ->
                     timer:sleep(500),
-                    wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, [Why | SeenErrors])
+                    wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, [
+                        Why | SeenErrors
+                    ])
             end
     end.
 
@@ -670,7 +951,7 @@ nip46_reply_filter(Context, Since) ->
 
 fetch_reply_events(Filter, Relays, TimeoutMs) ->
     _ = code:ensure_loaded(nostr_pool),
-    _ = catch nostr_pool:ensure_started(Relays),
+    _ = safe_eval(fun() -> nostr_pool:ensure_started(Relays) end),
     Fanout = max(1, length(Relays)),
     case erlang:function_exported(nostr_pool, req, 4) of
         true ->
@@ -768,6 +1049,320 @@ damage_nostr_client_keypair() ->
     end.
 
 %% ====================================================================
+%% Black-box relay helpers
+%% ====================================================================
+
+black_box_publish_event(Event, Relays, TimeoutMs) ->
+    Parent = self(),
+    Ref = make_ref(),
+    Workers =
+        [
+            spawn(fun() ->
+                RelayUrl = relay_url(Relay),
+                Result =
+                    try direct_black_box_publish(Event, Relay, TimeoutMs) of
+                        R -> R
+                    catch
+                        C:R:S -> {error, {black_box_publish_crash, C, R, stack_top(S)}}
+                    end,
+                Parent ! {Ref, RelayUrl, Result}
+            end)
+         || Relay <- Relays
+        ],
+    collect_black_box_publish_results(Ref, length(Workers), TimeoutMs + 2000, Workers, []).
+
+collect_black_box_publish_results(_Ref, 0, _TimeoutMs, _Workers, Acc) ->
+    finish_black_box_publish_results(lists:reverse(Acc));
+collect_black_box_publish_results(Ref, Remaining, TimeoutMs, Workers, Acc) ->
+    receive
+        {Ref, RelayUrl, Result} ->
+            collect_black_box_publish_results(Ref, Remaining - 1, TimeoutMs, Workers, [
+                {RelayUrl, Result} | Acc
+            ])
+    after TimeoutMs ->
+        _ = [safe_kill(Pid) || Pid <- Workers],
+        finish_black_box_publish_results(lists:reverse([{timeout, publish_collect_timeout} | Acc]))
+    end.
+
+finish_black_box_publish_results(Results) ->
+    Accepted = [{Relay, Map} || {Relay, {ok, Map}} <- Results],
+    case Accepted of
+        [] -> {error, #{error => all_black_box_relays_failed, results => compact(Results)}};
+        _ -> {ok, #{accepted => length(Accepted), results => compact(Results)}}
+    end.
+
+direct_black_box_publish(Event, Relay, TimeoutMs) ->
+    RelayUrl = relay_url(Relay),
+    case damage_nostr:open_relay_ws(Relay, #{connect_timeout => min(15000, TimeoutMs)}) of
+        {ok, ConnPid, StreamRef} ->
+            try
+                Msg = jsx:encode([<<"EVENT">>, Event]),
+                case safe_ws_send(ConnPid, StreamRef, Msg) of
+                    ok ->
+                        await_black_box_publish_ok(
+                            ConnPid, StreamRef, event_id(Event), RelayUrl, TimeoutMs
+                        );
+                    {error, FirstReason} ->
+                        %% damage_nostr:open_relay_ws/2 may either return after the
+                        %% websocket is already usable, or return while the gun upgrade
+                        %% message is still in flight.  Try the direct send first, then
+                        %% fall back to waiting for upgrade before retrying.
+                        case
+                            await_black_box_ws_ready(
+                                ConnPid, StreamRef, RelayUrl, min(15000, TimeoutMs)
+                            )
+                        of
+                            ok ->
+                                case safe_ws_send(ConnPid, StreamRef, Msg) of
+                                    ok ->
+                                        await_black_box_publish_ok(
+                                            ConnPid,
+                                            StreamRef,
+                                            event_id(Event),
+                                            RelayUrl,
+                                            TimeoutMs
+                                        );
+                                    {error, Reason} ->
+                                        {error, {black_box_publish_send_failed, RelayUrl, Reason}}
+                                end;
+                            {error, Reason} ->
+                                {error,
+                                    {black_box_publish_websocket_upgrade_failed, RelayUrl, #{
+                                        first_send => compact(FirstReason),
+                                        upgrade => compact(Reason)
+                                    }}}
+                        end
+                end
+            after
+                safe_close_gun(ConnPid)
+            end;
+        {error, Reason} ->
+            {error, {black_box_open_relay_failed, RelayUrl, Reason}}
+    end.
+
+await_black_box_ws_ready(ConnPid, StreamRef, RelayUrl, TimeoutMs) ->
+    receive
+        {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers} ->
+            ok;
+        {gun_response, ConnPid, StreamRef, _Fin, 101, _Headers} ->
+            ok;
+        {gun_response, ConnPid, StreamRef, _Fin, Status, _Headers} ->
+            {error, {black_box_websocket_upgrade_rejected, RelayUrl, Status}};
+        {gun_up, ConnPid, _Protocol} ->
+            await_black_box_ws_ready(ConnPid, StreamRef, RelayUrl, TimeoutMs);
+        {gun_error, ConnPid, StreamRef, Reason} ->
+            {error, {black_box_gun_error, RelayUrl, Reason}};
+        {gun_error, ConnPid, Reason} ->
+            {error, {black_box_gun_error, RelayUrl, Reason}};
+        {gun_down, ConnPid, Protocol, Reason, KilledStreams} ->
+            {error, {black_box_gun_down, RelayUrl, Protocol, Reason, safe_len(KilledStreams)}};
+        {gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams} ->
+            {error,
+                {black_box_gun_down, RelayUrl, Protocol, Reason, safe_len(KilledStreams),
+                    safe_len(UnprocessedStreams)}};
+        _Other ->
+            await_black_box_ws_ready(ConnPid, StreamRef, RelayUrl, TimeoutMs)
+    after TimeoutMs ->
+        {error, {black_box_websocket_upgrade_timeout, RelayUrl}}
+    end.
+
+await_black_box_publish_ok(ConnPid, StreamRef, ExpectedId, RelayUrl, TimeoutMs) ->
+    receive
+        {gun_ws, ConnPid, StreamRef, {text, Msg}} ->
+            case safe_decode(Msg) of
+                [<<"OK">>, EventId, true, Message] when
+                    EventId =:= ExpectedId; ExpectedId =:= <<>>
+                ->
+                    {ok, #{relay => RelayUrl, event_id => EventId, message => Message}};
+                [<<"OK">>, EventId, false, Message] when
+                    EventId =:= ExpectedId; ExpectedId =:= <<>>
+                ->
+                    {error, {black_box_relay_rejected_event, RelayUrl, EventId, Message}};
+                [<<"NOTICE">>, _Notice] ->
+                    await_black_box_publish_ok(ConnPid, StreamRef, ExpectedId, RelayUrl, TimeoutMs);
+                _Other ->
+                    await_black_box_publish_ok(ConnPid, StreamRef, ExpectedId, RelayUrl, TimeoutMs)
+            end;
+        {gun_down, ConnPid, Protocol, Reason, KilledStreams} ->
+            {error, {black_box_gun_down, RelayUrl, Protocol, Reason, safe_len(KilledStreams)}};
+        {gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams} ->
+            {error,
+                {black_box_gun_down, RelayUrl, Protocol, Reason, safe_len(KilledStreams),
+                    safe_len(UnprocessedStreams)}};
+        {gun_error, ConnPid, StreamRef, Reason} ->
+            {error, {black_box_gun_error, RelayUrl, Reason}};
+        {gun_error, ConnPid, Reason} ->
+            {error, {black_box_gun_error, RelayUrl, Reason}}
+    after TimeoutMs ->
+        {error, {black_box_publish_timeout, RelayUrl, ExpectedId}}
+    end.
+
+wait_for_relay_adapter_observation(EventId, Before, TimeoutMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    wait_for_relay_adapter_observation_loop(EventId, Before, Deadline, relay_adapter_status()).
+
+wait_for_relay_adapter_observation_loop(EventId, Before, Deadline, LastStatus) ->
+    Now = erlang:monotonic_time(millisecond),
+    case Now >= Deadline of
+        true ->
+            {error, relay_adapter_observation_timeout, LastStatus};
+        false ->
+            Status = relay_adapter_status(),
+            EventObserved = status_observed_event_id(EventId, Status),
+            CounterIncreased =
+                status_counter(inbound_events, Status) > status_counter(inbound_events, Before),
+            case EventObserved orelse CounterIncreased of
+                true ->
+                    {ok, Status};
+                false ->
+                    timer:sleep(250),
+                    wait_for_relay_adapter_observation_loop(EventId, Before, Deadline, Status)
+            end
+    end.
+
+relay_adapter_status() ->
+    case safe_eval(fun() -> damage_nsecbunker_relay:status() end) of
+        Status when is_map(Status) -> Status;
+        Other -> #{running => false, error => Other}
+    end.
+
+status_counter(Key, Status) when is_map(Status) ->
+    Stats = map_get_any(stats, Status, map_get_any(<<"stats">>, Status, #{})),
+    to_int_safe(map_get_any(Key, Stats, map_get_any(atom_to_binary(Key, utf8), Stats, 0)), 0);
+status_counter(_Key, _Status) ->
+    0.
+
+status_observed_event_id(EventId0, Status) when is_map(Status) ->
+    EventId = bin(EventId0),
+    Recent = [bin(Id) || Id <- recent_inbound_event_ids(Status)],
+    lists:member(EventId, Recent) orelse
+        bin(map_get_any(last_inbound_event_id, Status, <<>>)) =:= EventId;
+status_observed_event_id(_EventId, _Status) ->
+    false.
+
+recent_inbound_event_ids(Status) ->
+    first_present(
+        [
+            map_get_any(recent_inbound_event_ids, Status),
+            map_get_any(<<"recent_inbound_event_ids">>, Status),
+            []
+        ],
+        []
+    ).
+
+wait_for_relay_bridge_subscribed(Context, TimeoutMs) ->
+    %% Fire subscribe once. Use a bounded caller process so a stuck relay
+    %% implementation cannot hang the BDD step for the relay adapter's full
+    %% gen_server call timeout.
+    _ = safe_eval_timeout(fun() -> damage_nostr_relay_client:subscribe() end, 5000),
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    wait_for_relay_bridge_subscribed_loop(Context, Deadline, undefined, undefined).
+
+wait_for_relay_bridge_subscribed_loop(Context, Deadline, LastRelayClient, LastRelayAdapter) ->
+    Now = erlang:monotonic_time(millisecond),
+    case Now >= Deadline of
+        true ->
+            {error, LastRelayClient, LastRelayAdapter};
+        false ->
+            RelayClientStatus = safe_eval_timeout(
+                fun() -> damage_nostr_relay_client:status() end, 3000
+            ),
+            RelayAdapterStatus = safe_eval_timeout(
+                fun() -> damage_nsecbunker_relay:status() end, 3000
+            ),
+            case
+                {
+                    is_status_running(RelayClientStatus),
+                    is_status_running(RelayAdapterStatus),
+                    is_status_subscribed(RelayAdapterStatus)
+                }
+            of
+                {true, true, true} ->
+                    {ok, RelayClientStatus, RelayAdapterStatus};
+                _ ->
+                    %% If the adapter is still not live, retrigger subscribe.
+                    %% This is safe because the adapter replaces the subscription
+                    %% set cleanly and the bridge/adapter are both idempotent for
+                    %% this BDD setup phase.
+                    _ = safe_eval_timeout(fun() -> damage_nostr_relay_client:subscribe() end, 3000),
+                    timer:sleep(500),
+                    wait_for_relay_bridge_subscribed_loop(
+                        Context, Deadline, RelayClientStatus, RelayAdapterStatus
+                    )
+            end
+    end.
+
+safe_eval_timeout(Fun, TimeoutMs) when is_function(Fun, 0), is_integer(TimeoutMs), TimeoutMs > 0 ->
+    Parent = self(),
+    Ref = make_ref(),
+    Pid = spawn(fun() -> Parent ! {Ref, safe_eval(Fun)} end),
+    receive
+        {Ref, Value} -> Value
+    after TimeoutMs ->
+        safe_kill(Pid),
+        {error, {timeout, TimeoutMs}}
+    end.
+
+safe_eval(Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        Value -> Value
+    catch
+        C:R:S -> {error, {C, R, stack_top(S)}}
+    end.
+
+safe_kill(Pid) when is_pid(Pid) ->
+    try exit(Pid, kill) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
+safe_kill(_) ->
+    ok.
+
+safe_close_gun(ConnPid) when is_pid(ConnPid) ->
+    try gun:close(ConnPid) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
+safe_close_gun(_) ->
+    ok.
+
+safe_ws_send(ConnPid, StreamRef, Msg) ->
+    try gun:ws_send(ConnPid, StreamRef, {text, Msg}) of
+        ok -> ok;
+        Other -> {error, Other}
+    catch
+        C:R -> {error, {C, R}}
+    end.
+
+safe_decode(Msg) ->
+    try jsx:decode(Msg, [return_maps]) of
+        Frame -> Frame
+    catch
+        C:R -> {decode_failed, C, R, byte_size(bin(Msg))}
+    end.
+
+safe_len(L) when is_list(L) -> length(L);
+safe_len(_) -> 0.
+
+to_int_safe(I, _Default) when is_integer(I) -> I;
+to_int_safe(B, Default) when is_binary(B) ->
+    try
+        binary_to_integer(B)
+    catch
+        _:_ -> Default
+    end;
+to_int_safe(L, Default) when is_list(L) ->
+    try
+        list_to_integer(L)
+    catch
+        _:_ -> Default
+    end;
+to_int_safe(_, Default) ->
+    Default.
+
+%% ====================================================================
 %% Response / signed event helpers
 %% ====================================================================
 
@@ -798,18 +1393,25 @@ response_error(Resp) when is_map(Resp) ->
 response_error_reason(Resp) ->
     Err = response_error(Resp),
     case Err of
-        <<>> -> <<>>;
-        undefined -> <<>>;
+        <<>> ->
+            <<>>;
+        undefined ->
+            <<>>;
         M when is_map(M) ->
-            bin(first_present([
-                map_get_any(<<"reason">>, M),
-                map_get_any(reason, M),
-                map_get_any(<<"message">>, M),
-                map_get_any(message, M),
-                map_get_any(<<"code">>, M),
-                map_get_any(code, M),
-                M
-            ], <<>>));
+            bin(
+                first_present(
+                    [
+                        map_get_any(<<"reason">>, M),
+                        map_get_any(reason, M),
+                        map_get_any(<<"message">>, M),
+                        map_get_any(message, M),
+                        map_get_any(<<"code">>, M),
+                        map_get_any(code, M),
+                        M
+                    ],
+                    <<>>
+                )
+            );
         [Code, Message | _] ->
             iolist_to_binary([bin(Code), <<":">>, bin(Message)]);
         Other ->
@@ -846,8 +1448,10 @@ signed_event_from_response(Resp) ->
             catch
                 C:R -> erlang:error({signed_event_result_decode_failed, C, R, B})
             end;
-        L when is_list(L) -> signed_event_from_response(#{<<"result">> => unicode:characters_to_binary(L)});
-        Other -> erlang:error({signed_event_result_missing_or_invalid, Other, Resp})
+        L when is_list(L) ->
+            signed_event_from_response(#{<<"result">> => unicode:characters_to_binary(L)});
+        Other ->
+            erlang:error({signed_event_result_missing_or_invalid, Other, Resp})
     end.
 
 find_event_on_relays(EventId, Kind, Author, Relays, TimeoutMs) ->
@@ -894,9 +1498,11 @@ audit_tail(Context) ->
                         eof -> <<>>;
                         {error, Reason} -> erlang:error({audit_log_read_failed, Path1, Reason})
                     end;
-                {error, Reason} -> erlang:error({audit_log_open_failed, Path1, Reason})
+                {error, Reason} ->
+                    erlang:error({audit_log_open_failed, Path1, Reason})
             end;
-        {error, Reason} -> erlang:error({audit_log_stat_failed, Path1, Reason})
+        {error, Reason} ->
+            erlang:error({audit_log_stat_failed, Path1, Reason})
     end.
 
 %% ====================================================================
@@ -927,9 +1533,14 @@ get_policy(Context) ->
 return_only_filter(Context) ->
     Bunker = maps:get(bunker_pubkey_hex, live(Context), <<>>),
     case Bunker of
-        <<>> -> undefined;
+        <<>> ->
+            undefined;
         _ ->
-            case damage_nostr_relay_client:subscribe(#{relay_publication_mode => return_only, bunker_pubkey_hex => Bunker}) of
+            case
+                damage_nostr_relay_client:subscribe(#{
+                    relay_publication_mode => return_only, bunker_pubkey_hex => Bunker
+                })
+            of
                 {ok, #{filter := Filter}} -> Filter;
                 _ -> undefined
             end
@@ -1007,10 +1618,13 @@ map_get_any(Key, Map, Default) when is_map(Map) ->
     case maps:get(Key, Map, undefined) of
         undefined when is_atom(Key) -> maps:get(atom_to_binary(Key, utf8), Map, Default);
         undefined when is_binary(Key) ->
-            try maps:get(binary_to_existing_atom(Key, utf8), Map, Default)
-            catch _:_ -> Default
+            try
+                maps:get(binary_to_existing_atom(Key, utf8), Map, Default)
+            catch
+                _:_ -> Default
             end;
-        Value -> Value
+        Value ->
+            Value
     end;
 map_get_any(_Key, _Map, Default) ->
     Default.
@@ -1041,7 +1655,8 @@ strip_quotes(<<$", Rest/binary>>) ->
         true -> binary:part(Rest, 0, N - 1);
         false -> <<$", Rest/binary>>
     end;
-strip_quotes(Bin) -> Bin.
+strip_quotes(Bin) ->
+    Bin.
 
 trim(Bin) when is_binary(Bin) -> trim_right(trim_left(Bin)).
 trim_left(<<C, Rest/binary>>) when C =:= 32; C =:= 9; C =:= 10; C =:= 13 -> trim_left(Rest);
@@ -1050,8 +1665,10 @@ trim_right(Bin) -> trim_right(Bin, byte_size(Bin)).
 trim_right(_Bin, N) when N =< 0 -> <<>>;
 trim_right(Bin, N) ->
     case binary:at(Bin, N - 1) of
-        C when C =:= 32; C =:= 9; C =:= 10; C =:= 13 -> trim_right(binary:part(Bin, 0, N - 1), N - 1);
-        _ -> Bin
+        C when C =:= 32; C =:= 9; C =:= 10; C =:= 13 ->
+            trim_right(binary:part(Bin, 0, N - 1), N - 1);
+        _ ->
+            Bin
     end.
 
 to_int(I) when is_integer(I) -> I;
@@ -1064,13 +1681,13 @@ bin(B) when is_binary(B) -> B;
 bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 bin(L) when is_list(L) -> unicode:characters_to_binary(L);
 bin(I) when is_integer(I) -> integer_to_binary(I);
-bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])). 
+bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])).
 
 to_list(B) when is_binary(B) -> binary_to_list(B);
 to_list(A) when is_atom(A) -> atom_to_list(A);
 to_list(L) when is_list(L) -> L;
 to_list(I) when is_integer(I) -> integer_to_list(I);
-to_list(Other) -> lists:flatten(io_lib:format("~p", [Other])). 
+to_list(Other) -> lists:flatten(io_lib:format("~p", [Other])).
 
 lower_hex_bin(V) ->
     B = bin(V),
@@ -1081,7 +1698,8 @@ lower_hex(Bin) when is_binary(Bin) ->
 
 is_lower_hex_64(Bin) when is_binary(Bin), byte_size(Bin) =:= 64 ->
     re:run(Bin, <<"^[0-9a-f]{64}$">>, [{capture, none}]) =:= match;
-is_lower_hex_64(_) -> false.
+is_lower_hex_64(_) ->
+    false.
 
 relay_url(#{url := Url}) -> bin(Url);
 relay_url(#{<<"url">> := Url}) -> bin(Url);
@@ -1089,9 +1707,17 @@ relay_url(Url) -> bin(Url).
 
 secret_key_name(K) ->
     lists:member(lower_hex_bin(K), [
-        <<"nsec">>, <<"private_key">>, <<"private_key_hex">>, <<"privkey">>,
-        <<"privkey_hex">>, <<"secret_key">>, <<"secret_key_hex">>,
-        <<"mnemonic">>, <<"seed">>, <<"seed_hex">>, <<"sk">>
+        <<"nsec">>,
+        <<"private_key">>,
+        <<"private_key_hex">>,
+        <<"privkey">>,
+        <<"privkey_hex">>,
+        <<"secret_key">>,
+        <<"secret_key_hex">>,
+        <<"mnemonic">>,
+        <<"seed">>,
+        <<"seed_hex">>,
+        <<"sk">>
     ]).
 
 compact(Map) when is_map(Map) ->
@@ -1116,4 +1742,3 @@ compact(Other) ->
 
 stack_top([{M, F, A, _} | _]) -> {M, F, A};
 stack_top(_) -> undefined.
-

@@ -43,6 +43,8 @@
 -define(DEFAULT_CONNECT_TIMEOUT_MS, 15000).
 -define(DEFAULT_PUBLISH_TIMEOUT_MS, 15000).
 -define(DEFAULT_RECONNECT_MS, 5000).
+-define(SUBSCRIBE_RETRY_MS, 500).
+-define(MAX_SUBSCRIBE_ATTEMPTS, 20).
 -define(MAX_SEEN_IDS, 2000).
 
 -record(st, {
@@ -51,6 +53,8 @@
     %% ConnPid => #{relay := map(), relay_url := binary(), stream_ref := term(), sub_id := binary()}
     conns = #{} :: map(),
     seen_ids = #{} :: map(),
+    %% newest first; public event ids only, no content or secrets
+    recent_inbound_event_ids = [] :: [binary()],
     reconnect_ms = ?DEFAULT_RECONNECT_MS :: pos_integer(),
     stats = #{} :: map()
 }).
@@ -109,32 +113,52 @@ init([]) ->
     {ok, #st{relays = configured_relays(), stats = empty_stats()}}.
 
 handle_call(
-    status, _From, St = #st{relays = Relays, filter = Filter, conns = Conns, stats = Stats}
+    status,
+    _From,
+    St = #st{
+        relays = Relays,
+        filter = Filter,
+        conns = Conns,
+        stats = Stats,
+        recent_inbound_event_ids = RecentInbound
+    }
 ) ->
+    LastInbound =
+        case RecentInbound of
+            [EventId | _] -> EventId;
+            [] -> undefined
+        end,
     {reply,
         #{
             running => true,
-            subscribed => map_size(Conns) > 0,
+            subscribed => subscribed_count(Conns) > 0,
             relays => [relay_url(R) || R <- Relays],
             filter => Filter,
             connections => connection_status(Conns),
-            stats => Stats
+            stats => Stats,
+            last_inbound_event_id => LastInbound,
+            recent_inbound_event_ids => RecentInbound
         },
         St};
 handle_call({subscribe, Filter0, Relays0}, _From, St0) ->
     Filter = normalize_filter(Filter0),
     Relays = normalize_relays(Relays0),
 
-    %% Replace the previous subscription set cleanly.
+    %% Replace the previous subscription set cleanly, but do not block the
+    %% gen_server waiting for websocket upgrades.  Earlier versions waited
+    %% inside this call; while waiting, status/0 could not be served and the
+    %% live BDD timed out with damage_nsecbunker_relay:status/0.
     close_all(St0#st.conns),
     St1 = St0#st{relays = Relays, filter = Filter, conns = #{}},
 
     {Results, St2} = subscribe_all(Relays, Filter, St1),
-    Connected = length([ok || {_, ok} <- Results]),
+    Opened = length([ok || {_, ok} <- Results]),
     Reply =
-        case Connected > 0 of
-            true -> {ok, #{connected => Connected, relays => Results, filter => Filter}};
-            false -> {error, #{error => all_relays_failed, relays => Results, filter => Filter}}
+        case Opened > 0 of
+            true ->
+                {ok, #{opened => Opened, subscribing => true, relays => Results, filter => Filter}};
+            false ->
+                {error, #{error => all_relays_failed, relays => Results, filter => Filter}}
         end,
     {reply, Reply, St2};
 handle_call({publish_event, Event0, Relays0}, _From, St0) ->
@@ -150,10 +174,48 @@ handle_call(_Other, _From, St) ->
 handle_cast(_Msg, St) ->
     {noreply, St}.
 
+handle_info({gun_up, ConnPid, Protocol}, St0) ->
+    %% gun:open/3 reports TCP/TLS readiness before the WebSocket upgrade.
+    %% Do not treat this as a subscription. The REQ frame is sent only after
+    %% gun_upgrade/4 confirms the websocket is active.
+    case maps:get(ConnPid, St0#st.conns, undefined) of
+        #{relay_url := RelayUrl} ->
+            ?LOG_DEBUG("nsecbunker relay gun_up relay=~p protocol=~p", [RelayUrl, Protocol]);
+        _ ->
+            ok
+    end,
+    {noreply, St0};
+handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers}, St0) ->
+    handle_ws_upgrade(ConnPid, StreamRef, St0);
+handle_info({gun_response, ConnPid, StreamRef, _IsFin, 101, _Headers}, St0) ->
+    %% Older gun paths may expose the websocket upgrade as an HTTP 101 response.
+    handle_ws_upgrade(ConnPid, StreamRef, St0);
+handle_info({gun_response, ConnPid, StreamRef, _IsFin, Status, _Headers}, St0) ->
+    handle_conn_down(ConnPid, {websocket_upgrade_rejected, StreamRef, Status}, St0);
+handle_info({ensure_subscription, ConnPid}, St0) ->
+    case maps:get(ConnPid, St0#st.conns, undefined) of
+        #{subscribed := true} ->
+            {noreply, St0};
+        #{stream_ref := StreamRef} = Conn ->
+            case send_subscription(ConnPid, StreamRef, Conn, St0) of
+                {ok, St1} ->
+                    {noreply, St1};
+                {{error, Reason}, St1} ->
+                    {noreply, maybe_retry_subscription(ConnPid, Reason, St1)}
+            end;
+        _ ->
+            {noreply, St0}
+    end;
 handle_info({gun_ws, ConnPid, StreamRef, {text, Msg}}, St0) ->
     case maps:get(ConnPid, St0#st.conns, undefined) of
-        #{stream_ref := StreamRef, sub_id := SubId, relay_url := RelayUrl} = Conn ->
+        #{stream_ref := StreamRef, sub_id := SubId, relay_url := RelayUrl, subscribed := true} =
+                Conn ->
             handle_relay_frame(ConnPid, Conn, SubId, RelayUrl, Msg, St0);
+        #{stream_ref := StreamRef, relay_url := RelayUrl} ->
+            ?LOG_DEBUG("nsecbunker relay ignored websocket frame before subscription relay=~p", [
+                RelayUrl
+            ]),
+            {noreply, St0};
         _ ->
             ?LOG_DEBUG("nsecbunker relay ignored websocket frame from unknown conn=~p", [ConnPid]),
             {noreply, St0}
@@ -226,30 +288,122 @@ connect_and_subscribe(Relay, Filter, St0) ->
     case damage_nostr:open_relay_ws(Relay, #{connect_timeout => connect_timeout_ms()}) of
         {ok, ConnPid, StreamRef} ->
             SubId = make_sub_id(),
-            Req = jsx:encode([<<"REQ">>, SubId, Filter]),
-            case safe_ws_send(ConnPid, StreamRef, Req) of
-                ok ->
-                    ?LOG_INFO("nsecbunker NIP46 subscribed relay=~p sub_id=~p filter=~p", [
-                        RelayUrl, SubId, Filter
-                    ]),
-                    Conn = #{
-                        relay => Relay,
-                        relay_url => RelayUrl,
-                        stream_ref => StreamRef,
-                        sub_id => SubId,
-                        subscribed_at => erlang:system_time(second)
-                    },
-                    Conns0 = St0#st.conns,
-                    {ok, St0#st{conns = Conns0#{ConnPid => Conn}}};
-                {error, Reason} ->
-                    catch gun:close(ConnPid),
-                    {{error, {subscribe_send_failed, Reason}}, St0}
-            end;
+            Conn = #{
+                relay => Relay,
+                relay_url => RelayUrl,
+                stream_ref => StreamRef,
+                sub_id => SubId,
+                filter => Filter,
+                subscribed => false,
+                subscribe_attempts => 0,
+                opened_at => erlang:system_time(second)
+            },
+            Conns0 = St0#st.conns,
+            %% Return immediately after the websocket upgrade request has been
+            %% initiated. The actual REQ subscription is normally sent from
+            %% handle_ws_upgrade/3. Some damage_gun/open_ws paths consume the
+            %% upgrade confirmation internally before returning, so also schedule
+            %% an async subscription attempt.  The connection is marked
+            %% subscribed only after the REQ ws_send succeeds.
+            St1 = St0#st{conns = Conns0#{ConnPid => Conn}},
+            schedule_subscription_attempt(ConnPid, 0),
+            {ok, St1};
         {error, Reason} ->
             {{error, {open_relay_failed, RelayUrl, Reason}}, St0}
     end.
 
-handle_relay_frame(ConnPid, Conn, SubId, RelayUrl, Msg, St0) ->
+await_ws_upgrade(ConnPid, StreamRef, RelayUrl, TimeoutMs) ->
+    receive
+        {gun_up, ConnPid, Protocol} ->
+            ?LOG_DEBUG("nsecbunker relay gun_up relay=~p protocol=~p", [RelayUrl, Protocol]),
+            await_ws_upgrade(ConnPid, StreamRef, RelayUrl, TimeoutMs);
+        {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers} ->
+            ok;
+        {gun_response, ConnPid, StreamRef, _IsFin, 101, _Headers} ->
+            ok;
+        {gun_response, ConnPid, StreamRef, _IsFin, Status, _Headers} ->
+            {error, {websocket_upgrade_rejected, Status}};
+        {gun_error, ConnPid, StreamRef, Reason} ->
+            {error, {gun_error, Reason}};
+        {gun_error, ConnPid, Reason} ->
+            {error, {gun_error, Reason}};
+        {gun_down, ConnPid, Protocol, Reason, KilledStreams} ->
+            {error, {gun_down, Protocol, Reason, safe_len(KilledStreams)}};
+        {gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams} ->
+            {error,
+                {gun_down, Protocol, Reason, safe_len(KilledStreams), safe_len(UnprocessedStreams)}}
+    after TimeoutMs ->
+        {error, websocket_upgrade_timeout}
+    end.
+
+handle_ws_upgrade(ConnPid, StreamRef, St0) ->
+    case maps:get(ConnPid, St0#st.conns, undefined) of
+        #{stream_ref := StreamRef, subscribed := true, relay_url := RelayUrl} ->
+            ?LOG_DEBUG("nsecbunker relay duplicate websocket upgrade relay=~p", [RelayUrl]),
+            {noreply, St0};
+        #{stream_ref := StreamRef} = Conn ->
+            case send_subscription(ConnPid, StreamRef, Conn, St0) of
+                {ok, St1} -> {noreply, St1};
+                {{error, Reason}, St1} -> {noreply, maybe_retry_subscription(ConnPid, Reason, St1)}
+            end;
+        _ ->
+            ?LOG_DEBUG("nsecbunker relay websocket upgrade for unknown conn=~p", [ConnPid]),
+            {noreply, St0}
+    end.
+
+send_subscription(ConnPid, StreamRef, Conn, St0) ->
+    RelayUrl = maps:get(relay_url, Conn),
+    SubId = maps:get(sub_id, Conn),
+    Filter = maps:get(filter, Conn, St0#st.filter),
+    Req = jsx:encode([<<"REQ">>, SubId, Filter]),
+    case safe_ws_send(ConnPid, StreamRef, Req) of
+        ok ->
+            ?LOG_INFO("nsecbunker NIP46 subscribed relay=~p sub_id=~p filter=~p", [
+                RelayUrl, SubId, Filter
+            ]),
+            Conn1 = Conn#{subscribed => true, subscribed_at => erlang:system_time(second)},
+            Conns0 = St0#st.conns,
+            {ok, St0#st{conns = Conns0#{ConnPid => Conn1}}};
+        {error, Reason} ->
+            {{error, {subscribe_send_failed, Reason}}, St0}
+    end.
+
+schedule_subscription_attempt(ConnPid, DelayMs) when is_pid(ConnPid), is_integer(DelayMs) ->
+    erlang:send_after(max(0, DelayMs), self(), {ensure_subscription, ConnPid}),
+    ok.
+
+maybe_retry_subscription(ConnPid, Reason, St0) ->
+    case maps:get(ConnPid, St0#st.conns, undefined) of
+        #{relay_url := RelayUrl, subscribe_attempts := Attempts} = Conn when
+            Attempts < ?MAX_SUBSCRIBE_ATTEMPTS
+        ->
+            Attempts1 = Attempts + 1,
+            ?LOG_DEBUG(
+                "nsecbunker relay subscription not ready relay=~p attempt=~p reason=~p",
+                [RelayUrl, Attempts1, compact_error(Reason)]
+            ),
+            Conn1 = Conn#{
+                subscribe_attempts => Attempts1,
+                last_subscribe_error => compact_error(Reason)
+            },
+            Conns1 = (St0#st.conns)#{ConnPid => Conn1},
+            schedule_subscription_attempt(ConnPid, ?SUBSCRIBE_RETRY_MS),
+            St0#st{conns = Conns1};
+        #{relay_url := RelayUrl} = Conn ->
+            ?LOG_WARNING(
+                "nsecbunker relay subscription failed permanently relay=~p attempts=~p reason=~p",
+                [RelayUrl, maps:get(subscribe_attempts, Conn, 0), compact_error(Reason)]
+            ),
+            safe_close_gun(ConnPid),
+            Conns1 = maps:remove(ConnPid, St0#st.conns),
+            St1 = inc_stat(connection_downs, St0#st{conns = Conns1}),
+            schedule_reconnect(RelayUrl, St1),
+            St1;
+        _ ->
+            St0
+    end.
+
+handle_relay_frame(_ConnPid, _Conn, SubId, RelayUrl, Msg, St0) ->
     case safe_decode(Msg) of
         [<<"EVENT">>, SubId, Event0] when is_map(Event0) ->
             Event = normalize_event(Event0),
@@ -268,7 +422,8 @@ handle_relay_frame(ConnPid, Conn, SubId, RelayUrl, Msg, St0) ->
                     ]),
                     dispatch_inbound(Event, RelayUrl),
                     St1 = mark_seen(EventId, St0),
-                    {noreply, inc_stat(inbound_events, inc_stat(dispatched_events, St1))}
+                    St2 = record_inbound_event(EventId, St1),
+                    {noreply, inc_stat(inbound_events, inc_stat(dispatched_events, St2))}
             end;
         [<<"EOSE">>, SubId] ->
             ?LOG_DEBUG("nsecbunker relay EOSE relay=~p sub_id=~p", [RelayUrl, SubId]),
@@ -353,7 +508,7 @@ collect_publish_results(Ref, Remaining, TimeoutMs, Workers, Acc) ->
                 {RelayUrl, Result} | Acc
             ])
     after TimeoutMs ->
-        [catch exit(Pid, kill) || Pid <- Workers],
+        lists:foreach(fun kill_worker/1, Workers),
         finish_publish_results(lists:reverse([{timeout, publish_collect_timeout} | Acc]))
     end.
 
@@ -379,11 +534,37 @@ direct_publish_event(Event, Relay, TimeoutMs) ->
                 case safe_ws_send(ConnPid, StreamRef, Msg) of
                     ok ->
                         await_publish_ok(ConnPid, StreamRef, event_id(Event), RelayUrl, TimeoutMs);
-                    {error, Reason} ->
-                        {error, {publish_send_failed, RelayUrl, Reason}}
+                    {error, FirstReason} ->
+                        %% Some open_ws paths return before websocket upgrade; others
+                        %% consume the upgrade confirmation before returning.  Try
+                        %% immediate send first, then fall back to waiting for upgrade.
+                        case
+                            await_ws_upgrade(
+                                ConnPid,
+                                StreamRef,
+                                RelayUrl,
+                                min_int(connect_timeout_ms(), TimeoutMs)
+                            )
+                        of
+                            ok ->
+                                case safe_ws_send(ConnPid, StreamRef, Msg) of
+                                    ok ->
+                                        await_publish_ok(
+                                            ConnPid, StreamRef, event_id(Event), RelayUrl, TimeoutMs
+                                        );
+                                    {error, Reason} ->
+                                        {error, {publish_send_failed, RelayUrl, Reason}}
+                                end;
+                            {error, Reason} ->
+                                {error,
+                                    {publish_websocket_upgrade_failed, RelayUrl, #{
+                                        first_send => compact_error(FirstReason),
+                                        upgrade => compact_error(Reason)
+                                    }}}
+                        end
                 end
             after
-                catch gun:close(ConnPid)
+                safe_close_gun(ConnPid)
             end;
         {error, Reason} ->
             {error, {open_relay_failed, RelayUrl, Reason}}
@@ -556,15 +737,63 @@ mark_seen(EventId, St0 = #st{seen_ids = Seen0}) ->
         end,
     St0#st{seen_ids = Seen}.
 
+record_inbound_event(<<>>, St) ->
+    St;
+record_inbound_event(EventId, St0 = #st{recent_inbound_event_ids = Recent0}) ->
+    Recent1 = [EventId | [Id || Id <- Recent0, Id =/= EventId]],
+    St0#st{recent_inbound_event_ids = take_recent(50, Recent1)}.
+
+take_recent(_Max, []) ->
+    [];
+take_recent(Max, List) when is_integer(Max), Max > 0 ->
+    lists:sublist(List, Max).
+
 close_all(Conns) ->
     maps:foreach(
         fun(ConnPid, #{sub_id := SubId, stream_ref := StreamRef}) ->
-            catch gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"CLOSE">>, SubId])}),
-            catch gun:close(ConnPid)
+            safe_close_subscription(ConnPid, StreamRef, SubId)
         end,
         Conns
     ),
     ok.
+
+kill_worker(Pid) when is_pid(Pid) ->
+    try exit(Pid, kill) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
+kill_worker(_) ->
+    ok.
+
+safe_close_subscription(ConnPid, StreamRef, SubId) ->
+    try gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"CLOSE">>, SubId])}) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end,
+    safe_close_gun(ConnPid).
+
+safe_close_gun(ConnPid) when is_pid(ConnPid) ->
+    try gun:close(ConnPid) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
+safe_close_gun(_) ->
+    ok.
+
+subscribed_count(Conns) ->
+    maps:fold(
+        fun(_Pid, Conn, Acc) ->
+            case maps:get(subscribed, Conn, false) of
+                true -> Acc + 1;
+                _ -> Acc
+            end
+        end,
+        0,
+        Conns
+    ).
 
 connection_status(Conns) ->
     maps:fold(
