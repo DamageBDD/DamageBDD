@@ -76,11 +76,13 @@ fixture_catalog() ->
         project => <<"enwiki">>,
         pageview_project => <<"en.wikipedia">>,
         cirrus_release => <<"20260720">>,
-        content_shards => [#{
-            ordinal => 1,
-            name => <<"enwiki_content_0.json.bz2">>,
-            url => <<"https://example.invalid/content-0.json.bz2">>
-        }],
+        content_shards => [
+            #{
+                ordinal => 1,
+                name => <<"enwiki_content_0.json.bz2">>,
+                url => <<"https://example.invalid/content-0.json.bz2">>
+            }
+        ],
         pageview_months => [<<"2026-05">>, <<"2026-06">>],
         pageview_sources => [
             #{

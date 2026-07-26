@@ -94,10 +94,14 @@ canonical_binary(Term) ->
     ]).
 
 -spec externalize(term()) -> term().
-externalize(true) -> true;
-externalize(false) -> false;
-externalize(undefined) -> null;
-externalize(null) -> null;
+externalize(true) ->
+    true;
+externalize(false) ->
+    false;
+externalize(undefined) ->
+    null;
+externalize(null) ->
+    null;
 externalize(Value) when is_binary(Value); is_integer(Value); is_float(Value) ->
     Value;
 externalize(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
@@ -156,10 +160,12 @@ normalize_source(ipfs_cid, Source) ->
     ),
     #{cid => Cid, title => Title, source_key => SourceKey};
 normalize_source(ipfs_manifest, Source) ->
-    #{manifest_cid => required_binary(
-        manifest_cid,
-        field(manifest_cid, Source, undefined)
-    )};
+    #{
+        manifest_cid => required_binary(
+            manifest_cid,
+            field(manifest_cid, Source, undefined)
+        )
+    };
 normalize_source(wikimedia_visibility, Source) ->
     Project = token_binary(project, field(project, Source, <<"enwiki">>)),
     PageviewProject = token_binary(
@@ -176,11 +182,12 @@ normalize_source(wikimedia_visibility, Source) ->
         catalog_cid,
         field(catalog_cid, Source, undefined)
     ),
-    CatalogPath = case field(catalog_path, Source, undefined) of
-        undefined -> undefined;
-        null -> undefined;
-        Value -> optional_path(catalog_path, Value)
-    end,
+    CatalogPath =
+        case field(catalog_path, Source, undefined) of
+            undefined -> undefined;
+            null -> undefined;
+            Value -> optional_path(catalog_path, Value)
+        end,
     #{
         project => Project,
         pageview_project => PageviewProject,
@@ -190,9 +197,12 @@ normalize_source(wikimedia_visibility, Source) ->
         catalog_path => CatalogPath
     }.
 
-normalize_content_release(latest) -> <<"latest">>;
-normalize_content_release(<<"latest">>) -> <<"latest">>;
-normalize_content_release("latest") -> <<"latest">>;
+normalize_content_release(latest) ->
+    <<"latest">>;
+normalize_content_release(<<"latest">>) ->
+    <<"latest">>;
+normalize_content_release("latest") ->
+    <<"latest">>;
 normalize_content_release(Value) ->
     Release = required_binary(content_release, Value),
     case re:run(Release, <<"^[0-9]{8}$">>, [{capture, none}]) of
@@ -202,10 +212,12 @@ normalize_content_release(Value) ->
 
 normalize_months(Months) when is_list(Months), Months =/= [], length(Months) =< 64 ->
     [normalize_month(Month) || Month <- Months];
-normalize_months([]) -> validation_error({empty_field, pageview_months});
+normalize_months([]) ->
+    validation_error({empty_field, pageview_months});
 normalize_months(Months) when is_list(Months) ->
     validation_error({too_many_pageview_months, length(Months), 64});
-normalize_months(_Other) -> validation_error({invalid_field, pageview_months}).
+normalize_months(_Other) ->
+    validation_error({invalid_field, pageview_months}).
 
 normalize_month(Value) ->
     Month = required_binary(pageview_month, Value),
@@ -217,13 +229,15 @@ normalize_month(Value) ->
                 true -> Month;
                 false -> validation_error({invalid_month, Month})
             end;
-        _ -> validation_error({invalid_month, Month})
+        _ ->
+            validation_error({invalid_month, Month})
     end.
 
 token_binary(Name, Value) ->
     Token = required_binary(Name, Value),
-    case byte_size(Token) =< 128 andalso
-        re:run(Token, <<"^[A-Za-z0-9._-]+$">>, [{capture, none}]) =:= match
+    case
+        byte_size(Token) =< 128 andalso
+            re:run(Token, <<"^[A-Za-z0-9._-]+$">>, [{capture, none}]) =:= match
     of
         true -> Token;
         false -> validation_error({invalid_field, Name})
@@ -238,7 +252,8 @@ normalize_paths(Source) ->
                     Path -> [Path]
                 end;
             Paths when is_list(Paths) -> Paths;
-            _Other -> validation_error({invalid_field, paths})
+            _Other ->
+                validation_error({invalid_field, paths})
         end,
     case length(Paths0) of
         0 -> validation_error({empty_field, paths});
@@ -362,14 +377,15 @@ normalize_kind_options(wikimedia_visibility, Options, Base) ->
             field(publish_extracted_ipfs, Options, false)
         )
     };
-normalize_kind_options(_Kind, _Options, Base) -> Base.
-
+normalize_kind_options(_Kind, _Options, Base) ->
+    Base.
 
 validate_kind_source_options(wikimedia_visibility, Source, Options) ->
     MonthCount = length(maps:get(pageview_months, Source)),
     MinimumActiveMonths = maps:get(minimum_active_months, Options),
     case MinimumActiveMonths =< MonthCount of
-        true -> ok;
+        true ->
+            ok;
         false ->
             validation_error({
                 minimum_active_months_exceeds_window,
@@ -404,7 +420,6 @@ normalize_finalize(Finalize) ->
             validation_error({unsupported_option, auto_mint, step4b_required})
     end.
 
-
 validate_combination(_Kind, _Target, #{
     build_nft_manifest := false,
     publish_ipfs := true
@@ -431,8 +446,7 @@ normalize_index_mode(Kind, <<"ledger_only">>) -> normalize_index_mode(Kind, ledg
 normalize_index_mode(Kind, "live_search") -> normalize_index_mode(Kind, live_search);
 normalize_index_mode(Kind, "searchable_disk") -> normalize_index_mode(Kind, searchable_disk);
 normalize_index_mode(Kind, "ledger_only") -> normalize_index_mode(Kind, ledger_only);
-normalize_index_mode(Kind, Mode) ->
-    validation_error({invalid_index_mode, Kind, Mode}).
+normalize_index_mode(Kind, Mode) -> validation_error({invalid_index_mode, Kind, Mode}).
 
 default_mode(yelp_ndjson) -> live_search;
 default_mode(wikipedia_jsonl) -> live_search;
@@ -459,7 +473,8 @@ required_map(Name, _Value) -> validation_error({invalid_field, Name}).
 optional_map(_Name, Value) when is_map(Value) -> Value;
 optional_map(Name, _Value) -> validation_error({invalid_field, Name}).
 
-required_binary(Name, undefined) -> validation_error({missing_field, Name});
+required_binary(Name, undefined) ->
+    validation_error({missing_field, Name});
 required_binary(Name, Value) ->
     Bin = optional_binary(Name, Value),
     case byte_size(Bin) > 0 of
@@ -497,7 +512,8 @@ to_binary(_Name, List) when is_list(List) ->
         Bin when is_binary(Bin) -> Bin;
         _Invalid -> validation_error(invalid_unicode)
     end;
-to_binary(Name, _Value) -> validation_error({invalid_field, Name}).
+to_binary(Name, _Value) ->
+    validation_error({invalid_field, Name}).
 
 bounded_integer(_Name, Value, Min, Max) when
     is_integer(Value), Value >= Min, Value =< Max
@@ -533,10 +549,14 @@ external_key(Key) -> printable_binary(Key).
 printable_binary(Value) ->
     iolist_to_binary(io_lib:format("~P", [Value, 20])).
 
-encode(undefined) -> <<0>>;
-encode(null) -> <<1>>;
-encode(false) -> <<2>>;
-encode(true) -> <<3>>;
+encode(undefined) ->
+    <<0>>;
+encode(null) ->
+    <<1>>;
+encode(false) ->
+    <<2>>;
+encode(true) ->
+    <<3>>;
 encode(Value) when is_integer(Value) ->
     Digits = integer_to_binary(Value),
     [<<4>>, encode_binary(Digits)];

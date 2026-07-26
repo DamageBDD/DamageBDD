@@ -67,8 +67,7 @@ search(Ctx, Query0, Opts) when is_map(Opts) ->
         }}
     catch
         error:badarg -> {error, badarg};
-        Class:Reason:Stacktrace ->
-            {error, {wikimedia_search_failed, Class, Reason, Stacktrace}}
+        Class:Reason:Stacktrace -> {error, {wikimedia_search_failed, Class, Reason, Stacktrace}}
     end;
 search(_Ctx, _Query, _Opts) ->
     {error, badarg}.
@@ -114,10 +113,12 @@ normalize_options(Opts) ->
         )
     }.
 
-option_value(_Opts, [], Default) -> Default;
+option_value(_Opts, [], Default) ->
+    Default;
 option_value(Opts, [Key | Rest], Default) ->
     case maps:find(Key, Opts) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error ->
             case maps:find(atom_to_binary(Key, utf8), Opts) of
                 {ok, Value} -> Value;
@@ -132,10 +133,11 @@ search_map(Query, Opts) ->
         abstract => Query,
         prefix => maps:get(prefix, Opts, true)
     },
-    Base1 = case maps:get(language, Opts, undefined) of
-        undefined -> Base;
-        Language -> Base#{language => to_binary(Language)}
-    end,
+    Base1 =
+        case maps:get(language, Opts, undefined) of
+            undefined -> Base;
+            Language -> Base#{language => to_binary(Language)}
+        end,
     case maps:get(wikidata_id, Opts, undefined) of
         undefined -> Base1;
         Wikidata -> Base1#{wikidata_id => to_binary(Wikidata)}
@@ -149,23 +151,24 @@ matches_filters(Result, Opts) ->
         wikidata_matches(Record, maps:get(wikidata_only, Opts, false)).
 
 language_matches(_Record, undefined) -> true;
-language_matches(Record, Expected0) ->
-    maps:get(language, Record, <<>>) =:= to_binary(Expected0).
+language_matches(Record, Expected0) -> maps:get(language, Record, <<>>) =:= to_binary(Expected0).
 
 minimum_matches(Record, Key, Minimum) when is_integer(Minimum), Minimum >= 0 ->
     numeric_value(maps:get(Key, Record, 0)) >= Minimum;
-minimum_matches(_Record, _Key, _Minimum) -> true.
+minimum_matches(_Record, _Key, _Minimum) ->
+    true.
 
-maximum_rank_matches(_Record, undefined) -> true;
+maximum_rank_matches(_Record, undefined) ->
+    true;
 maximum_rank_matches(Record, Maximum) when is_integer(Maximum), Maximum > 0 ->
     Rank = numeric_value(maps:get(visibility_rank, Record, 0)),
     Rank > 0 andalso Rank =< Maximum;
-maximum_rank_matches(_Record, _Maximum) -> true.
+maximum_rank_matches(_Record, _Maximum) ->
+    true.
 
 wikidata_matches(_Record, false) -> true;
 wikidata_matches(Record, true) -> maps:get(wikidata_id, Record, <<>>) =/= <<>>;
 wikidata_matches(_Record, _Other) -> true.
-
 
 %% Wikimedia stores one document per language while Wikidata identifies the
 %% shared entity. By default, search returns one representative document for
@@ -178,13 +181,14 @@ deduplicate_entities(Results, true) ->
     {_NextPosition, Groups} = lists:foldl(
         fun(Result, {Position, Acc0}) ->
             Key = entity_key(Result),
-            Acc1 = case maps:find(Key, Acc0) of
-                error ->
-                    Acc0#{Key => {Position, Result}};
-                {ok, {FirstPosition, Current}} ->
-                    Preferred = preferred_entity_result(Result, Current),
-                    Acc0#{Key => {FirstPosition, Preferred}}
-            end,
+            Acc1 =
+                case maps:find(Key, Acc0) of
+                    error ->
+                        Acc0#{Key => {Position, Result}};
+                    {ok, {FirstPosition, Current}} ->
+                        Preferred = preferred_entity_result(Result, Current),
+                        Acc0#{Key => {FirstPosition, Preferred}}
+                end,
             {Position + 1, Acc1}
         end,
         {1, #{}},
@@ -228,10 +232,11 @@ preferred_entity_result(Candidate, Current) ->
 representative_key(Result) ->
     Record = maps:get(record, Result, #{}),
     Rank0 = numeric_value(maps:get(visibility_rank, Record, 0)),
-    Rank = case Rank0 > 0 of
-        true -> Rank0;
-        false -> 16#7FFFFFFFFFFFFFFF
-    end,
+    Rank =
+        case Rank0 > 0 of
+            true -> Rank0;
+            false -> 16#7FFFFFFFFFFFFFFF
+        end,
     Pageviews = numeric_value(maps:get(pageviews, Record, 0)),
     Score = numeric_score(maps:get(score, Result, 0.0)),
     Language = identity_binary(maps:get(language, Record, <<>>)),
@@ -246,7 +251,8 @@ numeric_score(Bin) when is_binary(Bin) ->
     catch
         error:badarg -> float(numeric_value(Bin))
     end;
-numeric_score(_Other) -> 0.0.
+numeric_score(_Other) ->
+    0.0.
 
 identity_binary(Bin) when is_binary(Bin) -> Bin;
 identity_binary(List) when is_list(List) ->
@@ -256,7 +262,8 @@ identity_binary(List) when is_list(List) ->
     end;
 identity_binary(Int) when is_integer(Int) -> integer_to_binary(Int);
 identity_binary(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
-identity_binary(_Other) -> <<>>.
+identity_binary(_Other) ->
+    <<>>.
 
 boolean_option(true) -> true;
 boolean_option(false) -> false;
@@ -277,7 +284,8 @@ normalize_query(List) when is_list(List), List =/= [] ->
         Bin when is_binary(Bin), byte_size(Bin) > 0 -> Bin;
         _ -> erlang:error(badarg)
     end;
-normalize_query(_Other) -> erlang:error(badarg).
+normalize_query(_Other) ->
+    erlang:error(badarg).
 
 bounded_limit(Value) when is_integer(Value), Value > 0 -> erlang:min(Value, ?MAX_LIMIT);
 bounded_limit(_Value) -> ?DEFAULT_LIMIT.
@@ -285,8 +293,13 @@ bounded_limit(_Value) -> ?DEFAULT_LIMIT.
 numeric_value(Value) when is_integer(Value) -> Value;
 numeric_value(Value) when is_float(Value) -> trunc(Value);
 numeric_value(Bin) when is_binary(Bin) ->
-    try binary_to_integer(Bin) catch error:badarg -> 0 end;
-numeric_value(_Other) -> 0.
+    try
+        binary_to_integer(Bin)
+    catch
+        error:badarg -> 0
+    end;
+numeric_value(_Other) ->
+    0.
 
 to_binary(Bin) when is_binary(Bin) -> Bin;
 to_binary(List) when is_list(List) -> unicode:characters_to_binary(List);

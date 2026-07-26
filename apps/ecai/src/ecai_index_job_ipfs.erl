@@ -62,13 +62,13 @@ process_documents(Job, Runtime, Checkpoint0, BatchSize, Processed) ->
                         current_source => maps:get(cid, Document),
                         documents_indexed =>
                             maps:get(documents_indexed, Checkpoint0, 0) +
-                                maps:get(documents_indexed, Stats, 1),
+                            maps:get(documents_indexed, Stats, 1),
                         records_indexed =>
                             maps:get(records_indexed, Checkpoint0, 0) +
-                                maps:get(records_indexed, Stats, 0),
+                            maps:get(records_indexed, Stats, 0),
                         duplicates =>
                             maps:get(duplicates, Checkpoint0, 0) +
-                                maps:get(duplicates, Stats, 0)
+                            maps:get(duplicates, Stats, 0)
                     },
                     process_documents(
                         Job,
@@ -96,12 +96,14 @@ ingest_document(#{spec := Spec}, Document) ->
     case Mode of
         searchable_disk ->
             BaseDir = maps:get(base_dir, Target),
-            case ecai_ipfs_ingest:ingest_cid_result(
-                path_list(BaseDir),
-                SourceKey,
-                Cid,
-                Title
-            ) of
+            case
+                ecai_ipfs_ingest:ingest_cid_result(
+                    path_list(BaseDir),
+                    SourceKey,
+                    Cid,
+                    Title
+                )
+            of
                 {ok, Stats} when is_map(Stats) -> {ok, Stats};
                 {error, _Reason} = Error -> Error;
                 Other -> {error, {unexpected_searchable_ingest_result, Other}}
@@ -113,26 +115,31 @@ ingest_document(#{spec := Spec}, Document) ->
                         records_indexed => maps:get(durable_new, Ack, 0),
                         duplicates => maps:get(duplicates, Ack, 0)
                     }};
-                {error, _Reason} = Error -> Error;
-                Other -> {error, {unexpected_ledger_ingest_result, Other}}
+                {error, _Reason} = Error ->
+                    Error;
+                Other ->
+                    {error, {unexpected_ledger_ingest_result, Other}}
             end
     end.
 
 source_documents(ipfs_cid, Source) ->
     Cid = maps:get(cid, Source),
     {ok,
-        [#{
-            cid => Cid,
-            source_key => maps:get(source_key, Source, <<"ipfs://", Cid/binary>>),
-            title => maps:get(title, Source, <<>>)
-        }],
+        [
+            #{
+                cid => Cid,
+                source_key => maps:get(source_key, Source, <<"ipfs://", Cid/binary>>),
+                title => maps:get(title, Source, <<>>)
+            }
+        ],
         #{cid => Cid}};
 source_documents(ipfs_manifest, Source) ->
     ManifestCid = maps:get(manifest_cid, Source),
     case damage_ipfs:cat_binary(ManifestCid) of
         {ok, Bytes} ->
             case byte_size(Bytes) =< max_manifest_bytes() of
-                true -> decode_manifest(ManifestCid, Bytes);
+                true ->
+                    decode_manifest(ManifestCid, Bytes);
                 false ->
                     {error, {
                         manifest_byte_limit_exceeded,
@@ -201,14 +208,18 @@ normalize_document(Document) ->
                     case required_binary(source_key, SourceKey0) of
                         {ok, SourceKey} ->
                             {ok, #{cid => Cid, source_key => SourceKey, title => Title}};
-                        {error, _Reason} = Error -> Error
+                        {error, _Reason} = Error ->
+                            Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
-required_binary(Name, undefined) -> {error, {missing_field, Name}};
+required_binary(Name, undefined) ->
+    {error, {missing_field, Name}};
 required_binary(Name, Value) ->
     case optional_binary(Name, Value) of
         {ok, <<>>} -> {error, {empty_field, Name}};
@@ -223,7 +234,8 @@ optional_binary(Name, List) when is_list(List) ->
     catch
         _Class:_Reason -> {error, {invalid_field, Name}}
     end;
-optional_binary(Name, _Value) -> {error, {invalid_field, Name}}.
+optional_binary(Name, _Value) ->
+    {error, {invalid_field, Name}}.
 
 progress(Runtime, Checkpoint) ->
     Completed = maps:get(document_index, Checkpoint, 0),

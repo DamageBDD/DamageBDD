@@ -108,12 +108,19 @@ wait_unregistered(Attempts) ->
         ecai_index_job_events
     ],
     case lists:any(fun(Name) -> whereis(Name) =/= undefined end, Names) of
-        true -> timer:sleep(10), wait_unregistered(Attempts - 1);
-        false -> ok
+        true ->
+            timer:sleep(10),
+            wait_unregistered(Attempts - 1);
+        false ->
+            ok
     end.
 
 temp_dir() ->
-    Root = case os:getenv("TMPDIR") of false -> "/tmp"; Value -> Value end,
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            Value -> Value
+        end,
     Dir = filename:join(
         Root,
         "ecai-index-jobs-" ++
@@ -137,8 +144,10 @@ remove_tree(Path) ->
             ),
             _ = file:del_dir(Path),
             ok;
-        {error, enoent} -> ok;
-        {error, _Reason} -> ok
+        {error, enoent} ->
+            ok;
+        {error, _Reason} ->
+            ok
     end.
 
 queue_capacity_and_position_test() ->

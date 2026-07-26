@@ -22,7 +22,8 @@ stream_job(Req0, State) ->
     case safe_get_job(JobId) of
         {ok, Job} ->
             case authorized_for_job(Job, State) of
-                true -> stream_authorized_job(JobId, Req0, State);
+                true ->
+                    stream_authorized_job(JobId, Req0, State);
                 false ->
                     Body = jsx:encode(#{ok => false, error => <<"forbidden">>}),
                     Req1 = cowboy_req:reply(
@@ -101,10 +102,8 @@ replay_pages(JobId, LastSeq, Req, Terminal0) ->
             ),
             case {Terminal1, length(Events), NextSeq > LastSeq} of
                 {true, _Count, _Advanced} -> {NextSeq, true};
-                {false, ?REPLAY_LIMIT, true} ->
-                    replay_pages(JobId, NextSeq, Req, false);
-                _ ->
-                    {NextSeq, false}
+                {false, ?REPLAY_LIMIT, true} -> replay_pages(JobId, NextSeq, Req, false);
+                _ -> {NextSeq, false}
             end;
         {error, _Reason} ->
             {LastSeq, Terminal0}
@@ -135,9 +134,15 @@ send_event(Event0, Req) ->
     Type = event_type(Event),
     Payload = jsx:encode(Event),
     Frame = iolist_to_binary([
-        "id: ", integer_to_binary(Seq), "\n",
-        "event: ", Type, "\n",
-        "data: ", Payload, "\n\n"
+        "id: ",
+        integer_to_binary(Seq),
+        "\n",
+        "event: ",
+        Type,
+        "\n",
+        "data: ",
+        Payload,
+        "\n\n"
     ]),
     cowboy_req:stream_body(Frame, nofin, Req).
 
@@ -192,7 +197,8 @@ requested_last_sequence(Req) ->
         0
     ).
 
-parse_nonnegative_integer(undefined, Default) -> Default;
+parse_nonnegative_integer(undefined, Default) ->
+    Default;
 parse_nonnegative_integer(Bin, Default) when is_binary(Bin) ->
     try binary_to_integer(Bin) of
         Value when Value >= 0 -> Value;
@@ -200,7 +206,8 @@ parse_nonnegative_integer(Bin, Default) when is_binary(Bin) ->
     catch
         error:badarg -> Default
     end;
-parse_nonnegative_integer(_Other, Default) -> Default.
+parse_nonnegative_integer(_Other, Default) ->
+    Default.
 
 safe_get_job(JobId) ->
     try ecai_index_jobs_srv:get(JobId) of
@@ -211,7 +218,8 @@ safe_get_job(JobId) ->
 
 authorized_for_job(Job, State) ->
     case authenticated_owner(State) of
-        undefined -> true;
+        undefined ->
+            true;
         Owner ->
             Spec = maps:get(<<"spec">>, Job, #{}),
             maps:get(<<"owner">>, Spec, <<>>) =:= Owner
@@ -226,7 +234,8 @@ authenticated_owner(State) ->
             catch
                 _Class:_Reason -> undefined
             end;
-        _ -> undefined
+        _ ->
+            undefined
     end.
 
 authorize(Req, State) ->

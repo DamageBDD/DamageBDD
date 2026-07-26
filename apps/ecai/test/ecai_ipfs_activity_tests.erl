@@ -19,9 +19,14 @@ local_activity_rotation_and_recovery_test() ->
         ?assertEqual(0, maps:get(pending_events, Status1)),
         ?assertEqual(1, maps:get(published_blocks, Status1)),
         ?assertMatch(<<"sha256:", _/binary>>, maps:get(previous_cid, Status1)),
-        ?assertEqual(1, length(filelib:wildcard(
-            filename:join([Dir, "activity", "activity-*.ndjson"])
-        ))),
+        ?assertEqual(
+            1,
+            length(
+                filelib:wildcard(
+                    filename:join([Dir, "activity", "activity-*.ndjson"])
+                )
+            )
+        ),
 
         {ok, Recovered} = ecai_ipfs_activity:open(
             Dir,
@@ -124,7 +129,8 @@ remove_tree(Path) ->
                         fun(Name) -> remove_tree(filename:join(Path, Name)) end,
                         Names
                     );
-                _ -> ok
+                _ ->
+                    ok
             end,
             _ = file:del_dir(Path),
             ok;

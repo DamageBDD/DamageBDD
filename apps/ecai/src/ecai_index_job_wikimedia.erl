@@ -32,12 +32,14 @@ prepare(#{id := JobId, spec := Spec} = Job) ->
             {ok, Catalog, CatalogMeta} ->
                 case ecai_wikimedia_selector:prepare(WorkDir, Catalog, Options) of
                     {ok, Selector} ->
-                        case ecai_wikimedia_content:prepare(
-                            WorkDir,
-                            Catalog,
-                            Selector,
-                            Options
-                        ) of
+                        case
+                            ecai_wikimedia_content:prepare(
+                                WorkDir,
+                                Catalog,
+                                Selector,
+                                Options
+                            )
+                        of
                             {ok, Content} ->
                                 case search_context() of
                                     {ok, Ctx0} ->
@@ -69,10 +71,12 @@ prepare(#{id := JobId, spec := Spec} = Job) ->
                                                 RecoveryCheckpoint = recovery_checkpoint(
                                                     Checkpoint0
                                                 ),
-                                                case maybe_load_selection(
-                                                    RecoveryCheckpoint,
-                                                    Selector
-                                                ) of
+                                                case
+                                                    maybe_load_selection(
+                                                        RecoveryCheckpoint,
+                                                        Selector
+                                                    )
+                                                of
                                                     {ok, SelectionTab, SelectionCount} ->
                                                         Runtime = #{
                                                             job_id => JobId,
@@ -94,30 +98,35 @@ prepare(#{id := JobId, spec := Spec} = Job) ->
                                                             activity => Activity0,
                                                             ctx => Ctx,
                                                             spec => Spec,
-                                                            recovery_checkpoint => RecoveryCheckpoint
+                                                            recovery_checkpoint =>
+                                                                RecoveryCheckpoint
                                                         },
-                                                        {ok,
-                                                            Runtime,
+                                                        {ok, Runtime,
                                                             progress(
                                                                 Runtime,
                                                                 RecoveryCheckpoint
                                                             )};
-                                                    {error, _Reason} = Error -> Error
+                                                    {error, _Reason} = Error ->
+                                                        Error
                                                 end;
-                                            {error, _Reason} = Error -> Error
+                                            {error, _Reason} = Error ->
+                                                Error
                                         end;
-                                    {error, _Reason} = Error -> Error
+                                    {error, _Reason} = Error ->
+                                        Error
                                 end;
-                            {error, _Reason} = Error -> Error
+                            {error, _Reason} = Error ->
+                                Error
                         end;
-                    {error, _Reason} = Error -> Error
+                    {error, _Reason} = Error ->
+                        Error
                 end;
-            {error, _Reason} = Error -> Error
+            {error, _Reason} = Error ->
+                Error
         end
     catch
         error:badarg -> {error, badarg};
-        Class:Reason:Stacktrace ->
-            {error, {wikimedia_prepare_failed, Class, Reason, Stacktrace}}
+        Class:Reason:Stacktrace -> {error, {wikimedia_prepare_failed, Class, Reason, Stacktrace}}
     end;
 prepare(_Job) ->
     {error, badarg}.
@@ -203,7 +212,8 @@ result(_Job, Runtime0, Checkpoint, Result0) ->
                         maps:get(work_dir, Runtime1)
                     )
                 }};
-            {error, _Reason} = Error -> Error
+            {error, _Reason} = Error ->
+                Error
         end
     catch
         Class:Reason:Stacktrace ->
@@ -223,10 +233,7 @@ process_units(Job, Runtime0, Checkpoint0, BatchSize, Processed) ->
                 {ok, Runtime1, Checkpoint1} ->
                     case maps:get(stage, Checkpoint1, catalog) of
                         done ->
-                            {complete,
-                                Runtime1,
-                                Checkpoint1,
-                                final_result(Runtime1, Checkpoint1)};
+                            {complete, Runtime1, Checkpoint1, final_result(Runtime1, Checkpoint1)};
                         _ ->
                             process_units(
                                 Job,
@@ -236,7 +243,8 @@ process_units(Job, Runtime0, Checkpoint0, BatchSize, Processed) ->
                                 Processed + 1
                             )
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end
     end.
 
@@ -261,12 +269,14 @@ run_one_unit(Job, Runtime0, Checkpoint0, pageviews) ->
         false ->
             Source = lists:nth(Index + 1, Sources),
             ProgressFun = live_progress_fun(Job, Runtime0, Checkpoint0),
-            case ecai_wikimedia_selector:spool_month(
-                maps:get(selector, Runtime0),
-                Source,
-                Index + 1,
-                ProgressFun
-            ) of
+            case
+                ecai_wikimedia_selector:spool_month(
+                    maps:get(selector, Runtime0),
+                    Source,
+                    Index + 1,
+                    ProgressFun
+                )
+            of
                 {ok, Meta} ->
                     Checkpoint1 = Checkpoint0#{
                         stage => pageviews,
@@ -300,14 +310,17 @@ run_one_unit(Job, Runtime0, Checkpoint0, aggregating) ->
     Partition = maps:get(partition_index, Checkpoint0, 0),
     Total = maps:get(partitions, Selector),
     case Partition >= Total of
-        true -> {ok, Runtime0, Checkpoint0#{stage => selection}};
+        true ->
+            {ok, Runtime0, Checkpoint0#{stage => selection}};
         false ->
             ProgressFun = live_progress_fun(Job, Runtime0, Checkpoint0),
-            case ecai_wikimedia_selector:aggregate_partition(
-                Selector,
-                Partition,
-                ProgressFun
-            ) of
+            case
+                ecai_wikimedia_selector:aggregate_partition(
+                    Selector,
+                    Partition,
+                    ProgressFun
+                )
+            of
                 {ok, Meta} ->
                     Checkpoint1 = Checkpoint0#{
                         stage => aggregating,
@@ -339,9 +352,11 @@ run_one_unit(Job, Runtime0, Checkpoint0, selection) ->
     case ecai_wikimedia_selector:merge_selection(Selector, ProgressFun) of
         {ok, Meta} ->
             Runtime1 = close_selection(Runtime0),
-            case ecai_wikimedia_selector:load_selection(
-                maps:get(selection_path, Selector)
-            ) of
+            case
+                ecai_wikimedia_selector:load_selection(
+                    maps:get(selection_path, Selector)
+                )
+            of
                 {ok, Tab, Count} ->
                     Runtime2 = Runtime1#{selection_tab => Tab, selection_count => Count},
                     Checkpoint1 = Checkpoint0#{
@@ -359,26 +374,31 @@ run_one_unit(Job, Runtime0, Checkpoint0, selection) ->
                         },
                         Checkpoint1
                     );
-                {error, Reason} -> {error, {selection_load_failed, Reason}}
+                {error, Reason} ->
+                    {error, {selection_load_failed, Reason}}
             end;
-        {error, Reason} -> {error, {selection_merge_failed, Reason}}
+        {error, Reason} ->
+            {error, {selection_merge_failed, Reason}}
     end;
 run_one_unit(Job, Runtime0, Checkpoint0, content) ->
     Shards = maps:get(content_shards, Runtime0),
     Index = maps:get(content_index, Checkpoint0, 0),
     case Index >= length(Shards) of
-        true -> {ok, Runtime0, Checkpoint0#{stage => rank_finalize}};
+        true ->
+            {ok, Runtime0, Checkpoint0#{stage => rank_finalize}};
         false ->
             case ensure_selection(Runtime0) of
                 {ok, Runtime1, SelectionTab} ->
                     Source = lists:nth(Index + 1, Shards),
                     ProgressFun = live_progress_fun(Job, Runtime1, Checkpoint0),
-                    case ecai_wikimedia_content:extract_shard(
-                        maps:get(content, Runtime1),
-                        Source,
-                        SelectionTab,
-                        ProgressFun
-                    ) of
+                    case
+                        ecai_wikimedia_content:extract_shard(
+                            maps:get(content, Runtime1),
+                            Source,
+                            SelectionTab,
+                            ProgressFun
+                        )
+                    of
                         {ok, Meta} ->
                             Checkpoint1 = Checkpoint0#{
                                 stage => content,
@@ -413,15 +433,18 @@ run_one_unit(Job, Runtime0, Checkpoint0, content) ->
                         {error, Reason} ->
                             {error, {content_shard_failed, Index + 1, Reason}}
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end
     end;
 run_one_unit(Job, Runtime0, Checkpoint0, rank_finalize) ->
     ProgressFun = live_progress_fun(Job, Runtime0, Checkpoint0),
-    case ecai_wikimedia_content:finalize_ranked(
-        maps:get(content, Runtime0),
-        ProgressFun
-    ) of
+    case
+        ecai_wikimedia_content:finalize_ranked(
+            maps:get(content, Runtime0),
+            ProgressFun
+        )
+    of
         {ok, Meta} ->
             Files = ecai_wikimedia_content:index_files(maps:get(content, Runtime0)),
             Checkpoint1 = Checkpoint0#{
@@ -439,13 +462,15 @@ run_one_unit(Job, Runtime0, Checkpoint0, rank_finalize) ->
                 },
                 Checkpoint1
             );
-        {error, Reason} -> {error, {rank_finalize_failed, Reason}}
+        {error, Reason} ->
+            {error, {rank_finalize_failed, Reason}}
     end;
 run_one_unit(_Job, Runtime0, Checkpoint0, indexing) ->
     Files = ecai_wikimedia_content:index_files(maps:get(content, Runtime0)),
     Index = maps:get(index_file_index, Checkpoint0, 0),
     case Index >= length(Files) of
-        true -> {ok, Runtime0, Checkpoint0#{stage => done}};
+        true ->
+            {ok, Runtime0, Checkpoint0#{stage => done}};
         false ->
             Path = lists:nth(Index + 1, Files),
             Opts = wikipedia_loader_opts(Runtime0),
@@ -467,8 +492,10 @@ run_one_unit(_Job, Runtime0, Checkpoint0, indexing) ->
                         },
                         Checkpoint1
                     );
-                {error, Reason} -> {error, {search_index_failed, Path, Reason}};
-                Other -> {error, {unexpected_wikipedia_loader_result, Path, Other}}
+                {error, Reason} ->
+                    {error, {search_index_failed, Path, Reason}};
+                Other ->
+                    {error, {unexpected_wikipedia_loader_result, Path, Other}}
             end
     end;
 run_one_unit(_Job, _Runtime, _Checkpoint, Stage) ->
@@ -481,44 +508,54 @@ ensure_catalog(WorkDir, Source, Finalize) ->
         true ->
             case ecai_wikimedia_catalog:read(LocalPath) of
                 {ok, Catalog} ->
-                    case ecai_wikimedia_catalog:write(
-                        WorkDir,
-                        Catalog,
-                        #{publish_ipfs => Publish}
-                    ) of
+                    case
+                        ecai_wikimedia_catalog:write(
+                            WorkDir,
+                            Catalog,
+                            #{publish_ipfs => Publish}
+                        )
+                    of
                         {ok, Meta} -> {ok, Catalog, Meta};
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
         false ->
             case ecai_wikimedia_catalog:resolve(Source) of
                 {ok, Catalog} ->
-                    case ecai_wikimedia_catalog:write(
-                        WorkDir,
-                        Catalog,
-                        #{publish_ipfs => Publish}
-                    ) of
+                    case
+                        ecai_wikimedia_catalog:write(
+                            WorkDir,
+                            Catalog,
+                            #{publish_ipfs => Publish}
+                        )
+                    of
                         {ok, Meta} -> {ok, Catalog, Meta};
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end
     end.
 
 maybe_load_selection(Checkpoint, Selector) ->
     Stage = maps:get(stage, normalize_checkpoint(Checkpoint), catalog),
-    case stage_requires_selection(Stage) andalso
-        filelib:is_regular(maps:get(selection_path, Selector))
+    case
+        stage_requires_selection(Stage) andalso
+            filelib:is_regular(maps:get(selection_path, Selector))
     of
         true ->
-            case ecai_wikimedia_selector:load_selection(
-                maps:get(selection_path, Selector)
-            ) of
+            case
+                ecai_wikimedia_selector:load_selection(
+                    maps:get(selection_path, Selector)
+                )
+            of
                 {ok, Tab, Count} -> {ok, Tab, Count};
                 {error, _Reason} = Error -> Error
             end;
-        false -> {ok, undefined, 0}
+        false ->
+            {ok, undefined, 0}
     end.
 
 ensure_selection(Runtime = #{selection_tab := Tab}) when Tab =/= undefined ->
@@ -528,7 +565,8 @@ ensure_selection(Runtime) ->
     case ecai_wikimedia_selector:load_selection(maps:get(selection_path, Selector)) of
         {ok, Tab, Count} ->
             {ok, Runtime#{selection_tab => Tab, selection_count => Count}, Tab};
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 stage_requires_selection(content) -> true;
@@ -552,18 +590,24 @@ live_progress_fun(#{id := JobId}, Runtime, Checkpoint) ->
     fun(Delta) ->
         Key = {?MODULE, JobId, last_progress_ms},
         Now = erlang:monotonic_time(millisecond),
-        Last = case get(Key) of undefined -> 0; Value -> Value end,
+        Last =
+            case get(Key) of
+                undefined -> 0;
+                Value -> Value
+            end,
         case Now - Last >= ?PROGRESS_INTERVAL_MS of
             true ->
                 put(Key, Now),
                 Progress = maps:merge(progress(Runtime, Checkpoint), normalize_progress(Delta)),
-                _ = try ecai_index_jobs_srv:checkpoint(JobId, Checkpoint, Progress) of
-                    _ -> ok
-                catch
-                    _:_ -> ok
-                end,
+                _ =
+                    try ecai_index_jobs_srv:checkpoint(JobId, Checkpoint, Progress) of
+                        _ -> ok
+                    catch
+                        _:_ -> ok
+                    end,
                 ok;
-            false -> ok
+            false ->
+                ok
         end
     end.
 
@@ -613,12 +657,9 @@ stage_completed_units(pageviews, PV, _P, _C, _I, _PVT, _PT, _CT) -> 1 + PV;
 stage_completed_units(aggregating, _PV, P, _C, _I, PVT, _PT, _CT) -> 1 + PVT + P;
 stage_completed_units(selection, _PV, _P, _C, _I, PVT, PT, _CT) -> 1 + PVT + PT;
 stage_completed_units(content, _PV, _P, C, _I, PVT, PT, _CT) -> 2 + PVT + PT + C;
-stage_completed_units(rank_finalize, _PV, _P, _C, _I, PVT, PT, CT) ->
-    2 + PVT + PT + CT;
-stage_completed_units(indexing, _PV, _P, _C, I, PVT, PT, CT) ->
-    3 + PVT + PT + CT + I;
-stage_completed_units(done, _PV, _P, _C, I, PVT, PT, CT) ->
-    3 + PVT + PT + CT + I;
+stage_completed_units(rank_finalize, _PV, _P, _C, _I, PVT, PT, CT) -> 2 + PVT + PT + CT;
+stage_completed_units(indexing, _PV, _P, _C, I, PVT, PT, CT) -> 3 + PVT + PT + CT + I;
+stage_completed_units(done, _PV, _P, _C, I, PVT, PT, CT) -> 3 + PVT + PT + CT + I;
 stage_completed_units(_, _PV, _P, _C, _I, _PVT, _PT, _CT) -> 0.
 
 phase(catalog) -> resolving_sources;
@@ -671,19 +712,27 @@ wikipedia_loader_opts(Runtime) ->
 material_files(CatalogMeta, Selector, Content) ->
     Base = [
         #{role => source_catalog, path => maps:get(path, CatalogMeta)},
-        #{role => visibility_selection, path => unicode:characters_to_binary(
-            maps:get(selection_path, Selector)
-        )},
-        #{role => visibility_selection_meta, path => unicode:characters_to_binary(
-            maps:get(selection_meta_path, Selector)
-        )}
+        #{
+            role => visibility_selection,
+            path => unicode:characters_to_binary(
+                maps:get(selection_path, Selector)
+            )
+        },
+        #{
+            role => visibility_selection_meta,
+            path => unicode:characters_to_binary(
+                maps:get(selection_meta_path, Selector)
+            )
+        }
     ],
-    Base ++ [
-        #{role => normalized_records, path => Path}
-     || Path <- ecai_wikimedia_content:index_files(Content)
-    ].
+    Base ++
+        [
+            #{role => normalized_records, path => Path}
+         || Path <- ecai_wikimedia_content:index_files(Content)
+        ].
 
-close_selection(Runtime = #{selection_tab := undefined}) -> Runtime;
+close_selection(Runtime = #{selection_tab := undefined}) ->
+    Runtime;
 close_selection(Runtime = #{selection_tab := Tab}) ->
     _ = ecai_wikimedia_selector:close_selection(Tab),
     Runtime#{selection_tab => undefined}.
@@ -716,7 +765,8 @@ rewind_indexing_checkpoint(Checkpoint) ->
 
 normalize_checkpoint(Checkpoint) when map_size(Checkpoint) =:= 0 ->
     #{stage => catalog};
-normalize_checkpoint(Checkpoint) -> Checkpoint.
+normalize_checkpoint(Checkpoint) ->
+    Checkpoint.
 
 public_checkpoint(Checkpoint) ->
     maps:without([catalog_meta], Checkpoint).
@@ -729,7 +779,8 @@ field_value(Key, Map, Default) when is_map(Map) ->
         {ok, Value} -> Value;
         error -> maps:get(atom_to_binary(Key, utf8), Map, Default)
     end;
-field_value(_Key, _Map, Default) -> Default.
+field_value(_Key, _Map, Default) ->
+    Default.
 
 read_json_map(Path, Default) ->
     case file:read_file(Path) of
@@ -740,14 +791,20 @@ read_json_map(Path, Default) ->
             catch
                 _:_ -> Default
             end;
-        {error, _Reason} -> Default
+        {error, _Reason} ->
+            Default
     end.
 
 count_lines(Path) ->
     case file:open(Path, [read, raw, binary]) of
         {ok, Fd} ->
-            try count_lines_loop(Fd, 0) after ok = file:close(Fd) end;
-        {error, _Reason} -> 0
+            try
+                count_lines_loop(Fd, 0)
+            after
+                ok = file:close(Fd)
+            end;
+        {error, _Reason} ->
+            0
     end.
 
 count_lines_loop(Fd, Count) ->
@@ -764,4 +821,5 @@ integer_value(_Value, Default) -> Default.
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     unicode:characters_to_list(Bin);
 path_list(List) when is_list(List), List =/= [] -> List;
-path_list(_Other) -> erlang:error(badarg).
+path_list(_Other) ->
+    erlang:error(badarg).

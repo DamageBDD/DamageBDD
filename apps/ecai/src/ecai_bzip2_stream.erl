@@ -89,8 +89,7 @@ fold_lines(Path0, Fun, Acc0, Opts) when is_function(Fun, 2), is_map(Opts) ->
         end
     catch
         error:badarg -> {error, badarg};
-        Class:Reason:Stacktrace ->
-            {error, {bzip2_stream_failed, Class, Reason, Stacktrace}}
+        Class:Reason:Stacktrace -> {error, {bzip2_stream_failed, Class, Reason, Stacktrace}}
     end;
 fold_lines(_Path, _Fun, _Acc0, _Opts) ->
     {error, badarg}.
@@ -188,10 +187,10 @@ maybe_emit_final(Fun, Acc0, Fragments, Lines, _Bytes) ->
     end.
 
 assemble_line([], Tail) -> Tail;
-assemble_line(Fragments, Tail) ->
-    iolist_to_binary([lists:reverse(Fragments), Tail]).
+assemble_line(Fragments, Tail) -> iolist_to_binary([lists:reverse(Fragments), Tail]).
 
-trim_cr(<<>>) -> <<>>;
+trim_cr(<<>>) ->
+    <<>>;
 trim_cr(Line) ->
     case binary:last(Line) of
         $\r -> binary:part(Line, 0, byte_size(Line) - 1);
@@ -236,4 +235,5 @@ bounded_positive(Key, Opts, Default, Min, Max) ->
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     unicode:characters_to_list(Bin);
 path_list(List) when is_list(List), List =/= [] -> List;
-path_list(_Other) -> erlang:error(badarg).
+path_list(_Other) ->
+    erlang:error(badarg).

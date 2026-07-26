@@ -46,7 +46,9 @@ get_binary(Url0, MaxBytes, Opts) when
 ->
     case parse_url(Url0) of
         {ok, Url} ->
-            request_binary(Url, MaxBytes, Opts, maps:get(max_redirects, Opts, ?DEFAULT_MAX_REDIRECTS));
+            request_binary(
+                Url, MaxBytes, Opts, maps:get(max_redirects, Opts, ?DEFAULT_MAX_REDIRECTS)
+            );
         {error, _Reason} = Error ->
             Error
     end;
@@ -82,8 +84,7 @@ download(Url0, DestPath0, Opts) when is_map(Opts) ->
         end
     catch
         error:badarg -> {error, badarg};
-        Class:Reason:Stacktrace ->
-            {error, {http_download_failed, Class, Reason, Stacktrace}}
+        Class:Reason:Stacktrace -> {error, {http_download_failed, Class, Reason, Stacktrace}}
     end;
 download(_Url, _DestPath, _Opts) ->
     {error, badarg}.
@@ -109,13 +110,18 @@ parse_url(Url0) ->
 
 normalize_parsed_url(Original, Parsed, DefaultPort, Transport) ->
     Path0 = maps:get(path, Parsed, <<"/">>),
-    Path1 = case Path0 of <<>> -> <<"/">>; _ -> Path0 end,
+    Path1 =
+        case Path0 of
+            <<>> -> <<"/">>;
+            _ -> Path0
+        end,
     Query = maps:get(query, Parsed, undefined),
-    Target = case Query of
-        undefined -> Path1;
-        <<>> -> Path1;
-        _ -> <<Path1/binary, "?", Query/binary>>
-    end,
+    Target =
+        case Query of
+            undefined -> Path1;
+            <<>> -> Path1;
+            _ -> <<Path1/binary, "?", Query/binary>>
+        end,
     #{
         original => Original,
         scheme => lower_binary(maps:get(scheme, Parsed)),
@@ -174,7 +180,8 @@ follow_binary_redirect(_Url, _Headers, _MaxBytes, _Opts, RedirectsLeft) when Red
     {error, too_many_redirects};
 follow_binary_redirect(Url, Headers, MaxBytes, Opts, RedirectsLeft) ->
     case header_value(<<"location">>, Headers) of
-        undefined -> {error, redirect_without_location};
+        undefined ->
+            {error, redirect_without_location};
         Location ->
             case resolve_location(Url, Location) of
                 {ok, NextUrl} -> request_binary(NextUrl, MaxBytes, Opts, RedirectsLeft - 1);
@@ -210,15 +217,17 @@ download_url(Url, DestPath, Opts, RedirectsLeft) ->
     PartPath = DestPath ++ ".part",
     Existing = file_size_or_zero(PartPath),
     Timeout = positive_opt(timeout_ms, Opts, ?DEFAULT_TIMEOUT_MS),
-    RangeHeaders = case Existing of
-        0 -> [];
-        _ ->
-            Range = {<<"range">>, <<"bytes=", (integer_to_binary(Existing))/binary, "-">>},
-            case resume_validator(PartPath) of
-                undefined -> [Range];
-                Validator -> [Range, {<<"if-range">>, Validator}]
-            end
-    end,
+    RangeHeaders =
+        case Existing of
+            0 ->
+                [];
+            _ ->
+                Range = {<<"range">>, <<"bytes=", (integer_to_binary(Existing))/binary, "-">>},
+                case resume_validator(PartPath) of
+                    undefined -> [Range];
+                    Validator -> [Range, {<<"if-range">>, Validator}]
+                end
+        end,
     Headers = request_headers(Opts, RangeHeaders),
     case open_connection(Url, Timeout) of
         {ok, ConnPid} ->
@@ -230,24 +239,27 @@ download_url(Url, DestPath, Opts, RedirectsLeft) ->
                         %% equals the remote object. Only promote it when the
                         %% server provides a matching total size.
                         case range_total(RespHeaders) of
-                            Existing -> promote_part(
-                                Url,
-                                PartPath,
-                                DestPath,
-                                416,
-                                RespHeaders,
-                                Existing,
-                                Existing
-                            );
-                            _ -> {error, {range_not_satisfiable, Existing}}
+                            Existing ->
+                                promote_part(
+                                    Url,
+                                    PartPath,
+                                    DestPath,
+                                    416,
+                                    RespHeaders,
+                                    Existing,
+                                    Existing
+                                );
+                            _ ->
+                                {error, {range_not_satisfiable, Existing}}
                         end;
                     {ok, Status, RespHeaders, FinState} when Status >= 200, Status < 300 ->
                         case validated_download_offset(Existing, Status, RespHeaders) of
                             {ok, Offset} ->
-                                Mode = case Offset of
-                                    0 -> [write, raw, binary];
-                                    _ -> [append, raw, binary]
-                                end,
+                                Mode =
+                                    case Offset of
+                                        0 -> [write, raw, binary];
+                                        _ -> [append, raw, binary]
+                                    end,
                                 case file:open(PartPath, Mode) of
                                     {ok, Fd} ->
                                         try
@@ -309,7 +321,8 @@ download_url(Url, DestPath, Opts, RedirectsLeft) ->
                                             Opts,
                                             RedirectsLeft - 1
                                         );
-                                    {error, _Reason} = Error -> Error
+                                    {error, _Reason} = Error ->
+                                        Error
                                 end;
                             false ->
                                 {error, {
@@ -391,10 +404,14 @@ stream_file_loop(
             case file:write(Fd, Data) of
                 ok ->
                     Count1 = Count + byte_size(Data),
-                    LastSync1 = case Count1 - LastSync >= SyncBytes of
-                        true -> ok = file:sync(Fd), Count1;
-                        false -> LastSync
-                    end,
+                    LastSync1 =
+                        case Count1 - LastSync >= SyncBytes of
+                            true ->
+                                ok = file:sync(Fd),
+                                Count1;
+                            false ->
+                                LastSync
+                        end,
                     safe_progress(ProgressFun, #{
                         phase => downloading,
                         url => maps:get(original, Url),
@@ -475,13 +492,16 @@ validated_download_offset(_Existing, Status, _Headers) ->
 
 range_start(Headers) ->
     case header_value(<<"content-range">>, Headers) of
-        undefined -> undefined;
+        undefined ->
+            undefined;
         Value ->
-            case re:run(
-                Value,
-                <<"^bytes[ ]+([0-9]+)-[0-9]+/[0-9*]+$">>,
-                [{capture, [1], binary}, caseless]
-            ) of
+            case
+                re:run(
+                    Value,
+                    <<"^bytes[ ]+([0-9]+)-[0-9]+/[0-9*]+$">>,
+                    [{capture, [1], binary}, caseless]
+                )
+            of
                 {match, [StartBin]} -> binary_to_integer(StartBin);
                 _ -> undefined
             end
@@ -506,11 +526,13 @@ resume_validator(PartPath) ->
                                 _ -> undefined
                             end
                     end;
-                _ -> undefined
+                _ ->
+                    undefined
             catch
                 _:_ -> undefined
             end;
-        {error, _Reason} -> undefined
+        {error, _Reason} ->
+            undefined
     end.
 
 write_resume_metadata(PartPath, Url, Headers) ->
@@ -525,32 +547,38 @@ atomic_write(Path, Bytes) ->
     Tmp = Path ++ ".tmp",
     case file:open(Tmp, [write, raw, binary]) of
         {ok, Fd} ->
-            Result = try
-                ok = file:write(Fd, Bytes),
-                file:sync(Fd)
-            after
-                ok = file:close(Fd)
-            end,
+            Result =
+                try
+                    ok = file:write(Fd, Bytes),
+                    file:sync(Fd)
+                after
+                    ok = file:close(Fd)
+                end,
             case Result of
                 ok -> file:rename(Tmp, Path);
                 {error, _Reason} = Error -> Error
             end;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 open_connection(Url, Timeout) ->
     Host = binary_to_list(maps:get(host, Url)),
     Port = maps:get(port, Url),
     GunOpts0 = #{protocols => [http2, http]},
-    GunOpts = case maps:get(transport, Url) of
-        tls -> GunOpts0#{transport => tls};
-        tcp -> GunOpts0
-    end,
+    GunOpts =
+        case maps:get(transport, Url) of
+            tls -> GunOpts0#{transport => tls};
+            tcp -> GunOpts0
+        end,
     case gun:open(Host, Port, GunOpts) of
         {ok, ConnPid} ->
             case gun:await_up(ConnPid, Timeout) of
-                {ok, _Protocol} -> {ok, ConnPid};
-                {error, Reason} -> safe_shutdown(ConnPid), {error, {http_connect_failed, Reason}}
+                {ok, _Protocol} ->
+                    {ok, ConnPid};
+                {error, Reason} ->
+                    safe_shutdown(ConnPid),
+                    {error, {http_connect_failed, Reason}}
             end;
         {error, Reason} ->
             {error, {http_open_failed, Reason}}
@@ -597,7 +625,8 @@ response_total(_Status, Headers, Offset) ->
 
 range_total(Headers) ->
     case header_value(<<"content-range">>, Headers) of
-        undefined -> undefined;
+        undefined ->
+            undefined;
         Value ->
             case re:run(Value, <<"/([0-9]+)$">>, [{capture, [1], binary}]) of
                 {match, [TotalBin]} -> binary_to_integer(TotalBin);
@@ -607,7 +636,8 @@ range_total(Headers) ->
 
 integer_header(Name, Headers) ->
     case header_value(Name, Headers) of
-        undefined -> undefined;
+        undefined ->
+            undefined;
         Bin ->
             try binary_to_integer(Bin) of
                 Value -> Value
@@ -644,12 +674,20 @@ is_redirect(_) -> false.
 
 -spec safe_progress(progress_fun() | term(), map()) -> ok.
 safe_progress(Fun, Progress) when is_function(Fun, 1) ->
-    try Fun(Progress) of _ -> ok catch _:_ -> ok end;
+    try Fun(Progress) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
 safe_progress(_Other, _Progress) ->
     ok.
 
 safe_shutdown(ConnPid) ->
-    try gun:shutdown(ConnPid) of _ -> ok catch _:_ -> ok end.
+    try gun:shutdown(ConnPid) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
 
 positive_opt(Key, Opts, Default) ->
     case maps:get(Key, Opts, Default) of

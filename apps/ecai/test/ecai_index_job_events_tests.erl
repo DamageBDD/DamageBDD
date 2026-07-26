@@ -5,7 +5,8 @@
 live_publish_and_unsubscribe_test() ->
     WasRunning = is_pid(whereis(ecai_index_job_events)),
     case WasRunning of
-        true -> ok;
+        true ->
+            ok;
         false ->
             {ok, Pid} = ecai_index_job_events:start_link(),
             unlink(Pid)

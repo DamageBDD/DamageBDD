@@ -78,8 +78,7 @@ prepare(WorkDir0, Catalog, SelectorRuntime, Opts) when
         }}
     catch
         error:badarg -> {error, badarg};
-        Class:Reason:Stacktrace ->
-            {error, {content_prepare_failed, Class, Reason, Stacktrace}}
+        Class:Reason:Stacktrace -> {error, {content_prepare_failed, Class, Reason, Stacktrace}}
     end;
 prepare(_WorkDir, _Catalog, _SelectorRuntime, _Opts) ->
     {error, badarg}.
@@ -106,7 +105,8 @@ extract_shard(Runtime, Source, SelectionTab, ProgressFun) when
     ),
     MarkerPath = OutputPath ++ ".complete.json",
     case read_marker(MarkerPath) of
-        {ok, Meta} -> {ok, Meta#{cached => true}};
+        {ok, Meta} ->
+            {ok, Meta#{cached => true}};
         not_found ->
             extract_shard_fresh(
                 Runtime,
@@ -116,7 +116,8 @@ extract_shard(Runtime, Source, SelectionTab, ProgressFun) when
                 OutputPath,
                 MarkerPath
             );
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end;
 extract_shard(_Runtime, _Source, _SelectionTab, _ProgressFun) ->
     {error, badarg}.
@@ -132,11 +133,13 @@ extract_shard_fresh(Runtime, Source, SelectionTab, ProgressFun, OutputPath, Mark
         source => maps:get(url, Source),
         shard => Name
     }),
-    case ecai_http_stream:download(
-        maps:get(url, Source),
-        DownloadPath,
-        #{progress_fun => ProgressFun}
-    ) of
+    case
+        ecai_http_stream:download(
+            maps:get(url, Source),
+            DownloadPath,
+            #{progress_fun => ProgressFun}
+        )
+    of
         {ok, DownloadMeta} ->
             Tmp = OutputPath ++ ".tmp",
             case file:open(Tmp, [write, raw, binary]) of
@@ -160,17 +163,18 @@ extract_shard_fresh(Runtime, Source, SelectionTab, ProgressFun, OutputPath, Mark
                             SelectionTab
                         )
                     end,
-                    Result = try
-                        ecai_bzip2_stream:fold_lines(
-                            DownloadPath,
-                            Fold,
-                            Initial,
-                            #{max_line_bytes => maps:get(cirrus_max_line_bytes, Runtime)}
-                        )
-                    after
-                        ok = file:sync(Out),
-                        ok = file:close(Out)
-                    end,
+                    Result =
+                        try
+                            ecai_bzip2_stream:fold_lines(
+                                DownloadPath,
+                                Fold,
+                                Initial,
+                                #{max_line_bytes => maps:get(cirrus_max_line_bytes, Runtime)}
+                            )
+                        after
+                            ok = file:sync(Out),
+                            ok = file:close(Out)
+                        end,
                     case Result of
                         {ok, State1, StreamStats} ->
                             case file:rename(Tmp, OutputPath) of
@@ -194,10 +198,12 @@ extract_shard_fresh(Runtime, Source, SelectionTab, ProgressFun, OutputPath, Mark
                                         unselected => maps:get(unselected, State1),
                                         malformed => maps:get(malformed, State1)
                                     },
-                                    case atomic_write(
-                                        MarkerPath,
-                                        jsx:encode(ecai_index_job_codec:externalize(Meta))
-                                    ) of
+                                    case
+                                        atomic_write(
+                                            MarkerPath,
+                                            jsx:encode(ecai_index_job_codec:externalize(Meta))
+                                        )
+                                    of
                                         ok ->
                                             maybe_delete_download(Runtime, DownloadPath),
                                             safe_progress(ProgressFun, #{
@@ -252,7 +258,8 @@ process_cirrus_line(Line, State0, Runtime, SelectionTab) ->
 
 classify_line(Map, _Expecting) when is_map(Map) ->
     case is_bulk_action(Map) of
-        true -> action;
+        true ->
+            action;
         false ->
             case maps:get(<<"_source">>, Map, undefined) of
                 Source when is_map(Source) -> {source, Source};
@@ -297,14 +304,16 @@ process_source_map(Source, State0, Runtime, SelectionTab) ->
 -spec normalize_document(map(), map(), map(), binary()) -> {ok, map()} | {error, term()}.
 normalize_document(Source, Visibility, Runtime, Title0) ->
     try
-        Title = case Title0 of
-            <<>> -> maps:get(title, Visibility);
-            _ -> Title0
-        end,
-        PageId = case first_integer(Source, [<<"page_id">>, <<"pageid">>, <<"id">>]) of
-            undefined -> maps:get(page_id, Visibility);
-            Value -> Value
-        end,
+        Title =
+            case Title0 of
+                <<>> -> maps:get(title, Visibility);
+                _ -> Title0
+            end,
+        PageId =
+            case first_integer(Source, [<<"page_id">>, <<"pageid">>, <<"id">>]) of
+                undefined -> maps:get(page_id, Visibility);
+                Value -> Value
+            end,
         Abstract0 = first_text(
             Source,
             [
@@ -339,11 +348,13 @@ normalize_document(Source, Visibility, Runtime, Title0) ->
             },
             <<"main_entity">> => #{<<"identifier">> => Wikidata},
             <<"date_modified">> => DateModified,
-            <<"license">> => [#{
-                <<"identifier">> => <<"CC-BY-SA">>,
-                <<"name">> => <<"Creative Commons Attribution-ShareAlike">>,
-                <<"url">> => <<"https://creativecommons.org/licenses/by-sa/4.0/">>
-            }],
+            <<"license">> => [
+                #{
+                    <<"identifier">> => <<"CC-BY-SA">>,
+                    <<"name">> => <<"Creative Commons Attribution-ShareAlike">>,
+                    <<"url">> => <<"https://creativecommons.org/licenses/by-sa/4.0/">>
+                }
+            ],
             <<"categories">> => Categories,
             <<"redirects">> => Redirects,
             <<"visibility">> => #{
@@ -374,8 +385,10 @@ finalize_ranked(Runtime, ProgressFun) when is_map(Runtime), is_function(Progress
         {ok, Meta} ->
             maybe_cleanup_extracted(Runtime),
             {ok, Meta#{cached => true}};
-        not_found -> finalize_ranked_fresh(Runtime, ProgressFun, MarkerPath);
-        {error, _Reason} = Error -> Error
+        not_found ->
+            finalize_ranked_fresh(Runtime, ProgressFun, MarkerPath);
+        {error, _Reason} = Error ->
+            Error
     end;
 finalize_ranked(_Runtime, _ProgressFun) ->
     {error, badarg}.
@@ -408,10 +421,12 @@ finalize_ranked_fresh(Runtime, ProgressFun, MarkerPath) ->
                                  || Path <- Files
                                 ]
                             },
-                            case atomic_write(
-                                filename:join(TmpDir, "COMPLETE.json"),
-                                jsx:encode(ecai_index_job_codec:externalize(Meta0))
-                            ) of
+                            case
+                                atomic_write(
+                                    filename:join(TmpDir, "COMPLETE.json"),
+                                    jsx:encode(ecai_index_job_codec:externalize(Meta0))
+                                )
+                            of
                                 ok ->
                                     case publish_directory(TmpDir, maps:get(index_dir, Runtime)) of
                                         ok ->
@@ -424,16 +439,20 @@ finalize_ranked_fresh(Runtime, ProgressFun, MarkerPath) ->
                                             }),
                                             maybe_cleanup_extracted(Runtime),
                                             {ok, Meta};
-                                        {error, _Reason} = Error -> Error
+                                        {error, _Reason} = Error ->
+                                            Error
                                     end;
                                 {error, Reason} ->
                                     {error, {index_complete_write_failed, Reason}}
                             end;
-                        {error, _Reason} = Error -> Error
+                        {error, _Reason} = Error ->
+                            Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec index_files(map()) -> [binary()].
@@ -447,7 +466,8 @@ index_files(Runtime) ->
                 lists:prefix("index-", Name),
                 filename:extension(Name) =:= ".jsonl"
             ];
-        {error, _Reason} -> []
+        {error, _Reason} ->
+            []
     end.
 
 -spec extracted_files(map()) -> [file:filename_all()].
@@ -460,31 +480,46 @@ extracted_files(Runtime) ->
              || Name <- lists:sort(Names),
                 lists:suffix(".selected.jsonl", Name)
             ];
-        {error, _Reason} -> []
+        {error, _Reason} ->
+            []
     end.
 
-collect_valid_ranks([], Set, Count) -> {ok, Set, Count};
+collect_valid_ranks([], Set, Count) ->
+    {ok, Set, Count};
 collect_valid_ranks([Path | Rest], Set0, Count0) ->
-    case fold_jsonl(Path, fun(Map, {Set, Count}) ->
-        Rank = visibility_integer(Map, <<"rank">>, 0),
-        case Rank > 0 of
-            true -> {ok, {gb_sets:add(Rank, Set), Count + 1}};
-            false -> {ok, {Set, Count}}
-        end
-    end, {Set0, Count0}) of
+    case
+        fold_jsonl(
+            Path,
+            fun(Map, {Set, Count}) ->
+                Rank = visibility_integer(Map, <<"rank">>, 0),
+                case Rank > 0 of
+                    true -> {ok, {gb_sets:add(Rank, Set), Count + 1}};
+                    false -> {ok, {Set, Count}}
+                end
+            end,
+            {Set0, Count0}
+        )
+    of
         {ok, {Set1, Count1}} -> collect_valid_ranks(Rest, Set1, Count1);
         {error, _Reason} = Error -> Error
     end.
 
-write_chosen_records([], _ChosenSet, Writer) -> {ok, Writer};
+write_chosen_records([], _ChosenSet, Writer) ->
+    {ok, Writer};
 write_chosen_records([Path | Rest], ChosenSet, Writer0) ->
-    case fold_jsonl(Path, fun(Map, Writer) ->
-        Rank = visibility_integer(Map, <<"rank">>, 0),
-        case gb_sets:is_member(Rank, ChosenSet) of
-            true -> ranked_writer_write(Writer, Rank, jsx:encode(Map));
-            false -> {ok, Writer}
-        end
-    end, Writer0) of
+    case
+        fold_jsonl(
+            Path,
+            fun(Map, Writer) ->
+                Rank = visibility_integer(Map, <<"rank">>, 0),
+                case gb_sets:is_member(Rank, ChosenSet) of
+                    true -> ranked_writer_write(Writer, Rank, jsx:encode(Map));
+                    false -> {ok, Writer}
+                end
+            end,
+            Writer0
+        )
+    of
         {ok, Writer1} -> write_chosen_records(Rest, ChosenSet, Writer1);
         {error, _Reason} = Error -> Error
     end.
@@ -524,9 +559,11 @@ ranked_writer_write_unique(Writer0, Line) ->
                         true -> close_current_ranked_file(Writer2);
                         false -> {ok, Writer2}
                     end;
-                {error, Reason} -> {error, {index_input_write_failed, Reason}}
+                {error, Reason} ->
+                    {error, {index_input_write_failed, Reason}}
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 ensure_ranked_writer_open(#{current_fd := Fd} = Writer) when Fd =/= undefined ->
@@ -544,15 +581,22 @@ ensure_ranked_writer_open(Writer0) ->
                 current_final => Final,
                 current_lines => 0
             }};
-        {error, Reason} -> {error, {index_input_open_failed, Final, Reason}}
+        {error, Reason} ->
+            {error, {index_input_open_failed, Final, Reason}}
     end.
 
-close_current_ranked_file(#{current_fd := undefined} = Writer) -> {ok, Writer};
+close_current_ranked_file(#{current_fd := undefined} = Writer) ->
+    {ok, Writer};
 close_current_ranked_file(Writer0) ->
     Fd = maps:get(current_fd, Writer0),
     Tmp = maps:get(current_tmp, Writer0),
     Final = maps:get(current_final, Writer0),
-    Result = try file:sync(Fd) after ok = file:close(Fd) end,
+    Result =
+        try
+            file:sync(Fd)
+        after
+            ok = file:close(Fd)
+        end,
     case Result of
         ok ->
             case file:rename(Tmp, Final) of
@@ -565,34 +609,47 @@ close_current_ranked_file(Writer0) ->
                         current_lines => 0,
                         files => [Final | maps:get(files, Writer0)]
                     }};
-                {error, Reason} -> {error, {index_input_rename_failed, Reason}}
+                {error, Reason} ->
+                    {error, {index_input_rename_failed, Reason}}
             end;
-        {error, Reason} -> {error, {index_input_sync_failed, Reason}}
+        {error, Reason} ->
+            {error, {index_input_sync_failed, Reason}}
     end.
 
 close_ranked_writer(Writer0) ->
     Seen = maps:get(seen_ranks, Writer0, undefined),
-    Result = case close_current_ranked_file(Writer0) of
-        {ok, Writer1} ->
-            {ok, lists:reverse(maps:get(files, Writer1)), maps:get(total_lines, Writer1)};
-        {error, _Reason} = Error -> Error
-    end,
+    Result =
+        case close_current_ranked_file(Writer0) of
+            {ok, Writer1} ->
+                {ok, lists:reverse(maps:get(files, Writer1)), maps:get(total_lines, Writer1)};
+            {error, _Reason} = Error ->
+                Error
+        end,
     case Seen of
-        undefined -> ok;
-        _ -> _ = ets:delete(Seen), ok
+        undefined ->
+            ok;
+        _ ->
+            _ = ets:delete(Seen),
+            ok
     end,
     Result.
 
 fold_jsonl(Path, Fun, Acc0) ->
     case file:open(Path, [read, raw, binary]) of
         {ok, Fd} ->
-            try fold_jsonl_loop(Fd, Path, Fun, Acc0, 1) after ok = file:close(Fd) end;
-        {error, Reason} -> {error, {jsonl_open_failed, Path, Reason}}
+            try
+                fold_jsonl_loop(Fd, Path, Fun, Acc0, 1)
+            after
+                ok = file:close(Fd)
+            end;
+        {error, Reason} ->
+            {error, {jsonl_open_failed, Path, Reason}}
     end.
 
 fold_jsonl_loop(Fd, Path, Fun, Acc0, LineNo) ->
     case file:read_line(Fd) of
-        eof -> {ok, Acc0};
+        eof ->
+            {ok, Acc0};
         {ok, Line} ->
             case decode_json(Line) of
                 {ok, Map} ->
@@ -601,9 +658,11 @@ fold_jsonl_loop(Fd, Path, Fun, Acc0, LineNo) ->
                         {error, _Reason} = Error -> Error;
                         Other -> {error, {invalid_jsonl_fold_return, Other}}
                     end;
-                {error, Reason} -> {error, {invalid_jsonl_line, Path, LineNo, Reason}}
+                {error, Reason} ->
+                    {error, {invalid_jsonl_line, Path, LineNo, Reason}}
             end;
-        {error, Reason} -> {error, {jsonl_read_failed, Path, Reason}}
+        {error, Reason} ->
+            {error, {jsonl_read_failed, Path, Reason}}
     end.
 
 visibility_integer(Map, Key, Default) ->
@@ -613,15 +672,21 @@ visibility_integer(Map, Key, Default) ->
                 Value when is_integer(Value) -> Value;
                 _ -> Default
             end;
-        _ -> Default
+        _ ->
+            Default
     end.
 
 first_integer(Map, Keys) ->
     case first_value(Map, Keys, undefined) of
         Value when is_integer(Value) -> Value;
         Bin when is_binary(Bin) ->
-            try binary_to_integer(Bin) catch error:badarg -> undefined end;
-        _ -> undefined
+            try
+                binary_to_integer(Bin)
+            catch
+                error:badarg -> undefined
+            end;
+        _ ->
+            undefined
     end.
 
 first_binary(Map, Keys, Default) ->
@@ -633,13 +698,15 @@ first_binary(Map, Keys, Default) ->
                 false -> Default
             end;
         Value when is_integer(Value) -> integer_to_binary(Value);
-        _ -> Default
+        _ ->
+            Default
     end.
 
 first_text(Map, Keys) ->
     first_nonempty_text(Map, Keys).
 
-first_nonempty_text(_Map, []) -> <<>>;
+first_nonempty_text(_Map, []) ->
+    <<>>;
 first_nonempty_text(Map, [Key | Rest]) ->
     case maps:find(Key, Map) of
         {ok, Value} when Value =/= null ->
@@ -647,10 +714,12 @@ first_nonempty_text(Map, [Key | Rest]) ->
                 <<>> -> first_nonempty_text(Map, Rest);
                 Text -> Text
             end;
-        _ -> first_nonempty_text(Map, Rest)
+        _ ->
+            first_nonempty_text(Map, Rest)
     end.
 
-first_value(_Map, [], Default) -> Default;
+first_value(_Map, [], Default) ->
+    Default;
 first_value(Map, [Key | Rest], Default) ->
     case maps:find(Key, Map) of
         {ok, Value} when Value =/= null -> Value;
@@ -660,7 +729,8 @@ first_value(Map, [Key | Rest], Default) ->
 text_value(Bin) when is_binary(Bin) -> Bin;
 text_value(List) when is_list(List) ->
     case is_string_list(List) of
-        true -> unicode:characters_to_binary(List);
+        true ->
+            unicode:characters_to_binary(List);
         false ->
             iolist_to_binary(
                 lists:join(<<"\n">>, [text_value(Item) || Item <- List])
@@ -670,7 +740,8 @@ text_value(Map) when is_map(Map) ->
     first_text(Map, [<<"plain">>, <<"text">>, <<"value">>]);
 text_value(Value) when is_integer(Value); is_float(Value) ->
     unicode:characters_to_binary(io_lib:format("~p", [Value]));
-text_value(_Other) -> <<>>.
+text_value(_Other) ->
+    <<>>.
 
 string_list(List) when is_list(List) ->
     lists:usort([
@@ -679,7 +750,8 @@ string_list(List) when is_list(List) ->
         byte_size(text_value(Item)) > 0
     ]);
 string_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> [Bin];
-string_list(_Other) -> [].
+string_list(_Other) ->
+    [].
 
 redirect_titles(List) when is_list(List) ->
     lists:usort([
@@ -690,11 +762,13 @@ redirect_titles(List) when is_list(List) ->
      || Item <- List,
         redirect_nonempty(Item)
     ]);
-redirect_titles(_Other) -> [].
+redirect_titles(_Other) ->
+    [].
 
 redirect_nonempty(Map) when is_map(Map) ->
     first_binary(Map, [<<"title">>, <<"name">>], <<>>) =/= <<>>;
-redirect_nonempty(Value) -> text_value(Value) =/= <<>>.
+redirect_nonempty(Value) ->
+    text_value(Value) =/= <<>>.
 
 canonical_url(Runtime, Source, Title) ->
     case first_binary(Source, [<<"url">>, <<"canonical_url">>], <<>>) of
@@ -702,7 +776,8 @@ canonical_url(Runtime, Source, Title) ->
             Project = maps:get(pageview_project, Runtime),
             EncodedTitle = url_title(Title),
             <<"https://", Project/binary, "/wiki/", EncodedTitle/binary>>;
-        Url -> Url
+        Url ->
+            Url
     end.
 
 url_title(Title0) ->
@@ -724,10 +799,11 @@ language_code(Project) ->
     end.
 
 utf8_prefix(Bin0, MaxBytes) ->
-    Bin = case ecai_chunker:validate_utf8(Bin0) of
-        ok -> Bin0;
-        {error, _Reason} -> <<>>
-    end,
+    Bin =
+        case ecai_chunker:validate_utf8(Bin0) of
+            ok -> Bin0;
+            {error, _Reason} -> <<>>
+        end,
     case byte_size(Bin) =< MaxBytes of
         true -> Bin;
         false -> utf8_prefix_shrink(Bin, MaxBytes)
@@ -741,14 +817,16 @@ utf8_prefix_shrink(Bin, Size) ->
         {error, _Reason} -> utf8_prefix_shrink(Bin, Size - 1)
     end.
 
-maybe_publish_file(#{publish_extracted_ipfs := false}, _Path) -> null;
+maybe_publish_file(#{publish_extracted_ipfs := false}, _Path) ->
+    null;
 maybe_publish_file(_Runtime, Path) ->
     case normalize_add_response(damage_ipfs:add({file, Path})) of
         {ok, Cid} -> Cid;
         {error, Reason} -> #{error => ecai_index_job_codec:externalize(Reason)}
     end.
 
-maybe_cleanup_extracted(#{keep_intermediates := true}) -> ok;
+maybe_cleanup_extracted(#{keep_intermediates := true}) ->
+    ok;
 maybe_cleanup_extracted(Runtime) ->
     %% Exact top-N index input is now durable. Remove the oversampled extracted
     %% shard files so a completed job retains only the material needed for
@@ -759,7 +837,8 @@ maybe_cleanup_extracted(Runtime) ->
 maybe_delete_download(#{keep_downloads := false}, Path) ->
     _ = file:delete(Path),
     ok;
-maybe_delete_download(_Runtime, _Path) -> ok.
+maybe_delete_download(_Runtime, _Path) ->
+    ok.
 
 read_marker(Path) ->
     case file:read_file(Path) of
@@ -770,8 +849,10 @@ read_marker(Path) ->
             catch
                 error:Reason -> {error, {invalid_marker, Path, Reason}}
             end;
-        {error, enoent} -> not_found;
-        {error, Reason} -> {error, {marker_read_failed, Path, Reason}}
+        {error, enoent} ->
+            not_found;
+        {error, Reason} ->
+            {error, {marker_read_failed, Path, Reason}}
     end.
 
 external_marker_to_internal(Map) ->
@@ -803,7 +884,6 @@ decode_json(Line0) ->
         error:Reason -> {error, {invalid_json, Reason}}
     end.
 
-
 %% OTP compatibility: avoid binary:trim/3 and remove only line-ending bytes.
 trim_line_end(Bin) when is_binary(Bin) ->
     trim_line_end(Bin, byte_size(Bin)).
@@ -820,22 +900,28 @@ trim_line_end(Bin, Size) ->
 strip_suffix(Bin, Suffix) ->
     BinSize = byte_size(Bin),
     SuffixSize = byte_size(Suffix),
-    case BinSize >= SuffixSize andalso
-        binary:part(Bin, BinSize - SuffixSize, SuffixSize) =:= Suffix
+    case
+        BinSize >= SuffixSize andalso
+            binary:part(Bin, BinSize - SuffixSize, SuffixSize) =:= Suffix
     of
         true -> binary:part(Bin, 0, BinSize - SuffixSize);
         false -> Bin
     end.
 
-is_string_list([]) -> true;
+is_string_list([]) ->
+    true;
 is_string_list([H | T]) when is_integer(H), H >= 0, H =< 16#10FFFF ->
     is_string_list(T);
-is_string_list(_Other) -> false.
+is_string_list(_Other) ->
+    false.
 
 hash_file(Path) ->
     {ok, Fd} = file:open(Path, [read, raw, binary]),
-    try hash_file_loop(Fd, crypto:hash_init(sha256))
-    after ok = file:close(Fd) end.
+    try
+        hash_file_loop(Fd, crypto:hash_init(sha256))
+    after
+        ok = file:close(Fd)
+    end.
 
 hash_file_loop(Fd, Context) ->
     case file:read(Fd, 1048576) of
@@ -855,17 +941,19 @@ atomic_write(Path, Bytes) ->
     Tmp = Path ++ ".tmp",
     case file:open(Tmp, [write, raw, binary]) of
         {ok, Fd} ->
-            Result = try
-                ok = file:write(Fd, Bytes),
-                file:sync(Fd)
-            after
-                ok = file:close(Fd)
-            end,
+            Result =
+                try
+                    ok = file:write(Fd, Bytes),
+                    file:sync(Fd)
+                after
+                    ok = file:close(Fd)
+                end,
             case Result of
                 ok -> file:rename(Tmp, Path);
                 {error, _Reason} = Error -> Error
             end;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 publish_directory(TmpDir, FinalDir) ->
@@ -878,11 +966,16 @@ publish_directory(TmpDir, FinalDir) ->
 last_or_zero([]) -> 0;
 last_or_zero(List) -> lists:last(List).
 
-normalize_add_response({ok, Value}) -> normalize_add_response(Value);
-normalize_add_response([Value]) -> normalize_add_response(Value);
-normalize_add_response(#{hash := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"Hash">> := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"hash">> := Value}) -> normalize_add_response(Value);
+normalize_add_response({ok, Value}) ->
+    normalize_add_response(Value);
+normalize_add_response([Value]) ->
+    normalize_add_response(Value);
+normalize_add_response(#{hash := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"Hash">> := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"hash">> := Value}) ->
+    normalize_add_response(Value);
 normalize_add_response(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> {ok, Bin};
 normalize_add_response(List) when is_list(List), List =/= [] ->
     try unicode:characters_to_binary(string:trim(List)) of
@@ -891,11 +984,17 @@ normalize_add_response(List) when is_list(List), List =/= [] ->
     catch
         _:_ -> {error, invalid_cid}
     end;
-normalize_add_response({error, _Reason} = Error) -> Error;
-normalize_add_response(Other) -> {error, {invalid_ipfs_add_response, Other}}.
+normalize_add_response({error, _Reason} = Error) ->
+    Error;
+normalize_add_response(Other) ->
+    {error, {invalid_ipfs_add_response, Other}}.
 
 safe_progress(Fun, Progress) ->
-    try Fun(Progress) of _ -> ok catch _:_ -> ok end.
+    try Fun(Progress) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
 
 bounded_integer(Key, Map, Default, Min, Max) ->
     case maps:get(Key, Map, Default) of
@@ -918,14 +1017,19 @@ remove_tree(Path) ->
                             ),
                             _ = file:del_dir(Path),
                             ok;
-                        {error, _Reason} -> ok
+                        {error, _Reason} ->
+                            ok
                     end;
-                _ -> _ = file:delete(Path), ok
+                _ ->
+                    _ = file:delete(Path),
+                    ok
             end;
-        {error, _Reason} -> ok
+        {error, _Reason} ->
+            ok
     end.
 
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     unicode:characters_to_list(Bin);
 path_list(List) when is_list(List), List =/= [] -> List;
-path_list(_Other) -> erlang:error(badarg).
+path_list(_Other) ->
+    erlang:error(badarg).

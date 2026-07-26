@@ -393,7 +393,11 @@ handle_call({artifact_ready, JobId, Artifact, Result}, _From, State0) ->
     case lookup_job(JobId, State0) of
         {ok, #{state := finalizing} = Job0} when is_map(Artifact) ->
             Ready = maps:get(ready_to_mint, Artifact, false),
-            FinalState = case Ready of true -> ready_to_mint; false -> completed end,
+            FinalState =
+                case Ready of
+                    true -> ready_to_mint;
+                    false -> completed
+                end,
             JobBase = maps:remove(worker_pid, Job0#{
                 state => FinalState,
                 artifact => Artifact,
@@ -474,11 +478,14 @@ enqueue_job(Spec, EnqueueOpts, State0 = #st{store = Store}) ->
                 SpecHash ->
                     {{ok, public_job(Existing, State0)}, State0};
                 ExistingHash ->
-                    {{error, {
-                        idempotency_conflict,
-                        safe_hash_hex(ExistingHash),
-                        safe_hash_hex(SpecHash)
-                    }}, State0}
+                    {
+                        {error, {
+                            idempotency_conflict,
+                            safe_hash_hex(ExistingHash),
+                            safe_hash_hex(SpecHash)
+                        }},
+                        State0
+                    }
             end;
         not_found ->
             case ensure_queue_capacity(Owner, State0) of
@@ -731,11 +738,12 @@ finish_worker_state(JobId, FinalState, Checkpoint, Error, State0) ->
     end.
 
 finish_active_worker_state(JobId, Job0, FinalState, Checkpoint, Error, State0) ->
-    FinishedAt = case FinalState of
-        failed -> now_ms();
-        canceled -> now_ms();
-        _ -> undefined
-    end,
+    FinishedAt =
+        case FinalState of
+            failed -> now_ms();
+            canceled -> now_ms();
+            _ -> undefined
+        end,
     JobBase0 = Job0#{
         state => FinalState,
         updated_at_ms => now_ms(),
@@ -743,10 +751,11 @@ finish_active_worker_state(JobId, Job0, FinalState, Checkpoint, Error, State0) -
         error => Error,
         progress => (maps:get(progress, Job0, #{}))#{phase => FinalState}
     },
-    JobBase1 = case Checkpoint of
-        undefined -> JobBase0;
-        _ when is_map(Checkpoint) -> JobBase0#{checkpoint => Checkpoint}
-    end,
+    JobBase1 =
+        case Checkpoint of
+            undefined -> JobBase0;
+            _ when is_map(Checkpoint) -> JobBase0#{checkpoint => Checkpoint}
+        end,
     JobBase = maps:remove(worker_pid, JobBase1),
     StateA = remove_running(JobId, State0),
     {Job1, State1} = emit_event(
@@ -838,7 +847,8 @@ handle_worker_down(JobId, Reason, State0) ->
     case lookup_job(JobId, State0) of
         {ok, Job} ->
             case terminal_or_stopped(maps:get(state, Job)) of
-                true -> State0;
+                true ->
+                    State0;
                 false ->
                     JobBase = maps:remove(worker_pid, Job#{
                         state => failed,
@@ -936,13 +946,16 @@ existing_idempotent_job(Store, Jobs, Owner, Key) ->
                 {ok, Job} -> {ok, Job};
                 error -> {error, {dangling_idempotency_key, JobId}}
             end;
-        not_found -> not_found;
-        {error, _Reason} = Error -> Error
+        not_found ->
+            not_found;
+        {error, _Reason} = Error ->
+            Error
     end.
 
 normalize_enqueue_options(Options) ->
     case maps:get(idempotency_key, Options, maps:get(<<"idempotency_key">>, Options, <<>>)) of
-        <<>> -> {ok, #{idempotency_key => <<>>}};
+        <<>> ->
+            {ok, #{idempotency_key => <<>>}};
         Bin when is_binary(Bin), byte_size(Bin) =< 4096 ->
             {ok, #{idempotency_key => Bin}};
         List when is_list(List) ->
@@ -952,17 +965,19 @@ normalize_enqueue_options(Options) ->
             catch
                 _Class:_Reason -> {error, invalid_idempotency_key}
             end;
-        _ -> {error, invalid_idempotency_key}
+        _ ->
+            {error, invalid_idempotency_key}
     end.
 
 normalize_event_query(AfterSeq, Limit0) when
     is_integer(AfterSeq), AfterSeq >= 0
 ->
-    Limit = case Limit0 of
-        undefined -> ?DEFAULT_EVENT_LIMIT;
-        Value when is_integer(Value), Value > 0, Value =< ?MAX_EVENT_LIMIT -> Value;
-        _ -> invalid
-    end,
+    Limit =
+        case Limit0 of
+            undefined -> ?DEFAULT_EVENT_LIMIT;
+            Value when is_integer(Value), Value > 0, Value =< ?MAX_EVENT_LIMIT -> Value;
+            _ -> invalid
+        end,
     case Limit of
         invalid -> {error, invalid_limit};
         _ -> {ok, AfterSeq, Limit}
@@ -992,13 +1007,16 @@ match_state(Job, Value) -> maps:get(state, Job) =:= normalize_state_filter(Value
 match_kind(_Job, any) -> true;
 match_kind(Job, Value) -> maps:get(kind, maps:get(spec, Job)) =:= normalize_kind_filter(Value).
 
-match_owner(_Job, any) -> true;
-match_owner(Job, Value) -> maps:get(owner, maps:get(spec, Job), <<>>) =:= normalize_binary_filter(Value).
+match_owner(_Job, any) ->
+    true;
+match_owner(Job, Value) ->
+    maps:get(owner, maps:get(spec, Job), <<>>) =:= normalize_binary_filter(Value).
 
 filter_value(Key, Filter, Default) ->
     maps:get(Key, Filter, maps:get(atom_to_binary(Key, utf8), Filter, Default)).
 
-normalize_state_filter(any) -> any;
+normalize_state_filter(any) ->
+    any;
 normalize_state_filter(Value) when is_atom(Value) -> Value;
 normalize_state_filter(Value) when is_binary(Value) ->
     case Value of
@@ -1017,7 +1035,8 @@ normalize_state_filter(Value) when is_binary(Value) ->
         <<"minted">> -> minted;
         _ -> invalid
     end;
-normalize_state_filter(_Value) -> invalid.
+normalize_state_filter(_Value) ->
+    invalid.
 
 normalize_kind_filter(any) -> any;
 normalize_kind_filter(Value) when is_atom(Value) -> Value;
@@ -1041,40 +1060,48 @@ recover_one_job(Store, Job0) ->
     PreviousState = maps:get(state, Job0, failed),
     Job1 = recover_job(Job0),
     RecoveredState = maps:get(state, Job1, failed),
-    Job2 = case RecoveredState =:= PreviousState of
-        true ->
-            ok = ecai_index_job_store:put_job(Store, Job1),
-            Job1;
-        false ->
-            {PersistedJob, RecoveryEvent} = make_event(
-                Job1,
-                recovery,
-                #{
-                    previous_state => PreviousState,
-                    state => RecoveredState,
-                    reason => restart_recovery
-                }
-            ),
-            ok = ecai_index_job_store:put_job_event(
-                Store,
-                PersistedJob,
-                RecoveryEvent
-            ),
-            PersistedJob
-    end,
+    Job2 =
+        case RecoveredState =:= PreviousState of
+            true ->
+                ok = ecai_index_job_store:put_job(Store, Job1),
+                Job1;
+            false ->
+                {PersistedJob, RecoveryEvent} = make_event(
+                    Job1,
+                    recovery,
+                    #{
+                        previous_state => PreviousState,
+                        state => RecoveredState,
+                        reason => restart_recovery
+                    }
+                ),
+                ok = ecai_index_job_store:put_job_event(
+                    Store,
+                    PersistedJob,
+                    RecoveryEvent
+                ),
+                PersistedJob
+        end,
     {maps:get(id, Job2), Job2}.
 
 recover_job(Job0) ->
     Job1 = maps:remove(worker_pid, Job0),
     State = maps:get(state, Job1, failed),
     case State of
-        preparing -> recover_to_queue(Job1, preparing);
-        running -> recover_to_queue(Job1, running);
-        finalizing -> recover_to_queue(Job1, finalizing);
-        pause_requested -> Job1#{state => paused, updated_at_ms => now_ms()};
-        cancel_requested -> Job1#{state => canceled, finished_at_ms => now_ms(), updated_at_ms => now_ms()};
-        minting -> Job1#{state => ready_to_mint, updated_at_ms => now_ms()};
-        _ -> Job1
+        preparing ->
+            recover_to_queue(Job1, preparing);
+        running ->
+            recover_to_queue(Job1, running);
+        finalizing ->
+            recover_to_queue(Job1, finalizing);
+        pause_requested ->
+            Job1#{state => paused, updated_at_ms => now_ms()};
+        cancel_requested ->
+            Job1#{state => canceled, finished_at_ms => now_ms(), updated_at_ms => now_ms()};
+        minting ->
+            Job1#{state => ready_to_mint, updated_at_ms => now_ms()};
+        _ ->
+            Job1
     end.
 
 recover_to_queue(Job0, PreviousState) ->
@@ -1090,28 +1117,35 @@ recover_to_queue(Job0, PreviousState) ->
 enrich_progress(Job, Progress0) ->
     Completed = maps:get(completed, Progress0, 0),
     Total = maps:get(total, Progress0, undefined),
-    Percent = case Total of
-        N when is_integer(N), N > 0, is_number(Completed) ->
-            erlang:min((Completed * 100.0) / N, 100.0);
-        0 -> 100.0;
-        _ -> undefined
-    end,
+    Percent =
+        case Total of
+            N when is_integer(N), N > 0, is_number(Completed) ->
+                erlang:min((Completed * 100.0) / N, 100.0);
+            0 ->
+                100.0;
+            _ ->
+                undefined
+        end,
     RateStartedAt = maps:get(rate_started_at_ms, Job, start_time(Job)),
     RateBase = maps:get(rate_base_completed, Job, 0),
     ElapsedMs = erlang:max(now_ms() - RateStartedAt, 1),
-    DeltaCompleted = case Completed of
-        N0 when is_number(N0) -> erlang:max(N0 - RateBase, 0);
-        _ -> 0
-    end,
-    Rate = case DeltaCompleted of
-        N1 when is_number(N1), N1 > 0 -> N1 * 1000.0 / ElapsedMs;
-        _ -> 0.0
-    end,
-    EtaMs = case {Total, Completed, Rate} of
-        {T, C, R} when is_number(T), is_number(C), T >= C, R > 0 ->
-            trunc((T - C) * 1000.0 / R);
-        _ -> undefined
-    end,
+    DeltaCompleted =
+        case Completed of
+            N0 when is_number(N0) -> erlang:max(N0 - RateBase, 0);
+            _ -> 0
+        end,
+    Rate =
+        case DeltaCompleted of
+            N1 when is_number(N1), N1 > 0 -> N1 * 1000.0 / ElapsedMs;
+            _ -> 0.0
+        end,
+    EtaMs =
+        case {Total, Completed, Rate} of
+            {T, C, R} when is_number(T), is_number(C), T >= C, R > 0 ->
+                trunc((T - C) * 1000.0 / R);
+            _ ->
+                undefined
+        end,
     Progress0#{
         percent => Percent,
         rate_per_second => Rate,
@@ -1122,10 +1156,11 @@ enrich_progress(Job, Progress0) ->
 complete_progress(Progress0, State) ->
     Completed0 = maps:get(completed, Progress0, 0),
     Total = maps:get(total, Progress0, undefined),
-    {Completed, Percent, Eta} = case Total of
-        N when is_number(N), N >= 0 -> {N, 100.0, 0};
-        _ -> {Completed0, undefined, undefined}
-    end,
+    {Completed, Percent, Eta} =
+        case Total of
+            N when is_number(N), N >= 0 -> {N, 100.0, 0};
+            _ -> {Completed0, undefined, undefined}
+        end,
     Progress0#{
         phase => State,
         completed => Completed,

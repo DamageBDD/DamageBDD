@@ -38,15 +38,18 @@ open(BaseDir0) ->
         BaseDir = path_list(BaseDir0),
         ok = filelib:ensure_dir(filename:join(BaseDir, "x")),
         Path = filename:join(BaseDir, "index-jobs.dets"),
-        case dets:open_file(?TABLE, [
-            {file, Path},
-            {type, set},
-            {repair, false},
-            {auto_save, 5000}
-        ]) of
+        case
+            dets:open_file(?TABLE, [
+                {file, Path},
+                {type, set},
+                {repair, false},
+                {auto_save, 5000}
+            ])
+        of
             {ok, Tab} ->
                 case ensure_meta(Tab) of
-                    ok -> {ok, #store{tab = Tab, path = Path}};
+                    ok ->
+                        {ok, #store{tab = Tab, path = Path}};
                     {error, _Reason} = Error ->
                         _ = dets:close(Tab),
                         Error
@@ -111,10 +114,11 @@ create_job(
         {{job, JobId}, Job},
         {{event, JobId, Seq}, Event}
     ],
-    Objects = case IdempotencyKey of
-        <<>> -> Objects0;
-        _ -> [{{idempotency, Owner, IdempotencyKey}, JobId} | Objects0]
-    end,
+    Objects =
+        case IdempotencyKey of
+            <<>> -> Objects0;
+            _ -> [{{idempotency, Owner, IdempotencyKey}, JobId} | Objects0]
+        end,
     dets:insert(Tab, Objects);
 create_job(_Store, _Job, _Event, _Owner, _IdempotencyKey) ->
     {error, badarg}.
@@ -156,17 +160,21 @@ put_idempotency(_Store, _Owner, _Key, _JobId) ->
 -spec replace_idempotency(#store{}, [{binary(), binary(), binary()}]) ->
     ok | {error, term()}.
 replace_idempotency(#store{tab = Tab}, Entries) when is_list(Entries) ->
-    case lists:all(
-        fun({Owner, Key, JobId}) ->
-            is_binary(Owner) andalso is_binary(Key) andalso is_binary(JobId)
-        end,
-        Entries
-    ) of
+    case
+        lists:all(
+            fun({Owner, Key, JobId}) ->
+                is_binary(Owner) andalso is_binary(Key) andalso is_binary(JobId)
+            end,
+            Entries
+        )
+    of
         true ->
-            case dets:match_delete(
-                Tab,
-                {{idempotency, '_', '_'}, '_'}
-            ) of
+            case
+                dets:match_delete(
+                    Tab,
+                    {{idempotency, '_', '_'}, '_'}
+                )
+            of
                 ok ->
                     Objects = [
                         {{idempotency, Owner, Key}, JobId}

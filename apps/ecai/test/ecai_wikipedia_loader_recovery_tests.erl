@@ -50,18 +50,19 @@ bounded_file_replay_is_idempotent_test() ->
         end
     end).
 
-
 malformed_and_invalid_utf8_lines_are_skipped_test() ->
     with_tmp(fun(Dir) ->
         SourcePath = filename:join(Dir, "mixed-wikipedia.jsonl"),
-        Valid = jsx:encode(normalized_record(
-            201,
-            <<"Valid article">>,
-            <<"Physics survives malformed neighbours">>,
-            <<"Q201">>,
-            100,
-            1
-        )),
+        Valid = jsx:encode(
+            normalized_record(
+                201,
+                <<"Valid article">>,
+                <<"Physics survives malformed neighbours">>,
+                <<"Q201">>,
+                100,
+                1
+            )
+        ),
         Bytes = <<
             "{not-json}\n",
             16#C3,
@@ -146,7 +147,8 @@ remove_tree(Path) ->
                         fun(Name) -> remove_tree(filename:join(Path, Name)) end,
                         Names
                     );
-                _ -> ok
+                _ ->
+                    ok
             end,
             _ = file:del_dir(Path),
             ok;

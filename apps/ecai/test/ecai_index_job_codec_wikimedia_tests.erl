@@ -46,7 +46,6 @@ too_many_months_rejected_test() ->
         ecai_index_job_codec:normalize_spec(Invalid)
     ).
 
-
 minimum_active_months_must_fit_window_test() ->
     Base = spec(),
     Options0 = maps:get(<<"options">>, Base),
@@ -66,7 +65,6 @@ invalid_project_token_rejected_test() ->
         {error, {invalid_field, project}},
         ecai_index_job_codec:normalize_spec(Invalid)
     ).
-
 
 auto_mint_is_rejected_until_step4b_test() ->
     Base = spec(),

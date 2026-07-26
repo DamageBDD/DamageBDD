@@ -19,10 +19,11 @@
 ]).
 
 temp_dir() ->
-    Root = case os:getenv("TMPDIR") of
-        false -> "/tmp";
-        Value -> Value
-    end,
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            Value -> Value
+        end,
     Suffix = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Dir = filename:join(Root, "ecai-step03-" ++ Suffix),
     ok = filelib:ensure_dir(filename:join(Dir, "placeholder")),
@@ -177,7 +178,8 @@ remove_path(Path) ->
                                 Names
                             ),
                             ok = file:del_dir(Path);
-                        {error, enoent} -> ok
+                        {error, enoent} ->
+                            ok
                     end;
                 _ ->
                     ok = file:delete(Path)

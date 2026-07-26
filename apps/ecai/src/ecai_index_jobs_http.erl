@@ -98,11 +98,15 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, #{action := collection} = State) ->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State};
 content_types_accepted(Req, State) ->
-    {[
-        {{<<"application">>, <<"json">>, '*'}, from_json},
-        {{<<"application">>, <<"octet-stream">>, '*'}, from_json},
-        {{<<"text">>, <<"plain">>, '*'}, from_json}
-    ], Req, State}.
+    {
+        [
+            {{<<"application">>, <<"json">>, '*'}, from_json},
+            {{<<"application">>, <<"octet-stream">>, '*'}, from_json},
+            {{<<"text">>, <<"plain">>, '*'}, from_json}
+        ],
+        Req,
+        State
+    }.
 
 to_json(Req0, #{action := collection} = State) ->
     Filter0 = query_filter(cowboy_req:parse_qs(Req0)),
@@ -131,12 +135,15 @@ to_json(Req0, #{action := artifact} = State) ->
                 reply_error(Req0, 409, artifact_not_ready, State);
             Artifact ->
                 JobId = maps:get(<<"id">>, Job),
-                NftMetadata = case safe_call(fun() ->
-                    ecai_index_jobs_srv:nft_metadata(JobId)
-                end) of
-                    {ok, {ok, Metadata}} -> Metadata;
-                    _ -> null
-                end,
+                NftMetadata =
+                    case
+                        safe_call(fun() ->
+                            ecai_index_jobs_srv:nft_metadata(JobId)
+                        end)
+                    of
+                        {ok, {ok, Metadata}} -> Metadata;
+                        _ -> null
+                    end,
                 reply_json(
                     Req0,
                     200,
@@ -153,18 +160,25 @@ from_json(Req0, #{action := collection} = State) ->
         {ok, Spec0, Req1} ->
             Spec = bind_authenticated_owner(Spec0, State),
             IdempotencyKey = cowboy_req:header(<<"idempotency-key">>, Req1, <<>>),
-            case safe_call(fun() ->
-                ecai_index_jobs_srv:enqueue(
-                    Spec,
-                    #{idempotency_key => IdempotencyKey}
-                )
-            end) of
+            case
+                safe_call(fun() ->
+                    ecai_index_jobs_srv:enqueue(
+                        Spec,
+                        #{idempotency_key => IdempotencyKey}
+                    )
+                end)
+            of
                 {ok, {ok, Job}} ->
-                    reply_json(Req1, 202, #{
-                        ok => true,
-                        job => Job,
-                        events => events_path(maps:get(<<"id">>, Job))
-                    }, State);
+                    reply_json(
+                        Req1,
+                        202,
+                        #{
+                            ok => true,
+                            job => Job,
+                            events => events_path(maps:get(<<"id">>, Job))
+                        },
+                        State
+                    );
                 {ok, {error, Reason}} ->
                     reply_error(Req1, enqueue_error_code(Reason), Reason, State);
                 {error, Reason} ->
@@ -214,9 +228,12 @@ with_job(Req0, State, Fun) ->
                 true -> Fun(Job);
                 false -> reply_error(Req0, 403, forbidden, State)
             end;
-        {ok, {error, not_found}} -> reply_error(Req0, 404, not_found, State);
-        {ok, {error, Reason}} -> reply_error(Req0, 400, Reason, State);
-        {error, Reason} -> reply_error(Req0, 503, Reason, State)
+        {ok, {error, not_found}} ->
+            reply_error(Req0, 404, not_found, State);
+        {ok, {error, Reason}} ->
+            reply_error(Req0, 400, Reason, State);
+        {error, Reason} ->
+            reply_error(Req0, 503, Reason, State)
     end.
 
 read_json_map(Req0) ->
@@ -269,7 +286,8 @@ scope_filter(Filter, State) ->
 
 authorized_for_job(Job, State) ->
     case authenticated_owner(State) of
-        undefined -> true;
+        undefined ->
+            true;
         Owner ->
             Spec = maps:get(<<"spec">>, Job, #{}),
             maps:get(<<"owner">>, Spec, <<>>) =:= Owner
@@ -284,7 +302,8 @@ authenticated_owner(State) ->
             catch
                 _Class:_Reason -> undefined
             end;
-        _ -> undefined
+        _ ->
+            undefined
     end.
 
 safe_call(Fun) ->
@@ -296,10 +315,15 @@ safe_call(Fun) ->
     end.
 
 reply_error(Req, Code, Reason, State) ->
-    reply_json(Req, Code, #{
-        ok => false,
-        error => ecai_index_job_codec:externalize(Reason)
-    }, State).
+    reply_json(
+        Req,
+        Code,
+        #{
+            ok => false,
+            error => ecai_index_job_codec:externalize(Reason)
+        },
+        State
+    ).
 
 reply_json(Req0, Code, Map, State) ->
     Req1 = cowboy_req:reply(

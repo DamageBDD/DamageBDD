@@ -25,7 +25,6 @@ source_descriptor_detects_change_test() ->
         remove_tree(Dir)
     end.
 
-
 source_identity_does_not_include_local_path_test() ->
     Dir = temp_dir(),
     Path1 = filename:join(Dir, "one/source.ndjson"),
@@ -44,7 +43,11 @@ source_identity_does_not_include_local_path_test() ->
     end.
 
 temp_dir() ->
-    Root = case os:getenv("TMPDIR") of false -> "/tmp"; Value -> Value end,
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            Value -> Value
+        end,
     Dir = filename:join(
         Root,
         "ecai-index-source-" ++
@@ -68,6 +71,8 @@ remove_tree(Path) ->
             ),
             _ = file:del_dir(Path),
             ok;
-        {error, enoent} -> ok;
-        {error, _Reason} -> ok
+        {error, enoent} ->
+            ok;
+        {error, _Reason} ->
+            ok
     end.

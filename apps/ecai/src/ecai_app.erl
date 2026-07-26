@@ -37,9 +37,12 @@ maybe_start_index_jobs(SupPid) ->
                 modules => [ecai_index_jobs_sup]
             },
             case supervisor:start_child(SupPid, ChildSpec) of
-                {ok, _Pid} -> ok;
-                {ok, _Pid, _Info} -> ok;
-                {error, {already_started, _Pid}} -> ok;
+                {ok, _Pid} ->
+                    ok;
+                {ok, _Pid, _Info} ->
+                    ok;
+                {error, {already_started, _Pid}} ->
+                    ok;
                 {error, already_present} ->
                     case supervisor:restart_child(SupPid, ecai_index_jobs_sup) of
                         {ok, _Pid} -> ok;
@@ -47,7 +50,8 @@ maybe_start_index_jobs(SupPid) ->
                         {error, running} -> ok;
                         {error, Reason} -> error({index_jobs_restart_failed, Reason})
                     end;
-                {error, Reason} -> error({index_jobs_start_failed, Reason})
+                {error, Reason} ->
+                    error({index_jobs_start_failed, Reason})
             end;
         false ->
             ok;

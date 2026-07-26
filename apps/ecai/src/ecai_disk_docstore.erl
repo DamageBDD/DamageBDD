@@ -64,7 +64,8 @@ open_existing(Path) ->
     case dets:open_file(Path) of
         {ok, Tab} ->
             case ensure_next(Tab) of
-                ok -> {ok, Tab};
+                ok ->
+                    {ok, Tab};
                 {error, _Reason} = Error ->
                     _ = dets:close(Tab),
                     Error
@@ -90,11 +91,13 @@ create_table_file_if_missing(Path) ->
         true ->
             ok;
         false ->
-            case dets:open_file(?CREATOR_TABLE, [
-                {file, Path},
-                {type, set},
-                {repair, true}
-            ]) of
+            case
+                dets:open_file(?CREATOR_TABLE, [
+                    {file, Path},
+                    {type, set},
+                    {repair, true}
+                ])
+            of
                 {ok, Tab} ->
                     try
                         case ensure_next(Tab) of

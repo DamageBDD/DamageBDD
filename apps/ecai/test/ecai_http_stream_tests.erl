@@ -31,7 +31,9 @@ rejects_unsupported_scheme_test() ->
 
 invalid_arguments_are_rejected_test() ->
     ?assertEqual({error, badarg}, ecai_http_stream:get_binary(<<"https://example.test">>, 0)),
-    ?assertEqual({error, badarg}, ecai_http_stream:download(<<"https://example.test">>, invalid_path, #{})).
+    ?assertEqual(
+        {error, badarg}, ecai_http_stream:download(<<"https://example.test">>, invalid_path, #{})
+    ).
 
 existing_destination_is_a_cache_hit_test() ->
     with_tmp(fun(Dir) ->

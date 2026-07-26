@@ -110,10 +110,15 @@ lookup_subscription(JobId, Pid, #st{subscriptions = Subs}) ->
         error -> not_found
     end.
 
-put_subscription(JobId, Pid, Ref, State = #st{
-    subscriptions = Subs0,
-    monitors = Mons0
-}) ->
+put_subscription(
+    JobId,
+    Pid,
+    Ref,
+    State = #st{
+        subscriptions = Subs0,
+        monitors = Mons0
+    }
+) ->
     JobSubs0 = maps:get(JobId, Subs0, #{}),
     JobSubs1 = JobSubs0#{Pid => Ref},
     State#st{

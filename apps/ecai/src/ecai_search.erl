@@ -172,8 +172,9 @@ new() ->
 %%% Public mutators
 %%%===================================================================
 
-add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record)
-        when is_binary(DocId), is_map(Record) ->
+add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record) when
+    is_binary(DocId), is_map(Record)
+->
     %% Derive terms before reserving an ID so invalid records cannot leave a
     %% half-created document mapping.
     Terms = ecai_terms:terms_from_record(Record),
@@ -436,7 +437,8 @@ preview_text(RecMap) when is_map(RecMap) ->
 preview_text(_) ->
     <<>>.
 
-first_nonempty_record_field(_Map, []) -> <<>>;
+first_nonempty_record_field(_Map, []) ->
+    <<>>;
 first_nonempty_record_field(Map, [Key | Rest]) ->
     case maps:get(Key, Map, <<>>) of
         Bin when is_binary(Bin), byte_size(Bin) > 0 -> Bin;
@@ -444,8 +446,7 @@ first_nonempty_record_field(Map, [Key | Rest]) ->
     end.
 
 preview_prefix(Bin, MaxBytes) when byte_size(Bin) =< MaxBytes -> Bin;
-preview_prefix(Bin, MaxBytes) ->
-    preview_prefix_valid(Bin, MaxBytes).
+preview_prefix(Bin, MaxBytes) -> preview_prefix_valid(Bin, MaxBytes).
 
 preview_prefix_valid(_Bin, Size) when Size =< 0 -> <<>>;
 preview_prefix_valid(Bin, Size) ->
@@ -491,7 +492,6 @@ apply_review_signals(Ctx, ScoreMap) ->
         ScoreMap
     ).
 
-
 %% Apply a bounded popularity signal to visibility-ranked corpora. The
 %% logarithm prevents high-traffic pages from overwhelming textual relevance.
 apply_visibility_signals(Ctx, ScoreMap) ->
@@ -504,10 +504,11 @@ apply_visibility_signals(Ctx, ScoreMap) ->
             Rank = nonnegative_number(maps:get(visibility_rank, Record, 0)),
             ViewBoost = 0.08 * math:log(1.0 + Pageviews),
             StabilityBoost = 0.02 * erlang:min(ActiveMonths, 12),
-            RankBoost = case Rank > 0 of
-                true -> 0.10 / math:sqrt(Rank);
-                false -> 0.0
-            end,
+            RankBoost =
+                case Rank > 0 of
+                    true -> 0.10 / math:sqrt(Rank);
+                    false -> 0.0
+                end,
             Score0 + ViewBoost + StabilityBoost + RankBoost
         end,
         ScoreMap
@@ -1134,11 +1135,12 @@ enable_gpu(Ctx0 = #ctx{}) ->
 disable_gpu(Ctx = #ctx{backend = ets}) ->
     Ctx;
 disable_gpu(Ctx = #ctx{backend = gpu, gpu = H}) ->
-    _ = try ecai_gpu:free(H) of
-        Result -> Result
-    catch
-        _Class:_Reason -> ok
-    end,
+    _ =
+        try ecai_gpu:free(H) of
+            Result -> Result
+        catch
+            _Class:_Reason -> ok
+        end,
     Ctx#ctx{backend = ets, gpu = undefined, term_ids = #{}}.
 
 %% Rebuild device snapshot (call after a bulk index or finalize/1)

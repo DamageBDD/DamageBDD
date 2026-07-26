@@ -34,8 +34,7 @@ open(BaseDir0, Opts) when is_map(Opts) ->
         end
     catch
         error:badarg -> {error, badarg};
-        Class:Reason:Stacktrace ->
-            {error, {activity_open_failed, Class, Reason, Stacktrace}}
+        Class:Reason:Stacktrace -> {error, {activity_open_failed, Class, Reason, Stacktrace}}
     end;
 open(_BaseDir, _Opts) ->
     {error, badarg}.
@@ -45,18 +44,22 @@ open_recovered(Dir, Pending, StatePath, State, Opts) ->
         {ok, PendingEvents0, LastPendingSequence0, RepairedBytes0} ->
             StateSequence = maps:get(sequence, State, 0),
             CommittedSequence = maps:get(committed_sequence, State, 0),
-            case discard_committed_pending(
-                Pending,
-                PendingEvents0,
-                LastPendingSequence0,
-                CommittedSequence,
-                RepairedBytes0
-            ) of
+            case
+                discard_committed_pending(
+                    Pending,
+                    PendingEvents0,
+                    LastPendingSequence0,
+                    CommittedSequence,
+                    RepairedBytes0
+                )
+            of
                 {ok, PendingEvents, LastPendingSequence, RepairedBytes} ->
-                    case pending_sequence_consistent(
-                        StateSequence,
-                        LastPendingSequence
-                    ) of
+                    case
+                        pending_sequence_consistent(
+                            StateSequence,
+                            LastPendingSequence
+                        )
+                    of
                         true ->
                             {ok, #{
                                 dir => Dir,
@@ -206,14 +209,16 @@ publish_pending(Activity) ->
     PendingPath = maps:get(pending_path, Activity),
     Sequence = maps:get(sequence, Activity),
     StartSequence = Sequence - maps:get(pending_events, Activity) + 1,
-    Header = jsx:encode(ecai_index_job_codec:externalize(#{
-        schema => ?SCHEMA,
-        stream_id => maps:get(stream_id, Activity),
-        previous_cid => maps:get(previous_cid, Activity, null),
-        first_sequence => StartSequence,
-        last_sequence => Sequence,
-        event_count => maps:get(pending_events, Activity)
-    })),
+    Header = jsx:encode(
+        ecai_index_job_codec:externalize(#{
+            schema => ?SCHEMA,
+            stream_id => maps:get(stream_id, Activity),
+            previous_cid => maps:get(previous_cid, Activity, null),
+            first_sequence => StartSequence,
+            last_sequence => Sequence,
+            event_count => maps:get(pending_events, Activity)
+        })
+    ),
     BlockPath = filename:join(
         maps:get(dir, Activity),
         lists:flatten(io_lib:format("activity-~12..0B.ndjson", [Sequence]))
@@ -244,26 +249,27 @@ build_block(BlockPath, Header, PendingPath) ->
     Tmp = BlockPath ++ ".tmp",
     case file:open(Tmp, [write, raw, binary]) of
         {ok, Out} ->
-            Result = try
-                ok = file:write(Out, <<Header/binary, "\n">>),
-                case file:open(PendingPath, [read, raw, binary]) of
-                    {ok, In} ->
-                        try
-                            ok = copy_file(In, Out)
-                        after
-                            ok = file:close(In)
-                        end;
-                    {error, Reason0} ->
-                        erlang:error({pending_open_failed, Reason0})
+            Result =
+                try
+                    ok = file:write(Out, <<Header/binary, "\n">>),
+                    case file:open(PendingPath, [read, raw, binary]) of
+                        {ok, In} ->
+                            try
+                                ok = copy_file(In, Out)
+                            after
+                                ok = file:close(In)
+                            end;
+                        {error, Reason0} ->
+                            erlang:error({pending_open_failed, Reason0})
+                    end,
+                    ok = file:sync(Out),
+                    ok
+                catch
+                    Class:Reason:Stacktrace ->
+                        {error, {Class, Reason, Stacktrace}}
+                after
+                    ok = file:close(Out)
                 end,
-                ok = file:sync(Out),
-                ok
-            catch
-                Class:Reason:Stacktrace ->
-                    {error, {Class, Reason, Stacktrace}}
-            after
-                ok = file:close(Out)
-            end,
             case Result of
                 ok ->
                     case file:rename(Tmp, BlockPath) of
@@ -280,11 +286,13 @@ build_block(BlockPath, Header, PendingPath) ->
 
 copy_file(In, Out) ->
     case file:read(In, 1048576) of
-        eof -> ok;
+        eof ->
+            ok;
         {ok, Bin} ->
             ok = file:write(Out, Bin),
             copy_file(In, Out);
-        {error, Reason} -> {error, {read_failed, Reason}}
+        {error, Reason} ->
+            {error, {read_failed, Reason}}
     end.
 
 commit_block(Activity0, Reference, BlockPath, DeleteBlock) ->
@@ -307,9 +315,11 @@ commit_block(Activity0, Reference, BlockPath, DeleteBlock) ->
                         false -> ok
                     end,
                     {ok, Reset};
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 reset_pending(Activity0) ->
@@ -368,12 +378,15 @@ read_state(Path) ->
                             undefined
                         )
                     }};
-                _ -> {error, {activity_state_not_map, Path}}
+                _ ->
+                    {error, {activity_state_not_map, Path}}
             catch
                 error:Reason -> {error, {activity_state_corrupt, Path, Reason}}
             end;
-        {error, enoent} -> not_found;
-        {error, Reason} -> {error, {activity_state_read_failed, Path, Reason}}
+        {error, enoent} ->
+            not_found;
+        {error, Reason} ->
+            {error, {activity_state_read_failed, Path, Reason}}
     end.
 
 recover_pending(Path) ->
@@ -443,11 +456,11 @@ activity_sequence(Line0) ->
                 Sequence when is_integer(Sequence), Sequence > 0 -> {ok, Sequence};
                 Other -> {error, {invalid_sequence, Other}}
             end;
-        _ -> {error, not_map}
+        _ ->
+            {error, not_map}
     catch
         error:Reason -> {error, {invalid_json, Reason}}
     end.
-
 
 %% OTP compatibility: binary:trim/3 is unavailable on some supported OTP
 %% releases. Activity records are line-delimited, so only trailing CR/LF
@@ -471,7 +484,8 @@ truncate_at(Fd, Offset) ->
                 ok -> file:sync(Fd);
                 {error, _Reason} = Error -> Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 discard_committed_pending(
@@ -503,18 +517,21 @@ discard_committed_pending(
 ) ->
     {ok, PendingEvents, LastPendingSequence, RepairedBytes}.
 
-pending_sequence_consistent(_StateSequence, 0) -> true;
+pending_sequence_consistent(_StateSequence, 0) ->
+    true;
 pending_sequence_consistent(StateSequence, LastPendingSequence) ->
     StateSequence =< LastPendingSequence.
 
 hash_file(Path) ->
     case file:open(Path, [read, raw, binary]) of
         {ok, Fd} ->
-            try hash_file_loop(Fd, crypto:hash_init(sha256))
+            try
+                hash_file_loop(Fd, crypto:hash_init(sha256))
             after
                 ok = file:close(Fd)
             end;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 hash_file_loop(Fd, Context) ->
@@ -527,32 +544,44 @@ hash_file_loop(Fd, Context) ->
 append_file(Path, Bytes) ->
     case file:open(Path, [append, raw, binary]) of
         {ok, Fd} ->
-            try file:write(Fd, Bytes) after ok = file:close(Fd) end;
-        {error, Reason} -> {error, Reason}
+            try
+                file:write(Fd, Bytes)
+            after
+                ok = file:close(Fd)
+            end;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 atomic_write(Path, Bytes) ->
     Tmp = Path ++ ".tmp",
     case file:open(Tmp, [write, raw, binary]) of
         {ok, Fd} ->
-            Result = try
-                ok = file:write(Fd, Bytes),
-                file:sync(Fd)
-            after
-                ok = file:close(Fd)
-            end,
+            Result =
+                try
+                    ok = file:write(Fd, Bytes),
+                    file:sync(Fd)
+                after
+                    ok = file:close(Fd)
+                end,
             case Result of
                 ok -> file:rename(Tmp, Path);
                 {error, _Reason} = Error -> Error
             end;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} ->
+            {error, Reason}
     end.
 
-normalize_add_response({ok, Value}) -> normalize_add_response(Value);
-normalize_add_response([Value]) -> normalize_add_response(Value);
-normalize_add_response(#{hash := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"Hash">> := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"hash">> := Value}) -> normalize_add_response(Value);
+normalize_add_response({ok, Value}) ->
+    normalize_add_response(Value);
+normalize_add_response([Value]) ->
+    normalize_add_response(Value);
+normalize_add_response(#{hash := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"Hash">> := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"hash">> := Value}) ->
+    normalize_add_response(Value);
 normalize_add_response(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> {ok, Bin};
 normalize_add_response(List) when is_list(List), List =/= [] ->
     try unicode:characters_to_binary(string:trim(List)) of
@@ -561,8 +590,10 @@ normalize_add_response(List) when is_list(List), List =/= [] ->
     catch
         _:_ -> {error, invalid_cid}
     end;
-normalize_add_response({error, _Reason} = Error) -> Error;
-normalize_add_response(Other) -> {error, {invalid_ipfs_add_response, Other}}.
+normalize_add_response({error, _Reason} = Error) ->
+    Error;
+normalize_add_response(Other) ->
+    {error, {invalid_ipfs_add_response, Other}}.
 
 file_size(Path) ->
     case file:read_file_info(Path) of
@@ -582,4 +613,5 @@ integer_value(_Value, Default) -> Default.
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     unicode:characters_to_list(Bin);
 path_list(List) when is_list(List), List =/= [] -> List;
-path_list(_Other) -> erlang:error(badarg).
+path_list(_Other) ->
+    erlang:error(badarg).

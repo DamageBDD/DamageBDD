@@ -87,7 +87,11 @@ restore_env(Key, undefined) ->
     application:unset_env(ecai, Key).
 
 temp_dir() ->
-    Root = case os:getenv("TMPDIR") of false -> "/tmp"; Value -> Value end,
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            Value -> Value
+        end,
     Dir = filename:join(
         Root,
         "ecai-index-artifact-" ++
@@ -111,8 +115,10 @@ remove_tree(Path) ->
             ),
             _ = file:del_dir(Path),
             ok;
-        {error, enoent} -> ok;
-        {error, _Reason} -> ok
+        {error, enoent} ->
+            ok;
+        {error, _Reason} ->
+            ok
     end.
 
 nft_metadata_rejects_unfinished_job_test() ->

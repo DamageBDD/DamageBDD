@@ -104,7 +104,8 @@ finalize(#{id := JobId, spec := Spec} = Job, AdapterResult) ->
                     result => AdapterResult
                 }}
             catch
-                throw:{artifact_error, Reason} -> {error, Reason};
+                throw:{artifact_error, Reason} ->
+                    {error, Reason};
                 Class:Reason:Stacktrace ->
                     {error, {artifact_finalize_failed, Class, Reason, Stacktrace}}
             end
@@ -135,7 +136,6 @@ nft_metadata(#{artifact := Artifact, spec := Spec}) when is_map(Artifact) ->
     end;
 nft_metadata(_Other) ->
     {error, artifact_not_ready}.
-
 
 source_identity(Spec, AdapterResult) ->
     Kind = maps:get(kind, Spec),
@@ -308,8 +308,7 @@ maybe_publish_manifest(Path, Bytes, Digest, true) ->
         {ok, Cid} ->
             case verify_published_manifest(Cid, Bytes, Digest) of
                 ok -> Cid;
-                {error, Reason} ->
-                    artifact_error({manifest_ipfs_verification_failed, Cid, Reason})
+                {error, Reason} -> artifact_error({manifest_ipfs_verification_failed, Cid, Reason})
             end;
         {error, Reason} ->
             artifact_error({manifest_ipfs_publish_failed, Reason})
@@ -339,11 +338,16 @@ identity_file(File) ->
 manifest_file(File) ->
     maps:without([local_path], File).
 
-normalize_add_response({ok, Value}) -> normalize_add_response(Value);
-normalize_add_response([Value]) -> normalize_add_response(Value);
-normalize_add_response(#{hash := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"Hash">> := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"hash">> := Value}) -> normalize_add_response(Value);
+normalize_add_response({ok, Value}) ->
+    normalize_add_response(Value);
+normalize_add_response([Value]) ->
+    normalize_add_response(Value);
+normalize_add_response(#{hash := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"Hash">> := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"hash">> := Value}) ->
+    normalize_add_response(Value);
 normalize_add_response(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> {ok, Bin};
 normalize_add_response(List) when is_list(List), List =/= [] ->
     try unicode:characters_to_binary(string:trim(List)) of
@@ -352,8 +356,10 @@ normalize_add_response(List) when is_list(List), List =/= [] ->
     catch
         _Class:_Reason -> {error, invalid_cid}
     end;
-normalize_add_response({error, _Reason} = Error) -> Error;
-normalize_add_response(Other) -> {error, {invalid_ipfs_add_response, Other}}.
+normalize_add_response({error, _Reason} = Error) ->
+    Error;
+normalize_add_response(Other) ->
+    {error, {invalid_ipfs_add_response, Other}}.
 
 artifact_dir(JobId) ->
     Root0 = application:get_env(

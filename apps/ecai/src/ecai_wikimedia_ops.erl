@@ -61,11 +61,14 @@ plan(Overrides) when is_map(Overrides) ->
                             <<"Pause and cancel take effect between recoverable work units.">>
                         ]
                     }};
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end;
-plan(_Overrides) -> {error, badarg}.
+plan(_Overrides) ->
+    {error, badarg}.
 
 -spec genesis_spec() -> map().
 genesis_spec() -> genesis_spec(#{}).
@@ -165,7 +168,8 @@ genesis_spec(Overrides) when is_map(Overrides) ->
             <<"auto_mint">> => false
         }
     };
-genesis_spec(_Overrides) -> erlang:error(badarg).
+genesis_spec(_Overrides) ->
+    erlang:error(badarg).
 
 -spec enqueue_genesis() -> {ok, map()} | {error, term()}.
 enqueue_genesis() -> enqueue_genesis(#{}).
@@ -179,7 +183,8 @@ enqueue_genesis(Overrides) when is_map(Overrides) ->
         default_idempotency_key(Spec)
     ),
     ecai_index_jobs_srv:enqueue(Spec, #{idempotency_key => Key});
-enqueue_genesis(_Overrides) -> {error, badarg}.
+enqueue_genesis(_Overrides) ->
+    {error, badarg}.
 
 status(JobId) -> ecai_index_jobs_srv:get(JobId).
 list_jobs() -> ecai_index_jobs_srv:list(#{kind => wikimedia_visibility, limit => 100}).

@@ -25,7 +25,11 @@ anonymous_docstore_round_trip_test() ->
     end.
 
 temp_dir() ->
-    Root = case os:getenv("TMPDIR") of false -> "/tmp"; Value -> Value end,
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            Value -> Value
+        end,
     Dir = filename:join(
         Root,
         "ecai-docstore-step04a-" ++
@@ -49,6 +53,8 @@ remove_tree(Path) ->
             ),
             _ = file:del_dir(Path),
             ok;
-        {error, enoent} -> ok;
-        {error, _Reason} -> ok
+        {error, enoent} ->
+            ok;
+        {error, _Reason} ->
+            ok
     end.

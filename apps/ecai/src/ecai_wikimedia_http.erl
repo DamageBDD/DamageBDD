@@ -88,13 +88,16 @@ to_json(Req0, #{action := plan} = State) ->
 to_json(Req0, #{action := search} = State) ->
     Query = maps:from_list(cowboy_req:parse_qs(Req0)),
     case maps:get(<<"q">>, Query, <<>>) of
-        <<>> -> reply_error(Req0, 400, missing_query, State);
+        <<>> ->
+            reply_error(Req0, 400, missing_query, State);
         Text ->
             case search_options(Query) of
                 {ok, Opts} ->
-                    case safe_call(fun() ->
-                        ecai_wikimedia_search:search(Text, Opts)
-                    end) of
+                    case
+                        safe_call(fun() ->
+                            ecai_wikimedia_search:search(Text, Opts)
+                        end)
+                    of
                         {ok, {ok, Result}} ->
                             reply_json(
                                 Req0,
@@ -125,20 +128,25 @@ from_json(Req0, #{action := index} = State) ->
             case build_index_spec(Body) of
                 {ok, Spec0} ->
                     Spec = bind_authenticated_owner(Spec0, State),
-                    IdempotencyKey = case cowboy_req:header(
-                        <<"idempotency-key">>,
-                        Req1,
-                        <<>>
-                    ) of
-                        <<>> -> default_idempotency_key(Spec);
-                        Value -> Value
-                    end,
-                    case safe_call(fun() ->
-                        ecai_index_jobs_srv:enqueue(
-                            Spec,
-                            #{idempotency_key => IdempotencyKey}
-                        )
-                    end) of
+                    IdempotencyKey =
+                        case
+                            cowboy_req:header(
+                                <<"idempotency-key">>,
+                                Req1,
+                                <<>>
+                            )
+                        of
+                            <<>> -> default_idempotency_key(Spec);
+                            Value -> Value
+                        end,
+                    case
+                        safe_call(fun() ->
+                            ecai_index_jobs_srv:enqueue(
+                                Spec,
+                                #{idempotency_key => IdempotencyKey}
+                            )
+                        end)
+                    of
                         {ok, {ok, Job}} ->
                             JobId = maps:get(<<"id">>, Job),
                             reply_json(
@@ -190,7 +198,8 @@ from_json(Req0, #{action := index} = State) ->
                 {error, Reason} ->
                     reply_error(Req1, 400, Reason, State)
             end;
-        {error, Code, Reason, Req1} -> reply_error(Req1, Code, Reason, State)
+        {error, Code, Reason, Req1} ->
+            reply_error(Req1, Code, Reason, State)
     end;
 from_json(Req0, State) ->
     reply_error(Req0, 404, not_found, State).
@@ -209,11 +218,13 @@ simple_overrides(Query) ->
     Source = source_override_fields(Query),
     case strict_override_fields(Query, numeric_override_specs(), fun parse_integer/1) of
         {ok, Numeric} ->
-            case strict_override_fields(
-                Query,
-                boolean_override_specs(),
-                fun parse_boolean/1
-            ) of
+            case
+                strict_override_fields(
+                    Query,
+                    boolean_override_specs(),
+                    fun parse_boolean/1
+                )
+            of
                 {ok, Boolean} ->
                     {ok, maps:merge(Source, maps:merge(Numeric, Boolean))};
                 {error, _Reason} = Error ->
@@ -248,11 +259,15 @@ source_override_fields(Map) ->
     lists:foldl(
         fun({External, Internal}, Acc) ->
             case field(External, Map, undefined) of
-                undefined -> Acc;
-                Value when External =:= <<"pageview_months">>;
-                           External =:= <<"months">> ->
+                undefined ->
+                    Acc;
+                Value when
+                    External =:= <<"pageview_months">>;
+                    External =:= <<"months">>
+                ->
                     Acc#{pageview_months => normalize_month_input(Value)};
-                Value -> Acc#{Internal => Value}
+                Value ->
+                    Acc#{Internal => Value}
             end
         end,
         #{},
@@ -340,21 +355,24 @@ search_options(Query) ->
                 #{limit => 25, minimum_pageviews => 0},
                 Numeric0
             ),
-            case strict_override_fields(
-                Query,
-                [
-                    {<<"has_wikidata">>, has_wikidata},
-                    {<<"dedupe_entities">>, dedupe_entities}
-                ],
-                fun parse_boolean/1
-            ) of
+            case
+                strict_override_fields(
+                    Query,
+                    [
+                        {<<"has_wikidata">>, has_wikidata},
+                        {<<"dedupe_entities">>, dedupe_entities}
+                    ],
+                    fun parse_boolean/1
+                )
+            of
                 {ok, Boolean} ->
                     Base = maps:merge(Numeric, Boolean),
-                    {ok, optional_put(
-                        language,
-                        maps:get(<<"language">>, Query, undefined),
-                        Base
-                    )};
+                    {ok,
+                        optional_put(
+                            language,
+                            maps:get(<<"language">>, Query, undefined),
+                            Base
+                        )};
                 {error, _Reason} = Error ->
                     Error
             end;
@@ -371,7 +389,8 @@ read_json_map(Req0) ->
             catch
                 error:Reason -> {error, 400, {invalid_json, Reason}, Req1}
             end;
-        {more, _Partial, Req1} -> {error, 413, payload_too_large, Req1}
+        {more, _Partial, Req1} ->
+            {error, 413, payload_too_large, Req1}
     end.
 
 bind_authenticated_owner(Spec, State) ->
@@ -389,7 +408,8 @@ authenticated_owner(State) ->
             catch
                 _:_ -> undefined
             end;
-        _ -> undefined
+        _ ->
+            undefined
     end.
 
 default_idempotency_key(Spec) ->
@@ -432,12 +452,18 @@ normalize_month_input(_Value) -> [].
 split_csv(Bin) when is_binary(Bin) ->
     [Part || Part <- binary:split(Bin, <<",">>, [global, trim_all]), Part =/= <<>>];
 split_csv(List) when is_list(List) -> split_csv(unicode:characters_to_binary(List));
-split_csv(_Other) -> [].
+split_csv(_Other) ->
+    [].
 
 parse_integer(Value) when is_integer(Value) -> {ok, Value};
 parse_integer(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
-    try {ok, binary_to_integer(Bin)} catch error:badarg -> error end;
-parse_integer(_Value) -> error.
+    try
+        {ok, binary_to_integer(Bin)}
+    catch
+        error:badarg -> error
+    end;
+parse_integer(_Value) ->
+    error.
 
 parse_boolean(true) -> {ok, true};
 parse_boolean(false) -> {ok, false};

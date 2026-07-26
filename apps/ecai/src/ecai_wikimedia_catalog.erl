@@ -54,7 +54,8 @@ list_sources(Opts) when is_map(Opts) ->
                 cirrus_root => ?CIRRUS_ROOT,
                 pageview_root => ?PAGEVIEW_ROOT
             }};
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end;
 list_sources(_Opts) ->
     {error, badarg}.
@@ -70,7 +71,8 @@ list_cirrus_releases(Limit) when is_integer(Limit), Limit > 0 ->
             Releases0 = href_captures(Html, <<"([0-9]{8})/">>),
             Releases = lists:reverse(lists:sort(lists:usort(Releases0))),
             {ok, lists:sublist(Releases, Limit)};
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end;
 list_cirrus_releases(_Limit) ->
     {error, badarg}.
@@ -91,7 +93,8 @@ list_cirrus_shards(Project0, Release0) ->
                         Names0 = href_captures(Html, Pattern),
                         Names = lists:sort(lists:usort(Names0)),
                         case Names of
-                            [] -> {error, {no_cirrus_shards, Project, Release}};
+                            [] ->
+                                {error, {no_cirrus_shards, Project, Release}};
                             _ ->
                                 {ok, [
                                     #{
@@ -106,7 +109,8 @@ list_cirrus_shards(Project0, Release0) ->
                                 ]}
                         end
                 end;
-            {error, _Reason} = Error -> Error
+            {error, _Reason} = Error ->
+                Error
         end
     catch
         throw:{catalog_error, Reason} -> {error, Reason}
@@ -141,14 +145,18 @@ write(BaseDir0, Catalog, Opts) when is_map(Catalog), is_map(Opts) ->
         Path = filename:join(Dir, "wikimedia-catalog.json"),
         ok = atomic_write(Path, Bytes),
         Publish = maps:get(publish_ipfs, Opts, false),
-        Cid = case Publish of
-            true ->
-                case normalize_add_response(damage_ipfs:add({file, Path})) of
-                    {ok, Value} -> Value;
-                    {error, Reason} -> throw({catalog_error, {catalog_ipfs_publish_failed, Reason}})
-                end;
-            false -> null
-        end,
+        Cid =
+            case Publish of
+                true ->
+                    case normalize_add_response(damage_ipfs:add({file, Path})) of
+                        {ok, Value} ->
+                            Value;
+                        {error, Reason} ->
+                            throw({catalog_error, {catalog_ipfs_publish_failed, Reason}})
+                    end;
+                false ->
+                    null
+            end,
         {ok, #{
             path => unicode:characters_to_binary(Path),
             sha256 => ecai_index_job_codec:id_hex(Digest),
@@ -158,8 +166,7 @@ write(BaseDir0, Catalog, Opts) when is_map(Catalog), is_map(Opts) ->
     catch
         throw:{catalog_error, Reason0} -> {error, Reason0};
         error:badarg -> {error, badarg};
-        Class:Reason1:Stacktrace ->
-            {error, {catalog_write_failed, Class, Reason1, Stacktrace}}
+        Class:Reason1:Stacktrace -> {error, {catalog_write_failed, Class, Reason1, Stacktrace}}
     end;
 write(_BaseDir, _Catalog, _Opts) ->
     {error, badarg}.
@@ -169,7 +176,8 @@ read(Ref0) ->
     try
         Ref = to_binary(Ref0),
         case filelib:is_regular(path_list(Ref)) of
-            true -> decode_catalog_file(path_list(Ref));
+            true ->
+                decode_catalog_file(path_list(Ref));
             false ->
                 case damage_ipfs:cat_binary(Ref) of
                     {ok, Bytes} -> decode_catalog(Bytes);
@@ -192,7 +200,7 @@ summary(Catalog) when is_map(Catalog) ->
         pageview_files => length(maps:get(pageview_sources, Catalog, [])),
         source_count =>
             length(maps:get(content_shards, Catalog, [])) +
-                length(maps:get(pageview_sources, Catalog, []))
+            length(maps:get(pageview_sources, Catalog, []))
     }.
 
 resolve_online(Source) ->
@@ -217,9 +225,11 @@ resolve_online(Source) ->
                             pageview_months => Months,
                             pageview_sources => Pageviews
                         }};
-                    {error, _Reason} = Error -> Error
+                    {error, _Reason} = Error ->
+                        Error
                 end;
-            {error, _Reason} = Error -> Error
+            {error, _Reason} = Error ->
+                Error
         end
     catch
         throw:{catalog_error, Reason} -> {error, Reason}
@@ -261,7 +271,8 @@ pageview_sources_loop(Project, [Month | Rest], Ordinal, Acc) ->
     case ecai_http_stream:get_binary(Directory, ?DEFAULT_HTTP_MAX) of
         {ok, Html, _Meta} ->
             case binary:match(Html, Name) of
-                nomatch -> {error, {pageview_source_missing, Month, Name}};
+                nomatch ->
+                    {error, {pageview_source_missing, Month, Name}};
                 _ ->
                     Source = #{
                         ordinal => Ordinal,
@@ -283,7 +294,8 @@ optional_catalog(Source) ->
                 undefined -> none;
                 Path -> {catalog, Path}
             end;
-        Cid -> {catalog, Cid}
+        Cid ->
+            {catalog, Cid}
     end.
 
 decode_catalog_file(Path) ->
@@ -375,8 +387,10 @@ href_captures(Html, Pattern) ->
 
 month_list(Months) when is_list(Months), Months =/= [] ->
     [required_month(Month) || Month <- Months];
-month_list([]) -> throw({catalog_error, {empty_field, pageview_months}});
-month_list(_Other) -> throw({catalog_error, {invalid_field, pageview_months}}).
+month_list([]) ->
+    throw({catalog_error, {empty_field, pageview_months}});
+month_list(_Other) ->
+    throw({catalog_error, {invalid_field, pageview_months}}).
 
 required_month(Value0) ->
     Value = to_binary(Value0),
@@ -388,7 +402,8 @@ required_month(Value0) ->
                 true -> Value;
                 false -> throw({catalog_error, {invalid_month, Value}})
             end;
-        _ -> throw({catalog_error, {invalid_month, Value}})
+        _ ->
+            throw({catalog_error, {invalid_month, Value}})
     end.
 
 required_release(Value0) ->
@@ -405,7 +420,8 @@ required_token(Name, Value0) ->
         _ -> throw({catalog_error, {invalid_field, Name}})
     end.
 
-default_months_loop(0, _Year, _Month, Acc) -> Acc;
+default_months_loop(0, _Year, _Month, Acc) ->
+    Acc;
 default_months_loop(Count, Year, Month, Acc) ->
     Value = iolist_to_binary(io_lib:format("~4..0B-~2..0B", [Year, Month])),
     {PrevYear, PrevMonth} = previous_month(Year, Month),
@@ -427,8 +443,13 @@ integer_field(Key, Map, Default) ->
     case field(Key, Map, Default) of
         Value when is_integer(Value) -> Value;
         Bin when is_binary(Bin) ->
-            try binary_to_integer(Bin) catch error:badarg -> Default end;
-        _ -> Default
+            try
+                binary_to_integer(Bin)
+            catch
+                error:badarg -> Default
+            end;
+        _ ->
+            Default
     end.
 
 to_binary(Bin) when is_binary(Bin) -> Bin;
@@ -439,30 +460,38 @@ to_binary(_Other) -> erlang:error(badarg).
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     unicode:characters_to_list(Bin);
 path_list(List) when is_list(List), List =/= [] -> List;
-path_list(_Other) -> erlang:error(badarg).
+path_list(_Other) ->
+    erlang:error(badarg).
 
 atomic_write(Path, Bytes) ->
     Tmp = Path ++ ".tmp",
     case file:open(Tmp, [write, raw, binary]) of
         {ok, Fd} ->
-            Result = try
-                ok = file:write(Fd, Bytes),
-                file:sync(Fd)
-            after
-                ok = file:close(Fd)
-            end,
+            Result =
+                try
+                    ok = file:write(Fd, Bytes),
+                    file:sync(Fd)
+                after
+                    ok = file:close(Fd)
+                end,
             case Result of
                 ok -> file:rename(Tmp, Path);
                 {error, _Reason} = Error -> Error
             end;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} ->
+            {error, Reason}
     end.
 
-normalize_add_response({ok, Value}) -> normalize_add_response(Value);
-normalize_add_response([Value]) -> normalize_add_response(Value);
-normalize_add_response(#{hash := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"Hash">> := Value}) -> normalize_add_response(Value);
-normalize_add_response(#{<<"hash">> := Value}) -> normalize_add_response(Value);
+normalize_add_response({ok, Value}) ->
+    normalize_add_response(Value);
+normalize_add_response([Value]) ->
+    normalize_add_response(Value);
+normalize_add_response(#{hash := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"Hash">> := Value}) ->
+    normalize_add_response(Value);
+normalize_add_response(#{<<"hash">> := Value}) ->
+    normalize_add_response(Value);
 normalize_add_response(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> {ok, Bin};
 normalize_add_response(List) when is_list(List), List =/= [] ->
     try unicode:characters_to_binary(string:trim(List)) of
@@ -471,5 +500,7 @@ normalize_add_response(List) when is_list(List), List =/= [] ->
     catch
         _:_ -> {error, invalid_cid}
     end;
-normalize_add_response({error, _Reason} = Error) -> Error;
-normalize_add_response(Other) -> {error, {invalid_ipfs_add_response, Other}}.
+normalize_add_response({error, _Reason} = Error) ->
+    Error;
+normalize_add_response(Other) ->
+    {error, {invalid_ipfs_add_response, Other}}.

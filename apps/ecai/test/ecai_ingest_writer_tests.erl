@@ -174,7 +174,8 @@ wait_for_restarted_writer(Sup, Previous, Attempts) ->
 
 with_tmp(Fun) ->
     BaseDir = ecai_step03_test_support:temp_dir(),
-    try Fun(BaseDir)
+    try
+        Fun(BaseDir)
     after
         ok = ecai_step03_test_support:cleanup(BaseDir)
     end.

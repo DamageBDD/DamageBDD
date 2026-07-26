@@ -102,7 +102,8 @@ active_legacy_job(State) ->
                 true -> {ok, Job};
                 false -> not_found
             end;
-        not_found -> not_found
+        not_found ->
+            not_found
     end.
 
 current_legacy_job(State = #state{last_job_id = JobId}) when is_binary(JobId) ->
@@ -114,15 +115,19 @@ current_legacy_job(State) ->
     latest_legacy_job(State).
 
 latest_legacy_job(State) ->
-    try ecai_index_jobs_srv:list(#{
-        kind => <<"yelp_ndjson">>,
-        owner => <<"legacy-yelp-admin">>
-    }) of
+    try
+        ecai_index_jobs_srv:list(#{
+            kind => <<"yelp_ndjson">>,
+            owner => <<"legacy-yelp-admin">>
+        })
+    of
         {ok, [Job | _]} ->
             JobId = maps:get(<<"id">>, Job),
             {ok, Job, State#state{last_job_id = JobId}};
-        {ok, []} -> not_found;
-        _ -> not_found
+        {ok, []} ->
+            not_found;
+        _ ->
+            not_found
     catch
         _Class:_Reason -> not_found
     end.
@@ -136,7 +141,9 @@ legacy_status(Job) ->
         started_at => maps:get(<<"started_at_ms">>, Job, 0),
         finished_at => maps:get(<<"finished_at_ms">>, Job, 0),
         files_total => maps:get(<<"sources_total">>, Progress, maps:get(<<"total">>, Progress, 0)),
-        files_done => maps:get(<<"sources_completed">>, Progress, maps:get(<<"completed">>, Progress, 0)),
+        files_done => maps:get(
+            <<"sources_completed">>, Progress, maps:get(<<"completed">>, Progress, 0)
+        ),
         docs_done => maps:get(<<"records_indexed">>, Progress, 0),
         percent => maps:get(<<"percent">>, Progress, null),
         rate_per_second => maps:get(<<"rate_per_second">>, Progress, 0.0),

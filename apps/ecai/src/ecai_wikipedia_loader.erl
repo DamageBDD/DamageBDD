@@ -128,9 +128,10 @@ load_chunks(_ChunkRefs, _Opts) ->
 %% Opts may include:
 %%  #{mem_high:=Bytes, mem_low:=Bytes, bin_high:=Bytes, snooze_ms:=Ms,
 %%    checkpoint_dir:=Path, checkpoint_every:=N}
-load(SourceRef, Opts0)
-        when (is_list(SourceRef) orelse is_binary(SourceRef) orelse is_map(SourceRef)),
-             is_map(Opts0) ->
+load(SourceRef, Opts0) when
+    (is_list(SourceRef) orelse is_binary(SourceRef) orelse is_map(SourceRef)),
+    is_map(Opts0)
+->
     File = source_path(SourceRef),
     %% merge defaults
     Opts1 = maps:merge(
@@ -267,7 +268,8 @@ line_binary(_Other) ->
 
 initial_checkpoint(Opts, CkptPath) ->
     case maps:get(checkpoint_enabled, Opts, true) of
-        true -> read_checkpoint(CkptPath);
+        true ->
+            read_checkpoint(CkptPath);
         false ->
             _ = file:delete(CkptPath),
             not_found
@@ -275,7 +277,8 @@ initial_checkpoint(Opts, CkptPath) ->
 
 checkpoint_due(Opts, Lines) ->
     case maps:get(checkpoint_enabled, Opts, true) of
-        false -> false;
+        false ->
+            false;
         true ->
             case maps:get(checkpoint_every, Opts, ?CHK_EVERY) of
                 N when is_integer(N), N > 0 -> Lines rem N =:= 0;
@@ -580,25 +583,33 @@ get_in(_, _, Default) ->
 
 wiki_tags(LangId, WD, Categories) ->
     Base0 = [<<"wiki">>, LangId],
-    Base = case WD of
-        <<>> -> Base0;
-        _ -> [damage_utils:binarystr_join([<<"wikidata:">>, b(WD)]) | Base0]
-    end,
+    Base =
+        case WD of
+            <<>> -> Base0;
+            _ -> [damage_utils:binarystr_join([<<"wikidata:">>, b(WD)]) | Base0]
+        end,
     lists:usort(Base ++ [<<"category:", Category/binary>> || Category <- Categories]).
 
 map_int(Map, Key, Default) when is_map(Map) ->
     case maps:get(Key, Map, Default) of
         Value when is_integer(Value) -> Value;
         Bin when is_binary(Bin) ->
-            try binary_to_integer(Bin) catch error:badarg -> Default end;
-        _ -> Default
+            try
+                binary_to_integer(Bin)
+            catch
+                error:badarg -> Default
+            end;
+        _ ->
+            Default
     end;
-map_int(_Map, _Key, Default) -> Default.
+map_int(_Map, _Key, Default) ->
+    Default.
 
 binary_list(List) when is_list(List) ->
     lists:usort([b(Value) || Value <- List]);
 binary_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 -> [Bin];
-binary_list(_Other) -> [].
+binary_list(_Other) ->
+    [].
 
 wiki_license_list(J) ->
     case maps:get(<<"license">>, J, []) of

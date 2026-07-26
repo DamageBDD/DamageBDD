@@ -17,7 +17,9 @@ pageview_line_parser_test() ->
             <<"en.wikipedia">>
         )
     ),
-    ?assertEqual(malformed, ecai_wikimedia_selector:parse_pageview_line(<<"broken">>, <<"en.wikipedia">>)).
+    ?assertEqual(
+        malformed, ecai_wikimedia_selector:parse_pageview_line(<<"broken">>, <<"en.wikipedia">>)
+    ).
 
 streaming_k_way_selection_test() ->
     with_tmp(fun(Dir) ->
@@ -28,18 +30,24 @@ streaming_k_way_selection_test() ->
         {ok, Runtime} = ecai_wikimedia_selector:prepare(
             Dir,
             Catalog,
-            #{selection_shards => 8, limit => 3, minimum_active_months => 1, oversample_percent => 100}
+            #{
+                selection_shards => 8,
+                limit => 3,
+                minimum_active_months => 1,
+                oversample_percent => 100
+            }
         ),
         TopDir = maps:get(top_dir, Runtime),
         lists:foreach(
             fun(P) ->
                 Path = filename:join(TopDir, lists:flatten(io_lib:format("top-~4..0B.jsonl", [P]))),
-                Records = case P of
-                    0 -> [record(8, <<"Eight">>, 80)];
-                    1 -> [record(1, <<"One">>, 100), record(9, <<"Nine">>, 10)];
-                    2 -> [record(2, <<"Two">>, 90)];
-                    _ -> []
-                end,
+                Records =
+                    case P of
+                        0 -> [record(8, <<"Eight">>, 80)];
+                        1 -> [record(1, <<"One">>, 100), record(9, <<"Nine">>, 10)];
+                        2 -> [record(2, <<"Two">>, 90)];
+                        _ -> []
+                    end,
                 ok = write_jsonl(Path, Records)
             end,
             lists:seq(0, 7)
@@ -83,18 +91,32 @@ with_tmp(Fun) ->
         "ecai-wikimedia-selector-" ++ integer_to_list(erlang:unique_integer([positive, monotonic]))
     ),
     ok = filelib:ensure_dir(filename:join(Dir, "x")),
-    try Fun(Dir) after remove_tree(Dir) end.
+    try
+        Fun(Dir)
+    after
+        remove_tree(Dir)
+    end.
 
-temp_dir() -> case os:getenv("TMPDIR") of false -> "/tmp"; V -> V end.
+temp_dir() ->
+    case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        V -> V
+    end.
 
 remove_tree(Path) ->
     case file:read_link_info(Path) of
         {ok, Info} when element(3, Info) =:= directory ->
             case file:list_dir(Path) of
-                {ok, Names} -> lists:foreach(fun(N) -> remove_tree(filename:join(Path, N)) end, Names);
-                _ -> ok
+                {ok, Names} ->
+                    lists:foreach(fun(N) -> remove_tree(filename:join(Path, N)) end, Names);
+                _ ->
+                    ok
             end,
-            _ = file:del_dir(Path), ok;
-        {ok, _} -> _ = file:delete(Path), ok;
-        _ -> ok
+            _ = file:del_dir(Path),
+            ok;
+        {ok, _} ->
+            _ = file:delete(Path),
+            ok;
+        _ ->
+            ok
     end.
