@@ -20,6 +20,11 @@
     retry/1,
     search/1,
     search/2,
+    fixture_status/0,
+    fixture_base_url/0,
+    fixture_catalog_url/0,
+    fixture_catalog_path/0,
+    fixture_reload/0,
     doctor/0
 ]).
 
@@ -61,14 +66,11 @@ plan(Overrides) when is_map(Overrides) ->
                             <<"Pause and cancel take effect between recoverable work units.">>
                         ]
                     }};
-                {error, _Reason} = Error ->
-                    Error
+                {error, _Reason} = Error -> Error
             end;
-        {error, _Reason} = Error ->
-            Error
+        {error, _Reason} = Error -> Error
     end;
-plan(_Overrides) ->
-    {error, badarg}.
+plan(_Overrides) -> {error, badarg}.
 
 -spec genesis_spec() -> map().
 genesis_spec() -> genesis_spec(#{}).
@@ -168,8 +170,7 @@ genesis_spec(Overrides) when is_map(Overrides) ->
             <<"auto_mint">> => false
         }
     };
-genesis_spec(_Overrides) ->
-    erlang:error(badarg).
+genesis_spec(_Overrides) -> erlang:error(badarg).
 
 -spec enqueue_genesis() -> {ok, map()} | {error, term()}.
 enqueue_genesis() -> enqueue_genesis(#{}).
@@ -183,8 +184,7 @@ enqueue_genesis(Overrides) when is_map(Overrides) ->
         default_idempotency_key(Spec)
     ),
     ecai_index_jobs_srv:enqueue(Spec, #{idempotency_key => Key});
-enqueue_genesis(_Overrides) ->
-    {error, badarg}.
+enqueue_genesis(_Overrides) -> {error, badarg}.
 
 status(JobId) -> ecai_index_jobs_srv:get(JobId).
 list_jobs() -> ecai_index_jobs_srv:list(#{kind => wikimedia_visibility, limit => 100}).
@@ -195,6 +195,26 @@ retry(JobId) -> ecai_index_jobs_srv:retry(JobId).
 search(Query) -> ecai_wikimedia_search:search(Query).
 search(Query, Opts) -> ecai_wikimedia_search:search(Query, Opts).
 
+-spec fixture_status() -> map() | {error, term()}.
+fixture_status() ->
+    ecai_wikimedia_fixture_server:status().
+
+-spec fixture_base_url() -> {ok, binary()} | {error, term()}.
+fixture_base_url() ->
+    ecai_wikimedia_fixture_server:base_url().
+
+-spec fixture_catalog_url() -> {ok, binary()} | {error, term()}.
+fixture_catalog_url() ->
+    ecai_wikimedia_fixture_server:catalog_url().
+
+-spec fixture_catalog_path() -> {ok, binary()} | {error, term()}.
+fixture_catalog_path() ->
+    ecai_wikimedia_fixture_server:catalog_path().
+
+-spec fixture_reload() -> {ok, map()} | {error, term()}.
+fixture_reload() ->
+    ecai_wikimedia_fixture_server:reload().
+
 -spec doctor() -> map().
 doctor() ->
     #{
@@ -203,6 +223,7 @@ doctor() ->
         jsx => module_status(jsx),
         ipfs_pool => process_status(damage_ipfs),
         index_jobs => process_status(ecai_index_jobs_srv),
+        fixture_server => fixture_status(),
         search => ecai_wikimedia_search:status(),
         source_catalog => ecai_wikimedia_catalog:list_cirrus_releases(1)
     }.

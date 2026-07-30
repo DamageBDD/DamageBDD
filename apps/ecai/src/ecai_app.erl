@@ -20,6 +20,7 @@ start(_StartType, _StartArgs) ->
     case ecai_sup:start_link() of
         {ok, SupPid} ->
             ok = maybe_start_index_jobs(SupPid),
+            ok = maybe_start_wikimedia_fixture_server(SupPid),
             {ok, SupPid};
         {error, _Reason} = Error ->
             Error
@@ -37,12 +38,9 @@ maybe_start_index_jobs(SupPid) ->
                 modules => [ecai_index_jobs_sup]
             },
             case supervisor:start_child(SupPid, ChildSpec) of
-                {ok, _Pid} ->
-                    ok;
-                {ok, _Pid, _Info} ->
-                    ok;
-                {error, {already_started, _Pid}} ->
-                    ok;
+                {ok, _Pid} -> ok;
+                {ok, _Pid, _Info} -> ok;
+                {error, {already_started, _Pid}} -> ok;
                 {error, already_present} ->
                     case supervisor:restart_child(SupPid, ecai_index_jobs_sup) of
                         {ok, _Pid} -> ok;
@@ -50,13 +48,30 @@ maybe_start_index_jobs(SupPid) ->
                         {error, running} -> ok;
                         {error, Reason} -> error({index_jobs_restart_failed, Reason})
                     end;
-                {error, Reason} ->
-                    error({index_jobs_start_failed, Reason})
+                {error, Reason} -> error({index_jobs_start_failed, Reason})
             end;
         false ->
             ok;
         Invalid ->
             error({invalid_configuration, index_jobs_enabled, Invalid})
+    end.
+
+maybe_start_wikimedia_fixture_server(SupPid) ->
+    case application:get_env(ecai, wikimedia_fixture_server_enabled, false) of
+        true ->
+            case ecai_wikimedia_fixture_server:start_supervised(SupPid) of
+                ok -> ok;
+                {error, Reason} ->
+                    error({wikimedia_fixture_start_failed, Reason})
+            end;
+        false ->
+            ok;
+        Invalid ->
+            error({
+                invalid_configuration,
+                wikimedia_fixture_server_enabled,
+                Invalid
+            })
     end.
 
 get_trails() ->

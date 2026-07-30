@@ -1,0 +1,13 @@
+%% Minimal entries for the managed Wikimedia fixture service plus one durable
+%% indexing worker. Merge these into the existing `ecai` env list.
+
+{wikimedia_fixture_server_enabled, true},
+{wikimedia_fixture_ip, {127, 0, 0, 1}},
+{wikimedia_fixture_port, 9876},
+{wikimedia_fixture_public_host, <<"127.0.0.1">>},
+{wikimedia_fixture_allow_non_loopback, false},
+{wikimedia_fixture_runtime_dir, "/tmp/ecai-wikimedia-fixture"},
+{wikimedia_fixture_idle_timeout_ms, 60000},
+
+{index_jobs_enabled, true},
+{index_jobs_max_concurrency, 1}

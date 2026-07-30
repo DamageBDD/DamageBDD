@@ -1,0 +1,22 @@
+%% Deterministic Wikimedia BDD integration profile. Merge these entries into
+%% the existing `ecai` application environment.
+
+{index_jobs_enabled, true},
+{index_jobs_dir, "/tmp/ecai-bdd-integration/index-jobs"},
+{index_jobs_artifact_dir, "/tmp/ecai-bdd-integration/artifacts"},
+{index_jobs_max_concurrency, 1},
+{index_jobs_max_pending, 100},
+{index_jobs_max_pending_per_owner, 100},
+
+{wikimedia_index_dir, "/tmp/ecai-bdd-integration/wikimedia"},
+{wikimedia_genesis_limit, 3},
+{wikimedia_activity_block_bytes, 4096},
+
+{wikimedia_fixture_server_enabled, true},
+{wikimedia_fixture_ip, {127, 0, 0, 1}},
+{wikimedia_fixture_port, 9876},
+{wikimedia_fixture_public_host, <<"127.0.0.1">>},
+{wikimedia_fixture_allow_non_loopback, false},
+{wikimedia_fixture_runtime_dir,
+    "/tmp/ecai-bdd-integration/wikimedia-fixture"},
+{wikimedia_fixture_idle_timeout_ms, 60000}

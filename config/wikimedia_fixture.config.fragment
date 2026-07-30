@@ -1,0 +1,13 @@
+%% Merge these entries into the existing `ecai` application environment.
+%% The fixture service is disabled by default in code and should normally be
+%% enabled only in development, CI, or an explicitly isolated operator node.
+
+{wikimedia_fixture_server_enabled, true},
+{wikimedia_fixture_ip, {127, 0, 0, 1}},
+{wikimedia_fixture_port, 9876},
+{wikimedia_fixture_public_host, <<"127.0.0.1">>},
+{wikimedia_fixture_runtime_dir, "/tmp/ecai-wikimedia-fixture"},
+{wikimedia_fixture_project, <<"enwiki">>},
+{wikimedia_fixture_pageview_project, <<"en.wikipedia">>},
+{wikimedia_fixture_idle_timeout_ms, 60000},
+{wikimedia_fixture_allow_non_loopback, false}
