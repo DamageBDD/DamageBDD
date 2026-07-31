@@ -41,11 +41,15 @@ status(Vault = #vault{path = Path, backend = Backend}) ->
     }.
 
 %% State expected by damage_nsecbunker_vault_guard.
-guard_state(#vault{policy = Policy, backend = {ok, _Cmd}}) ->
+guard_state(#vault{config = Config, policy = Policy, backend = {ok, _Cmd}}) ->
     Expected = maps:get(bunker_pubkey_hex, Policy, undefined),
-    case valid_pubkey(Expected) of
-        true -> #{sealed => false, integrity => ok, pubkey_hex => Expected};
-        false -> #{sealed => true, integrity => missing_bunker_pubkey, pubkey_hex => <<>>}
+    case {valid_pubkey(Expected), vault_passphrase(Config)} of
+        {false, _} ->
+            #{sealed => true, integrity => missing_bunker_pubkey, pubkey_hex => <<>>};
+        {true, {ok, _Passphrase}} ->
+            #{sealed => false, integrity => ok, pubkey_hex => Expected};
+        {true, error} ->
+            #{sealed => true, integrity => missing_vault_passphrase, pubkey_hex => Expected}
     end;
 guard_state(#vault{backend = {error, Reason}, policy = Policy}) ->
     #{
@@ -173,9 +177,13 @@ backend_status({error, Reason}) ->
 
 call_backend(#vault{backend = {error, Reason}}, _Payload) ->
     {error, Reason};
-call_backend(#vault{backend = {ok, Cmd}, config = Config}, Payload) ->
+call_backend(#vault{backend = {ok, Cmd}, config = Config, path = Path}, Payload0) ->
     Timeout = maps:get(crypto_timeout_ms, Config, 5000),
-    call_port(Cmd, Payload, Timeout).
+    Payload = ensure_payload_vault_path(Payload0, Path),
+    case backend_env(Config, Path) of
+        {ok, Env} -> call_port(Cmd, Payload, Timeout, Env);
+        {error, _Reason} = Error -> Error
+    end.
 
 call_backend_field(Vault, Payload, Field) ->
     case call_backend(Vault, Payload) of
@@ -190,8 +198,9 @@ call_backend_field(Vault, Payload, Field) ->
             {error, {bad_backend_response, Other}}
     end.
 
-call_port(Cmd, Payload, Timeout) ->
-    try open_port({spawn_executable, Cmd}, [binary, use_stdio, exit_status, stderr_to_stdout]) of
+call_port(Cmd, Payload, Timeout, Env) ->
+    PortOpts = [binary, use_stdio, exit_status, stderr_to_stdout, {env, Env}],
+    try open_port({spawn_executable, Cmd}, PortOpts) of
         Port ->
             Json = jsx:encode(Payload),
             true = port_command(Port, <<Json/binary, "\n">>),
@@ -199,6 +208,71 @@ call_port(Cmd, Payload, Timeout) ->
     catch
         Class:Reason -> {error, {crypto_backend_open_failed, Class, Reason}}
     end.
+
+ensure_payload_vault_path(Payload, Path) when is_map(Payload) ->
+    case maps:is_key(vault_path, Payload) orelse maps:is_key(<<"vault_path">>, Payload) of
+        true -> Payload;
+        false -> Payload#{vault_path => Path}
+    end;
+ensure_payload_vault_path(Payload, _Path) ->
+    Payload.
+
+backend_env(Config, Path) ->
+    case vault_passphrase(Config) of
+        {ok, Passphrase} ->
+            {ok,
+                dedupe_env(
+                    [
+                        {"DAMAGE_NSECBUNKER_VAULT_PATH", str(Path)},
+                        {"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", str(Passphrase)}
+                    ] ++ passthrough_env()
+                )};
+        error ->
+            {error,
+                {missing_vault_passphrase,
+                    maps:get(vault_passphrase, Config, nsecbunker_vault_passphrase)}}
+    end.
+
+vault_passphrase(Config) ->
+    %% Strict API boundary: one config key, atom names only by convention.
+    %% No env fallback and no binary/list/name candidate conversion. If the
+    %% configured secret name does not exactly match the stored atom, retrieval
+    %% fails closed.
+    SecretName = maps:get(vault_passphrase, Config, nsecbunker_vault_passphrase),
+    case secrets:retrieve_decrypt(SecretName) of
+        {ok, Passphrase} when Passphrase =/= <<>>, Passphrase =/= [] ->
+            {ok, Passphrase};
+        _ ->
+            error
+    end.
+
+passthrough_env() ->
+    passthrough_env([
+        "DAMAGE_NSECBUNKER_PRODUCTION",
+        "DAMAGE_NSECBUNKER_TEST_MODE",
+        "DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44"
+    ]).
+
+passthrough_env(Names) ->
+    lists:foldl(
+        fun(Name, Acc) ->
+            case os:getenv(Name) of
+                false -> Acc;
+                Value -> [{Name, Value} | Acc]
+            end
+        end,
+        [],
+        Names
+    ).
+
+dedupe_env(Env) ->
+    lists:reverse(
+        maps:fold(
+            fun(Name, Value, Acc) -> [{Name, Value} | Acc] end,
+            [],
+            maps:from_list(Env)
+        )
+    ).
 
 collect_port(Port, Timeout, Acc) ->
     receive
@@ -315,6 +389,13 @@ first_defined([Key | Rest], Map, Default) ->
         undefined -> first_defined(Rest, Map, Default);
         Value -> Value
     end.
+
+str(undefined) -> "";
+str(B) when is_binary(B) -> binary_to_list(B);
+str(L) when is_list(L) -> L;
+str(A) when is_atom(A) -> atom_to_list(A);
+str(I) when is_integer(I) -> integer_to_list(I);
+str(Other) -> lists:flatten(io_lib:format("~p", [Other])).
 
 bin(undefined) -> <<>>;
 bin(B) when is_binary(B) -> B;

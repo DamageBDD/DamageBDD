@@ -78,9 +78,7 @@ phase4a_create_dev_key_unsafe(Opts0) ->
     ReportDir = report_dir(Opts),
     JsonReport = filename:join(ReportDir, "PHASE4A_DEV_DAMAGEBDD_KEY.json"),
     MdReport = filename:join(ReportDir, "PHASE4A_DEV_DAMAGEBDD_KEY.md"),
-    Passphrase = opt_env(
-        Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4a-bdd-dev-passphrase"
-    ),
+    Passphrase = vault_passphrase(Opts, "phase4a-bdd-dev-passphrase"),
     Reset = truthy(opt_env(Opts, reset, "RESET_DEV_VAULT", "1")),
     ok = ensure_parent(Vault),
     ok = ensure_dir(ReportDir),
@@ -152,7 +150,7 @@ phase4b_create_production_damagebdd_node_key_0(Opts) ->
     ReportDir = report_dir(Opts#{root => Root}),
     JsonReport = filename:join(ReportDir, "PHASE4B_DAMAGEBDD_NODE_PRODUCTION_KEY.json"),
     MdReport = filename:join(ReportDir, "PHASE4B_DAMAGEBDD_NODE_PRODUCTION_KEY.md"),
-    Passphrase = opt_env(Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", undefined),
+    Passphrase = vault_passphrase(Opts, undefined),
     case Passphrase of
         undefined ->
             {error, production_vault_passphrase_required};
@@ -249,7 +247,7 @@ backend_call(Payload, Opts0) ->
 
 backend_call_executable(Backend, Payload, Opts) ->
     Timeout = opt(crypto_timeout_ms, Opts, config_get(crypto_timeout_ms, 45000)),
-    Env = opt(env, Opts, []),
+    Env = effective_backend_env(Opts, Payload),
     PortOpts0 = [binary, use_stdio, exit_status, stderr_to_stdout],
     PortOpts =
         case Env of
@@ -316,12 +314,7 @@ smoke_phase2b_crypto_c_backend(Opts0) ->
         "DAMAGE_NSECBUNKER_TEST_VAULT",
         "/tmp/damage-nsecbunker-phase2b-c.vault"
     ),
-    Passphrase = opt_env(
-        Opts,
-        passphrase,
-        "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE",
-        "phase2b-c-local-test-passphrase"
-    ),
+    Passphrase = vault_passphrase(Opts, "phase2b-c-local-test-passphrase"),
     _ = file:delete(Vault),
     Env = backend_env(Opts, Passphrase) ++ [{"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44", "1"}],
     O = Opts#{env => Env},
@@ -447,9 +440,7 @@ smoke_phase2c_crypto_vectors(Opts0) ->
         "DAMAGE_NSECBUNKER_TEST_VAULT",
         "/tmp/damage-nsecbunker-phase2c-smoke.vault"
     ),
-    Passphrase = opt_env(
-        Opts, passphrase, "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase2c-smoke-passphrase"
-    ),
+    Passphrase = vault_passphrase(Opts, "phase2c-smoke-passphrase"),
     _ = file:delete(Vault),
     Base = Opts#{env => backend_env(Opts, Passphrase)},
     assert_fields(health, backend_call(#{<<"op">> => <<"health">>}, Base), #{
@@ -859,6 +850,75 @@ opt_env(Opts, OptKey, EnvName, Default) ->
             Val
     end.
 
+vault_passphrase(Opts, Default) ->
+    case opt(passphrase, Opts, undefined) of
+        undefined ->
+            case secrets:retrieve_decrypt(vault_passphrase_secret_name(Opts)) of
+                {ok, Passphrase} when Passphrase =/= <<>>, Passphrase =/= [] ->
+                    Passphrase;
+                _ ->
+                    Default
+            end;
+        Passphrase ->
+            Passphrase
+    end.
+
+vault_passphrase_secret_name(Opts) ->
+    %% Strict API boundary: the secret name is the atom stored in config/opts.
+    %% No env fallback and no name candidate conversion. If the configured atom
+    %% does not exactly match the encrypted secret name, retrieval fails.
+    first_present(
+        [
+            opt(vault_passphrase, Opts, undefined),
+            config_get(vault_passphrase, undefined)
+        ],
+        nsecbunker_vault_passphrase
+    ).
+
+effective_backend_env(Opts, Payload) ->
+    Env0 = maybe_add_vault_path_env(Payload, opt(env, Opts, [])),
+    case needs_vault_passphrase(Payload) of
+        true ->
+            case vault_passphrase(Opts, undefined) of
+                undefined -> Env0;
+                [] -> Env0;
+                <<>> -> Env0;
+                Passphrase -> backend_env(Opts#{env => Env0}, Passphrase)
+            end;
+        false ->
+            Env0
+    end.
+
+needs_vault_passphrase(Payload) when is_map(Payload) ->
+    payload_vault_path(Payload) =/= undefined;
+needs_vault_passphrase(_) ->
+    false.
+
+maybe_add_vault_path_env(Payload, Env0) ->
+    case {payload_vault_path(Payload), env_has("DAMAGE_NSECBUNKER_VAULT_PATH", Env0)} of
+        {undefined, _} -> Env0;
+        {_Path, true} -> Env0;
+        {Path, false} -> [{"DAMAGE_NSECBUNKER_VAULT_PATH", str(Path)} | Env0]
+    end.
+
+payload_vault_path(Payload) when is_map(Payload) ->
+    case maps:get(<<"vault_path">>, Payload, undefined) of
+        undefined -> maps:get(vault_path, Payload, undefined);
+        Path -> Path
+    end;
+payload_vault_path(_) ->
+    undefined.
+
+env_has(Name, Env) ->
+    lists:any(
+        fun
+            ({Name0, _}) when Name0 =:= Name -> true;
+            ({Name0, _}) when is_binary(Name0) -> binary_to_list(Name0) =:= Name;
+            (_) -> false
+        end,
+        Env
+    ).
+
 opts(Map) when is_map(Map) -> Map;
 opts(List) when is_list(List) -> maps:from_list(List);
 opts(undefined) -> #{}.
@@ -876,7 +936,41 @@ backend_env(Opts, Passphrase) ->
             [] -> [];
             _ -> [{"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", str(Passphrase)}]
         end,
-    Base ++ Extra.
+    %% Extra env is allowed for non-secret flags/path, but the resolved
+    %% passphrase is authoritative and is written last into the env map.
+    dedupe_env(Extra ++ passthrough_env() ++ Base).
+
+passthrough_env() ->
+    passthrough_env([
+        "DAMAGE_NSECBUNKER_PRODUCTION",
+        "DAMAGE_NSECBUNKER_TEST_MODE",
+        "DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44"
+    ]).
+
+passthrough_env(Names) ->
+    lists:foldl(
+        fun(Name, Acc) ->
+            case os:getenv(Name) of
+                false -> Acc;
+                Value -> [{Name, Value} | Acc]
+            end
+        end,
+        [],
+        Names
+    ).
+
+dedupe_env(Env) ->
+    lists:reverse(
+        maps:fold(
+            fun(Name, Value, Acc) -> [{env_name(Name), Value} | Acc] end,
+            [],
+            maps:from_list([{env_name(Name), Value} || {Name, Value} <- Env])
+        )
+    ).
+
+env_name(Name) when is_binary(Name) -> binary_to_list(Name);
+env_name(Name) when is_atom(Name) -> atom_to_list(Name);
+env_name(Name) when is_list(Name) -> Name.
 
 require_phase4b_approval(Opts) ->
     Approved = opt(approved, Opts, false),
