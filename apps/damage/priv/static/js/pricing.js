@@ -1,7 +1,7 @@
-
 (function(window, document, undefined) {
 	let lastDamageUSDT = null;
 	let lastBtcUSDT = null;
+	let lastFetchMs = 0;
 
 	const numberFmt = (n, max=8) => {
 		try {
@@ -36,6 +36,7 @@
 		if (!(dmg && btc)) throw new Error('Missing DAMAGE or BTC price from Coinstore');
 		lastDamageUSDT = dmg;
 		lastBtcUSDT = btc;
+		lastFetchMs = Date.now();
 		return [dmg, btc];
 	}
 
@@ -50,12 +51,14 @@
 		const toUSDT = (val, what) => {
 			if (what === 'DAMAGE') return val * dmg;
 			if (what === 'USDT') return val;
+			if (what === 'SATS') return (val * btc) / 1e8;
 			if (what === 'BTC') return val * btc;
 			return NaN;
 		};
 		const fromUSDT = (usd, what) => {
 			if (what === 'DAMAGE') return usd / dmg;
 			if (what === 'USDT') return usd;
+			if (what === 'SATS') return satsFromUsd(usd, btc);
 			if (what === 'BTC') return usd / btc;
 			return NaN;
 		};
@@ -70,30 +73,49 @@
 		const out     = document.getElementById('conv-output');
 		const satsOut = document.getElementById('conv-output-sats');
 
+		if (!amount || !fromSel || !toSel || !out) return null;
+
+		// Default buyer path: 1 DAMAGE -> sats.
+		amount.value = amount.value || '1';
+		fromSel.value = 'DAMAGE';
+		toSel.value = 'SATS';
+
 		function recalcOnce() {
-			if (!amount || !fromSel || !toSel || !out) return;
 			const v = parseFloat(amount.value);
-			if (Number.isNaN(v)) { out.textContent = '—'; if (satsOut) satsOut.textContent = '—'; return; }
+			if (Number.isNaN(v)) {
+				out.textContent = '—';
+				if (satsOut) satsOut.textContent = '—';
+				return;
+			}
+
 			const res = convert(v, fromSel.value, toSel.value);
-			if (res == null) { out.textContent = '…'; return; }
-			out.textContent = numberFmt(res, toSel.value === 'BTC' ? 8 : 6) + ' ' + toSel.value;
-			// also show sats for convenience
+			if (res == null) {
+				out.textContent = '…';
+				if (satsOut) satsOut.textContent = '…';
+				return;
+			}
+
+			const precision = toSel.value === 'BTC' ? 8 : toSel.value === 'SATS' ? 2 : 6;
+			out.textContent = numberFmt(res, precision) + ' ' + (toSel.value === 'SATS' ? 'sats' : toSel.value);
+
+			// Also show sats for convenience.
 			if (satsOut) {
 				let usd;
 				if (toSel.value === 'USDT') usd = res;
 				else if (toSel.value === 'DAMAGE') usd = res * lastDamageUSDT;
+				else if (toSel.value === 'SATS') usd = (res * lastBtcUSDT) / 1e8;
 				else if (toSel.value === 'BTC') usd = res * lastBtcUSDT;
 				else usd = NaN;
+
 				const sats = satsFromUsd(usd, lastBtcUSDT);
 				satsOut.textContent = Number.isFinite(sats) ? numberFmt(sats, 2) + ' sats' : '—';
 			}
 		}
 
-		['input','change'].forEach(evt => {
-			if (amount) amount.addEventListener(evt, recalcOnce);
-			if (fromSel) fromSel.addEventListener(evt, recalcOnce);
-			if (toSel) toSel.addEventListener(evt, recalcOnce);
-		});
+		amount.addEventListener('input', recalcOnce);
+		amount.addEventListener('change', recalcOnce);
+		fromSel.addEventListener('change', recalcOnce);
+		toSel.addEventListener('change', recalcOnce);
 
 		return recalcOnce;
 	}
@@ -127,9 +149,20 @@
 		if (status) status.textContent = 'Prices live from Coinstore • Last update: ' + ts;
 	}
 
+	function hasPricingElements() {
+		return Boolean(
+			document.getElementById('live-pricing') ||
+			document.getElementById('converter') ||
+			document.getElementById('pricing-status') ||
+			document.getElementById('conv-output') ||
+			document.querySelector('[data-damage]')
+		);
+	}
+
 	let pendingConverterRecalc = null;
 
 	async function tick() {
+		if (!hasPricingElements()) return;
 		try {
 			const [dmgUSDT, btcUSDT] = await fetchCoinstoreDamageAndBtc();
 			lastDamageUSDT = dmgUSDT;
@@ -144,15 +177,12 @@
 	}
 
 	// --- expose minimal API for other modules (e.g., main.js) ---
-	let lastFetchMs = 0;
-
 	async function getPricesCached(maxAgeMs = 60_000) {
 		const now = Date.now();
 		if (lastDamageUSDT != null && lastBtcUSDT != null && (now - lastFetchMs) < maxAgeMs) {
 			return { damage_usdt: lastDamageUSDT, btc_usdt: lastBtcUSDT, cached: true };
 		}
 		const [dmgUSDT, btcUSDT] = await fetchCoinstoreDamageAndBtc();
-		lastFetchMs = now;
 		return { damage_usdt: dmgUSDT, btc_usdt: btcUSDT, cached: false };
 	}
 
@@ -174,8 +204,12 @@
 	};
 
 	document.addEventListener("DOMContentLoaded", async function() {
+		if (!hasPricingElements()) return;
+
 		pendingConverterRecalc = bindConverter();
-		//tick();
+		if (typeof pendingConverterRecalc === 'function') pendingConverterRecalc();
+
+		await tick();
 		setInterval(tick, 60000);
 	});
 
