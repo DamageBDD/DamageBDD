@@ -2,9 +2,9 @@
 %% Handler: damage_http_unlock
 %%
 %% Render and accept set/unlock node password flows:
-%%  - If secrets:has_node_password() == false -> show set_node_password.mustache
+%%  - If no node keypair exists -> show set_node_password.mustache
 %%    (requires password + confirmation; validated by damage_accounts:validate_password/1)
-%%  - If secrets:has_node_password() == true  -> show unlock_node.mustache (single password)
+%%  - If a node keypair exists -> show unlock_node.mustache (single password)
 %%
 %% POST (form/json) attempts secrets:set_node_password(Password).
 %%  - on success -> 200 + {status => "ok"}
@@ -115,13 +115,13 @@ is_authorized(Req, State) ->
 
 %% Render HTML page depending on whether a password is present/cached
 to_html(Req, State) ->
-    case secrets:has_node_password() of
+    case secrets:has_node_keypair() of
         false ->
-            %% No password cached ⇒ first-run / set flow
+            %% No keystore yet => first-run / set flow.
             Body = damage_utils:load_template("set_node_password.mustache", #{}),
             {Body, Req, State};
         true ->
-            %% Password exists (or we want user to unlock) ⇒ unlock flow
+            %% Existing keystore => unlock flow, even while password is not cached.
             Body = damage_utils:load_template("unlock_node.mustache", #{}),
             {Body, Req, State}
     end.
@@ -131,22 +131,35 @@ to_json(Req, State) ->
     Has = secrets:has_node_password(),
     {jsx:encode(#{status => <<"ok">>, has_node_password => Has}), Req, State}.
 unlock_node(Password) ->
-    secrets:set_node_password(Password),
-    case secrets:node_keypair() of
-        #{public_key := _PubKey, private_key := _NodePrivateKey} ->
-            %% set flow: require confirmation and validate password strength
-            #{status => <<"ok">>, message => <<"node unlocked">>};
-        {error, decrypt_keypair} ->
-            #{status => <<"failed">>, message => <<"decrypt node wallet failed">>}
+    case secrets:has_node_keypair() of
+        false ->
+            #{status => <<"failed">>, message => <<"node keypair not initialized">>};
+        true ->
+            case secrets:set_node_password(Password) of
+                ok ->
+                    case secrets:node_keypair() of
+                        #{public_key := _PubKey, private_key := _NodePrivateKey} ->
+                            #{status => <<"ok">>, message => <<"node unlocked">>};
+                        {error, _} ->
+                            #{status => <<"failed">>, message => <<"decrypt node wallet failed">>}
+                    end;
+                {error, password_required} ->
+                    #{status => <<"failed">>, message => <<"password required">>};
+                {error, invalid_password} ->
+                    #{status => <<"failed">>, message => <<"invalid node password">>};
+                {error, _} ->
+                    #{status => <<"failed">>, message => <<"invalid node password">>}
+            end
     end.
 %% Validate and set node password (set_password flow)
 set_password(PasswordBin, ConfirmBin) ->
-    case secrets:node_keypair() of
-        #{public_key := _PubKey, private_key := _NodePrivateKey} ->
-            %% set flow: require confirmation and validate password strength
+    case secrets:has_node_keypair() of
+        true ->
             #{status => <<"error">>, message => <<"node keypair already initialized">>};
-        {error, keypair_not_initialized} ->
+        false ->
             case PasswordBin of
+                undefined ->
+                    #{status => <<"failed">>, message => <<"password required">>};
                 <<>> ->
                     #{status => <<"failed">>, message => <<"password required">>};
                 _ ->
@@ -160,10 +173,16 @@ set_password(PasswordBin, ConfirmBin) ->
                                     %% Reuse unlock_node/1 to:
                                     %%  - cache password in secrets
                                     %%  - create/decrypt node keypair
-                                    secrets:set_node_password(PasswordBin),
-
-                                    #{public_key := _PubKey, private_key := _NodePrivateKey} = secrets:node_keypair(),
-                                    #{status => <<"ok">>, message => <<"node password set">>};
+                                    ok = secrets:set_node_password(PasswordBin),
+                                    case secrets:node_keypair() of
+                                        #{public_key := _PubKey, private_key := _NodePrivateKey} ->
+                                            #{status => <<"ok">>, message => <<"node password set">>};
+                                        {error, _} ->
+                                            #{
+                                                status => <<"failed">>,
+                                                message => <<"node keypair initialization failed">>
+                                            }
+                                    end;
                                 {error, Reason} ->
                                     #{
                                         status => <<"failed">>,
@@ -191,12 +210,7 @@ from_html(Req0, #{action := set_password} = State) ->
     Password = proplists:get_value(<<"password">>, Form, <<>>),
     Confirm = proplists:get_value(<<"password_confirm">>, Form, <<>>),
     Response = set_password(Password, Confirm),
-    Reply = cowboy_req:set_resp_body(
-        jsx:encode(Response),
-        Req
-    ),
-    %% Let cowboy_rest finish with this response
-    {stop, Reply, State};
+    reply_response(Response, Req, State);
 %% Accept form submits (browser)
 from_html(Req0, #{action := unlock} = State) ->
     {ok, BodyBin, Req} = cowboy_req:read_body(Req0),
@@ -206,56 +220,54 @@ from_html(Req0, #{action := unlock} = State) ->
     %% - password_confirm (optional, for set flow)
     Password = proplists:get_value(<<"password">>, Form, <<>>),
     Response = unlock_node(Password),
-    Reply = cowboy_req:set_resp_body(
-        jsx:encode(Response),
-        Req
-    ),
-    {stop, Reply, State}.
+    reply_response(Response, Req, State).
 
 %% Accept JSON posts too (API) - set password
 from_json(Req0, #{action := set_password} = State) ->
     {ok, DataBin, Req} = cowboy_req:read_body(Req0),
-    case catch jsx:decode(DataBin, [return_maps, {labels, atom}]) of
-        {'EXIT', _} ->
-            Reply0 = cowboy_req:set_resp_body(
-                jsx:encode(#{status => <<"failed">>, message => <<"json decode error">>}),
-                Req
-            ),
-            cowboy_req:reply(400, Reply0),
-            {stop, Reply0, State};
+    try jsx:decode(DataBin, [return_maps, {labels, atom}]) of
         Decoded when is_map(Decoded) ->
             Password = maps:get(password, Decoded, undefined),
             Confirm = maps:get(password_confirm, Decoded, undefined),
             Response = set_password(Password, Confirm),
-            StatusCode =
-                case Response of
-                    #{status := <<"ok">>} -> 200;
-                    _ -> 400
-                end,
-            Reply1 = cowboy_req:set_resp_body(
-                jsx:encode(Response),
-                Req
-            ),
-            cowboy_req:reply(StatusCode, Reply1),
-            {stop, Reply1, State}
+            reply_response(Response, Req, State)
+    catch
+        _Class:_Reason:_Stack ->
+            json_decode_error(Req, State)
     end;
 %% Accept JSON posts too (API)
 from_json(Req0, #{action := unlock} = State) ->
     {ok, DataBin, Req} = cowboy_req:read_body(Req0),
-    case catch jsx:decode(DataBin, [return_maps, {labels, atom}]) of
-        {'EXIT', _} ->
-            Reply = cowboy_req:set_resp_body(
-                jsx:encode(#{status => <<"failed">>, message => <<"json decode error">>}), Req
-            ),
-            cowboy_req:reply(400, Reply),
-            {stop, Reply, State};
+    try jsx:decode(DataBin, [return_maps, {labels, atom}]) of
         Decoded when is_map(Decoded) ->
             Password = maps:get(password, Decoded, undefined),
             Response = unlock_node(Password),
-            Reply = cowboy_req:set_resp_body(
-                jsx:encode(Response),
-                Req
-            ),
-            cowboy_req:reply(200, Reply),
-            {stop, Reply, State}
+            reply_response(Response, Req, State);
+        _ ->
+            json_decode_error(Req, State)
+    catch
+        _Class:_Reason:_Stack ->
+            json_decode_error(Req, State)
     end.
+
+json_decode_error(Req, State) ->
+    reply_response(
+        #{status => <<"failed">>, message => <<"json decode error">>},
+        Req,
+        State
+    ).
+
+reply_response(Response, Req, State) ->
+    StatusCode =
+        case Response of
+            #{status := <<"ok">>} -> 200;
+            _ -> 400
+        end,
+    Req1 = cowboy_req:reply(
+        StatusCode,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(Response),
+        Req
+    ),
+
+    {stop, Req1, State}.

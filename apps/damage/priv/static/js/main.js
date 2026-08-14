@@ -347,37 +347,42 @@ function restoreFeatureDraftFromShareLink() {
 		});
 
 
-		document.getElementById("node-unlock-password").addEventListener("keydown", async function(event) {
-			if (event.ctrlKey && event.key === "Enter") {
-				event.preventDefault();
-				await nodeUnlock();
-			}});
-		wrapApiButton(
-			document.getElementById("node-unlock-password-submit-btn"),
-			async (event) => {
-				event.preventDefault();
-				await nodeUnlock();
-			}
-		);
+		const nodeUnlockForm = document.getElementById("node-unlock-password-form");
+		const nodeUnlockSubmitBtn = document.getElementById("node-unlock-password-submit-btn");
+		wrapApiForm(nodeUnlockForm, nodeUnlockSubmitBtn, async (event) => {
+			event.preventDefault();
+			await nodeUnlock();
+		});
 
 
-		// Ctrl+Enter → keep immediate (no debounce, no loading UI)
-		document.getElementById("node-password-confirm")
-			.addEventListener("keydown", async function (event) {
+		const nodeUnlockPassword = document.getElementById("node-unlock-password");
+		if (nodeUnlockPassword && nodeUnlockForm) {
+			nodeUnlockPassword.addEventListener("keydown", (event) => {
 				if (event.ctrlKey && event.key === "Enter") {
 					event.preventDefault();
-					await nodeSetPassword();
+					nodeUnlockForm.requestSubmit();
 				}
 			});
+		}
 
+		const nodeSetPasswordSubmitBtn = document.getElementById("node-set-password-submit-btn");
+		const nodeSetPasswordForm =
+			nodeSetPasswordSubmitBtn?.closest("form") ||
+			document.getElementById("node-password")?.closest("form");
+		wrapApiForm(nodeSetPasswordForm, nodeSetPasswordSubmitBtn, async (event) => {
+			event.preventDefault();
+			await nodeSetPassword();
+		});
 
-		wrapApiButton(
-			document.getElementById("node-set-password-submit-btn"),
-			async (event) => {
-				event.preventDefault();
-				await nodeSetPassword();
-			}
-		);
+		const nodePasswordConfirm = document.getElementById("node-password-confirm");
+		if (nodePasswordConfirm && nodeSetPasswordForm) {
+			nodePasswordConfirm.addEventListener("keydown", (event) => {
+				if (event.ctrlKey && event.key === "Enter") {
+					event.preventDefault();
+					nodeSetPasswordForm.requestSubmit();
+				}
+			});
+		}
 
 
 		wrapApiForm(
@@ -551,7 +556,9 @@ function restoreFeatureDraftFromShareLink() {
 		// Toggle password (UI only → no debounce)
 		document.querySelectorAll(".toggle-password").forEach((btn) => {
 			btn.addEventListener("click", () => {
-				const input = document.querySelector(`input[name='${btn.dataset.target}']`);
+				const input = document.getElementById(btn.dataset.target) ||
+					document.querySelector(`input[name='${btn.dataset.target}']`);
+				if (!input) return;
 				if (input.type === "password") {
 					input.type = "text";
 					btn.textContent = "🙈";
@@ -674,8 +681,8 @@ function restoreFeatureDraftFromShareLink() {
 		const passwordInput = document.getElementById("node-password");
 		const confirmInput  = document.getElementById("node-password-confirm");
 
-		const password = passwordInput.value.trim();
-		const confirm  = confirmInput.value.trim();
+		const password = passwordInput.value;
+		const confirm  = confirmInput.value;
 
 		if (!password || !confirm) {
 			alert("Please enter and confirm your node password.");
@@ -913,9 +920,9 @@ function restoreFeatureDraftFromShareLink() {
 
 
 	async function nodeUnlock(){
-		const form = document.getElementById("node-unlock-password-form");
 		const passwordInput = document.getElementById("node-unlock-password");
-		const password = passwordInput.value.trim();
+		if (!passwordInput) return;
+		const password = passwordInput.value;
 
 		if (!password) {
 			alert("Please enter your node password.");
@@ -941,6 +948,8 @@ function restoreFeatureDraftFromShareLink() {
 					MicroModal.close("node-unlock-modal");
 				}
 				passwordInput.value = "";
+				window.location.reload();
+				return;
 			} else {
 				alert(`Unlock failed: ${data.message || "Unknown error"}`);
 			}

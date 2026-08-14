@@ -64,13 +64,17 @@ init([]) ->
     case ensure_boot_ready() of
         ok ->
             {ok, #{}};
+        locked ->
+            ?LOG_WARNING("Secrets started locked; unlock via /secrets/unlock", []),
+            {ok, #{}};
         {error, Reason} ->
             ?LOG_ERROR("Secrets not initialized, refusing to boot: ~p", [Reason]),
             {stop, Reason}
     end.
 ensure_boot_ready() ->
     case get_env_password() of
-        {error, _} = E -> E;
+        {error, no_env_password} -> locked;
+        {error, empty_env_password} -> locked;
         {ok, Pw} -> ensure_keypair_valid(Pw)
     end.
 get_env_password() ->
@@ -85,10 +89,6 @@ get_env_password() ->
             {ok, Pw}
     end.
 
-clear_cache() ->
-    Pid = gproc:lookup_local_name({?MODULE, secrets}),
-    gen_server:call(Pid, clear_cache, ?ASKPASS_TIMEOUT).
-
 get_node_password() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, get_node_password, ?ASKPASS_TIMEOUT).
@@ -96,11 +96,11 @@ get_node_password() ->
 get_node_password_cached(State) ->
     case maps:get(node_password, State, undefined) of
         undefined ->
-            case os:getenv("DAMAGE_SECRET_KEY") of
-                false ->
-                    {error, node_locked};
-                NodePassword ->
-                    {NodePassword, State}
+            case get_env_password() of
+                {ok, NodePassword} ->
+                    {binary_to_list(NodePassword), State};
+                {error, _} ->
+                    {error, node_locked}
             end;
         NodePassword ->
             {NodePassword, State}
@@ -113,23 +113,51 @@ cache_node_password(Password, State) ->
     maps:put(node_password, Password, State).
 
 has_node_password() ->
-    case os:getenv("DAMAGE_SECRET_KEY") of
-        false ->
+    case get_env_password() of
+        {ok, _} ->
+            true;
+        {error, _} ->
             Pid = gproc:lookup_local_name({?MODULE, secrets}),
-            gen_server:call(Pid, has_node_password, ?ASKPASS_TIMEOUT);
-        _ ->
-            true
+            gen_server:call(Pid, has_node_password, ?ASKPASS_TIMEOUT)
     end.
 
 set_node_password(Pw0) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {set_node_password, Pw0}, ?ASKPASS_TIMEOUT).
 
+normalize_node_password(undefined) ->
+    {error, password_required};
+normalize_node_password(<<>>) ->
+    {error, password_required};
+normalize_node_password("") ->
+    {error, password_required};
+normalize_node_password(Pw) when is_binary(Pw) ->
+    {ok, Pw};
+normalize_node_password(Pw) when is_list(Pw) ->
+    {ok, list_to_binary(Pw)};
+normalize_node_password(_) ->
+    {error, invalid_password}.
+
 handle_call(has_node_password, _From, State) ->
     Has = maps:get(node_password, State, undefined) =/= undefined,
     {reply, Has, State};
-handle_call({set_node_password, Pw}, _From, State) ->
-    {reply, ok, cache_node_password(Pw, State)};
+handle_call({set_node_password, Pw0}, _From, State) ->
+    case normalize_node_password(Pw0) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        {ok, Pw} ->
+            case has_node_keypair() of
+                false ->
+                    {reply, ok, cache_node_password(Pw, State)};
+                true ->
+                    case ensure_keypair_valid(Pw) of
+                        ok ->
+                            {reply, ok, cache_node_password(Pw, State)};
+                        {error, _} = Error ->
+                            {reply, Error, State}
+                    end
+            end
+    end;
 handle_call(clear_cache, _From, State) ->
     {reply, ok, maps:remove(node_password, State)};
 handle_call(get_node_password, _From, State0) ->
@@ -156,8 +184,8 @@ handle_call({encrypt, Key, Data}, _From, State0) ->
     end;
 handle_call({decrypt, Key, EncData}, _From, State0) ->
     case get_node_password_cached(State0) of
-        error ->
-            {reply, error, State0};
+        {error, _} = Error ->
+            {reply, Error, State0};
         {NodePassword, State} ->
             case maps:get(Key, State, undefined) of
                 undefined ->
@@ -184,10 +212,13 @@ handle_call(node_keypair, _From, State) ->
         {error, Other} ->
             {reply, {error, Other}, State};
         {NodePassword, State} ->
-            KeyPair =
-                #{public_key := AeAccount, private_key := PrivateKey} = keypair(Path, NodePassword),
-            {reply, #{public_key => AeAccount, private_key => PrivateKey},
-                maps:merge(KeyPair, State)}
+            case keypair(Path, NodePassword) of
+                #{public_key := AeAccount, private_key := PrivateKey} = KeyPair ->
+                    {reply, #{public_key => AeAccount, private_key => PrivateKey},
+                        maps:merge(KeyPair, State)};
+                {error, _} = Error ->
+                    {reply, Error, State}
+            end
     end;
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
@@ -225,7 +256,7 @@ keypair(Path, NodePassword) ->
             ok = file:write_file(Path, term_to_binary(EncData)),
             Data;
         {ok, EncDataBin} ->
-            case
+            try
                 secrets:decrypt(
                     NodePassword,
                     binary_to_term(EncDataBin)
@@ -233,10 +264,26 @@ keypair(Path, NodePassword) ->
             of
                 error ->
                     ?LOG_WARNING("Failed to unlock keypair ~p", [Path]),
-                    clear_cache(),
-                    keypair(Path, NodePassword);
-                Data ->
-                    binary_to_term(Data)
+                    {error, decrypt_keypair};
+                Data when is_binary(Data) ->
+                    try binary_to_term(Data) of
+                        #{public_key := _, private_key := _} = KeyPair ->
+                            KeyPair;
+                        _ ->
+                            {error, corrupt_keypair}
+                    catch
+                        _Class:_Reason:_Stack ->
+                            {error, corrupt_keypair}
+                    end;
+                _ ->
+                    {error, decrypt_keypair}
+            catch
+                Class:Reason:Stack ->
+                    ?LOG_WARNING(
+                        "Invalid keypair data ~p: ~p",
+                        [Path, {Class, Reason, Stack}]
+                    ),
+                    {error, corrupt_keypair}
             end
     end.
 node_keypair() ->
@@ -254,10 +301,14 @@ ensure_keypair_valid(NodePassword) ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case file:read_file(Path) of
         {ok, Enc} ->
-            case catch secrets:decrypt(NodePassword, binary_to_term(Enc)) of
-                {'EXIT', _} -> {error, corrupt_keypair};
-                error -> {error, invalid_password};
-                _ -> ok
+            try secrets:decrypt(NodePassword, binary_to_term(Enc)) of
+                error ->
+                    {error, invalid_password};
+                _ ->
+                    ok
+            catch
+                _Class:_Reason:_Stack ->
+                    {error, corrupt_keypair}
             end;
         _ ->
             {error, missing_keypair}
@@ -390,15 +441,21 @@ encrypt_store(Name, Secret) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
     store_secret(Name, encrypt_secret(Secret, PrivateKey)).
 retrieve_decrypt(Name) ->
-    case catch secrets:node_keypair() of
+    try secrets:node_keypair() of
         #{public_key := _AeAccount, private_key := PrivateKey} ->
-            case catch retrieve_secret(Name) of
+            try retrieve_secret(Name) of
                 [{Name, {IV, CipherText, Tag}}] ->
                     {ok, decrypt_secret({IV, CipherText, Tag}, PrivateKey)};
                 _ ->
                     error
+            catch
+                _Class:_Reason:_Stack ->
+                    error
             end;
         _ ->
+            error
+    catch
+        _Class:_Reason:_Stack ->
             error
     end.
 
@@ -426,16 +483,23 @@ import_secret_key(PublicKey, PrivateKeyHex) ->
     PrivateKey = binary:decode_hex(PrivateKeyHex),
     Keypair = #{private_key => PrivateKey, public_key => PublicKey},
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case catch erm_askpass:ask_password(Prompt) of
+    try erm_askpass:ask_password(Prompt) of
         Password when is_binary(Password) ->
             EncData = secrets:encrypt(
                 Password,
                 term_to_binary(Keypair)
             ),
             ok = file:write_file(Path, term_to_binary(EncData)),
-            Keypair;
-        {'EXIT', {{ask_password_failed, Class, Reason}, _Stack}} ->
+            Keypair
+    catch
+        _ExceptionClass:{ask_password_failed, Class, Reason}:_Stack ->
             ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
+            error;
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "Failed to get node_password ~p, Reason ~p",
+                [Class, {Reason, Stack}]
+            ),
             error
     end.
 
@@ -455,16 +519,23 @@ migrate() ->
     Path = application:get_env(damage, keystore, "damage.key"),
     Keypair = binary_to_term(Data),
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
-    case catch erm_askpass:ask_password(Prompt) of
+    try erm_askpass:ask_password(Prompt) of
         Password when is_binary(Password) ->
             EncData = secrets:encrypt(
                 Password,
                 term_to_binary(Keypair)
             ),
             ok = file:write_file(Path, term_to_binary(EncData)),
-            Keypair;
-        {'EXIT', {{ask_password_failed, Class, Reason}, _Stack}} ->
+            Keypair
+    catch
+        _ExceptionClass:{ask_password_failed, Class, Reason}:_Stack ->
             ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
+            error;
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "Failed to get node_password ~p, Reason ~p",
+                [Class, {Reason, Stack}]
+            ),
             error
     end.
 
