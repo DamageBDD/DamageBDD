@@ -201,7 +201,26 @@ execute_data(Config, Context, FeatureData) ->
     ok = file:write_file(BddFileName, FeatureData),
     execute_file(Config, Context, BddFileName).
 
-execute_file(Config, Context, Filename) when is_map(Context) ->
+execute_file(Config, Context0, Filename) when is_map(Context0) ->
+    try
+        Context = damage_context:prepare_run_context(Context0),
+        execute_file_prepared(Config, Context, Filename)
+    catch
+        error:{context_scope_unavailable, Scope, Reason}:Stacktrace ->
+            ?LOG_ERROR(
+                "Context preparation failed scope=~p reason=~p stack=~p",
+                [Scope, Reason, Stacktrace]
+            ),
+            {error, {context_scope_unavailable, Scope, Reason}};
+        throw:{context_ipfs_publish_failed, Reason}:Stacktrace ->
+            ?LOG_ERROR(
+                "Context IPFS publication failed reason=~p stack=~p",
+                [Reason, Stacktrace]
+            ),
+            {error, {context_ipfs_publish_failed, Reason}}
+    end.
+
+execute_file_prepared(Config, Context, Filename) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
     Concurrency = proplists:get_value(concurrency, Config, 1),
     StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
@@ -258,7 +277,15 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
             %% Use a stable “completed_at” in seconds for reaping
             CompletedAtSec = round(date_util:now_to_seconds(os:timestamp())),
 
-            %% Write meta BEFORE IPFS add so it is included in ReportHash
+            %% Publish the immutable encrypted context proof first. The returned
+            %% CID/URL is then included in run.meta before the complete report
+            %% directory is added to IPFS.
+            ContextIpfs = require_context_ipfs(RunDir, Context),
+            ContextIpfsHash = maps:get(hash, ContextIpfs),
+            ContextIpfsUri = maps:get(uri, ContextIpfs),
+            ContextIpfsUrl = maps:get(url, ContextIpfs),
+
+            %% Write meta BEFORE IPFS add so it is included in ReportHash.
             ok = write_run_meta(
                 RunDir,
                 #{
@@ -268,7 +295,10 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     start_time_hires => StartTimestamp,
                     end_time_hires => EndTimestamp,
                     execution_time_hires => (EndTimestamp - StartTimestamp),
-                    result => Result
+                    result => Result,
+                    context_ipfs_hash => ContextIpfsHash,
+                    context_ipfs_uri => ContextIpfsUri,
+                    context_ipfs_url => ContextIpfsUrl
                 }
             ),
 
@@ -306,7 +336,9 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                                 string:join([DamageApi, "reports", ReportHash], "/"),
                             run_id => RunId,
                             public_key => maps:get(public_key, Context, <<"">>),
-                            feature_hash => FeatureHash
+                            feature_hash => FeatureHash,
+                            context_ipfs_hash => ContextIpfsHash,
+                            context_ipfs_url => ContextIpfsUrl
                         }
                     )
             end,
@@ -318,6 +350,9 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                         run_id => list_to_binary(RunId),
                         feature_hash => FeatureHash,
                         report_hash => ReportHash,
+                        context_ipfs_hash => ContextIpfsHash,
+                        context_ipfs_uri => ContextIpfsUri,
+                        context_ipfs_url => ContextIpfsUrl,
                         feature_title => FeatureTitle,
                         public_key => maps:get(public_key, Context),
                         report_dir =>
@@ -351,6 +386,9 @@ execute_file(Config, Context, Filename) when is_map(Context) ->
                     feature_hash => FeatureHash,
                     report_hash => ReportHash,
                     report_dir => maps:get(report_dir, FinalContext),
+                    context_ipfs_hash => ContextIpfsHash,
+                    context_ipfs_uri => ContextIpfsUri,
+                    context_ipfs_url => ContextIpfsUrl,
                     start_time => StartTimestamp,
                     execution_time => EndTimestamp - StartTimestamp,
                     end_time => EndTimestamp,
@@ -1564,6 +1602,16 @@ check_setup() ->
                         ok = secrets:encrypt_store(smtp_pass, SmtpPassword)
                 end
         end.
+require_context_ipfs(RunDir, Context) ->
+    case damage_context:publish_run_proof(RunDir, Context) of
+        {ok, Publication} when is_map(Publication) ->
+            Publication;
+        {error, Reason} ->
+            throw({context_ipfs_publish_failed, Reason});
+        Other ->
+            throw({context_ipfs_publish_failed, {unexpected_result, Other}})
+    end.
+
 write_run_meta(RunDir, MetaMap) ->
     %% Keep it stable + easy to parse.
     Bin = jsx:encode(MetaMap),
