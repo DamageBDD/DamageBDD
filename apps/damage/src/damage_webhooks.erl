@@ -1,14 +1,14 @@
 -module(damage_webhooks).
 
--vsn("0.1.0").
+-behaviour(gen_server).
+
+-vsn("0.2.0").
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
 
 -license("Apache-2.0").
--include_lib("kernel/include/logger.hrl").
-
 -export([init/2]).
 -export([content_types_accepted/2]).
 -export([content_types_provided/2]).
@@ -19,14 +19,12 @@
 -export([trails/0]).
 -export([is_authorized/2]).
 -export([trigger_webhooks/1]).
--export(
-    [
-        get_webhooks/1,
-        get_webhooks_proc/1,
-        contract_call/3,
-        restart_webhook_proc/1
-    ]
-).
+-export([
+    get_webhooks/1,
+    get_webhooks_proc/1,
+    contract_call/3,
+    restart_webhook_proc/1
+]).
 -export(
     [
         init/1,
@@ -48,10 +46,10 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
 
--define(WEBHOOKS_CONTRACT,
-    "ct_XDiXtNguPHqdFkR6q4AhtAWNnSMpvRsxuMVanNZM2EzR7yhZJ"
-).
--define(WEBHOOKS_BUCKET, {<<"Default">>, <<"Webhooks">>}).
+%% Webhook URLs may contain bearer tokens or path secrets. Keep the whole map
+%% encrypted in the authenticated account scope and out of Gherkin templates.
+-define(WEBHOOKS_KEY, <<"damage.webhooks">>).
+-define(WEBHOOKS_META, #{sensitive => true, exposure => step_only}).
 -define(TRAILS_TAG, ["Manage Webhooks"]).
 
 trails() ->
@@ -112,39 +110,80 @@ content_types_accepted(Req, State) ->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
 allowed_methods(Req, State) ->
-    {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
+    {[<<"GET">>, <<"POST">>, <<"PUT">>, <<"DELETE">>], Req, State}.
 
-from_json(Req, State) ->
-    {ok, Data, _Req2} = cowboy_req:read_body(Req),
-    #{result := #{returnType := <<"ok">>}} =
-        case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
-            {'EXIT', {badarg, Trace}} ->
-                ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
-                {400, <<"Json decoding failed.">>};
-            #{name := _WebhookName, url := _WebhookUrl} = Webhook ->
-                create_webhook(Webhook, Req, State)
-        end,
-    Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
-    {stop, cowboy_req:reply(201, Resp), State}.
+from_json(Req0, State) ->
+    case cowboy_req:read_body(Req0) of
+        {ok, Data, Req} ->
+            case decode_webhook(Data) of
+                {ok, Webhook} ->
+                    case create_webhook(Webhook, Req, State) of
+                        {ok, Result} ->
+                            reply_json_stop(
+                                201,
+                                #{status => <<"ok">>, result => Result},
+                                Req,
+                                State
+                            );
+                        {error, Reason} ->
+                            ?LOG_ERROR("Webhook context write failed reason=~p", [Reason]),
+                            reply_json_stop(
+                                503,
+                                #{status => <<"error">>, error => <<"WEBHOOK_STORE_UNAVAILABLE">>},
+                                Req,
+                                State
+                            )
+                    end;
+                {error, Reason} ->
+                    ?LOG_WARNING(
+                        "Invalid webhook JSON bytes=~p reason=~p",
+                        [byte_size(Data), Reason]
+                    ),
+                    reply_json_stop(
+                        400,
+                        #{status => <<"error">>, error => <<"INVALID_WEBHOOK_REQUEST">>},
+                        Req,
+                        State
+                    )
+            end;
+        {more, _Data, Req} ->
+            reply_json_stop(
+                413,
+                #{status => <<"error">>, error => <<"WEBHOOK_REQUEST_TOO_LARGE">>},
+                Req,
+                State
+            )
+    end.
 
 to_json(Req, #{public_key := AeAccount} = State) ->
-    Body = jsx:encode(get_webhooks(AeAccount)),
-    logger:info("Loading webhooks for ~p ~p", [AeAccount, Body]),
-    {Body, Req, State}.
+    case get_webhooks(AeAccount) of
+        Webhooks when is_map(Webhooks) ->
+            ?LOG_INFO("Loading webhooks account=~p count=~p", [AeAccount, map_size(Webhooks)]),
+            {jsx:encode(Webhooks), set_no_store(Req), State};
+        {error, Reason} ->
+            ?LOG_ERROR("Webhook context read failed account=~p reason=~p", [AeAccount, Reason]),
+            reply_json_stop(
+                503,
+                #{status => <<"error">>, error => <<"WEBHOOK_STORE_UNAVAILABLE">>},
+                Req,
+                State
+            )
+    end.
 
 delete_resource(Req, #{public_key := AeAccount} = State) ->
-    Deleted =
-        lists:foldl(
-            fun(DeleteId, Acc) ->
-                ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-                ok = delete_webhook(AeAccount, DeleteId),
-                Acc + 1
-            end,
-            0,
-            maps:get(path_info, Req)
-        ),
-    ?LOG_INFO("deleted ~p webhook", [Deleted]),
-    {true, Req, State}.
+    case delete_webhook_ids(AeAccount, maps:get(path_info, Req, []), 0) of
+        {ok, Deleted} ->
+            ?LOG_INFO("Deleted webhooks account=~p count=~p", [AeAccount, Deleted]),
+            {true, Req, State};
+        {error, Reason} ->
+            ?LOG_ERROR("Webhook context delete failed account=~p reason=~p", [AeAccount, Reason]),
+            reply_json_stop(
+                503,
+                #{status => <<"error">>, error => <<"WEBHOOK_STORE_UNAVAILABLE">>},
+                Req,
+                State
+            )
+    end.
 
 create_webhook(
     #{name := WebhookName, url := WebhookUrl} = _WebhookData,
@@ -152,8 +191,7 @@ create_webhook(
     #{public_key := AeAccount} = _State
 ) ->
     Pid = get_webhooks_proc(AeAccount),
-
-    gen_server:call(Pid, {add_webhook, AeAccount, WebhookName, WebhookUrl}, ?AE_TIMEOUT).
+    gen_server:call(Pid, {add_webhook, WebhookName, WebhookUrl}, ?AE_TIMEOUT).
 
 delete_webhook(AeAccount, WebhookId) ->
     Pid = get_webhooks_proc(AeAccount),
@@ -194,79 +232,86 @@ trigger_webhook(Url, #{content := Content} = Context) ->
     %?LOG_DEBUG("webhook post ~p ~p.", [Body, TemplateContext]),
     StreamRef = gun:post(ConnPid, Path0, ?DEFAULT_HEADERS, Body),
     Resp = gun_await(ConnPid, StreamRef),
-    ?LOG_DEBUG("Got response from webhook url ~p ~p.", [Url, Resp]);
+    ?LOG_DEBUG("Got response from webhook host=~p response=~p", [Host0, Resp]);
 trigger_webhook(#{url := _Url} = _Webhook, _Context) ->
     ok.
 
 trigger_webhooks(FinalContext) ->
     case maps:get(notify_urls, FinalContext, none) of
-        none ->
-            ok;
-        #{"fail" := EventHooks} = _NotifyHooks ->
-            [
-                trigger_webhook(Webhook, FinalContext)
-             || Webhook <- sets:to_list(EventHooks)
-            ]
+        #{"fail" := EventHooks} ->
+            trigger_webhook_set(EventHooks, FinalContext);
+        #{<<"fail">> := EventHooks} ->
+            trigger_webhook_set(EventHooks, FinalContext);
+        _ ->
+            ok
     end.
 
-handle_call({add_webhook, WebhookName, WebhookUrl}, _From, #{public_key := AeAccount} = Cache) ->
-    AccountCache = maps:get(AeAccount, Cache, #{}),
-    WebHookCache = maps:get(webhooks, AccountCache, #{}),
-    WebhookUrlEncrypted = base64:encode(damage_utils:encrypt(WebhookUrl)),
-    WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
-    Results =
-        contract_call(
-            AeAccount,
-            "add_webhook",
-            [WebhookNameEncrypted, WebhookUrlEncrypted]
-        ),
-    ?LOG_DEBUG("Webhooks ~p", [Results]),
-    {
-        reply,
-        Results,
-        maps:put(
-            AeAccount,
-            maps:put(
-                webhooks,
-                maps:put(WebhookName, WebhookUrl, WebHookCache),
-                AccountCache
-            ),
-            Cache
-        )
-    };
-handle_call({delete_webhook, WebhookName}, _From, #{public_key := AeAccount} = Cache) ->
-    WebhookNameEncrypted = base64:encode(damage_utils:encrypt(WebhookName)),
-    Results =
-        contract_call(
-            AeAccount,
-            "delete_webhook",
-            [WebhookNameEncrypted]
-        ),
-    ?LOG_DEBUG("Webhooks ~p", [Results]),
-    {reply, Results, Cache};
-handle_call(get_webhooks, _From, #{public_key := AeAccount} = Cache) ->
-    case catch maps:get(webhooks, Cache, undefined) of
-        undefined ->
-            #{decodedResult := Results} =
-                contract_call(AeAccount, "get_webhooks", []),
-            WebHooks =
-                maps:from_list(
-                    [
-                        {
-                            damage_utils:decrypt(Key),
-                            damage_utils:decrypt(Hook)
-                        }
-                     || [Key, Hook] <- Results
-                    ]
-                ),
-            ?LOG_DEBUG("Cache get Webhooks ~p", [WebHooks]),
-            {
-                reply,
-                WebHooks,
-                maps:put(webhooks, WebHooks, Cache)
-            };
-        Context when is_map(Context) -> {reply, Context, Cache}
-    end.
+trigger_webhook_set(EventHooks, FinalContext) ->
+    Webhooks =
+        try sets:to_list(EventHooks) of
+            Values when is_list(Values) -> Values
+        catch
+            _:_ when is_list(EventHooks) -> EventHooks;
+            _:_ -> []
+        end,
+    lists:foreach(fun(Webhook) -> trigger_webhook(Webhook, FinalContext) end, Webhooks),
+    ok.
+
+handle_call(
+    {add_webhook, AeAccount, WebhookName, WebhookUrl},
+    From,
+    #{public_key := AeAccount} = State
+) ->
+    handle_call({add_webhook, WebhookName, WebhookUrl}, From, State);
+handle_call(
+    {add_webhook, WebhookName0, WebhookUrl0},
+    _From,
+    #{public_key := AeAccount} = State
+) ->
+    WebhookName = to_binary(WebhookName0),
+    WebhookUrl = to_binary(WebhookUrl0),
+    Reply =
+        case load_webhooks(AeAccount) of
+            {ok, Webhooks0} ->
+                Webhooks = maps:put(WebhookName, WebhookUrl, Webhooks0),
+                case store_webhooks(AeAccount, Webhooks) of
+                    {ok, Summary} ->
+                        {ok, #{name => WebhookName, context => Summary}};
+                    {error, _} = Error ->
+                        Error
+                end;
+            {error, _} = Error ->
+                Error
+        end,
+    {reply, Reply, State};
+handle_call({delete_webhook, WebhookName0}, _From, #{public_key := AeAccount} = State) ->
+    WebhookName = to_binary(WebhookName0),
+    Reply =
+        case load_webhooks(AeAccount) of
+            {ok, Webhooks0} ->
+                case maps:is_key(WebhookName, Webhooks0) of
+                    false ->
+                        ok;
+                    true ->
+                        persist_webhook_delete(
+                            AeAccount,
+                            maps:remove(WebhookName, Webhooks0)
+                        )
+                end;
+            {error, _} = Error ->
+                Error
+        end,
+    {reply, Reply, State};
+handle_call(get_webhooks, _From, #{public_key := AeAccount} = State) ->
+    Reply =
+        case load_webhooks(AeAccount) of
+            {ok, Webhooks} -> Webhooks;
+            {error, _} = Error -> Error
+        end,
+    {reply, Reply, State};
+handle_call(Other, _From, State) ->
+    ?LOG_WARNING("Unhandled damage_webhooks call ~p", [Other]),
+    {reply, {error, unsupported_call}, State}.
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
@@ -279,6 +324,8 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+get_webhooks_proc(AeAccount) when is_list(AeAccount) ->
+    get_webhooks_proc(list_to_binary(AeAccount));
 get_webhooks_proc(<<"ak_", _/binary>> = AeAccount) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of
         undefined ->
@@ -296,7 +343,7 @@ get_webhooks_proc(<<"ak_", _/binary>> = AeAccount) ->
                         shutdown => 60,
                         % optional
                         type => worker,
-                        modules => [damage_ae, damage_context, damage_webhooks]
+                        modules => [damage_webhooks]
                     }
                 )
             of
@@ -320,13 +367,101 @@ restart_webhook_proc(AeAccount) ->
             get_webhooks_proc(AeAccount)
     end.
 
-get_webhooks_contract() ->
-    application:get_env(damage, context_ct, ?WEBHOOKS_CONTRACT).
-contract_call(AeAccount, Func, Args) ->
-    damage_ae:contract_call(
-        AeAccount,
-        get_webhooks_contract(),
-        "contracts/webhooks.aes",
-        Func,
-        Args
+webhook_scope(AeAccount) ->
+    damage_context:account_scope(to_binary(AeAccount)).
+
+load_webhooks(AeAccount) ->
+    case damage_context:get(webhook_scope(AeAccount), ?WEBHOOKS_KEY) of
+        {ok, Webhooks} when is_map(Webhooks) ->
+            {ok, normalize_webhooks(Webhooks)};
+        {ok, Other} ->
+            {error, {invalid_webhooks_context_value, Other}};
+        not_found ->
+            {ok, #{}};
+        {error, _} = Error ->
+            Error
+    end.
+
+store_webhooks(AeAccount, Webhooks) when is_map(Webhooks) ->
+    damage_context:put(
+        webhook_scope(AeAccount),
+        ?WEBHOOKS_KEY,
+        normalize_webhooks(Webhooks),
+        ?WEBHOOKS_META
     ).
+
+persist_webhook_delete(AeAccount, Webhooks) when map_size(Webhooks) =:= 0 ->
+    case damage_context:delete(webhook_scope(AeAccount), ?WEBHOOKS_KEY) of
+        {ok, _Summary} -> ok;
+        {error, _} = Error -> Error
+    end;
+persist_webhook_delete(AeAccount, Webhooks) ->
+    case store_webhooks(AeAccount, Webhooks) of
+        {ok, _Summary} -> ok;
+        {error, _} = Error -> Error
+    end.
+
+normalize_webhooks(Webhooks) ->
+    maps:from_list([
+        {to_binary(Name), to_binary(Url)}
+     || {Name, Url} <- maps:to_list(Webhooks)
+    ]).
+
+decode_webhook(Data) ->
+    try jsx:decode(Data, [return_maps]) of
+        #{<<"name">> := Name, <<"url">> := Url} ->
+            normalize_webhook(Name, Url);
+        #{name := Name, url := Url} ->
+            normalize_webhook(Name, Url);
+        _ ->
+            {error, missing_name_or_url}
+    catch
+        Class:Reason:Stacktrace ->
+            {error, {json_decode_failed, Class, Reason, Stacktrace}}
+    end.
+
+normalize_webhook(Name0, Url0) ->
+    Name = to_binary(Name0),
+    Url = to_binary(Url0),
+    case {Name, Url} of
+        {<<>>, _} -> {error, empty_webhook_name};
+        {_, <<>>} -> {error, empty_webhook_url};
+        _ -> {ok, #{name => Name, url => Url}}
+    end.
+
+delete_webhook_ids(_AeAccount, [], Deleted) ->
+    {ok, Deleted};
+delete_webhook_ids(AeAccount, [WebhookId | Rest], Deleted) ->
+    case delete_webhook(AeAccount, WebhookId) of
+        ok -> delete_webhook_ids(AeAccount, Rest, Deleted + 1);
+        {error, _} = Error -> Error
+    end.
+
+reply_json_stop(Status, Body, Req0, State) ->
+    Req = cowboy_req:reply(
+        Status,
+        #{
+            <<"content-type">> => <<"application/json">>,
+            <<"cache-control">> => <<"private, no-store">>
+        },
+        jsx:encode(Body),
+        Req0
+    ),
+    {stop, Req, State}.
+
+set_no_store(Req) ->
+    cowboy_req:set_resp_header(<<"cache-control">>, <<"private, no-store">>, Req).
+
+%% Compatibility shim for older callers. Webhook persistence no longer uses
+%% an Aeternity contract; callers should use get_webhooks/1 or the HTTP API.
+contract_call(AeAccount, Func, Args) ->
+    ?LOG_WARNING(
+        "Legacy webhook contract call rejected account=~p function=~p args_count=~p",
+        [AeAccount, Func, length(Args)]
+    ),
+    {error, webhooks_contract_removed}.
+
+to_binary(Value) when is_binary(Value) -> Value;
+to_binary(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+to_binary(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+to_binary(Value) -> unicode:characters_to_binary(io_lib:format("~p", [Value])).
