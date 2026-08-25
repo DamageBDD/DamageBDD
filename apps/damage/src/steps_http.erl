@@ -127,7 +127,7 @@
 step(
     _Config,
     Context,
-    <<"Then">>,
+    _,
     _N,
     ?STEP_RESPONSE_CONTAINS,
     _
@@ -157,11 +157,11 @@ step(_Config, _Context, documentation, _N, ?STEP_HTTP_GET_WITH_PARAMS, _) ->
 step(
     Config,
     Context,
-    <<"When">>,
+    Keyword,
     _N,
     ?STEP_HTTP_GET_WITH_PARAMS,
     Body
-) ->
+) when Keyword =:= <<"When">>; Keyword =:= <<"And">> ->
     Params = steps_utils:parse_step_body(Body),
     %% NOTE: likely typo; prefer uri_string:compose_query/1
     Query = uri_string:compose_query(maps:to_list(Params)),
@@ -174,7 +174,9 @@ step(
 step(_Config, _Context, documentation, _N, ?STEP_HTTP_GET_PATH, _) ->
     _ = Path,
     "WHEN: Simple GET to a path (base_url is read from Context)";
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_GET_PATH, _) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_GET_PATH, _) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     gun_get(
         Config,
         Context,
@@ -184,28 +186,36 @@ step(Config, Context, <<"When">>, _N, ?STEP_HTTP_GET_PATH, _) ->
 %%------------------------------------------------------------------------------
 %% WHEN: POST to a path with request body as-is (IODATA)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_POST_PATH, Data) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_POST_PATH, Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     Url = build_url(Path, maps:get(base_url, Context, "")),
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     gun_post(Config, Context, Url, Headers, Data);
 %%------------------------------------------------------------------------------
 %% WHEN: PATCH to a path with body
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_PATCH_PATH, Data) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_PATCH_PATH, Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     Url = build_url(Path, maps:get(base_url, Context, "")),
     gun_patch(Config, Context, Url, Headers, Data);
 %%------------------------------------------------------------------------------
 %% WHEN: PUT to a path with body
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_PUT_PATH, Data) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_PUT_PATH, Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     Headers = get_headers(Context, ?DEFAULT_HEADERS),
     Url = build_url(Path, maps:get(base_url, Context, "")),
     gun_put(Config, Context, Url, Headers, Data);
 %%------------------------------------------------------------------------------
 %% WHEN: OPTIONS request
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_OPTIONS_PATH, _Data) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_OPTIONS_PATH, _Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     gun_options(
         Config,
         Context,
@@ -215,7 +225,9 @@ step(Config, Context, <<"When">>, _N, ?STEP_HTTP_OPTIONS_PATH, _Data) ->
 %%------------------------------------------------------------------------------
 %% WHEN: DELETE request
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_DELETE_PATH, _Data) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_DELETE_PATH, _Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     gun_delete(
         Config,
         Context,
@@ -225,7 +237,9 @@ step(Config, Context, <<"When">>, _N, ?STEP_HTTP_DELETE_PATH, _Data) ->
 %%------------------------------------------------------------------------------
 %% WHEN: TRACE not implemented (explicit failure marker)
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"When">>, _N, ?STEP_HTTP_TRACE_PATH, _Data) ->
+step(_Config, Context, Keyword, _N, ?STEP_HTTP_TRACE_PATH, _Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     ?LOG_DEBUG("TRACE path ~p", [Path]),
     maps:put(fail, <<"Step not implemented">>, Context);
 %%------------------------------------------------------------------------------
@@ -233,7 +247,9 @@ step(_Config, Context, <<"When">>, _N, ?STEP_HTTP_TRACE_PATH, _Data) ->
 %%   1) GET path to fetch CSRF/session headers
 %%   2) POST with CSRF + Session headers added
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_CSRF_POST_PATH, Data) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_CSRF_POST_PATH, Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     Headers0 = lists:append(
         [
             {<<"accept">>, "application/json"},
@@ -267,7 +283,9 @@ step(Config, Context, <<"When">>, _N, ?STEP_HTTP_CSRF_POST_PATH, Data) ->
 %%------------------------------------------------------------------------------
 %% WHEN: Form POST without CSRF preflight (explicit form headers)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"When">>, _N, ?STEP_HTTP_FORM_POST_PATH, Data) ->
+step(Config, Context, Keyword, _N, ?STEP_HTTP_FORM_POST_PATH, Data) when
+    Keyword =:= <<"When">>; Keyword =:= <<"And">>
+->
     Headers0 = [
         {<<"accept">>, "application/json"},
         {<<"content-type">>, <<"application/x-www-form-urlencoded">>},
@@ -308,7 +326,7 @@ step(_Config, Context, _, _N, ?STEP_RESPONSE_STATUS_EQ, _) ->
 step(
     _Config,
     Context,
-    <<"Then">>,
+    _,
     _N,
     ?STEP_RESPONSE_YAML_MUST,
     _
@@ -332,7 +350,7 @@ step(
 step(
     _Config,
     Context,
-    <<"Then">>,
+    _,
     _N,
     ?STEP_RESPONSE_JSON_MUST,
     _
@@ -394,7 +412,7 @@ step(
 %%------------------------------------------------------------------------------
 %% THEN: Specific header should equal an expected value
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"Then">>, _N, ?STEP_RESPONSE_HEADER_IS, _) ->
+step(_Config, Context, _, _N, ?STEP_RESPONSE_HEADER_IS, _) ->
     case maps:get(response, Context) of
         {_, Headers, _} ->
             case lists:keyfind(Var, 1, Headers) of
@@ -421,7 +439,9 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_RESPONSE_HEADER_IS, _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print JSON at JSONPath (for debugging/visibility in formatter)
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_JSON_PATH, _) ->
+step(Config, Context, Keyword, N, ?STEP_RESPONSE_PRINT_JSON_PATH, _) when
+    Keyword =:= <<"Then">>; Keyword =:= <<"And">>
+->
     [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
         maps:get(response, Context),
     case ejsonpath:q(Path, jsx:decode(Body, [return_maps])) of
@@ -443,7 +463,9 @@ step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_JSON_PATH, _) ->
 %%------------------------------------------------------------------------------
 %% THEN: Print raw response body
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Then">>, N, ?STEP_RESPONSE_PRINT_BODY, _) ->
+step(Config, Context, Keyword, N, ?STEP_RESPONSE_PRINT_BODY, _) when
+    Keyword =:= <<"Then">>; Keyword =:= <<"And">>
+->
     [{status_code, _StatusCode}, {headers, _Headers}, {body, Body}] =
         maps:get(response, Context),
     formatter:format(
@@ -482,7 +504,9 @@ step(_Config, Context, _Keyword, _N, ?STEP_CLEAR_HEADER, _) ->
 %%------------------------------------------------------------------------------
 %% GIVEN: Store cookies from response (extract 'set-cookie' headers)
 %%------------------------------------------------------------------------------
-step(_Config, Context, <<"Given">>, _N, ?STEP_STORE_COOKIES, _) ->
+step(_Config, Context, Keyword, _N, ?STEP_STORE_COOKIES, _) when
+    Keyword =:= <<"Given">>; Keyword =:= <<"And">>
+->
     [_, _StatusCode, {headers, Headers}, _Body] = maps:get(response, Context),
     ?LOG_DEBUG("Response Headers:  ~p", [Headers]),
     Cookies =
@@ -532,8 +556,9 @@ step(
 %%------------------------------------------------------------------------------
 %% GIVEN: Set base server and derive host/port from URI
 %%------------------------------------------------------------------------------
-step(_Config, Context0, <<"Given">>, _N, ?STEP_GIVEN_USING_SERVER, _) when
-    is_map(Context0)
+step(_Config, Context0, Keyword, _N, ?STEP_GIVEN_USING_SERVER, _) when
+    is_map(Context0),
+    (Keyword =:= <<"Given">> orelse Keyword =:= <<"And">>)
 ->
     Context = maps:put(base_url, Server, Context0),
     case uri_string:parse(Server) of
@@ -549,7 +574,9 @@ step(_Config, Context0, <<"Given">>, _N, ?STEP_GIVEN_USING_SERVER, _) when
 %%------------------------------------------------------------------------------
 %% GIVEN: Alias for setting base URL (chains into "I am using server")
 %%------------------------------------------------------------------------------
-step(Config, Context, <<"Given">>, _N, ?STEP_SET_BASE_URL, Body) ->
+step(Config, Context, Keyword, _N, ?STEP_SET_BASE_URL, Body) when
+    Keyword =:= <<"Given">>; Keyword =:= <<"And">>
+->
     maps:put(
         base_url,
         Server,
@@ -561,11 +588,11 @@ step(Config, Context, <<"Given">>, _N, ?STEP_SET_BASE_URL, Body) ->
 step(
     _Config,
     Context,
-    <<"Given">>,
+    Keyword,
     _N,
     ?STEP_GIVEN_BASIC_AUTH,
     _
-) ->
+) when Keyword =:= <<"Given">>; Keyword =:= <<"And">> ->
     maps:put(basic_auth, {User, Password}, Context);
 %%------------------------------------------------------------------------------
 %% GIVEN: Set OAuth (query) credentials
@@ -573,11 +600,11 @@ step(
 step(
     _Config,
     Context,
-    <<"Given">>,
+    Keyword,
     _N,
     ?STEP_GIVEN_OAUTH_QUERY,
     _
-) ->
+) when Keyword =:= <<"Given">>; Keyword =:= <<"And">> ->
     maps:put(oauth_query_auth, {Key, Secret}, Context);
 %%------------------------------------------------------------------------------
 %% GIVEN: Set OAuth (header) credentials
@@ -585,11 +612,11 @@ step(
 step(
     _Config,
     Context,
-    <<"Given">>,
+    Keyword,
     _N,
     ?STEP_GIVEN_OAUTH_HEADER,
     _
-) ->
+) when Keyword =:= <<"Given">>; Keyword =:= <<"And">> ->
     maps:put(oauth_header_auth, {Key, Secret}, Context);
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Disable TLS certificate verification for subsequent requests

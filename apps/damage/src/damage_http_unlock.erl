@@ -176,7 +176,10 @@ set_password(PasswordBin, ConfirmBin) ->
                                     ok = secrets:set_node_password(PasswordBin),
                                     case secrets:node_keypair() of
                                         #{public_key := _PubKey, private_key := _NodePrivateKey} ->
-                                            #{status => <<"ok">>, message => <<"node password set">>};
+                                            #{
+                                                status => <<"ok">>,
+                                                message => <<"node password set">>
+                                            };
                                         {error, _} ->
                                             #{
                                                 status => <<"failed">>,

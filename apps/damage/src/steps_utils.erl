@@ -1,5 +1,6 @@
 -module(steps_utils).
 
+-vsn("0.2.1").
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").
@@ -37,9 +38,30 @@ step_dry(_Config, Context, _, _N, _, _) ->
     maps:put(step_spend, Spend, Context).
 step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
     maps:put(Variable, list_to_binary(uuid:to_string(uuid:uuid4())), Context);
-step(_Config, Context, _, _N, ["I wait", Seconds, "seconds"], _) ->
-    timer:sleep(Seconds),
+%% Zero is a valid no-op. Keep explicit clauses so a tokenized string never
+%% reaches timer:sleep/1 before normalization.
+step(_Config, Context, _, _N, ["I wait", 0, "seconds"], _) ->
     Context;
+step(_Config, Context, _, _N, ["I wait", 0.0, "seconds"], _) ->
+    Context;
+step(_Config, Context, _, _N, ["I wait", "0", "seconds"], _) ->
+    Context;
+step(_Config, Context, _, _N, ["I wait", <<"0">>, "seconds"], _) ->
+    Context;
+step(_Config, Context, _, _N, ["I wait", Seconds0, "seconds"], _) ->
+    case wait_milliseconds(Seconds0) of
+        {ok, 0} ->
+            Context;
+        {ok, Milliseconds} when is_integer(Milliseconds), Milliseconds > 0 ->
+            timer:sleep(Milliseconds),
+            Context;
+        {error, Reason} ->
+            set_fail(
+                Context,
+                "Invalid wait duration ~p seconds: ~p",
+                [Seconds0, Reason]
+            )
+    end;
 %%------------------------------------------------------------------------------
 %% (Given/When/Then/And): Set an arbitrary variable in context
 %%------------------------------------------------------------------------------
@@ -373,6 +395,35 @@ run(_Context = #{exec_ctx := #ctx{sudo = Sudo}}, Cmd) when is_list(Cmd) ->
             ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Full]),
             {error, Reason}
     end.
+wait_milliseconds(Seconds) when is_integer(Seconds) ->
+    wait_milliseconds_from_number(Seconds);
+wait_milliseconds(Seconds) when is_float(Seconds) ->
+    wait_milliseconds_from_number(Seconds);
+wait_milliseconds(Seconds) when is_binary(Seconds) ->
+    wait_milliseconds(binary_to_list(Seconds));
+wait_milliseconds(Seconds) when is_list(Seconds) ->
+    Text = string:trim(Seconds),
+    case string:to_integer(Text) of
+        {Value, []} ->
+            wait_milliseconds_from_number(Value);
+        _ ->
+            case string:to_float(Text) of
+                {Value, []} -> wait_milliseconds_from_number(Value);
+                _ -> {error, invalid_number}
+            end
+    end;
+wait_milliseconds(_Seconds) ->
+    {error, invalid_type}.
+
+wait_milliseconds_from_number(Seconds) when Seconds < 0 ->
+    {error, negative_duration};
+wait_milliseconds_from_number(Seconds) ->
+    Milliseconds = round(Seconds * 1000),
+    case Milliseconds =< 16#FFFFFFFF of
+        true -> {ok, Milliseconds};
+        false -> {error, duration_too_large}
+    end.
+
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> list_to_binary(L);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);

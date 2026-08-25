@@ -39,18 +39,106 @@ get_headers(Context, DefaultHeaders) ->
 response_to_list({StatusCode, Headers, Body}) ->
     [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
 
+%% Human-readable failures for the common damage_gun error shapes.
+ipfs_request_error_message({await_up_failed, Reason}) ->
+    ipfs_request_error_message(Reason);
+ipfs_request_error_message({await_response_failed, Reason}) ->
+    ipfs_request_error_message(Reason);
+ipfs_request_error_message({await_body_failed, Reason}) ->
+    ipfs_request_error_message(Reason);
+ipfs_request_error_message({gun_open_exit, Reason}) ->
+    ipfs_request_error_message(Reason);
+ipfs_request_error_message({gun_not_started, Reason}) ->
+    damage_utils:strf(
+        "IPFS HTTP client is unavailable. Ensure Gun is started. Underlying error: ~p",
+        [Reason]
+    );
+ipfs_request_error_message(econnrefused) ->
+    <<"IPFS connection refused. Check that the IPFS API/gateway is running and the host/port are correct.">>;
+ipfs_request_error_message(nxdomain) ->
+    <<"IPFS hostname could not be resolved. Check the configured hostname and DNS.">>;
+ipfs_request_error_message(enetunreach) ->
+    <<"IPFS network is unreachable. Check routing, firewall, and endpoint configuration.">>;
+ipfs_request_error_message(ehostunreach) ->
+    <<"IPFS host is unreachable. Check routing, firewall, and endpoint configuration.">>;
+ipfs_request_error_message(timeout) ->
+    damage_utils:strf(
+        "IPFS request timed out after ~p ms. Check IPFS daemon/gateway health and network reachability.",
+        [?DEFAULT_HTTP_TIMEOUT]
+    );
+ipfs_request_error_message({tls_alert, Reason}) ->
+    damage_utils:strf(
+        "IPFS TLS connection failed. Check the HTTPS hostname, certificate, and trusted CA chain. "
+        "Underlying error: ~p",
+        [Reason]
+    );
+ipfs_request_error_message(Reason) ->
+    damage_utils:strf(
+        "IPFS request failed. Check the configured endpoint and IPFS service logs. "
+        "Underlying error: ~p",
+        [Reason]
+    ).
+
+ipfs_endpoint_error_message({unsupported_scheme, Scheme}) ->
+    damage_utils:strf(
+        "Unsupported IPFS URL scheme ~p. Use an absolute http:// or https:// URL.",
+        [Scheme]
+    );
+ipfs_endpoint_error_message({bad_url, BaseUrl, _}) ->
+    damage_utils:strf(
+        "Invalid IPFS endpoint ~p. Use an absolute URL such as http://127.0.0.1:5001.",
+        [BaseUrl]
+    );
+ipfs_endpoint_error_message(Reason) ->
+    damage_utils:strf("Invalid IPFS endpoint: ~p", [Reason]).
+
+ipfs_path_error_message(absolute_path_not_allowed, RunDir, Path) ->
+    damage_utils:strf(
+        "IPFS add path ~p must be relative to run_dir ~p; absolute paths are not allowed.",
+        [Path, RunDir]
+    );
+ipfs_path_error_message(does_not_exist, RunDir, Path) ->
+    damage_utils:strf(
+        "IPFS add path ~p does not exist under run_dir ~p.",
+        [Path, RunDir]
+    );
+ipfs_path_error_message(escaped_via_symlink_or_traversal, RunDir, Path) ->
+    damage_utils:strf(
+        "IPFS add path ~p resolves outside run_dir ~p; traversal and symlink escapes are refused.",
+        [Path, RunDir]
+    );
+ipfs_path_error_message(Reason, RunDir, Path) ->
+    damage_utils:strf(
+        "Cannot use IPFS add path ~p under run_dir ~p: ~p",
+        [Path, RunDir, Reason]
+    ).
+
 %% -------------------------------------------------------------------
 %% damage_gun-backed IPFS connection/request helpers
 %% -------------------------------------------------------------------
 %% Uniform POST to IPFS API. IPFS API endpoints usually expect POST.
 ipfs_post(undefined, _Path, _Headers, Context) ->
-    maps:put(fail, <<"IPFS API URL not set">>, Context);
+    maps:put(
+        fail,
+        <<
+            "IPFS API URL is not set. Add `Given I am using IPFS API at "
+            "\"http://127.0.0.1:5001\"` before this step."
+        >>,
+        Context
+    );
 ipfs_post(ApiUrl, Path, Headers, Context) ->
     ipfs_request(post, ApiUrl, Path, Headers, <<>>, Context).
 
 %% Uniform GET for gateways or API GET-compatible calls.
 ipfs_get(undefined, _Path, _Headers, Context) ->
-    maps:put(fail, <<"IPFS gateway URL not set">>, Context);
+    maps:put(
+        fail,
+        <<
+            "IPFS gateway URL is not set. Add `Given I am using IPFS gateway "
+            "\"http://127.0.0.1:8080\"` before this step."
+        >>,
+        Context
+    );
 ipfs_get(GatewayUrl, Path, Headers, Context) ->
     ipfs_request(get, GatewayUrl, Path, Headers, <<>>, Context).
 
@@ -90,22 +178,14 @@ ipfs_request(Method, BaseUrl, Path0, Headers, Body, Context) ->
                         "IPFS damage_gun request failed method=~p base=~p path=~p reason=~p",
                         [Method, BaseUrl, Path, Reason]
                     ),
-                    maps:put(
-                        fail,
-                        damage_utils:strf("IPFS request failed: ~p", [Reason]),
-                        Context
-                    )
+                    maps:put(fail, ipfs_request_error_message(Reason), Context)
             end;
         {error, Reason} ->
             ?LOG_ERROR(
                 "Invalid IPFS endpoint base=~p path=~p reason=~p",
                 [BaseUrl, Path0, Reason]
             ),
-            maps:put(
-                fail,
-                damage_utils:strf("Invalid IPFS endpoint: ~p", [Reason]),
-                Context
-            )
+            maps:put(fail, ipfs_endpoint_error_message(Reason), Context)
     end.
 
 ipfs_damage_gun_opts(Host, Transport) ->
@@ -220,7 +300,11 @@ step(_Cfg, Context0, <<"When">>, _N, ["I call IPFS", Cmd, "for the CID"], _Body)
     CID = maps:get(cid, Context0, undefined),
     case CID of
         undefined ->
-            maps:put(fail, <<"CID not set">>, Context0);
+            maps:put(
+                fail,
+                <<"CID is not set. Add `Given a CID \"<cid>\"` before calling IPFS for the CID.">>,
+                Context0
+            );
         _ ->
             Url = ipfs_api_url(Cmd, [{"arg", CID}]),
             Headers = get_headers(Context0, ?DEFAULT_HEADERS),
@@ -239,7 +323,11 @@ step(
     CID = maps:get(cid, Context0, undefined),
     case CID of
         undefined ->
-            maps:put(fail, <<"CID not set">>, Context0);
+            maps:put(
+                fail,
+                <<"CID is not set. Add `Given a CID \"<cid>\"` before calling IPFS for the CID.">>,
+                Context0
+            );
         _ ->
             Url = ipfs_api_url(Cmd, [{"arg", CID}, {"type", Type}]),
             Headers = get_headers(Context0, ?DEFAULT_HEADERS),
@@ -258,9 +346,20 @@ step(
     CID = maps:get(cid, Context0, undefined),
     case {Gw, CID} of
         {undefined, _} ->
-            maps:put(fail, <<"IPFS gateway not set">>, Context0);
+            maps:put(
+                fail,
+                <<
+                    "IPFS gateway URL is not set. Add `Given I am using IPFS gateway "
+                    "\"http://127.0.0.1:8080\"` before this step."
+                >>,
+                Context0
+            );
         {_, undefined} ->
-            maps:put(fail, <<"CID not set">>, Context0);
+            maps:put(
+                fail,
+                <<"CID is not set. Add `Given a CID \"<cid>\"` before requesting gateway content.">>,
+                Context0
+            );
         {Gateway, _} ->
             Path = binary_to_list(
                 binary:replace(list_to_binary(Path0), <<"<cid>">>, list_to_binary(CID), [global])
@@ -278,38 +377,53 @@ step(
     ?STEP_ADD_PATH_TO_IPFS_AND_STORE_HASH,
     _Body
 ) ->
-    {run_dir, RunDir0} = lists:keyfind(run_dir, 1, Config),
-    RunDir = filename:absname(RunDir0),
+    case lists:keyfind(run_dir, 1, Config) of
+        false ->
+            maps:put(
+                fail,
+                <<"IPFS add requires `run_dir` in the DamageBDD execution config.">>,
+                Context0
+            );
+        {run_dir, RunDir0} ->
+            RunDir = filename:absname(RunDir0),
+            Path = to_list(Path),
 
-    Path = to_list(Path),
-
-    case safe_resolve_under_run_dir(RunDir, Path) of
-        {ok, AbsPath} ->
-            case add_path_to_ipfs(AbsPath) of
-                {ok, HashList} ->
-                    RootName = root_name_for_path(AbsPath),
-                    case pick_root_hash(HashList, RootName) of
-                        {ok, Cid} ->
-                            maps:put(Variable, Cid, maps:put(ipfs_add_result, HashList, Context0));
+            case safe_resolve_under_run_dir(RunDir, Path) of
+                {ok, AbsPath} ->
+                    case add_path_to_ipfs(AbsPath) of
+                        {ok, HashList} ->
+                            RootName = root_name_for_path(AbsPath),
+                            case pick_root_hash(HashList, RootName) of
+                                {ok, Cid} ->
+                                    maps:put(
+                                        Variable,
+                                        Cid,
+                                        maps:put(ipfs_add_result, HashList, Context0)
+                                    );
+                                {error, Why} ->
+                                    maps:put(
+                                        fail,
+                                        damage_utils:strf(
+                                            "IPFS add succeeded but no root CID was returned: ~p",
+                                            [Why]
+                                        ),
+                                        Context0
+                                    )
+                            end;
                         {error, Why} ->
                             maps:put(
                                 fail,
                                 damage_utils:strf(
-                                    "ipfs add ok but cannot pick root cid: ~p",
-                                    [Why]
+                                    "IPFS add failed for ~p. Check the IPFS service and asset path. "
+                                    "Underlying error: ~p",
+                                    [AbsPath, Why]
                                 ),
                                 Context0
                             )
                     end;
                 {error, Why} ->
-                    maps:put(fail, damage_utils:strf("ipfs add failed: ~p", [Why]), Context0)
-            end;
-        {error, Why} ->
-            maps:put(
-                fail,
-                damage_utils:strf("refusing path outside run_dir: ~p ~p ~p", [Why, RunDir, Path]),
-                Context0
-            )
+                    maps:put(fail, ipfs_path_error_message(Why, RunDir, Path), Context0)
+            end
     end;
 %% Ensure IPFS asset (optional)
 step(_Config, Context, _Phase, _N, ["I ensure IPFS asset", Hash, "at", OutPath], _Body) ->
@@ -321,7 +435,15 @@ step(_Config, Context, _Phase, _N, ["I ensure IPFS asset", Hash, "at", OutPath],
             case damage_ipfs:get(Hash, OutPath) of
                 {error, Reason} ->
                     ?LOG_WARNING("ipfs failed to fetch ~s -> ~s error: ~p", [Hash, OutPath, Reason]),
-                    damage_utils:fail(Context, Reason);
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "IPFS fetch failed for CID ~p to ~p. Check that the CID exists, "
+                            "IPFS is reachable, and the destination is writable. Error: ~p",
+                            [Hash, OutPath, Reason]
+                        ),
+                        Context
+                    );
                 {ok, Result} ->
                     ?LOG_DEBUG("ensure ipfs asset result ~p", [Result]),
 
@@ -344,7 +466,15 @@ step(
             case damage_ipfs:get(Hash, OutPath) of
                 {error, Reason} ->
                     ?LOG_WARNING("ipfs failed to fetch ~s -> ~s error: ~p", [Hash, OutPath, Reason]),
-                    damage_utils:fail(Context, Reason);
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "IPFS fetch failed for CID ~p to ~p. Check that the CID exists, "
+                            "IPFS is reachable, and the destination is writable. Error: ~p",
+                            [Hash, OutPath, Reason]
+                        ),
+                        Context
+                    );
                 {ok, Result} ->
                     ?LOG_DEBUG("ensure ipfs asset result ~p", [Result]),
 

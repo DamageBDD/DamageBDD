@@ -99,17 +99,32 @@ step(Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
         ),
     Command = lists:flatten(CmdIO),
     Ctx1 = run_cmd(Config, Command, Context),
-    case cmd_stdout(Ctx1) of
-        <<>> ->
+    case maps:is_key(fail, Ctx1) of
+        true ->
+            %% Preserve the actual Docker failure; stderr is not a list of IDs.
             Ctx1;
-        Bin ->
-            Trimmed = string:trim(binary_to_list(Bin)),
-            case Trimmed of
-                "" ->
+        false ->
+            case cmd_stdout(Ctx1) of
+                <<>> ->
                     Ctx1;
-                _ ->
-                    ?LOG_ERROR("Docker cleanup failed, leftover IDs: ~s", [Trimmed]),
-                    erlang:error({docker_cleanup_failed, Trimmed})
+                Bin ->
+                    Trimmed = string:trim(binary_to_list(Bin)),
+                    case Trimmed of
+                        "" ->
+                            Ctx1;
+                        _ ->
+                            ?LOG_ERROR("Docker cleanup left unused containers behind: ~s", [Trimmed]),
+                            maps:put(
+                                fail,
+                                damage_utils:strf(
+                                    "Docker cleanup completed but unused containers still remain: ~s. "
+                                    "Inspect them with `docker ps -a`; they may still be in use or outside "
+                                    "the requested age filter.",
+                                    [Trimmed]
+                                ),
+                                Ctx1
+                            )
+                    end
             end
     end;
 %% ---------------------------------------------------------------------------
@@ -140,15 +155,25 @@ run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
     steps_utils:ensure_admin(Ctx0),
     ScriptBin = to_binary(ScriptBin0),
 
-    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-    WorkDir = filename:join(RunDir, "docker"),
+    WorkDir = docker_workdir(Config),
     OutDir = filename:join(WorkDir, "out"),
 
-    ok = filelib:ensure_dir(filename:join(WorkDir, "x")),
-    ok = filelib:ensure_dir(filename:join(OutDir, "x")),
+    ok = ensure_dir(WorkDir),
+    ok = ensure_dir(OutDir),
 
     ScriptPath = filename:join(WorkDir, "script.sh"),
-    ok = file:write_file(ScriptPath, ScriptBin),
+    case file:write_file(ScriptPath, ScriptBin) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            throw(
+                damage_utils:strf(
+                    "Docker step could not write the container script to ~s: ~p. "
+                    "Check that the DamageBDD run directory exists, is writable, and has free disk space.",
+                    [ScriptPath, Reason]
+                )
+            )
+    end,
 
     ContainerName = unique_container_name(),
 
@@ -188,45 +213,102 @@ unique_container_name() ->
 build_image_from_dockerfile(Config, Src, Tag, Params, ContextRel0, Ctx0) ->
     steps_utils:ensure_admin(Ctx0),
     WorkDir = docker_workdir(Config),
-    ok = filelib:ensure_dir(filename:join(WorkDir, "x")),
+    ok = ensure_dir(WorkDir),
 
-    %% 1) Fetch Dockerfile contents
-    {ok, DockerfileBin} = fetch_dockerfile(Src),
+    %% 1) Fetch Dockerfile contents. Do not let a failed URL/IPFS fetch turn
+    %% into an opaque badmatch.
+    case fetch_dockerfile(Src) of
+        {ok, DockerfileBin} ->
+            build_image_from_dockerfile_bin(
+                Config,
+                Src,
+                Tag,
+                Params,
+                ContextRel0,
+                WorkDir,
+                DockerfileBin,
+                Ctx0
+            );
+        {error, Reason} ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Unable to load Dockerfile from ~p: ~p. "
+                    "If this is a URL, check reachability and the HTTP status. "
+                    "If this is an IPFS CID, check that the configured IPFS service can retrieve it.",
+                    [Src, Reason]
+                ),
+                Ctx0
+            );
+        Other ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Unable to load Dockerfile from ~p: unexpected response ~p.",
+                    [Src, Other]
+                ),
+                Ctx0
+            )
+    end.
 
+build_image_from_dockerfile_bin(
+    Config, _Src, Tag, Params, ContextRel0, WorkDir, DockerfileBin, Ctx0
+) ->
     %% 2) Write Dockerfile into workdir
     DockerfilePath = filename:join(WorkDir, "Dockerfile"),
-    ok = file:write_file(DockerfilePath, DockerfileBin),
+    case file:write_file(DockerfilePath, DockerfileBin) of
+        ok ->
+            %% 3) Resolve build context
+            ContextDir =
+                case ContextRel0 of
+                    undefined ->
+                        WorkDir;
+                    Rel when is_binary(Rel) ->
+                        filename:join(WorkDir, binary_to_list(Rel));
+                    Rel when is_list(Rel) ->
+                        filename:join(WorkDir, Rel)
+                end,
 
-    %% 3) Resolve build context
-    ContextDir =
-        case ContextRel0 of
-            undefined ->
-                WorkDir;
-            Rel when is_binary(Rel) ->
-                %% relative to WorkDir
-                filename:join(WorkDir, binary_to_list(Rel))
-        end,
-
-    %% 4) Run docker build inside WorkDir
-    %% NOTE: Params is appended verbatim (user-controlled).
-    Cmd =
-        iolist_to_binary([
-            "docker build --network=host -f ",
-            shell_quote(DockerfilePath),
-            " -t ",
-            shell_quote(Tag),
-            " ",
-            Params,
-            " ",
-            shell_quote(ContextDir)
-        ]),
-    Ctx1 = run_cmd_in_docker_dir(Config, Cmd, Ctx0),
-
-    maps:put(docker_image_tag, Tag, Ctx1).
+            %% 4) Run docker build inside WorkDir
+            %% NOTE: Params is appended verbatim (user-controlled).
+            Cmd =
+                iolist_to_binary([
+                    "docker build --network=host -f ",
+                    shell_quote(DockerfilePath),
+                    " -t ",
+                    shell_quote(Tag),
+                    " ",
+                    Params,
+                    " ",
+                    shell_quote(ContextDir)
+                ]),
+            Ctx1 = run_cmd_in_docker_dir(Config, Cmd, Ctx0),
+            maps:put(docker_image_tag, Tag, Ctx1);
+        {error, Reason} ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Docker build could not write ~s: ~p. "
+                    "Check run-directory permissions and available disk space.",
+                    [DockerfilePath, Reason]
+                ),
+                Ctx0
+            )
+    end.
 
 docker_workdir(Config) ->
-    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-    filename:join(RunDir, "docker").
+    case lists:keyfind(run_dir, 1, Config) of
+        {run_dir, RunDir} ->
+            filename:join(RunDir, "docker");
+        false ->
+            throw(
+                <<
+                    "Docker step cannot start because `run_dir` is missing from the DamageBDD "
+                    "configuration. Ensure the normal DamageBDD run configuration is initialized "
+                    "before executing Docker steps."
+                >>
+            )
+    end.
 
 fetch_dockerfile(Src0) ->
     Src = to_binary(Src0),
@@ -279,25 +361,235 @@ run_cmd(Config, Command, Context) ->
             docker_loop(Config, Parent, [])
         end),
 
-    case
-        exec:run(Command, [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}, sync])
-    of
-        {ok, []} ->
+    ExecResult =
+        try
+            exec:run(
+                Command,
+                [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}, sync]
+            )
+        catch
+            ExecClass:ExecReason:ExecStack ->
+                ?LOG_ERROR(
+                    "steps_docker command runner crashed class=~p reason=~p stack=~p",
+                    [ExecClass, ExecReason, ExecStack]
+                ),
+                {error, {exec_exception, ExecClass, ExecReason}}
+        end,
+
+    case ExecResult of
+        {ok, _ExecInfo} ->
             Ctx1 =
                 receive
                     {docker_done, Result} ->
-                        maps:put(cmd_result, Result, Context)
+                        docker_result_context(Result, Context)
                 after 1000 ->
                     maps:put(cmd_result, ok, Context)
                 end,
             maybe_put_container_info(Command, Ctx1);
         {error, Reason} ->
             ?LOG_ERROR("steps_docker command exited with error ~p: ~p", [Command, Reason]),
-            ErrorBin = damage_utils:strf("Command failed ~p: ~p~n", [Command, Reason]),
-            Result = {error, [{stderr, [ErrorBin]}]},
+            Details =
+                receive
+                    {docker_done, WatchResult} -> docker_error_details(WatchResult)
+                after 100 ->
+                    docker_error_details(Reason)
+                end,
+            stop_docker_watcher(Watcher),
+            ErrorBin = docker_error_message(Details),
+            Result = {error, [{stderr, [Details]}]},
+            Ctx1 = maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context)),
+            maybe_put_container_info(Command, Ctx1);
+        Other ->
+            ?LOG_ERROR("steps_docker command returned unexpected result ~p", [Other]),
+            stop_docker_watcher(Watcher),
+            Details = docker_error_details(Other),
+            ErrorBin = docker_error_message(Details),
+            Result = {error, [{stderr, [Details]}]},
             Ctx1 = maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context)),
             maybe_put_container_info(Command, Ctx1)
     end.
+
+stop_docker_watcher(Watcher) when is_pid(Watcher) ->
+    unlink(Watcher),
+    try
+        exit(Watcher, kill)
+    catch
+        _:_ -> ok
+    end,
+    ok.
+
+docker_result_context({ok, _} = Result, Context) ->
+    maps:put(cmd_result, Result, Context);
+docker_result_context({error, _} = Result, Context) ->
+    Details = docker_error_details(Result),
+    ErrorBin = docker_error_message(Details),
+    maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context));
+docker_result_context(Result, Context) ->
+    maps:put(cmd_result, Result, Context).
+
+docker_error_details({error, Parts}) when is_list(Parts) ->
+    case lists:keyfind(stderr, 1, Parts) of
+        {stderr, Chunks} ->
+            iolist_to_binary(Chunks);
+        false ->
+            case lists:keyfind(stdout, 1, Parts) of
+                {stdout, Chunks} -> iolist_to_binary(Chunks);
+                false -> iolist_to_binary(io_lib:format("~p", [{error, Parts}]))
+            end
+    end;
+docker_error_details(Reason) ->
+    iolist_to_binary(io_lib:format("~p", [Reason])).
+
+docker_error_message(Details0) ->
+    Details = truncate_error(Details0, 3000),
+    Lower = list_to_binary(string:lowercase(binary_to_list(Details))),
+    Hint = docker_error_hint(Lower),
+    <<"Docker command failed. ", Hint/binary, " Docker reported: ", Details/binary>>.
+
+docker_error_hint(Lower) ->
+    first_docker_error_hint(
+        Lower,
+        [
+            {<<"cannot connect to the docker daemon">>, <<
+                "The Docker daemon is unavailable. Check that Docker is running and that "
+                "DOCKER_HOST points to the correct daemon/socket."
+            >>},
+            {<<"is the docker daemon running">>,
+                <<"The Docker daemon is unavailable. Start Docker and verify access to its socket.">>},
+            {<<"error during connect">>, <<
+                "DamageBDD could not connect to Docker. Check the Docker daemon, DOCKER_HOST, "
+                "and the Docker socket."
+            >>},
+            {<<"permission denied">>, <<
+                "Docker access was denied. Check permissions for the Docker socket "
+                "(commonly /var/run/docker.sock), the DamageBDD user, and any bind-mounted paths."
+            >>},
+            {<<"no space left on device">>, <<
+                "Docker ran out of disk space. Check `docker system df` and free space in the "
+                "Docker data/root filesystem before retrying."
+            >>},
+            {<<"pull access denied">>, <<
+                "Docker could not pull the image. Verify the image/tag and registry permissions; "
+                "authenticate with the registry when required."
+            >>},
+            {<<"authentication required">>, <<
+                "The container registry requires authentication. Verify registry credentials "
+                "and run the appropriate `docker login` outside the feature."
+            >>},
+            {<<"unauthorized">>,
+                <<"The registry rejected the request. Verify image access and registry credentials.">>},
+            {<<"manifest unknown">>,
+                <<"The requested image tag does not exist in the registry. Verify the image name and tag.">>},
+            {<<"no matching manifest">>, <<
+                "The image has no manifest for this host platform/architecture. Use a compatible "
+                "image or build for the required platform."
+            >>},
+            {<<"no such image">>,
+                <<"The Docker image is not available locally. Build it first or verify that it can be pulled.">>},
+            {<<"unable to find image">>, <<
+                "Docker could not find the requested image locally and could not obtain it. "
+                "Verify the image name/tag and registry connectivity."
+            >>},
+            {<<"conflict. the container name">>, <<
+                "A container with the requested name already exists. Remove/rename the old "
+                "container or use a different name."
+            >>},
+            {<<"container name">>, <<
+                "Docker reported a container-name problem. Check for an existing container with "
+                "`docker ps -a` and remove or rename it if appropriate."
+            >>},
+            {<<"no such container">>, <<
+                "The referenced container does not exist. Ensure the preceding `docker run` "
+                "succeeded and that the scenario retained the correct container name/id."
+            >>},
+            {<<"no matching entries in passwd file">>, <<
+                "The image does not contain the requested container user. This step runs as user "
+                "`damage`; add that user to the image or use an image that provides it."
+            >>},
+            {<<"unable to find user damage">>,
+                <<"The image does not contain the `damage` user required by this Docker run step.">>},
+            {<<"dockerfile parse error">>,
+                <<"Docker could not parse the Dockerfile. Check the reported Dockerfile line and syntax.">>},
+            {<<"failed to compute cache key">>, <<
+                "Docker could not resolve a build-context file, commonly from COPY/ADD. "
+                "Verify that the referenced path exists inside the selected build context."
+            >>},
+            {<<"failed to solve">>, <<
+                "The Docker build failed. Inspect the build output above, especially Dockerfile "
+                "instructions, COPY/ADD source paths, package/network access, and the build context."
+            >>},
+            {<<"bind source path does not exist">>,
+                <<"A bind-mounted host path does not exist. Create it or correct the mount path before running the container.">>},
+            {<<"invalid mount config">>,
+                <<"Docker rejected a mount. Check the host path, container path, and mount syntax.">>},
+            {<<"mounts denied">>,
+                <<"Docker denied a bind mount. Check Docker file-sharing permissions and the host path.">>},
+            {<<"read-only file system">>,
+                <<"The container or bind mount is read-only. Check mount flags and write to a writable path.">>},
+            {<<"port is already allocated">>, <<
+                "A requested host port is already in use. Stop the conflicting container/process "
+                "or choose another host port."
+            >>},
+            {<<"has active endpoints">>, <<
+                "Docker cannot remove the network because containers are still attached. "
+                "Disconnect/remove those containers before pruning the network."
+            >>},
+            {<<"volume is in use">>, <<
+                "Docker cannot remove the volume because a container still uses it. "
+                "Remove or detach the dependent container first."
+            >>},
+            {<<"network is unreachable">>,
+                <<"Docker cannot reach the network. Check host/container networking, firewall rules, proxy settings, and DNS.">>},
+            {<<"temporary failure in name resolution">>,
+                <<"DNS resolution failed inside Docker/build. Check Docker DNS and host network configuration.">>},
+            {<<"could not resolve host">>,
+                <<"DNS resolution failed. Check Docker DNS, proxy configuration, and network connectivity.">>},
+            {<<"tls handshake timeout">>,
+                <<"The registry/network TLS handshake timed out. Check connectivity, proxy settings, and registry availability.">>},
+            {<<"i/o timeout">>,
+                <<"The Docker network operation timed out. Check registry/network reachability and proxy settings.">>},
+            {<<"exec format error">>,
+                <<"The container executable is incompatible with the image/host architecture or has an invalid format.">>},
+            {<<"executable file not found">>, <<
+                "The requested command is not installed in the container or is not on PATH. "
+                "Check the image contents and command name."
+            >>},
+            {<<"docker: command not found">>,
+                <<"The Docker CLI is not installed or is not available in the DamageBDD service PATH.">>},
+            {<<"docker: not found">>,
+                <<"The Docker CLI is not installed or is not available in the DamageBDD service PATH.">>},
+            {<<"enoent">>, <<
+                "The Docker command runner could not start a required executable. Ensure the "
+                "`docker` CLI is installed and available in the DamageBDD service PATH."
+            >>},
+            {<<"undef">>, <<
+                "The DamageBDD OS command runner is unavailable or incomplete. Ensure the "
+                "erlexec/exec application is installed and started."
+            >>},
+            {<<"noproc">>, <<
+                "The DamageBDD OS command runner is not running. Ensure the erlexec/exec "
+                "application is started before Docker steps execute."
+            >>}
+        ],
+        <<
+            "Check the Docker error above, verify the daemon is running, and reproduce with the "
+            "same Docker operation on the node if more detail is needed."
+        >>
+    ).
+
+first_docker_error_hint(Bin, [{Needle, Hint} | Rest], Default) ->
+    case binary:match(Bin, Needle) of
+        nomatch -> first_docker_error_hint(Bin, Rest, Default);
+        _ -> Hint
+    end;
+first_docker_error_hint(_Bin, [], Default) ->
+    Default.
+
+truncate_error(Bin, Max) when is_binary(Bin), byte_size(Bin) =< Max ->
+    Bin;
+truncate_error(Bin, Max) when is_binary(Bin) ->
+    <<Prefix:Max/binary, _/binary>> = Bin,
+    <<Prefix/binary, "...">>.
 
 maybe_put_container_info(Command0, Ctx0) ->
     Command = to_binary(Command0),
@@ -467,8 +759,14 @@ ensure_dir(Dir) ->
         ok ->
             ok;
         {error, Reason} ->
-            ?LOG_ERROR("Cannot create directory ~s (~p)", [Dir, Reason]),
-            error({cannot_create_dir, Dir, Reason})
+            ?LOG_ERROR("Cannot create Docker working directory ~s (~p)", [Dir, Reason]),
+            throw(
+                damage_utils:strf(
+                    "Docker step cannot create working directory ~s: ~p. "
+                    "Check DamageBDD run-directory permissions and available disk space.",
+                    [Dir, Reason]
+                )
+            )
     end.
 
 %% Build a docker image from an inline Dockerfile contained in Raw.
@@ -480,8 +778,16 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
 
     case Trimmed of
         <<>> ->
-            %% Fail fast if the feature forgot to provide the Dockerfile body
-            erlang:error({missing_dockerfile_body, Image});
+            %% Fail fast if the feature forgot to provide the Dockerfile body.
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Docker image ~p cannot be built because the Dockerfile body is empty. "
+                    "Provide the Dockerfile in the step docstring.",
+                    [Image]
+                ),
+                Context
+            );
         DockerfileBin ->
             CWD = filename:absname(maps:get(cmd_cwd, Context, ".")),
             %% We keep a dedicated build context directory under the current CWD
@@ -489,7 +795,7 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
             DockerfilePath = filename:join(BuildDir, "Dockerfile"),
 
             %% Ensure directory exists
-            ok = filelib:ensure_dir(DockerfilePath),
+            ok = ensure_dir(BuildDir),
 
             %% Write Dockerfile
             case file:write_file(DockerfilePath, DockerfileBin) of
@@ -506,7 +812,15 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
                     ),
                     run_cmd(Config, Command, Context);
                 {error, Reason} ->
-                    erlang:error({dockerfile_write_failed, DockerfilePath, Reason})
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "Docker build could not write ~s: ~p. "
+                            "Check directory permissions and available disk space.",
+                            [DockerfilePath, Reason]
+                        ),
+                        Context
+                    )
             end
     end.
 
@@ -581,9 +895,14 @@ copy_file_from_container_to_ipfs(Config, Ctx0, Path0, Var0) ->
 
     Ctx1 = run_cmd_in_docker_dir(Config, CpCmd, Ctx0),
 
-    Hash = ipfs_add_path_and_get_hash(StageDir),
-
-    maps:put(Var, Hash, Ctx1).
+    case maps:is_key(fail, Ctx1) of
+        true ->
+            %% Do not replace a useful `docker cp` error with a secondary IPFS error.
+            Ctx1;
+        false ->
+            Hash = ipfs_add_path_and_get_hash(StageDir),
+            maps:put(Var, Hash, Ctx1)
+    end.
 
 ipfs_add_path_and_get_hash(Path0) ->
     Path = normalize_filename(Path0),
@@ -653,14 +972,11 @@ docker_container_id(Ctx) ->
         )
     of
         undefined ->
-            erlang:error(
-                {missing_container_in_context, [
-                    docker_container,
-                    docker_container_name,
-                    docker_container_id,
-                    container_id,
-                    container
-                ]}
+            throw(
+                <<
+                    "No Docker container is available in the scenario context. Ensure a preceding "
+                    "Docker run step completed successfully before copying files from the container."
+                >>
             );
         V ->
             to_binary(V)
