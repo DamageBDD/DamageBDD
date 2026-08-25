@@ -366,8 +366,7 @@ cached_identity_account(_) ->
 normalize_identity_key(Value) when is_binary(Value) -> Value;
 normalize_identity_key(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
 normalize_identity_key(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
-normalize_identity_key(Value) ->
-    unicode:characters_to_binary(io_lib:format("~p", [Value])).
+normalize_identity_key(Value) -> unicode:characters_to_binary(io_lib:format("~p", [Value])).
 
 deploy_contracts() ->
     #{

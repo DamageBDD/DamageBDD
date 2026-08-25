@@ -379,7 +379,7 @@ execute_file_prepared(Config, Context, Filename) ->
             RunCost =
                 case proplists:get_value(dry_run, Config, false) of
                     true -> maps:get(cost, FinalContext, 0);
-                    false -> damage_ae:get_spend(PublicKey)
+                    false -> safe_get_spend(PublicKey, maps:get(cost, FinalContext, 0))
                 end,
             RunRecord =
                 #{
@@ -1350,6 +1350,62 @@ execute_step_module(
                 true,
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             )
+    end.
+
+safe_get_spend(AeAccount, Fallback) ->
+    Timeout = spend_lookup_timeout_ms(),
+    try
+        WalletPid = damage_ae:get_wallet_proc(AeAccount),
+        gen_server:call(WalletPid, {get_spend, AeAccount}, Timeout)
+    of
+        Amount when is_integer(Amount); is_float(Amount) ->
+            Amount;
+        Other ->
+            ?LOG_WARNING(
+                "Unexpected spend lookup result account=~p result=~p; using fallback",
+                [AeAccount, Other]
+            ),
+            Fallback
+    catch
+        exit:{timeout, _} ->
+            ?LOG_WARNING(
+                "Spend lookup timed out account=~p timeout_ms=~p; using fallback",
+                [AeAccount, Timeout]
+            ),
+            Fallback;
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "Spend lookup failed account=~p class=~p reason=~p stack=~p; using fallback",
+                [AeAccount, Class, Reason, Stacktrace]
+            ),
+            Fallback
+    end.
+
+spend_lookup_timeout_ms() ->
+    case application:get_env(damage, ae_get_spend_timeout_ms, 2000) of
+        Value when is_integer(Value), Value > 0 ->
+            Value;
+        Value when is_binary(Value) ->
+            parse_positive_timeout(Value, 2000);
+        Value when is_list(Value) ->
+            parse_positive_timeout(Value, 2000);
+        _ ->
+            2000
+    end.
+
+parse_positive_timeout(Value, Default) ->
+    try
+        Parsed =
+            case Value of
+                Bin when is_binary(Bin) -> binary_to_integer(Bin);
+                List when is_list(List) -> list_to_integer(List)
+            end,
+        case Parsed > 0 of
+            true -> Parsed;
+            false -> Default
+        end
+    catch
+        _:_ -> Default
     end.
 
 hits_to_damage(Hits) ->

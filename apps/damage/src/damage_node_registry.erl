@@ -203,7 +203,12 @@ get_registry_ct_from_node_registry(AeAccount) ->
     case damage_node_registry:get_registry(AeAccount) of
         #{"return_type" := "ok", "return_value" := {address, RegBin}} ->
             {ok, aeser_api_encoder:encode(contract_pubkey, RegBin)};
-        #{"return_type" := "revert", "return_value" := <<"Account not registered">>} ->
+        #{"return_type" := "revert", "return_value" := Msg} when
+            Msg =:= <<"Account not registered">>;
+            Msg =:= <<"Account not registered.">>;
+            Msg =:= "Account not registered";
+            Msg =:= "Account not registered."
+        ->
             {error, not_registered};
         #{"return_type" := "revert", "return_value" := Msg} ->
             {error, {node_registry_revert, Msg}};
@@ -554,7 +559,7 @@ cached_contract_call(State, CacheKey, Func, Args) ->
         miss ->
             ContractId = require_contract(State),
             KeyPair = secrets:node_keypair(),
-            Resp = damage_ae:contract_call(
+            Resp = damage_ae:contract_call_dry(
                 KeyPair,
                 ContractId,
                 damage_ae:contract_path(State#state.contract_path),

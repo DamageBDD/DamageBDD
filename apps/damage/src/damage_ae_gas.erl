@@ -23,7 +23,7 @@
 ]).
 
 -define(BASE_GAS, 15000).
--define(GAS_PER_BYTE, 40).
+-define(GAS_PER_BYTE, 20).
 -define(KEY_BLOCK_INTERVAL, 3).
 
 %% Keep these atoms aligned with however you represent tx tags internally.

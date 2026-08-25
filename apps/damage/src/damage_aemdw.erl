@@ -16,11 +16,15 @@
 -include_lib("damage.hrl").
 
 -define(AEMDW_WEBSOCKET_HEARTBEAT, 60000).
+-define(AEMDW_RECONNECT_MIN, 5000).
+-define(AEMDW_RECONNECT_MAX, 60000).
 
 -record(state, {
     conn_pid = undefined,
     streamref = undefined,
     heartbeat_timer = undefined,
+    reconnect_timer = undefined,
+    reconnect_ms = ?AEMDW_RECONNECT_MIN,
     upgraded = false,
     host = undefined,
     port = undefined,
@@ -32,32 +36,24 @@ start_link() ->
 
 init([]) ->
     ?LOG_INFO("damage_aemdw started"),
-    case open_aemdw_ws() of
-        {ok, Host, Port, ConnPid, StreamRef, PathPrefix} ->
-            gproc:reg_other({n, l, {?MODULE, aemdw}}, self()),
-            ?LOG_INFO(
-                "aemdw websocket opened host=~p port=~p conn=~p stream=~p path=~p",
-                [Host, Port, ConnPid, StreamRef, PathPrefix]
-            ),
-            HeartbeatTimer =
-                erlang:send_after(?AEMDW_WEBSOCKET_HEARTBEAT, self(), heartbeat),
-            {ok, #state{
-                conn_pid = ConnPid,
-                streamref = StreamRef,
-                heartbeat_timer = HeartbeatTimer,
-                upgraded = true,
-                host = Host,
-                port = Port,
-                path = PathPrefix
-            }};
-        Err ->
-            ?LOG_ERROR("Finding ae mdw ws node failed ~p", [Err]),
-            {stop, {aemdw_ws_node_not_found, Err}}
+    gproc:reg_other({n, l, {?MODULE, aemdw}}, self()),
+    case connect(#state{}) of
+        {ok, State} ->
+            {ok, State};
+        {error, Err, State} ->
+            ?LOG_WARNING("AE middleware unavailable at startup ~p; retrying", [Err]),
+            {ok, schedule_reconnect(State)}
     end.
 
 open_aemdw_ws() ->
-    {ok, Nodes} = application:get_env(damage, ae_mdw_ws_nodes),
-    open_aemdw_ws(Nodes).
+    case application:get_env(damage, ae_mdw_ws_nodes) of
+        {ok, Nodes} when is_list(Nodes) ->
+            open_aemdw_ws(Nodes);
+        undefined ->
+            {error, no_aemdw_ws_nodes};
+        Error ->
+            {error, {invalid_aemdw_ws_nodes, Error}}
+    end.
 
 open_aemdw_ws([]) ->
     {error, no_aemdw_ws_nodes};
@@ -87,12 +83,72 @@ aemdw_transport(_Host, 443) -> tls;
 aemdw_transport(_Host, 8443) -> tls;
 aemdw_transport(_Host, _) -> tcp.
 
+connect(State0) ->
+    State = clear_connection(State0),
+    case open_aemdw_ws() of
+        {ok, Host, Port, ConnPid, StreamRef, PathPrefix} ->
+            ?LOG_INFO(
+                "aemdw websocket opened host=~p port=~p conn=~p stream=~p path=~p",
+                [Host, Port, ConnPid, StreamRef, PathPrefix]
+            ),
+            HeartbeatTimer =
+                erlang:send_after(?AEMDW_WEBSOCKET_HEARTBEAT, self(), heartbeat),
+            {ok, State#state{
+                conn_pid = ConnPid,
+                streamref = StreamRef,
+                heartbeat_timer = HeartbeatTimer,
+                reconnect_timer = undefined,
+                reconnect_ms = ?AEMDW_RECONNECT_MIN,
+                upgraded = true,
+                host = Host,
+                port = Port,
+                path = PathPrefix
+            }};
+        Error ->
+            {error, Error, State}
+    end.
+
+schedule_reconnect(#state{reconnect_timer = Timer} = State) when is_reference(Timer) ->
+    State;
+schedule_reconnect(#state{reconnect_ms = Delay} = State) ->
+    Timer = erlang:send_after(Delay, self(), reconnect),
+    NextDelay = erlang:min(Delay * 2, ?AEMDW_RECONNECT_MAX),
+    ?LOG_INFO("aemdw reconnect scheduled in ~p ms", [Delay]),
+    State#state{reconnect_timer = Timer, reconnect_ms = NextDelay}.
+
+reconnect(State0) ->
+    State = State0#state{reconnect_timer = undefined},
+    case connect(State) of
+        {ok, Connected} ->
+            {noreply, Connected};
+        {error, Error, Disconnected} ->
+            ?LOG_WARNING("aemdw reconnect failed ~p", [Error]),
+            {noreply, schedule_reconnect(Disconnected)}
+    end.
+
+connection_lost(Reason, State) ->
+    ?LOG_WARNING("aemdw connection lost ~p; reconnecting", [Reason]),
+    {noreply, schedule_reconnect(clear_connection(State))}.
+
+clear_connection(State) ->
+    maybe_close_gun(State#state.conn_pid),
+    cancel_timer(State#state.heartbeat_timer),
+    State#state{
+        conn_pid = undefined,
+        streamref = undefined,
+        heartbeat_timer = undefined,
+        upgraded = false,
+        host = undefined,
+        port = undefined,
+        path = undefined
+    }.
+
 handle_call(
     ping,
     _From,
     #state{upgraded = true, conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
-    Reply = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode(#{ok => <<"ping">>})}),
+    Reply = damage_gun:ws_send(ConnPid, StreamRef, {text, jsx:encode(#{ok => <<"ping">>})}),
     {reply, Reply, State};
 handle_call(ping, _From, State) ->
     {reply, {error, websocket_not_upgraded}, State};
@@ -107,6 +163,8 @@ handle_cast(Msg, State) ->
     ?LOG_DEBUG("got unknown on gun websocket cast ~p, State ~p", [Msg, State]),
     {noreply, State}.
 
+handle_info(reconnect, State) ->
+    reconnect(State);
 handle_info(
     {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _Headers},
     #state{conn_pid = ConnPid, streamref = StreamRef} = State
@@ -128,11 +186,7 @@ handle_info(
     {gun_error, ConnPid, StreamRef, Reason},
     #state{conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
-    ?LOG_ERROR(
-        "aemdw websocket error conn=~p stream=~p reason=~p",
-        [ConnPid, StreamRef, Reason]
-    ),
-    {stop, {websocket_error, Reason}, State};
+    connection_lost({websocket_error, Reason}, State);
 handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
     ?LOG_DEBUG(
         "ignoring stale gun_error conn=~p stream=~p reason=~p state=~p",
@@ -143,24 +197,20 @@ handle_info(
     heartbeat,
     #state{upgraded = true, conn_pid = ConnPid, streamref = StreamRef} = State
 ) ->
-    case gun:ws_send(ConnPid, StreamRef, {ping, <<>>}) of
+    case damage_gun:ws_send(ConnPid, StreamRef, {ping, <<>>}) of
         ok ->
             Timer = erlang:send_after(?AEMDW_WEBSOCKET_HEARTBEAT, self(), heartbeat),
             {noreply, State#state{heartbeat_timer = Timer}};
         Error ->
-            ?LOG_ERROR("aemdw heartbeat failed ~p", [Error]),
-            {stop, {heartbeat_failed, Error}, State}
+            connection_lost({heartbeat_failed, Error}, State)
     end;
 handle_info(heartbeat, State) ->
-    ?LOG_DEBUG("aemdw heartbeat skipped; websocket not upgraded yet"),
-    {noreply, State};
+    {noreply, schedule_reconnect(State#state{heartbeat_timer = undefined})};
 handle_info(
     {gun_down, ConnPid, _Protocol, Reason, _KilledStreams},
     #state{conn_pid = ConnPid} = State
 ) ->
-    ?LOG_ERROR("aemdw gun_down conn=~p reason=~p", [ConnPid, Reason]),
-    cancel_timer(State#state.heartbeat_timer),
-    {stop, {gun_down, Reason}, State};
+    connection_lost({gun_down, Reason}, State);
 handle_info(
     {gun_ws, ConnPid, StreamRef, {text, Message0}},
     #state{
@@ -179,7 +229,8 @@ handle_info(Info, State) ->
 terminate(Reason, State) ->
     maybe_close_gun(State#state.conn_pid),
     cancel_timer(State#state.heartbeat_timer),
-    ?LOG_ERROR("Terminating damage_aemdw ~p", [Reason]),
+    cancel_timer(State#state.reconnect_timer),
+    ?LOG_INFO("Terminating damage_aemdw ~p", [Reason]),
     ok.
 
 maybe_close_gun(Conn) when is_pid(Conn) ->
