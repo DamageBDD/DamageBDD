@@ -5,13 +5,113 @@
       <div>
         <h3>Create/Edit Feature</h3>
         <button type="button" class="styled-btn" id="open-feature-picker">Pick feature…</button>
+        <button type="button" class="styled-btn" id="edit-execution-context-btn"
+                aria-expanded="false" aria-controls="execution-context-editor">
+          Execution context…
+        </button>
+      </div>
 
+      <div id="execution-context-editor" hidden>
+        <fieldset>
+          <legend>Execution Context</legend>
+          <p>
+            Runtime context applies only to this execution. Account context is
+            persisted for the authenticated account and is merged into future runs.
+          </p>
 
+          <label for="runtime-context-json">Runtime context (JSON object)</label>
+          <p class="context-security-note">
+            Do not place secrets in runtime context. Store credentials as sensitive
+            account context. This draft is readable by same-origin scripts while the
+            browser tab remains open.
+          </p>
+          <textarea id="runtime-context-json" rows="7"
+                    placeholder='{"server":"https://api.example.com","region":"au"}'>{}</textarea>
+          <div>
+            <button type="button" class="styled-btn" id="save-runtime-context-btn">
+              Apply runtime context
+            </button>
+            <button type="button" class="styled-btn" id="clear-runtime-context-btn">
+              Clear runtime context
+            </button>
+          </div>
+          <div id="runtime-context-status" role="status" aria-live="polite"></div>
+
+          <hr>
+
+          <h4>Account context</h4>
+          <p>
+            Sensitive values are displayed redacted. Editing a sensitive value
+            requires supplying a replacement value.
+          </p>
+          <div>
+            <strong>Version:</strong> <span id="execution-account-context-version">—</span>
+            <button type="button" class="styled-btn" id="refresh-account-context-btn">Refresh</button>
+          </div>
+
+          <div id="execution-account-context-status" role="status" aria-live="polite"></div>
+          <div style="overflow-x:auto;">
+            <table class="pure-table pure-table-horizontal" style="width:100%;">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Value</th>
+                  <th>Sensitive</th>
+                  <th>Exposure</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="execution-account-context-rows">
+                <tr><td colspan="5">Open the editor to load account context.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pure-form pure-form-stacked">
+            <label for="execution-account-context-name">Name</label>
+            <input id="execution-account-context-name" type="text" maxlength="256"
+                   autocomplete="off" placeholder="api_server">
+
+            <label for="execution-account-context-value">Value</label>
+            <textarea id="execution-account-context-value" rows="3"
+                      placeholder="https://api.example.com"></textarea>
+
+            <label for="execution-account-context-type">Value type</label>
+            <select id="execution-account-context-type">
+              <option value="string">String</option>
+              <option value="integer">Integer</option>
+              <option value="float">Float</option>
+              <option value="boolean">Boolean</option>
+              <option value="json">JSON</option>
+            </select>
+
+            <label class="pure-checkbox">
+              <input id="execution-account-context-sensitive" type="checkbox">
+              Sensitive
+            </label>
+
+            <label for="execution-account-context-exposure">Exposure</label>
+            <select id="execution-account-context-exposure">
+              <option value="template">Template</option>
+              <option value="step_only">Step only</option>
+            </select>
+
+            <div>
+              <button type="button" class="styled-btn" id="save-account-context-btn">
+                Save account context
+              </button>
+              <button type="button" class="styled-btn" id="clear-account-context-editor-btn">
+                Clear editor
+              </button>
+            </div>
+          </div>
+        </fieldset>
       </div>
       <p>Edit Feature in the textarea below.</p>
       <div class="damage-editor">
         <div id="damageLineNumbers" aria-hidden="true"></div>
-        <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted" placeholder="Enter test case here ..." rows="20"></textarea>
+        <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted"
+                  placeholder="Enter test case here ..." rows="20"></textarea>
       </div>
       <div>
         <button type="submit" class="styled-btn" id="execute-feature-btn">Execute Feature</button>

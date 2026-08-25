@@ -5,6 +5,9 @@
 -export([
     start_link/0,
     get_account/1,
+    clear_cache/0,
+    clear_cache/1,
+    reload_account/1,
     register_email/2,
     register_npub/1,
     register_lightning/1,
@@ -44,7 +47,29 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 get_account(AeAccount) ->
-    gen_server:call(?MODULE, {get_account, AeAccount}, ?AE_TIMEOUT).
+    gen_server:call(
+        ?MODULE,
+        {get_account, normalize_identity_key(AeAccount)},
+        ?AE_TIMEOUT
+    ).
+
+clear_cache() ->
+    gen_server:call(?MODULE, clear_cache, ?AE_TIMEOUT).
+
+clear_cache(Key) ->
+    gen_server:call(
+        ?MODULE,
+        {clear_cache, normalize_identity_key(Key)},
+        ?AE_TIMEOUT
+    ).
+
+reload_account(AeAccount) ->
+    gen_server:call(
+        ?MODULE,
+        {reload_account, normalize_identity_key(AeAccount)},
+        ?AE_TIMEOUT
+    ).
+
 register_email(Email, Password) ->
     #{public_key := PubKey, private_key := PrivateKey} = secrets:make_keypair(),
     case
@@ -100,39 +125,41 @@ init([]) ->
     Table = ets:new(identity_cache, [named_table, set, private]),
     {ok, #{ets_table => Table}}.
 
+handle_call(clear_cache, _From, #{ets_table := Table} = State) ->
+    true = ets:delete_all_objects(Table),
+    {reply, ok, State};
+handle_call({clear_cache, Key}, _From, #{ets_table := Table} = State) ->
+    ok = evict_identity_cache(Table, Key),
+    {reply, ok, State};
+handle_call({reload_account, PublicKey}, _From, #{ets_table := Table} = State) ->
+    ok = evict_identity_cache(Table, PublicKey),
+    case load_account_from_contract(PublicKey) of
+        {ok, Account} ->
+            true = ets:insert(Table, {PublicKey, Account}),
+            {reply, Account, State};
+        notfound ->
+            {reply, notfound, State};
+        {error, _} = Error ->
+            {reply, Error, State}
+    end;
 handle_call({get_account, PublicKey}, _From, #{ets_table := Table} = State) ->
     case ets:lookup(Table, PublicKey) of
         [{PublicKey, Account}] ->
             {reply, Account, State};
         [] ->
-            case
-                damage_ae:contract_call(
-                    get_email_registry_contract(),
-                    damage_ae:contract_path(damage, "contracts/email_registry.aes"),
-                    "get_email",
-                    [
-                        PublicKey
-                    ]
-                )
-            of
-                #{
-                    "return_type" := "ok",
-                    "return_value" :=
-                        {
-                            {address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted
-                        }
-                } ->
-                    Password = secrets:decrypt(PasswordEncrypted),
-                    PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
-                    Address = aeser_api_encoder:encode(account_pubkey, AddressData),
-                    Account = #{
-                        public_key => Address, password => Password, private_key => PrivateKey
-                    },
-                    ets:insert(Table, {PublicKey, Account}),
+            case load_account_from_contract(PublicKey) of
+                {ok, Account} ->
+                    true = ets:insert(Table, {PublicKey, Account}),
 
                     {reply, Account, State};
-                Other ->
-                    ?LOG_DEBUG("Unexpected response ~p", [Other]),
+                notfound ->
+                    {reply, notfound, State};
+                {error, Reason} ->
+                    ?LOG_WARNING(
+                        "Identity account load failed account=~p reason=~p",
+                        [PublicKey, Reason]
+                    ),
+                    %% Preserve the historical get_account/1 return contract.
                     {reply, notfound, State}
             end
     end;
@@ -280,6 +307,68 @@ terminate(_, _) -> ok.
 %%% =========================
 %%% HELPER FUNCTIONS
 %%% =========================
+load_account_from_contract(PublicKey) ->
+    try
+        damage_ae:contract_call(
+            get_email_registry_contract(),
+            damage_ae:contract_path(damage, "contracts/email_registry.aes"),
+            "get_email",
+            [PublicKey]
+        )
+    of
+        #{
+            "return_type" := "ok",
+            "return_value" :=
+                {{address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted}
+        } ->
+            Address = aeser_api_encoder:encode(account_pubkey, AddressData),
+            case normalize_identity_key(Address) =:= PublicKey of
+                true ->
+                    {ok, #{
+                        public_key => PublicKey,
+                        password => secrets:decrypt(PasswordEncrypted),
+                        private_key => secrets:decrypt(PrivateKeyEncrypted)
+                    }};
+                false ->
+                    {error, {identity_account_mismatch, PublicKey, Address}}
+            end;
+        #{"return_type" := "revert"} ->
+            notfound;
+        Other ->
+            {error, {unexpected_identity_contract_result, Other}}
+    catch
+        Class:Reason:Stacktrace ->
+            {error, {identity_contract_read_failed, Class, Reason, Stacktrace}}
+    end.
+
+evict_identity_cache(Table, IdentityKey) ->
+    true = ets:delete(Table, IdentityKey),
+    lists:foreach(
+        fun({CacheKey, CachedValue}) ->
+            case cached_identity_account(CachedValue) of
+                IdentityKey ->
+                    true = ets:delete(Table, CacheKey);
+                _ ->
+                    ok
+            end
+        end,
+        ets:tab2list(Table)
+    ),
+    ok.
+
+cached_identity_account(#{public_key := Account}) ->
+    normalize_identity_key(Account);
+cached_identity_account({Account, _Password, _PrivateKey}) ->
+    normalize_identity_key(Account);
+cached_identity_account(_) ->
+    undefined.
+
+normalize_identity_key(Value) when is_binary(Value) -> Value;
+normalize_identity_key(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+normalize_identity_key(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+normalize_identity_key(Value) ->
+    unicode:characters_to_binary(io_lib:format("~p", [Value])).
+
 deploy_contracts() ->
     #{
         "contract_id" :=

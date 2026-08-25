@@ -109,14 +109,15 @@ format(
   RunResult = summary_value(
     maps:get(result, Summary, maps:get(result_status, Summary, undefined))
   ),
+    ContextIpfsUrl = summary_value(maps:get(context_ipfs_url, Summary, undefined)),
   ok = write_file(
          Config,
-         "<h2>Summary</h2><br>Feature: ~s<br>Report: ~s<br>RunId: ~s<br><br>Address: ~s"
+         "<h2>Summary</h2><br>Feature: ~s<br>Report: ~s<br>Context: ~s<br>RunId: ~s<br><br>Address: ~s"
          "<br>Run status: ~s<br>Run result: ~s"
          "<br>Cost DAMAGE: ~p<br>Cost hits: ~p<br>Cost BTC: ~p<br>Cost sats: ~p<br>Cost AE: ~p"
          "<br>tx_hash: ~s<br>",
          [
-           FeatureHash, ReportDir, RunId, Address,
+           FeatureHash, ReportDir, ContextIpfsUrl, RunId, Address,
            RunStatus, RunResult,
            CostDamage, CostHits, CostBtc, CostSats, CostAe, TxHash
          ]).

@@ -1,49 +1,482 @@
 <!-- -*- mode: html -*- -->
-<h2 id="modal-1-title">Settings</h2>
-<form action="submit_settings" method="post">
+<h2 id="settings-title">Settings</h2>
+
+<form action="submit_settings" method="post" class="pure-form pure-form-stacked">
   <fieldset>
     <legend>DNS Auth Token Settings</legend>
-    <button type="button" onclick="generateToken()">Generate Token</button>
+    <button class="pure-button" type="button" onclick="generateToken()">Generate Token</button>
     <div id="generatedToken"></div>
   </fieldset>
-  <fieldset id="contextVariablesForm">
-    <legend>Context Variables Settings</legend>
-    <label for="variableName">Name:</label>
-    <input type="text" id="variableName" name="variableName" placeholder="Enter variable name"><br>
-    <label for="value">Value:</label>
-    <input type="text" id="value" name="value" placeholder="Enter variable value"><br>
-    <label for="varType">Type:</label>
-    <select id="varType" name="varType">
-      <option value="integer">Integer</option>
-      <option value="float">Float</option>
-      <option value="boolean">Boolean</option>
-      <option value="string">String</option>
-    </select><br>
-    <label for="variableVisibility">Visibility:</label>
-    <select id="variableVisibility" name="variableVisibility">
-      <option value="public">Public</option>
-      <option value="private">Private</option>
-      <option value="obfuscated">Obfuscated</option>
-    </select><br>
-    <button type="button" onclick="addVariable()">Add Variable</button>
-    <div id="contextVariables"></div>
-  </fieldset>
-  <input type="submit" value="Submit">
 </form>
-<form action="submit_webhook" method="post">
-  <fieldset id="contextVariablesForm">
+
+{{#node_admin}}
+<section id="node-context-settings" aria-labelledby="node-context-title">
+  <h3 id="node-context-title">Node Context</h3>
+  <p>
+    Node-level values are inherited by account runs according to their inheritance policy.
+    Sensitive node values are stored encrypted and are always returned redacted.
+  </p>
+
+  <div class="node-context-meta">
+    <strong>Version:</strong> <span id="node-context-version">—</span>
+    &nbsp;
+    <strong>Root:</strong> <code id="node-context-root">—</code>
+    <button class="pure-button" type="button" id="node-context-refresh">Refresh</button>
+  </div>
+
+  <div id="node-context-status" role="status" aria-live="polite"></div>
+
+  <div class="node-context-table-wrap">
+    <table class="pure-table pure-table-horizontal" id="node-context-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Value</th>
+          <th>Sensitive</th>
+          <th>Exposure</th>
+          <th>Inheritance</th>
+          <th>Locked</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="node-context-rows">
+        <tr><td colspan="7">Loading node context…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <form id="node-context-editor" class="pure-form pure-form-stacked">
+    <fieldset>
+      <legend>Add or update node context</legend>
+
+      <label for="node-context-name">Name</label>
+      <input
+        type="text"
+        id="node-context-name"
+        maxlength="256"
+        autocomplete="off"
+        required
+        placeholder="default_server">
+
+      <label for="node-context-value">Value</label>
+      <textarea
+        id="node-context-value"
+        rows="3"
+        required
+        placeholder="https://api.example.com"></textarea>
+
+      <label for="node-context-type">Value type</label>
+      <select id="node-context-type">
+        <option value="string">String</option>
+        <option value="integer">Integer</option>
+        <option value="float">Float</option>
+        <option value="boolean">Boolean</option>
+        <option value="json">JSON</option>
+      </select>
+
+      <label class="pure-checkbox">
+        <input type="checkbox" id="node-context-sensitive">
+        Sensitive
+      </label>
+
+      <label for="node-context-exposure">Exposure</label>
+      <select id="node-context-exposure">
+        <option value="template">Template</option>
+        <option value="step_only">Step only</option>
+      </select>
+
+      <label for="node-context-inheritance">Inheritance</label>
+      <select id="node-context-inheritance">
+        <option value="default">Default</option>
+        <option value="locked">Locked</option>
+        <option value="none">None</option>
+      </select>
+
+      <p class="node-context-help">
+        Sensitive node values are normalized by the server to
+        <code>step_only</code>, <code>none</code>, and locked.
+      </p>
+
+      <button class="pure-button pure-button-primary" type="submit">Save</button>
+      <button class="pure-button" type="button" id="node-context-cancel">Clear</button>
+    </fieldset>
+  </form>
+</section>
+
+<style>
+  #node-context-settings {
+    margin-top: 2rem;
+  }
+
+  .node-context-meta,
+  #node-context-status {
+    margin: 0.75rem 0;
+  }
+
+  .node-context-table-wrap {
+    overflow-x: auto;
+    margin: 1rem 0;
+  }
+
+  #node-context-table {
+    width: 100%;
+  }
+
+  #node-context-table code {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  #node-context-editor textarea,
+  #node-context-editor input[type="text"],
+  #node-context-editor select {
+    max-width: 42rem;
+    width: 100%;
+  }
+
+  .node-context-help {
+    font-size: 0.9rem;
+    opacity: 0.8;
+  }
+
+  .node-context-error {
+    color: #b00020;
+  }
+
+  .node-context-success {
+    color: #0a6b2b;
+  }
+</style>
+
+<script>
+(() => {
+  const root = document.getElementById("node-context-settings");
+  if (!root || root.dataset.bound === "true") return;
+  root.dataset.bound = "true";
+
+  const endpoint = "/node/context";
+  const redacted = "XX-REDACTED-XX";
+
+  const rows = document.getElementById("node-context-rows");
+  const versionEl = document.getElementById("node-context-version");
+  const rootEl = document.getElementById("node-context-root");
+  const statusEl = document.getElementById("node-context-status");
+  const editor = document.getElementById("node-context-editor");
+  const nameEl = document.getElementById("node-context-name");
+  const valueEl = document.getElementById("node-context-value");
+  const typeEl = document.getElementById("node-context-type");
+  const sensitiveEl = document.getElementById("node-context-sensitive");
+  const exposureEl = document.getElementById("node-context-exposure");
+  const inheritanceEl = document.getElementById("node-context-inheritance");
+
+  let currentVersion = null;
+  let currentEntries = {};
+
+  function setStatus(message, kind) {
+    statusEl.textContent = message || "";
+    statusEl.className =
+      kind === "error" ? "node-context-error" :
+      kind === "success" ? "node-context-success" : "";
+  }
+
+  async function request(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+    headers.set("Accept", "application/json");
+    if (options.body) headers.set("Content-Type", "application/json");
+
+    const token = window.TokenManager?.getToken?.();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+
+    const response = await fetch(url, {
+      credentials: "include",
+      cache: "no-store",
+      ...options,
+      headers
+    });
+
+    let body = {};
+    const text = await response.text();
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch (_) {
+        body = {message: text};
+      }
+    }
+
+    if (!response.ok) {
+      const message =
+        body.message ||
+        body.error ||
+        `Node context request failed (${response.status})`;
+      const error = new Error(
+        typeof message === "string" ? message : JSON.stringify(message)
+      );
+      error.status = response.status;
+      error.body = body;
+      throw error;
+    }
+
+    return body;
+  }
+
+  function displayValue(entry) {
+    if (!entry) return "";
+    if (entry.sensitive === true || entry.value === redacted) return redacted;
+    if (typeof entry.value === "string") return entry.value;
+    return JSON.stringify(entry.value);
+  }
+
+  function addCell(row, value, useCode = false) {
+    const td = document.createElement("td");
+    if (useCode) {
+      const code = document.createElement("code");
+      code.textContent = value == null ? "" : String(value);
+      td.appendChild(code);
+    } else {
+      td.textContent = value == null ? "" : String(value);
+    }
+    row.appendChild(td);
+    return td;
+  }
+
+  function renderEntries() {
+    rows.replaceChildren();
+    const names = Object.keys(currentEntries).sort();
+
+    if (names.length === 0) {
+      const row = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      td.textContent = "No node context variables configured.";
+      row.appendChild(td);
+      rows.appendChild(row);
+      return;
+    }
+
+    for (const name of names) {
+      const entry = currentEntries[name] || {};
+      const row = document.createElement("tr");
+
+      addCell(row, name, true);
+      addCell(row, displayValue(entry), true);
+      addCell(row, entry.sensitive === true ? "yes" : "no");
+      addCell(row, entry.exposure || "");
+      addCell(row, entry.inheritance || "");
+      addCell(row, entry.locked === true ? "yes" : "no");
+
+      const actions = document.createElement("td");
+
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "pure-button";
+      edit.textContent = "Edit";
+      edit.addEventListener("click", () => editEntry(name, entry));
+      actions.appendChild(edit);
+
+      actions.appendChild(document.createTextNode(" "));
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "pure-button";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", () => deleteEntry(name));
+      actions.appendChild(remove);
+
+      row.appendChild(actions);
+      rows.appendChild(row);
+    }
+  }
+
+  async function loadContext() {
+    setStatus("Loading node context…");
+    try {
+      const data = await request(endpoint);
+      currentVersion = Number.isInteger(data.version) ? data.version : null;
+      currentEntries = data.entries && typeof data.entries === "object"
+        ? data.entries
+        : {};
+
+      versionEl.textContent =
+        currentVersion === null ? "—" : String(currentVersion);
+      rootEl.textContent = data.root || "—";
+      renderEntries();
+      setStatus("");
+    } catch (error) {
+      rows.replaceChildren();
+      const row = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      td.textContent = "Unable to load node context.";
+      row.appendChild(td);
+      rows.appendChild(row);
+      setStatus(error.message, "error");
+    }
+  }
+
+  function inferType(value) {
+    if (typeof value === "boolean") return "boolean";
+    if (Number.isInteger(value)) return "integer";
+    if (typeof value === "number") return "float";
+    if (value !== null && typeof value === "object") return "json";
+    return "string";
+  }
+
+  function editEntry(name, entry) {
+    nameEl.value = name;
+    nameEl.readOnly = true;
+    sensitiveEl.checked = entry.sensitive === true;
+    exposureEl.value = entry.exposure || "template";
+    inheritanceEl.value = entry.inheritance || "default";
+
+    if (entry.value === redacted || entry.sensitive === true) {
+      valueEl.value = "";
+      valueEl.placeholder = "Enter a replacement value for this sensitive setting";
+      typeEl.value = "string";
+    } else {
+      const value = entry.value;
+      typeEl.value = inferType(value);
+      valueEl.value =
+        typeEl.value === "json" ? JSON.stringify(value, null, 2) : String(value ?? "");
+      valueEl.placeholder = "";
+    }
+
+    valueEl.focus();
+  }
+
+  function clearEditor() {
+    editor.reset();
+    nameEl.readOnly = false;
+    valueEl.placeholder = "https://api.example.com";
+  }
+
+  function typedValue() {
+    const raw = valueEl.value;
+    switch (typeEl.value) {
+      case "integer": {
+        if (!/^-?\d+$/.test(raw.trim())) throw new Error("Value must be an integer.");
+        return Number.parseInt(raw, 10);
+      }
+      case "float": {
+        const value = Number(raw);
+        if (!Number.isFinite(value)) throw new Error("Value must be a number.");
+        return value;
+      }
+      case "boolean":
+        if (raw.trim().toLowerCase() === "true") return true;
+        if (raw.trim().toLowerCase() === "false") return false;
+        throw new Error('Boolean value must be "true" or "false".');
+      case "json":
+        return JSON.parse(raw);
+      default:
+        return raw;
+    }
+  }
+
+  async function saveEntry(event) {
+    event.preventDefault();
+    const name = nameEl.value.trim();
+    if (!name) {
+      setStatus("Name is required.", "error");
+      return;
+    }
+
+    let value;
+    try {
+      value = typedValue();
+    } catch (error) {
+      setStatus(error.message, "error");
+      return;
+    }
+
+    const spec = {
+      value,
+      sensitive: sensitiveEl.checked,
+      exposure: exposureEl.value,
+      inheritance: inheritanceEl.value
+    };
+
+    const payload = {
+      set: {[name]: spec},
+      delete: []
+    };
+    if (currentVersion !== null) payload.expected_version = currentVersion;
+
+    setStatus(`Saving ${name}…`);
+    try {
+      await request(endpoint, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      clearEditor();
+      setStatus(`${name} saved.`, "success");
+      await loadContext();
+    } catch (error) {
+      if (error.status === 409) {
+        setStatus("Node context changed elsewhere. Reloading latest version…", "error");
+        await loadContext();
+      } else {
+        setStatus(error.message, "error");
+      }
+    }
+  }
+
+  async function deleteEntry(name) {
+    if (!window.confirm(`Delete node context "${name}"?`)) return;
+
+    const payload = {
+      set: {},
+      delete: [name]
+    };
+    if (currentVersion !== null) payload.expected_version = currentVersion;
+
+    setStatus(`Deleting ${name}…`);
+    try {
+      await request(endpoint, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      if (nameEl.value === name) clearEditor();
+      setStatus(`${name} deleted.`, "success");
+      await loadContext();
+    } catch (error) {
+      if (error.status === 409) {
+        setStatus("Node context changed elsewhere. Reloading latest version…", "error");
+        await loadContext();
+      } else {
+        setStatus(error.message, "error");
+      }
+    }
+  }
+
+  editor.addEventListener("submit", saveEntry);
+  document.getElementById("node-context-refresh").addEventListener("click", loadContext);
+  document.getElementById("node-context-cancel").addEventListener("click", clearEditor);
+
+  loadContext();
+})();
+</script>
+{{/node_admin}}
+
+<form action="submit_webhook" method="post" class="pure-form pure-form-stacked">
+  <fieldset id="webhook-settings-form">
     <legend>Webhooks</legend>
-    <label for="variableName">Name:</label>
-    <input type="text" id="variableName" name="variableName" placeholder="Enter variable name"><br>
-    <label for="value">Webhook Url:</label>
-    <input type="text" id="value" name="value" placeholder="Enter variable value"><br>
-    <label for="method">Method:</label>
-    <select id="method" name="method">
+
+    <label for="webhook-name">Name</label>
+    <input type="text" id="webhook-name" name="variableName" placeholder="Webhook name">
+
+    <label for="webhook-url">Webhook URL</label>
+    <input type="url" id="webhook-url" name="value" placeholder="https://example.com/webhook">
+
+    <label for="webhook-method">Method</label>
+    <select id="webhook-method" name="method">
       <option value="POST">POST</option>
       <option value="GET">GET</option>
-    </select><br>
-    <button type="button" onclick="addWebhook()">Add Webhook</button>
-    <div id="contextVariables"></div>
+    </select>
+
+    <button class="pure-button" type="button" onclick="addWebhook()">Add Webhook</button>
+    <div id="webhookVariables"></div>
   </fieldset>
-  <input type="submit" value="Submit">
+
+  <input class="pure-button pure-button-primary" type="submit" value="Submit">
 </form>

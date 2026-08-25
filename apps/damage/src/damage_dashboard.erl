@@ -155,5 +155,36 @@ render_component(_, _) ->
 
 %% ---------------------- Rendering helper ---------------------
 render_tpl(TemplateRelPath, Context) ->
-    %% priv/templates/<TemplateRelPath> :contentReference[oaicite:1]{index=1}
-    damage_utils:load_template(TemplateRelPath, Context).
+    try damage_utils:load_template(TemplateRelPath, Context) of
+        {error, enoent} ->
+            log_missing_template(TemplateRelPath),
+            template_error_placeholder(TemplateRelPath);
+        {error, Reason} ->
+            ?LOG_ERROR(
+                "Template render failed template=~p reason=~p",
+                [TemplateRelPath, Reason]
+            ),
+            template_error_placeholder(TemplateRelPath);
+        Rendered ->
+            Rendered
+    catch
+        error:{badmatch, {error, enoent}}:Stacktrace ->
+            log_missing_template(TemplateRelPath),
+            ?LOG_DEBUG(
+                "Missing template stacktrace template=~p stacktrace=~p",
+                [TemplateRelPath, Stacktrace]
+            ),
+            template_error_placeholder(TemplateRelPath);
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Template render crashed template=~p class=~p reason=~p stacktrace=~p",
+                [TemplateRelPath, Class, Reason, Stacktrace]
+            ),
+            template_error_placeholder(TemplateRelPath)
+    end.
+
+log_missing_template(TemplateRelPath) ->
+    ?LOG_ERROR("Template file not found template=~p", [TemplateRelPath]).
+
+template_error_placeholder(_TemplateRelPath) ->
+    <<"<!-- template unavailable -->">>.

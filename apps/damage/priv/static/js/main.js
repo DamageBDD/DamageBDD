@@ -668,6 +668,7 @@ function restoreFeatureDraftFromShareLink() {
 		}, 0);
 
 
+		bindExecutionContextEditor();
 		restoreFeatureDraftFromShareLink();
 
 	}); // end DOMContentLoaded 
@@ -1184,12 +1185,394 @@ function restoreFeatureDraftFromShareLink() {
 	}
 
 
+	const EXECUTION_RUNTIME_CONTEXT_KEY = "damagebdd_execution_runtime_context";
+	const EXECUTION_RUNTIME_RESERVED_KEYS = new Set([
+		"feature", "feature_cid", "vars", "stream", "concurrency",
+		"continue_on_fail", "color_formatter", "channel_id", "signed_tx",
+		"unsigned_tx", "tx", "action", "payfor", "signature", "message",
+		"pubkey", "address", "public_key", "private_key", "access_token",
+		"auth_type", "username", "node_public_key", "token_contract",
+		"run_id", "run_dir", "report_hash", "report_dir", "feature_hash",
+		"context", "runtime_context", "context_scopes", "context_proofs",
+		"context_redactions", "context_redaction_ref", "damage_context_effective",
+		"account_context", "node_context", "context_ipfs_hash",
+		"context_ipfs_uri", "context_ipfs_url", "context_url"
+	]);
+	let executionRuntimeContext = {};
+	function validateRuntimeContextKeys(context) {
+		for (const key of Object.keys(context)) {
+			const normalized = String(key).toLowerCase();
+			if (EXECUTION_RUNTIME_RESERVED_KEYS.has(normalized)) {
+				throw new Error(`Runtime context key is reserved: ${key}`);
+			}
+		}
+	}
+
+
+	function executionContextStatus(id, message, error = false) {
+		const el = document.getElementById(id);
+		if (!el) return;
+		el.textContent = message || "";
+		el.className = error ? "error" : "success";
+	}
+
+	function parseTypedContextValue(raw, type) {
+		switch (type) {
+		case "integer":
+			if (!/^-?\d+$/.test(raw.trim())) throw new Error("Value must be an integer.");
+			return Number.parseInt(raw, 10);
+		case "float": {
+			const value = Number(raw);
+			if (!Number.isFinite(value)) throw new Error("Value must be a number.");
+			return value;
+		}
+		case "boolean":
+			if (raw.trim().toLowerCase() === "true") return true;
+			if (raw.trim().toLowerCase() === "false") return false;
+			throw new Error('Boolean value must be "true" or "false".');
+		case "json":
+			return JSON.parse(raw);
+		default:
+			return raw;
+		}
+	}
+
+	function loadRuntimeContextDraft() {
+		const input = document.getElementById("runtime-context-json");
+		let stored = sessionStorage.getItem(EXECUTION_RUNTIME_CONTEXT_KEY);
+		if (!stored) stored = "{}";
+
+		try {
+			const parsed = JSON.parse(stored);
+			executionRuntimeContext =
+				parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+		} catch (_e) {
+			executionRuntimeContext = {};
+		}
+
+		if (input) input.value = JSON.stringify(executionRuntimeContext, null, 2);
+	}
+
+	function applyRuntimeContextDraft() {
+		const input = document.getElementById("runtime-context-json");
+		if (!input) return {};
+
+		const parsed = JSON.parse(input.value || "{}");
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			throw new Error("Runtime context must be a JSON object.");
+		}
+		validateRuntimeContextKeys(parsed);
+
+		executionRuntimeContext = parsed;
+		sessionStorage.setItem(
+			EXECUTION_RUNTIME_CONTEXT_KEY,
+			JSON.stringify(executionRuntimeContext)
+		);
+		input.value = JSON.stringify(executionRuntimeContext, null, 2);
+		return executionRuntimeContext;
+	}
+
+	function currentRuntimeContext() {
+		return {...executionRuntimeContext};
+	}
+
+	function accountContextHeaders() {
+		const headers = buildJsonAuthHeaders(window.TokenManager?.getToken?.());
+		headers.set("Accept", "application/json");
+		return headers;
+	}
+
+	async function accountContextRequest(url, options = {}) {
+		const response = await fetch(url, {
+			credentials: "include",
+			cache: "no-store",
+			...options,
+			headers: options.headers || accountContextHeaders()
+		});
+
+		const text = await response.text();
+		let data = {};
+		if (text) {
+			try { data = JSON.parse(text); }
+			catch (_e) { data = {message: text}; }
+		}
+
+		if (!response.ok) {
+			throw new Error(data.message || data.error || `HTTP ${response.status}`);
+		}
+		return data;
+	}
+
+	function accountContextEntries(data) {
+		if (data && data.entries && typeof data.entries === "object") return data.entries;
+		if (data && data.result && data.result.entries &&
+			typeof data.result.entries === "object") return data.result.entries;
+		return {};
+	}
+
+	function renderExecutionAccountContext(data) {
+		const body = document.getElementById("execution-account-context-rows");
+		const version = document.getElementById("execution-account-context-version");
+		if (!body) return;
+
+		const entries = accountContextEntries(data);
+		const currentVersion =
+			Number.isInteger(data?.version) ? data.version :
+			Number.isInteger(data?.result?.version) ? data.result.version : null;
+
+		body.dataset.version = currentVersion === null ? "" : String(currentVersion);
+		if (version) version.textContent = currentVersion === null ? "—" : String(currentVersion);
+
+		body.replaceChildren();
+		const keys = Object.keys(entries).sort();
+		if (!keys.length) {
+			const tr = document.createElement("tr");
+			const td = document.createElement("td");
+			td.colSpan = 5;
+			td.textContent = "No account context configured.";
+			tr.appendChild(td);
+			body.appendChild(tr);
+			return;
+		}
+
+		for (const key of keys) {
+			const entry = entries[key] || {};
+			const tr = document.createElement("tr");
+			const values = [
+				key,
+				entry.sensitive === true ? "XX-REDACTED-XX" :
+					(typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value)),
+				entry.sensitive === true ? "yes" : "no",
+				entry.exposure || "template"
+			];
+
+			for (const value of values) {
+				const td = document.createElement("td");
+				td.textContent = value == null ? "" : String(value);
+				tr.appendChild(td);
+			}
+
+			const actions = document.createElement("td");
+			const edit = document.createElement("button");
+			edit.type = "button";
+			edit.className = "styled-btn";
+			edit.textContent = "Edit";
+			edit.addEventListener("click", () => editExecutionAccountContext(key, entry));
+			actions.appendChild(edit);
+
+			actions.appendChild(document.createTextNode(" "));
+
+			const remove = document.createElement("button");
+			remove.type = "button";
+			remove.className = "styled-btn";
+			remove.textContent = "Delete";
+			remove.addEventListener("click", () => deleteExecutionAccountContext(key));
+			actions.appendChild(remove);
+
+			tr.appendChild(actions);
+			body.appendChild(tr);
+		}
+	}
+
+	async function loadExecutionAccountContext() {
+		executionContextStatus("execution-account-context-status", "Loading account context…");
+		try {
+			const data = await accountContextRequest("/context");
+			renderExecutionAccountContext(data);
+			executionContextStatus("execution-account-context-status", "");
+		} catch (err) {
+			executionContextStatus(
+				"execution-account-context-status",
+				"Unable to load account context: " + err.message,
+				true
+			);
+		}
+	}
+
+	function editExecutionAccountContext(key, entry) {
+		const name = document.getElementById("execution-account-context-name");
+		const value = document.getElementById("execution-account-context-value");
+		const type = document.getElementById("execution-account-context-type");
+		const sensitive = document.getElementById("execution-account-context-sensitive");
+		const exposure = document.getElementById("execution-account-context-exposure");
+
+		if (name) {
+			name.value = key;
+			name.readOnly = true;
+		}
+		if (sensitive) sensitive.checked = entry.sensitive === true;
+		if (exposure) exposure.value = entry.exposure || "template";
+
+		if (value) {
+			if (entry.sensitive === true || entry.value === "XX-REDACTED-XX") {
+				value.value = "";
+				value.placeholder = "Enter replacement value";
+				if (type) type.value = "string";
+			} else {
+				const v = entry.value;
+				if (type) {
+					type.value =
+						typeof v === "boolean" ? "boolean" :
+						Number.isInteger(v) ? "integer" :
+						typeof v === "number" ? "float" :
+						v && typeof v === "object" ? "json" : "string";
+				}
+				value.value =
+					type?.value === "json" ? JSON.stringify(v, null, 2) : String(v ?? "");
+			}
+		}
+	}
+
+	function clearExecutionAccountContextEditor() {
+		const name = document.getElementById("execution-account-context-name");
+		const value = document.getElementById("execution-account-context-value");
+		const type = document.getElementById("execution-account-context-type");
+		const sensitive = document.getElementById("execution-account-context-sensitive");
+		const exposure = document.getElementById("execution-account-context-exposure");
+
+		if (name) {
+			name.value = "";
+			name.readOnly = false;
+		}
+		if (value) {
+			value.value = "";
+			value.placeholder = "https://api.example.com";
+		}
+		if (type) type.value = "string";
+		if (sensitive) sensitive.checked = false;
+		if (exposure) exposure.value = "template";
+	}
+
+	async function saveExecutionAccountContext() {
+		const name = document.getElementById("execution-account-context-name");
+		const value = document.getElementById("execution-account-context-value");
+		const type = document.getElementById("execution-account-context-type");
+		const sensitive = document.getElementById("execution-account-context-sensitive");
+		const exposure = document.getElementById("execution-account-context-exposure");
+		const rows = document.getElementById("execution-account-context-rows");
+
+		const key = name?.value?.trim();
+		if (!key) {
+			executionContextStatus("execution-account-context-status", "Account context name is required.", true);
+			return;
+		}
+
+		let typed;
+		try {
+			typed = parseTypedContextValue(value?.value || "", type?.value || "string");
+		} catch (err) {
+			executionContextStatus("execution-account-context-status", err.message, true);
+			return;
+		}
+
+		const payload = {
+			set: {
+				[key]: {
+					value: typed,
+					sensitive: sensitive?.checked === true,
+					exposure: exposure?.value || "template"
+				}
+			},
+			delete: []
+		};
+
+		const version = Number.parseInt(rows?.dataset?.version || "", 10);
+		if (Number.isInteger(version)) payload.expected_version = version;
+
+		try {
+			await accountContextRequest("/context", {
+				method: "PATCH",
+				headers: accountContextHeaders(),
+				body: JSON.stringify(payload)
+			});
+			clearExecutionAccountContextEditor();
+			executionContextStatus("execution-account-context-status", `${key} saved.`);
+			await loadExecutionAccountContext();
+		} catch (err) {
+			executionContextStatus("execution-account-context-status", err.message, true);
+			if (/409|VERSION_CONFLICT/i.test(err.message)) await loadExecutionAccountContext();
+		}
+	}
+
+	async function deleteExecutionAccountContext(key) {
+		if (!window.confirm(`Delete account context "${key}"?`)) return;
+		const rows = document.getElementById("execution-account-context-rows");
+		const payload = {set: {}, delete: [key]};
+		const version = Number.parseInt(rows?.dataset?.version || "", 10);
+		if (Number.isInteger(version)) payload.expected_version = version;
+
+		try {
+			await accountContextRequest("/context", {
+				method: "PATCH",
+				headers: accountContextHeaders(),
+				body: JSON.stringify(payload)
+			});
+			clearExecutionAccountContextEditor();
+			await loadExecutionAccountContext();
+		} catch (err) {
+			executionContextStatus("execution-account-context-status", err.message, true);
+		}
+	}
+
+	function bindExecutionContextEditor() {
+		const button = document.getElementById("edit-execution-context-btn");
+		const panel = document.getElementById("execution-context-editor");
+		if (!button || !panel || panel.dataset.bound === "true") return;
+		panel.dataset.bound = "true";
+
+		loadRuntimeContextDraft();
+
+		button.addEventListener("click", async () => {
+			const opening = panel.hidden;
+			panel.hidden = !opening;
+			button.setAttribute("aria-expanded", opening ? "true" : "false");
+			if (opening) await loadExecutionAccountContext();
+		});
+
+		document.getElementById("save-runtime-context-btn")?.addEventListener("click", () => {
+			try {
+				const ctx = applyRuntimeContextDraft();
+				executionContextStatus(
+					"runtime-context-status",
+					`Runtime context applied (${Object.keys(ctx).length} keys).`
+				);
+			} catch (err) {
+				executionContextStatus("runtime-context-status", err.message, true);
+			}
+		});
+
+		document.getElementById("clear-runtime-context-btn")?.addEventListener("click", () => {
+			executionRuntimeContext = {};
+			sessionStorage.removeItem(EXECUTION_RUNTIME_CONTEXT_KEY);
+			const input = document.getElementById("runtime-context-json");
+			if (input) input.value = "{}";
+			executionContextStatus("runtime-context-status", "Runtime context cleared.");
+		});
+
+		document.getElementById("refresh-account-context-btn")?.addEventListener(
+			"click", loadExecutionAccountContext
+		);
+		document.getElementById("save-account-context-btn")?.addEventListener(
+			"click", saveExecutionAccountContext
+		);
+		document.getElementById("clear-account-context-editor-btn")?.addEventListener(
+			"click", clearExecutionAccountContextEditor
+		);
+	}
+
+
 	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value.trim();
 		const concurrency = 1;
 		const reportElement = addReport();
 		const mode = window.TokenManager.getMode();
 
+		try {
+			applyRuntimeContextDraft();
+		} catch (err) {
+			reportElement.innerText = "Invalid runtime context: " + err.message;
+			return;
+		}
 		if (!inputText) {
 			reportElement.innerText = "Please enter a feature before executing.";
 			return;
@@ -1301,7 +1684,8 @@ function restoreFeatureDraftFromShareLink() {
 			body: JSON.stringify({
 				feature: inputText,
 				concurrency,
-				stream: true
+				stream: true,
+				context: currentRuntimeContext()
 			})
 		};
 
@@ -1367,7 +1751,8 @@ function restoreFeatureDraftFromShareLink() {
 				feature: inputText,
 				address,
 				concurrency,
-				channel_id: channel.channel.id
+				channel_id: channel.channel.id,
+				context: currentRuntimeContext()
 			})
 		};
 
@@ -1459,7 +1844,8 @@ function restoreFeatureDraftFromShareLink() {
 				feature: inputText,
 				address,
 				concurrency,
-				signed_tx: signedTx
+				signed_tx: signedTx,
+				context: currentRuntimeContext()
 			})
 		};
 

@@ -284,6 +284,7 @@ execute_file_prepared(Config, Context, Filename) ->
             ContextIpfsHash = maps:get(hash, ContextIpfs),
             ContextIpfsUri = maps:get(uri, ContextIpfs),
             ContextIpfsUrl = maps:get(url, ContextIpfs),
+            ContextUrl = maps:get(context_url, ContextIpfs, ContextIpfsUrl),
 
             %% Write meta BEFORE IPFS add so it is included in ReportHash.
             ok = write_run_meta(
@@ -298,7 +299,7 @@ execute_file_prepared(Config, Context, Filename) ->
                     result => Result,
                     context_ipfs_hash => ContextIpfsHash,
                     context_ipfs_uri => ContextIpfsUri,
-                    context_ipfs_url => ContextIpfsUrl
+                    context_ipfs_url => ContextUrl
                 }
             ),
 
@@ -337,8 +338,8 @@ execute_file_prepared(Config, Context, Filename) ->
                             run_id => RunId,
                             public_key => maps:get(public_key, Context, <<"">>),
                             feature_hash => FeatureHash,
-                            context_ipfs_hash => ContextIpfsHash,
-                            context_ipfs_url => ContextIpfsUrl
+                            context_ipfs_uri => ContextIpfsUri,
+                            context_ipfs_url => ContextUrl
                         }
                     )
             end,
@@ -352,7 +353,7 @@ execute_file_prepared(Config, Context, Filename) ->
                         report_hash => ReportHash,
                         context_ipfs_hash => ContextIpfsHash,
                         context_ipfs_uri => ContextIpfsUri,
-                        context_ipfs_url => ContextIpfsUrl,
+                        context_ipfs_url => ContextUrl,
                         feature_title => FeatureTitle,
                         public_key => maps:get(public_key, Context),
                         report_dir =>
@@ -388,7 +389,7 @@ execute_file_prepared(Config, Context, Filename) ->
                     report_dir => maps:get(report_dir, FinalContext),
                     context_ipfs_hash => ContextIpfsHash,
                     context_ipfs_uri => ContextIpfsUri,
-                    context_ipfs_url => ContextIpfsUrl,
+                    context_ipfs_url => ContextUrl,
                     start_time => StartTimestamp,
                     execution_time => EndTimestamp - StartTimestamp,
                     end_time => EndTimestamp,

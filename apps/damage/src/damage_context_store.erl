@@ -27,6 +27,8 @@
     register_redactions/1,
     redactions/1,
     release_redactions/1,
+    sign_proof_reference/2,
+    verify_proof_reference/3,
     reload/1,
     apply_changes/4,
     clear/1
@@ -176,6 +178,39 @@ release_redactions(Token) when is_binary(Token) ->
         {error, _} = Error -> Error
     end.
 
+-spec sign_proof_reference(binary() | list(), binary() | list()) ->
+    {ok, binary()} | {error, term()}.
+sign_proof_reference(AeAccount0, Cid0) ->
+    case ensure_started() of
+        ok ->
+            AeAccount = to_binary(AeAccount0),
+            Cid = to_binary(Cid0),
+            gen_server:call(
+                ?MODULE,
+                {sign_proof_reference, AeAccount, Cid},
+                ?AE_TIMEOUT
+            );
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec verify_proof_reference(binary() | list(), binary() | list(), binary() | list()) ->
+    {ok, boolean()} | {error, term()}.
+verify_proof_reference(AeAccount0, Cid0, Reference0) ->
+    case ensure_started() of
+        ok ->
+            AeAccount = to_binary(AeAccount0),
+            Cid = to_binary(Cid0),
+            Reference = to_binary(Reference0),
+            gen_server:call(
+                ?MODULE,
+                {verify_proof_reference, AeAccount, Cid, Reference},
+                ?AE_TIMEOUT
+            );
+        {error, _} = Error ->
+            Error
+    end.
+
 -spec reload(scope()) -> ok | {error, term()}.
 reload(Scope) ->
     case ensure_started() of
@@ -249,6 +284,19 @@ handle_call({register_redactions, Values}, _From, State) ->
 handle_call({release_redactions, Token}, _From, State) ->
     true = ets:delete(?REDACTION_TABLE, redaction_key(Token)),
     {reply, ok, State};
+handle_call(
+    {sign_proof_reference, AeAccount, Cid},
+    _From,
+    #{master_key := MasterKey} = State
+) ->
+    {reply, {ok, proof_reference(MasterKey, AeAccount, Cid)}, State};
+handle_call(
+    {verify_proof_reference, AeAccount, Cid, Reference},
+    _From,
+    #{master_key := MasterKey} = State
+) ->
+    Expected = proof_reference(MasterKey, AeAccount, Cid),
+    {reply, {ok, secure_equal(Expected, Reference)}, State};
 handle_call({reload, StorageKey, Scope}, _From, #{master_key := MasterKey} = State) ->
     true = ets:delete(?ETS_TABLE, StorageKey),
     {reply, ensure_scope_loaded(StorageKey, Scope, MasterKey), State};
@@ -302,12 +350,14 @@ freeze_snapshot_locked(StorageKey, Scope, MasterKey) ->
                 [{StorageKey, Snapshot}] ->
                     Version = maps:get(version, Snapshot, 0),
                     Root = maps:get(root, Snapshot, <<>>),
-                    case ensure_snapshot_witness_retained(
-                        StorageKey,
-                        Scope,
-                        Version,
-                        Root
-                    ) of
+                    case
+                        ensure_snapshot_witness_retained(
+                            StorageKey,
+                            Scope,
+                            Version,
+                            Root
+                        )
+                    of
                         ok -> {ok, Snapshot};
                         {error, _} = Error -> Error
                     end;
@@ -348,6 +398,30 @@ redaction_key(Token) ->
 
 redaction_ttl_seconds() ->
     env_pos_int(context_redaction_ttl_seconds, ?DEFAULT_REDACTION_TTL_SECONDS).
+
+proof_reference(MasterKey, AeAccount, Cid) ->
+    SigningKey = crypto:mac(
+        hmac,
+        sha256,
+        MasterKey,
+        <<"damage-context-proof-reference-key-v1">>
+    ),
+    lower_hex(
+        crypto:mac(
+            hmac,
+            sha256,
+            SigningKey,
+            term_to_binary(
+                {
+                    damage_context_proof_reference,
+                    ?SCHEMA_VERSION,
+                    AeAccount,
+                    Cid
+                },
+                [deterministic]
+            )
+        )
+    ).
 
 ensure_scope_loaded(StorageKey, Scope, MasterKey) ->
     case ets:lookup(?ETS_TABLE, StorageKey) of
@@ -473,13 +547,15 @@ persist_snapshot(StorageKey, Snapshot0, MasterKey) ->
                     ciphertext => Ciphertext
                 },
                 HistoryKey = snapshot_history_key(StorageKey, Version),
-                case dets:insert(
-                    ?DETS_TABLE,
-                    [
-                        {StorageKey, Persisted},
-                        {HistoryKey, Persisted}
-                    ]
-                ) of
+                case
+                    dets:insert(
+                        ?DETS_TABLE,
+                        [
+                            {StorageKey, Persisted},
+                            {HistoryKey, Persisted}
+                        ]
+                    )
+                of
                     ok ->
                         ok = maybe_sync_store(),
                         {ok, Payload#{root => Root}};
@@ -577,15 +653,16 @@ validate_persisted_snapshot(Version, Root, Persisted) when is_map(Persisted) ->
                 false -> {error, context_snapshot_root_mismatch}
             end;
         false ->
-            {error, {
-                context_snapshot_witness_mismatch,
-                #{
-                    expected_version => Version,
-                    actual_version => PersistedVersion,
-                    expected_root => Root,
-                    actual_root => PersistedRoot
-                }
-            }}
+            {error,
+                {
+                    context_snapshot_witness_mismatch,
+                    #{
+                        expected_version => Version,
+                        actual_version => PersistedVersion,
+                        expected_root => Root,
+                        actual_root => PersistedRoot
+                    }
+                }}
     end;
 validate_persisted_snapshot(_Version, _Root, Other) ->
     {error, {invalid_context_snapshot, Other}}.

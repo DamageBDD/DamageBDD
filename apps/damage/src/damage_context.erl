@@ -105,6 +105,7 @@
 %% client-forgeable boolean flag.
 -define(EFFECTIVE_MARKER, {prepared, ?SCHEMA_VERSION}).
 -define(DEFAULT_MAX_REQUEST_BYTES, 1048576).
+-define(DEFAULT_MAX_PROOF_VIEW_BYTES, 8388608).
 -define(MAX_KEY_BYTES, 256).
 -define(TRAILS_TAG, ["Context Management"]).
 -define(REDACTED_TEXT_MARKER, <<"XX-REDACTED-XX">>).
@@ -183,7 +184,8 @@ resolve_scope(#{kind := Kind, owner := Owner} = Scope0) ->
     Id = maps:get(id, Scope0, <<"default">>),
     case valid_scope_kind(Kind) of
         true ->
-            {ok, canonical_scope(Kind, normalize_account(Owner), normalize_scope_kind_id(Kind, Id))};
+            {ok,
+                canonical_scope(Kind, normalize_account(Owner), normalize_scope_kind_id(Kind, Id))};
         false ->
             {error, {invalid_context_scope_kind, Kind}}
     end;
@@ -809,7 +811,8 @@ refreshed_account_entries(Scope, Entries, RefreshedValues) ->
             case maps:find(Key, Entries) of
                 {ok, Entry} ->
                     case maps:get(value, Entry, undefined) =:= Value of
-                        true -> Acc;
+                        true ->
+                            Acc;
                         false ->
                             maps:put(
                                 Key,
@@ -901,8 +904,7 @@ register_frozen_redactions([]) ->
 register_frozen_redactions(Values) ->
     case damage_context_store:register_redactions(Values) of
         {ok, Token} -> Token;
-        {error, Reason} ->
-            error({context_scope_unavailable, context_redactions, Reason})
+        {error, Reason} -> error({context_scope_unavailable, context_redactions, Reason})
     end.
 
 -spec write_run_proof(string() | binary(), map()) -> ok | {error, term()}.
@@ -933,7 +935,6 @@ write_run_proof(
 write_run_proof(_RunDir, _Context) ->
     {error, context_not_prepared}.
 
-
 -spec publish_run_proof(string() | binary(), map()) -> {ok, map()} | {error, term()}.
 publish_run_proof(RunDir, Context) ->
     case write_run_proof(RunDir, Context) of
@@ -945,13 +946,14 @@ publish_run_proof(RunDir, Context) ->
                 {ok, HashList} ->
                     case context_proof_cid(HashList, Path) of
                         {ok, Cid} ->
-                            {ok, #{
+                            Publication = #{
                                 hash => Cid,
                                 cid => Cid,
                                 uri => <<"ipfs://", Cid/binary>>,
                                 url => context_ipfs_url(Cid),
                                 file => <<"context_proof.json">>
-                            }};
+                            },
+                            add_account_context_url(Context, Publication);
                         {error, _} = Error ->
                             Error
                     end;
@@ -962,6 +964,23 @@ publish_run_proof(RunDir, Context) ->
             end;
         {error, _} = Error ->
             Error
+    end.
+
+add_account_context_url(Context, #{hash := Cid} = Publication) ->
+    case context_account(Context) of
+        <<"ak_", _/binary>> = AeAccount ->
+            case damage_context_store:sign_proof_reference(AeAccount, Cid) of
+                {ok, Reference} ->
+                    {ok, Publication#{
+                        context_url => context_view_url(Cid, Reference)
+                    }};
+                {error, _} = Error ->
+                    Error
+            end;
+        _ ->
+            %% Node-only/internal runs have no account-authorized viewer. Keep
+            %% their direct content-addressed IPFS URL as the usable fallback.
+            {ok, Publication#{context_url => maps:get(url, Publication)}}
     end.
 
 safe_add_context_proof(Path) when is_binary(Path) ->
@@ -1007,6 +1026,21 @@ context_proof_cid(HashList, Path) when is_list(HashList) ->
 context_proof_cid(Other, _Path) ->
     {error, {invalid_context_ipfs_add_result, Other}}.
 
+context_view_url(Cid, Reference) ->
+    Relative = <<
+        "/context/proof?cid=",
+        Cid/binary,
+        "&ref=",
+        Reference/binary
+    >>,
+    case application:get_env(damage, api_url) of
+        {ok, Base0} when is_binary(Base0); is_list(Base0) ->
+            Base = trim_trailing_slashes(normalize_binary(Base0)),
+            <<Base/binary, Relative/binary>>;
+        _ ->
+            Relative
+    end.
+
 context_ipfs_url(Cid) ->
     case configured_context_ipfs_gateway() of
         undefined ->
@@ -1051,28 +1085,30 @@ normalize_path(Value) when is_binary(Value) -> binary_to_list(Value);
 normalize_path(Value) when is_list(Value) -> Value;
 normalize_path(Value) -> binary_to_list(normalize_binary(Value)).
 
-attach_proof_witnesses(#{
-    status := available,
-    kind := Kind,
-    owner := Owner,
-    id := Id,
-    version := Version,
-    root := Root
-} = Proof) ->
+attach_proof_witnesses(
+    #{
+        status := available,
+        kind := Kind,
+        owner := Owner,
+        id := Id,
+        version := Version,
+        root := Root
+    } = Proof
+) ->
     Scope = canonical_scope(Kind, normalize_account(Owner), Id),
     case damage_context_store:witness(Scope, Version, Root) of
         {ok, Witness} -> {ok, Proof#{witness => Witness}};
-        {error, Reason} ->
-            {error, {context_snapshot_witness_unavailable, scope_key(Scope), Reason}}
+        {error, Reason} -> {error, {context_snapshot_witness_unavailable, scope_key(Scope), Reason}}
     end;
 attach_proof_witnesses(Map) when is_map(Map) ->
     maps:fold(
-        fun(Key, Value, {ok, Acc}) ->
-            case attach_proof_witnesses(Value) of
-                {ok, WitnessedValue} -> {ok, maps:put(Key, WitnessedValue, Acc)};
-                {error, _} = Error -> Error
-            end;
-           (_Key, _Value, {error, _} = Error) ->
+        fun
+            (Key, Value, {ok, Acc}) ->
+                case attach_proof_witnesses(Value) of
+                    {ok, WitnessedValue} -> {ok, maps:put(Key, WitnessedValue, Acc)};
+                    {error, _} = Error -> Error
+                end;
+            (_Key, _Value, {error, _} = Error) ->
                 Error
         end,
         {ok, #{}},
@@ -1145,7 +1181,6 @@ effective_entries_and_proofs(AeAccount, AdditionalScopes0) ->
         error:{context_scope_unavailable, Scope, Reason} ->
             {error, {context_scope_unavailable, Scope, Reason}}
     end.
-
 
 filter_node_entries(Entries, Inheritance) ->
     maps:filter(
@@ -1242,7 +1277,6 @@ custodial_account_keypair(AeAccount) ->
             {error, {account_key_lookup_failed, Class, Reason}}
     end.
 
-
 public_entry(#{sensitive := true} = Entry) ->
     Entry#{value => ?REDACTED_TEXT_MARKER};
 public_entry(Entry) ->
@@ -1260,6 +1294,7 @@ internal_context_keys() ->
         context_ipfs_hash,
         context_ipfs_uri,
         context_ipfs_url,
+        context_url,
         account_context,
         node_context
     ],
@@ -1290,6 +1325,7 @@ protected_runtime_keys() ->
         context_ipfs_hash,
         context_ipfs_uri,
         context_ipfs_url,
+        context_url,
         context_proofs,
         context_redactions,
         context_redaction_ref,
@@ -1304,7 +1340,6 @@ reserved_context_keys() ->
         [normalize_key(Key) || Key <- protected_runtime_keys()] ++
             [<<"account_context">>, <<"node_context">>]
     ).
-
 
 %%%===================================================================
 %%% Compatibility wrappers
@@ -1354,6 +1389,33 @@ trails() ->
                     tags => ?TRAILS_TAG,
                     description => "Get the effective account context after node inheritance.",
                     produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/context/proof",
+            damage_context,
+            #{action => account_proof},
+            #{
+                get => #{
+                    tags => ?TRAILS_TAG,
+                    description =>
+                        "View an IPFS context proof owned by the authenticated account.",
+                    produces => ["application/json"],
+                    parameters => [
+                        #{
+                            name => <<"cid">>,
+                            in => <<"query">>,
+                            required => true,
+                            type => <<"string">>
+                        },
+                        #{
+                            name => <<"ref">>,
+                            in => <<"query">>,
+                            required => true,
+                            type => <<"string">>
+                        }
+                    ]
                 }
             }
         ),
@@ -1438,7 +1500,9 @@ is_node_admin(AeAccount0) ->
             false
     end.
 
-allowed_methods(Req, #{action := account_effective} = State) ->
+allowed_methods(Req, #{action := Action} = State) when
+    Action =:= account_effective; Action =:= account_proof
+->
     {[<<"GET">>], Req, State};
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"PATCH">>, <<"DELETE">>], Req, State}.
@@ -1469,6 +1533,8 @@ to_json(Req, #{action := account_effective, public_key := AeAccount} = State) ->
                 State
             )
     end;
+to_json(Req, #{action := account_proof, public_key := AeAccount} = State) ->
+    view_account_context_proof(Req, State, normalize_account(AeAccount));
 to_json(Req, State) ->
     case scope_from_state(State) of
         {ok, Scope} ->
@@ -1497,12 +1563,260 @@ to_json(Req, State) ->
             )
     end.
 
+view_account_context_proof(Req, State, AeAccount) ->
+    case context_proof_query(Req) of
+        {ok, Cid, Reference} ->
+            authorize_context_proof(Cid, Reference, AeAccount, Req, State);
+        {error, invalid_cid} ->
+            reply_json_stop(
+                400,
+                #{status => error, error => <<"INVALID_CONTEXT_CID">>},
+                Req,
+                State
+            );
+        {error, invalid_reference} ->
+            reply_json_stop(
+                400,
+                #{status => error, error => <<"INVALID_CONTEXT_REFERENCE">>},
+                Req,
+                State
+            );
+        {error, invalid_query} ->
+            reply_json_stop(
+                400,
+                #{status => error, error => <<"INVALID_CONTEXT_PROOF_QUERY">>},
+                Req,
+                State
+            )
+    end.
+
+context_proof_query(Req) ->
+    try cowboy_req:parse_qs(Req) of
+        Query when is_list(Query) ->
+            Cid = proplists:get_value(<<"cid">>, Query, undefined),
+            Reference = proplists:get_value(<<"ref">>, Query, undefined),
+            case {valid_context_cid(Cid), valid_proof_reference(Reference)} of
+                {true, true} ->
+                    {ok, normalize_binary(Cid), normalize_binary(Reference)};
+                {false, _} ->
+                    {error, invalid_cid};
+                {_, false} ->
+                    {error, invalid_reference}
+            end
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "Invalid context proof query class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {error, invalid_query}
+    end.
+
+authorize_context_proof(Cid, Reference, AeAccount, Req, State) ->
+    case damage_context_store:verify_proof_reference(AeAccount, Cid, Reference) of
+        {ok, true} ->
+            fetch_account_context_proof(Cid, AeAccount, Req, State);
+        {ok, false} ->
+            reply_json_stop(
+                403,
+                #{status => error, error => <<"CONTEXT_PROOF_FORBIDDEN">>},
+                Req,
+                State
+            );
+        {error, Reason} ->
+            reply_json_stop(
+                503,
+                #{
+                    status => error,
+                    error => <<"CONTEXT_PROOF_AUTH_UNAVAILABLE">>,
+                    reason => Reason
+                },
+                Req,
+                State
+            )
+    end.
+
+fetch_account_context_proof(Cid, AeAccount, Req, State) ->
+    try damage_ipfs:cat_binary(Cid) of
+        {ok, ProofBin} when is_binary(ProofBin) ->
+            MaxBytes = env_pos_int(
+                context_max_proof_view_bytes,
+                ?DEFAULT_MAX_PROOF_VIEW_BYTES
+            ),
+            case byte_size(ProofBin) =< MaxBytes of
+                true ->
+                    return_owned_context_proof(
+                        Cid, AeAccount, ProofBin, Req, State
+                    );
+                false ->
+                    reply_json_stop(
+                        413,
+                        #{
+                            status => error,
+                            error => <<"CONTEXT_PROOF_TOO_LARGE">>,
+                            size => byte_size(ProofBin),
+                            max_size => MaxBytes
+                        },
+                        Req,
+                        State
+                    )
+            end;
+        {error, Reason} ->
+            reply_json_stop(
+                503,
+                #{
+                    status => error,
+                    error => <<"CONTEXT_PROOF_UNAVAILABLE">>,
+                    reason => Reason
+                },
+                Req,
+                State
+            );
+        Other ->
+            reply_json_stop(
+                502,
+                #{
+                    status => error,
+                    error => <<"INVALID_CONTEXT_PROOF_RESPONSE">>,
+                    reason => Other
+                },
+                Req,
+                State
+            )
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Context proof fetch failed cid=~p class=~p reason=~p stack=~p",
+                [Cid, Class, Reason, Stacktrace]
+            ),
+            reply_json_stop(
+                503,
+                #{
+                    status => error,
+                    error => <<"CONTEXT_PROOF_UNAVAILABLE">>,
+                    reason => {Class, Reason}
+                },
+                Req,
+                State
+            )
+    end.
+
+return_owned_context_proof(Cid, AeAccount, ProofBin, Req, State) ->
+    try jsx:decode(ProofBin, [return_maps]) of
+        Proof when is_map(Proof) ->
+            case context_proof_account_owner(Proof) of
+                {ok, AeAccount} ->
+                    Req1 = set_no_store(Req),
+                    Req2 = cowboy_req:set_resp_header(
+                        <<"content-disposition">>,
+                        <<"inline; filename=\"context_proof.json\"">>,
+                        Req1
+                    ),
+                    Req3 = cowboy_req:set_resp_header(
+                        <<"x-context-ipfs-cid">>, Cid, Req2
+                    ),
+                    Req4 = cowboy_req:set_resp_header(
+                        <<"x-content-type-options">>, <<"nosniff">>, Req3
+                    ),
+                    {ProofBin, Req4, State};
+                {ok, _OtherAccount} ->
+                    reply_json_stop(
+                        403,
+                        #{status => error, error => <<"CONTEXT_PROOF_FORBIDDEN">>},
+                        Req,
+                        State
+                    );
+                {error, Reason} ->
+                    reply_json_stop(
+                        422,
+                        #{
+                            status => error,
+                            error => <<"INVALID_CONTEXT_PROOF">>,
+                            reason => Reason
+                        },
+                        Req,
+                        State
+                    )
+            end;
+        _ ->
+            reply_json_stop(
+                422,
+                #{status => error, error => <<"INVALID_CONTEXT_PROOF">>},
+                Req,
+                State
+            )
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "Context proof JSON decode failed cid=~p class=~p reason=~p stack=~p",
+                [Cid, Class, Reason, Stacktrace]
+            ),
+            reply_json_stop(
+                422,
+                #{status => error, error => <<"INVALID_CONTEXT_PROOF_JSON">>},
+                Req,
+                State
+            )
+    end.
+
+context_proof_account_owner(Proof) ->
+    Contexts = map_get_any(Proof, [<<"contexts">>, contexts], #{}),
+    Account = map_get_any(Contexts, [<<"account">>, account], undefined),
+    case map_get_any(Account, [<<"owner">>, owner], undefined) of
+        <<"ak_", _/binary>> = Owner ->
+            {ok, normalize_account(Owner)};
+        Owner when is_list(Owner) ->
+            case normalize_account(Owner) of
+                <<"ak_", _/binary>> = AccountOwner -> {ok, AccountOwner};
+                _ -> {error, invalid_account_owner}
+            end;
+        undefined ->
+            {error, account_proof_missing};
+        _ ->
+            {error, invalid_account_owner}
+    end.
+
+valid_context_cid(Cid) when is_binary(Cid) ->
+    Size = byte_size(Cid),
+    Size >= 32 andalso Size =< 128 andalso alphanumeric_binary(Cid);
+valid_context_cid(Cid) when is_list(Cid) ->
+    valid_context_cid(normalize_binary(Cid));
+valid_context_cid(_) ->
+    false.
+
+valid_proof_reference(Reference) when is_binary(Reference) ->
+    byte_size(Reference) =:= 64 andalso lower_hex_binary(Reference);
+valid_proof_reference(Reference) when is_list(Reference) ->
+    valid_proof_reference(normalize_binary(Reference));
+valid_proof_reference(_) ->
+    false.
+
+alphanumeric_binary(<<>>) ->
+    true;
+alphanumeric_binary(<<C, Rest/binary>>) when
+    (C >= $0 andalso C =< $9) orelse
+        (C >= $A andalso C =< $Z) orelse
+        (C >= $a andalso C =< $z)
+->
+    alphanumeric_binary(Rest);
+alphanumeric_binary(_) ->
+    false.
+
+lower_hex_binary(<<>>) ->
+    true;
+lower_hex_binary(<<C, Rest/binary>>) when
+    (C >= $0 andalso C =< $9) orelse
+        (C >= $a andalso C =< $f)
+->
+    lower_hex_binary(Rest);
+lower_hex_binary(_) ->
+    false.
+
 from_json(Req0, State) ->
     case scope_from_state(State) of
         {ok, Scope} -> handle_context_mutation(Scope, Req0, State);
         {error, Reason} -> reply_json_stop(400, #{status => error, error => Reason}, Req0, State)
     end.
-
 
 handle_context_mutation(Scope, Req0, State) ->
     case read_json_body(Req0) of
@@ -1622,7 +1936,6 @@ decode_json(Body, Req) ->
             ),
             {error, <<"INVALID_JSON">>, Req}
     end.
-
 
 reply_json_stop(Status, Body0, Req0, State) ->
     Req = cowboy_req:reply(

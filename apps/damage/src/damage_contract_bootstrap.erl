@@ -68,70 +68,107 @@ bootstrap_node_admin(NodeAdminAccount) ->
 init_admin_contracts(NodeAdminAccount) ->
     bootstrap_node_admin(NodeAdminAccount).
 
--spec secret_ct(atom()) -> {ok, binary()} | error.
-secret_ct(Key) ->
-    try secrets:retrieve_decrypt(Key) of
-        {ok, <<"ct_", _/binary>> = CtId} -> {ok, CtId};
-        {ok, CtId} when is_list(CtId) -> normalize_ct_result(CtId);
-        _ -> error
+-type contract_source_status() :: missing | {ok, binary()} | {error, term()}.
+
+-spec contract_secret_status(term()) -> contract_source_status().
+contract_secret_status(Key) ->
+    try secrets:retrieve_secret(Key) of
+        [] ->
+            missing;
+        _Rows when is_list(_Rows) ->
+            case secrets:retrieve_decrypt(Key) of
+                {ok, CtId0} -> normalize_contract_source(secret, Key, CtId0);
+                error -> {error, {contract_secret_unavailable, Key}};
+                {error, Reason} -> {error, {contract_secret_unavailable, Key, Reason}};
+                Other -> {error, {invalid_contract_secret_result, Key, Other}}
+            end;
+        Other ->
+            {error, {invalid_contract_secret_rows, Key, Other}}
     catch
         Class:Reason:Stacktrace ->
-            ?LOG_WARNING(
+            ?LOG_ERROR(
                 "Contract secret lookup failed key=~p class=~p reason=~p stack=~p",
                 [Key, Class, Reason, Stacktrace]
             ),
-            error
+            {error, {contract_secret_lookup_failed, Key, Class, Reason}}
     end.
 
-normalize_ct_result(CtId) ->
-    case normalize_ct(CtId) of
-        <<"ct_", _/binary>> = Ct -> {ok, Ct};
-        _ -> error
+-spec configured_contract_status(atom()) -> contract_source_status().
+configured_contract_status(Key) ->
+    case application:get_env(damage, Key) of
+        undefined -> missing;
+        {ok, CtId0} -> normalize_contract_source(application_env, Key, CtId0)
+    end.
+
+normalize_contract_source(Source, Key, CtId0) ->
+    case normalize_ct(CtId0) of
+        <<"ct_", _/binary>> = CtId -> {ok, CtId};
+        _ -> {error, {invalid_contract_id, Source, Key, CtId0}}
     end.
 
 normalize_ct(<<"ct_", _/binary>> = Ct) -> Ct;
 normalize_ct(Ct) when is_list(Ct) -> list_to_binary(Ct);
-normalize_ct(Ct) when is_binary(Ct) -> Ct.
+normalize_ct(Ct) when is_binary(Ct) -> Ct;
+normalize_ct(_) -> invalid.
 
--spec persist_ct(atom(), binary()) -> ok.
+-spec persist_ct(atom(), binary()) -> ok | {error, term()}.
 persist_ct(Key, CtId0) ->
     CtId = normalize_ct(CtId0),
-    secrets:encrypt_store(Key, CtId).
-
-ensure_node_registry() ->
-    case secret_ct(node_registry_ct) of
-        {ok, Ct} ->
-            activate_node_registry(Ct);
-        error ->
-            case configured_ct(node_registry_ct) of
-                {ok, Ct} ->
-                    ok = persist_ct(node_registry_ct, Ct),
-                    activate_node_registry(Ct);
-                error ->
-                    Ct = damage_node_registry:deploy_node_registry(),
-                    ok = persist_ct(node_registry_ct, Ct),
-                    activate_node_registry(Ct)
-            end
+    case contract_secret_status(Key) of
+        missing ->
+            secrets:encrypt_store(Key, CtId);
+        {ok, CtId} ->
+            ok;
+        {ok, Existing} ->
+            {error, {contract_id_conflict, Key, #{secret => Existing, selected => CtId}}};
+        {error, _} = Error ->
+            Error
     end.
 
-activate_node_registry(Ct) ->
-    ok = application:set_env(damage, node_registry_ct, Ct),
-    ok = damage_node_registry:set_contract(Ct),
-    {ok, Ct}.
+ensure_node_registry() ->
+    case local_contract_candidate(<<"node_registry">>, node_registry_ct) of
+        {ok, CtId} ->
+            activate_node_registry(CtId);
+        missing ->
+            try damage_node_registry:deploy_node_registry() of
+                <<"ct_", _/binary>> = CtId -> activate_node_registry(CtId);
+                Other -> {error, {invalid_deployed_contract_id, <<"node_registry">>, Other}}
+            catch
+                Class:Reason:Stacktrace ->
+                    ?LOG_ERROR(
+                        "Node registry deployment failed class=~p reason=~p stack=~p",
+                        [Class, Reason, Stacktrace]
+                    ),
+                    {error, {node_registry_deploy_failed, Class, Reason}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+activate_node_registry(CtId) ->
+    case ensure_local_contract_sources(<<"node_registry">>, node_registry_ct, CtId) of
+        ok ->
+            ok = damage_node_registry:set_contract(CtId),
+            {ok, CtId};
+        {error, _} = Error ->
+            Error
+    end.
 
 ensure_admin_account_registry(NodeAdminAccount) ->
-    damage_node_registry:ensure_account_registry(NodeAdminAccount, <<"node_admin">>).
-
-configured_ct(Key) ->
-    case application:get_env(damage, Key) of
-        {ok, <<"ct_", _/binary>> = CtId} -> {ok, CtId};
-        {ok, CtId} when is_list(CtId) -> normalize_ct_result(CtId);
-        _ -> error
+    case reload_identity_keypair(NodeAdminAccount) of
+        {ok, _KeyPair} ->
+            damage_node_registry:ensure_account_registry(NodeAdminAccount, <<"node_admin">>);
+        {error, _} = Error ->
+            Error
     end.
 
 ensure_named_contracts(NodeAdminAccount, RegistryCt) ->
-    KeyPair = identity_server:get_account(NodeAdminAccount),
-    ensure_named_contracts(KeyPair, RegistryCt, ?ADMIN_REQUIRED_CONTRACTS, #{}).
+    case reload_identity_keypair(NodeAdminAccount) of
+        {ok, KeyPair} ->
+            ensure_named_contracts(KeyPair, RegistryCt, ?ADMIN_REQUIRED_CONTRACTS, #{});
+        {error, _} = Error ->
+            Error
+    end.
 
 ensure_named_contracts(_KeyPair, _RegistryCt, [], Acc) ->
     {ok, Acc};
@@ -160,11 +197,33 @@ normalize_admin_spec({Name, EnvKey, DeployFun, Validator}) ->
     {Name, EnvKey, DeployFun, Validator}.
 
 resolve_or_init_contract(KeyPair, RegistryCt, NameBin, EnvKey, DeployFun, Validator) ->
-    Candidates = contract_candidates(KeyPair, RegistryCt, NameBin, EnvKey),
-    case first_valid_contract(KeyPair, Candidates, Validator) of
+    case registered_contract(KeyPair, RegistryCt, NameBin) of
         {ok, CtId} ->
-            activate_admin_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId);
-        error ->
+            case validate_contract(KeyPair, CtId, Validator) of
+                true -> activate_registered_contract(NameBin, EnvKey, CtId);
+                false -> {error, {registered_contract_validation_failed, NameBin, CtId}}
+            end;
+        missing ->
+            resolve_unregistered_contract(
+                KeyPair,
+                RegistryCt,
+                NameBin,
+                EnvKey,
+                DeployFun,
+                Validator
+            );
+        {error, Reason} ->
+            {error, {contract_registry_read_failed, NameBin, Reason}}
+    end.
+
+resolve_unregistered_contract(KeyPair, RegistryCt, NameBin, EnvKey, DeployFun, Validator) ->
+    case local_contract_candidate(NameBin, EnvKey) of
+        {ok, CtId} ->
+            case validate_contract(KeyPair, CtId, Validator) of
+                true -> register_and_activate_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId);
+                false -> {error, {configured_contract_validation_failed, NameBin, CtId}}
+            end;
+        missing ->
             deploy_and_activate_contract(
                 KeyPair,
                 RegistryCt,
@@ -172,41 +231,169 @@ resolve_or_init_contract(KeyPair, RegistryCt, NameBin, EnvKey, DeployFun, Valida
                 EnvKey,
                 DeployFun,
                 Validator
-            )
+            );
+        {error, _} = Error ->
+            Error
     end.
 
-contract_candidates(KeyPair, RegistryCt, NameBin, EnvKey) ->
-    RegistryCandidate =
-        case account_registry:get_contract(KeyPair, RegistryCt, NameBin) of
-            {ok, CtId} -> {ok, CtId};
-            _ -> error
-        end,
-    Candidates = [secret_ct(EnvKey), RegistryCandidate, configured_ct(EnvKey)],
-    unique_contract_candidates([
-        CtId
-     || {ok, <<"ct_", _/binary>> = CtId} <- Candidates
-    ]).
+registered_contract(KeyPair, RegistryCt, NameBin) ->
+    ok = account_registry:invalidate_cache(RegistryCt, NameBin),
+    case account_registry:get_contract(KeyPair, RegistryCt, NameBin) of
+        {ok, <<"ct_", _/binary>> = CtId} ->
+            {ok, CtId};
+        {ok, Other} ->
+            {error, {invalid_registered_contract_id, NameBin, Other}};
+        {error, Reason} ->
+            case contract_name_not_found(Reason) of
+                true -> missing;
+                false -> {error, Reason}
+            end;
+        Other ->
+            {error, {unexpected_registry_contract_result, Other}}
+    end.
 
-unique_contract_candidates(Candidates) ->
-    {_Seen, Reversed} = lists:foldl(
-        fun(CtId, {Seen, Acc}) ->
-            case maps:is_key(CtId, Seen) of
-                true -> {Seen, Acc};
-                false -> {maps:put(CtId, true, Seen), [CtId | Acc]}
+local_contract_candidate(NameBin, EnvKey) ->
+    Secret = contract_secret_status(EnvKey),
+    Configured = configured_contract_status(EnvKey),
+    case {Secret, Configured} of
+        {{ok, CtId}, {ok, CtId}} ->
+            {ok, CtId};
+        {{ok, SecretCt}, {ok, ConfigCt}} ->
+            {error, contract_conflict(NameBin, undefined, SecretCt, ConfigCt)};
+        {{ok, CtId}, missing} ->
+            {ok, CtId};
+        {missing, {ok, CtId}} ->
+            {ok, CtId};
+        {missing, missing} ->
+            missing;
+        {{error, Reason}, _} ->
+            {error, Reason};
+        {_, {error, Reason}} ->
+            {error, Reason}
+    end.
+
+activate_registered_contract(NameBin, EnvKey, CtId) ->
+    case ensure_local_contract_sources(NameBin, EnvKey, CtId) of
+        ok -> {ok, CtId};
+        {error, _} = Error -> Error
+    end.
+
+ensure_local_contract_sources(NameBin, EnvKey, CtId) ->
+    Secret = contract_secret_status(EnvKey),
+    Configured = configured_contract_status(EnvKey),
+    case ensure_source_matches(NameBin, CtId, Secret, Configured) of
+        ok ->
+            case persist_ct(EnvKey, CtId) of
+                ok -> set_contract_env_if_missing(NameBin, EnvKey, CtId);
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+ensure_source_matches(NameBin, Selected, Secret, Configured) ->
+    case {Secret, Configured} of
+        {{error, Reason}, _} ->
+            {error, Reason};
+        {_, {error, Reason}} ->
+            {error, Reason};
+        {{ok, SecretCt}, _} when SecretCt =/= Selected ->
+            {error, contract_conflict(NameBin, Selected, SecretCt, source_value(Configured))};
+        {_, {ok, ConfigCt}} when ConfigCt =/= Selected ->
+            {error, contract_conflict(NameBin, Selected, source_value(Secret), ConfigCt)};
+        _ ->
+            ok
+    end.
+
+source_value({ok, Value}) -> Value;
+source_value(missing) -> missing;
+source_value({error, Reason}) -> {error, Reason}.
+
+contract_conflict(NameBin, RegistryCt, SecretCt, ConfiguredCt) ->
+    {contract_id_conflict, NameBin, #{
+        registry => RegistryCt,
+        secret => SecretCt,
+        configured => ConfiguredCt
+    }}.
+
+set_contract_env_if_missing(NameBin, EnvKey, CtId) ->
+    case configured_contract_status(EnvKey) of
+        missing ->
+            application:set_env(damage, EnvKey, CtId);
+        {ok, CtId} ->
+            ok;
+        {ok, Existing} ->
+            {error,
+                contract_conflict(
+                    NameBin,
+                    CtId,
+                    source_value(contract_secret_status(EnvKey)),
+                    Existing
+                )};
+        {error, _} = Error ->
+            Error
+    end.
+
+register_and_activate_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId) ->
+    case account_registry:register_contract(KeyPair, RegistryCt, NameBin, CtId) of
+        {ok, true} ->
+            activate_registered_contract(NameBin, EnvKey, CtId);
+        {ok, false} ->
+            verify_registered_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId);
+        {error, Reason} ->
+            case verify_registered_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId) of
+                {ok, _} = Ok -> Ok;
+                {error, {contract_id_conflict, _, _}} = Conflict -> Conflict;
+                _ -> {error, {contract_registration_failed, NameBin, Reason}}
             end
-        end,
-        {#{}, []},
-        Candidates
-    ),
-    lists:reverse(Reversed).
-
-first_valid_contract(_KeyPair, [], _Validator) ->
-    error;
-first_valid_contract(KeyPair, [CtId | Rest], Validator) ->
-    case validate_contract(KeyPair, CtId, Validator) of
-        true -> {ok, CtId};
-        false -> first_valid_contract(KeyPair, Rest, Validator)
     end.
+verify_registered_contract(KeyPair, RegistryCt, NameBin, EnvKey, ExpectedCt) ->
+    case registered_contract(KeyPair, RegistryCt, NameBin) of
+        {ok, ExpectedCt} ->
+            activate_registered_contract(NameBin, EnvKey, ExpectedCt);
+        {ok, ExistingCt} ->
+            {error,
+                {contract_id_conflict, NameBin, #{
+                    registry => ExistingCt,
+                    selected => ExpectedCt,
+                    configured => source_value(configured_contract_status(EnvKey))
+                }}};
+        missing ->
+            {error, {contract_registration_not_visible, NameBin, ExpectedCt}};
+        {error, Reason} ->
+            {error, {contract_registration_verify_failed, NameBin, Reason}}
+    end.
+
+contract_name_not_found({unexpected_return_type, _Type, Info}) ->
+    contract_name_not_found(Info);
+contract_name_not_found({dry_run_contract_error, Reason}) ->
+    contract_name_not_found(Reason);
+contract_name_not_found({error, Reason}) ->
+    contract_name_not_found(Reason);
+contract_name_not_found(Value) when is_map(Value) ->
+    Candidates = [
+        maps:get("return_value", Value, undefined),
+        maps:get(<<"return_value">>, Value, undefined),
+        maps:get(return_value, Value, undefined),
+        maps:get("reason", Value, undefined),
+        maps:get(<<"reason">>, Value, undefined),
+        maps:get(reason, Value, undefined)
+    ],
+    lists:any(fun contract_name_not_found/1, Candidates);
+contract_name_not_found(Value) when is_tuple(Value) ->
+    lists:any(fun contract_name_not_found/1, tuple_to_list(Value));
+contract_name_not_found(Value) when is_binary(Value) ->
+    Lower = list_to_binary(string:lowercase(binary_to_list(Value))),
+    binary:match(Lower, <<"not found">>) =/= nomatch;
+contract_name_not_found(Value) when is_list(Value) ->
+    case io_lib:printable_unicode_list(Value) of
+        true -> contract_name_not_found(unicode:characters_to_binary(Value));
+        false -> lists:any(fun contract_name_not_found/1, Value)
+    end;
+contract_name_not_found(contract_name_not_found) ->
+    true;
+contract_name_not_found(_) ->
+    false.
 
 validate_contract(_KeyPair, _CtId, undefined) ->
     true;
@@ -228,22 +415,12 @@ validate_contract(KeyPair, CtId, Validator) when is_function(Validator, 2) ->
             false
     end.
 
-activate_admin_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId) ->
-    case account_registry:upsert_contract(KeyPair, RegistryCt, NameBin, CtId) of
-        {ok, true} ->
-            ok = persist_ct(EnvKey, CtId),
-            ok = application:set_env(damage, EnvKey, CtId),
-            {ok, CtId};
-        {error, _} = Error ->
-            Error
-    end.
-
 deploy_and_activate_contract(KeyPair, RegistryCt, NameBin, EnvKey, DeployFun, Validator) ->
     try DeployFun(KeyPair) of
         <<"ct_", _/binary>> = CtId ->
             case validate_deployed_contract(KeyPair, CtId, Validator) of
                 true ->
-                    activate_admin_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId);
+                    register_and_activate_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId);
                 false ->
                     {error, {deployed_contract_validation_failed, NameBin, CtId}}
             end;
@@ -257,8 +434,6 @@ deploy_and_activate_contract(KeyPair, RegistryCt, NameBin, EnvKey, DeployFun, Va
             ),
             {error, {contract_deploy_failed, NameBin, Class, Reason}}
     end.
-
-
 
 %% A mined deployment may only just have reached the latest microblock, and a
 %% second configured node may be a little behind. Retry validation before
@@ -288,7 +463,6 @@ positive_env(Key, Default) ->
         Value when is_integer(Value), Value > 0 -> Value;
         _ -> Default
     end.
-
 
 deploy_agent_registry(KeyPair) ->
     contract_id_from_deploy(
@@ -386,11 +560,26 @@ bootstrap_user_account(UserAccount0) ->
     end.
 
 ensure_user_account_registry(UserAccount) ->
-    damage_node_registry:ensure_account_registry(UserAccount, <<"node">>).
+    case reload_identity_keypair(UserAccount) of
+        {ok, _KeyPair} ->
+            damage_node_registry:ensure_account_registry(UserAccount, <<"node">>);
+        {error, _} = Error ->
+            Error
+    end.
 
 ensure_user_named_contracts(UserAccount, RegistryCt) ->
-    KeyPair = identity_server:get_account(UserAccount),
-    ensure_user_named_contracts(KeyPair, UserAccount, RegistryCt, ?USER_REQUIRED_CONTRACTS, #{}).
+    case reload_identity_keypair(UserAccount) of
+        {ok, KeyPair} ->
+            ensure_user_named_contracts(
+                KeyPair,
+                UserAccount,
+                RegistryCt,
+                ?USER_REQUIRED_CONTRACTS,
+                #{}
+            );
+        {error, _} = Error ->
+            Error
+    end.
 
 ensure_user_named_contracts(_KeyPair, _UserAccount, _RegistryCt, [], Acc) ->
     {ok, Acc};
@@ -409,56 +598,145 @@ user_contract_secret_key(UserAccount, NameBin) ->
             (base64:encode(crypto:hash(sha256, damage_utils:to_bin(UserAccount))))/binary>>
     ).
 
-secret_user_ct(UserAccount, NameBin) ->
-    try secrets:retrieve_decrypt(user_contract_secret_key(UserAccount, NameBin)) of
-        {ok, <<"ct_", _/binary>> = CtId} -> {ok, CtId};
-        {ok, CtId} when is_list(CtId) -> normalize_ct_result(CtId);
-        _ -> error
-    catch
-        _:_ -> error
+user_contract_secret_status(UserAccount, NameBin) ->
+    contract_secret_status(user_contract_secret_key(UserAccount, NameBin)).
+
+persist_user_ct(UserAccount, NameBin, <<"ct_", _/binary>> = CtId) ->
+    Key = user_contract_secret_key(UserAccount, NameBin),
+    case contract_secret_status(Key) of
+        missing ->
+            secrets:encrypt_store(Key, CtId);
+        {ok, CtId} ->
+            ok;
+        {ok, Existing} ->
+            {error,
+                {user_contract_id_conflict, NameBin, #{
+                    registry => CtId,
+                    secret => Existing
+                }}};
+        {error, _} = Error ->
+            Error
     end.
 
-persist_user_ct(UserAccount, NameBin, <<"ct_", _/binary>> = CtId0) ->
-    CtId = normalize_ct(CtId0),
-    secrets:encrypt_store(user_contract_secret_key(UserAccount, NameBin), CtId).
-
 resolve_or_init_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, DeployFun) ->
-    case secret_user_ct(UserAccount, NameBin) of
-        {ok, CtId} ->
-            case account_registry:upsert_contract(KeyPair, RegistryCt, NameBin, CtId) of
-                {ok, true} -> {ok, CtId};
+    case registered_contract(KeyPair, RegistryCt, NameBin) of
+        {ok, RegistryCtId} ->
+            case user_contract_secret_status(UserAccount, NameBin) of
+                missing ->
+                    case persist_user_ct(UserAccount, NameBin, RegistryCtId) of
+                        ok -> {ok, RegistryCtId};
+                        {error, _} = Error -> Error
+                    end;
+                {ok, RegistryCtId} ->
+                    {ok, RegistryCtId};
+                {ok, SecretCtId} ->
+                    {error,
+                        {user_contract_id_conflict, NameBin, #{
+                            registry => RegistryCtId,
+                            secret => SecretCtId
+                        }}};
+                {error, _} = Error ->
+                    Error
+            end;
+        missing ->
+            resolve_unregistered_user_contract(
+                KeyPair,
+                UserAccount,
+                RegistryCt,
+                NameBin,
+                DeployFun
+            );
+        {error, Reason} ->
+            {error, {user_contract_registry_read_failed, NameBin, Reason}}
+    end.
+
+resolve_unregistered_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, DeployFun) ->
+    case user_contract_secret_status(UserAccount, NameBin) of
+        {ok, CtId} -> register_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, CtId);
+        missing -> deploy_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, DeployFun);
+        {error, _} = Error -> Error
+    end.
+
+register_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, CtId) ->
+    case account_registry:register_contract(KeyPair, RegistryCt, NameBin, CtId) of
+        {ok, true} ->
+            case persist_user_ct(UserAccount, NameBin, CtId) of
+                ok -> {ok, CtId};
                 {error, _} = Error -> Error
             end;
-        error ->
-            case account_registry:get_contract(KeyPair, RegistryCt, NameBin) of
-                {ok, <<"ct_", _/binary>> = CtId} ->
-                    ok = persist_user_ct(UserAccount, NameBin, CtId),
-                    {ok, CtId};
-                _ ->
-                    try DeployFun(KeyPair) of
-                        <<"ct_", _/binary>> = CtId ->
-                            case
-                                account_registry:upsert_contract(
-                                    KeyPair, RegistryCt, NameBin, CtId
-                                )
-                            of
-                                {ok, true} ->
-                                    ok = persist_user_ct(UserAccount, NameBin, CtId),
-                                    {ok, CtId};
-                                {error, _} = Error ->
-                                    Error
-                            end;
-                        Other ->
-                            {error, {invalid_user_contract_id, NameBin, Other}}
-                    catch
-                        Class:Reason:Stacktrace ->
-                            ?LOG_ERROR(
-                                "User contract deployment failed name=~p class=~p reason=~p stack=~p",
-                                [NameBin, Class, Reason, Stacktrace]
-                            ),
-                            {error, {user_contract_deploy_failed, NameBin, Class, Reason}}
-                    end
+        {ok, false} ->
+            verify_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, CtId);
+        {error, Reason} ->
+            case verify_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, CtId) of
+                {ok, _} = Ok -> Ok;
+                {error, {user_contract_id_conflict, _, _}} = Conflict -> Conflict;
+                _ -> {error, {user_contract_registration_failed, NameBin, Reason}}
             end
+    end.
+
+-spec verify_user_contract(map(), binary(), binary(), binary(), binary()) ->
+    {ok, binary()} | {error, term()}.
+verify_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, ExpectedCt) ->
+    case registered_contract(KeyPair, RegistryCt, NameBin) of
+        {ok, ExpectedCt} ->
+            case persist_user_ct(UserAccount, NameBin, ExpectedCt) of
+                ok -> {ok, ExpectedCt};
+                {error, _} = Error -> Error
+            end;
+        {ok, ExistingCt} ->
+            {error,
+                {user_contract_id_conflict, NameBin, #{
+                    registry => ExistingCt,
+                    selected => ExpectedCt
+                }}};
+        missing ->
+            {error, {user_contract_registration_not_visible, NameBin, ExpectedCt}};
+        {error, Reason} ->
+            {error, {user_contract_registration_verify_failed, NameBin, Reason}}
+    end.
+
+-spec deploy_user_contract(map(), binary(), binary(), binary(), fun((map()) -> term())) ->
+    {ok, binary()} | {error, term()}.
+deploy_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, DeployFun) ->
+    try DeployFun(KeyPair) of
+        <<"ct_", _/binary>> = CtId ->
+            register_user_contract(KeyPair, UserAccount, RegistryCt, NameBin, CtId);
+        Other ->
+            {error, {invalid_user_contract_id, NameBin, Other}}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "User contract deployment failed name=~p class=~p reason=~p stack=~p",
+                [NameBin, Class, Reason, Stacktrace]
+            ),
+            {error, {user_contract_deploy_failed, NameBin, Class, Reason}}
+    end.
+
+-spec reload_identity_keypair(binary() | list()) -> {ok, map()} | {error, term()}.
+reload_identity_keypair(AeAccount0) ->
+    AeAccount = damage_utils:to_bin(AeAccount0),
+    Result =
+        try identity_server:reload_account(AeAccount) of
+            Value -> Value
+        catch
+            Class:Reason:Stacktrace ->
+                {error, {identity_reload_crashed, Class, Reason, Stacktrace}}
+        end,
+    case Result of
+        #{public_key := Pub0, private_key := PrivateKey} = Account when
+            is_binary(PrivateKey), PrivateKey =/= <<>>
+        ->
+            Pub = damage_utils:to_bin(Pub0),
+            case Pub =:= AeAccount of
+                true -> {ok, Account#{public_key := Pub}};
+                false -> {error, {identity_account_mismatch, AeAccount, Pub}}
+            end;
+        notfound ->
+            {error, {identity_not_found, AeAccount}};
+        {error, Reason0} ->
+            {error, {identity_reload_failed, AeAccount, Reason0}};
+        Other ->
+            {error, {invalid_identity_account, AeAccount, Other}}
     end.
 
 deploy_user_nwc_ledger(KeyPair) ->

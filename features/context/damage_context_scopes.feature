@@ -214,9 +214,9 @@ Feature: Scoped context API
     When I make a POST request to "/execute_feature/"
     """
     {
-      "feature": "Feature: Context report proof\n  Scenario: Publish context proof\n    Given I wait \"0\" seconds",
-      "concurrency": 1,
-      "stream": false
+    "feature": "Feature: Context report proof\n  Scenario: Publish context proof\n    Given I store an uuid in \"proof_id\"",
+    "concurrency": 1,
+    "stream": false
     }
     """
     Then the response status must be one of "200,202"

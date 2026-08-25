@@ -17,18 +17,18 @@ get_keyword(#{color := false}, scenario_keyword) -> "Scenario:";
 get_keyword(#{color := false}, feature_keyword) -> "Feature:";
 
 get_keyword(#{color := false}, KeyWord) when is_binary(KeyWord) ->
-  binary_to_list(KeyWord);
+    binary_to_list(KeyWord);
 
 get_keyword(#{color := true}, Keyword) ->
-  color:cyan(get_keyword(#{color => false}, Keyword)).
+    color:cyan(get_keyword(#{color => false}, Keyword)).
 
 get_status_text(#{color := true}, fail) -> color:red("fail");
 
 get_status_text(#{color := true}, {fail, Reason}) ->
-  color:red(damage_utils:strf("fail:~p", [Reason]));
+    color:red(damage_utils:strf("fail:~p", [Reason]));
 
 get_status_text(#{color := false}, {fail, Reason}) ->
-  damage_utils:strf("fail:~p", [Reason]);
+    damage_utils:strf("fail:~p", [Reason]);
 
 get_status_text(#{color := true}, dry) -> color:magenta("dry");
 get_status_text(#{color := true}, error) -> color:red("error");
@@ -38,24 +38,24 @@ get_status_text(#{color := true}, notfound) -> color:cyan("notfound");
 get_status_text(#{color := false}, Status) -> Status.
 
 write_file(#{output := Req}, FormatStr, Args) when is_map(Req) ->
-  cowboy_req:stream_body(
-    lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
-    nofin,
-    Req
-  ),
-  ok;
+    cowboy_req:stream_body(
+      lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
+      nofin,
+      Req
+     ),
+    ok;
 
 write_file(#{output := Output}, FormatStr, Args) when is_binary(Output) or is_list(Output)->
-  [_, PidStr, _] =  string:split(pid_to_list(self()), ".", all),
-  OutputFile =
-    damage_utils:render(
-      Output,
-      [{process_id, list_to_binary(PidStr)}, {node_id, atom_to_binary(node())}]
-    ),
-  ok =
-    file:write_file(
-      OutputFile,
-      lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
+    [_, PidStr, _] =  string:split(pid_to_list(self()), ".", all),
+    OutputFile =
+        damage_utils:render(
+          Output,
+          [{process_id, list_to_binary(PidStr)}, {node_id, atom_to_binary(node())}]
+         ),
+    ok =
+        file:write_file(
+          OutputFile,
+          lists:flatten(damage_utils:strf(FormatStr ++ "\n", Args)),
       [append]
     ).
 %% Stream raw docker output chunks
@@ -173,15 +173,17 @@ format(
     RunResult = summary_value(
         maps:get(result, Summary, maps:get(result_status, Summary, undefined))
     ),
+    ContextIpfsUrl = summary_value(maps:get(context_ipfs_url, Summary, undefined)),
     ok = write_file(
         Config,
-        "\nSummary: \n Feature: ~s\n Report: ~s\n RunId: ~s\n Account: ~s"
+        "\nSummary: \n Feature: ~s\n Report: ~s\nContext: ~s RunId: ~s\n Account: ~s"
         "\n Run status: ~s\n Run result: ~s"
         "\n Cost DAMAGE: ~p\n Cost hits: ~p\n Cost BTC: ~p\n Cost sats: ~p\n Cost AE: ~p"
         "\n tx_hash: ~s",
         [
             FeatureHash,
             ReportDir,
+         ContextIpfsUrl,
             RunId,
             Address,
             RunStatus,
