@@ -1,0 +1,84 @@
+# DamageBDD systemd service
+#
+# Canonical package unit. Keep distro-specific installers from generating
+# alternate copies of this file.
+#
+# Expected layout:
+#   release: /opt/damage
+#   config:  /etc/damage/damage.config
+#   state:   /var/lib/damage
+#   logs:    /var/log/damage
+
+[Unit]
+Description=Damage Node
+Documentation=https://damagebdd.com/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+# Run the node without root privileges.
+User=damage
+Group=damage
+
+# Release and application configuration.
+WorkingDirectory=/opt/damage
+ExecStart=/opt/damage/bin/damage foreground -config /etc/damage/damage.config
+
+# Optional environment overrides. The leading "-" means a missing file is OK.
+EnvironmentFile=-/etc/default/damage
+Environment=SHELL=/bin/sh
+
+# Restart on crashes, but not after a clean shutdown.
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+
+# Create persistent writable directories owned by User=/Group=.
+StateDirectory=damage
+LogsDirectory=damage
+
+# Resource limits.
+LimitNOFILE=65536
+LimitCORE=0
+UMask=0077
+
+# Filesystem isolation. The release is writable because DamageBDD may create
+# run/report data beneath its working tree; state and log directories are also
+# explicitly writable.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/opt/damage /var/lib/damage /var/log/damage
+
+# Privilege and kernel hardening.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+
+# DamageBDD only requires local Unix sockets plus IPv4/IPv6 networking.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Hide processes outside this service where supported by systemd.
+ProtectProc=invisible
+ProcSubset=pid
+
+# Do not enable MemoryDenyWriteExecute=true here. Erlang/OTP's BEAM JIT
+# requires executable dynamically generated code pages.
+
+# Production obtains temporary AWS credentials through the instance role.
+# Remove long-lived/static AWS credential overrides inherited from the service
+# manager or optional environment file. IMDS remains available to the SDK.
+UnsetEnvironment=AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE AWS_CONTAINER_CREDENTIALS_RELATIVE_URI AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_EC2_METADATA_SERVICE_ENDPOINT AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE AWS_EC2_METADATA_DISABLED DAMAGE_NSECBUNKER_VAULT_PASSPHRASE
+
+[Install]
+WantedBy=multi-user.target

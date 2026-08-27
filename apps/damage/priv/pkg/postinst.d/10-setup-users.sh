@@ -1,73 +1,136 @@
 #!/bin/sh
-set -e
-set -x
-# postinst for damage — relx release with include_erts=true
+set -eu
 
-#PKG_NAME="{{app}}"
+# Create the package service account and runtime directories.
+# Portable across Debian/Ubuntu, RHEL/Fedora, Arch and similar Linux systems.
 
-# Paths produced by your package layout
-#PREFIX="{{install_prefix}}"
-#BIN="${PREFIX}/{{app}}/bin/{{app}}"
-#LINK="/usr/bin/{{app}}"
-#
-#ETC_DIR="{{etc_dir}}"
-#VAR_DIR="{{var_dir}}"
-#LOG_DIR="{{log_dir}}"
-#
-## Service/user knobs (string flags so we can test in shell)
-#CREATE_USER="{{create_user}}"        # "true" or "false"
-#USER="{{user}}"
-#GROUP="{{group}}"
-#SERVICE_NAME="{{service_name}}"
-#AUTO_START="{{auto_start}}"          # "true" or "false"
+APP="${APP:-damage}"
+PREFIX="${PREFIX:-/opt}"
+INSTALL_DIR="${INSTALL_DIR:-${PREFIX%/}/${APP}}"
+BIN="${BIN:-${INSTALL_DIR}/bin/${APP}}"
+LINK="${LINK:-/usr/bin/${APP}}"
+ETC_DIR="${ETC_DIR:-/etc/${APP}}"
+VAR_DIR="${VAR_DIR:-/var/lib/${APP}}"
+LOG_DIR="${LOG_DIR:-/var/log/${APP}}"
+CREATE_USER="${CREATE_USER:-true}"
 
-log() { printf '%s\n' ">>> $*"; }
+# Prefer package-specific variables. USER may be inherited as root when a
+# package manager invokes the hook, so only use it when it is non-root.
+PKG_USER="${PKG_USER:-${SERVICE_USER:-}}"
+if [ -z "$PKG_USER" ]; then
+    case "${USER:-}" in
+        ""|root) PKG_USER="$APP" ;;
+        *) PKG_USER="$USER" ;;
+    esac
+fi
+PKG_GROUP="${PKG_GROUP:-${SERVICE_GROUP:-$PKG_USER}}"
+INSTALL_LOG="${INSTALL_LOG:-${LOG_DIR}/install.log}"
+
+utc_now() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date
+}
+
+init_install_log() {
+    mkdir -p "$LOG_DIR"
+    touch "$INSTALL_LOG"
+    chmod 0640 "$INSTALL_LOG" 2>/dev/null || true
+}
+
+log() {
+    _line="$(utc_now) [postinst][10-setup-users] $*"
+    printf '%s\n' "$_line"
+    printf '%s\n' "$_line" >>"$INSTALL_LOG" 2>/dev/null || true
+}
+
+fatal() {
+    log "ERROR: $*"
+    exit 1
+}
+
+group_exists() {
+    if command -v getent >/dev/null 2>&1; then
+        getent group "$PKG_GROUP" >/dev/null 2>&1
+    else
+        grep -q "^${PKG_GROUP}:" /etc/group 2>/dev/null
+    fi
+}
 
 ensure_group() {
-    if ! getent group "$GROUP" >/dev/null 2>&1; then
-        log "Creating group: $GROUP"
-        addgroup --system "$GROUP" >/dev/null
+    group_exists && return 0
+
+    log "Creating system group: $PKG_GROUP"
+    if command -v groupadd >/dev/null 2>&1; then
+        groupadd -r "$PKG_GROUP"
+    elif command -v addgroup >/dev/null 2>&1; then
+        addgroup --system "$PKG_GROUP" >/dev/null 2>&1 || \
+            addgroup -S "$PKG_GROUP" >/dev/null 2>&1
+    else
+        fatal "No supported group creation command found (groupadd/addgroup)"
+    fi
+}
+
+nologin_shell() {
+    if command -v nologin >/dev/null 2>&1; then
+        command -v nologin
+    elif [ -x /usr/sbin/nologin ]; then
+        printf '%s\n' /usr/sbin/nologin
+    elif [ -x /sbin/nologin ]; then
+        printf '%s\n' /sbin/nologin
+    else
+        printf '%s\n' /bin/false
     fi
 }
 
 ensure_user() {
-    if ! id -u "$USER" >/dev/null 2>&1; then
-        log "Creating user: $USER"
-        adduser --system --ingroup "$GROUP" --home "/var/lib/${APP}/" --no-create-home \
-                --shell /usr/sbin/nologin "$USER" >/dev/null
+    id -u "$PKG_USER" >/dev/null 2>&1 && return 0
+
+    _shell="$(nologin_shell)"
+    log "Creating system user: $PKG_USER (group=$PKG_GROUP home=$VAR_DIR)"
+    if command -v useradd >/dev/null 2>&1; then
+        useradd -r -g "$PKG_GROUP" -d "$VAR_DIR" -M -s "$_shell" "$PKG_USER"
+    elif command -v adduser >/dev/null 2>&1; then
+        adduser --system --ingroup "$PKG_GROUP" --home "$VAR_DIR" \
+            --no-create-home --shell "$_shell" "$PKG_USER" >/dev/null 2>&1 || \
+            adduser -S -D -H -G "$PKG_GROUP" -h "$VAR_DIR" -s "$_shell" "$PKG_USER"
+    else
+        fatal "No supported user creation command found (useradd/adduser)"
     fi
 }
 
-# Optional service account
-if [ "$CREATE_USER" = "true" ] && [ -n "$USER" ] && [ -n "$GROUP" ]; then
+init_install_log
+log "Starting account/directory setup for $APP"
+
+if [ "$CREATE_USER" = "true" ] && [ -n "$PKG_USER" ] && [ -n "$PKG_GROUP" ]; then
     ensure_group
     ensure_user
 fi
 
-# Ensure runtime/config dirs
-install -d -m 0755 "$ETC_DIR" "$VAR_DIR" "$LOG_DIR"
+# Configuration remains root-managed. Runtime and log directories are writable
+# by the service account.
+install -d -m 0755 "$ETC_DIR"
+install -d -m 0755 "$VAR_DIR" "$LOG_DIR"
 
-
-# Ownership (only if we created a user)
-if [ "$CREATE_USER" = "true" ] && [ -n "$USER" ] && [ -n "$GROUP" ]; then
-    chown -R "$USER:$GROUP" "$VAR_DIR" "$LOG_DIR" || true
+if [ "$CREATE_USER" = "true" ] && id -u "$PKG_USER" >/dev/null 2>&1; then
+    chown -R "$PKG_USER:$PKG_GROUP" "$VAR_DIR" "$LOG_DIR"
+    chmod 0640 "$INSTALL_LOG" 2>/dev/null || true
 fi
 
-# Make sure the release script is executable
 if [ -f "$BIN" ]; then
-    chmod 0755 "$BIN" || true
+    chmod 0755 "$BIN"
+else
+    log "Release executable not found yet: $BIN"
 fi
 
-# Symlink into PATH
 if [ -x "$BIN" ]; then
-    if [ -L "$LINK" ] && [ "$(readlink -f "$LINK")" = "$BIN" ]; then
-        : # correct link already present
-    else
+    _current=""
+    if [ -L "$LINK" ]; then
+        _current="$(readlink "$LINK" 2>/dev/null || true)"
+    fi
+    if [ "$_current" != "$BIN" ]; then
         log "Linking $LINK -> $BIN"
         ln -sf "$BIN" "$LINK"
     fi
 fi
 
-
-
+log "Account/directory setup complete"
 exit 0
