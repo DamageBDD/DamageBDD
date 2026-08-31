@@ -56,7 +56,7 @@ start_phase(start_trails_http, _StartType, []) ->
                 idle_timeout => 60000
             }
         ),
-    metrics:init(),
+    damage_metrics:init(),
     ?LOG_INFO("Started cowboy.").
 
 stop(_State) ->

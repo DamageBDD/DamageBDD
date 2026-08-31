@@ -51,7 +51,7 @@ start_phase(start_trails_http, _StartType, []) ->
                     [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h]
             }
         ),
-    metrics:init(),
+    damage_metrics:init(),
     ?LOG_INFO("Started Nostrernity cowboy.");
 start_phase(os_tune, _StartType, []) ->
     ?LOG_INFO("Tuning os."),

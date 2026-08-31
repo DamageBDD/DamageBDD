@@ -3,7 +3,7 @@
 %% @end
 %%%-------------------------------------------------------------------
 
--module(metrics).
+-module(damage_metrics).
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 

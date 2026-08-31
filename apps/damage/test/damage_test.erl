@@ -28,7 +28,7 @@ init_per_suite(Config) ->
     application:ensure_all_started(gun),
     application:ensure_all_started(cowboy),
     application:ensure_all_started(prometheus),
-    metrics:init(),
+    damage_metrics:init(),
     %cedb:break(steps_http, 66),
     Config.
 

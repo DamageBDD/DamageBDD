@@ -70,6 +70,7 @@ get_trails() ->
         [
             %{"/", cowboy_static, {priv_file, damage, "static/dealdamage.html"}},
             {"/terms", cowboy_static, {priv_file, damage, "static/terms.html"}},
+            {"/activity", cowboy_static, {priv_file, damage, "static/activity.html"}},
             {"/x", x_redirect_h, #{}},
             {"/samples/features/index.json", cowboy_static,
                 {priv_file, damage, "static/samples.json"}},
@@ -172,7 +173,7 @@ start_phase(start_trails_http, _StartType, []) ->
                 request_timeout => 90_000_000
             }
         ),
-    metrics:init(),
+    damage_metrics:init(),
     ?LOG_INFO("Started cowboy.");
 start_phase(damage, _StartType, []) ->
     damage_schedule:load_all_schedules(),

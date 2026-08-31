@@ -1190,7 +1190,7 @@ execute_step_module(
     try execute_step_function(Config, ContextIn, Step, StepModule) of
         Context when is_map(Context) ->
             Context0 = maps:put(step_found, true, Context),
-            metrics:update(success, AeAccount),
+            damage_metrics:update(success, AeAccount),
             Context0;
         {throw, Reason, Stack} ->
             ?LOG_ERROR("Step execution failed! ~p", [
@@ -1201,7 +1201,7 @@ execute_step_module(
                     step_module => StepModule
                 }
             ]),
-            metrics:update(fail, AeAccount),
+            damage_metrics:update(fail, AeAccount),
             formatter:format(
                 Config,
                 step,
@@ -1213,7 +1213,7 @@ execute_step_module(
                 maps:put(failing_step, Step, maps:put(fail, Reason, ContextIn))
             );
         {error, Reason, Stacktrace} ->
-            metrics:update(fail, AeAccount),
+            damage_metrics:update(fail, AeAccount),
             ?LOG_ERROR("Step execution failed! ~p", [Stacktrace]),
             formatter:format(
                 Config,
@@ -1229,7 +1229,7 @@ execute_step_module(
             Reason = damage_utils:strf(<<"invalid context from ~p ~p ~p">>, [
                 StepModule, Step, Error
             ]),
-            metrics:update(fail, AeAccount),
+            damage_metrics:update(fail, AeAccount),
             ?LOG_ERROR("Step execution failed! unhandled ~p ~p", [Error, Stacktrace]),
             formatter:format(
                 Config,
@@ -1245,7 +1245,7 @@ execute_step_module(
             Reason = damage_utils:strf(<<"Unauthorized to execute step ~p ~p.">>, [
                 StepModule, Step
             ]),
-            metrics:update(fail, AeAccount),
+            damage_metrics:update(fail, AeAccount),
             formatter:format(
                 Config,
                 step,
@@ -1260,7 +1260,7 @@ execute_step_module(
             Reason = damage_utils:strf(<<"invalid context from ~p ~p ~p">>, [
                 StepModule, Step, Other
             ]),
-            metrics:update(fail, AeAccount),
+            damage_metrics:update(fail, AeAccount),
             ?LOG_ERROR("Step execution failed! unhandled other ~p", [Other]),
             formatter:format(
                 Config,
@@ -1289,7 +1289,7 @@ execute_step_module(
                             step_module => StepModule
                         }
                     ]),
-                    metrics:update(fail, AeAccount),
+                    damage_metrics:update(fail, AeAccount),
                     formatter:format(
                         Config,
                         step,
@@ -1317,7 +1317,7 @@ execute_step_module(
                             step_module => StepModule
                         }
                     ]),
-                    metrics:update(fail, AeAccount),
+                    damage_metrics:update(fail, AeAccount),
                     formatter:format(
                         Config,
                         step,
@@ -1339,7 +1339,7 @@ execute_step_module(
                     step_module => StepModule
                 }
             ]),
-            metrics:update(fail, AeAccount),
+            damage_metrics:update(fail, AeAccount),
             formatter:format(
                 Config,
                 step,
@@ -1489,7 +1489,7 @@ execute_step(Config, Step, Context) ->
                 step,
                 {StepKeyWord, LineNo, Body1, Args2, Context, {fail, Reason}}
             ),
-            metrics:update(fail, maps:get(public_key, Context)),
+            damage_metrics:update(fail, maps:get(public_key, Context)),
             maps:put(failing_step, tuple_to_list(Step), Context);
         {ok, {Body1, Args1}} ->
             Args2 = merge_step_args(Args1, StepArgs),
@@ -1554,7 +1554,7 @@ execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) 
                         step,
                         {StepKeyWord, LineNo, Body1, Args2, Context, notfound}
                     ),
-                    metrics:update(notfound, maps:get(public_key, Context)),
+                    damage_metrics:update(notfound, maps:get(public_key, Context)),
                     maps:put(
                         fail,
                         {step_not_found, StepKeyWord, Body1},
@@ -1570,7 +1570,7 @@ execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) 
                 step,
                 {StepKeyWord, LineNo, Body1, Args2, Context, invalid_context}
             ),
-            metrics:update(notfound, maps:get(public_key, Context)),
+            damage_metrics:update(notfound, maps:get(public_key, Context)),
             maps:put(failing_step, Step, Context)
     end.
 

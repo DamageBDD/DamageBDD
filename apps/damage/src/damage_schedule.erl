@@ -228,7 +228,7 @@ execute_bdd(
                 [Schedule, AeAccount, Hash, Concurrency, Balance]
             ),
             Result = damage:execute_file(Config, Context, BddFileName),
-            metrics:update(schedule_execution, {AeAccount, Hash}),
+            damage_metrics:update(schedule_execution, {AeAccount, Hash}),
             case mark_schedule_executed(AeAccount, IdHash, erlang:system_time(millisecond)) of
                 ok ->
                     Result;
