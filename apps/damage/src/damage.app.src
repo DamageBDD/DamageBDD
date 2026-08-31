@@ -36,6 +36,7 @@
                 ssh
             ]
         },
+        {optional_applications, [aws, aws_credentials]},
         {env, []},
         {modules, []},
         {licenses, ["Apache 2.0"]},

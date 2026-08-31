@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
+#include <errno.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -14,6 +15,7 @@
 #include <openssl/sha.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,12 +26,42 @@
 #define TAG_LEN 16
 #define KEY_LEN 32
 #define NIP44_MAX_PLAINTEXT 262144
+#define DAMAGE_MAX_FRAME_BYTES (4u * 1024u * 1024u)
+#define DAMAGE_REQUEST_ID_BYTES 16u
+#define DAMAGE_FRAME_INIT_REQUEST 0x00u
+#define DAMAGE_FRAME_UNLOCK_REQUEST 0x01u
+#define DAMAGE_FRAME_OPERATION_REQUEST 0x02u
+#define DAMAGE_FRAME_INIT_RESPONSE 0x80u
+#define DAMAGE_FRAME_UNLOCK_RESPONSE 0x81u
+#define DAMAGE_FRAME_OPERATION_RESPONSE 0x82u
+#define DAMAGE_FRAME_STATUS_OK 0x00u
+#define DAMAGE_FRAME_STATUS_ERROR 0x01u
 
 struct vault {
   uint8_t priv[32];
   char pub[65];
   char npub[96];
 };
+
+struct response_capture {
+  bool active;
+  char *data;
+  size_t len;
+};
+
+struct secure_runtime {
+  bool active;
+  bool initialized;
+  bool unlocked;
+  bool production;
+  bool create_if_missing;
+  bool vault_created;
+  char *vault_path;
+  struct vault vault;
+};
+
+static struct response_capture g_response = {false, NULL, 0};
+static struct secure_runtime g_secure = {0};
 
 static void cleanse(void *p, size_t n) {
   if (p && n)
@@ -107,21 +139,59 @@ static bool file_exists(const char *path) {
   struct stat st;
   return path && stat(path, &st) == 0;
 }
-static bool write_file_private(const char *path, const char *data, size_t len) {
-  int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-  if (fd < 0)
+static bool private_regular_file(const char *path) {
+  struct stat st;
+  if (!path || lstat(path, &st) != 0)
     return false;
+  return S_ISREG(st.st_mode) && (st.st_mode & 0077) == 0;
+}
+
+static bool write_file_private(const char *path, const char *data, size_t len) {
+  if (!path || !data)
+    return false;
+  size_t tmp_len = strlen(path) + 64u;
+  char *tmp = malloc(tmp_len);
+  if (!tmp)
+    return false;
+  int written = snprintf(tmp, tmp_len, "%s.tmp.%ld", path, (long)getpid());
+  if (written < 0 || (size_t)written >= tmp_len) {
+    free(tmp);
+    return false;
+  }
+  int flags = O_WRONLY | O_CREAT | O_EXCL;
+#ifdef O_CLOEXEC
+  flags |= O_CLOEXEC;
+#endif
+#ifdef O_NOFOLLOW
+  flags |= O_NOFOLLOW;
+#endif
+  int fd = open(tmp, flags, 0600);
+  if (fd < 0) {
+    free(tmp);
+    return false;
+  }
+  bool ok = true;
   size_t off = 0;
   while (off < len) {
     ssize_t n = write(fd, data + off, len - off);
+    if (n < 0 && errno == EINTR)
+      continue;
     if (n <= 0) {
-      close(fd);
-      return false;
+      ok = false;
+      break;
     }
     off += (size_t)n;
   }
-  (void)fsync(fd);
-  return close(fd) == 0;
+  if (ok && fsync(fd) != 0)
+    ok = false;
+  if (close(fd) != 0)
+    ok = false;
+  if (ok && link(tmp, path) != 0)
+    ok = false;
+  (void)unlink(tmp);
+  cleanse(tmp, strlen(tmp));
+  free(tmp);
+  return ok && private_regular_file(path);
 }
 
 static char *json_escape(const char *s) {
@@ -171,13 +241,168 @@ static char *json_escape(const char *s) {
   o[j] = 0;
   return o;
 }
+static void response_capture_reset(void) {
+  if (g_response.data) {
+    cleanse(g_response.data, g_response.len);
+    free(g_response.data);
+  }
+  g_response.data = NULL;
+  g_response.len = 0;
+}
+
+static void response_capture_begin(void) {
+  response_capture_reset();
+  g_response.active = true;
+}
+
+static char *response_capture_take(size_t *len) {
+  char *data = g_response.data;
+  if (len)
+    *len = g_response.len;
+  g_response.data = NULL;
+  g_response.len = 0;
+  g_response.active = false;
+  return data;
+}
+
+static int response_printf(const char *format, ...) {
+  va_list args;
+  int needed;
+  va_start(args, format);
+  if (!g_response.active) {
+    int written = vprintf(format, args);
+    va_end(args);
+    fflush(stdout);
+    return written;
+  }
+  va_end(args);
+  va_start(args, format);
+  needed = vsnprintf(NULL, 0, format, args);
+  va_end(args);
+  if (needed < 0)
+    return needed;
+  char *buffer = malloc((size_t)needed + 1u);
+  if (!buffer)
+    return -1;
+  va_start(args, format);
+  (void)vsnprintf(buffer, (size_t)needed + 1u, format, args);
+  va_end(args);
+  response_capture_reset();
+  g_response.active = true;
+  g_response.data = buffer;
+  g_response.len = (size_t)needed;
+  return needed;
+}
+
 static void ok_obj(const char *obj) {
-  printf("{\"ok\":true,\"result\":%s}\n", obj ? obj : "{}");
+  response_printf("{\"ok\":true,\"result\":%s}\n", obj ? obj : "{}");
 }
 static void err_msg(const char *m) {
   char *e = json_escape(m ? m : "error");
-  printf("{\"ok\":false,\"error\":\"%s\"}\n", e ? e : "oom");
+  response_printf("{\"ok\":false,\"error\":\"%s\"}\n", e ? e : "oom");
   free(e);
+}
+
+static int read_exact(int fd, uint8_t *buffer, size_t length) {
+  size_t offset = 0;
+  while (offset < length) {
+    ssize_t count = read(fd, buffer + offset, length - offset);
+    if (count == 0)
+      return -1;
+    if (count < 0) {
+      if (errno == EINTR)
+        continue;
+      return -1;
+    }
+    offset += (size_t)count;
+  }
+  return 0;
+}
+
+static int write_exact(int fd, const uint8_t *buffer, size_t length) {
+  size_t offset = 0;
+  while (offset < length) {
+    ssize_t count = write(fd, buffer + offset, length - offset);
+    if (count < 0) {
+      if (errno == EINTR)
+        continue;
+      return -1;
+    }
+    offset += (size_t)count;
+  }
+  return 0;
+}
+
+static int read_packet4(uint8_t **payload, uint32_t *payload_len) {
+  uint8_t header[4];
+  uint32_t length;
+  uint8_t *frame;
+  *payload = NULL;
+  *payload_len = 0;
+  if (read_exact(STDIN_FILENO, header, sizeof(header)) != 0)
+    return -1;
+  length = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) |
+           ((uint32_t)header[2] << 8) | (uint32_t)header[3];
+  if (length == 0 || length > DAMAGE_MAX_FRAME_BYTES)
+    return -1;
+  frame = malloc(length);
+  if (!frame)
+    return -1;
+  if (read_exact(STDIN_FILENO, frame, length) != 0) {
+    cleanse(frame, length);
+    free(frame);
+    return -1;
+  }
+  *payload = frame;
+  *payload_len = length;
+  return 0;
+}
+
+static int write_packet4(const uint8_t *payload, uint32_t payload_len) {
+  uint8_t header[4] = {
+      (uint8_t)((payload_len >> 24) & 0xffu),
+      (uint8_t)((payload_len >> 16) & 0xffu),
+      (uint8_t)((payload_len >> 8) & 0xffu),
+      (uint8_t)(payload_len & 0xffu)};
+  if (write_exact(STDOUT_FILENO, header, sizeof(header)) != 0)
+    return -1;
+  return write_exact(STDOUT_FILENO, payload, payload_len);
+}
+
+static int write_simple_frame(uint8_t response_type, uint8_t status,
+                              const uint8_t *payload, uint32_t payload_len) {
+  uint32_t frame_len = 2u + payload_len;
+  uint8_t *frame = malloc(frame_len);
+  int result;
+  if (!frame)
+    return -1;
+  frame[0] = response_type;
+  frame[1] = status;
+  if (payload_len)
+    memcpy(frame + 2u, payload, payload_len);
+  result = write_packet4(frame, frame_len);
+  cleanse(frame, frame_len);
+  free(frame);
+  return result;
+}
+
+static int write_operation_frame(uint8_t status,
+                                 const uint8_t request_id[DAMAGE_REQUEST_ID_BYTES],
+                                 const uint8_t *payload, uint32_t payload_len) {
+  uint32_t frame_len = 2u + DAMAGE_REQUEST_ID_BYTES + payload_len;
+  uint8_t *frame = malloc(frame_len);
+  int result;
+  if (!frame)
+    return -1;
+  frame[0] = DAMAGE_FRAME_OPERATION_RESPONSE;
+  frame[1] = status;
+  memcpy(frame + 2u, request_id, DAMAGE_REQUEST_ID_BYTES);
+  if (payload_len)
+    memcpy(frame + 2u + DAMAGE_REQUEST_ID_BYTES, payload, payload_len);
+  result = write_packet4(frame, frame_len);
+  cleanse(frame, frame_len);
+  free(frame);
+  return result;
 }
 
 static int hx(char c) {
@@ -1206,6 +1431,7 @@ static bool gcm_enc(const uint8_t key[32], const uint8_t iv[12],
   ok = true;
 done:
   if (!ok && *ct) {
+    cleanse(*ct, (size_t)pl + 16u);
     free(*ct);
     *ct = NULL;
   }
@@ -1241,21 +1467,24 @@ static bool gcm_dec(const uint8_t key[32], const uint8_t iv[12],
   ok = true;
 done:
   if (!ok && *pt) {
+    cleanse(*pt, (size_t)cl + 1u);
     free(*pt);
     *pt = NULL;
   }
   EVP_CIPHER_CTX_free(c);
   return ok;
 }
-static bool save_vault(const char *path, struct vault *v) {
-  const char *pass = passphrase();
-  if (!pass) {
-    err_msg("missing_DAMAGE_NSECBUNKER_VAULT_PASSPHRASE");
+static bool save_vault_with_pass(const char *path, struct vault *v,
+                                 const char *pass) {
+  if (!pass || !*pass) {
+    err_msg("missing_vault_passphrase");
     return false;
   }
   char *priv = hex_encode(v->priv, 32);
-  if (!priv)
+  if (!priv) {
+    err_msg("oom");
     return false;
+  }
   char plain[512];
   snprintf(plain, sizeof(plain),
            "{\"privkey_hex\":\"%s\",\"pubkey_hex\":\"%s\",\"npub\":\"%s\"}",
@@ -1265,21 +1494,37 @@ static bool save_vault(const char *path, struct vault *v) {
   uint8_t salt[SALT_LEN], iv[IV_LEN], key[KEY_LEN], tag[TAG_LEN], *ct = NULL;
   int cl = 0;
   if (RAND_bytes(salt, SALT_LEN) != 1 || RAND_bytes(iv, IV_LEN) != 1) {
+    cleanse(plain, sizeof(plain));
     err_msg("vault_random_failed");
     return false;
   }
   if (!derive(pass, salt, key)) {
+    cleanse(plain, sizeof(plain));
     err_msg("vault_kdf_failed");
     return false;
   }
   if (!gcm_enc(key, iv, (uint8_t *)plain, (int)strlen(plain), &ct, &cl, tag)) {
+    cleanse(key, KEY_LEN);
+    cleanse(plain, sizeof(plain));
     err_msg("vault_encrypt_failed");
     return false;
   }
   char *sh = hex_encode(salt, SALT_LEN), *ih = hex_encode(iv, IV_LEN),
        *th = hex_encode(tag, TAG_LEN), *ch = hex_encode(ct, (size_t)cl);
+  if (!sh || !ih || !th || !ch) {
+    err_msg("oom");
+    cleanse(key, KEY_LEN); cleanse(plain, sizeof(plain)); cleanse(ct, (size_t)cl);
+    free(ct); free(sh); free(ih); free(th); free(ch);
+    return false;
+  }
   size_t cap = strlen(ch) + 512;
   char *out = malloc(cap);
+  if (!out) {
+    err_msg("oom");
+    cleanse(key, KEY_LEN); cleanse(plain, sizeof(plain)); cleanse(ct, (size_t)cl);
+    free(ct); free(sh); free(ih); free(th); free(ch);
+    return false;
+  }
   snprintf(out, cap,
            "{\"v\":2,\"backend\":\"damage-nsecbunker-crypto-c\",\"phase\":"
            "\"2c\",\"kdf\":\"pbkdf2-hmac-sha256\",\"iterations\":%d,\"cipher\":"
@@ -1289,22 +1534,26 @@ static bool save_vault(const char *path, struct vault *v) {
   bool ok = write_file_private(path, out, strlen(out));
   if (!ok)
     err_msg("vault_write_failed");
-  cleanse(key, KEY_LEN);
-  cleanse(plain, strlen(plain));
-  cleanse(ct, (size_t)cl);
-  free(ct);
-  free(sh);
-  free(ih);
-  free(th);
-  free(ch);
-  free(out);
+  cleanse(key, KEY_LEN); cleanse(plain, sizeof(plain)); cleanse(ct, (size_t)cl);
+  free(ct); free(sh); free(ih); free(th); free(ch);
+  cleanse(out, strlen(out)); free(out);
   return ok;
 }
-static bool load_vault(const char *path, struct vault *v) {
-  memset(v, 0, sizeof(*v));
+
+static bool save_vault(const char *path, struct vault *v) {
   const char *pass = passphrase();
   if (!pass) {
     err_msg("missing_DAMAGE_NSECBUNKER_VAULT_PASSPHRASE");
+    return false;
+  }
+  return save_vault_with_pass(path, v, pass);
+}
+
+static bool load_vault_with_pass(const char *path, struct vault *v,
+                                 const char *pass) {
+  memset(v, 0, sizeof(*v));
+  if (!pass || !*pass) {
+    err_msg("missing_vault_passphrase");
     return false;
   }
   char *file = slurp_file(path, NULL);
@@ -1313,82 +1562,72 @@ static bool load_vault(const char *path, struct vault *v) {
     return false;
   }
   char *sh = json_get_string(file, "salt"), *ih = json_get_string(file, "iv"),
-       *th = json_get_string(file, "tag"),
-       *ch = json_get_string(file, "ciphertext");
+       *th = json_get_string(file, "tag"), *ch = json_get_string(file, "ciphertext");
   if (!sh || !ih || !th || !ch) {
     err_msg("vault_missing_fields");
     goto fail;
   }
   size_t cl = strlen(ch) / 2;
-  uint8_t salt[SALT_LEN], iv[IV_LEN], tag[TAG_LEN], key[KEY_LEN],
-      *ct = malloc(cl), *pt = NULL;
+  uint8_t salt[SALT_LEN] = {0}, iv[IV_LEN] = {0}, tag[TAG_LEN] = {0},
+          key[KEY_LEN] = {0}, *ct = malloc(cl), *pt = NULL;
   int pl = 0;
-  if (!ct) {
-    err_msg("oom");
-    goto fail;
-  }
+  if (!ct) { err_msg("oom"); goto fail; }
   if (!hex_decode(sh, salt, SALT_LEN) || !hex_decode(ih, iv, IV_LEN) ||
       !hex_decode(th, tag, TAG_LEN) || !hex_decode(ch, ct, cl)) {
-    err_msg("vault_hex_decode_failed");
-    goto fail2;
+    err_msg("vault_hex_decode_failed"); goto fail2;
   }
-  if (!derive(pass, salt, key)) {
-    err_msg("vault_kdf_failed");
-    goto fail2;
-  }
+  if (!derive(pass, salt, key)) { err_msg("vault_kdf_failed"); goto fail2; }
   if (!gcm_dec(key, iv, ct, (int)cl, tag, &pt, &pl)) {
-    err_msg("vault_decrypt_failed");
-    goto fail2;
+    err_msg("vault_decrypt_failed"); goto fail2;
   }
   char *priv = json_get_string((char *)pt, "privkey_hex"),
        *pub = json_get_string((char *)pt, "pubkey_hex"),
        *np = json_get_string((char *)pt, "npub");
   if (!priv || !pub || !np || !hex64(priv) || !hex64(pub)) {
     err_msg("vault_plaintext_invalid");
-    free(priv);
-    free(pub);
-    free(np);
-    goto fail3;
+    if (priv) { cleanse(priv, strlen(priv)); free(priv); }
+    free(pub); free(np); goto fail3;
   }
   hex_decode(priv, v->priv, 32);
   snprintf(v->pub, sizeof(v->pub), "%s", pub);
   snprintf(v->npub, sizeof(v->npub), "%s", np);
-  cleanse(priv, strlen(priv));
-  free(priv);
-  free(pub);
-  free(np);
-  cleanse(pt, (size_t)pl);
-  free(pt);
-  cleanse(key, KEY_LEN);
-  cleanse(ct, cl);
-  free(ct);
-  free(sh);
-  free(ih);
-  free(th);
-  free(ch);
-  free(file);
+  cleanse(priv, strlen(priv)); free(priv); free(pub); free(np);
+  cleanse(pt, (size_t)pl); free(pt); cleanse(key, KEY_LEN);
+  cleanse(ct, cl); free(ct); free(sh); free(ih); free(th); free(ch);
+  cleanse(file, strlen(file)); free(file);
   return true;
 fail3:
-  if (pt) {
-    cleanse(pt, (size_t)pl);
-    free(pt);
-  }
+  if (pt) { cleanse(pt, (size_t)pl); free(pt); }
 fail2:
   cleanse(key, KEY_LEN);
-  if (ct) {
-    cleanse(ct, cl);
-    free(ct);
-  }
+  if (ct) { cleanse(ct, cl); free(ct); }
 fail:
-  free(sh);
-  free(ih);
-  free(th);
-  free(ch);
-  free(file);
+  free(sh); free(ih); free(th); free(ch);
+  cleanse(file, strlen(file)); free(file); cleanse(v, sizeof(*v));
   return false;
 }
 
+static bool load_vault(const char *path, struct vault *v) {
+  if (g_secure.active) {
+    if (!g_secure.unlocked || !g_secure.vault_path || !path ||
+        strcmp(path, g_secure.vault_path) != 0) {
+      err_msg("secure_vault_not_unlocked");
+      return false;
+    }
+    memcpy(v, &g_secure.vault, sizeof(*v));
+    return true;
+  }
+  const char *pass = passphrase();
+  if (!pass) {
+    err_msg("missing_DAMAGE_NSECBUNKER_VAULT_PASSPHRASE");
+    return false;
+  }
+  return load_vault_with_pass(path, v, pass);
+}
+
 static char *vault_path(char *json) {
+  if (g_secure.active && g_secure.vault_path)
+    return xstrndup(g_secure.vault_path, strlen(g_secure.vault_path));
   char *p = json_get_string(json, "vault_path");
   if (p)
     return p;
@@ -1396,6 +1635,8 @@ static char *vault_path(char *json) {
   return (e && *e) ? xstrndup(e, strlen(e)) : NULL;
 }
 static bool plain_test_allowed(void) {
+  if (g_secure.active)
+    return false;
   const char *prod = getenv("DAMAGE_NSECBUNKER_PRODUCTION");
   if (prod && strcmp(prod, "1") == 0)
     return false;
@@ -1413,6 +1654,18 @@ static bool op_health(void) {
   return true;
 }
 static bool op_generate(char *json) {
+  if (g_secure.active) {
+    if (!g_secure.unlocked) {
+      err_msg("secure_vault_not_unlocked");
+      return false;
+    }
+    response_printf(
+        "{\"ok\":true,\"result\":{\"pubkey_hex\":\"%s\",\"npub\":\"%s\","
+        "\"vault_written\":%s}}\n",
+        g_secure.vault.pub, g_secure.vault.npub,
+        g_secure.vault_created ? "true" : "false");
+    return true;
+  }
   char *path = vault_path(json);
   if (!path) {
     err_msg("missing_vault_path");
@@ -1435,7 +1688,7 @@ static bool op_generate(char *json) {
   snprintf(v.npub, sizeof(v.npub), "%s", np);
   bool ok = save_vault(path, &v);
   if (ok)
-    printf("{\"ok\":true,\"result\":{\"pubkey_hex\":\"%s\",\"npub\":\"%s\","
+    response_printf("{\"ok\":true,\"result\":{\"pubkey_hex\":\"%s\",\"npub\":\"%s\","
            "\"vault_written\":true}}\n",
            ph, np);
   cleanse(&v, sizeof(v));
@@ -1453,7 +1706,7 @@ static bool op_public(char *json) {
   struct vault v;
   bool ok = load_vault(path, &v);
   if (ok)
-    printf("{\"ok\":true,\"result\":{\"pubkey_hex\":\"%s\",\"npub\":\"%s\"}}\n",
+    response_printf("{\"ok\":true,\"result\":{\"pubkey_hex\":\"%s\",\"npub\":\"%s\"}}\n",
            v.pub, v.npub);
   cleanse(&v, sizeof(v));
   free(path);
@@ -1470,7 +1723,7 @@ static bool op_npub(char *json) {
   uint8_t pub[32];
   hex_decode(p, pub, 32);
   char *np = npub_encode(pub);
-  printf("{\"ok\":true,\"result\":{\"npub\":\"%s\"}}\n", np);
+  response_printf("{\"ok\":true,\"result\":{\"npub\":\"%s\"}}\n", np);
   free(p);
   free(np);
   return true;
@@ -1524,7 +1777,7 @@ static bool op_event_id(char *json) {
   uint8_t id[32];
   sha256_bytes((uint8_t *)ser, strlen(ser), id);
   char *idh = hex_encode(id, 32), *esc = json_escape(ser);
-  printf("{\"ok\":true,\"result\":{\"id\":\"%s\",\"serialization\":\"%s\"}}\n",
+  response_printf("{\"ok\":true,\"result\":{\"id\":\"%s\",\"serialization\":\"%s\"}}\n",
          idh, esc);
   free(event);
   free(pub);
@@ -1583,7 +1836,7 @@ static bool op_sign(char *json) {
   if (!tags)
     tags = xstrndup("[]", 2);
   char *idh = hex_encode(id, 32), *sigh = hex_encode(sig, 64);
-  printf("{\"ok\":true,\"result\":{\"event\":{\"id\":\"%s\",\"pubkey\":\"%s\","
+  response_printf("{\"ok\":true,\"result\":{\"event\":{\"id\":\"%s\",\"pubkey\":\"%s\","
          "\"created_at\":%s,\"kind\":%s,\"tags\":%s,\"content\":%s,\"sig\":\"%"
          "s\"}}}\n",
          idh, v.pub, created, kind, tags, content, sigh);
@@ -1621,7 +1874,7 @@ static bool op_schnorr_sign_vector(char *json) {
     goto done;
   }
   char *ph = hex_encode(pub, 32), *sh = hex_encode(sig, 64);
-  printf("{\"ok\":true,\"result\":{\"pubkey_hex\":\"%s\",\"signature_hex\":\"%"
+  response_printf("{\"ok\":true,\"result\":{\"pubkey_hex\":\"%s\",\"signature_hex\":\"%"
          "s\"}}\n",
          ph, sh);
   free(ph);
@@ -1651,7 +1904,7 @@ static bool op_schnorr_verify(char *json) {
   hex_decode(msg, m, 32);
   hex_decode(sig, s, 64);
   bool valid = schnorr_verify(p, m, s);
-  printf("{\"ok\":true,\"result\":{\"valid\":%s}}\n", valid ? "true" : "false");
+  response_printf("{\"ok\":true,\"result\":{\"valid\":%s}}\n", valid ? "true" : "false");
   free(pub);
   free(msg);
   free(sig);
@@ -1679,7 +1932,7 @@ static bool op_nip44_encrypt_vector(char *json) {
   bool ok = nip44_encrypt_raw(sk, pk, n, plain, &payload, &conv);
   if (ok) {
     char *esc = json_escape(payload);
-    printf("{\"ok\":true,\"result\":{\"conversation_key\":\"%s\",\"payload\":"
+    response_printf("{\"ok\":true,\"result\":{\"conversation_key\":\"%s\",\"payload\":"
            "\"%s\"}}\n",
            conv, esc);
     free(esc);
@@ -1713,7 +1966,7 @@ static bool op_nip44_decrypt_vector(char *json) {
   bool ok = nip44_decrypt_raw(sk, pk, payload, &plain, &conv);
   if (ok) {
     char *esc = json_escape(plain);
-    printf("{\"ok\":true,\"result\":{\"conversation_key\":\"%s\",\"plaintext\":"
+    response_printf("{\"ok\":true,\"result\":{\"conversation_key\":\"%s\",\"plaintext\":"
            "\"%s\"}}\n",
            conv, esc);
     free(esc);
@@ -1738,7 +1991,7 @@ static bool op_nip44_encrypt(char *json) {
       return false;
     }
     char *b = b64e((uint8_t *)p, strlen(p));
-    printf("{\"ok\":true,\"result\":{\"ciphertext\":\"plain:%s\"}}\n", b);
+    response_printf("{\"ok\":true,\"result\":{\"ciphertext\":\"plain:%s\"}}\n", b);
     cleanse(p, strlen(p));
     free(p);
     free(b);
@@ -1775,7 +2028,7 @@ static bool op_nip44_encrypt(char *json) {
   bool ok = nip44_encrypt_raw(v.priv, peer, nonce, plain, &payload, &conv);
   if (ok) {
     char *esc = json_escape(payload);
-    printf(
+    response_printf(
         "{\"ok\":true,\"result\":{\"ciphertext\":\"%s\",\"nip44\":\"v2\"}}\n",
         esc);
     free(esc);
@@ -1801,7 +2054,7 @@ static bool op_nip44_decrypt(char *json) {
       return false;
     }
     char *tmp = xstrndup((char *)p, n), *esc = json_escape(tmp);
-    printf("{\"ok\":true,\"result\":{\"plaintext\":\"%s\"}}\n", esc);
+    response_printf("{\"ok\":true,\"result\":{\"plaintext\":\"%s\"}}\n", esc);
     cleanse(p, n);
     free(p);
     cleanse(tmp, n);
@@ -1832,7 +2085,7 @@ static bool op_nip44_decrypt(char *json) {
   bool ok = nip44_decrypt_raw(v.priv, peer, c, &plain, &conv);
   if (ok) {
     char *esc = json_escape(plain);
-    printf("{\"ok\":true,\"result\":{\"plaintext\":\"%s\",\"nip44\":\"v2\"}}\n",
+    response_printf("{\"ok\":true,\"result\":{\"plaintext\":\"%s\",\"nip44\":\"v2\"}}\n",
            esc);
     free(esc);
   } else
@@ -1849,26 +2102,21 @@ static bool op_nip44_decrypt(char *json) {
   return ok;
 }
 static bool op_plain_mode_status(void) {
-  printf("{\"ok\":true,\"result\":{\"plain_allowed\":%s,\"production\":%s}}\n",
+  response_printf("{\"ok\":true,\"result\":{\"plain_allowed\":%s,\"production\":%s}}\n",
          plain_test_allowed() ? "true" : "false",
-         (getenv("DAMAGE_NSECBUNKER_PRODUCTION") &&
-          strcmp(getenv("DAMAGE_NSECBUNKER_PRODUCTION"), "1") == 0)
+         ((g_secure.active && g_secure.production) ||
+          (getenv("DAMAGE_NSECBUNKER_PRODUCTION") &&
+           strcmp(getenv("DAMAGE_NSECBUNKER_PRODUCTION"), "1") == 0))
              ? "true"
              : "false");
   return true;
 }
 
-int main(void) {
-  char *json = slurp_stdin();
-  if (!json) {
-    err_msg("stdin_read_failed");
-    return 1;
-  }
+static bool dispatch_operation(char *json) {
   char *op = json_get_string(json, "op");
   if (!op) {
     err_msg("missing_op");
-    free(json);
-    return 1;
+    return false;
   }
   bool ok = false;
   if (strcmp(op, "health") == 0)
@@ -1902,6 +2150,229 @@ int main(void) {
     ok = false;
   }
   free(op);
+  return ok;
+}
+
+static bool secure_operation_allowed(const char *op) {
+  return op &&
+      (strcmp(op, "health") == 0 || strcmp(op, "generate_identity") == 0 ||
+       strcmp(op, "get_public_key") == 0 || strcmp(op, "npub") == 0 ||
+       strcmp(op, "sign_event") == 0 || strcmp(op, "nip44_encrypt") == 0 ||
+       strcmp(op, "nip44_decrypt") == 0 ||
+       strcmp(op, "plain_mode_status") == 0);
+}
+
+static void secure_runtime_clear(void) {
+  response_capture_reset();
+  g_response.active = false;
+  if (g_secure.vault_path) {
+    cleanse(g_secure.vault_path, strlen(g_secure.vault_path));
+    free(g_secure.vault_path);
+  }
+  cleanse(&g_secure.vault, sizeof(g_secure.vault));
+  memset(&g_secure, 0, sizeof(g_secure));
+}
+
+static int secure_handle_init(const uint8_t *payload, uint32_t length) {
+  if (g_secure.initialized || length < 2u)
+    return write_simple_frame(DAMAGE_FRAME_INIT_RESPONSE,
+                              DAMAGE_FRAME_STATUS_ERROR,
+                              (const uint8_t *)"invalid_init", 12u);
+  char *json = xstrndup((const char *)(payload + 1u), length - 1u);
+  if (!json)
+    return -1;
+  char *protocol = json_get_string(json, "protocol");
+  char *path = json_get_string(json, "vault_path");
+  char *mode = json_get_string(json, "vault_mode");
+  char *production = json_get_raw_value(json, "production");
+  bool valid = protocol && strcmp(protocol, "damage-nsecbunker-port-v2") == 0 &&
+               path && path[0] == '/' && strlen(path) < PATH_MAX &&
+               mode && (strcmp(mode, "open_existing") == 0 ||
+                        strcmp(mode, "create_if_missing") == 0) &&
+               production && strcmp(production, "true") == 0;
+  if (!valid) {
+    free(protocol); free(path); free(mode); free(production);
+    cleanse(json, strlen(json)); free(json);
+    return write_simple_frame(DAMAGE_FRAME_INIT_RESPONSE,
+                              DAMAGE_FRAME_STATUS_ERROR,
+                              (const uint8_t *)"invalid_init", 12u);
+  }
+  g_secure.vault_path = path;
+  g_secure.create_if_missing = strcmp(mode, "create_if_missing") == 0;
+  g_secure.production = true;
+  g_secure.initialized = true;
+  free(protocol); free(mode); free(production);
+  cleanse(json, strlen(json)); free(json);
+  return write_simple_frame(DAMAGE_FRAME_INIT_RESPONSE,
+                            DAMAGE_FRAME_STATUS_OK, NULL, 0u);
+}
+
+static int secure_handle_unlock(const uint8_t *payload, uint32_t length) {
+  if (!g_secure.initialized || g_secure.unlocked || length < 2u)
+    return write_simple_frame(DAMAGE_FRAME_UNLOCK_RESPONSE,
+                              DAMAGE_FRAME_STATUS_ERROR,
+                              (const uint8_t *)"invalid_unlock", 14u);
+  size_t pass_len = length - 1u;
+  if (pass_len > 65536u || memchr(payload + 1u, '\0', pass_len) != NULL)
+    return write_simple_frame(DAMAGE_FRAME_UNLOCK_RESPONSE,
+                              DAMAGE_FRAME_STATUS_ERROR,
+                              (const uint8_t *)"invalid_passphrase", 18u);
+  char *pass = malloc(pass_len + 1u);
+  if (!pass)
+    return -1;
+  memcpy(pass, payload + 1u, pass_len);
+  pass[pass_len] = '\0';
+
+  struct vault candidate;
+  memset(&candidate, 0, sizeof(candidate));
+  bool created = false;
+  response_capture_begin();
+  bool ok;
+  if (file_exists(g_secure.vault_path)) {
+    if (!private_regular_file(g_secure.vault_path)) {
+      err_msg("vault_permissions_invalid");
+      ok = false;
+    } else {
+      ok = load_vault_with_pass(g_secure.vault_path, &candidate, pass);
+    }
+  } else if (g_secure.create_if_missing) {
+    uint8_t pub[32];
+    ok = keygen(candidate.priv, pub);
+    if (ok) {
+      char *pub_hex = hex_encode(pub, 32);
+      char *npub = npub_encode(pub);
+      ok = pub_hex && npub;
+      if (ok) {
+        snprintf(candidate.pub, sizeof(candidate.pub), "%s", pub_hex);
+        snprintf(candidate.npub, sizeof(candidate.npub), "%s", npub);
+        ok = save_vault_with_pass(g_secure.vault_path, &candidate, pass);
+        created = ok;
+      }
+      free(pub_hex); free(npub);
+    }
+  } else {
+    err_msg("vault_read_failed");
+    ok = false;
+  }
+  size_t ignored_len = 0;
+  char *ignored = response_capture_take(&ignored_len);
+  if (ignored) { cleanse(ignored, ignored_len); free(ignored); }
+  cleanse(pass, pass_len + 1u);
+  free(pass);
+
+  if (!ok) {
+    cleanse(&candidate, sizeof(candidate));
+    return write_simple_frame(DAMAGE_FRAME_UNLOCK_RESPONSE,
+                              DAMAGE_FRAME_STATUS_ERROR,
+                              (const uint8_t *)"vault_unlock_failed", 19u);
+  }
+  memcpy(&g_secure.vault, &candidate, sizeof(candidate));
+  cleanse(&candidate, sizeof(candidate));
+  g_secure.vault_created = created;
+  g_secure.unlocked = true;
+  char metadata[320];
+  int n = snprintf(metadata, sizeof(metadata),
+      "{\"vault_created\":%s,\"pubkey_hex\":\"%s\",\"npub\":\"%s\"}",
+      created ? "true" : "false", g_secure.vault.pub, g_secure.vault.npub);
+  if (n < 0 || (size_t)n >= sizeof(metadata))
+    return -1;
+  return write_simple_frame(DAMAGE_FRAME_UNLOCK_RESPONSE,
+                            DAMAGE_FRAME_STATUS_OK,
+                            (const uint8_t *)metadata, (uint32_t)n);
+}
+
+static int secure_reject_operation(const uint8_t request_id[DAMAGE_REQUEST_ID_BYTES],
+                                   const char *code) {
+  return write_operation_frame(DAMAGE_FRAME_STATUS_ERROR, request_id,
+                               (const uint8_t *)code, (uint32_t)strlen(code));
+}
+
+static int secure_handle_operation(const uint8_t *payload, uint32_t length) {
+  if (!g_secure.unlocked || length <= 1u + DAMAGE_REQUEST_ID_BYTES)
+    return -1;
+  const uint8_t *request_id = payload + 1u;
+  const uint8_t *json_bytes = payload + 1u + DAMAGE_REQUEST_ID_BYTES;
+  size_t json_len = length - 1u - DAMAGE_REQUEST_ID_BYTES;
+  char *json = xstrndup((const char *)json_bytes, json_len);
+  if (!json)
+    return -1;
+  if (find_key(json, "vault_path") || find_key(json, "passphrase") ||
+      find_key(json, "vault_passphrase") || find_key(json, "secret_value")) {
+    cleanse(json, json_len); free(json);
+    return secure_reject_operation(request_id, "forbidden_payload_key");
+  }
+  char *op = json_get_string(json, "op");
+  if (!secure_operation_allowed(op)) {
+    free(op); cleanse(json, json_len); free(json);
+    return secure_reject_operation(request_id, "operation_not_allowed");
+  }
+  free(op);
+  response_capture_begin();
+  (void)dispatch_operation(json);
+  size_t response_len = 0;
+  char *response = response_capture_take(&response_len);
+  cleanse(json, json_len); free(json);
+  if (!response) {
+    const char *fallback = "{\"ok\":false,\"error\":\"backend_response_missing\"}\n";
+    return write_operation_frame(DAMAGE_FRAME_STATUS_OK, request_id,
+                                 (const uint8_t *)fallback,
+                                 (uint32_t)strlen(fallback));
+  }
+  int result = write_operation_frame(DAMAGE_FRAME_STATUS_OK, request_id,
+                                     (const uint8_t *)response,
+                                     (uint32_t)response_len);
+  cleanse(response, response_len); free(response);
+  return result;
+}
+
+static int secure_backend_loop(void) {
+  g_secure.active = true;
+  for (;;) {
+    uint8_t *frame = NULL;
+    uint32_t length = 0;
+    if (read_packet4(&frame, &length) != 0)
+      break;
+    int result;
+    switch (frame[0]) {
+    case DAMAGE_FRAME_INIT_REQUEST:
+      result = secure_handle_init(frame, length);
+      break;
+    case DAMAGE_FRAME_UNLOCK_REQUEST:
+      result = secure_handle_unlock(frame, length);
+      break;
+    case DAMAGE_FRAME_OPERATION_REQUEST:
+      result = secure_handle_operation(frame, length);
+      break;
+    default:
+      result = -1;
+      break;
+    }
+    cleanse(frame, length); free(frame);
+    if (result != 0)
+      break;
+  }
+  secure_runtime_clear();
+  return 0;
+}
+
+static int legacy_main(void) {
+  char *json = slurp_stdin();
+  if (!json) {
+    err_msg("stdin_read_failed");
+    return 1;
+  }
+  bool ok = dispatch_operation(json);
+  cleanse(json, strlen(json));
   free(json);
   return ok ? 0 : 2;
+}
+
+int main(int argc, char **argv) {
+  if (argc == 2 && strcmp(argv[1], "--framed") == 0)
+    return secure_backend_loop();
+  if (argc != 1) {
+    err_msg("unsupported_arguments");
+    return 64;
+  }
+  return legacy_main();
 }

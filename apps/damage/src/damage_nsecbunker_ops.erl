@@ -5,11 +5,10 @@
 %% deployment/key-ceremony work can run from the Damage release without
 %% shell/python ceremony scripts.
 %%
-%% This module still calls the process-isolated C crypto backend via
-%% open_port({spawn_executable, Cmd}, ...). That is intentional: the C
-%% backend remains the custody/crypto boundary. The module does not invoke
-%% /bin/sh and does not require Python/curl/sha256sum for ceremony,
-%% artifact hashing or release checks.
+%% Managed-provider ceremonies delegate through the supervised secure owner.
+%% The default local provider retains the existing one-shot ceremony/backend
+%% behavior. The module does not invoke /bin/sh and does not require
+%% Python/curl/sha256sum for ceremony, artifact hashing or checks.
 %%--------------------------------------------------------------------
 -module(damage_nsecbunker_ops).
 
@@ -138,6 +137,96 @@ phase4b_create_production_damagebdd_node_key(Opts0) ->
     end).
 
 phase4b_create_production_damagebdd_node_key_0(Opts) ->
+    Config = config(),
+    case production_phase4b_preflight(Opts, Config) of
+        {ok, aws_secrets_manager} ->
+            phase4b_create_production_damagebdd_node_key_secure(Opts, Config);
+        {ok, local} ->
+            phase4b_create_production_damagebdd_node_key_local(Opts, Config);
+        {error, _} = Error ->
+            Error
+    end.
+
+phase4b_create_production_damagebdd_node_key_secure(Opts, Config) ->
+    Root = root(Opts),
+    Vault = str(maps:get(vault_path, Config)),
+    Backend = str(maps:get(crypto_backend_cmd, Config)),
+    ReportDir = report_dir(Opts#{root => Root}),
+    JsonReport = filename:join(ReportDir, "PHASE4B_DAMAGEBDD_NODE_PRODUCTION_KEY.json"),
+    MdReport = filename:join(ReportDir, "PHASE4B_DAMAGEBDD_NODE_PRODUCTION_KEY.md"),
+    ok = ensure_parent(JsonReport),
+    case damage_nsecbunker:generate_identity() of
+        {ok, Generated} ->
+            case damage_nsecbunker:export_identity() of
+                {ok, Exported} ->
+                    phase4b_write_secure_report(
+                        Backend, Vault, JsonReport, MdReport, Generated, Exported
+                    );
+                {error, Reason} ->
+                    {error, {production_identity_export_failed, Reason}}
+            end;
+        {error, Reason} ->
+            {error, {production_identity_generation_failed, Reason}}
+    end.
+
+phase4b_write_secure_report(Backend, Vault, JsonReport, MdReport, Generated, Exported) ->
+    Pubkey = require_pubkey(
+        first_present([
+            field(<<"pubkey_hex">>, Exported), field(<<"pubkey_hex">>, Generated)
+        ])
+    ),
+    Npub = require_npub(
+        first_present([
+            field(<<"npub">>, Exported), field(<<"npub">>, Generated)
+        ])
+    ),
+    OwnerStatus = damage_nsecbunker_secret_owner:status(),
+    Provenance = maps:get(secret_provenance, OwnerStatus, #{}),
+    VaultMetadata = maps:get(vault, OwnerStatus, #{}),
+    VaultCreated = first_present(
+        [
+            maps:get(vault_created, VaultMetadata, undefined),
+            maps:get(<<"vault_created">>, VaultMetadata, false)
+        ],
+        false
+    ),
+    ok = file_mode_private(Vault),
+    VaultMode = file_mode_octal(Vault),
+    Report = #{
+        <<"phase">> => <<"4B">>,
+        <<"purpose">> => <<"production_damagebdd_node_key">>,
+        <<"status">> =>
+            case VaultCreated of
+                true -> <<"generated">>;
+                false -> <<"existing_vault_public_identity_exported">>
+            end,
+        <<"created_at_utc">> => iso8601_now(),
+        <<"backend">> => bin(Backend),
+        <<"backend_sha256">> => lower_hex_sha256_file(Backend),
+        <<"backend_protocol">> => bin(maps:get(backend_protocol, Provenance, framed_stdio_v2)),
+        <<"secret_provider">> => <<"aws_secrets_manager">>,
+        <<"vault_path">> => bin(Vault),
+        <<"vault_created">> => VaultCreated,
+        <<"vault_mode_octal">> => bin(VaultMode),
+        <<"pubkey_hex">> => Pubkey,
+        <<"npub">> => Npub,
+        <<"credential_provider">> => bin(maps:get(credential_provider, Provenance, undefined)),
+        <<"imds_protocol">> => bin(maps:get(imds_protocol, Provenance, undefined)),
+        <<"aws_account_id">> => maps:get(account_id, Provenance, <<>>),
+        <<"aws_role_name">> => maps:get(role_name, Provenance, <<>>),
+        <<"secret_id_sha256">> => maps:get(secret_id_sha256, Provenance, <<>>),
+        <<"secret_version_id">> => bin(maps:get(version_id, Provenance, <<>>)),
+        <<"secret_version_stages">> => maps:get(version_stages, Provenance, []),
+        <<"secret_exported">> => false,
+        <<"scope">> => <<"PRODUCTION Damage node nsecbunker identity">>
+    },
+    write_phase4b_report(JsonReport, MdReport, Report).
+
+%% Compatibility path for non-managed infrastructure. It intentionally keeps
+%% the previous Damage secret-store and one-shot C backend behavior. It is
+%% selected only by explicit/default local configuration; an AWS-selected node
+%% never reaches this code after an AWS failure.
+phase4b_create_production_damagebdd_node_key_local(Opts, Config) ->
     Root = root(Opts),
     Backend = crypto_backend_path(Opts),
     Vault = opt_env_config(
@@ -145,7 +234,13 @@ phase4b_create_production_damagebdd_node_key_0(Opts) ->
         prod_vault_path,
         "DAMAGE_NSECBUNKER_PROD_VAULT",
         [phase4b_prod_vault_path, production_vault_path, prod_vault_path],
-        "/var/lib/damage/nsecbunker/damagebdd_node_production.vault"
+        str(
+            maps:get(
+                vault_path,
+                Config,
+                "/var/lib/damage/nsecbunker/damagebdd_node_production.vault"
+            )
+        )
     ),
     ReportDir = report_dir(Opts#{root => Root}),
     JsonReport = filename:join(ReportDir, "PHASE4B_DAMAGEBDD_NODE_PRODUCTION_KEY.json"),
@@ -159,13 +254,13 @@ phase4b_create_production_damagebdd_node_key_0(Opts) ->
         <<>> ->
             {error, production_vault_passphrase_required};
         _ ->
-            phase4b_create_production_damagebdd_node_key_1(
-                Opts, Backend, Vault, ReportDir, JsonReport, MdReport, Passphrase
+            phase4b_create_production_damagebdd_node_key_local_1(
+                Opts, Backend, Vault, JsonReport, MdReport, Passphrase
             )
     end.
 
-phase4b_create_production_damagebdd_node_key_1(
-    Opts, Backend, Vault, _ReportDir, JsonReport, MdReport, Passphrase
+phase4b_create_production_damagebdd_node_key_local_1(
+    Opts, Backend, Vault, JsonReport, MdReport, Passphrase
 ) ->
     ok = ensure_parent(Vault),
     ok = ensure_parent(JsonReport),
@@ -177,38 +272,43 @@ phase4b_create_production_damagebdd_node_key_1(
                 #{};
             false ->
                 backend_call(
-                    #{<<"op">> => <<"generate_identity">>, <<"vault_path">> => bin(Vault)}, Opts#{
-                        backend => Backend, env => Env
-                    }
+                    #{
+                        <<"op">> => <<"generate_identity">>,
+                        <<"vault_path">> => bin(Vault)
+                    },
+                    Opts#{backend => Backend, env => Env}
                 )
         end,
-    Pub = backend_call(#{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)}, Opts#{
-        backend => Backend, env => Env
-    }),
+    Pub = backend_call(
+        #{<<"op">> => <<"get_public_key">>, <<"vault_path">> => bin(Vault)},
+        Opts#{backend => Backend, env => Env}
+    ),
     Pubkey = require_pubkey(
-        first_present([field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)])
+        first_present([
+            field(<<"pubkey_hex">>, Pub), field(<<"pubkey_hex">>, Gen)
+        ])
     ),
     Npub = require_npub(
         first_present([
-            field(<<"npub">>, Gen), npub_for(Pubkey, Opts#{backend => Backend, env => Env})
+            field(<<"npub">>, Gen),
+            npub_for(Pubkey, Opts#{backend => Backend, env => Env})
         ])
     ),
     ok = file_mode_private(Vault),
     VaultMode = file_mode_octal(Vault),
-    BackendSha = lower_hex_sha256_file(Backend),
-    Created = iso8601_now(),
-    Status =
-        case VaultExistsBefore of
-            true -> <<"existing_vault_public_identity_exported">>;
-            false -> <<"generated">>
-        end,
     Report = #{
         <<"phase">> => <<"4B">>,
         <<"purpose">> => <<"production_damagebdd_node_key">>,
-        <<"status">> => Status,
-        <<"created_at_utc">> => Created,
+        <<"status">> =>
+            case VaultExistsBefore of
+                true -> <<"existing_vault_public_identity_exported">>;
+                false -> <<"generated">>
+            end,
+        <<"created_at_utc">> => iso8601_now(),
         <<"backend">> => bin(Backend),
-        <<"backend_sha256">> => BackendSha,
+        <<"backend_sha256">> => lower_hex_sha256_file(Backend),
+        <<"backend_protocol">> => <<"one_shot_json_v1">>,
+        <<"secret_provider">> => <<"local">>,
         <<"vault_path">> => bin(Vault),
         <<"vault_exists_before">> => VaultExistsBefore,
         <<"vault_mode_octal">> => bin(VaultMode),
@@ -217,18 +317,78 @@ phase4b_create_production_damagebdd_node_key_1(
         <<"secret_exported">> => false,
         <<"scope">> => <<"PRODUCTION Damage node nsecbunker identity">>
     },
+    write_phase4b_report(JsonReport, MdReport, Report).
+
+write_phase4b_report(JsonReport, MdReport, Report) ->
     ok = assert_no_secret_material(Report),
     ok = write_json(JsonReport, Report),
     ok = write_file(MdReport, phase4b_markdown(Report)),
     ok = change_mode(JsonReport, 8#644),
     ok = change_mode(MdReport, 8#644),
-    {ok, Report#{<<"json_report">> => bin(JsonReport), <<"markdown_report">> => bin(MdReport)}}.
+    {ok, Report#{
+        <<"json_report">> => bin(JsonReport),
+        <<"markdown_report">> => bin(MdReport)
+    }}.
+
+production_phase4b_preflight(Opts, Config) ->
+    case damage_nsecbunker_config:production(Config) of
+        false ->
+            {error, production_mode_required};
+        true ->
+            case damage_nsecbunker_config:secret_provider(Config) of
+                local ->
+                    {ok, local};
+                aws_secrets_manager ->
+                    managed_phase4b_preflight(Opts, Config);
+                Other ->
+                    {error, {unsupported_nsecbunker_secret_provider, Other}}
+            end
+    end.
+
+managed_phase4b_preflight(Opts, Config) ->
+    ForbiddenOptions = [
+        Key
+     || Key <- [
+            passphrase,
+            env,
+            backend,
+            prod_vault_path,
+            production_vault_path
+        ],
+        maps:is_key(Key, Opts)
+    ],
+    case
+        {
+            damage_nsecbunker_config:secure_aws(Config),
+            damage_nsecbunker_secret_owner:ready(),
+            ForbiddenOptions
+        }
+    of
+        {true, true, []} -> {ok, aws_secrets_manager};
+        {false, _, _} -> {error, invalid_aws_secret_provider_configuration};
+        {_, false, _} -> {error, secure_vault_owner_not_ready};
+        {_, _, [_ | _]} -> {error, {production_custody_override_forbidden, ForbiddenOptions}}
+    end.
 
 phase4a_ceremony_available() ->
     executable_file(crypto_backend_path()).
 
 phase4b_ceremony_available() ->
-    executable_file(crypto_backend_path()).
+    Config = config(),
+    case
+        {
+            damage_nsecbunker_config:production(Config),
+            damage_nsecbunker_config:secret_provider(Config)
+        }
+    of
+        {true, aws_secrets_manager} ->
+            damage_nsecbunker_config:secure_aws(Config) andalso
+                damage_nsecbunker_secret_owner:ready();
+        {true, local} ->
+            executable_file(crypto_backend_path());
+        _ ->
+            false
+    end.
 
 %%====================================================================
 %% Backend operations
@@ -238,70 +398,100 @@ backend_call(Payload) ->
     backend_call(Payload, #{}).
 
 backend_call(Payload, Opts0) ->
-    Opts = opts(Opts0),
-    Backend = crypto_backend_path(Opts),
-    case executable_file(Backend) of
-        true -> backend_call_executable(Backend, Payload, Opts);
-        false -> error({crypto_backend_not_executable, Backend})
-    end.
-
-backend_call_executable(Backend, Payload, Opts) ->
-    Timeout = opt(crypto_timeout_ms, Opts, config_get(crypto_timeout_ms, 45000)),
-    Env = effective_backend_env(Opts, Payload),
-    PortOpts0 = [binary, use_stdio, exit_status, stderr_to_stdout],
-    PortOpts =
-        case Env of
-            [] -> PortOpts0;
-            _ -> PortOpts0 ++ [{env, Env}]
-        end,
-    Port =
-        try open_port({spawn_executable, Backend}, PortOpts) of
-            P -> P
-        catch
-            Class:Reason -> error({crypto_backend_open_failed, Class, Reason})
-        end,
-    Json = jsx:encode(Payload),
-    true = port_command(Port, <<Json/binary, "\n">>),
-    case collect_port(Port, Timeout, <<>>) of
-        {ok, Bin} -> decode_backend(Bin);
-        {error, Reason0} -> error(Reason0)
-    end.
-
-collect_port(Port, Timeout, Acc) ->
-    receive
-        {Port, {data, Data}} -> collect_port(Port, Timeout, <<Acc/binary, Data/binary>>);
-        {Port, {exit_status, 0}} -> {ok, Acc};
-        {Port, {exit_status, Status}} -> {error, {crypto_backend_exit, Status, Acc}}
-    after Timeout ->
-        safe_port_close(Port),
-        {error, crypto_backend_timeout}
-    end.
-
-safe_port_close(Port) ->
-    try erlang:port_close(Port) of
-        _ -> ok
-    catch
-        _:_ -> ok
-    end.
-
-decode_backend(Bin) ->
-    case decode_backend_json(Bin) of
-        #{<<"ok">> := true, <<"result">> := Result} when is_map(Result) ->
-            Result;
-        #{<<"ok">> := true, <<"result">> := Result} ->
-            #{<<"value">> => Result};
-        #{<<"ok">> := false, <<"error">> := Error} ->
-            error({crypto_backend_not_ok, Error});
+    case damage_nsecbunker_config:secret_provider(config()) of
+        aws_secrets_manager ->
+            error(managed_provider_direct_backend_call_forbidden);
+        local ->
+            Opts = opts(Opts0),
+            Timeout = opt(
+                crypto_timeout_ms,
+                Opts,
+                config_get(crypto_timeout_ms, 45000)
+            ),
+            Config = legacy_backend_config(Opts),
+            unwrap_legacy_backend(
+                damage_nsecbunker_legacy_backend:call(
+                    Config,
+                    Payload,
+                    Timeout
+                )
+            );
         Other ->
-            error({crypto_backend_bad_envelope, Other})
+            error({unsupported_nsecbunker_secret_provider, Other})
     end.
 
-decode_backend_json(Bin) ->
-    try jsx:decode(Bin, [return_maps]) of
-        Json -> Json
-    catch
-        Class:Reason -> error({crypto_backend_invalid_json, Class, Reason, Bin})
+legacy_backend_config(Opts) ->
+    Base = config(),
+    Backend = crypto_backend_path(Opts),
+    Env = opt(env, Opts, []),
+    Config0 = maps:merge(
+        Base,
+        maps:with(
+            [
+                vault_passphrase,
+                vault_path,
+                crypto_timeout_ms
+            ],
+            Opts
+        )
+    ),
+    Config1 = Config0#{
+        crypto_backend_cmd => Backend,
+        backend_env => strip_backend_secret_env(Env)
+    },
+    case explicit_passphrase(Opts, Env) of
+        undefined ->
+            Config1;
+        Passphrase ->
+            Config1#{
+                resolved_vault_passphrase => Passphrase
+            }
     end.
+
+explicit_passphrase(Opts, Env) ->
+    case opt(passphrase, Opts, undefined) of
+        undefined ->
+            env_value(
+                "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE",
+                Env
+            );
+        Passphrase ->
+            Passphrase
+    end.
+
+env_value(_Name, []) ->
+    undefined;
+env_value(Name, [{Name0, Value} | Rest]) ->
+    case env_name(Name0) =:= Name of
+        true ->
+            Value;
+        false ->
+            env_value(Name, Rest)
+    end;
+env_value(Name, [_Other | Rest]) ->
+    env_value(Name, Rest).
+
+strip_backend_secret_env(Env) ->
+    [
+        {Name, Value}
+     || {Name, Value} <- Env,
+        not lists:member(
+            env_name(Name),
+            [
+                "DAMAGE_NSECBUNKER_VAULT_PASSPHRASE",
+                "DAMAGE_NSECBUNKER_VAULT_PATH"
+            ]
+        )
+    ].
+
+unwrap_legacy_backend({ok, Result}) when is_map(Result) ->
+    Result;
+unwrap_legacy_backend({ok, Result}) ->
+    #{<<"value">> => Result};
+unwrap_legacy_backend({error, {crypto_backend_rejected, Reason}}) ->
+    error({crypto_backend_not_ok, Reason});
+unwrap_legacy_backend({error, Reason}) ->
+    error(Reason).
 
 smoke_phase2b_crypto_c_backend() ->
     smoke_phase2b_crypto_c_backend(#{}).
@@ -790,37 +980,10 @@ report_dir(Opts0) ->
 config() ->
     try damage_nsecbunker:config() of
         C when is_map(C) -> C;
-        _ -> #{}
+        _ -> damage_nsecbunker_config:load()
     catch
-        _:_ ->
-            case application:get_env(damage, nsecbunker) of
-                {ok, Raw} -> canonical_config(Raw);
-                undefined -> #{}
-            end
+        _:_ -> damage_nsecbunker_config:load()
     end.
-
-canonical_config(Map) when is_map(Map) ->
-    Map;
-canonical_config(List) when is_list(List) ->
-    maps:from_list([{canon_key(K), V} || {K, V} <- List]);
-canonical_config(_) ->
-    #{}.
-
-canon_key(K) when is_atom(K) -> K;
-canon_key(K) when is_binary(K) ->
-    try
-        binary_to_existing_atom(K, utf8)
-    catch
-        _:_ -> K
-    end;
-canon_key(K) when is_list(K) ->
-    try
-        list_to_existing_atom(K)
-    catch
-        _:_ -> K
-    end;
-canon_key(K) ->
-    K.
 
 config_get(Key, Default) ->
     maps:get(Key, config(), Default).
@@ -851,16 +1014,26 @@ opt_env(Opts, OptKey, EnvName, Default) ->
     end.
 
 vault_passphrase(Opts, Default) ->
-    case opt(passphrase, Opts, undefined) of
-        undefined ->
-            case secrets:retrieve_decrypt(vault_passphrase_secret_name(Opts)) of
-                {ok, Passphrase} when Passphrase =/= <<>>, Passphrase =/= [] ->
-                    Passphrase;
-                _ ->
-                    Default
+    case damage_nsecbunker_config:secret_provider(config()) of
+        aws_secrets_manager ->
+            error(managed_provider_local_passphrase_forbidden);
+        local ->
+            case opt(passphrase, Opts, undefined) of
+                undefined ->
+                    case
+                        damage_nsecbunker_local_secret_provider:fetch(#{
+                            vault_passphrase =>
+                                vault_passphrase_secret_name(Opts)
+                        })
+                    of
+                        {ok, Passphrase} -> Passphrase;
+                        {error, _Reason} -> Default
+                    end;
+                Passphrase ->
+                    Passphrase
             end;
-        Passphrase ->
-            Passphrase
+        Other ->
+            error({unsupported_nsecbunker_secret_provider, Other})
     end.
 
 vault_passphrase_secret_name(Opts) ->
@@ -873,50 +1046,6 @@ vault_passphrase_secret_name(Opts) ->
             config_get(vault_passphrase, undefined)
         ],
         nsecbunker_vault_passphrase
-    ).
-
-effective_backend_env(Opts, Payload) ->
-    Env0 = maybe_add_vault_path_env(Payload, opt(env, Opts, [])),
-    case needs_vault_passphrase(Payload) of
-        true ->
-            case vault_passphrase(Opts, undefined) of
-                undefined -> Env0;
-                [] -> Env0;
-                <<>> -> Env0;
-                Passphrase -> backend_env(Opts#{env => Env0}, Passphrase)
-            end;
-        false ->
-            Env0
-    end.
-
-needs_vault_passphrase(Payload) when is_map(Payload) ->
-    payload_vault_path(Payload) =/= undefined;
-needs_vault_passphrase(_) ->
-    false.
-
-maybe_add_vault_path_env(Payload, Env0) ->
-    case {payload_vault_path(Payload), env_has("DAMAGE_NSECBUNKER_VAULT_PATH", Env0)} of
-        {undefined, _} -> Env0;
-        {_Path, true} -> Env0;
-        {Path, false} -> [{"DAMAGE_NSECBUNKER_VAULT_PATH", str(Path)} | Env0]
-    end.
-
-payload_vault_path(Payload) when is_map(Payload) ->
-    case maps:get(<<"vault_path">>, Payload, undefined) of
-        undefined -> maps:get(vault_path, Payload, undefined);
-        Path -> Path
-    end;
-payload_vault_path(_) ->
-    undefined.
-
-env_has(Name, Env) ->
-    lists:any(
-        fun
-            ({Name0, _}) when Name0 =:= Name -> true;
-            ({Name0, _}) when is_binary(Name0) -> binary_to_list(Name0) =:= Name;
-            (_) -> false
-        end,
-        Env
     ).
 
 opts(Map) when is_map(Map) -> Map;
@@ -1286,7 +1415,13 @@ secret_key(K) ->
         <<"mnemonic">>,
         <<"seed">>,
         <<"seed_hex">>,
-        <<"sk">>
+        <<"sk">>,
+        <<"passphrase">>,
+        <<"vault_passphrase">>,
+        <<"secret_value">>,
+        <<"aws_access_key_id">>,
+        <<"aws_secret_access_key">>,
+        <<"aws_session_token">>
     ]).
 
 secret_value(Bin0) ->

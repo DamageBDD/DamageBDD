@@ -47,12 +47,7 @@ stop() ->
     call(stop).
 
 config() ->
-    Raw =
-        case application:get_env(damage, nsecbunker) of
-            {ok, Value} -> Value;
-            undefined -> #{}
-        end,
-    normalize_config(Raw).
+    damage_nsecbunker_config:load().
 
 enabled() ->
     maps:get(enabled, config(), false) =:= true.
@@ -120,7 +115,7 @@ status() ->
     call(status).
 
 reload() ->
-    call(reload).
+    call(reload, 70000).
 
 generate_identity() ->
     call(generate_identity).
@@ -139,9 +134,12 @@ handle_plain_request(Request) when is_map(Request) ->
     call({plain_request, Request}).
 
 call(Request) ->
+    call(Request, 30000).
+
+call(Request, Timeout) ->
     case whereis(?MODULE) of
         undefined -> {error, nsecbunker_not_running};
-        _Pid -> gen_server:call(?MODULE, Request, 30000)
+        _Pid -> gen_server:call(?MODULE, Request, Timeout)
     end.
 
 %%====================================================================
@@ -150,12 +148,20 @@ call(Request) ->
 
 init([]) ->
     Config = config(),
-    Policy = policy(Config),
-    Vault = damage_nsecbunker_vault:init(Config, Policy),
-    ok = ensure_audit_path(Config),
-    {ok, #state{
-        config = Config, policy = Policy, vault = Vault, started_at = erlang:system_time(second)
-    }}.
+    case validate_runtime_config(Config) of
+        ok ->
+            Policy = policy(Config),
+            Vault = damage_nsecbunker_vault:init(Config, Policy),
+            ok = ensure_audit_path(Config),
+            {ok, #state{
+                config = Config,
+                policy = Policy,
+                vault = Vault,
+                started_at = erlang:system_time(second)
+            }};
+        {error, Reason} ->
+            {stop, Reason}
+    end.
 
 handle_call(
     status,
@@ -167,16 +173,34 @@ handle_call(
         running => true,
         started_at => StartedAt,
         mode => maps:get(mode, Config, undefined),
+        secret_provider => damage_nsecbunker_config:secret_provider(Config),
         policy => policy_summary(Policy),
         vault => damage_nsecbunker_vault:status(Vault),
+        secure_owner => secure_owner_status(Config),
         relay_client_enabled => maps:get(relay_client_enabled, Config, false)
     },
     {reply, Reply, State};
-handle_call(reload, _From, State) ->
-    Config = config(),
-    Policy = policy(Config),
-    Vault = damage_nsecbunker_vault:init(Config, Policy),
-    {reply, ok, State#state{config = Config, policy = Policy, vault = Vault}};
+handle_call(reload, _From, State = #state{config = CurrentConfig}) ->
+    CandidateConfig = config(),
+    case validate_candidate_config(CandidateConfig) of
+        ok ->
+            case reload_secret_provider(CurrentConfig, CandidateConfig) of
+                ok ->
+                    CandidatePolicy = policy(CandidateConfig),
+                    CandidateVault = damage_nsecbunker_vault:init(
+                        CandidateConfig, CandidatePolicy
+                    ),
+                    {reply, ok, State#state{
+                        config = CandidateConfig,
+                        policy = CandidatePolicy,
+                        vault = CandidateVault
+                    }};
+                {error, _} = Error ->
+                    {reply, Error, State}
+            end;
+        {error, _} = Error ->
+            {reply, Error, State}
+    end;
 handle_call(generate_identity, _From, State = #state{vault = Vault}) ->
     Reply = damage_nsecbunker_vault:generate_identity(Vault),
     {reply, Reply, State};
@@ -272,12 +296,19 @@ execute_request(#{method := <<"sign_event">>, event := Event} = Request, #state{
     vault = Vault, policy = Policy
 }) ->
     TimeoutMs = maps:get(signing_timeout_ms, Policy, 10000),
-    SignFun = fun() -> damage_nsecbunker_vault:sign_event(Vault, Event) end,
-    case damage_nsecbunker_signing_guard:with_timeout(SignFun, TimeoutMs) of
+    case damage_nsecbunker_vault:sign_event(Vault, Event, TimeoutMs) of
         {ok, SignedEvent} ->
             {ok, damage_nip46:encode_response_map(Request, jsx:encode(SignedEvent), <<>>)};
+        {error, crypto_backend_timeout} ->
+            {ok,
+                damage_nip46:encode_response_map(
+                    Request, <<>>, damage_nip46:format_error(signing_timeout)
+                )};
         {error, Reason} ->
-            {ok, damage_nip46:encode_response_map(Request, <<>>, damage_nip46:format_error(Reason))}
+            {ok,
+                damage_nip46:encode_response_map(
+                    Request, <<>>, damage_nip46:format_error(Reason)
+                )}
     end;
 execute_request(Request, _State) ->
     {ok, damage_nip46:encode_response_map(Request, <<>>, <<"unsupported_method">>)}.
@@ -286,55 +317,8 @@ execute_request(Request, _State) ->
 %% Helpers
 %%====================================================================
 
-normalize_config(Config) when is_map(Config) ->
-    normalize_config_map(Config);
-normalize_config(Config) when is_list(Config) ->
-    case is_kv_list(Config) of
-        true -> normalize_config_map(maps:from_list(Config));
-        false -> #{}
-    end;
-normalize_config(_) ->
-    #{}.
-
-normalize_config_map(Map) when is_map(Map) ->
-    maps:fold(
-        fun(K, V, Acc) ->
-            Acc#{normalize_config_key(K) => normalize_config_value(V)}
-        end,
-        #{},
-        Map
-    ).
-
-normalize_config_value(Map) when is_map(Map) ->
-    normalize_config_map(Map);
-normalize_config_value(List) when is_list(List) ->
-    case {is_string(List), is_kv_list(List)} of
-        {true, _} -> List;
-        {false, true} -> normalize_config_map(maps:from_list(List));
-        {false, false} -> [normalize_config_value(V) || V <- List]
-    end;
-normalize_config_value(Value) ->
-    Value.
-
-normalize_config_key(Key) when is_binary(Key) ->
-    try
-        binary_to_existing_atom(Key, utf8)
-    catch
-        _:_ -> Key
-    end;
-normalize_config_key(Key) when is_list(Key) ->
-    case is_string(Key) of
-        true ->
-            try
-                list_to_existing_atom(Key)
-            catch
-                _:_ -> Key
-            end;
-        false ->
-            Key
-    end;
-normalize_config_key(Key) ->
-    Key.
+normalize_config(Config) ->
+    damage_nsecbunker_config:normalize(Config).
 
 is_kv_list([]) ->
     false;
@@ -471,6 +455,54 @@ bin(V) when is_atom(V) -> atom_to_binary(V, utf8);
 bin(V) when is_list(V) -> unicode:characters_to_binary(V);
 bin(V) when is_integer(V) -> integer_to_binary(V);
 bin(V) -> unicode:characters_to_binary(io_lib:format("~p", [V])).
+
+validate_runtime_config(Config) ->
+    case damage_nsecbunker_config:validate_production(Config) of
+        ok ->
+            case damage_nsecbunker_config:managed_secret_owner(Config) of
+                true ->
+                    case damage_nsecbunker_secret_owner:ready() of
+                        true -> ok;
+                        false -> {error, secure_vault_owner_not_ready}
+                    end;
+                false ->
+                    ok
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+%% A provider change changes the supervisor child set and therefore requires a
+%% supervisor/application restart. Same-provider AWS reload remains
+%% transactional; same-provider local reload retains the previous behavior.
+validate_candidate_config(Config) ->
+    damage_nsecbunker_config:validate_production(Config).
+
+reload_secret_provider(CurrentConfig, CandidateConfig) ->
+    case
+        damage_nsecbunker_config:provider_change(
+            CurrentConfig,
+            CandidateConfig
+        )
+    of
+        ok ->
+            case damage_nsecbunker_config:secret_provider(CandidateConfig) of
+                aws_secrets_manager ->
+                    damage_nsecbunker_secret_owner:reload(
+                        CandidateConfig
+                    );
+                local ->
+                    ok
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+secure_owner_status(Config) ->
+    case damage_nsecbunker_config:managed_secret_owner(Config) of
+        true -> damage_nsecbunker_secret_owner:status();
+        false -> #{enabled => false}
+    end.
 
 ensure_audit_path(Config) ->
     Path = maps:get(audit_log, Config, "/var/log/damage/nsecbunker_audit.log"),

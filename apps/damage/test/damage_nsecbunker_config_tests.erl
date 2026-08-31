@@ -68,3 +68,202 @@ standard_sys_config_proplist_is_canonicalised_test() ->
     ?assertEqual(#{max_requests => 12, window_seconds => 60}, maps:get(rate_limit, Policy)),
 
     application:unset_env(damage, nsecbunker).
+
+default_provider_is_local_test() ->
+    ?assertEqual(
+        local,
+        damage_nsecbunker_config:secret_provider(#{})
+    ).
+
+explicit_local_overrides_stale_aws_block_test() ->
+    Config = #{
+        secret_provider => local,
+        aws_secret_bootstrap => #{enabled => true}
+    },
+    ?assertEqual(
+        local,
+        damage_nsecbunker_config:secret_provider(Config)
+    ),
+    ?assertEqual(
+        false,
+        damage_nsecbunker_config:managed_secret_owner(Config)
+    ).
+
+stale_aws_block_does_not_activate_aws_test() ->
+    Config = #{
+        aws_secret_bootstrap => #{enabled => true}
+    },
+    ?assertEqual(
+        local,
+        damage_nsecbunker_config:secret_provider(Config)
+    ).
+
+local_production_config_needs_no_aws_configuration_test() ->
+    ?assertEqual(
+        ok,
+        damage_nsecbunker_config:validate_production(
+            (production_config())#{
+                secret_provider => local
+            }
+        )
+    ).
+
+omitted_provider_preserves_local_compatibility_test() ->
+    Config = production_config(),
+    ?assertEqual(
+        local,
+        damage_nsecbunker_config:secret_provider(Config)
+    ),
+    ?assertEqual(
+        ok,
+        damage_nsecbunker_config:validate_production(Config)
+    ).
+
+complete_aws_production_config_is_valid_test() ->
+    Config = (production_config())#{
+        secret_provider => aws_secrets_manager,
+        aws_secret => aws_config()
+    },
+    ?assertEqual(
+        ok,
+        damage_nsecbunker_config:validate_production(Config)
+    ),
+    ?assertEqual(
+        true,
+        damage_nsecbunker_config:managed_secret_owner(Config)
+    ).
+
+aws_provider_requires_production_mode_test() ->
+    Config = #{
+        secret_provider => aws_secrets_manager,
+        aws_secret => aws_config()
+    },
+    ?assertEqual(
+        {error, invalid_aws_secret_provider_configuration},
+        damage_nsecbunker_config:validate_production(Config)
+    ).
+
+aws_configuration_must_be_complete_test() ->
+    Config = (production_config())#{
+        secret_provider => aws_secrets_manager,
+        aws_secret => maps:remove(secret_id, aws_config())
+    },
+    ?assertMatch(
+        {error, {missing_aws_secret_configuration, _}},
+        damage_nsecbunker_config:validate_production(Config)
+    ).
+
+unknown_provider_is_rejected_test() ->
+    Config = (production_config())#{
+        secret_provider => some_cloud
+    },
+    ?assertEqual(
+        {
+            error,
+            {
+                unsupported_nsecbunker_secret_provider,
+                some_cloud
+            }
+        },
+        damage_nsecbunker_config:validate_production(Config)
+    ).
+
+same_provider_reload_is_allowed_test() ->
+    ?assertEqual(
+        ok,
+        damage_nsecbunker_config:provider_change(
+            #{secret_provider => local},
+            #{secret_provider => local}
+        )
+    ).
+
+provider_change_requires_restart_test() ->
+    ?assertMatch(
+        {
+            error,
+            {
+                secret_provider_change_requires_restart,
+                #{
+                    from := local,
+                    to := aws_secrets_manager
+                }
+            }
+        },
+        damage_nsecbunker_config:provider_change(
+            #{secret_provider => local},
+            #{secret_provider => aws_secrets_manager}
+        )
+    ).
+
+local_supervisor_omits_managed_owner_test() ->
+    with_nsecbunker_config(
+        (production_config())#{
+            secret_provider => local
+        },
+        fun() ->
+            {ok, {{one_for_one, 5, 10}, Children}} =
+                damage_nsecbunker_sup:init([]),
+            ?assertEqual(
+                false,
+                lists:member(
+                    damage_nsecbunker_secret_owner,
+                    child_ids(Children)
+                )
+            )
+        end
+    ).
+
+aws_supervisor_includes_managed_owner_test() ->
+    with_nsecbunker_config(
+        (production_config())#{
+            secret_provider => aws_secrets_manager,
+            aws_secret => aws_config()
+        },
+        fun() ->
+            {ok, {{rest_for_one, 5, 10}, Children}} =
+                damage_nsecbunker_sup:init([]),
+            ?assertEqual(
+                true,
+                lists:member(
+                    damage_nsecbunker_secret_owner,
+                    child_ids(Children)
+                )
+            )
+        end
+    ).
+
+child_ids(Children) ->
+    [maps:get(id, Child) || Child <- Children].
+
+with_nsecbunker_config(Config, Fun) ->
+    Previous = application:get_env(damage, nsecbunker),
+    ok = application:set_env(damage, nsecbunker, Config),
+    try
+        Fun()
+    after
+        restore_nsecbunker_config(Previous)
+    end.
+
+restore_nsecbunker_config(undefined) ->
+    application:unset_env(damage, nsecbunker);
+restore_nsecbunker_config({ok, Value}) ->
+    application:set_env(damage, nsecbunker, Value).
+
+production_config() ->
+    #{
+        enabled => true,
+        mode => production,
+        crypto_backend_cmd =>
+            "/opt/damage/bin/damage-nsecbunker-crypto-c",
+        vault_path =>
+            "/var/lib/damage/nsecbunker/node.vault"
+    }.
+
+aws_config() ->
+    #{
+        region => "ap-southeast-2",
+        secret_id =>
+            "/damage/prod/nsecbunker/vault-passphrase",
+        expected_account_id => "123456789012",
+        expected_role_name => "damage-node-prod"
+    }.
