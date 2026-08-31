@@ -420,10 +420,13 @@ function restoreFeatureDraftFromShareLink() {
 			.catch(() => {});
 
 
-		document.getElementById("addScheduleBtn").addEventListener("click", (event) => {
-			console.log("add schedule");
-			event.preventDefault();
-		});
+        const addScheduleBtn = document.getElementById("addScheduleBtn");
+        if (addScheduleBtn) {
+            addScheduleBtn.addEventListener("click", (event) => {
+                console.log("add schedule");
+                event.preventDefault();
+            });
+        }
 
 		var activityLink = document.getElementById("activity-link");
 		if (activityLink) {
@@ -2552,8 +2555,8 @@ function restoreFeatureDraftFromShareLink() {
 	document.addEventListener("DOMContentLoaded", function () {
 		const refreshBtn = document.getElementById("refresh-node-liquidity-address-btn");
 		if (refreshBtn) {
-			wrapApiButton(refreshBtn, async () => {
-				e.preventDefault();
+            wrapApiButton(refreshBtn, async (event) => {
+                event.preventDefault();
 				await loadNodeLiquidityAddress();
 			});
 		}

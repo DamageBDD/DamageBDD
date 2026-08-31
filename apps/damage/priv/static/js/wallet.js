@@ -132,7 +132,7 @@ export function checkWalletAddress(required = true) {
 export function getAddress(){
     if(address)
         return address;
-    else checkWalletAddress();
+    return checkWalletAddress();
 }
 
 // Keep this near the top of the file (or right above fetchWalletBalance)

@@ -44,11 +44,8 @@ export function showDamageQR({ containerId, address,  expirySeconds = 600, helpU
 		logo || configuredLogo || "/static/img/logo.png";
 
     qrCanvas.imageEmbedded = true;
-    qrCanvas.isPolling = true;
-    //qrCanvas.imageSize = 100;
     qrSection.appendChild(qrCanvas);
-    qrCanvas.callback = invoicePolling;
-    qrCanvas.pollInterval = 2000;
+
     // Wait for shadow DOM to be populated, then style
     setTimeout(() => {
         const link = qrCanvas.shadowRoot?.getElementById("bitcoin-qr-container");
@@ -73,7 +70,7 @@ export function showDamageQR({ containerId, address,  expirySeconds = 600, helpU
     copyButton.style.display = "none";
     copyButton.setAttribute("aria-label", "Copy Lightning Invoice");
     copyButton.onclick = () => {
-        navigator.clipboard.writeText(paymentRequest).then(() => {
+        navigator.clipboard.writeText(address).then(() => {
             copyButton.textContent = "✅ Copied!";
             setTimeout(() => copyButton.textContent = "📋 Copy Invoice", 2000);
         });

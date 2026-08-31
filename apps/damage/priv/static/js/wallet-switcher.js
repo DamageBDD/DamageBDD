@@ -47,10 +47,10 @@ const TokenManager = {
 	},
 	on_custodial_login(address, email, access_token){
 		var mode = "custodial";
-		this.activate(mode);
 		this.setAddress(address, mode);
 		this.setToken(mode, access_token);
 		this.setEmail(email);
+		this.activate(mode);
 	},
 
 
@@ -407,7 +407,6 @@ document.addEventListener('DOMContentLoaded', () => {
 				}
 			});
 		
-		event.preventDefault();
 		return;
 	});
 	document.getElementById('connect-wallet-now')?.addEventListener('click', async (ev) => {
