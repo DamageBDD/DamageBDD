@@ -2278,7 +2278,6 @@ function restoreFeatureDraftFromShareLink() {
 					showLightningQR({containerId : "qrcode-lightning",
 													 paymentRequest:  data.invoice.payment_request,
 													 address: window.TokenManager.getAddress(),
-													 logo: "/static/img/logo.png"
 													});
 				} else {
 					console.error("Error Invoice fetching failed: ", data);
@@ -2357,8 +2356,7 @@ function restoreFeatureDraftFromShareLink() {
 				showLightningQR({
 					containerId: "qrcode-lightning",
 					paymentRequest: data.invoice.payment_request,
-					address: walletAddress,
-					logo: "/static/img/logo.png"
+					address: walletAddress
 				});
 			} else {
 				throw new Error(data?.message || "Invoice generation failed");
@@ -2537,8 +2535,7 @@ function restoreFeatureDraftFromShareLink() {
 						expirySeconds: Number(data.expires_at)
 							? Math.max(1, Number(data.expires_at) - Math.floor(Date.now() / 1000))
 							: expiry,
-						helpUrl: "/lightning",
-						logo: "/static/img/logo.png"
+						helpUrl: "/lightning"
 					});
 				} else {
 					metaEl.textContent = data?.message || "Invoice creation failed";

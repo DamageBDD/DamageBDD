@@ -136,6 +136,7 @@
         damage,
         [
             {feature_dirs, ["~/DamageBDD/features/"]},
+            {logo_image, "/static/img/logo.png"},
             {run_user, "damage"},
             {api_url, "http://localhost:8080"},
             {allowance, 1000},

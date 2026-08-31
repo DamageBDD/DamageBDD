@@ -45,11 +45,21 @@ to_html(Req, #{action := index} = State) ->
 
 %% -------------------------- Context --------------------------
 base_context(Req) ->
-    %% Add anything you want available to all templates (user, feature list, etc.)
     #{
         request_path => cowboy_req:path(Req),
-        node_version => <<"v0.1">>
+        node_version => <<"v0.1">>,
+        logo_image => logo_image()
     }.
+
+logo_image() ->
+    case application:get_env(damage, logo_image) of
+        {ok, Logo} when is_binary(Logo) ->
+            Logo;
+        {ok, Logo} when is_list(Logo) ->
+            list_to_binary(Logo);
+        _ ->
+            <<"/static/img/logo.png">>
+    end.
 
 %% -------------------------- Page -----------------------------
 render_full_page(Ctx) ->

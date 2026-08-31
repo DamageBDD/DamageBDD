@@ -2,38 +2,9 @@
 // Professional Lightning Payment UI for DamageBDD
 // Accessible, modular, and easy to integrate
 
-var current_invoice ;
 var qrCanvas;
-function invoicePolling() {
 
-    // Fetch current invoice status from your backend
-    fetch("/invoices/" + current_invoice)
-        .then(res => res.json())
-        .then(data => {
-            if (data.status === "paid") {
-                console.log("✅ Invoice paid");
-
-                // Hide the entire lightning QR section
-                const qrSection = document.getElementById("lnqr");
-                if (qrSection) {
-                    qrSection.style.display = "none";
-                }
-
-                // Show success tick
-                const container = document.getElementById("qrcode-lightning"); // Or your dynamic containerId
-                container.innerHTML = `<p style="text-align:center; font-size:1.5em; margin-top:1em;">✅ Payment Confirmed</p>`;
-                qrCanvas.isPolling = false;
-                const oldQR = document.getElementById("lnqr");
-                if (oldQR) oldQR.remove();
-            }
-        })
-        .catch(err => {
-            console.error("Invoice poll failed", err);
-        });
-}
-
-
-export function showLightningQR({ containerId, paymentRequest, address, expirySeconds = 600, helpUrl, logo }) {
+export function showDamageQR({ containerId, address,  expirySeconds = 600, helpUrl, logo }) {
     const container = document.getElementById(containerId);
     if (!container) {
         console.error(`Container with id '${containerId}' not found.`);
@@ -57,18 +28,10 @@ export function showLightningQR({ containerId, paymentRequest, address, expirySe
     title.textContent = "⚡ Lightning Payment Request";
     qrSection.appendChild(title);
 
-    // Address Display
-    const addrText = document.createElement("p");
-    addrText.style.wordBreak = "break-word";
-    addrText.style.fontSize = "0.9em";
-    addrText.style.color = "#ccc";
-    addrText.textContent = `For address: ${address}`;
-    qrSection.appendChild(addrText);
 
     // Generate QR after small delay
     qrCanvas = document.createElement("bitcoin-qr");
-    qrCanvas.lightning = paymentRequest;
-    current_invoice = paymentRequest;
+    qrCanvas.lightning = address;
     qrCanvas.width = 400;
     qrCanvas.height = 400;
     qrCanvas.style.display = "block";
@@ -123,6 +86,7 @@ export function showLightningQR({ containerId, paymentRequest, address, expirySe
     instructions.style.fontSize = "1em";
     instructions.innerHTML = `
     🛡️ Scan the QR code with your Lightning wallet or paste the invoice manually.<br>
+    💸 After payment, your Damage Tokens will arrive within seconds.
   `;
     qrSection.appendChild(instructions);
 
