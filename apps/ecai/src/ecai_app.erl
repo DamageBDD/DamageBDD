@@ -38,9 +38,12 @@ maybe_start_index_jobs(SupPid) ->
                 modules => [ecai_index_jobs_sup]
             },
             case supervisor:start_child(SupPid, ChildSpec) of
-                {ok, _Pid} -> ok;
-                {ok, _Pid, _Info} -> ok;
-                {error, {already_started, _Pid}} -> ok;
+                {ok, _Pid} ->
+                    ok;
+                {ok, _Pid, _Info} ->
+                    ok;
+                {error, {already_started, _Pid}} ->
+                    ok;
                 {error, already_present} ->
                     case supervisor:restart_child(SupPid, ecai_index_jobs_sup) of
                         {ok, _Pid} -> ok;
@@ -48,7 +51,8 @@ maybe_start_index_jobs(SupPid) ->
                         {error, running} -> ok;
                         {error, Reason} -> error({index_jobs_restart_failed, Reason})
                     end;
-                {error, Reason} -> error({index_jobs_start_failed, Reason})
+                {error, Reason} ->
+                    error({index_jobs_start_failed, Reason})
             end;
         false ->
             ok;
@@ -61,8 +65,7 @@ maybe_start_wikimedia_fixture_server(SupPid) ->
         true ->
             case ecai_wikimedia_fixture_server:start_supervised(SupPid) of
                 ok -> ok;
-                {error, Reason} ->
-                    error({wikimedia_fixture_start_failed, Reason})
+                {error, Reason} -> error({wikimedia_fixture_start_failed, Reason})
             end;
         false ->
             ok;
@@ -123,7 +126,7 @@ start_phase(start_trails_http, _StartType, []) ->
                     [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h]
             }
         ),
-    metrics:init(),
+    damage_metrics:init(),
     ?LOG_INFO("Started ECAI cowboy.").
 
 stop(_State) ->
