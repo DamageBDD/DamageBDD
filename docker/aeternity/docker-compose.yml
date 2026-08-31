@@ -1,24 +1,31 @@
 services:
   ae_mdw:
     image: aeternity/ae_mdw:latest
-    container_name: ae_mdw
-    restart: unless-stopped
 
     ports:
-      - "0.0.0.0:4000:4000" # MDW REST
-      - "0.0.0.0:4002:4001" # MDW websocket
-      - "0.0.0.0:3113:3113" # Node internal API
-      - "0.0.0.0:3013:3013" # Node external API
-      - "0.0.0.0:3014:3014" # Node channels WS
+      - "4000:4000"
+      - "4002:4001"
+      - "3113:3113"
+      - "3013:3013"
+      - "3014:3014"
 
     volumes:
-      # 🔐 Persistent chain + mdw data stored on host
-      - /var/lib/aeternity/mnesia:/home/aeternity/node/local/rel/aeternity/data/mnesia
-      - /var/lib/aeternity/mdw.db:/home/aeternity/node/local/rel/aeternity/data/mdw.db
+      - aeternity_mnesia:/home/aeternity/node/local/rel/aeternity/data/mnesia
+      - aeternity_mdw:/home/aeternity/node/local/rel/aeternity/data/mdw.db
 
-      # 📜 Config (read-only)
-      - ${PWD}/aeternity.yaml:/home/aeternity/aeternity.yaml:ro
+      - ./aeternity.yaml:/home/aeternity/aeternity.yaml:ro
 
     environment:
       AETERNITY_CONFIG: /home/aeternity/aeternity.yaml
       DISABLE_IPV6: "true"
+
+    restart: unless-stopped
+
+volumes:
+  aeternity_mnesia:
+    external: true
+    name: aeternity_mnesia
+
+  aeternity_mdw:
+    external: true
+    name: aeternity_mdw      
