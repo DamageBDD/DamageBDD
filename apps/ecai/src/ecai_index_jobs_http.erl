@@ -113,7 +113,7 @@ to_json(Req0, #{action := collection} = State) ->
     Filter = scope_filter(Filter0, State),
     case safe_call(fun() -> ecai_index_jobs_srv:list(Filter) end) of
         {ok, {ok, Jobs}} ->
-            reply_json(Req0, 200, #{ok => true, jobs => Jobs}, State);
+            reply_json(Req0, 200, #{ok => true, jobs => decorate_jobs(Jobs)}, State);
         {ok, {error, Reason}} ->
             reply_error(Req0, 400, Reason, State);
         {error, Reason} ->
@@ -126,7 +126,7 @@ to_json(Req0, #{action := status} = State) ->
     end;
 to_json(Req0, #{action := get} = State) ->
     with_job(Req0, State, fun(Job) ->
-        reply_json(Req0, 200, #{ok => true, job => Job}, State)
+        reply_json(Req0, 200, #{ok => true, job => decorate_job(Job)}, State)
     end);
 to_json(Req0, #{action := artifact} = State) ->
     with_job(Req0, State, fun(Job) ->
@@ -172,11 +172,7 @@ from_json(Req0, #{action := collection} = State) ->
                     reply_json(
                         Req1,
                         202,
-                        #{
-                            ok => true,
-                            job => Job,
-                            events => events_path(maps:get(<<"id">>, Job))
-                        },
+                        #{ok => true, job => decorate_job(Job)},
                         State
                     );
                 {ok, {error, Reason}} ->
@@ -201,7 +197,12 @@ from_json(Req0, #{action := Action} = State) when
                 true ->
                     case safe_call(fun() -> Function(JobId) end) of
                         {ok, {ok, Job}} ->
-                            reply_json(Req0, 202, #{ok => true, job => Job}, State);
+                            reply_json(
+                                Req0,
+                                202,
+                                #{ok => true, job => decorate_job(Job)},
+                                State
+                            );
                         {ok, {error, Reason}} ->
                             reply_error(Req0, 409, Reason, State);
                         {error, Reason} ->
@@ -334,5 +335,37 @@ reply_json(Req0, Code, Map, State) ->
     ),
     {stop, Req1, State}.
 
-events_path(JobId) ->
-    <<"/ecai/index-jobs/", JobId/binary, "/events">>.
+decorate_jobs(Jobs) when is_list(Jobs) ->
+    [decorate_job(Job) || Job <- Jobs];
+decorate_jobs(_Other) ->
+    [].
+
+decorate_job(Job) when is_map(Job) ->
+    case job_id(Job) of
+        JobId when is_binary(JobId), byte_size(JobId) > 0 ->
+            Job#{<<"links">> => job_links(JobId)};
+        _ ->
+            Job
+    end;
+decorate_job(Other) ->
+    Other.
+
+job_id(Job) ->
+    case maps:get(<<"id">>, Job, undefined) of
+        undefined -> maps:get(id, Job, undefined);
+        Value -> Value
+    end.
+
+job_links(JobId) ->
+    Base = <<"/ecai/index-jobs/", JobId/binary>>,
+    #{
+        <<"self">> => Base,
+        <<"events">> => <<Base/binary, "/events">>,
+        <<"artifact">> => <<Base/binary, "/artifact">>,
+        <<"controls">> => #{
+            <<"pause">> => <<Base/binary, "/pause">>,
+            <<"resume">> => <<Base/binary, "/resume">>,
+            <<"cancel">> => <<Base/binary, "/cancel">>,
+            <<"retry">> => <<Base/binary, "/retry">>
+        }
+    }.

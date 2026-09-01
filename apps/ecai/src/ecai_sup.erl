@@ -74,10 +74,7 @@ init([]) ->
                     type => worker,
                     modules => []
                 },
-                #{
-                    id => ecai_indexer,
-                    start => {ecai_indexer, start_link, []},
-                    restart => permanent,
+                                    restart => permanent,
                     shutdown => 60,
                     type => worker,
                     modules => []

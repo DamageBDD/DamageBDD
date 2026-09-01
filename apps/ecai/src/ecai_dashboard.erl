@@ -10,7 +10,8 @@
 -export([trails/0]).
 -export([init/2, allowed_methods/2, content_types_provided/2, to_html/2]).
 
--define(TPL(Name), (filename:join("ui/dashboard", Name))).
+-define(DASH_TPL(Name), (filename:join("ui/dashboard", Name))).
+-define(INDEXER_TPL(Name), (filename:join("ui/indexer", Name))).
 
 trails() ->
     [
@@ -25,6 +26,12 @@ trails() ->
             ?MODULE,
             #{action => chat},
             #{get => #{tags => ["UI", "HTML"], produces => ["text/html"]}}
+        ),
+        trails:trail(
+            "/indexer",
+            ?MODULE,
+            #{action => indexer},
+            #{get => #{tags => ["UI", "HTML", "ECAI Indexer"], produces => ["text/html"]}}
         )
     ].
 
@@ -33,41 +40,109 @@ allowed_methods(Req, State) -> {[<<"GET">>], Req, State}.
 content_types_provided(Req, State) -> {[{{<<"text">>, <<"html">>, '*'}, to_html}], Req, State}.
 
 to_html(Req, #{action := index} = State) ->
-    Ctx0 = base_context(Req),
-    #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
-    Host = cowboy_req:host(Req),
-    %% pick template based on hostname
-    Template =
-        case Host of
-            <<"ecai.damagebdd.com">> -> "ecai_search.mustache";
-            <<"ecai.chat">> -> "ecai_chat.mustache";
-            _ -> application:get_env(ecai, default_page, "ecai_search.mustache")
-        end,
-    PageCtx = Ctx0,
-    case Comp0 of
+    Ctx = base_context(Req),
+    #{component := Component} = cowboy_req:match_qs([{component, [], undefined}], Req),
+    case Component of
         undefined ->
-            {render_tpl(?TPL(Template), PageCtx), Req, State};
+            Host = cowboy_req:host(Req),
+            Template =
+                case Host of
+                    <<"ecai.damagebdd.com">> -> "ecai_search.mustache";
+                    <<"ecai.chat">> -> "ecai_chat.mustache";
+                    _ -> application:get_env(ecai, default_page, "ecai_search.mustache")
+                end,
+            {render_tpl(?DASH_TPL(Template), Ctx), Req, State};
         _ ->
-            Comp = binary_to_atom(Comp0, utf8),
-            {render_component(Comp, PageCtx), Req, State}
+            {render_dashboard_component(Component, Ctx), Req, State}
+    end;
+to_html(Req, #{action := chat} = State) ->
+    Ctx = base_context(Req),
+    {render_tpl(?DASH_TPL("ecai_chat.mustache"), Ctx), Req, State};
+to_html(Req, #{action := indexer} = State) ->
+    Ctx = base_context(Req),
+    #{component := Component} = cowboy_req:match_qs([{component, [], undefined}], Req),
+    case Component of
+        undefined -> {render_indexer_page(Ctx), Req, State};
+        _ -> {render_indexer_component(Component, Ctx), Req, State}
     end.
 
 %% -------------------------- Context --------------------------
 base_context(Req) ->
-    %% Add anything you want available to all templates (user, feature list, etc.)
     #{
         request_path => cowboy_req:path(Req),
-        node_version => <<"v0.1">>
+        node_version => <<"v0.1">>,
+        indexer_path => <<"/indexer">>
     }.
 
-render_component(topbar, Ctx) ->
-    render_tpl(?TPL("topbar.mustache"), Ctx);
-render_component(footer, Ctx) ->
-    render_tpl(?TPL("footer.mustache"), Ctx);
-render_component(_, _) ->
+%% ---------------------- Dashboard pieces --------------------
+render_dashboard_component(<<"topbar">>, Ctx) ->
+    render_tpl(?DASH_TPL("topbar.mustache"), Ctx);
+render_dashboard_component(<<"footer">>, Ctx) ->
+    render_tpl(?DASH_TPL("footer.mustache"), Ctx);
+render_dashboard_component(_, _) ->
+    <<>>.
+
+%% ----------------------- Indexer page ------------------------
+render_indexer_page(Ctx) ->
+    Header = render_tpl(?INDEXER_TPL("header.mustache"), Ctx),
+    QueueStatus = render_tpl(?INDEXER_TPL("queue_status.mustache"), Ctx),
+    NewJob = render_tpl(?INDEXER_TPL("new_wikimedia_job.mustache"), Ctx),
+    Search = render_tpl(?INDEXER_TPL("search.mustache"), Ctx),
+    Jobs = render_tpl(?INDEXER_TPL("jobs.mustache"), Ctx),
+    SelectedJob = render_tpl(?INDEXER_TPL("selected_job.mustache"), Ctx),
+    Artifact = render_tpl(?INDEXER_TPL("artifact.mustache"), Ctx),
+    OperatorOutput = render_tpl(?INDEXER_TPL("operator_output.mustache"), Ctx),
+    PageCtx = Ctx#{
+        indexer_header => Header,
+        queue_status => QueueStatus,
+        new_wikimedia_job => NewJob,
+        search => Search,
+        jobs => Jobs,
+        selected_job => SelectedJob,
+        artifact => Artifact,
+        operator_output => OperatorOutput
+    },
+    render_tpl(?INDEXER_TPL("page_shell.mustache"), PageCtx).
+
+render_indexer_component(<<"header">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("header.mustache"), Ctx);
+render_indexer_component(<<"queue_status">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("queue_status.mustache"), Ctx);
+render_indexer_component(<<"new_job">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("new_wikimedia_job.mustache"), Ctx);
+render_indexer_component(<<"search">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("search.mustache"), Ctx);
+render_indexer_component(<<"jobs">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("jobs.mustache"), Ctx);
+render_indexer_component(<<"selected_job">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("selected_job.mustache"), Ctx);
+render_indexer_component(<<"artifact">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("artifact.mustache"), Ctx);
+render_indexer_component(<<"operator_output">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("operator_output.mustache"), Ctx);
+render_indexer_component(<<"page">>, Ctx) ->
+    render_indexer_page(Ctx);
+render_indexer_component(_, _) ->
     <<>>.
 
 %% ---------------------- Rendering helper ---------------------
 render_tpl(TemplateRelPath, Context) ->
-    %% priv/templates/<TemplateRelPath> :contentReference[oaicite:1]{index=1}
-    damage_utils:load_template(ecai, TemplateRelPath, Context).
+    try damage_utils:load_template(ecai, TemplateRelPath, Context) of
+        {error, enoent} ->
+            ?LOG_ERROR("ECAI template file not found template=~p", [TemplateRelPath]),
+            <<"<!-- template unavailable -->">>;
+        {error, Reason} ->
+            ?LOG_ERROR("ECAI template render failed template=~p reason=~p", [
+                TemplateRelPath, Reason
+            ]),
+            <<"<!-- template unavailable -->">>;
+        Rendered ->
+            Rendered
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "ECAI template render crashed template=~p class=~p reason=~p stacktrace=~p",
+                [TemplateRelPath, Class, Reason, Stacktrace]
+            ),
+            <<"<!-- template unavailable -->">>
+    end.

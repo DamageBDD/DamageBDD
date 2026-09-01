@@ -21,7 +21,6 @@
 %% {"/yelp/chunk",   ecai_yelp_admin, #{action => chunk}}
 %% {"/yelp/ipfs",    ecai_yelp_admin, #{action => ipfs}}
 %% {"/yelp/assign",  ecai_yelp_admin, #{action => assign}}
-%% {"/yelp/index",   ecai_yelp_admin, #{action => index}}
 %% {"/yelp/headers", ecai_yelp_admin, #{action => headers}}
 %% {"/yelp/manifest",ecai_yelp_admin, #{action => manifest}}
 %% {"/yelp/status",  ecai_yelp_admin, #{action => status}}
@@ -48,7 +47,6 @@
 %% # continue your existing flow:
 %% curl -s -XPOST http://127.0.0.1:8080/yelp/ipfs     | jq
 %% curl -s -XPOST http://127.0.0.1:8080/yelp/assign   -d '{"cluster_id":0,"cluster_size":4}' -H 'content-type: application/json' | jq
-%% curl -s -XPOST http://127.0.0.1:8080/yelp/index_async | jq
 %%
 %% # 2) pin chunks to IPFS (CIDv1)
 %% curl -s -XPOST http://127.0.0.1:8080/yelp/ipfs | jq
@@ -58,7 +56,6 @@
 %%   -H 'content-type: application/json' -d '{"cluster_id":0,"cluster_size":4}' | jq
 %%
 %% # 4) index assigned chunks (no limit)
-%% curl -s -XPOST http://127.0.0.1:8080/yelp/index -H 'content-type: application/json' -d '{"limit":"infinity"}' | jq
 %%
 %% # 5) export headers (term roots)
 %% curl -s -XPOST http://127.0.0.1:8080/yelp/headers | jq
@@ -69,10 +66,8 @@
 %% # 7) status
 %% curl -s http://127.0.0.1:8080/yelp/status | jq
 %% # start (returns 202 + job_id)
-%% curl -s -XPOST http://127.0.0.1:8080/yelp/index_async | jq
 %%
 %% # poll progress
-%% watch -n 2 'curl -s http://127.0.0.1:8080/yelp/index_job | jq'
 
 %% persistent_term keys this module uses:
 
@@ -158,28 +153,7 @@ trails() ->
                 }
             }
         }),
-        trails:trail("/yelp/index", ecai_yelp_admin, #{action => index}, #{
-            description => "Index assigned Yelp chunks into local ECAI search",
-            methods => #{
-                post => #{
-                    tags => ["ECAI Yelp"],
-                    description => "Run the indexer",
-                    parameters => [
-                        #{
-                            name => <<"limit">>,
-                            type => <<"integer">>,
-                            required => false,
-                            description => "Limit per chunk (default: infinity)"
-                        }
-                    ],
-                    responses => #{
-                        <<"200">> => #{description => "Indexed"},
-                        <<"400">> => #{description => "No assigned chunks"}
-                    }
-                }
-            }
-        }),
-        trails:trail("/yelp/headers", ecai_yelp_admin, #{action => headers}, #{
+                trails:trail("/yelp/headers", ecai_yelp_admin, #{action => headers}, #{
             description => "Export on-chain term headers (Merkle roots per term)",
             methods => #{
                 post => #{
@@ -216,32 +190,7 @@ trails() ->
                 }
             }
         }),
-        trails:trail("/yelp/index_async", ecai_yelp_admin, #{action => index_async}, #{
-            description => "Start async indexing",
-            methods => #{
-                post => #{
-                    tags => ["ECAI Yelp"],
-                    responses => #{<<"202">> => #{description => "Started or busy"}}
-                }
-            }
-        }),
-        trails:trail("/yelp/index_job", ecai_yelp_admin, #{action => index_job}, #{
-            description => "Get index job status",
-            methods => #{
-                get => #{
-                    tags => ["ECAI Yelp"], responses => #{<<"200">> => #{description => "Status"}}
-                }
-            }
-        }),
-        trails:trail("/yelp/index_cancel", ecai_yelp_admin, #{action => index_cancel}, #{
-            description => "Cancel current job",
-            methods => #{
-                post => #{
-                    tags => ["ECAI Yelp"], responses => #{<<"200">> => #{description => "Canceled"}}
-                }
-            }
-        }),
-        trails:trail("/yelp/chunk_async", ecai_yelp_admin, #{action => chunk_async}, #{
+                                trails:trail("/yelp/chunk_async", ecai_yelp_admin, #{action => chunk_async}, #{
             description => "Start async Yelp chunking job",
             methods => #{
                 post => #{
@@ -274,13 +223,9 @@ init(Req, #{action := Action} = State) ->
         {<<"POST">>, chunk} -> handle_chunk(Req, State);
         {<<"POST">>, ipfs} -> handle_ipfs(Req, State);
         {<<"POST">>, assign} -> handle_assign(Req, State);
-        {<<"POST">>, index} -> handle_index(Req, State);
         {<<"POST">>, headers} -> handle_headers(Req, State);
         {<<"POST">>, manifest} -> handle_manifest(Req, State);
         {<<"GET">>, status} -> handle_status(Req, State);
-        {<<"POST">>, index_async} -> handle_index_async(Req, State);
-        {<<"GET">>, index_job} -> handle_index_job(Req, State);
-        {<<"POST">>, index_cancel} -> handle_index_cancel(Req, State);
         {<<"POST">>, chunk_async} -> handle_chunk_async(Req, State);
         {<<"GET">>, chunk_job} -> handle_chunk_job(Req, State);
         {<<"POST">>, chunk_cancel} -> handle_chunk_cancel(Req, State);
@@ -385,31 +330,7 @@ handle_assign(Req, State) ->
     end).
 
 %%%-------------------------------------------------------------------
-%%% /yelp/index  POST { "limit": 100000 }  % use "infinity" or omit for all
 %%% Creates ecai_search ctx on first call.
-%%%-------------------------------------------------------------------
-handle_index(Req, State) ->
-    with_json(Req, fun(M) ->
-        Ctx = ensure_ctx(),
-        Limit =
-            case maps:get(<<"limit">>, M, <<"infinity">>) of
-                <<"infinity">> -> infinity;
-                N when is_integer(N), N > 0 -> N;
-                _ -> infinity
-            end,
-        Paths = get_pt(?K_ASSIGN, get_pt(?K_CHUNKS, [])),
-        case Paths of
-            [] ->
-                reply_json(Req, 400, #{ok => false, error => <<"no_assigned_chunks">>}, State);
-            _ ->
-                ok = ecai_yelp_loader:index_chunks(Ctx, Paths, Limit),
-                Sz = ecai_search:size(Ctx),
-                reply_json(Req, 200, #{ok => true, size => Sz}, State)
-        end
-    end).
-
-%%%-------------------------------------------------------------------
-%%% /yelp/headers  POST {}
 %%%-------------------------------------------------------------------
 handle_headers(Req, State) ->
     Ctx = ensure_ctx(),
@@ -467,39 +388,6 @@ handle_status(Req, State) ->
                 }
         end,
     reply_json(Req, 200, Resp, State).
-
-handle_index_async(Req, State) ->
-    %% pick assigned paths (or all chunks) and start the singleton worker
-    Ctx = ensure_ctx(),
-    Paths = get_pt(?K_ASSIGN, get_pt(?K_CHUNKS, [])),
-    case Paths of
-        [] ->
-            reply_json(Req, 400, #{ok => false, error => <<"no_assigned_chunks">>}, State);
-        _ ->
-            Limit = infinity,
-            case ecai_indexer:start(Ctx, Paths, Limit) of
-                {ok, JobId} ->
-                    %% 202 Accepted with job pointer
-                    Body = jsx:encode(#{ok => true, job_id => JobId, status => running}),
-                    {ok, cowboy_req:reply(202, #{<<"content-type">> => ?JSON}, Body, Req), State};
-                {error, busy} ->
-                    %% Already running — return current status
-                    S = ecai_indexer:status(),
-                    reply_json(Req, 200, maps:merge(#{ok => true}, S), State)
-            end
-    end.
-
-handle_index_job(Req, State) ->
-    S = ecai_indexer:status(),
-    reply_json(Req, 200, maps:merge(#{ok => true}, S), State).
-
-handle_index_cancel(Req, State) ->
-    R = ecai_indexer:cancel(),
-    reply_json(Req, 200, #{ok => true, result => R}, State).
-
-%%%-------------------------------------------------------------------
-%%% Helpers
-%%%-------------------------------------------------------------------
 
 ensure_ctx() ->
     ecai_search_server:get_ctx().
