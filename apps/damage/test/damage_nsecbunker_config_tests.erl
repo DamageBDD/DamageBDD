@@ -69,6 +69,30 @@ standard_sys_config_proplist_is_canonicalised_test() ->
 
     application:unset_env(damage, nsecbunker).
 
+disabled_aws_config_is_not_requested_test() ->
+    ?assertEqual(
+        false,
+        damage_nsecbunker_config:aws_requested(#{
+            enabled => false,
+            secret_provider => aws_secrets_manager
+        })
+    ).
+
+enabled_aws_config_is_requested_test() ->
+    ?assertEqual(
+        true,
+        damage_nsecbunker_config:aws_requested(#{
+            enabled => true,
+            secret_provider => aws_secrets_manager
+        })
+    ).
+
+enabled_defaults_to_false_test() ->
+    ?assertEqual(
+        false,
+        damage_nsecbunker_config:enabled(#{})
+    ).
+
 default_provider_is_local_test() ->
     ?assertEqual(
         local,

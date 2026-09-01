@@ -229,11 +229,29 @@ bootstrap(Config) ->
                         maps:get(crypto_unlock_timeout_ms, Config, 15000), 15000
                     ),
                     case
-                        damage_aws_secret_provider:fetch_vault_passphrase(
-                            AwsConfig
+                        damage_aws_runtime:with_runtime(
+                            Config,
+                            fun(ImdsMetadata) ->
+                                damage_aws_secret_provider:
+                                    fetch_vault_passphrase(
+                                        AwsConfig,
+                                        #{
+                                            imdsv2_metadata =>
+                                                ImdsMetadata
+                                        }
+                                    )
+                            end
                         )
                     of
-                        {ok, Passphrase, Metadata} ->
+                        {ok, Passphrase, Metadata} when
+                            is_binary(Passphrase),
+                            byte_size(Passphrase) > 0,
+                            is_map(Metadata)
+                        ->
+                            %% AWS and aws_credentials have been stopped
+                            %% successfully before the persistent custody
+                            %% backend is opened. A teardown failure therefore
+                            %% cannot orphan an unlocked backend handle.
                             open_and_unlock(
                                 Config,
                                 BackendModule,
@@ -242,7 +260,9 @@ bootstrap(Config) ->
                                 UnlockTimeout
                             );
                         {error, _} = Error ->
-                            Error
+                            Error;
+                        _ ->
+                            {error, invalid_aws_secret_bootstrap_result}
                     end;
                 {error, _} = Error ->
                     Error

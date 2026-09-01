@@ -30,6 +30,17 @@
     smoke_phase2b_crypto_c_backend/1,
     smoke_phase2c_crypto_vectors/0,
     smoke_phase2c_crypto_vectors/1,
+
+    %% Interactive operator / REPL helpers
+    help/0,
+    status/0,
+    services/0,
+    aws_probe/0,
+    quiesce_aws/0,
+    disable/0,
+    use_local/0,
+    use_aws/4,
+    restart/0,
     %% Release/deployment helpers
     install_crypto_backend/0,
     install_crypto_backend/2,
@@ -838,6 +849,359 @@ assert_fields(Label, Map, Expected) ->
         Expected
     ).
 
+%%====================================================================
+%% Interactive operator / REPL helpers
+%%====================================================================
+
+help() ->
+    [
+        {status, "show consolidated nsecbunker and AWS state"},
+        {services, "show OTP process and AWS application state"},
+        {aws_probe, "perform one IMDSv2 role probe without starting aws_credentials"},
+        {quiesce_aws, "stop stray aws_credentials when AWS custody is not selected"},
+        {disable, "runtime-only disable nsecbunker and restart its subtree"},
+        {use_local, "runtime-only select local custody and restart its subtree"},
+        {use_aws, "use_aws(Region, SecretId, AccountId, RoleName); requires pinned bunker pubkey"},
+        {restart, "restart the nsecbunker subtree under damage_sup"}
+    ].
+
+status() ->
+    Config = config(),
+    #{
+        enabled =>
+            damage_nsecbunker_config:enabled(Config),
+
+        provider =>
+            damage_nsecbunker_config:secret_provider(
+                Config
+            ),
+
+        config_validation =>
+            damage_nsecbunker_config:validate_production(
+                Config
+            ),
+
+        services =>
+            services(),
+
+        aws =>
+            damage_aws_runtime:status(),
+
+        bunker =>
+            safe_bunker_status(),
+
+        owner =>
+            safe_owner_status()
+    }.
+
+services() ->
+    #{
+        damage_sup =>
+            process_status(damage_sup),
+
+        nsecbunker_sup =>
+            process_status(damage_nsecbunker_sup),
+
+        nsecbunker =>
+            process_status(damage_nsecbunker),
+
+        secret_owner =>
+            process_status(
+                damage_nsecbunker_secret_owner
+            ),
+
+        aws =>
+            application_status(aws),
+
+        aws_credentials =>
+            application_status(aws_credentials)
+    }.
+
+%% One-shot probe only. This must not start aws_credentials.
+aws_probe() ->
+    damage_aws_runtime:probe().
+
+%% Field-recovery helper. damage_aws_runtime refuses this while AWS custody
+%% is selected, so this cannot silently downgrade a managed node.
+quiesce_aws() ->
+    damage_aws_runtime:quiesce().
+
+%% Runtime-only configuration commands. These deliberately do not rewrite
+%% sys.config. Persist an approved configuration through normal deployment.
+
+disable() ->
+    Config0 = config(),
+    Config = Config0#{
+        enabled => false
+    },
+
+    apply_runtime_config(
+        Config0,
+        Config,
+        #{enabled => false},
+        true
+    ).
+
+use_local() ->
+    Config0 = config(),
+    Config = Config0#{
+        enabled => true,
+        secret_provider => local
+    },
+
+    case
+        damage_nsecbunker_config:validate_production(
+            Config
+        )
+    of
+        ok ->
+            apply_runtime_config(
+                Config0,
+                Config,
+                #{provider => local},
+                true
+            );
+        {error, _} = Error ->
+            Error
+    end.
+
+use_aws(
+    Region,
+    SecretId,
+    AccountId,
+    RoleName
+) ->
+    Config0 = config(),
+    case configured_bunker_pubkey(Config0) of
+        {ok, BunkerPubkey} ->
+            Config = Config0#{
+                enabled => true,
+                mode => production,
+                secret_provider => aws_secrets_manager,
+                vault_mode => open_existing,
+                bunker_pubkey_hex => BunkerPubkey,
+                aws_secret => #{
+                    region => Region,
+                    secret_id => SecretId,
+                    expected_account_id => AccountId,
+                    expected_role_name => RoleName
+                }
+            },
+            case damage_nsecbunker_config:validate_production(Config) of
+                ok ->
+                    apply_runtime_config(
+                        Config0,
+                        Config,
+                        #{
+                            provider => aws_secrets_manager,
+                            vault_mode => open_existing,
+                            bunker_pubkey_hex => BunkerPubkey
+                        },
+                        false
+                    );
+                {error, _} = Error ->
+                    Error
+            end;
+        error ->
+            {error, bunker_pubkey_required_for_aws_runtime_switch}
+    end.
+
+apply_runtime_config(Config0, Config, Result0, QuiesceAws) ->
+    ok = application:set_env(
+        damage,
+        nsecbunker,
+        Config
+    ),
+    case restart() of
+        {ok, _} = RestartResult ->
+            finish_runtime_config_change(
+                Result0,
+                RestartResult,
+                QuiesceAws
+            );
+        {error, _} = RestartError ->
+            %% Restore the previous runtime configuration and make a
+            %% best-effort attempt to restore the previous subtree.
+            ok = application:set_env(
+                damage,
+                nsecbunker,
+                Config0
+            ),
+            RollbackRestart = restart(),
+            {error, {
+                nsecbunker_runtime_config_restart_failed,
+                #{
+                    reason => RestartError,
+                    rollback_restart => RollbackRestart
+                }
+            }}
+    end.
+
+finish_runtime_config_change(Result0, RestartResult, false) ->
+    {ok,
+        Result0#{
+            runtime_only => true,
+            restart => RestartResult
+        }};
+finish_runtime_config_change(Result0, RestartResult, true) ->
+    case damage_aws_runtime:quiesce() of
+        ok ->
+            {ok,
+                Result0#{
+                    runtime_only => true,
+                    restart => RestartResult
+                }};
+        {error, _} = Error ->
+            %% The requested provider change is live, but credential cleanup
+            %% did not complete. Do not hide this from the operator.
+            {error, {
+                aws_runtime_quiesce_failed,
+                #{
+                    reason => Error,
+                    runtime_config_applied => true,
+                    restart => RestartResult
+                }
+            }}
+    end.
+
+configured_bunker_pubkey(Config) ->
+    case maps:get(bunker_pubkey_hex, Config, undefined) of
+        Value when is_binary(Value) ->
+            validate_bunker_pubkey(Value);
+        Value when is_list(Value) ->
+            validate_bunker_pubkey(
+                unicode:characters_to_binary(Value)
+            );
+        _ ->
+            error
+    end.
+
+validate_bunker_pubkey(<<Value:64/binary>>) ->
+    case lists:all(fun is_hex_char/1, binary_to_list(Value)) of
+        true -> {ok, Value};
+        false -> error
+    end;
+validate_bunker_pubkey(_) ->
+    error.
+
+is_hex_char(C) when C >= $0, C =< $9 -> true;
+is_hex_char(C) when C >= $a, C =< $f -> true;
+is_hex_char(C) when C >= $A, C =< $F -> true;
+is_hex_char(_) -> false.
+
+%% Restart only the nsecbunker subtree so operator changes do not require
+%% restarting the entire Damage node.
+restart() ->
+    case whereis(damage_sup) of
+        undefined ->
+            {error, damage_sup_not_running};
+        _Pid ->
+            restart_nsecbunker_child()
+    end.
+
+restart_nsecbunker_child() ->
+    case
+        supervisor:terminate_child(
+            damage_sup,
+            damage_nsecbunker_sup
+        )
+    of
+        ok ->
+            normalize_restart_result(
+                supervisor:restart_child(
+                    damage_sup,
+                    damage_nsecbunker_sup
+                )
+            );
+        {error, not_found} ->
+            {error, nsecbunker_supervisor_not_child_of_damage_sup};
+        {error, Reason} ->
+            {error, {
+                nsecbunker_terminate_failed,
+                Reason
+            }}
+    end.
+
+normalize_restart_result({ok, Pid}) when
+    is_pid(Pid)
+->
+    {ok, Pid};
+normalize_restart_result({ok, Pid, Info}) when
+    is_pid(Pid)
+->
+    {ok, #{pid => Pid, info => Info}};
+normalize_restart_result({error, Reason}) ->
+    {error, {
+        nsecbunker_restart_failed,
+        Reason
+    }}.
+
+safe_bunker_status() ->
+    case whereis(damage_nsecbunker) of
+        undefined ->
+            #{
+                running => false
+            };
+        _Pid ->
+            try damage_nsecbunker:status() of
+                Value ->
+                    Value
+            catch
+                _:_ ->
+                    #{
+                        running => true,
+                        status => unavailable
+                    }
+            end
+    end.
+
+safe_owner_status() ->
+    case
+        whereis(
+            damage_nsecbunker_secret_owner
+        )
+    of
+        undefined ->
+            #{
+                running => false,
+                ready => false
+            };
+        _Pid ->
+            damage_nsecbunker_secret_owner:status()
+    end.
+
+process_status(Name) ->
+    case whereis(Name) of
+        undefined ->
+            #{
+                running => false
+            };
+        Pid ->
+            #{
+                running => true,
+                pid => Pid
+            }
+    end.
+
+application_status(App) ->
+    case
+        lists:keyfind(
+            App,
+            1,
+            application:which_applications()
+        )
+    of
+        false ->
+            #{
+                running => false
+            };
+        {App, Description, Version} ->
+            #{
+                running => true,
+                description => Description,
+                version => Version
+            }
+    end.
 %%====================================================================
 %% Release / hashing helpers
 %%====================================================================

@@ -16,10 +16,12 @@
 -export([
     load/0,
     normalize/1,
+    enabled/1,
     production/1,
     secret_provider/1,
     aws_secret/1,
     managed_secret_owner/1,
+    aws_requested/1,
     secure_aws/1,
     provider_change/2,
     validate_production/1
@@ -46,6 +48,11 @@ normalize(Config) when is_list(Config) ->
     end;
 normalize(_) ->
     #{}.
+
+-spec enabled(term()) -> boolean().
+enabled(Config0) ->
+    Config = normalize(Config0),
+    maps:get(enabled, Config, false) =:= true.
 
 -spec production(term()) -> boolean().
 production(Config0) ->
@@ -74,6 +81,12 @@ secret_provider(Config0) ->
 -spec managed_secret_owner(term()) -> boolean().
 managed_secret_owner(Config) ->
     secret_provider(Config) =:= aws_secrets_manager.
+
+-spec aws_requested(term()) -> boolean().
+aws_requested(Config0) ->
+    Config = normalize(Config0),
+    enabled(Config) andalso
+        managed_secret_owner(Config).
 
 %% Deployment-specific AWS identifiers. IMDSv2, the EC2 credential provider
 %% and AWSCURRENT remain hard-coded security invariants in the AWS provider.

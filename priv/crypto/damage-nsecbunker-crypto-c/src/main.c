@@ -146,6 +146,58 @@ static bool private_regular_file(const char *path) {
   return S_ISREG(st.st_mode) && (st.st_mode & 0077) == 0;
 }
 
+/*
+ * Make the directory entry durable after publishing a newly-created vault.
+ *
+ * This is deliberately separate from fsync(fd): fsyncing the file persists
+ * file contents, while fsyncing the parent directory persists the link/name.
+ */
+static bool fsync_parent_directory(const char *path) {
+  const char *slash;
+  char *dir = NULL;
+  int flags = O_RDONLY;
+  int fd;
+  bool ok = false;
+
+  if (!path || !*path)
+    return false;
+
+  slash = strrchr(path, '/');
+  if (!slash) {
+    dir = strdup(".");
+  } else if (slash == path) {
+    dir = strdup("/");
+  } else {
+    size_t len = (size_t)(slash - path);
+    dir = malloc(len + 1u);
+    if (dir) {
+      memcpy(dir, path, len);
+      dir[len] = '\0';
+    }
+  }
+
+  if (!dir)
+    return false;
+
+#ifdef O_DIRECTORY
+  flags |= O_DIRECTORY;
+#endif
+#ifdef O_CLOEXEC
+  flags |= O_CLOEXEC;
+#endif
+
+  fd = open(dir, flags);
+  if (fd >= 0) {
+    ok = fsync(fd) == 0;
+    if (close(fd) != 0)
+      ok = false;
+  }
+
+  cleanse(dir, strlen(dir));
+  free(dir);
+  return ok;
+}
+
 static bool write_file_private(const char *path, const char *data, size_t len) {
   if (!path || !data)
     return false;
@@ -186,8 +238,28 @@ static bool write_file_private(const char *path, const char *data, size_t len) {
     ok = false;
   if (close(fd) != 0)
     ok = false;
-  if (ok && link(tmp, path) != 0)
-    ok = false;
+
+  /*
+   * Intentionally create-only.
+   *
+   * Never silently replace an existing identity vault. Passphrase rotation
+   * requires a separately designed atomic migration/re-encryption ceremony.
+   */
+  if (ok) {
+    if (link(tmp, path) != 0) {
+      ok = false;
+    } else if (!fsync_parent_directory(path)) {
+      /*
+       * Do not report failure while leaving a newly-published vault behind.
+       * If the directory entry could not be made durable, remove it and
+       * best-effort persist that removal.
+       */
+      if (unlink(path) == 0)
+        (void)fsync_parent_directory(path);
+      ok = false;
+    }
+  }
+
   (void)unlink(tmp);
   cleanse(tmp, strlen(tmp));
   free(tmp);
@@ -1486,11 +1558,28 @@ static bool save_vault_with_pass(const char *path, struct vault *v,
     return false;
   }
   char plain[512];
-  snprintf(plain, sizeof(plain),
-           "{\"privkey_hex\":\"%s\",\"pubkey_hex\":\"%s\",\"npub\":\"%s\"}",
-           priv, v->pub, v->npub);
+  int plain_len = snprintf(
+      plain,
+      sizeof(plain),
+      "{\"privkey_hex\":\"%s\",\"pubkey_hex\":\"%s\",\"npub\":\"%s\"}",
+      priv,
+      v->pub,
+      v->npub);
+
+  /*
+   * The private key has been copied into the bounded stack buffer.
+   * Do not retain a second heap copy in the persistent backend.
+   */
   cleanse(priv, strlen(priv));
   free(priv);
+  priv = NULL;
+
+  if (plain_len < 0 || (size_t)plain_len >= sizeof(plain)) {
+    cleanse(plain, sizeof(plain));
+    err_msg("vault_plaintext_too_large");
+    return false;
+  }
+
   uint8_t salt[SALT_LEN], iv[IV_LEN], key[KEY_LEN], tag[TAG_LEN], *ct = NULL;
   int cl = 0;
   if (RAND_bytes(salt, SALT_LEN) != 1 || RAND_bytes(iv, IV_LEN) != 1) {

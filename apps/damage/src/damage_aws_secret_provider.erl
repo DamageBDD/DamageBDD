@@ -4,11 +4,13 @@
 %% AWS support is part of the normal Damage build, but this module is invoked
 %% only when secret_provider=aws_secrets_manager. /2 keeps external effects
 %% injectable for EUnit without making production module selection configurable.
+%%
+%% Production callers MUST invoke this module from inside
+%% damage_aws_runtime:with_runtime/2 and supply `imdsv2_metadata`.
 %%--------------------------------------------------------------------
 -module(damage_aws_secret_provider).
 
 -export([
-    fetch_vault_passphrase/1,
     fetch_vault_passphrase/2,
     credential_provider/1
 ]).
@@ -20,10 +22,6 @@
 -define(VERSION_STAGE, <<"AWSCURRENT">>).
 -define(CREDENTIAL_PROVIDER, aws_credentials_ec2).
 
--spec fetch_vault_passphrase(term()) ->
-    {ok, binary(), map()} | {error, term()}.
-fetch_vault_passphrase(Config) ->
-    fetch_vault_passphrase(Config, #{}).
 
 -spec fetch_vault_passphrase(term(), map()) ->
     {ok, binary(), map()} | {error, term()}.
@@ -40,28 +38,54 @@ fetch_vault_passphrase(Config0, Dependencies0) ->
 fetch_validated(Config, Dependencies) ->
     case forbidden_credential_sources(Dependencies) of
         [] ->
-            PrepareRuntime = maps:get(prepare_runtime, Dependencies),
-            case PrepareRuntime() of
-                ok ->
-                    validate_imdsv2(Config, Dependencies);
-                {error, Reason} ->
-                    {error, {
-                        aws_runtime_start_failed,
-                        safe_reason(Reason)
-                    }}
+            case runtime_metadata(Config, Dependencies) of
+                {ok, ImdsMetadata} ->
+                    credentials(
+                        Config,
+                        ImdsMetadata,
+                        Dependencies
+                    );
+                {error, _} = Error ->
+                    Error
             end;
         Names ->
             {error, {forbidden_aws_credential_source, Names}}
     end.
 
-validate_imdsv2(Config, Dependencies) ->
-    ExpectedRole = to_binary(maps:get(expected_role_name, Config)),
-    Imdsv2Validate = maps:get(imdsv2_validate, Dependencies),
-    case Imdsv2Validate(ExpectedRole) of
-        {ok, ImdsMetadata} ->
-            credentials(Config, ImdsMetadata, Dependencies);
-        {error, _} = Error ->
-            Error
+%% Production calls arrive with IMDS already validated by
+%% damage_aws_runtime:with_runtime/2. The secondary path exists only so unit
+%% tests can inject their previous prepare/probe functions explicitly.
+runtime_metadata(Config, Dependencies) ->
+    case maps:get(imdsv2_metadata, Dependencies, undefined) of
+        Metadata when is_map(Metadata) ->
+            {ok, Metadata};
+        undefined ->
+            injected_runtime_metadata(Config, Dependencies);
+        _ ->
+            {error, invalid_imdsv2_metadata}
+    end.
+
+injected_runtime_metadata(Config, Dependencies) ->
+    case
+        {
+            maps:find(prepare_runtime, Dependencies),
+            maps:find(imdsv2_validate, Dependencies)
+        }
+    of
+        {{ok, PrepareRuntime}, {ok, Imdsv2Validate}} when
+            is_function(PrepareRuntime, 0),
+            is_function(Imdsv2Validate, 1)
+        ->
+            case PrepareRuntime() of
+                ok ->
+                    ExpectedRole =
+                        to_binary(maps:get(expected_role_name, Config)),
+                    Imdsv2Validate(ExpectedRole);
+                {error, Reason} ->
+                    {error, {aws_runtime_start_failed, safe_reason(Reason)}}
+            end;
+        _ ->
+            {error, aws_runtime_scope_required}
     end.
 
 credentials(Config, ImdsMetadata, Dependencies) ->
@@ -251,9 +275,7 @@ validate_config(Config) ->
 
 default_dependencies() ->
     #{
-        prepare_runtime => fun prepare_runtime/0,
         os_getenv => fun os:getenv/1,
-        imdsv2_validate => fun damage_aws_imdsv2:validate_role/1,
         get_credentials => fun aws_credentials:get_credentials/0,
         make_client => fun aws_client:make_temporary_client/4,
         sts_identity =>
@@ -273,47 +295,6 @@ default_dependencies() ->
                 )
             end
     }.
-
-prepare_runtime() ->
-    case ensure_loaded(aws_credentials) of
-        ok ->
-            ok = application:set_env(
-                aws_credentials,
-                credential_providers,
-                [?CREDENTIAL_PROVIDER]
-            ),
-            ok = application:set_env(
-                aws_credentials,
-                fail_if_unavailable,
-                true
-            ),
-            ensure_runtime_started();
-        {error, _} = Error ->
-            Error
-    end.
-
-ensure_runtime_started() ->
-    case application:ensure_all_started(aws) of
-        {ok, _AwsApps} ->
-            case application:ensure_all_started(aws_credentials) of
-                {ok, _CredentialApps} ->
-                    ok;
-                {error, _} = Error ->
-                    Error
-            end;
-        {error, _} = Error ->
-            Error
-    end.
-
-ensure_loaded(App) ->
-    case application:load(App) of
-        ok ->
-            ok;
-        {error, {already_loaded, App}} ->
-            ok;
-        {error, _} = Error ->
-            Error
-    end.
 
 forbidden_credential_sources(Dependencies) ->
     GetEnv = maps:get(os_getenv, Dependencies),

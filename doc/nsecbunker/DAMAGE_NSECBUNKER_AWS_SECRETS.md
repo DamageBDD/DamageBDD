@@ -1,7 +1,7 @@
 # DamageBDD secure AWS secret bootstrap
 
-This bundle implements a production-only path for retrieving the nsecbunker
-vault passphrase from AWS Secrets Manager on an EC2-hosted DamageBDD node.
+DamageBDD includes a production-only path for retrieving the nsecbunker vault
+passphrase from AWS Secrets Manager on an EC2-hosted DamageBDD node.
 
 ## Security properties
 
@@ -18,19 +18,40 @@ vault passphrase from AWS Secrets Manager on an EC2-hosted DamageBDD node.
   application state after unlock, reports, logs, and status output.
 - Any AWS, identity, metadata, or backend failure leaves the vault sealed.
 
-## Integration order
 
-1. Merge `rebar.config.fragment` and the production `sys.config` fragment.
-2. Add the Erlang modules under `apps/damage/src`.
-3. Integrate `priv/crypto/damage_secure_port_protocol.c` and the secure
-   backend-loop example into the C crypto backend, following
-   `docs/secure-backend-protocol.md`.
-4. Start `damage_nsecbunker_secret_owner` before `damage_nsecbunker`.
-5. Apply the semantic changes in `patches/integration.patch`.
-6. Deploy the instance profile and launch template from `infra`.
-7. Run `scripts/validate-ec2-security.sh` from deployment automation.
-8. Execute the DamageBDD feature in `features`.
+## Deployment order
 
+1. Build the normal production release:
+
+   ```sh
+   rebar3 as prod release
+   ```
+
+2. Merge `config/sys.config.aws.production.fragment.config` into the release
+   configuration.
+3. Replace the example AWS region, account, role and secret identifier.
+4. For an existing vault, keep `vault_mode` set to `open_existing` and replace
+   the example `bunker_pubkey_hex` with the approved 64-character identity.
+5. Use `create_if_missing` only for an explicitly approved initial key
+   ceremony.
+6. After an initial ceremony, record the exported bunker public key and return
+   the deployment configuration to `open_existing`.
+7. Deploy the EC2 instance profile and launch template from `infra`.
+8. Run:
+
+   # Source/security-boundary invariants.
+   ```sh
+   apps/damage/scripts/check-nsecbunker-aws-invariants.sh
+
+   # Validate the rendered production configuration. Replace the second
+   # argument with the actual deployed sys.config path.
+   apps/damage/scripts/check-nsecbunker-aws-invariants.sh \
+       "$(pwd)" \
+       /etc/damage/sys.config
+
+   # Validate EC2/IAM/IMDS control-plane settings.
+   apps/damage/scripts/validate-ec2-security.sh
+   ```
 ## Required production removals
 
 Delete every production path that reads
@@ -48,7 +69,12 @@ retires the old version.
 
 ## Validation status
 
-The JSON, YAML, shell, configuration fragments, and forbidden-name scan can be
-validated independently. The Erlang modules must still be compiled and tested
-inside the actual DamageBDD checkout, and the C backend must implement the
-framed protocol before the production path can be considered complete.
+The AWS provider, managed OTP secret owner and packet-framed C transport are
+part of the normal Damage source and release build.
+
+Production deployment still requires successful Erlang and C compilation,
+EUnit/common-test coverage, the source invariant scan, and EC2 control-plane
+validation.
+
+Selecting `aws_secrets_manager` alone is not proof that the deployment meets
+the production custody requirements.
