@@ -232,14 +232,13 @@ bootstrap(Config) ->
                         damage_aws_runtime:with_runtime(
                             Config,
                             fun(ImdsMetadata) ->
-                                damage_aws_secret_provider:
-                                    fetch_vault_passphrase(
-                                        AwsConfig,
-                                        #{
-                                            imdsv2_metadata =>
-                                                ImdsMetadata
-                                        }
-                                    )
+                                damage_aws_secret_provider:fetch_vault_passphrase(
+                                    AwsConfig,
+                                    #{
+                                        imdsv2_metadata =>
+                                            ImdsMetadata
+                                    }
+                                )
                             end
                         )
                     of

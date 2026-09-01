@@ -228,7 +228,6 @@ step(_Config, Context, _Keyword, _N, ?S_BLOCK_DOMAIN, _Body) ->
     add_domain(parental_block_domains, Domain, Context);
 step(_Config, Context, _Keyword, _N, ?S_ALLOW_DOMAIN, _Body) ->
     add_domain(parental_allow_domains, Domain, Context);
-
 %% ------------------------------------------------------------------
 %% Mutations
 %% ------------------------------------------------------------------
@@ -247,7 +246,6 @@ step(_Config, Context0, _Keyword, _N, ?S_REMOVE, _Body) ->
         {error, not_admin} ->
             set_fail(Context0, "Admin privileges required to remove parental controls", [])
     end;
-
 %% ------------------------------------------------------------------
 %% Assertions
 %% ------------------------------------------------------------------
@@ -355,7 +353,8 @@ validate_apply_input([], _Policy, _AllowDomains) ->
 validate_apply_input(_Users, allowlist, []) ->
     {error, empty_allowlist_would_block_all_web_access};
 validate_apply_input(_Users, Policy, _AllowDomains) when
-    Policy =:= blocklist; Policy =:= allowlist ->
+    Policy =:= blocklist; Policy =:= allowlist
+->
     ok;
 validate_apply_input(_Users, Policy, _AllowDomains) ->
     {error, {unsupported_policy, Policy}}.
@@ -368,11 +367,18 @@ activate_parental_controls(Context0) ->
             "/usr/bin/test -x /usr/bin/nft; ",
             "/usr/bin/test -x /usr/bin/ss; ",
             "/usr/bin/id -u proxy >/dev/null; ",
-            "/usr/bin/squid -k parse -f ", shell_quote(?SQUID_CONFIG), "; ",
-            "/usr/bin/nft -c -f ", shell_quote(?NFT_FILE), "; ",
+            "/usr/bin/squid -k parse -f ",
+            shell_quote(?SQUID_CONFIG),
+            "; ",
+            "/usr/bin/nft -c -f ",
+            shell_quote(?NFT_FILE),
+            "; ",
             "/usr/bin/systemctl daemon-reload; ",
-            "/usr/bin/systemctl enable ", ?SERVICE, "; ",
-            "/usr/bin/systemctl restart ", ?SERVICE
+            "/usr/bin/systemctl enable ",
+            ?SERVICE,
+            "; ",
+            "/usr/bin/systemctl restart ",
+            ?SERVICE
         ]),
 
     case run_privileged_ok(Context0, ValidationScript) of
@@ -386,18 +392,29 @@ remove_parental_controls(Context0) ->
     Script =
         lists:flatten([
             "set -e; ",
-            "/usr/bin/systemctl disable --now ", ?SERVICE, " 2>/dev/null || true; ",
+            "/usr/bin/systemctl disable --now ",
+            ?SERVICE,
+            " 2>/dev/null || true; ",
             "/usr/bin/nft delete table inet damage_parental 2>/dev/null || true; ",
             "/usr/bin/rm -f -- ",
-            shell_quote(?SQUID_CONFIG), " ",
-            shell_quote(?BLOCK_FILE), " ",
-            shell_quote(?ALLOW_FILE), " ",
-            shell_quote(?USERS_FILE), " ",
-            shell_quote(?NFT_FILE), " ",
-            shell_quote(?PROXY_ENV_FILE), " ",
-            shell_quote(?SYSTEMD_UNIT), "; ",
+            shell_quote(?SQUID_CONFIG),
+            " ",
+            shell_quote(?BLOCK_FILE),
+            " ",
+            shell_quote(?ALLOW_FILE),
+            " ",
+            shell_quote(?USERS_FILE),
+            " ",
+            shell_quote(?NFT_FILE),
+            " ",
+            shell_quote(?PROXY_ENV_FILE),
+            " ",
+            shell_quote(?SYSTEMD_UNIT),
+            "; ",
             "/usr/bin/systemctl daemon-reload; ",
-            "/usr/bin/systemctl reset-failed ", ?SERVICE, " 2>/dev/null || true"
+            "/usr/bin/systemctl reset-failed ",
+            ?SERVICE,
+            " 2>/dev/null || true"
         ]),
 
     case run_privileged_ok(Context0, Script) of
@@ -416,7 +433,9 @@ squid_policy(Port, Policy) ->
     iolist_to_binary([
         "# Managed by DamageBDD - do not edit\n",
         "visible_hostname damage-parental\n",
-        "http_port 127.0.0.1:", integer_to_list(Port), "\n",
+        "http_port 127.0.0.1:",
+        integer_to_list(Port),
+        "\n",
         "pid_filename none\n",
         "cache_effective_user proxy\n",
         "coredump_dir /tmp\n",
@@ -449,13 +468,17 @@ squid_policy(Port, Policy) ->
 
 squid_policy_rules(blocklist) ->
     [
-        "acl damage_parental_block dstdomain \"", ?BLOCK_FILE, "\"\n",
+        "acl damage_parental_block dstdomain \"",
+        ?BLOCK_FILE,
+        "\"\n",
         "http_access deny damage_parental_block\n",
         "http_access allow damage_local\n"
     ];
 squid_policy_rules(allowlist) ->
     [
-        "acl damage_parental_allow dstdomain \"", ?ALLOW_FILE, "\"\n",
+        "acl damage_parental_allow dstdomain \"",
+        ?ALLOW_FILE,
+        "\"\n",
         "http_access allow damage_local damage_parental_allow\n"
     ].
 
@@ -499,8 +522,10 @@ nft_policy(UserUids, Port) ->
         "type filter hook output priority filter; policy accept; }\n",
         "flush chain inet damage_parental output\n",
         [
-            ["add rule inet damage_parental output ",
-                string:trim(lists:flatten(Rule), leading)]
+            [
+                "add rule inet damage_parental output ",
+                string:trim(lists:flatten(Rule), leading)
+            ]
          || Rule <- Rules
         ]
     ]).
@@ -540,13 +565,27 @@ proxy_environment(Port, Users0) ->
         "# Managed by DamageBDD\n",
         "# A new login session is required after this file changes.\n",
         "case \"${USER:-${LOGNAME:-}}\" in\n",
-        "    ", UserPattern, ")\n",
-        "        export http_proxy=", shell_quote(Proxy), "\n",
-        "        export https_proxy=", shell_quote(Proxy), "\n",
-        "        export ftp_proxy=", shell_quote(Proxy), "\n",
-        "        export HTTP_PROXY=", shell_quote(Proxy), "\n",
-        "        export HTTPS_PROXY=", shell_quote(Proxy), "\n",
-        "        export FTP_PROXY=", shell_quote(Proxy), "\n",
+        "    ",
+        UserPattern,
+        ")\n",
+        "        export http_proxy=",
+        shell_quote(Proxy),
+        "\n",
+        "        export https_proxy=",
+        shell_quote(Proxy),
+        "\n",
+        "        export ftp_proxy=",
+        shell_quote(Proxy),
+        "\n",
+        "        export HTTP_PROXY=",
+        shell_quote(Proxy),
+        "\n",
+        "        export HTTPS_PROXY=",
+        shell_quote(Proxy),
+        "\n",
+        "        export FTP_PROXY=",
+        shell_quote(Proxy),
+        "\n",
         "        export no_proxy='localhost,127.0.0.1,::1'\n",
         "        export NO_PROXY='localhost,127.0.0.1,::1'\n",
         "        ;;\n",
@@ -564,10 +603,12 @@ users_file(UserUids) ->
 %% ==================================================================
 
 install_files(Context, Files) ->
-    case run_privileged_ok(
-        Context,
-        "/usr/bin/install -d -m 0755 -- " ++ shell_quote(?CONFIG_DIR)
-    ) of
+    case
+        run_privileged_ok(
+            Context,
+            "/usr/bin/install -d -m 0755 -- " ++ shell_quote(?CONFIG_DIR)
+        )
+    of
         ok ->
             install_files0(Context, Files);
         {error, Why} ->
@@ -798,7 +839,8 @@ command_stdout(#{stdout := Out}) ->
     output_binary(Out);
 command_stdout(Result) when is_list(Result) ->
     case lists:keyfind(stdout, 1, Result) of
-        {stdout, Out} -> output_binary(Out);
+        {stdout, Out} ->
+            output_binary(Out);
         false ->
             case io_lib:printable_unicode_list(Result) of
                 true -> output_binary(Result);
@@ -854,7 +896,8 @@ parse_port(_) ->
 valid_domain(Domain0) ->
     Domain = normalize_domain(Domain0),
     Size = byte_size(Domain),
-    Size > 0 andalso Size =< 253 andalso valid_domain_labels(binary:split(Domain, <<".">>, [global])).
+    Size > 0 andalso Size =< 253 andalso
+        valid_domain_labels(binary:split(Domain, <<".">>, [global])).
 
 valid_domain_labels([]) ->
     false;

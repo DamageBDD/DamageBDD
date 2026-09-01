@@ -1028,40 +1028,40 @@ apply_runtime_config(Config0, Config, Result0, QuiesceAws) ->
                 Config0
             ),
             RollbackRestart = restart(),
-            {error, {
-                nsecbunker_runtime_config_restart_failed,
-                #{
-                    reason => RestartError,
-                    rollback_restart => RollbackRestart
-                }
-            }}
+            {error,
+                {
+                    nsecbunker_runtime_config_restart_failed,
+                    #{
+                        reason => RestartError,
+                        rollback_restart => RollbackRestart
+                    }
+                }}
     end.
 
 finish_runtime_config_change(Result0, RestartResult, false) ->
-    {ok,
-        Result0#{
-            runtime_only => true,
-            restart => RestartResult
-        }};
+    {ok, Result0#{
+        runtime_only => true,
+        restart => RestartResult
+    }};
 finish_runtime_config_change(Result0, RestartResult, true) ->
     case damage_aws_runtime:quiesce() of
         ok ->
-            {ok,
-                Result0#{
-                    runtime_only => true,
-                    restart => RestartResult
-                }};
+            {ok, Result0#{
+                runtime_only => true,
+                restart => RestartResult
+            }};
         {error, _} = Error ->
             %% The requested provider change is live, but credential cleanup
             %% did not complete. Do not hide this from the operator.
-            {error, {
-                aws_runtime_quiesce_failed,
-                #{
-                    reason => Error,
-                    runtime_config_applied => true,
-                    restart => RestartResult
-                }
-            }}
+            {error,
+                {
+                    aws_runtime_quiesce_failed,
+                    #{
+                        reason => Error,
+                        runtime_config_applied => true,
+                        restart => RestartResult
+                    }
+                }}
     end.
 
 configured_bunker_pubkey(Config) ->

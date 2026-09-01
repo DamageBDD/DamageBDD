@@ -195,21 +195,23 @@ shutdown_result(ok, ok) ->
 shutdown_result(AwsError = {error, _}, ok) ->
     {error, {aws_runtime_shutdown_failed, #{aws => AwsError}}};
 shutdown_result(ok, CredentialsError = {error, _}) ->
-    {error, {
-        aws_runtime_shutdown_failed,
-        #{aws_credentials => CredentialsError}
-    }};
+    {error,
+        {
+            aws_runtime_shutdown_failed,
+            #{aws_credentials => CredentialsError}
+        }};
 shutdown_result(
     AwsError = {error, _},
     CredentialsError = {error, _}
 ) ->
-    {error, {
-        aws_runtime_shutdown_failed,
-        #{
-            aws => AwsError,
-            aws_credentials => CredentialsError
-        }
-    }}.
+    {error,
+        {
+            aws_runtime_shutdown_failed,
+            #{
+                aws => AwsError,
+                aws_credentials => CredentialsError
+            }
+        }}.
 
 ensure_loaded(App) ->
     case application:load(App) of

@@ -376,17 +376,19 @@ cmd_kv(Command0, TimeoutMs, true) ->
     try
         %% A private process group plus kill_group ensures that timing out the
         %% shell also cleans up children created by pipes (awk/grep/head/etc.).
-        case exec:run(
-            Command,
-            [
-                stdout,
-                stderr,
-                monitor,
-                {group, 0},
-                kill_group,
-                {kill_timeout, 1}
-            ]
-        ) of
+        case
+            exec:run(
+                Command,
+                [
+                    stdout,
+                    stderr,
+                    monitor,
+                    {group, 0},
+                    kill_group,
+                    {kill_timeout, 1}
+                ]
+            )
+        of
             {ok, ExecPid, OsPid} when is_pid(ExecPid), is_integer(OsPid) ->
                 Deadline = erlang:monotonic_time(millisecond) + Timeout,
                 collect_exec(ExecPid, OsPid, Deadline, <<>>, <<>>);
@@ -450,7 +452,8 @@ command_timeout(_ExecPid, OsPid, _Stdout, Stderr) ->
 safe_exec_stop(OsPid) ->
     try
         case exec:stop(OsPid) of
-            ok -> ok;
+            ok ->
+                ok;
             {error, Reason} ->
                 logger:warning(
                     "damage_hwmon failed to stop timed-out command pid=~p reason=~p",

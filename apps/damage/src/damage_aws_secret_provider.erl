@@ -22,7 +22,6 @@
 -define(VERSION_STAGE, <<"AWSCURRENT">>).
 -define(CREDENTIAL_PROVIDER, aws_credentials_ec2).
 
-
 -spec fetch_vault_passphrase(term(), map()) ->
     {ok, binary(), map()} | {error, term()}.
 fetch_vault_passphrase(Config0, Dependencies0) ->
