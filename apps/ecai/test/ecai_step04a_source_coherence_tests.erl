@@ -28,7 +28,6 @@ step04a_runtime_contract_test() ->
         {ecai_index_jobs_srv, cancel, 1},
         {ecai_index_jobs_srv, events, 3},
         {ecai_index_jobs_http, trails, 0},
-        {ecai_indexer, start, 3},
         {damage_ipfs, cat_binary, 1},
         {ecai_ipfs_ingest, ingest_cid, 4},
         {ecai_ipfs_ingest, ingest_cid_result, 4},

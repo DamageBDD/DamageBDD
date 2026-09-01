@@ -38,10 +38,21 @@ invalid_arguments_are_rejected_test() ->
 existing_destination_is_a_cache_hit_test() ->
     with_tmp(fun(Dir) ->
         Destination = filename:join(Dir, "cached.bin"),
+        Url = <<"http://127.0.0.1:1/not-contacted">>,
         Bytes = <<"already downloaded">>,
         ok = file:write_file(Destination, Bytes, [write, raw, binary, sync]),
+        ok = file:write_file(
+            Destination ++ ".source.json",
+            jsx:encode(#{
+                <<"url">> => Url,
+                <<"etag">> => null,
+                <<"last_modified">> => null,
+                <<"bytes">> => byte_size(Bytes)
+            }),
+            [write, raw, binary, sync]
+        ),
         {ok, Meta} = ecai_http_stream:download(
-            <<"http://127.0.0.1:1/not-contacted">>,
+            Url,
             Destination,
             #{timeout_ms => 10}
         ),
@@ -49,6 +60,21 @@ existing_destination_is_a_cache_hit_test() ->
         ?assertEqual(byte_size(Bytes), maps:get(bytes, Meta)),
         ?assertEqual(unicode:characters_to_binary(Destination), maps:get(path, Meta)),
         ?assertEqual({ok, Bytes}, file:read_file(Destination))
+    end).
+
+existing_destination_without_source_metadata_is_rejected_test() ->
+    with_tmp(fun(Dir) ->
+        Destination = filename:join(Dir, "untrusted-cache.bin"),
+        Bytes = <<"pre-existing bytes without provenance">>,
+        ok = file:write_file(Destination, Bytes, [write, raw, binary, sync]),
+        ?assertEqual(
+            {error, {cached_source_mismatch, unicode:characters_to_binary(Destination)}},
+            ecai_http_stream:download(
+                <<"http://127.0.0.1:1/not-contacted">>,
+                Destination,
+                #{timeout_ms => 10}
+            )
+        )
     end).
 
 with_tmp(Fun) ->

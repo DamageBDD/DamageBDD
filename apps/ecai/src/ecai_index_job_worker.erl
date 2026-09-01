@@ -174,12 +174,17 @@ finalize_artifact(Job, AdapterResult) ->
     JobId = maps:get(id, Job),
     case ecai_index_artifact:finalize(Job, AdapterResult) of
         {ok, Artifact} ->
-            _ = ecai_index_jobs_srv:artifact_ready(
-                JobId,
-                Artifact,
-                AdapterResult
-            ),
-            ok;
+            case maybe_activate_search(Job, AdapterResult, Artifact) of
+                ok ->
+                    _ = ecai_index_jobs_srv:artifact_ready(JobId, Artifact, AdapterResult),
+                    ok;
+                {error, Reason} ->
+                    _ = ecai_index_jobs_srv:worker_failed(
+                        JobId,
+                        {search_activation_failed, Reason}
+                    ),
+                    ok
+            end;
         {error, Reason} ->
             _ = ecai_index_jobs_srv:worker_failed(
                 JobId,
@@ -187,6 +192,24 @@ finalize_artifact(Job, AdapterResult) ->
             ),
             ok
     end.
+
+maybe_activate_search(#{id := JobId, spec := #{kind := wikimedia_visibility}}, AdapterResult, Artifact) ->
+    case maps:get(search_snapshot_path, AdapterResult, undefined) of
+        Path when is_binary(Path), byte_size(Path) > 0 ->
+            ecai_wikimedia_search_server:activate_snapshot(
+                Path,
+                maps:with([job_id, index_root, manifest_sha256, manifest_cid], #{
+                    job_id => JobId,
+                    index_root => maps:get(index_root, Artifact, undefined),
+                    manifest_sha256 => maps:get(manifest_sha256, Artifact, undefined),
+                    manifest_cid => maps:get(manifest_cid, Artifact, undefined)
+                })
+            );
+        _ ->
+            {error, search_snapshot_missing}
+    end;
+maybe_activate_search(_Job, _AdapterResult, _Artifact) ->
+    ok.
 
 safe_worker_failed(JobId, Reason) ->
     try ecai_index_jobs_srv:worker_failed(JobId, Reason) of

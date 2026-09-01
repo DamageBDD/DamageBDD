@@ -25,10 +25,11 @@ serve_status(Req0, Server, State, Kind) ->
         {ok, HeadOnly} ->
             try ecai_wikimedia_fixture_server:status(Server) of
                 Status when is_map(Status) ->
-                    Body = case Kind of
-                        health -> maps:merge(#{ok => true}, Status);
-                        status -> #{ok => true, status => Status}
-                    end,
+                    Body =
+                        case Kind of
+                            health -> maps:merge(#{ok => true}, Status);
+                            status -> #{ok => true, status => Status}
+                        end,
                     reply_json(Req0, 200, Body, State, HeadOnly);
                 Other ->
                     reply_json(
@@ -43,7 +44,11 @@ serve_status(Req0, Server, State, Kind) ->
                     reply_json(
                         Req0,
                         503,
-                        #{ok => false, ready => false, error => {fixture_server_unavailable, Class, Reason}},
+                        #{
+                            ok => false,
+                            ready => false,
+                            error => {fixture_server_unavailable, Class, Reason}
+                        },
                         State,
                         HeadOnly
                     )
@@ -84,12 +89,13 @@ serve_file_range(Req0, Entry, HeadOnly, State) ->
     Etag = maps:get(etag, Entry),
     RangeHeader = cowboy_req:header(<<"range">>, Req0, undefined),
     IfRange = cowboy_req:header(<<"if-range">>, Req0, undefined),
-    HonorRange = case {RangeHeader, IfRange} of
-        {undefined, _} -> false;
-        {_Range, undefined} -> true;
-        {_Range, Etag} -> true;
-        {_Range, _OtherValidator} -> false
-    end,
+    HonorRange =
+        case {RangeHeader, IfRange} of
+            {undefined, _} -> false;
+            {_Range, undefined} -> true;
+            {_Range, Etag} -> true;
+            {_Range, _OtherValidator} -> false
+        end,
     case HonorRange of
         false ->
             reply_file(Req0, Entry, 200, 0, Size, undefined, HeadOnly, State);
@@ -131,7 +137,7 @@ reply_file(
     Offset,
     Length,
     ContentRange,
-    HeadOnly,
+    _HeadOnly,
     State
 ) ->
     Headers0 = #{
@@ -141,16 +147,21 @@ reply_file(
         <<"content-length">> => integer_to_binary(Length),
         <<"etag">> => maps:get(etag, Entry)
     },
-    Headers1 = case ContentRange of
-        undefined -> Headers0;
-        Value -> Headers0#{<<"content-range">> => Value}
-    end,
+    Headers1 =
+        case ContentRange of
+            undefined -> Headers0;
+            Value -> Headers0#{<<"content-range">> => Value}
+        end,
     Headers = common_headers(Headers1),
-    Body = case {HeadOnly, Length} of
-        {true, _} -> <<>>;
-        {false, 0} -> <<>>;
-        {false, _} -> {sendfile, Offset, Length, maps:get(path, Entry)}
-    end,
+    Body =
+        case Length of
+            0 -> <<>>;
+            _ -> {sendfile, Offset, Length, maps:get(path, Entry)}
+        end,
+    %% Give Cowboy the actual representation for both GET and HEAD. Cowboy
+    %% suppresses the payload for HEAD based on the request method while
+    %% retaining the representation Content-Length. reply/3 has no response
+    %% body and therefore normalizes Content-Length to zero.
     Req1 = cowboy_req:reply(Status, Headers, Body, Req0),
     {ok, Req1, State}.
 
@@ -170,18 +181,22 @@ reply_json(Req0, Code, Body, State) ->
 reply_json(Req0, Code, Body0, State, HeadOnly) ->
     reply_json(Req0, Code, Body0, State, HeadOnly, #{}).
 
-reply_json(Req0, Code, Body0, State, HeadOnly, ExtraHeaders) ->
+reply_json(Req0, Code, Body0, State, _HeadOnly, ExtraHeaders) ->
     Body = jsx:encode(externalize(Body0)),
-    Headers = common_headers(maps:merge(
-        #{
-            <<"content-type">> => <<"application/json; charset=utf-8">>,
-            <<"content-length">> => integer_to_binary(byte_size(Body)),
-            <<"cache-control">> => <<"no-store">>
-        },
-        ExtraHeaders
-    )),
-    ResponseBody = case HeadOnly of true -> <<>>; false -> Body end,
-    Req1 = cowboy_req:reply(Code, Headers, ResponseBody, Req0),
+    Headers = common_headers(
+        maps:merge(
+            #{
+                <<"content-type">> => <<"application/json; charset=utf-8">>,
+                <<"content-length">> => integer_to_binary(byte_size(Body)),
+                <<"cache-control">> => <<"no-store">>
+            },
+            ExtraHeaders
+        )
+    ),
+    %% The same rule applies to JSON: pass the representation to reply/4 and
+    %% let Cowboy implement HEAD semantics. This preserves the GET-equivalent
+    %% Content-Length without transmitting the body.
+    Req1 = cowboy_req:reply(Code, Headers, Body, Req0),
     {ok, Req1, State}.
 
 common_headers(Headers) ->
@@ -239,11 +254,13 @@ parse_single_range(Spec, Size) ->
     case binary:split(Spec, <<"-">>, [global]) of
         [<<>>, SuffixBin] ->
             case parse_nonnegative_integer(SuffixBin) of
-                {ok, 0} -> {error, invalid_suffix_length};
+                {ok, 0} ->
+                    {error, invalid_suffix_length};
                 {ok, SuffixLength} ->
                     Length = erlang:min(SuffixLength, Size),
                     {ok, Size - Length, Length};
-                error -> {error, invalid_suffix_length}
+                error ->
+                    {error, invalid_suffix_length}
             end;
         [StartBin, <<>>] ->
             case parse_nonnegative_integer(StartBin) of
@@ -255,10 +272,12 @@ parse_single_range(Spec, Size) ->
                     {error, invalid_start}
             end;
         [StartBin, EndBin] ->
-            case {
-                parse_nonnegative_integer(StartBin),
-                parse_nonnegative_integer(EndBin)
-            } of
+            case
+                {
+                    parse_nonnegative_integer(StartBin),
+                    parse_nonnegative_integer(EndBin)
+                }
+            of
                 {{ok, Start}, {ok, End0}} when Start < Size, End0 >= Start ->
                     End = erlang:min(End0, Size - 1),
                     {ok, Start, End - Start + 1};
@@ -271,7 +290,8 @@ parse_single_range(Spec, Size) ->
             {error, invalid_range}
     end.
 
-parse_nonnegative_integer(<<>>) -> error;
+parse_nonnegative_integer(<<>>) ->
+    error;
 parse_nonnegative_integer(Bin) when is_binary(Bin) ->
     try binary_to_integer(Bin) of
         Value when Value >= 0 -> {ok, Value};
@@ -301,12 +321,17 @@ externalize(List) when is_list(List) ->
     [externalize(Value) || Value <- List];
 externalize(Tuple) when is_tuple(Tuple) ->
     [externalize(Value) || Value <- tuple_to_list(Tuple)];
-externalize(true) -> true;
-externalize(false) -> false;
-externalize(null) -> null;
-externalize(undefined) -> null;
+externalize(true) ->
+    true;
+externalize(false) ->
+    false;
+externalize(null) ->
+    null;
+externalize(undefined) ->
+    null;
 externalize(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
-externalize(Value) -> Value.
+externalize(Value) ->
+    Value.
 
 externalize_key(Key) when is_binary(Key) -> Key;
 externalize_key(Key) when is_atom(Key) -> atom_to_binary(Key, utf8);

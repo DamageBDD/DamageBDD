@@ -75,6 +75,14 @@ init([]) ->
                     modules => []
                 },
                 #{
+                    id => ecai_wikimedia_search_server,
+                    start => {ecai_wikimedia_search_server, start_link, []},
+                    restart => permanent,
+                    shutdown => 30000,
+                    type => worker,
+                    modules => [ecai_wikimedia_search_server]
+                },
+                #{
                     id => ecai_blender,
                     start => {ecai_blender, start_link, []},
                     restart => permanent,

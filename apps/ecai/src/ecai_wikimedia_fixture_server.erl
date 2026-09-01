@@ -67,10 +67,11 @@ child_spec() ->
 
 -spec child_spec(map()) -> map().
 child_spec(Opts) when is_map(Opts) ->
-    Start = case map_size(Opts) of
-        0 -> {?MODULE, start_link, []};
-        _ -> {?MODULE, start_link, [Opts]}
-    end,
+    Start =
+        case map_size(Opts) of
+            0 -> {?MODULE, start_link, []};
+            _ -> {?MODULE, start_link, [Opts]}
+        end,
     #{
         id => ?MODULE,
         start => Start,
@@ -101,8 +102,7 @@ start_supervised(Supervisor, Opts) when is_map(Opts) ->
                 {ok, _Pid} -> ok;
                 {ok, _Pid, _Info} -> ok;
                 {error, running} -> ok;
-                {error, Reason} ->
-                    {error, {fixture_child_restart_failed, Reason}}
+                {error, Reason} -> {error, {fixture_child_restart_failed, Reason}}
             end;
         {error, Reason} ->
             {error, {fixture_child_start_failed, Reason}}
@@ -265,19 +265,24 @@ handle_info(_Message, State) ->
 
 terminate(_Reason, State) ->
     case maps:get(listener_monitor, State, undefined) of
-        undefined -> ok;
-        Monitor -> _ = erlang:demonitor(Monitor, [flush]), ok
+        undefined ->
+            ok;
+        Monitor ->
+            _ = erlang:demonitor(Monitor, [flush]),
+            ok
     end,
     case maps:get(listener_ref, State, undefined) of
-        undefined -> ok;
+        undefined ->
+            ok;
         ListenerRef ->
-            _ = try cowboy:stop_listener(ListenerRef) of
-                ok -> ok;
-                {error, not_found} -> ok;
-                _Other -> ok
-            catch
-                _:_ -> ok
-            end,
+            _ =
+                try cowboy:stop_listener(ListenerRef) of
+                    ok -> ok;
+                    {error, not_found} -> ok;
+                    _Other -> ok
+                catch
+                    _:_ -> ok
+                end,
             ok
     end.
 
@@ -327,11 +332,13 @@ prepare_fixture_state(Opts) ->
             Catalog = build_catalog(Discovery, BaseUrl, Opts),
             case write_catalog(CatalogPath, Catalog) of
                 ok ->
-                    case file_entry(
-                        ?CATALOG_NAME,
-                        CatalogPath,
-                        <<"application/json; charset=utf-8">>
-                    ) of
+                    case
+                        file_entry(
+                            ?CATALOG_NAME,
+                            CatalogPath,
+                            <<"application/json; charset=utf-8">>
+                        )
+                    of
                         {ok, CatalogEntry} ->
                             SourceEntries = maps:get(entries, Discovery),
                             {ok, #{
@@ -421,47 +428,63 @@ normalize_options(Opts0) ->
         ),
         ok = validate_ip(Ip, AllowNonLoopback),
         ok = validate_port(Port),
-        FixtureDir = absolute_path(option(
-            fixture_dir,
-            Opts0,
-            wikimedia_fixture_dir,
-            default_fixture_dir()
-        )),
-        RuntimeDir = absolute_path(option(
-            runtime_dir,
-            Opts0,
-            wikimedia_fixture_runtime_dir,
-            default_runtime_dir()
-        )),
-        Project = required_token(option(
-            project,
-            Opts0,
-            wikimedia_fixture_project,
-            ?DEFAULT_PROJECT
-        )),
-        PageviewProject = required_token(option(
-            pageview_project,
-            Opts0,
-            wikimedia_fixture_pageview_project,
-            ?DEFAULT_PAGEVIEW_PROJECT
-        )),
-        PublicHost = normalize_public_host(option(
-            public_host,
-            Opts0,
-            wikimedia_fixture_public_host,
-            ip_to_binary(Ip)
-        )),
-        ListenerRef = listener_ref(maps:get(
-            listener_ref,
-            Opts0,
-            ?DEFAULT_LISTENER_REF
-        )),
-        IdleTimeout = bounded_integer(option(
-            idle_timeout_ms,
-            Opts0,
-            wikimedia_fixture_idle_timeout_ms,
-            60000
-        ), 1000, 3600000),
+        FixtureDir = absolute_path(
+            option(
+                fixture_dir,
+                Opts0,
+                wikimedia_fixture_dir,
+                default_fixture_dir()
+            )
+        ),
+        RuntimeDir = absolute_path(
+            option(
+                runtime_dir,
+                Opts0,
+                wikimedia_fixture_runtime_dir,
+                default_runtime_dir()
+            )
+        ),
+        Project = required_token(
+            option(
+                project,
+                Opts0,
+                wikimedia_fixture_project,
+                ?DEFAULT_PROJECT
+            )
+        ),
+        PageviewProject = required_token(
+            option(
+                pageview_project,
+                Opts0,
+                wikimedia_fixture_pageview_project,
+                ?DEFAULT_PAGEVIEW_PROJECT
+            )
+        ),
+        PublicHost = normalize_public_host(
+            option(
+                public_host,
+                Opts0,
+                wikimedia_fixture_public_host,
+                ip_to_binary(Ip)
+            )
+        ),
+        ListenerRef = listener_ref(
+            maps:get(
+                listener_ref,
+                Opts0,
+                ?DEFAULT_LISTENER_REF
+            )
+        ),
+        IdleTimeout = bounded_integer(
+            option(
+                idle_timeout_ms,
+                Opts0,
+                wikimedia_fixture_idle_timeout_ms,
+                60000
+            ),
+            1000,
+            3600000
+        ),
         {ok, #{
             ip => Ip,
             port => Port,
@@ -514,19 +537,23 @@ choose_port(#{port := Port}) ->
     {ok, Port}.
 
 reserve_ephemeral_port(Ip) ->
-    Family = case tuple_size(Ip) of
-        8 -> [inet6];
-        _ -> []
-    end,
-    case gen_tcp:listen(
-        0,
-        Family ++ [binary, {active, false}, {reuseaddr, true}, {ip, Ip}]
-    ) of
+    Family =
+        case tuple_size(Ip) of
+            8 -> [inet6];
+            _ -> []
+        end,
+    case
+        gen_tcp:listen(
+            0,
+            Family ++ [binary, {active, false}, {reuseaddr, true}, {ip, Ip}]
+        )
+    of
         {ok, Socket} ->
-            Result = case inet:sockname(Socket) of
-                {ok, {_Address, Port}} -> {ok, Port};
-                {error, Reason} -> {error, {fixture_ephemeral_port_failed, Reason}}
-            end,
+            Result =
+                case inet:sockname(Socket) of
+                    {ok, {_Address, Port}} -> {ok, Port};
+                    {error, Reason} -> {error, {fixture_ephemeral_port_failed, Reason}}
+                end,
             ok = gen_tcp:close(Socket),
             Result;
         {error, Reason} ->
@@ -557,11 +584,13 @@ discover_sources(FixtureDir, Opts) ->
 
 parse_content_fixture(Name, Project) ->
     NameBin = unicode:characters_to_binary(Name),
-    case re:run(
-        NameBin,
-        <<"^([A-Za-z0-9._-]+)_content-([0-9]{8})-([0-9]{5})\\.json\\.bz2$">>,
-        [{capture, [1, 2, 3], binary}]
-    ) of
+    case
+        re:run(
+            NameBin,
+            <<"^([A-Za-z0-9._-]+)_content-([0-9]{8})-([0-9]{5})\\.json\\.bz2$">>,
+            [{capture, [1, 2, 3], binary}]
+        )
+    of
         {match, [Project, Release, Shard]} ->
             #{kind => content, name => NameBin, release => Release, shard => Shard};
         {match, [_OtherProject, _Release, _Shard]} ->
@@ -572,11 +601,13 @@ parse_content_fixture(Name, Project) ->
 
 parse_pageview_fixture(Name) ->
     NameBin = unicode:characters_to_binary(Name),
-    case re:run(
-        NameBin,
-        <<"^pageviews-([0-9]{4})([0-9]{2})-user\\.bz2$">>,
-        [{capture, [1, 2], binary}]
-    ) of
+    case
+        re:run(
+            NameBin,
+            <<"^pageviews-([0-9]{4})([0-9]{2})-user\\.bz2$">>,
+            [{capture, [1, 2], binary}]
+        )
+    of
         {match, [Year, Month]} ->
             MonthNo = binary_to_integer(Month),
             case MonthNo >= 1 andalso MonthNo =< 12 of
@@ -611,7 +642,8 @@ finalize_discovery(FixtureDir, Content0, Pageviews0) ->
                         pageviews => Pageviews,
                         entries => Entries
                     }};
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
         _ ->
             {error, {mixed_wikimedia_content_releases, Releases}}
@@ -647,7 +679,8 @@ file_entry(Name, Path, ContentType) ->
                         sha256 => Hex,
                         etag => <<"\"sha256-", Hex/binary, "\"">>
                     }};
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
         {ok, #file_info{type = Type}} ->
             {error, {not_regular_file, Type}};
@@ -695,16 +728,18 @@ atomic_write(Path, Bytes) ->
     Tmp = Path ++ ".tmp",
     case file:open(Tmp, [write, raw, binary]) of
         {ok, Fd} ->
-            Result = try
-                ok = file:write(Fd, Bytes),
-                file:sync(Fd)
-            after
-                ok = file:close(Fd)
-            end,
+            Result =
+                try
+                    ok = file:write(Fd, Bytes),
+                    file:sync(Fd)
+                after
+                    ok = file:close(Fd)
+                end,
             case Result of
                 ok ->
                     case file:rename(Tmp, Path) of
-                        ok -> ok;
+                        ok ->
+                            ok;
                         {error, Reason} ->
                             _ = file:delete(Tmp),
                             {error, {rename_failed, Reason}}
@@ -720,7 +755,8 @@ atomic_write(Path, Bytes) ->
 hash_file(Path) ->
     case file:open(Path, [read, raw, binary]) of
         {ok, Fd} ->
-            try hash_file_loop(Fd, crypto:hash_init(sha256))
+            try
+                hash_file_loop(Fd, crypto:hash_init(sha256))
             after
                 ok = file:close(Fd)
             end;
@@ -765,17 +801,19 @@ public_status(State) ->
     }.
 
 make_base_url(Host0, Port) ->
-    Host = case binary:match(Host0, <<":">>) of
-        nomatch -> Host0;
-        _ -> <<"[", Host0/binary, "]">>
-    end,
+    Host =
+        case binary:match(Host0, <<":">>) of
+            nomatch -> Host0;
+            _ -> <<"[", Host0/binary, "]">>
+        end,
     <<"http://", Host/binary, ":", (integer_to_binary(Port))/binary>>.
 
 normalize_public_host(Value) ->
     Host = to_binary(Value),
-    case byte_size(Host) > 0 andalso
-        binary:match(Host, <<"/">>) =:= nomatch andalso
-        binary:match(Host, <<"\0">>) =:= nomatch
+    case
+        byte_size(Host) > 0 andalso
+            binary:match(Host, <<"/">>) =:= nomatch andalso
+            binary:match(Host, <<"\0">>) =:= nomatch
     of
         true -> Host;
         false -> config_error({invalid_fixture_public_host, Value})
@@ -783,8 +821,9 @@ normalize_public_host(Value) ->
 
 required_token(Value) ->
     Token = to_binary(Value),
-    case byte_size(Token) > 0 andalso byte_size(Token) =< 128 andalso
-        re:run(Token, <<"^[A-Za-z0-9._-]+$">>, [{capture, none}]) =:= match
+    case
+        byte_size(Token) > 0 andalso byte_size(Token) =< 128 andalso
+            re:run(Token, <<"^[A-Za-z0-9._-]+$">>, [{capture, none}]) =:= match
     of
         true -> Token;
         false -> config_error({invalid_fixture_token, Value})

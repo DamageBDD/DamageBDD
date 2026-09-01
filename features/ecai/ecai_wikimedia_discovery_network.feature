@@ -5,8 +5,9 @@ Feature: Wikimedia source discovery API
 
   Background:
     Given I am using server "{{ECAI_BASE_URL}}"
-    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
     And I set "Accept" header to "application/json"
+    And I set "Content-Type" header to "application/json"
+    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
 
   Scenario: List available Wikimedia source releases
     When I make a GET request to "/ecai/wikimedia/sources?project=enwiki&pageview_project=en.wikipedia&months={{WIKIMEDIA_MONTH}}"

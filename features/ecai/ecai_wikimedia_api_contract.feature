@@ -6,9 +6,9 @@ Feature: Wikimedia visibility API contract
 
   Background:
     Given I am using server "{{ECAI_BASE_URL}}"
-    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
     And I set "Accept" header to "application/json"
     And I set "Content-Type" header to "application/json"
+    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
 
   Scenario: Search rejects a missing query
     When I make a GET request to "/ecai/wikimedia/search"
@@ -29,7 +29,7 @@ Feature: Wikimedia visibility API contract
     And the response must contain text "matched_entities"
 
   Scenario: Index creation rejects malformed JSON
-    When I make a POST request to "/ecai/wikimedia/index"
+    When I make a POST request to "/ecai/index-jobs"
     """
     {"kind":
     """
@@ -37,7 +37,7 @@ Feature: Wikimedia visibility API contract
     And the response must contain text "invalid_json"
 
   Scenario: Index creation requires a JSON object
-    When I make a POST request to "/ecai/wikimedia/index"
+    When I make a POST request to "/ecai/index-jobs"
     """
     []
     """
@@ -46,7 +46,7 @@ Feature: Wikimedia visibility API contract
 
   Scenario: Automatic minting remains disabled until Step 4B
     Given I store an uuid in "RunId"
-    When I make a POST request to "/ecai/wikimedia/index"
+    When I make a POST request to "/ecai/index-jobs"
     """
     {
       "schema": "ecai-index-job/v1",
@@ -81,10 +81,10 @@ Feature: Wikimedia visibility API contract
     Then the response status must be "422"
     And the response must contain text "step4b_required"
 
-  Scenario: The Wikimedia convenience endpoint returns job and control links
+  Scenario: The durable index-job endpoint returns job and control links
     Given I store an uuid in "RunId"
     And I set "Idempotency-Key" header to "wikimedia-contract-{{RunId}}"
-    When I make a POST request to "/ecai/wikimedia/index"
+    When I make a POST request to "/ecai/index-jobs"
     """
     {
       "schema": "ecai-index-job/v1",
@@ -133,10 +133,10 @@ Feature: Wikimedia visibility API contract
     And the json at path "$.job.state" must be "queued"
     And the json at path "$.job.spec.kind" must be "wikimedia_visibility"
     And I store the JSON at path "$.job.id" in "WikimediaJobId"
-    And the json at path "$.events" must be "/ecai/index-jobs/{{WikimediaJobId}}/events"
-    And the json at path "$.controls.pause" must be "/ecai/index-jobs/{{WikimediaJobId}}/pause"
-    And the json at path "$.controls.resume" must be "/ecai/index-jobs/{{WikimediaJobId}}/resume"
-    And the json at path "$.controls.cancel" must be "/ecai/index-jobs/{{WikimediaJobId}}/cancel"
+    And the json at path "$.job.links.events" must be "/ecai/index-jobs/{{WikimediaJobId}}/events"
+    And the json at path "$.job.links.controls.pause" must be "/ecai/index-jobs/{{WikimediaJobId}}/pause"
+    And the json at path "$.job.links.controls.resume" must be "/ecai/index-jobs/{{WikimediaJobId}}/resume"
+    And the json at path "$.job.links.controls.cancel" must be "/ecai/index-jobs/{{WikimediaJobId}}/cancel"
     When I make a POST request to "/ecai/index-jobs/{{WikimediaJobId}}/cancel"
     """
     {}

@@ -1,8 +1,7 @@
 %%--------------------------------------------------------------------
 %% Read-only operator REST surface for the Wikimedia visibility corpus.
-%%
 %% Index execution and lifecycle control live exclusively under
-%% /ecai/index-jobs. There is intentionally no secondary enqueue route.
+%% /ecai/index-jobs.
 %%--------------------------------------------------------------------
 -module(ecai_wikimedia_http).
 
@@ -12,7 +11,7 @@
     is_authorized/2,
     allowed_methods/2,
     content_types_provided/2,
-    to_json/2,
+    to_json/2
 ]).
 
 -define(JSON, <<"application/json">>).
@@ -23,9 +22,8 @@ trails() ->
         get_trail("/ecai/wikimedia/sources", sources),
         get_trail("/ecai/wikimedia/plan", plan),
         get_trail("/ecai/wikimedia/search", search),
-        get_trail("/ecai/wikimedia/doctor", doctor),
-        %% Compatibility route only. It no longer duplicates queue logic.
-            ].
+        get_trail("/ecai/wikimedia/doctor", doctor)
+    ].
 
 get_trail(Path, Action) ->
     trails:trail(

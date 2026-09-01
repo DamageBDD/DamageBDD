@@ -211,7 +211,12 @@ normalize_content_release(Value) ->
     end.
 
 normalize_months(Months) when is_list(Months), Months =/= [], length(Months) =< 64 ->
-    [normalize_month(Month) || Month <- Months];
+    Normalized = [normalize_month(Month) || Month <- Months],
+    Canonical = lists:usort(Normalized),
+    case Canonical =:= Normalized of
+        true -> Canonical;
+        false -> validation_error({pageview_months_must_be_unique_and_sorted, Normalized})
+    end;
 normalize_months([]) ->
     validation_error({empty_field, pageview_months});
 normalize_months(Months) when is_list(Months) ->

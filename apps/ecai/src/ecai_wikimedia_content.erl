@@ -104,7 +104,7 @@ extract_shard(Runtime, Source, SelectionTab, ProgressFun) when
         binary_to_list(<<BaseName/binary, ".selected.jsonl">>)
     ),
     MarkerPath = OutputPath ++ ".complete.json",
-    case read_marker(MarkerPath) of
+    case read_output_marker(MarkerPath) of
         {ok, Meta} ->
             {ok, Meta#{cached => true}};
         not_found ->
@@ -180,40 +180,52 @@ extract_shard_fresh(Runtime, Source, SelectionTab, ProgressFun, OutputPath, Mark
                             case file:rename(Tmp, OutputPath) of
                                 ok ->
                                     Digest = hash_file(OutputPath),
-                                    Cid = maybe_publish_file(Runtime, OutputPath),
-                                    Meta = #{
-                                        schema => ?SCHEMA,
-                                        shard => Name,
-                                        source_url => maps:get(url, Source),
-                                        output_path => unicode:characters_to_binary(OutputPath),
-                                        output_bytes => file_size(OutputPath),
-                                        output_sha256 => ecai_index_job_codec:id_hex(Digest),
-                                        output_cid => Cid,
-                                        download => DownloadMeta,
-                                        stream => StreamStats,
-                                        source_lines => maps:get(source_lines, State1),
-                                        action_lines => maps:get(action_lines, State1),
-                                        selected => maps:get(selected, State1),
-                                        namespace_skipped => maps:get(namespace_skipped, State1),
-                                        unselected => maps:get(unselected, State1),
-                                        malformed => maps:get(malformed, State1)
-                                    },
-                                    case
-                                        atomic_write(
-                                            MarkerPath,
-                                            jsx:encode(ecai_index_job_codec:externalize(Meta))
-                                        )
-                                    of
-                                        ok ->
-                                            maybe_delete_download(Runtime, DownloadPath),
-                                            safe_progress(ProgressFun, #{
-                                                phase => content_shard_complete,
+                                    case maybe_publish_file(Runtime, OutputPath) of
+                                        {ok, Cid} ->
+                                            Meta = #{
+                                                schema => ?SCHEMA,
                                                 shard => Name,
-                                                selected => maps:get(selected, State1)
-                                            }),
-                                            {ok, Meta};
-                                        {error, Reason} ->
-                                            {error, {content_marker_write_failed, Reason}}
+                                                source_url => maps:get(url, Source),
+                                                output_path => unicode:characters_to_binary(
+                                                    OutputPath
+                                                ),
+                                                output_bytes => file_size(OutputPath),
+                                                output_sha256 => ecai_index_job_codec:id_hex(
+                                                    Digest
+                                                ),
+                                                output_cid => Cid,
+                                                download => DownloadMeta,
+                                                stream => StreamStats,
+                                                source_lines => maps:get(source_lines, State1),
+                                                action_lines => maps:get(action_lines, State1),
+                                                selected => maps:get(selected, State1),
+                                                namespace_skipped => maps:get(
+                                                    namespace_skipped, State1
+                                                ),
+                                                unselected => maps:get(unselected, State1),
+                                                malformed => maps:get(malformed, State1)
+                                            },
+                                            case
+                                                atomic_write(
+                                                    MarkerPath,
+                                                    jsx:encode(
+                                                        ecai_index_job_codec:externalize(Meta)
+                                                    )
+                                                )
+                                            of
+                                                ok ->
+                                                    maybe_delete_download(Runtime, DownloadPath),
+                                                    safe_progress(ProgressFun, #{
+                                                        phase => content_shard_complete,
+                                                        shard => Name,
+                                                        selected => maps:get(selected, State1)
+                                                    }),
+                                                    {ok, Meta};
+                                                {error, Reason} ->
+                                                    {error, {content_marker_write_failed, Reason}}
+                                            end;
+                                        {error, PublishReason} ->
+                                            {error, {content_ipfs_publish_failed, PublishReason}}
                                     end;
                                 {error, Reason} ->
                                     {error, {content_output_rename_failed, Reason}}
@@ -381,7 +393,7 @@ normalize_document(Source, Visibility, Runtime, Title0) ->
 -spec finalize_ranked(map(), fun((map()) -> any())) -> {ok, map()} | {error, term()}.
 finalize_ranked(Runtime, ProgressFun) when is_map(Runtime), is_function(ProgressFun, 1) ->
     MarkerPath = maps:get(index_complete_path, Runtime),
-    case read_marker(MarkerPath) of
+    case read_output_marker(MarkerPath) of
         {ok, Meta} ->
             maybe_cleanup_extracted(Runtime),
             {ok, Meta#{cached => true}};
@@ -818,12 +830,9 @@ utf8_prefix_shrink(Bin, Size) ->
     end.
 
 maybe_publish_file(#{publish_extracted_ipfs := false}, _Path) ->
-    null;
+    {ok, null};
 maybe_publish_file(_Runtime, Path) ->
-    case normalize_add_response(damage_ipfs:add({file, Path})) of
-        {ok, Cid} -> Cid;
-        {error, Reason} -> #{error => ecai_index_job_codec:externalize(Reason)}
-    end.
+    normalize_add_response(damage_ipfs:add({file, Path})).
 
 maybe_cleanup_extracted(#{keep_intermediates := true}) ->
     ok;
@@ -853,6 +862,44 @@ read_marker(Path) ->
             not_found;
         {error, Reason} ->
             {error, {marker_read_failed, Path, Reason}}
+    end.
+
+read_output_marker(Path) ->
+    case read_marker(Path) of
+        {ok, Meta} ->
+            case validate_output_marker(Meta) of
+                ok -> {ok, Meta};
+                {error, stale_marker} -> not_found;
+                {error, incomplete_marker} -> not_found;
+                {error, Reason} -> {error, {output_marker_invalid, Path, Reason}}
+            end;
+        Other -> Other
+    end.
+
+validate_output_marker(Meta) ->
+    case
+        {
+            maps:get(output_path, Meta, undefined),
+            maps:get(output_bytes, Meta, undefined),
+            maps:get(output_sha256, Meta, undefined)
+        }
+    of
+        {Path0, Bytes, Sha} when
+            (is_binary(Path0) orelse is_list(Path0)), is_integer(Bytes), is_binary(Sha)
+        ->
+            Path = path_list(Path0),
+            case filelib:is_regular(Path) andalso file_size(Path) =:= Bytes of
+                false ->
+                    {error, stale_marker};
+                true ->
+                    Digest = hash_file(Path),
+                    case ecai_index_job_codec:id_hex(Digest) =:= Sha of
+                        true -> ok;
+                        false -> {error, stale_marker}
+                    end
+            end;
+        _ ->
+            {error, incomplete_marker}
     end.
 
 external_marker_to_internal(Map) ->

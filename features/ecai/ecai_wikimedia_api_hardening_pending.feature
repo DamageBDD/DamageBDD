@@ -6,9 +6,9 @@ Feature: Pending Wikimedia API hardening contracts
 
   Background:
     Given I am using server "{{ECAI_BASE_URL}}"
-    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
     And I set "Accept" header to "application/json"
     And I set "Content-Type" header to "application/json"
+    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
 
   Scenario: Duplicate pageview months are rejected instead of double-counted
     Given I store an uuid in "RunId"

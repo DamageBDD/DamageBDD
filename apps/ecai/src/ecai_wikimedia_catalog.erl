@@ -334,6 +334,9 @@ normalize_catalog(Map) ->
             field(pageview_sources, Map, []),
             pageview_source
         ),
+        ok = validate_ordinals(Shards, content_shard),
+        ok = validate_ordinals(Pageviews, pageview_source),
+        ok = validate_pageview_consistency(Pageviews, PageviewProject, Months),
         {ok, #{
             schema => ?SCHEMA,
             project => Project,
@@ -353,18 +356,22 @@ normalize_catalog_sources(_Other, Kind) ->
     throw({catalog_error, {invalid_catalog_sources, Kind}}).
 
 normalize_catalog_source(Item, content_shard) when is_map(Item) ->
+    Name = safe_source_name(content_shard, binary_field(name, Item, <<>>)),
+    Url = safe_source_url(content_shard, binary_field(url, Item, <<>>)),
     #{
-        ordinal => integer_field(ordinal, Item, 1),
-        name => binary_field(name, Item, <<>>),
-        url => binary_field(url, Item, <<>>)
+        ordinal => positive_ordinal(Item),
+        name => Name,
+        url => Url
     };
 normalize_catalog_source(Item, pageview_source) when is_map(Item) ->
+    Name = safe_source_name(pageview_source, binary_field(name, Item, <<>>)),
+    Url = safe_source_url(pageview_source, binary_field(url, Item, <<>>)),
     #{
-        ordinal => integer_field(ordinal, Item, 1),
+        ordinal => positive_ordinal(Item),
         month => required_month(field(month, Item, undefined)),
-        name => binary_field(name, Item, <<>>),
-        url => binary_field(url, Item, <<>>),
-        project => binary_field(project, Item, <<>>)
+        name => Name,
+        url => Url,
+        project => required_token(project, field(project, Item, undefined))
     };
 normalize_catalog_source(_Item, Kind) ->
     throw({catalog_error, {invalid_catalog_source, Kind}}).
@@ -386,7 +393,12 @@ href_captures(Html, Pattern) ->
     end.
 
 month_list(Months) when is_list(Months), Months =/= [] ->
-    [required_month(Month) || Month <- Months];
+    Normalized = [required_month(Month) || Month <- Months],
+    Canonical = lists:usort(Normalized),
+    case Canonical =:= Normalized of
+        true -> Canonical;
+        false -> throw({catalog_error, {pageview_months_must_be_unique_and_sorted, Normalized}})
+    end;
 month_list([]) ->
     throw({catalog_error, {empty_field, pageview_months}});
 month_list(_Other) ->
@@ -418,6 +430,85 @@ required_token(Name, Value0) ->
     case re:run(Value, <<"^[A-Za-z0-9._-]+$">>, [{capture, none}]) of
         match when byte_size(Value) > 0, byte_size(Value) =< 128 -> Value;
         _ -> throw({catalog_error, {invalid_field, Name}})
+    end.
+
+positive_ordinal(Item) ->
+    case integer_field(ordinal, Item, 0) of
+        Value when is_integer(Value), Value > 0 -> Value;
+        Other -> throw({catalog_error, {invalid_ordinal, Other}})
+    end.
+
+safe_source_name(Kind, Name) when is_binary(Name), byte_size(Name) > 0, byte_size(Name) =< 512 ->
+    case
+        filename:basename(binary_to_list(Name)) =:= binary_to_list(Name) andalso
+            binary:match(Name, <<"..">>) =:= nomatch andalso
+            binary:match(Name, <<0>>) =:= nomatch
+    of
+        true -> validate_source_suffix(Kind, Name);
+        false -> throw({catalog_error, {unsafe_source_name, Name}})
+    end;
+safe_source_name(_Kind, Name) ->
+    throw({catalog_error, {unsafe_source_name, Name}}).
+
+validate_source_suffix(content_shard, Name) ->
+    case binary:match(Name, <<".json.bz2">>) of
+        {_, _} -> Name;
+        nomatch -> throw({catalog_error, {invalid_content_shard_name, Name}})
+    end;
+validate_source_suffix(pageview_source, Name) ->
+    case re:run(Name, <<"^pageviews-[0-9]{6}-user\\.bz2$">>, [{capture, none}]) of
+        match -> Name;
+        _ -> throw({catalog_error, {invalid_pageview_source_name, Name}})
+    end.
+
+safe_source_url(Kind, Url) when is_binary(Url), byte_size(Url) > 0, byte_size(Url) =< 4096 ->
+    try uri_string:parse(Url) of
+        Parsed ->
+            Scheme = maps:get(scheme, Parsed, <<>>),
+            Host = maps:get(host, Parsed, <<>>),
+            case source_host_allowed(Scheme, Host) of
+                true ->
+                    Path = maps:get(path, Parsed, <<>>),
+                    Name = unicode:characters_to_binary(filename:basename(binary_to_list(Path))),
+                    _ = safe_source_name(Kind, Name),
+                    Url;
+                false ->
+                    throw({catalog_error, {source_url_not_allowed, Url}})
+            end
+    catch
+        throw:{catalog_error, Reason} -> throw({catalog_error, Reason});
+        _:_ -> throw({catalog_error, {invalid_source_url, Url}})
+    end;
+safe_source_url(_Kind, Url) ->
+    throw({catalog_error, {invalid_source_url, Url}}).
+
+source_host_allowed(<<"https">>, <<"dumps.wikimedia.org">>) ->
+    true;
+source_host_allowed(Scheme, Host) ->
+    Allowed0 = application:get_env(ecai, wikimedia_source_allowed_hosts, []),
+    Allowed = [to_binary(Value) || Value <- Allowed0],
+    Fixture = application:get_env(ecai, wikimedia_fixture_server_enabled, false),
+    Loopback = lists:member(Host, [<<"127.0.0.1">>, <<"localhost">>, <<"::1">>]),
+    (Scheme =:= <<"https">> andalso lists:member(Host, Allowed)) orelse
+        (Fixture =:= true andalso Loopback andalso
+            (Scheme =:= <<"http">> orelse Scheme =:= <<"https">>)).
+
+validate_ordinals(Sources, Kind) ->
+    Ordinals = [maps:get(ordinal, Source) || Source <- Sources],
+    case length(Ordinals) =:= length(lists:usort(Ordinals)) of
+        true -> ok;
+        false -> throw({catalog_error, {duplicate_source_ordinals, Kind}})
+    end.
+
+validate_pageview_consistency(Pageviews, Project, Months) ->
+    SourceMonths = [maps:get(month, Source) || Source <- Pageviews],
+    case SourceMonths =:= Months of
+        true -> ok;
+        false -> throw({catalog_error, {pageview_source_window_mismatch, Months, SourceMonths}})
+    end,
+    case lists:all(fun(Source) -> maps:get(project, Source) =:= Project end, Pageviews) of
+        true -> ok;
+        false -> throw({catalog_error, {pageview_project_mismatch, Project}})
     end.
 
 default_months_loop(0, _Year, _Month, Acc) ->

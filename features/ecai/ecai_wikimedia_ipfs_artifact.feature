@@ -12,7 +12,7 @@ Feature: Wikimedia index artifact is published to IPFS and becomes NFT-ready
   Scenario: Publish the fixture index and retrieve its manifest by CID
     Given I store an uuid in "RunId"
     And I set "Idempotency-Key" header to "fixture-ipfs-{{RunId}}"
-    When I make a POST request to "/ecai/wikimedia/index"
+    When I make a POST request to "/ecai/index-jobs"
     """
     {
       "schema": "ecai-index-job/v1",
@@ -69,8 +69,8 @@ Feature: Wikimedia index artifact is published to IPFS and becomes NFT-ready
     When I make a GET request to "/ecai/index-jobs/{{IpfsJobId}}/artifact"
     Then the response status must be "200"
     And the json at path "$.artifact.ready_to_mint" must be "true"
-    And the json at path "$.artifact.schema" must be "ecai-index-manifest/v1"
-    And the json at path "$.nft_metadata.schema" must be "ecai-index-nft/v1"
+    And the json at path "$.artifact.schema" must be "ecai-index-manifest/v2"
+    And the json at path "$.nft_metadata.schema" must be "ecai-index-nft/v2"
     And I store the JSON at path "$.artifact.manifest_cid" in "ManifestCid"
     And the response must contain text "index_root"
     And the response must contain text "source_frontier_root"

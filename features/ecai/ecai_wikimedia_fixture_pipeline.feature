@@ -12,7 +12,7 @@ Feature: Wikimedia fixture corpus end-to-end API
   Scenario: Build and search a deterministic local Wikimedia corpus
     Given I store an uuid in "RunId"
     And I set "Idempotency-Key" header to "fixture-pipeline-{{RunId}}"
-    When I make a POST request to "/ecai/wikimedia/index"
+    When I make a POST request to "/ecai/index-jobs"
     """
     {
       "schema": "ecai-index-job/v1",
@@ -70,7 +70,7 @@ Feature: Wikimedia fixture corpus end-to-end API
 
     When I make a GET request to "/ecai/index-jobs/{{FixtureJobId}}/artifact"
     Then the response status must be "200"
-    And the json at path "$.artifact.schema" must be "ecai-index-manifest/v1"
+    And the json at path "$.artifact.schema" must be "ecai-index-manifest/v2"
     And the response must contain text "index_root"
     And the response must contain text "source_frontier_root"
 

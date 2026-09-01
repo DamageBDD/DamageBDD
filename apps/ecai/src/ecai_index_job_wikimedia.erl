@@ -158,9 +158,18 @@ run_batch(_Job, _Runtime, _Checkpoint, _BatchSize) ->
 -spec result(map(), map(), map(), map()) -> {ok, map()} | {error, term()}.
 result(_Job, Runtime0, Checkpoint, Result0) ->
     try
-        Ctx = maps:get(ctx, Runtime0),
-        _ = ecai_search:finalize_roots(Ctx),
-        Runtime1 = close_selection(Runtime0),
+        Ctx0 = maps:get(ctx, Runtime0),
+        Ctx = ecai_search:finalize(Ctx0),
+        WorkDir = maps:get(work_dir, Runtime0),
+        ArtifactInputDir = filename:join(WorkDir, "artifact-input"),
+        ok = filelib:ensure_dir(filename:join(ArtifactInputDir, "x")),
+        SnapshotPath = filename:join(ArtifactInputDir, "search-index-v1.etf"),
+        ok = ecai_search:save(Ctx, SnapshotPath),
+        Headers = sorted_headers(ecai_search:export_onchain_headers_v2(Ctx)),
+        HeaderBytes = ecai_index_job_codec:canonical_binary(Headers),
+        HeaderPath = filename:join(ArtifactInputDir, "term-headers.ecai"),
+        ok = atomic_write(HeaderPath, HeaderBytes),
+        Runtime1 = close_selection(Runtime0#{ctx => Ctx}),
         case ecai_ipfs_activity:close(maps:get(activity, Runtime1)) of
             {ok, Activity1} ->
                 Catalog = maps:get(catalog, Runtime1),
@@ -175,7 +184,18 @@ result(_Job, Runtime0, Checkpoint, Result0) ->
                     maps:get(index_complete_path, Content),
                     #{}
                 ),
-                MaterialFiles = material_files(CatalogMeta, Selector, Content),
+                MaterialFiles =
+                    material_files(CatalogMeta, Selector, Content) ++
+                        [
+                            #{
+                                role => search_snapshot,
+                                path => unicode:characters_to_binary(SnapshotPath)
+                            },
+                            #{
+                                role => term_headers,
+                                path => unicode:characters_to_binary(HeaderPath)
+                            }
+                        ],
                 SourceIdentity = #{
                     schema => ecai_wikimedia_catalog:version(),
                     project => maps:get(project, Catalog),
@@ -207,6 +227,11 @@ result(_Job, Runtime0, Checkpoint, Result0) ->
                     records_indexed => RecordsIndexed,
                     search_size => SearchSize,
                     material_files => MaterialFiles,
+                    search_snapshot_path => unicode:characters_to_binary(SnapshotPath),
+                    term_headers_path => unicode:characters_to_binary(HeaderPath),
+                    term_headers_sha256 => ecai_index_job_codec:id_hex(
+                        crypto:hash(sha256, HeaderBytes)
+                    ),
                     activity => ecai_ipfs_activity:status(Activity1),
                     operator_work_dir => unicode:characters_to_binary(
                         maps:get(work_dir, Runtime1)
@@ -738,9 +763,11 @@ close_selection(Runtime = #{selection_tab := Tab}) ->
     Runtime#{selection_tab => undefined}.
 
 search_context() ->
-    try ecai_search_server:get_ctx() of
-        undefined -> {error, search_index_not_ready};
-        Ctx -> {ok, Ctx}
+    %% Every Wikimedia build owns an isolated search context. Artifacts must
+    %% not depend on pre-existing Yelp/Wikipedia records or concurrent writers
+    %% in the process-global search server.
+    try
+        {ok, ecai_search:new()}
     catch
         Class:Reason -> {error, {search_context_failed, Class, Reason}}
     end.
@@ -817,6 +844,34 @@ count_lines_loop(Fd, Count) ->
 integer_value(Value, _Default) when is_integer(Value) -> Value;
 integer_value(Value, _Default) when is_float(Value) -> trunc(Value);
 integer_value(_Value, Default) -> Default.
+
+sorted_headers(Headers0) ->
+    [
+        Header
+     || {_Key, Header} <- lists:keysort(1, [
+            {ecai_index_job_codec:canonical_binary(Header), Header}
+         || Header <- Headers0
+        ])
+    ].
+
+atomic_write(Path, Bytes) ->
+    Tmp = Path ++ ".tmp",
+    case file:open(Tmp, [write, raw, binary]) of
+        {ok, Fd} ->
+            Result =
+                try
+                    ok = file:write(Fd, Bytes),
+                    file:sync(Fd)
+                after
+                    ok = file:close(Fd)
+                end,
+            case Result of
+                ok -> file:rename(Tmp, Path);
+                {error, _Reason} = Error -> Error
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     unicode:characters_to_list(Bin);

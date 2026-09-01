@@ -80,7 +80,7 @@ fixture_catalog() ->
             #{
                 ordinal => 1,
                 name => <<"enwiki_content_0.json.bz2">>,
-                url => <<"https://example.invalid/content-0.json.bz2">>
+                url => <<"https://dumps.wikimedia.org/content-0.json.bz2">>
             }
         ],
         pageview_months => [<<"2026-05">>, <<"2026-06">>],
@@ -89,14 +89,14 @@ fixture_catalog() ->
                 ordinal => 1,
                 month => <<"2026-05">>,
                 name => <<"pageviews-202605-user.bz2">>,
-                url => <<"https://example.invalid/pageviews-202605-user.bz2">>,
+                url => <<"https://dumps.wikimedia.org/pageviews-202605-user.bz2">>,
                 project => <<"en.wikipedia">>
             },
             #{
                 ordinal => 2,
                 month => <<"2026-06">>,
                 name => <<"pageviews-202606-user.bz2">>,
-                url => <<"https://example.invalid/pageviews-202606-user.bz2">>,
+                url => <<"https://dumps.wikimedia.org/pageviews-202606-user.bz2">>,
                 project => <<"en.wikipedia">>
             }
         ]

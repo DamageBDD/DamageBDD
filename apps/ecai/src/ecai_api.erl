@@ -22,7 +22,7 @@ trails() ->
     [
         trails:trail(
             "/ecai/ekef",
-            ecai_api,
+            ?MODULE,
             #{action => encode},
             #{
                 description => "EKEF encoding endpoint",

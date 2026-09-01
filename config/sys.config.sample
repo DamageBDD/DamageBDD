@@ -101,6 +101,7 @@
     ]},
     {
         ecai, [
+            {api_url, "https://ecai.example.com"},
             {port, 7314},
             {search_context_file, "/var/lib/damage/ecai/yelp.ctx"},
             {pools, [

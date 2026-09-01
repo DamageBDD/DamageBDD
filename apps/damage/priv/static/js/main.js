@@ -1637,7 +1637,7 @@ function restoreFeatureDraftFromShareLink() {
 	}
 
 	async function loadJobIntoModal(jobId) {
-		const res = await fetch(`/ecai/jobs/${jobId}`);
+		const res = await fetch(`/ecai/market/jobs/${jobId}`);
 		const data = await res.json();
 		const job = data.job || {};
 
@@ -1674,9 +1674,9 @@ function restoreFeatureDraftFromShareLink() {
 		submitBtn.style.display = (st === "claimed") ? "" : "none";
 		payBtn.style.display    = (st === "submitted") ? "" : "none";
 
-		claimBtn.onclick = () => fetch(`/ecai/jobs/${jobId}/claim`, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({miner_ak: window.myMinerAk})}).then(()=>loadJobIntoModal(jobId));
+		claimBtn.onclick = () => fetch(`/ecai/market/jobs/${jobId}/claim`, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({miner_ak: window.myMinerAk})}).then(()=>loadJobIntoModal(jobId));
 		submitBtn.onclick = () => {/* open your submit flow */};
-		payBtn.onclick = () => fetch(`/ecai/jobs/${jobId}/pay`, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({admin_ak: window.myAdminAk})}).then(()=>loadJobIntoModal(jobId));
+		payBtn.onclick = () => fetch(`/ecai/market/jobs/${jobId}/pay`, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({admin_ak: window.myAdminAk})}).then(()=>loadJobIntoModal(jobId));
 	}
 
 	async function handleCustodialExecution({ inputText, concurrency, headers, reportElement }) {
@@ -2611,4 +2611,3 @@ function restoreFeatureDraftFromShareLink() {
 		}
 	}
 })(window, document, undefined);
-

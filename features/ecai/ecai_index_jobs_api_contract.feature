@@ -6,9 +6,9 @@ Feature: Durable index-job API contract
 
   Background:
     Given I am using server "{{ECAI_BASE_URL}}"
-    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
     And I set "Accept" header to "application/json"
     And I set "Content-Type" header to "application/json"
+    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
 
   Scenario: A queued job can be inspected, paused, resumed and canceled
     Given I store an uuid in "RunId"

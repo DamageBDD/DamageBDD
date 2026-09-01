@@ -526,11 +526,20 @@ wiki_to_search_record(J) ->
     Url = b(maps:get(<<"url">>, J, <<>>)),
     LangId = get_in(J, [<<"in_language">>, <<"identifier">>], <<"en">>),
     Abs = b(maps:get(<<"abstract">>, J, <<>>)),
-    PageId =
+    PageId0 =
         case maps:get(<<"identifier">>, J, undefined) of
             I when is_integer(I) -> list_to_binary(integer_to_list(I));
             I when is_binary(I) -> I;
             _ -> crypto:hash(sha256, Url)
+        end,
+    Project = get_in(J, [<<"ecai_source">>, <<"project">>], <<>>),
+    %% Wikimedia page IDs are project-local. Preserve the historical bare ID
+    %% for legacy records, but namespace visibility-pipeline documents so
+    %% enwiki:42 and frwiki:42 cannot overwrite one another.
+    PageId =
+        case Project of
+            P when is_binary(P), byte_size(P) > 0 -> <<P/binary, ":", PageId0/binary>>;
+            _ -> PageId0
         end,
     Image = get_in(J, [<<"image">>, <<"content_url">>], <<>>),
     WikiData = get_in(J, [<<"main_entity">>, <<"identifier">>], <<>>),

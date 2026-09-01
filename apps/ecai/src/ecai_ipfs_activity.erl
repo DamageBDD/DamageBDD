@@ -242,7 +242,10 @@ publish_built_block(Activity, BlockPath) ->
             commit_block(Activity, Cid, BlockPath, true);
         {error, Reason} ->
             _ = file:delete(BlockPath),
-            persist_state(Activity#{last_publish_error => Reason})
+            case persist_state(Activity#{last_publish_error => Reason}) of
+                {ok, _Persisted} -> {error, {activity_ipfs_publish_failed, Reason}};
+                {error, _} = Error -> Error
+            end
     end.
 
 build_block(BlockPath, Header, PendingPath) ->
@@ -462,9 +465,6 @@ activity_sequence(Line0) ->
         error:Reason -> {error, {invalid_json, Reason}}
     end.
 
-%% OTP compatibility: binary:trim/3 is unavailable on some supported OTP
-%% releases. Activity records are line-delimited, so only trailing CR/LF
-%% bytes are removed.
 trim_line_end(Bin) when is_binary(Bin) ->
     trim_line_end(Bin, byte_size(Bin)).
 

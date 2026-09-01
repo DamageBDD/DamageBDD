@@ -32,14 +32,17 @@
 
     % (Ctx, TermBin, DocIdBin) -> {ok, Path, Dirs} | not_found
     proof_for/3,
+    proof_for_v2/3,
+    record_commitment/2,
+    term_root_v2/2,
+    export_onchain_headers_v2/1,
     term_root/2,
     term_tag/2,
     term_df/2,
     set_opts/2,
     get_opts/1,
-    % rebuild roots and optionally refresh a GPU snapshot
+    % rebuild all roots (for bulk loads)
     finalize/1,
-    % rebuild roots only; safe for callers that do not own the context record
     finalize_roots/1,
 
     % diagnostics
@@ -81,6 +84,9 @@
     <<"wikidata">> => 2,
     <<"rev">> => 1
 }).
+
+
+
 
 set_opts(Ctx = #ctx{}, OptsMap) when is_map(OptsMap) ->
     Ctx#ctx{opts = maps:merge(Ctx#ctx.opts, OptsMap)}.
@@ -190,7 +196,6 @@ add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record) when
                     erlang:raise(Class, Reason, Stacktrace)
             end;
         false ->
-            %% already present – do NOT crash
             {error, exists}
     end;
 add_record(_Ctx, _DocId, _Record) ->
@@ -214,10 +219,7 @@ remove_record(Ctx, DocId) ->
         [{DocId, Rec}] ->
             DocInt = maps:get(int, Rec),
             Terms = maps:get(terms, Rec, []),
-            lists:foreach(
-                fun(Term) -> remove_posting(Ctx, Term, DocInt) end,
-                Terms
-            ),
+            [remove_posting(Ctx, T, DocInt) || T <- Terms],
             ets:delete(Ctx#ctx.rec_tab, DocId),
             ets:delete(Ctx#ctx.doc2id_tab, DocId),
             ets:delete(Ctx#ctx.id2doc_tab, DocInt),
@@ -412,6 +414,7 @@ lookup_record(Ctx, DocId) ->
             #{}
     end.
 
+%% Replace your current preview_text/1 with this:
 preview_text(RecMap) when is_map(RecMap) ->
     Name = first_nonempty_record_field(RecMap, [name, title]),
     Abstract = first_nonempty_record_field(RecMap, [abstract, text]),
@@ -436,6 +439,9 @@ preview_text(RecMap) when is_map(RecMap) ->
     end;
 preview_text(_) ->
     <<>>.
+
+
+
 
 first_nonempty_record_field(_Map, []) ->
     <<>>;
@@ -494,6 +500,8 @@ apply_review_signals(Ctx, ScoreMap) ->
 
 %% Apply a bounded popularity signal to visibility-ranked corpora. The
 %% logarithm prevents high-traffic pages from overwhelming textual relevance.
+%% Apply a bounded popularity signal to visibility-ranked corpora. The
+%% logarithm prevents high-traffic pages from overwhelming textual relevance.
 apply_visibility_signals(Ctx, ScoreMap) ->
     maps:map(
         fun(DocInt, Score0) ->
@@ -533,6 +541,74 @@ proof_for(Ctx, Term, DocId) ->
                 true -> merkle_path_for(Docs, Int)
             end
     end.
+
+record_commitment(Ctx, DocId) ->
+    case ets:lookup(Ctx#ctx.rec_tab, DocId) of
+        [{DocId, Rec}] ->
+            Data = maps:get(data, Rec, #{}),
+            crypto:hash(sha256, ecai_index_job_codec:canonical_binary(Data));
+        [] ->
+            not_found
+    end.
+
+term_root_v2(Ctx, Term) ->
+    Entries = posting_commitments_v2(Ctx, Term),
+    case Entries of
+        [] -> <<1, (crypto:hash(sha256, <<>>))/binary>>;
+        _ -> tree_root([Leaf || {_DocId, _RecordHash, Leaf} <- Entries])
+    end.
+
+proof_for_v2(Ctx, Term, DocId) ->
+    Entries = posting_commitments_v2(Ctx, Term),
+    DocIds = [Id || {Id, _Hash, _Leaf} <- Entries],
+    case pos(DocIds, DocId, 1) of
+        0 -> not_found;
+        Position ->
+            Leaves = [Leaf || {_Id, _Hash, Leaf} <- Entries],
+            {Path, Dirs} = build_path(Leaves, Position),
+            {_Id, RecordHash, LeafHash} = lists:nth(Position, Entries),
+            {ok, #{
+                scheme => <<"ecai-posting-proof/v2">>,
+                doc_id => DocId,
+                record_sha256 => hex(RecordHash),
+                leaf => hex(LeafHash),
+                path => Path,
+                directions => Dirs
+            }}
+    end.
+
+export_onchain_headers_v2(Ctx) ->
+    Terms = [T || {T, _Df} <- ets:tab2list(Ctx#ctx.df_tab)],
+    [#{
+        scheme => <<"ecai-posting-proof/v2">>,
+        tag => term_tag(Ctx, Term),
+        root => hex(term_root_v2(Ctx, Term)),
+        df => term_df(Ctx, Term)
+    } || Term <- lists:sort(Terms)].
+
+posting_commitments_v2(Ctx, Term) ->
+    Entries0 = lists:filtermap(
+        fun(DocInt) ->
+            case docid(Ctx, DocInt) of
+                DocId when is_binary(DocId), byte_size(DocId) > 0 ->
+                    case record_commitment(Ctx, DocId) of
+                        RecordHash when is_binary(RecordHash), byte_size(RecordHash) =:= 32 ->
+                            LeafData = ecai_index_job_codec:canonical_binary(#{
+                                schema => <<"ecai-posting-leaf/v2">>,
+                                doc_id => DocId,
+                                record_sha256 => RecordHash
+                            }),
+                            {true, {DocId, RecordHash, leaf(LeafData)}};
+                        _ ->
+                            false
+                    end;
+                _ ->
+                    false
+            end
+        end,
+        postings(Ctx, Term)
+    ),
+    lists:keysort(1, Entries0).
 
 term_root(Ctx, Term) ->
     case ets:lookup(Ctx#ctx.root_tab, Term) of
@@ -670,15 +746,8 @@ recompute_roots(Ctx, Terms) ->
             ),
             ok;
         deferred ->
-            %% Bulk loaders call finalize/1 once after their batch. This avoids
-            %% rebuilding popular posting-list roots after every record.
+            %% Bulk loaders call finalize/1 once after their batch.
             ok
-    end.
-
-root_mode(#ctx{opts = Opts}) ->
-    case maps:get(root_mode, Opts, immediate) of
-        deferred -> deferred;
-        _ -> immediate
     end.
 
 recompute_root(Ctx, Term) ->
@@ -689,23 +758,66 @@ recompute_root(Ctx, Term) ->
     ok.
 
 next_id(Ctx) ->
-    %% The table stores the next unallocated ID. update_counter/3 makes
-    %% allocation atomic when multiple loader workers share one context.
     ets:update_counter(Ctx#ctx.next_id_tab, seq, {2, 1}) - 1.
 
 %%%===================================================================
-%%% Shared term extraction
+%%% Term extraction
 %%%===================================================================
+terms_from_record(Record) ->
+    ecai_terms:terms_from_record(Record).
 
-%% Review and ad-hoc field indexing still need the canonical exact-term wire
-%% format. Record/query expansion itself lives in ecai_terms.
+%% helpers to fan out across word lists
+suffixes_many(Toks, Min, Max) ->
+    lists:usort(lists:append([suffixes(T, Min, Max) || T <- Toks])).
+
+ngrams_many(_Toks, 0) -> [];
+ngrams_many(Toks, N) -> lists:usort(lists:append([ngrams(T, N) || T <- Toks])).
+
 term_key(Namespace, Token0) ->
     Token = binary:copy(Token0),
     <<Namespace/binary, $:, Token/binary>>.
+term_pfx(Namespace, Prefix0) ->
+    Prefix = binary:copy(Prefix0),
+    <<"pfx:", Namespace/binary, $:, Prefix/binary>>.
+term_sfx(Field, Suffix0) ->
+    Suffix = binary:copy(Suffix0),
+    <<"sfx:", Field/binary, $:, Suffix/binary>>.
+term_ng(Field, Ng0) ->
+    Ng = binary:copy(Ng0),
+    <<"ng:", Field/binary, $:, Ng/binary>>.
+
+reverse_bin(B) ->
+    <<<<C>> || C <- lists:reverse(binary:bin_to_list(B))>>.
+
+suffixes(Bin, Min, Max) ->
+    Len = byte_size(Bin),
+    From = min(Len, Max),
+    [binary:part(Bin, Len - N, N) || N <- lists:seq(Min, From)].
+
+ngrams(Bin, N) when N >= 1 ->
+    L = byte_size(Bin),
+    if
+        L < N -> [];
+        true -> [binary:part(Bin, I, N) || I <- lists:seq(0, L - N)]
+    end.
+
+prefixes_many(Tokens, Min, Max) ->
+    lists:usort(lists:append([pfx1(T, Min, Max) || T <- Tokens])).
+
+pfx1(Bin, Min, Max) ->
+    Len = byte_size(Bin),
+    To = min(Max, Len),
+    [binary:part(Bin, 0, N) || N <- lists:seq(Min, To)].
 
 %%%===================================================================
 %%% Posting access (exact + prefix)
 %%%===================================================================
+
+root_mode(#ctx{opts = Opts}) ->
+    case maps:get(root_mode, Opts, immediate) of
+        deferred -> deferred;
+        _ -> immediate
+    end.
 
 postings(#ctx{backend = gpu, dyn = H, term_ids = Map}, Term) ->
     case maps:get(Term, Map, undefined) of
@@ -869,8 +981,7 @@ kind_field(Term) ->
     {exact, term_field(Term)}.
 
 term_field(Term) ->
-    %% Split only at the field separator. Tokens themselves may contain ':',
-    %% for example tag:wikidata:q7259.
+    %% Split only at the field separator. Tokens may themselves contain ':'.
     case binary:split(Term, <<":">>) of
         [Field, _Token] -> Field;
         _ -> <<>>
@@ -1022,6 +1133,15 @@ hash_to_curve(Arg) -> ecai:hash_to_curve(Arg).
 h2c_tag(TermBin) ->
     hash_to_curve(TermBin).
 
+
+
+%% ---------------------------------------------------------------
+%% Snapshot the entire index to disk (single compressed term)
+%% ---------------------------------------------------------------
+
+%% Rebuild proof roots without changing backend state or GPU ownership.
+
+
 finalize(Ctx0 = #ctx{backend = gpu}) ->
     Ctx1 = disable_gpu(Ctx0),
     Ctx2 = rebuild_all_roots(Ctx1),
@@ -1029,9 +1149,7 @@ finalize(Ctx0 = #ctx{backend = gpu}) ->
 finalize(Ctx = #ctx{}) ->
     rebuild_all_roots(Ctx).
 
-%% Rebuild proof roots without changing backend state. Artifact finalization
-%% often receives a borrowed context from ecai_search_server and must not free
-%% or replace a GPU handle owned by that server.
+%% Rebuild proof roots without changing backend state or GPU ownership.
 finalize_roots(Ctx = #ctx{}) ->
     rebuild_all_roots(Ctx).
 
@@ -1042,15 +1160,12 @@ rebuild_all_roots(Ctx) ->
         lists:sort(Terms)
     ),
     Ctx.
-%% ---------------------------------------------------------------
-%% Snapshot the entire index to disk (single compressed term)
-%% ---------------------------------------------------------------
+
 save(File) ->
     save(ecai_search_server:get_ctx(), File).
 save(Ctx = #ctx{}, File) ->
     try
-        %% A persisted snapshot must never contain roots stale from deferred
-        %% bulk indexing.
+        %% A persisted snapshot must never contain roots stale from deferred bulk indexing.
         _ = rebuild_all_roots(Ctx),
         %% Optional: for very large tables you can fixtable (omitted for simplicity)
         Data = #{

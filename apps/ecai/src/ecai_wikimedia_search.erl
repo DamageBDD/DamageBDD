@@ -17,11 +17,16 @@ search(Query) ->
 search(Query, Limit) when is_integer(Limit) ->
     search(Query, #{limit => Limit});
 search(Query, Opts) when is_map(Opts) ->
-    try ecai_search_server:get_ctx() of
-        undefined -> {error, search_index_not_ready};
-        Ctx -> search(Ctx, Query, Opts)
-    catch
-        Class:Reason -> {error, {search_context_failed, Class, Reason}}
+    case whereis(ecai_wikimedia_search_server) of
+        Pid when is_pid(Pid) ->
+            ecai_wikimedia_search_server:search(Query, Opts);
+        undefined ->
+            try ecai_search_server:get_ctx() of
+                undefined -> {error, search_index_not_ready};
+                Ctx -> search(Ctx, Query, Opts)
+            catch
+                Class:Reason -> {error, {search_context_failed, Class, Reason}}
+            end
     end;
 search(_Query, _Opts) ->
     {error, badarg}.
@@ -74,11 +79,16 @@ search(_Ctx, _Query, _Opts) ->
 
 -spec status() -> map().
 status() ->
-    try ecai_search_server:get_ctx() of
-        undefined -> #{ready => false, reason => search_index_not_ready};
-        Ctx -> #{ready => true, size => ecai_search:size(Ctx)}
-    catch
-        Class:Reason -> #{ready => false, reason => {Class, Reason}}
+    case whereis(ecai_wikimedia_search_server) of
+        Pid when is_pid(Pid) ->
+            ecai_wikimedia_search_server:status();
+        undefined ->
+            try ecai_search_server:get_ctx() of
+                undefined -> #{ready => false, reason => search_index_not_ready};
+                Ctx -> #{ready => true, size => ecai_search:size(Ctx), compatibility_context => true}
+            catch
+                Class:Reason -> #{ready => false, reason => {Class, Reason}}
+            end
     end.
 
 normalize_options(Opts) ->

@@ -204,32 +204,48 @@ missing_fixture_sources_fail_closed_test() ->
     with_tmp(fun(RuntimeDir) ->
         EmptyFixtureDir = filename:join(RuntimeDir, "empty-fixtures"),
         ok = filelib:ensure_dir(filename:join(EmptyFixtureDir, "x")),
-        ?assertEqual(
+        assert_start_link_error(
             {error, no_wikimedia_content_fixtures},
-            ecai_wikimedia_fixture_server:start_link(#{
+            #{
                 listener_ref => ecai_wikimedia_fixture_http_missing_test,
                 ip => {127, 0, 0, 1},
                 port => free_port(),
                 fixture_dir => EmptyFixtureDir,
                 runtime_dir => filename:join(RuntimeDir, "runtime")
-            })
+            }
         )
     end).
 
 non_loopback_bind_requires_opt_in_test() ->
     with_tmp(fun(RuntimeDir) ->
-        ?assertEqual(
+        assert_start_link_error(
             {error, {fixture_non_loopback_binding_rejected, {0, 0, 0, 0}}},
-            ecai_wikimedia_fixture_server:start_link(#{
+            #{
                 listener_ref => ecai_wikimedia_fixture_http_non_loopback_test,
                 ip => {0, 0, 0, 0},
                 port => free_port(),
                 allow_non_loopback => false,
                 fixture_dir => fixture_dir(),
                 runtime_dir => RuntimeDir
-            })
+            }
         )
     end).
+
+assert_start_link_error(Expected, Opts) ->
+    PreviousTrapExit = process_flag(trap_exit, true),
+    try
+        ?assertEqual(Expected, ecai_wikimedia_fixture_server:start_link(Opts))
+    after
+        flush_start_link_exits(),
+        process_flag(trap_exit, PreviousTrapExit)
+    end.
+
+flush_start_link_exits() ->
+    receive
+        {'EXIT', _Pid, _Reason} -> flush_start_link_exits()
+    after 50 ->
+        ok
+    end.
 
 raw_request(Port, Method, Path, ExtraHeaders) ->
     {ok, Socket} = gen_tcp:connect(
@@ -344,7 +360,8 @@ with_tmp(Fun) ->
     Unique = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Dir = filename:join(temp_dir(), "ecai-managed-fixture-" ++ Unique),
     ok = filelib:ensure_dir(filename:join(Dir, "x")),
-    try Fun(Dir)
+    try
+        Fun(Dir)
     after
         remove_tree(Dir)
     end.
@@ -364,7 +381,8 @@ remove_tree(Path) ->
                         fun(Name) -> remove_tree(filename:join(Path, Name)) end,
                         Names
                     );
-                {error, _Reason0} -> ok
+                {error, _Reason0} ->
+                    ok
             end,
             _ = file:del_dir(Path),
             ok;

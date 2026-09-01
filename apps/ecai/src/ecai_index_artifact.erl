@@ -10,7 +10,8 @@
 
 -export([finalize/2, nft_metadata/1]).
 
--define(MANIFEST_SCHEMA, <<"ecai-index-manifest/v1">>).
+-define(MANIFEST_SCHEMA_V1, <<"ecai-index-manifest/v1">>).
+-define(MANIFEST_SCHEMA_V2, <<"ecai-index-manifest/v2">>).
 
 -spec finalize(map(), map()) -> {ok, map()} | {error, term()}.
 finalize(#{id := JobId, spec := Spec} = Job, AdapterResult) ->
@@ -23,6 +24,7 @@ finalize(#{id := JobId, spec := Spec} = Job, AdapterResult) ->
                 OutputDir = artifact_dir(JobId),
                 ok = filelib:ensure_dir(filename:join(OutputDir, "x")),
                 PublishIpfs = maps:get(publish_ipfs, Finalize, false),
+                ManifestSchema = manifest_schema(Spec),
                 {Counts, Files0, Logical} = collect_index_material(Job, AdapterResult, OutputDir),
                 {ok, Files} = maybe_publish_files(Files0, PublishIpfs),
                 SourceIdentity = source_identity(Spec, AdapterResult),
@@ -54,7 +56,7 @@ finalize(#{id := JobId, spec := Spec} = Job, AdapterResult) ->
                     ecai_index_job_codec:canonical_binary(ContentSpec)
                 ),
                 Identity0 = #{
-                    schema => ?MANIFEST_SCHEMA,
+                    schema => ManifestSchema,
                     index_id => maps:get(index_id, maps:get(target, Spec)),
                     namespace => maps:get(namespace, Target),
                     previous_manifest_cid => PreviousManifestCid,
@@ -90,7 +92,7 @@ finalize(#{id := JobId, spec := Spec} = Job, AdapterResult) ->
                 ReadyToMint = PublishIpfs andalso is_binary(ManifestCid),
                 {ok, #{
                     ready_to_mint => ReadyToMint,
-                    schema => ?MANIFEST_SCHEMA,
+                    schema => ManifestSchema,
                     manifest_path => unicode:characters_to_binary(ManifestPath),
                     manifest_sha256 => ecai_index_job_codec:id_hex(ManifestSha),
                     manifest_cid => ManifestCid,
@@ -116,7 +118,7 @@ nft_metadata(#{artifact := Artifact, spec := Spec}) when is_map(Artifact) ->
     case maps:get(ready_to_mint, Artifact, false) of
         true ->
             {ok, #{
-                schema => <<"ecai-index-nft/v1">>,
+                schema => nft_schema(maps:get(schema, Artifact, ?MANIFEST_SCHEMA_V1)),
                 manifest_cid => maps:get(manifest_cid, Artifact, null),
                 manifest_sha256 => maps:get(manifest_sha256, Artifact),
                 index_root => maps:get(index_root, Artifact),
@@ -137,6 +139,12 @@ nft_metadata(#{artifact := Artifact, spec := Spec}) when is_map(Artifact) ->
 nft_metadata(_Other) ->
     {error, artifact_not_ready}.
 
+manifest_schema(#{kind := wikimedia_visibility}) -> ?MANIFEST_SCHEMA_V2;
+manifest_schema(_Spec) -> ?MANIFEST_SCHEMA_V1.
+
+nft_schema(?MANIFEST_SCHEMA_V2) -> <<"ecai-index-nft/v2">>;
+nft_schema(_Other) -> <<"ecai-index-nft/v1">>.
+
 source_identity(Spec, AdapterResult) ->
     Kind = maps:get(kind, Spec),
     Source = maps:get(source, Spec),
@@ -148,7 +156,13 @@ source_identity(Spec, AdapterResult) ->
         yelp_ndjson ->
             verified_path_source_identity(Source, AdapterResult);
         wikipedia_jsonl ->
-            verified_path_source_identity(Source, AdapterResult)
+            verified_path_source_identity(Source, AdapterResult);
+        wikimedia_visibility ->
+            case maps:get(source_identity, AdapterResult, undefined) of
+                Identity when is_map(Identity) -> Identity;
+                undefined -> artifact_error(source_identity_missing);
+                _ -> artifact_error(invalid_source_identity)
+            end
     end.
 
 verified_path_source_identity(Source, AdapterResult) ->
@@ -181,8 +195,58 @@ collect_index_material(#{spec := Spec}, AdapterResult, OutputDir) ->
             collect_live_search(OutputDir, AdapterResult);
         {wikipedia_jsonl, live_search} ->
             collect_live_search(OutputDir, AdapterResult);
+        {wikimedia_visibility, live_search} ->
+            collect_wikimedia_live_search(AdapterResult);
         _ ->
             artifact_error({unsupported_artifact_mode, Kind, Mode})
+    end.
+
+collect_wikimedia_live_search(AdapterResult) ->
+    Material0 = maps:get(material_files, AdapterResult, []),
+    Material = normalize_material_files(Material0),
+    Files = [file_descriptor(maps:get(role, Item), maps:get(path, Item)) || Item <- Material],
+    Snapshot = required_material(search_snapshot, Material),
+    Headers = required_material(term_headers, Material),
+    Counts = maps:with([records_indexed, search_size], AdapterResult),
+    Logical = #{
+        mode => live_search,
+        isolated_context => true,
+        proof_scheme => <<"ecai-posting-proof/v2">>,
+        record_commitment => <<"sha256-canonical-record/v1">>,
+        snapshot_sha256 => maps:get(
+            sha256, file_descriptor(search_snapshot, maps:get(path, Snapshot))
+        ),
+        headers_sha256 => maps:get(sha256, file_descriptor(term_headers, maps:get(path, Headers))),
+        material_file_count => length(Files)
+    },
+    {Counts, Files, Logical}.
+
+normalize_material_files(Material) when is_list(Material) ->
+    [normalize_material_file(Item) || Item <- Material];
+normalize_material_files(_Other) ->
+    artifact_error(invalid_material_files).
+
+normalize_material_file(#{role := Role, path := Path}) ->
+    #{role => Role, path => path_list(Path)};
+normalize_material_file(#{<<"role">> := Role0, <<"path">> := Path}) ->
+    #{role => normalize_role(Role0), path => path_list(Path)};
+normalize_material_file(Other) ->
+    artifact_error({invalid_material_file, Other}).
+
+normalize_role(Bin) when is_binary(Bin) ->
+    try
+        binary_to_existing_atom(Bin, utf8)
+    catch
+        error:badarg -> artifact_error({invalid_material_role, Bin})
+    end;
+normalize_role(Atom) when is_atom(Atom) -> Atom;
+normalize_role(Other) ->
+    artifact_error({invalid_material_role, Other}).
+
+required_material(Role, Material) ->
+    case [Item || Item <- Material, maps:get(role, Item) =:= Role] of
+        [Item | _] -> Item;
+        [] -> artifact_error({required_material_missing, Role})
     end.
 
 collect_disk_index(Spec, AdapterResult) ->

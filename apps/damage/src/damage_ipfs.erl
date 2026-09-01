@@ -41,14 +41,13 @@
 
 start_link(Members) -> gen_server:start_link(?MODULE, Members, []).
 
-% Entry function to select a server.
+% Entry function to select a server
 select_server(Servers) when is_list(Servers) ->
     select_server(Servers, length(Servers)).
 
-% Internal function to handle selection and connection attempts.
 select_server([], _Length) ->
     {error, no_available_servers};
-select_server(Servers, Length) ->
+select_server(Servers, Length) when Length > 0 ->
     RandomIndex = rand:uniform(Length),
     SelectedServer = lists:nth(RandomIndex, Servers),
     case safe_ipfs_start_link(SelectedServer) of
@@ -57,22 +56,23 @@ select_server(Servers, Length) ->
                 {ok, _VersionInfo} ->
                     Pid;
                 {error, Reason} ->
-                    ?LOG_ERROR(
-                        "Error connecting to ipfs node ~p: ~p, index ~p",
-                        [SelectedServer, Reason, RandomIndex]
-                    ),
+                    ?LOG_ERROR("Error connecting to ipfs node ~p: ~p, index ~p", [
+                        SelectedServer, Reason, RandomIndex
+                    ]),
                     stop_failed_connection(Pid),
                     RemainingServers = Servers -- [SelectedServer],
                     select_server(RemainingServers, Length - 1)
             end;
         {error, Reason} ->
-            ?LOG_ERROR(
-                "Error starting ipfs node ~p: ~p, index ~p",
-                [SelectedServer, Reason, RandomIndex]
-            ),
+            ?LOG_ERROR("Error starting ipfs node ~p: ~p, index ~p", [
+                SelectedServer, Reason, RandomIndex
+            ]),
             RemainingServers = Servers -- [SelectedServer],
             select_server(RemainingServers, Length - 1)
     end.
+
+
+% Internal function to handle selection and connection attempts
 
 safe_ipfs_start_link(Server) ->
     try ipfs:start_link(Server) of
@@ -192,8 +192,6 @@ ls(Hash) ->
         fun(Worker) -> gen_server:call(Worker, {ls, Hash}, ?DEFAULT_IPFS_TIMEOUT) end
     ).
 
-%% Compatibility content-read API. get/2 still writes to a file; get/1
-%% returns normalized content bytes.
 get(Hash) ->
     cat_binary(Hash).
 
@@ -211,7 +209,6 @@ cat(Hash) ->
         fun(Worker) -> gen_server:call(Worker, {cat, Hash}, ?DEFAULT_IPFS_TIMEOUT) end
     ).
 
--spec cat_binary(term()) -> {ok, binary()} | {error, term()}.
 cat_binary(Hash) ->
     try cat(Hash) of
         Response -> normalize_cat_response(Response)
@@ -219,14 +216,10 @@ cat_binary(Hash) ->
         Class:Reason -> {error, {ipfs_cat_failed, Class, Reason}}
     end.
 
-normalize_cat_response({ok, Bin}) when is_binary(Bin) ->
-    {ok, Bin};
-normalize_cat_response(Bin) when is_binary(Bin) ->
-    {ok, Bin};
-normalize_cat_response({error, _Reason} = Error) ->
-    Error;
-normalize_cat_response(Other) ->
-    {error, {invalid_ipfs_cat_response, Other}}.
+normalize_cat_response({ok, Bin}) when is_binary(Bin) -> {ok, Bin};
+normalize_cat_response(Bin) when is_binary(Bin) -> {ok, Bin};
+normalize_cat_response({error, _Reason} = Error) -> Error;
+normalize_cat_response(Other) -> {error, {invalid_ipfs_cat_response, Other}}.
 
 fetch_to(Hash, OutPath) ->
     ok = damage_utils:ensure_dir(filename:dirname(OutPath) ++ "/"),
@@ -238,8 +231,8 @@ hydrate_feature_from_ipfs(Json0) ->
             {error, missing_feature_cid};
         Cid0 ->
             Cid = to_bin(Cid0),
-            case damage_ipfs:cat_binary(Cid) of
-                {ok, FeatureBin} ->
+            case damage_ipfs:cat(Cid) of
+                {ok, FeatureBin} when is_binary(FeatureBin) ->
                     Vars0 = maps:get(vars, Json0, #{}),
                     Vars =
                         case Vars0 of
@@ -254,6 +247,16 @@ hydrate_feature_from_ipfs(Json0) ->
                             Vars,
                             maps:remove(vars, Json0#{feature => FeatureBin})
                         ),
+                    {ok, Json1};
+                FeatureBin when is_binary(FeatureBin) ->
+                    %% support cat returning raw binary
+                    Vars0 = maps:get(vars, Json0, #{}),
+                    Vars =
+                        case Vars0 of
+                            M when is_map(M) -> M;
+                            _ -> #{}
+                        end,
+                    Json1 = maps:merge(Vars, maps:remove(vars, Json0#{feature => FeatureBin})),
                     {ok, Json1};
                 Err ->
                     {error, {ipfs_cat_failed, Cid, Err}}

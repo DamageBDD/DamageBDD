@@ -72,7 +72,6 @@
 %% persistent_term keys this module uses:
 
 %% ecai_search ctx
--define(K_CTX, ecai_admin_ctx).
 %% [PathBin]
 -define(K_CHUNKS, ecai_admin_chunks).
 %% [{PathBin,CIDBin}]
@@ -153,7 +152,7 @@ trails() ->
                 }
             }
         }),
-                trails:trail("/yelp/headers", ecai_yelp_admin, #{action => headers}, #{
+        trails:trail("/yelp/headers", ecai_yelp_admin, #{action => headers}, #{
             description => "Export on-chain term headers (Merkle roots per term)",
             methods => #{
                 post => #{
@@ -190,7 +189,7 @@ trails() ->
                 }
             }
         }),
-                                trails:trail("/yelp/chunk_async", ecai_yelp_admin, #{action => chunk_async}, #{
+        trails:trail("/yelp/chunk_async", ecai_yelp_admin, #{action => chunk_async}, #{
             description => "Start async Yelp chunking job",
             methods => #{
                 post => #{

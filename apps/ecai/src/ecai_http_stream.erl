@@ -69,7 +69,14 @@ download(Url0, DestPath0, Opts) when is_map(Opts) ->
             {ok, Url} ->
                 case filelib:is_regular(DestPath) of
                     true ->
-                        {ok, file_info_result(Url, DestPath, cached)};
+                        case cached_source_matches(Url, DestPath) of
+                            true ->
+                                {ok, file_info_result(Url, DestPath, cached)};
+                            false ->
+                                {error,
+                                    {cached_source_mismatch,
+                                        unicode:characters_to_binary(DestPath)}}
+                        end;
                     false ->
                         ok = filelib:ensure_dir(DestPath),
                         download_url(
@@ -215,6 +222,7 @@ collect_body(ConnPid, StreamRef, Timeout, MaxBytes, Acc, Count) ->
 
 download_url(Url, DestPath, Opts, RedirectsLeft) ->
     PartPath = DestPath ++ ".part",
+    ok = prepare_partial_for_url(Url, PartPath),
     Existing = file_size_or_zero(PartPath),
     Timeout = positive_opt(timeout_ms, Opts, ?DEFAULT_TIMEOUT_MS),
     RangeHeaders =
@@ -470,6 +478,7 @@ promote_part(Url, PartPath, DestPath, Status, RespHeaders, Count, Total) ->
             case file:rename(PartPath, DestPath) of
                 ok ->
                     _ = file:delete(resume_meta_path(PartPath)),
+                    ok = write_final_source_metadata(DestPath, Url, RespHeaders, Count),
                     Meta0 = response_meta(Url, Status, RespHeaders, Count),
                     {ok, Meta0#{
                         path => unicode:characters_to_binary(DestPath)
@@ -512,6 +521,68 @@ total_matches(Count, Count) -> true;
 total_matches(_Count, _Total) -> false.
 
 resume_meta_path(PartPath) -> PartPath ++ ".meta.json".
+final_source_meta_path(DestPath) -> DestPath ++ ".source.json".
+
+prepare_partial_for_url(Url, PartPath) ->
+    RequestedUrl = maps:get(original, Url),
+    case file:read_file(resume_meta_path(PartPath)) of
+        {ok, Bytes} ->
+            case metadata_url(Bytes) of
+                {ok, RequestedUrl} ->
+                    ok;
+                {ok, _Other} ->
+                    _ = file:delete(PartPath),
+                    _ = file:delete(resume_meta_path(PartPath)),
+                    ok;
+                error ->
+                    _ = file:delete(PartPath),
+                    _ = file:delete(resume_meta_path(PartPath)),
+                    ok
+            end;
+        {error, enoent} ->
+            case filelib:is_regular(PartPath) of
+                true ->
+                    _ = file:delete(PartPath),
+                    ok;
+                false ->
+                    ok
+            end;
+        {error, Reason} ->
+            {error, {resume_metadata_read_failed, Reason}}
+    end.
+
+cached_source_matches(Url, DestPath) ->
+    case file:read_file(final_source_meta_path(DestPath)) of
+        {ok, Bytes} ->
+            case metadata_url(Bytes) of
+                {ok, Requested} -> Requested =:= maps:get(original, Url);
+                error -> false
+            end;
+        {error, _} ->
+            false
+    end.
+
+metadata_url(Bytes) ->
+    try jsx:decode(Bytes, [return_maps]) of
+        Map when is_map(Map) ->
+            case maps:get(<<"url">>, Map, undefined) of
+                Url when is_binary(Url), byte_size(Url) > 0 -> {ok, Url};
+                _ -> error
+            end;
+        _ ->
+            error
+    catch
+        _:_ -> error
+    end.
+
+write_final_source_metadata(DestPath, Url, Headers, Count) ->
+    Meta = ecai_index_job_codec:externalize(#{
+        url => maps:get(original, Url),
+        etag => header_value(<<"etag">>, Headers),
+        last_modified => header_value(<<"last-modified">>, Headers),
+        bytes => Count
+    }),
+    atomic_write(final_source_meta_path(DestPath), jsx:encode(Meta)).
 
 resume_validator(PartPath) ->
     case file:read_file(resume_meta_path(PartPath)) of

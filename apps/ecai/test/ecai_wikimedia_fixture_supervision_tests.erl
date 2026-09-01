@@ -32,20 +32,26 @@ managed_child_restarts_under_supervisor_test() ->
             ),
             Child1 = child_pid(SupPid),
             ?assert(is_pid(Child1)),
-            ?assertEqual(true, maps:get(
-                ready,
-                ecai_wikimedia_fixture_server:status(Child1)
-            )),
+            ?assertEqual(
+                true,
+                maps:get(
+                    ready,
+                    ecai_wikimedia_fixture_server:status(Child1)
+                )
+            ),
 
             %% An abnormal, graceful gen_server stop runs terminate/2, closes
             %% the listener, and lets the permanent child restart cleanly.
             ok = gen_server:stop(Child1, fixture_test_crash, 5000),
             Child2 = wait_for_restarted_child(SupPid, Child1, 100),
             ?assert(Child2 =/= Child1),
-            ?assertEqual(true, maps:get(
-                ready,
-                ecai_wikimedia_fixture_server:status(Child2)
-            ))
+            ?assertEqual(
+                true,
+                maps:get(
+                    ready,
+                    ecai_wikimedia_fixture_server:status(Child2)
+                )
+            )
         after
             _ = supervisor:terminate_child(
                 SupPid,
@@ -63,13 +69,16 @@ init([]) ->
     {ok, {{one_for_one, 3, 10}, []}}.
 
 child_pid(SupPid) ->
-    case lists:keyfind(
-        ecai_wikimedia_fixture_server,
-        1,
-        supervisor:which_children(SupPid)
-    ) of
-        {ecai_wikimedia_fixture_server, Pid, worker, _Modules}
-                when is_pid(Pid) ->
+    case
+        lists:keyfind(
+            ecai_wikimedia_fixture_server,
+            1,
+            supervisor:which_children(SupPid)
+        )
+    of
+        {ecai_wikimedia_fixture_server, Pid, worker, _Modules} when
+            is_pid(Pid)
+        ->
             Pid;
         Other ->
             erlang:error({fixture_child_not_running, Other})
@@ -78,11 +87,12 @@ child_pid(SupPid) ->
 wait_for_restarted_child(_SupPid, _OldPid, 0) ->
     erlang:error(fixture_child_restart_timeout);
 wait_for_restarted_child(SupPid, OldPid, Attempts) ->
-    Result = try child_pid(SupPid) of
-        Pid -> {ok, Pid}
-    catch
-        error:_Reason -> not_ready
-    end,
+    Result =
+        try child_pid(SupPid) of
+            Pid -> {ok, Pid}
+        catch
+            error:_Reason -> not_ready
+        end,
     case Result of
         {ok, Pid0} when is_pid(Pid0), Pid0 =/= OldPid ->
             Pid0;
@@ -131,7 +141,8 @@ with_tmp(Fun) ->
     Unique = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Dir = filename:join(temp_dir(), "ecai-fixture-supervision-" ++ Unique),
     ok = filelib:ensure_dir(filename:join(Dir, "x")),
-    try Fun(Dir)
+    try
+        Fun(Dir)
     after
         remove_tree(Dir)
     end.
@@ -151,7 +162,8 @@ remove_tree(Path) ->
                         fun(Name) -> remove_tree(filename:join(Path, Name)) end,
                         Names
                     );
-                {error, _Reason0} -> ok
+                {error, _Reason0} ->
+                    ok
             end,
             _ = file:del_dir(Path),
             ok;
