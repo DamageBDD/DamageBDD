@@ -74,11 +74,6 @@ init([]) ->
                     type => worker,
                     modules => []
                 },
-                                    restart => permanent,
-                    shutdown => 60,
-                    type => worker,
-                    modules => []
-                },
                 #{
                     id => ecai_blender,
                     start => {ecai_blender, start_link, []},
