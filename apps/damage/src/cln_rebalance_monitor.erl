@@ -132,11 +132,11 @@ cancel_timer(Ref) ->
 %%====================================================================
 
 collect_snapshot(State) ->
-    Funds = safe_cln(fun cln:list_funds/0),
-    Peers = safe_cln(fun cln:list_channels/0),
-    Pays = safe_cln(fun cln:list_pays/0),
-    SendPays = safe_cln(fun cln:list_sendpays/0),
-    Balance = safe_cln(fun cln:get_node_balance/0),
+    Funds = safe_cln(fun damage_cln:list_funds/0),
+    Peers = safe_cln(fun damage_cln:list_channels/0),
+    Pays = safe_cln(fun damage_cln:list_pays/0),
+    SendPays = safe_cln(fun damage_cln:list_sendpays/0),
+    Balance = safe_cln(fun damage_cln:get_node_balance/0),
     Failures = recent_failures(Pays, SendPays, State#state.max_failures),
     #{
         node_balance => Balance,

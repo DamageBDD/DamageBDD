@@ -87,7 +87,7 @@ handle_pay_invoice(Req, Invoice0) ->
             {error, nwc_error(<<"UNAUTHORIZED">>, <<"No account mapping for request pubkey">>)};
         _AeAccount ->
             ?LOG_INFO("NWC pay_invoice request invoice=~p", [Invoice]),
-            case catch cln:pay_invoice(Invoice) of
+            case catch damage_cln:pay_invoice(Invoice) of
                 {'EXIT', Reason} ->
                     ?LOG_WARNING("NWC pay_invoice crashed ~p", [Reason]),
                     {error, nwc_error(<<"PAYMENT_FAILED">>, to_bin(Reason))};
@@ -143,7 +143,7 @@ handle_make_invoice(Req, Params) ->
     ),
     Expiry = read_int(Params, [<<"expiry">>, expiry], 3600),
     Label = make_nwc_label(request_pubkey(Req)),
-    case catch cln:create_invoice(AmountMsat, Description, Expiry, Label) of
+    case catch damage_cln:create_invoice(AmountMsat, Description, Expiry, Label) of
         {'EXIT', Reason} ->
             {error, nwc_error(<<"INTERNAL">>, to_bin(Reason))};
         #{bolt11 := Bolt11, payment_hash := PaymentHash} = Inv ->
@@ -161,7 +161,7 @@ handle_lookup_invoice(Params) ->
         undefined ->
             {error, nwc_error(<<"BAD_REQUEST">>, <<"payment_hash or invoice required">>)};
         Lookup ->
-            case catch cln:list_invoices_by_label(Lookup) of
+            case catch damage_cln:list_invoices_by_label(Lookup) of
                 {'EXIT', Reason} ->
                     {error, nwc_error(<<"INTERNAL">>, to_bin(Reason))};
                 #{invoices := Invoices} ->

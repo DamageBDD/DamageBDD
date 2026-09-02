@@ -39,61 +39,52 @@
 ]).
 
 get_cln_client_config() ->
-    {ok, Host} = application:get_env(damage, cln_host),
-    {ok, Port} = application:get_env(damage, cln_port),
-    {ok, Path} = application:get_env(damage, cln_wspath),
-    {ok, CaCertFile} = application:get_env(damage, cln_cacertfile),
-    {ok, CertFile} = application:get_env(damage, cln_certfile),
-    {ok, KeyFile} = application:get_env(damage, cln_keyfile),
-    TLSOptions =
-        [
-            {certfile, CertFile},
-            {keyfile, KeyFile},
-            {cacertfile, CaCertFile},
-            % This ensures the server's certificate is verified
-            {verify, verify_peer},
-            % Ensure compatibility with recent TLS versions
-            {versions, ['tlsv1.2', 'tlsv1.3']},
-            % HTTP2 or HTTP/1.1, depending on your setup
-            {alpn_protocols, ['http/1.1', h2]}
-        ],
-    Options =
-        case Host of
-            "localhost" -> #{};
-            _ -> #{transport => tls, tls_opts => TLSOptions}
-        end,
-    #state{
-        cln_host = Host,
-        cln_port = Port,
-        cln_wspath = Path,
-        cln_certfile = CertFile,
-        cln_keyfile = KeyFile,
-        options = Options
-    }.
+    case damage_cln:missing_websocket_config() of
+        [] ->
+            Host = application:get_env(damage, cln_host, undefined),
+            Port = application:get_env(damage, cln_port, undefined),
+            Path = application:get_env(damage, cln_wspath, undefined),
+            CaCertFile = application:get_env(damage, cln_cacertfile, undefined),
+            CertFile = application:get_env(damage, cln_certfile, undefined),
+            KeyFile = application:get_env(damage, cln_keyfile, undefined),
+            TLSOptions =
+                [
+                    {certfile, CertFile},
+                    {keyfile, KeyFile},
+                    {cacertfile, CaCertFile},
+                    {verify, verify_peer},
+                    {versions, ['tlsv1.2', 'tlsv1.3']},
+                    {alpn_protocols, ['http/1.1', h2]}
+                ],
+            Options =
+                case Host of
+                    "localhost" -> #{};
+                    <<"localhost">> -> #{};
+                    "127.0.0.1" -> #{};
+                    <<"127.0.0.1">> -> #{};
+                    _ -> #{transport => tls, tls_opts => TLSOptions}
+                end,
+            {ok,
+                #state{
+                    cln_host = Host,
+                    cln_port = Port,
+                    cln_wspath = Path,
+                    cln_certfile = CertFile,
+                    cln_keyfile = KeyFile,
+                    options = Options
+                }};
+        Missing ->
+            {error, {missing_cln_websocket_config, Missing}}
+    end.
 
 start_link([ws]) -> gen_server:start_link(?MODULE, [ws], []).
+
+%% init/1 deliberately never connects synchronously. A dead CLN websocket must
+%% not be able to fail damage_cln_sup startup or consume supervisor intensity.
 init([ws]) ->
-    case load_runes(get_cln_client_config()) of
-        {ok, #state{secrets_ready = true} = State1} ->
-            case start_ws(State1) of
-                {ok, State2} ->
-                    ?LOG_INFO("cln ws started"),
-                    {ok, State2};
-                Error ->
-                    ?LOG_ERROR("cln ws error ~p", [Error]),
-                    TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
-                    {ok, State1#state{secrets_ready = false, retry_timer = TRef}}
-            end;
-        {ok, #state{secrets_ready = false, retry_timer = undefined} = State1} ->
-            ?LOG_DEBUG("cln ws secrets not ready ~p", [State1]),
-            TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
-            {ok, State1#state{secrets_ready = false, retry_timer = TRef}};
-        {error, Error} ->
-            ?LOG_ERROR("cln ws error in init ~p", [Error]),
-            TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
-            State = get_cln_client_config(),
-            {ok, State#state{secrets_ready = false, retry_timer = TRef}}
-    end.
+    self() ! retry_secrets,
+    {ok, #state{}}.
+
 handle_call(Request, From, State) ->
     ?LOG_ERROR(
         "handle_call got unknown ~p, From ~p, State ~p",
@@ -113,54 +104,67 @@ handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
         [ConnPid, StreamRef, Reason]
     ),
     {noreply, State};
-handle_info({gun_down, ConnPid, _Reason}, State) when
-    ConnPid =:= State#state.conn_pid
-->
-    erlang:cancel_timer(State#state.heartbeat_timer),
-    {stop, normal, State};
+handle_info({gun_down, ConnPid, _Reason}, State = #state{conn_pid = ConnPid}) ->
+    ?LOG_WARNING("cln websocket connection down; reconnecting", []),
+    {noreply, schedule_retry(clear_connection(State))};
 handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, State) when
     StreamRef == State#state.streamref
 ->
     ?LOG_DEBUG("cln gun_upgrade upgraded ~p ", [StreamRef]),
     {noreply, State#state{conn_pid = ConnPid}};
-handle_info({gun_up, _, _} = _Info, State) ->
+handle_info({gun_up, _, _}, State) ->
     {noreply, State};
-handle_info({gun_ws, ConnPid, StreamRef, {text, <<"2">>}}, State) ->
-    gun:ws_send(
-        ConnPid,
-        StreamRef,
-        {text, <<"3">>}
-    ),
+handle_info(
+    {gun_ws, ConnPid, StreamRef, {text, <<"2">>}},
+    State = #state{conn_pid = ConnPid, streamref = StreamRef}
+) ->
+    _ = catch gun:ws_send(ConnPid, StreamRef, {text, <<"3">>}),
     {noreply, State};
-handle_info({gun_ws, ConnPid, StreamRef, {text, Message0}}, State) ->
+handle_info(
+    {gun_ws, ConnPid, StreamRef, {text, Message0}},
+    State = #state{conn_pid = ConnPid, streamref = StreamRef}
+) ->
     Message = parse_socketio_message(Message0),
     handle_event(ConnPid, StreamRef, Message),
     {noreply, State};
-handle_info({gun_ws, _, _, close} = _Info, State) ->
-    {noreply, State};
+
 handle_info(
-    {gun_down, _ConnPid, ws, closed, _Ref}, State
+    {gun_ws, ConnPid, StreamRef, close},
+    State = #state{conn_pid = ConnPid, streamref = StreamRef}
 ) ->
-    ?LOG_DEBUG("cln ws gun_down  ~p ", [State]),
-    {stop, normal, State};
+    ?LOG_WARNING("cln websocket closed; reconnecting", []),
+    {noreply, schedule_retry(clear_connection(State))};
+handle_info(
+    {gun_down, ConnPid, ws, _Reason, _Ref},
+    State = #state{conn_pid = ConnPid}
+) ->
+    ?LOG_WARNING("cln websocket gun_down; reconnecting", []),
+    {noreply, schedule_retry(clear_connection(State))};
 handle_info(retry_secrets, State0) ->
-    case load_runes(State0) of
-        {ok, State1} ->
-            %% cancel any existing retry timer
-            maybe_cancel(State0#state.retry_timer),
-            %% now actually connect
-            case start_ws(State1#state{retry_timer = undefined, secrets_ready = true}) of
-                {ok, State2} ->
-                    {noreply, State2};
-                {error, _} ->
-                    %% if connect fails, you can also backoff here
-                    TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
-                    {noreply, State1#state{retry_timer = TRef, secrets_ready = false}}
+    State1 = cancel_retry(State0),
+    case get_cln_client_config() of
+        {ok, ConfigState0} ->
+            case load_runes(ConfigState0) of
+                {ok, ConfigState1} ->
+                    case start_ws(ConfigState1#state{secrets_ready = true}) of
+                        {ok, State2} ->
+                            ?LOG_INFO("cln websocket connected"),
+                            {noreply, State2};
+                        {error, Reason} ->
+                            ?LOG_WARNING("cln websocket unavailable; retrying: ~p", [Reason]),
+                            {noreply, schedule_retry(ConfigState1#state{secrets_ready = true})}
+                    end;
+                {error, Reason} ->
+                    ?LOG_DEBUG("cln websocket secrets unavailable: ~p", [Reason]),
+                    {noreply, schedule_retry(ConfigState0#state{secrets_ready = false})}
             end;
-        {error, _} ->
-            TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
-            {noreply, State0#state{retry_timer = TRef, secrets_ready = false}}
-    end.
+        {error, Reason} ->
+            ?LOG_WARNING("cln websocket disabled/unconfigured for now: ~p", [Reason]),
+            {noreply, schedule_retry(State1#state{secrets_ready = false})}
+    end;
+handle_info(_Info, State) ->
+    {noreply, State}.
+
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 terminate(Reason, State) ->
     maybe_close_gun(State#state.conn_pid),
@@ -235,7 +239,7 @@ handle_event(
 ) ->
     ?LOG_INFO("cln: invoice_payment label=~p msat=~p", [Label, MSat]),
     %% Prefer matching by label (unique for our created invoices); fall back to hash if needed later.
-    case cln:list_invoices_by_label(Label) of
+    case damage_cln:list_invoices_by_label(Label) of
         #{invoices := [Inv | _]} ->
             %% Enrich the invoice record with runtime facts and broadcast a single canonical event.
             PaidInv = Inv#{
@@ -273,11 +277,48 @@ load_runes(State) ->
 start_ws(
     #state{cln_host = Host, cln_port = Port, options = Opts, readonly_rune = ReadOnly} = State
 ) ->
-    {ok, ConnPid} = damage_gun:open(Host, Port, Opts),
-    {ok, StreamRef} = damage_gun:ws_upgrade(ConnPid, "/socket.io/?EIO=4&transport=websocket", [
-        {<<"rune">>, ReadOnly}
-    ]),
-    {ok, State#state{conn_pid = ConnPid, streamref = StreamRef}}.
+    case damage_gun:open(Host, Port, Opts) of
+        {ok, ConnPid} ->
+            case damage_gun:ws_upgrade(
+                ConnPid,
+                "/socket.io/?EIO=4&transport=websocket",
+                [{<<"rune">>, ReadOnly}]
+            ) of
+                {ok, StreamRef} ->
+                    {ok, State#state{conn_pid = ConnPid, streamref = StreamRef}};
+                {error, Reason} ->
+                    maybe_close_gun(ConnPid),
+                    {error, {websocket_upgrade_failed, Reason}};
+                Other ->
+                    maybe_close_gun(ConnPid),
+                    {error, {unexpected_websocket_upgrade_result, Other}}
+            end;
+        {error, Reason} ->
+            {error, {cln_connection_failed, Reason}};
+        Other ->
+            {error, {unexpected_cln_open_result, Other}}
+    end.
+
+schedule_retry(State = #state{retry_timer = undefined}) ->
+    TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
+    State#state{retry_timer = TRef};
+schedule_retry(State) ->
+    State.
+
+cancel_retry(State = #state{retry_timer = undefined}) ->
+    State;
+cancel_retry(State = #state{retry_timer = TRef}) ->
+    _ = erlang:cancel_timer(TRef),
+    State#state{retry_timer = undefined}.
+
+clear_connection(State) ->
+    maybe_close_gun(State#state.conn_pid),
+    maybe_cancel(State#state.heartbeat_timer),
+    State#state{
+        conn_pid = undefined,
+        streamref = undefined,
+        heartbeat_timer = undefined
+    }.
 
 maybe_cancel(undefined) ->
     ok;

@@ -184,14 +184,14 @@ handle_pay_invoice(ClientPubHex, Params, _State) ->
         <<>> ->
             {error, <<"INVALID_PARAMS">>, <<"missing invoice">>};
         _ ->
-            case cln:decode_invoice(Invoice) of
+            case damage_cln:decode_invoice(Invoice) of
                 {ok, Decoded} ->
                     AmountMsat = invoice_amount_msat(Params, Decoded),
                     case resolve_owner_and_ledger_by_client_pubkey(ClientPubHex) of
                         {ok, Owner, LedgerCt} ->
                             case authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat) of
                                 ok ->
-                                    case cln:pay_invoice(Invoice) of
+                                    case damage_cln:pay_invoice(Invoice) of
                                         {ok, PayRes} ->
                                             FeesPaidMsat = pay_fees_msat(PayRes),
                                             _ = debit_after_payment(
@@ -231,7 +231,7 @@ handle_make_invoice(Params) ->
     Label = invoice_label_from_params(Params),
     case AmountMsat > 0 of
         true ->
-            case cln:create_invoice(AmountMsat, Desc, Label) of
+            case damage_cln:create_invoice(AmountMsat, Desc, Label) of
                 #{bolt11 := _} = Invoice ->
                     _ = damage_nwc_invoice_watch_sup:start_child(Label),
                     {ok, #{

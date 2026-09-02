@@ -138,7 +138,7 @@ to_json(Req, #{action := address} = State) ->
         case cowboy_req:match_qs([{type, [], <<"bech32">>}], Req) of
             #{type := T} -> normalize_addr_type(T)
         end,
-    case cln:newaddr(Type) of
+    case damage_cln:newaddr(Type) of
         {ok, AddrMap} ->
             Resp = normalize_newaddr_response(Type, AddrMap),
             {jsx:encode(Resp), Req, State};
@@ -181,7 +181,7 @@ handle_create_invoice(Json, Req, State) ->
                     undefined -> make_invoice_label();
                     L -> to_bin(L)
                 end,
-            case cln:create_invoice(AmountMsat, to_bin(Description), Expiry, Label) of
+            case damage_cln:create_invoice(AmountMsat, to_bin(Description), Expiry, Label) of
                 #{bolt11 := Bolt11} = Invoice ->
                     Resp = #{
                         status => <<"ok">>,
@@ -190,7 +190,7 @@ handle_create_invoice(Json, Req, State) ->
                         bolt11 => Bolt11,
                         label => maps:get(label, Invoice, Label),
                         amount_msat => maps:get(amount_msat, Invoice, AmountMsat),
-                        amount_sats => cln:msat_to_sats(maps:get(amount_msat, Invoice, AmountMsat)),
+                        amount_sats => damage_cln:msat_to_sats(maps:get(amount_msat, Invoice, AmountMsat)),
                         expires_at => maps:get(expires_at, Invoice, undefined),
                         created_index => maps:get(created_index, Invoice, undefined),
                         payment_hash => maps:get(payment_hash, Invoice, undefined)
@@ -217,7 +217,7 @@ invoice_amount_msat(#{amount_msat := Amount}) ->
     normalize_positive_int(Amount, <<"amount_msat must be a positive integer">>);
 invoice_amount_msat(#{amount_sats := AmountSats}) ->
     case normalize_positive_int(AmountSats, <<"amount_sats must be a positive integer">>) of
-        N when is_integer(N) -> cln:sats_to_msat(N);
+        N when is_integer(N) -> damage_cln:sats_to_msat(N);
         Error -> Error
     end;
 invoice_amount_msat(_) ->

@@ -191,18 +191,29 @@ to_json(Req, #{action := transactions} = State) ->
                 50
         end,
 
-    Funds0 = cln:list_funds(),
+    Funds0 = cln_map_or(
+        fun damage_cln:list_funds/0,
+        #{outputs => [], channels => []},
+        list_funds
+    ),
     Onchain0 = maps:get(outputs, Funds0, []),
     FundingChannels0 = maps:get(channels, Funds0, []),
 
-    {ok, Invoices0} = cln:list_all_invoices(#{page_limit => Limit, order => desc}),
-    Pays0 = cln:list_pays(),
-    SendPays0 = cln:list_sendpays(),
+    Invoices0 = cln_list_or(
+        fun() -> damage_cln:list_all_invoices(#{page_limit => Limit, order => desc}) end,
+        list_all_invoices
+    ),
+    Pays0 = cln_map_or(fun damage_cln:list_pays/0, #{pays => []}, list_pays),
+    SendPays0 = cln_map_or(
+        fun damage_cln:list_sendpays/0,
+        #{payments => []},
+        list_sendpays
+    ),
 
     Pays =
         case Pays0 of
             #{pays := L} when is_list(L) ->
-                Pays0#{pays := cln:sort_pays_desc(L)};
+                Pays0#{pays := damage_cln:sort_pays_desc(L)};
             _ ->
                 Pays0
         end,
@@ -210,7 +221,7 @@ to_json(Req, #{action := transactions} = State) ->
     SendPays =
         case SendPays0 of
             #{payments := L0} when is_list(L0) ->
-                SendPays0#{payments := cln:sort_sendpays_desc(L0)};
+                SendPays0#{payments := damage_cln:sort_sendpays_desc(L0)};
             _ ->
                 SendPays0
         end,
@@ -219,8 +230,8 @@ to_json(Req, #{action := transactions} = State) ->
         #{
             ok => true,
             onchain => Funds0#{
-                outputs => cln:sort_outputs_desc(Onchain0),
-                channels => cln:sort_peerchannels_desc(FundingChannels0)
+                outputs => damage_cln:sort_outputs_desc(Onchain0),
+                channels => damage_cln:sort_peerchannels_desc(FundingChannels0)
             },
             lightning => #{
                 pays => Pays,
@@ -230,24 +241,29 @@ to_json(Req, #{action := transactions} = State) ->
         },
     {jsx:encode(Body), Req, State};
 to_json(Req, #{action := channels} = State) ->
-    Channels0 = cln:list_channels(),
-    SortedChannels = cln:sort_peerchannels_desc(Channels0),
+    Channels0 = cln_list_or(fun damage_cln:list_channels/0, list_channels),
+    SortedChannels = damage_cln:sort_peerchannels_desc(Channels0),
+    Balance = cln_map_or(fun damage_cln:get_node_balance/0, #{}, get_node_balance),
     Body =
         #{
             ok => true,
-            balance => cln:get_node_balance(),
+            balance => Balance,
             channels => SortedChannels
         },
     {jsx:encode(Body), Req, State};
 to_json(Req, #{action := best_peers} = State) ->
     {AmountMsat0, Req1} = qs_int(Req, <<"amount_msat">>, 200000000),
     AmountSats = AmountMsat0 div 1000,
+    BestPeers = cln_list_or(
+        fun() -> damage_cln:find_best_peer_to_open(AmountSats) end,
+        find_best_peer_to_open
+    ),
     Body =
         #{
             ok => true,
             amount_msat => AmountMsat0,
             amount_sats => AmountSats,
-            best_peers => cln:find_best_peer_to_open(AmountSats)
+            best_peers => BestPeers
         },
     {jsx:encode(Body), Req1, State};
 to_json(Req, #{action := invoices_recent} = State) ->
@@ -256,7 +272,7 @@ to_json(Req, #{action := invoices_recent} = State) ->
     L = limit(Limit0),
 
     Body =
-        case cln:recent_invoices(Prefix, L) of
+        case damage_cln:recent_invoices(Prefix, L) of
             {ok, Rows} ->
                 #{ok => true, invoices => Rows};
             Error ->
@@ -270,7 +286,7 @@ to_json(Req, #{action := invoices_unpaid} = State) ->
     L = limit(Limit0),
 
     Body =
-        case cln:unpaid_invoices(Prefix, L) of
+        case damage_cln:unpaid_invoices(Prefix, L) of
             {ok, Rows} ->
                 #{ok => true, invoices => Rows};
             Error ->
@@ -280,7 +296,7 @@ to_json(Req, #{action := invoices_unpaid} = State) ->
     safe_json(Req2, State, Body);
 to_json(Req, #{action := invoice_status_counts} = State) ->
     Body =
-        case cln:invoice_counts_by_status() of
+        case damage_cln:invoice_counts_by_status() of
             {ok, Rows} ->
                 #{ok => true, counts => Rows};
             Error ->
@@ -301,14 +317,14 @@ to_json(Req, #{action := account_events} = State) ->
             _ ->
                 case Tag of
                     <<>> ->
-                        case cln:recent_account_events(Account, L) of
+                        case damage_cln:recent_account_events(Account, L) of
                             {ok, Rows} ->
                                 #{ok => true, events => Rows};
                             Error ->
                                 #{ok => false, error => normalize_error(Error)}
                         end;
                     _ ->
-                        case cln:recent_account_events(Account, Tag, L) of
+                        case damage_cln:recent_account_events(Account, Tag, L) of
                             {ok, Rows} ->
                                 #{ok => true, events => Rows};
                             Error ->
@@ -329,14 +345,14 @@ to_json(Req, #{action := account_summary} = State) ->
             _ ->
                 case Tag of
                     <<>> ->
-                        case cln:account_event_summary(Account) of
+                        case damage_cln:account_event_summary(Account) of
                             {ok, Rows} ->
                                 #{ok => true, summary => Rows};
                             Error ->
                                 #{ok => false, error => normalize_error(Error)}
                         end;
                     _ ->
-                        case cln:account_event_summary(Account, Tag) of
+                        case damage_cln:account_event_summary(Account, Tag) of
                             {ok, Rows} ->
                                 #{ok => true, summary => Rows};
                             Error ->
@@ -348,7 +364,7 @@ to_json(Req, #{action := account_summary} = State) ->
     safe_json(Req2, State, Body);
 to_json(Req, #{action := peerchannel_summary} = State) ->
     Body =
-        case cln:peerchannel_summary() of
+        case damage_cln:peerchannel_summary() of
             {ok, Rows} ->
                 #{ok => true, summary => Rows};
             Error ->
@@ -361,20 +377,63 @@ from_json(Req, #{action := connect_peer} = State) ->
     {ok, Raw, Req1} = cowboy_req:read_body(Req),
     Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
     Peer = maps:get(peer, Data),
-    Reply = cln:connect_peer(Peer),
+    Reply = cln_json_result(damage_cln:connect_peer(Peer)),
     reply_json(Req1, State, #{ok => true, result => Reply});
 from_json(Req, #{action := open_channel} = State) ->
     {ok, Raw, Req1} = cowboy_req:read_body(Req),
     Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
     Peer = maps:get(peer, Data),
     AmountSats = maps:get(amount_sats, Data, 200000),
-    Reply = cln:open_channel(Peer, AmountSats),
+    Reply = cln_json_result(damage_cln:open_channel(Peer, AmountSats)),
     reply_json(Req1, State, #{ok => true, result => Reply});
 from_json(Req, #{action := open_best_channels} = State) ->
     {ok, Raw, Req1} = cowboy_req:read_body(Req),
     Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
-    Reply = cln:open_channels_with_best_peers(Data),
+    Reply = cln_json_result(damage_cln:open_channels_with_best_peers(Data)),
     reply_json(Req1, State, #{ok => true, result => Reply}).
+
+cln_map_or(Fun, Default, Operation) ->
+    case Fun() of
+        Value when is_map(Value) ->
+            Value;
+        {ok, Value} when is_map(Value) ->
+            Value;
+        {error, {cln_unavailable, Reason}} ->
+            logger:warning("CLN unavailable during ~p: ~p", [Operation, Reason]),
+            Default;
+        Other ->
+            logger:warning("Unexpected CLN result during ~p: ~p", [Operation, Other]),
+            Default
+    end.
+
+cln_list_or(Fun, Operation) ->
+    case Fun() of
+        Value when is_list(Value) ->
+            Value;
+        {ok, Value} when is_list(Value) ->
+            Value;
+        {error, {cln_unavailable, Reason}} ->
+            logger:warning("CLN unavailable during ~p: ~p", [Operation, Reason]),
+            [];
+        Other ->
+            logger:warning("Unexpected CLN result during ~p: ~p", [Operation, Other]),
+            []
+    end.
+
+cln_json_result({error, {cln_unavailable, Reason}}) ->
+    #{
+        ok => false,
+        error => cln_unavailable,
+        reason => iolist_to_binary(io_lib:format("~p", [Reason]))
+    };
+cln_json_result({error, Reason}) ->
+    #{
+        ok => false,
+        error => cln_error,
+        reason => iolist_to_binary(io_lib:format("~p", [Reason]))
+    };
+cln_json_result(Result) ->
+    Result.
 
 reply_json(Req, State, Body) ->
     Req1 = cowboy_req:reply(

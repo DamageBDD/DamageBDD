@@ -132,7 +132,7 @@ handle_zap_request(#{nostr := ZapJsonBin, amount := AmountMsat}) ->
         Memo = maps:get(<<"content">>, ZapMap, <<"Zap! ⚡">>),
         Amount = AmountMsat div 1000,
         Label = <<"zap:", EventId/binary, ":", PubKey/binary>>,
-        #{bolt11 := Bolt11} = cln:create_invoice(Amount, Memo, 3600, Label),
+        #{bolt11 := Bolt11} = damage_cln:create_invoice(Amount, Memo, 3600, Label),
         {201, #{pr => Bolt11, routes => []}}
     catch
         _:Error ->
@@ -229,7 +229,7 @@ to_json(Req, #{action := invoice} = State) ->
                         bolt11 := Bolt11,
                         payment_secret := _PaymentSecret,
                         created_index := _CreatedIndex
-                    } = Invoice = cln:create_invoice(AmountMsat, Description, 3600, Label),
+                    } = Invoice = damage_cln:create_invoice(AmountMsat, Description, 3600, Label),
 
                     ?LOG_INFO("invoice ~p", [Invoice]),
                     {jsx:encode(#{pr => Bolt11}), Req, State};
@@ -311,7 +311,7 @@ do_post_action(
     ?LOG_DEBUG("generate invoice ~p", [Data]),
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("zap:" ++ Timestamp),
-    Invoice = cln:create_invoice(Amount, Memo, Expiry, Label),
+    Invoice = damage_cln:create_invoice(Amount, Memo, Expiry, Label),
     {201, Invoice};
 do_post_action(_Action, Data, _Req, _State) ->
     ?LOG_DEBUG("unhandled do_post_action ~p", [Data]).

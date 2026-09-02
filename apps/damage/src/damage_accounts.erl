@@ -869,7 +869,7 @@ delete_resource(Req, #{action := invoices} = State) ->
                             "cancelling invoice ~p ~p",
                             [maps:get(path_info, Req), RHash]
                         ),
-                        case cln:cancel_invoice(RHash) of
+                        case damage_cln:cancel_invoice(RHash) of
                             #{<<"code">> := 5} ->
                                 ?LOG_INFO("Invoice not found ~p", [RHash]);
                             Other ->

@@ -127,7 +127,7 @@ ensure_started(ContractId) ->
 
 init([ContractId]) ->
     process_flag(trap_exit, true),
-    cln:register_listener(invoice_paid),
+    damage_cln:register_listener(invoice_paid),
     ?LOG_INFO("damage_swap_option started with contract ~p", [ContractId]),
     {ok, #state{contract_id = ContractId}};
 init(Args) ->
@@ -150,7 +150,7 @@ handle_call(
         Expiry = OptionTtlSecs,
 
         {ok, #{bolt11 := Bolt11, payment_hash := PaymentHash}} =
-            cln:hold_invoice(SatsAmount, Label, Expiry),
+            damage_cln:hold_invoice(SatsAmount, Label, Expiry),
 
         %% 2) Create the option in the contract (backwards compatible entrypoint)
         Now = date_util:now_to_seconds(os:timestamp()),
@@ -355,10 +355,10 @@ normalize_option(Other) ->
     erlang:error({unexpected_option_shape, Other}).
 
 decode_payment_hash(Bolt11) ->
-    %% Try cln:decodepay/1 if available, otherwise attempt generic rpc.
+    %% Try damage_cln:decodepay/1 if available, otherwise attempt generic rpc.
     case erlang:function_exported(cln, decodepay, 1) of
         true ->
-            case cln:decodepay(Bolt11) of
+            case damage_cln:decodepay(Bolt11) of
                 {ok, #{payment_hash := PH}} -> {ok, PH};
                 {ok, #{<<"payment_hash">> := PH}} -> {ok, PH};
                 Other -> {error, {decodepay_unexpected, Other}}
@@ -366,7 +366,7 @@ decode_payment_hash(Bolt11) ->
         false ->
             case erlang:function_exported(cln, rpc, 2) of
                 true ->
-                    case cln:rpc(<<"decodepay">>, #{bolt11 => Bolt11}) of
+                    case damage_cln:rpc(<<"decodepay">>, #{bolt11 => Bolt11}) of
                         {ok, #{payment_hash := PH}} -> {ok, PH};
                         {ok, #{<<"payment_hash">> := PH}} -> {ok, PH};
                         Other -> {error, {cln_rpc_decodepay_unexpected, Other}}

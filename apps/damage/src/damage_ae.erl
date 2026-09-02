@@ -868,7 +868,7 @@ damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
 handle_continue(init_external, State) ->
     _ =
         try
-            cln:register_listener(invoice_paid)
+            damage_cln:register_listener(invoice_paid)
         catch
             _:Reason -> {error, Reason}
         end,

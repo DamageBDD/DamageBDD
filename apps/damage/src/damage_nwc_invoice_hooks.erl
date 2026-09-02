@@ -23,7 +23,7 @@ poll_until_settled(Label, N) ->
     end.
 
 check_invoice(Label) ->
-    case cln:list_invoices_by_label(Label) of
+    case damage_cln:list_invoices_by_label(Label) of
         #{invoices := Invoices} ->
             case find_settled_invoice(Invoices) of
                 {ok, Invoice} ->

@@ -1608,7 +1608,7 @@ do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, 
                         payment_secret := _PaymentSecret,
                         created_index := _CreatedIndex
                     } =
-                        Invoice = cln:create_invoice(
+                        Invoice = damage_cln:create_invoice(
                             Amount * 1000, Description, 3600, Label
                         ),
                     ?LOG_INFO("invoice ~p", [Invoice]),
@@ -1868,7 +1868,7 @@ to_json(Req, #{action := node_balances} = State) ->
         #{public_key := PubKey, private_key := _NodePrivateKey} ->
             NodeDamageBalance = damage_ae:node_damage_balance(),
             NodeAeBalance = damage_ae:node_ae_balance(),
-            NodeBtcBalance = cln:get_node_balance(),
+            NodeBtcBalance = damage_cln:get_node_balance(),
             {
                 jsx:encode(#{
                     ok => true,

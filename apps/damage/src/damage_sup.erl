@@ -42,7 +42,7 @@ init([]) ->
                 [{name, {local, Name}}, {worker_module, Name}] ++ SizeArgs,
                 WorkerArgs
             )
-         || {Name, SizeArgs, WorkerArgs} <- Pools
+         || {Name, SizeArgs, WorkerArgs} <- Pools, Name =/= cln
         ],
 
     %% Start order matters: put providers before consumers.
@@ -108,13 +108,16 @@ init([]) ->
                 type => worker,
                 modules => [price_feed]
             },
+            %% CLN is behind a fault-containment manager. damage_cln:init/1
+            %% always succeeds and boots the CLN subtree asynchronously, so
+            %% missing/broken CLN cannot prevent DamageBDD from starting.
             #{
-                id => cln_websocket,
-                start => {cln_ws_mgr, start_link, [[ws]]},
+                id => damage_cln,
+                start => {damage_cln, start_link, []},
                 restart => permanent,
-                shutdown => 60000,
+                shutdown => 5000,
                 type => worker,
-                modules => [cln, cln_ws_mgr]
+                modules => [damage_cln]
             },
             #{
                 id => damage_ssh_tunnel_listener,
@@ -155,14 +158,6 @@ init([]) ->
                 shutdown => 5000,
                 type => worker,
                 modules => [damage_balance_cache]
-            },
-            #{
-                id => damage_l402,
-                start => {damage_l402, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [cln, cln_ws_mgr, damage_l402]
             },
             #{
                 id => liquidity_ltr_server,

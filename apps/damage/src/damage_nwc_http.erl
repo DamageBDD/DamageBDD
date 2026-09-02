@@ -771,7 +771,7 @@ from_json(Req0, State = #{action := topup_invoice}) ->
                 {ok, _Policy} ->
                     Label = make_topup_label(Owner, ClientPubHex, AmountSat),
                     Desc = <<"Damage NWC top-up">>,
-                    case cln:create_invoice(AmountMsat, Desc, Label) of
+                    case damage_cln:create_invoice(AmountMsat, Desc, Label) of
                         #{bolt11 := Bolt11, payment_hash := PaymentHash} ->
                             ok = damage_nwc_topup_store:put(#{
                                 payment_hash => to_bin(PaymentHash),

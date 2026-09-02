@@ -135,7 +135,7 @@ to_json(Req, #{action := get_invoice} = State) ->
         undefined ->
             {jsx:encode(#{}), Req, State};
         InvoiceString ->
-            #{invoices := [Invoice | _]} = cln:list_invoices_by_invoicestring(InvoiceString),
+            #{invoices := [Invoice | _]} = damage_cln:list_invoices_by_invoicestring(InvoiceString),
             {jsx:encode(Invoice), Req, State}
     end;
 to_json(Req, #{public_key := _AeAccount} = State) ->
@@ -231,8 +231,19 @@ delete_resource(Req, #{public_key := _AeAccount} = State) ->
         lists:foldl(
             fun(PaymentHash, Acc) ->
                 ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), PaymentHash]),
-                ok = cln:hold_invoice_cancel(PaymentHash),
-                Acc + 1
+                case damage_cln:hold_invoice_cancel(PaymentHash) of
+                    ok ->
+                        Acc + 1;
+                    {error, {cln_unavailable, Reason}} ->
+                        ?LOG_WARNING(
+                            "CLN unavailable while cancelling invoice ~p: ~p",
+                            [PaymentHash, Reason]
+                        ),
+                        Acc;
+                    Other ->
+                        ?LOG_WARNING("Unable to cancel invoice ~p: ~p", [PaymentHash, Other]),
+                        Acc
+                end
             end,
             0,
             maps:get(path_info, Req)
@@ -253,7 +264,7 @@ check_invoices() ->
     lists:foldl(
         fun check_invoice_foldn/2,
         [],
-        cln:list_invoices([{"creation_date_start", CreationDate}])
+        damage_cln:list_invoices([{"creation_date_start", CreationDate}])
     ).
 create_invoice(AmountSats, <<"ak_", _/binary>> = AeAccount) ->
     DmgAmount = price_feed:sats_to_damage(AmountSats),
@@ -283,7 +294,7 @@ create_invoice(AmountSats, Memo, Label) ->
         bolt11 := PaymentRequest,
         payment_secret := _PaymentSecret,
         created_index := _CreatedIndex
-    } = Invoice = cln:create_invoice(AmountSats * 1000, Memo, 3600, Label),
+    } = Invoice = damage_cln:create_invoice(AmountSats * 1000, Memo, 3600, Label),
     ?LOG_DEBUG("created invoice ~p", [Invoice]),
     #{payment_request => PaymentRequest, payment_hash => PaymentHash, expiry => Expiry}.
 

@@ -22,7 +22,7 @@ step(
     true = steps_utils:is_admin(AeAccount),
     maps:put(
         lightning_payment_status,
-        cln:settle_invoice(list_to_binary(PaymentRequest)),
+        damage_cln:pay_invoice(list_to_binary(PaymentRequest)),
         Context
     );
 step(
@@ -180,7 +180,7 @@ step(
         undefined ->
             maps:put(fail, <<"payment_request missing (request invoice first)">>, Context);
         Pr ->
-            Result = cln:settle_invoice(to_bin(Pr)),
+            Result = damage_cln:pay_invoice(to_bin(Pr)),
             maps:put(lightning_payment_status, Result, Context)
     end;
 %% And I record the payment result

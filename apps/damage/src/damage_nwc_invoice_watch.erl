@@ -163,7 +163,7 @@ restore_open_invoices_into_self() ->
         paid_only => true,
         min_expires_at => Now - 7 * 24 * 60 * 60
     },
-    case cln:list_all_invoices(Opts) of
+    case damage_cln:list_all_invoices(Opts) of
         {ok, Invoices} ->
             lists:foreach(
                 fun(Invoice) ->
@@ -244,7 +244,7 @@ resolve_settled_invoice(Invoice) when is_map(Invoice) ->
         false ->
             case invoice_label(Invoice) of
                 Label when is_binary(Label), Label =/= <<>> ->
-                    case cln:list_invoices_by_label(Label) of
+                    case damage_cln:list_invoices_by_label(Label) of
                         #{invoices := Invoices} ->
                             case find_settled_invoice(Invoices) of
                                 {ok, SettledInvoice} -> {ok, SettledInvoice};

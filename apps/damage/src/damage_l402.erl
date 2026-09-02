@@ -53,9 +53,16 @@ child_spec() ->
 init([]) ->
     ensure_tabs(),
     %% Tell CLN we want invoice events
-    %% Your cln already has register_listener/1 and subscribe/0
-    true = cln:register_listener(invoice_paid),
-    {ok, #state{subscribed = true}}.
+    %% Listener registration is local gproc state. Do not make a hard match
+    %% part of startup even if the CLN facade/backend is temporarily absent.
+    Subscribed =
+        case damage_cln:register_listener(invoice_paid) of
+            true -> true;
+            Other ->
+                logger:warning("L402 CLN listener unavailable at startup: ~p", [Other]),
+                false
+        end,
+    {ok, #state{subscribed = Subscribed}}.
 
 handle_call({get_meta, MacB64}, _From, S) ->
     Reply =
@@ -158,7 +165,7 @@ challenge_with_body(Req0, Scope, AmountMsat, BodyBin) ->
     Label = <<"l402:", Scope/binary, ":", (list_to_binary(Timestamp))/binary, ":", MacB64/binary>>,
     Desc = <<"DamageBDD L402 ", Scope/binary>>,
 
-    InvoiceMap = cln:create_invoice(AmountMsat, Desc, Expiry, Label),
+    InvoiceMap = damage_cln:create_invoice(AmountMsat, Desc, Expiry, Label),
     Bolt11 = maps:get(bolt11, InvoiceMap, maps:get(<<"bolt11">>, InvoiceMap, undefined)),
     PaymentHash0 = maps:get(
         payment_hash, InvoiceMap, maps:get(<<"payment_hash">>, InvoiceMap, undefined)

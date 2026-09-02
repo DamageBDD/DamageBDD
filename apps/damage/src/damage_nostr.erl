@@ -261,7 +261,7 @@ init([NsecKey]) ->
         {ok, Nsec} ->
             {PublicKey, PrivateKey} = nsec_to_npub(Nsec),
             gproc:reg_other({n, l, ?NOSTR_PROC(NsecKey)}, self()),
-            cln:register_listener(invoice_paid),
+            damage_cln:register_listener(invoice_paid),
             State0 = #state{
                 public_key = PublicKey,
                 private_key = PrivateKey,
@@ -497,7 +497,7 @@ handle_call(
         conn_pid = ConnPid, streamref = StreamRef, public_key = PublicKey, private_key = PrivateKey
     } = State
 ) ->
-    AmountMsats = cln:sats_to_msat(AmountSats),
+    AmountMsats = damage_cln:sats_to_msat(AmountSats),
 
     %% 1) Fetch author lud16/lud06 via kind:0 on THIS relay
     %{ok, Lud} = fetch_author_lud_ws(ConnPid, StreamRef, OriginalAuthorPubKey),
@@ -545,7 +545,7 @@ handle_call(
     {ok, Invoice} = request_zap_invoice(CallbackUrlStr, AmountMsats, ZapReq, LnurlBech32),
 
     %% 7) Pay invoice with CLN
-    PayRes = cln:pay_invoice(Invoice),
+    PayRes = damage_cln:pay_invoice(Invoice),
 
     %% 8) Optional: publish zap request to relay (some clients like seeing it)
     _ = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"EVENT">>, ZapReq])}),
