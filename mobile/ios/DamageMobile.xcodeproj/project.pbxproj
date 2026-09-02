@@ -1,0 +1,422 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		300000000000000000000001 /* DamageBDDApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000001 /* DamageBDDApp.swift */; };
+		300000000000000000000002 /* DamageRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000002 /* DamageRootView.swift */; };
+		300000000000000000000003 /* AuthResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000003 /* AuthResponse.swift */; };
+		300000000000000000000004 /* DamageAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000004 /* DamageAuthService.swift */; };
+		300000000000000000000005 /* DamageSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000005 /* DamageSessionStore.swift */; };
+		300000000000000000000006 /* DamageLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000006 /* DamageLoginView.swift */; };
+		300000000000000000000007 /* DamageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000007 /* DamageService.swift */; };
+		300000000000000000000008 /* FeatureRunnerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000008 /* FeatureRunnerView.swift */; };
+		300000000000000000000009 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000009 /* AccountView.swift */; };
+		300000000000000000000021 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* AppConfig.swift */; };
+		300000000000000000000022 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* APIError.swift */; };
+		300000000000000000000023 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* APIClient.swift */; };
+		300000000000000000000024 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* KeychainStore.swift */; };
+		300000000000000000000030 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000A /* Assets.xcassets */; };
+		300000000000000000000031 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 240000000000000000000001 /* Security.framework */; };
+		310000000000000000000001 /* ECAIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000001 /* ECAIApp.swift */; };
+		310000000000000000000002 /* ECAIRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000002 /* ECAIRootView.swift */; };
+		310000000000000000000003 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000003 /* ChatMessage.swift */; };
+		310000000000000000000004 /* ECAIAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000004 /* ECAIAuthService.swift */; };
+		310000000000000000000005 /* ECAISessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000005 /* ECAISessionStore.swift */; };
+		310000000000000000000006 /* ECAILoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000006 /* ECAILoginView.swift */; };
+		310000000000000000000007 /* ECAIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* ECAIService.swift */; };
+		310000000000000000000008 /* ECAIChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* ECAIChatView.swift */; };
+		310000000000000000000021 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* AppConfig.swift */; };
+		310000000000000000000022 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* APIError.swift */; };
+		310000000000000000000023 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* APIClient.swift */; };
+		310000000000000000000024 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* KeychainStore.swift */; };
+		310000000000000000000030 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* Assets.xcassets */; };
+		310000000000000000000031 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 240000000000000000000001 /* Security.framework */; };
+		320000000000000000000001 /* DamageBDDTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000001 /* DamageBDDTests.swift */; };
+		320000000000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 240000000000000000000002 /* XCTest.framework */; };
+		320000000000000000000003 /* ECAITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000002 /* ECAITests.swift */; };
+		320000000000000000000004 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 240000000000000000000002 /* XCTest.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		600000000000000000000001 /* PBXContainerItemProxy */ = { isa = PBXContainerItemProxy; containerPortal = 110000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = 500000000000000000000001; remoteInfo = DamageBDD; };
+		600000000000000000000002 /* PBXContainerItemProxy */ = { isa = PBXContainerItemProxy; containerPortal = 110000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = 500000000000000000000002; remoteInfo = ECAI; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		200000000000000000000001 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Config/AppConfig.swift"; sourceTree = "<group>"; };
+		200000000000000000000002 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Networking/APIError.swift"; sourceTree = "<group>"; };
+		200000000000000000000003 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Networking/APIClient.swift"; sourceTree = "<group>"; };
+		200000000000000000000004 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Security/KeychainStore.swift"; sourceTree = "<group>"; };
+		210000000000000000000001 /* DamageBDDApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/DamageBDDApp.swift"; sourceTree = "<group>"; };
+		210000000000000000000002 /* DamageRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/DamageRootView.swift"; sourceTree = "<group>"; };
+		210000000000000000000003 /* AuthResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/AuthResponse.swift"; sourceTree = "<group>"; };
+		210000000000000000000004 /* DamageAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Auth/DamageAuthService.swift"; sourceTree = "<group>"; };
+		210000000000000000000005 /* DamageSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Auth/DamageSessionStore.swift"; sourceTree = "<group>"; };
+		210000000000000000000006 /* DamageLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Auth/DamageLoginView.swift"; sourceTree = "<group>"; };
+		210000000000000000000007 /* DamageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Damage/DamageService.swift"; sourceTree = "<group>"; };
+		210000000000000000000008 /* FeatureRunnerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Damage/FeatureRunnerView.swift"; sourceTree = "<group>"; };
+		210000000000000000000009 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Account/AccountView.swift"; sourceTree = "<group>"; };
+		21000000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Resources/Assets.xcassets"; sourceTree = "<group>"; };
+		220000000000000000000001 /* ECAIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/ECAIApp.swift"; sourceTree = "<group>"; };
+		220000000000000000000002 /* ECAIRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App/ECAIRootView.swift"; sourceTree = "<group>"; };
+		220000000000000000000003 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/ChatMessage.swift"; sourceTree = "<group>"; };
+		220000000000000000000004 /* ECAIAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Auth/ECAIAuthService.swift"; sourceTree = "<group>"; };
+		220000000000000000000005 /* ECAISessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Auth/ECAISessionStore.swift"; sourceTree = "<group>"; };
+		220000000000000000000006 /* ECAILoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Auth/ECAILoginView.swift"; sourceTree = "<group>"; };
+		220000000000000000000007 /* ECAIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Chat/ECAIService.swift"; sourceTree = "<group>"; };
+		220000000000000000000008 /* ECAIChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Chat/ECAIChatView.swift"; sourceTree = "<group>"; };
+		220000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Resources/Assets.xcassets"; sourceTree = "<group>"; };
+		230000000000000000000001 /* DamageBDDTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DamageBDDTests.swift; sourceTree = "<group>"; };
+		230000000000000000000002 /* ECAITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ECAITests.swift; sourceTree = "<group>"; };
+		240000000000000000000001 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		240000000000000000000002 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		250000000000000000000001 /* DamageBDD.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DamageBDD.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		250000000000000000000002 /* ECAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ECAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		250000000000000000000003 /* DamageBDDTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DamageBDDTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		250000000000000000000004 /* ECAITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ECAITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		400000000000000000000002 /* Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (300000000000000000000031 /* Security.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000012 /* Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (310000000000000000000031 /* Security.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000022 /* Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (320000000000000000000002 /* XCTest.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000032 /* Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (320000000000000000000004 /* XCTest.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		100000000000000000000001 = { isa = PBXGroup; children = (
+				100000000000000000000002 /* Shared */,
+				100000000000000000000003 /* DamageBDD */,
+				100000000000000000000004 /* ECAI */,
+				100000000000000000000005 /* DamageBDDTests */,
+				100000000000000000000006 /* ECAITests */,
+				100000000000000000000007 /* Frameworks */,
+				100000000000000000000008 /* Products */,
+			); sourceTree = "<group>"; };
+		100000000000000000000002 /* Shared */ = { isa = PBXGroup; children = (
+				200000000000000000000001 /* AppConfig.swift */,
+				200000000000000000000002 /* APIError.swift */,
+				200000000000000000000003 /* APIClient.swift */,
+				200000000000000000000004 /* KeychainStore.swift */,
+			); path = Shared; sourceTree = "<group>"; };
+		100000000000000000000003 /* DamageBDD */ = { isa = PBXGroup; children = (
+				210000000000000000000001 /* DamageBDDApp.swift */,
+				210000000000000000000002 /* DamageRootView.swift */,
+				210000000000000000000003 /* AuthResponse.swift */,
+				210000000000000000000004 /* DamageAuthService.swift */,
+				210000000000000000000005 /* DamageSessionStore.swift */,
+				210000000000000000000006 /* DamageLoginView.swift */,
+				210000000000000000000007 /* DamageService.swift */,
+				210000000000000000000008 /* FeatureRunnerView.swift */,
+				210000000000000000000009 /* AccountView.swift */,
+				21000000000000000000000A /* Assets.xcassets */,
+			); path = DamageBDD; sourceTree = "<group>"; };
+		100000000000000000000004 /* ECAI */ = { isa = PBXGroup; children = (
+				220000000000000000000001 /* ECAIApp.swift */,
+				220000000000000000000002 /* ECAIRootView.swift */,
+				220000000000000000000003 /* ChatMessage.swift */,
+				220000000000000000000004 /* ECAIAuthService.swift */,
+				220000000000000000000005 /* ECAISessionStore.swift */,
+				220000000000000000000006 /* ECAILoginView.swift */,
+				220000000000000000000007 /* ECAIService.swift */,
+				220000000000000000000008 /* ECAIChatView.swift */,
+				220000000000000000000009 /* Assets.xcassets */,
+			); path = ECAI; sourceTree = "<group>"; };
+		100000000000000000000005 /* DamageBDDTests */ = { isa = PBXGroup; children = (230000000000000000000001 /* DamageBDDTests.swift */,); path = DamageBDDTests; sourceTree = "<group>"; };
+		100000000000000000000006 /* ECAITests */ = { isa = PBXGroup; children = (230000000000000000000002 /* ECAITests.swift */,); path = ECAITests; sourceTree = "<group>"; };
+		100000000000000000000007 /* Frameworks */ = { isa = PBXGroup; children = (240000000000000000000001 /* Security.framework */, 240000000000000000000002 /* XCTest.framework */,); name = Frameworks; sourceTree = "<group>"; };
+		100000000000000000000008 /* Products */ = { isa = PBXGroup; children = (250000000000000000000001 /* DamageBDD.app */, 250000000000000000000002 /* ECAI.app */, 250000000000000000000003 /* DamageBDDTests.xctest */, 250000000000000000000004 /* ECAITests.xctest */,); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		500000000000000000000001 /* DamageBDD */ = { isa = PBXNativeTarget; buildConfigurationList = 810000000000000000000001; buildPhases = (400000000000000000000001, 400000000000000000000002, 400000000000000000000003,); buildRules = (); dependencies = (); name = DamageBDD; productName = DamageBDD; productReference = 250000000000000000000001; productType = "com.apple.product-type.application"; };
+		500000000000000000000002 /* ECAI */ = { isa = PBXNativeTarget; buildConfigurationList = 820000000000000000000001; buildPhases = (400000000000000000000011, 400000000000000000000012, 400000000000000000000013,); buildRules = (); dependencies = (); name = ECAI; productName = ECAI; productReference = 250000000000000000000002; productType = "com.apple.product-type.application"; };
+		500000000000000000000003 /* DamageBDDTests */ = { isa = PBXNativeTarget; buildConfigurationList = 830000000000000000000001; buildPhases = (400000000000000000000021, 400000000000000000000022, 400000000000000000000023,); buildRules = (); dependencies = (600000000000000000000011 /* PBXTargetDependency */,); name = DamageBDDTests; productName = DamageBDDTests; productReference = 250000000000000000000003; productType = "com.apple.product-type.bundle.unit-test"; };
+		500000000000000000000004 /* ECAITests */ = { isa = PBXNativeTarget; buildConfigurationList = 840000000000000000000001; buildPhases = (400000000000000000000031, 400000000000000000000032, 400000000000000000000033,); buildRules = (); dependencies = (600000000000000000000012 /* PBXTargetDependency */,); name = ECAITests; productName = ECAITests; productReference = 250000000000000000000004; productType = "com.apple.product-type.bundle.unit-test"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		110000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					500000000000000000000001 = { CreatedOnToolsVersion = 16.0; };
+					500000000000000000000002 = { CreatedOnToolsVersion = 16.0; };
+					500000000000000000000003 = { CreatedOnToolsVersion = 16.0; TestTargetID = 500000000000000000000001; };
+					500000000000000000000004 = { CreatedOnToolsVersion = 16.0; TestTargetID = 500000000000000000000002; };
+				};
+			};
+			buildConfigurationList = 800000000000000000000001;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = 100000000000000000000001;
+			productRefGroup = 100000000000000000000008;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (500000000000000000000001 /* DamageBDD */, 500000000000000000000002 /* ECAI */, 500000000000000000000003 /* DamageBDDTests */, 500000000000000000000004 /* ECAITests */,);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		400000000000000000000003 /* Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (300000000000000000000030 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000013 /* Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (310000000000000000000030 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000023 /* Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000033 /* Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		400000000000000000000001 /* Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+				300000000000000000000001 /* DamageBDDApp.swift in Sources */,
+				300000000000000000000002 /* DamageRootView.swift in Sources */,
+				300000000000000000000003 /* AuthResponse.swift in Sources */,
+				300000000000000000000004 /* DamageAuthService.swift in Sources */,
+				300000000000000000000005 /* DamageSessionStore.swift in Sources */,
+				300000000000000000000006 /* DamageLoginView.swift in Sources */,
+				300000000000000000000007 /* DamageService.swift in Sources */,
+				300000000000000000000008 /* FeatureRunnerView.swift in Sources */,
+				300000000000000000000009 /* AccountView.swift in Sources */,
+				300000000000000000000021 /* AppConfig.swift in Sources */,
+				300000000000000000000022 /* APIError.swift in Sources */,
+				300000000000000000000023 /* APIClient.swift in Sources */,
+				300000000000000000000024 /* KeychainStore.swift in Sources */,
+			); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000011 /* Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+				310000000000000000000001 /* ECAIApp.swift in Sources */,
+				310000000000000000000002 /* ECAIRootView.swift in Sources */,
+				310000000000000000000003 /* ChatMessage.swift in Sources */,
+				310000000000000000000004 /* ECAIAuthService.swift in Sources */,
+				310000000000000000000005 /* ECAISessionStore.swift in Sources */,
+				310000000000000000000006 /* ECAILoginView.swift in Sources */,
+				310000000000000000000007 /* ECAIService.swift in Sources */,
+				310000000000000000000008 /* ECAIChatView.swift in Sources */,
+				310000000000000000000021 /* AppConfig.swift in Sources */,
+				310000000000000000000022 /* APIError.swift in Sources */,
+				310000000000000000000023 /* APIClient.swift in Sources */,
+				310000000000000000000024 /* KeychainStore.swift in Sources */,
+			); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000021 /* Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (320000000000000000000001 /* DamageBDDTests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000031 /* Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (320000000000000000000003 /* ECAITests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		600000000000000000000011 /* PBXTargetDependency */ = { isa = PBXTargetDependency; target = 500000000000000000000001 /* DamageBDD */; targetProxy = 600000000000000000000001 /* PBXContainerItemProxy */; };
+		600000000000000000000012 /* PBXTargetDependency */ = { isa = PBXTargetDependency; target = 500000000000000000000002 /* ECAI */; targetProxy = 600000000000000000000002 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		700000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				ENABLE_TESTABILITY = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		700000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+			};
+			name = Release;
+		};
+		710000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				INFOPLIST_KEY_CFBundleDisplayName = DamageBDD;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				PRODUCT_BUNDLE_IDENTIFIER = com.damagebdd.mobile;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		710000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				INFOPLIST_KEY_CFBundleDisplayName = DamageBDD;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				PRODUCT_BUNDLE_IDENTIFIER = com.damagebdd.mobile;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		720000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				INFOPLIST_KEY_CFBundleDisplayName = ECAI;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ecai.mobile;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		720000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				INFOPLIST_KEY_CFBundleDisplayName = ECAI;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ecai.mobile;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		730000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.damagebdd.mobile.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DamageBDD.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/DamageBDD";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		730000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.damagebdd.mobile.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DamageBDD.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/DamageBDD";
+			};
+			name = Release;
+		};
+		740000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ecai.mobile.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ECAI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ECAI";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		740000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ecai.mobile.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ECAI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ECAI";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		800000000000000000000001 = { isa = XCConfigurationList; buildConfigurations = (700000000000000000000001, 700000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		810000000000000000000001 = { isa = XCConfigurationList; buildConfigurations = (710000000000000000000001, 710000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		820000000000000000000001 = { isa = XCConfigurationList; buildConfigurations = (720000000000000000000001, 720000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		830000000000000000000001 = { isa = XCConfigurationList; buildConfigurations = (730000000000000000000001, 730000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		840000000000000000000001 = { isa = XCConfigurationList; buildConfigurations = (740000000000000000000001, 740000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = 110000000000000000000001 /* Project object */;
+}
