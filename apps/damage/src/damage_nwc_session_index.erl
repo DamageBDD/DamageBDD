@@ -2,6 +2,7 @@
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 -license("Apache-2.0").
+-compile({no_auto_import, [get/1]}).
 
 -export([
     put/3,
