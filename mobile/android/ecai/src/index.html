@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090c11">
+  <title>ECAI</title>
+  <link rel="stylesheet" href="./shared/common.css">
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div class="app-shell chat-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark ecai-mark" aria-hidden="true">E</div>
+        <div class="brand-copy">
+          <h1>ECAI</h1>
+          <p>Mobile conversational client</p>
+        </div>
+      </div>
+      <button id="settingsToggle" class="btn btn-secondary compact-button" type="button"
+              aria-expanded="false" aria-controls="settingsCard">Settings</button>
+    </header>
+
+    <section id="settingsCard" class="card settings-card" aria-labelledby="settingsHeading" hidden>
+      <div class="card-header">
+        <div>
+          <h2 id="settingsHeading">Endpoint</h2>
+          <p>The ECAI server contract is configured here and adapted in <span class="mono">api.js</span>.</p>
+        </div>
+      </div>
+      <div class="card-body form-grid">
+        <label class="field" for="serverUrl">
+          <span>Server URL</span>
+          <input id="serverUrl" type="url" inputmode="url" autocomplete="url"
+                 spellcheck="false" placeholder="https://ecai.example">
+        </label>
+        <label class="field" for="apiPath">
+          <span>Chat path</span>
+          <input id="apiPath" type="text" spellcheck="false" value="/api/chat">
+        </label>
+        <div class="form-row">
+          <label class="field" for="model">
+            <span>Model (optional)</span>
+            <input id="model" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="server default">
+          </label>
+          <label class="field" for="apiToken">
+            <span>Bearer token (session only)</span>
+            <input id="apiToken" type="password" autocomplete="off" spellcheck="false"
+                   placeholder="optional">
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="saveSettingsButton" class="btn btn-primary" type="button">Save settings</button>
+          <button id="clearTokenButton" class="btn btn-ghost" type="button">Clear token</button>
+        </div>
+        <div id="settingsStatus" class="status" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+
+    <main class="chat-card card" aria-label="ECAI chat">
+      <div class="chat-toolbar">
+        <div>
+          <strong>Conversation</strong>
+          <span id="endpointLabel" class="muted">Configure an endpoint</span>
+        </div>
+        <button id="clearChatButton" class="btn btn-ghost compact-button" type="button">Clear</button>
+      </div>
+
+      <section id="messages" class="messages" aria-live="polite" aria-label="Messages"></section>
+
+      <div class="composer-wrap">
+        <div id="chatStatus" class="status composer-status" role="status" aria-live="polite" hidden></div>
+        <form id="composerForm" class="composer">
+          <label class="sr-only" for="messageInput">Message</label>
+          <textarea id="messageInput" rows="1" maxlength="20000"
+                    placeholder="Message ECAI…" autocomplete="off"></textarea>
+          <button id="sendButton" class="btn btn-primary send-button" type="submit">Send</button>
+        </form>
+        <p class="composer-help">Enter sends · Shift+Enter adds a line</p>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+.chat-shell {
+  display: flex;
+  max-height: 100dvh;
+  flex-direction: column;
+}
+
+.ecai-mark {
+  background: linear-gradient(145deg, #9cd5ff, #568dff);
+  border-color: rgb(156 213 255 / 45%);
+  color: #07152a;
+  box-shadow: 0 8px 26px rgb(86 141 255 / 18%);
+}
+
+.compact-button {
+  min-height: 37px;
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  font-size: 0.76rem;
+}
+
+.settings-card {
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+}
+
+.chat-card {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(180px, 1fr) auto;
+}
+
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 13px 15px;
+}
+
+.chat-toolbar > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.chat-toolbar strong {
+  font-size: 0.85rem;
+}
+
+.chat-toolbar span {
+  overflow: hidden;
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messages {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 18px 14px 22px;
+  scroll-behavior: smooth;
+}
+
+.message {
+  display: grid;
+  max-width: 88%;
+  gap: 5px;
+  margin-bottom: 16px;
+}
+
+.message[data-role="user"] {
+  margin-left: auto;
+  justify-items: end;
+}
+
+.message-meta {
+  display: flex;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.message-bubble {
+  border: 1px solid var(--border);
+  border-radius: 15px 15px 15px 5px;
+  padding: 11px 13px;
+  color: #e9eff8;
+  background: #151e2c;
+  font-size: 0.89rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message[data-role="user"] .message-bubble {
+  border-color: rgb(255 176 32 / 35%);
+  border-radius: 15px 15px 5px 15px;
+  color: #fff5df;
+  background: rgb(255 176 32 / 13%);
+}
+
+.message[data-role="system"] .message-bubble {
+  border-style: dashed;
+  color: var(--muted);
+  background: transparent;
+}
+
+.composer-wrap {
+  border-top: 1px solid var(--border);
+  padding: 12px;
+  background: rgb(10 15 23 / 90%);
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.composer textarea {
+  max-height: 180px;
+  min-height: 45px;
+  resize: none;
+}
+
+.send-button {
+  min-width: 74px;
+}
+
+.composer-help {
+  margin: 7px 3px 0;
+  color: #6f7b8f;
+  font-size: 0.66rem;
+  text-align: center;
+}
+
+.composer-status {
+  margin: 0 0 9px;
+}
+
+.sr-only {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+@media (max-width: 620px) {
+  .app-shell.chat-shell {
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .chat-shell .topbar {
+    margin-bottom: 12px;
+  }
+
+  .message {
+    max-width: 94%;
+  }
+
+  .composer .btn {
+    flex: initial;
+  }
+}

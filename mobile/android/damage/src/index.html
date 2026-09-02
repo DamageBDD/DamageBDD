@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090c11">
+  <title>DamageBDD</title>
+  <link rel="stylesheet" href="./shared/common.css">
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">D</div>
+        <div class="brand-copy">
+          <h1>DamageBDD</h1>
+          <p>Behaviour verification from your phone</p>
+        </div>
+      </div>
+      <span id="authPill" class="pill">Signed out</span>
+    </header>
+
+    <main class="content-stack">
+      <section class="card" aria-labelledby="nodeHeading">
+        <div class="card-header">
+          <div>
+            <h2 id="nodeHeading">Damage node</h2>
+            <p>Select the server used for authentication and execution.</p>
+          </div>
+          <span id="nodePill" class="pill">Unchecked</span>
+        </div>
+        <div class="card-body form-grid">
+          <label class="field" for="serverUrl">
+            <span>Server URL</span>
+            <input id="serverUrl" type="url" inputmode="url" autocomplete="url"
+                   spellcheck="false" placeholder="https://run.dev.damagebdd.com">
+          </label>
+          <div class="button-row">
+            <button id="checkNodeButton" class="btn btn-secondary" type="button">Check node</button>
+          </div>
+          <div id="nodeStatus" class="status" role="status" aria-live="polite" hidden></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="authHeading">
+        <div class="card-header">
+          <div>
+            <h2 id="authHeading">Account</h2>
+            <p>Authenticate with the DamageBDD account API.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <form id="loginForm" class="form-grid">
+            <label class="field" for="username">
+              <span>Email / username</span>
+              <input id="username" name="username" type="email" inputmode="email"
+                     autocomplete="username" required>
+            </label>
+            <label class="field" for="password">
+              <span>Password</span>
+              <input id="password" name="password" type="password"
+                     autocomplete="current-password" required>
+            </label>
+            <div class="button-row">
+              <button id="loginButton" class="btn btn-primary" type="submit">Sign in</button>
+            </div>
+          </form>
+
+          <div id="sessionPanel" class="session-panel" hidden>
+            <div>
+              <div class="field-label">Authenticated address</div>
+              <div id="accountAddress" class="account-address mono"></div>
+            </div>
+            <button id="logoutButton" class="btn btn-danger" type="button">Sign out</button>
+          </div>
+          <div id="authStatus" class="status" role="status" aria-live="polite" hidden></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="featureHeading">
+        <div class="card-header">
+          <div>
+            <h2 id="featureHeading">Feature</h2>
+            <p>Run a Gherkin feature with a single non-streaming request.</p>
+          </div>
+          <span id="runPill" class="pill">Ready</span>
+        </div>
+        <div class="card-body form-grid">
+          <label class="field" for="featureText">
+            <span>Gherkin</span>
+            <textarea id="featureText" class="feature-editor mono" rows="15"
+                      autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+          </label>
+
+          <div class="form-row compact-row">
+            <label class="field" for="concurrency">
+              <span>Concurrency</span>
+              <input id="concurrency" type="number" min="1" max="1000" value="1">
+            </label>
+            <div class="field action-field">
+              <span>Template</span>
+              <button id="resetFeatureButton" class="btn btn-secondary" type="button">Reset sample</button>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button id="executeButton" class="btn btn-primary" type="button" disabled>Execute feature</button>
+          </div>
+          <p class="help">A signed-in account is required. Streaming is disabled in this first mobile shell.</p>
+          <div id="runStatus" class="status" role="status" aria-live="polite" hidden></div>
+        </div>
+      </section>
+
+      <section id="resultCard" class="card" aria-labelledby="resultHeading" hidden>
+        <div class="card-header">
+          <div>
+            <h2 id="resultHeading">Run result</h2>
+            <p id="resultSummary">Latest response from the node.</p>
+          </div>
+          <a id="reportLink" class="btn btn-secondary" href="#" target="_blank" rel="noreferrer" hidden>Open report</a>
+        </div>
+        <div class="card-body result-stack">
+          <dl id="resultMeta" class="result-meta"></dl>
+          <pre id="resultOutput" class="output"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "damagebdd-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Terminal-first DamageBDD Android client",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "web": "node ../scripts/build-app.mjs",
+    "cap:add": "npm run web && npx cap add android",
+    "sync": "npm run web && npx cap sync android",
+    "build:android": "npm run sync && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
+  }
+}

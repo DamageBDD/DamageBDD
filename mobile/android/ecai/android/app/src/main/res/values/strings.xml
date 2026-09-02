@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ECAI</string>
+    <string name="title_activity_main">ECAI</string>
+    <string name="package_name">com.ecai.app</string>
+    <string name="custom_url_scheme">com.ecai.app</string>
+</resources>
