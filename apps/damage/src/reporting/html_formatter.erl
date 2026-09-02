@@ -69,18 +69,20 @@ format(Config, scenario, {ScenarioName, LineNo, Tags}) ->
     );
 
 format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) ->
+  StatusText = html_status(Status),
   ok =
     write_file(
       Config,
-      "<tr><td>~s</td><td>~p</td><td>~p</td><td>~p</td><td>~p</td></tr>",
+      "<tr><td>~s</td><td>~p</td><td>~p</td><td>~p</td><td>~s</td></tr>",
       [
         get_keyword(Keyword),
         binary_to_list(StepStatement),
         Args,
         LineNo,
-        Status
+        StatusText
       ]
-    );
+    ),
+  format_failure_html(Config, Status);
 
 format(
   Config,
@@ -130,8 +132,58 @@ summary_value(Value) when is_integer(Value) -> integer_to_list(Value);
 summary_value(Value) when is_float(Value) ->
   lists:flatten(io_lib:format("~p", [Value]));
 summary_value(Value) -> lists:flatten(io_lib:format("~p", [Value])).
+
+
+html_status({fail, _Reason}) ->
+  "fail";
+html_status(Status) when is_atom(Status) ->
+  atom_to_list(Status);
+html_status(Status) when is_binary(Status) ->
+  binary_to_list(Status);
+html_status(Status) when is_list(Status) ->
+  Status;
+html_status(Status) ->
+  lists:flatten(io_lib:format("~p", [Status])).
+
+format_failure_html(Config, {fail, Reason}) ->
+  Escaped = html_escape(reason_text(Reason)),
+  write_file(
+    Config,
+    "<tr class='failure'><td colspan='5'>"
+    "<strong>Failure:</strong>"
+    "<pre style='white-space:pre-wrap; margin:0.5em 0 0 0'>~s</pre>"
+    "</td></tr>",
+    [Escaped]
+  );
+format_failure_html(_Config, _Status) ->
+  ok.
+
+reason_text(Bin) when is_binary(Bin) ->
+  unicode:characters_to_list(Bin);
+reason_text(List) when is_list(List) ->
+  unicode:characters_to_list(List);
+reason_text(Atom) when is_atom(Atom) ->
+  atom_to_list(Atom);
+reason_text(Value) ->
+  lists:flatten(io_lib:format("~p", [Value])).
+
+html_escape(Text) ->
+  lists:flatten([html_escape_char(C) || C <- Text]).
+
+html_escape_char($&) -> "&amp;";
+html_escape_char($<) -> "&lt;";
+html_escape_char($>) -> "&gt;";
+html_escape_char($") -> "&quot;";
+html_escape_char($') -> "&#39;";
+html_escape_char(C) -> [C].
+
 format_args([]) -> <<"\n">>;
-format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p<br>">>, [Reason]);
+format_args({fail, Reason}) ->
+  unicode:characters_to_binary([
+    <<"Fail:<br><pre style='white-space:pre-wrap'>">>,
+    html_escape(reason_text(Reason)),
+    <<"</pre>">>
+  ]);
 
 format_args(Args) when is_list(Args); is_binary(Args) ->
   Data =

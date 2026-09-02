@@ -24,18 +24,23 @@ get_keyword(#{color := true}, Keyword) ->
 
 get_status_text(#{color := true}, fail) -> color:red("fail");
 
-get_status_text(#{color := true}, {fail, Reason}) ->
-    color:red(damage_utils:strf("fail:~p", [Reason]));
+get_status_text(#{color := true}, {fail, _Reason}) ->
+    color:red("fail");
 
-get_status_text(#{color := false}, {fail, Reason}) ->
-    damage_utils:strf("fail:~p", [Reason]);
+get_status_text(#{color := false}, {fail, _Reason}) ->
+    "fail";
 
 get_status_text(#{color := true}, dry) -> color:magenta("dry");
 get_status_text(#{color := true}, error) -> color:red("error");
 get_status_text(#{color := true}, success) -> color:green("success");
 get_status_text(#{color := true}, skip) -> color:yellow("skip");
 get_status_text(#{color := true}, notfound) -> color:cyan("notfound");
-get_status_text(#{color := false}, Status) -> Status.
+get_status_text(#{color := false}, Status) when is_atom(Status) ->
+    atom_to_list(Status);
+get_status_text(#{color := false}, Status) when is_binary(Status) ->
+    binary_to_list(Status);
+get_status_text(#{color := false}, Status) ->
+    Status.
 
 write_file(#{output := Req}, FormatStr, Args) when is_map(Req) ->
     cowboy_req:stream_body(
@@ -140,6 +145,7 @@ format(Config, step, {Keyword, LineNo, StepStatement, Args, _Context, Status}) -
             write_file(Config, "~s", [Raw])
     end,
 
+    ok = format_failure(Config, Status),
 
     case Args of
         <<>> -> ok;
@@ -215,9 +221,44 @@ summary_value(Value) when is_float(Value) ->
     lists:flatten(io_lib:format("~p", [Value]));
 summary_value(Value) -> lists:flatten(io_lib:format("~p", [Value])).
 
+format_failure(Config, {fail, Reason}) ->
+    ReasonText = reason_text(Reason),
+    Lines = string:split(ReasonText, "\n", all),
+    ok = write_file(Config, "      ~s", [failure_text(Config, "Failure:")]),
+    lists:foreach(
+        fun
+            ("") ->
+                ok;
+            (Line) ->
+                ok = write_file(
+                    Config,
+                    "        ~s",
+                    [failure_text(Config, Line)]
+                )
+        end,
+        Lines
+    ),
+    ok;
+format_failure(_Config, _Status) ->
+    ok.
+
+failure_text(#{color := true}, Text) ->
+    color:red(Text);
+failure_text(_Config, Text) ->
+    Text.
+
+reason_text(Bin) when is_binary(Bin) ->
+    unicode:characters_to_list(Bin);
+reason_text(List) when is_list(List) ->
+    unicode:characters_to_list(List);
+reason_text(Atom) when is_atom(Atom) ->
+    atom_to_list(Atom);
+reason_text(Value) ->
+    lists:flatten(io_lib:format("~p", [Value])).
 
 format_args([]) -> <<"\n">>;
-format_args({fail, Reason}) -> io_lib:format(<<"Fail: ~p\n">>, [Reason]);
+format_args({fail, Reason}) ->
+    unicode:characters_to_binary(["Fail:\n", reason_text(Reason), "\n"]);
 
 format_args(Args) when is_list(Args); is_binary(Args) ->
   Data =
