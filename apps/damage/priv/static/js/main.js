@@ -141,6 +141,53 @@ async function refreshDashboardBalances() {
 
 window.refreshDashboardBalances = refreshDashboardBalances;
 
+async function loadNodeStatus() {
+    const [versionResponse, balancesResult] = await Promise.all([
+        fetch("/api/version", {
+            method: "GET",
+            credentials: "include",
+            headers: { accept: "application/json" },
+            cache: "no-store"
+        }),
+        window.fetchNodeBalances({
+            credentials: "include"
+        })
+    ]);
+
+    if (!versionResponse.ok) {
+        throw new Error(
+            `/api/version returned ${versionResponse.status}`
+        );
+    }
+
+    const versionData = await versionResponse.json();
+
+    if (versionData?.ok !== true) {
+        throw new Error(
+            versionData?.error || "Unable to load node version"
+        );
+    }
+
+    if (!balancesResult?.ok) {
+        throw new Error(
+            balancesResult?.error?.message ||
+            "Unable to load node balances"
+        );
+    }
+
+    const balances = balancesResult.value || {};
+
+    // Preserve the old combined /version response shape so the
+    // existing render functions do not need to know about two APIs.
+    return {
+        ...balances,
+        version: versionData.version || {}
+    };
+}
+
+window.loadNodeStatus = loadNodeStatus;
+
+
 function restoreFeatureDraftFromShareLink() {
 	const ta = document.getElementById("damageTextArea");
 	if (!ta) return;
@@ -187,12 +234,8 @@ function restoreFeatureDraftFromShareLink() {
 
 	document.addEventListener("auth:changed", async () => {
 		try {
-			const r = await fetch("/version", {
-				method: "GET",
-				credentials: "include",
-				headers: { accept: "application/json" }
-			});
-			const data = await r.json();
+            const data = await loadNodeStatus();
+
 			if (data && data.ok === true) {
 				renderNodeFooter(data);
 				if (typeof renderNodeWalletModal === "function") {
@@ -200,7 +243,7 @@ function restoreFeatureDraftFromShareLink() {
 				}
 			}
 		} catch (err) {
-			console.warn("auth-changed version refresh failed:", err);
+            console.warn("auth-changed node status refresh failed:", err);
 		}
 
 		try {
@@ -403,12 +446,11 @@ function restoreFeatureDraftFromShareLink() {
 				MicroModal.close("wallet-modal");
 			}
 		);
-		fetch("/version")
-			.then(r => r.json())
+        loadNodeStatus()
 			.then(data => {
 				if (data.ok === true) {
 					renderNodeFooter(data);
-				}else{
+                } else {
 					//versionDom.innerText = 'node not initialized: ' + versionData.error;
 					MicroModal.close("login-modal");
 					if(data.error === "node_locked"){
@@ -416,8 +458,11 @@ function restoreFeatureDraftFromShareLink() {
 					}else if (data.error === "keypair_not_initialized"){
 						MicroModal.show("node-set-password-modal");
 					}
-				}})
-			.catch(() => {});
+                }
+            })
+            .catch(err => {
+                console.warn("initial node status fetch failed:", err);
+            });
 
 
         const addScheduleBtn = document.getElementById("addScheduleBtn");
@@ -1966,12 +2011,8 @@ function restoreFeatureDraftFromShareLink() {
 	}
 	async function refreshPostLoginUi() {
 		try {
-			const r = await fetch("/version", {
-				method: "GET",
-				credentials: "include",
-				headers: { accept: "application/json" }
-			});
-			const data = await r.json();
+			const data = await loadNodeStatus();
+
 			if (data && data.ok === true) {
 				renderNodeFooter(data);
 				renderNodeWalletModal(data);
@@ -1979,7 +2020,7 @@ function restoreFeatureDraftFromShareLink() {
 			
 			await refreshDashboardBalances();
 		} catch (err) {
-			console.warn("version refresh failed:", err);
+        console.warn("node status refresh failed:", err);
 		}
 	}
 
@@ -2576,11 +2617,7 @@ function restoreFeatureDraftFromShareLink() {
 		navigator.clipboard.writeText(el.value || "").catch(() => {});
 	}
 	async function refreshNodeWalletModal() {
-		const r = await fetch("/version", {
-			method: "GET",
-			headers: { "accept": "application/json" }
-		});
-		const resp = await r.json();
+		const resp = await loadNodeStatus();
 		renderNodeFooter(resp);
 		renderNodeWalletModal(resp);
 	}

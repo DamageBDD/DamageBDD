@@ -178,6 +178,31 @@
 
   const fetchAllBalances = safe(_fetchAllBalances);
 
+  const _fetchNodeBalances = async (opts = {}) => {
+    const {
+      apiBase = DEFAULTS.apiBase,
+      timeoutMs = DEFAULTS.timeoutMs,
+      credentials = DEFAULTS.credentials,
+      headers = {}
+    } = opts;
+
+    const base = String(apiBase).replace(/\/$/, '');
+    const url = `${base}/api/node/balances`;
+
+    const r = await fetchT(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        ...headers
+      },
+      credentials
+    }, timeoutMs);
+
+    return r.json();
+  };
+
+  const fetchNodeBalances = safe(_fetchNodeBalances);
+
   async function updateAllBalances(pubkey, opts = {}) {
     const {
       preserveAddressText = DEFAULTS.preserveAddressText
@@ -268,6 +293,7 @@
   }
 
   g.fetchAllBalances = fetchAllBalances;
+  g.fetchNodeBalances = fetchNodeBalances;
   g.updateAllBalances = updateAllBalances;
   g.updateDashboardBalances = updateDashboardBalances;
   g.bootDashboardBalanceFetch = bootDashboardBalanceFetch;

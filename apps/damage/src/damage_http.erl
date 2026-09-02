@@ -41,8 +41,37 @@ trails() ->
                 get =>
                     #{
                         tags => ?TRAILS_TAG,
-                        description => "Form to execute a test on this DamageBDD server.",
-                        produces => ["text/html"]
+                        description =>
+                            "Return DamageBDD application, build, Git and Erlang runtime version information.",
+                        produces => ["application/json"]
+                    }
+            }
+        ),
+        trails:trail(
+            "/api/version",
+            damage_http,
+            #{action => version},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Return DamageBDD application, build, Git and Erlang runtime version information.",
+                        produces => ["application/json"]
+                    }
+            }
+        ),
+        trails:trail(
+            "/api/node/balances",
+            damage_http,
+            #{action => node_balances},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Return DamageBDD node wallet balances.",
+                        produces => ["application/json"]
                     }
             }
         ),
@@ -159,6 +188,8 @@ trails() ->
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
 is_authorized(Req, #{action := version} = State) ->
+    {true, Req, State};
+is_authorized(Req, #{action := node_balances} = State) ->
     {true, Req, State};
 is_authorized(Req, #{action := tx} = State) ->
     {true, Req, State};
@@ -1816,59 +1847,45 @@ from_html(Req0, State) ->
     end.
 to_html(Req, #{action := version} = State) ->
     to_json(Req, State);
+to_html(Req, #{action := node_balances} = State) ->
+    to_json(Req, State);
 to_html(Req, State) ->
     Body = damage_utils:load_template("api.mustache", #{body => <<"Test">>}),
     {Body, Req, State}.
 
 to_json(Req, #{action := version} = State) ->
-    {ok, Version} = application:get_key(damage, vsn),
-    Resp = #{
-        version => list_to_binary(Version)
-    },
-    VersionInfo = #{
-        git_sha => damage_build_info:git_sha(),
-        git_sha_short => damage_build_info:git_sha_short(),
-        build_time => damage_build_info:build_time(),
-        build_env => damage_build_info:build_env()
-    },
+    {
+        jsx:encode(#{
+            ok => true,
+            version => damage:version()
+        }),
+        Req,
+        State
+    };
+to_json(Req, #{action := node_balances} = State) ->
 
     case secrets:node_keypair() of
         #{public_key := PubKey, private_key := _NodePrivateKey} ->
             NodeDamageBalance = damage_ae:node_damage_balance(),
             NodeAeBalance = damage_ae:node_ae_balance(),
             NodeBtcBalance = cln:get_node_balance(),
-            Resp0 =
-                #{
+            {
+                jsx:encode(#{
                     ok => true,
-                    public_key => PubKey,
+                    public_key => to_bin(PubKey),
                     damage_balance => NodeDamageBalance,
                     ae_balance => NodeAeBalance,
-                    btc_balance => NodeBtcBalance,
-                    version => VersionInfo
-                },
-            {
-                jsx:encode(
-                    maps:merge(
-                        Resp,
-                        Resp0
-                    )
-                ),
+                    btc_balance => NodeBtcBalance
+                }),
                 Req,
                 State
             };
         {error, Error} ->
-            Resp0 =
-                #{
-                    ok => false,
-                    error => atom_to_binary(Error)
-                },
             {
-                jsx:encode(
-                    maps:merge(
-                        Resp,
-                        Resp0
-                    )
-                ),
+                jsx:encode(#{
+                    ok => false,
+                    error => to_bin(Error)
+                }),
                 Req,
                 State
             }

@@ -29,6 +29,7 @@
 -export([check_setup/0]).
 -export([parse_file/1]).
 -export([hits_to_damage/1]).
+-export([version/0]).
 -import(damage_utils, [to_bin/1]).
 
 -define(IS_EXAMPLES_TAG(Tag),
@@ -41,6 +42,30 @@
         Tag =:= "Examples" orelse
         Tag =:= "Examples:")
 ).
+%% -------------------------------------------------------------------
+%% Build/version information
+%% -------------------------------------------------------------------
+
+-spec version() -> map().
+version() ->
+    AppVersion =
+        case application:get_key(damage, vsn) of
+            {ok, Vsn} ->
+                to_bin(Vsn);
+            undefined ->
+                <<"unknown">>
+        end,
+    #{
+        application => <<"damage">>,
+        version => AppVersion,
+        git_sha => damage_build_info:git_sha(),
+        git_sha_short => damage_build_info:git_sha_short(),
+        build_time => damage_build_info:build_time(),
+        build_env => damage_build_info:build_env(),
+        otp_release => to_bin(erlang:system_info(otp_release)),
+        erts_version => to_bin(erlang:system_info(version))
+    }.
+
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
