@@ -36,17 +36,10 @@
 %% their historical searchable-disk semantics; durable WAL ingestion uses
 %% ingest_live_* and ingest_*_to.
 
-
 %% Explicit searchable result used by ecai_index_job_ipfs for searchable_disk.
 
 %% Historical one-shot manifest ingest remains searchable and uses one locked
 %% index transaction for the whole manifest instead of opening an index per doc.
-
-
-
-
-
-
 
 %% Backward-compatible one-shot immutable-CID ingest. BaseDir APIs retain
 %% their historical searchable-disk semantics; durable WAL ingestion uses
@@ -74,7 +67,8 @@ ingest_cid_result(BaseDir, SourceKey0, Cid0, Title0) ->
                     {ok, Records} -> persist_searchable_records(AbsoluteBaseDir, Records);
                     {error, _Reason} = Error -> Error
                 end;
-            {error, _Reason} = Error -> Error
+            {error, _Reason} = Error ->
+                Error
         end
     end).
 
@@ -89,14 +83,19 @@ ingest_manifest(BaseDir, ManifestCid0) ->
                         case check_source_size(ManifestBytes) of
                             ok ->
                                 case decode_manifest_docs(ManifestBytes) of
-                                    {ok, Docs} -> persist_searchable_manifest(AbsoluteBaseDir, Docs);
-                                    {error, _Reason} = Error -> Error
+                                    {ok, Docs} ->
+                                        persist_searchable_manifest(AbsoluteBaseDir, Docs);
+                                    {error, _Reason} = Error ->
+                                        Error
                                 end;
-                            {error, _Reason} = Error -> Error
+                            {error, _Reason} = Error ->
+                                Error
                         end;
-                    {error, _Reason} = Error -> Error
+                    {error, _Reason} = Error ->
+                        Error
                 end;
-            {error, _Reason} = Error -> Error
+            {error, _Reason} = Error ->
+                Error
         end
     end).
 
@@ -112,7 +111,8 @@ persist_searchable_records(BaseDir, Records) ->
                                 records_indexed => length(Records),
                                 duplicates => 0
                             }};
-                        {error, _Reason} = Error -> Error
+                        {error, _Reason} = Error ->
+                            Error
                     end;
                 {error, _Reason} = Error ->
                     _ = ecai_disk_indexer:abort(Index0),
@@ -228,9 +228,11 @@ ingest_cid_to(Writer, SourceKey0, Cid0, Title0) ->
                         {ok, Records} -> safe_submit_batch(Writer, Records);
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 %% Each manifest document is one atomic source-version batch. Step 3 does not
@@ -243,14 +245,19 @@ ingest_manifest_to(Writer, ManifestCid0) ->
                     case check_source_size(ManifestBytes) of
                         ok ->
                             case decode_manifest_docs(ManifestBytes) of
-                                {ok, Docs} -> ingest_manifest_docs(Writer, ManifestCid, Docs, 1, []);
-                                {error, _Reason} = Error -> Error
+                                {ok, Docs} ->
+                                    ingest_manifest_docs(Writer, ManifestCid, Docs, 1, []);
+                                {error, _Reason} = Error ->
+                                    Error
                             end;
-                        {error, _Reason} = Error -> Error
+                        {error, _Reason} = Error ->
+                            Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec build_records(binary(), binary(), binary(), binary()) ->
@@ -340,19 +347,6 @@ reverse_fold_result({ok, {_Count, RecordsRev}}) ->
 reverse_fold_result({error, _Reason} = Error) ->
     Error.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 fetch_and_build(SourceKey, Cid, Title, MaxChunks) ->
     case fetch_ipfs_bytes(Cid) of
         {ok, Bytes} ->
@@ -360,7 +354,8 @@ fetch_and_build(SourceKey, Cid, Title, MaxChunks) ->
                 ok -> build_records(SourceKey, Cid, Title, Bytes, MaxChunks);
                 {error, _Reason} = Error -> Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 fetch_ipfs_bytes(Cid) ->
@@ -385,7 +380,8 @@ decode_manifest_docs(Bytes) ->
                 {ok, _InvalidDocs} -> {error, manifest_docs_not_list};
                 error -> {error, manifest_docs_missing}
             end;
-        _ -> {error, manifest_not_map}
+        _ ->
+            {error, manifest_not_map}
     catch
         error:Reason -> {error, {invalid_manifest_json, Reason}}
     end.
@@ -399,9 +395,11 @@ normalize_source_args(SourceKey0, Cid0, Title0) ->
                         {ok, Title} -> {ok, SourceKey, Cid, Title};
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 normalize_binary(Name, Value) ->
@@ -487,13 +485,12 @@ manifest_doc_fields(Doc) ->
                         {ok, SourceKey} -> {ok, SourceKey, Cid, Title};
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
-
-
-
 
 path_list(Bin) when is_binary(Bin) ->
     case unicode:characters_to_list(Bin) of
@@ -515,7 +512,6 @@ writer_batch_limit(Writer) ->
     catch
         exit:Reason -> {error, {ingest_writer_unavailable, Reason}}
     end.
-
 
 default_source_key(Cid) ->
     <<"ipfs://", Cid/binary>>.

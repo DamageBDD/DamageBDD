@@ -76,25 +76,59 @@ step_dry(Config, Context, Keyword, LineNo, ["I audit Xorg display", _Display] = 
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ["I use Xorg authority file", _Path] = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
-step_dry(Config, Context, Keyword, LineNo, ["Xorg should satisfy the strict security profile"] = Args, Body) ->
+step_dry(
+    Config,
+    Context,
+    Keyword,
+    LineNo,
+    ["Xorg should satisfy the strict security profile"] = Args,
+    Body
+) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ["Xorg should be rootless"] = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
-step_dry(Config, Context, Keyword, LineNo, ["Xorg network transports should be hardened"] = Args, Body) ->
+step_dry(
+    Config, Context, Keyword, LineNo, ["Xorg network transports should be hardened"] = Args, Body
+) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ["Xorg authorization should be hardened"] = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
-step_dry(Config, Context, Keyword, LineNo, ["Xorg dangerous extensions should be disabled"] = Args, Body) ->
+step_dry(
+    Config, Context, Keyword, LineNo, ["Xorg dangerous extensions should be disabled"] = Args, Body
+) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
-step_dry(Config, Context, Keyword, LineNo, ["Xorg unsafe compatibility modes should be disabled"] = Args, Body) ->
+step_dry(
+    Config,
+    Context,
+    Keyword,
+    LineNo,
+    ["Xorg unsafe compatibility modes should be disabled"] = Args,
+    Body
+) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ["Xorg XDMCP should be disabled"] = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
-step_dry(Config, Context, Keyword, LineNo, ["Xorg SSH X11 forwarding should be disabled"] = Args, Body) ->
+step_dry(
+    Config, Context, Keyword, LineNo, ["Xorg SSH X11 forwarding should be disabled"] = Args, Body
+) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
-step_dry(Config, Context, Keyword, LineNo, ["Xorg configuration and module paths should be root controlled"] = Args, Body) ->
+step_dry(
+    Config,
+    Context,
+    Keyword,
+    LineNo,
+    ["Xorg configuration and module paths should be root controlled"] = Args,
+    Body
+) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
-step_dry(Config, Context, Keyword, LineNo, ["Xorg should include current upstream security fixes"] = Args, Body) ->
+step_dry(
+    Config,
+    Context,
+    Keyword,
+    LineNo,
+    ["Xorg should include current upstream security fixes"] = Args,
+    Body
+) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ["I print the Xorg security audit"] = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args).
@@ -151,8 +185,15 @@ audit(Context) ->
     Processes = select_processes(Processes0, maps:get(xorg_display, Context, undefined)),
     Base =
         case Processes of
-            [] -> [err(runtime_identity, <<"No active Xorg/Xwayland process could be identified in /proc">>)];
-            _ -> []
+            [] ->
+                [
+                    err(
+                        runtime_identity,
+                        <<"No active Xorg/Xwayland process could be identified in /proc">>
+                    )
+                ];
+            _ ->
+                []
         end,
     ProcFindings = lists:append([audit_process(P, Context) || P <- Processes]),
     GlobalFindings =
@@ -229,7 +270,14 @@ audit_runtime_identity(#{pid := Pid, kind := Kind} = Proc) ->
     Identity =
         case Uid of
             0 ->
-                [err(runtime_identity, fmt("~s pid ~B is running as root; require a rootless X server", [kind_s(Kind), Pid]))];
+                [
+                    err(
+                        runtime_identity,
+                        fmt("~s pid ~B is running as root; require a rootless X server", [
+                            kind_s(Kind), Pid
+                        ])
+                    )
+                ];
             I when is_integer(I) ->
                 [info(runtime_identity, fmt("~s pid ~B runs as uid ~B", [kind_s(Kind), Pid, I]))];
             _ ->
@@ -238,22 +286,52 @@ audit_runtime_identity(#{pid := Pid, kind := Kind} = Proc) ->
     CapEff = maps:get(cap_eff, Proc, undefined),
     Caps =
         case CapEff of
-            0 -> [info(runtime_identity, <<"X server has no effective Linux capabilities">>)];
-            C when is_integer(C) -> [err(runtime_identity, fmt("X server retains effective Linux capabilities: 0x~.16B", [C]))];
-            _ -> [warn(runtime_identity, <<"Could not verify X server effective capability mask">>)]
+            0 ->
+                [info(runtime_identity, <<"X server has no effective Linux capabilities">>)];
+            C when is_integer(C) ->
+                [
+                    err(
+                        runtime_identity,
+                        fmt("X server retains effective Linux capabilities: 0x~.16B", [C])
+                    )
+                ];
+            _ ->
+                [warn(runtime_identity, <<"Could not verify X server effective capability mask">>)]
         end,
     NoNewPrivs =
         case maps:get(no_new_privs, Proc, undefined) of
-            1 -> [info(runtime_identity, <<"X server has NoNewPrivs enabled">>)];
-            0 -> [warn(runtime_identity, <<"X server does not have NoNewPrivs enabled; consider service-level sandbox hardening">>)];
-            _ -> []
+            1 ->
+                [info(runtime_identity, <<"X server has NoNewPrivs enabled">>)];
+            0 ->
+                [
+                    warn(
+                        runtime_identity,
+                        <<"X server does not have NoNewPrivs enabled; consider service-level sandbox hardening">>
+                    )
+                ];
+            _ ->
+                []
         end,
     Seccomp =
         case maps:get(seccomp, Proc, undefined) of
-            2 -> [info(runtime_identity, <<"X server is running under a seccomp filter">>)];
-            0 -> [warn(runtime_identity, <<"X server has no seccomp filter; consider a tested display-manager/systemd sandbox profile">>)];
-            1 -> [warn(runtime_identity, <<"X server is in strict seccomp mode; verify graphics/input compatibility">>)];
-            _ -> []
+            2 ->
+                [info(runtime_identity, <<"X server is running under a seccomp filter">>)];
+            0 ->
+                [
+                    warn(
+                        runtime_identity,
+                        <<"X server has no seccomp filter; consider a tested display-manager/systemd sandbox profile">>
+                    )
+                ];
+            1 ->
+                [
+                    warn(
+                        runtime_identity,
+                        <<"X server is in strict seccomp mode; verify graphics/input compatibility">>
+                    )
+                ];
+            _ ->
+                []
         end,
     Identity ++ Caps ++ NoNewPrivs ++ Seccomp.
 
@@ -267,17 +345,41 @@ audit_executable(#{exe := Exe}) ->
             Writable = (Mode band 8#0022) =/= 0,
             F0 =
                 case Setuid of
-                    true -> [err(executable, fmt("X server executable ~s has the setuid bit set", [Exe]))];
-                    false -> []
+                    true ->
+                        [
+                            err(
+                                executable,
+                                fmt("X server executable ~s has the setuid bit set", [Exe])
+                            )
+                        ];
+                    false ->
+                        []
                 end,
             F1 =
                 case Writable of
-                    true -> [err(executable, fmt("X server executable ~s is group/world writable", [Exe])) | F0];
-                    false -> F0
+                    true ->
+                        [
+                            err(
+                                executable,
+                                fmt("X server executable ~s is group/world writable", [Exe])
+                            )
+                            | F0
+                        ];
+                    false ->
+                        F0
                 end,
             case F1 of
-                [] -> [info(executable, fmt("X server executable ~s is not setuid or group/world writable", [Exe]))];
-                _ -> lists:reverse(F1)
+                [] ->
+                    [
+                        info(
+                            executable,
+                            fmt("X server executable ~s is not setuid or group/world writable", [
+                                Exe
+                            ])
+                        )
+                    ];
+                _ ->
+                    lists:reverse(F1)
             end;
         {error, Reason} ->
             [err(executable, fmt("Cannot verify X server executable ~s: ~p", [Exe, Reason]))]
@@ -289,15 +391,41 @@ audit_version(#{kind := Kind, exe := Exe}) when Exe =/= undefined ->
         {ok, Version, Raw} ->
             case version_at_least(Version, Min) of
                 true ->
-                    [info(version, fmt("~s version ~s satisfies minimum ~s", [kind_s(Kind), version_s(Version), version_s(Min)]))];
+                    [
+                        info(
+                            version,
+                            fmt("~s version ~s satisfies minimum ~s", [
+                                kind_s(Kind), version_s(Version), version_s(Min)
+                            ])
+                        )
+                    ];
                 false ->
-                    [err(version, fmt("~s version ~s is below security baseline ~s (~s)", [kind_s(Kind), version_s(Version), version_s(Min), truncate(Raw, 180)]))]
+                    [
+                        err(
+                            version,
+                            fmt("~s version ~s is below security baseline ~s (~s)", [
+                                kind_s(Kind), version_s(Version), version_s(Min), truncate(Raw, 180)
+                            ])
+                        )
+                    ]
             end;
         {error, Reason} ->
-            [err(version, fmt("Cannot verify ~s security patch level from ~s: ~p", [kind_s(Kind), Exe, Reason]))]
+            [
+                err(
+                    version,
+                    fmt("Cannot verify ~s security patch level from ~s: ~p", [
+                        kind_s(Kind), Exe, Reason
+                    ])
+                )
+            ]
     end;
 audit_version(#{kind := Kind}) ->
-    [err(version, fmt("Cannot verify ~s version because executable is unresolved", [kind_s(Kind)]))].
+    [
+        err(
+            version,
+            fmt("Cannot verify ~s version because executable is unresolved", [kind_s(Kind)])
+        )
+    ].
 
 audit_server_args(#{kind := xwayland}) ->
     %% Xwayland has a different option surface.  Network and version checks still
@@ -306,21 +434,49 @@ audit_server_args(#{kind := xwayland}) ->
 audit_server_args(#{argv := Args}) ->
     Checks = [
         {has_arg(Args, <<"-ac">>), <<"-ac disables X access control">>},
-        {has_arg(Args, <<"+iglx">>), <<"+iglx enables indirect GLX and its protocol parsing attack surface">>},
-        {has_arg(Args, <<"+byteswappedclients">>), <<"+byteswappedclients permits opposite-endian clients">>},
-        {has_arg(Args, <<"-allowNonLocalXvidtune">>), <<"-allowNonLocalXvidtune exposes the VidMode tuning interface to non-local clients">>},
-        {has_arg(Args, <<"-ignoreABI">>), <<"-ignoreABI allows potentially incompatible Xorg modules to load">>},
-        {has_arg_pair(Args, <<"-background">>, <<"none">>), <<"-background none may expose contents from a previous session during reset/startup">>},
-        {has_arg(Args, <<"-core">>), <<"-core enables server core dumps which may disclose display/session memory">>},
-        {has_any_arg(Args, [<<"-query">>, <<"-broadcast">>, <<"-multicast">>, <<"-indirect">>]), <<"XDMCP command-line mode is enabled">>},
+        {
+            has_arg(Args, <<"+iglx">>),
+            <<"+iglx enables indirect GLX and its protocol parsing attack surface">>
+        },
+        {
+            has_arg(Args, <<"+byteswappedclients">>),
+            <<"+byteswappedclients permits opposite-endian clients">>
+        },
+        {
+            has_arg(Args, <<"-allowNonLocalXvidtune">>),
+            <<"-allowNonLocalXvidtune exposes the VidMode tuning interface to non-local clients">>
+        },
+        {
+            has_arg(Args, <<"-ignoreABI">>),
+            <<"-ignoreABI allows potentially incompatible Xorg modules to load">>
+        },
+        {
+            has_arg_pair(Args, <<"-background">>, <<"none">>),
+            <<"-background none may expose contents from a previous session during reset/startup">>
+        },
+        {
+            has_arg(Args, <<"-core">>),
+            <<"-core enables server core dumps which may disclose display/session memory">>
+        },
+        {
+            has_any_arg(Args, [<<"-query">>, <<"-broadcast">>, <<"-multicast">>, <<"-indirect">>]),
+            <<"XDMCP command-line mode is enabled">>
+        },
         {has_listen_inet(Args), <<"X server command line explicitly enables TCP/INET transport">>}
     ],
     Errors = [err(server_args, Msg) || {true, Msg} <- Checks],
     ByteSwapDisabled = has_arg(Args, <<"-byteswappedclients">>) orelse config_byteswap_disabled(),
     ByteSwapFinding =
         case ByteSwapDisabled of
-            true -> [info(server_args, <<"Byte-swapped X11 clients are explicitly disabled">>)];
-            false -> [err(server_args, <<"Byte-swapped X11 clients are not explicitly disabled; use -byteswappedclients or Option \"AllowByteSwappedClients\" \"false\"">>)]
+            true ->
+                [info(server_args, <<"Byte-swapped X11 clients are explicitly disabled">>)];
+            false ->
+                [
+                    err(
+                        server_args,
+                        <<"Byte-swapped X11 clients are not explicitly disabled; use -byteswappedclients or Option \"AllowByteSwappedClients\" \"false\"">>
+                    )
+                ]
         end,
     case Errors of
         [] -> [info(server_args, <<"No insecure Xorg server flags were found">>) | ByteSwapFinding];
@@ -333,34 +489,75 @@ audit_network(#{pid := Pid, display := Display}) ->
         N when is_integer(N), N >= 0, N =< 59535 ->
             Port = 6000 + N,
             case lists:member(Port, Ports) of
-                true -> [err(network, fmt("X display ~s has TCP transport exposed on port ~B", [Display, Port]))];
-                false -> [info(network, fmt("X display ~s has no TCP listener on port ~B", [Display, Port]))]
+                true ->
+                    [
+                        err(
+                            network,
+                            fmt("X display ~s has TCP transport exposed on port ~B", [Display, Port])
+                        )
+                    ];
+                false ->
+                    [
+                        info(
+                            network,
+                            fmt("X display ~s has no TCP listener on port ~B", [Display, Port])
+                        )
+                    ]
             end;
         _ ->
             XPorts = [P || P <- Ports, P >= 6000, P =< 6063],
             case XPorts of
-                [] -> [info(network, <<"No common X11 TCP listener was found on ports 6000-6063">>)];
-                _ -> [err(network, fmt("X server namespace has common X11 TCP listener(s): ~p", [lists:usort(XPorts)]))]
+                [] ->
+                    [info(network, <<"No common X11 TCP listener was found on ports 6000-6063">>)];
+                _ ->
+                    [
+                        err(
+                            network,
+                            fmt("X server namespace has common X11 TCP listener(s): ~p", [
+                                lists:usort(XPorts)
+                            ])
+                        )
+                    ]
             end
     end.
 
 audit_abstract_socket(#{pid := Pid, display := Display}) ->
     case display_number(Display) of
         undefined ->
-            [warn(abstract_socket, <<"Could not derive display number to verify Linux abstract X11 socket exposure">>)];
+            [
+                warn(
+                    abstract_socket,
+                    <<"Could not derive display number to verify Linux abstract X11 socket exposure">>
+                )
+            ];
         N ->
             Names = unix_socket_names(Pid),
             Expected = to_bin(io_lib:format("@/tmp/.X11-unix/X~B", [N])),
             case lists:member(Expected, Names) of
                 true ->
-                    [err(abstract_socket, fmt("Linux abstract X11 socket ~s is enabled; strict namespace isolation requires -nolisten local", [Expected]))];
+                    [
+                        err(
+                            abstract_socket,
+                            fmt(
+                                "Linux abstract X11 socket ~s is enabled; strict namespace isolation requires -nolisten local",
+                                [Expected]
+                            )
+                        )
+                    ];
                 false ->
-                    [info(abstract_socket, fmt("Linux abstract X11 socket ~s is not exposed", [Expected]))]
+                    [
+                        info(
+                            abstract_socket,
+                            fmt("Linux abstract X11 socket ~s is not exposed", [Expected])
+                        )
+                    ]
             end
     end.
 
 audit_xdmcp(#{pid := Pid, argv := Args}) ->
-    ArgEnabled = has_any_arg(Args, [<<"-query">>, <<"-broadcast">>, <<"-multicast">>, <<"-indirect">>]),
+    ArgEnabled = has_any_arg(Args, [
+        <<"-query">>, <<"-broadcast">>, <<"-multicast">>, <<"-indirect">>
+    ]),
     Udp177 = lists:member(177, listening_udp_ports(Pid)),
     case ArgEnabled orelse Udp177 of
         true -> [err(xdmcp, <<"XDMCP is enabled by command line or UDP/177 exposure">>)];
@@ -371,7 +568,12 @@ audit_authorization(Proc, Context) ->
     Auth = authority_file(Proc, Context),
     case Auth of
         undefined ->
-            [err(authorization, <<"No Xauthority file could be established; strict profile requires -auth or an explicit authority path">>)];
+            [
+                err(
+                    authorization,
+                    <<"No Xauthority file could be established; strict profile requires -auth or an explicit authority path">>
+                )
+            ];
         Path ->
             audit_authority_file(Path, maps:get(uid, Proc, undefined))
     end.
@@ -384,15 +586,60 @@ audit_authority_file(PathBin, ServerUid) ->
         {ok, #file_info{type = regular, size = Size, mode = Mode, uid = Uid}} ->
             ModeBad = (Mode band 8#0077) =/= 0,
             OwnerBad = not (Uid =:= 0 orelse Uid =:= ServerUid),
-            F0 = case Size > 0 of true -> []; false -> [err(authorization, fmt("Xauthority file ~s is empty", [Path]))] end,
-            F1 = case ModeBad of true -> [err(authorization, fmt("Xauthority file ~s has group/other permissions ~.8B", [Path, Mode band 8#0777])) | F0]; false -> F0 end,
-            F2 = case OwnerBad of true -> [err(authorization, fmt("Xauthority file ~s is owned by uid ~B, not root/X server uid ~p", [Path, Uid, ServerUid])) | F1]; false -> F1 end,
+            F0 =
+                case Size > 0 of
+                    true -> [];
+                    false -> [err(authorization, fmt("Xauthority file ~s is empty", [Path]))]
+                end,
+            F1 =
+                case ModeBad of
+                    true ->
+                        [
+                            err(
+                                authorization,
+                                fmt("Xauthority file ~s has group/other permissions ~.8B", [
+                                    Path, Mode band 8#0777
+                                ])
+                            )
+                            | F0
+                        ];
+                    false ->
+                        F0
+                end,
+            F2 =
+                case OwnerBad of
+                    true ->
+                        [
+                            err(
+                                authorization,
+                                fmt(
+                                    "Xauthority file ~s is owned by uid ~B, not root/X server uid ~p",
+                                    [Path, Uid, ServerUid]
+                                )
+                            )
+                            | F1
+                        ];
+                    false ->
+                        F1
+                end,
             case F2 of
-                [] -> [info(authorization, fmt("Xauthority file ~s is private and non-empty", [Path]))];
-                _ -> lists:reverse(F2)
+                [] ->
+                    [
+                        info(
+                            authorization,
+                            fmt("Xauthority file ~s is private and non-empty", [Path])
+                        )
+                    ];
+                _ ->
+                    lists:reverse(F2)
             end;
         {ok, #file_info{type = Type}} ->
-            [err(authorization, fmt("Xauthority path ~s is not a regular file (~p)", [Path, Type]))];
+            [
+                err(
+                    authorization,
+                    fmt("Xauthority path ~s is not a regular file (~p)", [Path, Type])
+                )
+            ];
         {error, Reason} ->
             [err(authorization, fmt("Cannot stat Xauthority file ~s: ~p", [Path, Reason]))]
     end.
@@ -409,8 +656,23 @@ audit_host_file(#{display := Display}) ->
                 {ok, Bin} ->
                     Clean = trim_bin(strip_comments(Bin)),
                     case Clean of
-                        <<>> -> [info(xhost, fmt("Legacy host ACL file ~s contains no active hosts", [Path]))];
-                        _ -> [err(xhost, fmt("Legacy host ACL file ~s contains active host-based access entries", [Path]))]
+                        <<>> ->
+                            [
+                                info(
+                                    xhost,
+                                    fmt("Legacy host ACL file ~s contains no active hosts", [Path])
+                                )
+                            ];
+                        _ ->
+                            [
+                                err(
+                                    xhost,
+                                    fmt(
+                                        "Legacy host ACL file ~s contains active host-based access entries",
+                                        [Path]
+                                    )
+                                )
+                            ]
                     end;
                 {error, Reason} ->
                     [err(xhost, fmt("Cannot inspect legacy host ACL file ~s: ~p", [Path, Reason]))]
@@ -430,9 +692,18 @@ audit_xhost(Proc, Context) ->
         {Display0, Auth0, Xhost} ->
             Env = display_env(Display0, Auth0),
             case run_exec([Xhost], Env) of
-                {ok, Out, _Err} -> audit_xhost_output(Out);
+                {ok, Out, _Err} ->
+                    audit_xhost_output(Out);
                 {error, Why, Out, Err} ->
-                    [err(xhost, fmt("xhost failed; cannot verify active access control: ~p stdout=~s stderr=~s", [Why, truncate(Out, 120), truncate(Err, 120)]))]
+                    [
+                        err(
+                            xhost,
+                            fmt(
+                                "xhost failed; cannot verify active access control: ~p stdout=~s stderr=~s",
+                                [Why, truncate(Out, 120), truncate(Err, 120)]
+                            )
+                        )
+                    ]
             end
     end.
 
@@ -442,11 +713,26 @@ audit_xhost_output(Out0) ->
     Lines = [trim_bin(L) || L <- binary:split(Out0, <<"\n">>, [global])],
     Entries = [L || L <- Lines, is_xhost_acl_entry(L)],
     Broad = [L || L <- Entries, is_broad_xhost_entry(L)],
-    F0 = case Disabled of true -> [err(xhost, <<"xhost reports access control disabled">>)]; false -> [] end,
-    F1 = case Broad of [] -> F0; _ -> [err(xhost, fmt("Broad xhost ACL entries are present: ~p", [Broad])) | F0] end,
+    F0 =
+        case Disabled of
+            true -> [err(xhost, <<"xhost reports access control disabled">>)];
+            false -> []
+        end,
+    F1 =
+        case Broad of
+            [] -> F0;
+            _ -> [err(xhost, fmt("Broad xhost ACL entries are present: ~p", [Broad])) | F0]
+        end,
     case F1 of
-        [] -> [info(xhost, <<"X access control is enabled and no broad xhost ACL entry was detected">>)];
-        _ -> lists:reverse(F1)
+        [] ->
+            [
+                info(
+                    xhost,
+                    <<"X access control is enabled and no broad xhost ACL entry was detected">>
+                )
+            ];
+        _ ->
+            lists:reverse(F1)
     end.
 
 audit_extensions(Proc, Context) ->
@@ -458,13 +744,25 @@ audit_extensions(Proc, Context) ->
         {_, undefined, _} ->
             [err(extensions, <<"Cannot inspect X extensions because XAUTHORITY is unknown">>)];
         {_, _, undefined} ->
-            [err(extensions, <<"xdpyinfo is not installed; strict profile cannot verify dangerous extensions">>)];
+            [
+                err(
+                    extensions,
+                    <<"xdpyinfo is not installed; strict profile cannot verify dangerous extensions">>
+                )
+            ];
         {Display0, Auth0, Xdpyinfo} ->
             case run_exec([Xdpyinfo, "-queryExtensions"], display_env(Display0, Auth0)) of
                 {ok, Out, _Err} ->
                     ext_findings(Out);
                 {error, Why, Out, Err} ->
-                    [err(extensions, fmt("xdpyinfo failed: ~p stdout=~s stderr=~s", [Why, truncate(Out, 120), truncate(Err, 120)]))]
+                    [
+                        err(
+                            extensions,
+                            fmt("xdpyinfo failed: ~p stdout=~s stderr=~s", [
+                                Why, truncate(Out, 120), truncate(Err, 120)
+                            ])
+                        )
+                    ]
             end
     end.
 
@@ -472,8 +770,23 @@ ext_findings(Out) ->
     Dangerous = [<<"XTEST">>, <<"RECORD">>, <<"XFree86-DGA">>, <<"XFree86-VidModeExtension">>],
     Present = [E || E <- Dangerous, extension_present(Out, E)],
     case Present of
-        [] -> [info(extensions, <<"XTEST, RECORD, XFree86-DGA and XFree86-VidModeExtension are not advertised">>)];
-        _ -> [err(extensions, fmt("Dangerous/legacy X extensions are advertised: ~p; use -tst, disable XFree86-DGA and enable DisableVidModeExtension", [Present]))]
+        [] ->
+            [
+                info(
+                    extensions,
+                    <<"XTEST, RECORD, XFree86-DGA and XFree86-VidModeExtension are not advertised">>
+                )
+            ];
+        _ ->
+            [
+                err(
+                    extensions,
+                    fmt(
+                        "Dangerous/legacy X extensions are advertised: ~p; use -tst, disable XFree86-DGA and enable DisableVidModeExtension",
+                        [Present]
+                    )
+                )
+            ]
     end.
 
 %%%===================================================================
@@ -486,8 +799,15 @@ audit_socket_dir() ->
         {ok, #file_info{type = directory, uid = 0, mode = Mode}} ->
             Sticky = (Mode band 8#1000) =/= 0,
             case Sticky of
-                true -> [info(socket_dir, fmt("~s is root-owned and sticky", [Path]))];
-                false -> [err(socket_dir, fmt("~s is not sticky (mode ~.8B)", [Path, Mode band 8#07777]))]
+                true ->
+                    [info(socket_dir, fmt("~s is root-owned and sticky", [Path]))];
+                false ->
+                    [
+                        err(
+                            socket_dir,
+                            fmt("~s is not sticky (mode ~.8B)", [Path, Mode band 8#07777])
+                        )
+                    ]
             end;
         {ok, #file_info{type = directory, uid = Uid}} ->
             [err(socket_dir, fmt("~s is owned by uid ~B instead of root", [Path, Uid]))];
@@ -513,21 +833,43 @@ audit_xorg_config(Processes) ->
     ByteSwap = option_bool(Lower, <<"allowbyteswappedclients">>),
     Findings1 =
         case ByteSwap of
-            true -> [err(xorg_config, <<"AllowByteSwappedClients is enabled in Xorg configuration">>) | Findings0];
-            _ -> Findings0
+            true ->
+                [
+                    err(xorg_config, <<"AllowByteSwappedClients is enabled in Xorg configuration">>)
+                    | Findings0
+                ];
+            _ ->
+                Findings0
         end,
     PathFindings = lists:append([audit_config_path(P) || P <- Existing]),
     Success =
         case Findings1 of
-            [] -> [info(xorg_config, <<"No insecure Xorg boolean compatibility option was found in known active configuration paths">>)];
-            _ -> []
+            [] ->
+                [
+                    info(
+                        xorg_config,
+                        <<"No insecure Xorg boolean compatibility option was found in known active configuration paths">>
+                    )
+                ];
+            _ ->
+                []
         end,
     Success ++ lists:reverse(Findings1) ++ PathFindings.
 
 audit_config_path(Path) ->
     case audit_tree_permissions(Path) of
-        [] -> [info(paths, fmt("Xorg configuration/module path ~s is root-controlled and not group/world writable", [Path]))];
-        Errors -> Errors
+        [] ->
+            [
+                info(
+                    paths,
+                    fmt(
+                        "Xorg configuration/module path ~s is root-controlled and not group/world writable",
+                        [Path]
+                    )
+                )
+            ];
+        Errors ->
+            Errors
     end.
 
 audit_xwrapper() ->
@@ -537,14 +879,35 @@ audit_xwrapper() ->
             Lower = lower_bin(strip_comments(Bin)),
             Anybody = re_match(Lower, <<"(?m)^\\s*allowed_users\\s*=\\s*anybody\\s*$">>),
             ForceRoot = re_match(Lower, <<"(?m)^\\s*needs_root_rights\\s*=\\s*yes\\s*$">>),
-            F0 = case Anybody of true -> [err(wrapper, <<"Xorg.wrap allows anybody to start Xorg">>)]; false -> [] end,
-            F1 = case ForceRoot of true -> [err(wrapper, <<"Xorg.wrap forces root rights with needs_root_rights=yes">>) | F0]; false -> F0 end,
+            F0 =
+                case Anybody of
+                    true -> [err(wrapper, <<"Xorg.wrap allows anybody to start Xorg">>)];
+                    false -> []
+                end,
+            F1 =
+                case ForceRoot of
+                    true ->
+                        [
+                            err(
+                                wrapper,
+                                <<"Xorg.wrap forces root rights with needs_root_rights=yes">>
+                            )
+                            | F0
+                        ];
+                    false ->
+                        F0
+                end,
             case F1 of
                 [] -> [info(wrapper, <<"Xorg.wrap does not allow anybody or force root rights">>)];
                 _ -> lists:reverse(F1)
             end;
         {error, enoent} ->
-            [info(wrapper, <<"Xorg.wrap configuration is absent; actual runtime uid/setuid checks remain authoritative">>)];
+            [
+                info(
+                    wrapper,
+                    <<"Xorg.wrap configuration is absent; actual runtime uid/setuid checks remain authoritative">>
+                )
+            ];
         {error, Reason} ->
             [err(wrapper, fmt("Cannot read ~s: ~p", [Path, Reason]))]
     end.
@@ -558,11 +921,25 @@ audit_sshd() ->
                 {ok, Out, _Err} ->
                     Lower = lower_bin(Out),
                     case re_match(Lower, <<"(?m)^x11forwarding\\s+no\\s*$">>) of
-                        true -> [info(sshd, <<"sshd effective configuration has X11Forwarding no">>)];
-                        false -> [err(sshd, <<"sshd effective configuration does not have X11Forwarding no">>)]
+                        true ->
+                            [info(sshd, <<"sshd effective configuration has X11Forwarding no">>)];
+                        false ->
+                            [
+                                err(
+                                    sshd,
+                                    <<"sshd effective configuration does not have X11Forwarding no">>
+                                )
+                            ]
                     end;
                 {error, Why, Out, Err} ->
-                    [err(sshd, fmt("Cannot verify sshd effective X11 policy: ~p stdout=~s stderr=~s", [Why, truncate(Out, 100), truncate(Err, 160)]))]
+                    [
+                        err(
+                            sshd,
+                            fmt("Cannot verify sshd effective X11 policy: ~p stdout=~s stderr=~s", [
+                                Why, truncate(Out, 100), truncate(Err, 160)
+                            ])
+                        )
+                    ]
             end
     end.
 
@@ -579,14 +956,37 @@ audit_ssh_client() ->
                     Trusted = re_match(Lower, <<"(?m)^forwardx11trusted\s+yes\s*$">>),
                     case {Forward, Trusted} of
                         {false, _} ->
-                            [info(ssh_client, <<"OpenSSH client effective configuration has ForwardX11 disabled">>)];
+                            [
+                                info(
+                                    ssh_client,
+                                    <<"OpenSSH client effective configuration has ForwardX11 disabled">>
+                                )
+                            ];
                         {true, true} ->
-                            [err(ssh_client, <<"OpenSSH client enables trusted X11 forwarding; disable ForwardX11/ForwardX11Trusted">>)];
+                            [
+                                err(
+                                    ssh_client,
+                                    <<"OpenSSH client enables trusted X11 forwarding; disable ForwardX11/ForwardX11Trusted">>
+                                )
+                            ];
                         {true, false} ->
-                            [err(ssh_client, <<"OpenSSH client enables X11 forwarding by default; strict profile requires ForwardX11 no">>)]
+                            [
+                                err(
+                                    ssh_client,
+                                    <<"OpenSSH client enables X11 forwarding by default; strict profile requires ForwardX11 no">>
+                                )
+                            ]
                     end;
                 {error, Why, Out, Err} ->
-                    [warn(ssh_client, fmt("Cannot verify OpenSSH client X11 defaults: ~p stdout=~s stderr=~s", [Why, truncate(Out, 100), truncate(Err, 140)]))]
+                    [
+                        warn(
+                            ssh_client,
+                            fmt(
+                                "Cannot verify OpenSSH client X11 defaults: ~p stdout=~s stderr=~s",
+                                [Why, truncate(Out, 100), truncate(Err, 140)]
+                            )
+                        )
+                    ]
             end
     end.
 
@@ -598,7 +998,12 @@ audit_selinux() ->
                 Other -> [err(mac, fmt("SELinux is present but not enforcing (~s)", [Other]))]
             end;
         {error, enoent} ->
-            [info(mac, <<"SELinux is not present; SELinux-specific X controls are not applicable">>)];
+            [
+                info(
+                    mac,
+                    <<"SELinux is not present; SELinux-specific X controls are not applicable">>
+                )
+            ];
         {error, Reason} ->
             [warn(mac, fmt("Cannot inspect SELinux enforcement state: ~p", [Reason]))]
     end.
@@ -617,7 +1022,8 @@ find_x_servers() ->
                 {ok, Proc} <- [read_proc(Name)],
                 maps:get(kind, Proc, other) =/= other
             ];
-        {error, _} -> []
+        {error, _} ->
+            []
     end.
 
 read_proc(PidStr) ->
@@ -660,7 +1066,8 @@ classify_x_server(Args, Exe, Comm) ->
         ],
     Names = [lower_bin(N) || N <- Names0],
     case lists:any(fun(N) -> N =:= <<"xorg">> orelse N =:= <<"xorg.bin">> end, Names) of
-        true -> xorg;
+        true ->
+            xorg;
         false ->
             case lists:any(fun(N) -> N =:= <<"xwayland">> end, Names) of
                 true -> xwayland;
@@ -677,14 +1084,16 @@ select_processes(Processes, Display0) ->
 public_process(Proc) ->
     maps:with([pid, kind, uid, exe, display, auth], Proc).
 
-status_uid(undefined) -> undefined;
+status_uid(undefined) ->
+    undefined;
 status_uid(Bin) ->
     case re:run(Bin, <<"(?m)^Uid:\\s+([0-9]+)">>, [{capture, [1], binary}]) of
         {match, [UidBin]} -> binary_to_integer(UidBin);
         nomatch -> undefined
     end.
 
-status_hex_field(undefined, _Name) -> undefined;
+status_hex_field(undefined, _Name) ->
+    undefined;
 status_hex_field(Bin, Name) ->
     Pat = iolist_to_binary([<<"(?m)^">>, Name, <<":\\s+([0-9A-Fa-f]+)">>]),
     case re:run(Bin, Pat, [{capture, [1], binary}]) of
@@ -693,17 +1102,18 @@ status_hex_field(Bin, Name) ->
                 {ok, I} -> I;
                 error -> undefined
             end;
-        nomatch -> undefined
+        nomatch ->
+            undefined
     end.
 
-status_int_field(undefined, _Name) -> undefined;
+status_int_field(undefined, _Name) ->
+    undefined;
 status_int_field(Bin, Name) ->
     Pat = iolist_to_binary([<<"(?m)^">>, Name, <<":\\s+([0-9]+)">>]),
     case re:run(Bin, Pat, [{capture, [1], binary}]) of
         {match, [IntBin]} -> binary_to_integer(IntBin);
         nomatch -> undefined
     end.
-
 
 find_display(Args) ->
     case [A || A <- Args, is_display_arg(A)] of
@@ -716,7 +1126,8 @@ is_display_arg(<<$:, Rest/binary>>) ->
 is_display_arg(_) ->
     false.
 
-display_number(undefined) -> undefined;
+display_number(undefined) ->
+    undefined;
 display_number(Display0) ->
     Display = normalize_display(Display0),
     case re:run(Display, <<"^:([0-9]+)">>, [{capture, [1], binary}]) of
@@ -724,7 +1135,8 @@ display_number(Display0) ->
         nomatch -> undefined
     end.
 
-normalize_display(undefined) -> undefined;
+normalize_display(undefined) ->
+    undefined;
 normalize_display(Display0) ->
     Display = to_bin(Display0),
     case binary:split(Display, <<".">>, [global]) of
@@ -756,7 +1168,8 @@ parse_inet_ports(Pid, Kind, WantedState) ->
         {ok, Bin} ->
             Lines = tl_safe(binary:split(Bin, <<"\n">>, [global])),
             lists:filtermap(fun(Line) -> parse_inet_line(Line, WantedState) end, Lines);
-        {error, _} -> []
+        {error, _} ->
+            []
     end.
 
 parse_inet_line(Line, WantedState) ->
@@ -770,9 +1183,11 @@ parse_inet_line(Line, WantedState) ->
                         {ok, Port} -> {true, Port};
                         error -> false
                     end;
-                _ -> false
+                _ ->
+                    false
             end;
-        _ -> false
+        _ ->
+            false
     end.
 
 unix_socket_names(Pid) ->
@@ -781,7 +1196,8 @@ unix_socket_names(Pid) ->
         {ok, Bin} ->
             Lines = tl_safe(binary:split(Bin, <<"\n">>, [global])),
             lists:filtermap(fun unix_socket_name/1, Lines);
-        {error, _} -> []
+        {error, _} ->
+            []
     end.
 
 unix_socket_name(Line0) ->
@@ -853,14 +1269,17 @@ bool_option_findings(Lower, Specs) ->
 
 option_bool(Content, Name) ->
     Pat = iolist_to_binary([
-        <<"(?im)^\\s*option\\s+\\\"">>, Name,
+        <<"(?im)^\\s*option\\s+\\\"">>,
+        Name,
         <<"\\\"\\s+\\\"?(true|yes|on|1)\\\"?\\s*$">>
     ]),
     case re:run(Content, Pat, [{capture, none}]) of
-        match -> true;
+        match ->
+            true;
         nomatch ->
             PatFalse = iolist_to_binary([
-                <<"(?im)^\\s*option\\s+\\\"">>, Name,
+                <<"(?im)^\\s*option\\s+\\\"">>,
+                Name,
                 <<"\\\"\\s+\\\"?(false|no|off|0)\\\"?\\s*$">>
             ]),
             case re:run(Content, PatFalse, [{capture, none}]) of
@@ -886,18 +1305,34 @@ audit_tree_permissions(Path) ->
                             {ok, Names} -> [filename:join(Path, N) || N <- Names];
                             {error, _} -> []
                         end,
-                    BaseErrors ++ lists:append([audit_tree_permissions(C) || C <- Children, relevant_path(C)]);
-                _ -> BaseErrors
+                    BaseErrors ++
+                        lists:append([audit_tree_permissions(C) || C <- Children, relevant_path(C)]);
+                _ ->
+                    BaseErrors
             end;
         {error, Reason} ->
             [err(paths, fmt("Cannot inspect security-sensitive Xorg path ~s: ~p", [Path, Reason]))]
     end.
 
 path_meta_errors(Path, Uid, Mode) ->
-    E0 = case Uid =:= 0 of true -> []; false -> [err(paths, fmt("Xorg path ~s is owned by uid ~B, not root", [Path, Uid]))] end,
+    E0 =
+        case Uid =:= 0 of
+            true -> [];
+            false -> [err(paths, fmt("Xorg path ~s is owned by uid ~B, not root", [Path, Uid]))]
+        end,
     case (Mode band 8#0022) =/= 0 of
-        true -> [err(paths, fmt("Xorg path ~s is group/world writable (mode ~.8B)", [Path, Mode band 8#07777])) | E0];
-        false -> E0
+        true ->
+            [
+                err(
+                    paths,
+                    fmt("Xorg path ~s is group/world writable (mode ~.8B)", [
+                        Path, Mode band 8#07777
+                    ])
+                )
+                | E0
+            ];
+        false ->
+            E0
     end.
 
 relevant_path(Path) ->
@@ -909,7 +1344,8 @@ secure_system_file(Path, require_root) ->
         {ok, #file_info{type = symlink}} ->
             {error, symlink};
         {ok, #file_info{type = regular, uid = 0, mode = Mode} = Info} when
-            (Mode band 8#0022) =:= 0 ->
+            (Mode band 8#0022) =:= 0
+        ->
             {ok, Info};
         {ok, #file_info{type = regular, uid = Uid, mode = Mode}} ->
             {error, {unsafe_owner_or_mode, Uid, Mode band 8#07777}};
@@ -928,13 +1364,16 @@ read_x_version(Exe0) ->
     case secure_system_file(Exe, require_root) of
         {ok, #file_info{mode = Mode}} when (Mode band 8#0022) =:= 0 ->
             case run_exec([Exe, "-version"], []) of
-                {ok, Out, Err} -> parse_version_output(<<Out/binary, "\n", Err/binary>>);
+                {ok, Out, Err} ->
+                    parse_version_output(<<Out/binary, "\n", Err/binary>>);
                 {error, _Why, Out, Err} ->
                     %% Xorg commonly exits non-zero after printing -version; parse output anyway.
                     parse_version_output(<<Out/binary, "\n", Err/binary>>)
             end;
-        {ok, _} -> {error, executable_writable_by_non_root};
-        Error -> Error
+        {ok, _} ->
+            {error, executable_writable_by_non_root};
+        Error ->
+            Error
     end.
 
 parse_version_output(Bin) ->
@@ -949,13 +1388,16 @@ parse_version_patterns(_Bin, []) ->
     {error, version_not_found};
 parse_version_patterns(Bin, [Pat | Rest]) ->
     case re:run(Bin, Pat, [{capture, [1, 2, 3], binary}, caseless]) of
-        {match, [A, B, C]} -> {ok, {binary_to_integer(A), binary_to_integer(B), binary_to_integer(C)}, Bin};
-        nomatch -> parse_version_patterns(Bin, Rest)
+        {match, [A, B, C]} ->
+            {ok, {binary_to_integer(A), binary_to_integer(B), binary_to_integer(C)}, Bin};
+        nomatch ->
+            parse_version_patterns(Bin, Rest)
     end.
 
 run_exec([Exe | _] = Cmd, Env) ->
     case filelib:is_regular(Exe) of
-        false -> {error, enoent, <<>>, <<>>};
+        false ->
+            {error, enoent, <<>>, <<>>};
         true ->
             Opts0 = [sync, stdout, stderr],
             Opts =
@@ -967,7 +1409,8 @@ run_exec([Exe | _] = Cmd, Env) ->
                 {ok, Result} ->
                     {ok, result_stream(stdout, Result), result_stream(stderr, Result)};
                 {error, Result} when is_list(Result) ->
-                    {error, exit_status(Result), result_stream(stdout, Result), result_stream(stderr, Result)};
+                    {error, exit_status(Result), result_stream(stdout, Result),
+                        result_stream(stderr, Result)};
                 Other ->
                     {error, {unexpected_exec_result, Other}, <<>>, <<>>}
             catch
@@ -1024,21 +1467,24 @@ arg_value([Key, Value | _], Key) -> Value;
 arg_value([_ | Rest], Key) -> arg_value(Rest, Key);
 arg_value([], _Key) -> undefined.
 
-is_xhost_acl_entry(<<>>) -> false;
+is_xhost_acl_entry(<<>>) ->
+    false;
 is_xhost_acl_entry(Line0) ->
     Line = lower_bin(Line0),
-    not (
-        binary:match(Line, <<"access control enabled">>) =/= nomatch orelse
-            binary:match(Line, <<"access control disabled">>) =/= nomatch
-    ).
+    not (binary:match(Line, <<"access control enabled">>) =/= nomatch orelse
+        binary:match(Line, <<"access control disabled">>) =/= nomatch).
 
 is_broad_xhost_entry(Line0) ->
     Line = lower_bin(trim_bin(Line0)),
     case Line of
-        <<"local:">> -> true;
-        <<"+">> -> true;
-        <<"inet:", _/binary>> -> true;
-        <<"inet6:", _/binary>> -> true;
+        <<"local:">> ->
+            true;
+        <<"+">> ->
+            true;
+        <<"inet:", _/binary>> ->
+            true;
+        <<"inet6:", _/binary>> ->
+            true;
         _ ->
             %% SI:localuser:<name> is scoped to a local OS identity and is
             %% allowed by this strict profile.  Any other unresolved entry is
@@ -1094,12 +1540,17 @@ format_report(Audit) ->
     iolist_to_binary([Header, ProcLines, FindingLines]).
 
 format_finding(#{severity := Severity, check := Check, message := Message}) ->
-    io_lib:format("[~s] ~s: ~s\n", [string:uppercase(atom_to_list(Severity)), atom_to_list(Check), Message]).
+    io_lib:format("[~s] ~s: ~s\n", [
+        string:uppercase(atom_to_list(Severity)), atom_to_list(Check), Message
+    ]).
 
 format_errors(Errors) ->
     iolist_to_binary([
         <<"Xorg strict security profile failed:\n">>,
-        [io_lib:format(" - ~s: ~s\n", [atom_to_list(Check), Message]) || #{check := Check, message := Message} <- Errors]
+        [
+            io_lib:format(" - ~s: ~s\n", [atom_to_list(Check), Message])
+         || #{check := Check, message := Message} <- Errors
+        ]
     ]).
 
 err(Check, Msg) -> #{severity => error, check => Check, message => to_bin(Msg)}.
@@ -1132,7 +1583,8 @@ re_match(Bin, Pattern) ->
 truncate(Bin0, Max) ->
     Bin = to_bin(Bin0),
     case byte_size(Bin) =< Max of
-        true -> Bin;
+        true ->
+            Bin;
         false ->
             <<Prefix:Max/binary, _/binary>> = Bin,
             <<Prefix/binary, "...">>
@@ -1187,7 +1639,11 @@ is_digits([]) -> false;
 is_digits(Str) -> lists:all(fun(C) -> C >= $0 andalso C =< $9 end, Str).
 
 hex_to_int(Bin) ->
-    try {ok, list_to_integer(binary_to_list(Bin), 16)} catch _:_ -> error end.
+    try
+        {ok, list_to_integer(binary_to_list(Bin), 16)}
+    catch
+        _:_ -> error
+    end.
 
 tl_safe([_ | Rest]) -> Rest;
 tl_safe([]) -> [].

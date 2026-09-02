@@ -84,8 +84,10 @@ status() ->
             ecai_wikimedia_search_server:status();
         undefined ->
             try ecai_search_server:get_ctx() of
-                undefined -> #{ready => false, reason => search_index_not_ready};
-                Ctx -> #{ready => true, size => ecai_search:size(Ctx), compatibility_context => true}
+                undefined ->
+                    #{ready => false, reason => search_index_not_ready};
+                Ctx ->
+                    #{ready => true, size => ecai_search:size(Ctx), compatibility_context => true}
             catch
                 Class:Reason -> #{ready => false, reason => {Class, Reason}}
             end

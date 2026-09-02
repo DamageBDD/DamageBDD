@@ -85,9 +85,6 @@
     <<"rev">> => 1
 }).
 
-
-
-
 set_opts(Ctx = #ctx{}, OptsMap) when is_map(OptsMap) ->
     Ctx#ctx{opts = maps:merge(Ctx#ctx.opts, OptsMap)}.
 
@@ -440,9 +437,6 @@ preview_text(RecMap) when is_map(RecMap) ->
 preview_text(_) ->
     <<>>.
 
-
-
-
 first_nonempty_record_field(_Map, []) ->
     <<>>;
 first_nonempty_record_field(Map, [Key | Rest]) ->
@@ -562,7 +556,8 @@ proof_for_v2(Ctx, Term, DocId) ->
     Entries = posting_commitments_v2(Ctx, Term),
     DocIds = [Id || {Id, _Hash, _Leaf} <- Entries],
     case pos(DocIds, DocId, 1) of
-        0 -> not_found;
+        0 ->
+            not_found;
         Position ->
             Leaves = [Leaf || {_Id, _Hash, Leaf} <- Entries],
             {Path, Dirs} = build_path(Leaves, Position),
@@ -579,12 +574,15 @@ proof_for_v2(Ctx, Term, DocId) ->
 
 export_onchain_headers_v2(Ctx) ->
     Terms = [T || {T, _Df} <- ets:tab2list(Ctx#ctx.df_tab)],
-    [#{
-        scheme => <<"ecai-posting-proof/v2">>,
-        tag => term_tag(Ctx, Term),
-        root => hex(term_root_v2(Ctx, Term)),
-        df => term_df(Ctx, Term)
-    } || Term <- lists:sort(Terms)].
+    [
+        #{
+            scheme => <<"ecai-posting-proof/v2">>,
+            tag => term_tag(Ctx, Term),
+            root => hex(term_root_v2(Ctx, Term)),
+            df => term_df(Ctx, Term)
+        }
+     || Term <- lists:sort(Terms)
+    ].
 
 posting_commitments_v2(Ctx, Term) ->
     Entries0 = lists:filtermap(
@@ -1133,14 +1131,11 @@ hash_to_curve(Arg) -> ecai:hash_to_curve(Arg).
 h2c_tag(TermBin) ->
     hash_to_curve(TermBin).
 
-
-
 %% ---------------------------------------------------------------
 %% Snapshot the entire index to disk (single compressed term)
 %% ---------------------------------------------------------------
 
 %% Rebuild proof roots without changing backend state or GPU ownership.
-
 
 finalize(Ctx0 = #ctx{backend = gpu}) ->
     Ctx1 = disable_gpu(Ctx0),

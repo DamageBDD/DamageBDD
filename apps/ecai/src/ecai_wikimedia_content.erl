@@ -873,7 +873,8 @@ read_output_marker(Path) ->
                 {error, incomplete_marker} -> not_found;
                 {error, Reason} -> {error, {output_marker_invalid, Path, Reason}}
             end;
-        Other -> Other
+        Other ->
+            Other
     end.
 
 validate_output_marker(Meta) ->

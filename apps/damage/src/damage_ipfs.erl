@@ -71,7 +71,6 @@ select_server(Servers, Length) when Length > 0 ->
             select_server(RemainingServers, Length - 1)
     end.
 
-
 % Internal function to handle selection and connection attempts
 
 safe_ipfs_start_link(Server) ->

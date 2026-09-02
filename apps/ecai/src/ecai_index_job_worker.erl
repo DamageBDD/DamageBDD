@@ -193,7 +193,9 @@ finalize_artifact(Job, AdapterResult) ->
             ok
     end.
 
-maybe_activate_search(#{id := JobId, spec := #{kind := wikimedia_visibility}}, AdapterResult, Artifact) ->
+maybe_activate_search(
+    #{id := JobId, spec := #{kind := wikimedia_visibility}}, AdapterResult, Artifact
+) ->
     case maps:get(search_snapshot_path, AdapterResult, undefined) of
         Path when is_binary(Path), byte_size(Path) > 0 ->
             ecai_wikimedia_search_server:activate_snapshot(
