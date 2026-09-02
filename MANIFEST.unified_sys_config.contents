@@ -1,9 +1,0 @@
-MANIFEST.unified_sys_config.contents
-apps/damage/src/damage_nsecbunker.erl
-apps/damage/src/steps_nsecbunker_phase4a.erl
-apps/damage/src/steps_nsecbunker_phase4b.erl
-apps/damage/test/damage_nsecbunker_config_tests.erl
-config/nsecbunker.unified.env.fragment.config
-config/sys.config.nsecbunker.unified.example.config
-doc/nsecbunker/UNIFIED_NSECBUNKER_SYS_CONFIG_REVIEW.md
-scripts/nsecbunker/check_nsecbunker_unified_sys_config.sh

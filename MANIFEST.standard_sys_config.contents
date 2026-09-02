@@ -1,6 +1,0 @@
-apps/damage/src/damage_nsecbunker.erl
-apps/damage/test/damage_nsecbunker_config_tests.erl
-config/sys.config.nsecbunker.standard.fragment.config
-config/sys.config.nsecbunker.phase4a.dev.standard.fragment.config
-doc/nsecbunker/STANDARD_SYS_CONFIG.md
-scripts/nsecbunker/check_nsecbunker_standard_sys_config.sh
