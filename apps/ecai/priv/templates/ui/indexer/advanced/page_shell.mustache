@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Advanced ECAI durable indexing operator console">
+  <title>ECAI Indexer · Advanced</title>
+  <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/ecai-indexer-advanced.css">
+</head>
+<body>
+  <div id="ecai-indexer-root" data-page="indexer-advanced" data-node-version="{{node_version}}">
+    {{{indexer_header}}}
+
+    <main id="indexerWorkspace" class="ecai-indexer-layout" hidden>
+      <div class="ecai-indexer-stack">
+        {{{queue_status}}}
+        {{{new_wikimedia_job}}}
+        {{{search}}}
+      </div>
+
+      <div class="ecai-indexer-stack">
+        {{{jobs}}}
+        {{{selected_job}}}
+        {{{artifact}}}
+        {{{operator_output}}}
+      </div>
+    </main>
+
+    <section id="indexerAuthRequired" class="ecai-indexer-auth-required">
+      <h2>Authentication required</h2>
+      <p>Sign in with an existing DamageBDD account to manage indexing jobs.</p>
+      <button id="authRequiredLoginBtn" type="button">Sign in</button>
+    </section>
+
+    {{{login_dialog}}}
+  </div>
+
+  <script type="module" src="/static/js/sidekick.js"></script>
+  <script type="module" src="/static/js/ecai-indexer-advanced.js"></script>
+</body>
+</html>

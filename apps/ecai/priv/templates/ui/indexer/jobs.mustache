@@ -1,27 +1,24 @@
-<section class="ecai-indexer-panel" data-component="jobs">
-  <div class="ecai-indexer-row">
-    <h2 class="ecai-indexer-grow">Index jobs</h2>
-    <select id="stateFilter" aria-label="Filter jobs by state">
-      <option value="">all states</option>
-      <option>queued</option>
-      <option>preparing</option>
-      <option>running</option>
-      <option>pause_requested</option>
-      <option>paused</option>
-      <option>cancel_requested</option>
-      <option>canceled</option>
-      <option>finalizing</option>
-      <option>completed</option>
-      <option>ready_to_mint</option>
-      <option>failed</option>
-    </select>
-    <button id="refreshBtn" type="button">Refresh</button>
-    <label class="ecai-indexer-checkbox"><input id="autoRefresh" type="checkbox" checked> Auto</label>
+<section class="ecai-indexer-section" data-component="jobs">
+  <div class="ecai-indexer-section-heading">
+    <div>
+      <h2>Your indexing jobs</h2>
+      <p class="ecai-indexer-muted">Jobs continue on the node if you leave this page.</p>
+    </div>
+    <button id="refreshJobsBtn" type="button">Refresh</button>
   </div>
 
-  <div class="ecai-indexer-jobs-wrap">
-    <table>
-      <thead><tr><th>Job</th><th>State</th><th>Progress</th><th>Controls</th></tr></thead>
+  <p id="jobsEmpty" class="ecai-indexer-empty" hidden>No Wikimedia jobs queued yet.</p>
+
+  <div id="jobsTableWrap" class="ecai-indexer-table-wrap">
+    <table class="ecai-indexer-table">
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th class="ecai-indexer-actions-column">Actions</th>
+        </tr>
+      </thead>
       <tbody id="jobsBody"></tbody>
     </table>
   </div>

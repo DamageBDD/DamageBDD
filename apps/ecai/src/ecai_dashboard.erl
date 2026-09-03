@@ -12,6 +12,7 @@
 
 -define(DASH_TPL(Name), (filename:join("ui/dashboard", Name))).
 -define(INDEXER_TPL(Name), (filename:join("ui/indexer", Name))).
+-define(ADV_INDEXER_TPL(Name), (filename:join(["ui", "indexer", "advanced", Name]))).
 
 trails() ->
     [
@@ -31,6 +32,12 @@ trails() ->
             "/indexer",
             ?MODULE,
             #{action => indexer},
+            #{get => #{tags => ["UI", "HTML", "ECAI Indexer"], produces => ["text/html"]}}
+        ),
+        trails:trail(
+            "/indexer/advanced",
+            ?MODULE,
+            #{action => indexer_advanced},
             #{get => #{tags => ["UI", "HTML", "ECAI Indexer"], produces => ["text/html"]}}
         )
     ].
@@ -64,6 +71,13 @@ to_html(Req, #{action := indexer} = State) ->
     case Component of
         undefined -> {render_indexer_page(Ctx), Req, State};
         _ -> {render_indexer_component(Component, Ctx), Req, State}
+    end;
+to_html(Req, #{action := indexer_advanced} = State) ->
+    Ctx = base_context(Req),
+    #{component := Component} = cowboy_req:match_qs([{component, [], undefined}], Req),
+    case Component of
+        undefined -> {render_advanced_indexer_page(Ctx), Req, State};
+        _ -> {render_advanced_indexer_component(Component, Ctx), Req, State}
     end.
 
 %% -------------------------- Context --------------------------
@@ -71,7 +85,8 @@ base_context(Req) ->
     #{
         request_path => cowboy_req:path(Req),
         node_version => <<"v0.1">>,
-        indexer_path => <<"/indexer">>
+        indexer_path => <<"/indexer">>,
+        advanced_indexer_path => <<"/indexer/advanced">>
     }.
 
 %% ---------------------- Dashboard pieces --------------------
@@ -82,16 +97,44 @@ render_dashboard_component(<<"footer">>, Ctx) ->
 render_dashboard_component(_, _) ->
     <<>>.
 
-%% ----------------------- Indexer page ------------------------
+%% -------------------- Simple indexer page --------------------
 render_indexer_page(Ctx) ->
     Header = render_tpl(?INDEXER_TPL("header.mustache"), Ctx),
-    QueueStatus = render_tpl(?INDEXER_TPL("queue_status.mustache"), Ctx),
-    NewJob = render_tpl(?INDEXER_TPL("new_wikimedia_job.mustache"), Ctx),
-    Search = render_tpl(?INDEXER_TPL("search.mustache"), Ctx),
+    Presets = render_tpl(?INDEXER_TPL("presets.mustache"), Ctx),
     Jobs = render_tpl(?INDEXER_TPL("jobs.mustache"), Ctx),
-    SelectedJob = render_tpl(?INDEXER_TPL("selected_job.mustache"), Ctx),
-    Artifact = render_tpl(?INDEXER_TPL("artifact.mustache"), Ctx),
-    OperatorOutput = render_tpl(?INDEXER_TPL("operator_output.mustache"), Ctx),
+    LoginDialog = render_tpl(?INDEXER_TPL("login_dialog.mustache"), Ctx),
+    PageCtx = Ctx#{
+        indexer_header => Header,
+        presets => Presets,
+        jobs => Jobs,
+        login_dialog => LoginDialog
+    },
+    render_tpl(?INDEXER_TPL("page_shell.mustache"), PageCtx).
+
+render_indexer_component(<<"header">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("header.mustache"), Ctx);
+render_indexer_component(<<"presets">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("presets.mustache"), Ctx);
+render_indexer_component(<<"jobs">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("jobs.mustache"), Ctx);
+render_indexer_component(<<"login_dialog">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("login_dialog.mustache"), Ctx);
+render_indexer_component(<<"page">>, Ctx) ->
+    render_indexer_page(Ctx);
+render_indexer_component(_, _) ->
+    <<>>.
+
+%% ------------------- Advanced indexer page -------------------
+render_advanced_indexer_page(Ctx) ->
+    Header = render_tpl(?ADV_INDEXER_TPL("header.mustache"), Ctx),
+    QueueStatus = render_tpl(?ADV_INDEXER_TPL("queue_status.mustache"), Ctx),
+    NewJob = render_tpl(?ADV_INDEXER_TPL("new_wikimedia_job.mustache"), Ctx),
+    Search = render_tpl(?ADV_INDEXER_TPL("search.mustache"), Ctx),
+    Jobs = render_tpl(?ADV_INDEXER_TPL("jobs.mustache"), Ctx),
+    SelectedJob = render_tpl(?ADV_INDEXER_TPL("selected_job.mustache"), Ctx),
+    Artifact = render_tpl(?ADV_INDEXER_TPL("artifact.mustache"), Ctx),
+    OperatorOutput = render_tpl(?ADV_INDEXER_TPL("operator_output.mustache"), Ctx),
+    LoginDialog = render_tpl(?INDEXER_TPL("login_dialog.mustache"), Ctx),
     PageCtx = Ctx#{
         indexer_header => Header,
         queue_status => QueueStatus,
@@ -100,29 +143,32 @@ render_indexer_page(Ctx) ->
         jobs => Jobs,
         selected_job => SelectedJob,
         artifact => Artifact,
-        operator_output => OperatorOutput
+        operator_output => OperatorOutput,
+        login_dialog => LoginDialog
     },
-    render_tpl(?INDEXER_TPL("page_shell.mustache"), PageCtx).
+    render_tpl(?ADV_INDEXER_TPL("page_shell.mustache"), PageCtx).
 
-render_indexer_component(<<"header">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("header.mustache"), Ctx);
-render_indexer_component(<<"queue_status">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("queue_status.mustache"), Ctx);
-render_indexer_component(<<"new_job">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("new_wikimedia_job.mustache"), Ctx);
-render_indexer_component(<<"search">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("search.mustache"), Ctx);
-render_indexer_component(<<"jobs">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("jobs.mustache"), Ctx);
-render_indexer_component(<<"selected_job">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("selected_job.mustache"), Ctx);
-render_indexer_component(<<"artifact">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("artifact.mustache"), Ctx);
-render_indexer_component(<<"operator_output">>, Ctx) ->
-    render_tpl(?INDEXER_TPL("operator_output.mustache"), Ctx);
-render_indexer_component(<<"page">>, Ctx) ->
-    render_indexer_page(Ctx);
-render_indexer_component(_, _) ->
+render_advanced_indexer_component(<<"header">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("header.mustache"), Ctx);
+render_advanced_indexer_component(<<"queue_status">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("queue_status.mustache"), Ctx);
+render_advanced_indexer_component(<<"new_job">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("new_wikimedia_job.mustache"), Ctx);
+render_advanced_indexer_component(<<"search">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("search.mustache"), Ctx);
+render_advanced_indexer_component(<<"jobs">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("jobs.mustache"), Ctx);
+render_advanced_indexer_component(<<"selected_job">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("selected_job.mustache"), Ctx);
+render_advanced_indexer_component(<<"artifact">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("artifact.mustache"), Ctx);
+render_advanced_indexer_component(<<"operator_output">>, Ctx) ->
+    render_tpl(?ADV_INDEXER_TPL("operator_output.mustache"), Ctx);
+render_advanced_indexer_component(<<"login_dialog">>, Ctx) ->
+    render_tpl(?INDEXER_TPL("login_dialog.mustache"), Ctx);
+render_advanced_indexer_component(<<"page">>, Ctx) ->
+    render_advanced_indexer_page(Ctx);
+render_advanced_indexer_component(_, _) ->
     <<>>.
 
 %% ---------------------- Rendering helper ---------------------

@@ -1,20 +1,15 @@
 <header class="ecai-indexer-header">
   <div>
-    <h1>ECAI Indexer</h1>
-    <p class="ecai-indexer-muted">durable queue · live progress · NFT-ready artifacts · {{node_version}}</p>
+    <p class="ecai-indexer-kicker">ECAI</p>
+    <h1>Wikimedia Indexer</h1>
+    <p class="ecai-indexer-muted">Choose a source and queue it. The node resolves the release, pageview window, storage and indexing policy.</p>
   </div>
 
-  <div class="ecai-indexer-grow"></div>
-
-  <label class="ecai-indexer-header-field">
-    <span>API base</span>
-    <input id="apiBase" placeholder="same origin">
-  </label>
-
-  <label class="ecai-indexer-header-field">
-    <span>Bearer token</span>
-    <input id="token" type="password" autocomplete="off" placeholder="uses current session when blank">
-  </label>
-
-  <button id="connectBtn" type="button">Connect</button>
+  <div class="ecai-indexer-header-actions" aria-live="polite">
+    <span id="queueSummary" class="ecai-indexer-muted">queue unavailable</span>
+    <span id="authIdentity" class="ecai-indexer-muted"></span>
+    <a class="ecai-indexer-view-link" href="{{advanced_indexer_path}}">Advanced</a>
+    <button id="loginBtn" type="button">Sign in</button>
+    <button id="logoutBtn" type="button" hidden>Sign out</button>
+  </div>
 </header>

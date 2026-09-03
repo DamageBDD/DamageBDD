@@ -43,6 +43,18 @@ trails() ->
             #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
         ),
         trails:trail(
+            "/ecai/index-jobs/presets",
+            ?MODULE,
+            #{action => presets},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/ecai/index-jobs/presets/:preset",
+            ?MODULE,
+            #{action => enqueue_preset},
+            #{post => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
             "/ecai/index-jobs/:id",
             ?MODULE,
             #{action => get},
@@ -82,6 +94,8 @@ is_authorized(Req, State) ->
 
 allowed_methods(Req, #{action := collection} = State) ->
     {[<<"GET">>, <<"POST">>], Req, State};
+allowed_methods(Req, #{action := enqueue_preset} = State) ->
+    {[<<"POST">>], Req, State};
 allowed_methods(Req, #{action := Action} = State) when
     Action =:= pause;
     Action =:= resume;
@@ -95,7 +109,10 @@ allowed_methods(Req, State) ->
 content_types_provided(Req, State) ->
     {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
 
-content_types_accepted(Req, #{action := collection} = State) ->
+content_types_accepted(Req, #{action := Action} = State) when
+    Action =:= collection;
+    Action =:= enqueue_preset
+->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State};
 content_types_accepted(Req, State) ->
     {
@@ -123,6 +140,13 @@ to_json(Req0, #{action := status} = State) ->
     case safe_call(fun ecai_index_jobs_srv:status/0) of
         {ok, Status} -> reply_json(Req0, 200, #{ok => true, status => Status}, State);
         {error, Reason} -> reply_error(Req0, 503, Reason, State)
+    end;
+to_json(Req0, #{action := presets} = State) ->
+    case safe_call(fun ecai_wikimedia_presets:list/0) of
+        {ok, Presets} ->
+            reply_json(Req0, 200, #{ok => true, presets => Presets}, State);
+        {error, Reason} ->
+            reply_error(Req0, 503, Reason, State)
     end;
 to_json(Req0, #{action := get} = State) ->
     with_job(Req0, State, fun(Job) ->
@@ -169,17 +193,21 @@ from_json(Req0, #{action := collection} = State) ->
                 end)
             of
                 {ok, {ok, Job}} ->
-                    reply_json(
-                        Req1,
-                        202,
-                        #{ok => true, job => decorate_job(Job)},
-                        State
-                    );
+                    reply_json(Req1, 202, #{ok => true, job => decorate_job(Job)}, State);
                 {ok, {error, Reason}} ->
                     reply_error(Req1, enqueue_error_code(Reason), Reason, State);
                 {error, Reason} ->
                     reply_error(Req1, 503, Reason, State)
             end;
+        {error, Code, Reason, Req1} ->
+            reply_error(Req1, Code, Reason, State)
+    end;
+from_json(Req0, #{action := enqueue_preset} = State) ->
+    case read_json_map(Req0) of
+        {ok, Body, Req1} when map_size(Body) =:= 0 ->
+            enqueue_preset(Req1, State);
+        {ok, _Body, Req1} ->
+            reply_error(Req1, 400, preset_overrides_not_allowed, State);
         {error, Code, Reason, Req1} ->
             reply_error(Req1, Code, Reason, State)
     end;
@@ -220,6 +248,51 @@ from_json(Req0, #{action := Action} = State) when
     end;
 from_json(Req0, State) ->
     reply_error(Req0, 404, bad_action, State).
+
+enqueue_preset(Req0, State) ->
+    PresetId = cowboy_req:binding(preset, Req0),
+    case authenticated_owner(State) of
+        undefined ->
+            reply_error(Req0, 403, authenticated_owner_required, State);
+        Owner ->
+            enqueue_preset_for_owner(Req0, State, PresetId, Owner)
+    end.
+
+enqueue_preset_for_owner(Req0, State, PresetId, Owner) ->
+    case safe_call(fun() -> ecai_wikimedia_presets:spec(PresetId, Owner) end) of
+        {ok, {ok, Spec}} ->
+            case required_idempotency_key(Req0) of
+                {ok, IdempotencyKey} ->
+                    case
+                        safe_call(fun() ->
+                            ecai_index_jobs_srv:enqueue(
+                                Spec,
+                                #{idempotency_key => IdempotencyKey}
+                            )
+                        end)
+                    of
+                        {ok, {ok, Job}} ->
+                            reply_json(
+                                Req0,
+                                202,
+                                #{ok => true, job => decorate_job(Job)},
+                                State
+                            );
+                        {ok, {error, Reason}} ->
+                            reply_error(Req0, enqueue_error_code(Reason), Reason, State);
+                        {error, Reason} ->
+                            reply_error(Req0, 503, Reason, State)
+                    end;
+                {error, KeyReason} ->
+                    reply_error(Req0, 400, KeyReason, State)
+            end;
+        {ok, {error, {unknown_wikimedia_preset, _}} = Reason} ->
+            reply_error(Req0, 404, Reason, State);
+        {ok, {error, Reason}} ->
+            reply_error(Req0, 422, Reason, State);
+        {error, Reason} ->
+            reply_error(Req0, 503, Reason, State)
+    end.
 
 with_job(Req0, State, Fun) ->
     JobId = cowboy_req:binding(id, Req0),
@@ -305,6 +378,18 @@ authenticated_owner(State) ->
             end;
         _ ->
             undefined
+    end.
+
+required_idempotency_key(Req) ->
+    case cowboy_req:header(<<"idempotency-key">>, Req, undefined) of
+        undefined ->
+            {error, idempotency_key_required};
+        <<>> ->
+            {error, idempotency_key_required};
+        Value when is_binary(Value), byte_size(Value) =< 256 ->
+            {ok, Value};
+        _ ->
+            {error, invalid_idempotency_key}
     end.
 
 safe_call(Fun) ->

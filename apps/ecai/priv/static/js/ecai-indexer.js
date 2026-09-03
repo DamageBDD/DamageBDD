@@ -3,453 +3,460 @@
 
   const $ = (id) => document.getElementById(id);
   const state = {
+    authenticated: false,
+    accessToken: null,
+    email: null,
+    presets: [],
     jobs: [],
-    selectedJobId: null,
-    eventAbort: null,
-    lastEventId: "",
     pollTimer: null
   };
 
-  const terminalStates = new Set(["completed", "ready_to_mint", "failed", "canceled", "minted"]);
-
-  function apiBase() {
-    const raw = $("apiBase")?.value.trim() || "";
-    return (raw || window.location.origin).replace(/\/$/, "");
+  function currentToken() {
+    if (state.accessToken) return state.accessToken;
+    try { return window.TokenManager?.getToken?.() || ""; }
+    catch (_) { return ""; }
   }
 
   function authHeaders(extra = {}) {
     const headers = { ...extra };
-    const manualToken = $("token")?.value.trim() || "";
-    let token = manualToken;
-    if (!token) {
-      try { token = window.TokenManager?.getToken?.() || ""; } catch (_) { token = ""; }
-    }
+    const token = currentToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
 
-  function url(path) {
-    return `${apiBase()}${path}`;
-  }
-
   async function api(path, options = {}) {
-    const response = await fetch(url(path), {
+    const response = await fetch(path, {
       ...options,
+      credentials: "include",
       headers: authHeaders({
         Accept: "application/json",
         ...(options.body ? { "Content-Type": "application/json" } : {}),
         ...(options.headers || {})
       })
     });
+
     const text = await response.text();
     let body = null;
-    try { body = text ? JSON.parse(text) : null; } catch (_) { body = { raw: text }; }
+    try { body = text ? JSON.parse(text) : null; }
+    catch (_) { body = { raw: text }; }
+
     if (!response.ok) {
-      const error = new Error(`HTTP ${response.status}`);
+      const error = new Error(body?.error || body?.message || `HTTP ${response.status}`);
       error.status = response.status;
       error.body = body;
+      if (response.status === 401) {
+        setAuthenticated(false);
+        showLoginDialog("Your DamageBDD session has expired.");
+      }
       throw error;
     }
+
     return body;
   }
 
-  function pretty(value) {
-    return JSON.stringify(value, null, 2);
+  function setAuthenticated(authenticated, identity = "") {
+    state.authenticated = authenticated;
+    $("indexerWorkspace").hidden = !authenticated;
+    $("indexerAuthRequired").hidden = authenticated;
+    $("loginBtn").hidden = authenticated;
+    $("logoutBtn").hidden = !authenticated;
+    $("authIdentity").textContent = authenticated ? (identity || state.email || "signed in") : "";
+    if (!authenticated) $("queueSummary").textContent = "queue unavailable";
   }
 
-  function log(value) {
-    $("operatorOutput").textContent = typeof value === "string" ? value : pretty(value);
+  function setNotice(message = "", isError = false) {
+    const notice = $("indexerNotice");
+    notice.hidden = !message;
+    notice.textContent = message;
+    notice.className = `ecai-indexer-notice${isError ? " is-error" : ""}`;
   }
 
-  function setConnection(text, ok = false) {
-    const el = $("connectionState");
-    el.textContent = text;
-    el.className = ok ? "ok" : "bad";
-  }
-
-  function previousMonths(count = 12) {
-    const d = new Date();
-    d.setUTCDate(1);
-    const out = [];
-    for (let i = 0; i < count; i += 1) {
-      d.setUTCMonth(d.getUTCMonth() - 1);
-      out.unshift(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  function showLoginDialog(message = "") {
+    const dialog = $("indexerLoginDialog");
+    const status = $("loginStatus");
+    status.textContent = message;
+    if (typeof dialog.showModal === "function") {
+      if (!dialog.open) dialog.showModal();
+    } else {
+      dialog.setAttribute("open", "");
     }
-    return out;
+    setTimeout(() => $("loginEmail")?.focus(), 0);
   }
 
-  function newIdempotencyKey() {
-    const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    $("idempotencyKey").value = `ecai-index-${id}`;
+  function closeLoginDialog() {
+    const dialog = $("indexerLoginDialog");
+    if (typeof dialog.close === "function" && dialog.open) dialog.close();
+    else dialog.removeAttribute("open");
   }
 
-  function buildWikimediaSpec() {
-    const months = $("months").value.split(",").map((s) => s.trim()).filter(Boolean);
-    const catalogRef = $("catalogRef").value.trim();
-    const source = {
-      project: $("project").value.trim(),
-      pageview_project: $("pageviewProject").value.trim(),
-      content_release: $("release").value.trim(),
-      pageview_months: months
-    };
-    if (catalogRef) {
-      if (catalogRef.startsWith("bafy") || catalogRef.startsWith("Qm")) source.catalog_cid = catalogRef;
-      else source.catalog_path = catalogRef;
+  function validEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  }
+
+  async function login(event) {
+    event.preventDefault();
+    const email = $("loginEmail").value.trim();
+    const password = $("loginPassword").value;
+    const submit = $("loginSubmitBtn");
+    const status = $("loginStatus");
+
+    if (!validEmail(email)) {
+      status.textContent = "Enter a valid email address.";
+      return;
+    }
+    if (!password) {
+      status.textContent = "Enter your password.";
+      return;
     }
 
-    return {
-      schema: "ecai-index-job/v1",
-      kind: "wikimedia_visibility",
-      source,
-      target: {
-        index_id: $("indexId").value.trim(),
-        namespace: $("namespace").value.trim(),
-        base_dir: $("baseDir").value.trim(),
-        mode: "live_search",
-        previous_manifest_cid: null
-      },
-      options: {
-        priority: Number($("priority").value || 100),
-        max_retries: 3,
-        batch_size: 1,
-        limit: Number($("limit").value || 10000),
-        minimum_active_months: Number($("minMonths").value || 1),
-        selection_shards: 128,
-        oversample_percent: 125,
-        partition_buffer_bytes: 262144,
-        abstract_max_bytes: 16384,
-        cirrus_max_line_bytes: 67108864,
-        index_chunk_lines: 5000,
-        keep_downloads: false,
-        keep_intermediates: $("keepIntermediates").checked,
-        publish_activity_ipfs: $("publishActivity").checked,
-        publish_extracted_ipfs: false
-      },
-      finalize: {
-        build_nft_manifest: true,
-        publish_ipfs: $("publishIpfs").checked,
-        auto_mint: false
+    submit.disabled = true;
+    status.textContent = "Signing in…";
+
+    try {
+      const response = await fetch("/accounts/auth/", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          grant_type: "password",
+          scope: "basic",
+          username: email,
+          password
+        })
+      });
+
+      const text = await response.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; }
+      catch (_) { data = { message: text }; }
+
+      if (!response.ok || !data.access_token) {
+        throw new Error(data.message || data.error || "Authentication failed.");
       }
-    };
-  }
 
-  function writeSpec() {
-    const spec = buildWikimediaSpec();
-    $("specEditor").value = pretty(spec);
-    return spec;
-  }
+      state.accessToken = data.access_token;
+      state.email = data.email || email;
 
-  function jobLinks(job) {
-    if (job && job.links) return job.links;
-    const id = job.id;
-    const base = `/ecai/index-jobs/${encodeURIComponent(id)}`;
-    return {
-      self: base,
-      events: `${base}/events`,
-      artifact: `${base}/artifact`,
-      controls: {
-        pause: `${base}/pause`, resume: `${base}/resume`, cancel: `${base}/cancel`, retry: `${base}/retry`
+      try {
+        window.TokenManager?.on_custodial_login?.(data.address, state.email, data.access_token);
+        window.TokenManager?.activate?.("custodial");
+      } catch (error) {
+        console.warn("Unable to update TokenManager; using the authenticated indexer session", error);
       }
-    };
+
+      $("loginPassword").value = "";
+      status.textContent = "";
+      setAuthenticated(true, state.email);
+      closeLoginDialog();
+      setNotice("");
+      await Promise.all([loadPresets(), refreshAll()]);
+    } catch (error) {
+      status.textContent = error.message || "Authentication failed.";
+      setAuthenticated(false);
+    } finally {
+      submit.disabled = false;
+    }
   }
 
-  async function connect() {
+  async function logout() {
+    try {
+      await fetch("/accounts/logout", {
+        method: "POST",
+        credentials: "include",
+        headers: authHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
+        body: "{}"
+      });
+    } catch (_) {
+      // Local logout still proceeds if the request cannot reach the node.
+    }
+
+    try { window.TokenManager?.logout?.(window.TokenManager?.getMode?.()); }
+    catch (_) {}
+
+    state.accessToken = null;
+    state.email = null;
+    state.presets = [];
+    state.jobs = [];
+    setAuthenticated(false);
+    renderPresets();
+    renderJobs();
+    showLoginDialog("Signed out.");
+  }
+
+  async function probeAuthentication() {
     try {
       await refreshStatus();
-      await refreshJobs();
-      setConnection("connected", true);
+      setAuthenticated(true, state.email || "DamageBDD session");
+      await Promise.all([loadPresets(), refreshJobs()]);
+      return true;
     } catch (error) {
-      setConnection(`connection failed (${error.status || error.message})`, false);
-      log(error.body || error.message);
+      setAuthenticated(false);
+      if (error.status === 401) {
+        showLoginDialog("Sign in with your DamageBDD account.");
+      } else {
+        setNotice("Unable to connect to the index queue.", true);
+      }
+      return false;
+    }
+  }
+
+  async function loadPresets() {
+    const result = await api("/ecai/index-jobs/presets");
+    state.presets = Array.isArray(result?.presets) ? result.presets : [];
+    renderPresets();
+  }
+
+  function renderPresets() {
+    const grid = $("presetGrid");
+    grid.replaceChildren();
+
+    if (!state.presets.length) {
+      const empty = document.createElement("p");
+      empty.className = "ecai-indexer-muted";
+      empty.textContent = state.authenticated ? "This node has no Wikimedia presets configured." : "Sign in to load sources.";
+      grid.appendChild(empty);
+      return;
+    }
+
+    for (const preset of state.presets) {
+      const card = document.createElement("article");
+      card.className = "ecai-indexer-preset";
+
+      const title = document.createElement("h3");
+      title.textContent = preset.label || preset.id || "Wikimedia";
+
+      const description = document.createElement("p");
+      description.className = "ecai-indexer-muted";
+      description.textContent = preset.description || "Wikimedia visibility index.";
+
+      const meta = document.createElement("p");
+      meta.className = "ecai-indexer-preset-meta ecai-indexer-muted";
+      meta.textContent = preset.project || preset.id || "";
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Queue index";
+      button.addEventListener("click", () => queuePreset(preset, button));
+
+      card.append(title, description, meta, button);
+      grid.appendChild(card);
+    }
+  }
+
+  function presetIdempotencyStorageKey(presetId) {
+    return `ecai.indexer.preset.${presetId}.idempotency-key`;
+  }
+
+  function createIdempotencyKey(presetId) {
+    const nonce = crypto.randomUUID
+      ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+          byte.toString(16).padStart(2, "0")
+        ).join("");
+    return `wikimedia-preset-${presetId}-${nonce}`;
+  }
+
+  function pendingPresetIdempotencyKey(presetId) {
+    const storageKey = presetIdempotencyStorageKey(presetId);
+    let key = sessionStorage.getItem(storageKey);
+    if (!key) {
+      key = createIdempotencyKey(presetId);
+      sessionStorage.setItem(storageKey, key);
+    }
+    return key;
+  }
+
+  function completePresetRequest(presetId) {
+    sessionStorage.removeItem(presetIdempotencyStorageKey(presetId));
+  }
+
+  async function queuePreset(preset, button) {
+    button.disabled = true;
+    const previousLabel = button.textContent;
+    button.textContent = "Queueing…";
+    setNotice("");
+    const idempotencyKey = pendingPresetIdempotencyKey(preset.id);
+
+    try {
+      const result = await api(`/ecai/index-jobs/presets/${encodeURIComponent(preset.id)}`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: "{}"
+      });
+      completePresetRequest(preset.id);
+      const jobId = result?.job?.id;
+      setNotice(`${preset.label || preset.id} queued${jobId ? ` as ${jobId}` : ""}.`);
+      await refreshAll();
+    } catch (error) {
+      setNotice(errorMessage(error), true);
+    } finally {
+      button.disabled = false;
+      button.textContent = previousLabel;
     }
   }
 
   async function refreshStatus() {
-    const body = await api("/ecai/index-jobs/status");
-    const s = body.status || {};
-    $("mConcurrency").textContent = valueOrDash(s.max_concurrency);
-    $("mRunning").textContent = valueOrDash(s.running_jobs ?? s.running);
-    $("mQueued").textContent = valueOrDash(s.queued_jobs ?? s.queued);
-    $("mWorkers").textContent = valueOrDash(s.active_workers ?? s.workers);
-    return body;
+    const result = await api("/ecai/index-jobs/status");
+    const status = result?.status || {};
+    const running = status.running_jobs ?? status.running ?? 0;
+    const queued = status.queued_jobs ?? status.queued ?? 0;
+    $("queueSummary").textContent = `${running} running · ${queued} queued`;
   }
-
-  function valueOrDash(v) { return v === undefined || v === null ? "–" : String(v); }
 
   async function refreshJobs() {
-    const params = new URLSearchParams({ limit: "100" });
-    const filter = $("stateFilter").value;
-    if (filter) params.set("state", filter);
-    const body = await api(`/ecai/index-jobs?${params.toString()}`);
-    state.jobs = body.jobs || [];
+    const result = await api("/ecai/index-jobs?kind=wikimedia_visibility&limit=50");
+    state.jobs = Array.isArray(result?.jobs) ? result.jobs : [];
     renderJobs();
-    if (state.selectedJobId) {
-      const selected = state.jobs.find((j) => j.id === state.selectedJobId);
-      if (selected) showJob(selected);
-    }
   }
 
-  function progressOf(job) {
-    const p = job.progress || {};
-    if (typeof p.percent === "number") return Math.max(0, Math.min(100, p.percent));
-    if (Number.isFinite(p.completed) && Number.isFinite(p.total) && p.total > 0) return 100 * p.completed / p.total;
-    return 0;
+  async function refreshAll() {
+    await Promise.all([refreshStatus(), refreshJobs()]);
   }
 
   function renderJobs() {
     const body = $("jobsBody");
+    const empty = $("jobsEmpty");
+    const tableWrap = $("jobsTableWrap");
     body.replaceChildren();
-    for (const job of state.jobs) {
-      const tr = document.createElement("tr");
-      const progress = job.progress || {};
-      const pct = progressOf(job);
-      tr.innerHTML = `
-        <td><button class="select-job" data-id="${escapeHtml(job.id)}">${escapeHtml(job.id)}</button><br><span class="muted">${escapeHtml(job.spec?.kind || "")}</span></td>
-        <td><span class="pill">${escapeHtml(job.state || "")}</span><br><span class="muted">${escapeHtml(progress.phase || "")}</span></td>
-        <td>${pct ? pct.toFixed(1) + "%" : `${valueOrDash(progress.completed)}/${valueOrDash(progress.total)}`}<div class="progress"><i style="width:${pct}%"></i></div><span class="muted">${escapeHtml(progress.current_source || "")}</span></td>
-        <td class="controls"></td>`;
-      const controls = tr.querySelector(".controls");
-      addControlButtons(controls, job);
-      body.appendChild(tr);
+
+    const jobs = [...state.jobs].sort((a, b) => String(b.created_at || b.id || "").localeCompare(String(a.created_at || a.id || "")));
+    empty.hidden = jobs.length !== 0;
+    tableWrap.hidden = jobs.length === 0;
+
+    for (const job of jobs) {
+      body.appendChild(renderJobRow(job));
     }
-    body.querySelectorAll(".select-job").forEach((button) => {
-      button.addEventListener("click", () => selectJob(button.dataset.id));
-    });
   }
 
-  function addControlButtons(container, job) {
-    const allowed = controlsForState(job.state);
-    for (const action of ["pause", "resume", "cancel", "retry"]) {
+  function renderJobRow(job) {
+    const row = document.createElement("tr");
+
+    const sourceCell = document.createElement("td");
+    const sourceWrap = document.createElement("div");
+    sourceWrap.className = "ecai-indexer-job-source";
+    const sourceName = document.createElement("strong");
+    sourceName.textContent = labelForProject(job?.spec?.source?.project) || job?.spec?.source?.project || "Wikimedia";
+    const jobId = document.createElement("small");
+    jobId.textContent = job.id || "";
+    sourceWrap.append(sourceName, jobId);
+    sourceCell.appendChild(sourceWrap);
+
+    const stateCell = document.createElement("td");
+    const statePill = document.createElement("span");
+    statePill.className = "ecai-indexer-state";
+    statePill.textContent = job.state || "unknown";
+    const phase = document.createElement("div");
+    phase.className = "ecai-indexer-job-phase";
+    phase.textContent = job?.progress?.phase || "";
+    stateCell.append(statePill, phase);
+
+    const progressCell = document.createElement("td");
+    const progressText = document.createElement("div");
+    const percent = progressPercent(job.progress || {});
+    progressText.textContent = progressLabel(job.progress || {}, percent);
+    const progressBar = document.createElement("div");
+    progressBar.className = "ecai-indexer-progress";
+    const progressFill = document.createElement("span");
+    progressFill.style.width = `${percent}%`;
+    progressBar.appendChild(progressFill);
+    progressCell.append(progressText, progressBar);
+
+    const actionsCell = document.createElement("td");
+    const actions = document.createElement("div");
+    actions.className = "ecai-indexer-job-actions";
+    for (const action of allowedActions(job.state)) {
       const button = document.createElement("button");
-      button.textContent = action;
-      button.disabled = !allowed.has(action);
-      button.addEventListener("click", () => controlJob(job, action));
-      container.appendChild(button);
+      button.type = "button";
+      button.textContent = actionLabel(action);
+      button.addEventListener("click", () => controlJob(job, action, button));
+      actions.appendChild(button);
     }
+    actionsCell.appendChild(actions);
+
+    row.append(sourceCell, stateCell, progressCell, actionsCell);
+    return row;
   }
 
-  function controlsForState(s) {
-    const out = new Set();
-    if (["preparing", "running"].includes(s)) out.add("pause");
-    if (s === "paused") out.add("resume");
-    if (["queued", "preparing", "running", "pause_requested", "paused"].includes(s)) out.add("cancel");
-    if (["failed", "canceled"].includes(s)) out.add("retry");
-    return out;
+  function labelForProject(project) {
+    return state.presets.find((preset) => preset.project === project)?.label || "";
   }
 
-  async function controlJob(job, action) {
-    try {
-      const links = jobLinks(job);
-      const path = links.controls?.[action] || `/ecai/index-jobs/${encodeURIComponent(job.id)}/${action}`;
-      const result = await api(path, { method: "POST", body: "{}" });
-      log(result);
-      await refreshJobs();
-    } catch (error) {
-      log(error.body || error.message);
+  function progressPercent(progress) {
+    if (Number.isFinite(progress.percent)) {
+      return Math.max(0, Math.min(100, Number(progress.percent)));
     }
-  }
-
-  async function queueJob() {
-    let spec;
-    try { spec = JSON.parse($("specEditor").value || pretty(writeSpec())); }
-    catch (error) { log(`Invalid job JSON: ${error.message}`); return; }
-
-    if (!$("idempotencyKey").value.trim()) newIdempotencyKey();
-    try {
-      const result = await api("/ecai/index-jobs", {
-        method: "POST",
-        headers: { "Idempotency-Key": $("idempotencyKey").value.trim() },
-        body: JSON.stringify(spec)
-      });
-      log(result);
-      if (result.job?.id) {
-        state.selectedJobId = result.job.id;
-        showJob(result.job);
-      }
-      await refreshJobs();
-    } catch (error) {
-      log(error.body || error.message);
+    if (Number.isFinite(progress.completed) && Number.isFinite(progress.total) && Number(progress.total) > 0) {
+      return Math.max(0, Math.min(100, (100 * Number(progress.completed)) / Number(progress.total)));
     }
+    return 0;
   }
 
-  async function selectJob(id) {
-    state.selectedJobId = id;
-    try {
-      const result = await api(`/ecai/index-jobs/${encodeURIComponent(id)}`);
-      showJob(result.job);
-    } catch (error) {
-      log(error.body || error.message);
+  function progressLabel(progress, percent) {
+    if (percent > 0) return `${percent.toFixed(1)}%`;
+    if (Number.isFinite(progress.completed) && Number.isFinite(progress.total)) {
+      return `${progress.completed} / ${progress.total}`;
     }
-  }
-
-  function showJob(job) {
-    $("jobOutput").textContent = pretty(job);
-    $("trackBtn").disabled = !job?.id;
-    $("artifactBtn").disabled = !job?.id;
-  }
-
-  async function loadArtifact() {
-    const job = state.jobs.find((j) => j.id === state.selectedJobId) || { id: state.selectedJobId };
-    if (!job.id) return;
-    try {
-      const result = await api(jobLinks(job).artifact);
-      $("artifactOutput").textContent = pretty(result);
-    } catch (error) {
-      $("artifactOutput").textContent = pretty(error.body || { error: error.message });
+    if (Number.isFinite(progress.records_indexed)) {
+      return `${Number(progress.records_indexed).toLocaleString()} records`;
     }
+    return "—";
   }
 
-  async function streamSelectedEvents() {
-    stopEventStream();
-    const job = state.jobs.find((j) => j.id === state.selectedJobId) || { id: state.selectedJobId };
-    if (!job.id) return;
-    state.eventAbort = new AbortController();
-    $("trackBtn").disabled = true;
-    $("stopTrackBtn").disabled = false;
-    $("eventOutput").textContent = "connecting…\n";
+  function allowedActions(jobState) {
+    if (["preparing", "running"].includes(jobState)) return ["pause", "cancel"];
+    if (jobState === "paused") return ["resume", "cancel"];
+    if (["queued", "pause_requested"].includes(jobState)) return ["cancel"];
+    if (["failed", "canceled"].includes(jobState)) return ["retry"];
+    return [];
+  }
+
+  function actionLabel(action) {
+    return action.charAt(0).toUpperCase() + action.slice(1);
+  }
+
+  async function controlJob(job, action, button) {
+    button.disabled = true;
     try {
-      await consumeSse(jobLinks(job).events, state.eventAbort.signal);
+      const path = job?.links?.controls?.[action] || `/ecai/index-jobs/${encodeURIComponent(job.id)}/${action}`;
+      await api(path, { method: "POST", body: "{}" });
+      await refreshAll();
     } catch (error) {
-      if (error.name !== "AbortError") appendEvent(`stream error: ${error.message}`);
+      setNotice(errorMessage(error), true);
     } finally {
-      state.eventAbort = null;
-      $("trackBtn").disabled = false;
-      $("stopTrackBtn").disabled = true;
+      button.disabled = false;
     }
   }
 
-  async function consumeSse(path, signal) {
-    const headers = authHeaders({ Accept: "text/event-stream" });
-    if (state.lastEventId) headers["Last-Event-ID"] = state.lastEventId;
-    const response = await fetch(url(path), { headers, signal });
-    if (!response.ok) throw new Error(`SSE HTTP ${response.status}`);
-    if (!response.body) throw new Error("SSE response has no body");
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-      let boundary;
-      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-        const block = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        handleSseBlock(block);
-      }
-    }
-  }
-
-  function handleSseBlock(block) {
-    let id = "";
-    let event = "message";
-    const data = [];
-    for (const line of block.split("\n")) {
-      if (!line || line.startsWith(":")) continue;
-      const colon = line.indexOf(":");
-      const field = colon < 0 ? line : line.slice(0, colon);
-      const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
-      if (field === "id") id = value;
-      else if (field === "event") event = value;
-      else if (field === "data") data.push(value);
-    }
-    if (id) state.lastEventId = id;
-    let payload = data.join("\n");
-    try { payload = JSON.parse(payload); } catch (_) { /* keep text */ }
-    appendEvent(`${id || "-"} ${event}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`);
-    if (payload && typeof payload === "object" && terminalStates.has(payload.state)) refreshJobs().catch(() => {});
-  }
-
-  function appendEvent(line) {
-    const output = $("eventOutput");
-    output.textContent += `${line}\n`;
-    const lines = output.textContent.split("\n");
-    if (lines.length > 250) output.textContent = lines.slice(-250).join("\n");
-    output.scrollTop = output.scrollHeight;
-  }
-
-  function stopEventStream() {
-    if (state.eventAbort) state.eventAbort.abort();
-    state.eventAbort = null;
-    $("trackBtn").disabled = !state.selectedJobId;
-    $("stopTrackBtn").disabled = true;
-  }
-
-  async function doctor() {
-    try { log(await api("/ecai/wikimedia/doctor")); }
-    catch (error) { log(error.body || error.message); }
-  }
-
-  function sourceQuery() {
-    const q = new URLSearchParams({
-      project: $("project").value.trim(),
-      pageview_project: $("pageviewProject").value.trim(),
-      months: $("months").value.trim()
-    });
-    return q;
-  }
-
-  async function listSources() {
-    try { log(await api(`/ecai/wikimedia/sources?${sourceQuery()}`)); }
-    catch (error) { log(error.body || error.message); }
-  }
-
-  async function previewPlan() {
-    const q = sourceQuery();
-    q.set("limit", $("limit").value);
-    q.set("minimum_active_months", $("minMonths").value);
-    try { log(await api(`/ecai/wikimedia/plan?${q}`)); }
-    catch (error) { log(error.body || error.message); }
-  }
-
-  async function search() {
-    const q = $("searchQuery").value.trim();
-    if (!q) return;
-    const params = new URLSearchParams({ q, limit: "20", dedupe_entities: "true" });
-    try { $("searchOutput").textContent = pretty(await api(`/ecai/wikimedia/search?${params}`)); }
-    catch (error) { $("searchOutput").textContent = pretty(error.body || { error: error.message }); }
-  }
-
-  function escapeHtml(value) {
-    return String(value ?? "").replace(/[&<>'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
+  function errorMessage(error) {
+    const value = error?.body?.error ?? error?.body?.message ?? error?.message ?? "Request failed.";
+    if (typeof value === "string") return value;
+    try { return JSON.stringify(value); }
+    catch (_) { return "Request failed."; }
   }
 
   function startPolling() {
     clearInterval(state.pollTimer);
     state.pollTimer = setInterval(() => {
-      if (!$("autoRefresh").checked) return;
-      Promise.all([refreshStatus(), refreshJobs()]).catch(() => {});
-    }, 2500);
+      if (!state.authenticated || document.hidden) return;
+      refreshAll().catch(() => {});
+    }, 3000);
   }
 
   function init() {
     if (!$("ecai-indexer-root")) return;
-    $("apiBase").value = window.location.origin;
-    $("months").value = previousMonths(12).join(",");
-    newIdempotencyKey();
-    writeSpec();
 
-    $("connectBtn").addEventListener("click", connect);
-    $("refreshBtn").addEventListener("click", () => refreshJobs().catch((e) => log(e.body || e.message)));
-    $("stateFilter").addEventListener("change", () => refreshJobs().catch((e) => log(e.body || e.message)));
-    $("buildSpecBtn").addEventListener("click", writeSpec);
-    $("queueBtn").addEventListener("click", queueJob);
-    $("newKeyBtn").addEventListener("click", newIdempotencyKey);
-    $("doctorBtn").addEventListener("click", doctor);
-    $("sourcesBtn").addEventListener("click", listSources);
-    $("planBtn").addEventListener("click", previewPlan);
-    $("searchBtn").addEventListener("click", search);
-    $("searchQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
-    $("trackBtn").addEventListener("click", streamSelectedEvents);
-    $("stopTrackBtn").addEventListener("click", stopEventStream);
-    $("artifactBtn").addEventListener("click", loadArtifact);
+    $("loginBtn").addEventListener("click", () => showLoginDialog());
+    $("authRequiredLoginBtn").addEventListener("click", () => showLoginDialog());
+    $("closeLoginBtn").addEventListener("click", closeLoginDialog);
+    $("indexerLoginForm").addEventListener("submit", login);
+    $("logoutBtn").addEventListener("click", logout);
+    $("refreshJobsBtn").addEventListener("click", () => refreshAll().catch((error) => setNotice(errorMessage(error), true)));
 
-    ["project", "pageviewProject", "release", "months", "indexId", "namespace", "baseDir", "catalogRef", "limit", "minMonths", "priority", "publishIpfs", "publishActivity", "keepIntermediates"].forEach((id) => {
-      $(id).addEventListener("change", writeSpec);
-    });
-
+    setAuthenticated(false);
+    renderPresets();
+    renderJobs();
     startPolling();
+    probeAuthentication();
   }
 
   if (document.readyState === "loading") {
