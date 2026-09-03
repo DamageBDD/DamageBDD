@@ -1,10 +1,37 @@
-%%% -*- mode: erlang; erlang-indent-level: 2; -*-
-
+%%% -*- mode: erlang; erlang-indent-level: 4; -*-
+%% ---------------------------------------------------------------------------
+%% DamageBDD reference sys.config
+%% ---------------------------------------------------------------------------
+%% Source checkout:
+%%   cp config/sys.config.sample config/sys.config
+%%
+%% Packaged/systemd installation:
+%%   install -m 0644 config/sys.config.sample /etc/damage/damage.config
+%%
+%% The release loads the packaged file with:
+%%   /opt/damage/bin/damage foreground -config /etc/damage/damage.config
+%%
+%% IMPORTANT
+%%   * This is an Erlang term file. It does NOT expand ${ENVIRONMENT_VARIABLES}.
+%%   * The application name is `damage`, not `damagebdd`.
+%%   * Keep passwords, nsecs, macaroons, runes, private keys and vault
+%%     passphrases out of this file. Store them with the encrypted secrets API.
+%%   * The defaults below favour a single-node installation behind a reverse
+%%     proxy. Review every optional integration before enabling it.
+%%   * Paths under /var are package defaults. For an unprivileged source checkout,
+%%     replace them with writable paths such as ./var/lib/damage and ./var/log/damage.
+%%
 [
+    %% -----------------------------------------------------------------------
+    %% Erlang logging
+    %% -----------------------------------------------------------------------
+    %% `logger_level` is the primary runtime threshold. The file handlers rotate
+    %% at 10 MiB and retain five files. The parent directory must exist and be
+    %% writable by the release user before the VM starts.
     {
         kernel,
         [
-            {logger_level, debug},
+            {logger_level, info},
             {
                 logger,
                 [
@@ -13,69 +40,35 @@
                         default,
                         logger_std_h,
                         #{
-                            filters =>
-                                [
-                                    {
-                                        default,
-                                        {
-                                            fun logger_filters:domain/2,
-                                            {stop, super, [otp, sasl, tls]}
-                                        }
-                                    },
-                                    {debug, {fun logger_filters:level/2, {log, gt, debug}}}
-                                ],
+                            level => info,
                             formatter => {pretty_logger, #{}}
                         }
                     },
                     {
                         handler,
-                        debug,
+                        info_file,
                         logger_std_h,
                         #{
-                            filters =>
-                                [
-                                    {
-                                        default,
-                                        {
-                                            fun logger_filters:domain/2,
-                                            {stop, super, [otp, sasl, tls]}
-                                        }
-                                    },
-                                    {debug, {fun logger_filters:level/2, {stop, neq, debug}}}
-                                ],
-                            config => #{file => "/var/log/damage/debug.log", max_no_bytes => 1048576, max_no_files => 10}
-                        }
-                    },
-                    {
-                        handler,
-                        error,
-                        logger_std_h,
-                        #{
-                            single_line => false,
-                            filters =>
-                                [{error, {fun logger_filters:level/2, {stop, neq, error}}}],
-                            config => #{file => "/var/log/damage/error.log", max_no_bytes => 1048576, max_no_files => 10},
+                            level => info,
+                            config => #{
+                                file => "/var/log/damage/info.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 5
+                            },
                             formatter => {pretty_logger, #{}}
                         }
                     },
                     {
                         handler,
-                        info,
+                        error_file,
                         logger_std_h,
                         #{
-                            single_line => false,
-                            filters =>
-                                [
-                                    {
-                                        default,
-                                        {
-                                            fun logger_filters:domain/2,
-                                            {stop, super, [otp, sasl, tls]}
-                                        }
-                                    },
-                                    {error, {fun logger_filters:level/2, {stop, neq, info}}}
-                                ],
-                            config => #{file => "/var/log/damage/info.log", max_no_bytes => 1048576, max_no_files => 10},
+                            level => error,
+                            config => #{
+                                file => "/var/log/damage/error.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 5
+                            },
                             formatter => {pretty_logger, #{}}
                         }
                     }
@@ -83,200 +76,339 @@
             }
         ]
     },
-    {throttle, [
-        %{driver, throttle_ets},  %% or throttle_mnesia for cluster-wide limits
-        {ip_whitelist, [{127,0,0,1}, {192,168,1,197}]},
-        {rates, [
-            %%                Scope                     Limit      Period
-            {public_read, 200, per_minute},
-            {auth_read, 120, per_minute},
-            {write_light, 130, per_minute},
-            {heavy_query, 10, per_minute},
-            {file_upload, 6, per_minute},
-            {login_per_identity, 5, per_minute},
-            {login_per_ip, 20, per_hour},
-            {password_reset_per_identity, 3, per_hour},
-            {signup_per_ip, 3, per_day}
-        ]}
-    ]},
+
+    %% -----------------------------------------------------------------------
+    %% Request throttling
+    %% -----------------------------------------------------------------------
+    %% The default driver is node-local ETS. Select throttle_mnesia only when
+    %% cluster-wide rate limits have been designed and tested.
     {
-        ecai, [
-            {api_url, "https://ecai.example.com"},
+        throttle,
+        [
+            %% {driver, throttle_ets},
+            {ip_whitelist, [{127, 0, 0, 1}]},
+            {
+                rates,
+                [
+                    %% Scope                         Limit  Period
+                    {public_read,                     200, per_minute},
+                    {auth_read,                       120, per_minute},
+                    {write_light,                     130, per_minute},
+                    {heavy_query,                      10, per_minute},
+                    {file_upload,                       6, per_minute},
+                    {login_per_identity,                5, per_minute},
+                    {login_per_ip,                     20, per_hour},
+                    {password_reset_per_identity,       3, per_hour},
+                    {signup_per_ip,                      3, per_day}
+                ]
+            }
+        ]
+    },
+
+    %% -----------------------------------------------------------------------
+    %% Companion applications included in the umbrella release
+    %% -----------------------------------------------------------------------
+    %% These are separate OTP applications. Their ports are not the DamageBDD
+    %% HTTP port. Firewall or proxy them independently when they are used.
+    {
+        ecai,
+        [
+            {api_url, "http://127.0.0.1:7314"},
             {port, 7314},
             {search_context_file, "/var/lib/damage/ecai/yelp.ctx"},
-            {pools, [
-                {ecai_chat, [{size, 1}, {max_overflow, 0}], []}
-            ]}
+            {pools, [{ecai_chat, [{size, 1}, {max_overflow, 0}], []}]}
         ]
     },
+    {erm, [{port, 7711}, {pools, []}]},
+    {nosternity, [{port, 9001}, {pools, []}]},
     {
-        erm, [
-            {port, 7711},
-            {pools, []}
-        ]
-    },
-    {
-        nosternity, [
-            {port, 9001},
-            {pools, []}
-        ]
-    },
-    {
-        bop, [
+        bop,
+        [
             {port, 9002},
-            {
-                pools,
-                [
-                    {bop, [{size, 10}, {max_overflow, 100}], []}
-                ]
-            },
+            {pools, [{bop, [{size, 2}, {max_overflow, 4}], []}]},
+            %% Public identity only; replace when operating the BOP service.
             {nostr_npub, "npub16a2r3p8d7syd46ypygva0fqw6pfpgdxv5mm4gd8vqra4wr9scj5sx42y5t"}
         ]
     },
+
+    %% -----------------------------------------------------------------------
+    %% DamageBDD node
+    %% -----------------------------------------------------------------------
     {
         damage,
         [
-            {feature_dirs, ["~/DamageBDD/features/"]},
+            %% --- Core paths and public identity ----------------------------
+            {feature_dirs, ["./features/"]},
             {logo_image, "/static/img/logo.png"},
             {run_user, "damage"},
-            {api_url, "http://localhost:8080"},
-            {allowance, 1000},
-            {lnpay_host, "https://example.xyz"},
-            {l402_account, "ak_"},
-            {token_contract, "ct_2taq2WPRer6pkVV7JjiYrkTNr8vr61nLAHQFWbJ3jpX6iyCeBi"},
-            {account_contract, "ct_aBXwRhTXYXyD6Gqz7Vk7Nq3U1QhMsZuxFyZ2GvoiroKavxW6B"},
-            {identity_contract, "ct_aBXwRhTXYXyD6Gqz7Vk7Nq3U1QhMsZuxFyZ2GvoiroKavxW6B"},
-            {strict_no_catchall, false},
-            {cookie_secure, false},
-            {
-                node_admins,
-                [
-                    %"ak_...",
-                ]
-            },
-            {ip, {127, 0, 0, 1}},
-            %{ip, {0, 0, 0, 0}},
-            {port, 4888},
-            {smtp_host, "smtp.example.net"},
-            {smtp_hostname, "example.com"},
-            {smtp_from, {"DamageBDD Node", "node@example.com"}},
-            {smtp_user, "apikey"},
-            {smtp_port, 587},
-            {nostr_relay, "nos.lol"},
-            {nostr_npub, "npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8"},
+
+            %% Public origin used for report links, account emails and browser
+            %% flows. Set this to the externally reachable HTTPS origin in
+            %% production, for example "https://bdd.example.com".
+            {api_url, "http://127.0.0.1:4888"},
+
+            %% Initial account allowance. Zero avoids allocating execution
+            %% credit accidentally on a newly deployed private node.
+            {allowance, 0},
+
             {data_dir, "/var/lib/damage/"},
-            {bitcoin_rpc_port, 8332},
-            {bitcoin_rpc_user, "damage"},
-            {bitcoin_wallet, "damage"},
-            {lnd_host, "localhost"},
-            {lnd_port, 8011},
-            {lnd_wspath, "/v1/invoices/subscribe?method=GET"},
-            {lnd_certfile, "/var/lib/lnd/tls.cert"},
-            {lnd_keyfile, "/var/lib/lnd/tls.key"},
-            {cln_host, "localhost"},
-            {cln_port, 3010},
-            {cln_wspath, "/"},
-            {cln_cacertfile, "~/.lightning/bitcoin/ca.pem"},
-            {cln_certfile, "~/.lightning/bitcoin/client.pem"},
-            {cln_keyfile, "~/.lightning/bitcoin/client-key.pem"},
+            {keystore, "/var/lib/damage/damage.key"},
+
+            %% --- HTTP listener and browser/session security ----------------
+            %% Keep loopback when Nginx, Caddy, HAProxy or a tunnel is the
+            %% public entry point. Change to {0,0,0,0} only deliberately.
+            {ip, {127, 0, 0, 1}},
+            {port, 4888},
+
+            %% Set true only after the public origin is HTTPS.
+            {cookie_secure, false},
+
+            %% Reject broad catch-all step definitions during step discovery.
+            {strict_no_catchall, true},
+
+            %% Only explicitly trusted Aeternity accounts belong here.
+            {node_admins, []},
+
+            %% Empty means command-execution steps have no operator-approved
+            %% command entries. Add the narrowest possible exact commands.
+            {cmd_allowed, []},
+
+            %% --- SMTP metadata ---------------------------------------------
+            %% Credentials are stored as the encrypted secret `smtp_pass`.
+            %% These loopback placeholders avoid embedding a real mail host.
+            {smtp_host, "127.0.0.1"},
+            {smtp_hostname, "localhost"},
+            {smtp_from, {"DamageBDD Node", "damage@localhost"}},
+            {smtp_user, ""},
+            {smtp_port, 25},
+
+            %% --- IPFS report/artifact storage ------------------------------
+            %% Kubo's RPC API normally listens on 127.0.0.1:5001. The gateway
+            %% multiaddress below follows the current DamageBDD package sample;
+            %% change it when your Kubo gateway uses another port.
             {ipfs, [{"Addresses.Gateway", "/ip4/127.0.0.1/tcp/8082"}]},
+
+            %% --- Aeternity node and middleware -----------------------------
+            %% These lists are required by the current application startup and
+            %% chain-connected features. Keep network_id, REST and WebSocket
+            %% endpoints on the same network. Add fallbacks in priority order.
             {ae_network_id, "ae_mainnet"},
             {ae_tls, true},
             {
                 ae_nodes,
                 [
-                    %{"localhost", 3013, "/"}
-                    %{"testnet.aeternity.io", 443, "/"}
                     {"mainnet.aeternity.io", 443, "/"}
                 ]
             },
             {
                 ae_mdw_nodes,
                 [
-                    %{"localhost", 4000, "/"}
-                    %{"testnet.aeternity.io", 443, "/mdw/"}
                     {"mainnet.aeternity.io", 443, "/mdw/"}
                 ]
             },
-            {ae_mdw_ws_nodes, [
-                    %{"localhost", 4002, "/"}
+            {
+                ae_mdw_ws_nodes,
+                [
                     {"mainnet.aeternity.io", 443, "/mdw/v3/websocket"}
-                ]},
-            {cmd_allowed, ["zx list deps"]},
-            {chromedriver, "http://localhost:9515/"},
+                ]
+            },
+
+            %% Safety multipliers used when estimating fees and gas.
+            {ae_fee_multiplier, 2},
+            {ae_gas_multiplier, 2},
+            {ae_gas_price_multiplier, 3},
+
+            %% Optional deployment-specific contract overrides. Leave these
+            %% unset to use the contracts compiled/configured by the release.
+            %% {token_contract, "ct_REPLACE_ME"},
+            %% {account_contract, "ct_REPLACE_ME"},
+            %% {identity_contract, "ct_REPLACE_ME"},
+
+            %% --- Outbound proxy policy -------------------------------------
+            %% Supported proxy values include `none` and
+            %% {socks5, "127.0.0.1", 9050}. Local/internal hosts bypass the
+            %% proxy. TLS verification remains enabled by damage_gun.
+            {proxy, none},
+            {
+                proxy_exclude,
+                [
+                    "localhost",
+                    "127.0.0.1",
+                    "::1",
+                    ".local",
+                    ".lan",
+                    "ipfs",
+                    "bitcoin",
+                    "lightning",
+                    "ae_mdw"
+                ]
+            },
+
+            %% --- Nostr relays and service identity -------------------------
+            %% Relay URLs are public configuration. Private nsecs are encrypted
+            %% secrets (`nostr_nsec` and, for NWC, `damage_nostr_nsec`).
+            {
+                nostr_relays,
+                [
+                    "wss://nos.lol",
+                    "wss://offchain.pub",
+                    "wss://relay.primal.net"
+                ]
+            },
+            {nostr_relay_proxy_policy, #{default => auto}},
+            %% {nostr_npub, "npub1_REPLACE_ME"},
+
+            %% --- Nostr Wallet Connect (NIP-47) -----------------------------
+            %% The current handler falls back to server_signed when this key is
+            %% absent. operator_signed is the least-permissive recognised mode
+            %% for existing-ledger mutation paths, but it is NOT a global NWC
+            %% disable switch: missing-ledger bootstrap can still use an available
+            %% custodial key. Block /api/nwc/ at the reverse proxy when NWC is not
+            %% operated, and review the current code before exposing those routes.
+            {nwc_ledger_mode, operator_signed},
+
+            %% --- Bitcoin Core and Lightning -------------------------------
+            %% Bitcoin RPC password: encrypted secret `bitcoin_rpc_password`.
+            {bitcoin_rpc_port, 8332},
+            {bitcoin_rpc_user, "damage"},
+            {bitcoin_wallet, "damage"},
+
+            %% Explicit false prevents automatic CLN backend startup. Change to
+            %% true only after configuring the endpoint, TLS files and `cln_rune`.
+            {cln_enabled, false},
+            {cln_websocket_enabled, true},
+            {cln_restart_backoff_ms, 30000},
+            {cln_host, "127.0.0.1"},
+            {cln_port, 3010},
+            {cln_wspath, "/"},
+            {cln_cacertfile, "/var/lib/damage/lightning/ca.pem"},
+            {cln_certfile, "/var/lib/damage/lightning/client.pem"},
+            {cln_keyfile, "/var/lib/damage/lightning/client-key.pem"},
+
+            %% Optional LND values. Enable an LND pool only after these paths
+            %% and the encrypted `lnd_macaroon` secret are valid.
+            %% {lnd_host, "127.0.0.1"},
+            %% {lnd_port, 8011},
+            %% {lnd_wspath, "/v1/invoices/subscribe?method=GET"},
+            %% {lnd_certfile, "/var/lib/lnd/tls.cert"},
+            %% {lnd_keyfile, "/var/lib/lnd/tls.key"},
+
+            %% L402 is not enabled until l402_account is set and a Lightning
+            %% backend is usable. These are static fallback pricing bounds.
+            {l402_price_msat, 1000},
+            {l402_min_sats, 1},
+            %% {l402_account, "ak_REPLACE_ME"},
+
+            %% --- Worker pools ----------------------------------------------
+            %% Conservative single-node sizes. Increase only after measuring
+            %% scheduler, memory, file-descriptor, browser and upstream limits.
             {
                 pools,
                 [
-                    {damage, [{size, 10}, {max_overflow, 100}], []},
-                    {damage_ai, [{size, 2}, {max_overflow, 5}], []},
-                    {formatter, [{size, 3}, {max_overflow, 500}], []},
-                    {lnd, [{size, 1}, {max_overflow, 0}], []},
-                    {cln, [{size, 1}, {max_overflow, 0}], []},
+                    {damage, [{size, 4}, {max_overflow, 8}], []},
+                    {damage_ai, [{size, 1}, {max_overflow, 2}], []},
+                    {formatter, [{size, 4}, {max_overflow, 16}], []},
                     {
                         damage_ipfs,
-                        [{size, 2}, {max_overflow, 5}],
-                        [
-                            {"localhost", 5001}
-                        ]
+                        [{size, 2}, {max_overflow, 4}],
+                        [{"127.0.0.1", 5001}]
                     }
                 ]
             },
-            {abduco_workers, [
-                %#{
-                %    name => "lightningd",
-                %    cmd =>
-                %        ["/usr/sbin/lightningd"]
-                %},
 
-                %#{name => "lightpanda", cmd => ["bin/lightpanda-x86_64-linux", "--verbose"]},
-                #{name => "chromedriver", cmd => ["chromedriver", "--port=9515"]},
-                %#{name => "bitcoind", cmd => ["/usr/local/bin/bitcoind"]},
-                #{name => "ipfs", cmd => ["/usr/local/bin/ipfs", "daemon"]}
-            ]},
-            {market_rules, [
-                {"DAMAGEUSDT", [{price_precision, 4}, {min_qty, 100.0}]},
-                {"BTCUSDT", [{price_precision, 4}, {min_qty, 100.0}]}
-            ]},
-            {ssh_git, [
-                {enabled, true},
-                {listen_addr, {127, 0, 0, 1}},
-                {port, 2222},
-                {system_dir, "/var/lib/damage/ssh/git/system"},
-                {user_dir, "/var/lib/damage/ssh/git/user"},
-                {repos_root, "/var/lib/damage/git"}
-            ]},
+            %% DamageBDD does not start external daemons by default. Prefer
+            %% systemd/containers for Kubo, browsers, Bitcoin and Lightning.
+            {abduco_workers, []},
+            {chromedriver, "http://127.0.0.1:9515/"},
 
-            {ssh_tunnel, [
-                {enabled, false},
-                {ip, {127, 0, 0, 1}},
-                {port, 2223},
-                {system_dir, "/var/lib/damage/ssh/tunnel/system"},
-                {user_dir, "/var/lib/damage/ssh/tunnel/user"}
-            ]},
+            %% --- NIP-46 nsecbunker custody ---------------------------------
+            %% Standard Erlang strings/proplists are used intentionally. This
+            %% block is disabled and local by default. Production mode requires
+            %% a valid crypto backend and vault path; AWS custody additionally
+            %% requires the dedicated AWS configuration fragment and EC2 role.
+            {nsecbunker_rate_backend, ets},
             {
-                systemd,
+                nsecbunker,
                 [
+                    {enabled, false},
+                    {secret_provider, local},
+                    {relay_client_enabled, false},
+                    {relay_publication_mode, "return_only"},
+                    {mode, "development"},
+                    {crypto_backend_cmd, "/opt/damage/bin/damage-nsecbunker-crypto-c"},
+                    {crypto_timeout_ms, 5000},
+                    {vault_path, "/var/lib/damage/nsecbunker/node.vault"},
+                    {audit_log, "/var/log/damage/nsecbunker_audit.log"},
+                    {authorized_clients, []},
+                    {allowed_methods, ["connect", "ping", "get_public_key", "sign_event"]},
+                    {allowed_kinds, [1, 30023]},
                     {
-                        nginx,
-                        {admins, ["ak_2eu6yAH46eu9T88WN7MDnyr1QzW6GLWAc667Z93U44wLewuhLN"]}
-                    }
+                        relays,
+                        [
+                            "wss://relay.damus.io",
+                            "wss://relay.primal.net",
+                            "wss://nos.lol"
+                        ]
+                    },
+                    {
+                        limits,
+                        [
+                            {created_at_skew_seconds, 600},
+                            {created_at_window_seconds, 600},
+                            {max_kind_1_bytes, 4096},
+                            {max_kind_30023_bytes, 131072},
+                            {rate_limit_per_minute, 12},
+                            {rate_limit_window_seconds, 60}
+                        ]
+                    },
+                    {
+                        kind_30023,
+                        [
+                            {require_tags, ["d", "title", "published_at"]},
+                            {reject_html, true}
+                        ]
+                    },
+                    {genesis, [{enabled, false}, {allowed_content_sha256, []}]}
+                ]
+            },
+
+            %% Optional post-quantum envelope backend. The module must implement
+            %% the keypair/encapsulate/decapsulate adapter expected by secrets_pqc.
+            %% {pqc_backend_module, damage_pqc_backend},
+
+            %% --- Optional SSH services -------------------------------------
+            %% Both are disabled in the safe sample. Never expose SSH listeners
+            %% without host keys, authentication policy and firewall review.
+            {
+                ssh_git,
+                [
+                    {enabled, false},
+                    {listen_addr, {127, 0, 0, 1}},
+                    {port, 2222},
+                    {system_dir, "/var/lib/damage/ssh/git/system"},
+                    {user_dir, "/var/lib/damage/ssh/git/user"},
+                    {repos_root, "/var/lib/damage/git"}
+                ]
+            },
+            {
+                ssh_tunnel,
+                [
+                    {enabled, false},
+                    {ip, {127, 0, 0, 1}},
+                    {port, 2223},
+                    {system_dir, "/var/lib/damage/ssh/tunnel/system"},
+                    {user_dir, "/var/lib/damage/ssh/tunnel/user"}
                 ]
             }
         ]
     },
+
+    %% -----------------------------------------------------------------------
+    %% Supporting application configuration
+    %% -----------------------------------------------------------------------
     {
         cowboy_swagger,
         [
-            %% `static_files`: Static content directory. This is where Swagger-UI
-            %% is located. Default: `priv/swagger`.
-            %% Remember that Swagger-UI is embedded into `cowboy-swagger` project,
-            %% within `priv/swagger` folder. BUT you have to reference that path,
-            %% and depending on how youre using `cowboy-swagger` it will be different.
-            %% For example, assuming that you want to run your app which has
-            %% `cowboy-swagger` as dependency from the console, `static_files` will be:
-            {static_files, "./_build/default/lib/cowboy_swagger/priv/swagger"},
-            %% `global_spec`: Global fields for Swagger specification.
-            %% If these fields are not set, `cowboy_swagger` will set default values.
             {
                 global_spec,
                 #{

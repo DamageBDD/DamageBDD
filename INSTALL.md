@@ -1,11 +1,13 @@
 # Installing and Operating a DamageBDD Node
 
-This guide covers packaged installation, source builds, production configuration, systemd, reverse proxying, secrets, integrations, validation, upgrades, backup, troubleshooting, WSL2, and macOS.
+This guide covers package installation, source builds, runtime configuration, systemd, secrets, IPFS, Aeternity, SMTP, Lightning, Nostr, NWC, NIP-46 custody, reverse proxying, validation, upgrades, backup, and troubleshooting.
 
-**Last verified:** 3 September 2026  
-**Release/service name:** `damage`  
+**Last reviewed:** 3 September 2026  
+**Release/application name:** `damage`  
+**systemd unit:** `damage.service`  
 **Default HTTP listener:** `127.0.0.1:4888`  
-**Canonical configuration:** `/etc/damage/damage.config`
+**Packaged configuration:** `/etc/damage/damage.config`  
+**Reference configuration:** `config/sys.config.sample`
 
 ## 1. Choose an installation path
 
@@ -14,21 +16,22 @@ This guide covers packaged installation, source builds, production configuration
 | Operate a Linux node with the least manual setup | Install a package from <https://damagebdd.com/node>. |
 | Develop DamageBDD or modify Erlang modules | Clone the repository and run `rebar3 shell`. |
 | Produce a self-contained deployment | Build a relx release with `rebar3 as prod release`. |
-| Run on macOS | Build from source with the `mac,prod` profile or use a current CI artifact when one is published. |
-| Run on Windows | Use WSL2 for source builds, or follow the cross-platform Docker guide at <https://damagebdd.com/docker.html>. Native Windows is not a current BEAM release-build target. |
-| Run in a container/chroot | Start the release in the foreground; package hooks intentionally avoid `systemctl` when systemd is not PID 1. |
+| Build the Linux native release profile | Use `rebar3 as linux,prod release`. |
+| Build on macOS | Use `rebar3 as mac,prod release`. |
+| Run on Windows | Use WSL2 or the Docker guide at <https://damagebdd.com/docker.html>. |
+| Run in a container/chroot | Run the release in the foreground; do not assume systemd is PID 1. |
 
-The current CI release baseline is Erlang/OTP **28** and rebar3 **3.26.0**. A packaged relx release includes ERTS, so the destination host does not need a separate Erlang installation.
+The current release CI baseline is Erlang/OTP **28** and rebar3 **3.26.0**. A packaged relx release includes ERTS, so the destination host normally does not require a separate Erlang installation.
 
-CUDA is optional. The default and `prod` profiles do not require `nvcc`.
+CUDA is optional. Do not select the `cuda` profile unless the host has a compatible CUDA toolkit and `nvcc`.
 
-## 2. Package installation on Linux
+## 2. Install a Linux package
 
-The public package page currently provides the authoritative download links. Do not hard-code a package version or IPFS CID into automation without first verifying the release:
+Use the package page for current download locations and filenames:
 
 <https://damagebdd.com/node>
 
-Typical package-manager commands are:
+Typical installation commands are:
 
 ```bash
 # Debian, Ubuntu, Linux Mint
@@ -41,22 +44,25 @@ sudo pacman -U ./damage-*.pkg.tar.zst
 sudo dnf install ./damage-*.rpm
 ```
 
-### Package layout
+### Canonical package layout
 
 | Purpose | Path or name |
 |---|---|
 | Release | `/opt/damage` |
 | Executable | `/opt/damage/bin/damage` |
-| Convenience symlink | `/usr/bin/damage` |
+| Optional convenience command | `/usr/bin/damage` |
 | Configuration | `/etc/damage/damage.config` |
 | Optional environment file | `/etc/default/damage` |
 | Persistent state | `/var/lib/damage` |
 | Logs | `/var/log/damage` |
-| Installer log | `/var/log/damage/install.log` |
 | Service account | `damage:damage` |
 | systemd unit | `damage.service` |
 
-The package post-install hooks create the dedicated system account and directories, preserve an existing configuration, install the canonical systemd unit, and enable/start the service when systemd is running. The current hook also installs Kubo when no `ipfs` executable is available; it does not replace an existing IPFS installation.
+The canonical service command is:
+
+```text
+/opt/damage/bin/damage foreground -config /etc/damage/damage.config
+```
 
 ### Start and inspect the service
 
@@ -66,19 +72,19 @@ sudo systemctl status damage --no-pager
 sudo journalctl -u damage -n 100 --no-pager
 ```
 
-Follow logs during startup:
+Follow startup logs:
 
 ```bash
 sudo journalctl -u damage -f
 ```
 
-Validate the HTTP listener:
+Check the HTTP process/build endpoint:
 
 ```bash
 curl --fail-with-body http://127.0.0.1:4888/api/version | jq
 ```
 
-Do not use `/health`; it is not the canonical health/build probe in the current HTTP resource.
+Do not use `/health`; it is not the current canonical DamageBDD probe.
 
 ## 3. Source-build prerequisites
 
@@ -93,7 +99,7 @@ sudo apt install -y \
   libgmp-dev libssl-dev libsodium-dev libgtk-4-dev
 ```
 
-Install Erlang/OTP 28 and rebar3 3.26.0 or newer through a trusted package/toolchain manager. Ubuntu 22.04 distribution packages may be older than the release baseline, so verify rather than assume:
+Install Erlang/OTP 28 and rebar3 3.26.0 or newer through a trusted package or toolchain manager. Distribution packages can be older than the current release baseline, so verify the actual versions:
 
 ```bash
 erl -noshell \
@@ -109,11 +115,11 @@ sudo pacman -S --needed \
   erlang rebar3 gmp openssl libsodium gtk4
 ```
 
-Verify that the installed Erlang and rebar3 versions meet the baseline shown above.
+Verify the installed versions before building.
 
 ### Fedora or RHEL-family systems
 
-Package names vary by release, but the equivalent development set is:
+Package names vary by distribution release. The equivalent development set is generally:
 
 ```bash
 sudo dnf install -y \
@@ -121,11 +127,11 @@ sudo dnf install -y \
   erlang rebar3 gmp-devel openssl-devel libsodium-devel gtk4-devel
 ```
 
-Use a BEAM toolchain manager when the distribution Erlang/rebar3 packages are older than the current baseline.
+Use a BEAM toolchain manager when the distribution Erlang or rebar3 packages are older than the current baseline.
 
 ### macOS
 
-The current CI builds both Apple Silicon and Intel releases. Install the same core native dependencies used by that workflow:
+The current CI builds Apple Silicon and Intel releases. Install the core native dependencies:
 
 ```bash
 brew update
@@ -142,7 +148,7 @@ rebar3 --version
 
 ### WSL2
 
-Use an Ubuntu or Debian WSL2 distribution and follow the corresponding instructions above. Native Windows is not part of the current release matrix.
+Use an Ubuntu or Debian WSL2 distribution and follow the corresponding instructions above. Native Windows is not a current BEAM release-build target.
 
 Check whether systemd is active:
 
@@ -152,41 +158,26 @@ ps -p 1 -o comm=
 
 When PID 1 is not `systemd`, run the source shell or release in the foreground instead of using `systemctl`.
 
-## 4. Clone and configure a development checkout
+## 4. Clone the repository
 
 ```bash
 git clone https://github.com/DamageBDD/DamageBDD.git
 cd DamageBDD
-
-test -f config/sys.config || cp config/sys.config.sample config/sys.config
 ```
 
-The rebar3 shell profile loads `config/sys.config`. Review that file before first boot:
+Create the development configuration:
 
-1. Replace all example hosts, accounts, contract IDs, and credentials with valid deployment values or disable unused integrations.
-2. Set the `damage` listener to loopback for local development.
-3. Set `api_url` to the URL users and email links will actually use.
-4. Make `data_dir` writable.
-5. Change `/var/log/damage/...` logger paths to a writable development directory, or create `/var/log/damage` with suitable ownership.
-6. Never put passwords, private keys, runes, macaroons, or nsecs in `sys.config`.
-
-A minimal `damage` block looks like this:
-
-```erlang
-{
-    damage,
-    [
-        {ip, {127, 0, 0, 1}},
-        {port, 4888},
-        {api_url, "http://127.0.0.1:4888"},
-        {data_dir, "./var/lib/damage/"},
-        {feature_dirs, ["./features/"]},
-        {node_admins, []}
-    ]
-}
+```bash
+cp config/sys.config.sample config/sys.config
 ```
 
-Remember that a complete Erlang `sys.config` is a list terminated by a period:
+Do not edit `config/sys.config.sample` for a private deployment. Keep it as the tracked reference and put host-specific values in `config/sys.config` or `/etc/damage/damage.config`.
+
+## 5. Prepare `sys.config`
+
+DamageBDD uses normal Erlang `sys.config` syntax. The application key is **`damage`**, not `damagebdd`.
+
+The file is a single Erlang list terminated with a period:
 
 ```erlang
 [
@@ -196,7 +187,7 @@ Remember that a complete Erlang `sys.config` is a list terminated by a period:
             {ip, {127, 0, 0, 1}},
             {port, 4888},
             {api_url, "http://127.0.0.1:4888"},
-            {data_dir, "./var/lib/damage/"},
+            {data_dir, "/var/lib/damage/"},
             {feature_dirs, ["./features/"]},
             {node_admins, []}
         ]
@@ -204,9 +195,219 @@ Remember that a complete Erlang `sys.config` is a list terminated by a period:
 ].
 ```
 
-The correct application key is `damage`. Older examples using `{damagebdd, [...]}`, `bind_addr`, `/etc/damagebdd`, or `/var/lib/damagebdd` do not match the current packaged runtime.
+Older examples using `{damagebdd, [...]}`, `bind_addr`, `/etc/damagebdd`, `/var/lib/damagebdd`, or `damagebdd.service` do not match the current packaged runtime.
 
-## 5. Compile and run from source
+### The configuration does not expand environment variables
+
+This is valid Erlang configuration:
+
+```erlang
+{api_url, "https://bdd.example.com"}
+```
+
+This remains the literal string `${DAMAGE_API_URL}` and is not automatically expanded:
+
+```erlang
+{api_url, "${DAMAGE_API_URL}"}
+```
+
+`/etc/default/damage` can provide environment variables only to code that explicitly reads them. It does not preprocess the Erlang term file.
+
+### Development checkout edits
+
+The reference sample uses package paths and the `damage` service user. For an unprivileged source checkout, either create those paths with appropriate ownership or change every relevant path to a writable local directory.
+
+A local directory layout can be created with:
+
+```bash
+mkdir -p var/lib/damage \
+             var/lib/damage/ecai \
+             var/lib/damage/nsecbunker \
+             var/log/damage
+```
+
+Then update the copied `config/sys.config`, for example:
+
+```erlang
+{data_dir, "./var/lib/damage/"},
+{keystore, "./var/lib/damage/damage.key"},
+```
+
+Update logger files as well:
+
+```erlang
+file => "./var/log/damage/info.log"
+```
+
+```erlang
+file => "./var/log/damage/error.log"
+```
+
+The nsecbunker vault/audit paths and ECAI context path must also be writable if those components are used.
+
+For local source execution, set `run_user` and the `erlexec` user/allowlist to your actual local account, or create the dedicated `damage` account. Do not grant `erlexec` a broader user allowlist than required.
+
+### Package configuration deployment
+
+Back up an existing configuration before replacing it:
+
+```bash
+sudo install -d -m 0755 /etc/damage
+sudo cp -a \
+  /etc/damage/damage.config \
+  "/etc/damage/damage.config.backup-$(date +%F-%H%M%S)" \
+  2>/dev/null || true
+
+sudo install -o root -g root -m 0644 \
+  config/sys.config.sample \
+  /etc/damage/damage.config
+
+sudoedit /etc/damage/damage.config
+```
+
+The configuration itself can be root-owned and world-readable only when it contains no secrets. Persistent key material remains under `/var/lib/damage` with restrictive permissions.
+
+### Validate Erlang syntax
+
+Validate the term before restarting:
+
+```bash
+ERL_BIN="$(
+  command -v erl 2>/dev/null \
+  || find /opt/damage -type f -path '*/bin/erl' -print -quit 2>/dev/null
+)"
+test -n "$ERL_BIN" && test -x "$ERL_BIN"
+
+"$ERL_BIN" -noshell -eval '
+Path = "/etc/damage/damage.config",
+case file:consult(Path) of
+    {ok, [Config]} when is_list(Config) ->
+        io:format("valid sys.config: ~s~n", [Path]),
+        halt(0);
+    Error ->
+        io:format("invalid sys.config: ~p~n", [Error]),
+        halt(1)
+end.'
+```
+
+For a source checkout, change `Path` to `config/sys.config`.
+
+`file:consult/1` confirms Erlang syntax and the outer shape; it does not prove that every hostname, file, contract, credential, or backend is operational.
+
+### Safe defaults in the reference sample
+
+The updated sample deliberately starts with:
+
+- HTTP on loopback only: `127.0.0.1:4888`.
+- Strict step matching: `strict_no_catchall = true`.
+- No node administrators.
+- No approved shell commands.
+- No outbound SOCKS proxy.
+- CLN disabled.
+- SSH Git and SSH tunnel services disabled.
+- NIP-46 nsecbunker disabled.
+- NIP-46 relay publication disabled.
+- NWC set explicitly to `operator_signed` rather than relying on the current `server_signed` fallback; this is not a global disable switch.
+- No automatic Kubo, browser, Bitcoin, or Lightning daemon startup through `abduco_workers`.
+- Conservative worker-pool sizes.
+
+### Core configuration keys
+
+| Key | Purpose | Safe starting value |
+|---|---|---|
+| `ip` | Cowboy listener address | `{127,0,0,1}` |
+| `port` | DamageBDD HTTP port | `4888` |
+| `api_url` | Public origin used in links, emails, and browser flows | `http://127.0.0.1:4888` locally; HTTPS in production |
+| `data_dir` | Persistent application state | `/var/lib/damage/` |
+| `keystore` | Encrypted node keystore | `/var/lib/damage/damage.key` |
+| `feature_dirs` | Local feature search paths | `["./features/"]` |
+| `logo_image` | Dashboard logo URL/path | `/static/img/logo.png` |
+| `run_user` | Intended release user | `damage` |
+| `allowance` | Initial account allowance | `0` on a private node |
+| `cookie_secure` | Secure browser cookie flag | `false` for local HTTP, `true` for HTTPS |
+| `strict_no_catchall` | Reject unsafe broad step definitions | `true` |
+| `node_admins` | Trusted Aeternity admin accounts | `[]` |
+| `cmd_allowed` | Exact commands permitted by command steps | `[]` |
+
+### Logger configuration
+
+Runtime logging is configured under the `kernel` application, not through a `log_dir` key in the `damage` block.
+
+The reference sample writes:
+
+```text
+/var/log/damage/info.log
+/var/log/damage/error.log
+```
+
+It also writes to the default logger handler, which systemd captures in the journal.
+
+Ensure the directory exists before startup:
+
+```bash
+sudo install -d -o damage -g damage -m 0750 /var/log/damage
+```
+
+To enable temporary debug logging, lower both `logger_level` and the applicable handler level to `debug`. Restore `info` after diagnosis because debug output can be large and may contain operational metadata.
+
+### Request throttling
+
+The `throttle` block defines scope-specific limits. The default driver is node-local ETS. Use a cluster-wide backend only after deliberately designing consistency and failure behaviour.
+
+Keep the whitelist narrow. The sample whitelists only IPv4 loopback; do not copy private workstation addresses into a public reference file.
+
+### Aeternity endpoints
+
+The current application expects:
+
+```erlang
+{ae_network_id, "ae_mainnet"},
+{ae_nodes, [{Host, Port, PathPrefix}]},
+{ae_mdw_nodes, [{Host, Port, PathPrefix}]},
+{ae_mdw_ws_nodes, [{Host, Port, PathPrefix}]}
+```
+
+The sample points all three groups at public Aeternity mainnet services. When using testnet or a local stack, change the network ID and every REST/WebSocket endpoint together.
+
+Fee and gas safety multipliers default in the sample to:
+
+```erlang
+{ae_fee_multiplier, 2},
+{ae_gas_multiplier, 2},
+{ae_gas_price_multiplier, 3}
+```
+
+Increase them only to address measured underestimation; excessive values can increase transaction cost.
+
+### Outbound proxying
+
+Direct egress is the default:
+
+```erlang
+{proxy, none}
+```
+
+A SOCKS5 proxy can be configured explicitly:
+
+```erlang
+{proxy, {socks5, "127.0.0.1", 9050}}
+```
+
+Use `proxy_exclude` for loopback, local domains, and container/service names that must never be routed through the proxy. `damage_gun` performs peer verification for TLS connections unless a specific test step deliberately disables certificate verification.
+
+### Worker pools
+
+The `pools` setting controls the runner, formatter, AI, IPFS, and optional integration pools. Start conservatively. Raising concurrency without measuring downstream capacity can exhaust:
+
+- BEAM schedulers and memory.
+- File descriptors and ephemeral ports.
+- Browser processes.
+- IPFS, wallet, relay, and middleware connections.
+- Target-system capacity.
+
+The `damage_ipfs` worker pool uses Kubo's RPC API, not the public HTTP gateway.
+
+## 6. Compile and run from source
 
 Fetch dependencies and compile:
 
@@ -220,7 +421,9 @@ Start the development shell:
 rebar3 shell
 ```
 
-The node should listen on the configured IP and port. In another terminal:
+The shell profile loads `config/sys.config`.
+
+In another terminal:
 
 ```bash
 curl --fail-with-body http://127.0.0.1:4888/api/version | jq
@@ -228,21 +431,31 @@ curl --fail-with-body http://127.0.0.1:4888/api/version | jq
 
 Stop the shell with `q().` or `Ctrl-C` twice.
 
-### Build a production release
+### Common source-start failures
 
-Portable production profile:
+If startup fails before the HTTP listener appears, check these first:
+
+1. Every logger, data, keystore, vault, and companion-app path is writable.
+2. `run_user` and the `erlexec` user exist.
+3. `ae_network_id`, `ae_nodes`, `ae_mdw_nodes`, and `ae_mdw_ws_nodes` are present and reachable.
+4. Optional worker pools do not include an unconfigured LND or CLN backend.
+5. The copied configuration is valid Erlang and ends with `].`.
+
+## 7. Build a production release
+
+Generic production release:
 
 ```bash
 rebar3 as prod release
 ```
 
-Linux release profile, including the Linux native helper build:
+Linux profile:
 
 ```bash
 rebar3 as linux,prod release
 ```
 
-macOS release profile:
+macOS profile:
 
 ```bash
 rebar3 as mac,prod release
@@ -254,32 +467,32 @@ Optional CUDA profile:
 rebar3 as prod,cuda release
 ```
 
-Only use the CUDA profile after installing and validating the CUDA toolkit and `nvcc`. A normal DamageBDD release is complete without it.
+A normal DamageBDD release does not require CUDA.
 
-The generic production release executable is normally:
-
-```text
-_build/prod/rel/damage/bin/damage
-```
-
-Combined profiles may use a combined directory name under `_build`. Locate the generated script when necessary:
+Locate the generated release:
 
 ```bash
 find _build -path '*/rel/damage/bin/damage' -type f -print
 ```
 
-Start a release in the foreground:
+A generic production build is normally under:
+
+```text
+_build/prod/rel/damage
+```
+
+Start the release in the foreground:
 
 ```bash
 _build/prod/rel/damage/bin/damage foreground \
   -config "$PWD/config/sys.config"
 ```
 
-## 6. Install a source-built release under systemd
+## 8. Install a source-built release under systemd
 
-Packages are preferred because they apply the project’s post-install hooks. For a manual source deployment, build with the `prod` profile and then install the release deliberately.
+Packages are preferred because they apply the project’s packaging hooks. For a manual deployment, install the release deliberately.
 
-Create the account and directories:
+### Create the service account and directories
 
 ```bash
 sudo groupadd --system damage 2>/dev/null || true
@@ -297,35 +510,25 @@ sudo install -d -o damage -g damage -m 0750 \
   /opt/damage /var/lib/damage /var/log/damage
 ```
 
-Copy the release:
+### Copy the release
 
 ```bash
 sudo cp -a _build/prod/rel/damage/. /opt/damage/
 sudo chown -R damage:damage /opt/damage /var/lib/damage /var/log/damage
 ```
 
-Create the initial configuration:
+### Install and edit the configuration
 
 ```bash
-sudo tee /etc/damage/damage.config >/dev/null <<'EOF_CONFIG'
-%%% -*- mode: erlang; erlang-indent-level: 2; -*-
-[
-    {
-        damage,
-        [
-            {ip, {127, 0, 0, 1}},
-            {port, 4888},
-            {api_url, "http://127.0.0.1:4888"},
-            {data_dir, "/var/lib/damage/"},
-            {node_admins, []}
-        ]
-    }
-].
-EOF_CONFIG
-sudo chmod 0644 /etc/damage/damage.config
+sudo install -o root -g root -m 0644 \
+  config/sys.config.sample \
+  /etc/damage/damage.config
+sudoedit /etc/damage/damage.config
 ```
 
-Install the canonical service shipped by the repository:
+Validate it with the `file:consult/1` command from section 5.
+
+### Install the canonical unit
 
 ```bash
 sudo install -m 0644 \
@@ -336,182 +539,358 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now damage
 ```
 
-The canonical unit runs `/opt/damage/bin/damage foreground -config /etc/damage/damage.config` as `damage:damage` and applies filesystem, capability, process, and kernel hardening. Do not replace it with an older `damagebdd.service` example.
+The canonical unit runs as `damage:damage`, creates state/log directories, restarts on failure, restricts capabilities and address families, and loads `/etc/damage/damage.config`.
 
-## 7. Configuration reference
+Do not replace it with an older `damagebdd.service` example. Do not add `MemoryDenyWriteExecute=true`; the BEAM JIT requires executable dynamically generated code pages.
 
-### Core settings
+## 9. Configure encrypted secrets
 
-| Key | Meaning |
-|---|---|
-| `ip` | Listener tuple, normally `{127,0,0,1}` behind a proxy. |
-| `port` | HTTP port; package default is `4888`. |
-| `api_url` | Public origin used in links, emails, and browser flows. Use HTTPS in production. |
-| `data_dir` | Persistent application data directory. |
-| `feature_dirs` | Directories searched for local feature files. |
-| `node_admins` | Trusted Aeternity accounts with node administration access. |
-| `cookie_secure` | Set `true` when the public site is HTTPS. |
-| `strict_no_catchall` | Step-definition strictness. New modules should use explicit parameterised patterns. |
+Keep passwords, private keys, nsecs, runes, macaroons, vault passphrases, and cloud credentials out of `sys.config`.
 
-### Integration settings
-
-The full examples are in `config/sys.config.sample`. Common groups include:
-
-- SMTP: `smtp_host`, `smtp_hostname`, `smtp_from`, `smtp_user`, `smtp_port`.
-- Bitcoin Core: `bitcoin_rpc_port`, `bitcoin_rpc_user`, `bitcoin_wallet`.
-- LND: `lnd_host`, `lnd_port`, WebSocket path, and TLS file paths.
-- Core Lightning: `cln_host`, `cln_port`, WebSocket path, and client TLS file paths.
-- IPFS: the `ipfs` configuration list, including gateway addresses.
-- Aeternity: `ae_network_id`, `ae_nodes`, `ae_mdw_nodes`, and `ae_mdw_ws_nodes`.
-- Proxying: a SOCKS5 `proxy` and `proxy_exclude` list where required.
-- L402: `l402_account` and `l402_price_msat` when payment challenges are intentionally enabled.
-- NWC: explicitly review `nwc_ledger_mode`, signing authority, relay policy, and ledger contracts before activation.
-
-Restart after a configuration change:
-
-```bash
-sudo systemctl restart damage
-sudo journalctl -u damage -n 100 --no-pager
-```
-
-### Logging
-
-The current reference configuration defines Erlang logger handlers under the `kernel` section and writes rotating files such as:
-
-```text
-/var/log/damage/debug.log
-/var/log/damage/info.log
-/var/log/damage/error.log
-```
-
-The systemd unit also writes stdout/stderr to the journal:
-
-```bash
-sudo journalctl -u damage -f
-```
-
-There is no current `log_dir` application setting that automatically relocates those logger handlers. Change their `config => #{file => ...}` paths in `sys.config` when a different location is required.
-
-## 8. Store secrets securely
-
-Do not place secrets in Git, `damage.config`, `/etc/default/damage`, command-line arguments, or unit-file overrides.
-
-### Source shell
-
-Run `rebar3 shell`, then enter the required calls.
-
-### Packaged release console
-
-With the service running:
-
-```bash
-sudo -u damage -H /opt/damage/bin/damage remote_console
-```
-
-Run the masked interactive setup for the standard integrations:
+The standard setup function is:
 
 ```erlang
 damage:check_setup().
 ```
 
-Store or replace an individual integration secret directly only when needed:
+It checks or prompts for:
+
+- `nostr_nsec`
+- `bitcoin_rpc_password`
+- `lnd_macaroon`
+- `cln_rune`
+- `smtp_pass`
+
+The current SMTP secret name is `smtp_pass`; `smtp_password` is obsolete.
+
+### Source checkout
+
+Run the setup inside `rebar3 shell`:
 
 ```erlang
-%% Bitcoin Core RPC password
+damage:check_setup().
+```
+
+### Packaged release
+
+Stop the service before opening a local release console against the same state:
+
+```bash
+sudo systemctl stop damage
+sudo -u damage -H \
+  /opt/damage/bin/damage console \
+  -config /etc/damage/damage.config
+```
+
+At the Erlang prompt:
+
+```erlang
+damage:check_setup().
+```
+
+Exit with `q().`, then restart:
+
+```bash
+sudo systemctl start damage
+```
+
+When a deployment uses a different console/unlock workflow, run the same Erlang functions through that approved operator path instead of starting a second VM against live state.
+
+### Store individual values
+
+```erlang
 secrets:encrypt_store(bitcoin_rpc_password, "REPLACE_ME").
-
-%% General Nostr identity
 secrets:encrypt_store(nostr_nsec, "nsec1_REPLACE_ME").
-
-%% SMTP password — this is the current key name
 secrets:encrypt_store(smtp_pass, "REPLACE_ME").
-
-%% Core Lightning rune
 secrets:encrypt_store(cln_rune, "REPLACE_ME").
-
-%% LND macaroon
 secrets:encrypt_store(lnd_macaroon, "REPLACE_ME").
-
-%% Optional NWC service identity
 secrets:encrypt_store(damage_nostr_nsec, "nsec1_REPLACE_ME").
 ```
 
-To detach from `remote_console` without stopping the running service, press `Ctrl-G`, type `q`, and press Enter. Do **not** call `q().` from a remote console, because that can stop the node.
+Check a configured value without printing it:
 
-Literal values entered directly may be retained in Erlang shell history. Prefer the masked setup flow and securely clear any persistent history after manual secret entry.
-
-Generate upstream credentials where needed:
-
-```bash
-python3 ./bin/bitcoin_rpcauth.py
-lightning-cli createrune
+```erlang
+case secrets:retrieve_decrypt(smtp_pass) of
+    {ok, _} -> configured;
+    _ -> missing
+end.
 ```
 
-The old `smtp_password` key is obsolete; the current setup code reads `smtp_pass`.
+Do not print decrypted values into logs or reports.
 
-## 9. Integration checks
+## 10. Configure supporting services
 
-### SMTP and account confirmation
+### 10.1 Aeternity node and middleware
 
-Set the non-secret SMTP values in the `damage` application block and store the password as `smtp_pass`. Confirm that `api_url` points to the public origin; otherwise confirmation and reset links will be wrong.
+The sample provides public mainnet endpoints so the node has a coherent starting configuration. Production operators should configure multiple known endpoints or a maintained local stack.
 
-Create a test account only after SMTP is operational:
+Verify basic reachability from the `damage` account:
 
 ```bash
-curl --fail-with-body \
-  -X POST 'https://bdd.example.com/accounts/create' \
-  -H 'content-type: application/json' \
-  --data '{"email":"operator@example.com","full_name":"Operator"}'
+sudo -u damage curl --fail-with-body \
+  https://mainnet.aeternity.io/v3/status | jq
+
+sudo -u damage curl --fail-with-body \
+  https://mainnet.aeternity.io/mdw/status | jq
 ```
 
-### IPFS/Kubo
+Endpoint paths can evolve independently of DamageBDD. Use the exact paths required by the currently selected node and middleware versions.
 
-Feature execution and report publication can depend on IPFS. Verify the daemon and API before accepting production traffic:
+A successful local `/api/version` proves the DamageBDD process is running; it does not prove all chain integrations are healthy.
+
+### 10.2 IPFS/Kubo
+
+DamageBDD report publication uses the Kubo RPC API. The sample expects:
+
+```text
+RPC API: 127.0.0.1:5001
+Gateway: 127.0.0.1:8082
+```
+
+Keep the RPC API private. It is a control interface, not a public gateway.
+
+Verify a running daemon:
 
 ```bash
 ipfs version
 ipfs id
+curl --fail-with-body -X POST \
+  'http://127.0.0.1:5001/api/v0/id' | jq
 ```
 
-Keep the IPFS API on a trusted interface. Expose only a gateway route when public retrieval is required.
+When using containers, replace the IPFS worker host with the internal service name, for example:
 
-### Bitcoin and Lightning
+```erlang
+{
+    damage_ipfs,
+    [{size, 2}, {max_overflow, 4}],
+    [{"ipfs", 5001}]
+}
+```
 
-Validate Bitcoin RPC and the selected Lightning backend independently before enabling top-ups, NWC, invoices, or L402. Use restricted credentials, least-privilege CLN runes, and narrowly scoped filesystem access to TLS certificates and macaroons.
+Do not route local Kubo traffic through a SOCKS proxy; add the service name to `proxy_exclude`.
 
-### Aeternity
+### 10.3 SMTP
 
-The node needs reachable Aeternity node and middleware endpoints for account, contract, balance, and execution-settlement features. Keep multiple endpoints in the relevant lists when operational resilience is required.
+Configure public metadata in `damage.config`:
 
-### Nostr, NIP-46, and NWC
+```erlang
+{smtp_host, "smtp.example.com"},
+{smtp_hostname, "bdd.example.com"},
+{smtp_from, {"DamageBDD Node", "node@bdd.example.com"}},
+{smtp_user, "node@bdd.example.com"},
+{smtp_port, 587}
+```
 
-Treat the Nostr signer and wallet-connect paths as security-sensitive services:
+Store the password separately:
 
-- Generate signing keys in the intended vault or protected environment.
-- Pin the expected bunker public key and authorised client list.
-- Keep method and event-kind allowlists narrow.
-- Preserve replay, rate, stale-event, size, required-tag, active-content, timeout, and deterministic audit controls.
-- Configure only trusted relay URLs and review whether traffic bypasses or uses a proxy.
-- Explicitly choose and test the NWC ledger/signing mode rather than depending on a default.
+```erlang
+secrets:encrypt_store(smtp_pass, "REPLACE_ME").
+```
 
-## 10. Nginx and TLS
+Also set:
 
-Install Nginx and an ACME client using the packages for your system. Common examples are:
+```erlang
+{api_url, "https://bdd.example.com"}
+```
+
+Account confirmation and password reset links depend on `api_url` being the externally reachable origin.
+
+### 10.4 Bitcoin Core
+
+The public metadata belongs in configuration:
+
+```erlang
+{bitcoin_rpc_port, 8332},
+{bitcoin_rpc_user, "damage"},
+{bitcoin_wallet, "damage"}
+```
+
+Store the RPC password as `bitcoin_rpc_password`. Restrict Bitcoin RPC to loopback or a private network and use Bitcoin Core's authentication/allowlist controls.
+
+### 10.5 Core Lightning
+
+The reference sample disables CLN explicitly:
+
+```erlang
+{cln_enabled, false}
+```
+
+Configure the endpoint and TLS files before enabling it:
+
+```erlang
+{cln_enabled, true},
+{cln_host, "127.0.0.1"},
+{cln_port, 3010},
+{cln_wspath, "/"},
+{cln_cacertfile, "/var/lib/damage/lightning/ca.pem"},
+{cln_certfile, "/var/lib/damage/lightning/client.pem"},
+{cln_keyfile, "/var/lib/damage/lightning/client-key.pem"}
+```
+
+Review the rune syntax supported by the installed CLN version, then create a least-privilege rune limited to the RPC methods DamageBDD needs:
 
 ```bash
-# Debian/Ubuntu
-sudo apt install -y nginx certbot python3-certbot-nginx
-
-# Arch Linux
-sudo pacman -S --needed nginx certbot certbot-nginx
-
-# Fedora/RHEL family
-sudo dnf install -y nginx certbot python3-certbot-nginx
+lightning-cli help createrune
 ```
 
-Keep DamageBDD bound to `127.0.0.1:4888` and publish it through Nginx.
+Do not treat a bare, unrestricted rune as production-safe.
 
-Create `/etc/nginx/conf.d/damage.conf` or the equivalent file for your distribution:
+```erlang
+secrets:encrypt_store(cln_rune, "REPLACE_ME").
+```
+
+Inspect the fault-contained CLN manager from an Erlang console:
+
+```erlang
+damage_cln:status().
+```
+
+Do not enable a payment backend until invoice creation, payment limits, accounting, recovery, and monitoring have been tested.
+
+### 10.6 LND
+
+LND is optional. Configure its host, port, WebSocket path, TLS files, encrypted `lnd_macaroon`, and an LND worker pool only when the endpoint is available.
+
+Do not add an LND pool to `pools` on a node that has no working LND backend; optional integration failures should not become core startup failures.
+
+### 10.7 Nostr
+
+Configure relay URLs as public application settings:
+
+```erlang
+{
+    nostr_relays,
+    [
+        "wss://nos.lol",
+        "wss://offchain.pub",
+        "wss://relay.primal.net"
+    ]
+}
+```
+
+Store private identities separately:
+
+```erlang
+secrets:encrypt_store(nostr_nsec, "nsec1_REPLACE_ME").
+secrets:encrypt_store(damage_nostr_nsec, "nsec1_REPLACE_ME").
+```
+
+`damage_nostr_nsec` is used by NWC service paths. Review each relay's trust, retention, availability, and proxy requirements.
+
+### 10.8 Nostr Wallet Connect (NIP-47)
+
+The current implementation supports authenticated APIs for minting and revoking connections, listing sessions, reading ledger balances, and top-up flows. Its request handler includes:
+
+- `get_info`
+- `get_balance`
+- `pay_invoice`
+- `make_invoice`
+- `lookup_invoice`
+- `list_transactions`
+
+The current code selects `server_signed` when `nwc_ledger_mode` is absent. The reference sample therefore sets:
+
+```erlang
+{nwc_ledger_mode, operator_signed}
+```
+
+This is the least-permissive recognised selector for existing-ledger mutation paths. It is not a global NWC disable and is not a substitute for a complete NWC deployment. In the current code, missing-ledger bootstrap can still use an available custodial account key.
+
+Do not switch to:
+
+```erlang
+{nwc_ledger_mode, server_signed}
+```
+
+until all of the following are deliberate and tested:
+
+1. The server is intended to have custodial access to user Aeternity keys.
+2. Registry and NWC ledger contracts are deployed and verified.
+3. The NWC service identity is securely stored and recoverable.
+4. Relay allowlists and direct/proxy behaviour are approved.
+5. Per-connection limits, expiry, revocation, top-up, and debit accounting are tested.
+6. CLN authority is restricted to the required operations.
+7. Logs and alerts do not disclose connection secrets or payment preimages.
+8. Backup and incident-response procedures cover the ledger and service identity.
+
+Omitting the key is not a way to disable NWC. A node that does not operate NWC should also block `/api/nwc/` at its reverse proxy and avoid provisioning custodial account keys for those flows.
+
+### 10.9 L402
+
+L402 challenges remain inactive until a valid Aeternity account and Lightning backend are configured:
+
+```erlang
+{l402_account, "ak_REPLACE_ME"},
+{l402_price_msat, 1000},
+{l402_min_sats, 1}
+```
+
+Feature-execution routes can derive a payment amount from the dry-run result. Verify the complete challenge, invoice, preimage, authorisation, expiry, replay, and accounting flow before exposing it publicly.
+
+### 10.10 NIP-46 nsecbunker custody
+
+The reference sample includes a complete shape but keeps it disabled:
+
+```erlang
+{nsecbunker, [{enabled, false}, ...]}
+```
+
+The gate enforces vault readiness, client/method/kind policy, time windows, event-size limits, required tags, active-content rejection, replay protection, rate limits, signing timeouts, and deterministic redacted audit records.
+
+Production configuration is a custody ceremony, not a single boolean change. Use the repository fragments as the source of truth:
+
+```text
+config/sys.config.nsecbunker.fragment.config
+config/sys.config.aws.production.fragment.config
+```
+
+A local production provider requires at least:
+
+- `enabled = true`
+- a production mode
+- `secret_provider = local`
+- a valid crypto backend command
+- an existing vault path or an explicit one-time creation ceremony
+- the ratified bunker public key
+- an authorised-client allowlist
+- a writable, protected audit log
+- monitored replay/rate-limit services
+- tested backup and recovery
+
+AWS Secrets Manager custody is opt-in and production-only. It additionally requires:
+
+- `secret_provider = aws_secrets_manager`
+- `vault_mode = open_existing` for normal operation
+- the ratified 64-character bunker public key
+- AWS region and secret ID
+- expected AWS account ID and role name
+- EC2 instance-role/IMDSv2/STS validation
+- no static long-lived AWS credentials in the service environment
+
+The canonical systemd unit removes inherited static AWS credential variables and vault-passphrase variables. Do not weaken that boundary to make a broken bootstrap appear to work.
+
+### 10.11 Post-quantum secret envelopes
+
+`secrets_pqc` is optional. Configure `pqc_backend_module` only when a reviewed adapter provides the expected keypair, encapsulation, and decapsulation operations.
+
+The hybrid envelope uses ML-KEM to wrap an AES-256-GCM content key. It does not replace the normal node keystore or automatically migrate existing secrets.
+
+### 10.12 Browser automation
+
+The sample points at:
+
+```erlang
+{chromedriver, "http://127.0.0.1:9515/"}
+```
+
+It does not start ChromeDriver. Run browsers under a separate service/container with explicit resource, sandbox, network, and lifecycle controls. Never expose the ChromeDriver control port publicly.
+
+## 11. Reverse proxy and TLS
+
+Keep DamageBDD bound to `127.0.0.1:4888` and publish it through a maintained reverse proxy.
+
+Install Nginx and an ACME client using your distribution packages, then create an equivalent of `/etc/nginx/conf.d/damage.conf`:
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -545,6 +924,16 @@ server {
 }
 ```
 
+On a node that does **not** intentionally operate Nostr Wallet Connect, place this location before `location /`:
+
+```nginx
+location ^~ /api/nwc/ {
+    return 404;
+}
+```
+
+For nodes that do operate NWC, replace that deny rule with explicit authentication, rate-limit, and request-size policy rather than exposing the route family by accident.
+
 Validate and reload:
 
 ```bash
@@ -552,73 +941,92 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Obtain TLS with your normal ACME client. For Certbot on a supported Nginx installation:
+Obtain a certificate through your normal ACME process. With Certbot on a supported Nginx installation:
 
 ```bash
 sudo certbot --nginx -d bdd.example.com
 sudo certbot renew --dry-run
 ```
 
-Then update the DamageBDD configuration:
+Update DamageBDD after HTTPS is active:
 
 ```erlang
 {api_url, "https://bdd.example.com"},
 {cookie_secure, true}
 ```
 
-Restart `damage` after editing the configuration.
+Then validate the configuration and restart `damage`.
 
-Do not copy a deployment-specific Nginx file containing internal hostnames, certificates, upstreams, or Lightning routes without reviewing every directive.
+The current `/api/node/balances` endpoint is public. Restrict it at the proxy when node wallet metadata must not be exposed. Apply the same review to metrics, Swagger, debug, administration, and integration-specific routes.
 
-## 11. Firewall and network exposure
+## 12. Firewall and network exposure
 
 A typical public node exposes only TCP 80 and 443 through the reverse proxy.
 
-Never expose:
+Never expose directly to the public Internet:
 
 - EPMD on TCP `4369`.
 - Erlang distribution ports.
-- IPFS API port `5001`.
-- Database, wallet, Lightning RPC, or vault-management ports.
-- The DamageBDD listener on `4888` when Nginx is the intended entry point.
+- Kubo RPC on `5001`.
+- ChromeDriver on `9515`.
+- Bitcoin, Lightning, wallet, vault, or database RPC interfaces.
+- Aeternity internal control interfaces.
+- DamageBDD `4888` when Nginx is the intended entry point.
+- SSH Git or tunnel ports unless those services have been explicitly designed and enabled.
 
-Confirm the listener:
+Confirm the DamageBDD binding:
 
 ```bash
 ss -ltnp | grep ':4888'
 ```
 
-Expected production binding:
+Expected production output should show loopback, not `0.0.0.0`:
 
 ```text
 127.0.0.1:4888
 ```
 
-## 12. Validate the node
+## 13. Validate the node
 
-### Build and runtime identity
+### 13.1 Configuration and service
+
+```bash
+sudo systemctl cat damage
+sudo systemctl is-active damage
+sudo systemctl status damage --no-pager
+sudo journalctl -u damage -n 100 --no-pager
+```
+
+The unit should load:
+
+```text
+-config /etc/damage/damage.config
+```
+
+### 13.2 Build and runtime identity
 
 ```bash
 curl --fail-with-body http://127.0.0.1:4888/api/version | jq
 ```
 
-A successful response contains `ok: true` and a nested version object with application version, Git SHA, build time/environment, OTP release, and ERTS version.
+The response identifies the application version, Git SHA, build time/environment, OTP release, and ERTS version.
 
-### Node balances
+### 13.3 Node balances
 
 ```bash
 curl --fail-with-body http://127.0.0.1:4888/api/node/balances | jq
 ```
 
-This endpoint is public in the current HTTP resource. Restrict it in Nginx when publishing node wallet metadata is not acceptable.
+This endpoint can also reveal chain-integration failures. Remember that it is public unless restricted by the proxy.
 
-### Live step catalogue
+### 13.4 Live step catalogue
 
 ```bash
 curl --fail-with-body http://127.0.0.1:4888/steps.yaml | less
+curl --fail-with-body http://127.0.0.1:4888/steps.json | jq
 ```
 
-### Authenticated feature execution
+### 13.5 Authenticated smoke feature
 
 Create `smoke.feature`:
 
@@ -632,11 +1040,12 @@ Feature: Local DamageBDD smoke test
     Then the response must contain text "git_sha"
 ```
 
-Authenticate after creating and confirming an account:
+After creating and confirming an account:
 
 ```bash
 export DAMAGEBDD_URL='http://127.0.0.1:4888'
 export DAMAGEBDD_EMAIL='operator@example.com'
+
 read -r -s -p 'Password: ' DAMAGEBDD_PASSWORD
 printf '\n'
 
@@ -665,9 +1074,9 @@ curl --fail-with-body --no-buffer \
   --data-binary @smoke.feature
 ```
 
-The runner first performs a dry run. A valid test can still be rejected when the account lacks execution balance or when the target is not authorised for concurrent load.
+The runner first performs a dry run. A syntactically valid feature can still be rejected when the account lacks execution balance or when a target is not authorised for concurrent load.
 
-### Execute a feature from IPFS
+### 13.6 Execute a feature from IPFS
 
 ```bash
 curl --fail-with-body \
@@ -680,26 +1089,48 @@ curl --fail-with-body \
   }'
 ```
 
-## 13. Operations
+## 14. Day-to-day operations
 
-### Restart and status
+### Status and restart
+
+```bash
+sudo systemctl status damage --no-pager
+sudo systemctl restart damage
+sudo systemctl is-active damage
+```
+
+### Safe configuration change
+
+```bash
+sudo cp -a \
+  /etc/damage/damage.config \
+  "/etc/damage/damage.config.backup-$(date +%F-%H%M%S)"
+
+sudoedit /etc/damage/damage.config
+```
+
+Run syntax validation, then:
 
 ```bash
 sudo systemctl restart damage
-sudo systemctl is-active damage
 sudo systemctl status damage --no-pager
+curl --fail-with-body http://127.0.0.1:4888/api/version | jq
 ```
+
+If startup fails, restore the backup and inspect the journal before making another change.
 
 ### Package upgrade
 
-Download the current package from the node page and install it over the existing package. The installer preserves an existing `/etc/damage/damage.config` and persistent state, but take a backup first.
+Back up configuration and state first:
 
 ```bash
-sudo cp -a /etc/damage "/root/damage-config-backup-$(date +%F)"
-sudo tar -C /var/lib -czf "/root/damage-state-$(date +%F).tgz" damage
+sudo cp -a /etc/damage "/root/damage-config-$(date +%F-%H%M%S)"
+sudo tar -C /var/lib \
+  -czf "/root/damage-state-$(date +%F-%H%M%S).tgz" \
+  damage
 ```
 
-Then install the new package with the same package-manager command used initially and verify `/api/version`.
+Install the new package with the same package manager used originally. Verify the effective configuration was preserved, then check `/api/version`, step discovery, IPFS publication, chain connections, and any enabled payment/custody components.
 
 ### Source upgrade
 
@@ -709,6 +1140,7 @@ git fetch --all --tags
 git pull --ff-only
 rebar3 compile
 rebar3 eunit
+rebar3 ct
 rebar3 as prod release
 ```
 
@@ -723,22 +1155,24 @@ sudo systemctl start damage
 curl --fail-with-body http://127.0.0.1:4888/api/version | jq
 ```
 
-### Back up
+### Backups
 
 Back up at least:
 
 - `/etc/damage/damage.config`.
-- `/var/lib/damage`, including the encrypted secret store and node identity material.
-- Any external vault, wallet, IPFS, database, and Lightning state required by the deployment.
-- Recovery instructions and the keys needed to decrypt backups.
+- `/var/lib/damage`, including the encrypted keystore and identity state.
+- NIP-46 vault files and the material required to unlock or recover them.
+- External IPFS, Aeternity, Bitcoin, Lightning, database, and relay state required by the deployment.
+- Contract identifiers and deployment records.
+- Recovery instructions and decryption keys stored separately from the backup.
 
-Logs are useful for incident response but are usually not the primary recovery state.
+Test restoration. An untested encrypted backup is not a recovery plan.
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### `systemctl status damagebdd` says the unit does not exist
 
-The current service is named `damage`:
+The current unit is:
 
 ```bash
 sudo systemctl status damage
@@ -746,7 +1180,7 @@ sudo systemctl status damage
 
 ### Configuration changes have no effect
 
-Check all three current identifiers:
+Verify all three identifiers:
 
 ```text
 Application key: damage
@@ -754,16 +1188,27 @@ Configuration:  /etc/damage/damage.config
 Service:        damage.service
 ```
 
-Then inspect the actual command line:
+Then inspect the effective unit:
 
 ```bash
 systemctl cat damage
 ```
 
-It should load:
+### The configuration has a syntax error
 
-```text
--config /etc/damage/damage.config
+Run the `file:consult/1` validation command. Common errors are:
+
+- A missing comma between tuples.
+- A trailing comma before `]` or `}`.
+- A missing quote.
+- A missing final period.
+- Using JSON syntax instead of Erlang terms.
+- Writing a map where a component expects a standard proplist.
+
+Inspect startup errors:
+
+```bash
+sudo journalctl -u damage -b --no-pager
 ```
 
 ### `/health` returns 404
@@ -774,7 +1219,7 @@ Use:
 curl http://127.0.0.1:4888/api/version
 ```
 
-### The node cannot write logs or reports
+### The service cannot write logs, reports, or the keystore
 
 ```bash
 sudo install -d -o damage -g damage -m 0750 \
@@ -783,7 +1228,19 @@ sudo chown -R damage:damage /var/lib/damage /var/log/damage /opt/damage
 sudo systemctl restart damage
 ```
 
-Also verify every logger file path in `damage.config`.
+Verify every path in the `kernel` logger and `damage` configuration blocks.
+
+### A source checkout fails because the `damage` user does not exist
+
+Change both the `damage` application's `run_user` and the `erlexec` application's user/allowlist to your local account, or create the dedicated service account. Also replace package paths with writable local paths.
+
+### The port is already in use
+
+```bash
+ss -ltnp | grep ':4888'
+```
+
+Stop the conflicting service or change the DamageBDD `port` and matching `api_url`/reverse-proxy upstream.
 
 ### Account confirmation email is not sent
 
@@ -792,66 +1249,123 @@ Verify:
 - `smtp_host`, `smtp_hostname`, `smtp_from`, `smtp_user`, and `smtp_port`.
 - `secrets:retrieve_decrypt(smtp_pass)` succeeds.
 - `api_url` is the correct public origin.
-- The service can resolve and connect to the SMTP server.
-- Spam filtering and sender-domain policy.
+- DNS and outbound SMTP connectivity from the `damage` account.
+- Sender-domain SPF/DKIM/DMARC and provider policy.
+- Spam filtering.
 
-### Build fails because `nvcc` is missing
-
-Do not use the `cuda` profile. This is sufficient for a normal release:
-
-```bash
-rebar3 as prod release
-```
-
-### IPFS operations fail
+### IPFS publication fails
 
 ```bash
 command -v ipfs
 ipfs version
 ipfs id
-systemctl status ipfs --no-pager 2>/dev/null || true
+curl --fail-with-body -X POST \
+  'http://127.0.0.1:5001/api/v0/id' | jq
 ```
 
-Confirm that the configured IPFS API/gateway address matches the running daemon and that the `damage` user can access it.
+Confirm the `damage_ipfs` pool host/port and ensure the Kubo API is not being sent through a proxy.
 
 ### Aeternity or middleware calls fail
 
-Check DNS, TLS, proxy policy, and every endpoint in `ae_nodes`, `ae_mdw_nodes`, and `ae_mdw_ws_nodes`. Keep the version endpoint as the first local-process check; chain connectivity is a separate dependency.
+Check:
 
-### Package install fails in a container
+- DNS and TLS from the service account.
+- `ae_network_id` matches all endpoints.
+- `ae_nodes`, `ae_mdw_nodes`, and `ae_mdw_ws_nodes` contain valid path prefixes.
+- Proxy exclusions for local endpoints.
+- Fee/gas multipliers for failed transactions.
 
-The post-install hook intentionally leaves the unit and configuration in place without running `systemctl` when it detects a container/chroot. Start the release directly:
+A local version response is not a chain-health check.
 
-```bash
-/opt/damage/bin/damage foreground -config /etc/damage/damage.config
+### CLN remains unavailable
+
+Confirm `cln_enabled` is deliberately true, all TLS files are readable by `damage`, `cln_rune` exists, and the endpoint is reachable. Inspect:
+
+```erlang
+damage_cln:status().
 ```
 
-### Inspect installer actions
+The CLN manager is fault-contained and retries configured backends; disabling it is preferable to repeatedly retrying an intentionally absent service.
 
-```bash
-sudo less /var/log/damage/install.log
+### NWC unexpectedly performs or attempts server-signed operations
+
+Set an explicit mode. The current fallback for an absent or unrecognised `nwc_ledger_mode` is `server_signed`.
+
+The reference uses the least-permissive recognised selector:
+
+```erlang
+{nwc_ledger_mode, operator_signed}
 ```
 
-## 15. Security checklist
+Do not use an unknown atom or string expecting it to disable NWC. `operator_signed` is also not a global disable: missing-ledger bootstrap can still use an available custodial key. Block `/api/nwc/` at the reverse proxy when the service is not intentionally operated.
+
+### NIP-46 nsecbunker does not start
+
+Check the complete `nsecbunker` block and the dedicated fragment documentation. Production validation requires a crypto backend command and vault path. AWS mode also requires every AWS identity field and normal operation should open an existing ratified vault.
+
+Inspect permissions on:
+
+```text
+/var/lib/damage/nsecbunker
+/var/log/damage/nsecbunker_audit.log
+/opt/damage/bin/damage-nsecbunker-crypto-c
+```
+
+Do not bypass vault, identity, STS, audit, replay, rate, or timeout checks to make the service start.
+
+### Build fails because `nvcc` is missing
+
+Do not use the CUDA profile:
+
+```bash
+rebar3 as prod release
+```
+
+### Browser steps cannot connect
+
+Verify ChromeDriver is running only on a private/loopback interface and that the configured URL matches it:
+
+```bash
+curl --fail-with-body http://127.0.0.1:9515/status | jq
+```
+
+Check browser executable permissions, sandbox policy, display/headless mode, shared memory, and process limits.
+
+### Package install runs inside a container or chroot
+
+Do not rely on `systemctl` when systemd is not PID 1. Start the release directly:
+
+```bash
+/opt/damage/bin/damage foreground \
+  -config /etc/damage/damage.config
+```
+
+### Debug output is too large
+
+Restore `logger_level` and handler levels to `info`, restart, and verify rotating file limits. Do not leave debug logging enabled on payment or custody nodes without reviewing its data exposure.
+
+## 16. Security checklist
 
 Before exposing a node:
 
 - Keep the DamageBDD listener on loopback and terminate TLS at a maintained proxy.
-- Expose only necessary ports; never expose EPMD or Erlang distribution.
-- Keep `node_admins` empty until trusted accounts are explicitly chosen.
-- Use the packaged dedicated `damage` account and canonical hardened unit.
+- Expose only required ports; never expose EPMD or Erlang distribution.
+- Keep `node_admins`, `cmd_allowed`, SSH services, CLN, L402, and nsecbunker disabled until they are intentionally reviewed; block `/api/nwc/` unless NWC is deliberately operated.
+- Run the canonical release as the dedicated `damage` account.
+- Keep `/etc/damage` root-managed and state/log paths service-owned with restrictive modes.
 - Store integration credentials with `secrets:encrypt_store/2`.
-- Do not persist static cloud credentials or vault passphrases in the systemd environment.
-- Restrict and monitor the public node-balances endpoint if wallet metadata is sensitive.
+- Do not put long-lived cloud credentials or vault passphrases in systemd environment files.
+- Keep Kubo, browser, Bitcoin, Lightning, middleware, database, and vault control interfaces private.
+- Restrict and monitor public balance, metrics, Swagger, and administrative routes.
 - Use reverse-proxy and application rate limits.
-- Set CPU, memory, open-file, and request-size limits appropriate to the intended concurrency.
-- Patch Erlang/OTP, native libraries, Nginx, IPFS, wallet software, and DamageBDD regularly.
-- Test restoration of the encrypted secret store and node identity from backup.
+- Set CPU, memory, open-file, process, request-size, and execution-concurrency limits appropriate to the host.
+- Patch Erlang/OTP, native libraries, Nginx, Kubo, wallet software, browsers, and DamageBDD regularly.
+- Back up and test restoration of the encrypted keystore, node identity, contracts, and custody state.
 - Review NIP-46, NWC, L402, and payment features as separate security boundaries.
 
 See [SECURITY.txt](SECURITY.txt) and <https://damagebdd.com/security/> for reporting and hardening guidance.
 
-## 16. Uninstall
+## 17. Uninstall
 
 ### Package installation
 
@@ -868,7 +1382,7 @@ sudo pacman -R damage
 sudo dnf remove damage
 ```
 
-Package removal may preserve configuration and state. Delete them only after confirming that no keys, reports, balances, or recovery data are still required:
+Package removal may preserve configuration and state. Delete them only after confirming that no keys, reports, balances, contracts, vaults, or recovery data are still required:
 
 ```bash
 sudo rm -rf /etc/damage /var/lib/damage /var/log/damage /opt/damage
