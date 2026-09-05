@@ -57,7 +57,8 @@ init([]) ->
     %% part of startup even if the CLN facade/backend is temporarily absent.
     Subscribed =
         case damage_cln:register_listener(invoice_paid) of
-            true -> true;
+            true ->
+                true;
             Other ->
                 logger:warning("L402 CLN listener unavailable at startup: ~p", [Other]),
                 false

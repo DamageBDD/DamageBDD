@@ -190,7 +190,9 @@ handle_create_invoice(Json, Req, State) ->
                         bolt11 => Bolt11,
                         label => maps:get(label, Invoice, Label),
                         amount_msat => maps:get(amount_msat, Invoice, AmountMsat),
-                        amount_sats => damage_cln:msat_to_sats(maps:get(amount_msat, Invoice, AmountMsat)),
+                        amount_sats => damage_cln:msat_to_sats(
+                            maps:get(amount_msat, Invoice, AmountMsat)
+                        ),
                         expires_at => maps:get(expires_at, Invoice, undefined),
                         created_index => maps:get(created_index, Invoice, undefined),
                         payment_hash => maps:get(payment_hash, Invoice, undefined)

@@ -1863,7 +1863,6 @@ to_json(Req, #{action := version} = State) ->
         State
     };
 to_json(Req, #{action := node_balances} = State) ->
-
     case secrets:node_keypair() of
         #{public_key := PubKey, private_key := _NodePrivateKey} ->
             NodeDamageBalance = damage_ae:node_damage_balance(),
