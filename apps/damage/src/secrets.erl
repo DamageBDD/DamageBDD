@@ -23,6 +23,7 @@
     init_db/0,
     store_secret/2,
     retrieve_secret/1,
+    delete_secret/1,
     encrypt_secret/2,
     decrypt_secret/2,
     encrypt_store/2,
@@ -435,6 +436,14 @@ store_secret(Name, {IV, CipherText, Tag}) ->
 retrieve_secret(Name) ->
     dets:open_file(?DETS_FILE, ?DETS_ARGS),
     dets:lookup(?DETS_FILE, Name).
+
+%% Delete encrypted secret from dets by key
+delete_secret(Name) ->
+    {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
+    case dets:delete(?DETS_FILE, Name) of
+        ok -> dets:sync(?DETS_FILE);
+        {error, _} = Error -> Error
+    end.
 encrypt_store({Name, Secret}) ->
     encrypt_store(Name, Secret).
 encrypt_store(Name, Secret) ->
