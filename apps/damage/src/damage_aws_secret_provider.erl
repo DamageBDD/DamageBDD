@@ -21,6 +21,7 @@
 
 -define(VERSION_STAGE, <<"AWSCURRENT">>).
 -define(CREDENTIAL_PROVIDER, aws_credentials_ec2).
+-include_lib("kernel/include/logger.hrl").
 
 -spec fetch_vault_passphrase(term(), map()) ->
     {ok, binary(), map()} | {error, term()}.
@@ -164,8 +165,32 @@ verify_identity(Client, Config, ImdsMetadata, Dependencies) ->
     StsIdentity = maps:get(sts_identity, Dependencies),
     case StsIdentity(Client) of
         {ok, Identity, _HttpResponse} when is_map(Identity) ->
-            Account = maps:get(<<"Account">>, Identity, <<>>),
-            Arn = maps:get(<<"Arn">>, Identity, <<>>),
+            ?LOG_INFO(
+               "AWS STS identity response keys=~p",
+               [maps:keys(Identity)]
+              ),
+            Account = to_binary(
+                aws_field(
+                    Identity,
+                    [
+                        account,
+                        <<"account">>,
+                        <<"Account">>
+                    ],
+                    <<>>
+                )
+            ),
+            Arn = to_binary(
+                aws_field(
+                    Identity,
+                    [
+                        arn,
+                        <<"arn">>,
+                        <<"Arn">>
+                    ],
+                    <<>>
+                )
+            ),
             case
                 Account =:= ExpectedAccount andalso
                     assumed_role_matches(
@@ -203,54 +228,162 @@ verify_identity(Client, Config, ImdsMetadata, Dependencies) ->
             {error, invalid_sts_identity_response}
     end.
 
-get_secret(Client, Config, IdentityMetadata, Dependencies) ->
-    SecretId = to_binary(maps:get(secret_id, Config)),
+get_secret(
+    Client,
+    Config,
+    IdentityMetadata,
+    Dependencies
+) ->
+    SecretId =
+        to_binary(
+            maps:get(secret_id, Config)
+        ),
+
+    Stage = <<"AWSCURRENT">>,
+
     Input = #{
         <<"SecretId">> => SecretId,
-        <<"VersionStage">> => ?VERSION_STAGE
+        <<"VersionStage">> => Stage
     },
-    GetSecret = maps:get(get_secret, Dependencies),
+
+    GetSecret =
+        maps:get(get_secret, Dependencies),
+
     case GetSecret(Client, Input) of
-        {ok, #{<<"SecretString">> := Passphrase} = Response, _HttpResponse} when
-            is_binary(Passphrase),
-            byte_size(Passphrase) > 0
-        ->
-            VersionStages = maps:get(
-                <<"VersionStages">>,
+        {ok, Response, _HttpResponse}
+                when is_map(Response) ->
+            handle_secret_response(
                 Response,
-                []
-            ),
-            case lists:member(?VERSION_STAGE, VersionStages) of
-                true ->
-                    {ok, Passphrase, IdentityMetadata#{
-                        credential_provider => ?CREDENTIAL_PROVIDER,
-                        imds_protocol => imdsv2,
-                        secret_id_sha256 => sha256_hex(SecretId),
-                        version_id => maps:get(
-                            <<"VersionId">>,
-                            Response,
-                            undefined
-                        ),
-                        version_stages => VersionStages
-                    }};
-                false ->
-                    {error, secret_is_not_awscurrent}
-            end;
-        {ok, #{<<"SecretString">> := <<>>}, _HttpResponse} ->
-            {error, empty_secret_string};
-        {ok, #{<<"SecretBinary">> := _}, _HttpResponse} ->
-            {error, secret_binary_not_supported};
-        {ok, _Response, _HttpResponse} ->
-            {error, secret_string_missing};
+                SecretId,
+                Stage,
+                IdentityMetadata
+            );
+
         {error, Reason} ->
             {error, {
                 secrets_manager_get_failed,
                 safe_aws_error(Reason)
             }};
+
         _ ->
-            {error, invalid_secrets_manager_response}
+            {error,
+                invalid_secrets_manager_response}
     end.
 
+handle_secret_response(
+    Response,
+    SecretId,
+    Stage,
+    IdentityMetadata
+) ->
+    SecretString =
+        aws_field(
+            Response,
+            [
+                secret_string,
+                <<"secret_string">>,
+                <<"SecretString">>
+            ],
+            undefined
+        ),
+
+    SecretBinary =
+        aws_field(
+            Response,
+            [
+                secret_binary,
+                <<"secret_binary">>,
+                <<"SecretBinary">>
+            ],
+            undefined
+        ),
+
+    VersionStages0 =
+        aws_field(
+            Response,
+            [
+                version_stages,
+                <<"version_stages">>,
+                <<"VersionStages">>
+            ],
+            []
+        ),
+
+    VersionStages =
+        [
+            to_binary(Value)
+         || Value <- VersionStages0
+        ],
+
+    VersionId =
+        aws_field(
+            Response,
+            [
+                version_id,
+                <<"version_id">>,
+                <<"VersionId">>
+            ],
+            undefined
+        ),
+
+    case {
+        SecretString,
+        SecretBinary
+    } of
+        {Passphrase, _}
+                when is_binary(Passphrase),
+                     byte_size(Passphrase) > 0 ->
+            case lists:member(
+                Stage,
+                VersionStages
+            ) of
+                true ->
+                    {ok,
+                        Passphrase,
+                        IdentityMetadata#{
+                            credential_provider =>
+                                aws_credentials_ec2,
+                            imds_protocol =>
+                                imdsv2,
+                            secret_id_sha256 =>
+                                sha256_hex(SecretId),
+                            version_id =>
+                                VersionId,
+                            version_stages =>
+                                VersionStages
+                        }};
+
+                false ->
+                    {error,
+                        secret_is_not_awscurrent}
+            end;
+
+        {<<>>, _} ->
+            {error, empty_secret_string};
+
+        {undefined, Binary}
+                when Binary =/= undefined ->
+            {error,
+                secret_binary_not_supported};
+
+        _ ->
+            {error, secret_string_missing}
+    end.
+aws_field(_Map, [], Default) ->
+    Default;
+
+aws_field(Map, [Key | Rest], Default) ->
+    case maps:find(Key, Map) of
+        {ok, Value} ->
+            Value;
+
+        error ->
+            aws_field(
+                Map,
+                Rest,
+                Default
+            )
+    end.
 validate_config(Config) ->
     Required = [
         secret_id,
