@@ -893,15 +893,6 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-get_wallet_proc(AeAccount, PrivateKey) when is_list(AeAccount) ->
-    get_wallet_proc(list_to_binary(AeAccount), PrivateKey);
-get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
-    case wallet_lookup(AeAccount) of
-        {ok, Pid} ->
-            Pid;
-        undefined ->
-            start_or_reuse_wallet_proc(AeAccount, PrivateKey)
-    end.
 
 get_wallet_proc(AeAccount) when is_list(AeAccount) ->
     get_wallet_proc(list_to_binary(AeAccount));
@@ -913,35 +904,11 @@ get_wallet_proc(admin) ->
 get_wallet_proc(AeAccount, PrivateKey) when is_list(AeAccount) ->
     get_wallet_proc(list_to_binary(AeAccount), PrivateKey);
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
-    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+    case wallet_lookup(AeAccount) of
+        {ok, Pid} ->
+            Pid;
         undefined ->
-            case
-                supervisor:start_child(
-                    damage_sup,
-                    #{
-                        % mandatory
-                        id => {?MODULE, AeAccount},
-                        % mandatory
-                        start => {damage_ae, start_link, [AeAccount, PrivateKey]},
-                        % optional
-                        restart => permanent,
-                        % optional
-                        shutdown => 60,
-                        % optional
-                        type => worker,
-                        modules => [damage_ae]
-                    }
-                )
-            of
-                {ok, AePid} ->
-                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
-                    AePid;
-                {error, {already_started, AePid}} ->
-                    gproc:reg_other({n, l, {?MODULE, AeAccount}}, AePid),
-                    AePid
-            end;
-        Pid ->
-            Pid
+            start_or_reuse_wallet_proc(AeAccount, PrivateKey)
     end.
 
 wallet_key(AeAccount) ->
