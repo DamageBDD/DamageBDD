@@ -92,6 +92,27 @@ credentials(Config, ImdsMetadata, Dependencies) ->
     GetCredentials = maps:get(get_credentials, Dependencies),
     case GetCredentials() of
         Credentials when is_map(Credentials) ->
+            ?LOG_INFO(
+                "AWS credential response keys=~p provider=~p access_key_present=~p "
+                "secret_key_present=~p session_token_present=~p",
+                [
+                    maps:keys(Credentials),
+                    credential_provider(Credentials),
+                    nonempty_binary(
+                        maps:get(access_key_id, Credentials, undefined)
+                    ),
+                    nonempty_binary(
+                        maps:get(secret_access_key, Credentials, undefined)
+                    ),
+                    nonempty_binary(
+                        maps:get(
+                            token,
+                            Credentials,
+                            maps:get(session_token, Credentials, undefined)
+                        )
+                    )
+                ]
+            ),
             validate_credentials(
                 Credentials,
                 Config,
@@ -164,16 +185,22 @@ verify_identity(Client, Config, ImdsMetadata, Dependencies) ->
     ExpectedRole = to_binary(maps:get(expected_role_name, Config)),
     StsIdentity = maps:get(sts_identity, Dependencies),
     case StsIdentity(Client) of
-        {ok, Identity, _HttpResponse} when is_map(Identity) ->
+        {ok, Identity, HttpResponse} when is_map(Identity) ->
+            IdentityKeyTree = aws_key_tree(Identity, 4),
             ?LOG_INFO(
-               "AWS STS identity response keys=~p",
-               [maps:keys(Identity)]
-              ),
+                "AWS STS GetCallerIdentity ok response_shape=~p key_tree=~p http_shape=~p",
+                [
+                    term_shape(Identity),
+                    IdentityKeyTree,
+                    term_shape(HttpResponse)
+                ]
+            ),
             Account = to_binary(
-                aws_field(
+                aws_field_deep(
                     Identity,
                     [
                         account,
+                        'Account',
                         <<"account">>,
                         <<"Account">>
                     ],
@@ -181,15 +208,32 @@ verify_identity(Client, Config, ImdsMetadata, Dependencies) ->
                 )
             ),
             Arn = to_binary(
-                aws_field(
+                aws_field_deep(
                     Identity,
                     [
                         arn,
+                        'Arn',
                         <<"arn">>,
                         <<"Arn">>
                     ],
                     <<>>
                 )
+            ),
+            ?LOG_INFO(
+                "AWS STS identity extracted account=~p arn=~p expected_account=~p "
+                "expected_role=~p account_match=~p role_match=~p",
+                [
+                    Account,
+                    Arn,
+                    ExpectedAccount,
+                    ExpectedRole,
+                    Account =:= ExpectedAccount,
+                    assumed_role_matches(
+                        Arn,
+                        ExpectedAccount,
+                        ExpectedRole
+                    )
+                ]
             ),
             case
                 Account =:= ExpectedAccount andalso
@@ -220,11 +264,20 @@ verify_identity(Client, Config, ImdsMetadata, Dependencies) ->
                         }}
             end;
         {error, Reason} ->
+            SafeReason = safe_aws_error(Reason),
+            ?LOG_ERROR(
+                "AWS STS GetCallerIdentity failed reason=~p shape=~p",
+                [SafeReason, term_shape(Reason)]
+            ),
             {error, {
                 sts_identity_check_failed,
                 safe_aws_error(Reason)
             }};
-        _ ->
+        Other ->
+            ?LOG_ERROR(
+                "AWS STS GetCallerIdentity returned unexpected shape=~p",
+                [term_shape(Other)]
+            ),
             {error, invalid_sts_identity_response}
     end.
 
@@ -248,10 +301,21 @@ get_secret(
 
     GetSecret =
         maps:get(get_secret, Dependencies),
+    ?LOG_INFO(
+        "AWS Secrets Manager GetSecretValue begin secret_id_sha256=~p stage=~p",
+        [sha256_hex(SecretId), Stage]
+    ),
 
     case GetSecret(Client, Input) of
-        {ok, Response, _HttpResponse}
+        {ok, Response, HttpResponse}
                 when is_map(Response) ->
+            ?LOG_INFO(
+                "AWS Secrets Manager GetSecretValue ok key_tree=~p http_shape=~p",
+                [
+                    aws_key_tree(Response, 4),
+                    term_shape(HttpResponse)
+                ]
+            ),
             handle_secret_response(
                 Response,
                 SecretId,
@@ -260,12 +324,21 @@ get_secret(
             );
 
         {error, Reason} ->
+            SafeReason = safe_aws_error(Reason),
+            ?LOG_ERROR(
+                "AWS Secrets Manager GetSecretValue failed reason=~p shape=~p",
+                [SafeReason, term_shape(Reason)]
+            ),
             {error, {
                 secrets_manager_get_failed,
-                safe_aws_error(Reason)
+                SafeReason
             }};
 
-        _ ->
+        Other ->
+            ?LOG_ERROR(
+                "AWS Secrets Manager GetSecretValue unexpected response shape=~p",
+                [term_shape(Other)]
+            ),
             {error,
                 invalid_secrets_manager_response}
     end.
@@ -277,10 +350,11 @@ handle_secret_response(
     IdentityMetadata
 ) ->
     SecretString =
-        aws_field(
+        aws_field_deep(
             Response,
             [
                 secret_string,
+                'SecretString',
                 <<"secret_string">>,
                 <<"SecretString">>
             ],
@@ -288,10 +362,11 @@ handle_secret_response(
         ),
 
     SecretBinary =
-        aws_field(
+        aws_field_deep(
             Response,
             [
                 secret_binary,
+                'SecretBinary',
                 <<"secret_binary">>,
                 <<"SecretBinary">>
             ],
@@ -299,10 +374,11 @@ handle_secret_response(
         ),
 
     VersionStages0 =
-        aws_field(
+        aws_field_deep(
             Response,
             [
                 version_stages,
+                'VersionStages',
                 <<"version_stages">>,
                 <<"VersionStages">>
             ],
@@ -316,15 +392,29 @@ handle_secret_response(
         ],
 
     VersionId =
-        aws_field(
+        aws_field_deep(
             Response,
             [
                 version_id,
+                'VersionId',
                 <<"version_id">>,
                 <<"VersionId">>
             ],
             undefined
         ),
+
+    ?LOG_INFO(
+        "AWS Secrets Manager response parsed secret_string_present=~p "
+        "secret_string_bytes=~p secret_binary_present=~p "
+        "version_id=~p version_stages=~p",
+        [
+            is_binary(SecretString) andalso byte_size(SecretString) > 0,
+            secret_size(SecretString),
+            SecretBinary =/= undefined,
+            VersionId,
+            VersionStages
+        ]
+    ),
 
     case {
         SecretString,
@@ -371,19 +461,118 @@ handle_secret_response(
     end.
 aws_field(_Map, [], Default) ->
     Default;
-
-aws_field(Map, [Key | Rest], Default) ->
+aws_field(Map, [Key | Rest], Default) when is_map(Map) ->
     case maps:find(Key, Map) of
         {ok, Value} ->
             Value;
-
         error ->
-            aws_field(
-                Map,
-                Rest,
-                Default
-            )
+            aws_field(Map, Rest, Default)
+    end;
+aws_field(_Other, _Keys, Default) ->
+    Default.
+
+%% AWS Query/XML decoders may preserve response/result wrapper maps. Search
+%% known response fields recursively rather than assuming the service-specific
+%% fields are always top-level.
+aws_field_deep(Term, Keys, Default) ->
+    case aws_field_deep_find(Term, Keys) of
+        {ok, Value} -> Value;
+        error -> Default
     end.
+
+aws_field_deep_find(Map, Keys) when is_map(Map) ->
+    case aws_field(Map, Keys, '$damage_aws_missing') of
+        '$damage_aws_missing' ->
+            aws_field_deep_values(maps:values(Map), Keys);
+        Value ->
+            {ok, Value}
+    end;
+aws_field_deep_find(List, Keys) when is_list(List) ->
+    aws_field_deep_values(List, Keys);
+aws_field_deep_find(_Other, _Keys) ->
+    error.
+
+aws_field_deep_values([], _Keys) ->
+    error;
+aws_field_deep_values([Value | Rest], Keys) ->
+    case aws_field_deep_find(Value, Keys) of
+        {ok, _} = Found ->
+            Found;
+        error ->
+            aws_field_deep_values(Rest, Keys)
+    end.
+
+%% Log key names and structure only. Values are deliberately omitted so this is
+%% safe to use for STS and Secrets Manager responses.
+aws_key_tree(_Term, Depth) when Depth =< 0 ->
+    depth_limit;
+aws_key_tree(Map, Depth) when is_map(Map) ->
+    maps:from_list([
+        {safe_key(Key), aws_key_tree(Value, Depth - 1)}
+     || {Key, Value} <- maps:to_list(Map)
+    ]);
+aws_key_tree(List, Depth) when is_list(List) ->
+    case is_string_like(List) of
+        true ->
+            string;
+        false ->
+            [aws_key_tree(Value, Depth - 1) || Value <- lists:sublist(List, 8)]
+    end;
+aws_key_tree(Binary, _Depth) when is_binary(Binary) ->
+    {binary, byte_size(Binary)};
+aws_key_tree(Value, _Depth) when is_atom(Value) ->
+    atom;
+aws_key_tree(Value, _Depth) when is_integer(Value) ->
+    integer;
+aws_key_tree(Value, _Depth) when is_tuple(Value) ->
+    {tuple, tuple_size(Value)};
+aws_key_tree(_Value, _Depth) ->
+    other.
+
+safe_key(Key) when is_atom(Key) ->
+    Key;
+safe_key(Key) when is_binary(Key), byte_size(Key) =< 128 ->
+    Key;
+safe_key(Key) when is_list(Key) ->
+    try unicode:characters_to_binary(Key) of
+        Bin when byte_size(Bin) =< 128 -> Bin;
+        _ -> long_key
+    catch
+        _:_ -> invalid_key
+    end;
+safe_key(_) ->
+    unknown_key.
+
+is_string_like([]) ->
+    true;
+is_string_like(List) when is_list(List) ->
+    lists:all(fun(C) -> is_integer(C) andalso C >= 0 andalso C =< 16#10FFFF end, List);
+is_string_like(_) ->
+    false.
+
+term_shape(Map) when is_map(Map) ->
+    {map, map_size(Map)};
+term_shape(List) when is_list(List) ->
+    case is_string_like(List) of
+        true -> string;
+        false -> {list, length(List)}
+    end;
+term_shape(Binary) when is_binary(Binary) ->
+    {binary, byte_size(Binary)};
+term_shape(Tuple) when is_tuple(Tuple) ->
+    {tuple, tuple_size(Tuple)};
+term_shape(Value) when is_atom(Value) ->
+    Value;
+term_shape(Value) when is_integer(Value) ->
+    integer;
+term_shape(_) ->
+    other.
+
+secret_size(Value) when is_binary(Value) ->
+    byte_size(Value);
+secret_size(_) ->
+    0.
+
 validate_config(Config) ->
     Required = [
         secret_id,

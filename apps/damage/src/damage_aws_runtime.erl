@@ -26,6 +26,7 @@
 ]).
 
 -define(CREDENTIAL_PROVIDER, aws_credentials_ec2).
+-include_lib("kernel/include/logger.hrl").
 
 -spec active() -> boolean().
 active() ->
@@ -68,14 +69,33 @@ probe(Config0) ->
 -spec with_runtime(term(), fun((map()) -> term())) -> term().
 with_runtime(Config0, Fun) when is_function(Fun, 1) ->
     Config = damage_nsecbunker_config:normalize(Config0),
+    ?LOG_INFO(
+        "AWS nsecbunker runtime bootstrap begin config=~p",
+        [safe_runtime_config(Config)]
+    ),
     case probe(Config) of
         {ok, ImdsMetadata} ->
+            ?LOG_INFO(
+                "AWS IMDSv2 probe succeeded metadata=~p",
+                [safe_imds_metadata(ImdsMetadata)]
+            ),
             case start_runtime() of
                 {ok, Ownership} ->
+                    ?LOG_INFO(
+                        "AWS bootstrap runtime started ownership=~p",
+                        [Ownership]
+                    ),
                     try Fun(ImdsMetadata) of
                         Result ->
+                            ?LOG_INFO(
+                                "AWS bootstrap callback completed result_shape=~p",
+                                [term_shape(Result)]
+                            ),
                             case stop_owned_runtime(Ownership) of
                                 ok ->
+                                    ?LOG_INFO(
+                                        "AWS bootstrap runtime stopped and unloaded"
+                                    ),
                                     Result;
                                 {error, _} = StopError ->
                                     StopError
@@ -84,13 +104,25 @@ with_runtime(Config0, Fun) when is_function(Fun, 1) ->
                         Class:Reason:Stack ->
                             %% Always attempt cleanup, but preserve the original
                             %% callback exception and stacktrace.
+                            ?LOG_ERROR(
+                                "AWS bootstrap callback crashed class=~p reason=~p",
+                                [Class, safe_reason(Reason)]
+                            ),
                             _ = stop_owned_runtime(Ownership),
                             erlang:raise(Class, Reason, Stack)
                     end;
                 {error, _} = Error ->
+                    ?LOG_ERROR(
+                        "AWS bootstrap runtime start failed error=~p",
+                        [Error]
+                    ),
                     Error
             end;
         {error, _} = Error ->
+            ?LOG_ERROR(
+                "AWS IMDSv2 probe failed error=~p",
+                [Error]
+            ),
             Error
     end.
 
@@ -146,6 +178,16 @@ start_runtime() ->
     AwsWasRunning = application_running(aws),
     CredentialsWasLoaded = application_loaded(aws_credentials),
     AwsWasLoaded = application_loaded(aws),
+    ?LOG_INFO(
+        "AWS runtime pre-start aws_loaded=~p aws_running=~p "
+        "credentials_loaded=~p credentials_running=~p",
+        [
+            AwsWasLoaded,
+            AwsWasRunning,
+            CredentialsWasLoaded,
+            CredentialsWasRunning
+        ]
+    ),
     case {CredentialsWasRunning, AwsWasRunning} of
         {true, _} ->
             %% A release/supervisor has started this outside the controlled
@@ -211,6 +253,13 @@ configure_credentials_application() ->
                 fail_if_unavailable,
                 true
             ),
+            ?LOG_INFO(
+                "AWS credentials runtime configured providers=~p fail_if_unavailable=~p",
+                [
+                    app_env(aws_credentials, credential_providers),
+                    app_env(aws_credentials, fail_if_unavailable)
+                ]
+            ),
             ok;
         {error, _} = Error ->
             Error
@@ -233,6 +282,10 @@ failed_start(StartError, Ownership) ->
 cleanup_runtime(Ownership) ->
     %% Startup order is aws -> aws_credentials. Stop in reverse order, then
     %% unload only applications this runtime did not find loaded beforehand.
+    ?LOG_INFO(
+        "AWS runtime cleanup begin ownership=~p",
+        [Ownership]
+    ),
     Steps = [
         {
             stop_aws_credentials,
@@ -263,7 +316,19 @@ cleanup_runtime(Ownership) ->
             )
         }
     ],
-    cleanup_result(Steps).
+    Result = cleanup_result(Steps),
+    ?LOG_INFO(
+        "AWS runtime cleanup result=~p aws_loaded=~p aws_running=~p "
+        "credentials_loaded=~p credentials_running=~p",
+        [
+            Result,
+            application_loaded(aws),
+            application_running(aws),
+            application_loaded(aws_credentials),
+            application_running(aws_credentials)
+        ]
+    ),
+    Result.
 
 maybe_stop(_App, false) ->
     ok;
@@ -319,6 +384,55 @@ app_env(App, Key) ->
         {ok, Value} -> Value;
         undefined -> undefined
     end.
+
+safe_runtime_config(Config) ->
+    Aws = damage_nsecbunker_config:aws_secret(Config),
+    SecretId = to_binary(maps:get(secret_id, Aws, undefined)),
+    #{
+        requested => damage_nsecbunker_config:aws_requested(Config),
+        active_config => active(Config),
+        region => maps:get(region, Aws, undefined),
+        expected_account_id => maps:get(expected_account_id, Aws, undefined),
+        expected_role_name => maps:get(expected_role_name, Aws, undefined),
+        secret_id_sha256 => sha256_hex(SecretId)
+    }.
+
+safe_imds_metadata(Metadata) when is_map(Metadata) ->
+    maps:with(
+        [
+            protocol,
+            imds_protocol,
+            role_name,
+            expected_role_name,
+            instance_id
+        ],
+        Metadata
+    );
+safe_imds_metadata(_) ->
+    #{}.
+
+term_shape(Map) when is_map(Map) -> {map, map_size(Map)};
+term_shape(List) when is_list(List) -> {list, length(List)};
+term_shape(Binary) when is_binary(Binary) -> {binary, byte_size(Binary)};
+term_shape(Tuple) when is_tuple(Tuple) -> {tuple, tuple_size(Tuple)};
+term_shape(Value) when is_atom(Value) -> Value;
+term_shape(Value) when is_integer(Value) -> integer;
+term_shape(_) -> other.
+
+to_binary(Value) when is_binary(Value) -> Value;
+to_binary(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+to_binary(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+to_binary(_) -> <<>>.
+
+sha256_hex(Value) when is_binary(Value) ->
+    Hash = crypto:hash(sha256, Value),
+    iolist_to_binary([
+        [hex_digit(Byte bsr 4), hex_digit(Byte band 16#0f)]
+     || <<Byte>> <= Hash
+    ]).
+
+hex_digit(N) when N < 10 -> $0 + N;
+hex_digit(N) -> $a + N - 10.
 
 safe_reason({error, Reason}) -> safe_reason(Reason);
 safe_reason(Reason) when is_atom(Reason) -> Reason;
