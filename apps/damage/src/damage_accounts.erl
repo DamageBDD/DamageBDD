@@ -354,7 +354,7 @@ to_html(Req, #{action := reset_password} = State) ->
     case cowboy_req:match_qs([token], Req) of
         #{token := Token} ->
             Now = date_util:now_to_seconds(os:timestamp()),
-            case catch binary_to_term(secrets:decrypt(Token)) of
+            case decrypt_token_term(Token) of
                 #{email := _Email, expiry := Expiry} when Expiry < Now ->
                     Body = <<"Confirm Token Expired.">>,
                     {Body, Req, State};
@@ -382,7 +382,7 @@ to_html(Req, #{action := create} = State) ->
 to_html(Req, #{action := confirm} = State) ->
     #{token := Token} = cowboy_req:match_qs([token], Req),
     Now = date_util:now_to_seconds(os:timestamp()),
-    case catch binary_to_term(secrets:decrypt(Token)) of
+    case decrypt_token_term(Token) of
         #{email := _Email, expiry := Expiry} when Expiry < Now ->
             Body = <<"Confirm Token Expired.">>,
             {Body, Req, State};
@@ -509,7 +509,7 @@ do_post_action(
         true ->
             case NewPassword of
                 NewPasswordConfirm ->
-                    case catch binary_to_term(secrets:decrypt(Token)) of
+                    case decrypt_token_term(Token) of
                         #{email := _Email, expiry := Expiry} when Expiry < Now ->
                             Message = <<"Reset password token expired.">>,
                             {400, #{status => <<"failed">>, message => Message}};
@@ -583,7 +583,7 @@ do_post_action(
         true ->
             case NewPassword of
                 NewPasswordConfirm ->
-                    case catch binary_to_term(secrets:decrypt(Token)) of
+                    case decrypt_token_term(Token) of
                         #{email := _Email, expiry := Expiry} when Expiry < Now ->
                             Message = <<"Confirm Token Expired.">>,
                             {400, #{status => <<"failed">>, message => Message}};
@@ -680,7 +680,6 @@ from_html(Req, #{action := authenticate} = State) ->
     end;
 from_html(Req, #{action := create} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
-    ?LOG_DEBUG(" form data: ~p ", [Params]),
     case proplists:get_value(<<"email">>, Params) of
         undefined ->
             Response = cowboy_req:set_resp_body(
@@ -760,26 +759,8 @@ from_json(Req, #{action := logout} = State) ->
     logout_json_response(discard_request_body(Req), State);
 from_json(Req, #{action := authenticate} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
-        badarg ->
-            Req1 =
-                cowboy_req:reply(
-                    400,
-                    #{<<"content-type">> => <<"application/json">>},
-                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
-                    Req0
-                ),
-            {stop, Req1, State};
-        {'EXIT', {badarg, _}} ->
-            Req1 =
-                cowboy_req:reply(
-                    400,
-                    #{<<"content-type">> => <<"application/json">>},
-                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
-                    Req0
-                ),
-            {stop, Req1, State};
-        Data0 ->
+    case decode_json_body(Data) of
+        {ok, Data0} ->
             case do_post_action(authenticate, Data0) of
                 {200, #{access_token := Token} = Response0} ->
                     Req1 = damage_access_token:set_access_cookie(Req0, Token),
@@ -800,30 +781,14 @@ from_json(Req, #{action := authenticate} = State) ->
                             Req0
                         ),
                     {stop, Req1, State}
-            end
+            end;
+        {error, _Reason} ->
+            json_decode_error_response(Req0, State)
     end;
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
-        badarg ->
-            Req1 =
-                cowboy_req:reply(
-                    400,
-                    #{<<"content-type">> => <<"application/json">>},
-                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
-                    Req0
-                ),
-            {stop, Req1, State};
-        {'EXIT', {badarg, _}} ->
-            Req1 =
-                cowboy_req:reply(
-                    400,
-                    #{<<"content-type">> => <<"application/json">>},
-                    jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
-                    Req0
-                ),
-            {stop, Req1, State};
-        Data0 ->
+    case decode_json_body(Data) of
+        {ok, Data0} ->
             case do_post_action(Action, Data0) of
                 {204, <<>>} ->
                     {stop, cowboy_req:reply(204, Req0), State};
@@ -836,8 +801,47 @@ from_json(Req, #{action := Action} = State) ->
                             Req0
                         ),
                     {stop, Req1, State}
-            end
+            end;
+        {error, _Reason} ->
+            json_decode_error_response(Req0, State)
     end.
+
+%% Decrypt account tokens without the deprecated `catch Expr` form and never
+%% decode untrusted external terms without the safe option.
+decrypt_token_term(Token) ->
+    try secrets:decrypt(Token) of
+        Plain when is_binary(Plain) ->
+            try binary_to_term(Plain, [safe]) of
+                Term -> Term
+            catch
+                _:_ -> invalid_token
+            end;
+        _ ->
+            invalid_token
+    catch
+        _:_ -> invalid_token
+    end.
+
+decode_json_body(Data) ->
+    try jsx:decode(Data, [return_maps, {labels, atom}]) of
+        Decoded when is_map(Decoded) ->
+            {ok, Decoded};
+        _ ->
+            {error, json_object_required}
+    catch
+        error:badarg -> {error, badarg};
+        Class:Reason -> {error, {Class, Reason}}
+    end.
+
+json_decode_error_response(Req0, State) ->
+    Req1 = cowboy_req:reply(
+        400,
+        no_store_headers(<<"application/json">>),
+        jsx:encode(#{status => <<"failed">>, message => <<"Json decode error.">>}),
+        Req0
+    ),
+    {stop, Req1, State}.
+
 
 from_yaml(Req, #{action := logout} = State) ->
     logout_json_response(discard_request_body(Req), State);

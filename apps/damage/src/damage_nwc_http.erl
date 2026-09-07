@@ -1668,19 +1668,38 @@ user_registry_contract_secret_key(OwnerAkBin) ->
     ).
 
 secret_user_ledger_ct(OwnerAkBin) ->
-    Key = user_registry_contract_secret_key(OwnerAkBin),
-    case secrets:retrieve_decrypt(Key) of
-        {ok, <<"ct_", _/binary>> = CtId} ->
-            {ok, CtId};
-        {ok, CtId} when is_list(CtId) ->
-            {ok, list_to_binary(CtId)};
-        _ ->
-            error
+    Scope = {account, OwnerAkBin},
+    ScopedName = <<"nwc_ledger_ct">>,
+    case normalize_ledger_ct_secret(secrets:retrieve_decrypt(Scope, ScopedName)) of
+        {ok, _} = Ok ->
+            Ok;
+        error ->
+            %% One-way compatibility migration from the old node-global hashed
+            %% key.  Do not expose this fallback to BDD/user-controlled secret
+            %% lookup paths.
+            LegacyKey = user_registry_contract_secret_key(OwnerAkBin),
+            case normalize_ledger_ct_secret(secrets:retrieve_decrypt(LegacyKey)) of
+                {ok, CtId} = Ok ->
+                    ok = secrets:encrypt_store(Scope, ScopedName, CtId),
+                    _ = secrets:delete_secret(LegacyKey),
+                    Ok;
+                error ->
+                    error
+            end
     end.
 
 persist_user_ledger_ct(OwnerAkBin, <<"ct_", _/binary>> = CtId) ->
-    Key = user_registry_contract_secret_key(OwnerAkBin),
-    ok = secrets:encrypt_store(Key, CtId).
+    ok = secrets:encrypt_store({account, OwnerAkBin}, <<"nwc_ledger_ct">>, CtId).
+
+normalize_ledger_ct_secret({ok, <<"ct_", _/binary>> = CtId}) ->
+    {ok, CtId};
+normalize_ledger_ct_secret({ok, CtId}) when is_list(CtId) ->
+    case list_to_binary(CtId) of
+        <<"ct_", _/binary>> = CtBin -> {ok, CtBin};
+        _ -> error
+    end;
+normalize_ledger_ct_secret(_) ->
+    error.
 
 persist_nwc_session_index(ClientPubHex, Owner, LedgerCt, WalletPubHex, Relays, PolicyMeta0) ->
     PolicyMeta = maps:merge(

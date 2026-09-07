@@ -168,7 +168,7 @@ execute(Config, Context, FeatureName) ->
         get_feature_dir(Config)
     ).
 
-init_logging(Config) ->
+init_logging(Config, Context) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
     {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
     Cfg =
@@ -179,9 +179,12 @@ init_logging(Config) ->
 
     PidToLog = self(),
     PidFilter =
-        fun
-            (LogEvent, _) when PidToLog =:= self() -> LogEvent;
-            (_LogEvent, _) -> ignore
+        fun(LogEvent, _) ->
+            Meta = maps:get(meta, LogEvent, #{}),
+            case maps:get(pid, Meta, undefined) of
+                PidToLog -> sanitize_run_log_event(LogEvent, Context);
+                _ -> ignore
+            end
         end,
     logger:add_handler(
         RunId,
@@ -191,6 +194,26 @@ init_logging(Config) ->
             config => Cfg
         }
     ).
+sanitize_run_log_event(#{msg := Msg} = LogEvent, Context) ->
+    LogEvent#{msg => {string, sanitize_logger_message(Msg, Context)}};
+sanitize_run_log_event(LogEvent, _Context) ->
+    LogEvent.
+
+sanitize_logger_message(Msg, Context) ->
+    try
+        Text =
+            case Msg of
+                {string, String} -> unicode:characters_to_binary(String);
+                {report, Report} -> fmt(Report);
+                {Format, Args} when is_list(Args) ->
+                    iolist_to_binary(io_lib:format(Format, Args));
+                Other -> fmt(Other)
+            end,
+        damage_context:redact_text(Context, Text)
+    catch
+        _:_ -> <<"XX-REDACTED-LOG-ERROR-XX">>
+    end.
+
 
 deinit_logging(Config) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
@@ -297,7 +320,7 @@ execute_file_prepared(Config, Context, Filename) ->
             %% Decide Result early. Keep it JSON-safe because it is later
             %% included in run metadata and HTTP response maps.
             FailReason = maps:get(fail, FinalContext0, none),
-            Result = result_value(FailReason),
+            Result = result_value(Context, FailReason),
 
             %% Use a stable “completed_at” in seconds for reaping
             CompletedAtSec = round(date_util:now_to_seconds(os:timestamp())),
@@ -433,7 +456,7 @@ execute_file_prepared(Config, Context, Filename) ->
                     cost => RunCost,
                     spend => maps:get(step_spend, FinalContext, 0)
                 },
-            damage_webhooks:trigger_webhooks(FinalContext),
+            damage_webhooks:trigger_webhooks(RunRecord),
             %?LOG_DEBUG("RunRecord ~p", [RunRecord]),
             RunRecord;
         {error, enont} = Err ->
@@ -473,7 +496,7 @@ execute_feature(
     BackGround,
     Scenarios
 ) ->
-    init_logging(Config),
+    init_logging(Config, FeatureContext),
     %% BAN catch-all steps globally
     case ensure_no_catchall_steps(Config) of
         ok ->
@@ -1218,14 +1241,16 @@ execute_step_module(
             damage_metrics:update(success, AeAccount),
             Context0;
         {throw, Reason, Stack} ->
-            ?LOG_ERROR("Step execution failed! ~p", [
-                #{
-                    reason => result_reason(Reason),
-                    stacktrace => Stack,
-                    step => Step,
-                    step_module => StepModule
-                }
-            ]),
+            ?LOG_ERROR(
+                "Step execution failed module=~p line=~p reason=~s stack=~s step=~s",
+                [
+                    StepModule,
+                    LineNo,
+                    result_reason(ContextIn, Reason),
+                    safe_log_term(ContextIn, Stack),
+                    safe_log_term(ContextIn, Step)
+                ]
+            ),
             damage_metrics:update(fail, AeAccount),
             formatter:format(
                 Config,
@@ -1239,7 +1264,9 @@ execute_step_module(
             );
         {error, Reason, Stacktrace} ->
             damage_metrics:update(fail, AeAccount),
-            ?LOG_ERROR("Step execution failed! ~p", [Stacktrace]),
+            ?LOG_ERROR("Step execution failed module=~p line=~p stack=~s", [
+                StepModule, LineNo, safe_log_term(ContextIn, Stacktrace)
+            ]),
             formatter:format(
                 Config,
                 step,
@@ -1255,7 +1282,12 @@ execute_step_module(
                 StepModule, Step, Error
             ]),
             damage_metrics:update(fail, AeAccount),
-            ?LOG_ERROR("Step execution failed! unhandled ~p ~p", [Error, Stacktrace]),
+            ?LOG_ERROR("Step execution failed unhandled module=~p line=~p error=~s stack=~s", [
+                StepModule,
+                LineNo,
+                safe_log_term(ContextIn, Error),
+                safe_log_term(ContextIn, Stacktrace)
+            ]),
             formatter:format(
                 Config,
                 step,
@@ -1286,7 +1318,9 @@ execute_step_module(
                 StepModule, Step, Other
             ]),
             damage_metrics:update(fail, AeAccount),
-            ?LOG_ERROR("Step execution failed! unhandled other ~p", [Other]),
+            ?LOG_ERROR("Step execution failed unhandled module=~p line=~p result=~s", [
+                StepModule, LineNo, safe_log_term(ContextIn, Other)
+            ]),
             formatter:format(
                 Config,
                 step,
@@ -1306,14 +1340,16 @@ execute_step_module(
                     maps:put(step_found, false, ContextIn);
                 _ ->
                     Reason = <<"Step undef error">>,
-                    ?LOG_ERROR("Step execution undef! ~p", [
-                        #{
-                            reason => result_reason(Reason),
-                            stacktrace => Stacktrace,
-                            step => Step,
-                            step_module => StepModule
-                        }
-                    ]),
+                    ?LOG_ERROR(
+                        "Step execution undef module=~p line=~p reason=~s stack=~s step=~s",
+                        [
+                            StepModule,
+                            LineNo,
+                            result_reason(ContextIn, Reason),
+                            safe_log_term(ContextIn, Stacktrace),
+                            safe_log_term(ContextIn, Step)
+                        ]
+                    ),
                     damage_metrics:update(fail, AeAccount),
                     formatter:format(
                         Config,
@@ -1334,14 +1370,16 @@ execute_step_module(
                     maps:put(step_found, false, ContextIn);
                 _ ->
                     Reason = <<"Step error">>,
-                    ?LOG_ERROR("Step execution failed! ~p", [
-                        #{
-                            reason => result_reason(Reason),
-                            stacktrace => Stacktrace,
-                            step => Step,
-                            step_module => StepModule
-                        }
-                    ]),
+                    ?LOG_ERROR(
+                        "Step execution failed module=~p line=~p reason=~s stack=~s step=~s",
+                        [
+                            StepModule,
+                            LineNo,
+                            result_reason(ContextIn, Reason),
+                            safe_log_term(ContextIn, Stacktrace),
+                            safe_log_term(ContextIn, Step)
+                        ]
+                    ),
                     damage_metrics:update(fail, AeAccount),
                     formatter:format(
                         Config,
@@ -1355,15 +1393,17 @@ execute_step_module(
                     )
             end;
         Class:Reason:Stacktrace ->
-            ?LOG_ERROR("Step execution crashed! ~p", [
-                #{
-                    class => Class,
-                    reason => result_reason(Reason),
-                    stacktrace => Stacktrace,
-                    step => Step,
-                    step_module => StepModule
-                }
-            ]),
+            ?LOG_ERROR(
+                "Step execution crashed module=~p line=~p class=~p reason=~s stack=~s step=~s",
+                [
+                    StepModule,
+                    LineNo,
+                    Class,
+                    result_reason(ContextIn, Reason),
+                    safe_log_term(ContextIn, Stacktrace),
+                    safe_log_term(ContextIn, Step)
+                ]
+            ),
             damage_metrics:update(fail, AeAccount),
             formatter:format(
                 Config,
@@ -1488,7 +1528,9 @@ execute_step(Config, Step, #{fail := _} = Context) ->
     case damage_context:render_body_args(Body, Context) of
         {error, {Body1, Args1}, Reason} ->
             Args2 = merge_step_args(Args1, StepArgs),
-            ?LOG_DEBUG("execute_step fail error: ~p, ~p.", [Body1, Args2]),
+            ?LOG_DEBUG("execute_step fail error: body=~s args=~s", [
+                safe_log_term(Context, Body1), safe_log_term(Context, Args2)
+            ]),
             formatter:format(
                 Config,
                 step,
@@ -1524,7 +1566,7 @@ execute_step(Config, Step, Context) ->
                 Left ->
                     maps:put(
                         fail,
-                        {unresolved_step_placeholder, Left, StepKeyWord, Body1, Args2},
+                        {unresolved_step_placeholder, Left, StepKeyWord, LineNo},
                         maps:put(failing_step, Step, Context)
                     )
             end
@@ -1573,7 +1615,9 @@ execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) 
 
             case maps:get(step_found, Context0) of
                 false ->
-                    ?LOG_ERROR("execute_step notfound :~p ~p ", [StepKeyWord, Body1]),
+                    ?LOG_ERROR("execute_step notfound keyword=~p line=~p body=~s", [
+                        StepKeyWord, LineNo, safe_log_term(Context, Body1)
+                    ]),
                     formatter:format(
                         Config,
                         step,
@@ -1582,14 +1626,19 @@ execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) 
                     damage_metrics:update(notfound, maps:get(public_key, Context)),
                     maps:put(
                         fail,
-                        {step_not_found, StepKeyWord, Body1},
+                        {step_not_found, StepKeyWord, LineNo},
                         maps:put(failing_step, Step, Context)
                     );
                 true ->
                     Context0
             end;
         Other ->
-            ?LOG_ERROR("execute_step error :~p ~p ~p", [StepKeyWord, Body1, Other]),
+            ?LOG_ERROR("execute_step error keyword=~p line=~p body=~s result=~s", [
+                StepKeyWord,
+                LineNo,
+                safe_log_term(Context, Body1),
+                safe_log_term(Context, Other)
+            ]),
             formatter:format(
                 Config,
                 step,
@@ -1699,15 +1748,19 @@ write_run_meta(RunDir, MetaMap) ->
     Bin = jsx:encode(MetaMap),
     file:write_file(filename:join(RunDir, "run.meta"), Bin).
 
-result_value(none) ->
+result_value(_Context, none) ->
     <<"success">>;
-result_value(FailReason) ->
-    fmt(FailReason).
+result_value(Context, FailReason) ->
+    safe_log_term(Context, FailReason).
 
-result_reason(none) ->
+result_reason(_Context, none) ->
     <<>>;
-result_reason(FailReason) ->
-    fmt(FailReason).
+result_reason(Context, FailReason) ->
+    safe_log_term(Context, FailReason).
+
+safe_log_term(Context, Term) ->
+    damage_context:redact_text(Context, fmt(Term)).
+
 fmt(T) ->
     iolist_to_binary(io_lib:format("~p", [T])).
 

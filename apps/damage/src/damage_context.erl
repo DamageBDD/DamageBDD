@@ -79,7 +79,8 @@
     get_global_template_context/1,
     get_stepargs/1,
     render_body_args/2,
-    clean_secrets/3
+    clean_secrets/3,
+    redact_text/2
 ]).
 
 %% Cowboy REST API.
@@ -556,9 +557,12 @@ validate_context_key(Key0) ->
             end
     end.
 
-normalize_exposure(undefined, node, true) ->
+normalize_exposure(undefined, _Kind, true) ->
+    %% Sensitive values are not template material unless a caller explicitly
+    %% opts in with exposure=template.  This applies to account/wallet/agent
+    %% scopes as well as node scope.
     step_only;
-normalize_exposure(undefined, _Kind, _Sensitive) ->
+normalize_exposure(undefined, _Kind, false) ->
     template;
 normalize_exposure(template, _Kind, _Sensitive) ->
     template;
@@ -612,9 +616,12 @@ meta_sensitive(Meta, Key) when is_map(Meta) ->
         true -> true;
         <<"true">> -> true;
         "true" -> true;
-        false -> false;
-        <<"false">> -> false;
-        "false" -> false;
+        %% Explicit false may opt out only for keys that are not themselves
+        %% classified as secret-bearing.  Reserved secret-name patterns always
+        %% win so node defaults cannot accidentally inherit credentials.
+        false -> is_sensitive_key(Key);
+        <<"false">> -> is_sensitive_key(Key);
+        "false" -> is_sensitive_key(Key);
         undefined -> is_sensitive_key(Key);
         _ -> is_sensitive_key(Key)
     end;
@@ -709,6 +716,10 @@ build_effective_context(AeAccount, RuntimeContext, AdditionalScopes0) ->
         damage_context_effective => ?EFFECTIVE_MARKER,
         account_context => AccountValues,
         node_context => maps:merge(NodeDefaults, NodeLocked),
+        %% Replace any caller-supplied raw scopes with the owner-checked list.
+        %% This prevents later redaction/proof helpers from reading foreign
+        %% account scopes as a secret-equality oracle.
+        context_scopes => AdditionalScopes,
         context_proofs => Proofs,
         context_redaction_ref => RedactionRef
     }.
@@ -2008,11 +2019,12 @@ get_stepargs(Body) when is_list(Body) ->
 
 render_body_args(Body, Context) when is_map(Context) ->
     {Body0, Args} = get_stepargs(Body),
+    RenderContext = template_render_context(Context),
     try
-        Body1 = damage_utils:tokenize(damage_utils:render(Body0, Context)),
+        Body1 = damage_utils:tokenize(damage_utils:render(Body0, RenderContext)),
         case Args of
             <<>> -> {ok, {Body1, Args}};
-            _ -> {ok, {Body1, damage_utils:render(Args, Context)}}
+            _ -> {ok, {Body1, damage_utils:render(Args, RenderContext)}}
         end
     catch
         error:{unbound_var, Fail}:Stacktrace ->
@@ -2026,9 +2038,50 @@ render_body_args(Body, Context) when is_map(Context) ->
             {error, {Body0, Args}, {render, Class, Reason}}
     end.
 
+%% Authentication/keystore state is required by trusted Erlang code but must
+%% never become a Gherkin template variable.  User-created BDD variables remain
+%% available; only platform-internal credentials are removed here.
+template_render_context(Context) ->
+    maps:without(
+        [
+            access_token,
+            <<"access_token">>,
+            private_key,
+            <<"private_key">>,
+            node_password,
+            <<"node_password">>,
+            context_redaction_ref,
+            <<"context_redaction_ref">>
+        ],
+        Context
+    ).
+
 %%%===================================================================
 %%% Secret redaction
 %%%===================================================================
+
+%% Redact a single text blob using only the immutable run redaction set and
+%% values already present in the runtime context.  This helper deliberately
+%% does not log on failure, so it is safe to call from logger filters.
+redact_text(Context0, Text0) ->
+    Text = normalize_binary(Text0),
+    Context = damage_utils:normalize_context(Context0),
+    {Text1, _} = redact_known_sensitive_values(Context, Text, <<>>),
+    case maps:get(context_redaction_ref, Context0, none) of
+        none ->
+            Text1;
+        Ref when is_binary(Ref) ->
+            case damage_context_store:redactions(Ref) of
+                {ok, Redactions} ->
+                    {Text2, _} = redact_frozen_values(Redactions, Text1, <<>>),
+                    Text2;
+                {error, _} ->
+                    ?REDACTED_TEXT_MARKER
+            end;
+        _ ->
+            ?REDACTED_TEXT_MARKER
+    end.
+
 
 clean_secrets(
     #{
@@ -2081,10 +2134,13 @@ redact_frozen_values([Value | Rest], Body0, Args0) ->
 redact_frozen_values([], Body, Args) ->
     {Body, Args}.
 
-redact_current_scope_entries(#{public_key := AeAccount} = Context, Body0, Args0) ->
+redact_current_scope_entries(#{public_key := AeAccount0} = Context, Body0, Args0) ->
+    AeAccount = normalize_account(AeAccount0),
     {Body1, Args1} = redact_scope_entries(account_scope(AeAccount), Body0, Args0),
     {Body2, Args2} = redact_scope_entries(node, Body1, Args1),
-    AdditionalScopes = maps:get(context_scopes, Context, []),
+    AdditionalScopes = normalize_additional_scopes(
+        AeAccount, maps:get(context_scopes, Context, [])
+    ),
     lists:foldl(
         fun(Scope, {BodyAcc, ArgsAcc}) -> redact_scope_entries(Scope, BodyAcc, ArgsAcc) end,
         {Body2, Args2},
@@ -2096,7 +2152,10 @@ redact_current_scope_entries(_Context, Body, Args) ->
 redact_scope_entries(Scope, Body, Args) ->
     case get_entries(Scope) of
         {ok, Entries} -> clean_context_secrets(Entries, Body, Args);
-        {error, _} -> {Body, Args}
+        {error, _} ->
+            %% Redaction failure is a confidentiality failure, not a cosmetic
+            %% formatter problem.  Emit no potentially sensitive text.
+            {?REDACTED_TEXT_MARKER, ?REDACTED_TEXT_MARKER}
     end.
 
 clean_context_secrets(Entries, Body, Args) when is_map(Entries) ->
@@ -2145,7 +2204,7 @@ clean_nested_sensitive(_Value, Body, Args) ->
 
 is_sensitive_key(Key0) ->
     Key = normalize_key(Key0),
-    lists:member(Key, [
+    Exact = lists:member(Key, [
         <<"access_token">>,
         <<"authorization">>,
         <<"auth">>,
@@ -2169,7 +2228,18 @@ is_sensitive_key(Key0) ->
         <<"set-cookie">>,
         <<"x-preimage">>,
         <<"x-macaroon">>
-    ]).
+    ]),
+    Exact orelse sensitive_key_component(Key).
+
+sensitive_key_component(Key) ->
+    Parts = re:split(Key, <<"[_\\-.]+">>, [{return, binary}, trim]),
+    SensitiveParts = [
+        <<"password">>, <<"passwd">>, <<"pass">>, <<"secret">>, <<"token">>,
+        <<"nsec">>, <<"rune">>, <<"macaroon">>, <<"preimage">>,
+        <<"authorization">>, <<"bearer">>, <<"cookie">>, <<"private">>,
+        <<"apikey">>
+    ],
+    lists:any(fun(Part) -> lists:member(Part, SensitiveParts) end, Parts).
 
 redact_value(Value0, Body, Args) ->
     Value = normalize_binary(Value0),
