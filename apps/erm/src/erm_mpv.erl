@@ -1,426 +1,882 @@
 %%%-------------------------------------------------------------------
-%%% ecai_mpv_front.erl — WX GUI frontend for MPV with IPFS caching
-%%%-------------------------------------------------------------------
-%%% Social reporting added: posts "Now Playing" to Discord/Instagram via social_reporter
-%%%-------------------------------------------------------------------
-%%% Features
-%%%  - Recursively scan folders for media files
-%%%  - Enqueue into MPV via JSON IPC
-%%%  - Big playback controls (Play/Pause/Next/Prev, Seek, Volume)
-%%%  - Info lookup (reads basic tags; placeholder for ECAI mapping)
-%%%  - Local IPFS add + pin for offline playback; share button copies ipfs://CID
-%%%  - Like ★ toggle stored in ETS + JSON
-%%%  - Playlist management by IPFS CIDs
-%%%  - Minimal deps: inets (httpc), crypto, public_key, jsx (JSON)
+%%% @doc GTK4/gtkgs frontend for the ERM MPV player.
 %%%
-%%% Usage (overview)
-%%%   1) Start IPFS daemon locally: `ipfs daemon`
-%%%   2) Start MPV with IPC: `mpv --idle=yes --keep-open=yes --input-ipc-server=/tmp/mpv.sock`
-%%%   3) erl -pa _build/default/lib/*/ebin -s inets start -s ecai_mpv_front start
-%%%
-%%% Notes
-%%%   - MPV IPC defaults to /tmp/mpv.sock; override via env MPV_IPC=/path/to/socket.
-%%%   - IPFS API defaults to http://127.0.0.1:5001; override via env IPFS_API.
+%%% The frontend owns only logical UI objects. The native widgets belong to
+%%% gtkgs/gtknode4 and the MPV operating-system process belongs to
+%%% erm_mpv_proc. UI creation is deferred until the C-node handshake is ready,
+%%% which keeps the ERM supervision tree healthy while GTK starts.
+%%% @end
 %%%-------------------------------------------------------------------
 -module(erm_mpv).
--behaviour(wx_object).
--include_lib("wx/include/wx.hrl").
+-behaviour(gen_server).
+
 -include_lib("erm.hrl").
--include("erm_playlist.hrl").
 -include_lib("kernel/include/logger.hrl").
 
--export([show/0]).
--export([close/0]).
-
--export([start/1, start_link/0]).
+-export([show/0, close/0, start/1, start_link/0]).
 -export([
-    init/1, handle_event/2, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
 ]).
 
+-define(SERVER, ?MODULE).
+-define(APP_TITLE, "ERM Media").
+-define(UI_RETRY_MS, 1000).
+-define(REFRESH_MS, 1000).
+-define(MPV_RETRY_MS, 2000).
+-define(MPV_RETRY_MAX_MS, 30000).
+-define(SEEK_DEBOUNCE_MS, 120).
+-define(VOLUME_DEBOUNCE_MS, 80).
+-define(DEFAULT_VOLUME, 50).
+
 -record(state, {
-    frame,
-    panel,
-    btn_prev,
-    btn_play,
-    btn_next,
-    btn_like,
-    btn_share,
-    btn_add,
-    btn_rescan,
-    btn_ipfs_add,
-    btn_clear,
-    vol_slider,
-    seek_slider,
-    %% wxListCtrl for playlist
-    list,
-    status_text,
-    %% mpv_ipc handle
-    ipc,
-    playlist_pid,
-    current_id = undefined
+    window = undefined,
+    ui_monitor = undefined,
+    ipc = undefined,
+    ipc_monitor = undefined,
+    volume = ?DEFAULT_VOLUME,
+    ui_retry = undefined,
+    refresh_timer = undefined,
+    mpv_timer = undefined,
+    mpv_retry_ms = ?MPV_RETRY_MS,
+    seek_timer = undefined,
+    pending_seek = undefined,
+    volume_timer = undefined,
+    pending_volume = undefined,
+    mpv_errors = #{}
 }).
 
--define(APP_TITLE, "ECAI MPV Front").
--define(IPC_PATH, ipc_path()).
--define(IPFS_API, ipfs_api()).
--define(BTN_STYLE, ?wxBU_EXACTFIT bor ?wxBU_AUTODRAW).
+%%%===================================================================
+%%% Public API
+%%%===================================================================
 
-start(Config) -> wx_object:start_link(?MODULE, Config, []).
+start(Config) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, options_map(Config), []).
 
-start_link() -> wx_object:start_link(?MODULE, [], []).
-
-init([]) ->
-    Env = persistent_term:get(erm_wx_env),
-    wx:set_env(Env),
-
-    safe_apply(mpv_ipc, ensure_started, []),
-    safe_apply(media_scan, ensure_started, []),
-    safe_apply(ipfs_client, ensure_started, [?IPFS_API]),
-    maybe_ensure_started(playlist_sup),
-    {ok, Ply} = ensure_playlist_started(),
-    maybe_ensure_started(social_reporter),
-    Ipc = safe_mpv_connect(?IPC_PATH),
-    %% Register a gproc local name so other processes can find us
-    Frame = wxFrame:new(wx:null(), ?wxID_ANY, ?APP_TITLE, [{size, {1100, 720}}]),
-    Panel = wxPanel:new(Frame, []),
-
-    FontBig = wxFont:new(14, ?wxFONTFAMILY_SWISS, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_BOLD),
-
-    %% Controls
-    BtnPrev = wxButton:new(Panel, ?wxID_ANY, [{label, "⏮"}, {style, ?BTN_STYLE}]),
-    BtnPlay = wxButton:new(Panel, ?wxID_ANY, [{label, "⏯"}, {style, ?BTN_STYLE}]),
-    BtnNext = wxButton:new(Panel, ?wxID_ANY, [{label, "⏭"}, {style, ?BTN_STYLE}]),
-    BtnLike = wxButton:new(Panel, ?wxID_ANY, [{label, "☆ Like"}]),
-    BtnShare = wxButton:new(Panel, ?wxID_ANY, [{label, "Share (IPFS)"}]),
-
-    BtnAdd = wxButton:new(Panel, ?wxID_ANY, [{label, "Add Folder"}]),
-    BtnRescan = wxButton:new(Panel, ?wxID_ANY, [{label, "Rescan"}]),
-    BtnIpAdd = wxButton:new(Panel, ?wxID_ANY, [{label, "Add→IPFS"}]),
-    BtnClear = wxButton:new(Panel, ?wxID_ANY, [{label, "Clear"}]),
-
-    Vol = wxSlider:new(Panel, ?wxID_ANY, 50, 0, 100, []),
-    Seek = wxSlider:new(Panel, ?wxID_ANY, 0, 0, 1000, [{style, ?wxSL_HORIZONTAL}]),
-
-    List = wxListCtrl:new(Panel, [{style, ?wxLC_REPORT bor ?wxLC_SINGLE_SEL}]),
-    wxListCtrl:insertColumn(List, 0, "Title", [{width, 480}]),
-    wxListCtrl:insertColumn(List, 1, "CID", [{width, 360}]),
-    wxListCtrl:insertColumn(List, 2, "Liked", [{width, 80}]),
-
-    Status = wxStaticText:new(Panel, ?wxID_ANY, "Ready"),
-    wxWindow:setFont(Status, FontBig),
-
-    %% Layout
-    Top = wxBoxSizer:new(?wxVERTICAL),
-    Row1 = wxBoxSizer:new(?wxHORIZONTAL),
-    [
-        wxSizer:add(Row1, B, [{flag, ?wxALL}, {border, 5}])
-     || B <- [BtnPrev, BtnPlay, BtnNext, BtnLike, BtnShare, BtnAdd, BtnRescan, BtnIpAdd, BtnClear]
-    ],
-    wxSizer:add(Top, Row1, [{flag, ?wxEXPAND}]),
-
-    wxSizer:add(Top, Seek, [{flag, ?wxEXPAND bor ?wxALL}, {border, 5}]),
-
-    Row2 = wxBoxSizer:new(?wxHORIZONTAL),
-    wxSizer:add(Row2, wxStaticText:new(Panel, ?wxID_ANY, "Volume"), [
-        {flag, ?wxALIGN_CENTER_VERTICAL bor ?wxALL}, {border, 5}
-    ]),
-    wxSizer:add(Row2, Vol, [{proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 5}]),
-    wxSizer:add(Top, Row2, [{flag, ?wxEXPAND}]),
-
-    wxSizer:add(Top, List, [{proportion, 1}, {flag, ?wxEXPAND bor ?wxALL}, {border, 5}]),
-    wxSizer:add(Top, Status, [{flag, ?wxALL}, {border, 5}]),
-
-    wxPanel:setSizer(Panel, Top),
-    wxFrame:show(Frame),
-
-    %% Wire events
-    [wxPanel:connect(Panel, Evt, []) || Evt <- [key_down, key_up]],
-    [
-        wxButton:connect(B, command_button_clicked, [])
-     || B <- [BtnPrev, BtnPlay, BtnNext, BtnLike, BtnShare, BtnAdd, BtnRescan, BtnIpAdd, BtnClear]
-    ],
-    wxSlider:connect(Vol, command_slider_updated, []),
-    wxSlider:connect(Seek, command_slider_updated, []),
-    wxListCtrl:connect(List, command_list_item_selected, []),
-    gproc:reg_other({n, l, {?MODULE, erm_mpv}}, self()),
-    erlang:send_after(1000, self(), refresh_playlist),
-
-    {Frame, #state{
-        frame = Frame,
-        panel = Panel,
-        btn_prev = BtnPrev,
-        btn_play = BtnPlay,
-        btn_next = BtnNext,
-        btn_like = BtnLike,
-        btn_share = BtnShare,
-        btn_add = BtnAdd,
-        btn_rescan = BtnRescan,
-        btn_ipfs_add = BtnIpAdd,
-        btn_clear = BtnClear,
-        vol_slider = Vol,
-        seek_slider = Seek,
-        list = List,
-        status_text = Status,
-        ipc = Ipc,
-        playlist_pid = Ply
-    }}.
-close() ->
-    case gproc:lookup_local_name({?MODULE, erm_mpv}) of
-        undefined -> ok;
-        Pid -> wx_object:call(Pid, close)
-    end.
+start_link() ->
+    start(#{}).
 
 show() ->
-    case gproc:lookup_local_name({?MODULE, erm_mpv}) of
-        undefined -> start([]);
-        Pid -> wx_object:call(Pid, show)
+    call_or_start(show).
+
+close() ->
+    case whereis(?SERVER) of
+        undefined -> ok;
+        _Pid -> safe_server_call(close)
     end.
 
-handle_event(
-    #wx{event = #wxCommand{type = command_button_clicked}, id = Id}, S = #state{frame = F}
-) ->
-    %% Buttons dispatch by label
-    B0 = wxWindow:findWindowById(Id, [{parent, F}]),
-    Btn = wx:typeCast(B0, wxButton),
-    case wxButton:getLabel(Btn) of
-        "⏮" ->
-            play_selected(playlist:prev(), S),
-            {noreply, S};
-        "⏯" ->
-            mpv_ipc:toggle_pause(),
-            {noreply, S};
-        "⏭" ->
-            play_selected(playlist:next(), S),
-            {noreply, S};
-        "☆ Like" ->
-            playlist:toggle_like_current(),
-            refresh_playlist(S),
-            {noreply, S};
-        "Share (IPFS)" ->
-            share_current(S),
-            {noreply, S};
-        "Add Folder" ->
-            add_folder(S),
-            {noreply, S};
-        "Rescan" ->
-            rescan(S),
-            {noreply, S};
-        "Add→IPFS" ->
-            add_current_to_ipfs(S),
-            {noreply, S};
-        "Clear" ->
-            playlist:clear(),
-            refresh_playlist(S),
-            {noreply, S};
-        L ->
-            ?LOG_INFO("Unknown button ~ts", [L]),
-            {noreply, S}
+%%%===================================================================
+%%% gen_server callbacks
+%%%===================================================================
+
+init(_Config) ->
+    process_flag(trap_exit, true),
+    self() ! build_ui,
+    RefreshTimer = erlang:send_after(?REFRESH_MS, self(), refresh_playlist),
+    MpvTimer = erlang:send_after(0, self(), connect_mpv),
+    {ok, #state{refresh_timer = RefreshTimer, mpv_timer = MpvTimer}}.
+
+handle_call(show, _From, State = #state{window = undefined}) ->
+    self() ! build_ui,
+    {reply, ok, State};
+handle_call(show, _From, State) ->
+    _ = ui_config(mpv_window, [{show, true}]),
+    {reply, ok, State};
+handle_call(close, _From, State) ->
+    _ = ui_config(mpv_window, [{show, false}]),
+    {reply, ok, State};
+handle_call(_Request, _From, State) ->
+    {reply, {error, unsupported_call}, State}.
+
+handle_cast(_Message, State) ->
+    {noreply, State}.
+
+handle_info(build_ui, State = #state{window = undefined}) ->
+    case build_ui() of
+        {ok, Window} ->
+            cancel_timer(State#state.ui_retry),
+            demonitor_ref(State#state.ui_monitor),
+            ReadyState = State#state{
+                window = Window,
+                ui_monitor = monitor_registered_process(gtkgs),
+                ui_retry = undefined
+            },
+            _ = refresh_playlist(ReadyState),
+            {noreply, ReadyState};
+        {retry, Reason} ->
+            ?LOG_DEBUG("gtkgs media UI not ready: ~p", [Reason]),
+            Timer = replace_timer(State#state.ui_retry, ?UI_RETRY_MS, build_ui),
+            {noreply, State#state{ui_retry = Timer}};
+        {error, Reason} ->
+            ?LOG_WARNING("Could not build gtkgs media UI: ~p", [Reason]),
+            Timer = replace_timer(State#state.ui_retry, ?UI_RETRY_MS, build_ui),
+            {noreply, State#state{ui_retry = Timer}}
     end;
-handle_event(
-    #wx{event = #wxCommand{type = command_slider_updated, commandInt = Val}, id = Id},
-    S = #state{vol_slider = Vol, seek_slider = Seek}
+handle_info(build_ui, State) ->
+    {noreply, State};
+
+handle_info(connect_mpv, State = #state{ipc = undefined}) ->
+    case safe_mpv_connect(ipc_path()) of
+        {ok, Ipc} ->
+            cancel_timer(State#state.mpv_timer),
+            demonitor_ipc(State#state.ipc_monitor),
+            ?LOG_INFO("Connected to MPV IPC at ~ts", [ipc_path()]),
+            _ = ui_config(playback_detail, [{text, "Connected"}]),
+            {noreply, State#state{
+                ipc = Ipc,
+                ipc_monitor = monitor_ipc(Ipc),
+                mpv_timer = undefined,
+                mpv_retry_ms = ?MPV_RETRY_MS,
+                mpv_errors = maps:remove(connect, State#state.mpv_errors)
+            }};
+        {error, Reason} ->
+            Delay = State#state.mpv_retry_ms,
+            Timer = replace_timer(State#state.mpv_timer, Delay, connect_mpv),
+            FailedState = report_mpv_error(connect, Reason, State),
+            {noreply, FailedState#state{
+                mpv_timer = Timer,
+                mpv_retry_ms = erlang:min(Delay * 2, ?MPV_RETRY_MAX_MS)
+            }}
+    end;
+handle_info(connect_mpv, State) ->
+    {noreply, State#state{mpv_timer = undefined}};
+
+handle_info(refresh_playlist, State) ->
+    _ = refresh_playlist(State),
+    Timer = replace_timer(State#state.refresh_timer, ?REFRESH_MS, refresh_playlist),
+    {noreply, State#state{refresh_timer = Timer}};
+
+handle_info({mpv, status, Status}, State) when is_map(Status) ->
+    update_playback_status(Status),
+    {noreply, State};
+handle_info({mpv, disconnected, Reason}, State) ->
+    {noreply, mark_mpv_disconnected(Reason, State)};
+handle_info(
+    {'DOWN', MonitorRef, process, Ipc, Reason},
+    State = #state{ipc = Ipc, ipc_monitor = MonitorRef}
 ) ->
-    VolId = wxWindow:getId(Vol),
-    SeekId = wxWindow:getId(Seek),
-    case true of
-        _ when Id =:= VolId ->
-            mpv_ipc:set_volume(Val),
-            {noreply, S};
-        _ when Id =:= SeekId ->
-            mpv_ipc:seek_percent(Val / 10),
-            {noreply, S};
+    {noreply, mark_mpv_disconnected({ipc_process_down, Reason}, State)};
+handle_info(
+    {'DOWN', MonitorRef, port, Ipc, Reason},
+    State = #state{ipc = Ipc, ipc_monitor = MonitorRef}
+) ->
+    {noreply, mark_mpv_disconnected({ipc_port_down, Reason}, State)};
+handle_info(
+    {'DOWN', MonitorRef, process, _GtkgsPid, Reason},
+    State = #state{ui_monitor = MonitorRef}
+) ->
+    ?LOG_WARNING("gtkgs media UI transport stopped: ~p", [Reason]),
+    Timer = replace_timer(State#state.ui_retry, ?UI_RETRY_MS, build_ui),
+    {noreply, State#state{
+        window = undefined,
+        ui_monitor = undefined,
+        ui_retry = Timer
+    }};
+
+%% Transport controls.
+handle_info({gtkgs, previous_button, click, _Data, _Args}, State) ->
+    {noreply, play_selected(safe_playlist(prev), State)};
+handle_info({gtkgs, play_button, click, _Data, _Args}, State) ->
+    {noreply, mpv_action(toggle_pause, [], State)};
+handle_info({gtkgs, next_button, click, _Data, _Args}, State) ->
+    {noreply, play_selected(safe_playlist(next), State)};
+%% Playlist and library actions.
+handle_info({gtkgs, playlist_list, select, _Data, [Index, _Text, true]}, State)
+    when is_integer(Index), Index >= 0
+->
+    case safe_playlist(get_by_index, [Index]) of
+        {ok, Track} -> {noreply, play_track(Track, State)};
+        {error, Reason} ->
+            update_status(io_lib:format("Could not select track: ~p", [Reason])),
+            {noreply, State};
+        Other ->
+            update_status(io_lib:format("Unexpected playlist reply: ~p", [Other])),
+            {noreply, State}
+    end;
+handle_info({gtkgs, like_button, click, _Data, _Args}, State) ->
+    case safe_playlist(toggle_like_current) of
+        {error, Reason} ->
+            update_status(io_lib:format("Could not update favourite: ~p", [Reason]));
         _ ->
-            {noreply, S}
-    end;
-handle_event(#wx{event = #wxList{type = command_list_item_selected, itemIndex = Idx}}, S) ->
-    case playlist:get_by_index(Idx) of
+            _ = refresh_playlist(State)
+    end,
+    {noreply, State};
+handle_info({gtkgs, share_button, click, _Data, _Args}, State) ->
+    share_current(State),
+    {noreply, State};
+handle_info({gtkgs, ipfs_button, click, _Data, _Args}, State) ->
+    add_current_to_ipfs(State),
+    {noreply, State};
+handle_info({gtkgs, rescan_button, click, _Data, _Args}, State) ->
+    case safe_playlist(rescan_all) of
+        {error, Reason} ->
+            update_status(io_lib:format("Playlist rescan failed: ~p", [Reason]));
+        _ ->
+            _ = refresh_playlist(State),
+            update_status("Playlist rescan complete")
+    end,
+    {noreply, State};
+handle_info({gtkgs, clear_button, click, _Data, _Args}, State) ->
+    case safe_playlist(clear) of
+        {error, Reason} ->
+            update_status(io_lib:format("Could not clear playlist: ~p", [Reason]));
+        _ ->
+            _ = refresh_playlist(State),
+            update_status("Playlist cleared")
+    end,
+    {noreply, State};
+handle_info({gtkgs, add_folder_button, click, _Data, _Args}, State) ->
+    add_folder_from_entry(State),
+    {noreply, State};
+handle_info({gtkgs, folder_entry, keypress, _Data, ['Return', _Text]}, State) ->
+    add_folder_from_entry(State),
+    {noreply, State};
+
+%% Continuous controls. Programmatic GTK changes are suppressed natively, so
+%% MPV status updates do not feed back into seek commands.
+handle_info({gtkgs, seek_scale, change, _Data, [#{value := Value}]}, State)
+    when is_number(Value)
+->
+    Percent = clamp(float(Value) / 10.0, 0.0, 100.0),
+    Timer = replace_tagged_timer(
+        State#state.seek_timer,
+        ?SEEK_DEBOUNCE_MS,
+        apply_seek
+    ),
+    {noreply, State#state{seek_timer = Timer, pending_seek = Percent}};
+handle_info({gtkgs, volume_scale, change, _Data, [#{value := Value}]}, State)
+    when is_number(Value)
+->
+    Volume = clamp(round(Value), 0, 100),
+    _ = ui_config(volume_value, [{text, volume_text(Volume)}]),
+    Timer = replace_tagged_timer(
+        State#state.volume_timer,
+        ?VOLUME_DEBOUNCE_MS,
+        apply_volume
+    ),
+    {noreply, State#state{
+        volume = Volume,
+        volume_timer = Timer,
+        pending_volume = Volume
+    }};
+handle_info(
+    {apply_seek, Token},
+    State = #state{seek_timer = {_TimerRef, Token}, pending_seek = Percent}
+) when is_number(Percent) ->
+    NextState = mpv_action(seek_percent, [Percent], State),
+    {noreply, NextState#state{seek_timer = undefined, pending_seek = undefined}};
+handle_info({apply_seek, _StaleToken}, State) ->
+    {noreply, State};
+handle_info(
+    {apply_volume, Token},
+    State = #state{volume_timer = {_TimerRef, Token}, pending_volume = Volume}
+) when is_integer(Volume) ->
+    NextState = mpv_action(set_volume, [Volume], State),
+    {noreply, NextState#state{volume_timer = undefined, pending_volume = undefined}};
+handle_info({apply_volume, _StaleToken}, State) ->
+    {noreply, State};
+
+handle_info({gtkgs, close_button, click, _Data, _Args}, State) ->
+    _ = ui_config(mpv_window, [{show, false}]),
+    {noreply, State};
+handle_info({gtkgs, mpv_window, destroy, _Data, _Args}, State) ->
+    {noreply, State#state{window = undefined}};
+handle_info({gtkgs, _Object, _Event, _Data, _Args}, State) ->
+    {noreply, State};
+handle_info(_Message, State) ->
+    {noreply, State}.
+
+terminate(_Reason, State) ->
+    cancel_timer(State#state.ui_retry),
+    cancel_timer(State#state.refresh_timer),
+    cancel_timer(State#state.mpv_timer),
+    cancel_timer(State#state.seek_timer),
+    cancel_timer(State#state.volume_timer),
+    demonitor_ref(State#state.ui_monitor),
+    demonitor_ipc(State#state.ipc_monitor),
+    case State#state.window of
+        undefined -> ok;
+        _ -> best_effort(fun() -> gtkgs:destroy(mpv_window) end)
+    end,
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+%%%===================================================================
+%%% GTK UI
+%%%===================================================================
+
+build_ui() ->
+    case {whereis(gtkgs), whereis(gtknode4)} of
+        {undefined, _} ->
+            {retry, gtkgs_not_started};
+        {_, undefined} ->
+            {retry, gtknode4_not_started};
+        {Gtkgs, _Controller} ->
+            case safe_gtknode4_ready() of
+                ok -> create_ui_tree(Gtkgs);
+                {error, Reason} -> {retry, Reason}
+            end
+    end.
+
+create_ui_tree(Gtkgs) ->
+    Tree = [
+        {window, mpv_window,
+            [
+                {title, ?APP_TITLE},
+                {width, 920},
+                {height, 720},
+                {min_width, 360},
+                {min_height, 520},
+                {show, true}
+            ],
+            [
+                {frame, main_column,
+                    [
+                        {orient, vertical},
+                        {spacing, 12},
+                        {margin, 16},
+                        {expand, true}
+                    ],
+                    [
+                        {label, title_label,
+                            [{text, "ERM Media"}, {class, 'title-1'}, {align, start}]},
+                        {label, now_playing,
+                            [
+                                {text, "Nothing playing"},
+                                {class, 'title-3'},
+                                {align, start},
+                                {wrap, true}
+                            ]},
+                        {label, playback_detail,
+                            [{text, "MPV is connecting…"}, {align, start}, {class, 'dim-label'}]},
+                        {frame, transport_row,
+                            [{orient, horizontal}, {spacing, 8}, {homogeneous, true}],
+                            [
+                                touch_button(previous_button, "⏮  Previous", "Previous track"),
+                                touch_button(play_button, "⏯  Play / Pause", "Toggle playback"),
+                                touch_button(next_button, "Next  ⏭", "Next track")
+                            ]},
+                        {frame, seek_row,
+                            [{orient, horizontal}, {spacing, 8}],
+                            [
+                                {label, elapsed_label, [{text, "0:00"}, {width_chars, 6}]},
+                                {scale, seek_scale,
+                                    [
+                                        {min, 0},
+                                        {max, 1000},
+                                        {step, 1},
+                                        {value, 0},
+                                        {expand, true},
+                                        {draw_value, false},
+                                        {tooltip, "Playback position"}
+                                    ]},
+                                {label, duration_label, [{text, "0:00"}, {width_chars, 6}]}
+                            ]},
+                        {frame, volume_row,
+                            [{orient, horizontal}, {spacing, 8}],
+                            [
+                                {label, volume_label, [{text, "Volume"}, {width_chars, 8}]},
+                                {scale, volume_scale,
+                                    [
+                                        {min, 0},
+                                        {max, 100},
+                                        {step, 1},
+                                        {value, ?DEFAULT_VOLUME},
+                                        {expand, true},
+                                        {draw_value, false},
+                                        {tooltip, "Playback volume"}
+                                    ]},
+                                {label, volume_value,
+                                    [{text, volume_text(?DEFAULT_VOLUME)}, {width_chars, 5}]}
+                            ]},
+                        {frame, folder_row,
+                            [{orient, horizontal}, {spacing, 8}],
+                            [
+                                {entry, folder_entry,
+                                    [
+                                        {placeholder, "Music folder path"},
+                                        {expand, true},
+                                        {tooltip, "Enter a local media folder"}
+                                    ]},
+                                touch_button(add_folder_button, "Add folder", "Add media recursively"),
+                                touch_button(rescan_button, "Rescan", "Rescan playlist folders")
+                            ]},
+                        {frame, library_row,
+                            [{orient, horizontal}, {spacing, 8}, {homogeneous, true}],
+                            [
+                                touch_button(like_button, "☆  Like", "Like or unlike current track"),
+                                touch_button(ipfs_button, "Add to IPFS", "Pin current track to IPFS"),
+                                touch_button(share_button, "Share", "Copy the current IPFS URL"),
+                                touch_button(clear_button, "Clear", "Clear the playlist"),
+                                touch_button(close_button, "Hide", "Hide this window")
+                            ]},
+                        {label, playlist_heading,
+                            [{text, "Playlist"}, {class, heading}, {align, start}]},
+                        {listbox, playlist_list,
+                            [
+                                {items, []},
+                                {expand, true},
+                                {min_height, 220},
+                                {selection, single},
+                                {tooltip, "Select a track to play"}
+                            ]},
+                        {label, status_label,
+                            [
+                                {text, "Ready"},
+                                {align, start},
+                                {wrap, true},
+                                {class, 'dim-label'}
+                            ]}
+                    ]}
+            ]}
+    ],
+    try gtkgs:create_tree(Gtkgs, Tree) of
+        {ok, [Window]} -> {ok, Window};
+        {error, CreateReason} -> {error, CreateReason};
+        Other -> {error, {unexpected_create_tree_reply, Other}}
+    catch
+        Class:ExceptionReason:Stacktrace ->
+            {error, {create_tree_failed, Class, ExceptionReason, Stacktrace}}
+    end.
+
+touch_button(Name, Label, Tooltip) ->
+    {button, Name,
+        [
+            {label, Label},
+            {tooltip, Tooltip},
+            {min_height, 48},
+            {expand, true}
+        ]}.
+
+%%%===================================================================
+%%% Media actions
+%%%===================================================================
+
+add_folder_from_entry(State) ->
+    case ui_read(folder_entry, text) of
+        Path0 when is_binary(Path0); is_list(Path0) ->
+            Path = string:trim(to_text(Path0)),
+            case Path of
+                [] ->
+                    update_status("Enter a media folder path first");
+                _ ->
+                    case safe_playlist(add_files, [Path, true]) of
+                        {error, Reason} -> update_status(io_lib:format("Could not add folder: ~p", [Reason]));
+                        _ ->
+                            _ = refresh_playlist(State),
+                            update_status(io_lib:format("Added folder: ~ts", [Path]))
+                    end
+            end;
+        Error ->
+            update_status(io_lib:format("Could not read folder path: ~p", [Error]))
+    end.
+
+add_current_to_ipfs(State) ->
+    case safe_playlist(current) of
         {ok, Track} ->
-            play_track(Track, S),
-            {noreply, S};
-        error ->
-            {noreply, S}
-    end;
-handle_event(E, S) ->
-    ?LOG_DEBUG("Unhandled ~p", [E]),
-    {noreply, S}.
-
-handle_info({mpv, status, Map}, S) ->
-    maybe_update_seek(S, Map),
-    {noreply, S};
-handle_info(refresh_playlist, S) ->
-    refresh_playlist(S),
-    {noreply, S};
-handle_info(_Msg, S) ->
-    {noreply, S}.
-
-handle_call(close, _From, S = #state{frame = F}) ->
-    catch wxFrame:close(F),
-    {reply, ok, S};
-handle_call(show, _From, S = #state{frame = F}) ->
-    catch wxFrame:show(F),
-    {reply, ok, S};
-handle_call(_Req, _From, S) ->
-    {reply, ok, S}.
-handle_cast(_Msg, S) -> {noreply, S}.
-terminate(_Reason, #state{frame = F}) ->
-    catch wxFrame:destroy(F),
-    ok;
-terminate(_Reason, _S) ->
-    ok.
-code_change(_V, S, _Extra) -> {ok, S}.
-
-%% Helpers
-add_folder(S = #state{list = _List}) ->
-    Dlg = wxDirDialog:new(S#state.frame, [
-        {title, "Pick media folder"}, {style, ?wxDD_DIR_MUST_EXIST}
-    ]),
-    case wxDirDialog:showModal(Dlg) of
-        ?wxID_OK ->
-            Dir = wxDirDialog:getPath(Dlg),
-            _ = playlist:add_files(Dir, true),
-            refresh_playlist(S),
-            ok;
+            update_status("Adding current track to IPFS…"),
+            case safe_apply(ipfs_client, add_and_pin, [Track#track.path]) of
+                {ok, Cid} ->
+                    case safe_playlist(update_cid, [Track#track.id, Cid]) of
+                        {error, UpdateReason} ->
+                            update_status(io_lib:format(
+                                "Pinned to IPFS, but playlist update failed: ~p",
+                                [UpdateReason]
+                            ));
+                        _ ->
+                            _ = refresh_playlist(State),
+                            update_status(io_lib:format("Pinned to IPFS: ~ts", [to_text(Cid)]))
+                    end;
+                Error ->
+                    update_status(io_lib:format("IPFS add failed: ~p", [Error]))
+            end;
         _ ->
-            ok
-    end,
-    wxDialog:destroy(Dlg).
-
-rescan(S) ->
-    playlist:rescan_all(),
-    refresh_playlist(S).
-
-add_current_to_ipfs(S) ->
-    case playlist:current() of
-        {ok, T} ->
-            {ok, Cid} = ipfs_client:add_and_pin(T#track.path),
-            playlist:update_cid(T#track.id, Cid),
-            refresh_playlist(S),
-            ok;
-        error ->
-            ok
+            update_status("Select a track first")
     end.
 
-share_current(S) ->
-    case playlist:current() of
-        {ok, T} when T#track.cid =/= undefined ->
-            Url = ipfs_client:gateway_url(T#track.cid),
-            copy_to_clipboard(Url),
-            update_status(S, io_lib:format("Shared: ~s", [Url]));
-        {ok, _} ->
-            update_status(S, "Add to IPFS first (Add→IPFS)!");
-        error ->
-            ok
+share_current(_State) ->
+    case safe_playlist(current) of
+        {ok, Track} when Track#track.cid =/= undefined ->
+            Url = safe_apply(ipfs_client, gateway_url, [Track#track.cid]),
+            case Url of
+                {error, Reason} -> update_status(io_lib:format("Share failed: ~p", [Reason]));
+                _ ->
+                    case copy_to_clipboard(Url) of
+                        ok -> update_status(io_lib:format("Copied: ~ts", [to_text(Url)]));
+                        {error, ClipboardReason} ->
+                            update_status(io_lib:format(
+                                "Clipboard unavailable: ~p", [ClipboardReason]
+                            ))
+                    end
+            end;
+        {ok, _Track} ->
+            update_status("Add the current track to IPFS first");
+        _ ->
+            update_status("Select a track first")
     end.
 
-refresh_playlist(_S = #state{list = List}) ->
-    wxListCtrl:deleteAllItems(List),
-    Tracks = playlist:all(),
-    lists:foreach(
-        fun({Idx, T}) ->
-            _ = wxListCtrl:insertItem(List, Idx, display_title(T)),
-            wxListCtrl:setItem(
-                List,
-                Idx,
-                1,
-                case T#track.cid of
-                    undefined -> "-";
-                    C -> to_text(C)
-                end
-            ),
-            wxListCtrl:setItem(
-                List,
-                Idx,
-                2,
-                case T#track.liked of
-                    true -> "★";
-                    _ -> ""
-                end
-            )
+refresh_playlist(#state{window = undefined}) ->
+    ok;
+refresh_playlist(_State) ->
+    Tracks =
+        case safe_playlist(all) of
+            Value when is_list(Value) -> Value;
+            _ -> []
         end,
-        Tracks
-    ).
-
-update_status(_S = #state{status_text = Txt}, Str) when is_list(Str) ->
-    wxStaticText:setLabel(Txt, lists:flatten(Str));
-update_status(S, T = #track{}) ->
-    wxStaticText:setLabel(S#state.status_text, io_lib:format("Now: ~s", [display_title(T)])).
-
-display_title(T) -> filename:basename(T#track.path).
-
-play_selected({ok, Track}, S) ->
-    play_track(Track, S);
-play_selected(error, _S) ->
-    ok;
-play_selected(_, _S) ->
+    Items = [playlist_item(Index, Track) || {Index, Track} <- Tracks],
+    _ = ui_config(playlist_list, [{items, Items}]),
+    update_current_labels(),
     ok.
 
-play_track(Track, S) ->
-    case catch mpv_ipc:load_file(Track#track.path) of
-        {'EXIT', Reason} ->
-            ?LOG_WARNING("MPV load_file failed for ~p: ~p", [Track#track.path, Reason]),
-            update_status(S, io_lib:format("MPV load failed: ~p", [Reason]));
+playlist_item(Index, Track) ->
+    Liked =
+        case Track#track.liked of
+            true -> "★";
+            _ -> " "
+        end,
+    Cid =
+        case Track#track.cid of
+            undefined -> "local";
+            Value -> short_cid(Value)
+        end,
+    io_lib:format("~s  ~3B  ~ts   ·   ~ts", [Liked, Index + 1, display_title(Track), Cid]).
+
+update_current_labels() ->
+    case safe_playlist(current) of
+        {ok, Track} ->
+            _ = ui_config(now_playing, [{text, display_title(Track)}]),
+            LikeLabel =
+                case Track#track.liked of
+                    true -> "★  Liked";
+                    _ -> "☆  Like"
+                end,
+            _ = ui_config(like_button, [{label, LikeLabel}]),
+            ok;
         _ ->
-            playlist:set_current(Track#track.id),
-            update_status(S, Track)
+            _ = ui_config(now_playing, [{text, "Nothing playing"}]),
+            _ = ui_config(like_button, [{label, "☆  Like"}]),
+            ok
+    end.
+
+play_selected({ok, Track}, State) ->
+    play_track(Track, State);
+play_selected({error, Reason}, State) ->
+    update_status(io_lib:format("Could not change track: ~p", [Reason])),
+    State;
+play_selected(Other, State) ->
+    update_status(io_lib:format("Unexpected playlist reply: ~p", [Other])),
+    State.
+
+play_track(Track, State) ->
+    case call_mpv(load_file, [Track#track.path], State) of
+        {error, _Reason, FailedState} ->
+            FailedState;
+        {ok, _Reply, ReadyState} ->
+            _ = ui_config(now_playing, [{text, display_title(Track)}]),
+            case safe_playlist(set_current, [Track#track.id]) of
+                {error, PlaylistReason} ->
+                    update_status(io_lib:format(
+                        "Playing, but playlist state could not be updated: ~p",
+                        [PlaylistReason]
+                    ));
+                _ ->
+                    update_status("Playing")
+            end,
+            ReadyState
+    end.
+
+update_playback_status(Status) ->
+    Percent = map_value(["percent-pos", <<"percent-pos">>, percent_pos], Status, undefined),
+    Position = map_value(["time-pos", <<"time-pos">>, time_pos], Status, undefined),
+    Duration = map_value([duration, "duration", <<"duration">>], Status, undefined),
+    Paused = map_value([pause, "pause", <<"pause">>], Status, undefined),
+    case Percent of
+        Value when is_number(Value) ->
+            _ = ui_config(seek_scale, [{value, clamp(Value * 10, 0, 1000)}]);
+        _ -> ok
     end,
+    _ = ui_config(elapsed_label, [{text, duration_text(Position)}]),
+    _ = ui_config(duration_label, [{text, duration_text(Duration)}]),
+    Detail =
+        case Paused of
+            true -> "Paused";
+            false -> "Playing";
+            _ -> "Connected"
+        end,
+    _ = ui_config(playback_detail, [{text, Detail}]),
     ok.
+
+%%%===================================================================
+%%% Safe integration helpers
+%%%===================================================================
+
+call_or_start(Request) ->
+    case whereis(?SERVER) of
+        undefined ->
+            case start(#{}) of
+                {ok, _Pid} -> safe_server_call(Request);
+                {error, {already_started, _Pid}} -> safe_server_call(Request);
+                Error -> Error
+            end;
+        _Pid -> safe_server_call(Request)
+    end.
+
+safe_server_call(Request) ->
+    try gen_server:call(?SERVER, Request) of
+        Reply -> Reply
+    catch
+        exit:Reason -> {error, {erm_mpv_unavailable, Reason}}
+    end.
 
 safe_mpv_connect(Path) ->
-    case catch mpv_ipc:connect(Path) of
-        {ok, Ipc} ->
-            Ipc;
-        {'EXIT', Reason} ->
-            ?LOG_WARNING("MPV IPC connect failed: ~p", [Reason]),
-            undefined;
-        Other ->
-            ?LOG_DEBUG("MPV IPC connect returned ~p", [Other]),
-            Other
+    case safe_mpv(connect, [Path]) of
+        {ok, Ipc} -> {ok, Ipc};
+        {error, Reason} -> {error, Reason};
+        Other -> {error, {unexpected_connect_reply, Other}}
     end.
+
+safe_mpv(Function, Args) ->
+    safe_apply_quiet(mpv_ipc, Function, Args).
+
+mpv_action(Function, Args, State) ->
+    case call_mpv(Function, Args, State) of
+        {ok, _Reply, NextState} -> NextState;
+        {error, _Reason, NextState} -> NextState
+    end.
+
+call_mpv(Function, _Args, State = #state{ipc = undefined}) ->
+    WaitingState = ensure_mpv_connect(State),
+    FailedState = report_mpv_error(Function, not_connected, WaitingState),
+    {error, not_connected, FailedState};
+call_mpv(Function, Args, State) ->
+    case safe_mpv(Function, Args) of
+        {error, Reason} ->
+            FailedState = report_mpv_error(Function, Reason, State),
+            {error, Reason, FailedState};
+        Reply ->
+            {ok, Reply, clear_mpv_error(Function, State)}
+    end.
+
+ensure_mpv_connect(State = #state{mpv_timer = undefined}) ->
+    Timer = erlang:send_after(0, self(), connect_mpv),
+    State#state{mpv_timer = Timer};
+ensure_mpv_connect(State) ->
+    State.
+
+mark_mpv_disconnected(Reason, State) ->
+    demonitor_ipc(State#state.ipc_monitor),
+    Timer = replace_timer(State#state.mpv_timer, 0, connect_mpv),
+    DisconnectedState = State#state{
+        ipc = undefined,
+        ipc_monitor = undefined,
+        mpv_timer = Timer,
+        mpv_retry_ms = ?MPV_RETRY_MS
+    },
+    report_mpv_error(disconnected, Reason, DisconnectedState).
+
+report_mpv_error(Function, Reason, State = #state{mpv_errors = Errors}) ->
+    Summary = mpv_error_summary(Reason),
+    case maps:get(Function, Errors, undefined) of
+        Summary ->
+            ok;
+        _Previous ->
+            log_mpv_error(Function, Reason)
+    end,
+    update_status(io_lib:format("MPV ~p failed: ~p", [Function, Summary])),
+    State#state{mpv_errors = maps:put(Function, Summary, Errors)}.
+
+clear_mpv_error(Function, State = #state{mpv_errors = Errors}) ->
+    State#state{mpv_errors = maps:remove(Function, Errors)}.
+
+mpv_error_summary({exception, Class, Reason, _Stacktrace}) ->
+    {Class, Reason};
+mpv_error_summary(Reason) ->
+    Reason.
+
+log_mpv_error(Function, {exception, Class, Reason, Stacktrace}) ->
+    ?LOG_WARNING("mpv_ipc:~p failed: ~p:~p~n~p", [
+        Function, Class, Reason, Stacktrace
+    ]);
+log_mpv_error(Function, Reason) ->
+    ?LOG_WARNING("mpv_ipc:~p failed: ~p", [Function, Reason]).
+
+safe_apply_quiet(Module, Function, Args) ->
+    _ = code:ensure_loaded(Module),
+    case erlang:function_exported(Module, Function, length(Args)) of
+        false ->
+            {error, {not_exported, Module, Function, length(Args)}};
+        true ->
+            try apply(Module, Function, Args) of
+                Reply -> Reply
+            catch
+                Class:Reason:Stacktrace ->
+                    {error, {exception, Class, Reason, Stacktrace}}
+            end
+    end.
+
+safe_playlist(Function) ->
+    safe_playlist(Function, []).
+
+safe_playlist(Function, Args) ->
+    safe_apply_quiet(playlist, Function, Args).
 
 safe_apply(Module, Function, Args) ->
     _ = code:ensure_loaded(Module),
     case erlang:function_exported(Module, Function, length(Args)) of
+        false -> {error, {not_exported, Module, Function, length(Args)}};
         true ->
-            catch apply(Module, Function, Args);
-        false ->
-            ok
+            try apply(Module, Function, Args) of
+                Reply -> Reply
+            catch
+                Class:Reason:Stacktrace ->
+                    ?LOG_DEBUG("~p:~p/~B failed: ~p:~p~n~p", [
+                        Module, Function, length(Args), Class, Reason, Stacktrace
+                    ]),
+                    {error, {Class, Reason}}
+            end
     end.
 
-ensure_playlist_started() ->
-    case whereis(playlist) of
-        undefined ->
-            case playlist:start_link() of
-                {ok, Pid} -> {ok, Pid};
-                {error, {already_started, Pid}} -> {ok, Pid};
-                Error -> Error
-            end;
-        Pid ->
-            {ok, Pid}
+ui_config(Name, Options) ->
+    try gtkgs:config(Name, Options) catch
+        _:_ -> {error, ui_not_ready}
     end.
 
-maybe_ensure_started(Module) ->
-    _ = code:ensure_loaded(Module),
-    case erlang:function_exported(Module, ensure_started, 0) of
-        true -> catch Module:ensure_started();
-        false -> ok
+ui_read(Name, Key) ->
+    try gtkgs:read(Name, Key) catch
+        _:_ -> {error, ui_not_ready}
     end.
 
-to_text(Bin) when is_binary(Bin) -> binary_to_list(Bin);
-to_text(Atom) when is_atom(Atom) -> atom_to_list(Atom);
-to_text(Text) when is_list(Text) -> Text;
-to_text(Other) -> io_lib:format("~p", [Other]).
+safe_gtknode4_ready() ->
+    try gtknode4:await_ready(0) of
+        ok -> ok;
+        {error, _Reason} = Error -> Error;
+        Other -> {error, {unexpected_gtknode4_status, Other}}
+    catch
+        exit:{noproc, _} -> {error, gtknode4_not_started};
+        Class:Reason:Stacktrace ->
+            {error, {gtknode4_status_failed, Class, Reason, Stacktrace}}
+    end.
 
-maybe_update_seek(#state{seek_slider = Seek}, Map) ->
-    case {maps:get("percent-pos", Map, undefined)} of
-        {P} when is_number(P) -> wxSlider:setValue(Seek, trunc(P * 10));
+update_status(Text) ->
+    ui_config(status_label, [{text, unicode:characters_to_binary(Text)}]).
+
+best_effort(Fun) ->
+    try Fun() of
         _ -> ok
+    catch
+        _:_ -> ok
     end.
+
+copy_to_clipboard(Value) ->
+    case os:find_executable("xclip") of
+        false ->
+            {error, xclip_not_found};
+        Xclip ->
+            try open_port({spawn_executable, Xclip}, [
+                binary, exit_status, {args, ["-selection", "clipboard"]}
+            ]) of
+                Port ->
+                    write_clipboard_port(
+                        Port,
+                        unicode:characters_to_binary(to_text(Value))
+                    )
+            catch
+                Class:Reason -> {error, {clipboard_failed, Class, Reason}}
+            end
+    end.
+
+write_clipboard_port(Port, Data) ->
+    try port_command(Port, Data) of
+        true -> ok;
+        false -> {error, clipboard_port_closed}
+    catch
+        Class:Reason -> {error, {clipboard_write_failed, Class, Reason}}
+    after
+        safe_port_close(Port)
+    end.
+
+safe_port_close(Port) when is_port(Port) ->
+    try erlang:port_close(Port) of
+        _ -> ok
+    catch
+        error:badarg -> ok
+    end;
+safe_port_close(_Port) ->
+    ok.
+
+monitor_ipc(Ipc) when is_pid(Ipc) ->
+    erlang:monitor(process, Ipc);
+monitor_ipc(Ipc) when is_port(Ipc) ->
+    erlang:monitor(port, Ipc);
+monitor_ipc(_Ipc) ->
+    undefined.
+
+demonitor_ipc(undefined) ->
+    ok;
+demonitor_ipc(MonitorRef) when is_reference(MonitorRef) ->
+    _ = erlang:demonitor(MonitorRef, [flush]),
+    ok.
+
+monitor_registered_process(Name) ->
+    case whereis(Name) of
+        Pid when is_pid(Pid) -> erlang:monitor(process, Pid);
+        undefined -> undefined
+    end.
+
+demonitor_ref(undefined) ->
+    ok;
+demonitor_ref(MonitorRef) when is_reference(MonitorRef) ->
+    _ = erlang:demonitor(MonitorRef, [flush]),
+    ok.
+
+%%%===================================================================
+%%% Formatting and utility helpers
+%%%===================================================================
+
+display_title(Track) ->
+    filename:basename(Track#track.path).
+
+short_cid(Value) ->
+    Text = to_text(Value),
+    case length(Text) > 16 of
+        true -> lists:sublist(Text, 8) ++ "…" ++ lists:nthtail(length(Text) - 6, Text);
+        false -> Text
+    end.
+
+volume_text(Volume) ->
+    io_lib:format("~B%", [Volume]).
+
+duration_text(Value) when is_number(Value), Value >= 0 ->
+    Total = trunc(Value),
+    Hours = Total div 3600,
+    Minutes = (Total rem 3600) div 60,
+    Seconds = Total rem 60,
+    case Hours of
+        0 -> io_lib:format("~B:~2..0B", [Minutes, Seconds]);
+        _ -> io_lib:format("~B:~2..0B:~2..0B", [Hours, Minutes, Seconds])
+    end;
+duration_text(_) ->
+    "0:00".
+
+map_value([], _Map, Default) -> Default;
+map_value([Key | Rest], Map, Default) ->
+    case maps:find(Key, Map) of
+        {ok, Value} -> Value;
+        error -> map_value(Rest, Map, Default)
+    end.
+
+clamp(Value, Min, _Max) when Value < Min -> Min;
+clamp(Value, _Min, Max) when Value > Max -> Max;
+clamp(Value, _Min, _Max) -> Value.
 
 ipc_path() ->
     getenv_default("MPV_IPC", "/tmp/mpv.sock").
-
-ipfs_api() ->
-    getenv_default("IPFS_API", "http://127.0.0.1:5001").
 
 getenv_default(Name, Default) ->
     case os:getenv(Name) of
@@ -429,16 +885,31 @@ getenv_default(Name, Default) ->
         Value -> Value
     end.
 
-copy_to_clipboard(Str) ->
-    %% Simple X11 copy fallback via xclip; no-op if missing.
-    case os:find_executable("xclip") of
-        false ->
-            ok;
-        Xclip ->
-            Port = open_port({spawn_executable, Xclip}, [
-                binary, exit_status, {args, ["-selection", "clipboard"]}
-            ]),
-            port_command(Port, unicode:characters_to_binary(Str)),
-            port_close(Port),
-            ok
-    end.
+to_text(Value) when is_binary(Value) -> unicode:characters_to_list(Value);
+to_text(Value) when is_atom(Value) -> atom_to_list(Value);
+to_text(Value) when is_list(Value) -> lists:flatten(Value);
+to_text(Value) -> lists:flatten(io_lib:format("~p", [Value])).
+
+replace_timer(undefined, Delay, Message) ->
+    erlang:send_after(Delay, self(), Message);
+replace_timer(Timer, Delay, Message) ->
+    cancel_timer(Timer),
+    erlang:send_after(Delay, self(), Message).
+
+replace_tagged_timer(Timer, Delay, Tag) ->
+    cancel_timer(Timer),
+    Token = make_ref(),
+    TimerRef = erlang:send_after(Delay, self(), {Tag, Token}),
+    {TimerRef, Token}.
+
+cancel_timer(undefined) -> ok;
+cancel_timer({TimerRef, _Token}) when is_reference(TimerRef) ->
+    _ = erlang:cancel_timer(TimerRef),
+    ok;
+cancel_timer(Timer) ->
+    _ = erlang:cancel_timer(Timer),
+    ok.
+
+options_map(Map) when is_map(Map) -> Map;
+options_map(List) when is_list(List) -> maps:from_list(List);
+options_map(undefined) -> #{}.

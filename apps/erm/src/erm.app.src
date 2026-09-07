@@ -6,13 +6,37 @@
     [
         {description, "An OTP application that provides a graphical shell."},
         {vsn, "0.1.0"},
-        {registered, []},
+        {registered, [erm_sup, gtknode4_sup, gtknode4, gtknode4_port, gtkgs]},
         {mod, {erm_app, []}},
         {
             applications,
             [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, erlexec, damage]
         },
-        {env, []},
+        {
+            env,
+            [
+                %% Keep the native session opt-in until the C-node implements
+                %% the complete protocol in doc/gtknode4_protocol.md. Enable it
+                %% in sys.config with the local/fake/visual examples supplied
+                %% by this integration bundle.
+                {gtknode4, #{
+                    enabled => false,
+                    mode => local_cnode,
+                    port => #{
+                        cnode_regname => gtknode4,
+                        controller_regname => gtknode4,
+                        handshake_timeout => 10000,
+                        test_mode => false
+                    },
+                    gs => #{
+                        test_mode => false,
+                        backend_timeout => 5000,
+                        dialog_timeout => infinity,
+                        event_log_limit => 1000
+                    }
+                }}
+            ]
+        },
         {modules, []},
         {licenses, ["Apache 2.0"]},
         {

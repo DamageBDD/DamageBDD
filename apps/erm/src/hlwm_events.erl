@@ -12,6 +12,7 @@
 -behaviour(gen_server).
 -define(NOTIFY_ID, "42").
 -define(NOTIFY_TIMEOUT, "1000").
+-define(PORT_RETRY_MS, 5000).
 
 -export([start_link/1, get_or_start/1]).
 -export([init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2, code_change/3]).
@@ -24,7 +25,8 @@
 -export([test/0]).
 
 -record(state, {
-    port,
+    port = undefined,
+    restart_timer = undefined,
     hooks = #{},
     events = [],
     max_events = 256,
@@ -34,30 +36,32 @@
     pending_windows = []
 }).
 notify_dunst(Msg) ->
-    RunOpts = [sync, stderr],
-    {ok, []} = exec:run(
-        [
-            "/usr/sbin//notify-send",
-            "-t",
-            ?NOTIFY_TIMEOUT,
-            "-r",
-            ?NOTIFY_ID,
-            "-a",
-            "erm",
-            Msg
-        ],
-        RunOpts
-    ).
+    case os:find_executable("notify-send") of
+        false ->
+            {error, notify_send_not_found};
+        NotifySend ->
+            RunOpts = [sync, stderr],
+            case exec:run(
+                [
+                    NotifySend,
+                    "-t",
+                    ?NOTIFY_TIMEOUT,
+                    "-r",
+                    ?NOTIFY_ID,
+                    "-a",
+                    "erm",
+                    Msg
+                ],
+                RunOpts
+            ) of
+                {ok, _Output} -> ok;
+                Error -> {error, {notify_failed, Error}}
+            end
+    end.
 
 init([Ctx]) ->
     process_flag(trap_exit, true),
-
-    Port = open_port(
-        {spawn, "herbstclient --idle"},
-        [{line, 1024}, exit_status, use_stdio, stderr_to_stdout]
-    ),
-
-    gproc:reg({n, l, {hlwm_events, monitor}}),
+    _ = maybe_register_monitor(),
 
     DeskHook =
         fun(Evt) ->
@@ -74,25 +78,30 @@ init([Ctx]) ->
     Pending = maps:get(start_windows, Ctx, []),
     Clients = refresh_clients(),
 
-    {ok, #state{
-        port = Port,
+    State0 = #state{
         hooks = #{desktop_notify => DeskHook},
         clients = Clients,
         pending_windows = Pending
-    }}.
+    },
+    {ok, start_monitor(State0)}.
 
 get_or_start(Context) ->
-    case gproc:where({n, l, {hlwm_events, monitor}}) of
+    case lookup_monitor() of
         undefined ->
-            {ok, Pid} = gen_server:start_link(?MODULE, [Context], []),
-            Pid;
+            case gen_server:start_link(?MODULE, [Context], []) of
+                {ok, Pid} -> Pid;
+                {error, {already_started, Pid}} -> Pid;
+                Error -> Error
+            end;
         Pid ->
             Pid
     end.
 
 ensure_tmux_terminal(Name) ->
-    Pid = get_or_start(#{start_windows => [to_list(Name)]}),
-    ensure_tmux_terminal(Pid, Name).
+    case get_or_start(#{start_windows => [to_list(Name)]}) of
+        Pid when is_pid(Pid) -> ensure_tmux_terminal(Pid, Name);
+        Error -> Error
+    end.
 
 ensure_tmux_terminal(Pid, Name0) ->
     Name = to_list(Name0),
@@ -138,26 +147,97 @@ handle_info({Port, {data, {eol, Line}}}, S0 = #state{port = Port}) ->
         _ ->
             {noreply, S0}
     end;
-handle_info({Port, {data, {eol, Line}}}, S = #state{port = Port}) ->
-    case parse_event(Line) of
-        {ok, Evt} ->
-            S1 = push_event(Evt, S),
-            broadcast(Evt, S1),
-            {noreply, S1};
-        _ ->
-            {noreply, S}
-    end;
-handle_info({'EXIT', Port, _Status}, _State = #state{port = Port}) ->
-    ?LOG_WARNING("hlwm port exited; restarting", []),
-    {ok, S1} = init([#{}]),
-    {noreply, S1};
+handle_info({Port, {exit_status, Status}}, State = #state{port = Port}) ->
+    {noreply, monitor_down({exit_status, Status}, State)};
+handle_info({'EXIT', Port, Reason}, State = #state{port = Port}) ->
+    {noreply, monitor_down({port_exit, Reason}, State)};
+handle_info(restart_monitor, State = #state{port = undefined}) ->
+    {noreply, start_monitor(State#state{restart_timer = undefined})};
+handle_info(restart_monitor, State) ->
+    {noreply, State#state{restart_timer = undefined}};
 handle_info(_Info, S) ->
     {noreply, S}.
 
-terminate(Reason, _S) ->
+terminate(Reason, #state{port = Port, restart_timer = Timer}) ->
+    cancel_timer(Timer),
+    safe_port_close(Port),
     ?LOG_INFO("hlwm_events terminating ~p", [Reason]),
     ok.
 code_change(_V, S, _E) -> {ok, S}.
+
+start_monitor(State) ->
+    cancel_timer(State#state.restart_timer),
+    case os:find_executable("herbstclient") of
+        false ->
+            schedule_monitor_restart(herbstclient_not_found, State);
+        Executable ->
+            try open_port(
+                {spawn_executable, Executable},
+                [
+                    {args, ["--idle"]},
+                    {line, 1024},
+                    exit_status,
+                    use_stdio,
+                    stderr_to_stdout
+                ]
+            ) of
+                Port ->
+                    ?LOG_INFO("hlwm event monitor started with ~ts", [Executable]),
+                    State#state{port = Port, restart_timer = undefined}
+            catch
+                Class:Reason:Stacktrace ->
+                    schedule_monitor_restart(
+                        {open_port_failed, Class, Reason, Stacktrace},
+                        State
+                    )
+            end
+    end.
+
+monitor_down(Reason, State = #state{port = Port}) ->
+    safe_port_close(Port),
+    schedule_monitor_restart(Reason, State#state{port = undefined}).
+
+schedule_monitor_restart(Reason, State) ->
+    cancel_timer(State#state.restart_timer),
+    ?LOG_WARNING("hlwm event monitor unavailable: ~p; retrying in ~B ms", [
+        Reason, ?PORT_RETRY_MS
+    ]),
+    Timer = erlang:send_after(?PORT_RETRY_MS, self(), restart_monitor),
+    State#state{port = undefined, restart_timer = Timer}.
+
+maybe_register_monitor() ->
+    try gproc:reg({n, l, {hlwm_events, monitor}}) of
+        _ -> ok
+    catch
+        Class:Reason ->
+            ?LOG_WARNING("Could not register hlwm event monitor in gproc: ~p", [
+                {Class, Reason}
+            ]),
+            {error, Reason}
+    end.
+
+lookup_monitor() ->
+    try gproc:where({n, l, {hlwm_events, monitor}}) of
+        Pid when is_pid(Pid) -> Pid;
+        _ -> undefined
+    catch
+        _:_ -> undefined
+    end.
+
+safe_port_close(Port) when is_port(Port) ->
+    try erlang:port_close(Port) of
+        _ -> ok
+    catch
+        error:badarg -> ok
+    end;
+safe_port_close(_Port) ->
+    ok.
+
+cancel_timer(undefined) ->
+    ok;
+cancel_timer(Timer) ->
+    _ = erlang:cancel_timer(Timer),
+    ok.
 
 push_event(E, S = #state{events = Evts, max_events = Max}) ->
     Evts1 =
@@ -168,8 +248,17 @@ push_event(E, S = #state{events = Evts, max_events = Max}) ->
     S#state{events = Evts1}.
 
 broadcast(Evt, #state{hooks = Hooks}) ->
-    maps:map(fun(_K, Fun) -> catch Fun(Evt) end, Hooks),
+    maps:foreach(fun(_K, Fun) -> safe_hook(Fun, Evt) end, Hooks),
     ok.
+
+safe_hook(Fun, Event) ->
+    try Fun(Event) of
+        _ -> ok
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING("hlwm event hook failed: ~p", [{Class, Reason, Stacktrace}]),
+            ok
+    end.
 
 %%
 %% Example lines (from `herbstclient --idle`):

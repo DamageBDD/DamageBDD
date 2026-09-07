@@ -10,6 +10,7 @@
 -export([content_types_provided/2]).
 -export([to_html/2]).
 -export([to_json/2]).
+-export([is_authorized/2]).
 
 %-export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, from_yaml/2]).
@@ -20,6 +21,7 @@
 -export([notify_user/2]).
 -export([validate_password/1]).
 -export([authenticate_user/2]).
+-export([wallet_snapshot/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("damage.hrl").
@@ -78,6 +80,20 @@ trails() ->
                         tags => ?TRAILS_TAG,
                         description => "do some action ",
                         produces => ["text/html", "application/json", "application/x-yaml"]
+                    }
+            }
+        ),
+        trails:trail(
+            "/accounts/wallet",
+            damage_accounts,
+            #{action => wallet},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Return Lightning, AE, and DAMAGE balances for the authenticated account.",
+                        produces => ["application/json"]
                     }
             }
         ),
@@ -203,6 +219,27 @@ trails() ->
             }
         ),
         trails:trail(
+            "/accounts/logout",
+            damage_accounts,
+            #{action => logout},
+            #{
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Clear the authenticated browser session and return an idempotent logout response.",
+                        produces => ["text/html", "application/json"]
+                    },
+                delete =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Clear the authenticated browser session and return an idempotent logout response.",
+                        produces => ["text/html", "application/json"]
+                    }
+            }
+        ),
+        trails:trail(
             "/accounts/auth/",
             damage_accounts,
             #{action => authenticate},
@@ -229,25 +266,6 @@ trails() ->
                                     type => <<"string">>
                                 }
                             ]
-                    }
-            }
-        ),
-        trails:trail(
-            "/accounts/logout",
-            damage_accounts,
-            #{action => logout},
-            #{
-                post =>
-                    #{
-                        tags => ?TRAILS_TAG,
-                        description => "Log out current browser session.",
-                        produces => ["text/html", "application/json"]
-                    },
-                delete =>
-                    #{
-                        tags => ?TRAILS_TAG,
-                        description => "Log out current browser session.",
-                        produces => ["text/html", "application/json"]
                     }
             }
         )
@@ -280,52 +298,58 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
+is_authorized(Req, #{action := Action} = State)
+        when Action =:= balance;
+             Action =:= wallet;
+             Action =:= invoices ->
+    safe_account_authorized(Req, State);
+is_authorized(Req, State) ->
+    {true, Req, State}.
+
+safe_account_authorized(Req, State) ->
+    try damage_http:is_authorized(Req, State) of
+        {true, Req1, State1} ->
+            {true, Req1, State1};
+        {false, Req1, State1} ->
+            {{false, <<"Bearer realm=\"damage\"">>}, Req1, State1};
+        {{false, _Realm} = False, Req1, State1} ->
+            {False, Req1, State1};
+        Other ->
+            ?LOG_WARNING("Unexpected account authorization result: ~p", [Other]),
+            {{false, <<"Bearer realm=\"damage\"">>}, Req, State}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING("Account authorization crashed: ~p", [
+                {Class, Reason, Stacktrace}
+            ]),
+            {{false, <<"Bearer realm=\"damage\"">>}, Req, State}
+    end.
+no_store_req(Req0) ->
+    Req1 = cowboy_req:set_resp_header(<<"cache-control">>, <<"no-store">>, Req0),
+    cowboy_req:set_resp_header(<<"pragma">>, <<"no-cache">>, Req1).
 to_json(Req, #{action := logout} = State) ->
-    Req1 = damage_access_token:clear_access_cookie(Req),
-    Body = jsx:encode(#{status => <<"ok">>, message => <<"Logged out.">>}),
-    Req2 =
-        cowboy_req:reply(
-            200,
-            #{<<"content-type">> => <<"application/json">>},
-            Body,
-            Req1
-        ),
-    {stop, Req2, State};
+    logout_json_response(Req, State);
 to_json(Req, #{action := confirm} = State) ->
     % for some browsers who send in applicaion/json contenttype
     to_html(Req, State);
 to_json(Req, #{action := rate} = State) ->
     {jsx:encode(#{price => price_feed:get_prices()}), Req, State};
-to_json(Req, #{action := balance} = State) ->
-    case damage_http:is_authorized(Req, State) of
-        {true, _Req0, #{public_key := AeAccount} = _State0} ->
-            {jsx:encode(balance(AeAccount)), Req, State};
-        _Other ->
-            {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}
-    end;
+to_json(Req, #{action := balance, public_key := AeAccount} = State) ->
+    Req1 = no_store_req(Req),
+    {jsx:encode(balance(AeAccount)), Req1, State};
+
+to_json(Req, #{action := wallet, public_key := AeAccount} = State) ->
+    Req1 = no_store_req(Req),
+    {jsx:encode(wallet_snapshot(AeAccount)), Req1, State};
 to_json(Req, State) ->
-    {stop, cowboy_req:reply(401, cowboy_req:set_resp_body(<<"Unauthorized.">>, Req)), State}.
+    Body = #{
+        status => <<"failed">>,
+        message => <<"Unsupported account action.">>
+    },
+    {jsx:encode(Body), Req, State}.
 
 to_html(Req, #{action := logout} = State) ->
-    Req1 = damage_access_token:clear_access_cookie(Req),
-    {ok, ApiUrl} = application:get_env(damage, api_url),
-    Body =
-        damage_utils:load_template(
-            "reset_password_response.html.mustache",
-            #{
-                status => <<"ok">>,
-                message => <<"Logged out.">>,
-                login_url => list_to_binary(ApiUrl)
-            }
-        ),
-    Req2 =
-        cowboy_req:reply(
-            200,
-            #{<<"content-type">> => <<"text/html">>},
-            Body,
-            Req1
-        ),
-    {stop, Req2, State};
+    logout_html_response(Req, State);
 to_html(Req, #{action := reset_password} = State) ->
     case cowboy_req:match_qs([token], Req) of
         #{token := Token} ->
@@ -346,7 +370,8 @@ to_html(Req, #{action := reset_password} = State) ->
                             }
                         ),
                     {Body, Req, State};
-                _Error ->
+                Error ->
+                    ?LOG_DEBUG("Error validating ~p", [Error]),
                     {<<"Invalid reset password link. Please try again.">>, Req, State}
             end
     end;
@@ -373,7 +398,8 @@ to_html(Req, #{action := confirm} = State) ->
                     }
                 ),
             {Body, Req, State};
-        _Error ->
+        Error ->
+            ?LOG_DEBUG("Error validating ~p", [Error]),
             {<<"Invalid confirmation link. Please try again.">>, Req, State}
     end.
 
@@ -392,6 +418,7 @@ authenticate_user(Email, Password0) ->
         _ ->
             {error, notauthorized}
     end.
+
 validate_password(Password) ->
     %% For example, minimum 8 characters with at least one uppercase letter,
     %% one lowercase letter, one digit, and one special character
@@ -411,27 +438,34 @@ send_account_confirm_email(#{email := Email} = Meta) when is_binary(Email) ->
 
     Data = maps:put(allowance, Allowance, maps:put(password, AuthTokenEncrypted, Meta)),
     Query = list_to_binary(uri_string:compose_query([{"token", AuthTokenEncrypted}])),
-    Context =
+    Ctxt =
         maps:put(
             <<"password_reset_url">>,
             <<ApiUrl0/binary, "/accounts/confirm?", Query/binary>>,
             Data
         ),
-    ToEmail = {maps:get(full_name, Meta, <<"">>), Email},
-    TextBody = damage_utils:load_template("signup_email.txt.mustache", Context),
-    HtmlBody = damage_utils:load_template("signup_email.html.mustache", Context),
-    {ok, _Pid} = damage_utils:send_email(
-        ToEmail,
+    Result = damage_utils:send_email(
+        {maps:get(full_name, Meta, <<>>), Email},
         <<"DamageBDD Account SignUp">>,
-        TextBody,
-        HtmlBody
+        damage_utils:load_template("signup_email.txt.mustache", Ctxt),
+        damage_utils:load_template("signup_email.html.mustache", Ctxt)
     ),
-    {
-        ok,
-        <<
-            "Please check email for confirmation link. Don't forget to check spam folder too."
-        >>
-    }.
+    account_email_result(
+        Result,
+        <<"Please check email for confirmation link. Don't forget to check spam folder too.">>,
+        <<"Unable to send account confirmation email. Please try again later.">>
+    ).
+
+account_email_result({ok, _}, SuccessMessage, _FailureMessage) ->
+    {ok, SuccessMessage};
+account_email_result(ok, SuccessMessage, _FailureMessage) ->
+    {ok, SuccessMessage};
+account_email_result({error, Reason}, _SuccessMessage, FailureMessage) ->
+    ?LOG_ERROR("Account email delivery failed: ~p", [Reason]),
+    {error, FailureMessage};
+account_email_result(Unexpected, _SuccessMessage, FailureMessage) ->
+    ?LOG_ERROR("Unexpected account email delivery result: ~p", [Unexpected]),
+    {error, FailureMessage}.
 
 -spec do_post_action(atom(), map()) ->
     {integer(), map()}.
@@ -496,7 +530,7 @@ do_post_action(
                             end
                     end;
                 _ ->
-                    Message = <<"Password does match.">>,
+                    Message = <<"Password does not match.">>,
                     {400, #{status => <<"failed">>, message => Message}}
             end;
         false ->
@@ -522,17 +556,24 @@ do_post_action(
             <<ApiUrl0/binary, "/accounts/reset_password?", Query/binary>>,
             Data
         ),
-    {ok, _Pid} = damage_utils:send_email(
-        {maps:get(full_name, Data, <<"">>), Email},
+    Result = damage_utils:send_email(
+        {maps:get(full_name, Data, <<>>), Email},
         <<"DamageBDD Account Reset Password">>,
         damage_utils:load_template("reset_password_email.txt.mustache", Ctxt),
         damage_utils:load_template("reset_password_email.html.mustache", Ctxt)
     ),
-    {200, #{
-        status => <<"ok">>,
-        message =>
-            <<"Account password reset. Please check email for confirmation link. Don't forget to check spam folder too.">>
-    }};
+    case
+        account_email_result(
+            Result,
+            <<"Account password reset. Please check email for confirmation link. Don't forget to check spam folder too.">>,
+            <<"Unable to send password reset email. Please try again later.">>
+        )
+    of
+        {ok, Message} ->
+            {200, #{status => <<"ok">>, message => Message}};
+        {error, Message} ->
+            {500, #{status => <<"failed">>, message => Message}}
+    end;
 do_post_action(
     confirm,
     #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm}
@@ -578,8 +619,8 @@ do_post_action(
                                         public_key => PubKey
                                     }};
                                 {error, Error} ->
-                                    {200, #{
-                                        status => <<"fail">>,
+                                    {400, #{
+                                        status => <<"failed">>,
                                         message => Error
                                     }}
                             end
@@ -610,25 +651,7 @@ do_post_action(create, #{email := Email} = _Data) ->
     end.
 
 from_html(Req, #{action := logout} = State) ->
-    Req1 = damage_access_token:clear_access_cookie(Req),
-    {ok, ApiUrl} = application:get_env(damage, api_url),
-    Body =
-        damage_utils:load_template(
-            "reset_password_response.html.mustache",
-            #{
-                status => <<"ok">>,
-                message => <<"Logged out.">>,
-                login_url => list_to_binary(ApiUrl)
-            }
-        ),
-    Req2 =
-        cowboy_req:reply(
-            200,
-            #{<<"content-type">> => <<"text/html">>},
-            Body,
-            Req1
-        ),
-    {stop, Req2, State};
+    logout_html_response(discard_request_body(Req), State);
 from_html(Req, #{action := authenticate} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
     Username = proplists:get_value(<<"username">>, Params),
@@ -645,7 +668,8 @@ from_html(Req, #{action := authenticate} = State) ->
                     )
                 ),
                 State};
-        {error, _Message} ->
+        {error, Message} ->
+            ?LOG_DEBUG("Auth failed ~p", [Message]),
             {
                 stop,
                 cowboy_req:reply(
@@ -656,6 +680,7 @@ from_html(Req, #{action := authenticate} = State) ->
     end;
 from_html(Req, #{action := create} = State) ->
     {ok, Params, Req0} = cowboy_req:read_urlencoded_body(Req),
+    ?LOG_DEBUG(" form data: ~p ", [Params]),
     case proplists:get_value(<<"email">>, Params) of
         undefined ->
             Response = cowboy_req:set_resp_body(
@@ -718,7 +743,7 @@ from_html(Req, #{action := Action} = State) ->
                 };
             {_, #{message := Message, status := _}} ->
                 {
-                    200,
+                    400,
                     damage_utils:load_template(
                         "reset_password_response.html.mustache",
                         #{status => <<"failed">>, message => Message}
@@ -732,16 +757,7 @@ from_html(Req, #{action := Action} = State) ->
     }.
 
 from_json(Req, #{action := logout} = State) ->
-    Req1 = damage_access_token:clear_access_cookie(Req),
-    Response0 = #{status => <<"ok">>, message => <<"Logged out.">>},
-    Req2 =
-        cowboy_req:reply(
-            200,
-            #{<<"content-type">> => <<"application/json">>},
-            jsx:encode(Response0),
-            Req1
-        ),
-    {stop, Req2, State};
+    logout_json_response(discard_request_body(Req), State);
 from_json(Req, #{action := authenticate} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
@@ -809,7 +825,7 @@ from_json(Req, #{action := Action} = State) ->
             {stop, Req1, State};
         Data0 ->
             case do_post_action(Action, Data0) of
-                {204, <<"">>} ->
+                {204, <<>>} ->
                     {stop, cowboy_req:reply(204, Req0), State};
                 {Status0, Response0} ->
                     Req1 =
@@ -823,6 +839,8 @@ from_json(Req, #{action := Action} = State) ->
             end
     end.
 
+from_yaml(Req, #{action := logout} = State) ->
+    logout_json_response(discard_request_body(Req), State);
 from_yaml(Req, #{action := reset_password} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status0, Response0} =
@@ -859,6 +877,55 @@ from_yaml(Req, #{action := Action} = State) ->
         State
     }.
 
+%% Logout is deliberately idempotent: an absent or expired session still
+%% receives a successful response. The canonical token helper owns the cookie
+%% attributes so login and logout cannot drift apart.
+logout_json_response(Req0, State) ->
+    Req1 = damage_access_token:clear_access_cookie(Req0),
+    Body = jsx:encode(#{status => <<"ok">>, message => <<"Logged out.">>}),
+    Req2 = cowboy_req:reply(
+        200,
+        no_store_headers(<<"application/json">>),
+        Body,
+        Req1
+    ),
+    {stop, Req2, State}.
+
+logout_html_response(Req0, State) ->
+    Req1 = damage_access_token:clear_access_cookie(Req0),
+    {ok, ApiUrl} = application:get_env(damage, api_url),
+    Body = damage_utils:load_template(
+        "reset_password_response.html.mustache",
+        200,
+        #{
+            status => <<"ok">>,
+            message => <<"Logged out.">>,
+            login_url => list_to_binary(ApiUrl)
+        }
+    ),
+    Req2 = cowboy_req:reply(
+        200,
+        no_store_headers(<<"text/html">>),
+        Body,
+        Req1
+    ),
+    {stop, Req2, State}.
+
+no_store_headers(ContentType) ->
+    #{
+        <<"content-type">> => ContentType,
+        <<"cache-control">> => <<"no-store">>,
+        <<"pragma">> => <<"no-cache">>
+    }.
+
+discard_request_body(Req) ->
+    case cowboy_req:read_body(Req) of
+        {ok, _Data, Req0} -> Req0;
+        {more, _Data, Req0} -> discard_request_body(Req0)
+    end.
+
+delete_resource(Req, #{action := logout} = State) ->
+    logout_json_response(Req, State);
 delete_resource(Req, #{action := invoices} = State) ->
     case damage_http:is_authorized(Req, State) of
         {true, _Req0, #{username := _Username} = _State0} ->
@@ -892,26 +959,186 @@ delete_resource(Req, #{action := invoices} = State) ->
                 State
             }
     end.
+
 balance(AeAccount) ->
     damage_balance_cache:snapshot(AeAccount).
 
-%balance(AeAccount) ->
-%    #{id := AeAccount, balance := BalanceAettos} = damage_ae:get_ae_balance(AeAccount),
-%    DamageHits = damage_ae:balance(AeAccount),
-%    Ledger = damage_nwc:ledger_balance_for_account_cached(AeAccount),
-%    Msats = maps:get(balance_msat, Ledger, 0),
-%
-%    #{
-%        status => <<"ok">>,
-%        aettos => damage_utils:to_bin(BalanceAettos),
-%        hits => damage_utils:to_bin(DamageHits),
-%        msats => damage_utils:to_bin(Msats),
-%
-%        %% keep richer fields too for debugging / future UI
-%        ae_amount => BalanceAettos,
-%        amount => DamageHits,
-%        ledger => Ledger
-%    }.
+%% Return atomic values as decimal strings so mobile/web clients do not lose
+%% precision when balances exceed JavaScript's safe integer range.
+-spec wallet_snapshot(binary()) -> map().
+wallet_snapshot(AeAccount) ->
+    Balances = #{
+        lightning => wallet_lightning_balance(AeAccount),
+        ae => wallet_ae_balance(AeAccount),
+        damage => wallet_damage_balance(AeAccount)
+    },
+    Status =
+        case lists:all(fun wallet_balance_available/1, maps:values(Balances)) of
+            true -> <<"ok">>;
+            false -> <<"partial">>
+        end,
+    #{
+        status => Status,
+        address => AeAccount,
+        updated_at => erlang:system_time(second),
+        balances => Balances
+    }.
+
+wallet_balance_available(#{available := true}) -> true;
+wallet_balance_available(_) -> false.
+
+wallet_damage_balance(AeAccount) ->
+    try damage_ae:balance(AeAccount) of
+        Amount when is_integer(Amount), Amount >= 0 ->
+            wallet_atomic_balance(Amount, ?DAMAGE_DECIMALS, <<"DAMAGE">>, <<"damage_token">>);
+        {error, Reason} ->
+            wallet_unavailable_balance(
+                ?DAMAGE_DECIMALS, <<"DAMAGE">>, <<"damage_token">>, Reason
+            );
+        Other ->
+            wallet_unavailable_balance(
+                ?DAMAGE_DECIMALS,
+                <<"DAMAGE">>,
+                <<"damage_token">>,
+                {unexpected_damage_balance, Other}
+            )
+    catch
+        Class:Reason ->
+            wallet_unavailable_balance(
+                ?DAMAGE_DECIMALS, <<"DAMAGE">>, <<"damage_token">>, {Class, Reason}
+            )
+    end.
+
+wallet_ae_balance(AeAccount) ->
+    try damage_ae:get_ae_balance(AeAccount) of
+        Account when is_map(Account) ->
+            case wallet_map_get([balance, <<"balance">>], Account, undefined) of
+                Amount when is_integer(Amount), Amount >= 0 ->
+                    wallet_atomic_balance(Amount, ?AE_DECIMALS, <<"AE">>, <<"aeternity_node">>);
+                Other ->
+                    wallet_unavailable_balance(
+                        ?AE_DECIMALS,
+                        <<"AE">>,
+                        <<"aeternity_node">>,
+                        {unexpected_ae_balance, Other}
+                    )
+            end;
+        {error, Reason} ->
+            wallet_unavailable_balance(?AE_DECIMALS, <<"AE">>, <<"aeternity_node">>, Reason);
+        Other ->
+            wallet_unavailable_balance(
+                ?AE_DECIMALS,
+                <<"AE">>,
+                <<"aeternity_node">>,
+                {unexpected_ae_account, Other}
+            )
+    catch
+        Class:Reason ->
+            wallet_unavailable_balance(
+                ?AE_DECIMALS, <<"AE">>, <<"aeternity_node">>, {Class, Reason}
+            )
+    end.
+
+wallet_lightning_balance(AeAccount) ->
+    try damage_nwc_http:resolve_user_ledger_ct(AeAccount) of
+        {ok, LedgerCt0} ->
+            LedgerCt = wallet_to_binary(LedgerCt0),
+            case damage_nwc_ledger_events:sessions(LedgerCt, 200) of
+                {ok, Sessions} when is_list(Sessions) ->
+                    AmountMsat = lists:sum([wallet_session_balance_msat(S) || S <- Sessions]),
+                    #{
+                        available => true,
+                        amount => integer_to_binary(AmountMsat),
+                        amount_msat => integer_to_binary(AmountMsat),
+                        amount_sat => integer_to_binary(AmountMsat div 1000),
+                        decimals => 3,
+                        symbol => <<"sat">>,
+                        source => <<"nwc_ledger">>,
+                        ledger_ct => LedgerCt,
+                        session_count => length(Sessions)
+                    };
+                {error, Reason} ->
+                    wallet_unavailable_balance(3, <<"sat">>, <<"nwc_ledger">>, Reason);
+                Other ->
+                    wallet_unavailable_balance(
+                        3, <<"sat">>, <<"nwc_ledger">>, {unexpected_nwc_sessions, Other}
+                    )
+            end;
+        {error, Reason} ->
+            maps:merge(
+                wallet_unavailable_balance(3, <<"sat">>, <<"nwc_ledger">>, Reason),
+                #{configured => false, session_count => 0}
+            );
+        Other ->
+            wallet_unavailable_balance(
+                3, <<"sat">>, <<"nwc_ledger">>, {unexpected_nwc_ledger, Other}
+            )
+    catch
+        Class:Reason ->
+            wallet_unavailable_balance(3, <<"sat">>, <<"nwc_ledger">>, {Class, Reason})
+    end.
+
+wallet_atomic_balance(Amount, Decimals, Symbol, Source) ->
+    #{
+        available => true,
+        amount => integer_to_binary(Amount),
+        decimals => Decimals,
+        symbol => Symbol,
+        source => Source
+    }.
+
+wallet_unavailable_balance(Decimals, Symbol, Source, Reason) ->
+    #{
+        available => false,
+        amount => <<"0">>,
+        decimals => Decimals,
+        symbol => Symbol,
+        source => Source,
+        reason => wallet_reason(Reason)
+    }.
+
+wallet_session_balance_msat(Session) when is_map(Session) ->
+    wallet_to_non_neg_integer(
+        wallet_map_get([balance_msat, <<"balance_msat">>], Session, 0)
+    );
+wallet_session_balance_msat(_) ->
+    0.
+
+wallet_map_get([Key | Rest], Map, Default) ->
+    case maps:find(Key, Map) of
+        {ok, Value} -> Value;
+        error -> wallet_map_get(Rest, Map, Default)
+    end;
+wallet_map_get([], _Map, Default) ->
+    Default.
+
+wallet_to_non_neg_integer(Value) when is_integer(Value), Value >= 0 ->
+    Value;
+wallet_to_non_neg_integer(Value) when is_binary(Value) ->
+    try binary_to_integer(Value) of
+        Integer when Integer >= 0 -> Integer;
+        _ -> 0
+    catch
+        _:_ -> 0
+    end;
+wallet_to_non_neg_integer(Value) when is_list(Value) ->
+    try list_to_integer(Value) of
+        Integer when Integer >= 0 -> Integer;
+        _ -> 0
+    catch
+        _:_ -> 0
+    end;
+wallet_to_non_neg_integer(_) ->
+    0.
+
+wallet_to_binary(Value) when is_binary(Value) -> Value;
+wallet_to_binary(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+wallet_to_binary(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+wallet_to_binary(Value) -> iolist_to_binary(io_lib:format("~p", [Value])).
+
+wallet_reason(Reason) when is_binary(Reason) -> Reason;
+wallet_reason(Reason) when is_atom(Reason) -> atom_to_binary(Reason, utf8);
+wallet_reason(Reason) -> iolist_to_binary(io_lib:format("~p", [Reason])).
 
 delete_account(Email) ->
     case damage_ae:delete_account(Email) of

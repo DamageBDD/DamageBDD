@@ -131,18 +131,26 @@ call_or_start(Req) ->
     end.
 
 ensure_exec_started() ->
-    try application:ensure_all_started(exec) of
+    ensure_shell_env(),
+    try application:ensure_all_started(erlexec) of
         {ok, _Apps} ->
             ok;
-        {error, {already_started, exec}} ->
+        {error, {already_started, _App}} ->
             ok;
         {error, Reason} ->
             {error, Reason};
         Other ->
-            {error, {unexpected_exec_start_reply, Other}}
+            {error, {unexpected_erlexec_start_reply, Other}}
     catch
-        Class:Reason:Stack ->
-            {error, {exception, Class, Reason, Stack}}
+        Class:Reason:Stacktrace ->
+            {error, {exception, Class, Reason, Stacktrace}}
+    end.
+
+ensure_shell_env() ->
+    case os:getenv("SHELL") of
+        false -> os:putenv("SHELL", "/bin/sh");
+        "" -> os:putenv("SHELL", "/bin/sh");
+        _ -> ok
     end.
 
 ensure_mpv(Path, S) ->

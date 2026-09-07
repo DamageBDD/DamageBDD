@@ -56,7 +56,6 @@ empty_owner_is_rejected_test() ->
         )
     end).
 
-
 configured_presets_replace_builtins_test() ->
     Previous = application:get_env(ecai, wikimedia_index_presets),
     try

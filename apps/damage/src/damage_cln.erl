@@ -150,14 +150,17 @@ restart_backend() ->
 %% has enough configuration to be useful.
 enabled() ->
     case application:get_env(damage, cln_enabled) of
-        {ok, false} -> false;
-        {ok, true} -> true;
+        {ok, false} ->
+            false;
+        {ok, true} ->
+            true;
         _ ->
             %% Auto-enable only if there is a backend component that the
             %% isolated supervisor can actually start. This avoids an
             %% endless retry loop when env keys exist but no CLN pool is
             %% configured and websocket support is disabled.
-            try damage_cln_sup:configured_components() =/= []
+            try
+                damage_cln_sup:configured_components() =/= []
             catch
                 _:_ -> false
             end

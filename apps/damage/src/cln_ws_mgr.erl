@@ -64,15 +64,14 @@ get_cln_client_config() ->
                     <<"127.0.0.1">> -> #{};
                     _ -> #{transport => tls, tls_opts => TLSOptions}
                 end,
-            {ok,
-                #state{
-                    cln_host = Host,
-                    cln_port = Port,
-                    cln_wspath = Path,
-                    cln_certfile = CertFile,
-                    cln_keyfile = KeyFile,
-                    options = Options
-                }};
+            {ok, #state{
+                cln_host = Host,
+                cln_port = Port,
+                cln_wspath = Path,
+                cln_certfile = CertFile,
+                cln_keyfile = KeyFile,
+                options = Options
+            }};
         Missing ->
             {error, {missing_cln_websocket_config, Missing}}
     end.
@@ -127,7 +126,6 @@ handle_info(
     Message = parse_socketio_message(Message0),
     handle_event(ConnPid, StreamRef, Message),
     {noreply, State};
-
 handle_info(
     {gun_ws, ConnPid, StreamRef, close},
     State = #state{conn_pid = ConnPid, streamref = StreamRef}
@@ -279,11 +277,13 @@ start_ws(
 ) ->
     case damage_gun:open(Host, Port, Opts) of
         {ok, ConnPid} ->
-            case damage_gun:ws_upgrade(
-                ConnPid,
-                "/socket.io/?EIO=4&transport=websocket",
-                [{<<"rune">>, ReadOnly}]
-            ) of
+            case
+                damage_gun:ws_upgrade(
+                    ConnPid,
+                    "/socket.io/?EIO=4&transport=websocket",
+                    [{<<"rune">>, ReadOnly}]
+                )
+            of
                 {ok, StreamRef} ->
                     {ok, State#state{conn_pid = ConnPid, streamref = StreamRef}};
                 {error, Reason} ->

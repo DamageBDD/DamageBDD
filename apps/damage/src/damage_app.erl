@@ -92,7 +92,7 @@ get_trails() ->
     trails:store(Trails),
     trails:single_host_compile(Trails).
 
--spec start_phase(atom(), application:start_type(), []) -> ok.
+-spec start_phase(atom(), application:start_type(), []) -> ok | {error, term()}.
 start_phase(start_vanillae, _StartType, []) ->
     ?LOG_INFO("Starting vanillae."),
 
@@ -180,13 +180,15 @@ start_phase(damage, _StartType, []) ->
     ?LOG_INFO("Started Damage.");
 start_phase(register_node, _StartType, []) ->
     ?LOG_INFO("registering node."),
-    {ok, Hostname} = inet:gethostname(),
-    NodeName = list_to_atom("damage@" ++ Hostname),
-    case net_kernel:start([NodeName, longnames]) of
-        {ok, _Pid} ->
+    case ensure_distribution() of
+        {ok, NodeName, NameDomain, StartState} ->
+            ?LOG_INFO("Erlang distribution ~p as ~p using ~p", [
+                StartState, NodeName, NameDomain
+            ]),
             ok;
-        {error, {already_started, _}} ->
-            ok
+        {error, Reason} ->
+            ?LOG_ERROR("Could not start Erlang distribution: ~p", [Reason]),
+            {error, Reason}
     end;
 start_phase(start_sync, _StartType, []) ->
     ?LOG_INFO("Starting sync."),
@@ -238,3 +240,99 @@ stop(_State) ->
     ok.
 
 %% internal functions
+
+ensure_distribution() ->
+    case node() of
+        nonode@nohost ->
+            start_distribution();
+        RunningNode ->
+            validate_running_distribution(RunningNode)
+    end.
+
+start_distribution() ->
+    case inet:gethostname() of
+        {ok, Hostname} ->
+            AliveName = damage,
+            case configured_name_domain(Hostname) of
+                {ok, NameDomain} ->
+                    case net_kernel:start(AliveName, #{name_domain => NameDomain}) of
+                        {ok, _Pid} ->
+                            {ok, node(), NameDomain, started};
+                        {error, {already_started, _Pid}} ->
+                            validate_running_distribution(node());
+                        {error, NetKernelReason} ->
+                            {error, {
+                                net_kernel_start_failed,
+                                AliveName,
+                                NameDomain,
+                                NetKernelReason
+                            }}
+                    end;
+                {error, _Reason} = Error ->
+                    Error
+            end;
+        {error, HostnameReason} ->
+            {error, {hostname_lookup_failed, HostnameReason}}
+    end.
+
+configured_name_domain(Hostname) ->
+    case application:get_env(damage, node_name_domain, auto) of
+        auto ->
+            {ok, infer_name_domain(Hostname)};
+        shortnames ->
+            validate_requested_name_domain(shortnames, Hostname);
+        longnames ->
+            validate_requested_name_domain(longnames, Hostname);
+        Invalid ->
+            {error, {invalid_node_name_domain, Invalid, [auto, shortnames, longnames]}}
+    end.
+
+infer_name_domain(Hostname) ->
+    case lists:member($., Hostname) of
+        true -> longnames;
+        false -> shortnames
+    end.
+
+validate_requested_name_domain(longnames, Hostname) ->
+    case lists:member($., Hostname) of
+        true -> {ok, longnames};
+        false ->
+            {error, {longnames_requires_fully_qualified_hostname, Hostname,
+                "use shortnames or configure a fully qualified hostname"}}
+    end;
+validate_requested_name_domain(shortnames, Hostname) ->
+    case lists:member($., Hostname) of
+        false -> {ok, shortnames};
+        true ->
+            {error, {shortnames_requires_unqualified_hostname, Hostname}}
+    end.
+
+validate_running_distribution(nonode@nohost) ->
+    {error, erlang_distribution_not_started};
+validate_running_distribution(RunningNode) ->
+    case node_host(RunningNode) of
+        {ok, Hostname} ->
+            case net_kernel:get_state() of
+                #{started := Started, name_domain := NameDomain} when
+                    Started =/= no,
+                    (NameDomain =:= shortnames orelse NameDomain =:= longnames)
+                ->
+                    validate_running_name_domain(RunningNode, Hostname, NameDomain);
+                State ->
+                    {error, {invalid_distribution_state, RunningNode, State}}
+            end;
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+validate_running_name_domain(RunningNode, Hostname, NameDomain) ->
+    case validate_requested_name_domain(NameDomain, Hostname) of
+        {ok, NameDomain} -> {ok, RunningNode, NameDomain, already_started};
+        {error, Reason} -> {error, {invalid_running_node_name, RunningNode, Reason}}
+    end.
+
+node_host(NodeName) ->
+    case string:split(atom_to_list(NodeName), "@", all) of
+        [_Alive, Hostname] -> {ok, Hostname};
+        _ -> {error, {invalid_node_name, NodeName}}
+    end.

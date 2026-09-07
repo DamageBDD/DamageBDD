@@ -893,6 +893,16 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+get_wallet_proc(AeAccount, PrivateKey) when is_list(AeAccount) ->
+    get_wallet_proc(list_to_binary(AeAccount), PrivateKey);
+get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
+    case wallet_lookup(AeAccount) of
+        {ok, Pid} ->
+            Pid;
+        undefined ->
+            start_or_reuse_wallet_proc(AeAccount, PrivateKey)
+    end.
+
 get_wallet_proc(AeAccount) when is_list(AeAccount) ->
     get_wallet_proc(list_to_binary(AeAccount));
 get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
@@ -934,6 +944,114 @@ get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
             Pid
     end.
 
+wallet_key(AeAccount) ->
+    {?MODULE, AeAccount}.
+
+wallet_gproc_key(AeAccount) ->
+    {n, l, wallet_key(AeAccount)}.
+
+wallet_lookup(AeAccount) ->
+    try gproc:lookup_local_name(wallet_key(AeAccount)) of
+        Pid when is_pid(Pid) ->
+            case is_process_alive(Pid) of
+                true -> {ok, Pid};
+                false -> undefined
+            end;
+        _ ->
+            undefined
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_DEBUG("wallet lookup failed for ~p: ~p", [
+                AeAccount, {Class, Reason, Stacktrace}
+            ]),
+            undefined
+    end.
+
+start_or_reuse_wallet_proc(AeAccount, PrivateKey) ->
+    ChildSpec = #{
+        id => wallet_key(AeAccount),
+        start => {damage_ae, start_link, [AeAccount, PrivateKey]},
+        restart => permanent,
+        shutdown => 60,
+        type => worker,
+        modules => [damage_ae]
+    },
+    case supervisor:start_child(damage_sup, ChildSpec) of
+        {ok, Pid} ->
+            claim_wallet_proc(AeAccount, Pid);
+        {ok, Pid, _Info} ->
+            claim_wallet_proc(AeAccount, Pid);
+        {error, {already_started, Pid}} ->
+            claim_wallet_proc(AeAccount, Pid);
+        {error, already_present} ->
+            restart_present_wallet_proc(AeAccount, PrivateKey);
+        {error, Reason} ->
+            error({wallet_start_failed, AeAccount, Reason})
+    end.
+
+restart_present_wallet_proc(AeAccount, PrivateKey) ->
+    case wallet_lookup(AeAccount) of
+        {ok, Pid} ->
+            Pid;
+        undefined ->
+            case supervisor:restart_child(damage_sup, wallet_key(AeAccount)) of
+                {ok, Pid} ->
+                    claim_wallet_proc(AeAccount, Pid);
+                {ok, Pid, _Info} ->
+                    claim_wallet_proc(AeAccount, Pid);
+                {error, {already_started, Pid}} ->
+                    claim_wallet_proc(AeAccount, Pid);
+                {error, not_found} ->
+                    _ = delete_wallet_child(AeAccount),
+                    start_or_reuse_wallet_proc(AeAccount, PrivateKey);
+                {error, Reason} ->
+                    error({wallet_restart_failed, AeAccount, Reason})
+            end
+    end.
+
+delete_wallet_child(AeAccount) ->
+    try supervisor:delete_child(damage_sup, wallet_key(AeAccount)) of
+        _ -> ok
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_DEBUG("Ignoring wallet child delete failure for ~p: ~p", [
+                AeAccount, {Class, Reason, Stacktrace}
+            ]),
+            ok
+    end.
+
+claim_wallet_proc(AeAccount, Pid) when is_pid(Pid) ->
+    try gproc:reg_other(wallet_gproc_key(AeAccount), Pid) of
+        _ ->
+            Pid
+    catch
+        error:badarg:Stacktrace ->
+            case wallet_lookup(AeAccount) of
+                {ok, Pid} ->
+                    Pid;
+                {ok, ExistingPid} ->
+                    ?LOG_WARNING(
+                        "wallet proc race for ~p: started=~p existing=~p",
+                        [AeAccount, Pid, ExistingPid]
+                    ),
+                    ExistingPid;
+                undefined ->
+                    ?LOG_WARNING(
+                        "wallet gproc registration failed for ~p pid=~p: ~p",
+                        [AeAccount, Pid, Stacktrace]
+                    ),
+                    Pid
+            end;
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "wallet gproc registration crashed for ~p pid=~p: ~p",
+                [AeAccount, Pid, {Class, Reason, Stacktrace}]
+            ),
+            case wallet_lookup(AeAccount) of
+                {ok, ExistingPid} -> ExistingPid;
+                undefined -> Pid
+            end
+    end.
 restart_wallet_proc(AeAccount) ->
     case gproc:lookup_local_name({?MODULE, AeAccount}) of
         undefined ->

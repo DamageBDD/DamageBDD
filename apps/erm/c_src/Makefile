@@ -1,24 +1,25 @@
-CC      ?= cc
+ERL ?= erl
+CC ?= cc
 
-ERL_ROOT        := $(shell erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().' -s init stop)
-ERL_EI_INC      := $(ERL_ROOT)/usr/include
-ERL_EI_LIB      := $(ERL_ROOT)/usr/lib
+ERL_ROOT := $(shell $(ERL) -noshell -eval 'io:format("~s", [code:root_dir()]), halt().')
+ERL_INCLUDE := $(ERL_ROOT)/usr/include
+PKG_CONFIG ?= pkg-config
 
-CFLAGS  := -O2 -Wall -Wextra \
-           $(shell pkg-config --cflags gtk4) \
-           -I$(ERL_EI_INC)
+CFLAGS ?= -O2 -g
+CFLAGS += -fPIC -Wall -Wextra -Wpedantic -I$(ERL_INCLUDE) \
+          $(shell $(PKG_CONFIG) --cflags xcb xcb-screensaver xcb-dpms)
+LDLIBS := $(shell $(PKG_CONFIG) --libs xcb xcb-screensaver xcb-dpms)
 
-LDFLAGS := $(shell pkg-config --libs gtk4) \
-           -L$(ERL_EI_LIB) -lei
+TARGET := ../priv/erm_dpms_nif.so
+SRC := erm_dpms_nif.c
 
-all: gtknode4
+.PHONY: all clean
 
-gtknode4: gtknode4.o
-	$(CC) gtknode4.o $(LDFLAGS) -o $@
+all: $(TARGET)
 
-gtknode4.o: gtknode4.c gtknode4.h
-	$(CC) $(CFLAGS) -c $< -o $@
+$(TARGET): $(SRC)
+	mkdir -p ../priv
+	$(CC) $(CFLAGS) -shared -o $@ $< $(LDLIBS)
 
 clean:
-	rm -f gtknode4 gtknode4.o
-
+	rm -f $(TARGET)
