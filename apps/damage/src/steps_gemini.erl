@@ -97,48 +97,61 @@ step(_Config, _Context, documentation, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
     "GIVEN: Encrypt and persist the Gemini API key in the secrets store, then load into context";
 step(_Config, Context, _Kw, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
     Key = ensure_binary(ApiKey),
-    case catch secrets:encrypt_store(gemini_api_key, Key) of
-        ok ->
-            ?LOG_INFO("Gemini API key stored in secrets store", []),
-            maps:put(gemini_api_key, Key, Context);
-        Error ->
-            maps:put(
-                fail,
-                damage_utils:strf("Failed to store Gemini API key in secrets: ~p", [Error]),
-                Context
-            )
+    case account_secret_scope(Context) of
+        {ok, Scope} ->
+            try secrets:encrypt_store(Scope, <<"gemini_api_key">>, Key) of
+                ok ->
+                    ?LOG_INFO("Gemini API key stored in account-scoped secrets", []),
+                    maps:put(gemini_api_key, Key, Context);
+                Error ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf("Failed to store Gemini API key in secrets: ~p", [Error]),
+                        Context
+                    )
+            catch
+                Class:Reason ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "Failed to store Gemini API key in secrets: ~p",
+                            [{Class, Reason}]
+                        ),
+                        Context
+                    )
+            end;
+        {error, Reason} ->
+            maps:put(fail, damage_utils:strf("Gemini account secret scope unavailable: ~p", [Reason]), Context)
     end;
 %%------------------------------------------------------------------------------
 %% GIVEN: Load API key from secrets store by name
 %%
-%% SecretName is the atom key used when the secret was stored via
-%% secrets:encrypt_store/2.  Example Gherkin:
+%% SecretName is resolved only inside the authenticated account scope.
+%% Example Gherkin:
 %%   Given I load the Gemini API key from secret gemini_api_key
 %%------------------------------------------------------------------------------
 step(_Config, _Context, documentation, _N, ?STEP_LOAD_GEMINI_SECRET, _) ->
     _ = SecretName,
     "GIVEN: Retrieve and decrypt the Gemini API key from the secrets DETS store";
 step(_Config, Context, _Kw, _N, ?STEP_LOAD_GEMINI_SECRET, _) ->
-    Atom =
-        case SecretName of
-            A when is_atom(A) -> A;
-            B when is_binary(B) -> binary_to_atom(B, utf8);
-            L when is_list(L) -> list_to_atom(L)
-        end,
-    case secrets:retrieve_decrypt(Atom) of
-        {ok, Key} ->
-            maps:put(gemini_api_key, ensure_binary(Key), Context);
-        error ->
-            maps:put(
-                fail,
-                damage_utils:strf(
-                    "Could not retrieve Gemini API key from secrets store (name=~p). "
-                    "Ensure the secret was stored with secrets:encrypt_store/2 and "
-                    "the node is unlocked.",
-                    [Atom]
-                ),
-                Context
-            )
+    Name = secret_name_binary(SecretName),
+    case account_secret_scope(Context) of
+        {ok, Scope} ->
+            case secrets:retrieve_decrypt(Scope, Name) of
+                {ok, Key} ->
+                    maps:put(gemini_api_key, ensure_binary(Key), Context);
+                error ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "Could not retrieve Gemini API key from account-scoped secrets (name=~p).",
+                            [Name]
+                        ),
+                        Context
+                    )
+            end;
+        {error, Reason} ->
+            maps:put(fail, damage_utils:strf("Gemini account secret scope unavailable: ~p", [Reason]), Context)
     end;
 %%------------------------------------------------------------------------------
 %% GIVEN: Select a specific Gemini model
@@ -279,7 +292,7 @@ step(_Config, _Context, documentation, _N, ?STEP_GEMINI_RESP_JSON_PATH, _) ->
     "THEN: Assert ejsonpath Path in the raw Gemini JSON response equals Value";
 step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_RESP_JSON_PATH, _) ->
     Raw = maps:get(gemini_raw, Context, #{}),
-    case catch ejsonpath:q(Path, Raw) of
+    try ejsonpath:q(Path, Raw) of
         {[Value | _], _} ->
             Context;
         Other ->
@@ -288,6 +301,16 @@ step(_Config, Context, <<"Then">>, _N, ?STEP_GEMINI_RESP_JSON_PATH, _) ->
                 damage_utils:strf(
                     "Gemini JSON at ~p expected ~p, got ~p",
                     [Path, Value, Other]
+                ),
+                Context
+            )
+    catch
+        Class:Reason ->
+            maps:put(
+                fail,
+                damage_utils:strf(
+                    "Gemini JSON path ~p failed: ~p",
+                    [Path, {Class, Reason}]
                 ),
                 Context
             )
@@ -358,10 +381,8 @@ build_url(Model) ->
 %%      or pre-loaded via STEP_LOAD_GEMINI_SECRET.  This is always preferred so
 %%      that a test scenario can override the node-wide default.
 %%
-%%   2. secrets:retrieve_decrypt(Atom) – the encrypted-at-rest secret stored at
-%%      node start via secrets:encrypt_store(Atom, <<"sk-...">>).
-%%      The atom defaults to `gemini_api_key` but can be overridden by setting
-%%      `gemini_secret_name` in the context (binary, atom, or list accepted).
+%%   2. authenticated account-scoped secret storage. Trusted internal callers
+%%      without an account may use only the fixed legacy node key `gemini_api_key`.
 %%
 %%   3. OS env var GEMINI_API_KEY – convenient for local dev / CI pipelines.
 %%
@@ -375,17 +396,28 @@ resolve_api_key(Context) ->
     end.
 
 resolve_api_key_from_secrets(Context) ->
-    Atom = secret_name_atom(maps:get(gemini_secret_name, Context, gemini_api_key)),
-    case catch secrets:retrieve_decrypt(Atom) of
+    Name = secret_name_binary(maps:get(gemini_secret_name, Context, <<"gemini_api_key">>)),
+    Lookup =
+        case account_secret_scope(Context) of
+            {ok, Scope} ->
+                secrets:retrieve_decrypt(Scope, Name);
+            {error, no_authenticated_account} ->
+                %% Trusted node/internal callers may still use the fixed legacy
+                %% node-level Gemini key. User-controlled secret names are never
+                %% resolved in the node-global namespace.
+                secrets:retrieve_decrypt(gemini_api_key);
+            {error, _} ->
+                error
+        end,
+    case Lookup of
         {ok, Key} when is_binary(Key), byte_size(Key) > 0 ->
             Key;
         {ok, Key} when is_list(Key), Key =/= [] ->
             list_to_binary(Key);
         _ ->
             ?LOG_DEBUG(
-                "Gemini API key not found in secrets store (name=~p), "
-                "trying GEMINI_API_KEY env var",
-                [Atom]
+                "Gemini API key unavailable in permitted secret scope; trying GEMINI_API_KEY env var",
+                []
             ),
             resolve_api_key_from_env()
     end.
@@ -396,10 +428,22 @@ resolve_api_key_from_env() ->
         Key -> list_to_binary(Key)
     end.
 
-%% Coerce secret name to atom for secrets:retrieve_decrypt/1
-secret_name_atom(A) when is_atom(A) -> A;
-secret_name_atom(B) when is_binary(B) -> binary_to_atom(B, utf8);
-secret_name_atom(L) when is_list(L) -> list_to_atom(L).
+account_secret_scope(Context) ->
+    case maps:get(public_key, Context, undefined) of
+        <<"ak_", _/binary>> = Owner -> {ok, {account, Owner}};
+        Owner when is_list(Owner), Owner =/= [] ->
+            OwnerBin = unicode:characters_to_binary(Owner),
+            case OwnerBin of
+                <<"ak_", _/binary>> -> {ok, {account, OwnerBin}};
+                _ -> {error, invalid_authenticated_account}
+            end;
+        _ -> {error, no_authenticated_account}
+    end.
+
+secret_name_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
+secret_name_binary(B) when is_binary(B) -> B;
+secret_name_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
+secret_name_binary(V) -> ensure_binary(V).
 
 %% Build auth headers including x-goog-api-key
 auth_headers(ApiKey) ->

@@ -14,6 +14,7 @@
 -export([step_dry/6]).
 -export([is_admin/1]).
 -export([ensure_admin/1]).
+-export([has_role/2, step_module_roles/1, step_module_allowed/2]).
 -export([set_fail/2, set_fail/3]).
 -export([parse_table/1]).
 -export([parse_step_body/1]).
@@ -41,8 +42,6 @@ step(_Config, Context, _, _N, ["I store an uuid in", Variable], _) ->
 %% Zero is a valid no-op. Keep explicit clauses so a tokenized string never
 %% reaches timer:sleep/1 before normalization.
 step(_Config, Context, _, _N, ["I wait", 0, "seconds"], _) ->
-    Context;
-step(_Config, Context, _, _N, ["I wait", 0.0, "seconds"], _) ->
     Context;
 step(_Config, Context, _, _N, ["I wait", "0", "seconds"], _) ->
     Context;
@@ -95,13 +94,7 @@ step(
 %%   """
 %%------------------------------------------------------------------------------
 step(_Config, Context, _Keyword, _N, ?STEP_SET_JSON_VAR, Body) ->
-    case catch jsx:decode(iolist_to_binary(Body), [return_maps]) of
-        {'EXIT', _Reason} ->
-            set_fail(
-                Context,
-                "Invalid JSON provided for variable ~p",
-                [Variable]
-            );
+    try jsx:decode(iolist_to_binary(Body), [return_maps]) of
         Json when is_map(Json); is_list(Json) ->
             maps:put(Variable, Json, Context);
         Other ->
@@ -109,6 +102,13 @@ step(_Config, Context, _Keyword, _N, ?STEP_SET_JSON_VAR, Body) ->
                 Context,
                 "Unexpected JSON value for variable ~p: ~p",
                 [Variable, Other]
+            )
+    catch
+        _:_ ->
+            set_fail(
+                Context,
+                "Invalid JSON provided for variable ~p",
+                [Variable]
             )
     end;
 step(
@@ -306,18 +306,98 @@ step(
             end
     end.
 
+%% ------------------------------------------------------------------
+%% Role based step-module access
+%%
+%% Step modules may declare:
+%%     -damage_roles([node_admin]).
+%%
+%% No annotation means the module is public. Multiple roles are OR'ed:
+%% satisfying any declared role allows the module to participate in step
+%% matching. Role membership is derived from the authenticated principal;
+%% callers cannot grant themselves roles by adding values to Context.
+%% ------------------------------------------------------------------
+
 is_admin(Context) when is_map(Context) ->
     is_admin(maps:get(public_key, Context, undefined));
-is_admin(AeAccount) when is_binary(AeAccount) ->
-    is_admin(binary_to_list(AeAccount));
+is_admin(undefined) ->
+    false;
 is_admin(AeAccount) ->
+    Account = role_principal(AeAccount),
     case application:get_env(damage, node_admins) of
-        {ok, NodeAdmins} ->
-            lists:member(AeAccount, NodeAdmins);
-        Other ->
-            ?LOG_ERROR("not node admin ~p <> ~p", [Other, AeAccount]),
+        {ok, NodeAdmins0} ->
+            NodeAdmins = normalize_role_members(NodeAdmins0),
+            lists:member(Account, NodeAdmins);
+        _ ->
             false
     end.
+
+has_role(Context, node_admin) ->
+    is_admin(Context);
+has_role(Context, <<"node_admin">>) ->
+    is_admin(Context);
+has_role(Context, "node_admin") ->
+    is_admin(Context);
+has_role(_Context, _Role) ->
+    %% Future roles must be explicitly implemented here. Unknown roles fail
+    %% closed rather than silently granting access.
+    false.
+
+step_module_roles(Module) when is_atom(Module) ->
+    case code:ensure_loaded(Module) of
+        {module, Module} ->
+            try Module:module_info(attributes) of
+                Attributes ->
+                    normalize_step_module_roles(
+                        proplists:get_value(damage_roles, Attributes, [])
+                    )
+            catch
+                _:_ -> unavailable
+            end;
+        _ ->
+            unavailable
+    end;
+step_module_roles(_Module) ->
+    unavailable.
+
+step_module_allowed(Module, Context) ->
+    case step_module_roles(Module) of
+        [] ->
+            true;
+        unavailable ->
+            false;
+        Roles when is_list(Roles) ->
+            lists:any(fun(Role) -> has_role(Context, Role) end, Roles)
+    end.
+
+normalize_step_module_roles([]) ->
+    [];
+normalize_step_module_roles([Roles]) when is_list(Roles) ->
+    Roles;
+normalize_step_module_roles(Roles) when is_list(Roles) ->
+    Roles;
+normalize_step_module_roles(Role) ->
+    [Role].
+
+normalize_role_members(Members) when is_list(Members) ->
+    case io_lib:printable_unicode_list(Members) of
+        true ->
+            [role_principal(Members)];
+        false ->
+            [role_principal(Member) || Member <- Members]
+    end;
+normalize_role_members(Member) ->
+    [role_principal(Member)].
+
+role_principal(Value) when is_binary(Value) ->
+    Value;
+role_principal(Value) when is_list(Value) ->
+    unicode:characters_to_binary(Value);
+role_principal(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+role_principal(Value) ->
+    unicode:characters_to_binary(io_lib:format("~p", [Value])).
+
 ensure_admin(Context) ->
     case is_admin(Context) of
         true ->

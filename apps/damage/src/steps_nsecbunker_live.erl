@@ -15,6 +15,11 @@
 %% never written into the DamageBDD Context, logs, or reports.
 %%--------------------------------------------------------------------
 -module(steps_nsecbunker_live).
+%% This module exercises node-level signing and bunker control capabilities.
+%% The runner reads this attribute before step matching and excludes the module
+%% entirely for callers without one of the declared roles.
+-damage_roles([node_admin]).
+
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
 -license("Apache-2.0").

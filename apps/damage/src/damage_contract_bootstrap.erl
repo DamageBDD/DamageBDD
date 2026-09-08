@@ -598,14 +598,46 @@ user_contract_secret_key(UserAccount, NameBin) ->
             (base64:encode(crypto:hash(sha256, damage_utils:to_bin(UserAccount))))/binary>>
     ).
 
-user_contract_secret_status(UserAccount, NameBin) ->
-    contract_secret_status(user_contract_secret_key(UserAccount, NameBin)).
-
-persist_user_ct(UserAccount, NameBin, <<"ct_", _/binary>> = CtId) ->
-    Key = user_contract_secret_key(UserAccount, NameBin),
-    case contract_secret_status(Key) of
+user_contract_secret_status(UserAccount0, NameBin) ->
+    UserAccount = damage_utils:to_bin(UserAccount0),
+    Scope = {account, UserAccount},
+    ScopedName = user_contract_scoped_name(NameBin),
+    case scoped_contract_secret_status(Scope, ScopedName) of
+        {ok, _} = Ok ->
+            Ok;
         missing ->
-            secrets:encrypt_store(Key, CtId);
+            %% One-way migration from the legacy node-global owner-hashed key.
+            LegacyKey = user_contract_secret_key(UserAccount, NameBin),
+            case contract_secret_status(LegacyKey) of
+                {ok, CtId} = Ok ->
+                    ok = secrets:encrypt_store(Scope, ScopedName, CtId),
+                    _ = secrets:delete_secret(LegacyKey),
+                    Ok;
+                Other ->
+                    Other
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+scoped_contract_secret_status(Scope, Name) ->
+    case secrets:retrieve_decrypt(Scope, Name) of
+        {ok, CtId0} -> normalize_contract_source(scoped_secret, Name, CtId0);
+        error -> missing;
+        {error, Reason} -> {error, {contract_secret_unavailable, Name, Reason}};
+        Other -> {error, {invalid_contract_secret_result, Name, Other}}
+    end.
+
+user_contract_scoped_name(NameBin) ->
+    <<"contract:", NameBin/binary>>.
+
+persist_user_ct(UserAccount0, NameBin, <<"ct_", _/binary>> = CtId) ->
+    UserAccount = damage_utils:to_bin(UserAccount0),
+    Scope = {account, UserAccount},
+    ScopedName = user_contract_scoped_name(NameBin),
+    case scoped_contract_secret_status(Scope, ScopedName) of
+        missing ->
+            secrets:encrypt_store(Scope, ScopedName, CtId);
         {ok, CtId} ->
             ok;
         {ok, Existing} ->

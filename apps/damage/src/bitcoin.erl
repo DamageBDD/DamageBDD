@@ -14,7 +14,9 @@
 -export([
     rpc/2,
     rpc/3,
-    node_rpc/2
+    node_rpc/2,
+    bitcoin_req/2,
+    bitcoin_req/3
 ]).
 
 %% Wallet / node convenience API
@@ -173,13 +175,19 @@ rpc_config() ->
         }
     of
         {{ok, Port}, {ok, User}, {ok, Password}} ->
-            {ok, #{
-                host => normalize_host(Host),
-                port => Port,
-                user => to_binary(User),
-                password => to_binary(Password),
-                opts => rpc_open_opts(Timeout)
-            }};
+            NormalizedHost = normalize_host(Host),
+            case rpc_open_opts(NormalizedHost, Timeout) of
+                {ok, RpcOpts} ->
+                    {ok, #{
+                        host => NormalizedHost,
+                        port => Port,
+                        user => to_binary(User),
+                        password => to_binary(Password),
+                        opts => RpcOpts
+                    }};
+                {error, _} = Error ->
+                    Error
+            end;
         {{ok, _Port}, {ok, _User}, _MissingPassword} ->
             ?LOG_INFO("Bitcoin integration disabled: set `bitcoin_rpc_password` secret.", []),
             {error, bitcoin_rpc_password_not_configured};
@@ -192,16 +200,32 @@ rpc_config() ->
             {error, invalid_bitcoin_rpc_config}
     end.
 
-rpc_open_opts(Timeout) ->
+rpc_open_opts(Host, Timeout) ->
     Base = #{connect_timeout => Timeout},
     case application:get_env(damage, bitcoin_rpc_transport, tcp) of
-        {ok, tls} ->
-            Base#{transport => tls, tls_opts => [{verify, verify_peer}]};
-        {ok, ssl} ->
-            Base#{transport => tls, tls_opts => [{verify, verify_peer}]};
-        _ ->
-            Base#{transport => tcp}
+        tls ->
+            {ok, Base#{transport => tls, tls_opts => damage_gun:tls_opts(Host)}};
+        ssl ->
+            {ok, Base#{transport => tls, tls_opts => damage_gun:tls_opts(Host)}};
+        tcp ->
+            allow_bitcoin_tcp(Host, Base);
+        Other ->
+            {error, {invalid_bitcoin_rpc_transport, Other}}
     end.
+
+allow_bitcoin_tcp(Host, Base) ->
+    case is_loopback_host(Host) of
+        true -> {ok, Base#{transport => tcp}};
+        false -> {error, {insecure_remote_bitcoin_rpc, Host}}
+    end.
+
+is_loopback_host("localhost") -> true;
+is_loopback_host("127.0.0.1") -> true;
+is_loopback_host("::1") -> true;
+is_loopback_host(<<"localhost">>) -> true;
+is_loopback_host(<<"127.0.0.1">>) -> true;
+is_loopback_host(<<"::1">>) -> true;
+is_loopback_host(_) -> false.
 
 do_rpc(Host, Port, Opts, User, Password, Path, Payload) ->
     Timeout = maps:get(connect_timeout, Opts, ?BITCOIN_RPC_TIMEOUT),
@@ -248,25 +272,27 @@ post_rpc(ConnPid, User, Password, Path, Payload, Timeout) ->
     end.
 
 decode_rpc_response(Status, _Headers, Body) when Status >= 200, Status < 300 ->
-    case catch jsx:decode(Body, [{labels, atom}, return_maps]) of
-        #{result := Result, error := null} ->
+    try jsx:decode(Body, [return_maps]) of
+        #{<<"result">> := Result, <<"error">> := null} ->
             {ok, Result};
-        #{result := null, error := Error} when Error =/= null ->
+        #{<<"result">> := null, <<"error">> := Error} when Error =/= null ->
             {error, Error};
-        #{error := Error} when Error =/= null ->
+        #{<<"error">> := Error} when Error =/= null ->
             {error, Error};
-        #{result := Result} ->
+        #{<<"result">> := Result} ->
             {ok, Result};
-        {'EXIT', _} ->
-            {error, #{type => invalid_json, body => Body}};
         Other ->
             {error, #{type => unexpected_rpc_json, body => Other}}
+    catch
+        _:_ ->
+            {error, #{type => invalid_json, body => Body}}
     end;
 decode_rpc_response(Status, _Headers, Body) ->
     ErrorBody =
-        case catch jsx:decode(Body, [{labels, atom}, return_maps]) of
-            {'EXIT', _} -> Body;
+        try jsx:decode(Body, [return_maps]) of
             Decoded -> Decoded
+        catch
+            _:_ -> Body
         end,
     {error, #{type => http_error, status => Status, body => ErrorBody}}.
 

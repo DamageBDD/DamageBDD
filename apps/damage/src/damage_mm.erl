@@ -325,12 +325,16 @@ auth_get_json(Path, Headers) ->
     ).
 
 with_conn(Fun) ->
-    {ok, ConnPid} = gun:open(?HOST, ?PORT, #{tls_opts => [{verify, verify_none}]}),
+    {ok, ConnPid} = gun:open(?HOST, ?PORT, #{transport => tls, tls_opts => damage_gun:tls_opts(?HOST)}),
     try
         {ok, _Protocol} = gun:await_up(ConnPid),
         Fun(ConnPid)
     after
-        catch gun:close(ConnPid)
+        try gun:close(ConnPid) of
+            _ -> ok
+        catch
+            _:_ -> ok
+        end
     end.
 
 await_json(ConnPid, StreamRef) ->

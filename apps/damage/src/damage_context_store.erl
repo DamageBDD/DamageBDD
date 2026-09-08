@@ -153,22 +153,8 @@ register_redactions(Values) when is_list(Values) ->
 -spec redactions(binary()) -> {ok, [term()]} | {error, term()}.
 redactions(Token) when is_binary(Token) ->
     case ensure_started() of
-        ok ->
-            Now = erlang:monotonic_time(second),
-            Key = redaction_key(Token),
-            try ets:lookup(?REDACTION_TABLE, Key) of
-                [{Key, ExpiresAt, Values}] when ExpiresAt > Now, is_list(Values) ->
-                    {ok, Values};
-                [{Key, _ExpiresAt, _Values}] ->
-                    {error, context_redactions_expired};
-                [] ->
-                    {error, context_redactions_not_found}
-            catch
-                error:badarg ->
-                    {error, context_redaction_store_unavailable}
-            end;
-        {error, _} = Error ->
-            Error
+        ok -> gen_server:call(?MODULE, {redactions, Token}, ?AE_TIMEOUT);
+        {error, _} = Error -> Error
     end.
 
 -spec release_redactions(binary()) -> ok | {error, term()}.
@@ -281,6 +267,8 @@ handle_call({witness, StorageKey, Scope, Version, Root}, _From, State) ->
     {reply, load_snapshot_witness(StorageKey, Scope, Version, Root), State};
 handle_call({register_redactions, Values}, _From, State) ->
     {reply, register_redactions_locked(Values), State};
+handle_call({redactions, Token}, _From, State) ->
+    {reply, redactions_locked(Token), State};
 handle_call({release_redactions, Token}, _From, State) ->
     true = ets:delete(?REDACTION_TABLE, redaction_key(Token)),
     {reply, ok, State};
@@ -318,7 +306,7 @@ handle_call({clear, StorageKey, Scope}, _From, #{master_key := MasterKey} = Stat
     Reply = clear_scope(StorageKey, Scope, MasterKey),
     {reply, Reply, State};
 handle_call(Other, _From, State) ->
-    ?LOG_WARNING("Unhandled damage_context_store call ~p", [Other]),
+    ?LOG_WARNING("Unhandled damage_context_store call shape=~p", [term_shape(Other)]),
     {reply, {error, unsupported_call}, State}.
 
 handle_cast(_Message, State) ->
@@ -334,6 +322,13 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+term_shape(Term) when is_tuple(Term) -> {tuple, tuple_size(Term)};
+term_shape(Term) when is_map(Term) -> {map, map_size(Term)};
+term_shape(Term) when is_list(Term) -> list;
+term_shape(Term) when is_binary(Term) -> {binary, byte_size(Term)};
+term_shape(Term) when is_atom(Term) -> atom;
+term_shape(_) -> other.
 
 ensure_loaded(StorageKey, Scope) ->
     case ets:lookup(?ETS_TABLE, StorageKey) of
@@ -366,6 +361,19 @@ freeze_snapshot_locked(StorageKey, Scope, MasterKey) ->
             end;
         {error, _} = Error ->
             Error
+    end.
+
+redactions_locked(Token) ->
+    Now = erlang:monotonic_time(second),
+    Key = redaction_key(Token),
+    case ets:lookup(?REDACTION_TABLE, Key) of
+        [{Key, ExpiresAt, Values}] when ExpiresAt > Now, is_list(Values) ->
+            {ok, Values};
+        [{Key, _ExpiresAt, _Values}] ->
+            true = ets:delete(?REDACTION_TABLE, Key),
+            {error, context_redactions_expired};
+        [] ->
+            {error, context_redactions_not_found}
     end.
 
 register_redactions_locked(Values0) ->
@@ -883,7 +891,7 @@ ensure_redaction_table() ->
         undefined ->
             ets:new(?REDACTION_TABLE, [
                 named_table,
-                protected,
+                private,
                 set,
                 {read_concurrency, true},
                 {write_concurrency, true}

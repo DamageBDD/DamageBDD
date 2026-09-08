@@ -74,7 +74,7 @@ create_model(Name) ->
                     {<<"Authorization">>, list_to_binary("Bearer " ++ ApiKey)},
                     {<<"content-type">>, <<"application/json">>}
                 ],
-            {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+            {ok, ConnPid} = gun:open(Host, Port, #{transport => tls, tls_opts => damage_gun:tls_opts(Host)}),
             StreamRef = gun:post(ConnPid, <<"/api/create">>, Headers, PostData),
             Resp = read_stream(ConnPid, StreamRef),
             Resp;
@@ -146,7 +146,7 @@ handle_call({generate_text, UserPrompt, _AeAccount, _Req}, _From, #{api_key := A
             temperature => 0.2
         }),
 
-    {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+    {ok, ConnPid} = gun:open(Host, Port, #{transport => tls, tls_opts => damage_gun:tls_opts(Host)}),
     StreamRef = gun:post(ConnPid, Path, Headers, PostData),
     Resp = read_stream(ConnPid, StreamRef),
     {reply, Resp, State};
@@ -174,7 +174,7 @@ handle_call({generate_bdd, UserPrompt, _AeAccount, _Req}, _From, State) ->
             },
             {<<"content-type">>, <<"application/json">>}
         ],
-    {ok, ConnPid} = gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+    {ok, ConnPid} = gun:open(Host, Port, #{transport => tls, tls_opts => damage_gun:tls_opts(Host)}),
     StreamRef = gun:post(ConnPid, Path, Headers, PostData),
     Resp = read_stream(ConnPid, StreamRef),
     {reply, Resp, State};
@@ -236,7 +236,7 @@ handle_call(
                         {<<"content-type">>, <<"application/json">>}
                     ],
                 {ok, ConnPid} =
-                    gun:open(Host, Port, #{tls_opts => [{verify, verify_none}]}),
+                    gun:open(Host, Port, #{transport => tls, tls_opts => damage_gun:tls_opts(Host)}),
                 StreamRef = gun:post(ConnPid, Path, Headers, PostData),
                 case gun:await(ConnPid, StreamRef, 60000) of
                     {response, nofin, Status, _Headers0} ->

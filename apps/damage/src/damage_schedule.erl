@@ -258,23 +258,24 @@ schedule_job(#{public_key := Account, id := Id} = Schedule) ->
 
 binary_spec_to_term_spec([], Acc) ->
     Acc;
-binary_spec_to_term_spec([Spec | Rest], Acc) when is_integer(Spec) ->
-    binary_spec_to_term_spec(Rest, Acc ++ [Spec]);
 binary_spec_to_term_spec([Spec | Rest], Acc) ->
-    Term =
-        case catch binary_to_integer(Spec) of
-            {'EXIT', _} -> binary_to_atom(Spec);
-            Other -> Other
-        end,
-    binary_spec_to_term_spec(Rest, Acc ++ [Term]).
+    binary_spec_to_term_spec(Rest, Acc ++ [cron_token(Spec)]).
 
 validate(Gherkin) ->
-    case catch egherkin:parse(Gherkin) of
+    try egherkin:parse(Gherkin) of
         {failed, LineNo, Message} ->
             ?LOG_ERROR("Parsing Failed LineNo +~p ~n     ~p.", [LineNo, Message]),
             {parse_error, LineNo, Message};
         {_LineNo, _Tags, _Feature, _Description, _BackGround, _Scenarios} ->
-            ok
+            ok;
+        Other ->
+            {parse_error, unexpected_result, Other}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR("Schedule Gherkin parse crashed class=~p reason=~p stack=~p", [
+                Class, Reason, Stacktrace
+            ]),
+            {parse_error, Class, Reason}
     end.
 
 %% ------------------------------------------------------------------
@@ -429,8 +430,18 @@ add_schedule(AeAccount, Name, Cron, FeatureHash, Concurrency) when is_binary(AeA
             "add_schedule",
             [
                 binary_to_list(secrets:salted_hash(Name)),
-                binary_to_list(secrets:encrypt(jsx:encode(Cron))),
-                binary_to_list(secrets:encrypt(FeatureHash)),
+                binary_to_list(
+                    secrets:encrypt_bound(
+                        schedule_crypto_context(AeAccount, Name, cron),
+                        jsx:encode(Cron)
+                    )
+                ),
+                binary_to_list(
+                    secrets:encrypt_bound(
+                        schedule_crypto_context(AeAccount, Name, feature_hash),
+                        FeatureHash
+                    )
+                ),
                 Concurrency
             ]
         ),
@@ -614,9 +625,14 @@ parse_schedule_entry(
     {IdHash, IdPlain, CronEnc, FeatureHashEnc, Concurrency, Created, LastExecutionTs,
         ExecutionCounter} = Entry
 ) ->
-    ?LOG_DEBUG("parse_schedule_entry ~p ~p", [Account, Entry]),
-    CronRaw = secrets:decrypt(CronEnc),
-    FeatureHash = secrets:decrypt(FeatureHashEnc),
+    ?LOG_DEBUG("parse_schedule_entry account=~p id_hash=~p", [Account, IdHash]),
+    BindId =
+        case IdPlain of
+            undefined -> IdHash;
+            _ -> IdPlain
+        end,
+    CronRaw = decrypt_schedule_field(Account, BindId, cron, CronEnc),
+    FeatureHash = decrypt_schedule_field(Account, BindId, feature_hash, FeatureHashEnc),
     case decode_cron_spec(CronRaw) of
         {ok, CronSpec} ->
             #{
@@ -656,6 +672,24 @@ parse_schedule_entry(
                 error => Reason
             }
     end.
+schedule_crypto_context(Account0, ScheduleId0, Field) ->
+    {schedule, to_bin(Account0), to_bin(ScheduleId0), Field}.
+
+decrypt_schedule_field(Account, ScheduleId, Field, CipherText) ->
+    Context = schedule_crypto_context(Account, ScheduleId, Field),
+    case secrets:decrypt_bound(Context, CipherText) of
+        error ->
+            %% Legacy compatibility for schedules written before bound
+            %% envelopes. All newly created schedules are account/id-bound.
+            ?LOG_WARNING(
+                "Using legacy unbound schedule ciphertext account=~p id=~p field=~p; recreate this schedule",
+                [to_bin(Account), to_bin(ScheduleId), Field]
+            ),
+            secrets:decrypt(CipherText);
+        Value ->
+            Value
+    end.
+
 decode_optional_int({variant, [0, 1], 0, {}}) -> undefined;
 decode_optional_int({variant, [0, 1], 1, {V}}) -> V;
 decode_optional_int({option, none}) -> undefined;
@@ -716,12 +750,61 @@ parse_plain_cron(Bin) when is_binary(Bin) ->
             {error, {invalid_plain_cron, Bin, Reason}}
     end.
 
+cron_token(I) when is_integer(I) ->
+    I;
+cron_token(A) when is_atom(A) ->
+    case cron_keyword(atom_to_binary(A, utf8)) of
+        {ok, Keyword} -> Keyword;
+        error -> erlang:error({invalid_cron_token, A})
+    end;
+cron_token(List) when is_list(List) ->
+    cron_token(unicode:characters_to_binary(List));
 cron_token(Bin) when is_binary(Bin) ->
-    case catch binary_to_integer(Bin) of
-        I when is_integer(I) ->
-            I;
-        _ ->
-            binary_to_atom(string:lowercase(binary_to_list(Bin)))
+    try binary_to_integer(Bin) of
+        I -> I
+    catch
+        error:badarg ->
+            case cron_keyword(Bin) of
+                {ok, Keyword} -> Keyword;
+                error -> erlang:error({invalid_cron_token, Bin})
+            end
+    end.
+
+%% Never create atoms from schedule input. erlcron expressions use a small
+%% vocabulary, so map accepted textual tokens to compile-time atoms explicitly.
+cron_keyword(Bin0) ->
+    Bin = list_to_binary(string:lowercase(binary_to_list(Bin0))),
+    case Bin of
+        <<"*">> -> {ok, '*'};
+        <<"every">> -> {ok, every};
+        <<"at">> -> {ok, at};
+        <<"on">> -> {ok, on};
+        <<"daily">> -> {ok, daily};
+        <<"weekly">> -> {ok, weekly};
+        <<"monthly">> -> {ok, monthly};
+        <<"yearly">> -> {ok, yearly};
+        <<"second">> -> {ok, second};
+        <<"seconds">> -> {ok, seconds};
+        <<"minute">> -> {ok, minute};
+        <<"minutes">> -> {ok, minutes};
+        <<"hour">> -> {ok, hour};
+        <<"hours">> -> {ok, hours};
+        <<"day">> -> {ok, day};
+        <<"days">> -> {ok, days};
+        <<"week">> -> {ok, week};
+        <<"weeks">> -> {ok, weeks};
+        <<"month">> -> {ok, month};
+        <<"months">> -> {ok, months};
+        <<"year">> -> {ok, year};
+        <<"years">> -> {ok, years};
+        <<"monday">> -> {ok, monday};
+        <<"tuesday">> -> {ok, tuesday};
+        <<"wednesday">> -> {ok, wednesday};
+        <<"thursday">> -> {ok, thursday};
+        <<"friday">> -> {ok, friday};
+        <<"saturday">> -> {ok, saturday};
+        <<"sunday">> -> {ok, sunday};
+        _ -> error
     end.
 
 %% ------------------------------------------------------------------

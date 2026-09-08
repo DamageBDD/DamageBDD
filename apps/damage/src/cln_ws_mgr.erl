@@ -84,15 +84,12 @@ init([ws]) ->
     self() ! retry_secrets,
     {ok, #state{}}.
 
-handle_call(Request, From, State) ->
-    ?LOG_ERROR(
-        "handle_call got unknown ~p, From ~p, State ~p",
-        [Request, From, State]
-    ),
-    {reply, err, State}.
+handle_call(Request, _From, State) ->
+    ?LOG_ERROR("cln_ws_mgr unsupported call shape=~p", [term_shape(Request)]),
+    {reply, {error, unsupported_call}, State}.
 
 handle_cast(Msg, State) ->
-    ?LOG_DEBUG("handle_cast got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
+    ?LOG_DEBUG("cln_ws_mgr unsupported cast shape=~p", [term_shape(Msg)]),
     {noreply, State}.
 
 handle_info({gun_error, _ConnPid, _StreamRef, {badstate, "The stream cannot be found."}}, State) ->
@@ -117,7 +114,12 @@ handle_info(
     {gun_ws, ConnPid, StreamRef, {text, <<"2">>}},
     State = #state{conn_pid = ConnPid, streamref = StreamRef}
 ) ->
-    _ = catch gun:ws_send(ConnPid, StreamRef, {text, <<"3">>}),
+    _ =
+        try gun:ws_send(ConnPid, StreamRef, {text, <<"3">>}) of
+            Result -> Result
+        catch
+            _:_ -> ok
+        end,
     {noreply, State};
 handle_info(
     {gun_ws, ConnPid, StreamRef, {text, Message0}},
@@ -239,30 +241,43 @@ handle_event(
     %% Prefer matching by label (unique for our created invoices); fall back to hash if needed later.
     case damage_cln:list_invoices_by_label(Label) of
         #{invoices := [Inv | _]} ->
-            %% Enrich the invoice record with runtime facts and broadcast a single canonical event.
-            PaidInv = Inv#{
+            %% Payment preimages are bearer-like settlement proofs. Keep them
+            %% out of general process messages and logs; consumers that truly
+            %% need one must obtain it through a dedicated privileged API.
+            SafePay = maps:without([preimage, <<"preimage">>], Pay),
+            PaidInv = (maps:without([preimage, payment_preimage, payment_secret, <<"preimage">>, <<"payment_preimage">>, <<"payment_secret">>], Inv))#{
                 event => invoice_payment,
-                details => Pay,
-                preimage => Preimage,
+                details => SafePay,
                 received_msat => MSat,
                 paid_at_unix => erlang:system_time(second),
                 status_runtime => <<"paid">>
             },
-            ?LOG_INFO("received broadcast invoice_payment ~p", [Pay]),
+            _ = Preimage,
+            ?LOG_INFO("received invoice_payment label=~p msat=~p", [Label, MSat]),
             broadcast(invoice_paid, PaidInv);
         _ ->
-            %% We didn't create/track this label locally (rare). Still surface a useful payload.
+            %% We didn't create/track this label locally (rare). Surface only
+            %% non-secret payment metadata.
+            SafePay = maps:without([preimage, <<"preimage">>], Pay),
             Inv = #{
                 label => Label,
-                preimage => Preimage,
                 received_msat => MSat,
-                details => Pay
+                details => SafePay
             },
-            ?LOG_INFO("broadcast invoice_payment ~p", [Inv]),
+            _ = Preimage,
+            ?LOG_INFO("broadcast invoice_payment label=~p msat=~p", [Label, MSat]),
             broadcast(invoice_paid, Inv)
     end;
 handle_event(_ConnPid, _StreamRef, _UnknownEvent) ->
     ok.
+
+term_shape(Term) when is_tuple(Term) -> {tuple, tuple_size(Term)};
+term_shape(Term) when is_map(Term) -> {map, map_size(Term)};
+term_shape(Term) when is_list(Term) -> list;
+term_shape(Term) when is_binary(Term) -> {binary, byte_size(Term)};
+term_shape(Term) when is_atom(Term) -> atom;
+term_shape(_) -> other.
+
 load_runes(State) ->
     case {secrets:retrieve_decrypt(cln_rune), secrets:retrieve_decrypt(cln_readonly_rune)} of
         {{ok, Rune}, {ok, ReadOnly}} ->
@@ -327,8 +342,11 @@ maybe_cancel(TRef) ->
     ok.
 
 maybe_close_gun(Conn) when is_pid(Conn) ->
-    catch gun:close(Conn),
-    ok;
+    try gun:close(Conn) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
 maybe_close_gun(_) ->
     ok.
 
@@ -336,7 +354,7 @@ maybe_close_gun(_) ->
 %    broadcast(invoice_paid, Payload);
 broadcast(Topic, Payload) ->
     Message = {cln_event, Topic, Payload},
-    ?LOG_DEBUG("Broadcast event ~p ~p", [Topic, Payload]),
+    ?LOG_DEBUG("Broadcast event topic=~p payload_shape=~p", [Topic, term_shape(Payload)]),
     lists:foreach(
         fun(Pid) ->
             Pid ! Message

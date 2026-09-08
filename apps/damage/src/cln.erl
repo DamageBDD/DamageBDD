@@ -312,7 +312,7 @@ init([]) ->
         {ok, State1} ->
             {ok, State1#state{secrets_ready = true}};
         {error, Error} ->
-            ?LOG_DEBUG("cln worker error in init ~p ~p", [Error, State0]),
+            ?LOG_DEBUG("cln worker secrets unavailable in init reason=~p", [Error]),
             TRef = erlang:send_after(?SECRETS_RETRY_MS, self(), retry_secrets),
             {ok, State0#state{secrets_ready = false, retry_timer = TRef}}
     end.
@@ -325,6 +325,13 @@ ensure_cache_table() ->
         _ ->
             ok
     end.
+
+term_shape(Term) when is_tuple(Term) -> {tuple, tuple_size(Term)};
+term_shape(Term) when is_map(Term) -> {map, map_size(Term)};
+term_shape(Term) when is_list(Term) -> list;
+term_shape(Term) when is_binary(Term) -> {binary, byte_size(Term)};
+term_shape(Term) when is_atom(Term) -> atom;
+term_shape(_) -> other.
 
 %% ===================================================================
 %% Cache helpers
@@ -444,8 +451,11 @@ normalize_host(H) when is_list(H) -> H;
 normalize_host(H) when is_binary(H) -> binary_to_list(H).
 
 maybe_close_gun(Conn) when is_pid(Conn) ->
-    catch gun:close(Conn),
-    ok;
+    try gun:close(Conn) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
 maybe_close_gun(_) ->
     ok.
 
@@ -1861,12 +1871,12 @@ handle_call(
                 )
         end,
     {reply, Reply, State};
-handle_call(Request, From, State) ->
-    ?LOG_ERROR("handle_call got unknown ~p, From ~p, State ~p", [Request, From, State]),
-    {reply, err, State}.
+handle_call(Request, _From, State) ->
+    ?LOG_ERROR("cln unsupported call shape=~p", [term_shape(Request)]),
+    {reply, {error, unsupported_call}, State}.
 
 handle_cast(Msg, State) ->
-    ?LOG_DEBUG("handle_cast got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
+    ?LOG_DEBUG("cln unsupported cast shape=~p", [term_shape(Msg)]),
     {noreply, State}.
 
 handle_info({gun_response, ConnPid, _, _, _Status, _Headers}, #state{conn_pid = ConnPid} = State) ->

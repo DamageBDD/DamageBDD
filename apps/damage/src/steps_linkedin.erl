@@ -38,32 +38,44 @@
 %% Dry run clauses. Keep exact clauses only: no catch-all step matcher.
 %% -------------------------------------------------------------------
 step_dry(Config, Context, Keyword, LineNo, ?STEP_SET_VERSION = Args, Body) ->
+    _ = Version,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_SET_TOKEN = Args, Body) ->
+    _ = Token,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_SET_TOKEN_SECRET = Args, Body) ->
+    _ = SecretName,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_SET_AUTHOR = Args, Body) ->
+    _ = AuthorUrn,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_GET_USERINFO = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_GET_PATH = Args, Body) ->
+    _ = Path,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_POST_PATH = Args, Body) ->
+    _ = Path,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_CREATE_TEXT_POST_AUTHOR = Args, Body) ->
+    _ = AuthorUrn,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_CREATE_TEXT_POST_CONFIGURED = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_LOOKUP_ORG_VANITY = Args, Body) ->
+    _ = VanityName,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_STATUS_MUST = Args, Body) ->
+    _ = Status,
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_STORE_HEADER = Args, Body) ->
+    _ = {Header, Variable},
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_STORE_JSON = Args, Body) ->
+    _ = {JsonPath, Variable},
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_JSON_MUST = Args, Body) ->
+    _ = {JsonPath, Expected},
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args);
 step_dry(Config, Context, Keyword, LineNo, ?STEP_PRINT_RESPONSE = Args, Body) ->
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args).
@@ -76,7 +88,7 @@ step(_Config, Context, _Keyword, _N, ?STEP_SET_VERSION, _Body) ->
 step(_Config, Context, _Keyword, _N, ?STEP_SET_TOKEN, _Body) ->
     maps:put(linkedin_access_token, resolve_value(Context, Token), Context);
 step(_Config, Context, _Keyword, _N, ?STEP_SET_TOKEN_SECRET, _Body) ->
-    case read_secret(SecretName) of
+    case read_secret(Context, SecretName) of
         {ok, Token} -> maps:put(linkedin_access_token, to_bin(Token), Context);
         {error, Reason} -> fail(Context, "LinkedIn OAuth token secret lookup failed: ~p", [Reason])
     end;
@@ -108,7 +120,7 @@ step(_Config, Context, <<"When">>, _N, ?STEP_LOOKUP_ORG_VANITY, _Body) ->
 step(_Config, Context, <<"Then">>, _N, ?STEP_STATUS_MUST, _Body) ->
     Expected = to_int(Status),
     case maps:get(response, Context, undefined) of
-        [{status_code, Expected}, _Headers, _Body] ->
+        [{status_code, Expected}, _Headers, _ResponseBody] ->
             Context;
         [{status_code, Actual}, _Headers, {body, Body}] ->
             fail(Context, "LinkedIn response status is not ~p, got ~p: ~s", [Expected, Actual, Body]);
@@ -286,11 +298,12 @@ response_json(Context) ->
     end.
 
 json_path(Path, Json) ->
-    case catch ejsonpath:q(to_bin(Path), Json) of
+    try ejsonpath:q(to_bin(Path), Json) of
         {[Value | _], _} -> {ok, Value};
         {[], _} -> {error, {not_found, Path}};
-        {'EXIT', Reason} -> {error, Reason};
         Other -> {error, {unexpected_path_result, Other}}
+    catch
+        Class:Reason -> {error, {Class, Reason}}
     end.
 
 expected_json_value(Value0) ->
@@ -303,16 +316,18 @@ expected_json_value(Value0) ->
         <<"null">> ->
             null;
         _ ->
-            case catch jsx:decode(Value, [return_maps]) of
-                {'EXIT', _} -> maybe_int(Value);
+            try jsx:decode(Value, [return_maps]) of
                 Json -> Json
+            catch
+                _:_ -> maybe_int(Value)
             end
     end.
 
 maybe_int(Value) when is_binary(Value) ->
-    case catch binary_to_integer(Value) of
-        I when is_integer(I) -> I;
-        _ -> Value
+    try binary_to_integer(Value) of
+        I when is_integer(I) -> I
+    catch
+        _:_ -> Value
     end.
 
 json_value_to_context(Value) when is_binary(Value) -> Value;
@@ -363,28 +378,18 @@ resolve_value(Context, Value0) ->
             Value
     end.
 
-read_secret(Name0) ->
+read_secret(Context, Name0) ->
     Name = to_bin(Name0),
-    Candidates =
-        case existing_atom(Name) of
-            {ok, Atom} -> [Atom, Name];
-            error -> [Name]
-        end,
-    read_secret_candidates(Candidates).
-
-read_secret_candidates([]) ->
-    {error, not_found};
-read_secret_candidates([Key | Rest]) ->
-    case secrets:retrieve_decrypt(Key) of
-        {ok, Value} -> {ok, Value};
-        _ -> read_secret_candidates(Rest)
-    end.
-
-existing_atom(Bin) ->
-    try
-        {ok, binary_to_existing_atom(Bin, utf8)}
-    catch
-        _:_ -> error
+    case maps:get(public_key, Context, undefined) of
+        <<"ak_", _/binary>> = Owner ->
+            case secrets:retrieve_decrypt({account, Owner}, Name) of
+                {ok, Value} -> {ok, Value};
+                _ -> {error, not_found}
+            end;
+        Owner when is_list(Owner), Owner =/= [] ->
+            read_secret(Context#{public_key => to_bin(Owner)}, Name);
+        _ ->
+            {error, no_authenticated_account}
     end.
 
 fail(Context, Format, Args) ->

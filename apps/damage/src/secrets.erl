@@ -43,7 +43,7 @@
     get_node_password/0,
     interpolate_template/1
 ]).
--export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
+-export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, encrypt_bound/2, decrypt_bound/2, change_password/3]).
 -export([encrypt/3, decrypt/3]).
 -export([has_node_password/0, set_node_password/1, has_node_keypair/0]).
 -import(damage_utils, [to_bin/1]).
@@ -246,12 +246,20 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-request_tag(Term) when is_tuple(Term), tuple_size(Term) > 0 ->
-    element(1, Term);
+request_tag(Term) when is_tuple(Term) ->
+    %% Return structure only, never a caller-supplied tuple element. The first
+    %% element may itself contain a credential or other sensitive value.
+    {tuple, tuple_size(Term)};
 request_tag(Term) when is_atom(Term) ->
-    Term;
+    atom;
+request_tag(Term) when is_binary(Term) ->
+    binary;
+request_tag(Term) when is_list(Term) ->
+    list;
+request_tag(Term) when is_map(Term) ->
+    map;
 request_tag(_Term) ->
-    unknown.
+    other.
 
 decrypt_cached_payload(Password, EncData) ->
     try binary_to_term(EncData, [safe]) of
@@ -354,6 +362,19 @@ derive_key(Password, Salt) ->
 encrypt(PlainText) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
     base64:encode(term_to_binary(encrypt_secret(PlainText, PrivateKey))).
+
+%% Encrypt externally persisted application data while cryptographically
+%% binding it to its owner/purpose. This is distinct from scoped DETS storage:
+%% callers keep the returned base64 envelope in their own store/contract.
+encrypt_bound(Context, PlainText0) ->
+    PlainText = bound_plaintext(PlainText0),
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    AAD = bound_secret_aad(Context),
+    Key = derive_bound_aes_key(PrivateKey, AAD),
+    IV = crypto:strong_rand_bytes(?IV_SIZE),
+    {CipherText, Tag} =
+        crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, PlainText, AAD, true),
+    base64:encode(term_to_binary({bound_v1, IV, CipherText, Tag}, [deterministic])).
 encrypt(Key, Password, PlainText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {encrypt, Key, Password, PlainText}, ?ASKPASS_TIMEOUT).
@@ -375,16 +396,58 @@ decrypt(null) ->
 decrypt(Base64EncodedCipherTuple) ->
     decrypt(secrets:node_keypair(), Base64EncodedCipherTuple).
 
+decrypt_bound(_Context, null) ->
+    error;
+decrypt_bound(Context, Base64Envelope0) ->
+    try
+        Base64Envelope = bound_plaintext(Base64Envelope0),
+        EncodedTerm = base64:decode(Base64Envelope),
+        case binary_to_term(EncodedTerm, [safe]) of
+            {bound_v1, IV, CipherText, Tag} when
+                is_binary(IV), byte_size(IV) =:= ?IV_SIZE,
+                is_binary(CipherText),
+                is_binary(Tag), byte_size(Tag) =:= 16
+            ->
+                #{private_key := PrivateKey} = secrets:node_keypair(),
+                AAD = bound_secret_aad(Context),
+                Key = derive_bound_aes_key(PrivateKey, AAD),
+                case crypto:crypto_one_time_aead(
+                    aes_256_gcm, Key, IV, CipherText, AAD, Tag, false
+                ) of
+                    PlainText when is_binary(PlainText) -> PlainText;
+                    _ -> error
+                end;
+            _ ->
+                error
+        end
+    catch
+        _:_ -> error
+    end.
+
 decrypt(Key, Password, CipherText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {decrypt, Key, Password, CipherText}, ?ASKPASS_TIMEOUT).
 %% Decrypts data with a password
 decrypt(#{public_key := _AeAccount, private_key := PrivateKey}, Base64EncodedCipherTuple) ->
-    case base64:decode(Base64EncodedCipherTuple) of
+    %% Account/reset tokens are externally supplied. Treat both base64 and ETF
+    %% decoding as untrusted input and accept only the expected legacy envelope
+    %% shape before attempting AES-GCM decryption.
+    try base64:decode(Base64EncodedCipherTuple) of
         Term when is_binary(Term) ->
-            decrypt_secret(binary_to_term(Term), PrivateKey);
+            case binary_to_term(Term, [safe]) of
+                {IV, CipherText, Tag} = Envelope when
+                    is_binary(IV), byte_size(IV) =:= 16,
+                    is_binary(CipherText),
+                    is_binary(Tag), byte_size(Tag) =:= 16
+                ->
+                    decrypt_secret(Envelope, PrivateKey);
+                _ ->
+                    error
+            end;
         _ ->
             error
+    catch
+        _:_ -> error
     end;
 decrypt(Password, {Salt, IV, Tag, CipherText}) ->
     Key = derive_key(Password, Salt),
@@ -590,6 +653,17 @@ decrypt_scoped_secret({v2, IV, CipherText, Tag}, PrivateKey, AAD) ->
 derive_scoped_aes_key(PrivateKey, AAD) ->
     ScopeSalt = crypto:hash(sha256, AAD),
     hkdf(ScopeSalt, PrivateKey, <<"damagebdd:scoped-secret:v2">>, 32).
+
+bound_secret_aad(Context) ->
+    term_to_binary({damagebdd_bound_secret, 1, Context}, [deterministic]).
+
+derive_bound_aes_key(PrivateKey, AAD) ->
+    Salt = crypto:hash(sha256, AAD),
+    hkdf(Salt, PrivateKey, <<"damagebdd:bound-secret:v1">>, 32).
+
+bound_plaintext(Value) when is_binary(Value) -> Value;
+bound_plaintext(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+bound_plaintext(Value) -> to_bin(Value).
 
 salted_hash(BinaryData) when is_binary(BinaryData) ->
     case secrets:node_keypair() of

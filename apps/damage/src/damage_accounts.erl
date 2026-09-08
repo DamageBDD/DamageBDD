@@ -823,15 +823,39 @@ decrypt_token_term(Token) ->
     end.
 
 decode_json_body(Data) ->
-    try jsx:decode(Data, [return_maps, {labels, atom}]) of
+    %% Never let request-controlled JSON create VM atoms. Decode all object
+    %% keys as binaries, then normalize only the small set of top-level fields
+    %% consumed by do_post_action/2. Nested metadata remains binary-keyed.
+    try jsx:decode(Data, [return_maps]) of
         Decoded when is_map(Decoded) ->
-            {ok, Decoded};
+            {ok, normalize_account_json_fields(Decoded)};
         _ ->
             {error, json_object_required}
     catch
         error:badarg -> {error, badarg};
         Class:Reason -> {error, {Class, Reason}}
     end.
+
+normalize_account_json_fields(Map) when is_map(Map) ->
+    maps:from_list([
+        {account_json_field(Key), Value}
+     || {Key, Value} <- maps:to_list(Map)
+    ]).
+
+%% These atoms are compile-time constants already present in the VM. Unknown
+%% request keys stay binary, so arbitrary client input cannot grow the atom
+%% table while do_post_action/2 keeps its existing atom-key patterns.
+account_json_field(<<"username">>) -> username;
+account_json_field(<<"password">>) -> password;
+account_json_field(<<"address">>) -> address;
+account_json_field(<<"signature">>) -> signature;
+account_json_field(<<"meta">>) -> meta;
+account_json_field(<<"token">>) -> token;
+account_json_field(<<"new_password">>) -> new_password;
+account_json_field(<<"new_password_confirm">>) -> new_password_confirm;
+account_json_field(<<"current_password">>) -> current_password;
+account_json_field(<<"email">>) -> email;
+account_json_field(Key) -> Key.
 
 json_decode_error_response(Req0, State) ->
     Req1 = cowboy_req:reply(

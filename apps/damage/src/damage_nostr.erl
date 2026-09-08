@@ -359,7 +359,11 @@ min_int(_, B) -> B.
 clear_connection(#state{conn_pid = ConnPid, heartbeat_timer = HeartbeatTimer} = State) ->
     case ConnPid of
         Pid when is_pid(Pid) ->
-            catch gun:close(Pid);
+            try gun:close(Pid) of
+                _ -> ok
+            catch
+                _:_ -> ok
+            end;
         _ ->
             ok
     end,
@@ -550,7 +554,12 @@ handle_call(
     %% 8) Optional: publish zap request to relay (some clients like seeing it)
     _ = gun:ws_send(ConnPid, StreamRef, {text, jsx:encode([<<"EVENT">>, ZapReq])}),
     %% Best-effort await OK (don’t crash if something else arrives)
-    _ = catch gun:await(ConnPid, StreamRef, 2000),
+    _ =
+        try gun:await(ConnPid, StreamRef, 2000) of
+            AwaitResult -> AwaitResult
+        catch
+            _:_ -> ignored
+        end,
 
     {reply, #{invoice => Invoice, pay => PayRes, zap_request => ZapReq}, State};
 handle_call(
@@ -564,7 +573,7 @@ handle_call(
     Event = construct_note(PublicKey, Content, Timestamp, Tags, ImageURL),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
-    ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
+    ?LOG_INFO("Nostr sending message event_bytes=~p", [byte_size(EventJson)]),
     gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
     {ws, {text, Response}} =
         gun:await(ConnPid, StreamRef),
@@ -581,14 +590,14 @@ handle_call(
     Event = construct_bdd(PublicKey, BDD, Timestamp, Tags),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
-    ?LOG_INFO("Nostr Sending bdd: ~p ~p", [State, EventJson]),
+    ?LOG_INFO("Nostr sending BDD event_bytes=~p", [byte_size(EventJson)]),
     gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
     {ws, {text, Response}} =
         gun:await(ConnPid, StreamRef),
     ?LOG_DEBUG("got response ~p", [Response]),
     {reply, Response, State};
 handle_call(stop, _From, State) ->
-    ?LOG_INFO("Nostr handle_call stop: ~p ", [State]),
+    ?LOG_INFO("Nostr stop requested", []),
     gun:shutdown(State#state.conn_pid),
     {stop, normal, ok, State};
 handle_call(
@@ -602,7 +611,7 @@ handle_call(
             <<"kind">>,
             #{kinds => [0], <<"authors">> => [npub_or_hex_to_lower_hex64(Npub)]}
         ]),
-    ?LOG_INFO("Nostr Sending profile request: ~p ~p", [State, ProfileRequest]),
+    ?LOG_INFO("Nostr sending profile request bytes=~p", [byte_size(ProfileRequest)]),
     ok =
         gun:ws_send(
             State#state.conn_pid,
@@ -626,12 +635,15 @@ handle_call(
         #{kinds => [1], since => Timestamp, '#p' => [WalletPubHex]}
     ]),
 
-    case catch damage_nwc_wallet:subscribe_request(WalletPubHex) of
+    try damage_nwc_wallet:subscribe_request(WalletPubHex) of
         NwcSub when is_list(NwcSub); is_binary(NwcSub) ->
             ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, MentionSub}),
             ok = gun:ws_send(State#state.conn_pid, State#state.streamref, {text, NwcSub});
         Error ->
             ?LOG_WARNING("NWC subscription setup failed ~p", [Error])
+    catch
+        Class:Reason ->
+            ?LOG_WARNING("NWC subscription setup crashed class=~p reason=~p", [Class, Reason])
     end,
     gun:flush(State#state.conn_pid),
     {reply, ok, State};
@@ -656,16 +668,16 @@ handle_call(
 
     {reply, #{event => Event}, State};
 handle_call(Any, _From, State) ->
-    ?LOG_INFO("Nostr handle_call unknown: ~p ~p", [State, Any]),
+    ?LOG_INFO("Nostr handle_call unknown shape=~p", [term_shape(Any)]),
     %gun:shutdown(State#state.conn_pid),
     {reply, ok, State}.
 
 handle_cast(Any, State) ->
-    ?LOG_INFO("Nostr got cast message: ~s~n", [Any]),
+    ?LOG_INFO("Nostr got cast message shape=~p", [term_shape(Any)]),
     {noreply, State}.
 
 handle_info({cln_event, invoice_paid, Invoice}, State) ->
-    ?LOG_DEBUG("Nostr invoice_paid message: ~p~n", [Invoice]),
+    ?LOG_DEBUG("Nostr invoice_paid message received shape=~p", [term_shape(Invoice)]),
     try
         zap_receipt_for_invoice(Invoice, State)
     catch
@@ -726,7 +738,12 @@ handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
 handle_info(reward, State) ->
     {noreply, State};
 handle_info(do_subscribe, State) ->
-    _ = catch handle_call(subscribe, self(), State),
+    _ =
+        try handle_call(subscribe, self(), State) of
+            SubscribeResult -> SubscribeResult
+        catch
+            _:_ -> ignored
+        end,
     {noreply, State};
 handle_info(heartbeat, State) ->
     %% Send a ping message to check the connection
@@ -746,8 +763,11 @@ terminate(Reason, State) ->
     maybe_close_gun(State#state.conn_pid),
     ok.
 maybe_close_gun(Conn) when is_pid(Conn) ->
-    catch gun:close(Conn),
-    ok;
+    try gun:close(Conn) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
 maybe_close_gun(_) ->
     ok.
 
@@ -910,13 +930,13 @@ reply_event(
     Event = construct_note(npub_or_hex_to_lower_hex64(PublicKey), ReplyContent, Timestamp, Tags),
     PostEvent = finalize_event(Event, PrivateKey),
     EventJson = jsx:encode([<<"EVENT">>, PostEvent]),
-    ?LOG_INFO("Nostr Sending message: ~p ~p", [State, EventJson]),
+    ?LOG_INFO("Nostr sending message event_bytes=~p", [byte_size(EventJson)]),
     ok =
         gun:ws_send(State#state.conn_pid, State#state.streamref, {text, EventJson}),
     gun:flush(State#state.conn_pid).
 
 resolve_npub(NPub, Cache) ->
-    case catch maps:get(NPub, Cache, undefined) of
+    try maps:get(NPub, Cache, undefined) of
         undefined ->
             case identity_server:get_account_by_npub(NPub) of
                 #{decodedResult := EncryptedMetaJson} ->
@@ -932,6 +952,10 @@ resolve_npub(NPub, Cache) ->
             {reply, Meta, Cache};
         Error ->
             ?LOG_DEBUG("Error  ~p", [Error]),
+            {reply, error, Cache}
+    catch
+        Class:Reason ->
+            ?LOG_DEBUG("Nostr npub cache lookup failed class=~p reason=~p", [Class, Reason]),
             {reply, error, Cache}
     end.
 decode_npub(Npub) ->
@@ -2195,14 +2219,16 @@ mget_int(K, M, D) ->
     case maps:get(K, M, D) of
         I when is_integer(I) -> I;
         B when is_binary(B) ->
-            case catch binary_to_integer(B) of
-                I when is_integer(I) -> I;
-                _ -> D
+            try binary_to_integer(B) of
+                I when is_integer(I) -> I
+            catch
+                _:_ -> D
             end;
         L when is_list(L) ->
-            case catch list_to_integer(L) of
-                I when is_integer(I) -> I;
-                _ -> D
+            try list_to_integer(L) of
+                I when is_integer(I) -> I
+            catch
+                _:_ -> D
             end;
         _ ->
             D

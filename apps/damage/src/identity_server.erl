@@ -89,7 +89,9 @@ set_email_password(Email, Password) ->
         #{"return_type" := "ok", "return_value" := {}} ->
             {ok, <<"Password set.">>};
         #{"return_type" := _, "return_value" := Other} ->
-            {error, Other}
+            {error, Other};
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 register_npub(Npub) ->
@@ -176,8 +178,18 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
             ?DAMAGE_TOKEN_CONTRACT,
             binary_to_list(secrets:salted_hash(Email)),
             PublicKey,
-            binary_to_list(secrets:encrypt(secrets:salted_hash(Password))),
-            binary_to_list(secrets:encrypt(PrivateKey)),
+            binary_to_list(
+                secrets:encrypt_bound(
+                    {identity, normalize_identity_key(PublicKey), password},
+                    secrets:salted_hash(Password)
+                )
+            ),
+            binary_to_list(
+                secrets:encrypt_bound(
+                    {identity, normalize_identity_key(PublicKey), private_key},
+                    PrivateKey
+                )
+            ),
             ?DAMAGE_INITIAL_HITS,
             ?AE_INITIAL_AETTOS
         ]
@@ -186,7 +198,7 @@ handle_call({register_email, Email, PublicKey, Password, PrivateKey}, _From, Sta
 handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State) ->
     case ets:lookup(Table, Email) of
         [{Email, Account}] ->
-            ?LOG_DEBUG("Table look up ~p ~p", [Table, Account]),
+            ?LOG_DEBUG("Identity cache hit key=~p", [normalize_identity_key(Email)]),
             {reply, Account, State};
         [] ->
             KeyPair = secrets:node_keypair(),
@@ -202,7 +214,7 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
                 )
             of
                 #{"return_value" := #{email := _Email, meta := Meta}} ->
-                    Response = #{email => Email, meta => binary_to_term(secrets:decrypt(Meta))},
+                    Response = #{email => Email, meta => safe_decrypted_term(Meta)},
                     {reply, Response, State};
                 #{
                     "return_type" := "ok",
@@ -211,9 +223,9 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
                             {address, AddressData}, PrivateKeyEncrypted, PasswordEncrypted
                         }
                 } ->
-                    Password = secrets:decrypt(PasswordEncrypted),
-                    PrivateKey = secrets:decrypt(PrivateKeyEncrypted),
                     Address = aeser_api_encoder:encode(account_pubkey, AddressData),
+                    Password = decrypt_identity_field(Address, password, PasswordEncrypted),
+                    PrivateKey = decrypt_identity_field(Address, private_key, PrivateKeyEncrypted),
                     Account = {Address, Password, PrivateKey},
                     ets:insert(Table, {Email, Account}),
 
@@ -231,16 +243,27 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
     end;
 handle_call({set_email_password, Email, Password}, _From, #{ets_table := Table} = State) ->
     KeyPair = secrets:node_keypair(),
-    Response = damage_ae:contract_call(
-        KeyPair,
-        get_email_registry_contract(),
-        damage_ae:contract_path(damage, "contracts/email_registry.aes"),
-        "set_password",
-        [
-            binary_to_list(secrets:salted_hash(Email)),
-            binary_to_list(secrets:encrypt(Password))
-        ]
-    ),
+    Response =
+        case identity_public_key_by_email(KeyPair, Email) of
+            {ok, PublicKey} ->
+                damage_ae:contract_call(
+                    KeyPair,
+                    get_email_registry_contract(),
+                    damage_ae:contract_path(damage, "contracts/email_registry.aes"),
+                    "set_password",
+                    [
+                        binary_to_list(secrets:salted_hash(Email)),
+                        binary_to_list(
+                            secrets:encrypt_bound(
+                                {identity, PublicKey, password},
+                                Password
+                            )
+                        )
+                    ]
+                );
+            {error, Reason} ->
+                {error, {identity_lookup_failed, Reason}}
+        end,
 
     ets:delete(Table, Email),
     {reply, Response, State};
@@ -326,8 +349,12 @@ load_account_from_contract(PublicKey) ->
                 true ->
                     {ok, #{
                         public_key => PublicKey,
-                        password => secrets:decrypt(PasswordEncrypted),
-                        private_key => secrets:decrypt(PrivateKeyEncrypted)
+                        password => decrypt_identity_field(
+                            PublicKey, password, PasswordEncrypted
+                        ),
+                        private_key => decrypt_identity_field(
+                            PublicKey, private_key, PrivateKeyEncrypted
+                        )
                     }};
                 false ->
                     {error, {identity_account_mismatch, PublicKey, Address}}
@@ -339,6 +366,52 @@ load_account_from_contract(PublicKey) ->
     catch
         Class:Reason:Stacktrace ->
             {error, {identity_contract_read_failed, Class, Reason, Stacktrace}}
+    end.
+
+decrypt_identity_field(PublicKey0, Field, CipherText) ->
+    PublicKey = normalize_identity_key(PublicKey0),
+    case secrets:decrypt_bound({identity, PublicKey, Field}, CipherText) of
+        error ->
+            %% Legacy compatibility for accounts created before bound envelopes.
+            %% New registrations and password changes always write bound data.
+            ?LOG_WARNING(
+                "Using legacy unbound identity ciphertext account=~p field=~p; migrate this account",
+                [PublicKey, Field]
+            ),
+            secrets:decrypt(CipherText);
+        Value ->
+            Value
+    end.
+
+identity_public_key_by_email(KeyPair, Email) ->
+    case damage_ae:contract_call(
+        KeyPair,
+        get_email_registry_contract(),
+        damage_ae:contract_path(damage, "contracts/email_registry.aes"),
+        "get_account",
+        [binary_to_list(secrets:salted_hash(Email))]
+    ) of
+        #{
+            "return_type" := "ok",
+            "return_value" := {{address, AddressData}, _PrivateKeyEncrypted, _PasswordEncrypted}
+        } ->
+            {ok, normalize_identity_key(aeser_api_encoder:encode(account_pubkey, AddressData))};
+        #{"return_type" := "revert", "return_value" := Reason} ->
+            {error, Reason};
+        Other ->
+            {error, {unexpected_identity_contract_result, Other}}
+    end.
+
+safe_decrypted_term(CipherText) ->
+    case secrets:decrypt(CipherText) of
+        Plain when is_binary(Plain) ->
+            try binary_to_term(Plain, [safe]) of
+                Term -> Term
+            catch
+                _:_ -> error
+            end;
+        _ ->
+            error
     end.
 
 evict_identity_cache(Table, IdentityKey) ->
@@ -400,11 +473,11 @@ test() ->
     Res = register_email(Email, Password),
     ?LOG_INFO("register result ~p", [Res]),
     {_PubKey, Password, _PrivateKey} = Res0 = get_account_by_email(Email),
-    ?LOG_INFO("lookup result ~p", [Res0]).
+    ?LOG_INFO("lookup result account=~p", [cached_identity_account(Res0)]).
 
 test_email_contract() ->
     #{public_key := PublicKey, private_key := PrivateKey} = secrets:make_keypair(),
-    ?LOG_DEBUG("New key pair created ~p ~p", [PublicKey, PrivateKey]),
+    ?LOG_DEBUG("New key pair created public_key=~p", [PublicKey]),
     Email = <<"steven@damagebdd.com">>,
     Password = <<"testpassword">>,
     #{
@@ -427,12 +500,12 @@ test_email_contract() ->
         ?DAMAGE_TOKEN_CONTRACT,
         binary_to_list(secrets:salted_hash(Email)),
         PublicKey,
-        binary_to_list(secrets:encrypt(Password)),
-        binary_to_list(secrets:encrypt(PrivateKey)),
+        binary_to_list(secrets:encrypt_bound({identity, PublicKey, password}, Password)),
+        binary_to_list(secrets:encrypt_bound({identity, PublicKey, private_key}, PrivateKey)),
         100000000,
         1000
     ],
-    ?LOG_DEBUG("contaract call args ~p", [Args]),
+    ?LOG_DEBUG("contract call prepared for account=~p", [PublicKey]),
     damage_ae:contract_call(
         KeyPair,
         ContractId,

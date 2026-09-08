@@ -498,7 +498,7 @@ execute_feature(
 ) ->
     init_logging(Config, FeatureContext),
     %% BAN catch-all steps globally
-    case ensure_no_catchall_steps(Config) of
+    case ensure_no_catchall_steps(Config, FeatureContext) of
         ok ->
             ok;
         {error, Errors} ->
@@ -1572,7 +1572,15 @@ execute_step(Config, Step, Context) ->
             end
     end.
 
+step_modules_for_context(Context) ->
+    [
+        Module
+     || Module <- damage_utils:loaded_steps(),
+        steps_utils:step_module_allowed(Module, Context)
+    ].
+
 execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) ->
+    StepModules = step_modules_for_context(Context),
     case
         lists:foldl(
             fun
@@ -1607,7 +1615,7 @@ execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) 
                     ContextIn
             end,
             maps:remove(fail, maps:put(step_found, false, Context)),
-            damage_utils:loaded_steps()
+            StepModules
         )
     of
         Context2 when is_map(Context2) ->
@@ -1776,8 +1784,8 @@ get_module_md5(M) ->
         _:_ -> undefined
     end.
 
-ensure_no_catchall_steps(Config) ->
-    Modules = damage_utils:loaded_steps(),
+ensure_no_catchall_steps(Config, Context) ->
+    Modules = step_modules_for_context(Context),
     CacheKey = ?STEP_CATCHALL_CACHE_KEY,
     Cache0 =
         case persistent_term:get(CacheKey, undefined) of
