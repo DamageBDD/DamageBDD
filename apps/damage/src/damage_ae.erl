@@ -20,6 +20,9 @@
 -define(DEFAULT_TX_POLL_INTERVAL_MS, 2000).
 -define(DEFAULT_TX_WAIT_TIMEOUT_MS, 180000).
 -define(DEFAULT_DRY_RUN_CAPABILITY_TTL_MS, 60000).
+-define(DEFAULT_TOP_HEADER_CACHE_TTL_MS, 1000).
+-define(DEFAULT_GAS_PRICE_CACHE_TTL_MS, 10000).
+-define(AE_TX_SESSION_KEY, {?MODULE, tx_session}).
 -define(MAX_FEE_ITERATIONS, 6).
 %% Match the official SDK dry-run funding model: this amount exists only
 %% in the temporary dry-run state and is never transferred on-chain.
@@ -288,7 +291,9 @@ validate_ae_config() ->
         validate_optional_pos(ae_node_pool_connect_timeout_ms),
         validate_optional_pos(ae_node_pool_request_timeout_ms),
         validate_optional_pos(ae_node_pool_reconnect_min_ms),
-        validate_optional_pos(ae_node_pool_reconnect_max_ms)
+        validate_optional_pos(ae_node_pool_reconnect_max_ms),
+        validate_optional_nonneg(ae_top_header_cache_ttl_ms),
+        validate_optional_nonneg(ae_gas_price_cache_ttl_ms)
     ],
     Errors0 = [E || E <- Checks, E =/= ok],
     Errors =
@@ -407,31 +412,89 @@ maybe_warn_fee_amplification() ->
         false -> ok
     end.
 
-recent_gas_price(Fallback) ->
-    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
-    case damage_ae_node_pool:get_json("v3/recent-gas-prices", Timeout) of
-        {ok, #{status := Status, json := Json, node := Node}} when
-            Status >= 200, Status < 300
-        ->
-            case recent_gas_price_from_json(Json, Fallback) of
-                {ok, Price} = Ok ->
-                    ?LOG_DEBUG(
-                        "Recent gas price node=~p price=~p",
-                        [maps:get(node_id, Node, undefined), Price]
-                    ),
-                    Ok;
+with_ae_session(Fun) when is_function(Fun, 0) ->
+    case get(?AE_TX_SESSION_KEY) of
+        Existing when is_map(Existing) ->
+            Fun();
+        _ ->
+            case damage_ae_node_pool:checkout() of
+                {ok, Session} ->
+                    put(?AE_TX_SESSION_KEY, Session),
+                    try Fun()
+                    after
+                        erase(?AE_TX_SESSION_KEY)
+                    end;
                 Error ->
                     Error
+            end
+    end.
+
+current_ae_session() ->
+    case get(?AE_TX_SESSION_KEY) of
+        Session when is_map(Session) ->
+            case maps:get(conn_pid, Session, undefined) of
+                Pid when is_pid(Pid) ->
+                    case is_process_alive(Pid) of
+                        true -> {ok, Session};
+                        false ->
+                            {error,
+                                {pinned_ae_node_down,
+                                    maps:get(node_id, Session, undefined)}}
+                    end;
+                _ ->
+                    {error, invalid_pinned_ae_session}
             end;
-        {ok, #{status := Status, body := Body, node := Node}} ->
-            {error,
-                {recent_gas_price_http_error, #{
-                    status => Status,
-                    body => Body,
-                    node => Node
-                }}};
+        _ ->
+            damage_ae_node_pool:session()
+    end.
+
+session_node_id(Session) when is_map(Session) ->
+    maps:get(node_id, Session, undefined).
+
+top_header_cache_ttl_ms() ->
+    env_nonneg_int(ae_top_header_cache_ttl_ms, ?DEFAULT_TOP_HEADER_CACHE_TTL_MS).
+
+gas_price_cache_ttl_ms() ->
+    env_nonneg_int(ae_gas_price_cache_ttl_ms, ?DEFAULT_GAS_PRICE_CACHE_TTL_MS).
+
+recent_gas_price(Fallback) ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    case current_ae_session() of
+        {ok, Session} ->
+            case
+                damage_ae_node_pool:get_json_cached(
+                    Session,
+                    recent_gas_prices,
+                    "v3/recent-gas-prices",
+                    gas_price_cache_ttl_ms(),
+                    Timeout
+                )
+            of
+                {ok, #{status := Status, json := Json, node := Node}} when
+                    Status >= 200, Status < 300
+                ->
+                    case recent_gas_price_from_json(Json, Fallback) of
+                        {ok, Price} = Ok ->
+                            ?LOG_DEBUG(
+                                "Recent gas price node=~p price=~p",
+                                [maps:get(node_id, Node, undefined), Price]
+                            ),
+                            Ok;
+                        Error ->
+                            Error
+                    end;
+                {ok, #{status := Status, body := Body, node := Node}} ->
+                    {error,
+                        {recent_gas_price_http_error, #{
+                            status => Status,
+                            body => Body,
+                            node => Node
+                        }}};
+                Error ->
+                    {error, {recent_gas_price_unavailable, Error}}
+            end;
         Error ->
-            {error, {recent_gas_price_unavailable, Error}}
+            {error, {recent_gas_price_session_unavailable, Error}}
     end.
 
 recent_gas_price_from_json(#{data := Data}, Fallback) ->
@@ -1458,15 +1521,20 @@ next_nonce(AeAccount0) ->
         "v3/accounts/" ++ binary_to_list(AeAccount) ++
             "/next-nonce?strategy=continuity",
     Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
-    case damage_ae_node_pool:get(Path, Timeout) of
-        {ok, #{status := Status, body := Body, node := Node}} ->
-            ?LOG_DEBUG(
-                "Next nonce request account=~p node=~p",
-                [AeAccount, maps:get(node_id, Node, undefined)]
-            ),
-            next_nonce_body(Status, Body, AeAccount);
+    case current_ae_session() of
+        {ok, Session} ->
+            case damage_ae_node_pool:get(Session, Path, Timeout) of
+                {ok, #{status := Status, body := Body, node := Node}} ->
+                    ?LOG_DEBUG(
+                        "Next nonce request account=~p node=~p",
+                        [AeAccount, maps:get(node_id, Node, undefined)]
+                    ),
+                    next_nonce_body(Status, Body, AeAccount);
+                Error ->
+                    {error, {next_nonce_node_unavailable, AeAccount, Error}}
+            end;
         Error ->
-            {error, {next_nonce_node_unavailable, AeAccount, Error}}
+            {error, {next_nonce_session_unavailable, AeAccount, Error}}
     end.
 
 next_nonce_body(Status, Body, AeAccount) when Status >= 200, Status < 300 ->
@@ -1502,26 +1570,32 @@ post_tx(SignedTx) ->
 post_tx_detailed(SignedTx0) ->
     SignedTx = normalize_encoded_tx(SignedTx0),
     Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
-    case
-        damage_ae_node_pool:post_json(
-            "v3/transactions",
-            #{tx => SignedTx},
-            Timeout
-        )
-    of
-        {ok, #{
-            status := Status,
-            headers := Headers,
-            body := Body,
-            node := Node
-        }} ->
-            ?LOG_DEBUG(
-                "Transaction POST node=~p status=~p",
-                [maps:get(node_id, Node, undefined), Status]
-            ),
-            normalize_tx_post_response(Status, Headers, Body, SignedTx);
+    case current_ae_session() of
+        {ok, Session} ->
+            case
+                damage_ae_node_pool:post_json(
+                    Session,
+                    "v3/transactions",
+                    #{tx => SignedTx},
+                    Timeout
+                )
+            of
+                {ok, #{
+                    status := Status,
+                    headers := Headers,
+                    body := Body,
+                    node := Node
+                }} ->
+                    ?LOG_DEBUG(
+                        "Transaction POST node=~p status=~p",
+                        [maps:get(node_id, Node, undefined), Status]
+                    ),
+                    normalize_tx_post_response(Status, Headers, Body, SignedTx);
+                Error ->
+                    {error, {tx_post_node_unavailable, Error}}
+            end;
         Error ->
-            {error, {tx_post_node_unavailable, Error}}
+            {error, {tx_post_session_unavailable, Error}}
     end.
 
 normalize_encoded_tx(Tx) when is_binary(Tx) -> Tx;
@@ -1621,11 +1695,16 @@ get_ae_balance(AeAccount) when is_binary(AeAccount) ->
 get_ae_balance(AeAccount) ->
     Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
     Path = "v3/accounts/" ++ AeAccount,
-    case damage_ae_node_pool:get_json(Path, Timeout) of
-        {ok, #{json := Json}} when is_map(Json) ->
-            Json;
-        {ok, Response} ->
-            {error, {unexpected_ae_balance_response, Response}};
+    case current_ae_session() of
+        {ok, Session} ->
+            case damage_ae_node_pool:get_json(Session, Path, Timeout) of
+                {ok, #{json := Json}} when is_map(Json) ->
+                    Json;
+                {ok, Response} ->
+                    {error, {unexpected_ae_balance_response, Response}};
+                Error ->
+                    Error
+            end;
         Error ->
             Error
     end.
@@ -1909,81 +1988,110 @@ dry_run_capability() ->
         false ->
             disabled;
         true ->
-            dry_run_capability_cached()
+            case current_ae_session() of
+                {ok, Session} -> dry_run_capability(Session);
+                _ -> unknown
+            end
     end.
 
-dry_run_capability_cached() ->
-    Key = {?MODULE, dry_run_capability},
-    Now = erlang:monotonic_time(millisecond),
-    case persistent_term:get(Key, unknown) of
-        {unsupported, _Reason, ExpiresAt} when ExpiresAt > Now ->
-            unsupported;
-        {unsupported, _Reason, _Expired} ->
-            persistent_term:erase(Key),
-            unknown;
-        supported ->
-            supported;
-        _ ->
-            unknown
+dry_run_capability(Session) ->
+    case env_bool(ae_dry_run_enabled, true) of
+        false ->
+            disabled;
+        true ->
+            Key = {?MODULE, dry_run_capability, session_node_id(Session)},
+            Now = erlang:monotonic_time(millisecond),
+            case persistent_term:get(Key, unknown) of
+                {unsupported, _Reason, ExpiresAt} when ExpiresAt > Now ->
+                    unsupported;
+                {unsupported, _Reason, _Expired} ->
+                    persistent_term:erase(Key),
+                    unknown;
+                supported ->
+                    supported;
+                _ ->
+                    unknown
+            end
     end.
 
-mark_dry_run_supported() ->
-    persistent_term:put({?MODULE, dry_run_capability}, supported),
+mark_dry_run_supported(Session) ->
+    persistent_term:put(
+        {?MODULE, dry_run_capability, session_node_id(Session)},
+        supported
+    ),
     ok.
 
-mark_dry_run_unsupported(Reason) ->
-    %% Vanillae round-robins across its node list.  A single global negative
-    %% cache would incorrectly disable dry-run when only one node in a mixed
-    %% pool has the endpoint disabled.  Cache a negative result only for a
-    %% single-node pool; with multiple nodes the next call is allowed to probe
-    %% the next backend.
-    NodeCount =
-        try length(vanillae:ae_nodes()) of
-            Count -> Count
-        catch
-            _:_ -> 1
-        end,
-    case NodeCount =< 1 of
-        true ->
-            Ttl = env_pos_int(
-                ae_dry_run_capability_ttl_ms,
-                ?DEFAULT_DRY_RUN_CAPABILITY_TTL_MS
-            ),
-            ExpiresAt = erlang:monotonic_time(millisecond) + Ttl,
-            persistent_term:put(
-                {?MODULE, dry_run_capability},
-                {unsupported, Reason, ExpiresAt}
-            );
-        false ->
-            persistent_term:erase({?MODULE, dry_run_capability})
-    end,
+mark_dry_run_unsupported(Session, Reason) ->
+    Ttl = env_pos_int(
+        ae_dry_run_capability_ttl_ms,
+        ?DEFAULT_DRY_RUN_CAPABILITY_TTL_MS
+    ),
+    ExpiresAt = erlang:monotonic_time(millisecond) + Ttl,
+    persistent_term:put(
+        {?MODULE, dry_run_capability, session_node_id(Session)},
+        {unsupported, Reason, ExpiresAt}
+    ),
     ok.
 
 dry_run_call(Tx, Accounts, TopHash) ->
-    case dry_run_capability() of
+    case current_ae_session() of
+        {ok, Session} ->
+            dry_run_call(Session, Tx, Accounts, TopHash);
+        Error ->
+            {error, {dry_run_transport_failed, session, Error, []}}
+    end.
+
+dry_run_call(Session, Tx, Accounts, TopHash) ->
+    case dry_run_capability(Session) of
         disabled ->
             {error, {dry_run_unsupported, disabled_by_config}};
         unsupported ->
             {error, {dry_run_unsupported, cached_endpoint_unavailable}};
         _ ->
-            try vanillae:dry_run(Tx, Accounts, TopHash) of
-                {error, Reason} = Error ->
-                    case dry_run_endpoint_unavailable(Reason) of
+            Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+            DryData = #{
+                top => TopHash,
+                accounts => Accounts,
+                txs => [#{tx => normalize_encoded_tx(Tx)}],
+                tx_events => true
+            },
+            case
+                damage_ae_node_pool:post_json(
+                    Session,
+                    "v3/dry-run",
+                    DryData,
+                    Timeout
+                )
+            of
+                {ok, #{
+                    status := Status,
+                    body := Body,
+                    node := Node
+                }} ->
+                    Json = decode_next_nonce_json(Body),
+                    case Status >= 200 andalso Status < 300 of
                         true ->
-                            mark_dry_run_unsupported(Reason),
-                            {error, {dry_run_unsupported, Reason}};
+                            mark_dry_run_supported(Session),
+                            {ok, Json};
                         false ->
-                            %% The endpoint answered.  A transaction/contract error
-                            %% still proves that dry-run exists on this server.
-                            mark_dry_run_supported(),
-                            Error
+                            Error = #{
+                                http_status => Status,
+                                response => Json,
+                                node => Node
+                            },
+                            case dry_run_endpoint_unavailable(Error) of
+                                true ->
+                                    mark_dry_run_unsupported(Session, Error),
+                                    {error, {dry_run_unsupported, Error}};
+                                false ->
+                                    %% The endpoint exists; the transaction itself
+                                    %% was rejected by dry-run.
+                                    mark_dry_run_supported(Session),
+                                    {error, Error}
+                            end
                     end;
-                Result ->
-                    mark_dry_run_supported(),
-                    Result
-            catch
-                Class:Reason:Stacktrace ->
-                    {error, {dry_run_transport_failed, Class, Reason, Stacktrace}}
+                Error ->
+                    {error, {dry_run_transport_failed, request, Error, []}}
             end
     end.
 
@@ -2196,6 +2304,7 @@ decode_dry_run_return_value(CallObj) ->
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->
+    with_ae_session(fun() ->
     Amount = 0,
     GasPrice = gas_price(),
     {ok, AACI} = vanillae:prepare_contract(ContractSource),
@@ -2221,12 +2330,14 @@ contract_call_prepare_tx(
             ContractCall;
         Error ->
             Error
-    end.
+    end
+    end).
 payfor_tx(SignedTx) ->
     contract_call_payfor_tx(SignedTx).
 contract_call_payfor_tx(
     SignedTX
 ) ->
+    with_ae_session(fun() ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     GasPrice = gas_price(),
     InnerTxBin = tx_bin(SignedTX),
@@ -2251,11 +2362,13 @@ contract_call_payfor_tx(
             Error ->
                 {error, {next_nonce_failed, NodeAeAccount, Error}}
         end
+    end)
     end).
 
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
 ) when is_binary(PrivateKey), byte_size(PrivateKey) =:= 64 ->
+    with_ae_session(fun() ->
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     Amount = 0,
     GasPrice = gas_price(),
@@ -2327,6 +2440,7 @@ contract_call_payfor_user(
                 ?LOG_ERROR("contract_call_payfor_user inner build failed ~p", [Error]),
                 Error
         end
+    end)
     end);
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey},
@@ -2432,6 +2546,7 @@ contract_call(
     Func,
     Args
 ) ->
+    with_ae_session(fun() ->
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
 
     GasPrice = gas_price(),
@@ -2467,6 +2582,7 @@ contract_call(
             Error ->
                 Error
         end
+    end)
     end).
 
 %% Read-only contract call.  Prefer protected dry-run/static execution when
@@ -2487,6 +2603,7 @@ contract_query(
     Func,
     Args
 ) ->
+    with_ae_session(fun() ->
     case dry_run_capability() of
         disabled ->
             contract_query_fallback(
@@ -2510,7 +2627,8 @@ contract_query(
                 Result ->
                     Result
             end
-    end.
+    end
+    end).
 
 contract_query_fallback(Reason, KeyPair, ContractAddress, Contract, Func, Args) ->
     case env_bool(ae_contract_query_fallback_onchain, true) of
@@ -2532,6 +2650,7 @@ contract_call_dry(
     Func,
     Args
 ) ->
+    with_ae_session(fun() ->
     ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
     case dry_run_nonce(AeAccount) of
         {ok, TopHash, Nonce} ->
@@ -2584,7 +2703,8 @@ contract_call_dry(
             end;
         {error, _} = Error ->
             Error
-    end.
+    end
+    end).
 
 dry_run_contract_result(ContractCall, TopHash, AeAccount) ->
     Accounts = dry_run_accounts(AeAccount),
@@ -2650,47 +2770,91 @@ dry_run_accounts(AeAccount) ->
 %% exist in kb_current_hash() state yet, so post-deploy validation must derive
 %% both the contract state and caller nonce from this same top hash.
 dry_run_nonce(AeAccount) ->
-    case vanillae:top_block() of
-        {ok, #{"hash" := TopHash}} ->
-            dry_run_nonce_at_top(AeAccount, TopHash);
-        {ok, #{<<"hash">> := TopHash}} ->
-            dry_run_nonce_at_top(AeAccount, TopHash);
-        {ok, #{hash := TopHash}} ->
-            dry_run_nonce_at_top(AeAccount, TopHash);
-        {ok, Other} ->
-            {error, {unexpected_dry_run_top, Other}};
-        {error, Reason} ->
-            {error, {dry_run_top_hash_failed, Reason}};
-        Other ->
-            {error, {unexpected_dry_run_top_hash, Other}}
+    case current_ae_session() of
+        {ok, Session} ->
+            case top_block(Session) of
+                {ok, Top} ->
+                    case map_value([hash, <<"hash">>, "hash"], Top, undefined) of
+                        undefined ->
+                            {error, {unexpected_dry_run_top, Top}};
+                        TopHash ->
+                            dry_run_nonce_at_top(Session, AeAccount, TopHash)
+                    end;
+                {error, Reason} ->
+                    {error, {dry_run_top_hash_failed, Reason}}
+            end;
+        Error ->
+            {error, {dry_run_session_unavailable, Error}}
     end.
 
-dry_run_nonce_at_top(AeAccount, TopHash) ->
-    case vanillae:acc_at_block_id(AeAccount, TopHash) of
-        {ok, #{"nonce" := Nonce}} when is_integer(Nonce), Nonce >= 0 ->
-            {ok, TopHash, Nonce + 1};
-        {ok, #{<<"nonce">> := Nonce}} when is_integer(Nonce), Nonce >= 0 ->
-            {ok, TopHash, Nonce + 1};
-        {ok, #{nonce := Nonce}} when is_integer(Nonce), Nonce >= 0 ->
-            {ok, TopHash, Nonce + 1};
-        {ok, #{"reason" := "Account not found"}} ->
-            {ok, TopHash, 1};
-        {ok, #{<<"reason">> := <<"Account not found">>}} ->
-            {ok, TopHash, 1};
-        {ok, #{"reason" := Reason}} ->
-            {error, {dry_run_account_lookup_failed, Reason}};
-        {ok, #{<<"reason">> := Reason}} ->
-            {error, {dry_run_account_lookup_failed, Reason}};
-        {error, Reason} ->
-            {error, {dry_run_account_lookup_failed, Reason}};
-        Other ->
-            {error, {unexpected_dry_run_account, Other}}
+top_block(Session) ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    case
+        damage_ae_node_pool:get_json_cached(
+            Session,
+            top_header,
+            "v3/headers/top",
+            top_header_cache_ttl_ms(),
+            Timeout
+        )
+    of
+        {ok, #{status := Status, json := Json}} when
+            Status >= 200, Status < 300, is_map(Json)
+        ->
+            {ok, Json};
+        {ok, Response} ->
+            {error, {top_header_http_error, Response}};
+        Error ->
+            Error
     end.
+
+dry_run_nonce_at_top(Session, AeAccount, TopHash) ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    Path =
+        "v3/accounts/" ++ binary_to_list(normalize_ae_account(AeAccount)) ++
+            "/hash/" ++ to_s_path(TopHash),
+    case damage_ae_node_pool:get_json(Session, Path, Timeout) of
+        {ok, #{status := Status, json := Account}} when
+            Status >= 200, Status < 300, is_map(Account)
+        ->
+            dry_run_nonce_from_account(AeAccount, TopHash, Account);
+        {ok, #{json := Account}} when is_map(Account) ->
+            dry_run_nonce_from_account(AeAccount, TopHash, Account);
+        {ok, Response} ->
+            {error, {unexpected_dry_run_account, Response}};
+        Error ->
+            {error, {dry_run_account_lookup_failed, Error}}
+    end.
+
+dry_run_nonce_from_account(_AeAccount, TopHash, Account) ->
+    case map_int([nonce, <<"nonce">>, "nonce"], Account, undefined) of
+        Nonce when is_integer(Nonce), Nonce >= 0 ->
+            {ok, TopHash, Nonce + 1};
+        _ ->
+            Reason = map_value([reason, <<"reason">>, "reason"], Account, undefined),
+            case normalize_reason_text(Reason) of
+                <<"Account not found">> ->
+                    {ok, TopHash, 1};
+                _ ->
+                    {error, {dry_run_account_lookup_failed, Reason}}
+            end
+    end.
+
+to_s_path(Bin) when is_binary(Bin) -> binary_to_list(Bin);
+to_s_path(List) when is_list(List) -> List;
+to_s_path(Atom) when is_atom(Atom) -> atom_to_list(Atom);
+to_s_path(Value) -> lists:flatten(io_lib:format("~p", [Value])).
+
+normalize_reason_text(Bin) when is_binary(Bin) -> Bin;
+normalize_reason_text(List) when is_list(List) -> unicode:characters_to_binary(List);
+normalize_reason_text(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
+normalize_reason_text(Value) -> iolist_to_binary(io_lib:format("~p", [Value])).
 
 contract_deploy(Contract, Args) ->
     Keypair = secrets:node_keypair(),
     contract_deploy(Keypair, Contract, Args).
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
+    with_ae_session(fun() ->
     Amount = 0,
     GasPrice = gas_price(),
     BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
@@ -2723,6 +2887,7 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
             Error ->
                 Error
         end
+    end)
     end).
 
 contract_deploy_for(
@@ -2730,6 +2895,7 @@ contract_deploy_for(
     Contract,
     Args
 ) ->
+    with_ae_session(fun() ->
     Amount = 0,
     GasPrice = gas_price(),
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
@@ -2794,6 +2960,7 @@ contract_deploy_for(
             Error ->
                 Error
         end
+    end)
     end).
 
 contract_balance(Account) ->
@@ -3039,33 +3206,150 @@ tx_info_convert_result(Result) ->
             {error, Reason}
     end.
 
-poll_tx(Fun, Args, Interval, Timeout) ->
-    poll_tx(Fun, Args, Interval, Timeout, erlang:monotonic_time(millisecond)).
+poll_tx(Session, TxHash, Interval, Timeout) ->
+    poll_tx(
+        Session,
+        TxHash,
+        Interval,
+        Timeout,
+        erlang:monotonic_time(millisecond),
+        session_node_id(Session),
+        false
+    ).
 
-poll_tx(Fun, Args, Interval, Timeout, StartTime) ->
-    case apply(Fun, Args) of
+poll_tx(Session, TxHash, Interval, Timeout, StartTime, SubmittedNode, FailedOver) ->
+    case tx_info(Session, TxHash) of
         {ok, Result} ->
             tx_info_convert_result(Result);
-        Result ->
-            ?LOG_DEBUG("poll tx error value ~p args ~p", [Result, Args]),
-            Elapsed = erlang:monotonic_time(millisecond) - StartTime,
-            if
-                Elapsed >= Timeout ->
+        {error, Reason} = Error ->
+            case maybe_failover_tx_observer(Session, Reason, FailedOver) of
+                {ok, ObserverSession} ->
                     ?LOG_WARNING(
-                        "Transaction polling timed out timeout_ms=~p last_result=~p args=~p",
-                        [Timeout, Result, Args]
+                        "Transaction confirmation observer failover tx=~p submitted_node=~p observer_node=~p reason=~p",
+                        [
+                            TxHash,
+                            SubmittedNode,
+                            session_node_id(ObserverSession),
+                            Reason
+                        ]
                     ),
-                    {error,
-                        {tx_poll_timeout, #{
-                            timeout_ms => Timeout,
-                            last_result => Result,
-                            args => Args
-                        }}};
-                true ->
-                    timer:sleep(Interval),
-                    poll_tx(Fun, Args, Interval, Timeout, StartTime)
+                    poll_tx(
+                        ObserverSession,
+                        TxHash,
+                        Interval,
+                        Timeout,
+                        StartTime,
+                        SubmittedNode,
+                        true
+                    );
+                no_failover ->
+                    ?LOG_DEBUG(
+                        "poll tx error value ~p tx=~p node=~p",
+                        [Error, TxHash, session_node_id(Session)]
+                    ),
+                    Elapsed = erlang:monotonic_time(millisecond) - StartTime,
+                    if
+                        Elapsed >= Timeout ->
+                            ?LOG_WARNING(
+                                "Transaction polling timed out timeout_ms=~p tx=~p submitted_node=~p observer_node=~p last_result=~p",
+                                [
+                                    Timeout,
+                                    TxHash,
+                                    SubmittedNode,
+                                    session_node_id(Session),
+                                    Error
+                                ]
+                            ),
+                            {error,
+                                {tx_poll_timeout, #{
+                                    timeout_ms => Timeout,
+                                    last_result => Error,
+                                    tx_hash => TxHash,
+                                    submitted_node => SubmittedNode,
+                                    observer_node => session_node_id(Session),
+                                    observer_failover => FailedOver
+                                }}};
+                        true ->
+                            timer:sleep(Interval),
+                            poll_tx(
+                                Session,
+                                TxHash,
+                                Interval,
+                                Timeout,
+                                StartTime,
+                                SubmittedNode,
+                                FailedOver
+                            )
+                    end
             end
     end.
+
+tx_info(Session, TxHash0) ->
+    TxHash = to_s_path(TxHash0),
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    Path = "v3/transactions/" ++ TxHash ++ "/info",
+    case damage_ae_node_pool:get(Session, Path, Timeout) of
+        {ok, #{status := Status, body := Body}} ->
+            Json0 = decode_next_nonce_json(Body),
+            Reason = map_value([reason, <<"reason">>, "reason"], Json0, undefined),
+            case {Status >= 200 andalso Status < 300, Reason} of
+                {true, undefined} ->
+                    {ok, json_to_vanillae_term(Json0)};
+                {_, undefined} ->
+                    {error, {tx_info_http_error, Status, Json0}};
+                {_, Why} ->
+                    {error, normalize_reason_text(Why)}
+            end;
+        Error ->
+            {error, {tx_info_transport_failed, Error}}
+    end.
+
+json_to_vanillae_term(Map) when is_map(Map) ->
+    maps:from_list(
+        [
+            {json_key_to_string(Key), json_to_vanillae_term(Value)}
+         || {Key, Value} <- maps:to_list(Map)
+        ]
+    );
+json_to_vanillae_term(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+json_to_vanillae_term(List) when is_list(List) ->
+    [json_to_vanillae_term(Value) || Value <- List];
+json_to_vanillae_term(Value) ->
+    Value.
+
+json_key_to_string(Key) when is_binary(Key) -> binary_to_list(Key);
+json_key_to_string(Key) when is_atom(Key) -> atom_to_list(Key);
+json_key_to_string(Key) when is_list(Key) -> Key;
+json_key_to_string(Key) -> lists:flatten(io_lib:format("~p", [Key])).
+
+maybe_failover_tx_observer(_Session, _Reason, true) ->
+    no_failover;
+maybe_failover_tx_observer(Session, Reason, false) ->
+    case tx_observer_failover_reason(Reason) of
+        false ->
+            no_failover;
+        true ->
+            case damage_ae_node_pool:checkout() of
+                {ok, ObserverSession} ->
+                    case maps:get(conn_pid, ObserverSession, undefined) =/=
+                        maps:get(conn_pid, Session, undefined)
+                    of
+                        true -> {ok, ObserverSession};
+                        false -> no_failover
+                    end;
+                _ ->
+                    no_failover
+            end
+    end.
+
+tx_observer_failover_reason({tx_info_transport_failed, _}) -> true;
+tx_observer_failover_reason({tx_info_http_error, Status, _}) when
+    is_integer(Status), Status >= 500, Status < 600
+->
+    true;
+tx_observer_failover_reason({pinned_ae_node_down, _}) -> true;
+tx_observer_failover_reason(_) -> false.
 
 wait_posted_tx({ok, #{"tx_hash" := TxHash}}, IncludeHash) ->
     add_posted_tx_hash(wait_tx(TxHash), TxHash, IncludeHash);
@@ -3082,12 +3366,17 @@ add_posted_tx_hash(Result, _TxHash, _IncludeHash) ->
     Result.
 
 wait_tx(ConId) ->
-    poll_tx(
-        fun vanillae:tx_info/1,
-        [ConId],
-        tx_poll_interval_ms(),
-        tx_wait_timeout_ms()
-    ).
+    case current_ae_session() of
+        {ok, Session} ->
+            poll_tx(
+                Session,
+                ConId,
+                tx_poll_interval_ms(),
+                tx_wait_timeout_ms()
+            );
+        Error ->
+            {error, {tx_poll_session_unavailable, Error}}
+    end.
 
 node_ae_balance() ->
     case secrets:node_keypair() of

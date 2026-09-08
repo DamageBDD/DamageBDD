@@ -21,13 +21,20 @@
 -export([
     start_link/0,
     ensure_started/0,
+    checkout/0,
     session/0,
     clear_session/0,
+    clear_cache/0,
     info/0,
     get/2,
+    get/3,
     get_json/2,
+    get_json/3,
+    get_json_cached/5,
     post_json/3,
-    request/6
+    post_json/4,
+    request/6,
+    request/7
 ]).
 
 -export([
@@ -44,6 +51,7 @@
 -define(DEFAULT_REQUEST_TIMEOUT_MS, 30000).
 -define(DEFAULT_RECONNECT_MIN_MS, 1000).
 -define(DEFAULT_RECONNECT_MAX_MS, 30000).
+-define(CACHE_TABLE, damage_ae_node_pool_cache).
 
 -type session() :: #{
     node_id := term(),
@@ -122,9 +130,27 @@ restart_pool_child() ->
             {error, {pool_restart_failed, Reason}}
     end.
 
+%% Explicit checkout for a logical transaction. Unlike session/0 this does
+%% not store anything in the caller process dictionary. The caller can pass the
+%% returned session to get/3, get_json/3 and post_json/4 to guarantee node
+%% affinity across a complete transaction lifecycle.
+-spec checkout() -> {ok, session()} | {error, term()}.
+checkout() ->
+    case ensure_started() of
+        {ok, _Pid} ->
+            gen_server:call(?MODULE, checkout, request_timeout_ms());
+        Error ->
+            Error
+    end.
+
+clear_cache() ->
+    case ets:whereis(?CACHE_TABLE) of
+        undefined -> ok;
+        _ -> ets:delete_all_objects(?CACHE_TABLE), ok
+    end.
+
 %% Sticky per-caller session.  A wallet/identity process therefore keeps using
-%% the same node for gas-price, nonce and POST requests until that connection
-%% dies.  This is the first step toward transaction-scoped node affinity.
+%% the same node for ordinary reads until that connection dies.
 -spec session() -> {ok, session()} | {error, term()}.
 session() ->
     case get(?SESSION_KEY) of
@@ -145,15 +171,10 @@ clear_session() ->
     ok.
 
 checkout_and_cache() ->
-    case ensure_started() of
-        {ok, _Pid} ->
-            case gen_server:call(?MODULE, checkout, request_timeout_ms()) of
-                {ok, Session} = Ok ->
-                    put(?SESSION_KEY, Session),
-                    Ok;
-                Error ->
-                    Error
-            end;
+    case checkout() of
+        {ok, Session} = Ok ->
+            put(?SESSION_KEY, Session),
+            Ok;
         Error ->
             Error
     end.
@@ -169,16 +190,57 @@ info() ->
 get(Path, Timeout) ->
     request(get, Path, [], <<>>, Timeout, raw).
 
+get(Session, Path, Timeout) when is_map(Session) ->
+    request(Session, get, Path, [], <<>>, Timeout, raw).
+
 get_json(Path, Timeout) ->
     request(get, Path, [{<<"accept">>, <<"application/json">>}], <<>>, Timeout, json).
 
+get_json(Session, Path, Timeout) when is_map(Session) ->
+    request(
+        Session,
+        get,
+        Path,
+        [{<<"accept">>, <<"application/json">>}],
+        <<>>,
+        Timeout,
+        json
+    ).
+
+%% Small per-node cache for data that is safe to reuse briefly, such as the top
+%% header and recent gas price buckets. Explicit session is part of the key, so
+%% cached state is never mixed across AE nodes.
+get_json_cached(Session, CacheKey, Path, TtlMs, Timeout)
+    when is_map(Session), is_integer(TtlMs), TtlMs >= 0
+->
+    case TtlMs of
+        0 ->
+            get_json(Session, Path, Timeout);
+        _ ->
+            ensure_cache_table(),
+            Key = {maps:get(node_id, Session), CacheKey},
+            Now = erlang:monotonic_time(millisecond),
+            case ets:lookup(?CACHE_TABLE, Key) of
+                [{Key, ExpiresAt, Response}] when ExpiresAt > Now ->
+                    {ok, maps:put(cache, hit, Response)};
+                _ ->
+                    case get_json(Session, Path, Timeout) of
+                        {ok, #{status := Status} = Response} = Ok when
+                            Status >= 200, Status < 300
+                        ->
+                            true = ets:insert(
+                                ?CACHE_TABLE,
+                                {Key, Now + TtlMs, maps:remove(cache, Response)}
+                            ),
+                            Ok;
+                        Error ->
+                            Error
+                    end
+            end
+    end.
+
 post_json(Path, Value, Timeout) ->
-    Body =
-        case Value of
-            Bin when is_binary(Bin) -> Bin;
-            IoList when is_list(IoList) -> iolist_to_binary(IoList);
-            _ -> jsx:encode(Value)
-        end,
+    Body = encode_json_body(Value),
     request(
         post,
         Path,
@@ -191,6 +253,25 @@ post_json(Path, Value, Timeout) ->
         raw
     ).
 
+post_json(Session, Path, Value, Timeout) when is_map(Session) ->
+    Body = encode_json_body(Value),
+    request(
+        Session,
+        post,
+        Path,
+        [
+            {<<"accept">>, <<"application/json">>},
+            {<<"content-type">>, <<"application/json">>}
+        ],
+        Body,
+        Timeout,
+        raw
+    ).
+
+encode_json_body(Bin) when is_binary(Bin) -> Bin;
+encode_json_body(IoList) when is_list(IoList) -> iolist_to_binary(IoList);
+encode_json_body(Value) -> jsx:encode(Value).
+
 -spec request(
     get | post | put | patch | delete | head | options,
     string() | binary(),
@@ -200,9 +281,24 @@ post_json(Path, Value, Timeout) ->
     raw | json | none
 ) -> {ok, map()} | {error, term()}.
 request(Method, Path, Headers, Body, Timeout, Decode) ->
-    request(Method, Path, Headers, Body, Timeout, Decode, retry_safe(Method)).
+    request_auto(Method, Path, Headers, Body, Timeout, Decode, retry_safe(Method)).
 
-request(Method, Path, Headers, Body, Timeout, Decode, CanRetry) ->
+%% Explicit-session request. It deliberately does not fail over or retry: a
+%% transaction that was checked/dry-run against node A must not silently POST
+%% against node B.
+-spec request(
+    session(),
+    get | post | put | patch | delete | head | options,
+    string() | binary(),
+    list(),
+    iodata(),
+    pos_integer(),
+    raw | json | none
+) -> {ok, map()} | {error, term()}.
+request(Session, Method, Path, Headers, Body, Timeout, Decode) when is_map(Session) ->
+    request_once(Session, Method, Path, Headers, Body, Timeout, Decode).
+
+request_auto(Method, Path, Headers, Body, Timeout, Decode, CanRetry) ->
     case session() of
         {ok, Session} ->
             case request_once(Session, Method, Path, Headers, Body, Timeout, Decode) of
@@ -212,7 +308,7 @@ request(Method, Path, Headers, Body, Timeout, Decode, CanRetry) ->
                         [maps:get(node_id, Session), Method, Path, Reason]
                     ),
                     clear_session(),
-                    request(Method, Path, Headers, Body, Timeout, Decode, false);
+                    request_auto(Method, Path, Headers, Body, Timeout, Decode, false);
                 Result ->
                     Result
             end;
@@ -230,12 +326,22 @@ session_alive(#{conn_pid := ConnPid}) when is_pid(ConnPid) ->
 session_alive(_) ->
     false.
 
+safe_close(Pid) when is_pid(Pid) ->
+    try gun:close(Pid) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end;
+safe_close(_) ->
+    ok.
+
 %%====================================================================
 %% gen_server
 %%====================================================================
 
 init([]) ->
     process_flag(trap_exit, true),
+    ensure_cache_table(),
     Nodes0 = configured_nodes(),
     Nodes1 = [connect_node(Node) || Node <- Nodes0],
     Nodes = [schedule_reconnect_if_down(Node) || Node <- Nodes1],
@@ -364,7 +470,7 @@ connect_node(Node0) ->
                         reconnect_ms := reconnect_min_ms()
                     };
                 Error ->
-                    catch gun:close(ConnPid),
+                    safe_close(ConnPid),
                     ?LOG_WARNING(
                         "AE pooled connection await_up failed node=~p host=~p port=~p error=~p",
                         [maps:get(id, Node0), Host, Port, Error]
@@ -398,7 +504,7 @@ close_node(Node) ->
     end,
     case maps:get(conn_pid, Node, undefined) of
         Pid when is_pid(Pid) ->
-            catch gun:close(Pid);
+            safe_close(Pid);
         _ ->
             ok
     end,
@@ -421,9 +527,15 @@ connection_down(ConnPid, Reason, State0) ->
         {undefined, _Rest} ->
             State0;
         {Node0, Rest} ->
+            NodeId = maps:get(id, Node0),
+            invalidate_node_cache(NodeId),
+            %% Gun may remain alive after gun_down while attempting its own
+            %% reconnect. The pool owns reconnect policy, so close the stale
+            %% connection before scheduling a replacement.
+            safe_close(ConnPid),
             ?LOG_WARNING(
                 "AE pooled connection down node=~p host=~p reason=~p",
-                [maps:get(id, Node0), maps:get(host, Node0), Reason]
+                [NodeId, maps:get(host, Node0), Reason]
             ),
             case maps:get(monitor_ref, Node0, undefined) of
                 Ref when is_reference(Ref) -> erlang:demonitor(Ref, [flush]);
@@ -530,15 +642,16 @@ request_once(Session, Method, Path0, Headers, Body0, Timeout, Decode) ->
             Path = join_path(maps:get(path_prefix, Session), Path0),
             Body = normalize_body(Body0),
             try
+                ReqOpts = #{reply_to => self()},
                 StreamRef =
                     case Method of
-                        get -> gun:get(ConnPid, Path, Headers);
-                        post -> gun:post(ConnPid, Path, Headers, Body);
-                        put -> gun:put(ConnPid, Path, Headers, Body);
-                        patch -> gun:patch(ConnPid, Path, Headers, Body);
-                        delete -> gun:delete(ConnPid, Path, Headers);
-                        head -> gun:head(ConnPid, Path, Headers);
-                        options -> gun:options(ConnPid, Path, Headers)
+                        get -> gun:get(ConnPid, Path, Headers, ReqOpts);
+                        post -> gun:post(ConnPid, Path, Headers, Body, ReqOpts);
+                        put -> gun:put(ConnPid, Path, Headers, Body, ReqOpts);
+                        patch -> gun:patch(ConnPid, Path, Headers, Body, ReqOpts);
+                        delete -> gun:delete(ConnPid, Path, Headers, ReqOpts);
+                        head -> gun:head(ConnPid, Path, Headers, ReqOpts);
+                        options -> gun:options(ConnPid, Path, Headers, ReqOpts)
                     end,
                 await_response(Session, ConnPid, StreamRef, Timeout, Decode)
             catch
@@ -626,6 +739,37 @@ normalize_path(List) when is_list(List) -> List.
 normalize_body(undefined) -> <<>>;
 normalize_body(Bin) when is_binary(Bin) -> Bin;
 normalize_body(IoList) -> iolist_to_binary(IoList).
+
+ensure_cache_table() ->
+    case ets:whereis(?CACHE_TABLE) of
+        undefined ->
+            try
+                _ = ets:new(
+                    ?CACHE_TABLE,
+                    [
+                        named_table,
+                        set,
+                        public,
+                        {read_concurrency, true},
+                        {write_concurrency, true}
+                    ]
+                ),
+                ok
+            catch
+                error:badarg -> ok
+            end;
+        _ ->
+            ok
+    end.
+
+invalidate_node_cache(NodeId) ->
+    case ets:whereis(?CACHE_TABLE) of
+        undefined ->
+            ok;
+        _ ->
+            _ = ets:match_delete(?CACHE_TABLE, {{NodeId, '_'}, '_', '_'}),
+            ok
+    end.
 
 connect_timeout_ms() ->
     env_pos_int(ae_node_pool_connect_timeout_ms, ?DEFAULT_CONNECT_TIMEOUT_MS).
