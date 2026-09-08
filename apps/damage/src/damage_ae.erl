@@ -11,10 +11,15 @@
 
 -behaviour(gen_server).
 
--define(DEFAULT_GAS_MAX, 8000000).
+%% Mainnet microblocks and the restricted dry-run endpoint are capped at
+%% 6,000,000 gas.  Keeping our local ceiling at the same value prevents a
+%% perfectly valid estimator request from being rejected before execution.
+-define(PROTOCOL_GAS_MAX, 6000000).
+-define(DEFAULT_GAS_MAX, ?PROTOCOL_GAS_MAX).
 -define(DEFAULT_CONTRACT_GAS_HEADROOM, 100000).
 -define(DEFAULT_TX_POLL_INTERVAL_MS, 2000).
 -define(DEFAULT_TX_WAIT_TIMEOUT_MS, 180000).
+-define(DEFAULT_DRY_RUN_CAPABILITY_TTL_MS, 60000).
 -define(MAX_FEE_ITERATIONS, 6).
 %% Match the official SDK dry-run funding model: this amount exists only
 %% in the temporary dry-run state and is never transferred on-chain.
@@ -69,6 +74,9 @@
     contract_call/5,
     contract_call/6,
     contract_call_dry/5,
+    contract_query/4,
+    contract_query/5,
+    dry_run_capability/0,
     contract_deploy/3,
     contract_deploy/2,
     contract_balance/1,
@@ -89,7 +97,8 @@
     spend/2,
     get_spend/1,
     confirm_spend_all/0,
-    confirm_spend/2
+    confirm_spend/2,
+    post_tx/1
 ]).
 -export([
     test_get_block_height_since/0,
@@ -101,7 +110,7 @@
     test_contract_deploy_for/0
 ]).
 
--export([gas_price/0, fee_multiplier/0]).
+-export([gas_price/0, fee_multiplier/0, validate_ae_config/0]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -110,9 +119,15 @@ ae_to_aetto(Ae) -> Ae * 1000000000000000.
 
 %Ae * 100000000000000000.
 init([]) ->
-    process_flag(trap_exit, true),
-    ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
-    {ok, #{heartbeat_timer => ConfirmSpendTimer}, {continue, init_external}};
+    case validate_ae_config() of
+        ok ->
+            process_flag(trap_exit, true),
+            ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
+            {ok, #{heartbeat_timer => ConfirmSpendTimer}, {continue, init_external}};
+        {error, Errors} ->
+            ?LOG_ERROR("Invalid Aeternity configuration: ~p", [Errors]),
+            {stop, {invalid_ae_config, Errors}}
+    end;
 init([AeAccount, PrivateKey]) ->
     process_flag(trap_exit, true),
     {ok, #{public_key => AeAccount, private_key => PrivateKey}}.
@@ -148,7 +163,17 @@ min_fee() ->
     vanillae:min_fee() * fee_multiplier().
 
 gas_max() ->
-    env_pos_int(ae_gas_max, ?DEFAULT_GAS_MAX).
+    Requested = env_pos_int(ae_gas_max, ?DEFAULT_GAS_MAX),
+    case Requested =< ?PROTOCOL_GAS_MAX of
+        true ->
+            Requested;
+        false ->
+            ?LOG_WARNING(
+                "Configured ae_gas_max=~p exceeds mainnet/protected-dry-run ceiling ~p; clamping",
+                [Requested, ?PROTOCOL_GAS_MAX]
+            ),
+            ?PROTOCOL_GAS_MAX
+    end.
 
 contract_gas_headroom() ->
     MaxHeadroom = erlang:max(0, gas_max() - 1),
@@ -225,6 +250,157 @@ env_bool(Key, Default) ->
         {ok, "true"} -> true;
         {ok, "false"} -> false;
         _ -> Default
+    end.
+
+%% Validate AE transaction settings without silently accepting malformed values.
+%% This is intentionally conservative: protocol ceilings are errors, while
+%% unusually expensive fee multipliers are warnings because they are policy.
+validate_ae_config() ->
+    GasMaxConfigured = configured_int(ae_gas_max, ?DEFAULT_GAS_MAX),
+    GasMax = erlang:min(validated_or_default(GasMaxConfigured, ?DEFAULT_GAS_MAX), ?PROTOCOL_GAS_MAX),
+    Headroom = configured_int(ae_contract_gas_headroom, ?DEFAULT_CONTRACT_GAS_HEADROOM),
+    PollInterval = configured_int(ae_tx_poll_interval_ms, ?DEFAULT_TX_POLL_INTERVAL_MS),
+    WaitTimeout = configured_int(ae_tx_wait_timeout_ms, ?DEFAULT_TX_WAIT_TIMEOUT_MS),
+    Checks = [
+        validate_pos_int(ae_gas_max, GasMaxConfigured),
+        validate_max(ae_gas_max, GasMaxConfigured, ?PROTOCOL_GAS_MAX),
+        validate_nonneg_int(ae_contract_gas_headroom, Headroom),
+        validate_lt(ae_contract_gas_headroom, Headroom, GasMax),
+        validate_optional_pos_max(ae_contract_call_gas_limit, ?PROTOCOL_GAS_MAX),
+        validate_optional_pos_max(ae_contract_create_gas_limit, ?PROTOCOL_GAS_MAX),
+        validate_optional_pos(ae_contract_default_call_gas),
+        validate_optional_pos(ae_contract_gas_margin_percent),
+        validate_optional_nonneg(ae_contract_gas_margin_min),
+        validate_optional_pos(ae_gas_price_multiplier),
+        validate_optional_pos(ae_fee_multiplier),
+        validate_optional_pos(ae_paying_for_gas_multiplier),
+        validate_pos_int(ae_tx_poll_interval_ms, PollInterval),
+        validate_pos_int(ae_tx_wait_timeout_ms, WaitTimeout),
+        validate_optional_pos(ae_tx_post_timeout_ms),
+        validate_bool_setting(ae_dynamic_gas_price),
+        validate_bool_setting(ae_contract_gas_estimation),
+        validate_bool_setting(ae_contract_reject_dry_run_revert),
+        validate_bool_setting(ae_dry_run_fund_caller),
+        validate_bool_setting(ae_dry_run_enabled),
+        validate_bool_setting(ae_contract_query_fallback_onchain),
+        validate_bool_setting(ae_serialize_until_mined),
+        validate_optional_pos(ae_dry_run_capability_ttl_ms)
+    ],
+    Errors0 = [E || E <- Checks, E =/= ok],
+    Errors =
+        case {validated_int(PollInterval), validated_int(WaitTimeout)} of
+            {{ok, I}, {ok, T}} when T < I ->
+                [{ae_tx_wait_timeout_ms, {must_be_at_least_poll_interval, T, I}} | Errors0];
+            _ ->
+                Errors0
+        end,
+    maybe_warn_legacy_gas_multiplier(),
+    maybe_warn_fee_amplification(),
+    case Errors of
+        [] -> ok;
+        _ -> {error, lists:reverse(Errors)}
+    end.
+
+configured_int(Key, Default) ->
+    case application:get_env(damage, Key) of
+        undefined -> Default;
+        {ok, Value} -> Value
+    end.
+
+validated_or_default(Value, Default) ->
+    case validated_int(Value) of
+        {ok, I} when I > 0 -> I;
+        _ -> Default
+    end.
+
+validated_int(V) when is_integer(V) -> {ok, V};
+validated_int(V) when is_binary(V) ->
+    try {ok, binary_to_integer(V)} catch _:_ -> error end;
+validated_int(V) when is_list(V) ->
+    try {ok, list_to_integer(V)} catch _:_ -> error end;
+validated_int(_) -> error.
+
+validate_pos_int(Key, Value) ->
+    case validated_int(Value) of
+        {ok, I} when I > 0 -> ok;
+        _ -> {Key, {expected_positive_integer, Value}}
+    end.
+
+validate_nonneg_int(Key, Value) ->
+    case validated_int(Value) of
+        {ok, I} when I >= 0 -> ok;
+        _ -> {Key, {expected_nonnegative_integer, Value}}
+    end.
+
+validate_max(Key, Value, Max) ->
+    case validated_int(Value) of
+        {ok, I} when I =< Max -> ok;
+        {ok, I} -> {Key, {exceeds_protocol_max, I, Max}};
+        error -> ok
+    end.
+
+validate_lt(Key, Value, Max) ->
+    case validated_int(Value) of
+        {ok, I} when I < Max -> ok;
+        {ok, I} -> {Key, {must_be_less_than, I, Max}};
+        error -> ok
+    end.
+
+validate_optional_pos(Key) ->
+    case application:get_env(damage, Key) of
+        undefined -> ok;
+        {ok, Value} -> validate_pos_int(Key, Value)
+    end.
+
+validate_optional_nonneg(Key) ->
+    case application:get_env(damage, Key) of
+        undefined -> ok;
+        {ok, Value} -> validate_nonneg_int(Key, Value)
+    end.
+
+validate_optional_pos_max(Key, Max) ->
+    case application:get_env(damage, Key) of
+        undefined -> ok;
+        {ok, Value} ->
+            case validate_pos_int(Key, Value) of
+                ok -> validate_max(Key, Value, Max);
+                Error -> Error
+            end
+    end.
+
+validate_bool_setting(Key) ->
+    case application:get_env(damage, Key) of
+        undefined -> ok;
+        {ok, true} -> ok;
+        {ok, false} -> ok;
+        {ok, <<"true">>} -> ok;
+        {ok, <<"false">>} -> ok;
+        {ok, "true"} -> ok;
+        {ok, "false"} -> ok;
+        {ok, Value} -> {Key, {expected_boolean, Value}}
+    end.
+
+maybe_warn_legacy_gas_multiplier() ->
+    case application:get_env(damage, ae_gas_multiplier) of
+        undefined -> ok;
+        {ok, Value} ->
+            ?LOG_WARNING(
+                "ae_gas_multiplier=~p is ignored; contract execution gas is estimated via dry-run",
+                [Value]
+            )
+    end.
+
+maybe_warn_fee_amplification() ->
+    GasPriceMultiplier = env_pos_int(ae_gas_price_multiplier, 1),
+    FeeMultiplier = env_pos_int(ae_fee_multiplier, 1),
+    Combined = GasPriceMultiplier * FeeMultiplier,
+    case Combined > 8 of
+        true ->
+            ?LOG_WARNING(
+                "AE fee amplification is high: gas_price_multiplier=~p fee_multiplier=~p combined=~px",
+                [GasPriceMultiplier, FeeMultiplier, Combined]
+            );
+        false -> ok
     end.
 
 recent_gas_price(Fallback) ->
@@ -616,15 +792,18 @@ handle_call({confirm_spend_all}, _From, Cache) ->
 handle_call(
     {is_custodial, AeAccount},
     _From,
-    #{public_key := AeAccount, private_key := PrivateKey} = Cache
-) when is_binary(PrivateKey), byte_size(PrivateKey) =:= 64 ->
-    {reply, validate_account_signing_key(AeAccount, PrivateKey) =:= ok, Cache};
-handle_call(
-    {is_custodial, AeAccount},
-    _From,
-    #{public_key := AeAccount} = Cache
+    #{public_key := AeAccount} = State0
 ) ->
-    {reply, false, Cache};
+    case ensure_wallet_signing_key(AeAccount, State0) of
+        {ok, _PrivateKey, State} ->
+            {reply, true, State};
+        {error, Reason} ->
+            ?LOG_DEBUG(
+                "Account is not custodial account=~p reason=~p",
+                [AeAccount, Reason]
+            ),
+            {reply, false, State0}
+    end;
 handle_call(
     {set_private_key, AeAccount0, PrivateKey},
     _From,
@@ -848,8 +1027,8 @@ handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
     {Balance, Spend} = maps:get(spent_balance, AccountCache, {0, 0}),
     NewCache = maps:put(spent_balance, {Balance, Spend + Amount}, AccountCache),
     {noreply, maps:put(AeAccount, NewCache, Cache)};
-handle_cast({invalidate_cache, _AeAccount}, _Cache) ->
-    {noreply, #{}};
+handle_cast({invalidate_cache, AeAccount}, Cache0) ->
+    {noreply, maps:remove({balance, AeAccount}, Cache0)};
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
     {noreply, State}.
@@ -1143,15 +1322,37 @@ load_custodial_private_key(AeAccount) ->
     end.
 
 fresh_identity_account(AeAccount) ->
-    _ = code:ensure_loaded(identity_server),
-    Result =
+    %% reload_account/1 is a refresh operation.  Its return shape is not the
+    %% canonical account API shape (some implementations return a tuple), so do
+    %% not feed that return value directly into signing-key validation.
+    _ =
         case erlang:function_exported(identity_server, reload_account, 1) of
-            true -> identity_server:reload_account(AeAccount);
-            false -> identity_server:get_account(AeAccount)
+            true ->
+                try identity_server:reload_account(AeAccount) of
+                    ReloadResult ->
+                        ?LOG_DEBUG(
+                            "Refreshed custodial identity account=~p result_type=~p",
+                            [AeAccount, identity_result_type(ReloadResult)]
+                        ),
+                        ReloadResult
+                catch
+                    Class:Reason:Stacktrace ->
+                        ?LOG_WARNING(
+                            "Custodial identity refresh failed account=~p class=~p reason=~p stack=~p; "
+                            "falling back to get_account/1",
+                            [AeAccount, Class, Reason, Stacktrace]
+                        ),
+                        {error, {Class, Reason}}
+                end;
+            false ->
+                ok
         end,
-    case Result of
-        {ok, Account} when is_map(Account) -> Account;
-        Account -> Account
+    %% get_account/1 is the canonical keypair API used elsewhere in DamageBDD.
+    case identity_server:get_account(AeAccount) of
+        {ok, Account} when is_map(Account) ->
+            Account;
+        Account ->
+            Account
     end.
 
 validate_account_signing_key(AeAccount0, PrivateKey) ->
@@ -1218,6 +1419,27 @@ with_account_nonce_locks0([Account | Rest], Fun) ->
         Result -> Result
     end.
 
+%% By default keep the account nonce lock until the transaction is mined (or the
+%% wait times out). The old scope ended immediately after POST, allowing callers
+%% to enqueue nonce N+1, N+2, ... behind a transaction that could remain
+%% semantically invalid in the node pool. That creates an account-wide nonce
+%% convoy where every later transaction is "not mined".
+%%
+%% This serialization is the safe default. High-throughput deployments can turn
+%% it off only when they have a separate durable nonce reservation/replacement
+%% manager.
+with_account_nonce_locks_and_wait(Accounts, IncludeHash, Fun) ->
+    case env_bool(ae_serialize_until_mined, true) of
+        true ->
+            with_account_nonce_locks(
+                Accounts,
+                fun() -> wait_posted_tx(Fun(), IncludeHash) end
+            );
+        false ->
+            PostResult = with_account_nonce_locks(Accounts, Fun),
+            wait_posted_tx(PostResult, IncludeHash)
+    end.
+
 invalidate_cache(AeAccount) ->
     damage_balance_cache:invalidate(AeAccount),
     DamageAEPid = get_wallet_proc(AeAccount),
@@ -1255,19 +1477,52 @@ read_stream(ConnPid, StreamRef) ->
 -spec next_nonce(binary() | list()) -> {ok, non_neg_integer()} | {error, term()}.
 next_nonce(AeAccount0) ->
     AeAccount = normalize_ae_account(AeAccount0),
-    case vanillae:next_nonce(AeAccount) of
-        {ok, Nonce} = Ok when is_integer(Nonce), Nonce > 0 ->
-            ?LOG_DEBUG("Next nonce account=~p source=vanillae nonce=~p", [
+    case get_ae_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path = join_ae_path(
+                PathPrefix,
+                "v3/accounts/" ++ binary_to_list(AeAccount) ++
+                    "/next-nonce?strategy=continuity"
+            ),
+            try
+                StreamRef = gun:get(ConnPid, Path),
+                next_nonce_response(ConnPid, StreamRef, AeAccount)
+            after
+                safe_gun_close(ConnPid)
+            end;
+        Error ->
+            {error, {next_nonce_node_unavailable, AeAccount, Error}}
+    end.
+
+next_nonce_response(ConnPid, StreamRef, AeAccount) ->
+    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
+    case gun:await(ConnPid, StreamRef, Timeout) of
+        {response, nofin, Status, _Headers} ->
+            case gun:await_body(ConnPid, StreamRef, Timeout) of
+                {ok, Body} -> next_nonce_body(Status, Body, AeAccount);
+                Error -> {error, {next_nonce_body_failed, AeAccount, Error}}
+            end;
+        {response, fin, Status, _Headers} ->
+            next_nonce_body(Status, <<>>, AeAccount);
+        {error, Reason} ->
+            {error, {next_nonce_request_failed, AeAccount, Reason}};
+        Other ->
+            {error, {unexpected_next_nonce_response, AeAccount, Other}}
+    end.
+
+next_nonce_body(Status, Body, AeAccount) when Status >= 200, Status < 300 ->
+    Json = decode_next_nonce_json(Body),
+    case map_int([<<"next_nonce">>, next_nonce, "next_nonce"], Json, undefined) of
+        Nonce when is_integer(Nonce), Nonce > 0 ->
+            ?LOG_DEBUG("Next nonce account=~p source=node strategy=continuity nonce=~p", [
                 AeAccount, Nonce
             ]),
-            Ok;
-        {ok, Other} ->
-            {error, {invalid_next_nonce, AeAccount, Other}};
-        {error, _} = Error ->
-            Error;
+            {ok, Nonce};
         Other ->
-            {error, {unexpected_next_nonce_result, AeAccount, Other}}
-    end.
+            {error, {invalid_next_nonce, AeAccount, Other, Json}}
+    end;
+next_nonce_body(Status, Body, AeAccount) ->
+    {error, {next_nonce_http_error, AeAccount, Status, decode_next_nonce_json(Body)}}.
 
 decode_next_nonce_json(<<>>) ->
     #{};
@@ -1278,6 +1533,12 @@ decode_next_nonce_json(Body) when is_binary(Body) ->
     catch
         _:Reason -> #{<<"decode_error">> => Reason, <<"body">> => Body}
     end.
+
+%% Public transaction submission entry point.  All application modules should
+%% use this rather than vanillae:post_tx/1 so nonce/node/retry behavior remains
+%% centralized in damage_ae.
+post_tx(SignedTx) ->
+    post_tx_detailed(SignedTx).
 
 post_tx_detailed(SignedTx0) ->
     SignedTx = normalize_encoded_tx(SignedTx0),
@@ -1291,7 +1552,10 @@ post_tx_detailed(SignedTx0) ->
             Body = jsx:encode(#{tx => SignedTx}),
             try
                 StreamRef = gun:post(ConnPid, Path, Headers, Body),
-                tx_post_response(ConnPid, StreamRef)
+                %% Do not calculate a local hash before POST. A successful node
+                %% response already contains tx_hash. Local hashing is only
+                %% needed for the idempotent already_known response.
+                tx_post_response(ConnPid, StreamRef, SignedTx)
             after
                 safe_gun_close(ConnPid)
             end;
@@ -1302,23 +1566,23 @@ post_tx_detailed(SignedTx0) ->
 normalize_encoded_tx(Tx) when is_binary(Tx) -> Tx;
 normalize_encoded_tx(Tx) when is_list(Tx) -> list_to_binary(Tx).
 
-tx_post_response(ConnPid, StreamRef) ->
+tx_post_response(ConnPid, StreamRef, SignedTx) ->
     Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
     case gun:await(ConnPid, StreamRef, Timeout) of
         {response, nofin, Status, Headers} ->
             case gun:await_body(ConnPid, StreamRef, Timeout) of
-                {ok, Body} -> normalize_tx_post_response(Status, Headers, Body);
+                {ok, Body} -> normalize_tx_post_response(Status, Headers, Body, SignedTx);
                 Error -> {error, {tx_post_body_failed, Error}}
             end;
         {response, fin, Status, Headers} ->
-            normalize_tx_post_response(Status, Headers, <<>>);
+            normalize_tx_post_response(Status, Headers, <<>>, SignedTx);
         {error, Reason} ->
             {error, {tx_post_request_failed, Reason}};
         Other ->
             {error, {unexpected_tx_post_response, Other}}
     end.
 
-normalize_tx_post_response(Status, _Headers, Body) when Status >= 200, Status < 300 ->
+normalize_tx_post_response(Status, _Headers, Body, _SignedTx) when Status >= 200, Status < 300 ->
     Json = decode_next_nonce_json(Body),
     case
         map_value(
@@ -1330,7 +1594,7 @@ normalize_tx_post_response(Status, _Headers, Body) when Status >= 200, Status < 
         TxHash ->
             {ok, maps:put("tx_hash", TxHash, Json)}
     end;
-normalize_tx_post_response(Status, Headers, Body) ->
+normalize_tx_post_response(Status, Headers, Body, SignedTx) ->
     Json = decode_next_nonce_json(Body),
     Reason = map_value([<<"reason">>, reason, "reason"], Json, <<"Invalid tx">>),
     ErrorCode = map_value(
@@ -1345,14 +1609,67 @@ normalize_tx_post_response(Status, Headers, Body) ->
         Json,
         undefined
     ),
-    {error,
-        {tx_rejected, #{
-            http_status => Status,
-            reason => Reason,
-            error_code => ErrorCode,
-            response => Json,
-            headers => Headers
-        }}}.
+    case ErrorCode of
+        <<"already_known">> ->
+            already_known_tx_result(SignedTx);
+        "already_known" ->
+            already_known_tx_result(SignedTx);
+        already_known ->
+            already_known_tx_result(SignedTx);
+        _ ->
+            {error,
+                {tx_rejected, #{
+                    http_status => Status,
+                    reason => Reason,
+                    error_code => ErrorCode,
+                    response => Json,
+                    headers => Headers
+                }}}
+    end.
+
+already_known_tx_result(SignedTx) ->
+    case signed_tx_hash(SignedTx) of
+        {ok, TxHash} ->
+            ?LOG_INFO(
+                "Transaction already known by node tx_hash=~p; continuing to wait",
+                [TxHash]
+            ),
+            {ok, #{"tx_hash" => TxHash, already_known => true}};
+        {error, Reason} ->
+            {error, {already_known_hash_failed, Reason}}
+    end.
+
+%% Calculate the same Blake2b-256 hash used for signed transaction hashes.
+%%
+%% Aeternity releases differ in the aec_hash API. Newer releases export
+%% aec_hash:hash/2 while older/pinned versions may only expose
+%% blake2b_256_hash/1. DamageBDD supports both so an idempotent
+%% "already_known" response cannot break all transaction submission.
+signed_tx_hash(SignedTx) ->
+    try
+        {transaction, SignedTxBin} = aeser_api_encoder:decode(SignedTx),
+        Hash = signed_tx_hash_bin(SignedTxBin),
+        {ok, aeser_api_encoder:encode(tx_hash, Hash)}
+    catch
+        Class:Reason:Stacktrace ->
+            {error, {signed_tx_hash_failed, Class, Reason, Stacktrace}}
+    end.
+
+signed_tx_hash_bin(SignedTxBin) when is_binary(SignedTxBin) ->
+    _ = code:ensure_loaded(aec_hash),
+    case erlang:function_exported(aec_hash, hash, 2) of
+        true ->
+            aec_hash:hash(signed_tx, SignedTxBin);
+        false ->
+            case erlang:function_exported(aec_hash, blake2b_256_hash, 1) of
+                true ->
+                    aec_hash:blake2b_256_hash(SignedTxBin);
+                false ->
+                    %% enacl is already a DamageBDD dependency for Ed25519
+                    %% signing and its generic hash is Blake2b.
+                    enacl:generichash(32, SignedTxBin)
+            end
+    end.
 
 get_ae_balance(AeAccount) when is_binary(AeAccount) ->
     get_ae_balance(binary_to_list(AeAccount));
@@ -1567,9 +1884,16 @@ calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
 resolve_contract_gas_limit(Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice) ->
     case contract_gas_estimation() of
         true ->
-            estimate_contract_gas_limit(
-                Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice
-            );
+            case dry_run_capability() of
+                disabled ->
+                    {ok, clamp_contract_gas_limit(DefaultGas, 0)};
+                unsupported ->
+                    {ok, clamp_contract_gas_limit(DefaultGas, 0)};
+                _ ->
+                    estimate_contract_gas_limit(
+                        Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice
+                    )
+            end;
         false ->
             {ok, clamp_contract_gas_limit(DefaultGas, 0)}
     end.
@@ -1621,11 +1945,164 @@ dry_run_contract_gas(Tag, AeAccount, BuildNonceFun, GasLimit, GasPrice) ->
             {fallback, Reason}
     end.
 
+%% ------------------------------------------------------------------
+%% Dry-run capability detection
+%%
+%% Some public/node operators disable the protected dry-run endpoint.  We
+%% optimistically try it, remember explicit endpoint-disabled responses for a
+%% short TTL, and retry after the TTL so failover/configuration changes recover
+%% automatically.  Contract-level reverts still count as "supported".
+%% ------------------------------------------------------------------
+dry_run_capability() ->
+    case env_bool(ae_dry_run_enabled, true) of
+        false ->
+            disabled;
+        true ->
+            dry_run_capability_cached()
+    end.
+
+dry_run_capability_cached() ->
+    Key = {?MODULE, dry_run_capability},
+    Now = erlang:monotonic_time(millisecond),
+    case persistent_term:get(Key, unknown) of
+        {unsupported, _Reason, ExpiresAt} when ExpiresAt > Now ->
+            unsupported;
+        {unsupported, _Reason, _Expired} ->
+            persistent_term:erase(Key),
+            unknown;
+        supported ->
+            supported;
+        _ ->
+            unknown
+    end.
+
+mark_dry_run_supported() ->
+    persistent_term:put({?MODULE, dry_run_capability}, supported),
+    ok.
+
+mark_dry_run_unsupported(Reason) ->
+    %% Vanillae round-robins across its node list.  A single global negative
+    %% cache would incorrectly disable dry-run when only one node in a mixed
+    %% pool has the endpoint disabled.  Cache a negative result only for a
+    %% single-node pool; with multiple nodes the next call is allowed to probe
+    %% the next backend.
+    NodeCount =
+        try length(vanillae:ae_nodes()) of
+            Count -> Count
+        catch
+            _:_ -> 1
+        end,
+    case NodeCount =< 1 of
+        true ->
+            Ttl = env_pos_int(
+                ae_dry_run_capability_ttl_ms,
+                ?DEFAULT_DRY_RUN_CAPABILITY_TTL_MS
+            ),
+            ExpiresAt = erlang:monotonic_time(millisecond) + Ttl,
+            persistent_term:put(
+                {?MODULE, dry_run_capability},
+                {unsupported, Reason, ExpiresAt}
+            );
+        false ->
+            persistent_term:erase({?MODULE, dry_run_capability})
+    end,
+    ok.
+
+dry_run_call(Tx, Accounts, TopHash) ->
+    case dry_run_capability() of
+        disabled ->
+            {error, {dry_run_unsupported, disabled_by_config}};
+        unsupported ->
+            {error, {dry_run_unsupported, cached_endpoint_unavailable}};
+        _ ->
+            try vanillae:dry_run(Tx, Accounts, TopHash) of
+                {error, Reason} = Error ->
+                    case dry_run_endpoint_unavailable(Reason) of
+                        true ->
+                            mark_dry_run_unsupported(Reason),
+                            {error, {dry_run_unsupported, Reason}};
+                        false ->
+                            %% The endpoint answered.  A transaction/contract error
+                            %% still proves that dry-run exists on this server.
+                            mark_dry_run_supported(),
+                            Error
+                    end;
+                Result ->
+                    mark_dry_run_supported(),
+                    Result
+            catch
+                Class:Reason:Stacktrace ->
+                    {error, {dry_run_transport_failed, Class, Reason, Stacktrace}}
+            end
+    end.
+
+dry_run_endpoint_unavailable(Reason) ->
+    case dry_run_http_status(Reason) of
+        403 -> true;
+        404 -> true;
+        405 -> true;
+        501 -> true;
+        _ ->
+            Text = lower_reason_binary(Reason),
+            HasDry =
+                binary:match(Text, <<"dry-run">>) =/= nomatch orelse
+                binary:match(Text, <<"dry_run">>) =/= nomatch orelse
+                binary:match(Text, <<"dry run">>) =/= nomatch,
+            HasUnavailable =
+                binary:match(Text, <<"disabled">>) =/= nomatch orelse
+                binary:match(Text, <<"not enabled">>) =/= nomatch orelse
+                binary:match(Text, <<"forbidden">>) =/= nomatch orelse
+                binary:match(Text, <<"method not allowed">>) =/= nomatch orelse
+                binary:match(Text, <<"endpoint not found">>) =/= nomatch,
+            HasDry andalso HasUnavailable
+    end.
+
+dry_run_http_status(Map) when is_map(Map) ->
+    Value = map_int(
+        [
+            status,
+            <<"status">>,
+            http_status,
+            <<"http_status">>,
+            status_code,
+            <<"status_code">>,
+            code,
+            <<"code">>
+        ],
+        Map,
+        undefined
+    ),
+    case Value of
+        I when is_integer(I) -> I;
+        _ -> dry_run_http_status(maps:values(Map))
+    end;
+dry_run_http_status([Head | Rest]) ->
+    case dry_run_http_status(Head) of
+        undefined -> dry_run_http_status(Rest);
+        Status -> Status
+    end;
+dry_run_http_status([]) ->
+    undefined;
+dry_run_http_status(Tuple) when is_tuple(Tuple) ->
+    dry_run_http_status(tuple_to_list(Tuple));
+dry_run_http_status(I) when is_integer(I), I >= 100, I =< 599 ->
+    I;
+dry_run_http_status(_) ->
+    undefined.
+
+lower_reason_binary(Reason) ->
+    Bin = reason_to_binary(Reason),
+    list_to_binary(string:lowercase(binary_to_list(Bin))).
+
 dry_run_tx_gas(Tx, TopHash, AeAccount) ->
     Accounts = dry_run_accounts(AeAccount),
-    try vanillae:dry_run(Tx, Accounts, TopHash) of
+    case dry_run_call(Tx, Accounts, TopHash) of
         {ok, DryRunResult} ->
             normalize_dry_run_gas_result(DryRunResult);
+        {error, {dry_run_unsupported, _} = Reason} ->
+            {fallback, Reason};
+        {error, {dry_run_transport_failed, _, _, _} = Reason} ->
+            {fallback, Reason};
         {error, Reason} ->
             case classify_dry_run_reason(Reason) of
                 dry_run_over_gas_limit ->
@@ -1635,9 +2112,6 @@ dry_run_tx_gas(Tx, TopHash, AeAccount) ->
             end;
         Other ->
             normalize_dry_run_gas_result(Other)
-    catch
-        Class:Reason ->
-            {fallback, {dry_run_failed, Class, Reason}}
     end.
 
 normalize_dry_run_gas_result(DryRunResult) ->
@@ -1805,7 +2279,7 @@ contract_call_payfor_tx(
     #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
     GasPrice = gas_price(),
     InnerTxBin = tx_bin(SignedTX),
-    PostResult = with_account_nonce_locks([NodeAeAccount], fun() ->
+    with_account_nonce_locks_and_wait([NodeAeAccount], false, fun() ->
         case next_nonce(NodeAeAccount) of
             {ok, NodeNonce} ->
                 case build_paying_for_tx(NodeAeAccount, NodeNonce, InnerTxBin, GasPrice) of
@@ -1826,8 +2300,7 @@ contract_call_payfor_tx(
             Error ->
                 {error, {next_nonce_failed, NodeAeAccount, Error}}
         end
-    end),
-    wait_posted_tx(PostResult, false).
+    end).
 
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
@@ -1841,7 +2314,7 @@ contract_call_payfor_user(
             AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
         )
     end,
-    PostResult = with_account_nonce_locks([AeAccount, NodeAeAccount], fun() ->
+    with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
         case
             build_account_contract_tx(
                 contract_call_tx,
@@ -1903,8 +2376,7 @@ contract_call_payfor_user(
                 ?LOG_ERROR("contract_call_payfor_user inner build failed ~p", [Error]),
                 Error
         end
-    end),
-    wait_posted_tx(PostResult, true);
+    end);
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey},
     _ContractId,
@@ -2018,7 +2490,7 @@ contract_call(
             AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
         )
     end,
-    PostResult = with_account_nonce_locks([AeAccount], fun() ->
+    with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
         case
             build_account_contract_tx(
                 contract_call_tx,
@@ -2044,8 +2516,63 @@ contract_call(
             Error ->
                 Error
         end
-    end),
-    wait_posted_tx(PostResult, false).
+    end).
+
+%% Read-only contract call.  Prefer protected dry-run/static execution when
+%% available; only fall back to an on-chain call when the server explicitly
+%% reports that dry-run is unavailable and policy permits the fallback.
+contract_query(ContractAddress, Contract, Func, Args) ->
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair ->
+            contract_query(KeyPair, ContractAddress, Contract, Func, Args);
+        Error ->
+            Error
+    end.
+
+contract_query(
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair,
+    ContractAddress,
+    Contract,
+    Func,
+    Args
+) ->
+    case dry_run_capability() of
+        disabled ->
+            contract_query_fallback(
+                disabled_by_config, KeyPair, ContractAddress, Contract, Func, Args
+            );
+        unsupported ->
+            contract_query_fallback(
+                cached_endpoint_unavailable,
+                KeyPair,
+                ContractAddress,
+                Contract,
+                Func,
+                Args
+            );
+        _ ->
+            case contract_call_dry(KeyPair, ContractAddress, Contract, Func, Args) of
+                {error, {dry_run_unsupported, Reason}} ->
+                    contract_query_fallback(
+                        Reason, KeyPair, ContractAddress, Contract, Func, Args
+                    );
+                Result ->
+                    Result
+            end
+    end.
+
+contract_query_fallback(Reason, KeyPair, ContractAddress, Contract, Func, Args) ->
+    case env_bool(ae_contract_query_fallback_onchain, true) of
+        true ->
+            ?LOG_WARNING(
+                "Dry-run unavailable for read-only contract query; falling back on-chain "
+                "contract=~p function=~p reason=~p",
+                [ContractAddress, Func, Reason]
+            ),
+            contract_call(KeyPair, ContractAddress, Contract, Func, Args);
+        false ->
+            {error, {dry_run_unsupported, Reason}}
+    end.
 
 contract_call_dry(
     #{public_key := AeAccount, private_key := _PrivateKey},
@@ -2110,19 +2637,20 @@ contract_call_dry(
 
 dry_run_contract_result(ContractCall, TopHash, AeAccount) ->
     Accounts = dry_run_accounts(AeAccount),
-    try vanillae:dry_run(ContractCall, Accounts, TopHash) of
+    case dry_run_call(ContractCall, Accounts, TopHash) of
         {ok, DryRunResult} ->
             case first_dry_run_result(DryRunResult) of
                 {ok, Result} -> tx_info_convert_dry_run_result(Result);
                 {error, _} = Error -> Error
             end;
+        {error, {dry_run_unsupported, _} = Reason} ->
+            {error, Reason};
+        {error, {dry_run_transport_failed, _, _, _} = Reason} ->
+            {error, Reason};
         {error, Reason} ->
             {error, {dry_run_failed, Reason}};
         Other ->
             {error, {unexpected_dry_run_reply, Other}}
-    catch
-        Class:Reason:Stacktrace ->
-            {error, {dry_run_failed, Class, Reason, Stacktrace}}
     end.
 
 first_dry_run_result(#{"results" := [Result | _]}) ->
@@ -2219,7 +2747,7 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
             AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
         )
     end,
-    PostResult = with_account_nonce_locks([AeAccount], fun() ->
+    with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
         case
             build_account_contract_tx(
                 contract_create_tx,
@@ -2244,8 +2772,7 @@ contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract,
             Error ->
                 Error
         end
-    end),
-    wait_posted_tx(PostResult, false).
+    end).
 
 contract_deploy_for(
     #{public_key := AeAccount, private_key := PrivateKey},
@@ -2260,7 +2787,7 @@ contract_deploy_for(
             AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
         )
     end,
-    PostResult = with_account_nonce_locks([AeAccount, NodeAeAccount], fun() ->
+    with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
         case
             build_account_contract_tx(
                 contract_create_tx,
@@ -2316,8 +2843,7 @@ contract_deploy_for(
             Error ->
                 Error
         end
-    end),
-    wait_posted_tx(PostResult, false).
+    end).
 
 contract_balance(Account) ->
     damage_balance_cache:damage_balance(Account).
@@ -2329,7 +2855,7 @@ contract_balance_chain(Account) ->
         "contract_id" := ?DAMAGE_TOKEN_CONTRACT,
         "return_type" := "ok",
         "return_value" := ReturnValue
-    } = contract_call(
+    } = contract_query(
         KeyPair,
         ?DAMAGE_TOKEN_CONTRACT,
         "contracts/token.aes",

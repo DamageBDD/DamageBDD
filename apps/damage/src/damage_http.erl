@@ -715,10 +715,28 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
 %% Build one immutable scoped execution context after authentication. Internal
 %% preparation/proof fields are never accepted from the request body.
 -spec effective_context(map(), map()) -> map().
-effective_context(Context0, State) ->
+effective_context(Context0, State0) ->
     ClientContext = maps:without(internal_context_keys(), Context0),
+
+    %% Authentication proves who the caller is, but bearer/session credentials
+    %% are transport secrets and must never become BDD step/report context.
+    State = maps:without(auth_transport_secret_keys(), State0),
+
     Ctx1 = maps:merge(ClientContext, State),
     damage_context:prepare_run_context(Ctx1).
+
+auth_transport_secret_keys() ->
+    Atoms = [
+        access_token,
+        authorization,
+        private_key,
+        password,
+        sessionid,
+        cookie,
+        l402,
+        l402_macaroon
+    ],
+    Atoms ++ [atom_to_binary(Key, utf8) || Key <- Atoms].
 
 internal_context_keys() ->
     Atoms = [
