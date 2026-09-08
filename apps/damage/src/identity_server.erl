@@ -203,7 +203,7 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
         [] ->
             KeyPair = secrets:node_keypair(),
             case
-                damage_ae:contract_call(
+                damage_ae:contract_query(
                     KeyPair,
                     get_email_registry_contract(),
                     damage_ae:contract_path(damage, "contracts/email_registry.aes"),
@@ -227,9 +227,15 @@ handle_call({get_account_by_email, Email}, _From, #{ets_table := Table} = State)
                     Password = decrypt_identity_field(Address, password, PasswordEncrypted),
                     PrivateKey = decrypt_identity_field(Address, private_key, PrivateKeyEncrypted),
                     Account = {Address, Password, PrivateKey},
-                    ets:insert(Table, {Email, Account}),
+                    CanonicalAccount = #{
+                        public_key => Address,
+                        password => Password,
+                        private_key => PrivateKey
+                    },
+                    true = ets:insert(Table, {Email, Account}),
+                    true = ets:insert(Table, {Address, CanonicalAccount}),
 
-                    {reply, Account, maps:put(Email, Account, State)};
+                    {reply, Account, State};
                 #{
                     "return_type" := "revert",
                     "return_value" := <<"Email not registered.">>
@@ -298,7 +304,7 @@ handle_call({register_lightning, AuthKey, PublicKey}, _From, State) ->
 handle_call({get_account_by_npub, Npub}, _From, State) ->
     KeyPair = secrets:node_keypair(),
     Response =
-        damage_ae:contract_call(
+        damage_ae:contract_query(
             KeyPair,
             get_npub_registry_contract(),
             damage_ae:contract_path(damage, "contracts/npub_registry.aes"),
@@ -312,7 +318,7 @@ handle_call({get_account_by_npub, Npub}, _From, State) ->
 handle_call({get_account_by_lightning, AuthKey}, _From, State) ->
     KeyPair = secrets:node_keypair(),
     Response =
-        damage_ae:contract_call(
+        damage_ae:contract_query(
             KeyPair,
             get_lightning_registry_contract(),
             damage_ae:contract_path(damage, "contracts/lightning_registry.aes"),
@@ -332,7 +338,7 @@ terminate(_, _) -> ok.
 %%% =========================
 load_account_from_contract(PublicKey) ->
     try
-        damage_ae:contract_call(
+        damage_ae:contract_query(
             get_email_registry_contract(),
             damage_ae:contract_path(damage, "contracts/email_registry.aes"),
             "get_email",
@@ -384,7 +390,7 @@ decrypt_identity_field(PublicKey0, Field, CipherText) ->
     end.
 
 identity_public_key_by_email(KeyPair, Email) ->
-    case damage_ae:contract_call(
+    case damage_ae:contract_query(
         KeyPair,
         get_email_registry_contract(),
         damage_ae:contract_path(damage, "contracts/email_registry.aes"),
