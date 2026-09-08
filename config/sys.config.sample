@@ -148,7 +148,7 @@
     
                 %% Wait five seconds after the screensaver becomes active
                 %% before executing on_start.
-                {on_start_delay, 5},
+                {on_start_delay, 5}
     
                 %{on_start, {
                 %    shell,
