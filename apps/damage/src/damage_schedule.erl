@@ -424,21 +424,25 @@ delete_schedule(AeAccount, ScheduleId) ->
     {ok, Deleted}.
 
 add_schedule(AeAccount, Name, Cron, FeatureHash, Concurrency) when is_binary(AeAccount) ->
+    %% Bind encrypted fields to the stable identifier that is persisted by the
+    %% schedules contract. The plaintext Name is not guaranteed to be returned
+    %% by contract reads, while IdHash is.
+    IdHash = secrets:salted_hash(Name),
     Result =
         contract_call(
             AeAccount,
             "add_schedule",
             [
-                binary_to_list(secrets:salted_hash(Name)),
+                binary_to_list(IdHash),
                 binary_to_list(
                     secrets:encrypt_bound(
-                        schedule_crypto_context(AeAccount, Name, cron),
+                        schedule_crypto_context(AeAccount, IdHash, cron),
                         jsx:encode(Cron)
                     )
                 ),
                 binary_to_list(
                     secrets:encrypt_bound(
-                        schedule_crypto_context(AeAccount, Name, feature_hash),
+                        schedule_crypto_context(AeAccount, IdHash, feature_hash),
                         FeatureHash
                     )
                 ),
@@ -626,13 +630,8 @@ parse_schedule_entry(
         ExecutionCounter} = Entry
 ) ->
     ?LOG_DEBUG("parse_schedule_entry account=~p id_hash=~p", [Account, IdHash]),
-    BindId =
-        case IdPlain of
-            undefined -> IdHash;
-            _ -> IdPlain
-        end,
-    CronRaw = decrypt_schedule_field(Account, BindId, cron, CronEnc),
-    FeatureHash = decrypt_schedule_field(Account, BindId, feature_hash, FeatureHashEnc),
+    CronRaw = decrypt_schedule_field(Account, IdHash, IdPlain, cron, CronEnc),
+    FeatureHash = decrypt_schedule_field(Account, IdHash, IdPlain, feature_hash, FeatureHashEnc),
     case decode_cron_spec(CronRaw) of
         {ok, CronSpec} ->
             #{
@@ -675,20 +674,57 @@ parse_schedule_entry(
 schedule_crypto_context(Account0, ScheduleId0, Field) ->
     {schedule, to_bin(Account0), to_bin(ScheduleId0), Field}.
 
-decrypt_schedule_field(Account, ScheduleId, Field, CipherText) ->
-    Context = schedule_crypto_context(Account, ScheduleId, Field),
-    case secrets:decrypt_bound(Context, CipherText) of
+decrypt_schedule_field(Account, IdHash, IdPlain, Field, CipherText) ->
+    StableContext = schedule_crypto_context(Account, IdHash, Field),
+    case secrets:decrypt_bound(StableContext, CipherText) of
         error ->
-            %% Legacy compatibility for schedules written before bound
-            %% envelopes. All newly created schedules are account/id-bound.
-            ?LOG_WARNING(
-                "Using legacy unbound schedule ciphertext account=~p id=~p field=~p; recreate this schedule",
-                [to_bin(Account), to_bin(ScheduleId), Field]
-            ),
-            secrets:decrypt(CipherText);
+            %% Compatibility for the short-lived format that bound ciphertext
+            %% to the plaintext schedule name. Try it only when the contract
+            %% returned a distinct plaintext id, then fall back to the original
+            %% unbound format used before bound envelopes existed.
+            decrypt_schedule_field_compat(Account, IdHash, IdPlain, Field, CipherText);
         Value ->
             Value
     end.
+
+decrypt_schedule_field_compat(Account, IdHash, IdPlain, Field, CipherText) ->
+    case legacy_schedule_bind_id(IdHash, IdPlain) of
+        undefined ->
+            decrypt_legacy_schedule_field(Account, IdHash, Field, CipherText);
+        LegacyId ->
+            LegacyContext = schedule_crypto_context(Account, LegacyId, Field),
+            case secrets:decrypt_bound(LegacyContext, CipherText) of
+                error ->
+                    decrypt_legacy_schedule_field(Account, IdHash, Field, CipherText);
+                Value ->
+                    ?LOG_WARNING(
+                        "Using transitional name-bound schedule ciphertext account=~p id_hash=~p field=~p; recreate this schedule",
+                        [to_bin(Account), to_bin(IdHash), Field]
+                    ),
+                    Value
+            end
+    end.
+
+legacy_schedule_bind_id(_IdHash, undefined) ->
+    undefined;
+legacy_schedule_bind_id(_IdHash, none) ->
+    undefined;
+legacy_schedule_bind_id(_IdHash, null) ->
+    undefined;
+legacy_schedule_bind_id(IdHash, IdPlain) ->
+    IdHashBin = to_bin(IdHash),
+    IdPlainBin = to_bin(IdPlain),
+    case IdPlainBin =:= IdHashBin of
+        true -> undefined;
+        false -> IdPlainBin
+    end.
+
+decrypt_legacy_schedule_field(Account, IdHash, Field, CipherText) ->
+    ?LOG_WARNING(
+        "Using legacy unbound schedule ciphertext account=~p id_hash=~p field=~p; recreate this schedule",
+        [to_bin(Account), to_bin(IdHash), Field]
+    ),
+    secrets:decrypt(CipherText).
 
 decode_optional_int({variant, [0, 1], 0, {}}) -> undefined;
 decode_optional_int({variant, [0, 1], 1, {V}}) -> V;
@@ -783,6 +819,7 @@ cron_keyword(Bin0) ->
         <<"weekly">> -> {ok, weekly};
         <<"monthly">> -> {ok, monthly};
         <<"yearly">> -> {ok, yearly};
+        <<"sec">> -> {ok, sec};
         <<"second">> -> {ok, second};
         <<"seconds">> -> {ok, seconds};
         <<"minute">> -> {ok, minute};
