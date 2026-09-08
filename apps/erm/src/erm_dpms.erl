@@ -63,6 +63,7 @@
 ]).
 
 -define(DEFAULT_POLL_MS, 100).
+-define(DEFAULT_ON_START_DELAY_SECONDS, 0).
 -define(HOOK_OUTPUT_LIMIT, 8192).
 -define(HOOK_TIMEOUT_MS, 30000).
 -define(MAX_SCREENSAVER_TIMEOUT, 32767).
@@ -158,15 +159,19 @@ init(Opts0) ->
                                 saver_state => maps:get(state, SSInfo),
                                 dpms_on_saver => maps:get(dpms_on_saver, Opts),
                                 on_start => maps:get(on_start, Opts),
+                                on_start_delay => maps:get(on_start_delay, Opts),
+                                on_start_pending => undefined,
                                 on_stop => maps:get(on_stop, Opts),
                                 inhibited => false
                             },
                             ?LOG_INFO(
-                                "ERM DPMS started: screensaver=~p idle_ms=~p dpms_on_saver=~p",
+                                "ERM DPMS started: screensaver=~p idle_ms=~p "
+                                "dpms_on_saver=~p on_start_delay=~Bs",
                                 [
                                     maps:get(state, SSInfo),
                                     maps:get(idle_ms, SSInfo),
-                                    maps:get(dpms_on_saver, Opts)
+                                    maps:get(dpms_on_saver, Opts),
+                                    maps:get(on_start_delay, Opts)
                                 ]
                             ),
                             schedule_poll(State),
@@ -190,6 +195,8 @@ handle_call(status, _From, State = #{x11 := X11}) ->
         dpms => query_or_error(fun() -> x11_dpms_info(X11) end),
         dpms_timeouts => query_or_error(fun() -> x11_get_dpms_timeouts(X11) end),
         transition_state => maps:get(saver_state, State),
+        on_start_delay => maps:get(on_start_delay, State),
+        on_start_pending_ms => pending_start_remaining_ms(State),
         inhibited => maps:get(inhibited, State)
     },
     {reply, Reply, State};
@@ -198,7 +205,10 @@ handle_call(sleep, _From, State = #{x11 := X11}) ->
     Reply = x11_force_screensaver(X11, active),
     {reply, Reply, State};
 
-handle_call(wake, _From, State = #{x11 := X11}) ->
+handle_call(wake, _From, State0 = #{x11 := X11}) ->
+    %% Cancel first so an explicit wake cannot race the delayed start hook
+    %% while the XScreenSaver reset event is waiting for the next poll.
+    State = cancel_pending_start_hook(State0),
     %% Bring the monitor up before resetting the saver. Both operations are
     %% explicit X11 protocol requests; user activity normally does this too.
     R1 =
@@ -268,11 +278,34 @@ handle_info(poll_x11, State0 = #{x11 := X11}) ->
     schedule_poll(State1),
     {noreply, State1};
 
+handle_info(
+        {run_delayed_start_hook, Token},
+        State0 = #{on_start_pending := #{token := Token}}
+    ) ->
+    State1 = State0#{on_start_pending => undefined},
+    case delayed_start_is_valid(State1) of
+        true ->
+            ?LOG_INFO("ERM DPMS start-hook delay elapsed; running hook", []),
+            run_hook_async(start, maps:get(on_start, State1)),
+            {noreply, State1};
+        false ->
+            %% Re-check the live XScreenSaver state. This covers physical input
+            %% that wakes the display just before the next poll is processed.
+            ?LOG_DEBUG("Ignoring delayed start hook because the saver is inactive", []),
+            {noreply, State1}
+    end;
+handle_info({run_delayed_start_hook, _StaleToken}, State) ->
+    %% cancel_timer/1 can race with delivery. Tokens ensure an old timer can
+    %% never start a process during a later sleep cycle.
+    ?LOG_DEBUG("Ignoring stale ERM DPMS delayed start-hook timer", []),
+    {noreply, State};
+
 handle_info(Info, State) ->
     ?LOG_DEBUG("ERM DPMS ignoring info ~p", [Info]),
     {noreply, State}.
 
-terminate(Reason, State) ->
+terminate(Reason, State0) ->
+    State = cancel_pending_start_hook(State0),
     safe_x11_close(maps:get(x11, State, undefined)),
     ?LOG_INFO("ERM DPMS stopped: ~p", [Reason]),
     ok.
@@ -312,13 +345,13 @@ handle_screensaver_event(
         {false, true} ->
             ?LOG_INFO("X11 screensaver started: ~p", [Event]),
             maybe_power_down(State1),
-            run_hook_async(start, maps:get(on_start, State1)),
-            State1;
+            schedule_start_hook(State1);
         {true, false} ->
             ?LOG_INFO("X11 screensaver stopped: ~p", [Event]),
-            maybe_power_up(State1),
-            run_hook_async(stop, maps:get(on_stop, State1)),
-            State1;
+            State2 = cancel_pending_start_hook(State1),
+            maybe_power_up(State2),
+            run_hook_async(stop, maps:get(on_stop, State2)),
+            State2;
         _ ->
             State1
     end;
@@ -328,6 +361,60 @@ handle_screensaver_event(_Event, State) ->
 saver_active(on) -> true;
 saver_active(cycle) -> true;
 saver_active(_) -> false.
+
+schedule_start_hook(State0 = #{on_start := undefined}) ->
+    cancel_pending_start_hook(State0);
+schedule_start_hook(State0 = #{on_start_delay := 0, on_start := Hook}) ->
+    State = cancel_pending_start_hook(State0),
+    run_hook_async(start, Hook),
+    State;
+schedule_start_hook(State0 = #{on_start_delay := DelaySeconds}) ->
+    State = cancel_pending_start_hook(State0),
+    Token = make_ref(),
+    TimerRef = erlang:send_after(
+        DelaySeconds * 1000,
+        self(),
+        {run_delayed_start_hook, Token}
+    ),
+    ?LOG_INFO(
+        "Delaying ERM DPMS start hook for ~B seconds; wake cancels it",
+        [DelaySeconds]
+    ),
+    State#{on_start_pending => #{timer => TimerRef, token => Token}}.
+
+cancel_pending_start_hook(State) ->
+    case maps:get(on_start_pending, State, undefined) of
+        #{timer := TimerRef} ->
+            _ = erlang:cancel_timer(TimerRef),
+            ?LOG_DEBUG("Cancelled pending ERM DPMS start hook", []),
+            State#{on_start_pending => undefined};
+        undefined ->
+            State
+    end.
+
+pending_start_remaining_ms(State) ->
+    case maps:get(on_start_pending, State, undefined) of
+        #{timer := TimerRef} ->
+            case erlang:read_timer(TimerRef) of
+                false -> 0;
+                RemainingMs -> RemainingMs
+            end;
+        undefined ->
+            false
+    end.
+
+delayed_start_is_valid(#{x11 := X11, saver_state := CachedState}) ->
+    case x11_screensaver_info(X11) of
+        {ok, #{state := CurrentState}} ->
+            saver_active(CurrentState);
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "Could not confirm X11 saver state before delayed start hook: ~p "
+                "(cached_state=~p); suppressing hook",
+                [Reason, CachedState]
+            ),
+            false
+    end.
 
 maybe_power_down(#{dpms_on_saver := ignore}) ->
     ok;
@@ -380,6 +467,7 @@ normalize_opts(Opts) when is_map(Opts) ->
         dpms_timeouts => keep,
         dpms_on_saver => off,
         on_start => undefined,
+        on_start_delay => ?DEFAULT_ON_START_DELAY_SECONDS,
         on_stop => undefined
     },
     validate_opts(maps:merge(Defaults, Opts)).
@@ -389,6 +477,8 @@ validate_opts(Opts) ->
     true = is_integer(Poll) andalso Poll >= 20,
     Level = maps:get(dpms_on_saver, Opts),
     true = lists:member(Level, [ignore, standby, suspend, off]),
+    StartDelay = maps:get(on_start_delay, Opts),
+    true = is_integer(StartDelay) andalso StartDelay >= 0,
     Opts.
 
 configure_x11(X11, Opts) ->

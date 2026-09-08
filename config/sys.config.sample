@@ -119,7 +119,49 @@
             {pools, [{ecai_chat, [{size, 1}, {max_overflow, 0}], []}]}
         ]
     },
-    {erm, [{port, 7711}, {pools, []}]},
+    {
+        erm, [
+            {port, 9000},
+            {pools, []},
+    
+            {gtknode4, #{
+                enabled => true,
+                mode => local_cnode,
+                port => #{
+                    cnode_regname => gtknode4,
+                    controller_regname => gtknode4,
+                    handshake_timeout => 10000,
+                    test_mode => false
+                },
+                gs => #{
+                    test_mode => false,
+                    backend_timeout => 5000,
+                    dialog_timeout => infinity,
+                    event_log_limit => 1000
+                }
+            }},
+    
+            {dpms, [
+                {poll_ms, 100},
+                {screensaver_timeout, 300},
+                {dpms_on_saver, off},
+    
+                %% Wait five seconds after the screensaver becomes active
+                %% before executing on_start.
+                {on_start_delay, 5},
+    
+                %{on_start, {
+                %    shell,
+                %    "systemctl --user start aeternity-miner.service"
+                %}},
+    
+                %{on_stop, {
+                %    shell,
+                %    "systemctl --user stop aeternity-miner.service"
+                %}}
+            ]}
+        ]
+    },
     {nosternity, [{port, 9001}, {pools, []}]},
     {
         bop,
