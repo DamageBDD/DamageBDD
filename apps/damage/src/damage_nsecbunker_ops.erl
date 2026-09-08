@@ -57,7 +57,8 @@
     root/1,
     report_dir/1,
     lower_hex_sha256_file/1,
-    contains_secret_material/1
+    contains_secret_material/1,
+    secret_material_findings/1
 ]).
 
 -define(APPROVAL, "I_UNDERSTAND_THIS_CREATES_A_PRODUCTION_DAMAGEBDD_NODE_KEY").
@@ -1723,85 +1724,100 @@ first_present([[] | Rest], Default) -> first_present(Rest, Default);
 first_present([Value | _], _Default) -> Value.
 
 contains_secret_material(Term) ->
-    secret_leak(Term) =/= false orelse secret_value(term_to_binary_safe(Term)).
+    secret_material_findings(Term) =/= [].
 
-assert_no_secret_material(Term) ->
-    case secret_leak(Term) of
+%% Return only safe metadata about suspected secret material.
+%% Never include the offending value itself.
+-spec secret_material_findings(term()) -> [map()].
+secret_material_findings(Term) ->
+    lists:usort(secret_material_findings(Term, [])).
+
+secret_material_findings(Map, Path) when is_map(Map) ->
+    lists:flatmap(
+        fun({Key, Value}) ->
+            KeyPath = lists:reverse([Key | Path]),
+            KeyFindings =
+                case secret_key(Key) of
+                    true ->
+                        [
+                            #{
+                                type => secret_key,
+                                path => KeyPath,
+                                key => Key
+                            }
+                        ];
+                    false ->
+                        []
+                end,
+            KeyFindings ++
+                secret_material_findings(Value, [Key | Path])
+        end,
+        maps:to_list(Map)
+    );
+secret_material_findings(List, Path) when is_list(List) ->
+    case printable_string(List) of
+        true ->
+            secret_material_value_findings(
+                unicode:characters_to_binary(List),
+                Path
+            );
         false ->
-            case secret_value(term_to_binary_safe(Term)) of
-                false -> ok;
-                true -> error({secret_value_leaked, <<"[REDACTED]">>})
-            end;
-        Leak ->
-            error({secret_key_leaked, Leak})
+            lists:flatmap(
+                fun({Index, Value}) ->
+                    secret_material_findings(
+                        Value,
+                        [Index | Path]
+                    )
+                end,
+                lists:zip(
+                    lists:seq(0, length(List) - 1),
+                    List
+                )
+            )
+    end;
+secret_material_findings(Bin, Path) when is_binary(Bin) ->
+    secret_material_value_findings(Bin, Path);
+secret_material_findings(Tuple, Path) when is_tuple(Tuple) ->
+    secret_material_findings(tuple_to_list(Tuple), Path);
+secret_material_findings(_Other, _Path) ->
+    [].
+
+secret_material_value_findings(Bin, Path) ->
+    case secret_value(Bin) of
+        true ->
+            [
+                #{
+                    type => secret_value,
+                    path => lists:reverse(Path),
+                    value => <<"[REDACTED]">>
+                }
+            ];
+        false ->
+            []
     end.
 
-secret_leak(Map) when is_map(Map) ->
-    maps:fold(
-        fun(K, V, Acc) ->
-            case Acc of
-                false ->
-                    case secret_key(K) of
-                        true -> {secret_key, K};
-                        false -> secret_leak(V)
-                    end;
-                _ ->
-                    Acc
-            end
+printable_string([]) ->
+    true;
+printable_string(List) when is_list(List) ->
+    lists:all(
+        fun(C) ->
+            is_integer(C) andalso
+                C >= 0 andalso
+                C =< 16#10FFFF
         end,
-        false,
-        Map
-    );
-secret_leak(List) when is_list(List) ->
-    lists:foldl(
-        fun(V, Acc) ->
-            case Acc of
-                false -> secret_leak(V);
-                _ -> Acc
-            end
-        end,
-        false,
         List
     );
-secret_leak(_) ->
+printable_string(_) ->
     false.
 
-secret_key(K) ->
-    Lower = lower(bin(K)),
-    lists:member(Lower, [
-        <<"nsec">>,
-        <<"private_key">>,
-        <<"private_key_hex">>,
-        <<"privkey">>,
-        <<"privkey_hex">>,
-        <<"secret_key">>,
-        <<"secret_key_hex">>,
-        <<"mnemonic">>,
-        <<"seed">>,
-        <<"seed_hex">>,
-        <<"sk">>,
-        <<"passphrase">>,
-        <<"vault_passphrase">>,
-        <<"secret_value">>,
-        <<"aws_access_key_id">>,
-        <<"aws_secret_access_key">>,
-        <<"aws_session_token">>
-    ]).
-
-secret_value(Bin0) ->
-    Bin = bin(Bin0),
-    case re:run(Bin, <<"nsec1[02-9ac-hj-np-z]+">>, [caseless, {capture, none}]) of
-        match ->
-            true;
-        nomatch ->
-            case re:run(Bin, <<"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----">>, [{capture, none}]) of
-                match -> true;
-                nomatch -> false
-            end
+assert_no_secret_material(Term) ->
+    case secret_material_findings(Term) of
+        [] ->
+            ok;
+        Findings ->
+            error({secret_material_leaked, Findings})
     end.
 
-term_to_binary_safe(B) when is_binary(B) -> B;
-term_to_binary_safe(Term) -> unicode:characters_to_binary(io_lib:format("~p", [Term])).
 
 executable_file(Path0) ->
     Path = str(Path0),

@@ -52,7 +52,11 @@ step(_Config, Context, _Keyword, _Line, ["the live damage nsecbunker server is r
             #{running := true} = Status ->
                 Cfg = damage_nsecbunker:config(),
                 Policy = damage_nsecbunker:policy(),
-                put_live(Context, #{status => safe_public(Status), config => Cfg, policy => Policy});
+                put_live(Context, #{
+                    status => safe_public(Status),
+                    config => public_live_config(Cfg),
+                    policy => safe_public(Policy)
+                });
             Other ->
                 fail(Context, {live_nsecbunker_not_running, safe_public(Other)})
         end
@@ -269,9 +273,17 @@ step(
     _Args
 ) ->
     Live = live(Context),
-    case damage_nsecbunker_ops:contains_secret_material(Live) of
-        false -> Context;
-        true -> fail(Context, live_test_context_contains_secret_material)
+    case damage_nsecbunker_ops:secret_material_findings(Live) of
+        [] ->
+            Context;
+        Findings ->
+            fail(
+                Context,
+                {
+                    live_test_context_contains_secret_material,
+                    Findings
+                }
+            )
     end;
 %% ====================================================================
 %% Plain/local bunker request steps
@@ -1535,6 +1547,25 @@ get_config(Context) ->
 get_policy(Context) ->
     maps:get(policy, live(Context), damage_nsecbunker:policy()).
 
+
+%% Keep only the configuration required by the live BDD. In particular, do
+%% not copy secret-store references such as vault_passphrase into the test
+%% context merely because the running bunker config contains them.
+public_live_config(Config) when is_map(Config) ->
+    maps:with(
+        [
+            relays,
+            audit_log,
+            relay_autosubscribe,
+            relay_publication_mode,
+            relay_connect_timeout_ms,
+            relay_publish_timeout_ms,
+            bunker_pubkey_hex
+        ],
+        Config
+    );
+public_live_config(_) ->
+    #{}.
 return_only_filter(Context) ->
     Bunker = maps:get(bunker_pubkey_hex, live(Context), <<>>),
     case Bunker of
@@ -1722,7 +1753,13 @@ secret_key_name(K) ->
         <<"mnemonic">>,
         <<"seed">>,
         <<"seed_hex">>,
-        <<"sk">>
+        <<"sk">>,
+        <<"passphrase">>,
+        <<"vault_passphrase">>,
+        <<"secret_value">>,
+        <<"aws_access_key_id">>,
+        <<"aws_secret_access_key">>,
+        <<"aws_session_token">>
     ]).
 
 compact(Map) when is_map(Map) ->
