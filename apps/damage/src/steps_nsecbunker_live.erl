@@ -7,7 +7,6 @@
 %%   * damage_nostr:public_key_hex/construct_event/finalize_event/open_relay_ws
 %%   * damage_nostr_relay_client:subscribe/status
 %%   * damage_nsecbunker_relay:status/publish_event
-%%   * damage_nsecbunker_ops:backend_call/contains_secret_material
 %%   * damage_nostr_event:normalize_event/tag_values/id
 %%
 %% The live NIP-46 client identity is the existing damage_nostr_nsec
@@ -1022,42 +1021,22 @@ decrypt_nip46_reply(Context, Event) ->
 
 client_nip44_encrypt(BunkerPub, Plain) ->
     {_ClientPub, ClientPriv} = damage_nostr_client_keypair(),
-    NonceHex = lower_hex(crypto:strong_rand_bytes(32)),
-    Req = #{
-        <<"op">> => <<"nip44_encrypt_vector">>,
-        <<"secret_key_hex">> => lower_hex(ClientPriv),
-        <<"peer_pubkey_hex">> => BunkerPub,
-        <<"nonce_hex">> => NonceHex,
-        <<"plaintext">> => Plain
-    },
-    case backend_call(Req) of
-        #{<<"payload">> := Payload} -> {ok, Payload};
-        #{payload := Payload} -> {ok, Payload};
-        Other -> {error, {missing_nip44_payload, compact(Other)}}
-    end.
+    damage_nostr_nip44_client:encrypt(
+        ClientPriv,
+        BunkerPub,
+        Plain,
+        ?DEFAULT_TIMEOUT_MS
+    ).
 
 client_nip44_decrypt(BunkerPub, Payload) ->
     {_ClientPub, ClientPriv} = damage_nostr_client_keypair(),
-    Req = #{
-        <<"op">> => <<"nip44_decrypt_vector">>,
-        <<"secret_key_hex">> => lower_hex(ClientPriv),
-        <<"peer_pubkey_hex">> => BunkerPub,
-        <<"payload">> => Payload
-    },
-    case backend_call(Req) of
-        #{<<"plaintext">> := Plain} -> {ok, Plain};
-        #{plaintext := Plain} -> {ok, Plain};
-        Other -> {error, {missing_nip44_plaintext, compact(Other)}}
-    end.
+    damage_nostr_nip44_client:decrypt(
+        ClientPriv,
+        BunkerPub,
+        Payload,
+        ?DEFAULT_TIMEOUT_MS
+    ).
 
-backend_call(Req) ->
-    Config = damage_nsecbunker:config(),
-    Backend = first_present([
-        maps:get(crypto_backend_cmd, Config, undefined),
-        maps:get(crypto_port_cmd, Config, undefined),
-        damage_nsecbunker_ops:crypto_backend_path()
-    ]),
-    damage_nsecbunker_ops:backend_call(Req, #{backend => to_list(Backend)}).
 
 damage_nostr_client_keypair() ->
     case secrets:retrieve_decrypt(damage_nostr_nsec) of
@@ -1729,8 +1708,6 @@ lower_hex_bin(V) ->
     B = bin(V),
     list_to_binary(string:lowercase(binary_to_list(B))).
 
-lower_hex(Bin) when is_binary(Bin) ->
-    iolist_to_binary([io_lib:format("~2.16.0b", [X]) || <<X>> <= Bin]).
 
 is_lower_hex_64(Bin) when is_binary(Bin), byte_size(Bin) =:= 64 ->
     re:run(Bin, <<"^[0-9a-f]{64}$">>, [{capture, none}]) =:= match;
