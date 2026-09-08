@@ -2241,13 +2241,74 @@ sensitive_key_component(Key) ->
     ],
     lists:any(fun(Part) -> lists:member(Part, SensitiveParts) end, Parts).
 
-redact_value(Value0, Body, Args) ->
-    Value = normalize_binary(Value0),
-    case Value of
-        <<>> -> {Body, Args};
-        <<"null">> -> {Body, Args};
-        _ -> {redact_binary(Body, Value), redact_binary(Args, Value)}
+redact_value(Value0, Body0, Args0) ->
+    lists:foldl(
+        fun redact_scalar_value/2,
+        {Body0, Args0},
+        redaction_values(Value0)
+    ).
+
+redact_scalar_value(<<>>, Acc) ->
+    Acc;
+redact_scalar_value(<<"null">>, Acc) ->
+    Acc;
+redact_scalar_value(Value, {Body, Args}) when is_binary(Value) ->
+    {redact_binary(Body, Value), redact_binary(Args, Value)}.
+
+%% Sensitive values are not necessarily strings. Runtime integration config can
+%% legitimately be represented as maps, proplists or tuples. Redact the scalar
+%% leaves instead of coercing the whole term through unicode:characters_to_binary/1.
+%% Apart from avoiding badarg on proplists, this also prevents a nested secret
+%% value from escaping merely because the formatter contains only one leaf.
+redaction_values(Value) when is_binary(Value) ->
+    [Value];
+redaction_values(Value) when is_atom(Value) ->
+    [atom_to_binary(Value, utf8)];
+redaction_values(Value) when is_integer(Value) ->
+    [integer_to_binary(Value)];
+redaction_values(Value) when is_map(Value) ->
+    lists:flatmap(fun redaction_values/1, maps:values(Value));
+redaction_values({Key, Value}) when is_atom(Key); is_binary(Key); is_list(Key) ->
+    %% Treat a two-tuple with a textual key as a proplist entry. The key is
+    %% metadata; the value is the potentially sensitive material.
+    redaction_values(Value);
+redaction_values(Value) when is_tuple(Value) ->
+    lists:flatmap(fun redaction_values/1, tuple_to_list(Value));
+redaction_values(Value) when is_list(Value) ->
+    case flat_charlist_to_binary(Value) of
+        {ok, Bin} -> [Bin];
+        error -> redaction_list_values(Value)
+    end;
+redaction_values(Value) ->
+    [iolist_to_binary(io_lib:format("~p", [Value]))].
+
+flat_charlist_to_binary(Value) ->
+    case is_flat_charlist(Value) of
+        true ->
+            try unicode:characters_to_binary(Value) of
+                Bin when is_binary(Bin) -> {ok, Bin};
+                _ -> error
+            catch
+                _:_ -> error
+            end;
+        false ->
+            error
     end.
+
+is_flat_charlist([]) ->
+    true;
+is_flat_charlist([C | Rest]) when is_integer(C) ->
+    is_flat_charlist(Rest);
+is_flat_charlist(_) ->
+    false.
+
+redaction_list_values([Value | Rest]) ->
+    redaction_values(Value) ++ redaction_list_values(Rest);
+redaction_list_values([]) ->
+    [];
+redaction_list_values(ImproperTail) ->
+    redaction_values(ImproperTail).
+
 
 redact_binary(Data, Value) when is_binary(Data) ->
     binary:replace(Data, Value, ?REDACTED_TEXT_MARKER, [global]);
