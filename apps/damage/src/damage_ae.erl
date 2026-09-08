@@ -293,7 +293,11 @@ validate_ae_config() ->
         validate_optional_pos(ae_node_pool_reconnect_min_ms),
         validate_optional_pos(ae_node_pool_reconnect_max_ms),
         validate_optional_nonneg(ae_top_header_cache_ttl_ms),
-        validate_optional_nonneg(ae_gas_price_cache_ttl_ms)
+        validate_optional_nonneg(ae_gas_price_cache_ttl_ms),
+        validate_nonce_strategy_setting(),
+        validate_optional_nonneg(ae_nonce_retry_attempts),
+        validate_optional_nonneg(ae_nonce_retry_delay_ms),
+        validate_nonce_serialization()
     ],
     Errors0 = [E || E <- Checks, E =/= ok],
     Errors =
@@ -388,6 +392,57 @@ validate_bool_setting(Key) ->
         {ok, "false"} -> ok;
         {ok, Value} -> {Key, {expected_boolean, Value}}
     end.
+
+
+%% Nonce allocation deliberately defaults to the confirmed on-chain account
+%% nonce, not the node mempool's continuity/max view.  Public/load-balanced AE
+%% endpoints can expose different mempool views between requests; using those
+%% views as an allocator can create an ever-growing nonce convoy.
+nonce_strategy() ->
+    case application:get_env(damage, ae_nonce_strategy) of
+        {ok, chain} -> chain;
+        {ok, continuity} -> continuity;
+        {ok, max} -> max;
+        {ok, <<"chain">>} -> chain;
+        {ok, <<"continuity">>} -> continuity;
+        {ok, <<"max">>} -> max;
+        {ok, "chain"} -> chain;
+        {ok, "continuity"} -> continuity;
+        {ok, "max"} -> max;
+        _ -> chain
+    end.
+
+validate_nonce_strategy_setting() ->
+    case application:get_env(damage, ae_nonce_strategy) of
+        undefined -> ok;
+        {ok, chain} -> ok;
+        {ok, continuity} -> ok;
+        {ok, max} -> ok;
+        {ok, <<"chain">>} -> ok;
+        {ok, <<"continuity">>} -> ok;
+        {ok, <<"max">>} -> ok;
+        {ok, "chain"} -> ok;
+        {ok, "continuity"} -> ok;
+        {ok, "max"} -> ok;
+        {ok, Value} -> {ae_nonce_strategy, {expected_one_of, [chain, continuity, max], Value}}
+    end.
+
+%% chain nonce allocation is intentionally conservative: one live transaction
+%% per account.  If callers want multiple locally reserved nonces in flight,
+%% they need a durable reservation/replacement manager first.
+validate_nonce_serialization() ->
+    case {nonce_strategy(), env_bool(ae_serialize_until_mined, true)} of
+        {chain, false} ->
+            {ae_serialize_until_mined, required_for_chain_nonce_strategy};
+        _ ->
+            ok
+    end.
+
+nonce_retry_attempts() ->
+    env_nonneg_int(ae_nonce_retry_attempts, 1).
+
+nonce_retry_delay_ms() ->
+    env_nonneg_int(ae_nonce_retry_delay_ms, 500).
 
 maybe_warn_legacy_gas_multiplier() ->
     case application:get_env(damage, ae_gas_multiplier) of
@@ -1469,16 +1524,90 @@ with_account_nonce_locks0([Account | Rest], Fun) ->
 %% it off only when they have a separate durable nonce reservation/replacement
 %% manager.
 with_account_nonce_locks_and_wait(Accounts, IncludeHash, Fun) ->
+    Attempts = nonce_retry_attempts(),
     case env_bool(ae_serialize_until_mined, true) of
         true ->
             with_account_nonce_locks(
                 Accounts,
-                fun() -> wait_posted_tx(Fun(), IncludeHash) end
+                fun() ->
+                    wait_posted_tx_with_nonce_retry(
+                        Accounts, Fun, IncludeHash, Attempts
+                    )
+                end
             );
         false ->
+            %% Kept for compatibility with continuity/max strategies.  Startup
+            %% validation rejects this combination for the default chain
+            %% strategy because chain+1 without reservation would race.
             PostResult = with_account_nonce_locks(Accounts, Fun),
             wait_posted_tx(PostResult, IncludeHash)
     end.
+
+wait_posted_tx_with_nonce_retry(Accounts, Fun, IncludeHash, AttemptsLeft) ->
+    Result = wait_posted_tx(Fun(), IncludeHash),
+    case {nonce_rejection(Result), AttemptsLeft > 0} of
+        {{true, Code, Meta}, true} ->
+            Delay = nonce_retry_delay_ms(),
+            ?LOG_WARNING(
+                "AE transaction rejected for nonce account(s)=~p code=~p attempts_left=~p "
+                "retry_delay_ms=~p meta=~p",
+                [Accounts, Code, AttemptsLeft, Delay, Meta]
+            ),
+            log_nonce_diagnostics(Accounts),
+            case Delay > 0 of
+                true -> timer:sleep(Delay);
+                false -> ok
+            end,
+            %% Re-run the transaction builder. next_nonce/1 will fetch a fresh
+            %% confirmed account nonce from the pinned node session.
+            wait_posted_tx_with_nonce_retry(
+                Accounts, Fun, IncludeHash, AttemptsLeft - 1
+            );
+        _ ->
+            Result
+    end.
+
+nonce_rejection({error, {tx_rejected, Meta}}) when is_map(Meta) ->
+    Code = maps:get(error_code, Meta, undefined),
+    case is_nonce_error_code(Code) of
+        true -> {true, Code, Meta};
+        false -> false
+    end;
+nonce_rejection(_) ->
+    false.
+
+is_nonce_error_code(<<"nonce_too_high">>) -> true;
+is_nonce_error_code(<<"nonce_too_low">>) -> true;
+is_nonce_error_code(<<"nonce_already_used">>) -> true;
+is_nonce_error_code(<<"account_nonce_too_high">>) -> true;
+is_nonce_error_code(<<"account_nonce_too_low">>) -> true;
+is_nonce_error_code("nonce_too_high") -> true;
+is_nonce_error_code("nonce_too_low") -> true;
+is_nonce_error_code("nonce_already_used") -> true;
+is_nonce_error_code(nonce_too_high) -> true;
+is_nonce_error_code(nonce_too_low) -> true;
+is_nonce_error_code(nonce_already_used) -> true;
+is_nonce_error_code(_) -> false.
+
+log_nonce_diagnostics(Accounts) ->
+    lists:foreach(
+        fun(Account) ->
+            case nonce_diagnostics(Account) of
+                #{chain_next := ChainNext, continuity_next := Continuity, max_next := Max} ->
+                    ?LOG_WARNING(
+                        "AE nonce diagnostic account=~p chain_next=~p continuity_next=~p max_next=~p",
+                        [Account, ChainNext, Continuity, Max]
+                    );
+                Diagnostic ->
+                    ?LOG_WARNING(
+                        "AE nonce diagnostic account=~p result=~p",
+                        [Account, Diagnostic]
+                    )
+            end
+        end,
+        lists:usort([normalize_ae_account(A) || A <- Accounts])
+    ),
+    ok.
 
 invalidate_cache(AeAccount) ->
     damage_balance_cache:invalidate(AeAccount),
@@ -1511,45 +1640,137 @@ read_stream(ConnPid, StreamRef) ->
             Default
     end.
 
-%% Keep one nonce allocator for all live transactions. Contract calls,
-%% deployments and PayingFor wrappers already call this helper while dry-runs
-%% use dry_run_nonce/1 against their pinned top hash.
+%% Keep one nonce allocator for all live transactions.
+%%
+%% Default strategy is `chain`: use the confirmed account nonce + 1.  Do not
+%% derive a new transaction nonce from a public node's mempool continuity/max
+%% view.  The current transaction paths keep the account lock until mining, so
+%% only one local transaction per account is live and chain+1 is deterministic.
+%%
+%% `continuity` and `max` remain available as explicit compatibility settings.
 -spec next_nonce(binary() | list()) -> {ok, non_neg_integer()} | {error, term()}.
 next_nonce(AeAccount0) ->
     AeAccount = normalize_ae_account(AeAccount0),
-    Path =
-        "v3/accounts/" ++ binary_to_list(AeAccount) ++
-            "/next-nonce?strategy=continuity",
     Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
     case current_ae_session() of
         {ok, Session} ->
-            case damage_ae_node_pool:get(Session, Path, Timeout) of
-                {ok, #{status := Status, body := Body, node := Node}} ->
-                    ?LOG_DEBUG(
-                        "Next nonce request account=~p node=~p",
-                        [AeAccount, maps:get(node_id, Node, undefined)]
-                    ),
-                    next_nonce_body(Status, Body, AeAccount);
-                Error ->
-                    {error, {next_nonce_node_unavailable, AeAccount, Error}}
+            case nonce_strategy() of
+                chain ->
+                    chain_next_nonce(Session, AeAccount, Timeout);
+                continuity ->
+                    mempool_next_nonce(Session, AeAccount, continuity, Timeout);
+                max ->
+                    mempool_next_nonce(Session, AeAccount, max, Timeout)
             end;
         Error ->
             {error, {next_nonce_session_unavailable, AeAccount, Error}}
     end.
 
-next_nonce_body(Status, Body, AeAccount) when Status >= 200, Status < 300 ->
+chain_next_nonce(Session, AeAccount, Timeout) ->
+    Path = "v3/accounts/" ++ binary_to_list(AeAccount),
+    case damage_ae_node_pool:get(Session, Path, Timeout) of
+        {ok, #{status := Status, body := Body, node := Node}} when
+            Status >= 200, Status < 300
+        ->
+            Json = decode_next_nonce_json(Body),
+            case map_int([<<"nonce">>, nonce, "nonce"], Json, undefined) of
+                Nonce when is_integer(Nonce), Nonce >= 0 ->
+                    Next = Nonce + 1,
+                    ?LOG_DEBUG(
+                        "Next nonce account=~p source=chain node=~p confirmed_nonce=~p nonce=~p",
+                        [
+                            AeAccount,
+                            maps:get(node_id, Node, undefined),
+                            Nonce,
+                            Next
+                        ]
+                    ),
+                    {ok, Next};
+                Other ->
+                    {error, {invalid_chain_nonce, AeAccount, Other, Json}}
+            end;
+        {ok, #{status := 404, body := Body}} ->
+            Json = decode_next_nonce_json(Body),
+            case account_not_found_response(Json) of
+                true ->
+                    ?LOG_DEBUG(
+                        "Next nonce account=~p source=chain account_not_found nonce=1",
+                        [AeAccount]
+                    ),
+                    {ok, 1};
+                false ->
+                    {error, {chain_nonce_http_error, AeAccount, 404, Json}}
+            end;
+        {ok, #{status := Status, body := Body}} ->
+            {error,
+                {chain_nonce_http_error, AeAccount, Status, decode_next_nonce_json(Body)}};
+        Error ->
+            {error, {chain_nonce_request_failed, AeAccount, Error}}
+    end.
+
+account_not_found_response(Json) when is_map(Json) ->
+    Reason = map_value(
+        [<<"reason">>, reason, "reason", <<"error">>, error, "error"],
+        Json,
+        undefined
+    ),
+    Lower = lower_reason_binary(Reason),
+    binary:match(Lower, <<"account not found">>) =/= nomatch orelse
+        binary:match(Lower, <<"not found">>) =/= nomatch;
+account_not_found_response(_) ->
+    false.
+
+mempool_next_nonce(Session, AeAccount, Strategy, Timeout) ->
+    StrategyString = atom_to_list(Strategy),
+    Path =
+        "v3/accounts/" ++ binary_to_list(AeAccount) ++
+            "/next-nonce?strategy=" ++ StrategyString,
+    case damage_ae_node_pool:get(Session, Path, Timeout) of
+        {ok, #{status := Status, body := Body, node := Node}} ->
+            next_nonce_body(Status, Body, AeAccount, Strategy, Node);
+        Error ->
+            {error, {next_nonce_node_unavailable, AeAccount, Strategy, Error}}
+    end.
+
+next_nonce_body(Status, Body, AeAccount, Strategy, Node) when Status >= 200, Status < 300 ->
     Json = decode_next_nonce_json(Body),
     case map_int([<<"next_nonce">>, next_nonce, "next_nonce"], Json, undefined) of
         Nonce when is_integer(Nonce), Nonce > 0 ->
-            ?LOG_DEBUG("Next nonce account=~p source=node strategy=continuity nonce=~p", [
-                AeAccount, Nonce
-            ]),
+            ?LOG_DEBUG(
+                "Next nonce account=~p source=mempool strategy=~p node=~p nonce=~p",
+                [AeAccount, Strategy, maps:get(node_id, Node, undefined), Nonce]
+            ),
             {ok, Nonce};
         Other ->
-            {error, {invalid_next_nonce, AeAccount, Other, Json}}
+            {error, {invalid_next_nonce, AeAccount, Strategy, Other, Json}}
     end;
-next_nonce_body(Status, Body, AeAccount) ->
-    {error, {next_nonce_http_error, AeAccount, Status, decode_next_nonce_json(Body)}}.
+next_nonce_body(Status, Body, AeAccount, Strategy, _Node) ->
+    {error,
+        {next_nonce_http_error, AeAccount, Strategy, Status, decode_next_nonce_json(Body)}}.
+
+nonce_diagnostics(AeAccount0) ->
+    AeAccount = normalize_ae_account(AeAccount0),
+    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
+    case current_ae_session() of
+        {ok, Session} ->
+            #{
+                chain_next => diagnostic_nonce_value(
+                    chain_next_nonce(Session, AeAccount, Timeout)
+                ),
+                continuity_next => diagnostic_nonce_value(
+                    mempool_next_nonce(Session, AeAccount, continuity, Timeout)
+                ),
+                max_next => diagnostic_nonce_value(
+                    mempool_next_nonce(Session, AeAccount, max, Timeout)
+                ),
+                node => session_node_id(Session)
+            };
+        Error ->
+            #{error => Error}
+    end.
+
+diagnostic_nonce_value({ok, Nonce}) -> Nonce;
+diagnostic_nonce_value(Error) -> Error.
 
 decode_next_nonce_json(<<>>) ->
     #{};
