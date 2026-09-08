@@ -284,7 +284,11 @@ validate_ae_config() ->
         validate_bool_setting(ae_dry_run_enabled),
         validate_bool_setting(ae_contract_query_fallback_onchain),
         validate_bool_setting(ae_serialize_until_mined),
-        validate_optional_pos(ae_dry_run_capability_ttl_ms)
+        validate_optional_pos(ae_dry_run_capability_ttl_ms),
+        validate_optional_pos(ae_node_pool_connect_timeout_ms),
+        validate_optional_pos(ae_node_pool_request_timeout_ms),
+        validate_optional_pos(ae_node_pool_reconnect_min_ms),
+        validate_optional_pos(ae_node_pool_reconnect_max_ms)
     ],
     Errors0 = [E || E <- Checks, E =/= ok],
     Errors =
@@ -404,40 +408,30 @@ maybe_warn_fee_amplification() ->
     end.
 
 recent_gas_price(Fallback) ->
-    case get_ae_node() of
-        {ok, ConnPid, PathPrefix} ->
-            try
-                recent_gas_price_paths(ConnPid, recent_gas_price_paths(PathPrefix), Fallback)
-            after
-                safe_gun_close(ConnPid)
-            end;
-        Error ->
-            {error, Error}
-    end.
-
-safe_gun_close(ConnPid) ->
-    try gun:close(ConnPid) of
-        _ -> ok
-    catch
-        _:_ -> ok
-    end.
-
-recent_gas_price_paths(PathPrefix) ->
-    [join_ae_path(PathPrefix, "v3/recent-gas-prices")].
-
-recent_gas_price_paths(_ConnPid, [], _Fallback) ->
-    {error, recent_gas_price_unavailable};
-recent_gas_price_paths(ConnPid, [Path | Rest], Fallback) ->
-    StreamRef = gun:get(ConnPid, Path),
-    try read_stream(ConnPid, StreamRef) of
-        Json ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    case damage_ae_node_pool:get_json("v3/recent-gas-prices", Timeout) of
+        {ok, #{status := Status, json := Json, node := Node}} when
+            Status >= 200, Status < 300
+        ->
             case recent_gas_price_from_json(Json, Fallback) of
-                {ok, _Price} = Ok -> Ok;
-                _ -> recent_gas_price_paths(ConnPid, Rest, Fallback)
-            end
-    catch
-        _:_ ->
-            recent_gas_price_paths(ConnPid, Rest, Fallback)
+                {ok, Price} = Ok ->
+                    ?LOG_DEBUG(
+                        "Recent gas price node=~p price=~p",
+                        [maps:get(node_id, Node, undefined), Price]
+                    ),
+                    Ok;
+                Error ->
+                    Error
+            end;
+        {ok, #{status := Status, body := Body, node := Node}} ->
+            {error,
+                {recent_gas_price_http_error, #{
+                    status => Status,
+                    body => Body,
+                    node => Node
+                }}};
+        Error ->
+            {error, {recent_gas_price_unavailable, Error}}
     end.
 
 recent_gas_price_from_json(#{data := Data}, Fallback) ->
@@ -521,25 +515,6 @@ int_value(_V, Default) ->
 ceil_percent(Value, Percent) ->
     (Value * Percent + 99) div 100.
 
-join_ae_path(PathPrefix0, RelPath0) ->
-    PathPrefix = to_s(PathPrefix0),
-    RelPath = string:trim(to_s(RelPath0), leading, "/"),
-    case PathPrefix of
-        "" -> "/" ++ RelPath;
-        _ -> ensure_trailing_slash(PathPrefix) ++ RelPath
-    end.
-
-ensure_trailing_slash([]) ->
-    "/";
-ensure_trailing_slash(Path) ->
-    case lists:last(Path) of
-        $/ -> Path;
-        _ -> Path ++ "/"
-    end.
-
-to_s(Bin) when is_binary(Bin) -> binary_to_list(Bin);
-to_s(List) when is_list(List) -> List;
-to_s(Other) -> io_lib:format("~p", [Other]).
 get_ae_node() ->
     {ok, AENodes} = application:get_env(damage, ae_nodes),
     find_active_node(AENodes).
@@ -1028,6 +1003,8 @@ handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
     NewCache = maps:put(spent_balance, {Balance, Spend + Amount}, AccountCache),
     {noreply, maps:put(AeAccount, NewCache, Cache)};
 handle_cast({invalidate_cache, AeAccount}, Cache0) ->
+    %% Preserve the per-account map because it contains unsettled spent_balance.
+    %% Only the derived balance cache entry is invalidated here.
     {noreply, maps:remove({balance, AeAccount}, Cache0)};
 handle_cast(Event, State) ->
     ?LOG_DEBUG("unhandled cast : ~p", [Event]),
@@ -1477,37 +1454,19 @@ read_stream(ConnPid, StreamRef) ->
 -spec next_nonce(binary() | list()) -> {ok, non_neg_integer()} | {error, term()}.
 next_nonce(AeAccount0) ->
     AeAccount = normalize_ae_account(AeAccount0),
-    case get_ae_node() of
-        {ok, ConnPid, PathPrefix} ->
-            Path = join_ae_path(
-                PathPrefix,
-                "v3/accounts/" ++ binary_to_list(AeAccount) ++
-                    "/next-nonce?strategy=continuity"
+    Path =
+        "v3/accounts/" ++ binary_to_list(AeAccount) ++
+            "/next-nonce?strategy=continuity",
+    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
+    case damage_ae_node_pool:get(Path, Timeout) of
+        {ok, #{status := Status, body := Body, node := Node}} ->
+            ?LOG_DEBUG(
+                "Next nonce request account=~p node=~p",
+                [AeAccount, maps:get(node_id, Node, undefined)]
             ),
-            try
-                StreamRef = gun:get(ConnPid, Path),
-                next_nonce_response(ConnPid, StreamRef, AeAccount)
-            after
-                safe_gun_close(ConnPid)
-            end;
+            next_nonce_body(Status, Body, AeAccount);
         Error ->
             {error, {next_nonce_node_unavailable, AeAccount, Error}}
-    end.
-
-next_nonce_response(ConnPid, StreamRef, AeAccount) ->
-    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
-    case gun:await(ConnPid, StreamRef, Timeout) of
-        {response, nofin, Status, _Headers} ->
-            case gun:await_body(ConnPid, StreamRef, Timeout) of
-                {ok, Body} -> next_nonce_body(Status, Body, AeAccount);
-                Error -> {error, {next_nonce_body_failed, AeAccount, Error}}
-            end;
-        {response, fin, Status, _Headers} ->
-            next_nonce_body(Status, <<>>, AeAccount);
-        {error, Reason} ->
-            {error, {next_nonce_request_failed, AeAccount, Reason}};
-        Other ->
-            {error, {unexpected_next_nonce_response, AeAccount, Other}}
     end.
 
 next_nonce_body(Status, Body, AeAccount) when Status >= 200, Status < 300 ->
@@ -1542,45 +1501,31 @@ post_tx(SignedTx) ->
 
 post_tx_detailed(SignedTx0) ->
     SignedTx = normalize_encoded_tx(SignedTx0),
-    case get_ae_node() of
-        {ok, ConnPid, PathPrefix} ->
-            Path = join_ae_path(PathPrefix, "v3/transactions"),
-            Headers = [
-                {<<"accept">>, <<"application/json">>},
-                {<<"content-type">>, <<"application/json">>}
-            ],
-            Body = jsx:encode(#{tx => SignedTx}),
-            try
-                StreamRef = gun:post(ConnPid, Path, Headers, Body),
-                %% Do not calculate a local hash before POST. A successful node
-                %% response already contains tx_hash. Local hashing is only
-                %% needed for the idempotent already_known response.
-                tx_post_response(ConnPid, StreamRef, SignedTx)
-            after
-                safe_gun_close(ConnPid)
-            end;
+    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
+    case
+        damage_ae_node_pool:post_json(
+            "v3/transactions",
+            #{tx => SignedTx},
+            Timeout
+        )
+    of
+        {ok, #{
+            status := Status,
+            headers := Headers,
+            body := Body,
+            node := Node
+        }} ->
+            ?LOG_DEBUG(
+                "Transaction POST node=~p status=~p",
+                [maps:get(node_id, Node, undefined), Status]
+            ),
+            normalize_tx_post_response(Status, Headers, Body, SignedTx);
         Error ->
             {error, {tx_post_node_unavailable, Error}}
     end.
 
 normalize_encoded_tx(Tx) when is_binary(Tx) -> Tx;
 normalize_encoded_tx(Tx) when is_list(Tx) -> list_to_binary(Tx).
-
-tx_post_response(ConnPid, StreamRef, SignedTx) ->
-    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
-    case gun:await(ConnPid, StreamRef, Timeout) of
-        {response, nofin, Status, Headers} ->
-            case gun:await_body(ConnPid, StreamRef, Timeout) of
-                {ok, Body} -> normalize_tx_post_response(Status, Headers, Body, SignedTx);
-                Error -> {error, {tx_post_body_failed, Error}}
-            end;
-        {response, fin, Status, Headers} ->
-            normalize_tx_post_response(Status, Headers, <<>>, SignedTx);
-        {error, Reason} ->
-            {error, {tx_post_request_failed, Reason}};
-        Other ->
-            {error, {unexpected_tx_post_response, Other}}
-    end.
 
 normalize_tx_post_response(Status, _Headers, Body, _SignedTx) when Status >= 200, Status < 300 ->
     Json = decode_next_nonce_json(Body),
@@ -1674,10 +1619,16 @@ signed_tx_hash_bin(SignedTxBin) when is_binary(SignedTxBin) ->
 get_ae_balance(AeAccount) when is_binary(AeAccount) ->
     get_ae_balance(binary_to_list(AeAccount));
 get_ae_balance(AeAccount) ->
-    {ok, ConnPid, PathPrefix} = get_ae_node(),
-    Path = PathPrefix ++ "v3/accounts/" ++ AeAccount,
-    StreamRef = gun:get(ConnPid, Path),
-    read_stream(ConnPid, StreamRef).
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    Path = "v3/accounts/" ++ AeAccount,
+    case damage_ae_node_pool:get_json(Path, Timeout) of
+        {ok, #{json := Json}} when is_map(Json) ->
+            Json;
+        {ok, Response} ->
+            {error, {unexpected_ae_balance_response, Response}};
+        Error ->
+            Error
+    end.
 
 transfer_damage_tokens(AeAccount, Amount) ->
     % transfer damage tokens from admin account to to account
