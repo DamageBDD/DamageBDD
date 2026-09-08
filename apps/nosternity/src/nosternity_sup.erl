@@ -49,7 +49,6 @@ init([]) ->
             end,
             Pools
         ),
-    DefaultRelays = nostr_pool:default_relays(#{}),
 
     PoolSpecs0 =
         [
@@ -68,17 +67,15 @@ init([]) ->
                 shutdown => 60000,
                 type => worker,
                 modules => [damage_nostr]
-            },
-            #{
-                id => nostr_pool,
-                start => {nostr_pool, start_link, [#{relays => DefaultRelays}]},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [nostr_pool]
             }
         ] ++
             PoolSpecs,
 
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
+    case whereis(nostr_pool) of
+        undefined ->
+            ?LOG_WARNING("damage-supervised nostr_pool is not running");
+        Pid ->
+            ?LOG_DEBUG("Using damage-supervised nostr_pool pid=~p", [Pid])
+    end,
     {ok, {SupFlags, PoolSpecs0}}.

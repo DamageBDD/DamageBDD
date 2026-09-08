@@ -61,6 +61,18 @@ init([]) ->
                 modules => [secrets]
             },
             #{
+                id => nostr_pool,
+                start => {
+                    nostr_pool,
+                    start_link,
+                    [#{relays => nostr_pool:default_relays(#{})}]
+                },
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [nostr_pool]
+            },
+            #{
                 id => damage_schedule,
                 start => {damage_schedule, start_link, []},
                 restart => permanent,

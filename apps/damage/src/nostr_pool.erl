@@ -74,15 +74,12 @@ ensure_started() ->
 ensure_started(Relays) ->
     case whereis(?SERVER) of
         undefined ->
-            case start_link(Relays) of
-                {ok, _Pid} -> ok;
-                {error, {already_started, _}} -> ok;
-                Other -> Other
-            end;
+            {error, nostr_pool_not_started};
         _Pid ->
-            %% Update relay set if needed
-            ?LOG_DEBUG("ensure_started ~p", [Relays]),
-            gen_server:cast(?SERVER, {set_relays, damage_nostr:normalize_relays(Relays)}),
+            gen_server:cast(
+                ?SERVER,
+                {set_relays, damage_nostr:normalize_relays(Relays)}
+            ),
             ok
     end.
 
