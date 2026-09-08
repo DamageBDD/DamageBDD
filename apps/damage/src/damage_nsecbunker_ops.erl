@@ -1810,6 +1810,54 @@ printable_string(List) when is_list(List) ->
 printable_string(_) ->
     false.
 
+%% Classify secret-bearing field names. This detects the presence of a
+%% secret/custody boundary even when the value is only a secret-store
+%% reference rather than the secret itself.
+secret_key(K) ->
+    Lower = lower(bin(K)),
+    lists:member(Lower, [
+        <<"nsec">>,
+        <<"private_key">>,
+        <<"private_key_hex">>,
+        <<"privkey">>,
+        <<"privkey_hex">>,
+        <<"secret_key">>,
+        <<"secret_key_hex">>,
+        <<"mnemonic">>,
+        <<"seed">>,
+        <<"seed_hex">>,
+        <<"sk">>,
+        <<"passphrase">>,
+        <<"vault_passphrase">>,
+        <<"secret_value">>,
+        <<"aws_access_key_id">>,
+        <<"aws_secret_access_key">>,
+        <<"aws_session_token">>
+    ]).
+
+%% Detect recognisable secret values without ever returning or logging them.
+secret_value(Bin0) ->
+    Bin = bin(Bin0),
+    case re:run(
+        Bin,
+        <<"nsec1[02-9ac-hj-np-z]+">>,
+        [caseless, {capture, none}]
+    ) of
+        match ->
+            true;
+        nomatch ->
+            case re:run(
+                Bin,
+                <<"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----">>,
+                [{capture, none}]
+            ) of
+                match ->
+                    true;
+                nomatch ->
+                    false
+            end
+    end.
+
 assert_no_secret_material(Term) ->
     case secret_material_findings(Term) of
         [] ->
