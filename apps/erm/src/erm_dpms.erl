@@ -103,7 +103,6 @@ strip_enabled(Opts) when is_map(Opts) ->
 strip_enabled(Opts) when is_list(Opts) ->
     proplists:delete(enabled, Opts).
 
-
 stop() ->
     gen_server:stop(?MODULE).
 
@@ -126,16 +125,24 @@ disable_dpms() ->
 force_dpms(Level) when Level =:= on; Level =:= standby; Level =:= suspend; Level =:= off ->
     gen_server:call(?MODULE, {force_dpms, Level}).
 
-set_screensaver_timeout(Seconds)
-        when is_integer(Seconds),
-             Seconds >= 0,
-             Seconds =< ?MAX_SCREENSAVER_TIMEOUT ->
+set_screensaver_timeout(Seconds) when
+    is_integer(Seconds),
+    Seconds >= 0,
+    Seconds =< ?MAX_SCREENSAVER_TIMEOUT
+->
     gen_server:call(?MODULE, {set_screensaver_timeout, Seconds}).
 
-set_dpms_timeouts(Standby, Suspend, Off)
-        when is_integer(Standby), Standby >= 0, Standby =< ?MAX_DPMS_TIMEOUT,
-             is_integer(Suspend), Suspend >= 0, Suspend =< ?MAX_DPMS_TIMEOUT,
-             is_integer(Off), Off >= 0, Off =< ?MAX_DPMS_TIMEOUT ->
+set_dpms_timeouts(Standby, Suspend, Off) when
+    is_integer(Standby),
+    Standby >= 0,
+    Standby =< ?MAX_DPMS_TIMEOUT,
+    is_integer(Suspend),
+    Suspend >= 0,
+    Suspend =< ?MAX_DPMS_TIMEOUT,
+    is_integer(Off),
+    Off >= 0,
+    Off =< ?MAX_DPMS_TIMEOUT
+->
     gen_server:call(?MODULE, {set_dpms_timeouts, Standby, Suspend, Off}).
 
 inhibit(Bool) when is_boolean(Bool) ->
@@ -200,11 +207,9 @@ handle_call(status, _From, State = #{x11 := X11}) ->
         inhibited => maps:get(inhibited, State)
     },
     {reply, Reply, State};
-
 handle_call(sleep, _From, State = #{x11 := X11}) ->
     Reply = x11_force_screensaver(X11, active),
     {reply, Reply, State};
-
 handle_call(wake, _From, State0 = #{x11 := X11}) ->
     %% Cancel first so an explicit wake cannot race the delayed start hook
     %% while the XScreenSaver reset event is waiting for the next poll.
@@ -218,34 +223,37 @@ handle_call(wake, _From, State0 = #{x11 := X11}) ->
         end,
     R2 = x11_force_screensaver(X11, reset),
     {reply, first_error([R1, R2]), State};
-
 handle_call(enable_dpms, _From, State = #{x11 := X11}) ->
     {reply, x11_dpms_enable(X11), State};
-
 handle_call(disable_dpms, _From, State = #{x11 := X11}) ->
     {reply, x11_dpms_disable(X11), State};
-
-handle_call({force_dpms, Level}, _From, State = #{x11 := X11})
-        when Level =:= on; Level =:= standby; Level =:= suspend; Level =:= off ->
+handle_call({force_dpms, Level}, _From, State = #{x11 := X11}) when
+    Level =:= on; Level =:= standby; Level =:= suspend; Level =:= off
+->
     Reply =
         case ensure_dpms_enabled(X11) of
             ok -> x11_dpms_force(X11, Level);
             Error -> Error
         end,
     {reply, Reply, State};
-
-handle_call({set_screensaver_timeout, Seconds}, _From, State = #{x11 := X11})
-        when is_integer(Seconds),
-             Seconds >= 0,
-             Seconds =< ?MAX_SCREENSAVER_TIMEOUT ->
+handle_call({set_screensaver_timeout, Seconds}, _From, State = #{x11 := X11}) when
+    is_integer(Seconds),
+    Seconds >= 0,
+    Seconds =< ?MAX_SCREENSAVER_TIMEOUT
+->
     {reply, x11_set_screensaver_timeout(X11, Seconds), State};
-
-handle_call({set_dpms_timeouts, Standby, Suspend, Off}, _From, State = #{x11 := X11})
-        when is_integer(Standby), Standby >= 0, Standby =< ?MAX_DPMS_TIMEOUT,
-             is_integer(Suspend), Suspend >= 0, Suspend =< ?MAX_DPMS_TIMEOUT,
-             is_integer(Off), Off >= 0, Off =< ?MAX_DPMS_TIMEOUT ->
+handle_call({set_dpms_timeouts, Standby, Suspend, Off}, _From, State = #{x11 := X11}) when
+    is_integer(Standby),
+    Standby >= 0,
+    Standby =< ?MAX_DPMS_TIMEOUT,
+    is_integer(Suspend),
+    Suspend >= 0,
+    Suspend =< ?MAX_DPMS_TIMEOUT,
+    is_integer(Off),
+    Off >= 0,
+    Off =< ?MAX_DPMS_TIMEOUT
+->
     {reply, x11_set_dpms_timeouts(X11, Standby, Suspend, Off), State};
-
 handle_call({inhibit, Bool}, _From, State = #{inhibited := Bool}) when is_boolean(Bool) ->
     %% XScreenSaverSuspend is reference-counted by the X server. Keep this API
     %% idempotent so repeated inhibit(true) calls do not require matching
@@ -256,7 +264,6 @@ handle_call({inhibit, Bool}, _From, State = #{x11 := X11}) when is_boolean(Bool)
         ok -> {reply, ok, State#{inhibited => Bool}};
         Error -> {reply, Error, State}
     end;
-
 handle_call(Request, _From, State) ->
     {reply, {error, {unknown_call, Request}}, State}.
 
@@ -277,11 +284,10 @@ handle_info(poll_x11, State0 = #{x11 := X11}) ->
         end,
     schedule_poll(State1),
     {noreply, State1};
-
 handle_info(
-        {run_delayed_start_hook, Token},
-        State0 = #{on_start_pending := #{token := Token}}
-    ) ->
+    {run_delayed_start_hook, Token},
+    State0 = #{on_start_pending := #{token := Token}}
+) ->
     State1 = State0#{on_start_pending => undefined},
     case delayed_start_is_valid(State1) of
         true ->
@@ -299,7 +305,6 @@ handle_info({run_delayed_start_hook, _StaleToken}, State) ->
     %% never start a process during a later sleep cycle.
     ?LOG_DEBUG("Ignoring stale ERM DPMS delayed start-hook timer", []),
     {noreply, State};
-
 handle_info(Info, State) ->
     ?LOG_DEBUG("ERM DPMS ignoring info ~p", [Info]),
     {noreply, State}.
@@ -333,13 +338,14 @@ safe_x11_close(X11) ->
 %% ------------------------------------------------------------------
 
 handle_screensaver_event(
-        #{state := NewSaverState} = Event,
-        State0 = #{saver_state := OldSaverState}
-    )
-        when NewSaverState =:= on;
-             NewSaverState =:= off;
-             NewSaverState =:= cycle;
-             NewSaverState =:= disabled ->
+    #{state := NewSaverState} = Event,
+    State0 = #{saver_state := OldSaverState}
+) when
+    NewSaverState =:= on;
+    NewSaverState =:= off;
+    NewSaverState =:= cycle;
+    NewSaverState =:= disabled
+->
     State1 = State0#{saver_state => NewSaverState},
     case {saver_active(OldSaverState), saver_active(NewSaverState)} of
         {false, true} ->
@@ -491,20 +497,28 @@ configure_x11(X11, Opts) ->
 
 configure_screensaver_timeout(_X11, keep) ->
     ok;
-configure_screensaver_timeout(X11, Seconds)
-        when is_integer(Seconds),
-             Seconds >= 0,
-             Seconds =< ?MAX_SCREENSAVER_TIMEOUT ->
+configure_screensaver_timeout(X11, Seconds) when
+    is_integer(Seconds),
+    Seconds >= 0,
+    Seconds =< ?MAX_SCREENSAVER_TIMEOUT
+->
     x11_set_screensaver_timeout(X11, Seconds);
 configure_screensaver_timeout(_X11, Bad) ->
     {error, {bad_screensaver_timeout, Bad}}.
 
 configure_dpms_timeouts(_X11, keep) ->
     ok;
-configure_dpms_timeouts(X11, {Standby, Suspend, Off})
-        when is_integer(Standby), Standby >= 0, Standby =< ?MAX_DPMS_TIMEOUT,
-             is_integer(Suspend), Suspend >= 0, Suspend =< ?MAX_DPMS_TIMEOUT,
-             is_integer(Off), Off >= 0, Off =< ?MAX_DPMS_TIMEOUT ->
+configure_dpms_timeouts(X11, {Standby, Suspend, Off}) when
+    is_integer(Standby),
+    Standby >= 0,
+    Standby =< ?MAX_DPMS_TIMEOUT,
+    is_integer(Suspend),
+    Suspend >= 0,
+    Suspend =< ?MAX_DPMS_TIMEOUT,
+    is_integer(Off),
+    Off >= 0,
+    Off =< ?MAX_DPMS_TIMEOUT
+->
     x11_set_dpms_timeouts(X11, Standby, Suspend, Off);
 configure_dpms_timeouts(_X11, Bad) ->
     {error, {bad_dpms_timeouts, Bad}}.
@@ -624,8 +638,10 @@ load_nif() ->
     AppDir = filename:dirname(filename:dirname(Beam)),
     SoName = filename:join([AppDir, "priv", "erm_dpms_nif"]),
     case erlang:load_nif(SoName, 0) of
-        ok -> ok;
-        {error, {reload, _}} -> ok;
+        ok ->
+            ok;
+        {error, {reload, _}} ->
+            ok;
         {error, Reason} ->
             logger:error("Unable to load ERM DPMS NIF ~ts: ~p", [SoName, Reason]),
             ok
