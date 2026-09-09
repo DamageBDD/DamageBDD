@@ -1,0 +1,28 @@
+[
+ {damage, [
+   {ipfs, [
+     {ipfs_api, "http://127.0.0.1:5001"},
+     {data_dir, "/var/lib/damage/ipfs"},
+     {request_timeout_ms, 50000},
+     {connect_timeout_ms, 5000},
+     {http_timeout_ms, 15000},
+     {client_concurrency, 8},
+     {client_queue_limit, 64},
+     {fetch_concurrency, 4},
+     {fetch_queue_limit, 32},
+     {max_request_bytes, 67108864},
+     {max_response_bytes, 67108864},
+     {max_intents, 100000},
+     {pin_poll_ms, 1000},
+     {retry_base_ms, 2000},
+     {retry_max_ms, 300000},
+     {health_interval_ms, 30000},
+     {reconcile_interval_ms, 60000},
+     {reconcile_batch, 32},
+     {peer_interval_ms, 30000},
+     {max_peers, 128},
+     {loop_timeout_ms, 120000},
+     {ipfs_peers, []}
+   ]}
+ ]}
+].

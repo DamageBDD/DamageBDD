@@ -230,14 +230,7 @@ init([]) ->
                 type => worker,
                 modules => [damage_nwc_listener, damage_nwc_listener]
             },
-            #{
-                id => damage_ipfs_peers,
-                start => {damage_ipfs_peers, start_link, []},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [damage_ipfs_peers]
-            }
+            damage_ipfs_sup:child_spec()
         ],
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
