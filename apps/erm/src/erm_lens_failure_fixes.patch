@@ -1,0 +1,1338 @@
+--- a/apps/erm/src/erm_lens.erl
++++ b/apps/erm/src/erm_lens.erl
+@@ -15,6 +15,8 @@
+ -export([
+     start/0,
+     start/1,
++    start_standalone/0,
++    start_standalone/1,
+     start_link/1,
+     stop/0,
+     show/0,
+@@ -72,6 +74,9 @@
+ start() ->
+     start(application:get_env(erm, lens, #{})).
+ 
++%% Normal startup is supervised-only. The old implicit standalone fallback
++%% could leave an erm_lens_sup registered before erm_sup booted, causing the
++%% entire ERM application to fail with {already_started, Pid}.
+ start(C0) ->
+     C = merged_config(C0),
+     case maps:get(enabled, C, true) of
+@@ -79,15 +84,44 @@
+             ?LOG_INFO("ERM Lens start requested but Lens is disabled", []),
+             {error, disabled};
+         true ->
+-            start_via_erm_or_standalone(C)
++            case ensure_erm_application() of
++                ok -> start_under_erm(C);
++                {error, _} = Error -> Error
++            end
+     end.
+ 
++%% Explicit development escape hatch. Never called implicitly by show/0.
++start_standalone() ->
++    start_standalone(application:get_env(erm, lens, #{})).
++
++start_standalone(C0) ->
++    C = merged_config(C0),
++    do_start_standalone(C).
++
+ start_link(C0) ->
+     C = maps:remove(enabled, merged_config(C0)),
+     log_optional_dependency(ssl),
+     log_optional_dependency(gun),
+-    ?LOG_INFO("Starting ERM Lens supervision tree", []),
+-    erm_lens_sup:start_link(C).
++    case whereis(erm_lens_sup) of
++        undefined ->
++            ?LOG_INFO("Starting ERM Lens supervision tree", []),
++            erm_lens_sup:start_link(C);
++        Existing ->
++            %% If erm_sup is invoking this child start MFA, the existing
++            %% registered supervisor is an unmanaged development leftover.
++            %% Stop it and create a fresh child with the configured state.
++            case whereis(erm_sup) of
++                Parent when Parent =:= self() ->
++                    ?LOG_WARNING(
++                        "Reclaiming unmanaged ERM Lens supervisor pid=~p before supervised startup",
++                        [Existing]
++                    ),
++                    reclaim_standalone(Existing),
++                    erm_lens_sup:start_link(C);
++                _ ->
++                    {error, {already_started, Existing}}
++            end
++    end.
+ 
+ show() ->
+     case ensure_started() of
+@@ -123,9 +157,20 @@
+     GtkStatus = #{
+         gtknode4_sup => whereis(gtknode4_sup),
+         gtknode4 => whereis(gtknode4),
+-        gtkgs => whereis(gtkgs)
++        gtkgs => whereis(gtkgs),
++        controller_status => safe_process_call(gtknode4, status),
++        port_status => safe_process_call(gtknode4_port, status)
+     },
+-    #{supervisor => SupStatus, ui => UiStatus, gtk => GtkStatus}.
++    Optional = safe_apply(erm_sup, optional_status, [], not_started),
++    #{
++        application => application_status(erm),
++        supervisor => SupStatus,
++        optional_services => Optional,
++        ui => UiStatus,
++        feed => safe_process_call(erm_lens_feed, status),
++        sync => safe_process_call(erm_lens_sync, status),
++        gtk => GtkStatus
++    }.
+ 
+ stop() ->
+     case whereis(erm_sup) of
+@@ -141,37 +186,92 @@
+ %%%===================================================================
+ 
+ ensure_started() ->
+-    case whereis(erm_lens_sup) of
+-        Pid when is_pid(Pid) -> {ok, Pid};
+-        undefined -> start()
++    case ensure_erm_application() of
++        ok ->
++            C = merged_config(application:get_env(erm, lens, #{})),
++            start_under_erm(C);
++        {error, _} = Error -> Error
+     end.
+ 
+-start_via_erm_or_standalone(C) ->
++start_under_erm(C) ->
+     case whereis(erm_sup) of
+-        undefined ->
+-            start_standalone(C);
++        undefined -> {error, erm_sup_not_running};
+         _ ->
+             case safe_apply(erm_sup, start_lens, [maps:remove(enabled, C)], {error, start_lens_failed}) of
+                 {ok, Pid} = OK when is_pid(Pid) -> OK;
++                {error, already_present} -> current_lens_pid();
++                {error, {unmanaged_process_already_started, _}} -> current_lens_pid();
+                 Other -> Other
+             end
+     end.
+ 
+-start_standalone(C) ->
++do_start_standalone(C) ->
++    case whereis(erm_sup) of
++        Pid when is_pid(Pid) ->
++            {error, {erm_sup_running, use_start_or_show}};
++        undefined ->
++            case whereis(erm_lens_sup) of
++                undefined ->
++                    case start_link(C) of
++                        {ok, Pid} = OK ->
++                            unlink(Pid),
++                            ?LOG_WARNING(
++                                "ERM Lens started outside erm_sup; development-only process pid=~p",
++                                [Pid]
++                            ),
++                            OK;
++                        Error -> Error
++                    end;
++                Pid -> {ok, Pid}
++            end
++    end.
++
++current_lens_pid() ->
+     case whereis(erm_lens_sup) of
++        Pid when is_pid(Pid) -> {ok, Pid};
++        undefined -> {error, lens_not_started}
++    end.
++
++ensure_erm_application() ->
++    case whereis(erm_sup) of
++        Pid when is_pid(Pid) -> ok;
+         undefined ->
+-            case start_link(C) of
+-                {ok, Pid} = OK ->
+-                    unlink(Pid),
+-                    ?LOG_WARNING(
+-                        "ERM Lens started outside erm_sup; this is intended for development only",
+-                        []
+-                    ),
+-                    OK;
+-                {error, {already_started, Pid}} -> {ok, Pid};
+-                Error -> Error
+-            end;
+-        Pid -> {ok, Pid}
++            case {node(), local_cnode_requires_distribution()} of
++                {nonode@nohost, true} ->
++                    {error, {erm_not_ready, erlang_distribution_not_started}};
++                _ ->
++                    ?LOG_INFO("ERM Lens requested before erm_sup; ensuring ERM application is started", []),
++                    case application:ensure_all_started(erm) of
++                        {ok, _Apps} ->
++                            case whereis(erm_sup) of
++                                P when is_pid(P) -> ok;
++                                undefined -> {error, erm_sup_not_running}
++                            end;
++                        {error, Reason} -> {error, {erm_start_failed, Reason}}
++                    end
++            end
++    end.
++
++local_cnode_requires_distribution() ->
++    C = options_map(application:get_env(erm, gtknode4, #{})),
++    maps:get(enabled, C, false) =:= true andalso maps:get(mode, C, local_cnode) =:= local_cnode.
++
++reclaim_standalone(Pid) ->
++    case catch gen_server:stop(Pid, shutdown, 10000) of
++        ok -> ok;
++        {'EXIT', Reason} ->
++            ?LOG_WARNING("Failed to stop stale ERM Lens supervisor pid=~p reason=~p", [Pid, Reason]),
++            catch exit(Pid, shutdown);
++        Other ->
++            ?LOG_WARNING("Unexpected stale ERM Lens stop result pid=~p result=~p", [Pid, Other])
++    end,
++    wait_lens_unregistered(100).
++
++wait_lens_unregistered(0) -> ok;
++wait_lens_unregistered(Attempts) ->
++    case whereis(erm_lens_sup) of
++        undefined -> ok;
++        _ -> timer:sleep(10), wait_lens_unregistered(Attempts - 1)
+     end.
+ 
+ stop_standalone() ->
+@@ -292,6 +392,18 @@
+             temporary
+     end.
+ 
++application_status(App) ->
++    case lists:keyfind(App, 1, application:which_applications()) of
++        false -> stopped;
++        {App, Description, Vsn} -> #{state => running, description => Description, vsn => Vsn}
++    end.
++
++safe_process_call(Module, Function) ->
++    case whereis(Module) of
++        undefined -> not_started;
++        _ -> safe_apply(Module, Function, [], {error, status_failed})
++    end.
++
+ safe_apply(M, F, A, Default) ->
+     try apply(M, F, A) of
+         Result -> Result
+--- a/apps/erm/src/erm_lens_sup.erl
++++ b/apps/erm/src/erm_lens_sup.erl
+@@ -6,7 +6,16 @@
+ 
+ -include_lib("kernel/include/logger.hrl").
+ 
+--export([start_link/1, init/1]).
++-export([start_link/0, start_link/1, init/1]).
++
++start_link() ->
++    C0 = application:get_env(erm, lens, #{}),
++    C = maps:merge(erm_lens:defaults(), options_map(C0)),
++    ?LOG_WARNING(
++        "erm_lens_sup:start_link/0 is a development convenience; prefer erm_lens:start/0 or erm_lens:show/0",
++        []
++    ),
++    start_link(maps:remove(enabled, C)).
+ 
+ start_link(C) ->
+     supervisor:start_link({local, ?MODULE}, ?MODULE, C).
+@@ -40,3 +49,8 @@
+         type => worker,
+         modules => [M]
+     }.
++
++options_map(Map) when is_map(Map) -> Map;
++options_map(List) when is_list(List) -> maps:from_list(List);
++options_map(undefined) -> #{};
++options_map(_) -> #{}.
+--- a/apps/erm/src/erm_sup.erl
++++ b/apps/erm/src/erm_sup.erl
+@@ -27,7 +27,10 @@
+     start_lens/0,
+     start_lens/1,
+     stop_lens/0,
+-    lens_status/0
++    lens_status/0,
++    sync_optional/0,
++    optional_status/0,
++    start_gtknode4_child/1
+ ]).
+ -export([init/1]).
+ 
+@@ -43,15 +46,16 @@
+         period => 10
+     },
+ 
+-    %% Start GTK before application workers so shutdown happens in the reverse
+-    %% order: UI clients stop first, then the GTK session and native process.
+-    Gtk4Specs = gtknode4_specs(),
++    %% GTK4 and Lens are optional subsystems. Do not start them directly from
++    %% supervisor init: an optional child that fails during initial startup
++    %% would abort the entire ERM application. The bootstrap worker reconciles
++    %% them dynamically after erm_sup itself is live and retries failures.
+     MediaSpecs = media_specs(),
+-    LensSpecs = lens_specs(),
+     LegacySpecs = legacy_specs(),
+-    Children = Gtk4Specs ++ MediaSpecs ++ LensSpecs ++ LegacySpecs,
++    OptionalSpecs = [optional_services_child_spec()],
++    Children = MediaSpecs ++ LegacySpecs ++ OptionalSpecs,
+ 
+-    ?LOG_DEBUG("ERM child specifications: ~p", [Children]),
++    ?LOG_DEBUG("ERM core child specifications: ~p", [Children]),
+     {ok, {SupFlags, Children}}.
+ 
+ %%%===================================================================
+@@ -99,10 +103,12 @@
+         supervisor_not_running ->
+             {error, erm_sup_not_running};
+         stopped ->
++            ?LOG_INFO("Starting optional gtknode4 stack under erm_sup", []),
+             normalize_start_result(
+                 supervisor:start_child(?SERVER, gtknode4_child_spec(SessionConfig))
+             );
+         restarting ->
++            ?LOG_INFO("Restarting optional gtknode4 stack under erm_sup", []),
+             normalize_start_result(supervisor:restart_child(?SERVER, gtknode4_sup))
+     end.
+ 
+@@ -135,7 +141,9 @@
+ gtknode4_child_spec(SessionConfig) ->
+     #{
+         id => gtknode4_sup,
+-        start => {gtknode4_sup, start_link, [SessionConfig]},
++        %% Route startup through erm_sup so a stale manually-started GTK stack
++        %% can be reclaimed instead of crashing the ERM application.
++        start => {?MODULE, start_gtknode4_child, [SessionConfig]},
+         %% GTK is an optional subsystem. If its own supervisor exhausts its
+         %% restart budget, keep ERM alive and allow sync_gtknode4/0 to start a
+         %% fresh session after the underlying fault has been corrected.
+@@ -147,9 +155,35 @@
+ 
+ normalize_start_result({ok, Pid}) -> {ok, Pid};
+ normalize_start_result({ok, Pid, _Info}) -> {ok, Pid};
+-normalize_start_result({error, {already_started, Pid}}) -> {ok, Pid};
++normalize_start_result({error, {already_started, Pid}}) ->
++    {error, {unmanaged_process_already_started, Pid}};
++normalize_start_result({error, already_present}) -> {error, already_present};
+ normalize_start_result(Other) -> Other.
+ 
++%% Called as the child start MFA by erm_sup. During a hot-development session
++%% an older version of erm_lens/show or a manual GTK test may have left a
++%% registered gtknode4_sup outside this supervision tree. Reclaim it here so
++%% the optional subsystem cannot abort ERM startup.
++start_gtknode4_child(SessionConfig) ->
++    case whereis(gtknode4_sup) of
++        undefined ->
++            gtknode4_sup:start_link(SessionConfig);
++        Existing when Existing =:= self() ->
++            {error, recursive_gtknode4_supervisor};
++        Existing ->
++            case whereis(?SERVER) of
++                Parent when Parent =:= self() ->
++                    ?LOG_WARNING(
++                        "Reclaiming unmanaged gtknode4_sup pid=~p before supervised startup",
++                        [Existing]
++                    ),
++                    reclaim_registered_supervisor(gtknode4_sup, Existing),
++                    gtknode4_sup:start_link(SessionConfig);
++                _ ->
++                    {error, {already_started, Existing}}
++            end
++    end.
++
+ gtknode4_restart_policy(SessionConfig) ->
+     case maps:get(supervisor_restart, SessionConfig, temporary) of
+         Policy when Policy =:= permanent; Policy =:= transient; Policy =:= temporary ->
+@@ -248,6 +282,50 @@
+     end.
+ 
+ %%%===================================================================
++%%% Optional subsystem bootstrap
++%%%===================================================================
++
++optional_services_child_spec() ->
++    #{
++        id => erm_optional_services,
++        start => {erm_optional_services, start_link, []},
++        restart => permanent,
++        shutdown => 5000,
++        type => worker,
++        modules => [erm_optional_services]
++    }.
++
++sync_optional() ->
++    case whereis(erm_optional_services) of
++        undefined -> {error, optional_services_not_started};
++        _ -> erm_optional_services:sync()
++    end.
++
++optional_status() ->
++    case whereis(erm_optional_services) of
++        undefined -> not_started;
++        _ -> erm_optional_services:status()
++    end.
++
++reclaim_registered_supervisor(Name, Pid) ->
++    case catch gen_server:stop(Pid, shutdown, 10000) of
++        ok -> ok;
++        {'EXIT', Reason} ->
++            ?LOG_WARNING("Could not stop stale ~p cleanly pid=~p reason=~p", [Name, Pid, Reason]),
++            catch exit(Pid, shutdown);
++        Other ->
++            ?LOG_WARNING("Unexpected stop result for stale ~p pid=~p result=~p", [Name, Pid, Other])
++    end,
++    wait_unregistered(Name, 100).
++
++wait_unregistered(_Name, 0) -> ok;
++wait_unregistered(Name, Attempts) ->
++    case whereis(Name) of
++        undefined -> ok;
++        _ -> timer:sleep(10), wait_unregistered(Name, Attempts - 1)
++    end.
++
++%%%===================================================================
+ %%% GTK-independent media workers
+ %%%===================================================================
+ 
+--- a/apps/erm/src/erm_lens_relay.erl
++++ b/apps/erm/src/erm_lens_relay.erl
+@@ -1,119 +1,318 @@
+-%%% Bounded NIP-01 relay snapshots. Run outside the UI process.
++%%%-------------------------------------------------------------------
++%%% @doc Bounded NIP-01 relay snapshots. Run outside the UI process.
++%%%
++%%% This module intentionally uses only Gun APIs known to be present in the
++%%% surrounding Damage/ERM tree: gun:ws_upgrade/3 and gun:ws_send/3.
++%%% Connection exceptions retain the missing MFA in diagnostics so local API
++%%% mismatches are not misreported as remote relay failures.
++%%%-------------------------------------------------------------------
+ -module(erm_lens_relay).
++
++-include_lib("kernel/include/logger.hrl").
++
+ -export([fetch/2, publish/2]).
+ 
+-fetch(Url, C) -> with_connection(Url, fun(Pid, Stream) ->
+-    Now = erlang:system_time(second),
+-    Since = Now - maps:get(window_seconds, C, 172800),
+-    BasePosts = #{<<"since">> => Since, <<"until">> => Now, <<"limit">> => 150},
+-    Filters = [BasePosts#{<<"kinds">> => [20]}, BasePosts#{<<"kinds">> => [1]}],
+-    {PostCount, Rejected} = query(Pid, Stream, <<"lens-posts">>, Filters, 450),
+-    Ids = erm_lens_feed:ids(),
+-    Engagement = case Ids of
+-        [] -> {0, 0};
+-        _ ->
+-            Base = #{<<"since">> => Since, <<"until">> => Now, <<"limit">> => 500},
+-            query(Pid, Stream, <<"lens-engagement">>, [
+-                Base#{<<"kinds">> => [7, 6, 16, 1, 5], <<"#e">> => Ids},
+-                Base#{<<"kinds">> => [1111], <<"#E">> => Ids}], 1100)
+-    end,
+-    {EC, ER} = Engagement,
+-    {ok, #{posts_received => PostCount, engagement_received => EC,
+-           rejected => Rejected + ER, sampled_at => Now, coverage => bounded_sample}}
+-end).
++-define(CONNECT_TIMEOUT, 6000).
++-define(UPGRADE_TIMEOUT, 6000).
++-define(QUERY_TIMEOUT, 10000).
++-define(PUBLISH_TIMEOUT, 8000).
++-define(MAX_FRAME_BYTES, 262144).
++
++fetch(Url, C) ->
++    with_connection(Url, fun(Pid, Stream) ->
++        Now = erlang:system_time(second),
++        Since = Now - maps:get(window_seconds, C, 172800),
++        BasePosts = #{<<"since">> => Since, <<"until">> => Now, <<"limit">> => 150},
++        Filters = [
++            BasePosts#{<<"kinds">> => [20]},
++            BasePosts#{<<"kinds">> => [1]}
++        ],
++        {PostCount, Rejected} = query(Pid, Stream, <<"lens-posts">>, Filters, 450),
++        Ids = erm_lens_feed:ids(),
++        Engagement =
++            case Ids of
++                [] -> {0, 0};
++                _ ->
++                    Base = #{<<"since">> => Since, <<"until">> => Now, <<"limit">> => 500},
++                    query(Pid, Stream, <<"lens-engagement">>, [
++                        Base#{<<"kinds">> => [7, 6, 16, 1, 5], <<"#e">> => Ids},
++                        Base#{<<"kinds">> => [1111], <<"#E">> => Ids}
++                    ], 1100)
++            end,
++        {EC, ER} = Engagement,
++        {ok, #{
++            posts_received => PostCount,
++            engagement_received => EC,
++            rejected => Rejected + ER,
++            sampled_at => Now,
++            coverage => bounded_sample
++        }}
++    end).
+ 
+ publish(Url, Event) ->
+     case erm_lens_nostr:verify(Event) of
+-        ok -> with_connection(Url, fun(Pid, Stream) ->
+-            send_frame(Pid, Stream, [<<"EVENT">>, Event]),
+-            await_ok(Pid, Stream, maps:get(<<"id">>, Event), deadline(8000))
+-        end);
++        ok ->
++            with_connection(Url, fun(Pid, Stream) ->
++                ok = require_send(send_frame(Pid, Stream, [<<"EVENT">>, Event])),
++                await_ok(Pid, Stream, maps:get(<<"id">>, Event), deadline(?PUBLISH_TIMEOUT))
++            end);
+         Error -> Error
+     end.
+ 
+ with_connection(Url, Fun) ->
+     try
+-        #{scheme := <<"wss">>, host := Host} = U = uri_string:parse(Url),
+-        false = maps:is_key(userinfo, U),
+-        HostList = binary_to_list(Host),
+-        Port = maps:get(port, U, 443),
+-        Path0 = maps:get(path, U, <<"/">>),
+-        Path1 = case Path0 of <<>> -> <<"/">>; _ -> Path0 end,
+-        Path = case maps:find(query, U) of
+-            {ok, Q} -> <<Path1/binary, "?", Q/binary>>; error -> Path1 end,
+-        TLS = [{verify, verify_peer}, {cacerts, public_key:cacerts_get()},
+-               {server_name_indication, HostList},
+-               {customize_hostname_check, [{match_fun, public_key:pkix_verify_hostname_match_fun(https)}]}],
+-        {ok, Pid} = gun:open(HostList, Port, #{transport => tls,
+-            protocols => [http], retry => 0, connect_timeout => 5000, tls_opts => TLS}),
+-        try
+-            {ok, http} = gun:await_up(Pid, 6000),
+-            Stream = gun:ws_upgrade(Pid, Path, [], #{compress => false}),
+-            receive
+-                {gun_upgrade, Pid, Stream, [<<"websocket">>], _} -> Fun(Pid, Stream);
+-                {gun_response, Pid, Stream, _, Status, _} -> {error, {upgrade_rejected, Status}};
+-                {gun_error, Pid, Stream, Why} -> {error, {upgrade_failed, Why}}
+-            after 6000 -> {error, upgrade_timeout}
+-            end
+-        after
+-            gun:close(Pid)
++        {Host, Port, Path, TlsOpts} = relay_target(Url),
++        ?LOG_DEBUG("ERM Lens relay connecting url=~p host=~p port=~p path=~p", [
++            Url, Host, Port, Path
++        ]),
++        case safe_gun_open(Host, Port, #{
++            transport => tls,
++            protocols => [http],
++            retry => 0,
++            connect_timeout => 5000,
++            tls_opts => TlsOpts
++        }) of
++            {ok, Pid} ->
++                try
++                    case safe_await_up(Pid) of
++                        {ok, http} -> upgrade_and_run(Url, Pid, Path, Fun);
++                        {ok, Protocol} -> {error, {invalid_ws_protocol, Protocol}};
++                        {error, _} = Error -> Error
++                    end
++                after
++                    safe_close(Pid)
++                end;
++            {error, _} = Error -> Error
+         end
+     catch
+-        Class:Reason -> {error, {relay_failed, Class, Reason}}
++        error:undef:Stacktrace ->
++            MFA = undef_mfa(Stacktrace),
++            ?LOG_ERROR(
++                "ERM Lens relay local API unavailable url=~p mfa=~p stack=~p",
++                [Url, MFA, stack_head(Stacktrace)]
++            ),
++            {error, {relay_api_undefined, MFA}};
++        Class:Reason:Stacktrace ->
++            ?LOG_WARNING(
++                "ERM Lens relay connection exception url=~p error=~p:~p stack=~p",
++                [Url, Class, Reason, stack_head(Stacktrace)]
++            ),
++            {error, {relay_failed, Class, Reason}}
++    end.
++
++relay_target(Url) ->
++    #{scheme := <<"wss">>, host := Host} = U = uri_string:parse(Url),
++    false = maps:is_key(userinfo, U),
++    HostList = binary_to_list(Host),
++    Port = maps:get(port, U, 443),
++    Path0 = maps:get(path, U, <<"/">>),
++    Path1 = case Path0 of <<>> -> <<"/">>; _ -> Path0 end,
++    Path = case maps:find(query, U) of
++        {ok, Q} -> <<Path1/binary, "?", Q/binary>>;
++        error -> Path1
++    end,
++    TLS = [
++        {verify, verify_peer},
++        {cacerts, public_key:cacerts_get()},
++        {server_name_indication, HostList},
++        {customize_hostname_check, [
++            {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
++        ]}
++    ],
++    {HostList, Port, Path, TLS}.
++
++safe_gun_open(Host, Port, Opts) ->
++    case catch gun:open(Host, Port, Opts) of
++        {ok, Pid} when is_pid(Pid) -> {ok, Pid};
++        {error, Reason} -> {error, {open_failed, Reason}};
++        {'EXIT', {noproc, _} = Reason} -> {error, {gun_not_started, Reason}};
++        {'EXIT', Reason} -> {error, {gun_open_exit, Reason}};
++        Other -> {error, {unexpected_gun_open_result, Other}}
++    end.
++
++safe_await_up(Pid) ->
++    case catch gun:await_up(Pid, ?CONNECT_TIMEOUT) of
++        {ok, Protocol} -> {ok, Protocol};
++        {error, Reason} -> {error, {await_up_failed, Reason}};
++        {'EXIT', Reason} -> {error, {await_up_exit, Reason}};
++        Other -> {error, {unexpected_await_up_result, Other}}
++    end.
++
++upgrade_and_run(Url, Pid, Path, Fun) ->
++    %% Gun in this repository exposes ws_upgrade/3, not ws_upgrade/4.
++    Stream = gun:ws_upgrade(Pid, Path, []),
++    receive
++        {gun_upgrade, Pid, Stream, [<<"websocket">>], RespHeaders} ->
++            ?LOG_DEBUG("ERM Lens relay websocket ready url=~p headers=~p", [Url, RespHeaders]),
++            Fun(Pid, Stream);
++        {gun_response, Pid, Stream, _Fin, Status, RespHeaders} ->
++            {error, {upgrade_rejected, Status, summarize_headers(RespHeaders)}};
++        {gun_ws, Pid, Stream, close} ->
++            {error, {upgrade_closed, close}};
++        {gun_ws, Pid, Stream, {close, Code, Reason}} ->
++            {error, {upgrade_closed, Code, Reason}};
++        {gun_ws, Pid, Stream, {close, Reason}} ->
++            {error, {upgrade_closed, Reason}};
++        {gun_error, Pid, Stream, Why} ->
++            {error, {upgrade_failed, Why}};
++        {gun_down, Pid, _Protocol, Reason, _Killed, _Unprocessed} ->
++            {error, {gun_down, Reason}};
++        {gun_down, Pid, _Protocol, Reason, _Killed} ->
++            {error, {gun_down, Reason}}
++    after ?UPGRADE_TIMEOUT ->
++        {error, upgrade_timeout}
+     end.
+ 
+ query(Pid, Stream, Sub, Filters, Cap) ->
+-    send_frame(Pid, Stream, [<<"REQ">>, Sub | Filters]),
+-    try collect(Pid, Stream, Sub, Filters, Cap, deadline(10000), 0, 0)
+-    after send_frame(Pid, Stream, [<<"CLOSE">>, Sub]) end.
++    ok = require_send(send_frame(Pid, Stream, [<<"REQ">>, Sub | Filters])),
++    try
++        collect(Pid, Stream, Sub, Filters, Cap, deadline(?QUERY_TIMEOUT), 0, 0)
++    after
++        _ = send_frame(Pid, Stream, [<<"CLOSE">>, Sub])
++    end.
+ 
+-collect(_Pid, _Stream, _Sub, _Filters, 0, _End, N, Bad) -> {N, Bad};
++collect(_Pid, _Stream, _Sub, _Filters, 0, _End, N, Bad) ->
++    {N, Bad};
+ collect(Pid, Stream, Sub, Filters, Left, End, N, Bad) ->
+     case remaining(End) of
+         0 -> {N, Bad};
+         _ -> collect_message(Pid, Stream, Sub, Filters, Left, End, N, Bad)
+     end.
++
+ collect_message(Pid, Stream, Sub, Filters, Left, End, N, Bad) ->
+     receive
+-        {gun_ws, Pid, Stream, {text, Data}} when byte_size(Data) =< 262144 ->
++        {gun_ws, Pid, Stream, {text, Data}} when byte_size(Data) =< ?MAX_FRAME_BYTES ->
+             case decode(Data) of
+-                [<<"EVENT">>, Sub, E] when is_map(E) ->
++                {ok, [<<"EVENT">>, Sub, E]} when is_map(E) ->
+                     Valid = try lists:any(fun(F) -> erm_lens_nostr:matches(E, F) end, Filters)
+                             catch _:_ -> false end,
+-                    Result = case Valid of true -> erm_lens_feed:ingest(E);
+-                                                false -> {error, wrong_filter} end,
++                    Result = case Valid of
++                        true -> erm_lens_feed:ingest(E);
++                        false -> {error, wrong_filter}
++                    end,
+                     case Result of
+-                        ok -> collect(Pid, Stream, Sub, Filters, Left-1, End, N+1, Bad);
+-                        _ -> collect(Pid, Stream, Sub, Filters, Left-1, End, N, Bad+1)
++                        ok -> collect(Pid, Stream, Sub, Filters, Left - 1, End, N + 1, Bad);
++                        _ -> collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad + 1)
+                     end;
+-                [<<"EOSE">>, Sub] -> {N, Bad};
+-                [<<"CLOSED">>, Sub, Reason] -> error({subscription_closed, Reason});
+-                _ -> collect(Pid, Stream, Sub, Filters, Left-1, End, N, Bad)
++                {ok, [<<"EOSE">>, Sub]} ->
++                    {N, Bad};
++                {ok, [<<"CLOSED">>, Sub, Reason]} ->
++                    error({subscription_closed, Reason});
++                {error, DecodeReason} ->
++                    ?LOG_DEBUG("ERM Lens relay ignored invalid JSON frame reason=~p", [DecodeReason]),
++                    collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad + 1);
++                _ ->
++                    collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad)
+             end;
+-        {gun_ws, Pid, Stream, {text, _}} -> error(oversized_relay_frame);
+-        {gun_ws, Pid, Stream, close} -> error(relay_closed);
+-        {gun_down, Pid, _, Reason, _} -> error({relay_down, Reason});
+-        {gun_error, Pid, Stream, Reason} -> error({relay_error, Reason})
+-    after remaining(End) -> {N, Bad}
++        {gun_ws, Pid, Stream, {text, _}} ->
++            error(oversized_relay_frame);
++        {gun_ws, Pid, Stream, close} ->
++            error(relay_closed);
++        {gun_ws, Pid, Stream, {close, Code, Reason}} ->
++            error({relay_closed, Code, Reason});
++        {gun_ws, Pid, Stream, {close, Reason}} ->
++            error({relay_closed, Reason});
++        {gun_down, Pid, _Proto, Reason, _Killed, _Unprocessed} ->
++            error({relay_down, Reason});
++        {gun_down, Pid, _Proto, Reason, _Killed} ->
++            error({relay_down, Reason});
++        {gun_error, Pid, Stream, Reason} ->
++            error({relay_error, Reason})
++    after remaining(End) ->
++        {N, Bad}
+     end.
++
+ await_ok(Pid, Stream, Id, End) ->
+     case remaining(End) of
+         0 -> {error, acknowledgment_timeout};
+         _ -> await_ok_message(Pid, Stream, Id, End)
+     end.
++
+ await_ok_message(Pid, Stream, Id, End) ->
+     receive
+-        {gun_ws, Pid, Stream, {text, Data}} when byte_size(Data) =< 262144 ->
++        {gun_ws, Pid, Stream, {text, Data}} when byte_size(Data) =< ?MAX_FRAME_BYTES ->
+             case decode(Data) of
+-                [<<"OK">>, Id, true, Message] -> {ok, Message};
+-                [<<"OK">>, Id, false, Message] -> {error, {rejected, Message}};
++                {ok, [<<"OK">>, Id, true, Message]} -> {ok, Message};
++                {ok, [<<"OK">>, Id, false, Message]} -> {error, {rejected, Message}};
+                 _ -> await_ok(Pid, Stream, Id, End)
+             end;
++        {gun_ws, Pid, Stream, close} -> {error, relay_closed};
++        {gun_ws, Pid, Stream, {close, Code, Reason}} -> {error, {relay_closed, Code, Reason}};
++        {gun_ws, Pid, Stream, {close, Reason}} -> {error, {relay_closed, Reason}};
++        {gun_down, Pid, _, Reason, _, _} -> {error, {relay_down, Reason}};
+         {gun_down, Pid, _, Reason, _} -> {error, {relay_down, Reason}};
+         {gun_error, Pid, Stream, Reason} -> {error, {relay_error, Reason}}
+-    after remaining(End) -> {error, acknowledgment_timeout}
++    after remaining(End) ->
++        {error, acknowledgment_timeout}
++    end.
++
++send_frame(Pid, Stream, Value) ->
++    case encode(Value) of
++        {ok, Payload} ->
++            %% Gun in this repository exposes ws_send/3, not ws_send_frame/3.
++            case catch gun:ws_send(Pid, Stream, {text, Payload}) of
++                ok -> ok;
++                {'EXIT', Reason} -> {error, {ws_send_exit, Reason}};
++                {error, Reason} -> {error, {ws_send_failed, Reason}};
++                Other -> {error, {unexpected_ws_send_result, Other}}
++            end;
++        {error, _} = Error -> Error
++    end.
++
++require_send(ok) -> ok;
++require_send({error, Reason}) -> error({send_failed, Reason}).
++
++encode(Value) ->
++    _ = code:ensure_loaded(json),
++    case erlang:function_exported(json, encode, 1) of
++        true ->
++            try {ok, iolist_to_binary(json:encode(Value))}
++            catch Class:Reason -> {error, {json_encode_failed, Class, Reason}} end;
++        false ->
++            _ = code:ensure_loaded(jsx),
++            case erlang:function_exported(jsx, encode, 1) of
++                true ->
++                    try {ok, iolist_to_binary(jsx:encode(Value))}
++                    catch Class2:Reason2 -> {error, {jsx_encode_failed, Class2, Reason2}} end;
++                false -> {error, json_codec_unavailable}
++            end
+     end.
+-decode(Data) -> try json:decode(Data) catch _:_ -> invalid_json end.
+-send_frame(Pid, Stream, Value) -> gun:ws_send_frame(Pid, Stream, {text, iolist_to_binary(json:encode(Value))}).
++
++decode(Data) ->
++    _ = code:ensure_loaded(json),
++    case erlang:function_exported(json, decode, 1) of
++        true ->
++            try {ok, json:decode(Data)}
++            catch Class:Reason -> {error, {json_decode_failed, Class, Reason}} end;
++        false ->
++            _ = code:ensure_loaded(jsx),
++            case erlang:function_exported(jsx, decode, 2) of
++                true ->
++                    try {ok, jsx:decode(Data, [{return_maps, true}])}
++                    catch Class2:Reason2 -> {error, {jsx_decode_failed, Class2, Reason2}} end;
++                false -> {error, json_codec_unavailable}
++            end
++    end.
++
++safe_close(Pid) ->
++    catch gun:close(Pid),
++    ok.
++
++summarize_headers(Headers) when is_list(Headers) ->
++    %% Keep diagnostics useful without copying large Cloudflare report bodies.
++    lists:map(fun
++        ({<<"report-to">>, Value}) when is_binary(Value), byte_size(Value) > 128 ->
++            {<<"report-to">>, <<(binary:part(Value, 0, 128))/binary, "...">>};
++        (Pair) -> Pair
++    end, Headers);
++summarize_headers(Other) -> Other.
++
++undef_mfa([{M, F, A, _} | _]) when is_atom(M), is_atom(F), is_list(A) -> {M, F, length(A)};
++undef_mfa([{M, F, Arity, _} | _]) when is_atom(M), is_atom(F), is_integer(Arity) -> {M, F, Arity};
++undef_mfa(_) -> unknown.
++
++stack_head(Stack) when is_list(Stack) -> lists:sublist(Stack, 8);
++stack_head(Other) -> Other.
++
+ deadline(Ms) -> erlang:monotonic_time(millisecond) + Ms.
+ remaining(End) -> max(0, End - erlang:monotonic_time(millisecond)).
+--- a/apps/erm/src/erm_lens_sync.erl
++++ b/apps/erm/src/erm_lens_sync.erl
+@@ -1,78 +1,264 @@
+-%%% Poll snapshots without giving relays control over the application lifecycle.
++%%%-------------------------------------------------------------------
++%%% @doc Poll bounded relay snapshots without giving relays control over the
++%%% application lifecycle.
++%%%
++%%% Relay failures are tracked per URL with bounded backoff. Repeated identical
++%%% transient failures are demoted to debug logs; local code/API faults remain
++%%% error-level and include their concrete reason.
++%%%-------------------------------------------------------------------
+ -module(erm_lens_sync).
+ -behaviour(gen_server).
++
+ -include_lib("kernel/include/logger.hrl").
++
+ -export([start_link/1, refresh/0, status/0]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
++
++-define(DEFAULT_BACKOFF_MS, 30000).
++-define(DEFAULT_BACKOFF_MAX_MS, 300000).
++
+ start_link(C) -> gen_server:start_link({local, ?MODULE}, ?MODULE, C, []).
+ refresh() -> gen_server:cast(?MODULE, refresh).
+ status() -> gen_server:call(?MODULE, status).
++
+ init(C) ->
+     ?LOG_INFO("ERM Lens sync initialized relays=~p refresh_ms=~p", [
+         length(maps:get(relays, C, [])), maps:get(refresh_ms, C, 60000)
+     ]),
+     self() ! tick,
+     {ok, #{config => C, jobs => #{}, status => #{}, timer => undefined}}.
+-handle_call(status, _, S) -> {reply, maps:get(status, S), S};
+-handle_call(_, _, S) -> {reply, {error, unsupported_call}, S}.
+-handle_cast(refresh, S) -> {noreply, start_jobs(S)};
+-handle_cast(_, S) -> {noreply, S}.
++
++handle_call(status, _, S) ->
++    {reply, status_snapshot(S), S};
++handle_call(_, _, S) ->
++    {reply, {error, unsupported_call}, S}.
++
++handle_cast(refresh, S) ->
++    ?LOG_DEBUG("ERM Lens manual relay refresh requested", []),
++    {noreply, start_jobs(S, true)};
++handle_cast(_, S) ->
++    {noreply, S}.
++
+ handle_info(tick, S) ->
+-    cancel(maps:get(timer, S)),
++    cancel(maps:get(timer, S, undefined)),
+     C = maps:get(config, S),
+     Timer = erlang:send_after(max(30000, maps:get(refresh_ms, C, 60000)), self(), tick),
+-    {noreply, start_jobs(S#{timer := Timer})};
++    {noreply, start_jobs(S#{timer := Timer}, false)};
+ handle_info({relay_result, Pid, Result}, S) ->
+     case maps:take(Pid, maps:get(jobs, S)) of
+-        error -> {noreply, S};
+-        {#{monitor := Mon, timer := Timer, url := U}, Jobs} ->
+-            erlang:demonitor(Mon, [flush]), cancel(Timer),
+-            log_relay_result(U, Result),
+-            Status = (maps:get(status, S))#{U => Result},
+-            {noreply, S#{jobs := Jobs, status := Status}}
++        error ->
++            {noreply, S};
++        {#{monitor := Mon, timer := Timer, url := U, started_ms := Started}, Jobs} ->
++            erlang:demonitor(Mon, [flush]),
++            cancel(Timer),
++            Duration = max(0, erlang:monotonic_time(millisecond) - Started),
++            {Status1, Entry} = record_result(U, Result, Duration, S),
++            log_relay_result(U, Result, Entry),
++            {noreply, S#{jobs := Jobs, status := Status1}}
+     end;
+ handle_info({job_timeout, Pid}, S) ->
+-    case maps:get(Pid, maps:get(jobs, S), undefined) of
+-        #{url := U} ->
+-            ?LOG_WARNING("ERM Lens relay sample timed out relay=~p pid=~p", [U, Pid]),
+-            exit(Pid, kill);
+-        undefined -> ok
+-    end,
+-    {noreply, S};
++    case maps:take(Pid, maps:get(jobs, S)) of
++        error ->
++            {noreply, S};
++        {#{monitor := Mon, timer := Timer, url := U, started_ms := Started}, Jobs} ->
++            cancel(Timer),
++            erlang:demonitor(Mon, [flush]),
++            exit(Pid, kill),
++            Duration = max(0, erlang:monotonic_time(millisecond) - Started),
++            Result = {error, relay_sample_timeout},
++            S0 = S#{jobs := Jobs},
++            {Status1, Entry} = record_result(U, Result, Duration, S0),
++            ?LOG_WARNING(
++                "ERM Lens relay sample timed out relay=~p duration_ms=~p failures=~p retry_in_ms=~p",
++                [U, Duration, maps:get(consecutive_failures, Entry), maps:get(retry_in_ms, Entry)]
++            ),
++            {noreply, S0#{status := Status1}}
++    end;
+ handle_info({'DOWN', Mon, process, Pid, Reason}, S) ->
+     case maps:take(Pid, maps:get(jobs, S)) of
+-        {#{monitor := Mon, timer := Timer, url := U}, Jobs} ->
++        {#{monitor := Mon, timer := Timer, url := U, started_ms := Started}, Jobs} ->
+             cancel(Timer),
+-            ?LOG_WARNING("ERM Lens relay worker exited relay=~p reason=~p", [U, Reason]),
+-            {noreply, S#{jobs := Jobs, status := (maps:get(status, S))#{U => {error, Reason}}}};
+-        _ -> {noreply, S}
++            Duration = max(0, erlang:monotonic_time(millisecond) - Started),
++            Result = {error, {relay_worker_exit, Reason}},
++            S0 = S#{jobs := Jobs},
++            {Status1, Entry} = record_result(U, Result, Duration, S0),
++            log_relay_result(U, Result, Entry),
++            {noreply, S0#{status := Status1}};
++        _ ->
++            {noreply, S}
+     end;
+-handle_info(_, S) -> {noreply, S}.
+-terminate(_, S) ->
+-    cancel(maps:get(timer, S)),
+-    maps:foreach(fun(P, J) -> cancel(maps:get(timer, J)), exit(P, shutdown) end, maps:get(jobs, S)), ok.
++handle_info(Info, S) ->
++    ?LOG_DEBUG("ERM Lens sync ignored message: ~p", [Info]),
++    {noreply, S}.
++
++terminate(Reason, S) ->
++    ?LOG_INFO("Stopping ERM Lens sync reason=~p active_jobs=~p", [Reason, map_size(maps:get(jobs, S))]),
++    cancel(maps:get(timer, S, undefined)),
++    maps:foreach(
++        fun(P, J) ->
++            cancel(maps:get(timer, J, undefined)),
++            exit(P, shutdown)
++        end,
++        maps:get(jobs, S)
++    ),
++    ok.
++
+ code_change(_, S, _) -> {ok, S}.
+-start_jobs(S) ->
+-    C = maps:get(config, S), Parent = self(),
+-    lists:foldl(fun(U, Acc) ->
+-        Jobs = maps:get(jobs, Acc),
+-        Busy = lists:any(fun(J) -> maps:get(url, J) =:= U end, maps:values(Jobs)),
+-        case Busy of
+-            true -> Acc;
+-            false ->
+-                ?LOG_DEBUG("ERM Lens sampling relay ~p", [U]),
+-                {Pid, Mon} = spawn_monitor(fun() -> Parent ! {relay_result, self(), erm_lens_relay:fetch(U, C)} end),
+-                Timer = erlang:send_after(40000, self(), {job_timeout, Pid}),
+-                Acc#{jobs := Jobs#{Pid => #{url => U, monitor => Mon, timer => Timer}},
+-                     status := (maps:get(status, Acc))#{U => connecting}}
+-        end
+-    end, S, lists:sublist(lists:usort(maps:get(relays, C, [])), 4)).
+-cancel(undefined) -> ok;
+-cancel(Timer) -> erlang:cancel_timer(Timer), ok.
+ 
+-log_relay_result(U, {ok, Summary}) ->
+-    ?LOG_DEBUG("ERM Lens relay sample complete relay=~p summary=~p", [U, Summary]);
+-log_relay_result(U, {error, Reason}) ->
+-    ?LOG_WARNING("ERM Lens relay sample failed relay=~p reason=~p", [U, Reason]);
+-log_relay_result(U, Other) ->
+-    ?LOG_DEBUG("ERM Lens relay sample result relay=~p result=~p", [U, Other]).
++start_jobs(S, Force) ->
++    C = maps:get(config, S),
++    Parent = self(),
++    Relays = lists:sublist(lists:usort(maps:get(relays, C, [])), 4),
++    lists:foldl(
++        fun(U, Acc) ->
++            Jobs = maps:get(jobs, Acc),
++            Status = maps:get(status, Acc),
++            Busy = lists:any(fun(J) -> maps:get(url, J) =:= U end, maps:values(Jobs)),
++            BackedOff = not Force andalso in_backoff(U, Status),
++            case {Busy, BackedOff} of
++                {true, _} ->
++                    Acc;
++                {false, true} ->
++                    ?LOG_DEBUG("ERM Lens relay still in backoff relay=~p", [U]),
++                    Acc;
++                {false, false} ->
++                    ?LOG_DEBUG("ERM Lens sampling relay=~p force=~p", [U, Force]),
++                    Started = erlang:monotonic_time(millisecond),
++                    {Pid, Mon} = spawn_monitor(fun() ->
++                        Parent ! {relay_result, self(), erm_lens_relay:fetch(U, C)}
++                    end),
++                    Timer = erlang:send_after(40000, self(), {job_timeout, Pid}),
++                    Prev = maps:get(U, Status, #{}),
++                    Entry = Prev#{
++                        state => connecting,
++                        last_started_at => erlang:system_time(millisecond),
++                        retry_in_ms => 0
++                    },
++                    Acc#{
++                        jobs := Jobs#{Pid => #{
++                            url => U,
++                            monitor => Mon,
++                            timer => Timer,
++                            started_ms => Started
++                        }},
++                        status := Status#{U => Entry}
++                    }
++            end
++        end,
++        S,
++        Relays
++    ).
++
++record_result(U, Result, Duration, S) ->
++    C = maps:get(config, S),
++    Status0 = maps:get(status, S),
++    Prev = maps:get(U, Status0, #{}),
++    NowWall = erlang:system_time(millisecond),
++    NowMono = erlang:monotonic_time(millisecond),
++    case Result of
++        {ok, Summary} ->
++            Entry = #{
++                state => ok,
++                last_result => {ok, Summary},
++                last_ok_at => NowWall,
++                last_error_at => maps:get(last_error_at, Prev, undefined),
++                consecutive_failures => 0,
++                retry_in_ms => 0,
++                next_retry_mono => 0,
++                duration_ms => Duration
++            },
++            {Status0#{U => Entry}, Entry};
++        _ ->
++            Failures = maps:get(consecutive_failures, Prev, 0) + 1,
++            Delay = retry_delay(Failures, C),
++            Entry = Prev#{
++                state => error,
++                last_result => Result,
++                last_error_at => NowWall,
++                consecutive_failures => Failures,
++                retry_in_ms => Delay,
++                next_retry_mono => NowMono + Delay,
++                duration_ms => Duration
++            },
++            {Status0#{U => Entry}, Entry}
++    end.
++
++retry_delay(Failures, C) ->
++    Base = max(1000, maps:get(relay_backoff_ms, C, ?DEFAULT_BACKOFF_MS)),
++    Max = max(Base, maps:get(relay_backoff_max_ms, C, ?DEFAULT_BACKOFF_MAX_MS)),
++    Shift = min(8, max(0, Failures - 1)),
++    min(Max, Base * (1 bsl Shift)).
++
++in_backoff(U, Status) ->
++    case maps:get(U, Status, undefined) of
++        #{state := error, next_retry_mono := At} when is_integer(At) ->
++            erlang:monotonic_time(millisecond) < At;
++        _ -> false
++    end.
++
++status_snapshot(S) ->
++    Now = erlang:monotonic_time(millisecond),
++    maps:map(
++        fun(_U, Entry) ->
++            Next = maps:get(next_retry_mono, Entry, 0),
++            Entry#{retry_in_ms => max(0, Next - Now)}
++        end,
++        maps:get(status, S)
++    ).
++
++log_relay_result(U, {ok, Summary}, Entry) ->
++    ?LOG_DEBUG(
++        "ERM Lens relay sample complete relay=~p duration_ms=~p summary=~p",
++        [U, maps:get(duration_ms, Entry, undefined), Summary]
++    );
++log_relay_result(U, {error, Reason} = Result, Entry) ->
++    Failures = maps:get(consecutive_failures, Entry, 1),
++    Delay = maps:get(retry_in_ms, Entry, 0),
++    case {error_class(Reason), Failures} of
++        {local_fault, _} ->
++            ?LOG_ERROR(
++                "ERM Lens local relay implementation failure relay=~p reason=~p failures=~p retry_in_ms=~p",
++                [U, Reason, Failures, Delay]
++            );
++        {transient, 1} ->
++            ?LOG_WARNING(
++                "ERM Lens relay temporarily unavailable relay=~p reason=~p retry_in_ms=~p",
++                [U, Reason, Delay]
++            );
++        {transient, _} ->
++            ?LOG_DEBUG(
++                "ERM Lens relay still unavailable relay=~p reason=~p failures=~p retry_in_ms=~p",
++                [U, Reason, Failures, Delay]
++            );
++        {remote, 1} ->
++            ?LOG_WARNING(
++                "ERM Lens relay sample failed relay=~p reason=~p retry_in_ms=~p",
++                [U, Reason, Delay]
++            );
++        {remote, _} ->
++            ?LOG_DEBUG(
++                "ERM Lens relay sample still failing relay=~p reason=~p failures=~p retry_in_ms=~p",
++                [U, Reason, Failures, Delay]
++            )
++    end,
++    _ = Result,
++    ok;
++log_relay_result(U, Other, Entry) ->
++    ?LOG_WARNING("ERM Lens unexpected relay result relay=~p result=~p entry=~p", [U, Other, Entry]).
++
++error_class({relay_api_undefined, _}) -> local_fault;
++error_class(json_codec_unavailable) -> local_fault;
++error_class({send_failed, {json_codec_unavailable, _}}) -> local_fault;
++error_class({upgrade_rejected, Status, _}) when Status >= 500 -> transient;
++error_class({upgrade_rejected, Status}) when Status >= 500 -> transient;
++error_class(upgrade_timeout) -> transient;
++error_class(relay_sample_timeout) -> transient;
++error_class({await_up_failed, timeout}) -> transient;
++error_class({gun_down, _}) -> transient;
++error_class({relay_down, _}) -> transient;
++error_class(_) -> remote.
++
++cancel(undefined) -> ok;
++cancel(Timer) ->
++    _ = erlang:cancel_timer(Timer),
++    ok.
+--- a/apps/erm/src/erm_lens_ui.erl
++++ b/apps/erm/src/erm_lens_ui.erl
+@@ -292,7 +292,15 @@
+         {undefined, undefined} -> {error, {gtk_backend_not_started, gtknode4_and_gtkgs}};
+         {undefined, _} -> {error, gtknode4_not_started};
+         {_, undefined} -> {error, gtkgs_not_started};
+-        {_GtkNode, _GtkGs} -> ok
++        {_GtkNode, _GtkGs} ->
++            try gtknode4:await_ready(0) of
++                ok -> ok;
++                {error, timeout} -> {error, gtknode4_not_ready};
++                Other -> {error, {gtknode4_not_ready, Other}}
++            catch
++                Class:Reason:Stacktrace ->
++                    {error, {gtknode4_status_failed, Class, Reason, lists:sublist(Stacktrace, 6)}}
++            end
+     end.
+ 
+ sync_ui() ->
+@@ -336,13 +344,26 @@
+         closed => maps:get(closed, S, false),
+         want_visible => maps:get(want_visible, S, false),
+         last_ui_error => maps:get(last_ui_error, S, undefined),
++        backend => backend_status(),
+         gtkgs => whereis(gtkgs),
+         gtknode4 => whereis(gtknode4),
++        gtknode4_status => safe_gtknode4_status(),
+         feed => whereis(erm_lens_feed),
+         sync => whereis(erm_lens_sync),
+         media => whereis(erm_lens_media)
+     }.
+ 
++safe_gtknode4_status() ->
++    case whereis(gtknode4) of
++        undefined -> not_started;
++        _ ->
++            try gtknode4:status() of
++                Status -> Status
++            catch
++                Class:Reason -> {error, {Class, Reason}}
++            end
++    end.
++
+ note_ui_error(Reason, S) ->
+     case maps:get(last_ui_error, S, undefined) of
+         Reason ->
+@@ -510,9 +531,9 @@
+         Result -> Result
+     catch
+         Class:Reason:Stacktrace ->
+-            logger:debug(
+-                "ERM Lens ignored non-critical UI operation failure: ~p:~p stack=~p",
+-                [Class, Reason, Stacktrace]
++            ?LOG_DEBUG(
++                "ERM Lens best-effort UI operation failed error=~p:~p stack=~p",
++                [Class, Reason, lists:sublist(Stacktrace, 6)]
+             ),
+             ok
+     end.
+--- /dev/null
++++ b/apps/erm/src/erm_optional_services.erl
+@@ -0,0 +1,163 @@
++%%%-------------------------------------------------------------------
++%%% @doc
++%%% Non-fatal bootstrap/reconciliation for optional ERM subsystems.
++%%%
++%%% Optional UI services must never prevent the ERM application supervisor
++%%% from starting. This worker starts after erm_sup is alive, reconciles the
++%%% configured GTK/Lens children dynamically, and retries failures with bounded
++%%% exponential backoff. Manual sync requests can bypass the retry delay.
++%%%-------------------------------------------------------------------
++-module(erm_optional_services).
++-behaviour(gen_server).
++
++-include_lib("kernel/include/logger.hrl").
++
++-export([start_link/0, sync/0, status/0]).
++-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
++
++-define(SERVER, ?MODULE).
++-define(INITIAL_DELAY_MS, 100).
++-define(RETRY_MIN_MS, 1000).
++-define(RETRY_MAX_MS, 60000).
++
++start_link() ->
++    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
++
++sync() ->
++    gen_server:call(?SERVER, sync, 15000).
++
++status() ->
++    case whereis(?SERVER) of
++        undefined -> not_started;
++        _ -> gen_server:call(?SERVER, status, 3000)
++    end.
++
++init([]) ->
++    Timer = erlang:send_after(?INITIAL_DELAY_MS, self(), reconcile),
++    {ok, #{
++        timer => Timer,
++        retry_ms => ?RETRY_MIN_MS,
++        last => #{},
++        last_sync_at => undefined
++    }}.
++
++handle_call(sync, _From, S0) ->
++    cancel(maps:get(timer, S0, undefined)),
++    {Results, S1} = reconcile(S0#{timer := undefined}, manual),
++    {reply, Results, S1};
++handle_call(status, _From, S) ->
++    {reply, S, S};
++handle_call(_Request, _From, S) ->
++    {reply, {error, unsupported_call}, S}.
++
++handle_cast(sync, S) ->
++    self() ! reconcile,
++    {noreply, S};
++handle_cast(_Message, S) ->
++    {noreply, S}.
++
++handle_info(reconcile, S0) ->
++    {_Results, S1} = reconcile(S0#{timer := undefined}, scheduled),
++    {noreply, S1};
++handle_info(_Info, S) ->
++    {noreply, S}.
++
++terminate(_Reason, S) ->
++    cancel(maps:get(timer, S, undefined)),
++    ok.
++
++code_change(_OldVsn, S, _Extra) ->
++    {ok, S}.
++
++reconcile(S0, Trigger) ->
++    Gtk = safe_sync(gtknode4, fun erm_sup:sync_gtknode4/0),
++    Lens = safe_sync(lens, fun erm_sup:sync_lens/0),
++    Results = #{gtknode4 => Gtk, lens => Lens},
++    Previous = maps:get(last, S0, #{}),
++    log_changes(Results, Previous, Trigger),
++
++    NeedsRetry = needs_retry(gtknode4, Gtk) orelse needs_retry(lens, Lens),
++    Retry0 = maps:get(retry_ms, S0, ?RETRY_MIN_MS),
++    {Timer, Retry1} =
++        case NeedsRetry of
++            true ->
++                Delay = Retry0,
++                {erlang:send_after(Delay, self(), reconcile), min(?RETRY_MAX_MS, Retry0 * 2)};
++            false ->
++                {undefined, ?RETRY_MIN_MS}
++        end,
++    {Results, S0#{
++        timer := Timer,
++        retry_ms := Retry1,
++        last := Results,
++        last_sync_at := erlang:system_time(millisecond)
++    }}.
++
++safe_sync(Name, Fun) ->
++    try Fun() of
++        Result -> Result
++    catch
++        Class:Reason:Stacktrace ->
++            ?LOG_ERROR(
++                "Optional ERM service reconcile crashed service=~p error=~p:~p stack=~p",
++                [Name, Class, Reason, Stacktrace]
++            ),
++            {error, {Class, Reason}}
++    end.
++
++needs_retry(gtknode4, Result) ->
++    configured(gtknode4) andalso not successful(Result);
++needs_retry(lens, Result) ->
++    configured(lens) andalso not successful(Result).
++
++configured(gtknode4) ->
++    C = options_map(application:get_env(erm, gtknode4, #{})),
++    maps:get(enabled, C, false) =:= true;
++configured(lens) ->
++    C = options_map(application:get_env(erm, lens, #{})),
++    maps:get(enabled, C, true) =:= true.
++
++successful(ok) -> true;
++successful({ok, Pid}) when is_pid(Pid) -> true;
++successful({ok, Pid, _}) when is_pid(Pid) -> true;
++successful(_) -> false.
++
++log_changes(Results, Previous, Trigger) ->
++    maps:foreach(
++        fun(Service, Result) ->
++            Prev = maps:get(Service, Previous, undefined),
++            case {Result, Result =:= Prev} of
++                {{error, _}, false} ->
++                    ?LOG_WARNING(
++                        "Optional ERM service unavailable service=~p trigger=~p result=~p",
++                        [Service, Trigger, Result]
++                    );
++                {{error, _}, true} ->
++                    ?LOG_DEBUG(
++                        "Optional ERM service still unavailable service=~p result=~p",
++                        [Service, Result]
++                    );
++                {_, false} ->
++                    ?LOG_INFO(
++                        "Optional ERM service reconciled service=~p trigger=~p result=~p",
++                        [Service, Trigger, Result]
++                    );
++                {_, true} ->
++                    ?LOG_DEBUG(
++                        "Optional ERM service unchanged service=~p result=~p",
++                        [Service, Result]
++                    )
++            end
++        end,
++        Results
++    ).
++
++cancel(undefined) -> ok;
++cancel(Timer) ->
++    _ = erlang:cancel_timer(Timer),
++    ok.
++
++options_map(Map) when is_map(Map) -> Map;
++options_map(List) when is_list(List) -> maps:from_list(List);
++options_map(undefined) -> #{};
++options_map(_) -> #{}.

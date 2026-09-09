@@ -72,6 +72,10 @@ typedef struct {
   int width_chars;
 } Gn4Options;
 
+typedef struct {
+  char *message;
+} Gn4CssParseError;
+
 static char *gn4_strdup(const char *value) {
   return value ? g_strdup(value) : NULL;
 }
@@ -352,6 +356,27 @@ static void gn4_send_reply_error(Gn4State *st, const erlang_ref *ref,
   ei_x_free(&reply);
 }
 
+static void gn4_send_reply_error_detail(Gn4State *st, const erlang_ref *ref,
+                                        const char *reason,
+                                        const char *detail) {
+  ei_x_buff reply;
+  const char *safe_reason = reason ? reason : "unknown";
+  const char *safe_detail = detail ? detail : "";
+  ei_x_new_with_version(&reply);
+  ei_x_encode_tuple_header(&reply, 4);
+  ei_x_encode_atom(&reply, "gtknode4");
+  ei_x_encode_atom(&reply, "reply");
+  ei_x_encode_ref(&reply, (erlang_ref *)ref);
+  ei_x_encode_tuple_header(&reply, 2);
+  ei_x_encode_atom(&reply, "error");
+  ei_x_encode_tuple_header(&reply, 2);
+  ei_x_encode_atom(&reply, safe_reason);
+  ei_x_encode_binary(&reply, safe_detail, (long)strlen(safe_detail));
+  ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, reply.buff,
+              reply.index);
+  ei_x_free(&reply);
+}
+
 static void gn4_send_reply_ok_binary(Gn4State *st, const erlang_ref *ref,
                                      const char *value) {
   ei_x_buff reply;
@@ -525,6 +550,98 @@ static void gn4_list_append(GtkListBox *list, const char *text) {
   gtk_widget_set_margin_top(label, 10);
   gtk_widget_set_margin_bottom(label, 10);
   gtk_list_box_append(list, label);
+}
+
+static void gn4_css_parse_error(GtkCssProvider *provider,
+                                GtkCssSection *section,
+                                const GError *error,
+                                gpointer user_data) {
+  Gn4CssParseError *parse_error = user_data;
+  (void)provider;
+  (void)section;
+  if (parse_error && parse_error->message == NULL && error && error->message)
+    parse_error->message = g_strdup(error->message);
+}
+
+static void gn4_remove_provider_for_display(gpointer key, gpointer value,
+                                            gpointer user_data) {
+  GdkDisplay *display = user_data;
+  (void)key;
+  if (display && value)
+    gtk_style_context_remove_provider_for_display(
+        display, GTK_STYLE_PROVIDER(value));
+}
+
+static gboolean gn4_remove_stylesheet(Gn4State *st, const char *name) {
+  GtkCssProvider *provider;
+  GdkDisplay *display;
+
+  if (!st || !st->stylesheets || !name || name[0] == '\0')
+    return FALSE;
+
+  provider = g_hash_table_lookup(st->stylesheets, name);
+  if (!provider)
+    return TRUE;
+
+  display = gdk_display_get_default();
+  if (display)
+    gtk_style_context_remove_provider_for_display(
+        display, GTK_STYLE_PROVIDER(provider));
+
+  g_hash_table_remove(st->stylesheets, name);
+  return TRUE;
+}
+
+static gboolean gn4_set_stylesheet(Gn4State *st, const char *name,
+                                   const char *css, char **error_message) {
+  GtkCssProvider *provider;
+  GdkDisplay *display;
+  Gn4CssParseError parse_error = {NULL};
+  gulong parse_handler;
+
+  if (error_message)
+    *error_message = NULL;
+
+  if (!st || !st->stylesheets || !name || name[0] == '\0' || !css) {
+    if (error_message)
+      *error_message = g_strdup("badarg");
+    return FALSE;
+  }
+
+  display = gdk_display_get_default();
+  if (!display) {
+    if (error_message)
+      *error_message = g_strdup("no_display");
+    return FALSE;
+  }
+
+  provider = gtk_css_provider_new();
+  if (!provider) {
+    if (error_message)
+      *error_message = g_strdup("css_provider_alloc_failed");
+    return FALSE;
+  }
+
+  parse_handler = g_signal_connect(provider, "parsing-error",
+                                   G_CALLBACK(gn4_css_parse_error),
+                                   &parse_error);
+  gtk_css_provider_load_from_data(provider, css, -1);
+  g_signal_handler_disconnect(provider, parse_handler);
+
+  if (parse_error.message != NULL) {
+    if (error_message)
+      *error_message = parse_error.message;
+    else
+      g_free(parse_error.message);
+    g_object_unref(provider);
+    return FALSE;
+  }
+
+  gn4_remove_stylesheet(st, name);
+  gtk_style_context_add_provider_for_display(
+      display, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  g_hash_table_insert(st->stylesheets, g_strdup(name), provider);
+  return TRUE;
 }
 
 static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
@@ -1066,6 +1183,40 @@ static void gn4_handle_tuple_command(Gn4State *st, const char *buf, int *idx,
     return;
   }
 
+  if (strcmp(command, "set_stylesheet") == 0 && arity == 3) {
+    char *name = gn4_decode_string(buf, idx);
+    char *css = gn4_decode_string(buf, idx);
+    char *error_message = NULL;
+    gboolean ok = name && css && gn4_set_stylesheet(st, name, css,
+                                                    &error_message);
+    if (reply) {
+      if (ok)
+        gn4_send_reply_ok(st, ref);
+      else if (error_message)
+        gn4_send_reply_error_detail(st, ref, "stylesheet_failed",
+                                    error_message);
+      else
+        gn4_send_reply_error(st, ref, "stylesheet_failed");
+    }
+    g_free(error_message);
+    g_free(name);
+    g_free(css);
+    return;
+  }
+
+  if (strcmp(command, "remove_stylesheet") == 0 && arity == 2) {
+    char *name = gn4_decode_string(buf, idx);
+    gboolean ok = name && gn4_remove_stylesheet(st, name);
+    if (reply) {
+      if (ok)
+        gn4_send_reply_ok(st, ref);
+      else
+        gn4_send_reply_error(st, ref, "stylesheet_remove_failed");
+    }
+    g_free(name);
+    return;
+  }
+
   if (reply)
     gn4_send_reply_error(st, ref, "unsupported_command");
 }
@@ -1223,6 +1374,10 @@ gboolean gn4_init_gtk(Gn4State *st, int *argc, char ***argv) {
   }
   st->widgets = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
                                       gn4_widget_free);
+  st->stylesheets = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                         g_object_unref);
+  if (!st->widgets || !st->stylesheets)
+    return FALSE;
   return TRUE;
 }
 
@@ -1311,7 +1466,7 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_tuple_header(&hello, 2);
   ei_x_encode_atom(&hello, st->register_name);
   ei_x_encode_atom(&hello, st->node_name);
-  ei_x_encode_map_header(&hello, 3);
+  ei_x_encode_map_header(&hello, 5);
   ei_x_encode_atom(&hello, "protocol");
   ei_x_encode_long(&hello, GN4_PROTOCOL_VERSION);
   ei_x_encode_atom(&hello, "widgets");
@@ -1321,6 +1476,13 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_empty_list(&hello);
   ei_x_encode_atom(&hello, "test_mode");
   ei_x_encode_atom(&hello, st->test_mode ? "true" : "false");
+  ei_x_encode_atom(&hello, "css");
+  ei_x_encode_atom(&hello, "true");
+  ei_x_encode_atom(&hello, "style_commands");
+  ei_x_encode_list_header(&hello, 2);
+  ei_x_encode_atom(&hello, "set_stylesheet");
+  ei_x_encode_atom(&hello, "remove_stylesheet");
+  ei_x_encode_empty_list(&hello);
   if (ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, hello.buff,
                   hello.index) < 0) {
     ei_x_free(&hello);
@@ -1394,6 +1556,14 @@ void gn4_main_loop(Gn4State *st) {
 void gn4_cleanup(Gn4State *st) {
   if (!st)
     return;
+  if (st->stylesheets) {
+    GdkDisplay *display = gdk_display_get_default();
+    if (display)
+      g_hash_table_foreach(st->stylesheets, gn4_remove_provider_for_display,
+                           display);
+    g_hash_table_destroy(st->stylesheets);
+    st->stylesheets = NULL;
+  }
   if (st->widgets) {
     /* Use the same leaf-first, container-aware destruction path during normal
      * shutdown. Never destroy a window while registry entries still contain

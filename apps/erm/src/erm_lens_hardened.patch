@@ -1,0 +1,1025 @@
+--- /mnt/data/erm_lens.erl	2026-09-07 03:22:53.162010759 +0000
++++ /mnt/data/erm_lens_hardened/erm_lens.erl	2026-09-07 03:28:17.373770309 +0000
+@@ -1,39 +1,305 @@
+-%%% ERM Lens entrypoint. Prefer child_spec/1 under erm_sup in a release.
++%%%-------------------------------------------------------------------
++%%% @doc ERM Lens public entrypoint.
++%%%
++%%% Lens is an optional ERM subsystem. In a normal release it is supervised
++%%% by erm_sup. Direct start/0 remains available for development shells.
++%%%
++%%% show/0 is intentionally synchronous: it ensures the Lens supervisor and
++%%% GTK4 stack are available, asks the UI to build/show immediately, and
++%%% returns a useful error instead of silently dropping a cast.
++%%%-------------------------------------------------------------------
+ -module(erm_lens).
+--export([start/0, start/1, start_link/1, stop/0, show/0, child_spec/1, defaults/0]).
++
++-include_lib("kernel/include/logger.hrl").
++
++-export([
++    start/0,
++    start/1,
++    start_link/1,
++    stop/0,
++    show/0,
++    status/0,
++    child_spec/1,
++    defaults/0
++]).
++
++-define(UI_CALL_TIMEOUT, 10000).
++-define(GTK_READY_TIMEOUT, 8000).
++-define(UI_START_TIMEOUT, 5000).
++
+ defaults() ->
+     Home = case os:getenv("HOME") of false -> "/tmp"; V -> V end,
+     Priv = case code:priv_dir(erm) of {error, _} -> filename:absname("priv"); V2 -> V2 end,
+-    #{relays => [<<"wss://relay.damus.io">>, <<"wss://nos.lol">>, <<"wss://relay.primal.net">>],
+-      window_seconds => 172800, refresh_ms => 60000, max_events => 4000,
+-      media_script => filename:join(Priv, "lens_media.py"),
+-      cache_dir => filename:join([Home, ".cache", "erm-lens"]),
+-      load_images => true, media_hosts => [], page_size => 6,
+-      nostr_pubkey => undefined, signer => undefined, wallet_adapter => undefined,
+-      network => <<"ae_uat">>, registry => undefined, tokens => [], allow_mainnet => false}.
+-child_spec(C) -> #{id => erm_lens_sup, start => {?MODULE, start_link, [C]},
+-                   restart => permanent, shutdown => infinity, type => supervisor,
+-                   modules => [erm_lens_sup]}.
+-start() -> start(application:get_env(erm, lens, #{})).
+-start(C) ->
+-    case whereis(erm_lens_sup) of
+-        undefined -> case start_link(C) of
+-            {ok, Pid} = OK -> unlink(Pid), OK;
+-            Error -> Error end;
+-        Pid -> show(), {ok, Pid}
+-    end.
+-start_link(C) ->
+-    case application:ensure_all_started(ssl) of
+-        {ok, _} ->
+-            case application:ensure_all_started(gun) of
+-                {ok, _} -> erm_lens_sup:start_link(maps:merge(defaults(), C));
+-                GunError -> GunError
++    #{
++        enabled => true,
++        show_on_start => false,
++        relays => [
++            <<"wss://relay.damus.io">>,
++            <<"wss://nos.lol">>,
++            <<"wss://relay.primal.net">>
++        ],
++        window_seconds => 172800,
++        refresh_ms => 60000,
++        max_events => 4000,
++        media_script => filename:join(Priv, "lens_media.py"),
++        cache_dir => filename:join([Home, ".cache", "erm-lens"]),
++        load_images => true,
++        media_hosts => [],
++        page_size => 6,
++        nostr_pubkey => undefined,
++        signer => undefined,
++        wallet_adapter => undefined,
++        network => <<"ae_uat">>,
++        registry => undefined,
++        tokens => [],
++        allow_mainnet => false
++    }.
++
++child_spec(C0) ->
++    C = merged_config(C0),
++    #{
++        id => erm_lens_sup,
++        start => {?MODULE, start_link, [C]},
++        %% Lens is optional. If its private supervision tree exhausts its
++        %% restart budget, keep ERM alive and allow erm_sup:sync_lens/0 to
++        %% re-create it after the underlying problem has been fixed.
++        restart => lens_restart_policy(C),
++        shutdown => 10000,
++        type => supervisor,
++        modules => [erm_lens_sup]
++    }.
++
++start() ->
++    start(application:get_env(erm, lens, #{})).
++
++start(C0) ->
++    C = merged_config(C0),
++    case maps:get(enabled, C, true) of
++        false ->
++            ?LOG_INFO("ERM Lens start requested but Lens is disabled", []),
++            {error, disabled};
++        true ->
++            start_via_erm_or_standalone(C)
++    end.
++
++start_link(C0) ->
++    C = maps:remove(enabled, merged_config(C0)),
++    log_optional_dependency(ssl),
++    log_optional_dependency(gun),
++    ?LOG_INFO("Starting ERM Lens supervision tree", []),
++    erm_lens_sup:start_link(C).
++
++show() ->
++    case ensure_started() of
++        {ok, _Pid} ->
++            case ensure_ui_backend() of
++                ok ->
++                    case await_ui() of
++                        ok -> call_ui(show);
++                        {error, UiReason} = UiError ->
++                            ?LOG_WARNING("ERM Lens UI process did not become ready: ~p", [UiReason]),
++                            UiError
++                    end;
++                {error, Reason} = Error ->
++                    ?LOG_WARNING("ERM Lens cannot show: GTK backend unavailable: ~p", [Reason]),
++                    Error
+             end;
+-        SslError -> SslError
++        {error, Reason} = Error ->
++            ?LOG_WARNING("ERM Lens cannot show: subsystem unavailable: ~p", [Reason]),
++            Error
+     end.
+-show() -> gen_server:cast(erm_lens_ui, show).
++
++status() ->
++    SupStatus =
++        case whereis(erm_sup) of
++            undefined -> standalone_lens_status();
++            _ -> safe_apply(erm_sup, lens_status, [], standalone_lens_status())
++        end,
++    UiStatus =
++        case whereis(erm_lens_ui) of
++            undefined -> not_started;
++            _ -> safe_ui_call(status, {error, ui_status_failed})
++        end,
++    GtkStatus = #{
++        gtknode4_sup => whereis(gtknode4_sup),
++        gtknode4 => whereis(gtknode4),
++        gtkgs => whereis(gtkgs)
++    },
++    #{supervisor => SupStatus, ui => UiStatus, gtk => GtkStatus}.
++
+ stop() ->
++    case whereis(erm_sup) of
++        undefined -> stop_standalone();
++        _ ->
++            Result = safe_apply(erm_sup, stop_lens, [], {error, erm_sup_stop_failed}),
++            ?LOG_INFO("ERM Lens stop result: ~p", [Result]),
++            Result
++    end.
++
++%%%===================================================================
++%%% Internal
++%%%===================================================================
++
++ensure_started() ->
++    case whereis(erm_lens_sup) of
++        Pid when is_pid(Pid) -> {ok, Pid};
++        undefined -> start()
++    end.
++
++start_via_erm_or_standalone(C) ->
++    case whereis(erm_sup) of
++        undefined ->
++            start_standalone(C);
++        _ ->
++            case safe_apply(erm_sup, start_lens, [maps:remove(enabled, C)], {error, start_lens_failed}) of
++                {ok, Pid} = OK when is_pid(Pid) -> OK;
++                Other -> Other
++            end
++    end.
++
++start_standalone(C) ->
++    case whereis(erm_lens_sup) of
++        undefined ->
++            case start_link(C) of
++                {ok, Pid} = OK ->
++                    unlink(Pid),
++                    ?LOG_WARNING(
++                        "ERM Lens started outside erm_sup; this is intended for development only",
++                        []
++                    ),
++                    OK;
++                {error, {already_started, Pid}} -> {ok, Pid};
++                Error -> Error
++            end;
++        Pid -> {ok, Pid}
++    end.
++
++stop_standalone() ->
+     case whereis(erm_lens_sup) of
+         undefined -> ok;
+         Pid -> gen_server:stop(Pid, normal, 10000)
+     end.
++
++standalone_lens_status() ->
++    case whereis(erm_lens_sup) of
++        undefined -> stopped;
++        Pid -> {running, Pid}
++    end.
++
++ensure_ui_backend() ->
++    case whereis(gtkgs) of
++        Pid when is_pid(Pid) -> await_gtknode4_ready();
++        undefined ->
++            case whereis(erm_sup) of
++                undefined -> {error, gtkgs_not_started};
++                _ ->
++                    case safe_apply(erm_sup, start_gtknode4, [], {error, gtknode4_start_failed}) of
++                        {ok, _} -> await_gtkgs();
++                        {error, disabled} -> {error, gtknode4_disabled};
++                        Error -> {error, {gtknode4_start_failed, Error}}
++                    end
++            end
++    end.
++
++
++await_ui() ->
++    End = erlang:monotonic_time(millisecond) + ?UI_START_TIMEOUT,
++    await_ui(End).
++
++await_ui(End) ->
++    case whereis(erm_lens_ui) of
++        Pid when is_pid(Pid) -> ok;
++        undefined ->
++            case End - erlang:monotonic_time(millisecond) of
++                Left when Left =< 0 -> {error, ui_start_timeout};
++                _ -> timer:sleep(25), await_ui(End)
++            end
++    end.
++
++await_gtkgs() ->
++    End = erlang:monotonic_time(millisecond) + ?GTK_READY_TIMEOUT,
++    await_gtkgs(End).
++
++await_gtkgs(End) ->
++    case whereis(gtkgs) of
++        Pid when is_pid(Pid) -> await_gtknode4_ready();
++        undefined ->
++            case End - erlang:monotonic_time(millisecond) of
++                Left when Left =< 0 -> {error, gtkgs_start_timeout};
++                _ -> timer:sleep(50), await_gtkgs(End)
++            end
++    end.
++
++await_gtknode4_ready() ->
++    case whereis(gtknode4) of
++        undefined -> {error, gtknode4_not_started};
++        _ ->
++            try gtknode4:await_ready(?GTK_READY_TIMEOUT) of
++                ok -> ok;
++                Other -> {error, {gtknode4_not_ready, Other}}
++            catch
++                error:undef -> {error, gtknode4_api_unavailable};
++                Class:Reason -> {error, {gtknode4_ready_failed, Class, Reason}}
++            end
++    end.
++
++call_ui(Request) ->
++    case safe_ui_call(Request, {error, ui_call_failed}) of
++        {ok, _} = OK -> OK;
++        ok -> ok;
++        {error, _} = Error -> Error;
++        Other -> Other
++    end.
++
++safe_ui_call(Request, Default) ->
++    case whereis(erm_lens_ui) of
++        undefined -> {error, ui_not_started};
++        _ ->
++            try gen_server:call(erm_lens_ui, Request, ?UI_CALL_TIMEOUT) of
++                Reply -> Reply
++            catch
++                exit:Reason ->
++                    ?LOG_WARNING("ERM Lens UI call ~p exited: ~p", [Request, Reason]),
++                    case Default of
++                        {error, Tag} -> {error, {Tag, Reason}};
++                        _ -> Default
++                    end
++            end
++    end.
++
++log_optional_dependency(App) ->
++    case application:ensure_all_started(App) of
++        {ok, _} -> ?LOG_DEBUG("ERM Lens dependency ready: ~p", [App]);
++        {error, Reason} ->
++            %% Do not fail the Lens supervisor. Relay/media paths already
++            %% isolate I/O failures and can recover when dependencies appear.
++            ?LOG_WARNING("ERM Lens optional dependency ~p unavailable: ~p", [App, Reason])
++    end.
++
++merged_config(C0) ->
++    maps:merge(defaults(), options_map(C0)).
++
++options_map(Map) when is_map(Map) -> Map;
++options_map(List) when is_list(List) -> maps:from_list(List);
++options_map(undefined) -> #{};
++options_map(Other) -> error({bad_lens_config, Other}).
++
++lens_restart_policy(C) ->
++    case maps:get(supervisor_restart, C, temporary) of
++        Policy when Policy =:= permanent; Policy =:= transient; Policy =:= temporary -> Policy;
++        Invalid ->
++            ?LOG_WARNING("Ignoring invalid ERM Lens supervisor restart policy: ~p", [Invalid]),
++            temporary
++    end.
++
++safe_apply(M, F, A, Default) ->
++    try apply(M, F, A) of
++        Result -> Result
++    catch
++        Class:Reason:Stacktrace ->
++            ?LOG_WARNING(
++                "ERM Lens helper ~p:~p/~p failed: ~p:~p stack=~p",
++                [M, F, length(A), Class, Reason, Stacktrace]
++            ),
++            Default
++    end.
+--- /mnt/data/erm_lens_sup(1).erl	2026-09-07 03:22:53.506010768 +0000
++++ /mnt/data/erm_lens_hardened/erm_lens_sup.erl	2026-09-07 03:24:39.776888055 +0000
+@@ -1,10 +1,42 @@
++%%%-------------------------------------------------------------------
++%%% @doc Private supervision tree for ERM Lens.
++%%%-------------------------------------------------------------------
+ -module(erm_lens_sup).
+ -behaviour(supervisor).
++
++-include_lib("kernel/include/logger.hrl").
++
+ -export([start_link/1, init/1]).
+-start_link(C) -> supervisor:start_link({local, ?MODULE}, ?MODULE, C).
+-init(C) ->
+-    Children = [child(erm_lens_feed, C), child(erm_lens_sync, C),
+-                child(erm_lens_media, C), child(erm_lens_ui, C)],
+-    {ok, {#{strategy => one_for_one, intensity => 5, period => 30}, Children}}.
+-child(M, C) -> #{id => M, start => {M, start_link, [C]}, restart => permanent,
+-                 shutdown => 5000, type => worker, modules => [M]}.
++
++start_link(C) ->
++    supervisor:start_link({local, ?MODULE}, ?MODULE, C).
++
++init(C) when is_map(C) ->
++    ?LOG_INFO(
++        "Initializing ERM Lens workers relays=~p refresh_ms=~p load_images=~p",
++        [
++            length(maps:get(relays, C, [])),
++            maps:get(refresh_ms, C, 60000),
++            maps:get(load_images, C, true)
++        ]
++    ),
++    Children = [
++        child(erm_lens_feed, C),
++        child(erm_lens_sync, C),
++        child(erm_lens_media, C),
++        child(erm_lens_ui, C)
++    ],
++    {ok, {#{strategy => one_for_one, intensity => 5, period => 30}, Children}};
++init(Other) ->
++    ?LOG_ERROR("Invalid ERM Lens supervisor configuration: ~p", [Other]),
++    {stop, {bad_lens_config, Other}}.
++
++child(M, C) ->
++    #{
++        id => M,
++        start => {M, start_link, [C]},
++        restart => permanent,
++        shutdown => 5000,
++        type => worker,
++        modules => [M]
++    }.
+--- /mnt/data/erm_sup(4).erl	2026-09-07 03:22:53.354010764 +0000
++++ /mnt/data/erm_lens_hardened/erm_sup.erl	2026-09-07 03:24:56.009952845 +0000
+@@ -22,7 +22,12 @@
+     sync_gtknode4/0,
+     start_gtknode4/0,
+     stop_gtknode4/0,
+-    gtknode4_status/0
++    gtknode4_status/0,
++    sync_lens/0,
++    start_lens/0,
++    start_lens/1,
++    stop_lens/0,
++    lens_status/0
+ ]).
+ -export([init/1]).
+ 
+@@ -42,8 +47,9 @@
+     %% order: UI clients stop first, then the GTK session and native process.
+     Gtk4Specs = gtknode4_specs(),
+     MediaSpecs = media_specs(),
++    LensSpecs = lens_specs(),
+     LegacySpecs = legacy_specs(),
+-    Children = Gtk4Specs ++ MediaSpecs ++ LegacySpecs,
++    Children = Gtk4Specs ++ MediaSpecs ++ LensSpecs ++ LegacySpecs,
+ 
+     ?LOG_DEBUG("ERM child specifications: ~p", [Children]),
+     {ok, {SupFlags, Children}}.
+@@ -154,6 +160,94 @@
+     end.
+ 
+ %%%===================================================================
++%%% ERM Lens optional subsystem
++%%%===================================================================
++
++lens_specs() ->
++    Config = lens_config(),
++    case maps:get(enabled, Config, true) of
++        true ->
++            LensConfig = maps:remove(enabled, Config),
++            ?LOG_INFO("Enabling supervised ERM Lens subsystem", []),
++            [erm_lens:child_spec(LensConfig)];
++        false ->
++            ?LOG_INFO("ERM Lens is disabled by ERM configuration", []),
++            []
++    end.
++
++sync_lens() ->
++    Config = lens_config(),
++    case maps:get(enabled, Config, true) of
++        true -> start_lens(maps:remove(enabled, Config));
++        false -> stop_lens()
++    end.
++
++start_lens() ->
++    Config = lens_config(),
++    case maps:get(enabled, Config, true) of
++        true -> start_lens(maps:remove(enabled, Config));
++        false -> {error, disabled}
++    end.
++
++start_lens(LensConfig) when is_map(LensConfig) ->
++    case lens_status() of
++        {running, Pid} ->
++            {ok, Pid};
++        supervisor_not_running ->
++            {error, erm_sup_not_running};
++        stopped ->
++            ?LOG_INFO("Starting ERM Lens under erm_sup", []),
++            normalize_start_result(
++                supervisor:start_child(?SERVER, erm_lens:child_spec(LensConfig))
++            );
++        restarting ->
++            ?LOG_INFO("Restarting ERM Lens under erm_sup", []),
++            normalize_start_result(supervisor:restart_child(?SERVER, erm_lens_sup))
++    end;
++start_lens(Other) ->
++    {error, {bad_lens_config, Other}}.
++
++stop_lens() ->
++    case lens_status() of
++        supervisor_not_running -> ok;
++        stopped -> ok;
++        _ ->
++            ?LOG_INFO("Stopping ERM Lens", []),
++            case supervisor:terminate_child(?SERVER, erm_lens_sup) of
++                ok -> supervisor:delete_child(?SERVER, erm_lens_sup);
++                {error, not_found} -> ok;
++                Error -> Error
++            end
++    end.
++
++lens_status() ->
++    case whereis(?SERVER) of
++        undefined ->
++            supervisor_not_running;
++        _ ->
++            case lists:keyfind(erm_lens_sup, 1, supervisor:which_children(?SERVER)) of
++                {erm_lens_sup, Pid, supervisor, _} when is_pid(Pid) -> {running, Pid};
++                {erm_lens_sup, undefined, supervisor, _} -> restarting;
++                false -> stopped
++            end
++    end.
++
++lens_config() ->
++    case application:get_env(erm, lens, #{}) of
++        Map when is_map(Map) -> Map;
++        List when is_list(List) ->
++            try maps:from_list(List)
++            catch _:_ ->
++                ?LOG_WARNING("Ignoring invalid ERM Lens configuration: ~p", [List]),
++                #{enabled => false}
++            end;
++        undefined -> #{};
++        Invalid ->
++            ?LOG_WARNING("Ignoring invalid ERM Lens configuration: ~p", [Invalid]),
++            #{enabled => false}
++    end.
++
++%%%===================================================================
+ %%% GTK-independent media workers
+ %%%===================================================================
+ 
+--- /mnt/data/erm_lens_ui.erl	2026-09-07 03:22:53.614010771 +0000
++++ /mnt/data/erm_lens_hardened/erm_lens_ui.erl	2026-09-07 03:26:18.991900060 +0000
+@@ -1,40 +1,112 @@
+-%%% GTKGS-only frontend. External I/O and decoding use separate workers.
+-%%% A page is a stable snapshot: updates do not reorder cards under a finger.
++%%%-------------------------------------------------------------------
++%%% @doc GTKGS-only frontend for ERM Lens.
++%%%
++%%% External I/O and decoding use separate workers. UI construction is
++%%% deferred until gtkgs/gtknode4 are ready and is retried without taking down
++%%% the Lens supervision tree. A page is a stable snapshot: updates do not
++%%% reorder cards under a finger.
++%%%-------------------------------------------------------------------
+ -module(erm_lens_ui).
+ -behaviour(gen_server).
+--export([start_link/1]).
++
++-include_lib("kernel/include/logger.hrl").
++
++-export([start_link/1, show/0, status/0]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+ 
+-start_link(C) -> gen_server:start_link({local, ?MODULE}, ?MODULE, C, []).
++-define(TICK_MS, 2000).
++-define(SYNC_TIMEOUT, 5000).
++
++start_link(C) ->
++    gen_server:start_link({local, ?MODULE}, ?MODULE, C, []).
++
++show() ->
++    gen_server:call(?MODULE, show, 10000).
++
++status() ->
++    gen_server:call(?MODULE, status, 3000).
++
+ init(C) ->
++    process_flag(trap_exit, true),
++    ShowOnStart = maps:get(show_on_start, C, false),
++    ?LOG_INFO(
++        "ERM Lens UI initialized show_on_start=~p gtkgs=~p gtknode4=~p",
++        [ShowOnStart, whereis(gtkgs), whereis(gtknode4)]
++    ),
+     self() ! tick,
+-    {ok, #{config => C, window => undefined, gui_monitor => undefined,
+-        closed => false, cards => [], photos => #{}, rows => [], page => 0,
+-        mode => popular, generation => 0, revision => -1, job => undefined,
+-        pending_tip => undefined, message => <<"Browsing without a wallet">>, timer => undefined}}.
+-handle_call(_, _, S) -> {reply, {error, unsupported_call}, S}.
++    {ok, #{
++        config => C,
++        window => undefined,
++        gui_monitor => undefined,
++        closed => false,
++        want_visible => ShowOnStart,
++        cards => [],
++        photos => #{},
++        rows => [],
++        page => 0,
++        mode => popular,
++        generation => 0,
++        revision => -1,
++        job => undefined,
++        pending_tip => undefined,
++        message => <<"Browsing without a wallet">>,
++        timer => undefined,
++        last_ui_error => undefined
++    }}.
++
++handle_call(show, _From, S0) ->
++    ?LOG_DEBUG("ERM Lens show requested window=~p", [maps:get(window, S0, undefined)]),
++    S = S0#{closed := false, want_visible := true},
++    case show_now(S) of
++        {ok, S1} ->
++            {reply, {ok, visible}, clear_ui_error(S1)};
++        {error, Reason, S1} ->
++            S2 = note_ui_error({show_failed, Reason}, S1),
++            {reply, {error, Reason}, S2}
++    end;
++handle_call(status, _From, S) ->
++    {reply, status_snapshot(S), S};
++handle_call(_, _, S) ->
++    {reply, {error, unsupported_call}, S}.
++
++%% Backwards-compatible cast; erm_lens:show/0 now uses the synchronous call.
+ handle_cast(show, S) ->
+-    safe(fun() -> gtkgs:config(lens_window, [{map, true}]) end),
+-    {noreply, S#{closed := false}};
+-handle_cast(_, S) -> {noreply, S}.
+-handle_info(tick, S) ->
+-    Timer = erlang:send_after(2000, self(), tick),
+-    S1 = try update(S) catch Class:Reason ->
+-        Failure = {Class, Reason},
+-        case maps:get(last_ui_error, S, undefined) =:= Failure of
+-            true -> ok;
+-            false -> logger:warning("ERM Lens UI unavailable: ~p", [Failure])
+-        end,
+-        S#{last_ui_error => Failure}
+-    end,
++    self() ! async_show,
++    {noreply, S#{closed := false, want_visible := true}};
++handle_cast(_, S) ->
++    {noreply, S}.
++
++handle_info(async_show, S) ->
++    case show_now(S) of
++        {ok, S1} -> {noreply, clear_ui_error(S1)};
++        {error, Reason, S1} -> {noreply, note_ui_error({async_show_failed, Reason}, S1)}
++    end;
++handle_info(tick, S0) ->
++    Timer = erlang:send_after(?TICK_MS, self(), tick),
++    S1 = update_safe(S0),
+     {noreply, S1#{timer := Timer}};
+ handle_info({gtkgs, lens_window, destroy, _, _}, S) ->
+-    {noreply, S#{closed := true, window := undefined, cards := [], photos := #{}}};
++    ?LOG_INFO("ERM Lens window closed by user", []),
++    {noreply, S#{
++        closed := true,
++        want_visible := false,
++        window := undefined,
++        cards := [],
++        photos := #{}
++    }};
+ handle_info({gtkgs, lens_confirm, destroy, _, _}, S) ->
+     {noreply, S#{pending_tip := undefined}};
+ handle_info({gtkgs, _, click, Action, _}, S) ->
+-    try action(Action, S) of S1 -> {noreply, S1}
+-    catch _:_ -> {noreply, message(<<"Action could not be completed; check configuration.">>, S)} end;
++    try action(Action, S) of
++        S1 -> {noreply, S1}
++    catch
++        Class:Reason:Stacktrace ->
++            ?LOG_WARNING(
++                "ERM Lens action failed action=~p error=~p:~p stack=~p",
++                [Action, Class, Reason, Stacktrace]
++            ),
++            {noreply, message(<<"Action could not be completed; check configuration.">>, S)}
++    end;
+ handle_info({lens_media, {Gen, Id, Index}, Result}, S = #{generation := Gen}) ->
+     case maps:get(Id, maps:get(photos, S), undefined) of
+         #{picture := Pic, detail := Label, index := Index, image := Image} ->
+@@ -43,50 +115,160 @@
+                     safe(fun() -> gtkgs:config(Pic, [{file, Path}]) end),
+                     safe(fun() -> gtkgs:config(Label, [{text, maps:get(alt, Image, <<>>)}]) end);
+                 {error, Why} ->
++                    ?LOG_DEBUG("ERM Lens image unavailable id=~p reason=~p", [Id, Why]),
+                     safe(fun() -> gtkgs:config(Label, [{text, fmt("Image unavailable: ~p", [Why])}]) end)
+             end;
+         _ -> ok
+     end,
+     {noreply, S};
+ handle_info({action_result, Pid, Result}, S = #{job := #{pid := Pid, mon := Mon, timer := T, kind := Kind}}) ->
+-    erlang:demonitor(Mon, [flush]), erlang:cancel_timer(T),
++    erlang:demonitor(Mon, [flush]),
++    erlang:cancel_timer(T),
+     S1 = S#{job := undefined},
+-    try finish(Kind, Result, S1) of S2 -> {noreply, S2}
+-    catch _:_ -> {noreply, message(<<"Result could not be displayed.">>, S1)} end;
++    try finish(Kind, Result, S1) of
++        S2 -> {noreply, S2}
++    catch
++        Class:Reason:Stacktrace ->
++            ?LOG_WARNING(
++                "ERM Lens result rendering failed kind=~p result=~p error=~p:~p stack=~p",
++                [Kind, Result, Class, Reason, Stacktrace]
++            ),
++            {noreply, message(<<"Result could not be displayed.">>, S1)}
++    end;
+ handle_info({action_timeout, Pid}, S = #{job := #{pid := Pid, mon := Mon}}) ->
+-    exit(Pid, kill), erlang:demonitor(Mon, [flush]),
++    exit(Pid, kill),
++    erlang:demonitor(Mon, [flush]),
++    ?LOG_WARNING("ERM Lens action timed out pid=~p", [Pid]),
+     {noreply, message(<<"Timed out. A payment may still have been submitted; check the wallet before retrying.">>, S#{job := undefined})};
+-handle_info({'DOWN', Mon, process, _, _}, S = #{gui_monitor := Mon}) ->
+-    {noreply, S#{window := undefined, cards := [], photos := #{}, gui_monitor := undefined}};
++handle_info({'DOWN', Mon, process, Pid, Reason}, S = #{gui_monitor := Mon}) ->
++    ?LOG_WARNING("ERM Lens GTKGS server went down pid=~p reason=~p", [Pid, Reason]),
++    {noreply, note_ui_error(
++        {gtkgs_down, Reason},
++        S#{window := undefined, cards := [], photos := #{}, gui_monitor := undefined}
++    )};
+ handle_info({'DOWN', Mon, process, _, _}, S = #{job := #{mon := Mon, timer := T}}) ->
+     erlang:cancel_timer(T),
+     {noreply, message(<<"Operation stopped. Check wallet transaction history before retrying a payment.">>, S#{job := undefined})};
+-handle_info(_, S) -> {noreply, S}.
+-terminate(_, S) ->
+-    case maps:get(timer, S) of undefined -> ok; T -> erlang:cancel_timer(T) end,
+-    case maps:get(job, S) of undefined -> ok; #{pid := P} -> exit(P, shutdown) end,
+-    lists:foreach(fun destroy/1, [lens_window, lens_compose, lens_wallet, lens_tip, lens_confirm, lens_comment]), ok.
+-code_change(_, S, _) -> {ok, S}.
++handle_info(Info, S) ->
++    ?LOG_DEBUG("ERM Lens UI ignored message: ~p", [Info]),
++    {noreply, S}.
+ 
+-update(S = #{window := undefined, closed := false}) -> build(S);
+-update(S = #{window := undefined}) -> S;
++terminate(Reason, S) ->
++    ?LOG_INFO("Stopping ERM Lens UI reason=~p", [Reason]),
++    case maps:get(timer, S, undefined) of undefined -> ok; T -> erlang:cancel_timer(T) end,
++    case maps:get(job, S, undefined) of undefined -> ok; #{pid := P} -> exit(P, shutdown) end,
++    lists:foreach(fun destroy/1, [lens_window, lens_compose, lens_wallet, lens_tip, lens_confirm, lens_comment]),
++    ok.
++
++code_change(_, S, _) ->
++    {ok, S}.
++
++%%%===================================================================
++%%% UI lifecycle
++%%%===================================================================
++
++show_now(S = #{window := undefined}) ->
++    build(S);
++show_now(S) ->
++    case ui_config(lens_window, [{map, true}]) of
++        ok ->
++            case sync_ui() of
++                ok -> {ok, S#{closed := false, want_visible := true}};
++                {error, Reason} -> {error, Reason, S}
++            end;
++        {error, _} = Error ->
++            %% The logical window disappeared underneath us. Clear the stale
++            %% state and perform one immediate rebuild for the caller.
++            ?LOG_DEBUG("ERM Lens existing window could not be shown: ~p; rebuilding", [Error]),
++            build(S#{window := undefined, cards := [], photos := #{}})
++    end.
++
++update_safe(S) ->
++    try update(S) of
++        S1 -> S1
++    catch
++        Class:Reason:Stacktrace ->
++            note_ui_error({tick_failed, Class, Reason, Stacktrace}, S)
++    end.
++
++update(S = #{window := undefined, closed := false, want_visible := true}) ->
++    case build(S) of
++        {ok, S1} -> clear_ui_error(S1);
++        {error, Reason, S1} -> note_ui_error({build_failed, Reason}, S1)
++    end;
++update(S = #{window := undefined}) ->
++    S;
+ update(S) ->
+-    case gtkgs:read(lens_window, shown) of
+-        {error, _} -> destroy(lens_window), S#{window := undefined};
+-        _ ->
++    case safe_read_shown() of
++        {error, Reason} ->
++            ?LOG_DEBUG("ERM Lens window no longer readable: ~p", [Reason]),
++            destroy(lens_window),
++            S#{window := undefined, cards := [], photos := #{}};
++        _Shown ->
+             Info = erm_lens_feed:status(),
++            SyncStatus = erm_lens_sync:status(),
+             Stats = fmt("~p verified events cached · ~p rejected · ~p relay samples\n~ts",
+                 [maps:get(events, Info), maps:get(rejected, Info),
+-                 map_size(erm_lens_sync:status()), maps:get(message, S)]),
+-            gtkgs:config(lens_status, [{text, Stats}]),
++                 map_size(SyncStatus), maps:get(message, S)]),
++            case ui_config(lens_status, [{text, Stats}]) of
++                ok -> ok;
++                {error, Why} -> error({status_update_failed, Why})
++            end,
+             case maps:get(rows, S) =:= [] andalso maps:get(revision, Info) =/= maps:get(revision, S) of
+                 true -> render(S#{revision := maps:get(revision, Info)});
+                 false -> S
+             end
+     end.
++
+ build(S) ->
+-    Server = gtkgs:server(),
+-    Tree = [{window, lens_window,
++    case backend_status() of
++        ok -> do_build(S);
++        {error, Reason} -> {error, Reason, S}
++    end.
++
++do_build(S) ->
++    ?LOG_DEBUG(
++        "Building ERM Lens UI gtkgs=~p gtknode4=~p visible=~p",
++        [whereis(gtkgs), whereis(gtknode4), maps:get(want_visible, S, false)]
++    ),
++    try
++        Server = gtkgs:server(),
++        Tree = lens_tree(S),
++        case gtkgs:create_tree(Server, Tree) of
++            {ok, [Window]} ->
++                demonitor_ref(maps:get(gui_monitor, S, undefined)),
++                Mon = erlang:monitor(process, Server),
++                S0 = S#{window := Window, gui_monitor := Mon, cards := [], photos := #{}},
++                try
++                    S1 = render(S0),
++                    Visible = maps:get(want_visible, S1, false),
++                    ok = expect_ok(gtkgs:config(Window, [{map, Visible}]), map_window),
++                    ok = expect_ok(sync_ui(), sync_window),
++                    ?LOG_INFO("ERM Lens UI built successfully visible=~p window=~p", [Visible, Window]),
++                    {ok, S1}
++                catch
++                    Class1:Reason1:Stack1 ->
++                        ?LOG_WARNING(
++                            "ERM Lens UI post-build setup failed: ~p:~p stack=~p",
++                            [Class1, Reason1, Stack1]
++                        ),
++                        safe(fun() -> gtkgs:destroy(Window) end),
++                        {error, {post_build_failed, Class1, Reason1, Stack1}, S#{window := undefined}}
++                end;
++            {ok, Other} ->
++                {error, {unexpected_create_tree_result, Other}, S};
++            {error, Reason} ->
++                {error, {create_tree_failed, Reason}, S};
++            Other ->
++                {error, {create_tree_failed, Other}, S}
++        end
++    catch
++        Class:Reason:Stacktrace ->
++            {error, {ui_build_exception, Class, Reason, Stacktrace}, S}
++    end.
++
++lens_tree(S) ->
++    [{window, lens_window,
+         [{title, "ERM Lens"}, {width, 480}, {height, 840}, {map, false}], [
+         {frame, lens_root, [{orient, vertical}, {spacing, 8}, {margin, 12}, {expand, true}], [
+             {label, lens_title, [{text, "ERM Lens"}, {align, start}, {class, 'title-1'}]},
+@@ -101,21 +283,100 @@
+                 {frame, lens_body, [{orient, vertical}, {spacing, 16}], []}]},
+             {frame, lens_pages, [{orient, horizontal}, {spacing, 8}, {homogeneous, true}], [
+                 button(lens_prev, "Previous", previous), button(lens_next, "Next", next)]},
+-            {label, lens_status, [{text, "Connecting to relays…"}, {wrap, true}, {align, start}]}]}]}],
+-    case gtkgs:create_tree(Server, Tree) of
+-        {ok, [Window]} ->
+-            case maps:get(gui_monitor, S) of undefined -> ok; Old -> erlang:demonitor(Old, [flush]) end,
+-            Mon = erlang:monitor(process, Server),
+-            S1 = render(S#{window := Window, gui_monitor := Mon, cards := [], photos := #{}}),
+-            gtkgs:config(Window, [{map, true}]), S1;
+-        _ -> S
++            {label, lens_status, [{text, "Connecting to relays…"}, {wrap, true}, {align, start}]}
++        ]}
++    ]}].
++
++backend_status() ->
++    case {whereis(gtknode4), whereis(gtkgs)} of
++        {undefined, undefined} -> {error, {gtk_backend_not_started, gtknode4_and_gtkgs}};
++        {undefined, _} -> {error, gtknode4_not_started};
++        {_, undefined} -> {error, gtkgs_not_started};
++        {_GtkNode, _GtkGs} -> ok
++    end.
++
++sync_ui() ->
++    try gtkgs:sync(?SYNC_TIMEOUT) of
++        ok -> ok;
++        {error, _} = Error -> Error;
++        Other -> {error, {unexpected_sync_result, Other}}
++    catch
++        error:undef ->
++            %% Older gtkgs builds exposed sync/0 only.
++            try gtkgs:sync() of
++                ok -> ok;
++                {error, _} = Error2 -> Error2;
++                Other2 -> {error, {unexpected_sync_result, Other2}}
++            catch Class2:Reason2 -> {error, {sync_failed, Class2, Reason2}} end;
++        Class:Reason -> {error, {sync_failed, Class, Reason}}
+     end.
+-button(Name, Text, Data) -> {button, Name, [{label, Text}, {data, Data}, {min_height, 48}, {expand, true}]}.
++
++ui_config(Ref, Options) ->
++    try gtkgs:config(Ref, Options) of
++        ok -> ok;
++        {error, _} = Error -> Error;
++        Other -> {error, {unexpected_config_result, Other}}
++    catch
++        Class:Reason -> {error, {config_failed, Class, Reason}}
++    end.
++
++safe_read_shown() ->
++    try gtkgs:read(lens_window, shown) of
++        {error, _} = Error -> Error;
++        Value -> Value
++    catch
++        Class:Reason -> {error, {read_failed, Class, Reason}}
++    end.
++
++status_snapshot(S) ->
++    #{
++        pid => self(),
++        window => maps:get(window, S, undefined),
++        shown => case maps:get(window, S, undefined) of undefined -> false; _ -> safe_read_shown() end,
++        closed => maps:get(closed, S, false),
++        want_visible => maps:get(want_visible, S, false),
++        last_ui_error => maps:get(last_ui_error, S, undefined),
++        gtkgs => whereis(gtkgs),
++        gtknode4 => whereis(gtknode4),
++        feed => whereis(erm_lens_feed),
++        sync => whereis(erm_lens_sync),
++        media => whereis(erm_lens_media)
++    }.
++
++note_ui_error(Reason, S) ->
++    case maps:get(last_ui_error, S, undefined) of
++        Reason ->
++            ?LOG_DEBUG("ERM Lens UI still unavailable: ~p", [Reason]);
++        Previous ->
++            ?LOG_WARNING("ERM Lens UI unavailable: ~p previous=~p", [Reason, Previous])
++    end,
++    S#{last_ui_error => Reason}.
++
++clear_ui_error(S) ->
++    case maps:get(last_ui_error, S, undefined) of
++        undefined -> S;
++        Previous ->
++            ?LOG_INFO("ERM Lens UI recovered from: ~p", [Previous]),
++            S#{last_ui_error => undefined}
++    end.
++
++expect_ok(ok, _Op) -> ok;
++expect_ok({error, Reason}, Op) -> error({Op, Reason});
++expect_ok(Other, Op) -> error({Op, Other}).
++
++demonitor_ref(undefined) -> ok;
++demonitor_ref(Ref) when is_reference(Ref) -> erlang:demonitor(Ref, [flush]), ok;
++demonitor_ref(_) -> ok.
++
++button(Name, Text, Data) ->
++    {button, Name, [{label, Text}, {data, Data}, {min_height, 48}, {expand, true}]}.
++
+ new(Type, Parent, Options) ->
+     case gtkgs:create(Type, Parent, Options) of
+         {gtkgs_ref, _, _} = Ref -> Ref;
+-        Other -> error({widget_failed, Other})
++        Other -> error({widget_failed, Type, Parent, Other})
+     end.
++
+ render(S) ->
+     lists:foreach(fun destroy/1, maps:get(cards, S)),
+     Rows = erm_lens_feed:snapshot(maps:get(mode, S)),
+@@ -244,7 +505,17 @@
+ read(Name) -> case gtkgs:read(Name,text) of B when is_binary(B) -> B; L when is_list(L) -> unicode:characters_to_binary(L); _ -> error(read_failed) end.
+ message(Text,S) -> safe(fun() -> gtkgs:config(lens_status,[{text,Text}]) end),S#{message:=Text}.
+ destroy(Ref) -> safe(fun() -> gtkgs:destroy(Ref) end).
+-safe(F) -> try F() catch _:_ -> ok end.
++safe(F) ->
++    try F() of
++        Result -> Result
++    catch
++        Class:Reason:Stacktrace ->
++            logger:debug(
++                "ERM Lens ignored non-critical UI operation failure: ~p:~p stack=~p",
++                [Class, Reason, Stacktrace]
++            ),
++            ok
++    end.
+ fmt(Format,Args) -> unicode:characters_to_binary(io_lib:format(Format,Args)).
+ shorten(Text,N) ->
+     L=unicode:characters_to_list(Text),
+--- /mnt/data/erm_lens_sync.erl	2026-09-07 03:22:54.214010787 +0000
++++ /mnt/data/erm_lens_hardened/erm_lens_sync.erl	2026-09-07 03:26:50.475391121 +0000
+@@ -1,12 +1,16 @@
+ %%% Poll snapshots without giving relays control over the application lifecycle.
+ -module(erm_lens_sync).
+ -behaviour(gen_server).
++-include_lib("kernel/include/logger.hrl").
+ -export([start_link/1, refresh/0, status/0]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+ start_link(C) -> gen_server:start_link({local, ?MODULE}, ?MODULE, C, []).
+ refresh() -> gen_server:cast(?MODULE, refresh).
+ status() -> gen_server:call(?MODULE, status).
+ init(C) ->
++    ?LOG_INFO("ERM Lens sync initialized relays=~p refresh_ms=~p", [
++        length(maps:get(relays, C, [])), maps:get(refresh_ms, C, 60000)
++    ]),
+     self() ! tick,
+     {ok, #{config => C, jobs => #{}, status => #{}, timer => undefined}}.
+ handle_call(status, _, S) -> {reply, maps:get(status, S), S};
+@@ -23,16 +27,23 @@
+         error -> {noreply, S};
+         {#{monitor := Mon, timer := Timer, url := U}, Jobs} ->
+             erlang:demonitor(Mon, [flush]), cancel(Timer),
++            log_relay_result(U, Result),
+             Status = (maps:get(status, S))#{U => Result},
+             {noreply, S#{jobs := Jobs, status := Status}}
+     end;
+ handle_info({job_timeout, Pid}, S) ->
+-    case maps:is_key(Pid, maps:get(jobs, S)) of true -> exit(Pid, kill); false -> ok end,
++    case maps:get(Pid, maps:get(jobs, S), undefined) of
++        #{url := U} ->
++            ?LOG_WARNING("ERM Lens relay sample timed out relay=~p pid=~p", [U, Pid]),
++            exit(Pid, kill);
++        undefined -> ok
++    end,
+     {noreply, S};
+ handle_info({'DOWN', Mon, process, Pid, Reason}, S) ->
+     case maps:take(Pid, maps:get(jobs, S)) of
+         {#{monitor := Mon, timer := Timer, url := U}, Jobs} ->
+             cancel(Timer),
++            ?LOG_WARNING("ERM Lens relay worker exited relay=~p reason=~p", [U, Reason]),
+             {noreply, S#{jobs := Jobs, status := (maps:get(status, S))#{U => {error, Reason}}}};
+         _ -> {noreply, S}
+     end;
+@@ -49,6 +60,7 @@
+         case Busy of
+             true -> Acc;
+             false ->
++                ?LOG_DEBUG("ERM Lens sampling relay ~p", [U]),
+                 {Pid, Mon} = spawn_monitor(fun() -> Parent ! {relay_result, self(), erm_lens_relay:fetch(U, C)} end),
+                 Timer = erlang:send_after(40000, self(), {job_timeout, Pid}),
+                 Acc#{jobs := Jobs#{Pid => #{url => U, monitor => Mon, timer => Timer}},
+@@ -57,3 +69,10 @@
+     end, S, lists:sublist(lists:usort(maps:get(relays, C, [])), 4)).
+ cancel(undefined) -> ok;
+ cancel(Timer) -> erlang:cancel_timer(Timer), ok.
++
++log_relay_result(U, {ok, Summary}) ->
++    ?LOG_DEBUG("ERM Lens relay sample complete relay=~p summary=~p", [U, Summary]);
++log_relay_result(U, {error, Reason}) ->
++    ?LOG_WARNING("ERM Lens relay sample failed relay=~p reason=~p", [U, Reason]);
++log_relay_result(U, Other) ->
++    ?LOG_DEBUG("ERM Lens relay sample result relay=~p result=~p", [U, Other]).

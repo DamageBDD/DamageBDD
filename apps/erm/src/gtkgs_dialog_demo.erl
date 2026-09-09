@@ -40,95 +40,99 @@ stop(Pid) when is_pid(Pid) ->
 
 init() ->
     case ui_ready() of
-        ok -> init_ready(gtkgs:server());
+        ok ->
+            init_ready(gtkgs:server());
         {error, Reason} ->
             logger:warning("gtkgs dialog demo not started: ~p", [Reason]),
             ok
     end.
 
 init_ready(Server) ->
-    case gtkgs:create_tree(Server, [
-        {window, main_window,
-            [
-                {title, "gtkgs manual test"},
-                {size, {720, 520}},
-                {orient, vertical}
-            ],
-            [
-                {label, intro_label, [
-                    {label,
-                        {text, "GS-style objects and deterministic events over a GTK4 C-node."}},
-                    {border, 10}
-                ]},
-
-                {entry, name_entry, [
-                    {text, "Type here and press Return"},
-                    {expand, true},
-                    {border, 10}
-                ]},
-
-                {listbox, test_list, [
-                    {items, [
-                        "Nostr relay",
-                        "Nostr event",
-                        "Nostr identity"
+    case
+        gtkgs:create_tree(Server, [
+            {window, main_window,
+                [
+                    {title, "gtkgs manual test"},
+                    {size, {720, 520}},
+                    {orient, vertical}
+                ],
+                [
+                    {label, intro_label, [
+                        {label,
+                            {text, "GS-style objects and deterministic events over a GTK4 C-node."}},
+                        {border, 10}
                     ]},
-                    {proportion, 1},
-                    {expand, true},
-                    {border, 10}
-                ]},
 
-                {editor, compose_editor, [
-                    {text, "A test Nostr note."},
-                    {proportion, 1},
-                    {expand, true},
-                    {border, 10}
-                ]},
-
-                {frame, action_row,
-                    [
-                        {orient, horizontal},
+                    {entry, name_entry, [
+                        {text, "Type here and press Return"},
                         {expand, true},
                         {border, 10}
-                    ],
-                    [
-                        {button, read_button, [
-                            {label, "Read editor"},
-                            {data, read_editor},
-                            {border, 4}
-                        ]},
-                        {button, toggle_button, [
-                            {label, "Toggle editor"},
-                            {data, toggle_editor},
-                            {border, 4}
-                        ]},
-                        {button, help_button, [
-                            {label, "Help"},
-                            {data, show_help},
-                            {border, 4}
-                        ]},
-                        {button, about_button, [
-                            {label, "About"},
-                            {data, show_about},
-                            {border, 4}
-                        ]},
-                        {button, close_button, [
-                            {label, "Close"},
-                            {data, close_window},
-                            {border, 4}
-                        ]}
                     ]},
 
-                {label, status_label, [
-                    {label, {text, "Ready"}},
-                    {expand, true},
-                    {border, 10}
+                    {listbox, test_list, [
+                        {items, [
+                            "Nostr relay",
+                            "Nostr event",
+                            "Nostr identity"
+                        ]},
+                        {proportion, 1},
+                        {expand, true},
+                        {border, 10}
+                    ]},
+
+                    {editor, compose_editor, [
+                        {text, "A test Nostr note."},
+                        {proportion, 1},
+                        {expand, true},
+                        {border, 10}
+                    ]},
+
+                    {frame, action_row,
+                        [
+                            {orient, horizontal},
+                            {expand, true},
+                            {border, 10}
+                        ],
+                        [
+                            {button, read_button, [
+                                {label, "Read editor"},
+                                {data, read_editor},
+                                {border, 4}
+                            ]},
+                            {button, toggle_button, [
+                                {label, "Toggle editor"},
+                                {data, toggle_editor},
+                                {border, 4}
+                            ]},
+                            {button, help_button, [
+                                {label, "Help"},
+                                {data, show_help},
+                                {border, 4}
+                            ]},
+                            {button, about_button, [
+                                {label, "About"},
+                                {data, show_about},
+                                {border, 4}
+                            ]},
+                            {button, close_button, [
+                                {label, "Close"},
+                                {data, close_window},
+                                {border, 4}
+                            ]}
+                        ]},
+
+                    {label, status_label, [
+                        {label, {text, "Ready"}},
+                        {expand, true},
+                        {border, 10}
+                    ]}
                 ]}
-            ]}
-    ]) of
+        ])
+    of
         {ok, [Window]} ->
             case {gtkgs:config(Window, {map, true}), gtkgs:sync()} of
-                {ok, ok} -> loop();
+                {ok, ok} ->
+                    loop();
                 {ConfigResult, SyncResult} ->
                     logger:error("gtkgs demo initialization failed: config=~p sync=~p", [
                         ConfigResult, SyncResult

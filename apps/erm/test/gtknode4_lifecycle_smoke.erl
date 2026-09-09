@@ -33,11 +33,13 @@ run(Iterations) when is_integer(Iterations), Iterations > 0 ->
         Port1 = gtknode4_port:status(),
         OsPid1 = maps:get(os_pid, Port1),
 
-        case {
-            maps:get(ready, Controller, false),
-            maps:get(alive, Port1, false),
-            OsPid1 =:= OsPid0
-        } of
+        case
+            {
+                maps:get(ready, Controller, false),
+                maps:get(alive, Port1, false),
+                OsPid1 =:= OsPid0
+            }
+        of
             {true, true, true} ->
                 {ok, #{
                     iterations => Iterations,
@@ -63,36 +65,50 @@ run(Iterations) ->
 
 exercise_tree(Index) ->
     Server = gtkgs:server(),
-    Window = expect_ref(gtkgs:create(window, Server, [
-        {title, io_lib:format("gtknode4 lifecycle ~B", [Index])},
-        {size, {420, 280}},
-        {orient, vertical}
-    ])),
-    Outer = expect_ref(gtkgs:create(frame, Window, [
-        {orient, vertical},
-        {expand, true},
-        {margin, 8}
-    ])),
-    Row = expect_ref(gtkgs:create(frame, Outer, [
-        {orient, horizontal},
-        {expand, true},
-        {spacing, 4}
-    ])),
-    _Label = expect_ref(gtkgs:create(label, Row, [
-        {label, "Lifecycle"},
-        {expand, true}
-    ])),
-    _Button = expect_ref(gtkgs:create(button, Row, [
-        {label, "Destroy"}
-    ])),
-    _Entry = expect_ref(gtkgs:create(entry, Outer, [
-        {text, "registry-owned child"},
-        {expand, true}
-    ])),
-    _List = expect_ref(gtkgs:create(listbox, Outer, [
-        {items, ["one", "two", "three"]},
-        {expand, true}
-    ])),
+    Window = expect_ref(
+        gtkgs:create(window, Server, [
+            {title, io_lib:format("gtknode4 lifecycle ~B", [Index])},
+            {size, {420, 280}},
+            {orient, vertical}
+        ])
+    ),
+    Outer = expect_ref(
+        gtkgs:create(frame, Window, [
+            {orient, vertical},
+            {expand, true},
+            {margin, 8}
+        ])
+    ),
+    Row = expect_ref(
+        gtkgs:create(frame, Outer, [
+            {orient, horizontal},
+            {expand, true},
+            {spacing, 4}
+        ])
+    ),
+    _Label = expect_ref(
+        gtkgs:create(label, Row, [
+            {label, "Lifecycle"},
+            {expand, true}
+        ])
+    ),
+    _Button = expect_ref(
+        gtkgs:create(button, Row, [
+            {label, "Destroy"}
+        ])
+    ),
+    _Entry = expect_ref(
+        gtkgs:create(entry, Outer, [
+            {text, "registry-owned child"},
+            {expand, true}
+        ])
+    ),
+    _List = expect_ref(
+        gtkgs:create(listbox, Outer, [
+            {items, ["one", "two", "three"]},
+            {expand, true}
+        ])
+    ),
 
     ok = expect_ok(gtkgs:config(Window, {map, true})),
     ok = expect_ok(gtkgs:sync()),

@@ -45,6 +45,10 @@
     message_dialog/3,
     respond_dialog/2,
     active_dialogs/0,
+    set_stylesheet/1,
+    set_stylesheet/2,
+    remove_stylesheet/1,
+    stylesheets/0,
 
     sync/0,
     sync/1,
@@ -76,6 +80,7 @@
 -define(FIRST_DIALOG_ID, 1000000).
 -define(DEFAULT_BACKEND_TIMEOUT, 5000).
 -define(DEFAULT_EVENT_LOG_LIMIT, 1000).
+-define(DEFAULT_MAX_STYLESHEET_BYTES, 262144).
 
 -record(object, {
     id,
@@ -104,7 +109,9 @@
     event_seq = 0,
     event_log = {[], []},
     event_log_limit = ?DEFAULT_EVENT_LOG_LIMIT,
-    waiters = #{}
+    waiters = #{},
+    stylesheets = #{},
+    max_stylesheet_bytes = ?DEFAULT_MAX_STYLESHEET_BYTES
 }).
 
 -type server_ref() :: pid().
@@ -236,6 +243,27 @@ respond_dialog(DialogRef, Response) ->
 active_dialogs() ->
     gen_server:call(server(), active_dialogs).
 
+%% Install or replace a named GTK CSS provider. Stylesheets are global to the
+%% gtkgs backend session; widget-level {class, ClassName} options attach CSS
+%% classes that these providers can target.
+-spec set_stylesheet(unicode:chardata()) -> ok | {error, term()}.
+set_stylesheet(Css) ->
+    set_stylesheet(default, Css).
+
+-spec set_stylesheet(atom() | binary() | string(), unicode:chardata()) ->
+    ok | {error, term()}.
+set_stylesheet(Name, Css) ->
+    gen_server:call(server(), {set_stylesheet, self(), Name, Css}, infinity).
+
+-spec remove_stylesheet(atom() | binary() | string()) -> ok | {error, term()}.
+remove_stylesheet(Name) ->
+    gen_server:call(server(), {remove_stylesheet, self(), Name}, infinity).
+
+%% Return metadata only, not the CSS body. This keeps status/debug calls small.
+-spec stylesheets() -> [map()].
+stylesheets() ->
+    gen_server:call(server(), stylesheets).
+
 -spec sync() -> ok | {error, term()}.
 sync() ->
     sync(?DEFAULT_BACKEND_TIMEOUT).
@@ -325,7 +353,12 @@ init(Opts) ->
                 test_mode = maps:get(test_mode, Opts, false),
                 backend_timeout = maps:get(backend_timeout, Opts, ?DEFAULT_BACKEND_TIMEOUT),
                 dialog_timeout = maps:get(dialog_timeout, Opts, infinity),
-                event_log_limit = maps:get(event_log_limit, Opts, ?DEFAULT_EVENT_LOG_LIMIT)
+                event_log_limit = maps:get(event_log_limit, Opts, ?DEFAULT_EVENT_LOG_LIMIT),
+                max_stylesheet_bytes = maps:get(
+                    max_stylesheet_bytes,
+                    Opts,
+                    ?DEFAULT_MAX_STYLESHEET_BYTES
+                )
             }};
         SubscribeResult ->
             {stop, {gtknode4_subscribe_failed, SubscribeResult}}
@@ -388,6 +421,18 @@ handle_call(active_dialogs, _From, State) ->
         Dialogs0
     ),
     {reply, Dialogs, State};
+handle_call(stylesheets, _From, State) ->
+    {reply, stylesheet_public_list(State#state.stylesheets), State};
+handle_call({set_stylesheet, _Owner, Name0, Css0}, _From, State0) ->
+    case safe_set_stylesheet(Name0, Css0, State0) of
+        {ok, State} -> {reply, ok, State};
+        {error, Reason} -> {reply, {error, Reason}, State0}
+    end;
+handle_call({remove_stylesheet, _Owner, Name0}, _From, State0) ->
+    case safe_remove_stylesheet(Name0, State0) of
+        {ok, State} -> {reply, ok, State};
+        {error, Reason} -> {reply, {error, Reason}, State0}
+    end;
 handle_call({inspect, Owner, Ref}, _From, State) ->
     case resolve_object(Owner, Ref, State) of
         {ok, Object} -> {reply, inspect_object(Object, State), State};
@@ -525,6 +570,99 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%%===================================================================
+%%% Stylesheets
+%%%===================================================================
+
+safe_set_stylesheet(Name0, Css0, State0) ->
+    try
+        Name = stylesheet_name(Name0),
+        Css = stylesheet_binary(Css0),
+        ok = validate_stylesheet_size(Css, State0#state.max_stylesheet_bytes),
+        case
+            mutation_result(
+                safe_backend_call(
+                    {set_stylesheet, Name, Css},
+                    State0#state.backend_timeout
+                )
+            )
+        of
+            ok ->
+                Entry = #{
+                    name => Name,
+                    bytes => byte_size(Css),
+                    updated_at => erlang:system_time(second)
+                },
+                {ok, State0#state{stylesheets = maps:put(Name, Entry, State0#state.stylesheets)}};
+            {error, Reason} ->
+                {error, Reason}
+        end
+    catch
+        Class:Reason0:Stacktrace ->
+            {error, {set_stylesheet_failed, Class, Reason0, Stacktrace}}
+    end.
+
+safe_remove_stylesheet(Name0, State0) ->
+    try
+        Name = stylesheet_name(Name0),
+        case
+            mutation_result(
+                safe_backend_call(
+                    {remove_stylesheet, Name},
+                    State0#state.backend_timeout
+                )
+            )
+        of
+            ok ->
+                {ok, State0#state{stylesheets = maps:remove(Name, State0#state.stylesheets)}};
+            {error, Reason} ->
+                {error, Reason}
+        end
+    catch
+        Class:Reason0:Stacktrace ->
+            {error, {remove_stylesheet_failed, Class, Reason0, Stacktrace}}
+    end.
+
+stylesheet_name(default) ->
+    <<"default">>;
+stylesheet_name(Name) when is_atom(Name) ->
+    validate_stylesheet_name(atom_to_binary(Name, utf8));
+stylesheet_name(Name) when is_binary(Name) ->
+    validate_stylesheet_name(Name);
+stylesheet_name(Name) when is_list(Name) ->
+    validate_stylesheet_name(unicode:characters_to_binary(Name));
+stylesheet_name(Name) ->
+    error({bad_stylesheet_name, Name}).
+
+validate_stylesheet_name(Name) when is_binary(Name), byte_size(Name) > 0, byte_size(Name) =< 128 ->
+    case binary:match(Name, <<0>>) of
+        nomatch -> Name;
+        _ -> error({bad_stylesheet_name, contains_nul})
+    end;
+validate_stylesheet_name(Name) ->
+    error({bad_stylesheet_name, Name}).
+
+stylesheet_binary(Css) ->
+    case unicode:characters_to_binary(Css) of
+        Bin when is_binary(Bin) -> Bin;
+        {error, _Encoded, _Rest} -> error(bad_stylesheet_unicode);
+        {incomplete, _Encoded, _Rest} -> error(incomplete_stylesheet_unicode)
+    end.
+
+validate_stylesheet_size(Css, Max) when is_integer(Max), Max > 0 ->
+    case byte_size(Css) =< Max of
+        true -> ok;
+        false -> error({stylesheet_too_large, byte_size(Css), Max})
+    end;
+validate_stylesheet_size(_Css, Max) ->
+    error({bad_max_stylesheet_bytes, Max}).
+
+stylesheet_public_list(Stylesheets) ->
+    lists:sort(
+        fun(A, B) -> maps:get(name, A) =< maps:get(name, B) end,
+        maps:values(Stylesheets)
+    ).
+
+%%%===================================================================
 %%% Tree creation
 %%%===================================================================
 
@@ -534,9 +672,10 @@ create_tree_nodes(Parent, [Node | Rest], Acc) ->
     try create_tree_node(Parent, Node) of
         Ref -> create_tree_nodes(Parent, Rest, [Ref | Acc])
     catch
-        error:TreeError:_Stacktrace
-            when is_tuple(TreeError), tuple_size(TreeError) =:= 4,
-                 element(1, TreeError) =:= tree_node_failed
+        error:TreeError:_Stacktrace when
+            is_tuple(TreeError),
+            tuple_size(TreeError) =:= 4,
+            element(1, TreeError) =:= tree_node_failed
         ->
             lists:foreach(fun best_effort_destroy/1, Acc),
             {error, TreeError};
@@ -1267,7 +1406,6 @@ native_type(scale) -> scale;
 native_type(picture) -> picture;
 native_type(scrolled) -> scrolled_box.
 
-
 %% Refuse unsupported native widgets before allocating logical state. This is
 %% intentionally negotiated from gtknode4's hello capabilities instead of
 %% assuming that gtkgs.erl and the native executable were rebuilt together.
@@ -1281,10 +1419,10 @@ require_backend_widget(LogicalType, NativeType) ->
                     ok;
                 _ ->
                     case lists:member(NativeType, Widgets) of
-                        true -> ok;
+                        true ->
+                            ok;
                         false ->
-                            error({unsupported_backend_widget,
-                                   LogicalType, NativeType, Widgets})
+                            error({unsupported_backend_widget, LogicalType, NativeType, Widgets})
                     end
             end;
         _ ->
@@ -1370,9 +1508,12 @@ native_options(Type, Name, Id, Options) ->
 native_patch(Options) ->
     lists:foldl(fun native_option/2, #{}, normalize_options(Options)).
 
-native_option({data, _Data}, Acc) -> Acc;
-native_option({label, {text, Text}}, Acc) -> maps:put(label, to_binary(Text), Acc);
-native_option({label, Text}, Acc) -> maps:put(label, to_binary(Text), Acc);
+native_option({data, _Data}, Acc) ->
+    Acc;
+native_option({label, {text, Text}}, Acc) ->
+    maps:put(label, to_binary(Text), Acc);
+native_option({label, Text}, Acc) ->
+    maps:put(label, to_binary(Text), Acc);
 %% ERM_LENS_WIDGETS_V1: only local, normalized files cross into GTK.
 native_option({file, Path}, Acc) ->
     Bin = to_binary(Path),
@@ -1380,20 +1521,28 @@ native_option({file, Path}, Acc) ->
         true -> maps:put(text, Bin, Acc);
         false -> error(picture_requires_absolute_local_path)
     end;
-native_option({text, Text}, Acc) -> maps:put(text, to_binary(Text), Acc);
-native_option({title, Text}, Acc) -> maps:put(title, to_binary(Text), Acc);
-native_option({tooltip, Text}, Acc) -> maps:put(tooltip, to_binary(Text), Acc);
-native_option({items, Items}, Acc) -> maps:put(items, [to_binary(Item) || Item <- Items], Acc);
-native_option({add, Item}, Acc) -> maps:put(add, to_binary(Item), Acc);
+native_option({text, Text}, Acc) ->
+    maps:put(text, to_binary(Text), Acc);
+native_option({title, Text}, Acc) ->
+    maps:put(title, to_binary(Text), Acc);
+native_option({tooltip, Text}, Acc) ->
+    maps:put(tooltip, to_binary(Text), Acc);
+native_option({items, Items}, Acc) ->
+    maps:put(items, [to_binary(Item) || Item <- Items], Acc);
+native_option({add, Item}, Acc) ->
+    maps:put(add, to_binary(Item), Acc);
 native_option({enable, Bool}, Acc) when is_boolean(Bool) -> maps:put(enabled, Bool, Acc);
 native_option({map, Bool}, Acc) when is_boolean(Bool) -> maps:put(shown, Bool, Acc);
 native_option({show, Bool}, Acc) when is_boolean(Bool) -> maps:put(shown, Bool, Acc);
 native_option({setfocus, Bool}, Acc) when is_boolean(Bool) -> maps:put(focus, Bool, Acc);
-native_option({orient, Orientation}, Acc) -> maps:put(orientation, Orientation, Acc);
-native_option({layout, Orientation}, Acc) -> maps:put(orientation, Orientation, Acc);
+native_option({orient, Orientation}, Acc) ->
+    maps:put(orientation, Orientation, Acc);
+native_option({layout, Orientation}, Acc) ->
+    maps:put(orientation, Orientation, Acc);
 native_option({Key, Value}, Acc) when is_atom(Key) -> maps:put(Key, normalize_value(Value), Acc);
 native_option(Key, Acc) when is_atom(Key) -> maps:put(Key, true, Acc);
-native_option(_Other, Acc) -> Acc.
+native_option(_Other, Acc) ->
+    Acc.
 
 stored_options(Options) ->
     Automation = native_patch(Options),

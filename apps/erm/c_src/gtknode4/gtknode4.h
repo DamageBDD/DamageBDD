@@ -21,6 +21,7 @@ typedef struct {
   GtkApplication *app;
   GtkBuilder *builder;
   GHashTable *widgets;
+  GHashTable *stylesheets;
   uint64_t event_seq;
   gboolean test_mode;
   gboolean running;
