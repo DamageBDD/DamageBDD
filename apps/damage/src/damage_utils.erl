@@ -533,18 +533,15 @@ is_valid_email(Email) when is_list(Email) ->
         nomatch -> false
     end.
 add_log_filter(Module) ->
-    Filter = {
-        fun(#{meta := Meta} = Event, _Args) ->
-            ?LOG_ERROR("event ~p", [Event]),
-            case maps:get(module, Meta, undefined) of
-                Module -> stop;
-                _ -> ignore
-            end
-        end,
-        #{}
-    },
-
-    logger:add_primary_filter(no_tls_logs, Filter).
+    %% Legacy wrapper: globally suppress one module. Keep matching logic in
+    %% log_utils and, importantly, never log from inside a Logger filter (that
+    %% can recurse back through the same filter). New routing should normally
+    %% be configured at handler level in sys.config instead of as a primary
+    %% filter, so the event can still be written to a dedicated file.
+    logger:add_primary_filter(
+        no_tls_logs,
+        {fun log_utils:exclude/2, #{modules => [Module]}}
+    ).
 
 sudo_prefix() ->
     case string:trim(os:cmd("id -u")) of

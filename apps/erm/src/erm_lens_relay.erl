@@ -22,6 +22,8 @@
 -define(PUBLISH_TIMEOUT, 8000).
 -define(MAX_FRAME_BYTES, 262144).
 
+-define(LOG_META, #{domain => [erm, lens, relay]}).
+
 fetch(Url, C) ->
     with_connection(Url, fun(Pid, Stream) ->
         Now = erlang:system_time(second),
@@ -80,7 +82,7 @@ with_connection(Url, Fun) ->
         {Host, Port, Path, TlsOpts} = relay_target(Url),
         ?LOG_DEBUG("ERM Lens relay connecting endpoint=~ts", [
             erm_lens_diagnostics:relay_label(Url)
-        ]),
+        ], ?LOG_META),
         case
             safe_gun_open(Host, Port, #{
                 transport => tls,
@@ -111,13 +113,13 @@ with_connection(Url, Fun) ->
             MFA = undef_mfa(Stacktrace),
             ?LOG_ERROR(
                 "ERM Lens relay local API unavailable url=~p mfa=~p stack=~p",
-                [erm_lens_diagnostics:relay_label(Url), MFA, stack_head(Stacktrace)]
+                [erm_lens_diagnostics:relay_label(Url), MFA, stack_head(Stacktrace)], ?LOG_META
             ),
             {error, {relay_api_undefined, MFA}};
         Class:Reason:Stacktrace ->
             ?LOG_WARNING(
                 "ERM Lens relay connection exception url=~p error=~p:~p stack=~p",
-                [erm_lens_diagnostics:relay_label(Url), Class, safe_reason(Reason), stack_head(Stacktrace)]
+                [erm_lens_diagnostics:relay_label(Url), Class, safe_reason(Reason), stack_head(Stacktrace)], ?LOG_META
             ),
             {error, {relay_failed, Class, safe_reason(Reason)}}
     end.
@@ -178,7 +180,7 @@ upgrade_and_run(Url, Pid, Path, Fun) ->
     Stream = gun:ws_upgrade(Pid, Path, []),
     receive
         {gun_upgrade, Pid, Stream, [<<"websocket">>], _RespHeaders} ->
-            ?LOG_DEBUG("ERM Lens relay websocket ready endpoint=~ts", [erm_lens_diagnostics:relay_label(Url)]),
+            ?LOG_DEBUG("ERM Lens relay websocket ready endpoint=~ts", [erm_lens_diagnostics:relay_label(Url)], ?LOG_META),
             Fun(Pid, Stream);
         {gun_response, Pid, Stream, _Fin, Status, _RespHeaders} ->
             {error, {upgrade_rejected, Status}};
@@ -244,7 +246,7 @@ collect_message(Pid, Stream, Sub, Filters, Left, End, N, Bad) ->
                 {ok, [<<"CLOSED">>, Sub, Reason]} ->
                     error({subscription_closed, safe_reason(Reason)});
                 {error, DecodeReason} ->
-                    ?LOG_DEBUG("ERM Lens relay ignored invalid JSON frame reason=~p", [DecodeReason]),
+                    ?LOG_DEBUG("ERM Lens relay ignored invalid JSON frame reason=~p", [DecodeReason], ?LOG_META),
                     collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad + 1);
                 _ ->
                     collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad)

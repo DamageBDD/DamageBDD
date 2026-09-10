@@ -29,6 +29,8 @@
 -define(GTK_READY_TIMEOUT, 8000).
 -define(UI_START_TIMEOUT, 5000).
 
+-define(LOG_META, #{domain => [erm, lens]}).
+
 defaults() ->
     Home =
         case os:getenv("HOME") of
@@ -94,7 +96,7 @@ start(C0) ->
 start_configured(C) ->
     case maps:get(enabled, C, true) of
         false ->
-            ?LOG_INFO("ERM Lens start requested but Lens is disabled", []),
+            ?LOG_INFO("ERM Lens start requested but Lens is disabled", [], ?LOG_META),
             {error, disabled};
         true ->
             case ensure_erm_application() of
@@ -128,7 +130,7 @@ start_link_configured(C) ->
     log_optional_dependency(gun),
     case whereis(erm_lens_sup) of
         undefined ->
-            ?LOG_INFO("Starting ERM Lens supervision tree", []),
+            ?LOG_INFO("Starting ERM Lens supervision tree", [], ?LOG_META),
             erm_lens_sup:start_link(C);
         Existing ->
             %% If erm_sup is invoking this child start MFA, the existing
@@ -138,7 +140,7 @@ start_link_configured(C) ->
                 Parent when Parent =:= self() ->
                     ?LOG_WARNING(
                         "Reclaiming unmanaged ERM Lens supervisor pid=~p before supervised startup",
-                        [Existing]
+                        [Existing], ?LOG_META
                     ),
                     case reclaim_standalone(Existing) of
                         ok -> erm_lens_sup:start_link(C);
@@ -158,15 +160,15 @@ show() ->
                         ok ->
                             call_ui(show);
                         {error, UiReason} = UiError ->
-                            ?LOG_WARNING("ERM Lens UI process did not become ready: ~p", [UiReason]),
+                            ?LOG_WARNING("ERM Lens UI process did not become ready: ~p", [UiReason], ?LOG_META),
                             UiError
                     end;
                 {error, Reason} = Error ->
-                    ?LOG_WARNING("ERM Lens cannot show: GTK backend unavailable: ~p", [Reason]),
+                    ?LOG_WARNING("ERM Lens cannot show: GTK backend unavailable: ~p", [Reason], ?LOG_META),
                     Error
             end;
         {error, Reason} = Error ->
-            ?LOG_WARNING("ERM Lens cannot show: subsystem unavailable: ~p", [Reason]),
+            ?LOG_WARNING("ERM Lens cannot show: subsystem unavailable: ~p", [Reason], ?LOG_META),
             Error
     end.
 
@@ -205,7 +207,7 @@ stop() ->
             stop_standalone();
         _ ->
             Result = safe_apply(erm_sup, stop_lens, [], {error, erm_sup_stop_failed}),
-            ?LOG_INFO("ERM Lens stop result: ~p", [Result]),
+            ?LOG_INFO("ERM Lens stop result: ~p", [Result], ?LOG_META),
             Result
     end.
 
@@ -246,7 +248,7 @@ do_start_standalone(C) ->
                             unlink(Pid),
                             ?LOG_WARNING(
                                 "ERM Lens started outside erm_sup; development-only process pid=~p",
-                                [Pid]
+                                [Pid], ?LOG_META
                             ),
                             OK;
                         Error ->
@@ -272,7 +274,7 @@ ensure_erm_application() ->
                     {error, {erm_not_ready, erlang_distribution_not_started}};
                 _ ->
                     ?LOG_INFO(
-                        "ERM Lens requested before erm_sup; ensuring ERM application is started", []
+                        "ERM Lens requested before erm_sup; ensuring ERM application is started", [], ?LOG_META
                     ),
                     case application:ensure_all_started(erm) of
                         {ok, _Apps} ->
@@ -392,7 +394,7 @@ safe_ui_call(Request, Default) ->
                 Reply -> Reply
             catch
                 exit:Reason ->
-                    ?LOG_WARNING("ERM Lens UI call ~p exited: ~p", [Request, Reason]),
+                    ?LOG_WARNING("ERM Lens UI call ~p exited: ~p", [Request, Reason], ?LOG_META),
                     case Default of
                         {error, Tag} -> {error, {Tag, Reason}};
                         _ -> Default
@@ -403,11 +405,11 @@ safe_ui_call(Request, Default) ->
 log_optional_dependency(App) ->
     case application:ensure_all_started(App) of
         {ok, _} ->
-            ?LOG_DEBUG("ERM Lens dependency ready: ~p", [App]);
+            ?LOG_DEBUG("ERM Lens dependency ready: ~p", [App], ?LOG_META);
         {error, Reason} ->
             %% Do not fail the Lens supervisor. Relay/media paths already
             %% isolate I/O failures and can recover when dependencies appear.
-            ?LOG_WARNING("ERM Lens optional dependency ~p unavailable: ~p", [App, Reason])
+            ?LOG_WARNING("ERM Lens optional dependency ~p unavailable: ~p", [App, Reason], ?LOG_META)
     end.
 
 merged_config(C0) ->
@@ -431,7 +433,7 @@ lens_restart_policy(C) ->
     case maps:get(supervisor_restart, C, temporary) of
         Policy when Policy =:= permanent; Policy =:= transient; Policy =:= temporary -> Policy;
         Invalid ->
-            ?LOG_WARNING("Ignoring invalid ERM Lens supervisor restart policy: ~p", [Invalid]),
+            ?LOG_WARNING("Ignoring invalid ERM Lens supervisor restart policy: ~p", [Invalid], ?LOG_META),
             temporary
     end.
 
@@ -455,7 +457,7 @@ safe_apply(M, F, A, Default) ->
             ?LOG_WARNING(
                 "ERM Lens helper ~p:~p/~p failed: ~p:~p stack=~p",
                 [M, F, length(A), Class, erm_lens_diagnostics:summary(Reason),
-                 erm_lens_diagnostics:stack(Stacktrace)]
+                 erm_lens_diagnostics:stack(Stacktrace)], ?LOG_META
             ),
             Default
     end.

@@ -1,4 +1,5 @@
-%% Reusable log utilities: file tailing (inode/offset), journald cursor query, pattern matching
+%% Reusable log utilities: Logger routing/filtering, file tailing (inode/offset),
+%% journald cursor query, pattern matching and bounded event summarisation
 -module(log_utils).
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
@@ -10,7 +11,12 @@
     tail_file/3,
     query_journald/4,
     match_lines/2,
+    include/2,
+    exclude/2,
+    matches_selector/2,
     filter_by_module/2,
+    filter_by_module_prefix/2,
+    filter_by_application/2,
     summarize/1,
     summarize/2,
     summarize_fmt/1,
@@ -145,26 +151,175 @@ any_match(_Line, []) ->
     false.
 
 %% ------------------------------------------------------------------
-%% Generic logger filter
+%% Generic Logger routing filters
 %%
-%% Usage in sys.config:
+%% Keep routing policy in sys.config and matching mechanics here. This avoids
+%% adding logger-filter functions to every subsystem module.
 %%
-%% filters => #{
-%%     only_damage_nostr =>
-%%         {fun log_utils:filter_by_module/2, damage_nostr}
-%% }
+%% Selector keys are ORed:
+%%   #{modules => [damage_gun],
+%%     module_prefixes => [<<"erm_lens">>],
+%%     applications => [erm]}
 %%
+%% Handler examples:
+%%
+%%   %% Dedicated module-family file
+%%   filter_default => stop,
+%%   filters => [
+%%       {only_erm_lens,
+%%        {fun log_utils:include/2,
+%%         #{module_prefixes => [<<"erm_lens">>]}}}
+%%   ]
+%%
+%%   %% Remove the same family from a general/console handler
+%%   filters => [
+%%       {exclude_erm_lens,
+%%        {fun log_utils:exclude/2,
+%%         #{module_prefixes => [<<"erm_lens">>]}}}
+%%   ]
+%%
+%% Application matching uses Logger metadata when present and otherwise
+%% application:get_application(Module). No atoms are created from config data.
 %% ------------------------------------------------------------------
 
-filter_by_module(LogEvent = #{meta := Meta}, Module) ->
-    case maps:get(mfa, Meta, undefined) of
-        {Module, _, _} ->
-            LogEvent;
-        _ ->
-            stop
+-spec include(map(), term()) -> map() | stop.
+include(LogEvent, Selector) ->
+    case matches_selector(LogEvent, Selector) of
+        true -> LogEvent;
+        false -> stop
+    end.
+
+-spec exclude(map(), term()) -> stop | ignore.
+exclude(LogEvent, Selector) ->
+    case matches_selector(LogEvent, Selector) of
+        true -> stop;
+        false -> ignore
+    end.
+
+%% Compatibility/readability helpers for simple handlers.
+filter_by_module(LogEvent, Module) ->
+    include(LogEvent, #{modules => [Module]}).
+
+filter_by_module_prefix(LogEvent, Prefix) ->
+    include(LogEvent, #{module_prefixes => [Prefix]}).
+
+filter_by_application(LogEvent, Application) ->
+    include(LogEvent, #{applications => [Application]}).
+
+-spec matches_selector(map(), term()) -> boolean().
+matches_selector(LogEvent, Selector0) ->
+    Selector = normalize_selector(Selector0),
+    Module = event_module(LogEvent),
+    Modules = selector_values(module, modules, Selector),
+    Prefixes = selector_values(module_prefix, module_prefixes, Selector),
+    Applications = selector_values(application, applications, Selector),
+    module_selected(Module, Modules) orelse
+        prefix_selected(Module, Prefixes) orelse
+        application_selected(LogEvent, Module, Applications).
+
+normalize_selector(Selector) when is_map(Selector) ->
+    Selector;
+normalize_selector({module, Module}) ->
+    #{modules => [Module]};
+normalize_selector({modules, Modules}) ->
+    #{modules => normalize_selector_list(Modules)};
+normalize_selector({module_prefix, Prefix}) ->
+    #{module_prefixes => [Prefix]};
+normalize_selector({module_prefixes, Prefixes}) ->
+    #{module_prefixes => normalize_selector_list(Prefixes)};
+normalize_selector({application, Application}) ->
+    #{applications => [Application]};
+normalize_selector({applications, Applications}) ->
+    #{applications => normalize_selector_list(Applications)};
+normalize_selector(Module) when is_atom(Module) ->
+    #{modules => [Module]};
+normalize_selector(_) ->
+    #{}.
+
+selector_values(Singular, Plural, Selector) ->
+    SingularValues =
+        case maps:find(Singular, Selector) of
+            {ok, Value} -> [Value];
+            error -> []
+        end,
+    PluralValues =
+        case maps:find(Plural, Selector) of
+            {ok, Values} -> normalize_selector_list(Values);
+            error -> []
+        end,
+    SingularValues ++ PluralValues.
+
+normalize_selector_list([]) ->
+    [];
+normalize_selector_list(Values) when is_list(Values) ->
+    case lists:all(fun erlang:is_integer/1, Values) of
+        true -> [Values];
+        false -> Values
     end;
-filter_by_module(_, _) ->
-    stop.
+normalize_selector_list(Value) ->
+    [Value].
+
+event_module(#{meta := Meta}) when is_map(Meta) ->
+    case maps:get(mfa, Meta, undefined) of
+        {Module, _Function, _Arity} when is_atom(Module) -> Module;
+        _ -> maps:get(module, Meta, undefined)
+    end;
+event_module(_) ->
+    undefined.
+
+module_selected(undefined, _Modules) ->
+    false;
+module_selected(Module, Modules) ->
+    ModuleName = selector_name(Module),
+    lists:any(fun(M) -> selector_name(M) =:= ModuleName end, Modules).
+
+prefix_selected(undefined, _Prefixes) ->
+    false;
+prefix_selected(Module, Prefixes) ->
+    ModuleName = selector_name(Module),
+    lists:any(fun(Prefix) -> has_prefix(ModuleName, selector_name(Prefix)) end, Prefixes).
+
+has_prefix(_Name, <<>>) ->
+    false;
+has_prefix(Name, Prefix) when byte_size(Name) >= byte_size(Prefix) ->
+    binary:part(Name, 0, byte_size(Prefix)) =:= Prefix;
+has_prefix(_Name, _Prefix) ->
+    false.
+
+application_selected(_LogEvent, _Module, []) ->
+    false;
+application_selected(LogEvent, Module, Applications) ->
+    case event_application(LogEvent, Module) of
+        undefined -> false;
+        Application ->
+            AppName = selector_name(Application),
+            lists:any(fun(A) -> selector_name(A) =:= AppName end, Applications)
+    end.
+
+event_application(#{meta := Meta}, Module) when is_map(Meta) ->
+    case maps:get(application, Meta, undefined) of
+        undefined -> module_application(Module);
+        Application -> Application
+    end;
+event_application(_LogEvent, Module) ->
+    module_application(Module).
+
+module_application(Module) when is_atom(Module) ->
+    case application:get_application(Module) of
+        {ok, Application} -> Application;
+        undefined -> undefined
+    end;
+module_application(_) ->
+    undefined.
+
+selector_name(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+selector_name(Value) when is_binary(Value) ->
+    Value;
+selector_name(Value) when is_list(Value) ->
+    unicode:characters_to_binary(Value);
+selector_name(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value])).
 
 %% Safe bounded term summarisation for logs
 %% ------------------------------------------------------------------
