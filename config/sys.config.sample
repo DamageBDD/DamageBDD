@@ -31,19 +31,53 @@
     {
         kernel,
         [
+            %% Primary Logger profile switch:
+            %%   development -> debug
+            %%   production  -> info
+            %% The console handler below remains warning+ in both modes.
             {logger_level, info},
             {
                 logger,
                 [
+                    %% Keep the interactive shell readable. Routine info/debug
+                    %% belongs in files; warning/error still reaches the shell.
                     {
                         handler,
                         default,
                         logger_std_h,
                         #{
-                            level => info,
+                            level => warning,
+                            config => #{type => standard_io},
                             formatter => {pretty_logger, #{}}
                         }
                     },
+
+                    %% Exact DEBUG events. In production logger_level=info stops
+                    %% these before they reach any handler.
+                    {
+                        handler,
+                        debug_file,
+                        logger_std_h,
+                        #{
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {debug_only,
+                                    {fun logger_filters:level/2, {log, eq, debug}}}
+                            ],
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/debug.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 5,
+                                compress_on_rotate => true
+                            },
+                            formatter => {pretty_logger, #{}}
+                        }
+                    },
+
+                    %% Operational timeline: info and every more severe level,
+                    %% including OTP/SASL/TLS reports.
                     {
                         handler,
                         info_file,
@@ -51,25 +85,126 @@
                         #{
                             level => info,
                             config => #{
+                                type => file,
                                 file => "/var/log/damage/info.log",
                                 max_no_bytes => 10485760,
-                                max_no_files => 5
+                                max_no_files => 5,
+                                compress_on_rotate => true
+                            },
+                            formatter => {pretty_logger, #{}}
+                        }
+                    },
+
+                    %% Triage log: warnings and everything more severe. Keeping
+                    %% warnings here avoids losing the events between info/error.
+                    {
+                        handler,
+                        error_file,
+                        logger_std_h,
+                        #{
+                            level => warning,
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/error.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 10,
+                                compress_on_rotate => true,
+                                filesync_repeat_interval => 1000
+                            },
+                            formatter =>
+                                {pretty_logger, #{
+                                    max_event_chars => 12000,
+                                    max_text_chars => 4096,
+                                    max_binary => 128,
+                                    max_string => 512,
+                                    max_list => 24,
+                                    max_map => 32,
+                                    max_tuple => 24,
+                                    depth => 6
+                                }}
+                        }
+                    },
+
+                    %% High-volume subsystems get focused files as well as the
+                    %% general severity files above.
+                    {
+                        handler,
+                        nostr_module_log,
+                        logger_std_h,
+                        #{
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {only_damage_nostr,
+                                    {fun damage_logger_filters:module_only/2, damage_nostr}}
+                            ],
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/nostr_module.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 5,
+                                compress_on_rotate => true
                             },
                             formatter => {pretty_logger, #{}}
                         }
                     },
                     {
                         handler,
-                        error_file,
+                        damage_gun_log,
                         logger_std_h,
                         #{
-                            level => error,
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {only_damage_gun,
+                                    {fun damage_logger_filters:module_only/2, damage_gun}}
+                            ],
                             config => #{
-                                file => "/var/log/damage/error.log",
+                                type => file,
+                                file => "/var/log/damage/damage_gun.log",
                                 max_no_bytes => 10485760,
-                                max_no_files => 5
+                                max_no_files => 5,
+                                compress_on_rotate => true
                             },
                             formatter => {pretty_logger, #{}}
+                        }
+                    },
+                    {
+                        handler,
+                        nwc_listener_file,
+                        logger_std_h,
+                        #{
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {only_damage_nwc_listener,
+                                    {fun damage_logger_filters:module_only/2,
+                                        damage_nwc_listener}}
+                            ],
+                            formatter =>
+                                {logger_formatter, #{
+                                    single_line => true,
+                                    template => [
+                                        time,
+                                        " ",
+                                        level,
+                                        " ",
+                                        pid,
+                                        " ",
+                                        mfa,
+                                        " ",
+                                        msg,
+                                        "\n"
+                                    ]
+                                }},
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/nwc_listener.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 5,
+                                compress_on_rotate => true,
+                                filesync_repeat_interval => 1000
+                            }
                         }
                     }
                 ]

@@ -84,7 +84,7 @@ request(Method, Host0, Port, Path0, Headers0, Body0, Opts0) when
                 end
             after
                 case Close of
-                    true -> catch gun:close(ConnPid);
+                    true -> best_effort(fun() -> gun:close(ConnPid) end);
                     false -> ok
                 end
             end;
@@ -127,7 +127,7 @@ do_request(Method, ConnPid, Path, Headers, Body, Timeout, Decode) ->
         end,
 
     Reply = await_response(ConnPid, StreamRef, Timeout, Decode),
-    catch gun:cancel(ConnPid, StreamRef),
+    _ = best_effort(fun() -> gun:cancel(ConnPid, StreamRef) end),
     Reply.
 
 await_response(ConnPid, StreamRef, Timeout, Decode) ->
@@ -286,14 +286,14 @@ open_ws(Host0, Port, Path, Opts0) ->
                         {ok, StreamRef} ->
                             {ok, ConnPid, StreamRef};
                         Error ->
-                            catch gun:close(ConnPid),
+                            _ = best_effort(fun() -> gun:close(ConnPid) end),
                             Error
                     end;
                 {ok, Protocol} ->
-                    catch gun:close(ConnPid),
+                    _ = best_effort(fun() -> gun:close(ConnPid) end),
                     {error, {invalid_ws_protocol, Protocol}};
                 Error ->
-                    catch gun:close(ConnPid),
+                    _ = best_effort(fun() -> gun:close(ConnPid) end),
                     Error
             end;
         Error ->
@@ -304,16 +304,21 @@ await_up(ConnPid) ->
     await_up(ConnPid, ?DEFAULT_CONNECT_TIMEOUT).
 
 await_up(ConnPid, Timeout) ->
-    case catch gun:await_up(ConnPid, Timeout) of
+    try gun:await_up(ConnPid, Timeout) of
         {ok, _Protocol} = Ok ->
             %?LOG_DEBUG("gun connection up protocol=~p", [Protocol]),
             Ok;
         {error, Reason} ->
             {error, {await_up_failed, Reason}};
-        {'EXIT', Reason} ->
-            {error, {await_up_exit, Reason}};
         Other ->
             {error, {await_up_failed, Other}}
+    catch
+        exit:Reason ->
+            {error, {await_up_exit, Reason}};
+        error:Reason:Stacktrace ->
+            {error, {await_up_exit, {Reason, Stacktrace}}};
+        throw:Reason ->
+            {error, {await_up_failed, Reason}}
     end.
 normalize_ws_path(Path0) ->
     Path = normalize_path(Path0),
@@ -345,7 +350,10 @@ ws_upgrade(ConnPid, Path) ->
 ws_upgrade(ConnPid, Path0, WsHeaders) ->
     Path = normalize_ws_path(Path0),
     SafeHeaders = sanitize_ws_headers(WsHeaders),
-    ?LOG_INFO("WS upgrade ~p ~p", [Path, SafeHeaders]),
+    ?LOG_DEBUG(
+        "WS upgrade path=~p headers=~p",
+        [redact_ws_path(Path), summarize_headers(SafeHeaders)]
+    ),
     StreamRef = gun:ws_upgrade(ConnPid, Path, SafeHeaders),
     receive
         {gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _RespHeaders} ->
@@ -354,7 +362,7 @@ ws_upgrade(ConnPid, Path0, WsHeaders) ->
             maybe_drain_http_body(ConnPid, StreamRef, Fin),
             ?LOG_ERROR(
                 "WS upgrade failed status=~p resp_headers=~p sent_headers=~p",
-                [Status, RespHeaders, SafeHeaders]
+                [Status, summarize_headers(RespHeaders), summarize_headers(SafeHeaders)]
             ),
             {error, {upgrade_failed, Status, RespHeaders}};
         {gun_ws, ConnPid, StreamRef, close} ->
@@ -370,10 +378,20 @@ ws_upgrade(ConnPid, Path0, WsHeaders) ->
     end.
 
 ws_send(ConnPid, StreamRef, Frame) ->
-    catch gun:ws_send(ConnPid, StreamRef, Frame).
+    try gun:ws_send(ConnPid, StreamRef, Frame) of
+        Result ->
+            Result
+    catch
+        throw:Reason ->
+            Reason;
+        exit:Reason ->
+            {'EXIT', Reason};
+        error:Reason:Stacktrace ->
+            {'EXIT', {Reason, Stacktrace}}
+    end.
 
 ws_close(ConnPid) ->
-    catch gun:close(ConnPid),
+    _ = best_effort(fun() -> gun:close(ConnPid) end),
     ok.
 
 %% ===================================================================
@@ -445,17 +463,26 @@ socks_opts(Host, Port, tcp, _Opts) ->
     #{host => Host, port => Port, transport => tcp}.
 
 safe_gun_open(Host, Port, Opts) ->
-    case catch gun:open(Host, Port, Opts) of
-        {ok, _Pid} = Ok -> Ok;
-        {'EXIT', {noproc, _} = Reason} -> {error, {gun_not_started, Reason}};
-        {'EXIT', Reason} -> {error, {gun_open_exit, Reason}};
-        Error -> Error
+    try gun:open(Host, Port, Opts) of
+        {ok, _Pid} = Ok ->
+            Ok;
+        Error ->
+            Error
+    catch
+        exit:{noproc, _} = Reason ->
+            {error, {gun_not_started, Reason}};
+        exit:Reason ->
+            {error, {gun_open_exit, Reason}};
+        error:Reason:Stacktrace ->
+            {error, {gun_open_exit, {Reason, Stacktrace}}};
+        throw:Reason ->
+            Reason
     end.
 
 maybe_drain_http_body(_ConnPid, _StreamRef, fin) ->
     ok;
 maybe_drain_http_body(ConnPid, StreamRef, nofin) ->
-    _ = catch gun:await_body(ConnPid, StreamRef, 2000),
+    _ = best_effort(fun() -> gun:await_body(ConnPid, StreamRef, 2000) end),
     ok;
 maybe_drain_http_body(_, _, _) ->
     ok.
@@ -488,7 +515,7 @@ log_open(Host, Port, Transport, Proxy, Opts) ->
             _ ->
                 undefined
         end,
-    ?LOG_INFO(
+    ?LOG_DEBUG(
         "Opening gun connection host=~p port=~p transport=~p proxy=~p tls_verify=~p",
         [Host, Port, Transport, redact_proxy(Proxy), Verify]
     ).
@@ -501,7 +528,7 @@ log_ws_open(Host, Port, Transport, Proxy, Headers0, Opts) ->
             _ ->
                 undefined
         end,
-    ?LOG_INFO(
+    ?LOG_DEBUG(
         "Opening WS connection host=~p port=~p transport=~p proxy=~p tls_verify=~p ws_headers=~p",
         [Host, Port, Transport, redact_proxy(Proxy), Verify, summarize_headers(Headers0)]
     ).
@@ -510,13 +537,26 @@ summarize_headers([]) ->
     [];
 summarize_headers(Headers) when is_list(Headers) ->
     lists:map(fun summarize_header/1, Headers).
+redact_ws_path(Path) when is_binary(Path) ->
+    case binary:split(Path, <<"?">>) of
+        [Base] -> Base;
+        [Base, _Query] -> <<Base/binary, "?<redacted>">>
+    end;
+redact_ws_path(Path) when is_list(Path) ->
+    binary_to_list(redact_ws_path(list_to_binary(Path))).
+
 
 summarize_header({K, V}) ->
     Key = to_lower(K),
     case Key of
         <<"authorization">> -> {Key, <<"REDACTED">>};
+        <<"proxy-authorization">> -> {Key, <<"REDACTED">>};
         <<"cookie">> -> {Key, <<"REDACTED">>};
+        <<"set-cookie">> -> {Key, <<"REDACTED">>};
         <<"rune">> -> {Key, <<"REDACTED">>};
+        <<"macaroon">> -> {Key, <<"REDACTED">>};
+        <<"x-api-key">> -> {Key, <<"REDACTED">>};
+        <<"x-auth-token">> -> {Key, <<"REDACTED">>};
         <<"sec-websocket-key">> -> {Key, <<"REDACTED">>};
         <<"origin">> -> {Key, V};
         <<"host">> -> {Key, V};
@@ -546,6 +586,13 @@ truncate(Bin, Max) when is_binary(Bin) ->
 redact_proxy(none) -> none;
 redact_proxy(direct) -> none;
 redact_proxy({socks5, Host, Port}) -> {socks5, normalize_open_host(Host), Port}.
+
+best_effort(Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
 
 put_new(Key, Val, Map) ->
     case maps:is_key(Key, Map) of

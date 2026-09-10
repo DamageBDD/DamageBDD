@@ -168,56 +168,28 @@ execute(Config, Context, FeatureName) ->
         get_feature_dir(Config)
     ).
 
-init_logging(Config, Context) ->
-    {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
-    Cfg =
-        case proplists:get_value(dry_run, Config, false) of
-            true -> #{};
-            false -> #{file => filename:join(RunDir, "run.log")}
+init_logging(Config, _Context) ->
+    %% Per-run IDs are UUID/string values and must not become Logger handler
+    %% atoms. Static handlers in sys.config own routing; attach correlation
+    %% metadata to this execution process instead.
+    PreviousMetadata = logger:get_process_metadata(),
+    RunMetadata0 =
+        case lists:keyfind(run_id, 1, Config) of
+            {run_id, RunId} -> #{damage_run_id => RunId};
+            false -> #{}
+         end,
+    RunMetadata =
+        case lists:keyfind(run_dir, 1, Config) of
+            {run_dir, RunDir} -> RunMetadata0#{damage_run_dir => RunDir};
+            false -> RunMetadata0
         end,
+    logger:update_process_metadata(RunMetadata),
+    PreviousMetadata.
 
-    PidToLog = self(),
-    PidFilter =
-        fun(LogEvent, _) ->
-            Meta = maps:get(meta, LogEvent, #{}),
-            case maps:get(pid, Meta, undefined) of
-                PidToLog -> sanitize_run_log_event(LogEvent, Context);
-                _ -> ignore
-            end
-        end,
-    logger:add_handler(
-        RunId,
-        logger_std_h,
-        #{
-            filters => [{PidFilter, []}],
-            config => Cfg
-        }
-    ).
-sanitize_run_log_event(#{msg := Msg} = LogEvent, Context) ->
-    LogEvent#{msg => {string, sanitize_logger_message(Msg, Context)}};
-sanitize_run_log_event(LogEvent, _Context) ->
-    LogEvent.
-
-sanitize_logger_message(Msg, Context) ->
-    try
-        Text =
-            case Msg of
-                {string, String} -> unicode:characters_to_binary(String);
-                {report, Report} -> fmt(Report);
-                {Format, Args} when is_list(Args) ->
-                    iolist_to_binary(io_lib:format(Format, Args));
-                Other -> fmt(Other)
-            end,
-        damage_context:redact_text(Context, Text)
-    catch
-        _:_ -> <<"XX-REDACTED-LOG-ERROR-XX">>
-    end.
-
-
-deinit_logging(Config) ->
-    {run_id, RunId} = lists:keyfind(run_id, 1, Config),
-    logger:remove_handler(RunId).
+deinit_logging(PreviousMetadata) when is_map(PreviousMetadata) ->
+    logger:set_process_metadata(PreviousMetadata);
+deinit_logging(_PreviousMetadata) ->
+    logger:unset_process_metadata().
 
 parse_file(Filename) ->
     case file:read_file(Filename) of
@@ -496,24 +468,23 @@ execute_feature(
     BackGround,
     Scenarios
 ) ->
-    init_logging(Config, FeatureContext),
-    %% BAN catch-all steps globally
-    case ensure_no_catchall_steps(Config, FeatureContext) of
-        ok ->
-            ok;
-        {error, Errors} ->
-            %% Convert to a fail context and stop executing scenarios.
-            ?LOG_ERROR("Catch-all step(s) banned: ~p", [Errors]),
-            formatter:format(
-                Config, error, {LineNo, io_lib:format("Catch-all steps banned: ~p", [Errors])}
-            ),
-            deinit_logging(Config),
-            %% mark failure in context so run is red
-            throw({catchall_steps_banned, Errors})
-    end,
+    PreviousLogMetadata = init_logging(Config, FeatureContext),
+    try
+        %% BAN catch-all steps globally
+        case ensure_no_catchall_steps(Config, FeatureContext) of
+            ok ->
+                ok;
+            {error, Errors} ->
+                %% Convert to a fail context and stop executing scenarios.
+                ?LOG_ERROR("Catch-all step(s) banned: ~p", [Errors]),
+                formatter:format(
+                    Config, error, {LineNo, io_lib:format("Catch-all steps banned: ~p", [Errors])}
+                ),
+                %% mark failure in context so run is red
+                throw({catchall_steps_banned, Errors})
+        end,
 
-    formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
-    FinalContext =
+        formatter:format(Config, feature, {FeatureName, LineNo, Tags, Description}),
         run_fold(
             Config,
             fun(Scenario, AccContext) ->
@@ -537,9 +508,10 @@ execute_feature(
             end,
             FeatureContext,
             Scenarios
-        ),
-    deinit_logging(Config),
-    FinalContext.
+        )
+    after
+        deinit_logging(PreviousLogMetadata)
+    end.
 
 continue_on_fail(Config) ->
     proplists:get_value(continue_on_fail, Config, false) =:= true.
@@ -642,7 +614,7 @@ execute_scenario(Config, Context, BackGround, Scenario0) ->
 split_examples_before_normalize(ScenarioName, Steps0, ScenarioExamples0) ->
     FlatSteps = normalize_steps(Steps0),
     Keys = placeholder_keys({ScenarioName, FlatSteps}),
-    ?LOG_INFO("split_examples_before_normalize keys=~p flat_steps=~p", [Keys, FlatSteps]),
+    ?LOG_DEBUG("split_examples_before_normalize keys=~p flat_steps=~p", [Keys, FlatSteps]),
 
     case normalize_datatable(ScenarioExamples0) of
         {datatable, _Rows} = Existing ->
@@ -651,10 +623,10 @@ split_examples_before_normalize(ScenarioName, Steps0, ScenarioExamples0) ->
             case split_outline_datatable(Keys, FlatSteps) of
                 {Steps1, Rows} ->
                     Table = {datatable, normalize_table_rows(Rows)},
-                    ?LOG_INFO("outline examples extracted table=~p", [Table]),
+                    ?LOG_DEBUG("outline examples extracted table=~p", [Table]),
                     {Steps1, Table};
                 none ->
-                    ?LOG_INFO("outline examples failed extracted before normalize table=~p", [none]),
+                    ?LOG_DEBUG("outline examples failed extracted before normalize table=~p", [none]),
                     {FlatSteps, none}
             end
     end.
@@ -781,10 +753,10 @@ extract_outline_examples(ScenarioName, Steps, ScenarioExamples) ->
     Keys = placeholder_keys({ScenarioName, Steps}),
     case normalize_datatable(ScenarioExamples) of
         {datatable, Rows0} ->
-            ?LOG_INFO("normalize_datatable ~p", [Rows0]),
+            ?LOG_DEBUG("normalize_datatable ~p", [Rows0]),
             outline_from_rows(Keys, Steps, Rows0);
         none ->
-            ?LOG_INFO("normalize_datatable none ~p", [Steps]),
+            ?LOG_DEBUG("normalize_datatable none ~p", [Steps]),
             extract_outline_examples_from_steps(Keys, Steps)
     end.
 

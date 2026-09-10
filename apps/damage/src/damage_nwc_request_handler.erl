@@ -26,15 +26,16 @@ handle_nip47_request(#{<<"method">> := <<"get_info">>}) ->
 handle_nip47_request(#{<<"method">> := <<"get_balance">>} = Req) ->
     case resolve_request_session(Req) of
         {ok, Owner, LedgerCt, ClientPubHex} ->
-            case catch damage_nwc_wallet:ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
+            try damage_nwc_wallet:ledger_balance_msat(Owner, LedgerCt, ClientPubHex) of
                 {ok, BalanceMsat} when is_integer(BalanceMsat) ->
                     {ok, #{balance => BalanceMsat}};
-                {'EXIT', Reason} ->
-                    {error, nwc_error(<<"LEDGER_BALANCE_FAILED">>, fmt(Reason))};
                 {error, Why} ->
                     {error, nwc_error(<<"LEDGER_BALANCE_FAILED">>, fmt(Why))};
                 Other ->
                     {error, nwc_error(<<"LEDGER_BALANCE_FAILED">>, fmt(Other))}
+            catch
+                Class:Reason ->
+                    {error, nwc_error(<<"LEDGER_BALANCE_FAILED">>, fmt({Class, Reason}))}
             end;
         {error, Code, Message} ->
             {error, nwc_error(Code, Message)}
@@ -77,7 +78,7 @@ handle_nip47_request(
 handle_nip47_request(#{<<"method">> := <<"list_transactions">>} = Req) ->
     handle_list_transactions(Req, #{});
 handle_nip47_request(Req) ->
-    ?LOG_WARNING("Unhandled NIP-47 request ~p", [Req]),
+    ?LOG_WARNING("Unhandled NIP-47 method=~p", [maps:get(<<"method">>, Req, undefined)]),
     {error, nwc_error(<<"NOT_IMPLEMENTED">>, <<"NIP-47 method is not implemented yet">>)}.
 
 handle_pay_invoice(Req, Invoice0) ->
@@ -86,14 +87,18 @@ handle_pay_invoice(Req, Invoice0) ->
         undefined ->
             {error, nwc_error(<<"UNAUTHORIZED">>, <<"No account mapping for request pubkey">>)};
         _AeAccount ->
-            ?LOG_INFO("NWC pay_invoice request invoice=~p", [Invoice]),
-            case catch damage_cln:pay_invoice(Invoice) of
-                {'EXIT', Reason} ->
-                    ?LOG_WARNING("NWC pay_invoice crashed ~p", [Reason]),
-                    {error, nwc_error(<<"PAYMENT_FAILED">>, to_bin(Reason))};
+            ?LOG_INFO(
+                "NWC pay_invoice request invoice_sha256=~p",
+                [lower_hex(crypto:hash(sha256, Invoice))]
+            ),
+            try damage_cln:pay_invoice(Invoice) of
                 PayRes ->
-                    ?LOG_INFO("NWC pay_invoice success ~p", [PayRes]),
+                    ?LOG_INFO("NWC pay_invoice completed"),
                     normalize_pay_invoice_result(PayRes)
+            catch
+                Class:Reason ->
+                    ?LOG_WARNING("NWC pay_invoice crashed class=~p", [Class]),
+                    {error, nwc_error(<<"PAYMENT_FAILED">>, fmt({Class, Reason}))}
             end
     end.
 
@@ -131,7 +136,7 @@ normalize_pay_invoice_result(#{code := _, message := _} = Err) ->
 normalize_pay_invoice_result(#{<<"code">> := _, <<"message">> := _} = Err) ->
     {error, nwc_error(<<"PAYMENT_FAILED">>, jsx:encode(Err))};
 normalize_pay_invoice_result(Other) ->
-    ?LOG_WARNING("Unexpected CLN pay_invoice result ~p", [Other]),
+    ?LOG_WARNING("Unexpected CLN pay_invoice result"),
     {error, nwc_error(<<"PAYMENT_FAILED">>, to_bin(Other))}.
 
 handle_make_invoice(Req, Params) ->
@@ -143,9 +148,7 @@ handle_make_invoice(Req, Params) ->
     ),
     Expiry = read_int(Params, [<<"expiry">>, expiry], 3600),
     Label = make_nwc_label(request_pubkey(Req)),
-    case catch damage_cln:create_invoice(AmountMsat, Description, Expiry, Label) of
-        {'EXIT', Reason} ->
-            {error, nwc_error(<<"INTERNAL">>, to_bin(Reason))};
+    try damage_cln:create_invoice(AmountMsat, Description, Expiry, Label) of
         #{bolt11 := Bolt11, payment_hash := PaymentHash} = Inv ->
             {ok, #{
                 invoice => Bolt11,
@@ -154,6 +157,9 @@ handle_make_invoice(Req, Params) ->
             }};
         Other ->
             {error, nwc_error(<<"INTERNAL">>, to_bin(Other))}
+    catch
+        Class:Reason ->
+            {error, nwc_error(<<"INTERNAL">>, fmt({Class, Reason}))}
     end.
 
 handle_lookup_invoice(Params) ->
@@ -161,13 +167,14 @@ handle_lookup_invoice(Params) ->
         undefined ->
             {error, nwc_error(<<"BAD_REQUEST">>, <<"payment_hash or invoice required">>)};
         Lookup ->
-            case catch damage_cln:list_invoices_by_label(Lookup) of
-                {'EXIT', Reason} ->
-                    {error, nwc_error(<<"INTERNAL">>, to_bin(Reason))};
+            try damage_cln:list_invoices_by_label(Lookup) of
                 #{invoices := Invoices} ->
                     {ok, #{invoices => Invoices}};
                 Other ->
                     {ok, normalize_map(Other)}
+            catch
+                Class:Reason ->
+                    {error, nwc_error(<<"INTERNAL">>, fmt({Class, Reason}))}
             end
     end.
 
@@ -176,8 +183,8 @@ handle_list_transactions(Req, Params) ->
         {ok, Owner, LedgerCt, ClientPubHex} ->
             Limit = clamp_int(read_int(Params, [<<"limit">>, limit], 10), 1, 100),
             Offset = clamp_int(read_int(Params, [<<"offset">>, offset], 0), 0, 1000000),
-            case
-                catch damage_nwc_wallet:ledger_transactions(
+            try
+                damage_nwc_wallet:ledger_transactions(
                     Owner, LedgerCt, ClientPubHex, Limit + Offset + 50, 0
                 )
             of
@@ -188,12 +195,13 @@ handle_list_transactions(Req, Params) ->
                         transaction_matches(Params, ledger_tx_to_nwc(Tx))
                     ],
                     {ok, #{transactions => take(Limit, drop(Offset, Filtered))}};
-                {'EXIT', Reason} ->
-                    {error, nwc_error(<<"INTERNAL">>, fmt(Reason))};
                 {error, Why} ->
                     {error, nwc_error(<<"INTERNAL">>, fmt(Why))};
                 Other ->
                     {error, nwc_error(<<"INTERNAL">>, fmt(Other))}
+            catch
+                Class:Reason ->
+                    {error, nwc_error(<<"INTERNAL">>, fmt({Class, Reason}))}
             end;
         {error, Code, Message} ->
             {error, nwc_error(Code, Message)}
@@ -246,16 +254,7 @@ read_int(Map, [K | Ks], Default) ->
         undefined ->
             read_int(Map, Ks, Default);
         V when is_integer(V) -> V;
-        V when is_binary(V) ->
-            case catch binary_to_integer(V) of
-                I when is_integer(I) -> I;
-                _ -> Default
-            end;
-        V when is_list(V) ->
-            case catch list_to_integer(V) of
-                I when is_integer(I) -> I;
-                _ -> Default
-            end;
+        V when is_binary(V); is_list(V) -> integer_or_default(V, Default);
         _ ->
             Default
     end;
@@ -287,20 +286,25 @@ pick_first([H | _]) ->
 pick_first([]) ->
     <<>>.
 
-msat_to_int(V) when is_integer(V) ->
+msat_to_int(V) ->
+    integer_or_default(V, 0).
+
+integer_or_default(V, _Default) when is_integer(V) ->
     V;
-msat_to_int(V) when is_binary(V) ->
-    case catch binary_to_integer(V) of
-        I when is_integer(I) -> I;
-        _ -> 0
+integer_or_default(V, Default) when is_binary(V) ->
+    try binary_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
     end;
-msat_to_int(V) when is_list(V) ->
-    case catch list_to_integer(V) of
-        I when is_integer(I) -> I;
-        _ -> 0
+integer_or_default(V, Default) when is_list(V) ->
+    try list_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
     end;
-msat_to_int(_) ->
-    0.
+integer_or_default(_V, Default) ->
+    Default.
 
 ledger_tx_to_nwc(Tx) ->
     Kind = to_bin(maps:get(kind, Tx, <<>>)),

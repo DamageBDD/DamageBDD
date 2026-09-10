@@ -298,10 +298,11 @@ content_types_accepted(Req, State) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
-is_authorized(Req, #{action := Action} = State)
-        when Action =:= balance;
-             Action =:= wallet;
-             Action =:= invoices ->
+is_authorized(Req, #{action := Action} = State) when
+    Action =:= balance;
+    Action =:= wallet;
+    Action =:= invoices
+->
     safe_account_authorized(Req, State);
 is_authorized(Req, State) ->
     {true, Req, State}.
@@ -337,7 +338,6 @@ to_json(Req, #{action := rate} = State) ->
 to_json(Req, #{action := balance, public_key := AeAccount} = State) ->
     Req1 = no_store_req(Req),
     {jsx:encode(balance(AeAccount)), Req1, State};
-
 to_json(Req, #{action := wallet, public_key := AeAccount} = State) ->
     Req1 = no_store_req(Req),
     {jsx:encode(wallet_snapshot(AeAccount)), Req1, State};
@@ -866,7 +866,6 @@ json_decode_error_response(Req0, State) ->
     ),
     {stop, Req1, State}.
 
-
 from_yaml(Req, #{action := logout} = State) ->
     logout_json_response(discard_request_body(Req), State);
 from_yaml(Req, #{action := reset_password} = State) ->
@@ -1175,4 +1174,7 @@ delete_account(Email) ->
     end.
 
 notify_user(Username, Message) ->
-    ?LOG_INFO("NotifyUser ~p, Message: ~p", [Username, Message]).
+    ?LOG_DEBUG(
+        "NotifyUser recipient=~p message_bytes=~p",
+        [Username, byte_size(wallet_to_binary(Message))]
+    ).

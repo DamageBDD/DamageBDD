@@ -301,7 +301,7 @@ l402_execution_account() ->
         {ok, AeAccount0} ->
             {ok, to_bin(AeAccount0)};
         Other ->
-            ?LOG_INFO("L402 not enabled ~p", [Other]),
+            ?LOG_DEBUG("L402 not enabled config=~p", [Other]),
             {error, l402_not_enabled}
     end.
 
@@ -410,7 +410,7 @@ execute_bdd_once(Config, Context, FeatureData) ->
             }
             | _
         ] ->
-            ?LOG_ERROR("Fail ~p", [FailReason]),
+            ?LOG_DEBUG("BDD assertion failed line=~p", [Line]),
             {200, #{
                 status => <<"notok">>,
                 line => Line,
@@ -448,7 +448,7 @@ execute_bdd_once(Config, Context, FeatureData) ->
         %% Parser/lexer error with pretty message
         {parse_error, LineNo, MessagePretty} ->
             formatter:format(Config, error, {LineNo, MessagePretty}),
-            ?LOG_ERROR("Fail parse_error ~p ~p", [LineNo, MessagePretty]),
+            ?LOG_DEBUG("BDD parse failed line=~p", [LineNo]),
             {400, #{
                 status => <<"notok">>,
                 message => MessagePretty,
@@ -486,7 +486,7 @@ execute_bdd_once(Config, Context, FeatureData) ->
             }};
         %% Anything unexpected
         Error ->
-            ?LOG_ERROR("execute_bdd unexpected failure ~p.", [Error]),
+            ?LOG_ERROR("execute_bdd unexpected failure ~s.", [redacted_log_term(Context, Error)]),
             {500, #{
                 status => <<"notok">>,
                 message => to_bin(io_lib:format("~p", [Error])),
@@ -971,6 +971,17 @@ ceil_damage(Value) when is_float(Value) ->
 ceil_damage(_) ->
     0.
 
+redacted_log_term(Context, Term) ->
+    try
+        damage_context:redact_text(
+            Context,
+            to_bin(io_lib:format("~p", [Term]))
+        )
+    catch
+        _:_ -> <<"XX-REDACTED-LOG-ERROR-XX">>
+    end.
+
+
 decode_json(Data) ->
     try
         {ok, jsx:decode(Data, [{labels, atom}, return_maps])}
@@ -1435,7 +1446,7 @@ do_action_tx(
     State,
     Req
 ) ->
-    ?LOG_DEBUG("signed tx received ~p", [SignedTx]),
+    ?LOG_DEBUG("signed tx received bytes=~p", [byte_size(to_bin(SignedTx))]),
     {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTx),
     #{
         "caller_id" := _,
@@ -1620,16 +1631,19 @@ do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, 
                     Label = <<Label0/binary, PubKey/binary>>,
 
                     #{
-                        payment_hash := _PaymentHash,
-                        expires_at := _Expiry,
+                        payment_hash := PaymentHash,
+                        expires_at := Expiry,
                         bolt11 := Bolt11,
                         payment_secret := _PaymentSecret,
                         created_index := _CreatedIndex
                     } =
-                        Invoice = damage_cln:create_invoice(
+                        damage_cln:create_invoice(
                             Amount * 1000, Description, 3600, Label
                         ),
-                    ?LOG_INFO("invoice ~p", [Invoice]),
+                    ?LOG_INFO(
+                        "Created DAMAGE purchase invoice payment_hash=~p expires_at=~p",
+                        [PaymentHash, Expiry]
+                    ),
                     {
                         200,
                         #{payment_request => Bolt11}

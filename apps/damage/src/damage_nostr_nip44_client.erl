@@ -33,15 +33,18 @@ encrypt(PrivateKey, PeerPubkey, Plaintext) ->
 -spec encrypt(binary(), binary() | list(), binary() | list(), timeout()) ->
     {ok, binary()} | {error, term()}.
 encrypt(PrivateKey0, PeerPubkey0, Plaintext0, Timeout0) ->
-    case {
-        private_key_hex(PrivateKey0),
-        pubkey_hex(PeerPubkey0),
-        to_binary(Plaintext0),
-        backend_command(),
-        normalize_timeout(Timeout0)
-    } of
-        {{ok, PrivateKey}, {ok, PeerPubkey}, Plaintext, {ok, Command}, Timeout}
-                when is_binary(Plaintext), byte_size(Plaintext) > 0 ->
+    case
+        {
+            private_key_hex(PrivateKey0),
+            pubkey_hex(PeerPubkey0),
+            to_binary(Plaintext0),
+            backend_command(),
+            normalize_timeout(Timeout0)
+        }
+    of
+        {{ok, PrivateKey}, {ok, PeerPubkey}, Plaintext, {ok, Command}, Timeout} when
+            is_binary(Plaintext), byte_size(Plaintext) > 0
+        ->
             Request = #{
                 <<"op">> => <<"nip44_encrypt_vector">>,
                 <<"secret_key_hex">> => PrivateKey,
@@ -73,15 +76,18 @@ decrypt(PrivateKey, PeerPubkey, Payload) ->
 -spec decrypt(binary(), binary() | list(), binary() | list(), timeout()) ->
     {ok, binary()} | {error, term()}.
 decrypt(PrivateKey0, PeerPubkey0, Payload0, Timeout0) ->
-    case {
-        private_key_hex(PrivateKey0),
-        pubkey_hex(PeerPubkey0),
-        to_binary(Payload0),
-        backend_command(),
-        normalize_timeout(Timeout0)
-    } of
-        {{ok, PrivateKey}, {ok, PeerPubkey}, Payload, {ok, Command}, Timeout}
-                when is_binary(Payload), byte_size(Payload) > 0 ->
+    case
+        {
+            private_key_hex(PrivateKey0),
+            pubkey_hex(PeerPubkey0),
+            to_binary(Payload0),
+            backend_command(),
+            normalize_timeout(Timeout0)
+        }
+    of
+        {{ok, PrivateKey}, {ok, PeerPubkey}, Payload, {ok, Command}, Timeout} when
+            is_binary(Payload), byte_size(Payload) > 0
+        ->
             Request = #{
                 <<"op">> => <<"nip44_decrypt_vector">>,
                 <<"secret_key_hex">> => PrivateKey,
