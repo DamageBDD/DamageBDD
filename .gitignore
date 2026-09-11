@@ -1,29 +1,183 @@
+# --------------------------------------------------------------------
+# Erlang / Rebar3
+# --------------------------------------------------------------------
 .rebar3
+.rebar
 _*
 .eunit
-*.o
+_build
+ebin
+
 *.beam
+*.o
+*.so
 *.plt
+
+rebar3.crashdump
+erl_crash.dump
+.erlang.cookie
+
+ct_run.*
+ct_log_cache/
+
+# --------------------------------------------------------------------
+# Editor / IDE
+# --------------------------------------------------------------------
+.idea/
+*.iml
 *.swp
 *.swo
-.erlang.cookie
-ebin
-log
-erl_crash.dump
-.rebar
-logs
-_build
-.idea
-*.iml
-rebar3.crashdump
 *~
+
+# Emacs autosave / lock / desktop state
+\#*\#
+.\#*
+.emacs.desktop
+
+# Local editor configuration
+.dir-locals.el
+
+# --------------------------------------------------------------------
+# Logs / temporary output
+# --------------------------------------------------------------------
+log
+logs/
+LOG
+*.log
+nohup.out
+recompile.log
+suite.log.latest.html
+
+# Screenshots / temporary media
+*_scrot.png
+out*.ogv
+
+# Generic scratch files seen during development
+chunk.tmp
+headers.txt
+testfile
+patch
+
+# --------------------------------------------------------------------
+# Local configuration
+# --------------------------------------------------------------------
 config/sys.config
+config/sys.config.bak
+config/sys.config.dev
+config/sys.*.config
+
+.gitconfig
+
+# --------------------------------------------------------------------
+# Generated contract/deployment output
+# --------------------------------------------------------------------
 contracts/*.aes.deploy.*
-apps/ecai/priv/wikipedia/*
+
+# --------------------------------------------------------------------
+# Generated build metadata
+# --------------------------------------------------------------------
 apps/damage/src/damage_build_info.erl
-ct_run.*
+commit_hash.txt
+
+# --------------------------------------------------------------------
+# Generated website
+# --------------------------------------------------------------------
+site/damagebdd.com/public/
+
+# --------------------------------------------------------------------
+# Packaging/build caches and packages
+# --------------------------------------------------------------------
 packaging/arch/.cache/*
 packaging/arch/zst/*
 packaging/mint/22/deb/*
-*.so
+packaging/ubuntu/*/deb/*.deb
+
+*.deb
+*.pkg.tar.zst
+*.tar.gz
+*.tgz
+
+# --------------------------------------------------------------------
+# ECAI generated data
+# --------------------------------------------------------------------
+apps/ecai/priv/wikipedia/*
+ecai_index/
+knowledge_store.dets
+*.ctx
+
+# --------------------------------------------------------------------
+# Runtime databases / node state
+# --------------------------------------------------------------------
+Mnesia.*/
+damage.dets
+damage.prod.dets
+damage.staging.dets
+
+data/*.dets
+data/**/*.dets
+data/**/*.log
+!apps/damage/test/fixtures/public-test.key
+
+variables-*
+
+# --------------------------------------------------------------------
+# DamageBDD wallets / private runtime material
+# --------------------------------------------------------------------
+wallets/
+
+*.key
+*.pem
+
+# Do NOT accidentally commit locally generated certificates/keys.
+priv/certs/privkey.pem
+# Secrets / private key material
+
+*.key
+*.private
+*.pem
+*.vault
+
+# Erlang runtime/state databases
+*.dets
+
+# Mnesia runtime state
+Mnesia.*/
+
+# --------------------------------------------------------------------
+# NsecBunker vaults
+# --------------------------------------------------------------------
+.damage-nsecbunker/*.vault
+
+# --------------------------------------------------------------------
+# Tor hidden-service runtime identity
+# --------------------------------------------------------------------
+*.onion/hostname
+*.onion/hs_ed25519_public_key
+*.onion/hs_ed25519_secret_key
+*.onion/authorized_clients/
+
+# --------------------------------------------------------------------
+# Local Vagrant state
+# --------------------------------------------------------------------
+.vagrant/
+
+# --------------------------------------------------------------------
+# Generated test / report artifacts
+# --------------------------------------------------------------------
+artifacts/
+all_runs.html
+
+# Generated documentation, if rebuilt from source
+priv/docs/
+
+# --------------------------------------------------------------------
+# Misc runtime state observed in the repository
+# --------------------------------------------------------------------
+nwc_listener.log
+desopycli.log
+zomp.meta
+
+# --------------------------------------------------------------------
+# Existing project-specific rule
+# --------------------------------------------------------------------
 Q*
