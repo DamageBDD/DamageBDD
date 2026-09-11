@@ -1,0 +1,47 @@
+#+TITLE: ECAI Red Lines & Guardrails Policy
+#+DESCRIPTION: Executive policy defining ECAI Red Lines and Guardrails, establishing ethical boundaries, human oversight, cryptographic auditability and safety-first deterministic AI governance.
+#+KEYWORDS: ECAI policy, AI red lines, AI guardrails, deterministic AI governance, cryptographic auditability, human-in-the-loop AI, privacy-first AI design, ethical AI framework
+
+#+AUTHOR: DamageBDD Executive Release
+#+DATE: <2025-09-17>
+#+OPTIONS: toc:nil num:nil
+
+* Introducing the ECAI Red Lines & Guardrails Policy
+Elliptic Curve AI (ECAI) is a deterministic intelligence system designed for
+verification, resilience, and peace.  
+But power without boundaries is risk.  
+That is why DamageBDD has published the **ECAI Red Lines & Guardrails Policy**.
+
+This executive release defines two sets of principles:
+
+**Red Lines (Never Cross)**
+- No autonomous lethal decisions
+- No non-consensual mass surveillance
+- No irrevocable harm to individuals
+- No automation of crime or suppression
+- No “truth monopolies” that silence human appeal
+- No centralized control of verification
+
+**Guardrails (Always Enforce)**
+- Human-in-the-loop on critical outcomes
+- Full cryptographic auditability
+- Privacy-first knowledge encoding
+- Consent + revocation channels
+- Threshold cryptography (no single keys)
+- Staged rollouts, red-teamed and audited
+- Emergency pause controls
+- Transparent reporting
+- Incentives aligned with safety
+
+* Executive Release
+The full executive document is available here:  
+[[/redlines.pdf][Download ECAI Red Lines & Guardrails Policy (PDF)]]
+
+* Closing Note
+ECAI represents a breakthrough in deterministic verification.  
+By respecting these red lines and enforcing these guardrails, we ensure that its
+power strengthens trust, resilience, and peace rather than undermining them.
+
+#+BEGIN_QUOTE
+“Knowing how far is too far is the first step to building what lasts.”  
+#+END_QUOTE

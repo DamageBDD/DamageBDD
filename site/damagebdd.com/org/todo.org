@@ -1,0 +1,5 @@
+* TODO [#A] Implement post feature to api 
+  SCHEDULED: <2019-03-28 Thu>
+
+* TODO [#A] Improve marketing material 
+* TODO [#A] setup redundant sites , distribute home page across all machines

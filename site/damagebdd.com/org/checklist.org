@@ -1,0 +1,51 @@
+#+Title: 🧑💻 Task Submission Checklist - Code Like a Pro 🚀
+
+#+INCLUDE: "header.org"
+* 🧑💻 Task Submission Checklist - Code Like a Pro 🚀
+
+Welcome, coder! Before you submit your latest masterpiece, let’s run through a quick checklist to ensure everything’s polished, efficient, and ready for prime time. Follow these steps to keep things smooth and professional.
+
+---
+
+**1. Branching & Commits 🔧**
+- [ ] Created a new branch for the task (e.g., `feature/xyz` or `bugfix/xyz`)?
+- [ ] Commit messages are clear, concise, and describe the changes you’ve made?
+- [ ] Commits are atomic—one logical change per commit, no clutter!
+
+---
+
+**2. Code Quality ✨**
+- [ ] Code is clean, readable, and follows the project’s coding standards.
+- [ ] Functions and methods are small, focused, and reusable.
+- [ ] Avoided unnecessary complexity—keep it simple, keep it elegant.
+
+---
+
+**3. Testing 🧪**
+- [ ] New features are covered by tests (unit, integration, etc.)?
+- [ ] All existing tests pass—no broken builds on your watch!
+- [ ] Ran tests locally or via CI to ensure everything’s working as expected.
+
+---
+
+**4. Pull Request (PR) 🚨**
+- [ ] PR title is clear and reflects the changes made (e.g., `Fix button alignment on mobile`)
+- [ ] PR description includes a summary of the changes and any context for reviewers.
+- [ ] Rebased your branch with the latest `main` branch? A clean commit history is always preferred.
+- [ ] PR is reviewed and approved by at least one teammate.
+
+---
+
+**5. Security 🔒**
+- [ ] No sensitive data (API keys, passwords, etc.) in the code—everything secure!
+- [ ] Dependencies are up-to-date and safe—no outdated packages in the system.
+
+---
+
+**6. Issue Tracking 🗂️**
+- [ ] PR is linked to the relevant issue or ticket (if applicable).
+- [ ] Any blockers or dependencies are clearly noted for the team.
+
+---
+
+✅ **You’re almost there!** Once you've ticked off all these boxes, your code is ready for submission. Keep it professional, stay sharp, and always strive for clean, efficient code. Happy coding! 👩💻

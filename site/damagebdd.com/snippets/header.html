@@ -1,0 +1,101 @@
+  <!-- =========================
+       Core
+  ========================== -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- One canonical per page -->
+  <link rel="canonical" href="https://damagebdd.com" />
+
+  <!-- Robots: change to noindex for drafts/staging -->
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+
+  <!-- =========================
+       High-signal description
+       (aim ~140–160 chars)
+  ========================== -->
+  <meta name="description" content="DamageBDD is a deterministic Behavior-Driven Development engine that verifies software, contracts and AI with cryptographic integrity and Bitcoin-native incentives." />
+
+  <!-- =========================
+       Open Graph (social share)
+       ========================== -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="DamageBDD — Behaviour Driven Development at Planetary Scale">
+  <meta property="og:description" content="DamageBDD turns behaviour into executable infrastructure. Define software expectations in plain language and verify them continuously with deterministic execution, Lightning payments, and cryptographic assurance.">
+  <meta property="og:url" content="https://damagebdd.com">
+  <meta property="og:site_name" content="DamageBDD">
+  <meta property="og:image" content="https://damagebdd.com/assets/img/og-damagebdd.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+
+  <!-- =========================
+       Twitter / X card
+       ========================== -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="DamageBDD — Behaviour Driven Development at Planetary Scale">
+  <meta name="twitter:description" content="Behaviour becomes executable verification. DamageBDD runs plain-language expectations directly against software with deterministic execution and Lightning-native automation.">
+  <meta name="twitter:image" content="https://damagebdd.com/assets/img/og-damagebdd.png">
+  <meta name="twitter:creator" content="@damagebdd">
+  <!-- =========================
+       Favicons / app icons
+       Generate via real favicon pipeline
+  ========================== -->
+  <link rel='icon' type="image/x-icon" sizes="any" href="/assets/img/favicon.ico">
+  <link rel="icon" href="/assets/icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
+  <meta name="theme-color" content="#0B0F19" />
+
+
+  <!-- If you serve fonts yourself, prefer self-host + preload:
+  <link rel="preload" href="/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
+  -->
+
+  <!-- =========================
+       Security / privacy hardening
+       (safe defaults; adjust if needed)
+  ========================== -->
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+  <!-- =========================
+       Structured data (JSON-LD)
+       Helps rich results + knowledge panels
+  ========================== -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "DamageBDD",
+    "url": "https://damagebdd.com",
+    "logo": "https://damagebdd.com/icons/icon.png",
+    "description": "Behavior-driven verification: testable specs, reproducible behavior, and decentralized proof of work for software correctness.",
+    "sameAs": [
+      "https://www.linkedin.com/company/damagebdd/",
+      "https://github.com/DamageBDD/DamageBDD.git",
+      "https://njump.me/npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8"
+    ]
+  }
+  </script>
+
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<script src='/assets/js/nav.js' defer></script>
+<script src='/assets/js/theme.js' defer></script>
+<script defer src="/assets/js/activity.js"></script>
+<script type='module' src='/assets/js/damage.js' defer></script>
+<script type='module' src='/assets/js/damage-lightning-ui.js' ></script>
+<script type='module' src='/assets/js/thumb-bdd-picker.js' ></script>
+<!--<button id='theme-toggle' title='Toggle Theme'>🌓</button>"-->
+<button onclick="toggleTheme()" title="Toggle Light/Dark" style="position:fixed;top:1rem;right:1rem;font-size:1.5rem;background:none;border:none;cursor:pointer;">🌓</button>
+<link rel="stylesheet" type="text/css" href='/assets/css/nostr-scroll.css'>
+<link rel="stylesheet" type="text/css" href='/assets/css/nav.css'>
+<link rel="stylesheet" type="text/css" href='/assets/css/damage.css'>
+<link rel="stylesheet" type="text/css" href='/assets/css/activity.css'>
+<link rel="stylesheet" type="text/css" href='/assets/css/damage-finger.css'>
+<link rel="stylesheet" type="text/css" href='/assets/css/damage-lightning-ui.css'>
+<link rel="stylesheet" type="text/css" href="/assets/css/damage-amount-selector.css"> 
+<link rel="stylesheet" type="text/css" href="/assets/css/thumb-bdd-picker.css"> 
+
+
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.6.1/elliptic.min.js" integrity="sha512-8Jat/4TlxxW9Pt7eHMI3Re0lLhZ0+YbaHR4u4kZwojwoEq2mQ9FM2zul65Caf5RUrmC3ZnyuwYIzOwHe/hL93w==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>

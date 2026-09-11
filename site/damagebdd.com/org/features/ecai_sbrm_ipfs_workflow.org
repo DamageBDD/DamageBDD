@@ -1,0 +1,303 @@
+#+TITLE: ECAI SBRM – IPFS-Hosted Feature Execution Workflow
+#+AUTHOR: Steven Joseph
+#+OPTIONS: toc:1 num:t
+
+* Executive Summary
+
+ECAI SBRM search is a deterministic indexing and retrieval system for structured financial statements. Unlike text search, SQL-bound reporting, or probabilistic vector models, ECAI encodes financial concepts deterministically, writes them into reproducible disk indexes, and returns exact postings for every query. The same data and logic always produce the same indexed state and the same search result, making the system audit-ready, replayable, and infrastructure-grade. IPFS provides immutable transport, but the core value is deterministic financial concept retrieval with zero probabilistic AI.
+
+* What this system actually delivers
+
+This document describes a deterministic financial indexing and search system built on ECAI.
+
+The value proposition is simple:
+
+- Deterministic indexing of structured financial statements (SBRM)
+- Deterministic retrieval of financial concepts
+- Reproducible execution
+- Zero probabilistic AI
+
+IPFS is only the transport layer.
+
+The core value is the indexing model.
+
+* The Problem
+
+Financial statement search today is typically:
+
+- Text search (imprecise)
+- SQL queries (schema-bound and brittle)
+- Vector search (probabilistic and non-reproducible)
+- Or manually curated reports
+
+These approaches either:
+- Approximate results,
+- Depend on fragile schemas,
+- Or rely on probabilistic ranking.
+
+None of them provide cryptographically reproducible retrieval.
+
+In regulated financial environments, that is a serious limitation.
+
+* The ECAI Difference
+
+ECAI indexing is deterministic by design.
+
+Each financial concept (e.g. mini:CashAndCashEquivalents):
+
+1. Is encoded deterministically
+2. Is written into disk segments deterministically
+3. Produces exact postings lists
+4. Returns exact document matches
+
+There is:
+
+- No ranking heuristic
+- No embeddings
+- No scoring model
+- No probabilistic similarity
+
+The same input always produces the same index.
+The same query always produces the same result.
+
+* Compact Value Proposition
+
+ECAI SBRM search provides:
+
+- Exact concept retrieval
+- Replayable indexing
+- Audit-ready determinism
+- Infrastructure-level reproducibility
+
+Query → Posting List → Document IDs → Exact Retrieval
+
+Not:
+
+Query → Model → Guess → Ranked approximation
+
+* Why This Matters
+
+For financial systems, compliance, and audit:
+
+- Results must be explainable.
+- Results must be reproducible.
+- Results must be verifiable.
+
+If the same feature CID and data CID are replayed,
+the same index and the same search result are produced.
+
+That is operational determinism.
+
+* The Role of IPFS
+
+IPFS makes both:
+
+- The indexing logic
+- The financial data
+
+immutable and content-addressed.
+
+But the strategic value is not IPFS.
+
+The strategic value is:
+
+Deterministic ECAI indexing of structured financial data.
+* ECAI SBRM – Feature-From-IPFS Execution Model
+
+This workflow makes both:
+
+1. The SBRM JSONL data
+2. The DamageBDD feature file
+
+content-addressed and immutable via IPFS.
+
+Execution becomes:
+
+Feature CID → Loaded → Executed
+Data CID → Loaded → Indexed
+Query → Deterministic Retrieval
+
+No mutable scripts.
+No local feature dependency.
+Everything is hash-addressed.
+
+---
+
+* Architecture
+
+#+BEGIN_EXAMPLE
+SBRM JSONL ──> ipfs add ──> CID (data)
+Feature file ──> ipfs add ──> CID (logic)
+
+curl execute_feature(feature_cid, vars)
+        ↓
+DamageBDD:
+  ipfs cat(feature_cid)
+  parse feature
+  ipfs cat(data_cid)
+  ingest
+  query disk index
+        ↓
+Deterministic result
+#+END_EXAMPLE
+
+The logic itself is immutable.
+
+This is executable intelligence stored as content.
+
+---
+
+* Create the Feature File
+
+Example: ecai_sbrm_query.feature
+
+#+BEGIN_SRC gherkin
+Feature: Query SBRM index from IPFS-hosted feature
+
+  Scenario: Ingest JSONL and query disk index
+    Given I store "{{ipfs_jsonl_cid}}" in "ipfs_jsonl_cid"
+    When I ingest the SBRM financial JSONL file from IPFS hash in "ipfs_jsonl_cid"
+
+    Given I store "{{base_dir}}" in "ecai_base_dir"
+    Given I open the ECAI disk search at base dir "ecai_base_dir" and store it in "idx"
+
+    When I query the ECAI SBRM index in "idx" for "{{term}}" and store the results in "docs"
+
+    Then I set response status to 200
+    And I set response json to:
+      """
+      {
+        "ok": true,
+        "term": "{{term}}",
+        "docs": {{docs}}
+      }
+      """
+#+END_SRC
+
+---
+
+* Add the Feature to IPFS
+
+#+BEGIN_SRC bash
+ipfs add -Q ecai_sbrm_query.feature
+#+END_SRC
+
+Output:
+
+#+BEGIN_EXAMPLE
+bafybeifeaturecid...
+#+END_EXAMPLE
+
+This is your immutable executable intelligence.
+
+---
+
+* Add the Data to IPFS
+
+#+BEGIN_SRC bash
+ipfs add -Q ./sbrm.jsonl
+#+END_SRC
+
+Output:
+
+#+BEGIN_EXAMPLE
+bafybeidatacid...
+#+END_EXAMPLE
+
+---
+
+* Execute via One-Line curl
+
+Now both logic and data are content-addressed.
+
+#+BEGIN_SRC bash
+FEATURE="$(ipfs add -Q ecai_sbrm_query.feature)" && \
+DATA="$(ipfs add -Q ./sbrm.jsonl)" && \
+curl -sS -X POST http://127.0.0.1:8080/execute_feature_from_ipfs \
+  -H 'content-type: application/json' \
+  -d "{\"feature_cid\":\"$FEATURE\",\"vars\":{\"ipfs_jsonl_cid\":\"$DATA\",\"term\":\"mini:CashAndCashEquivalents\"}}"
+#+END_SRC
+
+Optional:
+
+#+BEGIN_SRC bash
+... | jq
+#+END_SRC
+
+---
+
+* What =execute_feature_from_ipfs= Does
+
+1. ipfs cat(feature_cid)
+2. Parse feature text
+3. Execute BDD steps
+4. ipfs cat(data_cid)
+5. Ingest via ecai_sbrm_financial_statement_ingestor
+6. Query via ecai_disk_search
+7. Return JSON
+
+The logic is immutable.
+The data is immutable.
+The result is deterministic.
+
+---
+
+* Why This Is Important
+
+This model gives you:
+
+- Portable executable intelligence
+- Immutable logic
+- Immutable data
+- Deterministic indexing
+- Deterministic retrieval
+- Zero probabilistic AI
+
+You are not calling a model.
+
+You are executing a content-addressed intelligence program.
+
+---
+
+* Operational Hardening
+
+- Pin feature CIDs
+- Pin data CIDs
+- Restrict =execute_feature_from_ipfs= endpoint
+- Enforce base_dir whitelist
+- Snapshot disk index regularly
+
+---
+
+* The Bigger Picture
+
+Traditional AI:
+
+Mutable model
+Mutable weights
+Opaque inference
+
+ECAI:
+
+Immutable logic (IPFS feature)
+Immutable data (IPFS JSONL)
+Deterministic indexing
+Deterministic retrieval
+
+This is structured intelligence.
+
+Not stochastic generation.
+
+---
+
+* Summary
+
+Workflow:
+
+#+BEGIN_EXAMPLE
+Feature CID + Data CID → Execute → Retrieve → Deterministic Result
+#+END_EXAMPLE
+
+ECAI does not guess.
+
+It retrieves.

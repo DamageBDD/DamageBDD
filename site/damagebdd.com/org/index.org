@@ -1,0 +1,186 @@
+#+TITLE: DamageBDD – Verifying Software Behaviour at Planetary Scale
+
+#+DESCRIPTION: Deterministic BDD verification with cryptographic integrity and Bitcoin-native incentives.
+#+KEYWORDS: BDD, verification, Erlang, Bitcoin, Lightning, deterministic AI
+#+INCLUDE: "header.org"
+
+#+BEGIN_COMMENT
+This version simplifies and strengthens the pitch for lay readers and business stakeholders,
+highlighting why DamageBDD is powerful, unique, and viable as a decentralized verification platform.
+#+END_COMMENT
+
+#+BEGIN_EXPORT html
+<!-- Hero Banner: DamageBDD Book -->
+<section class="hero hero--book">
+  <div class="hero__inner">
+    <div class="hero__text">
+      <h1>DamageBDD: Behaviour Verification at Planetary Scale</h1>
+      <p class="tagline">
+        A beginner-to-advanced guide from BDD → Behaviour-Driven DevOps → the Verification Economy.
+      </p>
+      <div class="cta">
+        <a class="btn btn--primary" href="/assets/damagebdd_book.pdf">
+          ⬇ Download Now (PDF)
+        </a>
+        <a class="btn btn--ghost" href="/damagebdd-book">
+          Read more
+        </a>
+      </div>
+    </div>
+
+    <div class="hero__cover">
+      <!-- Use your generated cover image path -->
+      <img
+        src="/assets/img/book_front_cover.png"
+        alt="Book cover: DamageBDD — Behaviour Verification at Planetary Scale"
+        width="640" height="1000"
+        loading="eager" decoding="async"
+        srcset="/assets/img/book_front_cover.png 1x, /assets/img/book_front_cover@2x.png 2x">
+    </div>
+  </div>
+</section>
+
+
+<noscript>
+  <p><a href="/assets/damagebdd_book.pdf">Download the DamageBDD book (PDF)</a></p>
+</noscript>
+
+#+END_EXPORT
+* What is DamageBDD?
+
+DamageBDD is a platform that lets anyone – not just programmers – describe how software should behave, using simple sentences. These sentences are written in a format called [[https://en.wikipedia.org/wiki/Behavior-driven_development][BDD]] (Behaviour Driven Development), which turns software testing into a conversation instead of a cryptic task only engineers understand.
+
+Think of it like writing instructions for how an app should work, and DamageBDD automatically checks if the app really does that. This makes it possible for teams of all skill levels – developers, testers, support staff, even end users – to work together and catch problems before they reach the real world.
+
+
+* Why is it powerful?
+
+Unlike traditional testing tools that need experts and manual effort, DamageBDD:
+
+- Uses plain language to define tests
+- Works across technical and non-technical teams
+- Can simulate *massive* user activity to test performance
+- Works automatically inside CI/CD (Continuous Integration/Deployment) systems
+- Can detect performance issues before they go live
+- Enables Bitcoin-based payments for verified contributions
+
+This means DamageBDD isn’t just about testing – it’s about *trust, transparency, and automation at scale.*
+
+* Example
+
+#+BEGIN_SRC gherkin
+Feature: Test echo json functionality of JsonTest.com using HTTP API
+
+  Scenario: GET request to JsonTest.com
+    Given I am using server "http://echo.jsontest.com"
+    When I make a GET request to "/key/value/one/two"
+    Then the json at path "$.one" must be "one"
+#+END_SRC
+
+This tells DamageBDD what to test – and it does the heavy lifting behind the scenes, checking servers, APIs, and even entire apps.
+
+* Business Use Cases
+
+- Web & Mobile Apps: Monitor uptime, load, and functionality
+- Smart Contracts (Web3): Continuously audit decentralized apps
+- Enterprise Systems: Automate QA and compliance checks
+- Infrastructure Teams: Track service availability and performance
+- Product Teams: Capture feature requests and real-world usage
+- AI & Bots: Autogenerate tests and verify their own behavior
+
+* Revenue Streams
+
+- 🟠 Pay-per-Test: Users pay in Bitcoin or DAMAGE tokens to run tests at scale
+- 🟢 Bug Bounties: Token rewards for contributors who define useful tests
+- 🔵 DeFi Integration: Smart contracts trigger payments only when conditions are verified
+- 🟡 Verification-as-a-Service: Enterprises pay for automated third-party verification
+- 🟣 Token-Governed Test Market: A decentralized ecosystem where testers and developers collaborate, get paid, and build trust
+
+* Target User Roles
+
+| Role            | Use Case                                                                       |
+|-----------------+--------------------------------------------------------------------------------|
+| End User        | initial requirements, feature requests, defect reporting                       |
+| Product Support | feature requests, isolating defect behaviour, edge cases, monitoring, alerting|
+| QA              | define expected behaviours, continuous monitoring, reporting, alerts           |
+| Infra           | availability monitoring, endpoint latency reporting, alerts                    |
+| Development     | prototyping, maintenance, verification, continous monitoring                   |
+| Management      | project velocity, current progress, performance metrics, fund allocation       |
+
+* Feature Highlights
+
+| DamageBDD Feature                                                                 | Status        |
+|-----------------------------------------------------------------------------------+---------------|
+| REST API for test execution                                                      | ✅ Done        |
+| Scheduled testing, continuous testing config                                     | 🧪 Testing     |
+| Bitcoin & DeFi payment system                                                    | 🔨 In progress |
+| Secrets management and variable templates                                        | 🧪 Testing     |
+| CI/CD integration and monitoring                                                 | 🧪 Testing     |
+| AI-generated tests and code suggestions                                          | 🧠 In analysis |
+| Appium and Selenium browser/mobile testing                                       | 🧪 Testing     |
+| IPFS reports, dashboards, alerts                                                 | 🧪 Testing     |
+| Webhook triggers                                                                 | 🧪 Testing     |
+| Zero Knowledge Proof test validation & payouts                                   | 🔍 Researching |
+| DAMAGE Token governance and test ecosystem incentives                            | 🪙 In analysis |
+
+* Why DamageBDD is Unique
+
+- 🧠 Human-readable testing
+- 🚀 Planetary-scale automation
+- ⚡ Bitcoin-native monetization
+- 🕵️ Verifiable trust in every test
+- 🤝 Open contribution and collaboration
+
+* Links
+
+- 📄 [[./whitepaper.html][DAMAGE Token Whitepaper]]  
+  The official guide to the DAMAGE Token vision, design, and use cases.
+  
+- 📄 [[./book.html][DamageBDD Book]]  
+  The official book to the DAMAGE Token vision, design, and use cases.
+
+- 📊 [[https://aescan.io/tokens/ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk?type=holders][Explore Token Stats]]  
+  Track live data on DAMAGE token supply, holders, and transactions.
+  
+- 📄 [[./tokenomics.html][DAMAGE Token Tokenomics]]
+  Implemented DAMAGE tokenomics for DamageBDD.
+
+- 👛 [[./supported_wallets][Wallets]]  
+  Find supported wallets for storing and managing your DAMAGE tokens safely.
+
+- 💬 [[https://t.me/damagebdd][Telegram]]  
+  Join the community chat for real-time discussions and support.
+
+- 🎮 [[https://discord.gg/ZQHnDqAg][Discord]]  
+  Connect with developers and contributors in our Discord server.
+
+- 🧭 [[https://njump.me/npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8][Nostr]]  
+  Follow DamageBDD on Nostr for decentralized updates.
+
+- 🔒 [[https://damagebdd.com/security][Security Guidelines]]  
+  Learn best practices to keep your accounts, tokens, and nodes secure.
+
+- 💻 [[https://github.com/DamageBDD/DamageBDD][GitHub Repository]]  
+  Explore the open-source code powering DamageBDD.
+
+- 🔗 [[https://www.linkedin.com/company/damagebdd/][LinkedIn Page]]  
+  Follow our LinkedIn for project news, thought leadership, and hiring.
+
+- 📑 [[https://run.damagebdd.com/api-docs/][API Docs]]  
+  Developer documentation for integrating with DamageBDD APIs.
+
+- 💱 [[https://www.coinstore.com/spot/DAMAGEUSDT][DAMAGE/USDT on Coinstore]]  
+  Trade DAMAGE tokens directly on the Coinstore exchange.
+
+- 🎥 [[https://youtu.be/T70txXsSxig][Video: Better Smart Contracts with BDD]]  
+  A short video introduction to BDD for smart contract design.
+
+- 📝 [[https://medium.com/coinmonks/design-of-smart-contracts-using-bdd-and-cucumber-4533162fc235][Smart Contract BDD Article]]  
+  Read an in-depth article on using BDD for smarter contracts.
+
+- 🛠 [[https://microlancer.io/?page=1&length=25&status=my&showCompleted=1&showHidden=1&minimumAmount=0&user=asyncmind&tag=&category=&search=][DamageBDD Tasks on Microlancer]]  
+  Take on bounties and earn rewards by contributing to DamageBDD.
+  
+- 💻 [[./node][Run a Damage Node]]
+  Participate in the Damage network, spend and earn DAMAGE with you computer.
+ 

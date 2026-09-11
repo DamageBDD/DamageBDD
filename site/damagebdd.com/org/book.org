@@ -1,0 +1,52 @@
+#+TITLE: DamageBDD: Behaviour Verification at Planetary Scale
+
+#+INCLUDE: "header.org"
+#+DESCRIPTION: DamageBDD: Behaviour Verification at Planetary Scale — a beginner-to-advanced guide to BDD, Behaviour-Driven DevOps, the Verification Economy, and deterministic ECAI.
+#+KEYWORDS: DamageBDD book, Behaviour Verification, BDD guide, Behaviour-Driven DevOps, Verification Economy, DAMAGE token, Lightning payments, deterministic AI, ECAI, Steven Joseph
+
+
+* DamageBDD: Behaviour Verification at Planetary Scale
+Welcome! This short page introduces the /DamageBDD/ book and offers a download link to the latest mobile-friendly PDF.
+
+- **Audience:** Beginners → advanced readers (developers, DevOps, architects, decision-makers)
+- **Format:** Modern LaTeX, A5 layout, comfy fonts (great on phones/tablets)
+- **Scope:** BDD fundamentals → DamageBDD execution → Behaviour-Driven DevOps → Verification Economy → ECAI (moonshot)
+
+* Abstract
+#+begin_quote
+*If behaviour can be defined, it can be verified.*  
+The book starts with basic computer and testing concepts, moves into plain-language BDD (Gherkin), and then shows how /DamageBDD/ executes those behaviours at scale—across APIs, browsers, infrastructure, and payments.  
+You’ll learn advanced assertions (JSON/YAML), variables and context (with secret redaction), Selenium/Appium integration, performance/load testing, and scheduling.  
+In DevOps, this becomes *Behaviour-Driven DevOps*—pipelines that prove correctness, not just assume it.  
+Finally, the book introduces the *Verification Economy* (DAMAGE token on æternity + Lightning flows) and points toward *ECAI (Elliptic Curve AI)*, a deterministic intelligence built on verification rails.
+#+end_quote
+
+* Download
+- [[/static/damagebdd_book.pdf][**⬇ Download the PDF (latest)**]]
+- Optional covers:
+  - [[/static/cover_front.png][Front Cover]] · [[/static/cover_back.png][Back Cover]]
+
+* Try It Hosted (Optional)
+You can run feature files at [[https://run.damagebdd.com][run.damagebdd.com]].  
+/Note:/ Hosted execution requires *Damage Tokens (DAMAGE)* and a compatible wallet (e.g., Superhero). The dashboard also provides a *secure installer script generator* for one-click installs.
+
+* What You'll Learn (Highlights)
+- **BDD, clearly:** Gherkin, Given/When/Then, collaboration patterns
+- **Execution:** HTTP steps, JSON/YAML checks, variables, contexts (secret redaction)
+- **UI & Mobile:** Selenium/Appium flows
+- **Ops:** Journald/systemd, fail2ban, security hardening, log scanning, IPFS checks
+- **Performance:** Load/stress scenarios
+- **Scheduling:** Continuous verification with cron-like policies
+- **Economy:** DAMAGE token, invoices/hold-invoices, LNURL-Pay, payouts for passing runs
+- **Future:** From BDD rails to *ECAI* (deterministic, proof-anchored AI)
+
+* Suggested Citation
+#+begin_example
+Steven Joseph. *DamageBDD: Behaviour Verification at Planetary Scale*. (Latest PDF at /static/damagebdd_book.pdf)
+#+end_example
+
+* Contact
+- Project: [[https://damagebdd.com][damagebdd.com]]
+- Author: Steven Joseph
+
+  

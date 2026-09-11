@@ -1,0 +1,155 @@
+#+TITLE: Pricing of DAMAGE Tokens
+#+OPTIONS: toc:ni1
+#+DESCRIPTION: DamageBDD pricing for DAMAGE tokens with step-based costs, live market peg, Lightning purchase flow, Coinstore trading and governance token terms.
+#+KEYWORDS: DAMAGE token pricing, DamageBDD pricing, step-based pricing, Lightning Network payments, AEX-9 token, Coinstore DAMAGE, BDD execution costs, satoshi pricing, governance token
+
+
+#+INCLUDE: "header.org"
+
+* Pricing
+
+
+We calculate pricing based on the number of steps and their
+implementations. Each step is individually priced based on the
+resources used and complexity involved. If you run steps concurrently,
+each execution will count against the total number of step
+executions. For example, running one step 10 times will deduct 10
+Damage Tokens from your balance.
+
+Please note that pricing may be subject to change as we continue to
+update and improve our product. We recommend checking this page
+regularly for any updates.
+
+* 💰 Step-Based Pricing
+
+#+BEGIN_EXPORT html
+<div id="live-pricing">
+  <p id="pricing-status" style="font-style: italic;">Fetching live prices…</p>
+  <div style="margin:0.5rem 0 1rem 0;">
+    <small>Live peg: DAMAGE/USDT = <strong id="damage-usdt">–</strong>, BTC/USDT = <strong id="btc-usdt">–</strong>.</small>
+  </div>
+
+  <table style="width:100%;border-collapse:collapse" id="pricing-table">
+    <thead>
+      <tr>
+        <th style="text-align:left;border-bottom:1px solid #ccc;">Step Type</th>
+        <th style="text-align:right;border-bottom:1px solid #ccc;">Price (Damage)</th>
+        <th style="text-align:right;border-bottom:1px solid #ccc;">Price (USD)</th>
+        <th style="text-align:right;border-bottom:1px solid #ccc;">Price (sats)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr data-damage="1">
+        <td>Simple Step</td>
+        <td style="text-align:right;"><span data-price="damage">1 DAMAGE</span></td>
+        <td style="text-align:right;"><span data-price="usd">–</span></td>
+        <td style="text-align:right;"><span data-price="sats">–</span></td>
+      </tr>
+      <tr data-damage="10">
+        <td>Selenium Step</td>
+        <td style="text-align:right;"><span data-price="damage">10 DAMAGE</span></td>
+        <td style="text-align:right;"><span data-price="usd">–</span></td>
+        <td style="text-align:right;"><span data-price="sats">–</span></td>
+      </tr>
+      <tr data-damage="20">
+        <td>Appium Step</td>
+        <td style="text-align:right;"><span data-price="damage">20 DAMAGE</span></td>
+        <td style="text-align:right;"><span data-price="usd">–</span></td>
+        <td style="text-align:right;"><span data-price="sats">–</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<script src="/assets/js/pricing.js"></script>
+#+END_EXPORT
+
+#+BEGIN_EXPORT html
+<div id="converter" style="margin-top:1.5rem;padding:1rem;border:1px solid #ddd;border-radius:12px;">
+  <div style="margin-bottom:0.5rem;font-weight:600;">Quick Converter</div>
+  <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+    <input id="conv-amount" type="number" min="0" step="0.000001" value="1" placeholder="1.0" style="width:10rem;padding:0.4rem;border:1px solid #ccc;border-radius:8px;">
+    <select id="conv-from" style="padding:0.4rem;border:1px solid #ccc;border-radius:8px;">
+      <option value="DAMAGE">DAMAGE</option>
+      <option value="USDT">USDT</option>
+      <option value="SATS">sats</option>
+      <option value="BTC">BTC</option>
+    </select>
+    <span>to</span>
+    <select id="conv-to" style="padding:0.4rem;border:1px solid #ccc;border-radius:8px;">
+      <option value="USDT">USDT</option>
+      <option value="DAMAGE">DAMAGE</option>
+      <option value="SATS" selected>sats</option>
+      <option value="BTC">BTC</option>
+    </select>
+    <span style="margin-left:0.5rem;">=</span>
+    <strong id="conv-output">—</strong>
+  </div>
+  <div style="margin-top:0.25rem;color:#555;"><small>Also ≈ <span id="conv-output-sats">—</span></small></div>
+</div>
+#+END_EXPORT
+
+Pricing is aligned with the live market rate for DAMAGE/USDT on [[https://coinstore.com][Coinstore]].
+
+Please read [[./token_tos.org][Token Terms of Use]].
+* ⚡ Buy Damage Tokens Now with the Lightning Network
+
+🧑‍💻 **Create an Account**  
+Go to [[https://run.damagebdd.com][run.damagebdd.com]] and sign up to get your **custodial Aeternity wallet**, hosted by DamageBDD.
+
+🧾 **Generate a Lightning Invoice**  
+From your dashboard, generate an invoice for the number of satoshis you want to exchange for Damage Tokens.
+
+💸 **Make a Payment**  
+Use your Lightning wallet to pay the invoice — it's fast, final, and self-custodial.
+
+📥 **Receive Damage Tokens**  
+Once the payment is verified, your Damage Tokens are delivered directly to your hosted wallet.
+
+🚀 **Transfer Freely**  
+You are free to send your tokens to any wallet that supports the **AEX-9** token standard.
+
+🔥 *Verification is power. The Denied shall execute.*  
+
+* 🏦 Buy DAMAGE on Coinstore
+
+If you already use a centralized exchange or prefer to acquire DAMAGE on the open market, you can purchase DAMAGE tokens directly via
+https://www.coinstore.com.
+
+This is a **secondary-market purchase** and is independent of DamageBDD’s Lightning-based issuance flow.
+
+**How it works**
+
+🧾 **Create a Coinstore Account**  
+Sign up and complete any required exchange onboarding on https://www.coinstore.com.
+
+💱 **Purchase DAMAGE**  
+Trade USDT for DAMAGE at the prevailing market price on Coinstore.
+
+📤 **Withdraw to Your Wallet**  
+Withdraw your DAMAGE tokens to:
+- Your DamageBDD custodial wallet (shown in your dashboard), or
+- Any external wallet that supports the **AEX-9** token standard on Aeternity.
+
+⚠️ *Always verify the destination address and token contract before withdrawing.*
+
+**Important Notes**
+
+- Coinstore is a third-party exchange. DamageBDD does not operate, control, or intermediate Coinstore trades.
+- Pricing on Coinstore is market-driven and may differ from Lightning conversion rates shown on this page.
+- Exchange fees, withdrawal fees, and custody terms are governed by Coinstore’s own policies.
+
+For terms governing usage of DAMAGE within DamageBDD, please read:
+[[./token_tos.org][Token Terms of Use]].
+
+
+
+
+* 📞 Consultation Pricing
+
+If you’re looking to quickly integrate DamageBDD into your team’s workflow, you can book a consultation with our experts.  
+
+
+#+BEGIN_EXPORT html
+<a href="https://calendly.com/damagebdd/15min">Schedule a Call with DamageBDD Now</a>
+<!--<a href="https://run.damagebdd.com/erm/schedule_call/15min">Schedule a Call with DamageBDD Now</a>-->
+#+END_EXPORT

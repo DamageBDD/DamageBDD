@@ -1,0 +1,43 @@
+#+Title: Damagebdd - Accounts
+
+#+INCLUDE: "header.org"
+
+** Create an Account
+
+To fully utilize the capabilities of DamageBDD, you need to create an account.
+
+
+Use the following form to create an account:
+
+
+#+BEGIN_EXPORT html
+<form id="kycForm" action="/accounts/create" method="post">
+  <input type="hidden" name="csrf_token" value="your_csrf_token_here">
+  
+  <label for="full_name">Full Name:</label>
+  <input type="text" id="full_name" name="full_name" ><br><br>
+<label for="email">Email:</label>
+<input type="text" id="email" name="email" required><span style="color: red;">* required</span><br><br>
+
+  <!--<label for="dateOfBirth">Date of Birth:</label>
+  <input type="date" id="dateOfBirth" name="dateOfBirth" required><br><br>
+
+  <label for="nationality">Nationality:</label>
+  <input type="text" id="nationality" name="nationality" required><br><br>
+
+  <label for="address">Address:</label>
+  <textarea id="address" name="address" required></textarea><br><br>
+
+  <label for="idDocument">ID Document (Passport, Driver’s License, etc.):</label>
+  <input type="file" id="idDocument" name="idDocument" required><br><br>-->
+
+  <i>By clicking submit you are agreeing to the usage terms & conditions <a href="/tac.html">here.</a></i><br><br>
+  <button type="submit">Submit</button>
+</form>
+#+END_EXPORT
+
+After submitting the form, you will receive a confirmation link in
+your email. Click on the link and set a password for your account.
+
+See [[file:manual.org][Getting Started]] for steps to get an ~AUTH_TOKEN~ and to use the API.
+

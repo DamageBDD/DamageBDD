@@ -1,0 +1,169 @@
+#+TITLE: DamageBDD Lightning Swap Funding Steps
+#+SUBTITLE: Fund GitHub Issues with Lightning → Receive DAMAGE → Pay Contractors Automatically
+#+AUTHOR: DamageBDD
+#+OPTIONS: toc:t
+
+* Overview
+
+These DamageBDD steps allow *DAMAGE token holders* (funders) to finance
+development work on GitHub issues using *Lightning payments*. When the
+funder pays a Lightning invoice:
+
+- A *Lightning Swap Option* is created on-chain.
+- A *JobRegistry* entry is opened inside a Damage state channel.
+- The funder receives *DAMAGE tokens* as reward.
+- The contractor receives payment automatically once BDD tests pass.
+
+All behaviour is verifiable, reproducible, and cryptographically linked.
+
+* How it Works
+
+The lifecycle of a funded issue:
+
+1. A GitHub issue defines the requested work.
+2. A funder opens a *Lightning Swap Option* for that issue.
+3. DamageBDD creates:
+   - a Lightning hold invoice,
+   - a swap option on-chain,
+   - an off-chain job in =JobRegistry=.
+4. The funder pays the Lightning invoice.
+5. The option is exercised automatically, transferring DAMAGE to the funder.
+6. Once BDD tests pass, the contractor is paid (BTC or DAMAGE).
+7. All steps are captured in verifiable BDD scenarios.
+
+* Required Variables
+
+Before using the swap steps, define the following variables in your feature:
+
+| Variable              | Meaning                                            |
+|-----------------------+----------------------------------------------------|
+| swap_channel_id       | State channel ID used for the JobRegistry entry    |
+| funder_ae_account     | AE account that will receive DAMAGE rewards        |
+| lock_sats             | Satoshis the funder pays to fund the issue         |
+| payout_damage         | DAMAGE rewarded to the funder                      |
+| expiry_seconds        | Duration before the option expires                 |
+
+Example:
+
+#+begin_src gherkin
+Given I set the variable "swap_channel_id" to "ch_abc123"
+And I set the variable "funder_ae_account" to "ak_fundertest123"
+And I set the variable "lock_sats" to "20000"
+And I set the variable "payout_damage" to "500"
+And I set the variable "expiry_seconds" to "86400"
+#+end_src
+
+* Step Reference
+
+This section documents all steps provided by the =steps_swap_funding.erl= module.
+
+** When I fund the tracked issue with a Lightning swap option
+
+Creates:
+
+- A Lightning *hold invoice*
+- A LightningSwapOption entry on-chain
+- A JobRegistry record inside the state channel
+
+Usage:
+
+#+begin_src gherkin
+When I fund the tracked issue with a Lightning swap option
+#+end_src
+
+Prerequisites:
+
+#+begin_src gherkin
+Given I use GitHub repo "damagebdd/damagebdd"
+And I track issue "#42"
+#+end_src
+
+Effect on context:
+
+- =swap_option_id=
+- =swap_invoice=
+- =swap_payment_hash=
+- =job_id=
+- =job_channel_pid=
+
+** Then the Lightning swap option should be open for the tracked issue
+
+Asserts that the JobRegistry job exists and is in =open= state.
+
+#+begin_src gherkin
+Then the Lightning swap option should be open for the tracked issue
+#+end_src
+
+** Then the Lightning invoice should be paid
+
+Checks whether the Lightning invoice has been settled.
+
+The invoice is considered paid when:
+
+- =damage_swap_option= no longer tracks the payment hash,
+- the swap option has been exercised on-chain.
+
+#+begin_src gherkin
+Then the Lightning invoice should be paid
+#+end_src
+
+** Then the funder should receive DAMAGE rewards
+
+Asserts the funder's AE account received the promised DAMAGE amount:
+
+#+begin_src gherkin
+Then the funder should receive DAMAGE rewards
+#+end_src
+
+The balance check uses =damage_ae:balance/1=.
+
+** Then the contractor should be paid for the tracked issue
+
+Validates that:
+
+- the JobRegistry entry transitioned to =completed=
+- contractor payout logic executed (BTC or DAMAGE)
+
+#+begin_src gherkin
+Then the contractor should be paid for the tracked issue
+#+end_src
+
+* Full Example Feature
+
+Below is a complete working example linking GitHub → Lightning → DAMAGE → Job completion.
+
+#+begin_src gherkin
+Feature: Fund contractor work via Lightning swaps
+
+  Background:
+    Given I use GitHub repo "damagebdd/damagebdd"
+    And I track issue "#42"
+
+    And I set the variable "swap_channel_id" to "ch_abcd123"
+    And I set the variable "funder_ae_account" to "ak_fundertest123"
+    And I set the variable "lock_sats" to "20000"
+    And I set the variable "payout_damage" to "500"
+    And I set the variable "expiry_seconds" to "86400"
+
+  Scenario: Funder pays the invoice and receives DAMAGE
+    When I fund the tracked issue with a Lightning swap option
+    Then the Lightning swap option should be open for the tracked issue
+
+    # User pays the invoice externally
+    Then the Lightning invoice should be paid
+
+    And the funder should receive DAMAGE rewards
+    And the contractor should be paid for the tracked issue
+#+end_src
+
+* Conceptual Summary
+
+- *Funders* pay with Lightning and receive verifiable DAMAGE tokens.
+- *Contractors* receive payment only when BDD tests pass.
+- *JobRegistry + Swap Options + Lightning* create an auditable payment pipeline.
+- Everything is expressed in human-readable BDD, fully reproducible and trustless.
+
+This integrates the Bitcoin Lightning Network with DamageBDD’s deterministic
+verification pipeline, enabling a crypto-native, provable funding system for
+open-source and commercial development work.
+

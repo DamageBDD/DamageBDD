@@ -1,0 +1,533 @@
+#+TITLE: DamageBDD NWC API Manual
+#+AUTHOR: OpenAI
+#+OPTIONS: toc:2 num:nil
+
+* DamageBDD NWC API Manual
+
+This manual describes the authenticated NWC API exposed by DamageBDD for
+creating, inspecting, and revoking ledger-backed Nostr Wallet Connect
+connections, and it makes the permission boundary around ledger credit explicit.
+
+The current handler exposes these POST endpoints:
+
+- =/api/nwc/mint=
+- =/api/nwc/revoke=
+- =/api/nwc/ledger/balance=
+- =/api/nwc/ledger/credit=
+
+The important rule is simple:
+
+- =/api/nwc/ledger/credit= is a node-admin operation, not a general client
+  top-up endpoint.
+
+So there are really two flows to think about:
+
+- *Current implemented flow*: admins can mint, inspect, credit, and revoke.
+- *Recommended public top-up flow*: regular users mint, inspect, and revoke, but
+  top-up happens through a separate invoice or quote endpoint that eventually
+  triggers an internal admin credit after settlement.
+
+Authentication is delegated to the standard Damage token flow. In practice, you
+first obtain an =access_token= from =/accounts/auth/= and then send it as:
+
+- =Authorization: Bearer <access_token>=
+
+The server also accepts the token as an =access_token= query parameter or via
+=sessionid= cookie, but the Bearer header is the cleanest option for scripts.
+
+* Authentication
+
+** Get an access token
+
+#+begin_src sh
+curl -sS -X POST \
+  https://run.dev.damagebdd.com/accounts/auth/ \
+  -H 'content-type: application/json' \
+  -d '{
+        "username": "you@example.com",
+        "password": "your-password"
+      }'
+#+end_src
+
+Expected JSON response:
+
+#+begin_src json
+{
+  "status": "ok",
+  "access_token": "...",
+  "address": "ak_..."
+}
+#+end_src
+
+Store the token for later:
+
+#+begin_src sh
+export DAMAGE_BASE='https://run.dev.damagebdd.com'
+export DAMAGE_TOKEN='PASTE_ACCESS_TOKEN_HERE'
+#+end_src
+
+** Python helper for authenticated requests
+
+#+begin_src python
+import requests
+
+BASE = "https://run.dev.damagebdd.com"
+TOKEN = "PASTE_ACCESS_TOKEN_HERE"
+
+session = requests.Session()
+session.headers.update({
+    "Authorization": f"Bearer {TOKEN}",
+    "content-type": "application/json",
+    "accept": "application/json",
+})
+
+
+def post_json(path, payload):
+    response = session.post(f"{BASE}{path}", json=payload, timeout=60)
+    response.raise_for_status()
+    if response.content:
+        return response.json()
+    return None
+#+end_src
+
+* Endpoint: /api/nwc/mint
+
+Creates a new NWC connection for the authenticated user. The handler generates a
+new client secret, derives the client pubkey, resolves the user ledger, and
+returns an NWC URI. If the user has no registered ledger yet, it may either set
+it up automatically or return setup intents, depending on execution mode and key
+availability.
+
+** Request body
+
+- =relays=: list of relay URLs. Optional.
+- =max_single_sat=: per-payment ceiling in sats. Optional. Default =10000=.
+- =max_total_sat=: total ledger ceiling in sats. Optional. Default =100000=.
+- =expires_height=: chain height expiry. Optional. Default =0=.
+
+** curl example
+
+#+begin_src sh
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/mint" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "relays": ["wss://relay.damus.io"],
+        "max_single_sat": 1000,
+        "max_total_sat": 5000,
+        "expires_height": 0
+      }'
+#+end_src
+
+** Python example
+
+#+begin_src python
+mint = post_json("/api/nwc/mint", {
+    "relays": ["wss://relay.damus.io"],
+    "max_single_sat": 1000,
+    "max_total_sat": 5000,
+    "expires_height": 0,
+})
+
+print(mint)
+client_pubkey = mint["client_pubkey"]
+nwc_uri = mint["nwc_uri"]
+#+end_src
+
+** Typical success response
+
+#+begin_src json
+{
+  "status": "ok",
+  "owner": "ak_...",
+  "ledger_ct": "ct_...",
+  "ledger_mode": "server_signed",
+  "client_pubkey": "<64-hex>",
+  "secret_hex": "<32-byte-secret-hex>",
+  "nwc_uri": "nostr+walletconnect://<wallet_pubkey>?relay=wss://...&secret=<secret_hex>",
+  "wallet_pubkey": "<64-hex>",
+  "relay": "wss://relay.damus.io",
+  "intents": []
+}
+#+end_src
+
+** Notes
+
+- The current code returns HTTP =200= with a JSON body on success, not =204=.
+- =secret_hex= is only returned at mint time, so persist it immediately if your
+  client needs it.
+- In =user_signed= mode, =intents= contains a ledger registration intent instead
+  of server-side execution.
+- In missing-ledger cases, the server may either auto-setup the ledger and still
+  return =status: "ok"=, or return =status: "needs_ledger_setup"= with setup
+  intents.
+
+* Endpoint: /api/nwc/ledger/balance
+
+Looks up the ledger-backed balance state for a given =client_pubkey= under the
+currently authenticated owner.
+
+** Request body
+
+- =client_pubkey=: required NWC client pubkey.
+
+** curl example
+
+#+begin_src sh
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/ledger/balance" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "client_pubkey": "YOUR_CLIENT_PUBKEY"
+      }'
+#+end_src
+
+** Python example
+
+#+begin_src python
+balance = post_json("/api/nwc/ledger/balance", {
+    "client_pubkey": client_pubkey,
+})
+print(balance)
+#+end_src
+
+** Response shape
+
+#+begin_src json
+{
+  "status": "ok",
+  "owner": "ak_...",
+  "ledger_ct": "ct_...",
+  "client_pubkey": "<64-hex>",
+  "result": {
+    "return_type": "ok",
+    "return_value": "..."
+  }
+}
+#+end_src
+
+The exact shape of =result.return_value= depends on the smart-contract entrypoint
+serialization returned by =ledger_call_user(..., "balance", ...)=.
+
+* Endpoint: /api/nwc/ledger/credit
+
+Credits a ledger-backed NWC connection by a deterministic amount. This endpoint
+is explicitly node-admin-only and should be treated as a privileged operation.
+It is not the right endpoint for ordinary account self-service top-up.
+
+** Request body
+
+- =client_pubkey=: required NWC client pubkey.
+- =amount_sat=: amount to credit in sats.
+- =ref=: reference string.
+- =meta=: metadata string, commonly JSON encoded text.
+
+** curl example for node admins
+
+#+begin_src sh
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/ledger/credit" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "client_pubkey": "YOUR_CLIENT_PUBKEY",
+        "amount_sat": 2000,
+        "ref": "bdd-credit-1",
+        "meta": "{}"
+      }'
+#+end_src
+
+** Python example for node admins
+
+#+begin_src python
+credit = post_json("/api/nwc/ledger/credit", {
+    "client_pubkey": client_pubkey,
+    "amount_sat": 2000,
+    "ref": "bdd-credit-1",
+    "meta": "{}",
+})
+print(credit)
+#+end_src
+
+** Success response
+
+#+begin_src json
+{
+  "status": "ok",
+  "owner": "ak_...",
+  "ledger_ct": "ct_...",
+  "credited_sat": 2000,
+  "intents": []
+}
+#+end_src
+
+** Notes
+
+- The handler converts =amount_sat= to millisatoshis before calling the ledger.
+- In =user_signed= mode, the response may include credit intents instead of the
+  server executing the mutation.
+- The code expects =role := <<"admin">>= in request state before allowing this
+  endpoint.
+- For public user top-up, use a separate invoice or quote flow. Do not expose
+  this endpoint to non-admin clients.
+
+* Endpoint: /api/nwc/revoke
+
+Revokes a previously minted NWC connection identified by =client_pubkey=.
+
+** Request body
+
+- =client_pubkey=: required NWC client pubkey.
+
+** curl example
+
+#+begin_src sh
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/revoke" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "client_pubkey": "YOUR_CLIENT_PUBKEY"
+      }'
+#+end_src
+
+** Python example
+
+#+begin_src python
+revoke = post_json("/api/nwc/revoke", {
+    "client_pubkey": client_pubkey,
+})
+print(revoke)
+#+end_src
+
+** Success response
+
+#+begin_src json
+{
+  "status": "ok",
+  "revoked": true,
+  "client_pubkey": "<64-hex>",
+  "ledger_ct": "ct_...",
+  "intents": []
+}
+#+end_src
+
+In =user_signed= mode, =intents= may contain a revoke intent instead.
+
+* Recommended public top-up design
+
+This section describes the cleaner public model for self-service funding.
+It documents the boundary you clarified:
+
+- normal accounts do not call =/api/nwc/ledger/credit=
+- node admins do
+- clients top up through a separate payment challenge or invoice flow
+- settlement triggers an internal admin credit
+
+A practical public endpoint would look like:
+
+- =/api/nwc/topup_invoice=
+
+with a request body like:
+
+#+begin_src json
+{
+  "client_pubkey": "<64-hex>",
+  "amount_sat": 2000
+}
+#+end_src
+
+and a response like:
+
+#+begin_src json
+{
+  "status": "payment_required",
+  "client_pubkey": "<64-hex>",
+  "amount_sat": 2000,
+  "invoice": "lnbc...",
+  "payment_hash": "...",
+  "expires_at": "2026-04-02T12:34:56Z"
+}
+#+end_src
+
+After settlement, the server would internally perform the same ledger credit
+logic with a deterministic reference such as the Lightning payment hash.
+
+That gives you:
+
+- self-service top-up for ordinary users
+- no public arbitrary credit mutation
+- idempotent settlement processing
+- a clean place to return L402-style responses when balance is too low
+
+* End-to-end example: regular account flow
+
+This example uses only the endpoints a normal authenticated account should rely
+on today.
+
+** curl workflow
+
+#+begin_src sh
+export DAMAGE_BASE='https://run.dev.damagebdd.com'
+export DAMAGE_TOKEN='PASTE_ACCESS_TOKEN_HERE'
+
+MINT_JSON=$(curl -sS -X POST "$DAMAGE_BASE/api/nwc/mint" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "relays": ["wss://relay.damus.io"],
+        "max_single_sat": 1000,
+        "max_total_sat": 5000,
+        "expires_height": 0
+      }')
+
+printf '%s\n' "$MINT_JSON"
+CLIENT_PUBKEY=$(printf '%s' "$MINT_JSON" | jq -r '.client_pubkey')
+
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/ledger/balance" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"client_pubkey\":\"$CLIENT_PUBKEY\"}"
+
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/revoke" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"client_pubkey\":\"$CLIENT_PUBKEY\"}"
+#+end_src
+
+** Python workflow
+
+#+begin_src python
+mint = post_json("/api/nwc/mint", {
+    "relays": ["wss://relay.damus.io"],
+    "max_single_sat": 1000,
+    "max_total_sat": 5000,
+    "expires_height": 0,
+})
+
+client_pubkey = mint["client_pubkey"]
+print("NWC URI:", mint["nwc_uri"])
+
+balance_1 = post_json("/api/nwc/ledger/balance", {
+    "client_pubkey": client_pubkey,
+})
+print("Initial balance:", balance_1)
+
+revoke = post_json("/api/nwc/revoke", {
+    "client_pubkey": client_pubkey,
+})
+print("Revoke result:", revoke)
+#+end_src
+
+* End-to-end example: node admin credit flow
+
+This flow is for node admins only.
+
+** curl workflow
+
+#+begin_src sh
+export DAMAGE_BASE='https://run.dev.damagebdd.com'
+export DAMAGE_TOKEN='PASTE_ADMIN_ACCESS_TOKEN_HERE'
+
+MINT_JSON=$(curl -sS -X POST "$DAMAGE_BASE/api/nwc/mint" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "relays": ["wss://relay.damus.io"],
+        "max_single_sat": 1000,
+        "max_total_sat": 5000,
+        "expires_height": 0
+      }')
+
+CLIENT_PUBKEY=$(printf '%s' "$MINT_JSON" | jq -r '.client_pubkey')
+
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/ledger/credit" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"client_pubkey\":\"$CLIENT_PUBKEY\",\"amount_sat\":2000,\"ref\":\"bdd-credit-1\",\"meta\":\"{}\"}"
+
+curl -sS -X POST "$DAMAGE_BASE/api/nwc/ledger/balance" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"client_pubkey\":\"$CLIENT_PUBKEY\"}"
+#+end_src
+
+** Python workflow
+
+#+begin_src python
+mint = post_json("/api/nwc/mint", {
+    "relays": ["wss://relay.damus.io"],
+    "max_single_sat": 1000,
+    "max_total_sat": 5000,
+    "expires_height": 0,
+})
+
+client_pubkey = mint["client_pubkey"]
+
+credit = post_json("/api/nwc/ledger/credit", {
+    "client_pubkey": client_pubkey,
+    "amount_sat": 2000,
+    "ref": "bdd-credit-1",
+    "meta": "{}",
+})
+print("Credit result:", credit)
+
+balance_2 = post_json("/api/nwc/ledger/balance", {
+    "client_pubkey": client_pubkey,
+})
+print("Balance after credit:", balance_2)
+#+end_src
+
+* Error handling
+
+Common error envelopes from this handler include:
+
+#+begin_src json
+{
+  "status": "error",
+  "error": "NO_LEDGER",
+  "reason": "..."
+}
+#+end_src
+
+Mint can also return a setup-oriented response:
+
+#+begin_src json
+{
+  "status": "needs_ledger_setup",
+  "reason": "...",
+  "account_registry_ct": "ct_...",
+  "client_pubkey": "<64-hex>",
+  "secret_hex": "...",
+  "nwc_uri": "nostr+walletconnect://...",
+  "wallet_pubkey": "...",
+  "relay": "wss://...",
+  "intents": [
+    {"type": "deploy_ledger", "...": "..."},
+    {"type": "upsert_registry", "...": "..."},
+    {"type": "ledger_register", "...": "..."}
+  ]
+}
+#+end_src
+
+For shell scripts, treat non-2xx HTTP codes as transport or application errors,
+and also inspect the JSON =status= field because some logical failures are
+expressed inside JSON payloads.
+
+For non-admin callers, a credit attempt should be treated as a permission error,
+not as a balance top-up path.
+
+* Practical caveats
+
+- Your original BDD scenario expected =204= from =/api/nwc/mint=, but the
+  handler shown here replies with =200= and a JSON body containing the minted
+  values.
+- =Then I print the response= only makes sense when the endpoint actually
+  returns a body. The current mint handler does.
+- =/api/nwc/ledger/credit= should only appear in admin scenarios.
+- Client self-service top-up should be modeled as a separate endpoint and
+  settlement flow.
+
+* Source basis
+
+This manual was derived from the current =damage_nwc_http= handler, the shared
+Damage auth flow in =damage_http=, and the account auth endpoint in
+=damage_accounts=.

@@ -1,0 +1,59 @@
+#+TITLE: DamageBDD Module Index
+#+SUBTITLE: One landing page to discover what DamageBDD can verify today — and what’s coming next
+#+AUTHOR: DamageBDD
+#+OPTIONS: toc:2 num:nil
+#+STARTUP: overview
+
+* Welcome
+
+DamageBDD is a Behaviour-Driven Development (BDD) verification platform.
+
+This page is the *front door* for BDD writers:
+- what modules exist
+- what each module is for (in plain language)
+- where to find the step documentation
+- how the index will grow over time
+
+If you can describe behaviour in words, DamageBDD can verify it.
+
+
+
+* How to use this index
+
+1. Pick the kind of behaviour you want to verify:
+   - API behaviour (HTTP)
+   - Browser behaviour (CDP / web UI)
+   - Chain / token behaviour (Aeternity + DAMAGE)
+2. Click into that module’s page.
+3. Copy a scenario template and start writing.
+
+
+
+* Quick links (start here)
+
+- [[file:http.org][HTTP Steps (API testing)]]
+- [[file:cdp.org][CDP Steps (Browser testing)]]
+
+
+
+* Module catalogue
+
+This catalogue is intentionally *extendable*.
+Every module gets:
+- a short description (human)
+- a purpose (“when to use”)
+- the documentation page
+- a maturity level
+
+**Maturity levels**
+- *Stable* = safe for everyday use
+- *Beta* = useful but evolving
+- *Experimental* = early capability / subject to change
+- *Planned* = listed to show the roadmap
+
+
+
+**Legend**
+- *Behaviour type:* what kind of behaviour this module verifies
+- *Audience:* who writes these tests
+- *Outputs:* what you get when t

@@ -1,0 +1,11 @@
+#+TITLE: Articles 
+#+INCLUDE: "../header.org"
+
+Welcome to the DamageBDD article vault.
+
+Here you'll find technical deep dives, verification patterns, and philosophical rants from the edge of software truth. Every post is part of our mission to align code, behavior, and reality — at planetary scale.
+
+If it can't be tested, it doesn't belong here.
+
+#+INCLUDE: "index.inc"
+

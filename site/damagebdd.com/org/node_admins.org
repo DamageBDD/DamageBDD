@@ -1,0 +1,629 @@
+#+TITLE: DamageBDD Node Admin Guide
+#+AUTHOR: DamageBDD Engineering
+#+OPTIONS: toc:t num:t
+#+STARTUP: overview
+
+* Overview
+DamageBDD nodes participate in the Verification Economy by executing BDD features,
+publishing results, and confirming on-chain spends. Node Administrators are responsible for:
+
+- Setting up custodial or non-custodial admin wallets
+- Managing user wallet processes
+- Configuring secure process execution via =erlexec=
+- Configuring Lightning (CLN), Bitcoin Core, and LNURL integration
+- Configuring Nostr integration for BDD posts and zaps
+
+This document explains all required steps.
+
+* Wallet Administration
+
+DamageBDD relies on Aeternity accounts to:
+- Pay for contract calls
+- Confirm feature execution spend
+- Transfer DAMAGE tokens
+- Manage user wallets (custodial mode)
+
+Wallet management logic lives in:
+- =damage.erl=
+- =damage_ae.erl=
+
+** Wallet Types
+DamageBDD supports two admin wallet modes:
+
+*** Custodial Mode
+Private key is stored (encrypted) on the node.  
+Allows:
+- Automated contract calls
+- Paying-for transactions
+- Token transfers
+- Automatic spend confirmation
+
+*** Non-Custodial Mode
+Only the public key is configured.  
+The admin signs transactions externally.
+
+Use for:
+- Regulated environments
+- Multi-party or segregated-authority setups
+
+** Setting the Admin Wallet in =sys.config=
+
+Add one or more admin accounts:
+
+#+BEGIN_SRC erlang
+{damage, [
+    {node_admins, [
+        <<"ak_YourAdminPubKeyHere">>
+    ]}
+]}.
+#+END_SRC
+
+Multiple admins:
+
+#+BEGIN_SRC erlang
+{node_admins, [
+    <<"ak_admin1">>,
+    <<"ak_admin2">>
+]}.
+#+END_SRC
+
+** Providing Admin Keys via Encrypted Store
+
+When the node starts, it will prompt for missing secrets:
+
+- Nostr NSEC  
+- Bitcoin RPC password  
+- LND/CLN rune(s)  
+- Other integration credentials
+
+Keys are encrypted using DamageBDD’s =secrets= subsystem.
+
+Triggered by:
+
+#+BEGIN_SRC erlang
+damage:check_setup().
+#+END_SRC
+
+** Custodial Admin Setup
+
+Store private key:
+
+#+BEGIN_SRC erlang
+damage_ae:set_private_key(<<"ak_...">>, PrivateKeyBin).
+#+END_SRC
+
+Check custodial state:
+
+#+BEGIN_SRC erlang
+damage_ae:is_custodial(<<"ak_...">>).
+#+END_SRC
+
+Returns:
+- =true= → Node signs operations  
+- =false= → Non-custodial
+
+** User Wallet Processes
+
+Each user or admin AE account gets a dedicated wallet handler process:
+
+#+BEGIN_SRC erlang
+Pid = damage_ae:get_wallet_proc(AeAccount).
+#+END_SRC
+
+Restart wallet process:
+
+#+BEGIN_SRC erlang
+damage_ae:restart_wallet_proc(AeAccount).
+#+END_SRC
+
+These processes:
+- Track spent balance
+- Handle contract calls
+- Cache AE & DAMAGE token balances
+- Manage signing if custodial
+
+** How Spend Confirmation Works
+
+After a feature run, the node invokes:
+
+#+BEGIN_SRC erlang
+damage_ae:confirm_spend(Config, Context).
+#+END_SRC
+
+The admin wallet:
+
+1. Executes the =spend= contract function  
+2. Commits the report hash & feature hash  
+3. Pays for the final transaction  
+
+This only works in *custodial* mode.
+
+* Lightning & Bitcoin Integration
+
+DamageBDD integrates with:
+
+- Core Lightning (CLN) for invoices, hold invoices, and channel management
+- LNURL / Lightning Address via HTTP endpoints
+- Bitcoin Core for on-chain balance and payouts
+
+** Core Lightning (CLN) Configuration
+
+The =cln= module talks to a Core Lightning REST or plugin endpoint over TLS and WebSockets.:contentReference[oaicite:0]{index=0}
+
+Configuration is read from the =damage= application environment:
+
+- =cln_host= :: CLN host (e.g. ="localhost"= or a remote hostname)
+- =cln_port= :: CLN HTTP/WebSocket port (e.g. =3010=)
+- =cln_wspath= :: WebSocket path (e.g. ="/socket.io/"= or plugin path)
+- =cln_cacertfile= :: Path to CA cert file for TLS
+- =cln_certfile= :: Client certificate file
+- =cln_keyfile= :: Client key file
+
+Secrets (stored via =secrets=):
+
+- =cln_rune= :: Main CLN rune with sufficient permission for:
+  - =getinfo=
+  - =listinvoices= / =listpeerchannels=
+  - =fundchannel=
+  - =listfunds=
+  - =holdinvoice= / =holdinvoicecancel= (if used)
+- =cln_readonly_rune= :: Read-only rune for WebSocket subscriptions (invoice events)
+
+*** Example CLN sys.config
+
+#+BEGIN_SRC erlang
+{damage, [
+    %% CLN HTTP + WebSocket config
+    {cln_host, "localhost"},
+    {cln_port, 3010},
+    {cln_wspath, "/"},
+    {cln_cacertfile, "/etc/ssl/certs/ca-certificates.crt"},
+    {cln_certfile, "/etc/damagebdd/cln/client.crt"},
+    {cln_keyfile, "/etc/damagebdd/cln/client.key"}
+]}.
+#+END_SRC
+
+Then store runes via the =secrets= CLI or during =damage:check_setup()/0= prompts:
+
+- =cln_rune=
+- =cln_readonly_rune=
+
+*** CLN Capabilities Used
+
+The =cln= module provides:​:contentReference[oaicite:1]{index=1}
+
+- Node info: =cln:getinfo/0=
+- Balance: =cln:get_node_balance/0=
+- Channel listing + scoring:
+  - =cln:list_channels/0=
+  - =cln:list_all_channels/0=
+  - =cln:find_best_peer_to_open/[0,1]=
+  - =cln:open_channels_with_best_peers/0=
+- Invoices:
+  - =cln:create_invoice/2,3,4=
+  - =cln:hold_invoice/4=
+  - =cln:hold_invoice_cancel/1=
+  - =cln:list_invoices/0= and filtered list functions
+
+These are used by:
+
+- LNURL / LN Address endpoints
+- Nostr zap handling
+- Automated channel management / liquidity strategies
+
+** LNURL / Lightning Address Configuration
+
+The LNURL and Lightning Address endpoints are served by the =lnaddress= module.:contentReference[oaicite:2]{index=2}
+
+*** HTTP Endpoints
+
+- =/.well-known/lnurlp/:user= :: LNURL-Pay / Lightning Address resolution
+- =/.well-known/nostr.json= :: NIP-05 discovery
+- =/pay/:user/= (POST) :: Server-side pay endpoint (JSON)
+- =/zap/= (POST) :: NIP-57 zap request handling
+
+These routes are declared via =trails= in =lnaddress.erl=.
+
+*** Application Environment
+
+- =lnpay_host= :: Base URL used to build LNURL callback targets (your public-facing API host)
+
+Example:
+
+#+BEGIN_SRC erlang
+{damage, [
+    {lnpay_host, "https://damagebdd.com"}
+]}.
+#+END_SRC
+
+This is used by:
+
+#+BEGIN_SRC erlang
+default_pay_user(User) ->
+    {ok, ApiUrl} = application:get_env(damage, lnpay_host),
+    #{
+        tag => <<"payRequest">>,
+        nostrPubkey => lookup_user_npub(User),
+        allowsNostr => true,
+        callback =>
+            damage_utils:binarystr_join(
+                [list_to_binary(ApiUrl), <<"/pay/">>, User]
+            )
+    }.
+#+END_SRC
+
+*** User Mapping and Nostr Pubkeys
+
+=lookup_user_npub/1= maps LN addresses / user handles (e.g. =asyncmind=, =damagebdd=) to Nostr npubs for zaps:​:contentReference[oaicite:3]{index=3}
+
+#+BEGIN_SRC erlang
+lookup_user_npub(<<"asyncmind">>) ->
+    <<"npub1...">>;
+lookup_user_npub(<<"damagebdd">>) ->
+    <<"npub1...">>;
+...
+#+END_SRC
+
+Edit this function to add more LN users and link them to npubs.
+
+*** NIP-57 Zaps via CLN
+
+When a zap is requested, =lnaddress= decodes the zap request and uses =cln:create_invoice/4= to generate a BOLT11:
+
+- Zap request JSON → parsed
+- Tags: =["e", ...]=, =["p", ...]= extracted
+- Amount converted from msats
+- Label encoded as =<<"zap:EventId:PubKey">>=
+- CLN returns BOLT11 invoice that is sent back to the wallet
+
+** Bitcoin Core Integration
+
+The =bitcoin= module integrates with Bitcoin Core over JSON-RPC.:contentReference[oaicite:5]{index=5}
+
+*** Application Environment
+
+- =bitcoin_wallet= :: Wallet name inside Bitcoin Core (e.g. ="damagebdd"=)
+- =bitcoin_rpc_host= :: RPC host (default ="localhost"=)
+- =bitcoin_rpc_port= :: RPC port (e.g. =8332=)
+- =bitcoin_rpc_user= :: RPC username
+
+Example:
+
+#+BEGIN_SRC erlang
+{damage, [
+    {bitcoin_wallet, "damagebdd"},
+    {bitcoin_rpc_host, "127.0.0.1"},
+    {bitcoin_rpc_port, 8332},
+    {bitcoin_rpc_user, "damagebddrpc"}
+]}.
+#+END_SRC
+
+Secrets (via =secrets=):
+
+- =bitcoin_rpc_password= :: RPC password used for HTTP Basic auth to Bitcoin Core
+
+*** Capabilities
+
+The module exposes:​:contentReference[oaicite:6]{index=6}
+
+- Address validation: =bitcoin:validateaddress/1=
+- Balances: =bitcoin:getbalance/0=
+- Address payments: =bitcoin:getreceivedbyaddress/1=
+- Address creation: =bitcoin:getnewaddress/1=
+- Sending funds: =bitcoin:sendtoaddress/3=
+- Wallet lifecycle: =createwallet/1=, =loadwallet/1=, =unloadwallet/1=, =listwallets/0=
+
+This can be used to:
+
+- Pay contractors on-chain
+- Fund LN channels
+- Bridge BTC into Lightning or AE-based systems
+
+* Nostr Integration
+
+DamageBDD integrates with Nostr in two ways:
+
+1. Posting BDDs and notes to relays
+2. Handling zaps and zap receipts for invoices
+
+All Nostr logic is in =damage_nostr.erl=.:contentReference[oaicite:7]{index=7}
+
+** Nostr Application Environment
+
+Required =damage= / =bop= application env keys:
+
+- =nostr_relay= :: Relay hostname (no scheme, TLS implied)
+  - Example: ="nos.lol"= or ="relay.damus.io"=
+- =nostr_npub= (damage) :: DamageBDD npub (used for NIP-05 / nostr.json)
+- =nostr_npub= (bop) :: Coordinator npub in =bop= app env (for =coordinator=)
+
+Example:
+
+#+BEGIN_SRC erlang
+{damage, [
+    {nostr_relay, "nos.lol"},
+    {nostr_npub, "npub1...damage..."},
+    ...
+]},
+{bop, [
+    {nostr_npub, "npub1...coordinator..."}
+]}.
+#+END_SRC
+
+Secrets (via =secrets=):
+
+- =damage_nostr_nsec= :: DamageBDD Nostr NSEC
+- Other per-identity NSECs as required
+
+** Nostr Process and Key Handling
+
+=damage_nostr= is a =gen_server= that:
+
+- Connects to the relay using =gun= over TLS
+- Decodes the NSEC via bech32
+- Derives a Schnorr public key
+- Registers itself via =gproc= using the NSEC key:​:contentReference[oaicite:8]{index=8}
+
+#+BEGIN_SRC erlang
+start_link(NsecKey) -> gen_server:start_link(?MODULE, [NsecKey], []).
+...
+gproc:reg_other({n, l, ?NOSTR_PROC(NsecKey)}, self()).
+#+END_SRC
+
+Runner APIs:
+
+- =damage_nostr:post_note/2,4=
+- =damage_nostr:post_bdd/1,2=
+- =damage_nostr:get_recent_posts/2=
+- =damage_nostr:get_metadata/2=
+- =damage_nostr:subscribe/1=
+
+** NIP-05 and nostr.json
+
+=lnaddress= serves =/.well-known/nostr.json= and uses =damage_nostr:get_nostr_json/0= to generate the mapping:
+
+#+BEGIN_SRC erlang
+get_nostr_json() ->
+    {ok, BopNpub} = application:get_env(bop, nostr_npub),
+    {ok, DamageNpub} = application:get_env(damage, nostr_npub),
+    #{
+        names => #{
+            asyncmind => list_to_binary(decode_npub(DamageNpub)),
+            damage => list_to_binary(decode_npub(DamageNpub)),
+            coordinator => list_to_binary(decode_npub(BopNpub))
+        }
+    }.
+#+END_SRC
+
+** Nostr + CLN: Zap Receipts (NIP-57 / 9735)
+
+=damage_nostr= listens to CLN invoice-paid events:
+
+#+BEGIN_SRC erlang
+handle_info({cln_event, invoice_paid, Invoice}, State) ->
+    try
+        zap_receipt_for_invoice(Invoice, State)
+    catch
+        _:Reason ->
+            ?LOG_WARNING("Failed to send zap receipt: ~p", [Reason])
+    end,
+    {noreply, State};
+#+END_SRC
+
+=zap_receipt_for_invoice/2=:
+
+- Extracts =bolt11=, =description= (zap request JSON), =paid_at=, =payment_preimage=
+- Parses zap request via =parse_zap_request/1=
+- Builds a NIP-57 zap receipt (kind =9735=) with tags:
+  - =["p", <recipient-pubkey>]=
+  - =["e", <original-event-id>]= (optional)
+  - =["a", ...]= (optional)
+  - =["P", <sender-pubkey>]=
+  - =["bolt11", ...]=
+  - =["description", <zap-request-json>]=
+  - =["preimage", ...]= (optional)
+- Signs and publishes to the relay (and any relays listed in tags)
+
+** Nostr-Triggered BDD Execution
+
+The module also scans incoming Nostr events for BDD-like content referencing =damagebdd= and can trigger feature execution:​:contentReference[oaicite:11]{index=11}
+
+- Extracts =Feature ...= text via regex
+- Resolves npub → AE account
+- Checks AE balance via =damage_ae:balance/1=
+- Runs =damage:execute_data/3=
+- Replies with success / failure status as a Nostr reply event
+
+* erlexec Privilege Configuration
+
+DamageBDD uses the Erlang =erlexec= application to safely execute OS-level commands
+required by various BDD steps.
+
+These settings live inside =sys.config= under the =erlexec= application.
+
+** Example =sys.config= Section
+
+#+BEGIN_SRC erlang
+{erlexec, [
+    verbose,
+    {debug, 0},
+    {root, false},
+    {user, "damagebdd"},
+    {limit_users, ["damagebdd", "nobody"]},
+    {env, [
+        {"PATH", "/usr/local/bin:/usr/bin:/bin"},
+        {"LD_LIBRARY_PATH", "/usr/local/lib"},
+        {"UNSAFE_FLAG", false}
+    ]},
+    {args, ["--no-color"]},
+    {alarm, 10},
+    {portexe, "/usr/local/lib/erlexec_port"}
+]}.
+#+END_SRC
+
+** Option Details
+
+*** =debug= / ={debug, Level}=
+Enables debug traces for port processes.
+
+- =debug= → =Level=1
+- Use higher levels for verbose output
+
+*** =verbose=
+Logs port execution events. Useful in CI or when debugging steps.
+
+*** =root= or ={root, Boolean}=
+Allows running spawned OS processes as root.
+
+⚠️ *Do not enable unless in a fully isolated environment.*
+
+*** ={user, User}=
+When =erlexec= is compiled with Linux capabilities and SUID root:
+
+- Drops privileges to =User=
+- Prevents executing root-level commands
+
+Recommended setting:
+
+#+BEGIN_SRC erlang
+{user, "damagebdd"}.
+#+END_SRC
+
+*** ={limit_users, [Users]}=
+Restricts execution so only listed OS users may run commands.
+
+#+BEGIN_SRC erlang
+{limit_users, ["damagebdd", "tester"]}.
+#+END_SRC
+
+*** ={args, Args}=
+Appends args to the port executable.
+
+Example:
+
+#+BEGIN_SRC erlang
+{args, ["--safe-mode", "--timeout=30"]}.
+#+END_SRC
+
+*** ={env, Env}=
+Environment variable overrides.
+
+#+BEGIN_SRC erlang
+{env, [
+    {"PATH", "/opt/bdd/bin:/usr/bin"},
+    {"DEBUG", "true"},
+    {"LD_PRELOAD", false}
+]}.
+#+END_SRC
+
+*** ={alarm, Seconds}=
+Timeout for child process cleanup after shutdown.
+
+*** ={portexe, Path}=
+Specifies custom erlexec port binary location.
+
+Useful when:
+- Ports live on NFS
+- SUID root bit needs local execution
+
+*** =valgrind=
+Runs port via valgrind. Only for debugging.
+
+#+BEGIN_SRC erlang
+{valgrind, true}.
+#+END_SRC
+
+* Hardening Guidelines
+
+** Run Under a Dedicated System User
+
+#+BEGIN_SRC bash
+useradd -r -s /usr/sbin/nologin damagebdd
+#+END_SRC
+
+Then in =sys.config=:
+
+#+BEGIN_SRC erlang
+{user, "damagebdd"},
+{limit_users, ["damagebdd"]},
+{root, false}.
+#+END_SRC
+
+** Avoid Root Execution
+Never set:
+
+#+BEGIN_SRC erlang
+{root, true}.
+#+END_SRC
+
+Unless absolutely necessary.
+
+** Avoid valgrind in Production
+It will significantly slow down execution.
+
+** Protect Secrets
+All of the following must be stored via the =secrets= subsystem and never hard-coded:
+
+- Admin AE private keys
+- =cln_rune= and =cln_readonly_rune=
+- =bitcoin_rpc_password=
+- Nostr NSECs such as =damage_nostr_nsec=
+- Any API tokens for external systems
+
+** Validate Admin Wallet Permissions
+Ensure the admin wallet has:
+
+- Correct private key (custodial)
+- Correct public key (non-custodial)
+- Rights to interact with Damage Token contract
+
+* Full Example Combined Configuration
+
+#+BEGIN_SRC erlang
+[
+ {damage, [
+    %% AE / Damage
+    {node_admins, [<<"ak_admin_pubkey_here">>]},
+    {feature_dirs, ["./features/"]},
+    {feature_include, "*.feature"},
+
+    %% CLN
+    {cln_host, "localhost"},
+    {cln_port, 3010},
+    {cln_wspath, "/"},
+    {cln_cacertfile, "/etc/ssl/certs/ca-certificates.crt"},
+    {cln_certfile, "/etc/damagebdd/cln/client.crt"},
+    {cln_keyfile, "/etc/damagebdd/cln/client.key"},
+
+    %% LNURL / LN Address
+    {lnpay_host, "https://damagebdd.com"},
+
+    %% Bitcoin Core
+    {bitcoin_wallet, "damagebdd"},
+    {bitcoin_rpc_host, "127.0.0.1"},
+    {bitcoin_rpc_port, 8332},
+    {bitcoin_rpc_user, "damagebddrpc"},
+
+    %% Nostr
+    {nostr_relay, "nos.lol"},
+    {nostr_npub, "npub1yourdamagebddnpubhere"}
+ ]},
+
+ {bop, [
+    {nostr_npub, "npub1yourcoordinatornpubhere"}
+ ]},
+
+ {erlexec, [
+    verbose,
+    {debug, 0},
+    {user, "damagebdd"},
+    {limit_users, ["damagebdd"]},
+    {env, [
+        {"PATH", "/usr/local/bin:/usr/bin:/bin"},
+        {"LD_LIBRARY_PATH", "/usr/local/lib"},
+        {"UNSAFE_FLAG", false}
+    ]},
+    {alarm, 8}
+ ]}
+].
+#+END_SRC

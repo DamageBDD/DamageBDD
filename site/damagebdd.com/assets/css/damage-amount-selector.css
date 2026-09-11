@@ -1,0 +1,125 @@
+/* Extra styling for Damage Lightning UI amount selector */
+
+/* Wrapper for the entire amount selector */
+#amount-selector {
+  max-width: 320px;
+  margin: 2em auto;
+  background: var(--pre-bg);
+  padding: 1.5em;
+  border-radius: 1em;
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Label for input */
+#amount-selector label {
+  display: block;
+  margin-bottom: 0.8em;
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+/* Flex layout for minus, input, plus */
+.amount-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+/* Input itself */
+#damage-amount {
+  flex: 1;
+  font-size: 1.2em;
+  padding: 0.6em;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid #555;
+  border-radius: 0.6em;
+  text-align: center;
+}
+
+/* Buttons around the input */
+.amount-controls button {
+  font-size: 1.5em;
+  padding: 0.5em;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 0.5em;
+  cursor: pointer;
+}
+
+.amount-controls button:hover {
+  background: #555;
+}
+
+/* Preset amount buttons */
+.preset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  justify-content: center;
+  margin-top: 1.2em;
+}
+
+.preset-buttons button {
+  font-size: 1em;
+  padding: 0.5em 1em;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 0.5em;
+  cursor: pointer;
+}
+
+.preset-buttons button:hover {
+  background: #555;
+}
+
+/* Generate Invoice Button */
+.generate-invoice {
+  margin-top: 2em;
+  text-align: center;
+}
+
+.generate-invoice button {
+  font-size: 1.2em;
+  padding: 0.8em 1.5em;
+  background: var(--link);
+  color: white;
+  border: none;
+  border-radius: 0.6em;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: background-color 0.3s;
+}
+
+.generate-invoice button:hover {
+  background: #3377ee; /* Slightly lighter hover color */
+}
+/* Wallet connection area */
+.centered-controls {
+  text-align: center;
+  margin-bottom: 2em;
+}
+
+/* Wallet and Buy buttons */
+#connect-wallet, #generate-invoice {
+  font-size: 1.2em;
+  padding: 0.8em 1.5em;
+  background: var(--link);
+  color: white;
+  border: none;
+  border-radius: 0.6em;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: background-color 0.3s;
+}
+
+#connect-wallet:hover, #generate-invoice:hover:not(:disabled) {
+  background: #3377ee;
+}
+
+#generate-invoice:disabled {
+  background: #888;
+  cursor: not-allowed;
+}

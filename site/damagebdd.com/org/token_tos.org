@@ -1,0 +1,125 @@
+#+TITLE: Terms and Conditions for Damage Token Sales
+#+DESCRIPTION: Terms of Use for DAMAGE token outlining utility scope, non-custodial design, liability limits, regulatory position and Australian governing law.
+#+KEYWORDS: DAMAGE token terms, utility token agreement, AEX9 token terms of use, non-custodial crypto policy, token liability disclaimer, Australian crypto law, software utility token, DamageBDD governance terms
+
+
+#+INCLUDE: "header.org"
+#+TITLE: DAMAGE Token – Terms of Use
+#+OPTIONS: toc:nil
+#+TOC: headlines 2
+#+OPTIONS: toc:nil num:nil
+#+LANGUAGE: en
+
+* 1. Introduction
+
+These Terms of Use ("Terms") govern access to and use of the DAMAGE token ("DAMAGE") and related software functionality made available by Steven Joseph ("the Operator").
+
+The Operator is an individual sole trader and not a corporation, partnership, or financial institution.
+
+By acquiring, holding, or using DAMAGE, you acknowledge that you have read, understood, and agreed to these Terms.
+
+* 2. Nature of DAMAGE
+
+DAMAGE is a cryptographic utility token designed for use within the DamageBDD software ecosystem.
+
+DAMAGE is used exclusively for:
+- Metering execution of software-defined behaviour
+- Coordinating verification activity
+- Recording and settling deterministic outcomes
+- Accessing or unlocking software functionality
+
+DAMAGE does not represent:
+- Money or legal tender
+- Stored value
+- A security, derivative, or investment product
+- Equity, debt, or ownership interest
+- A claim on future revenue or profits
+- A right of redemption or buyback
+
+No representation is made that DAMAGE has or will have monetary value outside its intended software utility.
+
+* 3. No Financial or Regulated Services
+
+The Operator does not provide financial services.
+
+Specifically, the Operator does not:
+- Operate a digital currency exchange
+- Provide custodial wallet services
+- Hold or manage assets on behalf of users
+- Facilitate fiat currency transactions
+- Offer remittance or money transmission services
+- Provide investment advice or returns
+
+Any acquisition or disposal of DAMAGE occurs independently of the Operator and is outside the scope of these Terms.
+
+* 4. User Custody and Responsibility
+
+Users retain sole and exclusive control of their cryptographic keys and digital assets at all times.
+
+The Operator:
+- Does not access user private keys
+- Cannot recover lost keys
+- Cannot reverse transactions
+- Does not guarantee availability or continuity of access
+
+Loss of DAMAGE due to user error, key loss, software incompatibility, or third-party actions is the sole responsibility of the user.
+
+* 5. Software-Only Scope
+
+DAMAGE exists solely as a mechanism within software systems.
+
+Access to software features may:
+- Change over time
+- Be gated by protocol rules
+- Be limited or discontinued
+
+The Operator makes no guarantee that any specific feature, interface, or integration will remain available.
+
+* 6. Regulatory Position
+
+Based on the current functionality and scope of DAMAGE, the Operator is not required to register as a digital currency exchange or remittance provider under Australian law.
+
+This assessment is based on:
+- Non-custodial design
+- Absence of fiat services
+- Software-only utility scope
+
+If the functionality of the software materially changes, this position may be reviewed.
+
+* 7. No Warranties
+
+DAMAGE and all related software are provided "as is" and "as available".
+
+To the maximum extent permitted by law, the Operator disclaims all warranties, express or implied, including but not limited to fitness for purpose, merchantability, or non-infringement.
+
+* 8. Limitation of Liability
+
+To the maximum extent permitted by law, the Operator shall not be liable for any indirect, incidental, consequential, or economic loss arising from use of DAMAGE or associated software.
+
+Aggregate liability, if any, shall be limited to the amount paid directly to the Operator for software access in the preceding 12 months.
+
+* 9. No Partnership or Agency
+
+Nothing in these Terms creates any partnership, agency, joint venture, or employment relationship between the user and the Operator.
+
+Users act independently and at their own risk.
+
+* 10. Amendments
+
+These Terms may be updated from time to time.
+
+Continued use of DAMAGE after publication of updated Terms constitutes acceptance of those changes.
+
+* 11. Governing Law
+
+These Terms are governed by the laws of Australia.
+
+Any disputes shall be resolved exclusively in the courts of the relevant Australian jurisdiction.
+
+* 12. Contact
+
+For matters relating to these Terms, contact:
+
+Steven Joseph<steven@damagebdd.com>
+Founder, DamageBDD
+

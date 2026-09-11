@@ -1,0 +1,147 @@
+#+TITLE: Paid Task (Sats): Run DamageBDD macOS Builds + Report Errors
+#+AUTHOR: Steven Joseph / DamageBDD
+#+OPTIONS: toc:nil
+
+* Overview
+DamageBDD is a multi-app Erlang/OTP monorepo (apps/*) built with rebar3 + relx.
+We need a clean macOS build sanity-check and structured error report.
+
+Your job: run the mac build locally, capture logs, reproduce failures, and report clearly so we can patch fast.
+
+* Repository Details
+** Project
+- Name: DamageBDD
+- Language: Erlang/OTP (monorepo with apps/*)
+- Build Tool: rebar3
+- Release Tool: relx (include_erts = true)
+
+** Repository
+- GitHub: https://github.com/DamageBDD/damagebdd
+- Default branch: main
+- Uses git submodules: no (standard deps via rebar)
+
+** Architecture Notes
+- Multiple OTP apps: damage, erm, ecai, nosternity, vanillae, bop
+- Includes Cowboy (HTTP), IPFS client, cryptographic deps, telemetry
+- Linux-only NIF builds currently exist (ecai)
+- GTK-related C build hook may be Linux-specific
+
+We need to verify:
+1) Can macOS build a production release?
+2) Do OS-specific hooks break the build?
+3) Does the release binary run?
+
+* Target Environments
+- macOS Sonoma / Ventura
+- Apple Silicon (arm64) preferred
+- Intel (x86_64) also valuable
+- Bonus if both tested
+
+* Prerequisites (baseline)
+- Xcode Command Line Tools
+- Homebrew
+- Erlang/OTP 26+ (brew install erlang)
+- rebar3 (brew install rebar3)
+- git
+- make
+
+Optional:
+- gmp
+- openssl
+- libsodium (if needed by crypto deps)
+
+* Required Build Steps
+#+BEGIN_SRC bash
+git clone https://github.com/DamageBDD/damagebdd.git
+cd damagebdd
+
+rebar3 clean
+rebar3 compile
+rebar3 as prod release
+#+END_SRC
+
+If release succeeds:
+
+#+BEGIN_SRC bash
+cd _build/prod/rel/damage
+bin/damage foreground
+#+END_SRC
+
+Or:
+
+#+BEGIN_SRC bash
+bin/damage console
+#+END_SRC
+
+* Deliverables
+1) Environment Report
+   - macOS version
+   - CPU arch (arm64 or x86_64)
+   - Erlang/OTP version
+   - rebar3 version
+   - brew list (top-level summary)
+2) Full Build Logs
+   - compile output
+   - release output
+   - first failing error (if any)
+3) Repro Notes
+   - exact commands run
+   - environment variables used
+4) Diagnosis
+   - likely cause of failure
+   - suggestion for fix (even approximate)
+
+If build succeeds:
+- confirm release path
+- confirm binary executes
+- confirm any runtime warnings
+
+* Known Likely Failure Points
+- Linux-specific make hook: apps/erm/c_src gtknode4
+- Linux-only NIF port_specs (ecai)
+- Hardcoded include paths in NIF build
+- System library linkage differences (mac vs linux)
+
+Your report should specifically call out which of these break (if any).
+
+* Payment (in sats)
+Assumed BTC price: USD 68,000
+1 USD ≈ 1,470 sats
+
+** Tier A – Single architecture build + structured report
+- 250,000 – 400,000 sats
+- (~USD 170 – 272)
+
+** Tier B – Single arch + deeper root cause analysis
+- 450,000 – 650,000 sats
+- (~USD 306 – 442)
+
+** Tier C – Both arm64 + x86_64 tested + consolidated report
+- 700,000 – 1,200,000 sats
+- (~USD 476 – 816)
+
+** Suggested default offer
+- 500,000 sats (~USD 340) for a solid single-arch build + actionable report.
+
+Bonus: additional sats for PRs or working mac profile patch.
+
+* Acceptance Criteria
+- Reproducible environment description
+- Complete logs
+- Clear first failure (or success confirmation)
+- Actionable diagnosis
+
+* Payment Method
+- Lightning invoice preferred
+- On-chain possible if needed
+- Payment released on report delivery
+
+* How to Apply
+Reply with:
+- macOS version
+- CPU architecture
+- Whether you can test both architectures
+- Desired payout tier
+- Relevant Erlang / OTP / NIF experience
+
+You will receive confirmation and any additional internal build notes if needed.

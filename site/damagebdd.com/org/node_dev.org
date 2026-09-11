@@ -1,0 +1,1 @@
+template files and static files in the packaged release .. edit the files in `/opt/damage/lib/damage-<version>/priv/` and the changes will be reflected on save

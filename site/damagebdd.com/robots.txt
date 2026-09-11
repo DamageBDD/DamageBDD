@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /*.html$
+Disallow: /*/data/*
+Disallow: *.dl.html
+Sitemap: https://damagebdd.com/sitemap.html

@@ -1,0 +1,634 @@
+#+TITLE: DamageBDD Manual: Using curl and pyl402 for ECAI Steps and Other Step Features
+#+AUTHOR: OpenAI
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+This manual shows how to call DamageBDD over HTTP with:
+
+- =curl= for direct execution and debugging
+- =pyl402= for automated L402 payment handling in Python
+
+It focuses on two practical paths:
+
+1. executing feature text directly
+2. executing an IPFS-hosted feature that uses ECAI and other step modules
+
+It also includes examples for:
+
+- authenticating with an access token
+- handling L402 payment challenges
+- sending raw Gherkin feature files
+- sending JSON requests for IPFS-hosted features
+- using ECAI feature steps
+- using general HTTP steps inside a feature
+
+* What the server exposes
+
+The current HTTP surface relevant to this workflow is:
+
+- =PUT /execute_feature/= to execute a posted feature
+- =PUT /execute_feature_from_ipfs/= to execute a feature fetched from an IPFS CID
+- =POST /accounts/auth/= to obtain an access token
+- =POST /api/nwc/mint= to mint a Nostr Wallet Connect connection
+- =POST /api/nwc/revoke= to revoke an NWC connection
+- =POST /api/nwc/ledger/balance= to query NWC ledger balance
+- =POST /api/nwc/ledger/credit= to credit the NWC ledger
+
+The execution endpoints are protected. Depending on how you call them, the server can accept:
+
+- an OAuth-style bearer token
+- an L402 authorization header
+- a Nostr auth token in some flows
+
+For the execution endpoints, if the request is not already authorized, the server may answer with an L402 challenge instead of a normal 401. That makes =curl= good for inspection and =pyl402= good for automation.
+
+* Quick mental model
+
+** Path A: direct feature execution
+
+You send the full Gherkin feature text to =/execute_feature/=.
+
+This is the best option when you are:
+
+- iterating quickly
+- debugging a new scenario
+- testing plain HTTP steps
+- testing ECAI steps without first pinning the feature to IPFS
+
+** Path B: execute from IPFS
+
+You send JSON to =/execute_feature_from_ipfs/= with:
+
+- =feature_cid= for the feature file on IPFS
+- =vars= for execution-time variables
+
+This is the best option when you are:
+
+- running stable published features
+- wiring ECAI publication flows
+- separating feature distribution from execution
+
+* Authentication options
+
+** Option 1: bearer token from /accounts/auth/
+
+If you have a username and password, obtain an access token first.
+
+#+begin_src bash
+export DAMAGE_BASE="https://run.example.damagebdd.com"
+
+curl -sS \
+  -X POST "$DAMAGE_BASE/accounts/auth/" \
+  -H 'content-type: application/json' \
+  -d '{
+    "username": "you@example.com",
+    "password": "your-password"
+  }'
+#+end_src
+
+A successful response should contain an =access_token= and =address=.
+
+Store it:
+
+#+begin_src bash
+export DAMAGE_TOKEN="paste-access-token-here"
+#+end_src
+
+Then use it on later requests:
+
+#+begin_src bash
+-H "Authorization: Bearer $DAMAGE_TOKEN"
+#+end_src
+
+** Option 2: L402 payment flow
+
+If you do not send a valid bearer token, the execution endpoint may return an L402 challenge. In that case:
+
+- =curl= lets you inspect the challenge and pay manually
+- =pyl402= can automate the pay-and-retry loop
+
+* Using curl against /execute_feature/
+
+** Smallest possible feature
+
+Create a local feature file:
+
+#+begin_src gherkin
+Feature: version check
+
+  Scenario: fetch version endpoint
+    Given I am using server "https://run.example.damagebdd.com"
+    When I make a GET request to "/version/"
+    Then the response status must be "200"
+    Then I print the response
+#+end_src
+
+Save it as =version.feature=.
+
+Then execute it:
+
+#+begin_src bash
+curl -sS \
+  -X PUT "$DAMAGE_BASE/execute_feature/" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: text/plain' \
+  --data-binary @version.feature
+#+end_src
+
+Notes:
+
+- use =--data-binary= so the feature text is sent exactly as written
+- =text/plain= is the safest choice for raw feature submission
+- the server also supports streaming in some cases, but JSON response mode is easiest to start with
+
+** A more complete HTTP-step feature
+
+#+begin_src gherkin
+Feature: http smoke checks
+
+  Scenario: call version and inspect result
+    Given I am using server "https://run.example.damagebdd.com"
+    And I set "accept" header to "application/json"
+    When I make a GET request to "/version/"
+    Then the response status must be "200"
+    Then I print the response
+#+end_src
+
+This uses the built-in HTTP steps:
+
+- =I am using server "..."=
+- =I set "..." header to "..."=
+- =I make a GET request to "..."=
+- =the response status must be "..."=
+- =I print the response=
+
+** Posting JSON to an application under test
+
+#+begin_src gherkin
+Feature: api post example
+
+  Scenario: submit JSON body
+    Given I am using server "https://api.example.com"
+    And I set "content-type" header to "application/json"
+    When I make a POST request to "/items"
+    """
+    {"name":"demo-item","enabled":true}
+    """
+    Then the response status must be one of "200,201"
+    Then I print the response
+#+end_src
+
+** Using variables inside a feature
+
+#+begin_src gherkin
+Feature: package receipt
+
+  Scenario: set variables before ECAI mint
+    Given I set the variable "MetaCid" to "bafybeiexamplemetacid"
+    And I set the variable "AssetHash" to "sha256:abcd1234"
+    When I mint an NFT with metadata IPFS hash in "MetaCid" and asset hash in "AssetHash"
+    Then I store the mint result in "MintResult"
+#+end_src
+
+* Using curl against /execute_feature_from_ipfs/
+
+The server accepts JSON for IPFS-hosted execution.
+
+Minimal request body:
+
+#+begin_src json
+{
+  "feature_cid": "bafybeiexamplefeaturecid",
+  "vars": {
+    "MetaCid": "bafybeiexamplemetacid",
+    "AssetHash": "sha256:abcd1234"
+  }
+}
+#+end_src
+
+Call it with =curl=:
+
+#+begin_src bash
+curl -sS \
+  -X PUT "$DAMAGE_BASE/execute_feature_from_ipfs/" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "feature_cid": "bafybeiexamplefeaturecid",
+    "vars": {
+      "MetaCid": "bafybeiexamplemetacid",
+      "AssetHash": "sha256:abcd1234"
+    }
+  }'
+#+end_src
+
+This is the right shape when the feature file itself is already on IPFS and you only want to supply runtime variables.
+
+* What ECAI steps are available right now
+
+The current =steps_ecai= module is intentionally small and focused.
+
+** Mint inventory Knowledge NFTs
+
+#+begin_src gherkin
+When I mint 3 Knowledge NFTs to the executor with this product metadata
+"""
+{
+  "batch_id": "drop-001",
+  "product": {
+    "sku": "tee-black-xl",
+    "name": "DamageBDD Tee",
+    "size": "XL"
+  }
+}
+"""
+#+end_src
+
+What it does:
+
+- parses the JSON docstring
+- adds =slot_no= per item
+- stores each slot metadata JSON to IPFS
+- mints Knowledge facts for each inventory slot
+- stores the receipts in =ecai_last_mint_result=
+
+You can capture that result with:
+
+#+begin_src gherkin
+Then I store the Knowledge NFT mint result in "MintReceipts"
+#+end_src
+
+** Mint a package publication receipt from existing variables
+
+#+begin_src gherkin
+When I mint an NFT with metadata IPFS hash in "MetaCid" and asset hash in "AssetHash"
+Then I store the mint result in "MintResult"
+#+end_src
+
+This links:
+
+- subject: =artifact:<asset_hash>=
+- predicate: =has metadata=
+- object: =<meta_hash>=
+- context: =packages=
+
+** Optional ECAI execution context
+
+The step module also checks for:
+
+- =ecai_keypair= in the execution context
+- =ecai_knowledge_ct= in the execution context
+
+So if you inject those values through your broader execution setup, the ECAI steps can use them. If not, the module falls back to the node keypair for minting.
+
+* Full example: direct feature with ECAI mint
+
+#+begin_src gherkin
+Feature: ecai package publication
+
+  Scenario: mint a package publication receipt
+    Given I set the variable "MetaCid" to "bafybeif4metaexample"
+    And I set the variable "AssetHash" to "sha256:build-artifact-001"
+    When I mint an NFT with metadata IPFS hash in "MetaCid" and asset hash in "AssetHash"
+    Then I store the mint result in "MintResult"
+#+end_src
+
+Run it directly:
+
+#+begin_src bash
+curl -sS \
+  -X PUT "$DAMAGE_BASE/execute_feature/" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: text/plain' \
+  --data-binary @ecai-package.feature
+#+end_src
+
+* Full example: direct feature that combines HTTP and ECAI style
+
+#+begin_src gherkin
+Feature: verify API and mint package receipt
+
+  Scenario: call API then mint receipt
+    Given I am using server "https://run.example.damagebdd.com"
+    When I make a GET request to "/version/"
+    Then the response status must be "200"
+    And I print the response
+    Given I set the variable "MetaCid" to "bafybeimeta123"
+    And I set the variable "AssetHash" to "sha256:artifact-xyz"
+    When I mint an NFT with metadata IPFS hash in "MetaCid" and asset hash in "AssetHash"
+    Then I store the mint result in "MintResult"
+#+end_src
+
+* Inspecting an L402 challenge with curl
+
+When no valid bearer token is present, an execution endpoint may reply with a =402 Payment Required= response.
+
+A useful first probe is:
+
+#+begin_src bash
+curl -i \
+  -X PUT "$DAMAGE_BASE/execute_feature/" \
+  -H 'content-type: text/plain' \
+  --data-binary @version.feature
+#+end_src
+
+What to look for:
+
+- HTTP status =402=
+- an =WWW-Authenticate= header for L402
+- possibly a JSON body describing the payment requirement
+
+In the current DamageBDD flow, the server can return a dynamic price for execution requests based on a dry run of the feature, not just a single static flat charge.
+
+That means the first request can act as both:
+
+- a payment challenge request
+- a cost preview request
+
+* Automating L402 with pyl402
+
+The public =pyl402= project is a Python client that automatically handles HTTP 402 Payment Required flows and can pay via a compatible wallet implementation.
+
+** Install
+
+#+begin_src bash
+python -m venv .venv
+source .venv/bin/activate
+pip install pyl402 requests
+#+end_src
+
+** Minimal example structure
+
+The public README shows a pattern like this:
+
+#+begin_src python
+from pyl402.wallet import AlbyWallet
+from pyl402.token_store import MemoryTokenStore
+from pyl402.client import L402Client
+
+wallet = AlbyWallet(token="your_alby_api_token_here")
+store = MemoryTokenStore()
+client = L402Client(wallet=wallet, store=store)
+response = client.get("https://some-l402-protected-endpoint")
+print(response.text)
+#+end_src
+
+For DamageBDD you adapt that pattern to =PUT= execution calls.
+
+** Example: send a raw feature with pyl402
+
+#+begin_src python
+from pathlib import Path
+from pyl402.wallet import AlbyWallet
+from pyl402.token_store import MemoryTokenStore
+from pyl402.client import L402Client
+
+BASE = "https://run.example.damagebdd.com"
+FEATURE = Path("version.feature").read_text()
+
+wallet = AlbyWallet(token="YOUR_ALBY_API_TOKEN")
+store = MemoryTokenStore()
+client = L402Client(wallet=wallet, store=store)
+
+resp = client.put(
+    f"{BASE}/execute_feature/",
+    content=FEATURE.encode("utf-8"),
+    headers={"content-type": "text/plain"},
+)
+
+print(resp.status_code)
+print(resp.text)
+#+end_src
+
+** Example: execute an IPFS feature with pyl402
+
+#+begin_src python
+from pyl402.wallet import AlbyWallet
+from pyl402.token_store import MemoryTokenStore
+from pyl402.client import L402Client
+
+BASE = "https://run.example.damagebdd.com"
+
+wallet = AlbyWallet(token="YOUR_ALBY_API_TOKEN")
+store = MemoryTokenStore()
+client = L402Client(wallet=wallet, store=store)
+
+payload = {
+    "feature_cid": "bafybeiexamplefeaturecid",
+    "vars": {
+        "MetaCid": "bafybeimeta123",
+        "AssetHash": "sha256:artifact-xyz"
+    }
+}
+
+resp = client.put(
+    f"{BASE}/execute_feature_from_ipfs/",
+    json=payload,
+    headers={"content-type": "application/json"},
+)
+
+print(resp.status_code)
+print(resp.text)
+#+end_src
+
+** Adding a bearer token and still keeping pyl402 available
+
+In some environments you may want to prefer your bearer token first and only rely on L402 for endpoints that challenge.
+
+#+begin_src python
+from pathlib import Path
+from pyl402.wallet import AlbyWallet
+from pyl402.token_store import MemoryTokenStore
+from pyl402.client import L402Client
+
+BASE = "https://run.example.damagebdd.com"
+TOKEN = "YOUR_DAMAGEBDD_ACCESS_TOKEN"
+FEATURE = Path("version.feature").read_text()
+
+wallet = AlbyWallet(token="YOUR_ALBY_API_TOKEN")
+store = MemoryTokenStore()
+client = L402Client(wallet=wallet, store=store)
+
+resp = client.put(
+    f"{BASE}/execute_feature/",
+    content=FEATURE.encode("utf-8"),
+    headers={
+        "content-type": "text/plain",
+        "authorization": f"Bearer {TOKEN}",
+    },
+)
+
+print(resp.status_code)
+print(resp.text)
+#+end_src
+
+* Choosing between curl and pyl402
+
+** Use curl when
+
+- you are building or debugging a feature
+- you want to inspect exact HTTP headers
+- you want to see the raw L402 challenge
+- you are testing with a normal bearer token
+
+** Use pyl402 when
+
+- you want programmatic retries
+- you want L402 handled automatically
+- you are wiring paid execution into CI, bots, or tools
+- you want to execute many protected requests without manually handling each challenge
+
+* NWC helper endpoints for payment-adjacent automation
+
+DamageBDD also exposes Nostr Wallet Connect helper endpoints under =/api/nwc/=.
+
+Example mint call:
+
+#+begin_src bash
+curl -sS \
+  -X POST "$DAMAGE_BASE/api/nwc/mint" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "max_single_sat": 10000,
+    "max_total_sat": 100000,
+    "expires_height": 0
+  }'
+#+end_src
+
+This can return an =nwc_uri= plus related metadata. That is useful when you want a wallet-style programmatic payment surface associated with a user.
+
+* Troubleshooting
+
+** 400 with JSON decode error
+
+Cause:
+
+- invalid JSON payload for =/execute_feature_from_ipfs/=
+- wrong =content-type= for JSON request body
+
+Fix:
+
+- send =application/json=
+- validate the JSON before calling
+
+** 400 parse error for feature execution
+
+Cause:
+
+- invalid Gherkin syntax
+- broken indentation or docstring formatting
+
+Fix:
+
+- validate the feature locally
+- make sure docstrings are closed with matching triple quotes
+- use =--data-binary= with =curl=
+
+** 402 Payment Required
+
+Cause:
+
+- no valid bearer token
+- execution requires payment through L402
+
+Fix:
+
+- inspect the challenge with =curl -i=
+- switch to =pyl402= for automatic payment handling
+- or obtain and send a valid bearer token
+
+** Step not found
+
+Cause:
+
+- the step text does not match an available step module exactly
+
+Fix:
+
+- reuse the exact step phrases from the modules
+- keep punctuation and wording stable
+
+** ECAI variables not found
+
+Cause:
+
+- you referenced variables like ="MetaCid"= or ="AssetHash"= before setting them
+
+Fix:
+
+- set them earlier with =I set the variable "..." to "..."=
+- or inject them via =vars= when using =/execute_feature_from_ipfs/=
+
+* Copy-paste examples
+
+** Authenticate and export a token
+
+#+begin_src bash
+export DAMAGE_BASE="https://run.example.damagebdd.com"
+
+export DAMAGE_TOKEN="$({
+  curl -sS \
+    -X POST "$DAMAGE_BASE/accounts/auth/" \
+    -H 'content-type: application/json' \
+    -d '{"username":"you@example.com","password":"secret"}'
+} | jq -r '.access_token')"
+
+printf 'token=%s\n' "$DAMAGE_TOKEN"
+#+end_src
+
+** Run a local feature directly
+
+#+begin_src bash
+curl -sS \
+  -X PUT "$DAMAGE_BASE/execute_feature/" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: text/plain' \
+  --data-binary @feature.feature | jq .
+#+end_src
+
+** Run an IPFS-hosted feature
+
+#+begin_src bash
+curl -sS \
+  -X PUT "$DAMAGE_BASE/execute_feature_from_ipfs/" \
+  -H "Authorization: Bearer $DAMAGE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "feature_cid": "bafybeiexamplefeaturecid",
+    "vars": {"MetaCid": "bafybeimeta123", "AssetHash": "sha256:artifact-xyz"}
+  }' | jq .
+#+end_src
+
+** Probe the L402 challenge
+
+#+begin_src bash
+curl -i \
+  -X PUT "$DAMAGE_BASE/execute_feature/" \
+  -H 'content-type: text/plain' \
+  --data-binary @feature.feature
+#+end_src
+
+* Final advice
+
+Start with =curl= until:
+
+- your feature text is stable
+- your step phrases are correct
+- your endpoint payloads are correct
+
+Then move to =pyl402= when you want:
+
+- automatic L402 handling
+- repeatable Python automation
+- bot and CI integration
+
+For ECAI specifically, the most useful starter pattern is:
+
+1. set runtime variables
+2. mint a package receipt or inventory batch
+3. store the mint result in a variable
+4. inspect the JSON response from the execution endpoint
+
+That gives you a clean first end-to-end path before you layer on larger publication and verification flows.

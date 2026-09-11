@@ -1,0 +1,52 @@
+#+Title: Damagebdd - Steps Manual
+#+DESCRIPTION: Complete reference of DamageBDD step definitions with arguments, examples and grouped documentation for building advanced Gherkin-based behavior tests.
+#+KEYWORDS: DamageBDD steps manual, BDD step definitions, Gherkin reference, behavior testing steps, automated test steps, API testing steps, Selenium steps, Appium steps, test automation documentation
+
+
+#+INCLUDE: "header.org"
+#+OPTIONS: toc:2      
+
+#+BEGIN_EXPORT html
+<h2 ><a id="available_steps">Available Step Definitions</a></h2>
+#+END_EXPORT
+
+On this page you can find all the currently implemented and documented step definitions and the arguments accepted by them.
+
+#+BEGIN_SRC python :exports results :results value html
+  import yaml
+  from yaml.loader import SafeLoader
+  def render_step(step_data):
+      results = []
+      for group, steps in step_data.items():
+          results.append(f"<h4>{group}</h4>")
+          for step, args in steps.items():
+              stepid = step.lower().replace(" ","_").replace("{", "_").replace("}","_")
+  
+              results.append(f"<a href=\"#{stepid}\">{step}</a>")
+
+      return "<br>".join(results)
+
+  return render_step(yaml.load(open("steps.yaml"), SafeLoader))
+#+END_SRC
+
+* Step Details
+
+#+BEGIN_SRC python :exports results :results value html
+  import yaml
+  from yaml.loader import SafeLoader
+  def render_step(step_data):
+      results = []
+      for group, steps in step_data.items():
+          results.append(f"<h4>{group}</h4>")
+
+          for step, args in steps.items():
+              stepid = step.lower().replace(" ","_").replace("{", "_").replace("}","_")
+              results.append(f"<h5 id=\"{stepid}\">{step}</h5>")
+              results.append(f"<a href=\"#available_steps\"><i>back to top</i></a>")
+              if not args:continue 
+              results.append(f"<p>{args.get('help', '')}</p>")
+              results.append(f"<code>{args.get('example', '')}</code>")
+      return "<br>".join(results)
+
+  return render_step(yaml.load(open("steps.yaml"), SafeLoader))
+#+END_SRC

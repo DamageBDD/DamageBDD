@@ -1,0 +1,106 @@
+/* activity.css — layered on top of /static/css/damage.css */
+
+:root{
+  --activity-card: rgba(127,127,127,0.08);
+  --activity-line: rgba(127,127,127,0.22);
+}
+
+.activity-wrap{ max-width: 980px; margin: 0 auto; padding: 0 14px 56px; }
+
+.panel{
+  border: 1px solid var(--activity-line);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  background: var(--activity-card);
+}
+
+.row{ display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; }
+.grow{ flex: 1 1 320px; min-width: 280px; }
+.right{ display:flex; gap:.5rem; align-items:center; }
+
+.mono{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.pill{
+  display:inline-flex;
+  gap:.5rem;
+  align-items:center;
+  padding:.35rem .65rem;
+  border:1px solid var(--activity-line);
+  border-radius: 999px;
+  font-size:.9em;
+  color: var(--meta);
+}
+
+input[type="text"]{
+  width:100%;
+  padding:.7rem .85rem;
+  border-radius: 10px;
+  border:1px solid var(--activity-line);
+  background: var(--code-bg);
+  color: var(--code-fg);
+}
+
+input.invalid{ border-color: var(--error); }
+
+button{
+  padding:.7rem .9rem;
+  border-radius: 10px;
+  border:1px solid var(--activity-line);
+  background: var(--pre-bg);
+  cursor:pointer;
+  color: var(--fg);
+}
+
+button:hover{ filter: brightness(1.03); }
+button:disabled{ opacity:.5; cursor:not-allowed; }
+
+.hint{ color: var(--meta); font-size:.95em; margin-top:.35rem; }
+
+.list{ list-style:none; padding:0; margin:0; }
+
+.item{
+  border-top: 1px dashed var(--meta);
+  padding: 1rem 0;
+}
+.item:first-child{ border-top: none; }
+
+.item-head{
+  display:flex;
+  justify-content:space-between;
+  gap:1rem;
+  align-items:baseline;
+  flex-wrap:wrap;
+}
+
+.item-title{ font-weight: 700; }
+.item-meta{ color: var(--meta); font-size:.9em; }
+
+.tags{ display:flex; gap:.5rem; flex-wrap:wrap; margin:.6rem 0 .4rem; }
+
+.tag{
+  display:inline-flex;
+  align-items:center;
+  gap:.35rem;
+  padding:.25rem .55rem;
+  border:1px solid var(--activity-line);
+  border-radius: 999px;
+  font-size:.9em;
+  text-decoration:none;
+}
+
+.tag:hover{ text-decoration: underline; }
+
+.kv{
+  display:grid;
+  grid-template-columns: 140px 1fr;
+  gap:.35rem .75rem;
+  margin-top:.6rem;
+  padding:.75rem;
+  border:1px solid var(--activity-line);
+  border-radius: 10px;
+  background: rgba(127,127,127,0.06);
+}
+.k{ color: var(--meta); font-size:.9em; }
+.v{ overflow-wrap:anywhere; }

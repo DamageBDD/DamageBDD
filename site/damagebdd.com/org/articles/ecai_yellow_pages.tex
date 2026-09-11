@@ -1,0 +1,90 @@
+% ECAI for Network State Business Directory
+% Compile with: pdflatex
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue}
+
+\begin{document}
+
+\begin{center}
+    {\LARGE\bfseries ECAI for a Multidimensional Network State Directory}\\[4pt]
+    {\large Proposal Document}
+\end{center}
+
+\section*{1. Scenario (as raised by Andrew Noble)}
+
+The vision is to build a phone book (or yellow pages) for the Network State:
+\begin{itemize}
+  \item Records for businesses by jurisdiction and by business category.
+  \item Price information expressed directly in satoshis.
+  \item Businesses and individuals must be able to update their own stale records.
+  \item Records should be usable for tax reasoning, aligned with Logical English.
+  \item A single unit of account for every information repository globally, reducing degrees of freedom in record-keeping.
+\end{itemize}
+
+\section*{2. Core Problems}
+\begin{itemize}
+  \item Traditional directories are centralized and quickly become stale.
+  \item Updates lack verifiability; no immutable proof of who changed what.
+  \item Price denominated in fiat introduces conversion risk and fragmentation.
+  \item Tax and compliance use-cases require deterministic, machine-verifiable records.
+\end{itemize}
+
+\section*{3. Proposed Solution with ECAI}
+
+Elliptic Curve AI (ECAI) encodes business knowledge deterministically as elliptic curve points, removing guesswork and providing verifiable, immutable state.
+
+\subsection*{3.1 Knowledge Encoding}
+Each business record is represented in Subject–Predicate–Object–Context structure:
+\begin{itemize}
+  \item Subject: Business entity (jurisdiction + name).
+  \item Predicate: Attribute (category, license, address, price, compliance tag).
+  \item Object: Value of the attribute.
+  \item Context: Timestamp and cryptographic signature.
+\end{itemize}
+
+Encoded via ECAI, each record becomes a curve point (knowledge NFT). Updates are signed by the business owner’s keypair, ensuring authenticity.
+
+\subsection*{3.2 Logical English Alignment}
+Statements like ``Company A is licensed in Jurisdiction X'' or ``Service Y costs 2500 sats'' can be written in Logical English and mapped directly into ECAI knowledge points, making them usable for tax reasoning or compliance automation.
+
+\subsection*{3.3 Price in Satoshis}
+Prices are always denominated in satoshis, binding each record to Bitcoin’s native unit. Integration with Lightning invoices allows discovery and settlement in the same structure.
+
+\subsection*{3.4 Multidimensional Queries}
+Because every record is structured deterministically, queries can be executed across dimensions:
+\begin{itemize}
+  \item By jurisdiction (all licensed entities in Jurisdiction X).
+  \item By category (all suppliers in Category Y).
+  \item By compliance status (entities with up-to-date filings).
+  \item By last updated (filtering stale vs. current records).
+\end{itemize}
+
+\subsection*{3.5 Updating Records}
+Businesses update their own records using private keys. Each new update creates an immutable successor state while preserving the old record for audit history. Consumers and auditors can always verify the most recent valid state.
+
+\section*{4. Benefits}
+\begin{itemize}
+  \item Immutable, cryptographically verifiable records.
+  \item Self-service updates with no central authority required.
+  \item Unified denomination in sats simplifies payments and reporting.
+  \item Compatibility with Logical English enables direct use in tax reasoning.
+  \item Collapses redundant degrees of freedom: one deterministic state layer for global business knowledge.
+\end{itemize}
+
+\section*{5. Next Steps}
+\begin{itemize}
+  \item Build a proof-of-concept registry using DamageBDD + ECAI encoding.
+  \item Define canonical predicates (jurisdiction, category, license, price).
+  \item Integrate Lightning Network payments for record verification and updates.
+  \item Pilot with a small set of businesses across two jurisdictions.
+\end{itemize}
+
+\vfill
+\noindent\footnotesize Draft for internal discussion. All figures illustrative.
+
+\end{document}

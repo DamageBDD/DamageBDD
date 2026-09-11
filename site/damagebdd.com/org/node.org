@@ -1,0 +1,164 @@
+#+TITLE: DamageBDD – Run a Damage Node
+#+DESCRIPTION: Install and run a Damage Node on Linux to locally verify deterministic Behavior-Driven Development execution with cryptographic integrity and Bitcoin-native incentives.
+#+KEYWORDS: Damage Node, DamageBDD, BDD verification, deterministic software, Linux installer, Ubuntu, Arch Linux, local dashboard, cryptographic verification, Bitcoin-native infrastructure
+
+#+INCLUDE: "header.org"
+
+#+OPTIONS: toc:nil
+#+TOC: headlines 2
+* Install Damage Node (Simple & Safe)
+
+This page explains how *anyone* can install and update the Damage Node.
+No technical knowledge required.
+
+You only need to:
+
+1. Download the file for your system  
+2. Double-click it  
+3. Enter your password  
+
+That's it.
+
+
+* Download for Your System
+
+** Linux Mint 22
+
+Click the link below to download the installer:
+
+[[https://ipfs.damagebdd.com/ipfs/QmVmqZz1NKfMMb2oZyATbXyH4bgvz6yJb5Gp5TKqVNUdad?filename=damage_1.5.6+build.87.refc90092f_amd64.deb][Download Damage Node for Linux Mint]]
+
+To install:
+
+1. Open your *Downloads* folder  
+2. Double-click =damage_1.5.7_amd64.deb=  
+3. Press “Install”  
+4. Enter your password  
+   
+** Ubuntu 22.04 (LTS)
+
+Click the link below to download the installer:
+
+[[https://ipfs.damagebdd.com/ipfs/QmeeaYq4tzWwWfThQwnBq3vyWdpEk9RBS2utfUwDUV3UUV?filename=damage_1.5.7+build.67.ref135a5b9_amd64.deb][Download Damage Node for Ubuntu Jammy]]
+
+To install:
+
+1. Open your *Downloads* folder  
+2. Double-click =damage_1.5.7_amd64.deb=  
+3. Press “Install”  
+4. Enter your password  
+
+
+** Arch Linux (Manjaro, EndeavourOS)
+
+Click the link below:
+
+[[https://ipfs.damagebdd.com/ipfs/QmRpCGrzAoy3cFLubG9kYVCpJQgf57BpGzzGJHngk2jRaB?filename=damage-1.5.7-1-x86_64.pkg.tar.zst][Download Damage Node for Arch Linux]]
+
+Then:
+
+1. Open your terminal  
+2. Run:
+
+   #+begin_src bash
+   sudo pacman -U ~/Downloads/damage-1.5.7-1-x86_64.pkg.tar.zst
+   #+end_src
+
+
+* Start Damage Node
+
+After installation, search your apps menu for:
+
+**“Damage Node”**
+
+Click it to start.
+
+To confirm it is running, visit:
+
+#+begin_src
+http://localhost:4888
+#+end_src
+
+(This opens the local dashboard. It runs only on your machine.)
+
+
+* Updating Damage Node (Very Easy)
+
+When a new version is released:
+
+1. Visit this page  
+2. Download the new file  
+3. Install it the same way as before  
+
+You do *not* need to uninstall the old version.
+The new version replaces it automatically.
+
+All of your:
+
+- settings  
+- data  
+- keys  
+
+remain intact.
+
+
+* Optional: Faster & Safer Downloading (Advanced Users)
+:PROPERTIES:
+:ID: advanced
+:END:
+:OPEN:
+
+If you run an IPFS node, you can “pin” the files directly:
+
+#+begin_src bash
+ipfs pin add QmYF8VL6kqMDnpX6X7MFUJqkjS3uYRDvEntmCn2wC9gis5
+ipfs pin add QmRpCGrzAoy3cFLubG9kYVCpJQgf57BpGzzGJHngk2jRaB
+#+end_src
+
+This guarantees:
+
+- maximum download speed  
+- full decentralisation  
+- verifiable integrity  
+
+:END:
+
+
+* What Makes DamageBDD Distribution Trustless?
+
+Damage Node installers are stored on **IPFS**, which means:
+
+- No single company controls distribution  
+- Anyone can mirror the files  
+- Downloads are verified by cryptographic content addressing  
+- Files cannot be secretly changed — the CID would change  
+
+This is the same decentralisation philosophy as Bitcoin.
+
+
+* Need Help?
+
+If something does not work:
+
+- Ask on Nostr  
+- Contact DamageBDD  
+- Or reach out to your team lead  
+
+Damage Node is designed to be simple for everyone, not just developers.
+
+
+* Next Steps: Node Administration
+
+Running a DamageBDD node goes beyond basic execution.  
+To operate reliably in production, every node requires correct configuration of:
+
+- Admin wallets (custodial or non-custodial)
+- Bitcoin + Lightning (CLN) connectivity
+- LNURL / Lightning Address routing
+- Nostr relay integration
+- Execution security through =erlexec=
+- Privilege isolation and secret management
+
+These responsibilities are covered in the companion document  
+[[./node_admins][Node Admins]], which provides a focused operational guide for system administrators.
+
