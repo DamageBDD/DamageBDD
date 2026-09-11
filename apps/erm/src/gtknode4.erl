@@ -18,6 +18,9 @@
 -module(gtknode4).
 -behaviour(gen_server).
 
+-include("erm_log.hrl").
+-include_lib("kernel/include/logger.hrl").
+
 -export([
     start_link/0,
     start_link/1,
@@ -51,6 +54,8 @@
 -define(SERVER, ?MODULE).
 -define(PROTOCOL_VERSION, 1).
 -define(DEFAULT_CALL_TIMEOUT, 5000).
+-define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_GTKNODE4).
+-define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
 -record(state, {
     endpoint = undefined,
@@ -151,6 +156,7 @@ get_label(WidgetName) ->
 
 init(Opts) ->
     process_flag(trap_exit, true),
+    init_logging(),
     Endpoint = maps:get(endpoint, Opts, undefined),
     case maps:get(backend, Opts, undefined) of
         undefined ->
@@ -318,6 +324,14 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%%===================================================================
+%%% Logging
+%%%===================================================================
+
+init_logging() ->
+    _ = erm_log:ensure_handler(),
+    erm_log:set_process_domain(?LOG_DOMAIN).
+
+%%%===================================================================
 %%% Backend execution
 %%%===================================================================
 
@@ -346,11 +360,11 @@ execute_backend_cast(Command, State0) ->
         {noreply, BackendState1, Events} ->
             {noreply, publish_events(Events, State0#state{backend_state = BackendState1})};
         Other ->
-            logger:warning("gtknode4 backend returned invalid cast result: ~p", [Other]),
+            ?LOG_WARNING("gtknode4 backend returned invalid cast result: ~p", [Other], ?LOG_META),
             {noreply, State0}
     catch
         Class:Reason:Stacktrace ->
-            logger:error("gtknode4 backend cast failed: ~p", [{Class, Reason, Stacktrace}]),
+            ?LOG_ERROR("gtknode4 backend cast failed: ~p", [{Class, Reason, Stacktrace}], ?LOG_META),
             {noreply, State0}
     end.
 
@@ -443,7 +457,7 @@ publish_events(Events, State0) when is_list(Events) ->
             ({NativeId, EventType, Payload}, Acc) ->
                 publish_event(NativeId, EventType, normalize_payload(Payload), Acc);
             (BadEvent, Acc) ->
-                logger:warning("gtknode4 backend emitted invalid event: ~p", [BadEvent]),
+                ?LOG_WARNING("gtknode4 backend emitted invalid event: ~p", [BadEvent], ?LOG_META),
                 Acc
         end,
         State0,

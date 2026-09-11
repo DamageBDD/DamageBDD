@@ -152,7 +152,8 @@ log_changes(Results, Previous, Trigger) ->
         Results
     ).
 
-cancel(undefined) -> ok;
+cancel(undefined) ->
+    ok;
 cancel(Timer) ->
     _ = erlang:cancel_timer(Timer),
     ok.

@@ -65,8 +65,10 @@ start_phase_enabled(start_trails_http, _StartType, []) ->
 
 enabled() ->
     case application:get_env(erm, enabled, true) of
-        true -> true;
-        false -> false;
+        true ->
+            true;
+        false ->
+            false;
         Invalid ->
             ?LOG_WARNING("Ignoring invalid erm.enabled value: ~p; defaulting to true", [Invalid]),
             true
@@ -90,7 +92,8 @@ best_effort(Fun) when is_function(Fun, 0) ->
 
 ensure_runtime_app(App) ->
     try application:ensure_all_started(App) of
-        {ok, _Started} -> ok;
+        {ok, _Started} ->
+            ok;
         {error, AppReason} ->
             ?LOG_WARNING("Optional ERM runtime application ~p is unavailable: ~p", [
                 App, AppReason
@@ -112,7 +115,9 @@ start_http_listener() ->
         true ->
             start_http_listener_enabled();
         Invalid ->
-            ?LOG_WARNING("Ignoring invalid erm.http_enabled value: ~p; defaulting to true", [Invalid]),
+            ?LOG_WARNING("Ignoring invalid erm.http_enabled value: ~p; defaulting to true", [
+                Invalid
+            ]),
             start_http_listener_enabled()
     end.
 
@@ -121,11 +126,13 @@ start_http_listener_enabled() ->
         Dispatch = get_trails(),
         WsPort = application:get_env(erm, port, 9000),
         WsIp = application:get_env(erm, ip, {127, 0, 0, 1}),
-        case cowboy:start_clear(
-            http_erm,
-            [{ip, WsIp}, {port, WsPort}],
-            #{env => #{dispatch => Dispatch}}
-        ) of
+        case
+            cowboy:start_clear(
+                http_erm,
+                [{ip, WsIp}, {port, WsPort}],
+                #{env => #{dispatch => Dispatch}}
+            )
+        of
             {ok, _Pid} ->
                 ?LOG_INFO("Started erm Cowboy listener on ~p:~p", [WsIp, WsPort]),
                 ok;

@@ -7,6 +7,13 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xatom.h>
+#endif
+
 #define GN4_PROTOCOL_VERSION 1
 
 typedef struct {
@@ -28,7 +35,11 @@ typedef struct {
   char *placeholder;
   char *orientation;
   char *css_class;
+  char *wm_class;
+  char *wm_instance;
+  char *window_role;
   char *align;
+  char *valign;
   char *selection;
   char *add;
   char **items;
@@ -42,6 +53,10 @@ typedef struct {
   gboolean focus;
   gboolean has_expand;
   gboolean expand;
+  gboolean has_hexpand;
+  gboolean hexpand;
+  gboolean has_vexpand;
+  gboolean vexpand;
   gboolean has_homogeneous;
   gboolean homogeneous;
   gboolean has_wrap;
@@ -129,7 +144,11 @@ static void gn4_options_clear(Gn4Options *opts) {
   g_free(opts->placeholder);
   g_free(opts->orientation);
   g_free(opts->css_class);
+  g_free(opts->wm_class);
+  g_free(opts->wm_instance);
+  g_free(opts->window_role);
   g_free(opts->align);
+  g_free(opts->valign);
   g_free(opts->selection);
   g_free(opts->add);
   for (i = 0; i < opts->item_count; i++)
@@ -258,7 +277,11 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_STRING_OPTION("placeholder", placeholder)
     GN4_STRING_OPTION("orientation", orientation)
     GN4_STRING_OPTION("class", css_class)
+    GN4_STRING_OPTION("wm_class", wm_class)
+    GN4_STRING_OPTION("wm_instance", wm_instance)
+    GN4_STRING_OPTION("window_role", window_role)
     GN4_STRING_OPTION("align", align)
+    GN4_STRING_OPTION("valign", valign)
     GN4_STRING_OPTION("selection", selection)
     GN4_STRING_OPTION("add", add)
 
@@ -287,6 +310,8 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_BOOL_OPTION("shown", has_shown, shown)
     GN4_BOOL_OPTION("focus", has_focus, focus)
     GN4_BOOL_OPTION("expand", has_expand, expand)
+    GN4_BOOL_OPTION("hexpand", has_hexpand, hexpand)
+    GN4_BOOL_OPTION("vexpand", has_vexpand, vexpand)
     GN4_BOOL_OPTION("homogeneous", has_homogeneous, homogeneous)
     GN4_BOOL_OPTION("wrap", has_wrap, wrap)
     GN4_BOOL_OPTION("draw_value", has_draw_value, draw_value)
@@ -644,6 +669,91 @@ static gboolean gn4_set_stylesheet(Gn4State *st, const char *name,
   return TRUE;
 }
 
+
+
+/* Window-manager identity is per top-level window, not a global gtknode4
+ * process setting.  This lets ERM apps share one C-node session while exposing
+ * distinct WM_CLASS/window-role values such as erm_mpv, erm_lens, erm_wallet.
+ *
+ * GTK4 no longer has a backend-neutral WM_CLASS API.  On X11/herbstluftwm we
+ * set the ICCCM/EWMH properties directly.  On Wayland, compositors use the
+ * GtkApplication app-id; per-window class is not generally available. */
+static void gn4_apply_window_identity(Gn4Widget *entry, Gn4Options *opts) {
+  GtkWidget *widget;
+  const char *wm_class;
+  const char *wm_instance;
+  const char *window_role;
+
+  if (!entry || !opts || !GTK_IS_WINDOW(entry->widget))
+    return;
+
+  widget = entry->widget;
+  wm_class = opts->wm_class;
+  wm_instance = opts->wm_instance ? opts->wm_instance : opts->wm_class;
+  window_role = opts->window_role;
+
+  if (!wm_class && !wm_instance && !window_role)
+    return;
+
+  /* Give GTK a chance to create the backing GdkSurface before setting X11
+   * properties.  This is safe for toplevel windows and keeps WM_CLASS in place
+   * before gtk_window_present() maps the window. */
+  if (!gtk_widget_get_realized(widget))
+    gtk_widget_realize(widget);
+
+#ifdef GDK_WINDOWING_X11
+  {
+    GdkDisplay *display = gtk_widget_get_display(widget);
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(widget));
+    if (display && surface && GDK_IS_X11_DISPLAY(display)) {
+      Display *xdisplay = gdk_x11_display_get_xdisplay(display);
+      Window xwindow = gdk_x11_surface_get_xid(surface);
+
+      if (xdisplay && xwindow && wm_class && wm_class[0] != '\0') {
+        XClassHint hint;
+        hint.res_name = (char *)((wm_instance && wm_instance[0] != '\0')
+                                     ? wm_instance
+                                     : wm_class);
+        hint.res_class = (char *)wm_class;
+        XSetClassHint(xdisplay, xwindow, &hint);
+      }
+
+      if (xdisplay && xwindow && window_role && window_role[0] != '\0') {
+        Atom role_atom = XInternAtom(xdisplay, "WM_WINDOW_ROLE", False);
+        XChangeProperty(xdisplay, xwindow, role_atom, XA_STRING, 8,
+                        PropModeReplace, (const unsigned char *)window_role,
+                        (int)strlen(window_role));
+      }
+
+      if (xdisplay)
+        XFlush(xdisplay);
+    }
+  }
+#else
+  (void)wm_instance;
+  (void)window_role;
+#endif
+}
+
+static void gn4_apply_css_classes(GtkWidget *widget, const char *classes) {
+  char **split;
+  int i;
+
+  if (!widget || !classes || classes[0] == '\0')
+    return;
+
+  split = g_strsplit_set(classes, " \t\r\n", -1);
+  if (!split)
+    return;
+
+  for (i = 0; split[i] != NULL; i++) {
+    if (split[i][0] != '\0')
+      gtk_widget_add_css_class(widget, split[i]);
+  }
+
+  g_strfreev(split);
+}
+
 static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
   GtkWidget *widget = entry->widget;
   GtkWidget *target = entry->signal_widget ? entry->signal_widget : widget;
@@ -673,22 +783,28 @@ static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
   }
   if (opts->title && GTK_IS_WINDOW(widget))
     gtk_window_set_title(GTK_WINDOW(widget), opts->title);
+  if (GTK_IS_WINDOW(widget) && (opts->wm_class || opts->wm_instance || opts->window_role))
+    gn4_apply_window_identity(entry, opts);
   if (opts->tooltip)
     gtk_widget_set_tooltip_text(widget, opts->tooltip);
   if (opts->placeholder && GTK_IS_ENTRY(target))
     gtk_entry_set_placeholder_text(GTK_ENTRY(target), opts->placeholder);
-  if (opts->css_class)
-    gtk_widget_add_css_class(widget, opts->css_class);
+  if (opts->css_class) {
+    gn4_apply_css_classes(widget, opts->css_class);
+    if (target != widget)
+      gn4_apply_css_classes(target, opts->css_class);
+  }
   if (opts->align) {
-    gtk_widget_set_halign(widget, gn4_align(opts->align));
+    GtkAlign halign = gn4_align(opts->align);
+    gtk_widget_set_halign(widget, halign);
     if (GTK_IS_LABEL(target))
       gtk_label_set_xalign(GTK_LABEL(target),
-                           gn4_align(opts->align) == GTK_ALIGN_END
+                           halign == GTK_ALIGN_END
                                ? 1.0f
-                               : (gn4_align(opts->align) == GTK_ALIGN_CENTER
-                                      ? 0.5f
-                                      : 0.0f));
+                               : (halign == GTK_ALIGN_CENTER ? 0.5f : 0.0f));
   }
+  if (opts->valign)
+    gtk_widget_set_valign(widget, gn4_align(opts->valign));
   if (opts->orientation && GTK_IS_ORIENTABLE(target))
     gtk_orientable_set_orientation(GTK_ORIENTABLE(target),
                                    gn4_orientation(opts->orientation));
@@ -708,6 +824,10 @@ static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
     gtk_widget_set_hexpand(widget, opts->expand);
     gtk_widget_set_vexpand(widget, opts->expand);
   }
+  if (opts->has_hexpand)
+    gtk_widget_set_hexpand(widget, opts->hexpand);
+  if (opts->has_vexpand)
+    gtk_widget_set_vexpand(widget, opts->vexpand);
   if (opts->has_margin) {
     gtk_widget_set_margin_start(widget, opts->margin);
     gtk_widget_set_margin_end(widget, opts->margin);
@@ -764,8 +884,10 @@ static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
     gtk_widget_set_sensitive(widget, opts->enabled);
   if (opts->has_shown) {
     gtk_widget_set_visible(widget, opts->shown);
-    if (opts->shown && GTK_IS_WINDOW(widget))
+    if (opts->shown && GTK_IS_WINDOW(widget)) {
+      gn4_apply_window_identity(entry, opts);
       gtk_window_present(GTK_WINDOW(widget));
+    }
   }
   if (opts->has_focus && opts->focus)
     gtk_widget_grab_focus(target);
@@ -846,7 +968,10 @@ static Gn4Widget *gn4_create_widget(Gn4State *st, long id, const char *type,
     gtk_picture_set_can_shrink(GTK_PICTURE(widget), TRUE);
     signal_widget = widget;
   } else if (strcmp(type, "scale") == 0) {
-    widget = gtk_scale_new_with_range(gn4_orientation(opts->orientation),
+    GtkOrientation scale_orientation = opts->orientation
+                                           ? gn4_orientation(opts->orientation)
+                                           : GTK_ORIENTATION_HORIZONTAL;
+    widget = gtk_scale_new_with_range(scale_orientation,
                                       opts->has_min ? opts->min : 0.0,
                                       opts->has_max ? opts->max : 100.0,
                                       opts->has_step ? opts->step : 1.0);

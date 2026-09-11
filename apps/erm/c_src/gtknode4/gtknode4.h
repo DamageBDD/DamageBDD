@@ -13,6 +13,8 @@ typedef struct {
   char *peer_node;
   char *peer_regname;
   char *register_name;
+  char *app_id;
+  char *wm_class;
 
   int dist_fd;
   unsigned int creation;

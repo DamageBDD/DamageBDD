@@ -8,12 +8,17 @@
 -module(gtknode4_port).
 -behaviour(gen_server).
 
+-include("erm_log.hrl").
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_link/0, start_link/1, stop/0, status/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
 -define(DEFAULT_RETRY_MS, 1000).
 -define(DEFAULT_RETRY_MAX_MS, 30000).
+-define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_GTKNODE4).
+-define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
 -record(state, {
     port = undefined,
@@ -56,6 +61,7 @@ status() ->
 
 init(Opts) ->
     process_flag(trap_exit, true),
+    init_logging(),
     case node() of
         nonode@nohost ->
             {stop, {erlang_distribution_not_started, "start the VM with -sname or -name"}};
@@ -92,10 +98,10 @@ handle_cast(_Message, State) ->
     {noreply, State}.
 
 handle_info({Port, {data, {eol, Line}}}, State = #state{port = Port}) ->
-    logger:notice("gtknode4: ~ts", [Line]),
+    ?LOG_NOTICE("gtknode4: ~ts", [Line], ?LOG_META),
     {noreply, State};
 handle_info({Port, {data, {noeol, Line}}}, State = #state{port = Port}) ->
-    logger:notice("gtknode4: ~ts", [Line]),
+    ?LOG_NOTICE("gtknode4: ~ts", [Line], ?LOG_META),
     {noreply, State};
 handle_info({gtknode4, status, ready, _Info}, State) ->
     cancel_timer(State#state.handshake_timer),
@@ -114,20 +120,18 @@ handle_info(handshake_timeout, State = #state{port = undefined}) ->
     %% A cancelled timer may already have reached the mailbox after the native
     %% process went down. The retry timer now owns recovery.
     {noreply, State#state{handshake_timer = undefined}};
-handle_info(
-    handshake_timeout,
-    State = #state{
-        handshake_timeout = Timeout,
-        handshake_failures = Failures
-    }
-) ->
+handle_info(handshake_timeout, State = #state{
+    handshake_timeout = Timeout,
+    handshake_failures = Failures
+}) ->
     case controller_status() of
         #{ready := true} ->
             {noreply, State#state{handshake_timer = undefined, handshake_failures = 0}};
         Status when Failures < 2 ->
-            logger:warning(
+            ?LOG_WARNING(
                 "gtknode4 handshake is still pending (~B/~B): ~p",
-                [Failures + 1, 3, Status]
+                [Failures + 1, 3, Status],
+                ?LOG_META
             ),
             Timer = start_timer(Timeout, handshake_timeout),
             {noreply, State#state{
@@ -149,9 +153,10 @@ handle_info(restart_native, State = #state{port = undefined}) ->
     State0 = State#state{retry_timer = undefined},
     case attempt_start(State0#state.opts) of
         {ok, Started} ->
-            logger:notice(
+            ?LOG_NOTICE(
                 "restarted gtknode4 C-node after ~B failed attempts",
-                [State0#state.restart_count]
+                [State0#state.restart_count],
+                ?LOG_META
             ),
             {noreply, merge_retry_state(Started, State0)};
         {error, Reason} ->
@@ -175,6 +180,10 @@ terminate(_Reason, #state{
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+init_logging() ->
+    _ = erm_log:ensure_handler(),
+    erm_log:set_process_domain(?LOG_DOMAIN).
 
 start_port(Opts) ->
     case validate_distribution_names(Opts) of
@@ -219,9 +228,10 @@ start_port_validated(Opts) ->
                     case controller_subscribe() of
                         ok ->
                             Timer = start_timer(HandshakeTimeout, handshake_timeout),
-                            logger:notice(
+                            ?LOG_NOTICE(
                                 "started gtknode4 C-node ~p as OS pid ~p",
-                                [CNode, OsPid]
+                                [CNode, OsPid],
+                                ?LOG_META
                             ),
                             {ok, #state{
                                 port = Port,
@@ -278,9 +288,10 @@ schedule_restart(Reason, State = #state{retry_timer = Existing}) ->
     Delay = State#state.retry_delay,
     Max = State#state.retry_max,
     Timer = start_timer(Delay, restart_native),
-    logger:warning(
+    ?LOG_WARNING(
         "gtknode4 native process unavailable: ~p; retrying in ~B ms",
-        [Reason, Delay]
+        [Reason, Delay],
+        ?LOG_META
     ),
     State#state{
         port = undefined,
@@ -431,9 +442,8 @@ distribution_name_domain() ->
 validate_longname_hosts(PeerNode, PeerHost, CNode, CNodeHost) ->
     case {lists:member($., PeerHost), lists:member($., CNodeHost)} of
         {false, _} ->
-            {error,
-                {invalid_longname_host, PeerNode, PeerHost,
-                    "restart the Erlang VM with -sname or use a fully qualified -name host"}};
+            {error, {invalid_longname_host, PeerNode, PeerHost,
+                "restart the Erlang VM with -sname or use a fully qualified -name host"}};
         {_, false} ->
             {error, {invalid_cnode_longname, CNode, CNodeHost}};
         {true, true} ->

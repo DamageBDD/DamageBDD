@@ -4,7 +4,9 @@
 %%% The frontend owns only logical UI objects. The native widgets belong to
 %%% gtkgs/gtknode4 and the MPV operating-system process belongs to
 %%% erm_mpv_proc. UI creation is deferred until the C-node handshake is ready,
-%%% which keeps the ERM supervision tree healthy while GTK starts.
+%%% which keeps the ERM supervision tree healthy while GTK starts. MPV itself
+%%% is kept hidden by erm_mpv_proc and all controls use bounded owner-mediated
+%%% IPC calls.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(erm_mpv).
@@ -13,7 +15,7 @@
 -include_lib("erm.hrl").
 -include_lib("kernel/include/logger.hrl").
 
--export([show/0, close/0, start/1, start_link/0]).
+-export([show/0, close/0, start/1, start_link/0, set_layout/1, reload_layout/0, set_theme/1, reload_theme/0]).
 -export([
     init/1,
     handle_call/3,
@@ -29,9 +31,12 @@
 -define(REFRESH_MS, 1000).
 -define(MPV_RETRY_MS, 2000).
 -define(MPV_RETRY_MAX_MS, 30000).
+-define(MPV_CMD_TIMEOUT_MS, 3000).
 -define(SEEK_DEBOUNCE_MS, 120).
 -define(VOLUME_DEBOUNCE_MS, 80).
 -define(DEFAULT_VOLUME, 50).
+-define(DEFAULT_LAYOUT, classic).
+-define(DEFAULT_THEME, "cyberpunk").
 
 -record(state, {
     window = undefined,
@@ -39,6 +44,8 @@
     ipc = undefined,
     ipc_monitor = undefined,
     volume = ?DEFAULT_VOLUME,
+    layout = ?DEFAULT_LAYOUT,
+    theme = ?DEFAULT_THEME,
     ui_retry = undefined,
     refresh_timer = undefined,
     mpv_timer = undefined,
@@ -69,16 +76,40 @@ close() ->
         _Pid -> safe_server_call(close)
     end.
 
+set_layout(Layout) when Layout =:= classic; Layout =:= compact; Layout =:= playlist ->
+    call_or_start({set_layout, Layout});
+set_layout(Layout) ->
+    {error, {bad_layout, Layout}}.
+
+reload_layout() ->
+    call_or_start(reload_layout).
+
+set_theme(Theme0) ->
+    case resource_name(Theme0) of
+        {ok, Theme} -> call_or_start({set_theme, Theme});
+        {error, _Reason} = Error -> Error
+    end.
+
+reload_theme() ->
+    call_or_start(reload_theme).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 init(_Config) ->
     process_flag(trap_exit, true),
+    Layout = saved_layout(),
+    Theme = saved_theme(),
     self() ! build_ui,
     RefreshTimer = erlang:send_after(?REFRESH_MS, self(), refresh_playlist),
     MpvTimer = erlang:send_after(0, self(), connect_mpv),
-    {ok, #state{refresh_timer = RefreshTimer, mpv_timer = MpvTimer}}.
+    {ok, #state{
+        layout = Layout,
+        theme = Theme,
+        refresh_timer = RefreshTimer,
+        mpv_timer = MpvTimer
+    }}.
 
 handle_call(show, _From, State = #state{window = undefined}) ->
     self() ! build_ui,
@@ -89,6 +120,18 @@ handle_call(show, _From, State) ->
 handle_call(close, _From, State) ->
     _ = ui_config(mpv_window, [{show, false}]),
     {reply, ok, State};
+handle_call({set_layout, Layout}, _From, State) ->
+    save_layout(Layout),
+    _ = apply_layout(Layout),
+    {reply, ok, State#state{layout = Layout}};
+handle_call(reload_layout, _From, State) ->
+    {reply, apply_layout(State#state.layout), State};
+handle_call({set_theme, Theme}, _From, State) ->
+    save_theme(Theme),
+    Reply = apply_mpv_theme(Theme),
+    {reply, Reply, State#state{theme = Theme}};
+handle_call(reload_theme, _From, State) ->
+    {reply, apply_mpv_theme(State#state.theme), State};
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -105,6 +148,8 @@ handle_info(build_ui, State = #state{window = undefined}) ->
                 ui_monitor = monitor_registered_process(gtkgs),
                 ui_retry = undefined
             },
+            _ = apply_mpv_theme(ReadyState#state.theme),
+            _ = apply_layout(ReadyState#state.layout),
             _ = refresh_playlist(ReadyState),
             {noreply, ReadyState};
         {retry, Reason} ->
@@ -280,6 +325,18 @@ handle_info(
 handle_info({apply_volume, _StaleToken}, State) ->
     {noreply, State};
 
+handle_info({gtkgs, layout_classic_button, click, _Data, _Args}, State) ->
+    save_layout(classic),
+    _ = apply_layout(classic),
+    {noreply, State#state{layout = classic}};
+handle_info({gtkgs, layout_compact_button, click, _Data, _Args}, State) ->
+    save_layout(compact),
+    _ = apply_layout(compact),
+    {noreply, State#state{layout = compact}};
+handle_info({gtkgs, layout_playlist_button, click, _Data, _Args}, State) ->
+    save_layout(playlist),
+    _ = apply_layout(playlist),
+    {noreply, State#state{layout = playlist}};
 handle_info({gtkgs, close_button, click, _Data, _Args}, State) ->
     _ = ui_config(mpv_window, [{show, false}]),
     {noreply, State};
@@ -325,117 +382,21 @@ build_ui() ->
     end.
 
 create_ui_tree(Gtkgs) ->
-    Tree = [
-        {window, mpv_window,
-            [
-                {title, ?APP_TITLE},
-                {width, 920},
-                {height, 720},
-                {min_width, 360},
-                {min_height, 520},
-                {show, true}
-            ],
-            [
-                {frame, main_column,
-                    [
-                        {orient, vertical},
-                        {spacing, 12},
-                        {margin, 16},
-                        {expand, true}
-                    ],
-                    [
-                        {label, title_label,
-                            [{text, "ERM Media"}, {class, 'title-1'}, {align, start}]},
-                        {label, now_playing,
-                            [
-                                {text, "Nothing playing"},
-                                {class, 'title-3'},
-                                {align, start},
-                                {wrap, true}
-                            ]},
-                        {label, playback_detail,
-                            [{text, "MPV is connecting…"}, {align, start}, {class, 'dim-label'}]},
-                        {frame, transport_row,
-                            [{orient, horizontal}, {spacing, 8}, {homogeneous, true}],
-                            [
-                                touch_button(previous_button, "⏮  Previous", "Previous track"),
-                                touch_button(play_button, "⏯  Play / Pause", "Toggle playback"),
-                                touch_button(next_button, "Next  ⏭", "Next track")
-                            ]},
-                        {frame, seek_row,
-                            [{orient, horizontal}, {spacing, 8}],
-                            [
-                                {label, elapsed_label, [{text, "0:00"}, {width_chars, 6}]},
-                                {scale, seek_scale,
-                                    [
-                                        {min, 0},
-                                        {max, 1000},
-                                        {step, 1},
-                                        {value, 0},
-                                        {expand, true},
-                                        {draw_value, false},
-                                        {tooltip, "Playback position"}
-                                    ]},
-                                {label, duration_label, [{text, "0:00"}, {width_chars, 6}]}
-                            ]},
-                        {frame, volume_row,
-                            [{orient, horizontal}, {spacing, 8}],
-                            [
-                                {label, volume_label, [{text, "Volume"}, {width_chars, 8}]},
-                                {scale, volume_scale,
-                                    [
-                                        {min, 0},
-                                        {max, 100},
-                                        {step, 1},
-                                        {value, ?DEFAULT_VOLUME},
-                                        {expand, true},
-                                        {draw_value, false},
-                                        {tooltip, "Playback volume"}
-                                    ]},
-                                {label, volume_value,
-                                    [{text, volume_text(?DEFAULT_VOLUME)}, {width_chars, 5}]}
-                            ]},
-                        {frame, folder_row,
-                            [{orient, horizontal}, {spacing, 8}],
-                            [
-                                {entry, folder_entry,
-                                    [
-                                        {placeholder, "Music folder path"},
-                                        {expand, true},
-                                        {tooltip, "Enter a local media folder"}
-                                    ]},
-                                touch_button(add_folder_button, "Add folder", "Add media recursively"),
-                                touch_button(rescan_button, "Rescan", "Rescan playlist folders")
-                            ]},
-                        {frame, library_row,
-                            [{orient, horizontal}, {spacing, 8}, {homogeneous, true}],
-                            [
-                                touch_button(like_button, "☆  Like", "Like or unlike current track"),
-                                touch_button(ipfs_button, "Add to IPFS", "Pin current track to IPFS"),
-                                touch_button(share_button, "Share", "Copy the current IPFS URL"),
-                                touch_button(clear_button, "Clear", "Clear the playlist"),
-                                touch_button(close_button, "Hide", "Hide this window")
-                            ]},
-                        {label, playlist_heading,
-                            [{text, "Playlist"}, {class, heading}, {align, start}]},
-                        {listbox, playlist_list,
-                            [
-                                {items, []},
-                                {expand, true},
-                                {min_height, 220},
-                                {selection, single},
-                                {tooltip, "Select a track to play"}
-                            ]},
-                        {label, status_label,
-                            [
-                                {text, "Ready"},
-                                {align, start},
-                                {wrap, true},
-                                {class, 'dim-label'}
-                            ]}
-                    ]}
-            ]}
-    ],
+    Tree =
+        case load_player_tree() of
+            {ok, LoadedTree} ->
+                LoadedTree;
+            {error, TreeReason} ->
+                %% Missing resource files must not trap the media UI in a
+                %% one-second retry loop. Use a small built-in fallback so the
+                %% player still comes up, while the real layout remains
+                %% editable under priv/erm_mpv/layouts/player.term.
+                ?LOG_WARNING(
+                    "ERM MPV player layout resource unavailable; using built-in fallback: ~p",
+                    [TreeReason]
+                ),
+                builtin_player_tree()
+        end,
     try gtkgs:create_tree(Gtkgs, Tree) of
         {ok, [Window]} -> {ok, Window};
         {error, CreateReason} -> {error, CreateReason};
@@ -445,14 +406,498 @@ create_ui_tree(Gtkgs) ->
             {error, {create_tree_failed, Class, ExceptionReason, Stacktrace}}
     end.
 
-touch_button(Name, Label, Tooltip) ->
-    {button, Name,
-        [
-            {label, Label},
-            {tooltip, Tooltip},
-            {min_height, 48},
-            {expand, true}
-        ]}.
+builtin_player_tree() ->
+    [
+        {window, mpv_window,
+            [
+                {title, ?APP_TITLE},
+                {width, 1000},
+                {height, 560},
+                {min_width, 560},
+                {min_height, 340},
+                {show, true},
+                {wm_class, "erm_mpv"},
+                {wm_instance, "erm_mpv"},
+                {window_role, "erm_mpv_player"},
+                {class, "erm_mpv cp-window"}
+            ],
+            [
+                {frame, player_root,
+                    [
+                        {orient, vertical},
+                        {spacing, 3},
+                        {margin, 6},
+                        {hexpand, true},
+                        {vexpand, true},
+                        {class, "cp-root"}
+                    ],
+                    [
+                        {frame, top_strip,
+                            [
+                                {orient, horizontal},
+                                {spacing, 4},
+                                {height, 28},
+                                {hexpand, true},
+                                {vexpand, false},
+                                {class, "cp-panel cp-top-strip"}
+                            ],
+                            [
+                                {label, title_label,
+                                    [{text, "ERM Media"}, {class, "cp-title"}, {width_chars, 12}, {valign, center}]},
+                                {label, playback_detail,
+                                    [{text, "MPV connecting…"}, {class, "cp-status"}, {width_chars, 22}, {valign, center}]},
+                                {label, top_spacer,
+                                    [{text, ""}, {hexpand, true}, {vexpand, false}]},
+                                {button, layout_classic_button,
+                                    [{label, "Classic"}, {min_height, 24}, {min_width, 72}, {vexpand, false}, {valign, center}, {class, "cp-layout-button"}]},
+                                {button, layout_compact_button,
+                                    [{label, "Compact"}, {min_height, 24}, {min_width, 76}, {vexpand, false}, {valign, center}, {class, "cp-layout-button"}]},
+                                {button, layout_playlist_button,
+                                    [{label, "Playlist"}, {min_height, 24}, {min_width, 76}, {vexpand, false}, {valign, center}, {class, "cp-layout-button"}]}
+                            ]},
+                        {frame, now_playing_strip,
+                            [
+                                {orient, horizontal},
+                                {spacing, 4},
+                                {height, 24},
+                                {hexpand, true},
+                                {vexpand, false},
+                                {class, "cp-panel cp-now-strip"}
+                            ],
+                            [
+                                {label, now_playing,
+                                    [{text, "Nothing playing"}, {class, "cp-now-playing"}, {hexpand, true}, {vexpand, false}, {valign, center}]}
+                            ]},
+                        {frame, control_strip,
+                            [
+                                {orient, horizontal},
+                                {spacing, 4},
+                                {height, 38},
+                                {hexpand, true},
+                                {vexpand, false},
+                                {class, "cp-control-strip"}
+                            ],
+                            [
+                                {button, previous_button, [{label, "⏮"}, {min_height, 28}, {min_width, 38}, {vexpand, false}, {valign, center}, {class, "cp-button cp-transport"}]},
+                                {button, play_button, [{label, "⏯"}, {min_height, 30}, {min_width, 50}, {vexpand, false}, {valign, center}, {class, "cp-button-primary cp-transport"}]},
+                                {button, next_button, [{label, "⏭"}, {min_height, 28}, {min_width, 38}, {vexpand, false}, {valign, center}, {class, "cp-button cp-transport"}]},
+                                {label, elapsed_label, [{text, "0:00"}, {width_chars, 6}, {vexpand, false}, {valign, center}, {class, "cp-time"}]},
+                                {scale, seek_scale, [{orient, horizontal}, {min, 0}, {max, 1000}, {step, 1}, {value, 0}, {height, 22}, {hexpand, true}, {vexpand, false}, {valign, center}, {draw_value, false}, {class, "cp-seek"}]},
+                                {label, duration_label, [{text, "0:00"}, {width_chars, 6}, {vexpand, false}, {valign, center}, {class, "cp-time"}]},
+                                {label, volume_label, [{text, "Vol"}, {width_chars, 4}, {vexpand, false}, {valign, center}, {class, "cp-dim"}]},
+                                {scale, volume_scale, [{orient, horizontal}, {min, 0}, {max, 100}, {step, 1}, {value, ?DEFAULT_VOLUME}, {width, 120}, {height, 22}, {vexpand, false}, {valign, center}, {draw_value, false}, {class, "cp-volume"}]},
+                                {label, volume_value, [{text, volume_text(?DEFAULT_VOLUME)}, {width_chars, 5}, {vexpand, false}, {valign, center}, {class, "cp-time"}]}
+                            ]},
+                        {frame, utility_row,
+                            [
+                                {orient, horizontal},
+                                {spacing, 4},
+                                {height, 30},
+                                {hexpand, true},
+                                {vexpand, false},
+                                {class, "cp-utility-strip"}
+                            ],
+                            [
+                                {button, like_button, [{label, "☆"}, {min_height, 24}, {min_width, 38}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
+                                {button, ipfs_button, [{label, "IPFS"}, {min_height, 24}, {min_width, 50}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
+                                {button, share_button, [{label, "Share"}, {min_height, 24}, {min_width, 58}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
+                                {button, clear_button, [{label, "Clear"}, {min_height, 24}, {min_width, 54}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
+                                {label, utility_spacer, [{text, ""}, {hexpand, true}, {vexpand, false}]},
+                                {button, close_button, [{label, "Hide"}, {min_height, 24}, {min_width, 54}, {vexpand, false}, {valign, center}, {class, "cp-button"}]}
+                            ]},
+                        {frame, body_row,
+                            [{orient, horizontal}, {spacing, 6}, {hexpand, true}, {vexpand, true}, {class, "cp-body-row"}],
+                            [
+                                {frame, playlist_panel,
+                                    [{orient, vertical}, {spacing, 3}, {hexpand, true}, {vexpand, true}, {class, "cp-panel cp-playlist-panel"}],
+                                    [
+                                        {label, playlist_heading, [{text, "Playlist"}, {height, 20}, {vexpand, false}, {class, "cp-heading"}]},
+                                        {listbox, playlist_list, [{items, []}, {hexpand, true}, {vexpand, true}, {selection, single}, {class, "cp-list"}]}
+                                    ]},
+                                {frame, side_panel,
+                                    [{orient, vertical}, {spacing, 4}, {width, 240}, {min_width, 220}, {vexpand, true}, {class, "cp-panel cp-side-panel"}],
+                                    [
+                                        {label, library_heading, [{text, "Library"}, {height, 20}, {vexpand, false}, {class, "cp-heading"}]},
+                                        {entry, folder_entry, [{placeholder, "Music folder path"}, {hexpand, true}, {vexpand, false}, {class, "cp-entry"}]},
+                                        {frame, library_button_row,
+                                            [{orient, horizontal}, {spacing, 4}, {height, 28}, {hexpand, true}, {vexpand, false}],
+                                            [
+                                                {button, add_folder_button, [{label, "Add"}, {min_height, 24}, {min_width, 46}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
+                                                {button, rescan_button, [{label, "Rescan"}, {min_height, 24}, {min_width, 62}, {vexpand, false}, {valign, center}, {class, "cp-button"}]}
+                                            ]}
+                                    ]}
+                            ]},
+                        {frame, status_strip,
+                            [{orient, horizontal}, {height, 22}, {hexpand, true}, {vexpand, false}, {class, "cp-status-strip"}],
+                            [
+                                {label, status_label, [{text, "Ready"}, {hexpand, true}, {vexpand, false}, {valign, center}, {class, "cp-status-box"}]}
+                            ]}
+                    ]}
+            ]}
+    ].
+
+apply_layout(Layout) when Layout =:= classic; Layout =:= compact; Layout =:= playlist ->
+    case load_layout_rules(Layout) of
+        {ok, Rules} ->
+            apply_layout_rules(Rules),
+            mark_layout_buttons(Layout),
+            ok;
+        {error, LoadReason} ->
+            ?LOG_WARNING("Could not load ERM MPV layout ~p: ~p", [Layout, LoadReason]),
+            apply_builtin_layout(Layout),
+            mark_layout_buttons(Layout),
+            {error, LoadReason}
+    end.
+
+apply_layout_rules(Rules) when is_list(Rules) ->
+    lists:foreach(fun apply_layout_rule/1, Rules),
+    ok.
+
+apply_layout_rule({Widget, Options}) when is_atom(Widget), is_list(Options) ->
+    _ = ui_config(Widget, Options),
+    ok;
+apply_layout_rule({comment, _Text}) ->
+    ok;
+apply_layout_rule(BadRule) ->
+    ?LOG_WARNING("Ignoring bad ERM MPV layout rule: ~p", [BadRule]),
+    ok.
+
+%% Last-resort fallback only. The normal layout lives in
+%% priv/erm_mpv/layouts/<layout>.term so UI iteration does not require editing
+%% and recompiling erm_mpv.erl.
+apply_builtin_layout(classic) ->
+    _ = ui_config(mpv_window, [{width, 1040}, {height, 620}]),
+    _ = ui_config(now_playing_strip, [{show, true}]),
+    _ = ui_config(utility_row, [{show, true}]),
+    _ = ui_config(side_panel, [{show, true}]),
+    ok;
+apply_builtin_layout(compact) ->
+    _ = ui_config(mpv_window, [{width, 860}, {height, 380}]),
+    _ = ui_config(now_playing_strip, [{show, true}]),
+    _ = ui_config(utility_row, [{show, true}]),
+    _ = ui_config(side_panel, [{show, false}]),
+    ok;
+apply_builtin_layout(playlist) ->
+    _ = ui_config(mpv_window, [{width, 900}, {height, 620}]),
+    _ = ui_config(now_playing_strip, [{show, true}]),
+    _ = ui_config(utility_row, [{show, false}]),
+    _ = ui_config(side_panel, [{show, false}]),
+    ok.
+
+mark_layout_buttons(Layout) ->
+    _ = ui_config(layout_classic_button, [{label, layout_button_label(classic, Layout)}]),
+    _ = ui_config(layout_compact_button, [{label, layout_button_label(compact, Layout)}]),
+    _ = ui_config(layout_playlist_button, [{label, layout_button_label(playlist, Layout)}]),
+    ok.
+
+layout_button_label(Layout, Layout) ->
+    case Layout of
+        classic -> "▣ Classic";
+        compact -> "▣ Compact";
+        playlist -> "▣ Playlist"
+    end;
+layout_button_label(classic, _Current) -> "□ Classic";
+layout_button_label(compact, _Current) -> "□ Compact";
+layout_button_label(playlist, _Current) -> "□ Playlist".
+
+saved_layout() ->
+    case application:get_env(erm, erm_mpv_layout, ?DEFAULT_LAYOUT) of
+        classic -> classic;
+        compact -> compact;
+        playlist -> playlist;
+        _ -> ?DEFAULT_LAYOUT
+    end.
+
+save_layout(Layout) when Layout =:= classic; Layout =:= compact; Layout =:= playlist ->
+    application:set_env(erm, erm_mpv_layout, Layout).
+
+saved_theme() ->
+    case application:get_env(erm, erm_mpv_theme, ?DEFAULT_THEME) of
+        Value when is_atom(Value); is_binary(Value); is_list(Value) ->
+            case resource_name(Value) of
+                {ok, Name} -> Name;
+                {error, _} -> ?DEFAULT_THEME
+            end;
+        _ ->
+            ?DEFAULT_THEME
+    end.
+
+save_theme(Theme) when is_list(Theme) ->
+    application:set_env(erm, erm_mpv_theme, Theme).
+
+apply_mpv_theme(Theme) ->
+    CssResult =
+        case load_theme_css(Theme) of
+            {ok, Css} ->
+                {ok, Css};
+            {error, ThemeReason} when Theme =:= ?DEFAULT_THEME ->
+                ?LOG_WARNING(
+                    "Could not load ERM MPV default theme ~ts; using built-in fallback: ~p",
+                    [Theme, ThemeReason]
+                ),
+                {ok, builtin_theme_css()};
+            {error, ThemeReason} ->
+                {error, ThemeReason}
+        end,
+    case CssResult of
+        {ok, CssBin} ->
+            case safe_apply_quiet(gtkgs, set_stylesheet, [erm_mpv_theme, CssBin]) of
+                ok -> ok;
+                {error, {not_exported, gtkgs, set_stylesheet, 2}} ->
+                    ?LOG_WARNING("gtkgs CSS API is not loaded; ERM MPV theme not applied", []),
+                    {error, css_api_not_loaded};
+                {error, StyleReason} ->
+                    ?LOG_WARNING("Could not apply ERM MPV theme ~ts: ~p", [Theme, StyleReason]),
+                    {error, StyleReason};
+                Other ->
+                    ?LOG_DEBUG("gtkgs:set_stylesheet returned ~p", [Other]),
+                    ok
+            end;
+        {error, LoadReason} ->
+            ?LOG_WARNING("Could not load ERM MPV theme ~ts: ~p", [Theme, LoadReason]),
+            {error, LoadReason}
+    end.
+
+load_player_tree() ->
+    case consult_resource_term(["layouts", "player.term"]) of
+        {ok, [Tree]} when is_list(Tree) -> {ok, Tree};
+        {ok, Tree} when is_list(Tree) -> {ok, Tree};
+        {ok, Other} -> {error, {bad_player_tree_resource, Other}};
+        {error, _LoadReason} = Error -> Error
+    end.
+
+load_layout_rules(Layout) when Layout =:= classic; Layout =:= compact; Layout =:= playlist ->
+    Filename = atom_to_list(Layout) ++ ".term",
+    case consult_resource_term(["layouts", Filename]) of
+        {ok, [Rules]} when is_list(Rules) -> {ok, Rules};
+        {ok, Rules} when is_list(Rules) -> {ok, Rules};
+        {ok, Other} -> {error, {bad_layout_resource, Layout, Other}};
+        {error, _LoadReason} = Error -> Error
+    end.
+
+load_theme_css(Theme) when is_list(Theme) ->
+    read_resource_file(["themes", Theme ++ ".css"]). 
+
+consult_resource_term(Parts) ->
+    case find_resource_file(Parts) of
+        {ok, Path} ->
+            try file:consult(Path) of
+                {ok, Terms} -> {ok, Terms};
+                {error, ConsultReason} -> {error, {Path, ConsultReason}}
+            catch
+                Class:ExceptionReason:Stacktrace ->
+                    {error, {Path, Class, ExceptionReason, Stacktrace}}
+            end;
+        {error, _FindReason} = Error ->
+            Error
+    end.
+
+read_resource_file(Parts) ->
+    case find_resource_file(Parts) of
+        {ok, Path} ->
+            try file:read_file(Path) of
+                {ok, Bin} -> {ok, Bin};
+                {error, FileReason} -> {error, {Path, FileReason}}
+            catch
+                Class:ExceptionReason:Stacktrace ->
+                    {error, {Path, Class, ExceptionReason, Stacktrace}}
+            end;
+        {error, _FindReason} = Error ->
+            Error
+    end.
+
+find_resource_file(Parts) ->
+    Candidates = [filename:join([Root | Parts]) || Root <- resource_roots()],
+    case [Path || Path <- Candidates, filelib:is_regular(Path)] of
+        [Path | _] -> {ok, Path};
+        [] -> {error, {resource_not_found, Parts, Candidates}}
+    end.
+
+resource_roots() ->
+    uniq_keep_order(
+        configured_resource_roots() ++
+            env_resource_roots() ++
+            otp_priv_resource_roots() ++
+            dev_source_resource_roots()
+    ).
+
+configured_resource_roots() ->
+    case application:get_env(erm, erm_mpv_resource_dir) of
+        {ok, Root} -> [filename:absname(to_text(Root))];
+        undefined -> []
+    end.
+
+env_resource_roots() ->
+    case os:getenv("ERM_MPV_RESOURCE_DIR") of
+        false -> [];
+        "" -> [];
+        Root -> [filename:absname(Root)]
+    end.
+
+otp_priv_resource_roots() ->
+    case code:priv_dir(erm) of
+        {error, bad_name} -> [];
+        PrivDir -> [filename:join(PrivDir, "erm_mpv")]
+    end.
+
+dev_source_resource_roots() ->
+    Cwd =
+        case file:get_cwd() of
+            {ok, Dir} -> Dir;
+            {error, _} -> "."
+        end,
+    [
+        filename:absname(filename:join([Cwd, "apps", "erm", "priv", "erm_mpv"])),
+        filename:absname(filename:join([Cwd, "..", "apps", "erm", "priv", "erm_mpv"])),
+        filename:absname(filename:join([Cwd, "..", "..", "apps", "erm", "priv", "erm_mpv"]))
+    ].
+
+uniq_keep_order(List) ->
+    {_Seen, Out} =
+        lists:foldl(
+            fun(Item, {Seen, Acc}) ->
+                case maps:is_key(Item, Seen) of
+                    true -> {Seen, Acc};
+                    false -> {Seen#{Item => true}, [Item | Acc]}
+                end
+            end,
+            {#{}, []},
+            List
+        ),
+    lists:reverse(Out).
+
+resource_name(Name) when is_atom(Name) ->
+    resource_name(atom_to_list(Name));
+resource_name(Name) when is_binary(Name) ->
+    resource_name(unicode:characters_to_list(Name));
+resource_name(Name) when is_list(Name) ->
+    case valid_resource_name(Name) of
+        true -> {ok, Name};
+        false -> {error, {bad_resource_name, Name}}
+    end;
+resource_name(Name) ->
+    {error, {bad_resource_name, Name}}.
+
+valid_resource_name([]) ->
+    false;
+valid_resource_name(Name) ->
+    length(Name) =< 64 andalso lists:all(fun valid_resource_char/1, Name).
+
+valid_resource_char(C) when C >= $a, C =< $z -> true;
+valid_resource_char(C) when C >= $A, C =< $Z -> true;
+valid_resource_char(C) when C >= $0, C =< $9 -> true;
+valid_resource_char($_) -> true;
+valid_resource_char($-) -> true;
+valid_resource_char(_) -> false.
+
+builtin_theme_css() ->
+    <<"
+window.cp-window {
+  background: #070a0f;
+  color: #d8f7ff;
+}
+
+.cp-root {
+  background: #070a0f;
+  color: #d8f7ff;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.cp-panel,
+.cp-control-strip,
+.cp-utility-strip,
+.cp-status-strip {
+  background: #0d141d;
+  border: 1px solid #203347;
+  border-radius: 5px;
+  padding: 3px;
+}
+
+.cp-title {
+  color: #75f7ff;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.cp-now-playing {
+  color: #f2fbff;
+  font-weight: 700;
+}
+
+.cp-heading {
+  color: #ff5fd7;
+  font-weight: 800;
+}
+
+.cp-status,
+.cp-dim,
+.cp-time,
+.cp-status-box {
+  color: #9edfff;
+}
+
+button.cp-button,
+button.cp-layout-button,
+button.cp-button-primary {
+  min-height: 20px;
+  padding: 1px 7px;
+  border-radius: 4px;
+}
+
+button.cp-button,
+button.cp-layout-button {
+  background: #111b27;
+  color: #d8f7ff;
+  border: 1px solid #29465e;
+}
+
+button.cp-button-primary {
+  background: #102838;
+  color: #75f7ff;
+  border: 1px solid #4fe4ff;
+  font-weight: 800;
+}
+
+entry.cp-entry,
+scrolledwindow.cp-list,
+scrolledwindow.cp-list > viewport,
+scrolledwindow.cp-list list,
+list.cp-list,
+list.cp-list row,
+list.cp-list row label {
+  background: #081018;
+  color: #e2faff;
+}
+
+list.cp-list row:selected,
+list.cp-list row:selected label {
+  background: #123145;
+  color: #75f7ff;
+}
+
+scale.cp-seek trough,
+scale.cp-volume trough {
+  background: #071019;
+  border: 1px solid #23394c;
+  min-height: 4px;
+  border-radius: 3px;
+}
+
+scale.cp-seek highlight,
+scale.cp-volume highlight {
+  background: #75f7ff;
+}
+
+scale.cp-seek slider,
+scale.cp-volume slider {
+  background: #ff5fd7;
+  border: 1px solid #ffe6fb;
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 8px;
+}
+">>.
 
 %%%===================================================================
 %%% Media actions
@@ -574,21 +1019,48 @@ play_selected(Other, State) ->
     State.
 
 play_track(Track, State) ->
-    case call_mpv(load_file, [Track#track.path], State) of
-        {error, _Reason, FailedState} ->
-            FailedState;
-        {ok, _Reply, ReadyState} ->
-            _ = ui_config(now_playing, [{text, display_title(Track)}]),
-            case safe_playlist(set_current, [Track#track.id]) of
-                {error, PlaylistReason} ->
-                    update_status(io_lib:format(
-                        "Playing, but playlist state could not be updated: ~p",
-                        [PlaylistReason]
-                    ));
-                _ ->
-                    update_status("Playing")
-            end,
-            ReadyState
+    case normalize_mpv_path(Track#track.path) of
+        {ok, Path} ->
+            case call_mpv(load_file, [Path], State) of
+                {error, _Reason, FailedState} ->
+                    FailedState;
+                {ok, _Reply, ReadyState} ->
+                    _ = ui_config(now_playing, [{text, display_title(Track)}]),
+                    case safe_playlist(set_current, [Track#track.id]) of
+                        {error, PlaylistReason} ->
+                            update_status(io_lib:format(
+                                "Playing, but playlist state could not be updated: ~p",
+                                [PlaylistReason]
+                            ));
+                        _ ->
+                            update_status("Playing")
+                    end,
+                    ReadyState
+            end;
+        {error, Reason} ->
+            update_status(io_lib:format("Cannot play track: ~p", [Reason])),
+            State
+    end.
+
+normalize_mpv_path(Path0) ->
+    Path = to_text(Path0),
+    case Path of
+        [] ->
+            {error, empty_media_path};
+        _ ->
+            case media_ref_exists(Path) of
+                true -> {ok, unicode:characters_to_binary(Path)};
+                false -> {error, {media_path_not_found, Path}}
+            end
+    end.
+
+media_ref_exists(Path) ->
+    has_uri_scheme(Path) orelse filelib:is_regular(Path).
+
+has_uri_scheme(Path) ->
+    case string:find(Path, "://") of
+        nomatch -> false;
+        _ -> true
     end.
 
 update_playback_status(Status) ->
@@ -635,14 +1107,26 @@ safe_server_call(Request) ->
     end.
 
 safe_mpv_connect(Path) ->
-    case safe_mpv(connect, [Path]) of
-        {ok, Ipc} -> {ok, Ipc};
-        {error, Reason} -> {error, Reason};
-        Other -> {error, {unexpected_connect_reply, Other}}
+    %% Do not call mpv_ipc:connect/1 directly from the UI process. The process
+    %% owner is responsible for starting MPV, validating the socket, and bounding
+    %% all IPC calls so a wedged socket cannot freeze media controls.
+    case safe_apply_quiet(erm_mpv_proc, ensure_started, [Path]) of
+        ok ->
+            case whereis(erm_mpv_proc) of
+                Pid when is_pid(Pid) -> {ok, Pid};
+                undefined -> {error, mpv_proc_not_started}
+            end;
+        {error, Reason} ->
+            {error, Reason};
+        Other ->
+            {error, {unexpected_ensure_started_reply, Other}}
     end.
 
 safe_mpv(Function, Args) ->
-    safe_apply_quiet(mpv_ipc, Function, Args).
+    %% Route every command through the MPV process owner. erm_mpv_proc bounds
+    %% the IPC call, ensures the socket exists first, and restarts managed MPV
+    %% if a command wedges.
+    safe_apply_quiet(erm_mpv_proc, command, [Function, Args, ?MPV_CMD_TIMEOUT_MS]).
 
 mpv_action(Function, Args, State) ->
     case call_mpv(Function, Args, State) of
@@ -650,14 +1134,27 @@ mpv_action(Function, Args, State) ->
         {error, _Reason, NextState} -> NextState
     end.
 
-call_mpv(Function, _Args, State = #state{ipc = undefined}) ->
-    WaitingState = ensure_mpv_connect(State),
-    FailedState = report_mpv_error(Function, not_connected, WaitingState),
-    {error, not_connected, FailedState};
+call_mpv(Function, Args, State = #state{ipc = undefined}) ->
+    case safe_mpv_connect(ipc_path()) of
+        {ok, Ipc} ->
+            ConnectedState = State#state{
+                ipc = Ipc,
+                ipc_monitor = monitor_ipc(Ipc),
+                mpv_timer = undefined,
+                mpv_retry_ms = ?MPV_RETRY_MS,
+                mpv_errors = maps:remove(connect, State#state.mpv_errors)
+            },
+            call_mpv(Function, Args, ConnectedState);
+        {error, Reason} ->
+            WaitingState = ensure_mpv_connect(State),
+            FailedState = report_mpv_error(Function, Reason, WaitingState),
+            {error, Reason, FailedState}
+    end;
 call_mpv(Function, Args, State) ->
     case safe_mpv(Function, Args) of
         {error, Reason} ->
-            FailedState = report_mpv_error(Function, Reason, State),
+            FaultState = maybe_drop_mpv_connection(Reason, State),
+            FailedState = report_mpv_error(Function, Reason, FaultState),
             {error, Reason, FailedState};
         Reply ->
             {ok, Reply, clear_mpv_error(Function, State)}
@@ -668,6 +1165,30 @@ ensure_mpv_connect(State = #state{mpv_timer = undefined}) ->
     State#state{mpv_timer = Timer};
 ensure_mpv_connect(State) ->
     State.
+
+maybe_drop_mpv_connection(Reason, State) ->
+    case mpv_connection_fault(Reason) of
+        true -> drop_mpv_connection(State);
+        false -> State
+    end.
+
+mpv_connection_fault(not_connected) -> true;
+mpv_connection_fault({mpv_unavailable, _Reason}) -> true;
+mpv_connection_fault({mpv_command_timeout, _Function, _Timeout}) -> true;
+mpv_connection_fault({mpv_ipc_connect_failed, _Path, _Reason}) -> true;
+mpv_connection_fault({disconnected, _Reason}) -> true;
+mpv_connection_fault({exception, _Class, _Reason, _Stacktrace}) -> true;
+mpv_connection_fault({erm_mpv_proc_unavailable, _Reason}) -> true;
+mpv_connection_fault(mpv_proc_not_started) -> true;
+mpv_connection_fault(_) -> false.
+
+drop_mpv_connection(State) ->
+    demonitor_ipc(State#state.ipc_monitor),
+    ensure_mpv_connect(State#state{
+        ipc = undefined,
+        ipc_monitor = undefined,
+        mpv_retry_ms = ?MPV_RETRY_MS
+    }).
 
 mark_mpv_disconnected(Reason, State) ->
     demonitor_ipc(State#state.ipc_monitor),
@@ -700,11 +1221,11 @@ mpv_error_summary(Reason) ->
     Reason.
 
 log_mpv_error(Function, {exception, Class, Reason, Stacktrace}) ->
-    ?LOG_WARNING("mpv_ipc:~p failed: ~p:~p~n~p", [
+    ?LOG_WARNING("MPV command ~p failed: ~p:~p~n~p", [
         Function, Class, Reason, Stacktrace
     ]);
 log_mpv_error(Function, Reason) ->
-    ?LOG_WARNING("mpv_ipc:~p failed: ~p", [Function, Reason]).
+    ?LOG_WARNING("MPV command ~p failed: ~p", [Function, Reason]).
 
 safe_apply_quiet(Module, Function, Args) ->
     _ = code:ensure_loaded(Module),

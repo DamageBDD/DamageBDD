@@ -54,7 +54,6 @@ init([]) ->
         false ->
             ?LOG_NOTICE("erm is disabled by configuration; starting empty supervisor", []),
             {ok, {SupFlags, []}};
-
         true ->
             MediaSpecs = media_specs(),
             LegacySpecs = legacy_specs(),
@@ -170,12 +169,16 @@ gtknode4_child_spec(SessionConfig) ->
         modules => [gtknode4_sup]
     }.
 
-normalize_start_result({ok, Pid}) -> {ok, Pid};
-normalize_start_result({ok, Pid, _Info}) -> {ok, Pid};
+normalize_start_result({ok, Pid}) ->
+    {ok, Pid};
+normalize_start_result({ok, Pid, _Info}) ->
+    {ok, Pid};
 normalize_start_result({error, {already_started, Pid}}) ->
     {error, {unmanaged_process_already_started, Pid}};
-normalize_start_result({error, already_present}) -> {error, already_present};
-normalize_start_result(Other) -> Other.
+normalize_start_result({error, already_present}) ->
+    {error, already_present};
+normalize_start_result(Other) ->
+    Other.
 
 %% Called as the child start MFA by erm_sup. During a hot-development session
 %% an older version of erm_lens/show or a manual GTK test may have left a
@@ -260,8 +263,10 @@ start_lens(Other) ->
 
 stop_lens() ->
     case lens_status() of
-        supervisor_not_running -> ok;
-        stopped -> ok;
+        supervisor_not_running ->
+            ok;
+        stopped ->
+            ok;
         _ ->
             ?LOG_INFO("Stopping ERM Lens", []),
             case supervisor:terminate_child(?SERVER, erm_lens_sup) of
@@ -287,12 +292,15 @@ lens_config() ->
     case application:get_env(erm, lens, #{}) of
         Map when is_map(Map) -> Map;
         List when is_list(List) ->
-            try maps:from_list(List)
-            catch _:_ ->
-                ?LOG_WARNING("Ignoring invalid ERM Lens configuration: ~p", [List]),
-                #{enabled => false}
+            try
+                maps:from_list(List)
+            catch
+                _:_ ->
+                    ?LOG_WARNING("Ignoring invalid ERM Lens configuration: ~p", [List]),
+                    #{enabled => false}
             end;
-        undefined -> #{};
+        undefined ->
+            #{};
         Invalid ->
             ?LOG_WARNING("Ignoring invalid ERM Lens configuration: ~p", [Invalid]),
             #{enabled => false}
@@ -326,7 +334,8 @@ optional_status() ->
 
 reclaim_registered_supervisor(Name, Pid) ->
     case catch gen_server:stop(Pid, shutdown, 10000) of
-        ok -> ok;
+        ok ->
+            ok;
         {'EXIT', Reason} ->
             ?LOG_WARNING("Could not stop stale ~p cleanly pid=~p reason=~p", [Name, Pid, Reason]),
             catch exit(Pid, shutdown);
@@ -335,11 +344,15 @@ reclaim_registered_supervisor(Name, Pid) ->
     end,
     wait_unregistered(Name, 100).
 
-wait_unregistered(_Name, 0) -> ok;
+wait_unregistered(_Name, 0) ->
+    ok;
 wait_unregistered(Name, Attempts) ->
     case whereis(Name) of
-        undefined -> ok;
-        _ -> timer:sleep(10), wait_unregistered(Name, Attempts - 1)
+        undefined ->
+            ok;
+        _ ->
+            timer:sleep(10),
+            wait_unregistered(Name, Attempts - 1)
     end.
 
 %%%===================================================================
