@@ -27,6 +27,10 @@
 -module(gtkgs).
 -behaviour(gen_server).
 
+-include("erm_log.hrl").
+
+-define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_GTKGS).
+
 -export([
     start/0,
     start_link/0,
@@ -346,6 +350,7 @@ inject(Object, EventType, Payload) ->
 %%%===================================================================
 
 init(Opts) ->
+    init_logging(),
     process_flag(trap_exit, true),
     try gtknode4:subscribe(self()) of
         ok ->
@@ -568,6 +573,10 @@ terminate(_Reason, State0) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+init_logging() ->
+    _ = erm_log:ensure_handler(),
+    erm_log:set_process_domain(?LOG_DOMAIN).
 
 %%%===================================================================
 %%% Stylesheets

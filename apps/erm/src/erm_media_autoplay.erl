@@ -84,7 +84,7 @@ do_play_default(S = #st{playlist_file = PlaylistFile}) ->
         ok ->
             do_play_default_ready(PlaylistFile, S);
         {error, Reason} ->
-            ?LOG_WARNING("Playlist process unavailable: ~p; retrying", [Reason], ?LOG_META),
+            ?LOG_WARNING("Playlist process unavailable: ~p; retrying", [Reason]),
             {{error, Reason}, schedule_retry(S)}
     end.
 
@@ -93,8 +93,7 @@ do_play_default_ready(PlaylistFile, S) ->
         {ok, 0} ->
             ?LOG_WARNING(
                 "ERM media autoplay found no media files in default dirs ~p",
-                [safe_default_media_dirs()],
-                ?LOG_META
+                [safe_default_media_dirs()]
             ),
             {{error, no_media}, S};
         {ok, Count} when is_integer(Count), Count > 0 ->
@@ -105,25 +104,24 @@ do_play_default_ready(PlaylistFile, S) ->
                         ok ->
                             ?LOG_INFO(
                                 "ERM media autoplay started ~p shuffled tracks from ~s",
-                                [Count, PlaylistFile],
-                                ?LOG_META
+                                [Count, PlaylistFile]
                             ),
                             {ok, cancel_retry(S)};
                         {error, Reason} ->
-                            ?LOG_WARNING("MPV autoplay failed: ~p; retrying", [Reason], ?LOG_META),
+                            ?LOG_WARNING("MPV autoplay failed: ~p; retrying", [Reason]),
                             {{error, Reason}, schedule_retry(S)}
                     end;
                 {error, Reason} ->
                     ?LOG_WARNING("Could not write MPV playlist ~s: ~p", [
                         PlaylistFile, Reason
-                    ], ?LOG_META),
+                    ]),
                     {{error, Reason}, schedule_retry(S)}
             end;
         {error, Reason} ->
-            ?LOG_WARNING("Could not load default playlist: ~p; retrying", [Reason], ?LOG_META),
+            ?LOG_WARNING("Could not load default playlist: ~p; retrying", [Reason]),
             {{error, Reason}, schedule_retry(S)};
         Other ->
-            ?LOG_WARNING("Unexpected playlist:load_default/1 result: ~p; retrying", [Other], ?LOG_META),
+            ?LOG_WARNING("Unexpected playlist:load_default/1 result: ~p; retrying", [Other]),
             {{error, {unexpected_playlist_load_result, Other}}, schedule_retry(S)}
     end.
 
@@ -168,10 +166,10 @@ current_tracks() ->
         Tracks0 when is_list(Tracks0) ->
             [T || {_Idx, T} <- Tracks0];
         {error, Reason} ->
-            ?LOG_WARNING("Could not read playlist after load: ~p", [Reason], ?LOG_META),
+            ?LOG_WARNING("Could not read playlist after load: ~p", [Reason]),
             [];
         Other ->
-            ?LOG_WARNING("Unexpected playlist:all/0 result after load: ~p", [Other], ?LOG_META),
+            ?LOG_WARNING("Unexpected playlist:all/0 result after load: ~p", [Other]),
             []
     end.
 
@@ -182,12 +180,12 @@ start_mpv_playlist(PlaylistFile) ->
         {ok, _} ->
             ok;
         {error, {not_exported, mpv_ipc, load_list, 1}} ->
-            ?LOG_WARNING("mpv_ipc:load_list/1 missing; falling back to load_file/1", [], ?LOG_META),
+            ?LOG_WARNING("mpv_ipc:load_list/1 missing; falling back to load_file/1", []),
             fallback_mpv_load_file(PlaylistFile);
         {error, Reason} ->
             {error, {mpv_ipc_load_list_failed, PlaylistFile, Reason}};
         Other ->
-            ?LOG_DEBUG("erm_mpv_proc:command(load_list) returned ~p", [Other], ?LOG_META),
+            ?LOG_DEBUG("erm_mpv_proc:command(load_list) returned ~p", [Other]),
             ok
     end.
 
@@ -197,7 +195,7 @@ fallback_mpv_load_file(PlaylistFile) ->
         {ok, _} -> ok;
         {error, Reason} -> {error, {mpv_ipc_load_file_failed, PlaylistFile, Reason}};
         Other ->
-            ?LOG_DEBUG("erm_mpv_proc:command(load_file) returned ~p", [Other], ?LOG_META),
+            ?LOG_DEBUG("erm_mpv_proc:command(load_file) returned ~p", [Other]),
             ok
     end.
 
@@ -208,10 +206,10 @@ safe_mpv_command(Function, Args, Timeout) ->
         error:undef:Stack ->
             %% Hot-upgrade compatibility: older erm_mpv_proc may not yet export
             %% command/3. Use the old path but keep exception containment.
-            ?LOG_WARNING("erm_mpv_proc:command/3 unavailable; using direct mpv_ipc path", [], ?LOG_META),
+            ?LOG_WARNING("erm_mpv_proc:command/3 unavailable; using direct mpv_ipc path", []),
             direct_mpv_call(Function, Args, Stack);
-        Class:Reason:Stack ->
-            {error, {exception, Class, Reason, Stack}}
+        Class:CatchReason:Stack ->
+            {error, {exception, Class, CatchReason, Stack}}
     end.
 
 direct_mpv_call(Function, Args, _Stack) ->

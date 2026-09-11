@@ -9,9 +9,9 @@
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
+#include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <X11/Xatom.h>
 #endif
 
 #define GN4_PROTOCOL_VERSION 1
@@ -671,13 +671,12 @@ static gboolean gn4_set_stylesheet(Gn4State *st, const char *name,
 
 
 
-/* Window-manager identity is per top-level window, not a global gtknode4
- * process setting.  This lets ERM apps share one C-node session while exposing
- * distinct WM_CLASS/window-role values such as erm_mpv, erm_lens, erm_wallet.
+/* Window-manager identity belongs to each top-level window, not to the shared
+ * gtknode4 process.  This allows erm_mpv, erm_lens, erm_wallet, etc. to share
+ * one C-node while herbstluftwm can still match class/instance/role per app.
  *
- * GTK4 no longer has a backend-neutral WM_CLASS API.  On X11/herbstluftwm we
- * set the ICCCM/EWMH properties directly.  On Wayland, compositors use the
- * GtkApplication app-id; per-window class is not generally available. */
+ * GTK4 has no backend-neutral WM_CLASS setter.  For X11 WMs we set the ICCCM
+ * properties directly.  On Wayland these options are harmless no-ops. */
 static void gn4_apply_window_identity(Gn4Widget *entry, Gn4Options *opts) {
   GtkWidget *widget;
   const char *wm_class;
@@ -695,16 +694,14 @@ static void gn4_apply_window_identity(Gn4Widget *entry, Gn4Options *opts) {
   if (!wm_class && !wm_instance && !window_role)
     return;
 
-  /* Give GTK a chance to create the backing GdkSurface before setting X11
-   * properties.  This is safe for toplevel windows and keeps WM_CLASS in place
-   * before gtk_window_present() maps the window. */
+#ifdef GDK_WINDOWING_X11
   if (!gtk_widget_get_realized(widget))
     gtk_widget_realize(widget);
 
-#ifdef GDK_WINDOWING_X11
   {
     GdkDisplay *display = gtk_widget_get_display(widget);
     GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(widget));
+
     if (display && surface && GDK_IS_X11_DISPLAY(display)) {
       Display *xdisplay = gdk_x11_display_get_xdisplay(display);
       Window xwindow = gdk_x11_surface_get_xid(surface);
@@ -725,11 +722,12 @@ static void gn4_apply_window_identity(Gn4Widget *entry, Gn4Options *opts) {
                         (int)strlen(window_role));
       }
 
-      if (xdisplay)
-        XFlush(xdisplay);
+      XFlush(xdisplay);
     }
   }
 #else
+  (void)widget;
+  (void)wm_class;
   (void)wm_instance;
   (void)window_role;
 #endif
@@ -783,7 +781,8 @@ static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
   }
   if (opts->title && GTK_IS_WINDOW(widget))
     gtk_window_set_title(GTK_WINDOW(widget), opts->title);
-  if (GTK_IS_WINDOW(widget) && (opts->wm_class || opts->wm_instance || opts->window_role))
+  if (GTK_IS_WINDOW(widget) &&
+      (opts->wm_class || opts->wm_instance || opts->window_role))
     gn4_apply_window_identity(entry, opts);
   if (opts->tooltip)
     gtk_widget_set_tooltip_text(widget, opts->tooltip);

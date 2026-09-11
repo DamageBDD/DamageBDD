@@ -18,8 +18,11 @@
 -module(gtknode4).
 -behaviour(gen_server).
 
--include("erm_log.hrl").
 -include_lib("kernel/include/logger.hrl").
+-include("erm_log.hrl").
+
+-define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_GTKNODE4).
+-define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
 -export([
     start_link/0,
@@ -54,8 +57,6 @@
 -define(SERVER, ?MODULE).
 -define(PROTOCOL_VERSION, 1).
 -define(DEFAULT_CALL_TIMEOUT, 5000).
--define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_GTKNODE4).
--define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
 -record(state, {
     endpoint = undefined,
@@ -155,8 +156,8 @@ get_label(WidgetName) ->
 %%%===================================================================
 
 init(Opts) ->
-    process_flag(trap_exit, true),
     init_logging(),
+    process_flag(trap_exit, true),
     Endpoint = maps:get(endpoint, Opts, undefined),
     case maps:get(backend, Opts, undefined) of
         undefined ->
@@ -322,10 +323,6 @@ best_effort_backend_terminate(Backend, Reason, BackendState) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-%%%===================================================================
-%%% Logging
-%%%===================================================================
 
 init_logging() ->
     _ = erm_log:ensure_handler(),

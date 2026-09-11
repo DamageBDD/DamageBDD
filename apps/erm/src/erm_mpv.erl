@@ -14,8 +14,20 @@
 
 -include_lib("erm.hrl").
 -include_lib("kernel/include/logger.hrl").
+-include("erm_log.hrl").
 
--export([show/0, close/0, start/1, start_link/0, set_layout/1, reload_layout/0, set_theme/1, reload_theme/0]).
+-export([
+    show/0,
+    close/0,
+    start/1,
+    start_link/0,
+    set_layout/1,
+    reload_layout/0,
+    set_theme/1,
+    reload_theme/0,
+    stop_mpv/0,
+    restart_mpv/0
+]).
 -export([
     init/1,
     handle_call/3,
@@ -37,6 +49,8 @@
 -define(DEFAULT_VOLUME, 50).
 -define(DEFAULT_LAYOUT, classic).
 -define(DEFAULT_THEME, "cyberpunk").
+-define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_MPV_UI).
+-define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
 -record(state, {
     window = undefined,
@@ -44,6 +58,9 @@
     ipc = undefined,
     ipc_monitor = undefined,
     volume = ?DEFAULT_VOLUME,
+    playback_state = idle,
+    loaded_track_id = undefined,
+    loaded_track_path = undefined,
     layout = ?DEFAULT_LAYOUT,
     theme = ?DEFAULT_THEME,
     ui_retry = undefined,
@@ -76,6 +93,12 @@ close() ->
         _Pid -> safe_server_call(close)
     end.
 
+stop_mpv() ->
+    call_or_start(stop_mpv).
+
+restart_mpv() ->
+    call_or_start(restart_mpv).
+
 set_layout(Layout) when Layout =:= classic; Layout =:= compact; Layout =:= playlist ->
     call_or_start({set_layout, Layout});
 set_layout(Layout) ->
@@ -98,6 +121,7 @@ reload_theme() ->
 %%%===================================================================
 
 init(_Config) ->
+    init_logging(),
     process_flag(trap_exit, true),
     Layout = saved_layout(),
     Theme = saved_theme(),
@@ -120,6 +144,12 @@ handle_call(show, _From, State) ->
 handle_call(close, _From, State) ->
     _ = ui_config(mpv_window, [{show, false}]),
     {reply, ok, State};
+handle_call(stop_mpv, _From, State) ->
+    {Reply, State1} = stop_playback(State),
+    {reply, Reply, State1};
+handle_call(restart_mpv, _From, State) ->
+    {Reply, State1} = restart_backend(State),
+    {reply, Reply, State1};
 handle_call({set_layout, Layout}, _From, State) ->
     save_layout(Layout),
     _ = apply_layout(Layout),
@@ -190,14 +220,14 @@ handle_info(connect_mpv, State = #state{ipc = undefined}) ->
 handle_info(connect_mpv, State) ->
     {noreply, State#state{mpv_timer = undefined}};
 
-handle_info(refresh_playlist, State) ->
-    _ = refresh_playlist(State),
-    Timer = replace_timer(State#state.refresh_timer, ?REFRESH_MS, refresh_playlist),
-    {noreply, State#state{refresh_timer = Timer}};
+handle_info(refresh_playlist, State0) ->
+    _ = refresh_playlist(State0),
+    State1 = refresh_mpv_status(State0),
+    Timer = replace_timer(State1#state.refresh_timer, ?REFRESH_MS, refresh_playlist),
+    {noreply, State1#state{refresh_timer = Timer}};
 
 handle_info({mpv, status, Status}, State) when is_map(Status) ->
-    update_playback_status(Status),
-    {noreply, State};
+    {noreply, apply_playback_status(Status, State)};
 handle_info({mpv, disconnected, Reason}, State) ->
     {noreply, mark_mpv_disconnected(Reason, State)};
 handle_info(
@@ -226,7 +256,7 @@ handle_info(
 handle_info({gtkgs, previous_button, click, _Data, _Args}, State) ->
     {noreply, play_selected(safe_playlist(prev), State)};
 handle_info({gtkgs, play_button, click, _Data, _Args}, State) ->
-    {noreply, mpv_action(toggle_pause, [], State)};
+    {noreply, play_or_recover(State)};
 handle_info({gtkgs, next_button, click, _Data, _Args}, State) ->
     {noreply, play_selected(safe_playlist(next), State)};
 %% Playlist and library actions.
@@ -337,6 +367,12 @@ handle_info({gtkgs, layout_playlist_button, click, _Data, _Args}, State) ->
     save_layout(playlist),
     _ = apply_layout(playlist),
     {noreply, State#state{layout = playlist}};
+handle_info({gtkgs, stop_button, click, _Data, _Args}, State) ->
+    {_Reply, State1} = stop_playback(State),
+    {noreply, State1};
+handle_info({gtkgs, restart_backend_button, click, _Data, _Args}, State) ->
+    {_Reply, State1} = restart_backend(State),
+    {noreply, State1};
 handle_info({gtkgs, close_button, click, _Data, _Args}, State) ->
     _ = ui_config(mpv_window, [{show, false}]),
     {noreply, State};
@@ -363,6 +399,10 @@ terminate(_Reason, State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+init_logging() ->
+    _ = erm_log:ensure_handler(),
+    erm_log:set_process_domain(?LOG_DOMAIN).
 
 %%%===================================================================
 %%% GTK UI
@@ -1035,7 +1075,11 @@ play_track(Track, State) ->
                         _ ->
                             update_status("Playing")
                     end,
-                    ReadyState
+                    ReadyState#state{
+                        playback_state = playing,
+                        loaded_track_id = Track#track.id,
+                        loaded_track_path = Path
+                    }
             end;
         {error, Reason} ->
             update_status(io_lib:format("Cannot play track: ~p", [Reason])),
@@ -1063,11 +1107,142 @@ has_uri_scheme(Path) ->
         _ -> true
     end.
 
+play_or_recover(State) ->
+    case mpv_status(State) of
+        {ok, Status, StatusState} ->
+            case status_has_loaded_media(Status) of
+                true ->
+                    mpv_action(toggle_pause, [], apply_playback_status(Status, StatusState));
+                false ->
+                    recover_playback(StatusState)
+            end;
+        {error, StatusReason, StatusState} ->
+            %% If MPV is alive but idle/stopped, some properties can be
+            %% unavailable. Recover by loading a track rather than only
+            %% toggling pause on an empty backend.
+            log_mpv_error(status, StatusReason),
+            recover_playback(StatusState)
+    end.
+
+recover_playback(State) ->
+    case first_playable_track() of
+        {ok, Track} ->
+            play_track(Track, State);
+        {error, RecoverReason} ->
+            update_status(io_lib:format("Nothing to play: ~p", [RecoverReason])),
+            State#state{playback_state = idle, loaded_track_id = undefined, loaded_track_path = undefined}
+    end.
+
+first_playable_track() ->
+    case safe_playlist(current) of
+        {ok, Track} ->
+            {ok, Track};
+        _ ->
+            case safe_playlist(get_by_index, [0]) of
+                {ok, Track} -> {ok, Track};
+                _ -> {error, no_playlist_track}
+            end
+    end.
+
+stop_playback(State) ->
+    case call_mpv(stop, [], State) of
+        {ok, _Reply, State1} ->
+            _ = ui_config(playback_detail, [{text, "Stopped"}]),
+            update_status("Stopped"),
+            {ok, State1#state{playback_state = stopped, loaded_track_id = undefined, loaded_track_path = undefined}};
+        {error, StopReason, State1} ->
+            {{error, StopReason}, State1}
+    end.
+
+restart_backend(State) ->
+    Reply = safe_apply_quiet(erm_mpv_proc, restart, []),
+    State1 = drop_mpv_connection(State#state{
+        playback_state = idle,
+        loaded_track_id = undefined,
+        loaded_track_path = undefined
+    }),
+    case Reply of
+        ok ->
+            update_status("MPV backend restarted"),
+            {ok, State1};
+        {error, RestartReason} ->
+            update_status(io_lib:format("MPV backend restart failed: ~p", [RestartReason])),
+            {{error, RestartReason}, State1};
+        Other ->
+            update_status(io_lib:format("MPV backend restart returned: ~p", [Other])),
+            {Other, State1}
+    end.
+
+mpv_status(State) ->
+    case call_mpv(status, [], State) of
+        {ok, {ok, Status}, State1} when is_map(Status) -> {ok, Status, State1};
+        {ok, Status, State1} when is_map(Status) -> {ok, Status, State1};
+        {ok, Other, State1} -> {error, {bad_status_reply, Other}, State1};
+        {error, StatusReason, State1} -> {error, StatusReason, State1}
+    end.
+
+refresh_mpv_status(State = #state{ipc = undefined}) ->
+    State;
+refresh_mpv_status(State) ->
+    case mpv_status(State) of
+        {ok, Status, State1} -> apply_playback_status(Status, State1);
+        {error, _StatusReason, State1} -> State1
+    end.
+
+apply_playback_status(Status, State) when is_map(Status) ->
+    update_playback_status(Status),
+    Path0 = map_value([path, "path", <<"path">>, filename, "filename", <<"filename">>], Status, State#state.loaded_track_path),
+    Idle = map_value([idle_active, "idle-active", <<"idle-active">>], Status, undefined),
+    Paused = map_value([pause, "pause", <<"pause">>], Status, undefined),
+    PlaybackState = playback_state(Idle, Paused, Path0),
+    State#state{
+        playback_state = PlaybackState,
+        loaded_track_path = normalize_loaded_path(Path0, State#state.loaded_track_path)
+    }.
+
+status_has_loaded_media(Status) ->
+    Path = map_value([path, "path", <<"path">>, filename, "filename", <<"filename">>], Status, undefined),
+    Idle = map_value([idle_active, "idle-active", <<"idle-active">>], Status, undefined),
+    has_loaded_path(Path) andalso Idle =/= true.
+
+playback_state(true, _Paused, _Path) -> idle;
+playback_state(_Idle, true, Path) ->
+    case has_loaded_path(Path) of
+        true -> paused;
+        false -> idle
+    end;
+playback_state(_Idle, false, Path) ->
+    case has_loaded_path(Path) of
+        true -> playing;
+        false -> idle
+    end;
+playback_state(_Idle, _Paused, Path) ->
+    case has_loaded_path(Path) of
+        true -> loaded;
+        false -> idle
+    end.
+
+has_loaded_path(undefined) -> false;
+has_loaded_path(null) -> false;
+has_loaded_path(<<>>) -> false;
+has_loaded_path([]) -> false;
+has_loaded_path(_Path) -> true.
+
+normalize_loaded_path(Path, Previous) when Path =:= undefined; Path =:= null; Path =:= <<>>; Path =:= [] ->
+    Previous;
+normalize_loaded_path(Path, _Previous) when is_binary(Path) ->
+    unicode:characters_to_list(Path);
+normalize_loaded_path(Path, _Previous) when is_list(Path) ->
+    Path;
+normalize_loaded_path(Path, _Previous) ->
+    to_text(Path).
+
 update_playback_status(Status) ->
     Percent = map_value(["percent-pos", <<"percent-pos">>, percent_pos], Status, undefined),
     Position = map_value(["time-pos", <<"time-pos">>, time_pos], Status, undefined),
     Duration = map_value([duration, "duration", <<"duration">>], Status, undefined),
     Paused = map_value([pause, "pause", <<"pause">>], Status, undefined),
+    Idle = map_value([idle_active, "idle-active", <<"idle-active">>], Status, undefined),
     case Percent of
         Value when is_number(Value) ->
             _ = ui_config(seek_scale, [{value, clamp(Value * 10, 0, 1000)}]);
@@ -1076,9 +1251,10 @@ update_playback_status(Status) ->
     _ = ui_config(elapsed_label, [{text, duration_text(Position)}]),
     _ = ui_config(duration_label, [{text, duration_text(Duration)}]),
     Detail =
-        case Paused of
-            true -> "Paused";
-            false -> "Playing";
+        case {Idle, Paused} of
+            {true, _} -> "Idle";
+            {_, true} -> "Paused";
+            {_, false} -> "Playing";
             _ -> "Connected"
         end,
     _ = ui_config(playback_detail, [{text, Detail}]),
@@ -1187,7 +1363,10 @@ drop_mpv_connection(State) ->
     ensure_mpv_connect(State#state{
         ipc = undefined,
         ipc_monitor = undefined,
-        mpv_retry_ms = ?MPV_RETRY_MS
+        mpv_retry_ms = ?MPV_RETRY_MS,
+        playback_state = idle,
+        loaded_track_id = undefined,
+        loaded_track_path = undefined
     }).
 
 mark_mpv_disconnected(Reason, State) ->
@@ -1197,7 +1376,10 @@ mark_mpv_disconnected(Reason, State) ->
         ipc = undefined,
         ipc_monitor = undefined,
         mpv_timer = Timer,
-        mpv_retry_ms = ?MPV_RETRY_MS
+        mpv_retry_ms = ?MPV_RETRY_MS,
+        playback_state = idle,
+        loaded_track_id = undefined,
+        loaded_track_path = undefined
     },
     report_mpv_error(disconnected, Reason, DisconnectedState).
 

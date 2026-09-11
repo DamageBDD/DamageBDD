@@ -16,6 +16,7 @@
 -behaviour(gen_server).
 
 -include_lib("kernel/include/logger.hrl").
+-include("erm_log.hrl").
 
 -export([
     start_link/0,
@@ -44,6 +45,10 @@
 -define(STOP_WAIT_MS, 5000).
 -define(KILL_WAIT_MS, 1000).
 -define(CMD_TIMEOUT_MS, 3000).
+-define(IPC_REPLY_TIMEOUT_MS, 1000).
+-define(IPC_REPLY_MAX_BYTES, 1048576).
+-define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_MPV_PROC).
+-define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
 -record(st, {
     path = ipc_path(),
@@ -99,6 +104,7 @@ command(Function, Args, Timeout) when
 %% gen_server
 
 init([]) ->
+    init_logging(),
     process_flag(trap_exit, true),
     case ensure_exec_started() of
         ok ->
@@ -172,7 +178,7 @@ handle_info({'DOWN', OsPid, process, Pid, Reason}, S = #st{
     pid = Pid,
     path = Path
 }) ->
-    ?LOG_WARNING("Managed MPV exited os_pid=~p pid=~p reason=~p", [OsPid, Pid, Reason]),
+    ?LOG_WARNING("Managed MPV exited os_pid=~p pid=~p reason=~p", [OsPid, Pid, Reason], ?LOG_META),
     safe_delete_socket(Path),
     {noreply, S#st{
         pid = undefined,
@@ -180,7 +186,7 @@ handle_info({'DOWN', OsPid, process, Pid, Reason}, S = #st{
         last_error = {managed_mpv_down, Reason}
     }};
 handle_info({'EXIT', Pid, Reason}, S = #st{pid = Pid, path = Path}) ->
-    ?LOG_WARNING("Managed MPV linked process exited pid=~p reason=~p", [Pid, Reason]),
+    ?LOG_WARNING("Managed MPV linked process exited pid=~p reason=~p", [Pid, Reason], ?LOG_META),
     safe_delete_socket(Path),
     {noreply, S#st{
         pid = undefined,
@@ -192,11 +198,11 @@ handle_info({restart_mpv, Reason}, S0) ->
         {ok, S1} ->
             {noreply, S1#st{last_error = Reason}};
         {error, RestartReason, S1} ->
-            ?LOG_WARNING("MPV restart failed after ~p: ~p", [Reason, RestartReason]),
+            ?LOG_WARNING("MPV restart failed after ~p: ~p", [Reason, RestartReason], ?LOG_META),
             {noreply, S1#st{last_error = {Reason, RestartReason}}}
     end;
 handle_info(Msg, S) ->
-    ?LOG_DEBUG("Unhandled erm_mpv_proc message: ~p", [Msg]),
+    ?LOG_DEBUG("Unhandled erm_mpv_proc message: ~p", [Msg], ?LOG_META),
     {noreply, S}.
 
 terminate(_Reason, S) ->
@@ -207,6 +213,10 @@ code_change(_OldVsn, S, _Extra) ->
     {ok, S}.
 
 %% Internal
+
+init_logging() ->
+    _ = erm_log:ensure_handler(),
+    erm_log:set_process_domain(?LOG_DOMAIN).
 
 call_or_start(Req, Timeout) ->
     case whereis(?MODULE) of
@@ -244,8 +254,8 @@ ensure_exec_started() ->
         Other ->
             {error, {unexpected_erlexec_start_reply, Other}}
     catch
-        Class:Reason:Stacktrace ->
-            {error, {exception, Class, Reason, Stacktrace}}
+        Class:CatchReason:Stacktrace ->
+            {error, {exception, Class, CatchReason, Stacktrace}}
     end.
 
 ensure_shell_env() ->
@@ -262,7 +272,8 @@ ensure_mpv(Path, S) ->
         {true, false} ->
             ?LOG_WARNING(
                 "Managed MPV pid=~p os_pid=~p is alive but IPC socket ~s is unavailable; restarting",
-                [S#st.pid, S#st.os_pid, Path]
+                [S#st.pid, S#st.os_pid, Path],
+                ?LOG_META
             ),
             case restart_mpv({managed_mpv_socket_unavailable, Path}, S) of
                 {ok, S1} -> {ok, S1};
@@ -270,7 +281,7 @@ ensure_mpv(Path, S) ->
             end;
         %% Something already owns the socket. Do not delete it.
         {false, true} ->
-            ?LOG_INFO("MPV IPC socket already alive at ~s; using existing MPV", [Path]),
+            ?LOG_INFO("MPV IPC socket already alive at ~s; using existing MPV", [Path], ?LOG_META),
             {ok, S#st{pid = undefined, os_pid = undefined, last_error = undefined}};
         {false, false} ->
             start_managed_mpv(Path, S)
@@ -287,7 +298,7 @@ start_managed_mpv(Path, S) ->
 
             LogFun =
                 fun(Stream, OsPid0, Data) ->
-                    ?LOG_DEBUG("mpv(~p) ~p: ~ts", [OsPid0, Stream, safe_text(Data)])
+                    ?LOG_DEBUG("mpv(~p) ~p: ~ts", [OsPid0, Stream, safe_text(Data)], ?LOG_META)
                 end,
 
             Opts = [
@@ -302,7 +313,7 @@ start_managed_mpv(Path, S) ->
 
             case safe_exec_run(Cmd, Opts) of
                 {ok, Pid, OsPid} ->
-                    ?LOG_INFO("Started managed MPV os_pid=~p pid=~p ipc=~s", [OsPid, Pid, Path]),
+                    ?LOG_INFO("Started managed MPV os_pid=~p pid=~p ipc=~s", [OsPid, Pid, Path], ?LOG_META),
                     S1 = S#st{path = Path, pid = Pid, os_pid = OsPid, last_error = undefined},
                     case wait_for_socket(Path, ?SOCKET_WAIT_MS) of
                         ok ->
@@ -338,14 +349,27 @@ hidden_mpv_command(Mpv, Path) ->
 restart_mpv(Reason, S = #st{os_pid = undefined, path = Path}) ->
     case socket_alive(Path) of
         true ->
-            %% This is an external MPV/socket. Do not delete or kill something
-            %% not started through this worker.
-            {error, {external_mpv_socket_alive, Path, Reason}, S#st{last_error = Reason}};
+            case takeover_external_socket() of
+                true ->
+                    ?LOG_WARNING(
+                        "Taking over live external MPV socket ~s after ~p",
+                        [Path, Reason],
+                        ?LOG_META
+                    ),
+                    _ = best_effort(fun() -> send_mpv_command(Path, [<<"quit">>]) end),
+                    _ = wait_for_socket_gone(Path, 1500),
+                    safe_delete_socket(Path),
+                    start_managed_mpv(Path, S#st{last_error = Reason});
+                false ->
+                    %% This is an external MPV/socket. Do not delete or kill something
+                    %% not started through this worker unless explicitly configured.
+                    {error, {external_mpv_socket_alive, Path, Reason}, S#st{last_error = Reason}}
+            end;
         false ->
             start_managed_mpv(Path, S#st{last_error = Reason})
     end;
 restart_mpv(Reason, S0) ->
-    ?LOG_WARNING("Restarting managed MPV session: ~p", [Reason]),
+    ?LOG_WARNING("Restarting managed MPV session: ~p", [Reason], ?LOG_META),
     {_Reply, S1} = stop_mpv(S0),
     start_managed_mpv(S1#st.path, S1#st{last_error = Reason}).
 
@@ -357,12 +381,15 @@ stop_mpv(S = #st{os_pid = undefined, path = Path}) ->
     end,
     {ok, S#st{pid = undefined, os_pid = undefined}};
 stop_mpv(S = #st{os_pid = OsPid, pid = Pid, path = Path}) ->
+    %% Ask MPV to quit through IPC first so normal player shutdown can flush
+    %% state before erlexec escalates to process termination.
+    _ = best_effort(fun() -> send_mpv_command(Path, [<<"quit">>]) end),
     StopReply = safe_exec_stop(OsPid),
     DownReply0 = wait_for_down(OsPid, Pid, ?STOP_WAIT_MS),
     DownReply =
         case DownReply0 of
             timeout ->
-                ?LOG_WARNING("MPV os_pid=~p did not stop cleanly; forcing SIGKILL", [OsPid]),
+                ?LOG_WARNING("MPV os_pid=~p did not stop cleanly; forcing SIGKILL", [OsPid], ?LOG_META),
                 _ = safe_exec_kill(OsPid, 9),
                 wait_for_down(OsPid, Pid, ?KILL_WAIT_MS);
             Other ->
@@ -412,28 +439,41 @@ safe_mpv_call(Function, Args, Path) ->
 direct_mpv_call(connect, [Path0], _OwnerPath) ->
     connect_socket(normalize_path(Path0));
 direct_mpv_call(load_file, [File], Path) ->
-    send_mpv_json(Path, [<<"loadfile">>, File, <<"replace">>]);
+    send_mpv_command(Path, [<<"loadfile">>, File, <<"replace">>]);
 direct_mpv_call(load_list, [File], Path) ->
-    send_mpv_json(Path, [<<"loadlist">>, File, <<"replace">>]);
+    send_mpv_command(Path, [<<"loadlist">>, File, <<"replace">>]);
 direct_mpv_call(toggle_pause, [], Path) ->
-    send_mpv_json(Path, [<<"cycle">>, <<"pause">>]);
+    send_mpv_command(Path, [<<"cycle">>, <<"pause">>]);
+direct_mpv_call(play, [], Path) ->
+    send_mpv_command(Path, [<<"set_property">>, <<"pause">>, false]);
+direct_mpv_call(pause, [], Path) ->
+    send_mpv_command(Path, [<<"set_property">>, <<"pause">>, true]);
+direct_mpv_call(stop, [], Path) ->
+    send_mpv_command(Path, [<<"stop">>]);
+direct_mpv_call(quit, [], Path) ->
+    send_mpv_command(Path, [<<"quit">>]);
+direct_mpv_call(get_property, [Property], Path) ->
+    send_mpv_command(Path, [<<"get_property">>, json_property(Property)]);
+direct_mpv_call(status, [], Path) ->
+    {ok, {ok, mpv_status(Path)}};
 direct_mpv_call(set_volume, [Volume0], Path) when is_integer(Volume0); is_float(Volume0) ->
     Volume = clamp_number(Volume0, 0, 100),
-    send_mpv_json(Path, [<<"set_property">>, <<"volume">>, Volume]);
+    send_mpv_command(Path, [<<"set_property">>, <<"volume">>, Volume]);
 direct_mpv_call(seek_percent, [Percent0], Path) when is_integer(Percent0); is_float(Percent0) ->
     Percent = clamp_number(Percent0, 0, 100),
-    send_mpv_json(Path, [<<"seek">>, Percent, <<"absolute-percent">>]);
+    send_mpv_command(Path, [<<"seek">>, Percent, <<"absolute-percent">>]);
 direct_mpv_call(_Function, _Args, _Path) ->
     unsupported.
 
-send_mpv_json(Path0, Args0) ->
+send_mpv_command(Path0, Args0) ->
     Path = normalize_path(Path0),
     Args = [json_arg(Arg) || Arg <- Args0],
-    Payload = [jsx:encode(#{<<"command">> => Args}), <<"\n">>],
-    case send_ipc(Path, Payload) of
-        ok -> {ok, ok};
-        {error, Reason} -> {error, Reason}
-    end.
+    RequestId = erlang:unique_integer([positive, monotonic]),
+    Payload = [
+        jsx:encode(#{<<"command">> => Args, <<"request_id">> => RequestId}),
+        <<"\n">>
+    ],
+    send_ipc_request(Path, Payload, RequestId, ?IPC_REPLY_TIMEOUT_MS).
 
 connect_socket(Path) ->
     case gen_tcp:connect({local, Path}, 0, [binary, {active, false}], 1000) of
@@ -444,22 +484,103 @@ connect_socket(Path) ->
             {error, {mpv_ipc_connect_failed, Path, Reason}}
     end.
 
-send_ipc(Path, Payload0) ->
+send_ipc_request(Path, Payload0, RequestId, RecvTimeout) ->
     Payload = iolist_to_binary(Payload0),
     try gen_tcp:connect({local, Path}, 0, [binary, {active, false}], 1000) of
         {ok, Sock} ->
-            try gen_tcp:send(Sock, Payload) of
-                ok -> ok;
-                {error, Reason} -> {error, {mpv_ipc_send_failed, Path, Reason}}
+            try
+                case gen_tcp:send(Sock, Payload) of
+                    ok -> recv_request_reply(Sock, RequestId, RecvTimeout, <<>>, 0);
+                    {error, SendReason} -> {error, {mpv_ipc_send_failed, Path, SendReason}}
+                end
             after
                 gen_tcp:close(Sock)
             end;
-        {error, Reason} ->
-            {error, {mpv_ipc_connect_failed, Path, Reason}}
+        {error, ConnectReason} ->
+            {error, {mpv_ipc_connect_failed, Path, ConnectReason}}
     catch
-        Class:Reason:Stacktrace ->
-            {error, {exception, Class, Reason, Stacktrace}}
+        Class:CatchReason:Stacktrace ->
+            {error, {exception, Class, CatchReason, Stacktrace}}
     end.
+
+recv_request_reply(_Sock, RequestId, _Timeout, _Acc, Bytes) when Bytes > ?IPC_REPLY_MAX_BYTES ->
+    {error, {mpv_ipc_reply_too_large, RequestId, Bytes}};
+recv_request_reply(Sock, RequestId, Timeout, Acc0, Bytes0) ->
+    case gen_tcp:recv(Sock, 0, Timeout) of
+        {ok, Chunk} ->
+            Acc = <<Acc0/binary, Chunk/binary>>,
+            case find_request_reply(Acc, RequestId) of
+                {ok, ReplyMap} -> mpv_reply_result(ReplyMap);
+                incomplete -> recv_request_reply(Sock, RequestId, Timeout, Acc, Bytes0 + byte_size(Chunk))
+            end;
+        {error, timeout} ->
+            {error, {mpv_ipc_reply_timeout, RequestId}};
+        {error, closed} ->
+            {error, {mpv_ipc_closed_before_reply, RequestId}};
+        {error, RecvReason} ->
+            {error, {mpv_ipc_recv_failed, RecvReason}}
+    end.
+
+find_request_reply(Bin, RequestId) when is_binary(Bin) ->
+    Lines = binary:split(Bin, <<"\n">>, [global]),
+    find_request_reply_lines(Lines, RequestId).
+
+find_request_reply_lines([], _RequestId) ->
+    incomplete;
+find_request_reply_lines([<<>> | Rest], RequestId) ->
+    find_request_reply_lines(Rest, RequestId);
+find_request_reply_lines([Line | Rest], RequestId) ->
+    case decode_mpv_line(Line) of
+        {ok, #{<<"request_id">> := RequestId} = Reply} -> {ok, Reply};
+        _Other -> find_request_reply_lines(Rest, RequestId)
+    end.
+
+decode_mpv_line(Line) ->
+    try jsx:decode(Line, [return_maps]) of
+        Map when is_map(Map) -> {ok, Map};
+        Other -> {error, {bad_mpv_reply, Other}}
+    catch
+        _:_ -> skip
+    end.
+
+mpv_reply_result(#{<<"error">> := Error} = Reply) when Error =:= <<"success">>; Error =:= "success" ->
+    case maps:find(<<"data">>, Reply) of
+        {ok, null} -> {ok, ok};
+        {ok, Data} -> {ok, {ok, normalize_json_value(Data)}};
+        error -> {ok, ok}
+    end;
+mpv_reply_result(#{<<"error">> := Error} = Reply) ->
+    {error, {mpv_error, normalize_json_value(Error), normalize_json_value(maps:get(<<"data">>, Reply, undefined))}};
+mpv_reply_result(Reply) ->
+    {error, {bad_mpv_reply, Reply}}.
+
+mpv_status(Path) ->
+    maps:from_list([
+        {idle_active, get_property_value(Path, <<"idle-active">>)},
+        {pause, get_property_value(Path, <<"pause">>)},
+        {path, get_property_value(Path, <<"path">>)},
+        {percent_pos, get_property_value(Path, <<"percent-pos">>)},
+        {time_pos, get_property_value(Path, <<"time-pos">>)},
+        {duration, get_property_value(Path, <<"duration">>)}
+    ]).
+
+get_property_value(Path, Property) ->
+    case send_mpv_command(Path, [<<"get_property">>, Property]) of
+        {ok, {ok, Value}} -> Value;
+        {ok, ok} -> undefined;
+        {error, Reason} -> {error, Reason}
+    end.
+
+json_property(Property) when is_binary(Property) -> Property;
+json_property(Property) when is_atom(Property) -> atom_to_binary(Property, utf8);
+json_property(Property) when is_list(Property) -> unicode:characters_to_binary(Property).
+
+normalize_json_value(Value) when is_map(Value) ->
+    maps:from_list([{normalize_json_value(K), normalize_json_value(V)} || {K, V} <- maps:to_list(Value)]);
+normalize_json_value(Value) when is_list(Value) ->
+    [normalize_json_value(V) || V <- Value];
+normalize_json_value(Value) ->
+    Value.
 
 json_arg(Arg) when is_binary(Arg) -> Arg;
 json_arg(Arg) when is_list(Arg) -> unicode:characters_to_binary(Arg);
@@ -482,8 +603,8 @@ fallback_mpv_ipc_call(Function, Args) ->
                         {error, Reason} -> {error, Reason};
                         Reply -> {ok, Reply}
                     catch
-                        Class:Reason:Stacktrace ->
-                            {error, {exception, Class, Reason, Stacktrace}}
+                        Class:CatchReason:Stacktrace ->
+                            {error, {exception, Class, CatchReason, Stacktrace}}
                     end;
                 false ->
                     {error, {not_exported, mpv_ipc, Function, length(Args)}}
@@ -491,8 +612,8 @@ fallback_mpv_ipc_call(Function, Args) ->
         {error, Reason} ->
             {error, {mpv_ipc_not_loaded, Reason}}
     catch
-        Class:Reason:Stacktrace ->
-            {error, {mpv_ipc_load_failed, Class, Reason, Stacktrace}}
+        Class:CatchReason:Stacktrace ->
+            {error, {mpv_ipc_load_failed, Class, CatchReason, Stacktrace}}
     end.
 
 safe_exec_run(Cmd, Opts) ->
@@ -553,6 +674,20 @@ wait_for_socket(Path, LeftMs) ->
             wait_for_socket(Path, LeftMs - ?SOCKET_POLL_MS)
     end.
 
+wait_for_socket_gone(Path, LeftMs) when LeftMs =< 0 ->
+    case socket_alive(Path) of
+        true -> {error, timeout};
+        false -> ok
+    end;
+wait_for_socket_gone(Path, LeftMs) ->
+    case socket_alive(Path) of
+        false ->
+            ok;
+        true ->
+            timer:sleep(?SOCKET_POLL_MS),
+            wait_for_socket_gone(Path, LeftMs - ?SOCKET_POLL_MS)
+    end.
+
 socket_alive(Path) ->
     try gen_tcp:connect({local, Path}, 0, [binary, {active, false}], 250) of
         {ok, Sock} ->
@@ -576,9 +711,29 @@ safe_delete_socket(Path) ->
                 ok -> ok;
                 {error, enoent} -> ok;
                 {error, Reason} ->
-                    ?LOG_DEBUG("Could not delete MPV IPC path ~s: ~p", [Path, Reason]),
+                    ?LOG_DEBUG("Could not delete MPV IPC path ~s: ~p", [Path, Reason], ?LOG_META),
                     ok
             end
+    end.
+
+takeover_external_socket() ->
+    case application:get_env(erm, mpv_takeover_external, false) of
+        true -> true;
+        false -> false;
+        Invalid ->
+            ?LOG_WARNING(
+                "Ignoring invalid erm.mpv_takeover_external value ~p; defaulting to false",
+                [Invalid],
+                ?LOG_META
+            ),
+            false
+    end.
+
+best_effort(Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        _ -> ok
+    catch
+        _:_ -> ok
     end.
 
 normalize_path(Path) when is_binary(Path) ->

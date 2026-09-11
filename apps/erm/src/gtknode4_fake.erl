@@ -27,27 +27,14 @@ init(Opts) ->
             picture, scrolled_box
         ],
         object_commands => [create, config, read, destroy, inspect, sync],
-        style_commands => [set_stylesheet, remove_stylesheet],
-        css => true,
         test_injection => TestMode,
         visual_capture => false,
+        css => true,
+        style_commands => [set_stylesheet, remove_stylesheet],
         dialogs => deterministic
     },
     {ok, #state{test_mode = TestMode}, Capabilities}.
 
-handle_command({set_stylesheet, Name, Css}, State0) when is_binary(Name), is_binary(Css) ->
-    Stylesheets = maps:put(
-        Name,
-        #{name => Name, bytes => byte_size(Css), css => Css},
-        State0#state.stylesheets
-    ),
-    {reply, ok, State0#state{stylesheets = Stylesheets}};
-handle_command({set_stylesheet, _Name, _Css}, State) ->
-    {reply, {error, badarg}, State};
-handle_command({remove_stylesheet, Name}, State0) when is_binary(Name) ->
-    {reply, ok, State0#state{stylesheets = maps:remove(Name, State0#state.stylesheets)}};
-handle_command({remove_stylesheet, _Name}, State) ->
-    {reply, {error, badarg}, State};
 handle_command({create, NativeId, Type, Parent, Props0}, State0) ->
     Props = options_map(Props0),
     case validate_create(NativeId, Parent, State0#state.objects) of
@@ -110,6 +97,16 @@ handle_command({message_dialog, DialogId, ParentId, Message, Options0}, State0) 
             ],
             {reply, {ok, Response}, State0, Events}
     end;
+handle_command({set_stylesheet, Name, Css}, State0) when is_binary(Name), is_binary(Css) ->
+    Entry = #{name => Name, bytes => byte_size(Css)},
+    Stylesheets = maps:put(Name, Entry, State0#state.stylesheets),
+    {reply, ok, State0#state{stylesheets = Stylesheets}};
+handle_command({set_stylesheet, Name, Css}, State0) ->
+    {reply, {error, {bad_stylesheet, Name, Css}}, State0};
+handle_command({remove_stylesheet, Name}, State0) when is_binary(Name) ->
+    {reply, ok, State0#state{stylesheets = maps:remove(Name, State0#state.stylesheets)}};
+handle_command({remove_stylesheet, Name}, State0) ->
+    {reply, {error, {bad_stylesheet_name, Name}}, State0};
 handle_command({dismiss_dialog, DialogId}, State0) ->
     case maps:get(DialogId, State0#state.dialogs, undefined) of
         undefined ->
@@ -151,7 +148,7 @@ handle_command(sync, State) ->
 handle_command({sync}, State) ->
     {reply, ok, State};
 handle_command(reset, State) ->
-    {reply, ok, State#state{objects = #{}, dialogs = #{}, stylesheets = #{}}};
+    {reply, ok, State#state{objects = #{}, dialogs = #{}}};
 handle_command(Command, State) ->
     {reply, {error, {unsupported_command, Command}}, State}.
 
