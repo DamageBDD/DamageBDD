@@ -40,6 +40,7 @@
 -export([
     ensure_scope/1,
     get/2,
+    get_entry/2,
     get_scope/1,
     get_context/1,
     get_entries/1,
@@ -275,11 +276,23 @@ ensure_scope(Scope0) ->
 
 -spec get(term(), context_key()) -> {ok, term()} | not_found | {error, term()}.
 get(Scope0, Key0) ->
+    case get_entry(Scope0, Key0) of
+        {ok, #{value := Value}} ->
+            {ok, Value};
+        not_found ->
+            not_found;
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec get_entry(term(), context_key()) ->
+    {ok, entry()} | not_found | {error, term()}.
+get_entry(Scope0, Key0) ->
     Key = normalize_context_key(Key0),
     case snapshot(Scope0) of
         {ok, #{entries := Entries}} ->
             case maps:find(Key, Entries) of
-                {ok, #{value := Value}} -> {ok, Value};
+                {ok, Entry} -> {ok, Entry};
                 error -> not_found
             end;
         {error, _} = Error ->
