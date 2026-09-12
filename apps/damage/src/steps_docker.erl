@@ -75,14 +75,16 @@ step(_Config, Context, <<"Given">>, _N, ?GIVEN_UNUSED_SINCE, _Raw) ->
 step(Config, Context, <<"When">>, _N, ?WHEN_CLEANUP_UNUSED_SINCE, _Raw) ->
     steps_utils:ensure_admin(Context),
     {ok, ISODate} = relative_string_to_date(Relative),
-    CmdIO =
-        io_lib:format(
-            "docker system prune -a --force --filter \"until=~s\"",
-            [ISODate]
-        ),
-    Command = lists:flatten(CmdIO),
-    Ctx1 = run_cmd(Config, Command, Context),
-    ?LOG_NOTICE("Docker cleanup command executed: ~s", [Command]),
+    Args = [
+        "system",
+        "prune",
+        "-a",
+        "--force",
+        "--filter",
+        "until=" ++ ISODate
+    ],
+    Ctx1 = run_docker(Config, Args, Context),
+    ?LOG_NOTICE("Docker cleanup command executed for resources before ~s", [ISODate]),
     Ctx1#{since => ISODate};
 %% ---------------------------------------------------------------------------
 %% Then: assert that no unused resources older than relative time remain
@@ -91,14 +93,17 @@ step(Config, Context, <<"When">>, _N, ?WHEN_CLEANUP_UNUSED_SINCE, _Raw) ->
 step(Config, Context, <<"Then">>, _N, ?THEN_NO_UNUSED_OLDER_THAN, _Raw) ->
     steps_utils:ensure_admin(Context),
     {ok, ISODate} = relative_string_to_date(Relative),
-    CmdIO =
-        io_lib:format(
-            "docker ps -a --filter \"status=exited\" "
-            "--filter \"until=~s\" --format '{{.ID}}'",
-            [ISODate]
-        ),
-    Command = lists:flatten(CmdIO),
-    Ctx1 = run_cmd(Config, Command, Context),
+    Args = [
+        "ps",
+        "-a",
+        "--filter",
+        "status=exited",
+        "--filter",
+        "until=" ++ ISODate,
+        "--format",
+        "{{.ID}}"
+    ],
+    Ctx1 = run_docker(Config, Args, Context),
     case maps:is_key(fail, Ctx1) of
         true ->
             %% Preserve the actual Docker failure; stderr is not a list of IDs.
@@ -151,18 +156,22 @@ step(Config, Context, Kw, _N, ?THEN_COPY_FILE_FROM_CONTAINER_TO_IPFS_STORE_HASH,
 step(Config, Context, <<"Then">>, _N, ?RUN_DOCKER_IMAGE_TAGGED, ScriptBin) ->
     run_docker_tagged(Config, Tag, ScriptBin, Context).
 
-run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
+run_docker_tagged(Config, Tag0, ScriptBin0, Ctx0) ->
     steps_utils:ensure_admin(Ctx0),
+    Tag = require_docker_ref(Tag0),
     ScriptBin = to_binary(ScriptBin0),
 
-    WorkDir = docker_workdir(Config),
+    WorkDir = filename:absname(docker_workdir(Config)),
     OutDir = filename:join(WorkDir, "out"),
 
     ok = ensure_dir(WorkDir),
     ok = ensure_dir(OutDir),
 
-    ScriptPath = filename:join(WorkDir, "script.sh"),
-    case file:write_file(ScriptPath, ScriptBin) of
+    %% The Gherkin docstring is intentionally executable *inside the container*.
+    %% Never interpolate it into a host shell command. Write it to a file and
+    %% bind-mount that file read-only into the container.
+    ScriptPath = filename:join(WorkDir, "script-" ++ unique_stage_id() ++ ".sh"),
+    case file:write_file(ScriptPath, ScriptBin, [binary]) of
         ok ->
             ok;
         {error, Reason} ->
@@ -176,33 +185,72 @@ run_docker_tagged(Config, Tag, ScriptBin0, Ctx0) ->
     end,
 
     ContainerName = unique_container_name(),
+    OutMount = OutDir ++ ":/out/",
+    ScriptMount = ScriptPath ++ ":/tmp/damagebdd-script.sh:ro",
 
-    Cmd =
-        iolist_to_binary([
-            "docker run --network=host ",
-            "--name ",
-            shell_quote(ContainerName),
-            " ",
-            "--user damage ",
-            "-v ",
-            shell_quote(OutDir),
-            ":/out/ ",
-            "-w /opt/workspace ",
-            shell_quote(Tag),
-            " ",
-            "sh -lc ",
-            shell_quote(ScriptBin)
-        ]),
+    Args = [
+        "run",
+        "--network=host",
+        "--name",
+        binary_to_list(ContainerName),
+        "--user",
+        "damage",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--cap-drop",
+        "ALL",
+        "-v",
+        OutMount,
+        "-v",
+        ScriptMount,
+        "-w",
+        "/opt/workspace",
+        binary_to_list(Tag),
+        "/bin/sh",
+        "/tmp/damagebdd-script.sh"
+    ],
 
-    ?LOG_DEBUG("Docker cmd ~p script path ~p", [Cmd, ScriptPath]),
-    Ctx1 = run_cmd_in_docker_dir(Config, Cmd, Ctx0),
+    ?LOG_DEBUG(
+        "Docker run image=~p container=~p script_path=~p",
+        [Tag, ContainerName, ScriptPath]
+    ),
+    Ctx1 =
+        try
+            run_docker(Config, Args, Ctx0)
+        after
+            %% Keep the bind source path present while the stopped container is
+            %% retained.  `docker cp` may remount the stopped container and Docker
+            %% expects every recorded bind source to still exist with the same
+            %% type.  Deleting this file here can make a later `docker cp` fail
+            %% with e.g. `mkdirat tmp/damagebdd-script.sh: file exists`.
+            %%
+            %% Scrub the contents immediately instead: the executable build script
+            %% is not retained, but the empty regular file keeps the bind mount
+            %% valid until the run directory/container is cleaned up.
+            scrub_script_file(ScriptPath)
+        end,
 
     maps:merge(Ctx1, #{
         docker_workdir => WorkDir,
         docker_outdir => OutDir,
+        docker_script_path => ScriptPath,
         docker_container_name => ContainerName,
         docker_container => ContainerName
     }).
+
+scrub_script_file(ScriptPath) ->
+    case file:write_file(ScriptPath, <<>>, [binary]) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            %% Do not mask the Docker result if cleanup itself fails.
+            ?LOG_WARNING(
+                "Unable to scrub Docker script bind source ~s: ~p",
+                [ScriptPath, Reason]
+            ),
+            ok
+    end.
+
 unique_container_name() ->
     Enc = base64:encode(crypto:strong_rand_bytes(9)),
     Safe = binary:replace(binary:replace(Enc, <<"/">>, <<"_">>, [global]), <<"+">>, <<"-">>, [
@@ -252,48 +300,249 @@ build_image_from_dockerfile(Config, Src, Tag, Params, ContextRel0, Ctx0) ->
     end.
 
 build_image_from_dockerfile_bin(
-    Config, _Src, Tag, Params, ContextRel0, WorkDir, DockerfileBin, Ctx0
+    Config, _Src, Tag0, Params0, ContextRel0, WorkDir0, DockerfileBin, Ctx0
 ) ->
-    %% 2) Write Dockerfile into workdir
+    Tag = require_docker_ref(Tag0),
+    WorkDir = filename:absname(WorkDir0),
     DockerfilePath = filename:join(WorkDir, "Dockerfile"),
-    case file:write_file(DockerfilePath, DockerfileBin) of
-        ok ->
-            %% 3) Resolve build context
-            ContextDir =
-                case ContextRel0 of
-                    undefined ->
-                        WorkDir;
-                    Rel when is_binary(Rel) ->
-                        filename:join(WorkDir, binary_to_list(Rel));
-                    Rel when is_list(Rel) ->
-                        filename:join(WorkDir, Rel)
-                end,
 
-            %% 4) Run docker build inside WorkDir
-            %% NOTE: Params is appended verbatim (user-controlled).
-            Cmd =
-                iolist_to_binary([
-                    "docker build --network=host -f ",
-                    shell_quote(DockerfilePath),
-                    " -t ",
-                    shell_quote(Tag),
-                    " ",
-                    Params,
-                    " ",
-                    shell_quote(ContextDir)
-                ]),
-            Ctx1 = run_cmd_in_docker_dir(Config, Cmd, Ctx0),
-            maps:put(docker_image_tag, Tag, Ctx1);
+    case parse_docker_build_params(Params0) of
         {error, Reason} ->
             maps:put(
                 fail,
                 damage_utils:strf(
-                    "Docker build could not write ~s: ~p. "
-                    "Check run-directory permissions and available disk space.",
-                    [DockerfilePath, Reason]
+                    "Unsafe or invalid Docker build parameters: ~p. "
+                    "Only explicitly allowed build flags are accepted.",
+                    [Reason]
                 ),
                 Ctx0
-            )
+            );
+        {ok, ParamArgs} ->
+            case safe_build_context(WorkDir, ContextRel0) of
+                {error, Reason} ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf("Invalid Docker build context: ~p", [Reason]),
+                        Ctx0
+                    );
+                {ok, ContextDir} ->
+                    case file:write_file(DockerfilePath, DockerfileBin, [binary]) of
+                        ok ->
+                            Args =
+                                [
+                                    "build",
+                                    "--network=host",
+                                    "-f",
+                                    DockerfilePath,
+                                    "-t",
+                                    binary_to_list(Tag)
+                                ] ++
+                                    ParamArgs ++
+                                    [ContextDir],
+                            Ctx1 = run_docker(Config, Args, Ctx0),
+                            maps:put(docker_image_tag, Tag, Ctx1);
+                        {error, Reason} ->
+                            maps:put(
+                                fail,
+                                damage_utils:strf(
+                                    "Docker build could not write ~s: ~p. "
+                                    "Check run-directory permissions and available disk space.",
+                                    [DockerfilePath, Reason]
+                                ),
+                                Ctx0
+                            )
+                    end
+            end
+    end.
+
+require_docker_ref(Ref0) ->
+    Ref = to_binary(Ref0),
+    %% This intentionally validates a conservative subset of Docker references.
+    %% It prevents whitespace/control characters and keeps malformed values away
+    %% from Docker even though argv execution already prevents shell injection.
+    case
+        re:run(
+            Ref,
+            <<"^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,254}$">>,
+            [{capture, none}]
+        )
+    of
+        match ->
+            Ref;
+        nomatch ->
+            throw(damage_utils:strf("Invalid Docker image reference: ~p", [Ref]))
+    end.
+
+safe_build_context(WorkDir0, ContextRel0) ->
+    WorkDir = filename:absname(WorkDir0),
+    case filelib:is_dir(WorkDir) of
+        true ->
+            safe_build_context_rel(WorkDir, ContextRel0);
+        false ->
+            {error, {workdir_not_directory, WorkDir}}
+    end.
+
+safe_build_context_rel(WorkDir, undefined) ->
+    {ok, WorkDir};
+safe_build_context_rel(WorkDir, Rel0) ->
+    Rel = normalize_exec_arg(Rel0),
+    case filename:pathtype(Rel) of
+        absolute ->
+            {error, absolute_context_not_allowed};
+        _ ->
+            %% safe_relative_path/2 is symlink-aware. In addition to normal
+            %% ".." traversal, reject any symlink within Rel that resolves
+            %% above WorkDir.
+            case filelib:safe_relative_path(Rel, WorkDir) of
+                unsafe ->
+                    {error, context_escapes_workdir};
+                SafeRel ->
+                    Candidate =
+                        case SafeRel of
+                            [] ->
+                                WorkDir;
+                            _ ->
+                                filename:absname(filename:join(WorkDir, SafeRel))
+                        end,
+                    case filelib:is_dir(Candidate) of
+                        true ->
+                            {ok, Candidate};
+                        false ->
+                            {error, {context_not_directory, Candidate}}
+                    end
+            end
+    end.
+
+parse_docker_build_params(undefined) ->
+    {ok, []};
+parse_docker_build_params(<<>>) ->
+    {ok, []};
+parse_docker_build_params([]) ->
+    {ok, []};
+parse_docker_build_params(Params0) ->
+    Params = normalize_exec_arg(Params0),
+    case split_cli_args(Params) of
+        {ok, Args} ->
+            validate_docker_build_args(Args);
+        Error ->
+            Error
+    end.
+
+%% Parse shell-like quoting only as data. No expansion, command substitution,
+%% globbing, variable expansion, redirections, or shell execution occurs.
+split_cli_args(Input) when is_list(Input) ->
+    split_cli_args(Input, unquoted, [], [], false).
+
+split_cli_args([], unquoted, Current, Acc, InToken) ->
+    {ok, lists:reverse(finish_cli_token(Current, Acc, InToken))};
+split_cli_args([], Quote, _Current, _Acc, _InToken) ->
+    {error, {unterminated_quote, Quote}};
+split_cli_args([$\\], _Quote, _Current, _Acc, _InToken) ->
+    {error, trailing_escape};
+split_cli_args([$\\, C | Rest], unquoted, Current, Acc, _InToken) ->
+    split_cli_args(Rest, unquoted, [C | Current], Acc, true);
+split_cli_args([$\\, C | Rest], double, Current, Acc, _InToken) ->
+    split_cli_args(Rest, double, [C | Current], Acc, true);
+split_cli_args([$' | Rest], unquoted, Current, Acc, _InToken) ->
+    split_cli_args(Rest, single, Current, Acc, true);
+split_cli_args([$' | Rest], single, Current, Acc, InToken) ->
+    split_cli_args(Rest, unquoted, Current, Acc, InToken);
+split_cli_args([$" | Rest], unquoted, Current, Acc, _InToken) ->
+    split_cli_args(Rest, double, Current, Acc, true);
+split_cli_args([$" | Rest], double, Current, Acc, InToken) ->
+    split_cli_args(Rest, unquoted, Current, Acc, InToken);
+split_cli_args([C | Rest], unquoted, Current, Acc, InToken) when
+    C =:= $\s; C =:= $\t; C =:= $\r; C =:= $\n
+->
+    Acc1 = finish_cli_token(Current, Acc, InToken),
+    split_cli_args(Rest, unquoted, [], Acc1, false);
+split_cli_args([C | Rest], Quote, Current, Acc, _InToken) ->
+    split_cli_args(Rest, Quote, [C | Current], Acc, true).
+
+finish_cli_token(_Current, Acc, false) ->
+    Acc;
+finish_cli_token(Current, Acc, true) ->
+    [lists:reverse(Current) | Acc].
+
+validate_docker_build_args(Args) ->
+    validate_docker_build_args(Args, []).
+
+validate_docker_build_args([], Acc) ->
+    {ok, lists:reverse(Acc)};
+validate_docker_build_args(["--build-arg", Value | Rest], Acc) ->
+    case validate_build_arg(Value) of
+        ok -> validate_docker_build_args(Rest, [Value, "--build-arg" | Acc]);
+        Error -> Error
+    end;
+validate_docker_build_args([Arg | Rest], Acc) ->
+    case string:prefix(Arg, "--build-arg=") of
+        nomatch ->
+            validate_safe_build_flag(Arg, Rest, Acc);
+        Value ->
+            case validate_build_arg(Value) of
+                ok -> validate_docker_build_args(Rest, [Arg | Acc]);
+                Error -> Error
+            end
+    end.
+
+validate_safe_build_flag("--pull", Rest, Acc) ->
+    validate_docker_build_args(Rest, ["--pull" | Acc]);
+validate_safe_build_flag("--no-cache", Rest, Acc) ->
+    validate_docker_build_args(Rest, ["--no-cache" | Acc]);
+validate_safe_build_flag("--target", [Value | Rest], Acc) ->
+    validate_named_value(target, Value, Rest, Acc);
+validate_safe_build_flag("--platform", [Value | Rest], Acc) ->
+    validate_named_value(platform, Value, Rest, Acc);
+validate_safe_build_flag("--label", [Value | Rest], Acc) ->
+    case validate_assignment(Value) of
+        ok -> validate_docker_build_args(Rest, [Value, "--label" | Acc]);
+        Error -> Error
+    end;
+validate_safe_build_flag("--progress", [Value | Rest], Acc) ->
+    case lists:member(Value, ["auto", "plain", "tty", "rawjson"]) of
+        true -> validate_docker_build_args(Rest, [Value, "--progress" | Acc]);
+        false -> {error, {invalid_progress, Value}}
+    end;
+validate_safe_build_flag(Flag, _Rest, _Acc) ->
+    {error, {unsupported_build_parameter, Flag}}.
+
+validate_named_value(Name, Value, Rest, Acc) ->
+    case
+        re:run(
+            to_binary(Value),
+            <<"^[A-Za-z0-9][A-Za-z0-9._/,:+-]*$">>,
+            [{capture, none}]
+        )
+    of
+        match ->
+            Flag =
+                case Name of
+                    target -> "--target";
+                    platform -> "--platform"
+                end,
+            validate_docker_build_args(Rest, [Value, Flag | Acc]);
+        nomatch ->
+            {error, {invalid_build_parameter_value, Name, Value}}
+    end.
+
+validate_build_arg(Value) ->
+    case binary:split(to_binary(Value), <<"=">>) of
+        [Key, _Val] ->
+            case re:run(Key, <<"^[A-Za-z_][A-Za-z0-9_]*$">>, [{capture, none}]) of
+                match -> ok;
+                nomatch -> {error, {invalid_build_arg_name, Key}}
+            end;
+        [_KeyOnly] ->
+            %% Do not allow Docker to inherit a value from the DamageBDD
+            %% service environment by using `--build-arg NAME`.
+            {error, build_arg_requires_explicit_value}
+    end.
+
+validate_assignment(Value) ->
+    case binary:split(to_binary(Value), <<"=">>) of
+        [<<>>, _] -> {error, invalid_empty_assignment_key};
+        [_Key, _Val] -> ok;
+        [_] -> {error, assignment_requires_value}
     end.
 
 docker_workdir(Config) ->
@@ -334,23 +583,38 @@ fetch_url(Url) ->
         Err -> Err
     end.
 
-run_cmd_in_docker_dir(Config, CmdBin, Ctx0) ->
-    %% Use your existing run_cmd but force cwd to docker workdir
-    %% (If you already refactored run_cmd to use <run_dir>/docker by default, just call it.)
-    %% Placeholder:
-    run_cmd(Config, CmdBin, Ctx0).
+run_docker(Config, Args0, Context) when is_list(Args0) ->
+    Docker = docker_executable(),
+    Args = [normalize_exec_arg(A) || A <- Args0],
+    run_exec(Config, [Docker | Args], Context).
 
-shell_quote(List) when is_list(List) ->
-    shell_quote(list_to_binary(List));
-shell_quote(Bin) when is_binary(Bin) ->
-    %% minimal safe quoting for paths/tags (single quotes)
-    <<"'", (binary:replace(Bin, <<"'>">>, <<"'\"'\"'">>, [global]))/binary, "'">>.
+docker_executable() ->
+    case os:find_executable("docker") of
+        false ->
+            throw(
+                <<
+                    "Docker CLI is not available in the DamageBDD service PATH. "
+                    "Install Docker and ensure the service can execute it."
+                >>
+            );
+        Path ->
+            filename:absname(Path)
+    end.
+
+normalize_exec_arg(B) when is_binary(B) ->
+    binary_to_list(B);
+normalize_exec_arg(L) when is_list(L) ->
+    L;
+normalize_exec_arg(A) when is_atom(A) ->
+    atom_to_list(A);
+normalize_exec_arg(I) when is_integer(I) ->
+    integer_to_list(I).
 
 %% ===== Helpers ===============================================================
-run_cmd(Config, Command, Context) ->
+run_exec(Config, ExecSpec, Context) ->
     steps_utils:ensure_admin(Context),
     DockerDir = docker_workdir(Config),
-    ?LOG_DEBUG("steps_docker running command in ~s: ~s", [DockerDir, Command]),
+    ?LOG_DEBUG("steps_docker exec in ~s: ~p", [DockerDir, redact_exec_spec(ExecSpec)]),
 
     LogDir0 = filename:join(DockerDir, "logs"),
     ok = ensure_dir(LogDir0),
@@ -364,7 +628,7 @@ run_cmd(Config, Command, Context) ->
     ExecResult =
         try
             exec:run(
-                Command,
+                ExecSpec,
                 [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}, sync]
             )
         catch
@@ -385,9 +649,11 @@ run_cmd(Config, Command, Context) ->
                 after 1000 ->
                     maps:put(cmd_result, ok, Context)
                 end,
-            maybe_put_container_info(Command, Ctx1);
+            Ctx1;
         {error, Reason} ->
-            ?LOG_ERROR("steps_docker command exited with error ~p: ~p", [Command, Reason]),
+            ?LOG_ERROR("steps_docker command exited with error spec=~p reason=~p", [
+                redact_exec_spec(ExecSpec), Reason
+            ]),
             Details =
                 receive
                     {docker_done, WatchResult} -> docker_error_details(WatchResult)
@@ -398,7 +664,7 @@ run_cmd(Config, Command, Context) ->
             ErrorBin = docker_error_message(Details),
             Result = {error, [{stderr, [Details]}]},
             Ctx1 = maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context)),
-            maybe_put_container_info(Command, Ctx1);
+            Ctx1;
         Other ->
             ?LOG_ERROR("steps_docker command returned unexpected result ~p", [Other]),
             stop_docker_watcher(Watcher),
@@ -406,7 +672,7 @@ run_cmd(Config, Command, Context) ->
             ErrorBin = docker_error_message(Details),
             Result = {error, [{stderr, [Details]}]},
             Ctx1 = maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context)),
-            maybe_put_container_info(Command, Ctx1)
+            Ctx1
     end.
 
 stop_docker_watcher(Watcher) when is_pid(Watcher) ->
@@ -417,6 +683,30 @@ stop_docker_watcher(Watcher) when is_pid(Watcher) ->
         _:_ -> ok
     end,
     ok.
+
+redact_exec_spec([Executable | Args]) ->
+    [Executable | redact_exec_args(Args)];
+redact_exec_spec(Other) ->
+    Other.
+
+redact_exec_args(["--build-arg", Value | Rest]) ->
+    ["--build-arg", redact_assignment(Value) | redact_exec_args(Rest)];
+redact_exec_args([Arg | Rest]) ->
+    case string:prefix(Arg, "--build-arg=") of
+        nomatch ->
+            [Arg | redact_exec_args(Rest)];
+        Value ->
+            ["--build-arg=" ++ redact_assignment(Value) | redact_exec_args(Rest)]
+    end;
+redact_exec_args([]) ->
+    [].
+
+redact_assignment(Value0) ->
+    Value = normalize_exec_arg(Value0),
+    case string:split(Value, "=", leading) of
+        [Key, _] -> Key ++ "=REDACTED";
+        _ -> "REDACTED"
+    end.
 
 docker_result_context({ok, _} = Result, Context) ->
     maps:put(cmd_result, Result, Context);
@@ -489,6 +779,11 @@ docker_error_hint(Lower) ->
             {<<"unable to find image">>, <<
                 "Docker could not find the requested image locally and could not obtain it. "
                 "Verify the image name/tag and registry connectivity."
+            >>},
+            {<<"damagebdd-script.sh: file exists">>, <<
+                "Docker could not remount the stopped container's script bind. This usually "
+                "means the host bind-source file was removed or changed type after `docker run`. "
+                "Keep the bind source as a regular file until artifact copies are complete."
             >>},
             {<<"conflict. the container name">>, <<
                 "A container with the requested name already exists. Remove/rename the old "
@@ -591,105 +886,6 @@ truncate_error(Bin, Max) when is_binary(Bin) ->
     <<Prefix:Max/binary, _/binary>> = Bin,
     <<Prefix/binary, "...">>.
 
-maybe_put_container_info(Command0, Ctx0) ->
-    Command = to_binary(Command0),
-    case is_docker_run_command(Command) of
-        false ->
-            Ctx0;
-        true ->
-            Name0 = extract_docker_run_name(Command),
-            Cid0 = extract_container_id_from_result(Ctx0),
-
-            Ctx1 =
-                case Name0 of
-                    undefined -> Ctx0;
-                    Name -> maps:put(docker_container_name, Name, Ctx0)
-                end,
-
-            Ctx2 =
-                case Cid0 of
-                    undefined -> Ctx1;
-                    Cid -> maps:put(docker_container_id, Cid, Ctx1)
-                end,
-
-            case
-                {
-                    maps:get(docker_container_id, Ctx2, undefined),
-                    maps:get(docker_container_name, Ctx2, undefined)
-                }
-            of
-                {undefined, undefined} ->
-                    Ctx2;
-                {undefined, Name0} ->
-                    maps:put(docker_container, Name0, Ctx2);
-                {Cid0, _Name} ->
-                    maps:put(docker_container, Cid0, Ctx2)
-            end
-    end.
-
-is_docker_run_command(Command) ->
-    binary:match(Command, <<"docker run">>) =/= nomatch.
-
-extract_docker_run_name(Command) ->
-    %% matches: --name foo   or   --name=foo
-    case re:run(Command, <<"--name(?:[= ]+)([^ ]+)">>, [{capture, [1], binary}]) of
-        {match, [Name]} ->
-            strip_shell_quotes(Name);
-        nomatch ->
-            undefined
-    end.
-
-extract_container_id_from_result(Ctx) ->
-    case maps:get(cmd_result, Ctx, undefined) of
-        {ok, [{stdout, [Bin]}]} ->
-            extract_container_id(Bin);
-        {error, List} ->
-            case lists:keyfind(stdout, 1, List) of
-                {stdout, [Bin]} -> extract_container_id(Bin);
-                false -> undefined
-            end;
-        _ ->
-            undefined
-    end.
-
-extract_container_id(Bin0) when is_binary(Bin0) ->
-    Bin = iolist_to_binary(Bin0),
-    Lines =
-        [
-            list_to_binary(string:trim(L))
-         || L <- string:split(binary_to_list(Bin), "\n", all),
-            string:trim(L) =/= ""
-        ],
-    case Lines of
-        [First | _] ->
-            case re:run(First, <<"^[0-9a-f]{12,64}$">>, [{capture, none}]) of
-                match -> First;
-                nomatch -> undefined
-            end;
-        [] ->
-            undefined
-    end.
-
-strip_shell_quotes(<<"'", Rest/binary>>) ->
-    strip_trailing_single_quote(Rest);
-strip_shell_quotes(<<"\"", Rest/binary>>) ->
-    strip_trailing_double_quote(Rest);
-strip_shell_quotes(Bin) ->
-    Bin.
-
-strip_trailing_single_quote(Bin) ->
-    Size = byte_size(Bin),
-    case Bin of
-        <<Body:(Size - 1)/binary, "'">> -> Body;
-        _ -> Bin
-    end.
-
-strip_trailing_double_quote(Bin) ->
-    Size = byte_size(Bin),
-    case Bin of
-        <<Body:(Size - 1)/binary, "\"">> -> Body;
-        _ -> Bin
-    end.
 docker_loop(Config, Parent, Acc) ->
     receive
         %% stdout from OS process
@@ -800,17 +996,24 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
             %% Write Dockerfile
             case file:write_file(DockerfilePath, DockerfileBin) of
                 ok ->
-                    CmdIO =
-                        io_lib:format(
-                            "docker build --network=host -t ~s -f ~s ~s",
-                            [Image, DockerfilePath, BuildDir]
-                        ),
-                    Command = lists:flatten(CmdIO),
+                    ImageRef = require_docker_ref(Image),
                     ?LOG_INFO(
                         "Building docker image ~s from inline Dockerfile at ~s (context ~s)",
-                        [Image, DockerfilePath, BuildDir]
+                        [ImageRef, DockerfilePath, BuildDir]
                     ),
-                    run_cmd(Config, Command, Context);
+                    run_docker(
+                        Config,
+                        [
+                            "build",
+                            "--network=host",
+                            "-t",
+                            binary_to_list(ImageRef),
+                            "-f",
+                            DockerfilePath,
+                            BuildDir
+                        ],
+                        Context
+                    );
                 {error, Reason} ->
                     maps:put(
                         fail,
@@ -872,36 +1075,93 @@ seconds_for_unit("months", N) -> date_util:days_to_seconds(N * 30);
 seconds_for_unit("year", N) -> date_util:days_to_seconds(N * 365);
 seconds_for_unit("years", N) -> date_util:days_to_seconds(N * 365);
 seconds_for_unit(Unit, _) -> erlang:error({unknown_unit, Unit}).
-copy_file_from_container_to_ipfs(Config, Ctx0, Path0, Var0) ->
-    Container = docker_container_id(Ctx0),
-    Path = to_binary(Path0),
-    Var = to_binary(Var0),
+copy_file_from_container_to_ipfs(Config, Context0, Path0, Variable0) ->
+    steps_utils:ensure_admin(Context0),
 
-    WorkDir = docker_workdir(Config),
-    StageRoot = filename:join(WorkDir, "ipfs_stage"),
+    Container = docker_container_id(Context0),
+    Path = to_binary(Path0),
+    %% Preserve the key type emitted by the step tokenizer.  Other DamageBDD
+    %% variable-producing steps store the captured variable name directly.
+    Variable = Variable0,
+
+    DockerDir = docker_workdir(Config),
+    StageRoot = filename:join(DockerDir, "ipfs_stage"),
     ok = ensure_dir(StageRoot),
 
-    StageDir = filename:join(StageRoot, unique_stage_id()),
-    ok = ensure_dir(StageDir),
+    %% Leave the destination itself absent. `docker cp` will create this exact
+    %% path for either a source file or source directory, avoiding an extra
+    %% random wrapper directory around the artifact.
+    StageDir = filename:join(
+        StageRoot,
+        binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(12)))
+    ),
 
-    %% Direct copy (no docker exec)
-    CpCmd =
-        iolist_to_binary([
-            "docker cp ",
-            shell_quote(<<Container/binary, ":", Path/binary>>),
-            " ",
-            shell_quote(StageDir)
-        ]),
+    Source = <<Container/binary, ":", Path/binary>>,
 
-    Ctx1 = run_cmd_in_docker_dir(Config, CpCmd, Ctx0),
+    ?LOG_INFO(
+        "Copying Docker artifact container=~p source=~p stage=~p",
+        [Container, Path, StageDir]
+    ),
 
-    case maps:is_key(fail, Ctx1) of
+    %% Execute Docker directly as argv.  Do not construct a host shell command:
+    %% paths and container names are data, and this also removes the old
+    %% shell-quoting/temp-script collision path entirely.
+    Context1 = run_docker(
+        Config,
+        ["cp", Source, StageDir],
+        Context0
+    ),
+
+    case maps:is_key(fail, Context1) of
         true ->
-            %% Do not replace a useful `docker cp` error with a secondary IPFS error.
-            Ctx1;
+            maybe_remove_stage_path(StageDir),
+            Context1;
         false ->
-            Hash = ipfs_add_path_and_get_hash(StageDir),
-            maps:put(Var, Hash, Ctx1)
+            try
+                Hash = ipfs_add_path_and_get_hash(StageDir),
+                maps:put(Variable, Hash, Context1)
+            catch
+                Class:Reason:Stack ->
+                    ?LOG_ERROR(
+                        "Docker artifact IPFS staging failed class=~p reason=~p stack=~p",
+                        [Class, Reason, Stack]
+                    ),
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "Failed to add Docker artifact to IPFS: ~p",
+                            [Reason]
+                        ),
+                        Context1
+                    )
+            after
+                maybe_remove_stage_path(StageDir)
+            end
+    end.
+
+maybe_remove_stage_path(StagePath) ->
+    Result =
+        case file:read_link_info(StagePath) of
+            {ok, #file_info{type = directory}} ->
+                file:del_dir_r(StagePath);
+            {ok, _Info} ->
+                file:delete(StagePath);
+            {error, enoent} ->
+                ok;
+            {error, Reason0} ->
+                {error, Reason0}
+        end,
+    case Result of
+        ok ->
+            ok;
+        {error, enoent} ->
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "Unable to remove Docker IPFS staging path ~p: ~p",
+                [StagePath, Reason]
+            ),
+            ok
     end.
 
 ipfs_add_path_and_get_hash(Path0) ->

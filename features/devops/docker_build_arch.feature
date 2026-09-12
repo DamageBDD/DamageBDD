@@ -3,7 +3,7 @@ Feature: Build damagebdd package for Arch
     When I build an image from Dockerfile at "QmatJahHtWEUKwwwak2wK2DTXuzQ6MGSi3MyDmTrUFR6KQ" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
     Then I run docker image tagged "damagebdd/arch-builder:latest"
     """
-    #set -ex
+    set -eu
     export CUDA_LIB64=/opt/cuda/lib64/
     export PATH=$PATH:/opt/cuda/bin/
 
@@ -16,16 +16,43 @@ Feature: Build damagebdd package for Arch
     #DEBUG=1
 
     rebar3 as prod release
-    DEBUG=1 rebar3 pkg gen -t arch
-    #rebar3 pkg gen -t arch
+    DEBUG=1 rebar3 pkg gen -t arch --fpm=false
 
     cd _build/pkg/arch/damage/
-    makepkg 
-    echo "build success"
-    #exit 0
+
+    makepkg
+    
+    # Only expose files that belong to the NFT artifact.
+    rm -rf /out/nft
+    mkdir -p /out/nft
+    
+    # Package(s)
+    find . -maxdepth 1 -type f \
+        -name '*.pkg.tar.zst' \
+        -exec cp -- '{}' /out/nft/ \;
+    
+    # Fail if makepkg produced no package.
+    test -n "$(find /out/nft -maxdepth 1 -type f \
+        -name '*.pkg.tar.zst' -print -quit)"
+    
+    # Reproducibility/provenance.
+    cp PKGBUILD /out/nft/PKGBUILD
+    makepkg --printsrcinfo > /out/nft/.SRCINFO
+    
+    git -C /app rev-parse HEAD > /out/nft/GIT_COMMIT
+    git -C /app describe --tags --always --dirty > /out/nft/GIT_DESCRIBE
+    
+    (
+        cd /out/nft
+        sha256sum *.pkg.tar.zst > SHA256SUMS
+    )
+    
+    echo "NFT artifact:"
+    find /out/nft -maxdepth 1 -type f -printf '%f\n'
 
     """
     Then I copy file "/app/_build/pkg/arch/damage/" from the container to ipfs and store the hash in "asset_hash"
+    And I print "asset_hash"
     When I set the JSON variable "meta" to
     """
     {
