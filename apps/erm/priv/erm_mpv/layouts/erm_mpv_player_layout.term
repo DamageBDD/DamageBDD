@@ -1,0 +1,275 @@
+[
+    {window, mpv_window,
+        [
+            {title, "ERM Media"},
+            {width, 1040},
+            {height, 620},
+            {min_width, 580},
+            {min_height, 360},
+            {show, true},
+            {wm_class, "erm_mpv"},
+            {wm_instance, "erm_mpv"},
+            {window_role, "erm_mpv_player"},
+            {class, "erm_mpv cp-window"}
+        ],
+        [
+            {frame, player_root,
+                [
+                    {orient, vertical},
+                    {spacing, 4},
+                    {margin, 6},
+                    {hexpand, true},
+                    {vexpand, true},
+                    {class, "cp-root"}
+                ],
+                [
+                    {frame, top_strip,
+                        [
+                            {orient, horizontal},
+                            {spacing, 4},
+                            {height, 30},
+                            {hexpand, true},
+                            {class, "cp-panel cp-top-strip"}
+                        ],
+                        [
+                            {label, title_label,
+                                [
+                                    {text, "ERM Media"},
+                                    {class, "cp-title"},
+                                    {align, start},
+                                    {width_chars, 12}
+                                ]},
+                            {label, playback_detail,
+                                [
+                                    {text, "MPV connecting…"},
+                                    {class, "cp-status"},
+                                    {align, start},
+                                    {wrap, false},
+                                    {width_chars, 22}
+                                ]},
+                            {label, top_spacer,
+                                [{text, ""}, {hexpand, true}, {class, "cp-spacer"}]},
+                            {button, layout_classic_button,
+                                [
+                                    {label, "Classic"},
+                                    {tooltip, "Classic player layout"},
+                                    {min_height, 24},
+                                    {min_width, 72},
+                                    {class, "cp-layout-button"}
+                                ]},
+                            {button, layout_compact_button,
+                                [
+                                    {label, "Compact"},
+                                    {tooltip, "Compact player layout"},
+                                    {min_height, 24},
+                                    {min_width, 76},
+                                    {class, "cp-layout-button"}
+                                ]},
+                            {button, layout_playlist_button,
+                                [
+                                    {label, "Playlist"},
+                                    {tooltip, "Playlist-first layout"},
+                                    {min_height, 24},
+                                    {min_width, 76},
+                                    {class, "cp-layout-button"}
+                                ]}
+                        ]},
+
+                    {frame, now_playing_strip,
+                        [
+                            {orient, horizontal},
+                            {spacing, 4},
+                            {height, 26},
+                            {hexpand, true},
+                            {class, "cp-panel cp-now-strip"}
+                        ],
+                        [
+                            {label, now_playing,
+                                [
+                                    {text, "Nothing playing"},
+                                    {class, "cp-now-playing"},
+                                    {align, start},
+                                    {wrap, false},
+                                    {hexpand, true}
+                                ]}
+                        ]},
+
+                    {frame, control_strip,
+                        [
+                            {orient, horizontal},
+                            {spacing, 4},
+                            {height, 42},
+                            {hexpand, true},
+                            {class, "cp-control-strip"}
+                        ],
+                        [
+                            {button, previous_button,
+                                [
+                                    {label, "⏮"},
+                                    {tooltip, "Previous track"},
+                                    {min_height, 30},
+                                    {min_width, 40},
+                                    {class, "cp-button cp-transport"}
+                                ]},
+                            {button, play_button,
+                                [
+                                    {label, "⏯"},
+                                    {tooltip, "Play / pause"},
+                                    {min_height, 32},
+                                    {min_width, 52},
+                                    {class, "cp-button-primary cp-transport"}
+                                ]},
+                            {button, next_button,
+                                [
+                                    {label, "⏭"},
+                                    {tooltip, "Next track"},
+                                    {min_height, 30},
+                                    {min_width, 40},
+                                    {class, "cp-button cp-transport"}
+                                ]},
+                            {label, elapsed_label,
+                                [{text, "0:00"}, {width_chars, 6}, {class, "cp-time"}]},
+                            {scale, seek_scale,
+                                [
+                                    {orient, horizontal},
+                                    {min, 0},
+                                    {max, 1000},
+                                    {step, 1},
+                                    {value, 0},
+                                    {height, 24},
+                                    {hexpand, true},
+                                    {draw_value, false},
+                                    {tooltip, "Playback position"},
+                                    {class, "cp-seek"}
+                                ]},
+                            {label, duration_label,
+                                [{text, "0:00"}, {width_chars, 6}, {class, "cp-time"}]},
+                            {label, volume_label,
+                                [{text, "Vol"}, {width_chars, 4}, {class, "cp-dim"}]},
+                            {scale, volume_scale,
+                                [
+                                    {orient, horizontal},
+                                    {min, 0},
+                                    {max, 100},
+                                    {step, 1},
+                                    {value, 50},
+                                    {width, 130},
+                                    {height, 24},
+                                    {draw_value, false},
+                                    {tooltip, "Playback volume"},
+                                    {class, "cp-volume"}
+                                ]},
+                            {label, volume_value,
+                                [{text, "50%"}, {width_chars, 5}, {class, "cp-time"}]}
+                        ]},
+
+                    {frame, utility_row,
+                        [
+                            {orient, horizontal},
+                            {spacing, 4},
+                            {height, 34},
+                            {hexpand, true},
+                            {class, "cp-utility-strip"}
+                        ],
+                        [
+                            {button, like_button,
+                                [{label, "☆"}, {tooltip, "Like current track"}, {min_height, 28}, {min_width, 40}, {class, "cp-button"}]},
+                            {button, ipfs_button,
+                                [{label, "IPFS"}, {tooltip, "Pin current track to IPFS"}, {min_height, 28}, {min_width, 54}, {class, "cp-button"}]},
+                            {button, share_button,
+                                [{label, "Share"}, {tooltip, "Copy current IPFS URL"}, {min_height, 28}, {min_width, 62}, {class, "cp-button"}]},
+                            {button, clear_button,
+                                [{label, "Clear"}, {tooltip, "Clear playlist"}, {min_height, 28}, {min_width, 58}, {class, "cp-button"}]},
+                            {button, stop_button,
+                                [{label, "Stop"}, {tooltip, "Stop playback"}, {min_height, 28}, {min_width, 52}, {class, "cp-button"}]},
+                            {button, restart_backend_button,
+                                [{label, "Restart"}, {tooltip, "Restart MPV backend"}, {min_height, 28}, {min_width, 74}, {class, "cp-button"}]},
+                            {label, utility_spacer,
+                                [{text, ""}, {hexpand, true}, {class, "cp-spacer"}]},
+                            {button, close_button,
+                                [{label, "Hide"}, {tooltip, "Hide this window"}, {min_height, 28}, {min_width, 58}, {class, "cp-button"}]}
+                        ]},
+
+                    {frame, body_row,
+                        [
+                            {orient, horizontal},
+                            {spacing, 6},
+                            {hexpand, true},
+                            {vexpand, true},
+                            {class, "cp-body-row"}
+                        ],
+                        [
+                            {frame, playlist_panel,
+                                [
+                                    {orient, vertical},
+                                    {spacing, 4},
+                                    {hexpand, true},
+                                    {vexpand, true},
+                                    {class, "cp-panel cp-playlist-panel"}
+                                ],
+                                [
+                                    {label, playlist_heading,
+                                        [{text, "Playlist"}, {class, "cp-heading"}, {align, start}, {height, 22}]},
+                                    {listbox, playlist_list,
+                                        [
+                                            {items, []},
+                                            {hexpand, true},
+                                            {vexpand, true},
+                                            {min_height, 220},
+                                            {selection, single},
+                                            {tooltip, "Select a track to play"},
+                                            {class, "cp-list"}
+                                        ]}
+                                ]},
+
+                            {frame, side_panel,
+                                [
+                                    {orient, vertical},
+                                    {spacing, 5},
+                                    {width, 260},
+                                    {min_width, 240},
+                                    {vexpand, true},
+                                    {class, "cp-panel cp-side-panel"}
+                                ],
+                                [
+                                    {label, library_heading,
+                                        [{text, "Library"}, {class, "cp-heading"}, {align, start}, {height, 22}]},
+                                    {entry, folder_entry,
+                                        [
+                                            {placeholder, "Music folder path"},
+                                            {tooltip, "Enter a local media folder"},
+                                            {hexpand, true},
+                                            {class, "cp-entry"}
+                                        ]},
+                                    {frame, library_button_row,
+                                        [{orient, horizontal}, {spacing, 4}, {height, 32}, {hexpand, true}],
+                                        [
+                                            {button, add_folder_button,
+                                                [{label, "Add"}, {tooltip, "Add media recursively"}, {min_height, 26}, {min_width, 50}, {class, "cp-button"}]},
+                                            {button, rescan_button,
+                                                [{label, "Rescan"}, {tooltip, "Rescan playlist folders"}, {min_height, 26}, {min_width, 66}, {class, "cp-button"}]}
+                                        ]}
+                                ]}
+                        ]},
+
+                    {frame, status_strip,
+                        [
+                            {orient, horizontal},
+                            {spacing, 4},
+                            {height, 24},
+                            {hexpand, true},
+                            {class, "cp-status-strip"}
+                        ],
+                        [
+                            {label, status_label,
+                                [
+                                    {text, "Ready"},
+                                    {align, start},
+                                    {wrap, false},
+                                    {hexpand, true},
+                                    {class, "cp-status-box"}
+                                ]}
+                        ]}
+                ]}
+        ]}
+].

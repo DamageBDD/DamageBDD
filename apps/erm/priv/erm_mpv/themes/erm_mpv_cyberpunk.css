@@ -1,0 +1,136 @@
+window.erm_mpv.cp-window,
+window.cp-window {
+  background: #070a0f;
+  color: #d8f7ff;
+}
+
+.cp-root {
+  background: #070a0f;
+  color: #d8f7ff;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.cp-panel,
+.cp-control-strip,
+.cp-utility-strip,
+.cp-status-strip {
+  background: #0d141d;
+  border: 1px solid #203347;
+  border-radius: 5px;
+  padding: 3px;
+}
+
+.cp-body-row {
+  background: #070a0f;
+}
+
+.cp-title {
+  color: #75f7ff;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.cp-now-playing {
+  color: #f2fbff;
+  font-weight: 700;
+}
+
+.cp-heading {
+  color: #ff5fd7;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.cp-status,
+.cp-dim,
+.cp-time,
+.cp-status-box {
+  color: #9edfff;
+}
+
+button.cp-button,
+button.cp-layout-button,
+button.cp-button-primary {
+  min-height: 20px;
+  padding: 1px 7px;
+  border-radius: 4px;
+}
+
+button.cp-button,
+button.cp-layout-button {
+  background: #111b27;
+  color: #d8f7ff;
+  border: 1px solid #29465e;
+}
+
+button.cp-button:hover,
+button.cp-layout-button:hover {
+  border-color: #75f7ff;
+  color: #ffffff;
+}
+
+button.cp-button-primary {
+  background: #102838;
+  color: #75f7ff;
+  border: 1px solid #4fe4ff;
+  font-weight: 800;
+}
+
+entry.cp-entry {
+  background: #081018;
+  color: #e2faff;
+  border: 1px solid #20384d;
+  border-radius: 4px;
+  min-height: 22px;
+  padding: 1px 6px;
+}
+
+scrolledwindow.cp-list,
+scrolledwindow.cp-list > viewport,
+scrolledwindow.cp-list list,
+list.cp-list,
+list.cp-list row,
+list.cp-list row label {
+  background: #081018;
+  color: #e2faff;
+}
+
+list.cp-list row {
+  min-height: 20px;
+  padding: 0 4px;
+  border-bottom: 1px solid #0f1d2a;
+}
+
+list.cp-list row:hover {
+  background: #101f2d;
+}
+
+list.cp-list row:selected,
+list.cp-list row:selected label {
+  background: #123145;
+  color: #75f7ff;
+}
+
+scale.cp-seek trough,
+scale.cp-volume trough {
+  background: #071019;
+  border: 1px solid #23394c;
+  min-height: 4px;
+  border-radius: 3px;
+}
+
+scale.cp-seek highlight,
+scale.cp-volume highlight {
+  background: #75f7ff;
+  border-radius: 3px;
+}
+
+scale.cp-seek slider,
+scale.cp-volume slider {
+  background: #ff5fd7;
+  border: 1px solid #ffe6fb;
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 8px;
+}
