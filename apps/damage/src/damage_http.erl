@@ -981,7 +981,6 @@ redacted_log_term(Context, Term) ->
         _:_ -> <<"XX-REDACTED-LOG-ERROR-XX">>
     end.
 
-
 decode_json(Data) ->
     try
         {ok, jsx:decode(Data, [{labels, atom}, return_maps])}
@@ -1885,11 +1884,33 @@ to_html(Req, State) ->
     Body = damage_utils:load_template("api.mustache", #{body => <<"Test">>}),
     {Body, Req, State}.
 
+onion_version_info() ->
+    try damage_tor:onion_address() of
+        {ok, Address0} ->
+            Address = to_bin(Address0),
+            #{
+                available => true,
+                address => Address,
+                url => <<"http://", Address/binary, "/">>
+            };
+        {error, Reason} ->
+            ?LOG_DEBUG("Tor onion address unavailable reason=~p", [Reason]),
+            #{available => false}
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "Tor onion address lookup failed error=~p:~p stack=~p",
+                [Class, Reason, Stack]
+            ),
+            #{available => false}
+    end.
+
 to_json(Req, #{action := version} = State) ->
     {
         jsx:encode(#{
             ok => true,
-            version => damage:version()
+            version => damage:version(),
+            onion => onion_version_info()
         }),
         Req,
         State
