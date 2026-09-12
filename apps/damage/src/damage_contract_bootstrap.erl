@@ -17,7 +17,9 @@
 -export([
     bootstrap_user_account/1,
     ensure_user_account_registry/1,
-    ensure_user_named_contracts/2
+    ensure_user_named_contracts/2,
+    ensure_build_release_nft/1,
+    ensure_build_release_nft/2
 ]).
 
 -define(USER_REQUIRED_CONTRACTS, [
@@ -31,6 +33,10 @@
     {agent_execution_ledger, agent_execution_ledger_ct, fun deploy_agent_execution_ledger/1},
     {nwc_session_registry, nwc_session_registry_ct, fun deploy_nwc_session_registry/1}
 ]).
+
+-define(BUILD_RELEASE_NFT_NAME, <<"build_release_nft">>).
+-define(BUILD_RELEASE_NFT_PATH, "contracts/build_release_nft.aes").
+-define(DEFAULT_BUILD_RELEASE_ORACLE_TTL, 500000).
 
 bootstrap_node_only() ->
     case ensure_node_registry() of
@@ -527,6 +533,253 @@ contract_id_from_deploy(Name, #{<<"contract_id">> := CtId}) when is_list(CtId) -
     contract_id_from_deploy(Name, #{"contract_id" => CtId});
 contract_id_from_deploy(Name, Result) ->
     error({contract_deploy_failed, Name, Result}).
+
+%% -------------------------------------------------------------------
+%% Build release NFT
+%%
+%% This is intentionally lazy and account-scoped. The account registry is the
+%% source of truth for <<"build_release_nft">>. A scoped secret is only a local
+%% cache/recovery source. The contract is deployed only when neither source has
+%% a contract for this account.
+%%
+%% The global lock prevents two concurrent builds on connected DamageBDD nodes
+%% from both observing "missing" and deploying duplicate contracts.
+%% -------------------------------------------------------------------
+
+-spec ensure_build_release_nft(binary() | list()) ->
+    {ok, binary()} | {error, term()}.
+ensure_build_release_nft(Account0) ->
+    Ttl = positive_env(build_release_oracle_ttl, ?DEFAULT_BUILD_RELEASE_ORACLE_TTL),
+    ensure_build_release_nft(Account0, Ttl).
+
+-spec ensure_build_release_nft(binary() | list(), pos_integer()) ->
+    {ok, binary()} | {error, term()}.
+ensure_build_release_nft(Account0, OracleTtl) when is_integer(OracleTtl), OracleTtl > 0 ->
+    Account = damage_utils:to_bin(Account0),
+    Lock = {{?MODULE, build_release_nft, Account}, self()},
+    case
+        global:trans(
+            Lock,
+            fun() -> ensure_build_release_nft_locked(Account, OracleTtl) end
+        )
+    of
+        aborted ->
+            {error, {build_release_nft_lock_aborted, Account}};
+        Result ->
+            Result
+    end;
+ensure_build_release_nft(_Account0, OracleTtl) ->
+    {error, {invalid_build_release_oracle_ttl, OracleTtl}}.
+
+ensure_build_release_nft_locked(Account, OracleTtl) ->
+    case ensure_node_registry() of
+        {ok, _NodeRegistryCt} ->
+            case ensure_admin_account_registry(Account) of
+                {ok, RegistryCt} ->
+                    case reload_identity_keypair(Account) of
+                        {ok, KeyPair} ->
+                            resolve_build_release_nft(
+                                KeyPair,
+                                Account,
+                                RegistryCt,
+                                OracleTtl
+                            );
+                        {error, _} = Error ->
+                            Error
+                    end;
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+%% AccountRegistry is authoritative. If it already names a contract, never
+%% deploy another one merely because local configuration is absent.
+resolve_build_release_nft(KeyPair, Account, RegistryCt, OracleTtl) ->
+    case registered_contract(KeyPair, RegistryCt, ?BUILD_RELEASE_NFT_NAME) of
+        {ok, CtId} ->
+            activate_existing_build_release_nft(KeyPair, Account, CtId, OracleTtl);
+        missing ->
+            resolve_unregistered_build_release_nft(
+                KeyPair,
+                Account,
+                RegistryCt,
+                OracleTtl
+            );
+        {error, Reason} ->
+            {error, {build_release_nft_registry_read_failed, Account, Reason}}
+    end.
+
+activate_existing_build_release_nft(KeyPair, Account, CtId, OracleTtl) ->
+    case validate_build_release_nft(KeyPair, CtId) of
+        true ->
+            case ensure_build_release_oracle(KeyPair, CtId, OracleTtl) of
+                ok ->
+                    case persist_user_ct(Account, ?BUILD_RELEASE_NFT_NAME, CtId) of
+                        ok -> {ok, CtId};
+                        {error, _} = Error -> Error
+                    end;
+                {error, _} = Error ->
+                    Error
+            end;
+        false ->
+            {error, {registered_build_release_nft_validation_failed, Account, CtId}}
+    end.
+
+resolve_unregistered_build_release_nft(KeyPair, Account, RegistryCt, OracleTtl) ->
+    case user_contract_secret_status(Account, ?BUILD_RELEASE_NFT_NAME) of
+        {ok, CtId} ->
+            %% A scoped secret is a recovery source only. Validate it before
+            %% registering it; never put an unverified contract into the
+            %% account's on-chain registry.
+            case validate_build_release_nft(KeyPair, CtId) of
+                true ->
+                    case ensure_build_release_oracle(KeyPair, CtId, OracleTtl) of
+                        ok ->
+                            register_user_contract(
+                                KeyPair,
+                                Account,
+                                RegistryCt,
+                                ?BUILD_RELEASE_NFT_NAME,
+                                CtId
+                            );
+                        {error, _} = Error ->
+                            Error
+                    end;
+                false ->
+                    {error, {scoped_build_release_nft_validation_failed, Account, CtId}}
+            end;
+        missing ->
+            deploy_register_build_release_nft(
+                KeyPair,
+                Account,
+                RegistryCt,
+                OracleTtl
+            );
+        {error, _} = Error ->
+            Error
+    end.
+
+deploy_register_build_release_nft(KeyPair, Account, RegistryCt, OracleTtl) ->
+    try deploy_build_release_nft(KeyPair) of
+        <<"ct_", _/binary>> = CtId ->
+            case
+                validate_deployed_contract(
+                    KeyPair,
+                    CtId,
+                    fun validate_build_release_nft/2
+                )
+            of
+                true ->
+                    case ensure_build_release_oracle(KeyPair, CtId, OracleTtl) of
+                        ok ->
+                            register_user_contract(
+                                KeyPair,
+                                Account,
+                                RegistryCt,
+                                ?BUILD_RELEASE_NFT_NAME,
+                                CtId
+                            );
+                        {error, _} = Error ->
+                            Error
+                    end;
+                false ->
+                    {error, {deployed_build_release_nft_validation_failed, Account, CtId}}
+            end;
+        Other ->
+            {error, {invalid_deployed_build_release_nft_id, Account, Other}}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Build release NFT deployment failed account=~p class=~p reason=~p stack=~p",
+                [Account, Class, Reason, Stacktrace]
+            ),
+            {error, {build_release_nft_deploy_failed, Account, Class, Reason}}
+    end.
+
+deploy_build_release_nft(KeyPair) ->
+    contract_id_from_deploy(
+        build_release_nft,
+        damage_ae:contract_deploy_for(
+            KeyPair,
+            damage_ae:contract_path(damage, ?BUILD_RELEASE_NFT_PATH),
+            []
+        )
+    ).
+
+ensure_build_release_oracle(KeyPair, CtId, OracleTtl) ->
+    ContractPath = damage_ae:contract_path(damage, ?BUILD_RELEASE_NFT_PATH),
+    case damage_ae:contract_query(KeyPair, CtId, ContractPath, "oracle_registered", []) of
+        #{"return_type" := "ok", "return_value" := true} ->
+            ok;
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := true} ->
+            ok;
+        #{return_type := ok, return_value := true} ->
+            ok;
+        #{"return_type" := "ok", "return_value" := false} ->
+            register_build_release_oracle(KeyPair, CtId, ContractPath, OracleTtl);
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := false} ->
+            register_build_release_oracle(KeyPair, CtId, ContractPath, OracleTtl);
+        #{return_type := ok, return_value := false} ->
+            register_build_release_oracle(KeyPair, CtId, ContractPath, OracleTtl);
+        Other ->
+            {error, {build_release_oracle_status_failed, CtId, Other}}
+    end.
+
+register_build_release_oracle(KeyPair, CtId, ContractPath, OracleTtl) ->
+    case
+        damage_ae:contract_call_payfor_user(
+            KeyPair,
+            CtId,
+            ContractPath,
+            "register_oracle",
+            [integer_to_list(OracleTtl)]
+        )
+    of
+        #{"return_type" := "ok"} ->
+            ok;
+        #{<<"return_type">> := <<"ok">>} ->
+            ok;
+        #{return_type := ok} ->
+            ok;
+        Other ->
+            {error, {build_release_oracle_register_failed, CtId, Other}}
+    end.
+
+validate_build_release_nft(KeyPair, CtId) ->
+    case
+        damage_ae:contract_query(
+            KeyPair,
+            CtId,
+            damage_ae:contract_path(damage, ?BUILD_RELEASE_NFT_PATH),
+            "aex141_extensions",
+            []
+        )
+    of
+        #{"return_type" := "ok", "return_value" := Extensions} ->
+            build_release_extension_present(Extensions);
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Extensions} ->
+            build_release_extension_present(Extensions);
+        #{return_type := ok, return_value := Extensions} ->
+            build_release_extension_present(Extensions);
+        Other ->
+            ?LOG_WARNING(
+                "Build release NFT validation failed ct=~p result=~p",
+                [CtId, Other]
+            ),
+            false
+    end.
+
+build_release_extension_present(Extensions) when is_list(Extensions) ->
+    lists:any(
+        fun(E) ->
+            damage_utils:to_bin(E) =:= <<"damagebdd_build_release_oracle">>
+        end,
+        Extensions
+    );
+build_release_extension_present(_) ->
+    false.
 
 bootstrap_user_account(UserAccount0) ->
     UserAccount = damage_utils:to_bin(UserAccount0),
