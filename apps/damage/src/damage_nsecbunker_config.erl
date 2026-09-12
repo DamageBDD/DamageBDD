@@ -93,7 +93,17 @@ aws_requested(Config0) ->
 -spec aws_secret(term()) -> map().
 aws_secret(Config0) ->
     Config = normalize(Config0),
-    normalize(maps:get(aws_secret, Config, #{})).
+    %% aws_secret is the canonical/current key.  Retain compatibility with
+    %% aws_secret_bootstrap so existing production configuration and tests do
+    %% not silently lose the deployment-specific AWS identifiers.
+    Bootstrap = normalize(
+        maps:get(aws_secret_bootstrap, Config, #{})
+    ),
+    AwsSecret = normalize(
+        maps:get(aws_secret, Config, #{})
+    ),
+    %% Canonical aws_secret wins when both are present.
+    maps:merge(Bootstrap, AwsSecret).
 
 %% Retained for callers that need a boolean readiness/configuration predicate.
 %% This checks configuration only; runtime IMDS/STS/Secrets Manager validation
