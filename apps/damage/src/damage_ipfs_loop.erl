@@ -145,12 +145,12 @@ complete(R, S = #{running := Run, config := C}) ->
     end,
     Base = maps:get(interval, S),
     Delay =
-        case Failed of
-            true ->
+        case {Failed, backoff_enabled(Result)} of
+            {true, true} ->
                 Cap = maps:get(retry_max_ms, C),
                 Backoff = min(Cap, Base * (1 bsl min(Failures, 8))),
                 min(Cap, Backoff + rand:uniform(max(1, Backoff div 5)));
-            false ->
+            _ ->
                 Base
         end,
     Next =
@@ -165,6 +165,10 @@ complete(R, S = #{running := Run, config := C}) ->
         last_run => damage_ipfs_config:now_ms(),
         failures => Failures
     }).
+%% A callback may own durable, per-item retry timing. Keep reporting a degraded
+%% pass while allowing unrelated items to run at the normal scan interval.
+backoff_enabled({ok, #{backoff := false}}) -> false;
+backoff_enabled(_) -> true.
 schedule(Ms, S) ->
     case maps:find(timer, S) of
         {ok, {Old, _}} -> erlang:cancel_timer(Old);

@@ -10,6 +10,7 @@
     complete/3,
     page/2,
     requeue/2,
+    verification_result/3,
     put_metadata/2,
     get_metadata/1
 ]).
@@ -44,6 +45,8 @@ with_cid(C, F) ->
         {ok, B} -> F(B);
         E -> E
     end.
+verification_result(Cid, Revision, Result) ->
+    call({verification_result, Cid, Revision, Result}).
 
 init(C) ->
     process_flag(trap_exit, true),
@@ -129,7 +132,10 @@ handle_call({complete, Cid, Rev, Result}, _, S = #{config := C}) ->
                             checked_at => Now,
                             last_error => undefined,
                             attempts => 0,
-                            next_at => infinity
+                            next_at => infinity,
+                            verify_attempts => 0,
+                            verify_next_at => 0,
+                            last_verify_error => undefined
                         };
                     false ->
                         N = maps:get(attempts, R) + 1,
@@ -164,6 +170,35 @@ handle_call({page, Cursor, Limit}, _, S = #{pins := Pins}) ->
         end,
     {Rows, Next} = take_page(First, Limit, Pins, [], Cursor),
     {reply, {ok, Rows, Next}, S};
+handle_call({verification_result, Cid, Rev, Result}, _, S = #{config := C}) ->
+    case lookup_row(Cid, S) of
+        #{revision := Rev, status := applied} = R ->
+            Now = damage_ipfs_config:now_ms(),
+            R1 =
+                case Result of
+                    ok ->
+                        R#{
+                            verify_attempts => 0,
+                            verify_next_at => 0,
+                            last_verify_error => undefined,
+                            checked_at => Now
+                        };
+                    {error, _} ->
+                        N = maps:get(verify_attempts, R, 0) + 1,
+                        Max = maps:get(retry_max_ms, C),
+                        Base = min(Max, maps:get(retry_base_ms, C) * (1 bsl min(N - 1, 16))),
+                        Delay = min(Max, Base + rand:uniform(max(1, Base div 5))),
+                        R#{
+                            verify_attempts => N,
+                            verify_next_at => Now + Delay,
+                            last_verify_error => safe_error(Result)
+                        }
+                end,
+            persist(Cid, R1, S),
+            {reply, ok, S};
+        _ ->
+            {reply, {error, stale_revision}, S}
+    end;
 handle_call({metadata, Cid, M}, _, S = #{tab := Tab, config := C}) ->
     Key = {metadata, Cid},
     case

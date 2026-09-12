@@ -112,6 +112,10 @@ normalize(Opts) when is_map(Opts) ->
         [client_queue_limit, fetch_queue_limit]
     ),
     true = maps:get(retry_max_ms, C) >= maps:get(retry_base_ms, C),
+    case maps:get(reconcile_batch, C) =< 1000 of
+        true -> ok;
+        false -> error({invalid_ipfs_config, reconcile_batch})
+    end,
     %% Background scans need room to complete at least one client call and
     %% checkpoint before their own deadline expires.
     true = maps:get(loop_timeout_ms, C) > maps:get(request_timeout_ms, C) + 2000,
