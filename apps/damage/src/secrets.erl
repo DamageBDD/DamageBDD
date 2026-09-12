@@ -150,16 +150,15 @@ handle_call({set_node_password, Pw0}, _From, State) ->
         {error, _} = Error ->
             {reply, Error, State};
         {ok, Pw} ->
-            case has_node_keypair() of
-                false ->
+            %% A supplied node password is sufficient to initialise a
+            %% first-run node.  Existing keypairs are validated; a genuinely
+            %% missing keypair is generated and persisted before the password
+            %% is accepted.
+            case ensure_keypair_valid(Pw) of
+                ok ->
                     {reply, ok, cache_node_password(Pw, State)};
-                true ->
-                    case ensure_keypair_valid(Pw) of
-                        ok ->
-                            {reply, ok, cache_node_password(Pw, State)};
-                        {error, _} = Error ->
-                            {reply, Error, State}
-                    end
+                {error, _} = Error ->
+                    {reply, Error, State}
             end
     end;
 handle_call(clear_cache, _From, State) ->
@@ -283,29 +282,25 @@ make_keypair() ->
     PubBin = aeser_api_encoder:encode(account_pubkey, Pub),
     PubStr = unicode:characters_to_list(PubBin),
     #{public_key => PubStr, private_key => Priv}.
+
 keypair(Path, NodePassword) ->
     case file:read_file(Path) of
         {error, enoent} ->
-            ?LOG_INFO(Path ++ " not found ... creating.", []),
-            Data = make_keypair(),
-            EncData = secrets:encrypt(
-                NodePassword,
-                term_to_binary(Data)
-            ),
-            ok = file:write_file(Path, term_to_binary(EncData)),
-            Data;
+            create_keypair(Path, NodePassword);
+        {error, Reason} ->
+            {error, {keypair_read_failed, Reason}};
         {ok, EncDataBin} ->
             try
                 secrets:decrypt(
                     NodePassword,
-                    binary_to_term(EncDataBin)
+                    binary_to_term(EncDataBin, [safe])
                 )
             of
                 error ->
                     ?LOG_WARNING("Failed to unlock keypair ~p", [Path]),
                     {error, decrypt_keypair};
                 Data when is_binary(Data) ->
-                    try binary_to_term(Data) of
+                    try binary_to_term(Data, [safe]) of
                         #{public_key := _, private_key := _} = KeyPair ->
                             KeyPair;
                         _ ->
@@ -325,9 +320,38 @@ keypair(Path, NodePassword) ->
                     {error, corrupt_keypair}
             end
     end.
+
+create_keypair(Path, NodePassword) ->
+    ?LOG_INFO("Node keypair ~p not found; creating first-run keypair.", [Path]),
+    case filelib:ensure_dir(Path) of
+        ok ->
+            Data = make_keypair(),
+            EncData = secrets:encrypt(
+                NodePassword,
+                term_to_binary(Data)
+            ),
+            case file:write_file(Path, term_to_binary(EncData), [binary]) of
+                ok ->
+                    %% The encrypted node key is still sensitive material.
+                    %% Restrict the file independently of the process umask.
+                    case file:change_mode(Path, 8#600) of
+                        ok ->
+                            Data;
+                        {error, Reason} ->
+                            _ = file:delete(Path),
+                            {error, {keypair_chmod_failed, Reason}}
+                    end;
+                {error, Reason} ->
+                    {error, {keypair_write_failed, Reason}}
+            end;
+        {error, Reason} ->
+            {error, {keypair_directory_failed, Reason}}
+    end.
+
 node_keypair() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, node_keypair, ?ASKPASS_TIMEOUT).
+
 has_node_keypair() ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case file:read_file(Path) of
@@ -336,21 +360,36 @@ has_node_keypair() ->
         {ok, _EncDataBin} ->
             true
     end.
+
 ensure_keypair_valid(NodePassword) ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case file:read_file(Path) of
         {ok, Enc} ->
-            try secrets:decrypt(NodePassword, binary_to_term(Enc)) of
+            try secrets:decrypt(NodePassword, binary_to_term(Enc, [safe])) of
                 error ->
                     {error, invalid_password};
+                Data when is_binary(Data) ->
+                    case binary_to_term(Data, [safe]) of
+                        #{public_key := _, private_key := _} ->
+                            ok;
+                        _ ->
+                            {error, corrupt_keypair}
+                    end;
                 _ ->
-                    ok
+                    {error, invalid_password}
             catch
                 _Class:_Reason:_Stack ->
                     {error, corrupt_keypair}
             end;
-        _ ->
-            {error, missing_keypair}
+        {error, enoent} ->
+            case create_keypair(Path, NodePassword) of
+                #{public_key := _, private_key := _} ->
+                    ok;
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, Reason} ->
+            {error, {keypair_read_failed, Reason}}
     end.
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
@@ -404,16 +443,20 @@ decrypt_bound(Context, Base64Envelope0) ->
         EncodedTerm = base64:decode(Base64Envelope),
         case binary_to_term(EncodedTerm, [safe]) of
             {bound_v1, IV, CipherText, Tag} when
-                is_binary(IV), byte_size(IV) =:= ?IV_SIZE,
+                is_binary(IV),
+                byte_size(IV) =:= ?IV_SIZE,
                 is_binary(CipherText),
-                is_binary(Tag), byte_size(Tag) =:= 16
+                is_binary(Tag),
+                byte_size(Tag) =:= 16
             ->
                 #{private_key := PrivateKey} = secrets:node_keypair(),
                 AAD = bound_secret_aad(Context),
                 Key = derive_bound_aes_key(PrivateKey, AAD),
-                case crypto:crypto_one_time_aead(
-                    aes_256_gcm, Key, IV, CipherText, AAD, Tag, false
-                ) of
+                case
+                    crypto:crypto_one_time_aead(
+                        aes_256_gcm, Key, IV, CipherText, AAD, Tag, false
+                    )
+                of
                     PlainText when is_binary(PlainText) -> PlainText;
                     _ -> error
                 end;
@@ -436,9 +479,11 @@ decrypt(#{public_key := _AeAccount, private_key := PrivateKey}, Base64EncodedCip
         Term when is_binary(Term) ->
             case binary_to_term(Term, [safe]) of
                 {IV, CipherText, Tag} = Envelope when
-                    is_binary(IV), byte_size(IV) =:= 16,
+                    is_binary(IV),
+                    byte_size(IV) =:= 16,
                     is_binary(CipherText),
-                    is_binary(Tag), byte_size(Tag) =:= 16
+                    is_binary(Tag),
+                    byte_size(Tag) =:= 16
                 ->
                     decrypt_secret(Envelope, PrivateKey);
                 _ ->
