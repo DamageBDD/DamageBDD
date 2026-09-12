@@ -334,8 +334,9 @@ get_secret(
     ),
 
     case GetSecret(Client, Input) of
-        {ok, Response, HttpResponse}
-                when is_map(Response) ->
+        {ok, Response, HttpResponse} when
+            is_map(Response)
+        ->
             ?LOG_INFO(
                 "AWS Secrets Manager GetSecretValue ok key_tree=~p http_shape=~p",
                 [
@@ -349,7 +350,6 @@ get_secret(
                 Stage,
                 IdentityMetadata
             );
-
         {error, Reason} ->
             SafeReason = safe_aws_error(Reason),
             ?LOG_ERROR(
@@ -360,14 +360,12 @@ get_secret(
                 secrets_manager_get_failed,
                 SafeReason
             }};
-
         Other ->
             ?LOG_ERROR(
                 "AWS Secrets Manager GetSecretValue unexpected response shape=~p",
                 [term_shape(Other)]
             ),
-            {error,
-                invalid_secrets_manager_response}
+            {error, invalid_secrets_manager_response}
     end.
 
 handle_secret_response(
@@ -443,46 +441,44 @@ handle_secret_response(
         ]
     ),
 
-    case {
-        SecretString,
-        SecretBinary
-    } of
-        {Passphrase, _}
-                when is_binary(Passphrase),
-                     byte_size(Passphrase) > 0 ->
-            case lists:member(
-                Stage,
-                VersionStages
-            ) of
+    case
+        {
+            SecretString,
+            SecretBinary
+        }
+    of
+        {Passphrase, _} when
+            is_binary(Passphrase),
+            byte_size(Passphrase) > 0
+        ->
+            case
+                lists:member(
+                    Stage,
+                    VersionStages
+                )
+            of
                 true ->
-                    {ok,
-                        Passphrase,
-                        IdentityMetadata#{
-                            credential_provider =>
-                                aws_credentials_ec2,
-                            imds_protocol =>
-                                imdsv2,
-                            secret_id_sha256 =>
-                                sha256_hex(SecretId),
-                            version_id =>
-                                VersionId,
-                            version_stages =>
-                                VersionStages
-                        }};
-
+                    {ok, Passphrase, IdentityMetadata#{
+                        credential_provider =>
+                            aws_credentials_ec2,
+                        imds_protocol =>
+                            imdsv2,
+                        secret_id_sha256 =>
+                            sha256_hex(SecretId),
+                        version_id =>
+                            VersionId,
+                        version_stages =>
+                            VersionStages
+                    }};
                 false ->
-                    {error,
-                        secret_is_not_awscurrent}
+                    {error, secret_is_not_awscurrent}
             end;
-
         {<<>>, _} ->
             {error, empty_secret_string};
-
-        {undefined, Binary}
-                when Binary =/= undefined ->
-            {error,
-                secret_binary_not_supported};
-
+        {undefined, Binary} when
+            Binary =/= undefined
+        ->
+            {error, secret_binary_not_supported};
         _ ->
             {error, secret_string_missing}
     end.

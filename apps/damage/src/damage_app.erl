@@ -79,6 +79,9 @@ get_trails() ->
             {"/.well-known/security.txt.asc", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt.asc"}},
             {"/token_tos", cowboy_static, {priv_file, damage, "static/token_tos.html"}},
+            %% Canonical cross-platform installer entry point. The implementation
+            %% lives in priv/scripts so there is one installer file to maintain.
+            {"/install", cowboy_static, {priv_file, damage, "scripts/install.sh"}},
             {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
             {"/scripts/[...]", cowboy_static, {priv_dir, damage, "scripts/"}},
             {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},
@@ -295,16 +298,17 @@ infer_name_domain(Hostname) ->
 
 validate_requested_name_domain(longnames, Hostname) ->
     case lists:member($., Hostname) of
-        true -> {ok, longnames};
+        true ->
+            {ok, longnames};
         false ->
-            {error, {longnames_requires_fully_qualified_hostname, Hostname,
-                "use shortnames or configure a fully qualified hostname"}}
+            {error,
+                {longnames_requires_fully_qualified_hostname, Hostname,
+                    "use shortnames or configure a fully qualified hostname"}}
     end;
 validate_requested_name_domain(shortnames, Hostname) ->
     case lists:member($., Hostname) of
         false -> {ok, shortnames};
-        true ->
-            {error, {shortnames_requires_unqualified_hostname, Hostname}}
+        true -> {error, {shortnames_requires_unqualified_hostname, Hostname}}
     end.
 
 validate_running_distribution(nonode@nohost) ->

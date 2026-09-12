@@ -1838,19 +1838,23 @@ secret_key(K) ->
 %% Detect recognisable secret values without ever returning or logging them.
 secret_value(Bin0) ->
     Bin = bin(Bin0),
-    case re:run(
-        Bin,
-        <<"nsec1[02-9ac-hj-np-z]+">>,
-        [caseless, {capture, none}]
-    ) of
+    case
+        re:run(
+            Bin,
+            <<"nsec1[02-9ac-hj-np-z]+">>,
+            [caseless, {capture, none}]
+        )
+    of
         match ->
             true;
         nomatch ->
-            case re:run(
-                Bin,
-                <<"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----">>,
-                [{capture, none}]
-            ) of
+            case
+                re:run(
+                    Bin,
+                    <<"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----">>,
+                    [{capture, none}]
+                )
+            of
                 match ->
                     true;
                 nomatch ->
@@ -1865,7 +1869,6 @@ assert_no_secret_material(Term) ->
         Findings ->
             error({secret_material_leaked, Findings})
     end.
-
 
 executable_file(Path0) ->
     Path = str(Path0),

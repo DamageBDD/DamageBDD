@@ -145,8 +145,11 @@ checkout() ->
 
 clear_cache() ->
     case ets:whereis(?CACHE_TABLE) of
-        undefined -> ok;
-        _ -> ets:delete_all_objects(?CACHE_TABLE), ok
+        undefined ->
+            ok;
+        _ ->
+            ets:delete_all_objects(?CACHE_TABLE),
+            ok
     end.
 
 %% Sticky per-caller session.  A wallet/identity process therefore keeps using
@@ -210,8 +213,8 @@ get_json(Session, Path, Timeout) when is_map(Session) ->
 %% Small per-node cache for data that is safe to reuse briefly, such as the top
 %% header and recent gas price buckets. Explicit session is part of the key, so
 %% cached state is never mixed across AE nodes.
-get_json_cached(Session, CacheKey, Path, TtlMs, Timeout)
-    when is_map(Session), is_integer(TtlMs), TtlMs >= 0
+get_json_cached(Session, CacheKey, Path, TtlMs, Timeout) when
+    is_map(Session), is_integer(TtlMs), TtlMs >= 0
 ->
     case TtlMs of
         0 ->
@@ -607,7 +610,8 @@ take_node(_NodeId, []) ->
     {undefined, []};
 take_node(NodeId, [Node | Rest]) ->
     case maps:get(id, Node) =:= NodeId of
-        true -> {Node, Rest};
+        true ->
+            {Node, Rest};
         false ->
             {Found, Tail} = take_node(NodeId, Rest),
             {Found, [Node | Tail]}
@@ -617,7 +621,8 @@ take_node_by_pid(_Pid, []) ->
     {undefined, []};
 take_node_by_pid(Pid, [Node | Rest]) ->
     case maps:get(conn_pid, Node, undefined) =:= Pid of
-        true -> {Node, Rest};
+        true ->
+            {Node, Rest};
         false ->
             {Found, Tail} = take_node_by_pid(Pid, Rest),
             {Found, [Node | Tail]}
@@ -713,8 +718,10 @@ join_path(Prefix0, Path0) ->
     Path = normalize_path(Path0),
     Full =
         case Prefix of
-            "/" -> "/" ++ string:trim(Path, leading, "/");
-            "" -> "/" ++ string:trim(Path, leading, "/");
+            "/" ->
+                "/" ++ string:trim(Path, leading, "/");
+            "" ->
+                "/" ++ string:trim(Path, leading, "/");
             _ ->
                 string:trim(Prefix, trailing, "/") ++ "/" ++
                     string:trim(Path, leading, "/")
@@ -725,12 +732,12 @@ normalize_host(Bin) when is_binary(Bin) -> binary_to_list(Bin);
 normalize_host(List) when is_list(List) -> List.
 
 normalize_prefix(Bin) when is_binary(Bin) -> normalize_prefix(binary_to_list(Bin));
-normalize_prefix([]) -> "/";
+normalize_prefix([]) ->
+    "/";
 normalize_prefix(List) when is_list(List) ->
     case List of
         "/" -> "/";
-        _ ->
-            "/" ++ string:trim(List, both, "/") ++ "/"
+        _ -> "/" ++ string:trim(List, both, "/") ++ "/"
     end.
 
 normalize_path(Bin) when is_binary(Bin) -> binary_to_list(Bin);

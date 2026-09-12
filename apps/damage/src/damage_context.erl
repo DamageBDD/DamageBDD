@@ -2095,7 +2095,6 @@ redact_text(Context0, Text0) ->
             ?REDACTED_TEXT_MARKER
     end.
 
-
 clean_secrets(
     #{
         damage_context_effective := ?EFFECTIVE_MARKER,
@@ -2164,7 +2163,8 @@ redact_current_scope_entries(_Context, Body, Args) ->
 
 redact_scope_entries(Scope, Body, Args) ->
     case get_entries(Scope) of
-        {ok, Entries} -> clean_context_secrets(Entries, Body, Args);
+        {ok, Entries} ->
+            clean_context_secrets(Entries, Body, Args);
         {error, _} ->
             %% Redaction failure is a confidentiality failure, not a cosmetic
             %% formatter problem.  Emit no potentially sensitive text.
@@ -2247,9 +2247,19 @@ is_sensitive_key(Key0) ->
 sensitive_key_component(Key) ->
     Parts = re:split(Key, <<"[_\\-.]+">>, [{return, binary}, trim]),
     SensitiveParts = [
-        <<"password">>, <<"passwd">>, <<"pass">>, <<"secret">>, <<"token">>,
-        <<"nsec">>, <<"rune">>, <<"macaroon">>, <<"preimage">>,
-        <<"authorization">>, <<"bearer">>, <<"cookie">>, <<"private">>,
+        <<"password">>,
+        <<"passwd">>,
+        <<"pass">>,
+        <<"secret">>,
+        <<"token">>,
+        <<"nsec">>,
+        <<"rune">>,
+        <<"macaroon">>,
+        <<"preimage">>,
+        <<"authorization">>,
+        <<"bearer">>,
+        <<"cookie">>,
+        <<"private">>,
         <<"apikey">>
     ],
     lists:any(fun(Part) -> lists:member(Part, SensitiveParts) end, Parts).
@@ -2321,7 +2331,6 @@ redaction_list_values([]) ->
     [];
 redaction_list_values(ImproperTail) ->
     redaction_values(ImproperTail).
-
 
 redact_binary(Data, Value) when is_binary(Data) ->
     binary:replace(Data, Value, ?REDACTED_TEXT_MARKER, [global]);

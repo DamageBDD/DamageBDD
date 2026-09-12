@@ -390,13 +390,15 @@ decrypt_identity_field(PublicKey0, Field, CipherText) ->
     end.
 
 identity_public_key_by_email(KeyPair, Email) ->
-    case damage_ae:contract_query(
-        KeyPair,
-        get_email_registry_contract(),
-        damage_ae:contract_path(damage, "contracts/email_registry.aes"),
-        "get_account",
-        [binary_to_list(secrets:salted_hash(Email))]
-    ) of
+    case
+        damage_ae:contract_query(
+            KeyPair,
+            get_email_registry_contract(),
+            damage_ae:contract_path(damage, "contracts/email_registry.aes"),
+            "get_account",
+            [binary_to_list(secrets:salted_hash(Email))]
+        )
+    of
         #{
             "return_type" := "ok",
             "return_value" := {{address, AddressData}, _PrivateKeyEncrypted, _PasswordEncrypted}

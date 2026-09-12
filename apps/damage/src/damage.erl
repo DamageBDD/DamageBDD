@@ -177,7 +177,7 @@ init_logging(Config, _Context) ->
         case lists:keyfind(run_id, 1, Config) of
             {run_id, RunId} -> #{damage_run_id => RunId};
             false -> #{}
-         end,
+        end,
     RunMetadata =
         case lists:keyfind(run_dir, 1, Config) of
             {run_dir, RunDir} -> RunMetadata0#{damage_run_dir => RunDir};

@@ -43,7 +43,9 @@
     get_node_password/0,
     interpolate_template/1
 ]).
--export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, encrypt_bound/2, decrypt_bound/2, change_password/3]).
+-export([
+    encrypt/1, encrypt/2, decrypt/1, decrypt/2, encrypt_bound/2, decrypt_bound/2, change_password/3
+]).
 -export([encrypt/3, decrypt/3]).
 -export([has_node_password/0, set_node_password/1, has_node_keypair/0]).
 -import(damage_utils, [to_bin/1]).
@@ -590,7 +592,6 @@ delete_secret(Scope, Name) ->
 
 encrypt_store({Name, Secret}) ->
     encrypt_store(Name, Secret).
-
 
 %% Legacy node-global storage.  Retained for trusted node integrations only.
 encrypt_store(Name, Secret) ->

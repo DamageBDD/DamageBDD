@@ -74,7 +74,9 @@ create_model(Name) ->
                     {<<"Authorization">>, list_to_binary("Bearer " ++ ApiKey)},
                     {<<"content-type">>, <<"application/json">>}
                 ],
-            {ok, ConnPid} = gun:open(Host, Port, #{transport => tls, tls_opts => damage_gun:tls_opts(Host)}),
+            {ok, ConnPid} = gun:open(Host, Port, #{
+                transport => tls, tls_opts => damage_gun:tls_opts(Host)
+            }),
             StreamRef = gun:post(ConnPid, <<"/api/create">>, Headers, PostData),
             Resp = read_stream(ConnPid, StreamRef),
             Resp;

@@ -325,7 +325,9 @@ auth_get_json(Path, Headers) ->
     ).
 
 with_conn(Fun) ->
-    {ok, ConnPid} = gun:open(?HOST, ?PORT, #{transport => tls, tls_opts => damage_gun:tls_opts(?HOST)}),
+    {ok, ConnPid} = gun:open(?HOST, ?PORT, #{
+        transport => tls, tls_opts => damage_gun:tls_opts(?HOST)
+    }),
     try
         {ok, _Protocol} = gun:await_up(ConnPid),
         Fun(ConnPid)

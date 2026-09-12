@@ -245,7 +245,17 @@ handle_event(
             %% out of general process messages and logs; consumers that truly
             %% need one must obtain it through a dedicated privileged API.
             SafePay = maps:without([preimage, <<"preimage">>], Pay),
-            PaidInv = (maps:without([preimage, payment_preimage, payment_secret, <<"preimage">>, <<"payment_preimage">>, <<"payment_secret">>], Inv))#{
+            PaidInv = (maps:without(
+                [
+                    preimage,
+                    payment_preimage,
+                    payment_secret,
+                    <<"preimage">>,
+                    <<"payment_preimage">>,
+                    <<"payment_secret">>
+                ],
+                Inv
+            ))#{
                 event => invoice_payment,
                 details => SafePay,
                 received_msat => MSat,

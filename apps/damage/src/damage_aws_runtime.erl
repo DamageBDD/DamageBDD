@@ -143,10 +143,10 @@ status() ->
         aws_credentials_running => CredentialsRunning,
         unexpected_aws_runtime =>
             not Requested andalso
-                (AwsLoaded orelse
-                    CredentialsLoaded orelse
-                    AwsRunning orelse
-                    CredentialsRunning),
+            (AwsLoaded orelse
+                CredentialsLoaded orelse
+                AwsRunning orelse
+                CredentialsRunning),
         unexpected_credentials_service =>
             CredentialsRunning andalso not Requested,
         credential_providers =>
