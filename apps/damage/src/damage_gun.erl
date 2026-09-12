@@ -41,11 +41,7 @@
 -define(DEFAULT_HTTP_TIMEOUT, 30000).
 -define(DEFAULT_WS_TIMEOUT, 15000).
 
--define(LOG_DOMAIN, [damage, gun]).
--define(GUN_DEBUG(Format, Args), ?LOG_DEBUG(Format, Args, #{domain => ?LOG_DOMAIN})).
--define(GUN_INFO(Format, Args), ?LOG_INFO(Format, Args, #{domain => ?LOG_DOMAIN})).
--define(GUN_WARNING(Format, Args), ?LOG_WARNING(Format, Args, #{domain => ?LOG_DOMAIN})).
--define(GUN_ERROR(Format, Args), ?LOG_ERROR(Format, Args, #{domain => ?LOG_DOMAIN})).
+-define(LOG_META, #{domain => [damage, gun]}).
 
 %% ===================================================================
 %% HTTP API
@@ -312,7 +308,7 @@ await_up(ConnPid) ->
 await_up(ConnPid, Timeout) ->
     case catch gun:await_up(ConnPid, Timeout) of
         {ok, _Protocol} = Ok ->
-            %?GUN_DEBUG("gun connection up protocol=~p", [Protocol]),
+            %?LOG_DEBUG("gun connection up protocol=~p", [Protocol]),
             Ok;
         {error, Reason} ->
             {error, {await_up_failed, Reason}};
@@ -351,9 +347,10 @@ ws_upgrade(ConnPid, Path) ->
 ws_upgrade(ConnPid, Path0, WsHeaders) ->
     Path = normalize_ws_path(Path0),
     SafeHeaders = sanitize_ws_headers(WsHeaders),
-    ?GUN_DEBUG(
+    ?LOG_DEBUG(
         "WS upgrade path=~p headers=~p",
-        [redact_ws_path(Path), summarize_headers(SafeHeaders)]
+        [redact_ws_path(Path), summarize_headers(SafeHeaders)],
+        ?LOG_META
     ),
     StreamRef = gun:ws_upgrade(ConnPid, Path, SafeHeaders),
     receive
@@ -361,9 +358,10 @@ ws_upgrade(ConnPid, Path0, WsHeaders) ->
             {ok, StreamRef};
         {gun_response, ConnPid, StreamRef, Fin, Status, RespHeaders} ->
             maybe_drain_http_body(ConnPid, StreamRef, Fin),
-            ?GUN_ERROR(
+            ?LOG_ERROR(
                 "WS upgrade failed status=~p resp_headers=~p sent_headers=~p",
-                [Status, summarize_headers(RespHeaders), summarize_headers(SafeHeaders)]
+                [Status, summarize_headers(RespHeaders), summarize_headers(SafeHeaders)],
+                ?LOG_META
             ),
             {error, {upgrade_failed, Status, RespHeaders}};
         {gun_ws, ConnPid, StreamRef, close} ->
@@ -497,9 +495,10 @@ log_open(Host, Port, Transport, Proxy, Opts) ->
             _ ->
                 undefined
         end,
-    ?GUN_DEBUG(
+    ?LOG_DEBUG(
         "Opening gun connection host=~p port=~p transport=~p proxy=~p tls_verify=~p",
-        [Host, Port, Transport, redact_proxy(Proxy), Verify]
+        [Host, Port, Transport, redact_proxy(Proxy), Verify],
+        ?LOG_META
     ).
 
 log_ws_open(Host, Port, Transport, Proxy, Headers0, Opts) ->
@@ -510,9 +509,10 @@ log_ws_open(Host, Port, Transport, Proxy, Headers0, Opts) ->
             _ ->
                 undefined
         end,
-    ?GUN_DEBUG(
+    ?LOG_DEBUG(
         "Opening WS connection host=~p port=~p transport=~p proxy=~p tls_verify=~p ws_headers=~p",
-        [Host, Port, Transport, redact_proxy(Proxy), Verify, summarize_headers(Headers0)]
+        [Host, Port, Transport, redact_proxy(Proxy), Verify, summarize_headers(Headers0)],
+        ?LOG_META
     ).
 
 summarize_headers([]) ->
@@ -526,7 +526,6 @@ redact_ws_path(Path) when is_binary(Path) ->
     end;
 redact_ws_path(Path) when is_list(Path) ->
     binary_to_list(redact_ws_path(list_to_binary(Path))).
-
 
 summarize_header({K, V}) ->
     Key = to_lower(K),
