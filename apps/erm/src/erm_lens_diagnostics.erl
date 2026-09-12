@@ -15,7 +15,8 @@ summary(Term) ->
 stack(Frames) when is_list(Frames) ->
     %% Stack frames may contain actual function arguments (URLs, keys, payloads).
     [mfa(F) || F <- lists:sublist(Frames, 6)];
-stack(_) -> [].
+stack(_) ->
+    [].
 
 mfa({M, F, Args, _}) when is_list(Args) -> {M, F, length(Args)};
 mfa({M, F, Arity, _}) when is_integer(Arity) -> {M, F, Arity};

@@ -121,10 +121,13 @@ handle_info(handshake_timeout, State = #state{port = undefined}) ->
     %% A cancelled timer may already have reached the mailbox after the native
     %% process went down. The retry timer now owns recovery.
     {noreply, State#state{handshake_timer = undefined}};
-handle_info(handshake_timeout, State = #state{
-    handshake_timeout = Timeout,
-    handshake_failures = Failures
-}) ->
+handle_info(
+    handshake_timeout,
+    State = #state{
+        handshake_timeout = Timeout,
+        handshake_failures = Failures
+    }
+) ->
     case controller_status() of
         #{ready := true} ->
             {noreply, State#state{handshake_timer = undefined, handshake_failures = 0}};
@@ -443,8 +446,9 @@ distribution_name_domain() ->
 validate_longname_hosts(PeerNode, PeerHost, CNode, CNodeHost) ->
     case {lists:member($., PeerHost), lists:member($., CNodeHost)} of
         {false, _} ->
-            {error, {invalid_longname_host, PeerNode, PeerHost,
-                "restart the Erlang VM with -sname or use a fully qualified -name host"}};
+            {error,
+                {invalid_longname_host, PeerNode, PeerHost,
+                    "restart the Erlang VM with -sname or use a fully qualified -name host"}};
         {_, false} ->
             {error, {invalid_cnode_longname, CNode, CNodeHost}};
         {true, true} ->

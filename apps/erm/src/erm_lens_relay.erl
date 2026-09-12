@@ -62,7 +62,7 @@ fetch(Url, C) ->
             posts_end => PostsEnd,
             engagement_end => EngagementEnd,
             complete => PostsEnd =:= eose andalso
-                        (EngagementEnd =:= eose orelse EngagementEnd =:= skipped)
+                (EngagementEnd =:= eose orelse EngagementEnd =:= skipped)
         }}
     end).
 
@@ -70,7 +70,9 @@ publish(Url, Event) ->
     case erm_lens_nostr:verify(Event) of
         ok ->
             with_connection(Url, fun(Pid, Stream) ->
-                ok = require_send(send_frame(Pid, Stream, [<<"EVENT">>, erm_lens_nostr:event_fields(Event)])),
+                ok = require_send(
+                    send_frame(Pid, Stream, [<<"EVENT">>, erm_lens_nostr:event_fields(Event)])
+                ),
                 await_ok(Pid, Stream, maps:get(<<"id">>, Event), deadline(?PUBLISH_TIMEOUT))
             end);
         Error ->
@@ -80,9 +82,13 @@ publish(Url, Event) ->
 with_connection(Url, Fun) ->
     try
         {Host, Port, Path, TlsOpts} = relay_target(Url),
-        ?LOG_DEBUG("ERM Lens relay connecting endpoint=~ts", [
-            erm_lens_diagnostics:relay_label(Url)
-        ], ?LOG_META),
+        ?LOG_DEBUG(
+            "ERM Lens relay connecting endpoint=~ts",
+            [
+                erm_lens_diagnostics:relay_label(Url)
+            ],
+            ?LOG_META
+        ),
         case
             safe_gun_open(Host, Port, #{
                 transport => tls,
@@ -113,13 +119,20 @@ with_connection(Url, Fun) ->
             MFA = undef_mfa(Stacktrace),
             ?LOG_ERROR(
                 "ERM Lens relay local API unavailable url=~p mfa=~p stack=~p",
-                [erm_lens_diagnostics:relay_label(Url), MFA, stack_head(Stacktrace)], ?LOG_META
+                [erm_lens_diagnostics:relay_label(Url), MFA, stack_head(Stacktrace)],
+                ?LOG_META
             ),
             {error, {relay_api_undefined, MFA}};
         Class:Reason:Stacktrace ->
             ?LOG_WARNING(
                 "ERM Lens relay connection exception url=~p error=~p:~p stack=~p",
-                [erm_lens_diagnostics:relay_label(Url), Class, safe_reason(Reason), stack_head(Stacktrace)], ?LOG_META
+                [
+                    erm_lens_diagnostics:relay_label(Url),
+                    Class,
+                    safe_reason(Reason),
+                    stack_head(Stacktrace)
+                ],
+                ?LOG_META
             ),
             {error, {relay_failed, Class, safe_reason(Reason)}}
     end.
@@ -180,7 +193,11 @@ upgrade_and_run(Url, Pid, Path, Fun) ->
     Stream = gun:ws_upgrade(Pid, Path, []),
     receive
         {gun_upgrade, Pid, Stream, [<<"websocket">>], _RespHeaders} ->
-            ?LOG_DEBUG("ERM Lens relay websocket ready endpoint=~ts", [erm_lens_diagnostics:relay_label(Url)], ?LOG_META),
+            ?LOG_DEBUG(
+                "ERM Lens relay websocket ready endpoint=~ts",
+                [erm_lens_diagnostics:relay_label(Url)],
+                ?LOG_META
+            ),
             Fun(Pid, Stream);
         {gun_response, Pid, Stream, _Fin, Status, _RespHeaders} ->
             {error, {upgrade_rejected, Status}};
@@ -246,7 +263,11 @@ collect_message(Pid, Stream, Sub, Filters, Left, End, N, Bad) ->
                 {ok, [<<"CLOSED">>, Sub, Reason]} ->
                     error({subscription_closed, safe_reason(Reason)});
                 {error, DecodeReason} ->
-                    ?LOG_DEBUG("ERM Lens relay ignored invalid JSON frame reason=~p", [DecodeReason], ?LOG_META),
+                    ?LOG_DEBUG(
+                        "ERM Lens relay ignored invalid JSON frame reason=~p",
+                        [DecodeReason],
+                        ?LOG_META
+                    ),
                     collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad + 1);
                 _ ->
                     collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad)
@@ -263,10 +284,14 @@ collect_message(Pid, Stream, Sub, Filters, Left, End, N, Bad) ->
             error({relay_down, Reason});
         {gun_down, Pid, _Proto, Reason, _Killed} ->
             error({relay_down, Reason});
-        {gun_error, Pid, Stream, Reason} -> error({relay_error, safe_reason(Reason)});
-        {gun_error, Pid, Reason} -> error({relay_error, safe_reason(Reason)});
-        {'DOWN', _Mon, process, Pid, Reason} -> error({relay_down, safe_reason(Reason)});
-        {gun_ws, Pid, Stream, {binary, _}} -> error(unexpected_binary_frame);
+        {gun_error, Pid, Stream, Reason} ->
+            error({relay_error, safe_reason(Reason)});
+        {gun_error, Pid, Reason} ->
+            error({relay_error, safe_reason(Reason)});
+        {'DOWN', _Mon, process, Pid, Reason} ->
+            error({relay_down, safe_reason(Reason)});
+        {gun_ws, Pid, Stream, {binary, _}} ->
+            error(unexpected_binary_frame);
         {gun_ws, Pid, Stream, _Control} ->
             refill(Pid, Stream),
             collect(Pid, Stream, Sub, Filters, Left - 1, End, N, Bad)
@@ -277,7 +302,8 @@ collect_message(Pid, Stream, Sub, Filters, Left, End, N, Bad) ->
 await_ok(Pid, Stream, Id, End) ->
     await_ok(Pid, Stream, Id, End, 128).
 
-await_ok(_Pid, _Stream, _Id, _End, 0) -> {error, acknowledgment_frame_limit};
+await_ok(_Pid, _Stream, _Id, _End, 0) ->
+    {error, acknowledgment_frame_limit};
 await_ok(Pid, Stream, Id, End, Left) ->
     case remaining(End) of
         0 -> {error, acknowledgment_timeout};
@@ -293,18 +319,29 @@ await_ok_message(Pid, Stream, Id, End, Left) ->
                     {ok, erm_lens_diagnostics:summary(Message)};
                 {ok, [<<"OK">>, Id, false, Message]} when is_binary(Message) ->
                     {error, {rejected, erm_lens_diagnostics:summary(Message)}};
-                _ -> await_ok(Pid, Stream, Id, End, Left - 1)
+                _ ->
+                    await_ok(Pid, Stream, Id, End, Left - 1)
             end;
-        {gun_ws, Pid, Stream, {text, _}} -> {error, oversized_relay_frame};
-        {gun_ws, Pid, Stream, {binary, _}} -> {error, unexpected_binary_frame};
-        {gun_ws, Pid, Stream, close} -> {error, relay_closed};
-        {gun_ws, Pid, Stream, {close, Code, _}} -> {error, {relay_closed, Code}};
-        {gun_ws, Pid, Stream, {close, _}} -> {error, relay_closed};
-        {gun_down, Pid, _, Reason, _, _} -> {error, {relay_down, safe_reason(Reason)}};
-        {gun_down, Pid, _, Reason, _} -> {error, {relay_down, safe_reason(Reason)}};
-        {gun_error, Pid, Stream, Reason} -> {error, {relay_error, safe_reason(Reason)}};
-        {gun_error, Pid, Reason} -> {error, {relay_error, safe_reason(Reason)}};
-        {'DOWN', _Mon, process, Pid, Reason} -> {error, {relay_down, safe_reason(Reason)}};
+        {gun_ws, Pid, Stream, {text, _}} ->
+            {error, oversized_relay_frame};
+        {gun_ws, Pid, Stream, {binary, _}} ->
+            {error, unexpected_binary_frame};
+        {gun_ws, Pid, Stream, close} ->
+            {error, relay_closed};
+        {gun_ws, Pid, Stream, {close, Code, _}} ->
+            {error, {relay_closed, Code}};
+        {gun_ws, Pid, Stream, {close, _}} ->
+            {error, relay_closed};
+        {gun_down, Pid, _, Reason, _, _} ->
+            {error, {relay_down, safe_reason(Reason)}};
+        {gun_down, Pid, _, Reason, _} ->
+            {error, {relay_down, safe_reason(Reason)}};
+        {gun_error, Pid, Stream, Reason} ->
+            {error, {relay_error, safe_reason(Reason)}};
+        {gun_error, Pid, Reason} ->
+            {error, {relay_error, safe_reason(Reason)}};
+        {'DOWN', _Mon, process, Pid, Reason} ->
+            {error, {relay_down, safe_reason(Reason)}};
         {gun_ws, Pid, Stream, _Control} ->
             refill(Pid, Stream),
             await_ok(Pid, Stream, Id, End, Left - 1)
@@ -323,8 +360,10 @@ send_frame(Pid, Stream, Value) ->
                 error:undef:Stack -> erlang:raise(error, undef, Stack);
                 Class:Reason -> {error, {ws_send_failed, Class, safe_reason(Reason)}}
             end;
-        {ok, _} -> {error, outbound_frame_too_large};
-        {error, _} = Error -> Error
+        {ok, _} ->
+            {error, outbound_frame_too_large};
+        {error, _} = Error ->
+            Error
     end.
 
 require_send(ok) -> ok;
@@ -333,12 +372,17 @@ encode(Value) -> erm_lens_codec:encode(Value).
 decode(Data) -> erm_lens_codec:decode(Data).
 
 safe_close(Pid) ->
-    try gun:close(Pid) catch _:_ -> ok end,
+    try
+        gun:close(Pid)
+    catch
+        _:_ -> ok
+    end,
     ok.
 
 ingest(Event, End) ->
     Timeout = max(1, min(1000, remaining(End))),
-    try gen_server:call(erm_lens_feed, {ingest, Event}, Timeout)
+    try
+        gen_server:call(erm_lens_feed, {ingest, Event}, Timeout)
     catch
         exit:{timeout, _} -> error({feed_unavailable, timeout});
         exit:_ -> error({feed_unavailable, unavailable})

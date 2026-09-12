@@ -41,19 +41,21 @@ notify_dunst(Msg) ->
             {error, notify_send_not_found};
         NotifySend ->
             RunOpts = [sync, stderr],
-            case exec:run(
-                [
-                    NotifySend,
-                    "-t",
-                    ?NOTIFY_TIMEOUT,
-                    "-r",
-                    ?NOTIFY_ID,
-                    "-a",
-                    "erm",
-                    Msg
-                ],
-                RunOpts
-            ) of
+            case
+                exec:run(
+                    [
+                        NotifySend,
+                        "-t",
+                        ?NOTIFY_TIMEOUT,
+                        "-r",
+                        ?NOTIFY_ID,
+                        "-a",
+                        "erm",
+                        Msg
+                    ],
+                    RunOpts
+                )
+            of
                 {ok, _Output} -> ok;
                 Error -> {error, {notify_failed, Error}}
             end
@@ -171,16 +173,18 @@ start_monitor(State) ->
         false ->
             schedule_monitor_restart(herbstclient_not_found, State);
         Executable ->
-            try open_port(
-                {spawn_executable, Executable},
-                [
-                    {args, ["--idle"]},
-                    {line, 1024},
-                    exit_status,
-                    use_stdio,
-                    stderr_to_stdout
-                ]
-            ) of
+            try
+                open_port(
+                    {spawn_executable, Executable},
+                    [
+                        {args, ["--idle"]},
+                        {line, 1024},
+                        exit_status,
+                        use_stdio,
+                        stderr_to_stdout
+                    ]
+                )
+            of
                 Port ->
                     ?LOG_INFO("hlwm event monitor started with ~ts", [Executable]),
                     State#state{port = Port, restart_timer = undefined}

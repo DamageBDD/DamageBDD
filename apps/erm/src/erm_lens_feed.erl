@@ -15,8 +15,14 @@ status() -> gen_server:call(?MODULE, status).
 init(C) ->
     process_flag(trap_exit, true),
     Timer = erlang:start_timer(30000, self(), prune),
-    {ok, #{model => erm_lens_model:new(C), rejected => 0, revision => 0,
-           epoch => make_ref(), timer => Timer, last_rejection => undefined}}.
+    {ok, #{
+        model => erm_lens_model:new(C),
+        rejected => 0,
+        revision => 0,
+        epoch => make_ref(),
+        timer => Timer,
+        last_rejection => undefined
+    }}.
 
 handle_call({ingest, E}, _, S) ->
     case erm_lens_nostr:verify(E) of
@@ -34,27 +40,41 @@ handle_call({snapshot, _}, _, S) ->
 handle_call(ids, _, S) ->
     S1 = prune(S),
     {reply, lists:sublist(erm_lens_model:ids(maps:get(model, S1)), 200), S1};
-handle_call({mute, P}, _, S) -> preference(mute, muted, P, S);
-handle_call({follow, P}, _, S) -> preference(follow, following, P, S);
+handle_call({mute, P}, _, S) ->
+    preference(mute, muted, P, S);
+handle_call({follow, P}, _, S) ->
+    preference(follow, following, P, S);
 handle_call(status, _, S) ->
     M = maps:get(model, S),
-    {reply, #{events => erm_lens_model:size(M), bytes => maps:get(bytes, M, 0),
-              max_store_bytes => maps:get(byte_limit, M, 67108864),
-              rejected => maps:get(rejected, S), revision => maps:get(revision, S),
-              epoch => maps:get(epoch, S), last_rejection => maps:get(last_rejection, S)}, S};
-handle_call(_, _, S) -> {reply, {error, unsupported_call}, S}.
+    {reply,
+        #{
+            events => erm_lens_model:size(M),
+            bytes => maps:get(bytes, M, 0),
+            max_store_bytes => maps:get(byte_limit, M, 67108864),
+            rejected => maps:get(rejected, S),
+            revision => maps:get(revision, S),
+            epoch => maps:get(epoch, S),
+            last_rejection => maps:get(last_rejection, S)
+        },
+        S};
+handle_call(_, _, S) ->
+    {reply, {error, unsupported_call}, S}.
 
 handle_cast(_, S) -> {noreply, S}.
 handle_info({timeout, Ref, prune}, S = #{timer := Ref}) ->
     Timer = erlang:start_timer(30000, self(), prune),
     {noreply, prune(S#{timer := Timer})};
-handle_info(_, S) -> {noreply, S}.
-terminate(_, S) -> erlang:cancel_timer(maps:get(timer, S)), ok.
+handle_info(_, S) ->
+    {noreply, S}.
+terminate(_, S) ->
+    erlang:cancel_timer(maps:get(timer, S)),
+    ok.
 code_change(_, S, _) ->
-    Timer = case maps:get(timer, S, undefined) of
-        Ref when is_reference(Ref) -> Ref;
-        _ -> erlang:start_timer(30000, self(), prune)
-    end,
+    Timer =
+        case maps:get(timer, S, undefined) of
+            Ref when is_reference(Ref) -> Ref;
+            _ -> erlang:start_timer(30000, self(), prune)
+        end,
     {ok, S#{epoch => maps:get(epoch, S, make_ref()), timer => Timer}}.
 
 preference(Fun, Key, P, S) ->

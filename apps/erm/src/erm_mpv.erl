@@ -193,7 +193,6 @@ handle_info(build_ui, State = #state{window = undefined}) ->
     end;
 handle_info(build_ui, State) ->
     {noreply, State};
-
 handle_info(connect_mpv, State = #state{ipc = undefined}) ->
     case safe_mpv_connect(ipc_path()) of
         {ok, Ipc} ->
@@ -219,13 +218,11 @@ handle_info(connect_mpv, State = #state{ipc = undefined}) ->
     end;
 handle_info(connect_mpv, State) ->
     {noreply, State#state{mpv_timer = undefined}};
-
 handle_info(refresh_playlist, State0) ->
     _ = refresh_playlist(State0),
     State1 = refresh_mpv_status(State0),
     Timer = replace_timer(State1#state.refresh_timer, ?REFRESH_MS, refresh_playlist),
     {noreply, State1#state{refresh_timer = Timer}};
-
 handle_info({mpv, status, Status}, State) when is_map(Status) ->
     {noreply, apply_playback_status(Status, State)};
 handle_info({mpv, disconnected, Reason}, State) ->
@@ -251,7 +248,6 @@ handle_info(
         ui_monitor = undefined,
         ui_retry = Timer
     }};
-
 %% Transport controls.
 handle_info({gtkgs, previous_button, click, _Data, _Args}, State) ->
     {noreply, play_selected(safe_playlist(prev), State)};
@@ -260,11 +256,12 @@ handle_info({gtkgs, play_button, click, _Data, _Args}, State) ->
 handle_info({gtkgs, next_button, click, _Data, _Args}, State) ->
     {noreply, play_selected(safe_playlist(next), State)};
 %% Playlist and library actions.
-handle_info({gtkgs, playlist_list, select, _Data, [Index, _Text, true]}, State)
-    when is_integer(Index), Index >= 0
+handle_info({gtkgs, playlist_list, select, _Data, [Index, _Text, true]}, State) when
+    is_integer(Index), Index >= 0
 ->
     case safe_playlist(get_by_index, [Index]) of
-        {ok, Track} -> {noreply, play_track(Track, State)};
+        {ok, Track} ->
+            {noreply, play_track(Track, State)};
         {error, Reason} ->
             update_status(io_lib:format("Could not select track: ~p", [Reason])),
             {noreply, State};
@@ -310,11 +307,10 @@ handle_info({gtkgs, add_folder_button, click, _Data, _Args}, State) ->
 handle_info({gtkgs, folder_entry, keypress, _Data, ['Return', _Text]}, State) ->
     add_folder_from_entry(State),
     {noreply, State};
-
 %% Continuous controls. Programmatic GTK changes are suppressed natively, so
 %% MPV status updates do not feed back into seek commands.
-handle_info({gtkgs, seek_scale, change, _Data, [#{value := Value}]}, State)
-    when is_number(Value)
+handle_info({gtkgs, seek_scale, change, _Data, [#{value := Value}]}, State) when
+    is_number(Value)
 ->
     Percent = clamp(float(Value) / 10.0, 0.0, 100.0),
     Timer = replace_tagged_timer(
@@ -323,8 +319,8 @@ handle_info({gtkgs, seek_scale, change, _Data, [#{value := Value}]}, State)
         apply_seek
     ),
     {noreply, State#state{seek_timer = Timer, pending_seek = Percent}};
-handle_info({gtkgs, volume_scale, change, _Data, [#{value := Value}]}, State)
-    when is_number(Value)
+handle_info({gtkgs, volume_scale, change, _Data, [#{value := Value}]}, State) when
+    is_number(Value)
 ->
     Volume = clamp(round(Value), 0, 100),
     _ = ui_config(volume_value, [{text, volume_text(Volume)}]),
@@ -354,7 +350,6 @@ handle_info(
     {noreply, NextState#state{volume_timer = undefined, pending_volume = undefined}};
 handle_info({apply_volume, _StaleToken}, State) ->
     {noreply, State};
-
 handle_info({gtkgs, layout_classic_button, click, _Data, _Args}, State) ->
     save_layout(classic),
     _ = apply_layout(classic),
@@ -482,18 +477,43 @@ builtin_player_tree() ->
                                 {class, "cp-panel cp-top-strip"}
                             ],
                             [
-                                {label, title_label,
-                                    [{text, "ERM Media"}, {class, "cp-title"}, {width_chars, 12}, {valign, center}]},
-                                {label, playback_detail,
-                                    [{text, "MPV connecting…"}, {class, "cp-status"}, {width_chars, 22}, {valign, center}]},
-                                {label, top_spacer,
-                                    [{text, ""}, {hexpand, true}, {vexpand, false}]},
-                                {button, layout_classic_button,
-                                    [{label, "Classic"}, {min_height, 24}, {min_width, 72}, {vexpand, false}, {valign, center}, {class, "cp-layout-button"}]},
-                                {button, layout_compact_button,
-                                    [{label, "Compact"}, {min_height, 24}, {min_width, 76}, {vexpand, false}, {valign, center}, {class, "cp-layout-button"}]},
-                                {button, layout_playlist_button,
-                                    [{label, "Playlist"}, {min_height, 24}, {min_width, 76}, {vexpand, false}, {valign, center}, {class, "cp-layout-button"}]}
+                                {label, title_label, [
+                                    {text, "ERM Media"},
+                                    {class, "cp-title"},
+                                    {width_chars, 12},
+                                    {valign, center}
+                                ]},
+                                {label, playback_detail, [
+                                    {text, "MPV connecting…"},
+                                    {class, "cp-status"},
+                                    {width_chars, 22},
+                                    {valign, center}
+                                ]},
+                                {label, top_spacer, [{text, ""}, {hexpand, true}, {vexpand, false}]},
+                                {button, layout_classic_button, [
+                                    {label, "Classic"},
+                                    {min_height, 24},
+                                    {min_width, 72},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-layout-button"}
+                                ]},
+                                {button, layout_compact_button, [
+                                    {label, "Compact"},
+                                    {min_height, 24},
+                                    {min_width, 76},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-layout-button"}
+                                ]},
+                                {button, layout_playlist_button, [
+                                    {label, "Playlist"},
+                                    {min_height, 24},
+                                    {min_width, 76},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-layout-button"}
+                                ]}
                             ]},
                         {frame, now_playing_strip,
                             [
@@ -505,8 +525,13 @@ builtin_player_tree() ->
                                 {class, "cp-panel cp-now-strip"}
                             ],
                             [
-                                {label, now_playing,
-                                    [{text, "Nothing playing"}, {class, "cp-now-playing"}, {hexpand, true}, {vexpand, false}, {valign, center}]}
+                                {label, now_playing, [
+                                    {text, "Nothing playing"},
+                                    {class, "cp-now-playing"},
+                                    {hexpand, true},
+                                    {vexpand, false},
+                                    {valign, center}
+                                ]}
                             ]},
                         {frame, control_strip,
                             [
@@ -518,15 +543,84 @@ builtin_player_tree() ->
                                 {class, "cp-control-strip"}
                             ],
                             [
-                                {button, previous_button, [{label, "⏮"}, {min_height, 28}, {min_width, 38}, {vexpand, false}, {valign, center}, {class, "cp-button cp-transport"}]},
-                                {button, play_button, [{label, "⏯"}, {min_height, 30}, {min_width, 50}, {vexpand, false}, {valign, center}, {class, "cp-button-primary cp-transport"}]},
-                                {button, next_button, [{label, "⏭"}, {min_height, 28}, {min_width, 38}, {vexpand, false}, {valign, center}, {class, "cp-button cp-transport"}]},
-                                {label, elapsed_label, [{text, "0:00"}, {width_chars, 6}, {vexpand, false}, {valign, center}, {class, "cp-time"}]},
-                                {scale, seek_scale, [{orient, horizontal}, {min, 0}, {max, 1000}, {step, 1}, {value, 0}, {height, 22}, {hexpand, true}, {vexpand, false}, {valign, center}, {draw_value, false}, {class, "cp-seek"}]},
-                                {label, duration_label, [{text, "0:00"}, {width_chars, 6}, {vexpand, false}, {valign, center}, {class, "cp-time"}]},
-                                {label, volume_label, [{text, "Vol"}, {width_chars, 4}, {vexpand, false}, {valign, center}, {class, "cp-dim"}]},
-                                {scale, volume_scale, [{orient, horizontal}, {min, 0}, {max, 100}, {step, 1}, {value, ?DEFAULT_VOLUME}, {width, 120}, {height, 22}, {vexpand, false}, {valign, center}, {draw_value, false}, {class, "cp-volume"}]},
-                                {label, volume_value, [{text, volume_text(?DEFAULT_VOLUME)}, {width_chars, 5}, {vexpand, false}, {valign, center}, {class, "cp-time"}]}
+                                {button, previous_button, [
+                                    {label, "⏮"},
+                                    {min_height, 28},
+                                    {min_width, 38},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button cp-transport"}
+                                ]},
+                                {button, play_button, [
+                                    {label, "⏯"},
+                                    {min_height, 30},
+                                    {min_width, 50},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button-primary cp-transport"}
+                                ]},
+                                {button, next_button, [
+                                    {label, "⏭"},
+                                    {min_height, 28},
+                                    {min_width, 38},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button cp-transport"}
+                                ]},
+                                {label, elapsed_label, [
+                                    {text, "0:00"},
+                                    {width_chars, 6},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-time"}
+                                ]},
+                                {scale, seek_scale, [
+                                    {orient, horizontal},
+                                    {min, 0},
+                                    {max, 1000},
+                                    {step, 1},
+                                    {value, 0},
+                                    {height, 22},
+                                    {hexpand, true},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {draw_value, false},
+                                    {class, "cp-seek"}
+                                ]},
+                                {label, duration_label, [
+                                    {text, "0:00"},
+                                    {width_chars, 6},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-time"}
+                                ]},
+                                {label, volume_label, [
+                                    {text, "Vol"},
+                                    {width_chars, 4},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-dim"}
+                                ]},
+                                {scale, volume_scale, [
+                                    {orient, horizontal},
+                                    {min, 0},
+                                    {max, 100},
+                                    {step, 1},
+                                    {value, ?DEFAULT_VOLUME},
+                                    {width, 120},
+                                    {height, 22},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {draw_value, false},
+                                    {class, "cp-volume"}
+                                ]},
+                                {label, volume_value, [
+                                    {text, volume_text(?DEFAULT_VOLUME)},
+                                    {width_chars, 5},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-time"}
+                                ]}
                             ]},
                         {frame, utility_row,
                             [
@@ -538,39 +632,148 @@ builtin_player_tree() ->
                                 {class, "cp-utility-strip"}
                             ],
                             [
-                                {button, like_button, [{label, "☆"}, {min_height, 24}, {min_width, 38}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
-                                {button, ipfs_button, [{label, "IPFS"}, {min_height, 24}, {min_width, 50}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
-                                {button, share_button, [{label, "Share"}, {min_height, 24}, {min_width, 58}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
-                                {button, clear_button, [{label, "Clear"}, {min_height, 24}, {min_width, 54}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
-                                {label, utility_spacer, [{text, ""}, {hexpand, true}, {vexpand, false}]},
-                                {button, close_button, [{label, "Hide"}, {min_height, 24}, {min_width, 54}, {vexpand, false}, {valign, center}, {class, "cp-button"}]}
+                                {button, like_button, [
+                                    {label, "☆"},
+                                    {min_height, 24},
+                                    {min_width, 38},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button"}
+                                ]},
+                                {button, ipfs_button, [
+                                    {label, "IPFS"},
+                                    {min_height, 24},
+                                    {min_width, 50},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button"}
+                                ]},
+                                {button, share_button, [
+                                    {label, "Share"},
+                                    {min_height, 24},
+                                    {min_width, 58},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button"}
+                                ]},
+                                {button, clear_button, [
+                                    {label, "Clear"},
+                                    {min_height, 24},
+                                    {min_width, 54},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button"}
+                                ]},
+                                {label, utility_spacer, [
+                                    {text, ""}, {hexpand, true}, {vexpand, false}
+                                ]},
+                                {button, close_button, [
+                                    {label, "Hide"},
+                                    {min_height, 24},
+                                    {min_width, 54},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-button"}
+                                ]}
                             ]},
                         {frame, body_row,
-                            [{orient, horizontal}, {spacing, 6}, {hexpand, true}, {vexpand, true}, {class, "cp-body-row"}],
+                            [
+                                {orient, horizontal},
+                                {spacing, 6},
+                                {hexpand, true},
+                                {vexpand, true},
+                                {class, "cp-body-row"}
+                            ],
                             [
                                 {frame, playlist_panel,
-                                    [{orient, vertical}, {spacing, 3}, {hexpand, true}, {vexpand, true}, {class, "cp-panel cp-playlist-panel"}],
                                     [
-                                        {label, playlist_heading, [{text, "Playlist"}, {height, 20}, {vexpand, false}, {class, "cp-heading"}]},
-                                        {listbox, playlist_list, [{items, []}, {hexpand, true}, {vexpand, true}, {selection, single}, {class, "cp-list"}]}
+                                        {orient, vertical},
+                                        {spacing, 3},
+                                        {hexpand, true},
+                                        {vexpand, true},
+                                        {class, "cp-panel cp-playlist-panel"}
+                                    ],
+                                    [
+                                        {label, playlist_heading, [
+                                            {text, "Playlist"},
+                                            {height, 20},
+                                            {vexpand, false},
+                                            {class, "cp-heading"}
+                                        ]},
+                                        {listbox, playlist_list, [
+                                            {items, []},
+                                            {hexpand, true},
+                                            {vexpand, true},
+                                            {selection, single},
+                                            {class, "cp-list"}
+                                        ]}
                                     ]},
                                 {frame, side_panel,
-                                    [{orient, vertical}, {spacing, 4}, {width, 240}, {min_width, 220}, {vexpand, true}, {class, "cp-panel cp-side-panel"}],
                                     [
-                                        {label, library_heading, [{text, "Library"}, {height, 20}, {vexpand, false}, {class, "cp-heading"}]},
-                                        {entry, folder_entry, [{placeholder, "Music folder path"}, {hexpand, true}, {vexpand, false}, {class, "cp-entry"}]},
+                                        {orient, vertical},
+                                        {spacing, 4},
+                                        {width, 240},
+                                        {min_width, 220},
+                                        {vexpand, true},
+                                        {class, "cp-panel cp-side-panel"}
+                                    ],
+                                    [
+                                        {label, library_heading, [
+                                            {text, "Library"},
+                                            {height, 20},
+                                            {vexpand, false},
+                                            {class, "cp-heading"}
+                                        ]},
+                                        {entry, folder_entry, [
+                                            {placeholder, "Music folder path"},
+                                            {hexpand, true},
+                                            {vexpand, false},
+                                            {class, "cp-entry"}
+                                        ]},
                                         {frame, library_button_row,
-                                            [{orient, horizontal}, {spacing, 4}, {height, 28}, {hexpand, true}, {vexpand, false}],
                                             [
-                                                {button, add_folder_button, [{label, "Add"}, {min_height, 24}, {min_width, 46}, {vexpand, false}, {valign, center}, {class, "cp-button"}]},
-                                                {button, rescan_button, [{label, "Rescan"}, {min_height, 24}, {min_width, 62}, {vexpand, false}, {valign, center}, {class, "cp-button"}]}
+                                                {orient, horizontal},
+                                                {spacing, 4},
+                                                {height, 28},
+                                                {hexpand, true},
+                                                {vexpand, false}
+                                            ],
+                                            [
+                                                {button, add_folder_button, [
+                                                    {label, "Add"},
+                                                    {min_height, 24},
+                                                    {min_width, 46},
+                                                    {vexpand, false},
+                                                    {valign, center},
+                                                    {class, "cp-button"}
+                                                ]},
+                                                {button, rescan_button, [
+                                                    {label, "Rescan"},
+                                                    {min_height, 24},
+                                                    {min_width, 62},
+                                                    {vexpand, false},
+                                                    {valign, center},
+                                                    {class, "cp-button"}
+                                                ]}
                                             ]}
                                     ]}
                             ]},
                         {frame, status_strip,
-                            [{orient, horizontal}, {height, 22}, {hexpand, true}, {vexpand, false}, {class, "cp-status-strip"}],
                             [
-                                {label, status_label, [{text, "Ready"}, {hexpand, true}, {vexpand, false}, {valign, center}, {class, "cp-status-box"}]}
+                                {orient, horizontal},
+                                {height, 22},
+                                {hexpand, true},
+                                {vexpand, false},
+                                {class, "cp-status-strip"}
+                            ],
+                            [
+                                {label, status_label, [
+                                    {text, "Ready"},
+                                    {hexpand, true},
+                                    {vexpand, false},
+                                    {valign, center},
+                                    {class, "cp-status-box"}
+                                ]}
                             ]}
                     ]}
             ]}
@@ -636,9 +839,12 @@ layout_button_label(Layout, Layout) ->
         compact -> "▣ Compact";
         playlist -> "▣ Playlist"
     end;
-layout_button_label(classic, _Current) -> "□ Classic";
-layout_button_label(compact, _Current) -> "□ Compact";
-layout_button_label(playlist, _Current) -> "□ Playlist".
+layout_button_label(classic, _Current) ->
+    "□ Classic";
+layout_button_label(compact, _Current) ->
+    "□ Compact";
+layout_button_label(playlist, _Current) ->
+    "□ Playlist".
 
 saved_layout() ->
     case application:get_env(erm, erm_mpv_layout, ?DEFAULT_LAYOUT) of
@@ -682,7 +888,8 @@ apply_mpv_theme(Theme) ->
     case CssResult of
         {ok, CssBin} ->
             case safe_apply_quiet(gtkgs, set_stylesheet, [erm_mpv_theme, CssBin]) of
-                ok -> ok;
+                ok ->
+                    ok;
                 {error, {not_exported, gtkgs, set_stylesheet, 2}} ->
                     ?LOG_WARNING("gtkgs CSS API is not loaded; ERM MPV theme not applied", []),
                     {error, css_api_not_loaded};
@@ -716,7 +923,7 @@ load_layout_rules(Layout) when Layout =:= classic; Layout =:= compact; Layout =:
     end.
 
 load_theme_css(Theme) when is_list(Theme) ->
-    read_resource_file(["themes", Theme ++ ".css"]). 
+    read_resource_file(["themes", Theme ++ ".css"]).
 
 consult_resource_term(Parts) ->
     case find_resource_file(Parts) of
@@ -831,113 +1038,114 @@ valid_resource_char($-) -> true;
 valid_resource_char(_) -> false.
 
 builtin_theme_css() ->
-    <<"
-window.cp-window {
-  background: #070a0f;
-  color: #d8f7ff;
-}
-
-.cp-root {
-  background: #070a0f;
-  color: #d8f7ff;
-  font-family: monospace;
-  font-size: 11px;
-}
-
-.cp-panel,
-.cp-control-strip,
-.cp-utility-strip,
-.cp-status-strip {
-  background: #0d141d;
-  border: 1px solid #203347;
-  border-radius: 5px;
-  padding: 3px;
-}
-
-.cp-title {
-  color: #75f7ff;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.cp-now-playing {
-  color: #f2fbff;
-  font-weight: 700;
-}
-
-.cp-heading {
-  color: #ff5fd7;
-  font-weight: 800;
-}
-
-.cp-status,
-.cp-dim,
-.cp-time,
-.cp-status-box {
-  color: #9edfff;
-}
-
-button.cp-button,
-button.cp-layout-button,
-button.cp-button-primary {
-  min-height: 20px;
-  padding: 1px 7px;
-  border-radius: 4px;
-}
-
-button.cp-button,
-button.cp-layout-button {
-  background: #111b27;
-  color: #d8f7ff;
-  border: 1px solid #29465e;
-}
-
-button.cp-button-primary {
-  background: #102838;
-  color: #75f7ff;
-  border: 1px solid #4fe4ff;
-  font-weight: 800;
-}
-
-entry.cp-entry,
-scrolledwindow.cp-list,
-scrolledwindow.cp-list > viewport,
-scrolledwindow.cp-list list,
-list.cp-list,
-list.cp-list row,
-list.cp-list row label {
-  background: #081018;
-  color: #e2faff;
-}
-
-list.cp-list row:selected,
-list.cp-list row:selected label {
-  background: #123145;
-  color: #75f7ff;
-}
-
-scale.cp-seek trough,
-scale.cp-volume trough {
-  background: #071019;
-  border: 1px solid #23394c;
-  min-height: 4px;
-  border-radius: 3px;
-}
-
-scale.cp-seek highlight,
-scale.cp-volume highlight {
-  background: #75f7ff;
-}
-
-scale.cp-seek slider,
-scale.cp-volume slider {
-  background: #ff5fd7;
-  border: 1px solid #ffe6fb;
-  min-width: 10px;
-  min-height: 10px;
-  border-radius: 8px;
-}
-">>.
+    <<
+        "\n"
+        "window.cp-window {\n"
+        "  background: #070a0f;\n"
+        "  color: #d8f7ff;\n"
+        "}\n"
+        "\n"
+        ".cp-root {\n"
+        "  background: #070a0f;\n"
+        "  color: #d8f7ff;\n"
+        "  font-family: monospace;\n"
+        "  font-size: 11px;\n"
+        "}\n"
+        "\n"
+        ".cp-panel,\n"
+        ".cp-control-strip,\n"
+        ".cp-utility-strip,\n"
+        ".cp-status-strip {\n"
+        "  background: #0d141d;\n"
+        "  border: 1px solid #203347;\n"
+        "  border-radius: 5px;\n"
+        "  padding: 3px;\n"
+        "}\n"
+        "\n"
+        ".cp-title {\n"
+        "  color: #75f7ff;\n"
+        "  font-weight: 800;\n"
+        "  letter-spacing: 0.08em;\n"
+        "}\n"
+        "\n"
+        ".cp-now-playing {\n"
+        "  color: #f2fbff;\n"
+        "  font-weight: 700;\n"
+        "}\n"
+        "\n"
+        ".cp-heading {\n"
+        "  color: #ff5fd7;\n"
+        "  font-weight: 800;\n"
+        "}\n"
+        "\n"
+        ".cp-status,\n"
+        ".cp-dim,\n"
+        ".cp-time,\n"
+        ".cp-status-box {\n"
+        "  color: #9edfff;\n"
+        "}\n"
+        "\n"
+        "button.cp-button,\n"
+        "button.cp-layout-button,\n"
+        "button.cp-button-primary {\n"
+        "  min-height: 20px;\n"
+        "  padding: 1px 7px;\n"
+        "  border-radius: 4px;\n"
+        "}\n"
+        "\n"
+        "button.cp-button,\n"
+        "button.cp-layout-button {\n"
+        "  background: #111b27;\n"
+        "  color: #d8f7ff;\n"
+        "  border: 1px solid #29465e;\n"
+        "}\n"
+        "\n"
+        "button.cp-button-primary {\n"
+        "  background: #102838;\n"
+        "  color: #75f7ff;\n"
+        "  border: 1px solid #4fe4ff;\n"
+        "  font-weight: 800;\n"
+        "}\n"
+        "\n"
+        "entry.cp-entry,\n"
+        "scrolledwindow.cp-list,\n"
+        "scrolledwindow.cp-list > viewport,\n"
+        "scrolledwindow.cp-list list,\n"
+        "list.cp-list,\n"
+        "list.cp-list row,\n"
+        "list.cp-list row label {\n"
+        "  background: #081018;\n"
+        "  color: #e2faff;\n"
+        "}\n"
+        "\n"
+        "list.cp-list row:selected,\n"
+        "list.cp-list row:selected label {\n"
+        "  background: #123145;\n"
+        "  color: #75f7ff;\n"
+        "}\n"
+        "\n"
+        "scale.cp-seek trough,\n"
+        "scale.cp-volume trough {\n"
+        "  background: #071019;\n"
+        "  border: 1px solid #23394c;\n"
+        "  min-height: 4px;\n"
+        "  border-radius: 3px;\n"
+        "}\n"
+        "\n"
+        "scale.cp-seek highlight,\n"
+        "scale.cp-volume highlight {\n"
+        "  background: #75f7ff;\n"
+        "}\n"
+        "\n"
+        "scale.cp-seek slider,\n"
+        "scale.cp-volume slider {\n"
+        "  background: #ff5fd7;\n"
+        "  border: 1px solid #ffe6fb;\n"
+        "  min-width: 10px;\n"
+        "  min-height: 10px;\n"
+        "  border-radius: 8px;\n"
+        "}\n"
+    >>.
 
 %%%===================================================================
 %%% Media actions
@@ -952,7 +1160,8 @@ add_folder_from_entry(State) ->
                     update_status("Enter a media folder path first");
                 _ ->
                     case safe_playlist(add_files, [Path, true]) of
-                        {error, Reason} -> update_status(io_lib:format("Could not add folder: ~p", [Reason]));
+                        {error, Reason} ->
+                            update_status(io_lib:format("Could not add folder: ~p", [Reason]));
                         _ ->
                             _ = refresh_playlist(State),
                             update_status(io_lib:format("Added folder: ~ts", [Path]))
@@ -970,10 +1179,12 @@ add_current_to_ipfs(State) ->
                 {ok, Cid} ->
                     case safe_playlist(update_cid, [Track#track.id, Cid]) of
                         {error, UpdateReason} ->
-                            update_status(io_lib:format(
-                                "Pinned to IPFS, but playlist update failed: ~p",
-                                [UpdateReason]
-                            ));
+                            update_status(
+                                io_lib:format(
+                                    "Pinned to IPFS, but playlist update failed: ~p",
+                                    [UpdateReason]
+                                )
+                            );
                         _ ->
                             _ = refresh_playlist(State),
                             update_status(io_lib:format("Pinned to IPFS: ~ts", [to_text(Cid)]))
@@ -990,14 +1201,18 @@ share_current(_State) ->
         {ok, Track} when Track#track.cid =/= undefined ->
             Url = safe_apply(ipfs_client, gateway_url, [Track#track.cid]),
             case Url of
-                {error, Reason} -> update_status(io_lib:format("Share failed: ~p", [Reason]));
+                {error, Reason} ->
+                    update_status(io_lib:format("Share failed: ~p", [Reason]));
                 _ ->
                     case copy_to_clipboard(Url) of
-                        ok -> update_status(io_lib:format("Copied: ~ts", [to_text(Url)]));
+                        ok ->
+                            update_status(io_lib:format("Copied: ~ts", [to_text(Url)]));
                         {error, ClipboardReason} ->
-                            update_status(io_lib:format(
-                                "Clipboard unavailable: ~p", [ClipboardReason]
-                            ))
+                            update_status(
+                                io_lib:format(
+                                    "Clipboard unavailable: ~p", [ClipboardReason]
+                                )
+                            )
                     end
             end;
         {ok, _Track} ->
@@ -1068,10 +1283,12 @@ play_track(Track, State) ->
                     _ = ui_config(now_playing, [{text, display_title(Track)}]),
                     case safe_playlist(set_current, [Track#track.id]) of
                         {error, PlaylistReason} ->
-                            update_status(io_lib:format(
-                                "Playing, but playlist state could not be updated: ~p",
-                                [PlaylistReason]
-                            ));
+                            update_status(
+                                io_lib:format(
+                                    "Playing, but playlist state could not be updated: ~p",
+                                    [PlaylistReason]
+                                )
+                            );
                         _ ->
                             update_status("Playing")
                     end,
@@ -1130,7 +1347,9 @@ recover_playback(State) ->
             play_track(Track, State);
         {error, RecoverReason} ->
             update_status(io_lib:format("Nothing to play: ~p", [RecoverReason])),
-            State#state{playback_state = idle, loaded_track_id = undefined, loaded_track_path = undefined}
+            State#state{
+                playback_state = idle, loaded_track_id = undefined, loaded_track_path = undefined
+            }
     end.
 
 first_playable_track() ->
@@ -1149,7 +1368,9 @@ stop_playback(State) ->
         {ok, _Reply, State1} ->
             _ = ui_config(playback_detail, [{text, "Stopped"}]),
             update_status("Stopped"),
-            {ok, State1#state{playback_state = stopped, loaded_track_id = undefined, loaded_track_path = undefined}};
+            {ok, State1#state{
+                playback_state = stopped, loaded_track_id = undefined, loaded_track_path = undefined
+            }};
         {error, StopReason, State1} ->
             {{error, StopReason}, State1}
     end.
@@ -1191,7 +1412,11 @@ refresh_mpv_status(State) ->
 
 apply_playback_status(Status, State) when is_map(Status) ->
     update_playback_status(Status),
-    Path0 = map_value([path, "path", <<"path">>, filename, "filename", <<"filename">>], Status, State#state.loaded_track_path),
+    Path0 = map_value(
+        [path, "path", <<"path">>, filename, "filename", <<"filename">>],
+        Status,
+        State#state.loaded_track_path
+    ),
     Idle = map_value([idle_active, "idle-active", <<"idle-active">>], Status, undefined),
     Paused = map_value([pause, "pause", <<"pause">>], Status, undefined),
     PlaybackState = playback_state(Idle, Paused, Path0),
@@ -1201,11 +1426,14 @@ apply_playback_status(Status, State) when is_map(Status) ->
     }.
 
 status_has_loaded_media(Status) ->
-    Path = map_value([path, "path", <<"path">>, filename, "filename", <<"filename">>], Status, undefined),
+    Path = map_value(
+        [path, "path", <<"path">>, filename, "filename", <<"filename">>], Status, undefined
+    ),
     Idle = map_value([idle_active, "idle-active", <<"idle-active">>], Status, undefined),
     has_loaded_path(Path) andalso Idle =/= true.
 
-playback_state(true, _Paused, _Path) -> idle;
+playback_state(true, _Paused, _Path) ->
+    idle;
 playback_state(_Idle, true, Path) ->
     case has_loaded_path(Path) of
         true -> paused;
@@ -1228,7 +1456,9 @@ has_loaded_path(<<>>) -> false;
 has_loaded_path([]) -> false;
 has_loaded_path(_Path) -> true.
 
-normalize_loaded_path(Path, Previous) when Path =:= undefined; Path =:= null; Path =:= <<>>; Path =:= [] ->
+normalize_loaded_path(Path, Previous) when
+    Path =:= undefined; Path =:= null; Path =:= <<>>; Path =:= []
+->
     Previous;
 normalize_loaded_path(Path, _Previous) when is_binary(Path) ->
     unicode:characters_to_list(Path);
@@ -1246,7 +1476,8 @@ update_playback_status(Status) ->
     case Percent of
         Value when is_number(Value) ->
             _ = ui_config(seek_scale, [{value, clamp(Value * 10, 0, 1000)}]);
-        _ -> ok
+        _ ->
+            ok
     end,
     _ = ui_config(elapsed_label, [{text, duration_text(Position)}]),
     _ = ui_config(duration_label, [{text, duration_text(Duration)}]),
@@ -1272,7 +1503,8 @@ call_or_start(Request) ->
                 {error, {already_started, _Pid}} -> safe_server_call(Request);
                 Error -> Error
             end;
-        _Pid -> safe_server_call(Request)
+        _Pid ->
+            safe_server_call(Request)
     end.
 
 safe_server_call(Request) ->
@@ -1432,7 +1664,8 @@ safe_playlist(Function, Args) ->
 safe_apply(Module, Function, Args) ->
     _ = code:ensure_loaded(Module),
     case erlang:function_exported(Module, Function, length(Args)) of
-        false -> {error, {not_exported, Module, Function, length(Args)}};
+        false ->
+            {error, {not_exported, Module, Function, length(Args)}};
         true ->
             try apply(Module, Function, Args) of
                 Reply -> Reply
@@ -1446,12 +1679,16 @@ safe_apply(Module, Function, Args) ->
     end.
 
 ui_config(Name, Options) ->
-    try gtkgs:config(Name, Options) catch
+    try
+        gtkgs:config(Name, Options)
+    catch
         _:_ -> {error, ui_not_ready}
     end.
 
 ui_read(Name, Key) ->
-    try gtkgs:read(Name, Key) catch
+    try
+        gtkgs:read(Name, Key)
+    catch
         _:_ -> {error, ui_not_ready}
     end.
 
@@ -1462,8 +1699,7 @@ safe_gtknode4_ready() ->
         Other -> {error, {unexpected_gtknode4_status, Other}}
     catch
         exit:{noproc, _} -> {error, gtknode4_not_started};
-        Class:Reason:Stacktrace ->
-            {error, {gtknode4_status_failed, Class, Reason, Stacktrace}}
+        Class:Reason:Stacktrace -> {error, {gtknode4_status_failed, Class, Reason, Stacktrace}}
     end.
 
 update_status(Text) ->
@@ -1481,9 +1717,11 @@ copy_to_clipboard(Value) ->
         false ->
             {error, xclip_not_found};
         Xclip ->
-            try open_port({spawn_executable, Xclip}, [
-                binary, exit_status, {args, ["-selection", "clipboard"]}
-            ]) of
+            try
+                open_port({spawn_executable, Xclip}, [
+                    binary, exit_status, {args, ["-selection", "clipboard"]}
+                ])
+            of
                 Port ->
                     write_clipboard_port(
                         Port,
@@ -1567,7 +1805,8 @@ duration_text(Value) when is_number(Value), Value >= 0 ->
 duration_text(_) ->
     "0:00".
 
-map_value([], _Map, Default) -> Default;
+map_value([], _Map, Default) ->
+    Default;
 map_value([Key | Rest], Map, Default) ->
     case maps:find(Key, Map) of
         {ok, Value} -> Value;
@@ -1605,7 +1844,8 @@ replace_tagged_timer(Timer, Delay, Tag) ->
     TimerRef = erlang:send_after(Delay, self(), {Tag, Token}),
     {TimerRef, Token}.
 
-cancel_timer(undefined) -> ok;
+cancel_timer(undefined) ->
+    ok;
 cancel_timer({TimerRef, _Token}) when is_reference(TimerRef) ->
     _ = erlang:cancel_timer(TimerRef),
     ok;

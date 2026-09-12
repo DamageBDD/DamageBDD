@@ -140,7 +140,8 @@ start_link_configured(C) ->
                 Parent when Parent =:= self() ->
                     ?LOG_WARNING(
                         "Reclaiming unmanaged ERM Lens supervisor pid=~p before supervised startup",
-                        [Existing], ?LOG_META
+                        [Existing],
+                        ?LOG_META
                     ),
                     case reclaim_standalone(Existing) of
                         ok -> erm_lens_sup:start_link(C);
@@ -160,11 +161,17 @@ show() ->
                         ok ->
                             call_ui(show);
                         {error, UiReason} = UiError ->
-                            ?LOG_WARNING("ERM Lens UI process did not become ready: ~p", [UiReason], ?LOG_META),
+                            ?LOG_WARNING(
+                                "ERM Lens UI process did not become ready: ~p",
+                                [UiReason],
+                                ?LOG_META
+                            ),
                             UiError
                     end;
                 {error, Reason} = Error ->
-                    ?LOG_WARNING("ERM Lens cannot show: GTK backend unavailable: ~p", [Reason], ?LOG_META),
+                    ?LOG_WARNING(
+                        "ERM Lens cannot show: GTK backend unavailable: ~p", [Reason], ?LOG_META
+                    ),
                     Error
             end;
         {error, Reason} = Error ->
@@ -248,7 +255,8 @@ do_start_standalone(C) ->
                             unlink(Pid),
                             ?LOG_WARNING(
                                 "ERM Lens started outside erm_sup; development-only process pid=~p",
-                                [Pid], ?LOG_META
+                                [Pid],
+                                ?LOG_META
                             ),
                             OK;
                         Error ->
@@ -274,7 +282,9 @@ ensure_erm_application() ->
                     {error, {erm_not_ready, erlang_distribution_not_started}};
                 _ ->
                     ?LOG_INFO(
-                        "ERM Lens requested before erm_sup; ensuring ERM application is started", [], ?LOG_META
+                        "ERM Lens requested before erm_sup; ensuring ERM application is started",
+                        [],
+                        ?LOG_META
                     ),
                     case application:ensure_all_started(erm) of
                         {ok, _Apps} ->
@@ -409,7 +419,9 @@ log_optional_dependency(App) ->
         {error, Reason} ->
             %% Do not fail the Lens supervisor. Relay/media paths already
             %% isolate I/O failures and can recover when dependencies appear.
-            ?LOG_WARNING("ERM Lens optional dependency ~p unavailable: ~p", [App, Reason], ?LOG_META)
+            ?LOG_WARNING(
+                "ERM Lens optional dependency ~p unavailable: ~p", [App, Reason], ?LOG_META
+            )
     end.
 
 merged_config(C0) ->
@@ -433,7 +445,9 @@ lens_restart_policy(C) ->
     case maps:get(supervisor_restart, C, temporary) of
         Policy when Policy =:= permanent; Policy =:= transient; Policy =:= temporary -> Policy;
         Invalid ->
-            ?LOG_WARNING("Ignoring invalid ERM Lens supervisor restart policy: ~p", [Invalid], ?LOG_META),
+            ?LOG_WARNING(
+                "Ignoring invalid ERM Lens supervisor restart policy: ~p", [Invalid], ?LOG_META
+            ),
             temporary
     end.
 
@@ -456,8 +470,15 @@ safe_apply(M, F, A, Default) ->
         Class:Reason:Stacktrace ->
             ?LOG_WARNING(
                 "ERM Lens helper ~p:~p/~p failed: ~p:~p stack=~p",
-                [M, F, length(A), Class, erm_lens_diagnostics:summary(Reason),
-                 erm_lens_diagnostics:stack(Stacktrace)], ?LOG_META
+                [
+                    M,
+                    F,
+                    length(A),
+                    Class,
+                    erm_lens_diagnostics:summary(Reason),
+                    erm_lens_diagnostics:stack(Stacktrace)
+                ],
+                ?LOG_META
             ),
             Default
     end.

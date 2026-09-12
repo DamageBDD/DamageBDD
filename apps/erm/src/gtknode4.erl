@@ -361,7 +361,9 @@ execute_backend_cast(Command, State0) ->
             {noreply, State0}
     catch
         Class:Reason:Stacktrace ->
-            ?LOG_ERROR("gtknode4 backend cast failed: ~p", [{Class, Reason, Stacktrace}], ?LOG_META),
+            ?LOG_ERROR(
+                "gtknode4 backend cast failed: ~p", [{Class, Reason, Stacktrace}], ?LOG_META
+            ),
             {noreply, State0}
     end.
 

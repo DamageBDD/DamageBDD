@@ -23,8 +23,16 @@ init(Opts) ->
         backend => fake,
         protocol_version => 1,
         widgets => [
-            window, box, button, label, entry, text_view, list_view, scale,
-            picture, scrolled_box
+            window,
+            box,
+            button,
+            label,
+            entry,
+            text_view,
+            list_view,
+            scale,
+            picture,
+            scrolled_box
         ],
         object_commands => [create, config, read, destroy, inspect, sync],
         test_injection => TestMode,

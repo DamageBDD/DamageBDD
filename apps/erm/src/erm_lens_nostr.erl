@@ -46,14 +46,27 @@ verify(E) ->
 
 %% Strip unsigned extension fields before retention and retransmission.
 event_fields(E) ->
-    maps:with([<<"id">>, <<"pubkey">>, <<"sig">>, <<"created_at">>,
-               <<"kind">>, <<"content">>, <<"tags">>], E).
+    maps:with(
+        [
+            <<"id">>,
+            <<"pubkey">>,
+            <<"sig">>,
+            <<"created_at">>,
+            <<"kind">>,
+            <<"content">>,
+            <<"tags">>
+        ],
+        E
+    ).
 
 -spec validate(term()) -> ok | {error, invalid_event}.
 validate(E) ->
     %% Malformed local terms (including improper tag lists) fail closed too.
-    try validate_fields(E)
-    catch _:_ -> {error, invalid_event} end.
+    try
+        validate_fields(E)
+    catch
+        _:_ -> {error, invalid_event}
+    end.
 
 validate_fields(#{
     <<"id">> := Id,
@@ -88,23 +101,29 @@ validate_fields(_) ->
 
 %% Count byte budgets incrementally, without allocating term_to_binary/1 for
 %% an attacker-controlled tag tree. Include small per-element framing costs.
-valid_tags([], _Left, Budget) -> Budget >= 0;
+valid_tags([], _Left, Budget) ->
+    Budget >= 0;
 valid_tags([Tag | Rest], Left, Budget) when Left > 0, Budget >= 0 ->
     case tag_budget(Tag, 32, Budget - 2) of
         {ok, Remaining} -> valid_tags(Rest, Left - 1, Remaining);
         error -> false
     end;
-valid_tags(_, _, _) -> false.
+valid_tags(_, _, _) ->
+    false.
 
 tag_budget([], _Left, Budget) when Budget >= 0 -> {ok, Budget};
-tag_budget([V | Rest], Left, Budget)
-  when Left > 0, is_binary(V), byte_size(V) =< 8192,
-       Budget >= byte_size(V) + 4 ->
+tag_budget([V | Rest], Left, Budget) when
+    Left > 0,
+    is_binary(V),
+    byte_size(V) =< 8192,
+    Budget >= byte_size(V) + 4
+->
     case utf8(V) of
         true -> tag_budget(Rest, Left - 1, Budget - byte_size(V) - 4);
         false -> error
     end;
-tag_budget(_, _, _) -> error.
+tag_budget(_, _, _) ->
+    error.
 
 utf8(B) -> is_list(unicode:characters_to_list(B, utf8)).
 is_hex(B, N) when is_binary(B), byte_size(B) =:= N ->
@@ -209,8 +228,10 @@ parse_imeta(Values) ->
     Url = maps:get(<<"url">>, Fields, <<>>),
     Mime = maps:get(<<"m">>, Fields, <<>>),
     Hash = maps:get(<<"x">>, Fields, <<>>),
-    case safe_url(Url) andalso (image_mime(Mime) orelse image_extension(Url)) andalso
-         (Hash =:= <<>> orelse is_hex(Hash, 64)) of
+    case
+        safe_url(Url) andalso (image_mime(Mime) orelse image_extension(Url)) andalso
+            (Hash =:= <<>> orelse is_hex(Hash, 64))
+    of
         true ->
             #{
                 url => Url,
@@ -241,12 +262,15 @@ safe_url(<<"https://", _/binary>> = Url) when byte_size(Url) =< 4096 ->
     try
         #{scheme := <<"https">>, host := Host} = U = uri_string:parse(Url),
         byte_size(Host) > 0 andalso
-        not maps:is_key(userinfo, U) andalso
-        not maps:is_key(fragment, U) andalso
-        maps:get(port, U, 443) =:= 443 andalso
-        lists:all(fun(X) -> X > 32 andalso X =/= 127 end, binary_to_list(Url))
-    catch _:_ -> false end;
-safe_url(_) -> false.
+            not maps:is_key(userinfo, U) andalso
+            not maps:is_key(fragment, U) andalso
+            maps:get(port, U, 443) =:= 443 andalso
+            lists:all(fun(X) -> X > 32 andalso X =/= 127 end, binary_to_list(Url))
+    catch
+        _:_ -> false
+    end;
+safe_url(_) ->
+    false.
 content_images(C) ->
     case re:run(C, <<"https://[^\\s<>\\\"]+">>, [global, {capture, first, binary}]) of
         {match, URLs} ->
@@ -310,7 +334,8 @@ picture(Pub, Url, Mime, Alt, Caption, Title) ->
         is_hex(Pub, 64) andalso safe_url(Url) andalso image_mime(Mime) andalso
             is_binary(Alt) andalso byte_size(Alt) =< 8000 andalso utf8(Alt) andalso
             is_binary(Caption) andalso byte_size(Caption) =< 65536 andalso utf8(Caption) andalso
-            is_binary(Title) andalso byte_size(Title) > 0 andalso byte_size(Title) =< 256 andalso utf8(Title)
+            is_binary(Title) andalso byte_size(Title) > 0 andalso byte_size(Title) =< 256 andalso
+            utf8(Title)
     of
         true ->
             {ok,

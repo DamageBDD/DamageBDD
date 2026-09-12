@@ -121,7 +121,11 @@ step(_Config, Context, _Kw, _N, ?STEP_STORE_GEMINI_API_KEY, _) ->
                     )
             end;
         {error, Reason} ->
-            maps:put(fail, damage_utils:strf("Gemini account secret scope unavailable: ~p", [Reason]), Context)
+            maps:put(
+                fail,
+                damage_utils:strf("Gemini account secret scope unavailable: ~p", [Reason]),
+                Context
+            )
     end;
 %%------------------------------------------------------------------------------
 %% GIVEN: Load API key from secrets store by name
@@ -151,7 +155,11 @@ step(_Config, Context, _Kw, _N, ?STEP_LOAD_GEMINI_SECRET, _) ->
                     )
             end;
         {error, Reason} ->
-            maps:put(fail, damage_utils:strf("Gemini account secret scope unavailable: ~p", [Reason]), Context)
+            maps:put(
+                fail,
+                damage_utils:strf("Gemini account secret scope unavailable: ~p", [Reason]),
+                Context
+            )
     end;
 %%------------------------------------------------------------------------------
 %% GIVEN: Select a specific Gemini model
@@ -430,14 +438,16 @@ resolve_api_key_from_env() ->
 
 account_secret_scope(Context) ->
     case maps:get(public_key, Context, undefined) of
-        <<"ak_", _/binary>> = Owner -> {ok, {account, Owner}};
+        <<"ak_", _/binary>> = Owner ->
+            {ok, {account, Owner}};
         Owner when is_list(Owner), Owner =/= [] ->
             OwnerBin = unicode:characters_to_binary(Owner),
             case OwnerBin of
                 <<"ak_", _/binary>> -> {ok, {account, OwnerBin}};
                 _ -> {error, invalid_authenticated_account}
             end;
-        _ -> {error, no_authenticated_account}
+        _ ->
+            {error, no_authenticated_account}
     end.
 
 secret_name_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);

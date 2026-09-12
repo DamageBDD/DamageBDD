@@ -19,7 +19,6 @@
 %% entirely for callers without one of the declared roles.
 -damage_roles([node_admin]).
 
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
 -license("Apache-2.0").
 
@@ -1037,7 +1036,6 @@ client_nip44_decrypt(BunkerPub, Payload) ->
         ?DEFAULT_TIMEOUT_MS
     ).
 
-
 damage_nostr_client_keypair() ->
     case secrets:retrieve_decrypt(damage_nostr_nsec) of
         {ok, Nsec} -> damage_nostr:nsec_to_npub(Nsec);
@@ -1526,7 +1524,6 @@ get_config(Context) ->
 get_policy(Context) ->
     maps:get(policy, live(Context), damage_nsecbunker:policy()).
 
-
 %% Keep only the configuration required by the live BDD. In particular, do
 %% not copy secret-store references such as vault_passphrase into the test
 %% context merely because the running bunker config contains them.
@@ -1707,7 +1704,6 @@ to_list(Other) -> lists:flatten(io_lib:format("~p", [Other])).
 lower_hex_bin(V) ->
     B = bin(V),
     list_to_binary(string:lowercase(binary_to_list(B))).
-
 
 is_lower_hex_64(Bin) when is_binary(Bin), byte_size(Bin) =:= 64 ->
     re:run(Bin, <<"^[0-9a-f]{64}$">>, [{capture, none}]) =:= match;

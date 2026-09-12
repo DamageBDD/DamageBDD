@@ -59,7 +59,8 @@ format_amount(N, D) when is_integer(N), N >= 0, is_integer(D), D > 0, D =< 36 ->
     F = integer_to_binary(N rem Scale),
     Pad = binary:copy(<<"0">>, D - byte_size(F)),
     <<W/binary, ".", Pad/binary, F/binary>>;
-format_amount(_, _) -> error(invalid_amount_format).
+format_amount(_, _) ->
+    error(invalid_amount_format).
 
 prepare_tip(E, Contract, Text, C) ->
     protect(fun() ->
@@ -125,13 +126,13 @@ link_draft(Pub, Account, C) ->
     Net = maps:get(network, C),
     Registry = maps:get(registry, C),
     {ok, Content} = erm_lens_codec:encode(#{
-            <<"app">> => <<"erm-lens">>,
-            <<"version">> => 1,
-            <<"network">> => Net,
-            <<"registry">> => Registry,
-            <<"account">> => Account,
-            <<"nonce">> => erm_lens_nostr:hex(crypto:strong_rand_bytes(32))
-        }),
+        <<"app">> => <<"erm-lens">>,
+        <<"version">> => 1,
+        <<"network">> => Net,
+        <<"registry">> => Registry,
+        <<"account">> => Account,
+        <<"nonce">> => erm_lens_nostr:hex(crypto:strong_rand_bytes(32))
+    }),
     D = <<"erm-lens-account:", Net/binary, ":", Registry/binary>>,
     erm_lens_nostr:draft(Pub, 30078, Content, [[<<"d">>, D]]).
 link_account(C) ->
@@ -238,8 +239,12 @@ publish(E, C) ->
     of
         true ->
             %% A relay acknowledgment is not undone by local cache downtime.
-            Local = try erm_lens_feed:ingest(E)
-                    catch _:_ -> {error, local_feed_unavailable} end,
+            Local =
+                try
+                    erm_lens_feed:ingest(E)
+                catch
+                    _:_ -> {error, local_feed_unavailable}
+                end,
             {ok, #{event_id => maps:get(<<"id">>, E), relays => Results, local_ingest => Local}};
         false ->
             {error, {not_acknowledged, Results}}
@@ -252,7 +257,8 @@ check_network(C) ->
     end.
 adapter(F, Args, C) ->
     case maps:get(wallet_adapter, C, undefined) of
-        undefined -> {error, aeternity_wallet_adapter_not_configured};
+        undefined ->
+            {error, aeternity_wallet_adapter_not_configured};
         M when is_atom(M) ->
             protect(fun() ->
                 case apply(M, F, Args ++ [C]) of
@@ -261,7 +267,8 @@ adapter(F, Args, C) ->
                     _ -> {error, invalid_wallet_adapter_result}
                 end
             end);
-        _ -> {error, invalid_wallet_adapter}
+        _ ->
+            {error, invalid_wallet_adapter}
     end.
 protect(Fun) ->
     try
@@ -276,25 +283,46 @@ protect(Fun) ->
 %% This validates the local intent, not an opaque chain transaction. The
 %% adapter must additionally decode/check the actual transaction, enforce
 %% durable request-ID idempotency, and reconcile unknown submission outcomes.
-validate_prepared(#{request := Req, fee_aettos := Fee})
-  when is_map(Req), is_integer(Fee), Fee >= 0, Fee < (1 bsl 256) ->
+validate_prepared(#{request := Req, fee_aettos := Fee}) when
+    is_map(Req), is_integer(Fee), Fee >= 0, Fee < (1 bsl 256)
+->
     case Req of
-        #{sender := From, recipient := To, author := Pub, network := Network,
-          token := Token, amount_base_units := Units, decimals := Decimals,
-          symbol := Symbol, post_id := Post, request_id := Id, expires_at := Expiry}
-          when is_integer(Units), Units > 0, Units < (1 bsl 256),
-               is_integer(Decimals), Decimals >= 0, Decimals =< 36,
-               is_integer(Expiry), Expiry > 0 ->
-            case account_shape(From) andalso account_shape(To) andalso From =/= To andalso
-                 contract_shape(Token) andalso is_binary(Network) andalso
-                 erm_lens_nostr:is_hex(Pub, 64) andalso erm_lens_nostr:is_hex(Post, 64) andalso
-                 erm_lens_nostr:is_hex(Id, 64) andalso valid_symbol(Symbol) of
+        #{
+            sender := From,
+            recipient := To,
+            author := Pub,
+            network := Network,
+            token := Token,
+            amount_base_units := Units,
+            decimals := Decimals,
+            symbol := Symbol,
+            post_id := Post,
+            request_id := Id,
+            expires_at := Expiry
+        } when
+            is_integer(Units),
+            Units > 0,
+            Units < (1 bsl 256),
+            is_integer(Decimals),
+            Decimals >= 0,
+            Decimals =< 36,
+            is_integer(Expiry),
+            Expiry > 0
+        ->
+            case
+                account_shape(From) andalso account_shape(To) andalso From =/= To andalso
+                    contract_shape(Token) andalso is_binary(Network) andalso
+                    erm_lens_nostr:is_hex(Pub, 64) andalso erm_lens_nostr:is_hex(Post, 64) andalso
+                    erm_lens_nostr:is_hex(Id, 64) andalso valid_symbol(Symbol)
+            of
                 true -> ok;
                 false -> {error, invalid_prepared_tip}
             end;
-        _ -> {error, invalid_prepared_tip}
+        _ ->
+            {error, invalid_prepared_tip}
     end;
-validate_prepared(_) -> {error, invalid_prepared_tip}.
+validate_prepared(_) ->
+    {error, invalid_prepared_tip}.
 
 check_expiry(#{expires_at := Expiry}) when is_integer(Expiry) ->
     Now = erlang:system_time(second),
@@ -302,7 +330,8 @@ check_expiry(#{expires_at := Expiry}) when is_integer(Expiry) ->
         true -> ok;
         false -> {error, tip_preview_expired}
     end;
-check_expiry(_) -> {error, invalid_prepared_tip}.
+check_expiry(_) ->
+    {error, invalid_prepared_tip}.
 
 %% Prefix/size validation only. Checksums and chain identity remain the
 %% official SDK / node adapter's responsibility; these are not chain proofs.
@@ -312,9 +341,11 @@ contract_shape(<<"ct_", Rest/binary>>) -> base58_shape(Rest);
 contract_shape(_) -> false.
 valid_symbol(B) when is_binary(B), byte_size(B) > 0, byte_size(B) =< 32 ->
     lists:all(fun(C) -> C >= 33 andalso C =< 126 end, binary_to_list(B));
-valid_symbol(_) -> false.
+valid_symbol(_) ->
+    false.
 
 base58_shape(B) when byte_size(B) > 0, byte_size(B) =< 100 ->
     Alphabet = <<"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz">>,
     lists:all(fun(C) -> binary:match(Alphabet, <<C>>) =/= nomatch end, binary_to_list(B));
-base58_shape(_) -> false.
+base58_shape(_) ->
+    false.

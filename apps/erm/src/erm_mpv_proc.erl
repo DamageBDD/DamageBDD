@@ -163,7 +163,7 @@ handle_call(status, _From, S) ->
         hidden_gui => true,
         video => disabled,
         healthy => (ManagedAlive andalso SocketAlive) orelse
-                   (S#st.os_pid =:= undefined andalso SocketAlive),
+            (S#st.os_pid =:= undefined andalso SocketAlive),
         last_error => S#st.last_error
     },
     {reply, Reply, S};
@@ -173,11 +173,14 @@ handle_call(_Req, _From, S) ->
 handle_cast(_Msg, S) ->
     {noreply, S}.
 
-handle_info({'DOWN', OsPid, process, Pid, Reason}, S = #st{
-    os_pid = OsPid,
-    pid = Pid,
-    path = Path
-}) ->
+handle_info(
+    {'DOWN', OsPid, process, Pid, Reason},
+    S = #st{
+        os_pid = OsPid,
+        pid = Pid,
+        path = Path
+    }
+) ->
     ?LOG_WARNING("Managed MPV exited os_pid=~p pid=~p reason=~p", [OsPid, Pid, Reason], ?LOG_META),
     safe_delete_socket(Path),
     {noreply, S#st{
@@ -313,7 +316,9 @@ start_managed_mpv(Path, S) ->
 
             case safe_exec_run(Cmd, Opts) of
                 {ok, Pid, OsPid} ->
-                    ?LOG_INFO("Started managed MPV os_pid=~p pid=~p ipc=~s", [OsPid, Pid, Path], ?LOG_META),
+                    ?LOG_INFO(
+                        "Started managed MPV os_pid=~p pid=~p ipc=~s", [OsPid, Pid, Path], ?LOG_META
+                    ),
                     S1 = S#st{path = Path, pid = Pid, os_pid = OsPid, last_error = undefined},
                     case wait_for_socket(Path, ?SOCKET_WAIT_MS) of
                         ok ->
@@ -389,7 +394,9 @@ stop_mpv(S = #st{os_pid = OsPid, pid = Pid, path = Path}) ->
     DownReply =
         case DownReply0 of
             timeout ->
-                ?LOG_WARNING("MPV os_pid=~p did not stop cleanly; forcing SIGKILL", [OsPid], ?LOG_META),
+                ?LOG_WARNING(
+                    "MPV os_pid=~p did not stop cleanly; forcing SIGKILL", [OsPid], ?LOG_META
+                ),
                 _ = safe_exec_kill(OsPid, 9),
                 wait_for_down(OsPid, Pid, ?KILL_WAIT_MS);
             Other ->
@@ -510,8 +517,10 @@ recv_request_reply(Sock, RequestId, Timeout, Acc0, Bytes0) ->
         {ok, Chunk} ->
             Acc = <<Acc0/binary, Chunk/binary>>,
             case find_request_reply(Acc, RequestId) of
-                {ok, ReplyMap} -> mpv_reply_result(ReplyMap);
-                incomplete -> recv_request_reply(Sock, RequestId, Timeout, Acc, Bytes0 + byte_size(Chunk))
+                {ok, ReplyMap} ->
+                    mpv_reply_result(ReplyMap);
+                incomplete ->
+                    recv_request_reply(Sock, RequestId, Timeout, Acc, Bytes0 + byte_size(Chunk))
             end;
         {error, timeout} ->
             {error, {mpv_ipc_reply_timeout, RequestId}};
@@ -543,14 +552,18 @@ decode_mpv_line(Line) ->
         _:_ -> skip
     end.
 
-mpv_reply_result(#{<<"error">> := Error} = Reply) when Error =:= <<"success">>; Error =:= "success" ->
+mpv_reply_result(#{<<"error">> := Error} = Reply) when
+    Error =:= <<"success">>; Error =:= "success"
+->
     case maps:find(<<"data">>, Reply) of
         {ok, null} -> {ok, ok};
         {ok, Data} -> {ok, {ok, normalize_json_value(Data)}};
         error -> {ok, ok}
     end;
 mpv_reply_result(#{<<"error">> := Error} = Reply) ->
-    {error, {mpv_error, normalize_json_value(Error), normalize_json_value(maps:get(<<"data">>, Reply, undefined))}};
+    {error,
+        {mpv_error, normalize_json_value(Error),
+            normalize_json_value(maps:get(<<"data">>, Reply, undefined))}};
 mpv_reply_result(Reply) ->
     {error, {bad_mpv_reply, Reply}}.
 
@@ -576,7 +589,10 @@ json_property(Property) when is_atom(Property) -> atom_to_binary(Property, utf8)
 json_property(Property) when is_list(Property) -> unicode:characters_to_binary(Property).
 
 normalize_json_value(Value) when is_map(Value) ->
-    maps:from_list([{normalize_json_value(K), normalize_json_value(V)} || {K, V} <- maps:to_list(Value)]);
+    maps:from_list([
+        {normalize_json_value(K), normalize_json_value(V)}
+     || {K, V} <- maps:to_list(Value)
+    ]);
 normalize_json_value(Value) when is_list(Value) ->
     [normalize_json_value(V) || V <- Value];
 normalize_json_value(Value) ->
@@ -708,8 +724,10 @@ safe_delete_socket(Path) ->
             ok;
         false ->
             case file:delete(Path) of
-                ok -> ok;
-                {error, enoent} -> ok;
+                ok ->
+                    ok;
+                {error, enoent} ->
+                    ok;
                 {error, Reason} ->
                     ?LOG_DEBUG("Could not delete MPV IPC path ~s: ~p", [Path, Reason], ?LOG_META),
                     ok
@@ -718,8 +736,10 @@ safe_delete_socket(Path) ->
 
 takeover_external_socket() ->
     case application:get_env(erm, mpv_takeover_external, false) of
-        true -> true;
-        false -> false;
+        true ->
+            true;
+        false ->
+            false;
         Invalid ->
             ?LOG_WARNING(
                 "Ignoring invalid erm.mpv_takeover_external value ~p; defaulting to false",

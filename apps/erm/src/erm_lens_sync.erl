@@ -76,7 +76,12 @@ handle_info({job_timeout, Pid}, S) ->
             {Status1, Entry} = record_result(U, Result, Duration, S0),
             ?LOG_WARNING(
                 "ERM Lens relay sample timed out relay=~p duration_ms=~p failures=~p retry_in_ms=~p",
-                [erm_lens_diagnostics:relay_label(U), Duration, maps:get(consecutive_failures, Entry), maps:get(retry_in_ms, Entry)]
+                [
+                    erm_lens_diagnostics:relay_label(U),
+                    Duration,
+                    maps:get(consecutive_failures, Entry),
+                    maps:get(retry_in_ms, Entry)
+                ]
             ),
             {noreply, S0#{status := Status1}}
     end;
@@ -128,10 +133,14 @@ start_jobs(S, Force) ->
                 {true, _} ->
                     Acc;
                 {false, true} ->
-                    ?LOG_DEBUG("ERM Lens relay still in backoff relay=~p", [erm_lens_diagnostics:relay_label(U)]),
+                    ?LOG_DEBUG("ERM Lens relay still in backoff relay=~p", [
+                        erm_lens_diagnostics:relay_label(U)
+                    ]),
                     Acc;
                 {false, false} ->
-                    ?LOG_DEBUG("ERM Lens sampling relay=~p force=~p", [erm_lens_diagnostics:relay_label(U), Force]),
+                    ?LOG_DEBUG("ERM Lens sampling relay=~p force=~p", [
+                        erm_lens_diagnostics:relay_label(U), Force
+                    ]),
                     Started = erlang:monotonic_time(millisecond),
                     {Pid, Mon} = erm_lens_worker:start(relay_result, fun() ->
                         erm_lens_relay:fetch(U, C)
@@ -197,7 +206,10 @@ record_result(U, Result, Duration, S) ->
 
 retry_delay(Failures, C) ->
     Base = erm_lens_config:integer(relay_backoff_ms, C, ?DEFAULT_BACKOFF_MS, 1000, 3600000),
-    Max = max(Base, erm_lens_config:integer(relay_backoff_max_ms, C, ?DEFAULT_BACKOFF_MAX_MS, 1000, 3600000)),
+    Max = max(
+        Base,
+        erm_lens_config:integer(relay_backoff_max_ms, C, ?DEFAULT_BACKOFF_MAX_MS, 1000, 3600000)
+    ),
     Shift = min(8, max(0, Failures - 1)),
     Ceiling = min(Max, Base * (1 bsl Shift)),
     %% Equal jitter spreads eligibility deadlines; refresh cadence still
@@ -225,7 +237,8 @@ status_snapshot(S) ->
                             error -> max(0, At - Now);
                             _ -> 0
                         end;
-                    _ -> 0
+                    _ ->
+                        0
                 end,
             Entry#{retry_in_ms => Retry}
         end,
@@ -235,8 +248,11 @@ status_snapshot(S) ->
 log_relay_result(U, {ok, Summary}, Entry) ->
     ?LOG_DEBUG(
         "ERM Lens relay sample complete relay=~p duration_ms=~p summary=~p",
-        [erm_lens_diagnostics:relay_label(U), maps:get(duration_ms, Entry, undefined),
-         erm_lens_diagnostics:summary(Summary)]
+        [
+            erm_lens_diagnostics:relay_label(U),
+            maps:get(duration_ms, Entry, undefined),
+            erm_lens_diagnostics:summary(Summary)
+        ]
     );
 log_relay_result(U, {error, Reason} = Result, Entry) ->
     Failures = maps:get(consecutive_failures, Entry, 1),
@@ -245,7 +261,12 @@ log_relay_result(U, {error, Reason} = Result, Entry) ->
         {local_fault, _} ->
             ?LOG_ERROR(
                 "ERM Lens local relay implementation failure relay=~p reason=~p failures=~p retry_in_ms=~p",
-                [erm_lens_diagnostics:relay_label(U), erm_lens_diagnostics:summary(Reason), Failures, Delay]
+                [
+                    erm_lens_diagnostics:relay_label(U),
+                    erm_lens_diagnostics:summary(Reason),
+                    Failures,
+                    Delay
+                ]
             );
         {transient, 1} ->
             ?LOG_WARNING(
@@ -255,7 +276,12 @@ log_relay_result(U, {error, Reason} = Result, Entry) ->
         {transient, _} ->
             ?LOG_DEBUG(
                 "ERM Lens relay still unavailable relay=~p reason=~p failures=~p retry_in_ms=~p",
-                [erm_lens_diagnostics:relay_label(U), erm_lens_diagnostics:summary(Reason), Failures, Delay]
+                [
+                    erm_lens_diagnostics:relay_label(U),
+                    erm_lens_diagnostics:summary(Reason),
+                    Failures,
+                    Delay
+                ]
             );
         {remote, 1} ->
             ?LOG_WARNING(
@@ -265,14 +291,22 @@ log_relay_result(U, {error, Reason} = Result, Entry) ->
         {remote, _} ->
             ?LOG_DEBUG(
                 "ERM Lens relay sample still failing relay=~p reason=~p failures=~p retry_in_ms=~p",
-                [erm_lens_diagnostics:relay_label(U), erm_lens_diagnostics:summary(Reason), Failures, Delay]
+                [
+                    erm_lens_diagnostics:relay_label(U),
+                    erm_lens_diagnostics:summary(Reason),
+                    Failures,
+                    Delay
+                ]
             )
     end,
     _ = Result,
     ok;
 log_relay_result(U, Other, Entry) ->
-    ?LOG_WARNING("ERM Lens unexpected relay result relay=~p result=~p entry=~p", [erm_lens_diagnostics:relay_label(U), erm_lens_diagnostics:summary(Other),
-         erm_lens_diagnostics:summary(Entry)]).
+    ?LOG_WARNING("ERM Lens unexpected relay result relay=~p result=~p entry=~p", [
+        erm_lens_diagnostics:relay_label(U),
+        erm_lens_diagnostics:summary(Other),
+        erm_lens_diagnostics:summary(Entry)
+    ]).
 
 error_class({relay_api_undefined, _}) -> local_fault;
 error_class(json_codec_unavailable) -> local_fault;

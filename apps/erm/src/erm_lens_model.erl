@@ -25,19 +25,25 @@ insert(E0, Now, S) ->
     T = maps:get(<<"created_at">>, E),
     K = maps:get(<<"kind">>, E),
     S0 = prune(Now, S),
-    case T >= Now - maps:get(window, S0) andalso T =< Now + 60 andalso
-         lists:member(K, [1, 5, 6, 7, 16, 20, 1111]) of
-        false -> S0;
+    case
+        T >= Now - maps:get(window, S0) andalso T =< Now + 60 andalso
+            lists:member(K, [1, 5, 6, 7, 16, 20, 1111])
+    of
+        false ->
+            S0;
         true ->
             Es = (maps:get(events, S0))#{maps:get(<<"id">>, E) => E},
             bound(Es, S0)
     end.
 
 prune(Now, S) ->
-    Es = maps:filter(fun(_, E) ->
-        T = maps:get(<<"created_at">>, E),
-        T >= Now - maps:get(window, S) andalso T =< Now + 60
-    end, maps:get(events, S)),
+    Es = maps:filter(
+        fun(_, E) ->
+            T = maps:get(<<"created_at">>, E),
+            T >= Now - maps:get(window, S) andalso T =< Now + 60
+        end,
+        maps:get(events, S)
+    ),
     S#{events := Es, bytes => store_bytes(Es)}.
 
 bound(Es, S) ->
@@ -45,20 +51,26 @@ bound(Es, S) ->
     Limit = maps:get(limit, S),
     ByteLimit = maps:get(byte_limit, S, 67108864),
     case map_size(Es) =< Limit andalso Bytes =< ByteLimit of
-        true -> S#{events := Es, bytes => Bytes};
+        true ->
+            S#{events := Es, bytes => Bytes};
         false ->
             %% A deterministic byte AND count budget; event-count alone can
             %% still retain hundreds of MiB of signed content/tags.
-            Sorted = lists:sort(fun({I, A}, {J, B}) ->
-                {-maps:get(<<"created_at">>, A), I} <
-                {-maps:get(<<"created_at">>, B), J}
-            end, maps:to_list(Es)),
+            Sorted = lists:sort(
+                fun({I, A}, {J, B}) ->
+                    {-maps:get(<<"created_at">>, A), I} <
+                        {-maps:get(<<"created_at">>, B), J}
+                end,
+                maps:to_list(Es)
+            ),
             {Kept, Used} = take_budget(Sorted, Limit, ByteLimit, [], 0),
             S#{events := maps:from_list(Kept), bytes => Used}
     end.
 
-take_budget([], _, _, Acc, Used) -> {Acc, Used};
-take_budget(_, 0, _, Acc, Used) -> {Acc, Used};
+take_budget([], _, _, Acc, Used) ->
+    {Acc, Used};
+take_budget(_, 0, _, Acc, Used) ->
+    {Acc, Used};
 take_budget([{_, E} = Pair | Rest], Left, Remaining, Acc, Used) ->
     Size = erlang:external_size(E),
     case Size =< Remaining of

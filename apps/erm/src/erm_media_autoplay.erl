@@ -191,9 +191,12 @@ start_mpv_playlist(PlaylistFile) ->
 
 fallback_mpv_load_file(PlaylistFile) ->
     case safe_mpv_command(load_file, [PlaylistFile], ?MPV_CMD_TIMEOUT_MS) of
-        ok -> ok;
-        {ok, _} -> ok;
-        {error, Reason} -> {error, {mpv_ipc_load_file_failed, PlaylistFile, Reason}};
+        ok ->
+            ok;
+        {ok, _} ->
+            ok;
+        {error, Reason} ->
+            {error, {mpv_ipc_load_file_failed, PlaylistFile, Reason}};
         Other ->
             ?LOG_DEBUG("erm_mpv_proc:command(load_file) returned ~p", [Other]),
             ok

@@ -129,7 +129,12 @@ handle_info({gtkgs, _, click, Action, _}, S) ->
         Class:Reason:Stacktrace ->
             ?LOG_WARNING(
                 "ERM Lens action failed action=~p error=~p:~p stack=~p",
-                [compact_term(Action), Class, compact_term(Reason), erm_lens_diagnostics:stack(Stacktrace)]
+                [
+                    compact_term(Action),
+                    Class,
+                    compact_term(Reason),
+                    erm_lens_diagnostics:stack(Stacktrace)
+                ]
             ),
             {noreply, message(<<"Action could not be completed; check configuration.">>, S)}
     end;
@@ -162,7 +167,13 @@ handle_info(
         Class:Reason:Stacktrace ->
             ?LOG_WARNING(
                 "ERM Lens result rendering failed kind=~p result=~p error=~p:~p stack=~p",
-                [Kind, compact_term(Result), Class, compact_term(Reason), erm_lens_diagnostics:stack(Stacktrace)]
+                [
+                    Kind,
+                    compact_term(Result),
+                    Class,
+                    compact_term(Reason),
+                    erm_lens_diagnostics:stack(Stacktrace)
+                ]
             ),
             {noreply, message(<<"Result could not be displayed.">>, S1)}
     end;
@@ -213,10 +224,13 @@ code_change(_, S, _) ->
         Ref when is_reference(Ref) -> erlang:cancel_timer(Ref);
         _ -> ok
     end,
-    {ok, S#{timer => erlang:start_timer(?TICK_MS, self(), tick), snapshot_loaded => maps:get(snapshot_loaded, S, false),
-            wallet_outcome_unknown => maps:get(wallet_outcome_unknown, S, false),
-            build_failures => maps:get(build_failures, S, 0),
-            next_build_mono => maps:get(next_build_mono, S, undefined)}}.
+    {ok, S#{
+        timer => erlang:start_timer(?TICK_MS, self(), tick),
+        snapshot_loaded => maps:get(snapshot_loaded, S, false),
+        wallet_outcome_unknown => maps:get(wallet_outcome_unknown, S, false),
+        build_failures => maps:get(build_failures, S, 0),
+        next_build_mono => maps:get(next_build_mono, S, undefined)
+    }}.
 
 %%%===================================================================
 %%% UI lifecycle
@@ -249,7 +263,8 @@ update_safe(S) ->
 update(S = #{window := undefined, closed := false, want_visible := true}) ->
     Next = maps:get(next_build_mono, S, undefined),
     case is_integer(Next) andalso Next > erlang:monotonic_time(millisecond) of
-        true -> S;
+        true ->
+            S;
         false ->
             case build(S) of
                 {ok, S1} -> clear_ui_error(S1);
@@ -282,11 +297,16 @@ update(S) ->
             end,
             case
                 maps:get(rows, S) =:= [] andalso
-                {maps:get(epoch, Info, undefined), maps:get(revision, Info)} =/= maps:get(revision, S)
+                    {maps:get(epoch, Info, undefined), maps:get(revision, Info)} =/=
+                        maps:get(revision, S)
             of
-                true -> render(S#{snapshot_loaded := false,
-                                  revision := {maps:get(epoch, Info, undefined), maps:get(revision, Info)}});
-                false -> S
+                true ->
+                    render(S#{
+                        snapshot_loaded := false,
+                        revision := {maps:get(epoch, Info, undefined), maps:get(revision, Info)}
+                    });
+                false ->
+                    S
             end
     end.
 
@@ -497,7 +517,7 @@ status_snapshot(S) ->
         pid => self(),
         window => maps:get(window, S, undefined),
         shown => maps:get(window, S, undefined) =/= undefined andalso
-                 maps:get(want_visible, S, false) andalso not maps:get(closed, S, false),
+            maps:get(want_visible, S, false) andalso not maps:get(closed, S, false),
         shown_is_cached => true,
         closed => maps:get(closed, S, false),
         want_visible => maps:get(want_visible, S, false),
@@ -511,10 +531,11 @@ status_snapshot(S) ->
         sync => whereis(erm_lens_sync),
         media => whereis(erm_lens_media),
         wallet_outcome_unknown => maps:get(wallet_outcome_unknown, S, false),
-        operation => case maps:get(job, S, undefined) of
-            undefined -> idle;
-            #{kind := Kind} -> Kind
-        end
+        operation =>
+            case maps:get(job, S, undefined) of
+                undefined -> idle;
+                #{kind := Kind} -> Kind
+            end
     }.
 
 safe_gtknode4_status() ->
@@ -543,8 +564,11 @@ note_ui_error(Reason, S) ->
     end,
     Failures = maps:get(build_failures, S, 0) + 1,
     Delay = min(30000, 1000 * (1 bsl min(5, Failures - 1))),
-    S#{last_ui_error => Summary, build_failures => Failures,
-       next_build_mono => erlang:monotonic_time(millisecond) + Delay}.
+    S#{
+        last_ui_error => Summary,
+        build_failures => Failures,
+        next_build_mono => erlang:monotonic_time(millisecond) + Delay
+    }.
 
 ui_error_summary(undefined) ->
     undefined;
@@ -593,10 +617,11 @@ new(Type, Parent, Options) ->
 
 render(S) ->
     try
-        Rows = case maps:get(snapshot_loaded, S, false) of
-            true -> maps:get(rows, S);
-            false -> gen_server:call(erm_lens_feed, {snapshot, maps:get(mode, S)}, 1000)
-        end,
+        Rows =
+            case maps:get(snapshot_loaded, S, false) of
+                true -> maps:get(rows, S);
+                false -> gen_server:call(erm_lens_feed, {snapshot, maps:get(mode, S)}, 1000)
+            end,
         true = is_list(Rows),
         render_rows(Rows, S)
     catch
@@ -604,7 +629,11 @@ render(S) ->
     end.
 
 render_rows(Rows, S) ->
-    MaxPageSize = case ui_capability(scrolled, S) of true -> 12; false -> 1 end,
+    MaxPageSize =
+        case ui_capability(scrolled, S) of
+            true -> 12;
+            false -> 1
+        end,
     Configured = erm_lens_config:integer(page_size, maps:get(config, S), 6, 1, 12),
     PageSize = min(MaxPageSize, Configured),
     Page = min(maps:get(page, S), max(0, (length(Rows) - 1) div PageSize)),
@@ -614,25 +643,51 @@ render_rows(Rows, S) ->
     Gen = erlang:unique_integer([monotonic, positive]),
     PageRoot = new(frame, lens_body, [{orient, vertical}, {spacing, 16}, {map, false}]),
     try
-        Photos = lists:foldl(fun(P, Acc) ->
-            {_Card, Photo} = card(P, maps:get(ui_capabilities, S, #{}), PageRoot),
-            Acc#{maps:get(id, P) => Photo}
-        end, #{}, Visible),
+        Photos = lists:foldl(
+            fun(P, Acc) ->
+                {_Card, Photo} = card(P, maps:get(ui_capabilities, S, #{}), PageRoot),
+                Acc#{maps:get(id, P) => Photo}
+            end,
+            #{},
+            Visible
+        ),
         case Visible of
-            [] -> new(label, PageRoot, [
-                {text, "No pictures yet. Refresh after the relay sample completes."}, {wrap, true}]);
-            _ -> ok
+            [] ->
+                new(label, PageRoot, [
+                    {text, "No pictures yet. Refresh after the relay sample completes."},
+                    {wrap, true}
+                ]);
+            _ ->
+                ok
         end,
         ok = expect_ok(gtkgs:config(PageRoot, [{map, true}]), map_page),
         lists:foreach(fun destroy/1, maps:get(cards, S)),
         erm_lens_media:cancel_before(self(), Gen),
         %% Queue decoding only after the logical page has been installed.
-        maps:foreach(fun(Id, Photo) ->
-            safe(fun() -> maybe_request_image(maps:get(picture, Photo), maps:get(detail, Photo),
-                Gen, Id, 1, maps:get(image, Photo), maps:get(config, S)) end)
-        end, Photos),
-        S#{rows := Rows, page := Page, generation := Gen, cards := [PageRoot],
-           photos := Photos, snapshot_loaded := true}
+        maps:foreach(
+            fun(Id, Photo) ->
+                safe(fun() ->
+                    maybe_request_image(
+                        maps:get(picture, Photo),
+                        maps:get(detail, Photo),
+                        Gen,
+                        Id,
+                        1,
+                        maps:get(image, Photo),
+                        maps:get(config, S)
+                    )
+                end)
+            end,
+            Photos
+        ),
+        S#{
+            rows := Rows,
+            page := Page,
+            generation := Gen,
+            cards := [PageRoot],
+            photos := Photos,
+            snapshot_loaded := true
+        }
     catch
         _:_ ->
             destroy(PageRoot),
@@ -707,7 +762,11 @@ action(Mode, S) when Mode =:= popular; Mode =:= newest; Mode =:= following ->
     change_view(#{mode => Mode, page => 0, snapshot_loaded => false}, S);
 action(refresh, S) ->
     erm_lens_sync:refresh(),
-    render(message(<<"Sampling relays; press Refresh to re-rank when ready.">>, S#{page := 0, snapshot_loaded := false}));
+    render(
+        message(<<"Sampling relays; press Refresh to re-rank when ready.">>, S#{
+            page := 0, snapshot_loaded := false
+        })
+    );
 action(next, S) ->
     change_view(#{page => maps:get(page, S) + 1}, S);
 action(previous, S) ->
@@ -821,8 +880,11 @@ action({preview_tip, Id}, S) ->
     run(preview_tip, fun() -> erm_lens_wallet:prepare_tip(E, Token, Amount, C) end, S);
 action(
     {confirm_tip, RequestId},
-    S = #{job := undefined, wallet_outcome_unknown := false,
-          pending_tip := Prepared = #{request := #{request_id := RequestId}}}
+    S = #{
+        job := undefined,
+        wallet_outcome_unknown := false,
+        pending_tip := Prepared = #{request := #{request_id := RequestId}}
+    }
 ) ->
     C = maps:get(config, S),
     destroy(lens_confirm),
@@ -855,14 +917,19 @@ finish(wallet_status, Result, S) ->
     safe(fun() -> gtkgs:config(lens_wallet_info, [{text, fmt("~p", [Result])}]) end),
     message(<<"Wallet status received. No transaction submitted.">>, S);
 finish(Kind, {error, _}, S) when Kind =:= payment; Kind =:= link ->
-    message(<<"Wallet operation failed or is uncertain. Check wallet history before retrying.">>,
-            mark_uncertain(Kind, S));
+    message(
+        <<"Wallet operation failed or is uncertain. Check wallet history before retrying.">>,
+        mark_uncertain(Kind, S)
+    );
 finish(payment, {ok, Result}, S) ->
     message(fmt("Wallet result: ~p. Submission is not final confirmation.", [Result]), S);
 finish(_, Result, S) ->
     message(shorten(fmt("~p", [Result]), 500), S).
 run(Kind, _, S = #{wallet_outcome_unknown := true}) when Kind =:= payment; Kind =:= link ->
-    message(<<"Wallet outcome is uncertain. Check wallet history, then explicitly acknowledge that check.">>, S);
+    message(
+        <<"Wallet outcome is uncertain. Check wallet history, then explicitly acknowledge that check.">>,
+        S
+    );
 run(_, _, S = #{job := Job}) when Job =/= undefined ->
     message(<<"An operation is already awaiting a result.">>, S);
 run(Kind, Fun, S) ->
@@ -928,12 +995,14 @@ shorten(Text, N) ->
 
 mark_uncertain(Kind, S) when Kind =:= payment; Kind =:= link ->
     S#{wallet_outcome_unknown := true};
-mark_uncertain(_, S) -> S.
+mark_uncertain(_, S) ->
+    S.
 
 change_view(Changes, S) ->
     Next = render(maps:merge(S, Changes)),
     case maps:get(generation, Next) =:= maps:get(generation, S) of
-        false -> Next;
+        false ->
+            Next;
         true ->
             %% A failed render must not advance navigation metadata while old
             %% cards are still on screen.
