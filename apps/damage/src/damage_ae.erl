@@ -2153,12 +2153,16 @@ estimate_contract_gas_limit(Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice)
     DefaultGas1 = clamp_contract_gas_limit(DefaultGas, 0),
     case dry_run_contract_gas(Tag, AeAccount, BuildNonceFun, DefaultGas1, GasPrice) of
         {ok, GasUsed} when is_integer(GasUsed), GasUsed > 0 ->
-            Estimated = clamp_contract_gas_limit(add_contract_gas_margin(GasUsed), 0),
-            ?LOG_INFO(
-                "Estimated contract gas tag=~p gas_used=~p gas_limit=~p default_gas=~p",
-                [Tag, GasUsed, Estimated, DefaultGas1]
-            ),
-            {ok, Estimated};
+            finalize_contract_gas_estimate(Tag, GasUsed, DefaultGas1);
+        {retry, Reason} ->
+            retry_contract_gas_estimation(
+                Tag,
+                AeAccount,
+                BuildNonceFun,
+                DefaultGas1,
+                GasPrice,
+                Reason
+            );
         {fallback, Reason} ->
             ?LOG_WARNING(
                 "Contract gas estimation soft-failed tag=~p reason=~p fallback_gas=~p",
@@ -2171,6 +2175,58 @@ estimate_contract_gas_limit(Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice)
                 [Tag, Reason]
             ),
             {error, {contract_gas_estimation_rejected, Tag, Reason}}
+    end.
+
+finalize_contract_gas_estimate(Tag, GasUsed, ProbeGas) ->
+    Estimated = clamp_contract_gas_limit(add_contract_gas_margin(GasUsed), 0),
+    ?LOG_INFO(
+        "Estimated contract gas tag=~p gas_used=~p gas_limit=~p probe_gas=~p",
+        [Tag, GasUsed, Estimated, ProbeGas]
+    ),
+    {ok, Estimated}.
+
+retry_contract_gas_estimation(
+    Tag,
+    AeAccount,
+    BuildNonceFun,
+    DefaultGas,
+    GasPrice,
+    InitialReason
+) ->
+    MaxProbeGas = clamp_contract_gas_limit(gas_max(), 0),
+    case MaxProbeGas > DefaultGas of
+        false ->
+            {error,
+                {contract_gas_estimation_rejected, Tag, {dry_run_contract_error, InitialReason}}};
+        true ->
+            ?LOG_WARNING(
+                "Contract dry-run errored at gas=~p; retrying estimation at gas=~p reason=~p",
+                [DefaultGas, MaxProbeGas, InitialReason]
+            ),
+            case
+                dry_run_contract_gas(
+                    Tag,
+                    AeAccount,
+                    BuildNonceFun,
+                    MaxProbeGas,
+                    GasPrice
+                )
+            of
+                {ok, GasUsed} when is_integer(GasUsed), GasUsed > 0 ->
+                    finalize_contract_gas_estimate(Tag, GasUsed, MaxProbeGas);
+                {retry, RetryReason} ->
+                    {error,
+                        {contract_gas_estimation_rejected, Tag,
+                            {dry_run_contract_error_at_max_gas, InitialReason, RetryReason}}};
+                {fallback, RetryReason} ->
+                    {error,
+                        {contract_gas_estimation_rejected, Tag,
+                            {dry_run_retry_failed, InitialReason, RetryReason}}};
+                {error, RetryReason} ->
+                    {error,
+                        {contract_gas_estimation_rejected, Tag,
+                            {dry_run_retry_rejected, InitialReason, RetryReason}}}
+            end
     end.
 
 add_contract_gas_margin(GasUsed) ->
@@ -2384,20 +2440,33 @@ dry_run_tx_gas(Tx, TopHash, AeAccount) ->
         {error, {dry_run_transport_failed, _, _, _} = Reason} ->
             {fallback, Reason};
         {error, Reason} ->
-            case classify_dry_run_reason(Reason) of
-                dry_run_over_gas_limit ->
-                    {error, {dry_run_over_gas_limit, Reason}};
-                Classified ->
-                    {fallback, {dry_run_error, Classified}}
-            end;
+            dry_run_failure_action(Reason);
         Other ->
             normalize_dry_run_gas_result(Other)
+    end.
+
+%% Only dry-run capability/transport problems are soft fallbacks.  A contract
+%% runtime error must never be converted into a real transaction at the default
+%% gas limit: retry it once at the maximum safe execution gas, then fail closed.
+dry_run_failure_action(Reason0) ->
+    Classified = classify_dry_run_reason(Reason0),
+    case Classified of
+        dry_run_insufficient_funds ->
+            {fallback, {dry_run_error, dry_run_insufficient_funds, Reason0}};
+        dry_run_nonce_too_high ->
+            {fallback, {dry_run_error, dry_run_nonce_too_high, Reason0}};
+        dry_run_over_gas_limit ->
+            {retry, {dry_run_over_gas_limit, Reason0}};
+        {dry_run_contract_error, Reason} ->
+            {retry, {dry_run_contract_error, Reason}}
     end.
 
 normalize_dry_run_gas_result(DryRunResult) ->
     case extract_dry_run_gas_used(DryRunResult) of
         {ok, _GasUsed} = Ok ->
             Ok;
+        {retry, _Reason} = Retry ->
+            Retry;
         {fallback, dry_run_over_gas_limit} ->
             {error, dry_run_over_gas_limit};
         {fallback, _Reason} = Fallback ->
@@ -2421,13 +2490,13 @@ extract_dry_run_gas_used(#{<<"results">> := []} = Other) ->
 extract_dry_run_gas_used(#{results := []} = Other) ->
     {error, {dry_run_results_empty, Other}};
 extract_dry_run_gas_used(#{"result" := "error", "reason" := Reason}) ->
-    {fallback, classify_dry_run_reason(Reason)};
+    dry_run_failure_action(Reason);
 extract_dry_run_gas_used(#{<<"result">> := <<"error">>, <<"reason">> := Reason}) ->
-    {fallback, classify_dry_run_reason(Reason)};
+    dry_run_failure_action(Reason);
 extract_dry_run_gas_used(#{result := error, reason := Reason}) ->
-    {fallback, classify_dry_run_reason(Reason)};
+    dry_run_failure_action(Reason);
 extract_dry_run_gas_used(#{result := <<"error">>, reason := Reason}) ->
-    {fallback, classify_dry_run_reason(Reason)};
+    dry_run_failure_action(Reason);
 extract_dry_run_gas_used(Other) ->
     extract_dry_run_gas_used_from_result(Other).
 
@@ -2471,10 +2540,16 @@ gas_used_from_call_obj(CallObj) ->
         map_int([gas_used, "gas_used", <<"gas_used">>, gasUsed, <<"gasUsed">>], CallObj, undefined)
     of
         GasUsed when is_integer(GasUsed), GasUsed > 0 ->
-            case dry_run_revert_reason(CallObj) of
-                false ->
-                    {ok, GasUsed};
-                {true, RevertReason} ->
+            case dry_run_return_type(CallObj) of
+                error ->
+                    %% A FATE error is not a successful gas estimate. In
+                    %% particular, out-of-gas executions commonly report
+                    %% gas_used equal to the probe limit. Retry once with the
+                    %% maximum safe contract gas before deciding whether this
+                    %% is a real contract/runtime error.
+                    {retry, {fate_error, decode_dry_run_return_value(CallObj), GasUsed}};
+                revert ->
+                    RevertReason = decode_dry_run_return_value(CallObj),
                     case contract_reject_dry_run_revert() of
                         true ->
                             {error, {dry_run_revert, RevertReason}};
@@ -2484,10 +2559,31 @@ gas_used_from_call_obj(CallObj) ->
                                 [RevertReason, GasUsed]
                             ),
                             {ok, GasUsed}
-                    end
+                    end;
+                _ ->
+                    {ok, GasUsed}
             end;
         _ ->
             {error, {gas_used_not_found, CallObj}}
+    end.
+
+dry_run_return_type(CallObj) ->
+    ReturnType = map_value(
+        [return_type, "return_type", <<"return_type">>, returnType, <<"returnType">>],
+        CallObj,
+        undefined
+    ),
+    case ReturnType of
+        error -> error;
+        "error" -> error;
+        <<"error">> -> error;
+        revert -> revert;
+        "revert" -> revert;
+        <<"revert">> -> revert;
+        ok -> ok;
+        "ok" -> ok;
+        <<"ok">> -> ok;
+        _ -> unknown
     end.
 
 dry_run_revert_reason(CallObj) ->
@@ -2526,80 +2622,14 @@ contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
 ) ->
     with_ae_session(fun() ->
-    Amount = 0,
-    GasPrice = gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(ContractSource),
-    BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
-        vanillae:contract_call(
-            AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
-        )
-    end,
-    case
-        build_account_contract_tx(
-            contract_call_tx,
-            AeAccount,
-            BuildNonceFun,
-            contract_call_gas_limit(),
-            GasPrice
-        )
-    of
-        {ok, #{tx := ContractCall, fee := Fee, fee_gas := FeeGas, gas_limit := GasLimit}} ->
-            ?LOG_DEBUG(
-                "Prepared contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
-                [GasLimit, FeeGas, Fee, GasPrice]
-            ),
-            ContractCall;
-        Error ->
-            Error
-    end
-    end).
-payfor_tx(SignedTx) ->
-    contract_call_payfor_tx(SignedTx).
-contract_call_payfor_tx(
-    SignedTX
-) ->
-    with_ae_session(fun() ->
-    #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
-    GasPrice = gas_price(),
-    InnerTxBin = tx_bin(SignedTX),
-    with_account_nonce_locks_and_wait([NodeAeAccount], false, fun() ->
-        case next_nonce(NodeAeAccount) of
-            {ok, NodeNonce} ->
-                case build_paying_for_tx(NodeAeAccount, NodeNonce, InnerTxBin, GasPrice) of
-                    {ok, #{tx := PayingForTxFinal, fee := Fee, fee_gas := FeeGas}} ->
-                        ?LOG_INFO("PayingFor fee_gas=~p fee=~p gas_price=~p", [
-                            FeeGas, Fee, GasPrice
-                        ]),
-                        PayingSignature = make_transaction_signature_base58(
-                            NodePrivateKey, PayingForTxFinal
-                        ),
-                        PayingSignedTX = attach_signature_base58(
-                            PayingForTxFinal, PayingSignature
-                        ),
-                        post_tx_detailed(PayingSignedTX);
-                    Error ->
-                        Error
-                end;
-            Error ->
-                {error, {next_nonce_failed, NodeAeAccount, Error}}
-        end
-    end)
-    end).
-
-contract_call_payfor_user(
-    #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
-) when is_binary(PrivateKey), byte_size(PrivateKey) =:= 64 ->
-    with_ae_session(fun() ->
-    #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
-    Amount = 0,
-    GasPrice = gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(ContractSource),
-    BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
-        vanillae:contract_call(
-            AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
-        )
-    end,
-    with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
+        Amount = 0,
+        GasPrice = gas_price(),
+        {ok, AACI} = vanillae:prepare_contract(ContractSource),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_call(
+                AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+            )
+        end,
         case
             build_account_contract_tx(
                 contract_call_tx,
@@ -2609,59 +2639,125 @@ contract_call_payfor_user(
                 GasPrice
             )
         of
-            {ok, #{
-                tx := ContractCall,
-                fee := InnerFee,
-                fee_gas := InnerFeeGas,
-                gas_limit := GasLimit
-            }} ->
-                ?LOG_INFO(
-                    "Inner contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
-                    [GasLimit, InnerFeeGas, InnerFee, GasPrice]
+            {ok, #{tx := ContractCall, fee := Fee, fee_gas := FeeGas, gas_limit := GasLimit}} ->
+                ?LOG_DEBUG(
+                    "Prepared contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                    [GasLimit, FeeGas, Fee, GasPrice]
                 ),
-                Signature = make_transaction_signature_base58(
-                    PrivateKey, {inner, ContractCall}
-                ),
-                SignedTX = attach_signature_base58(ContractCall, Signature),
-                InnerTxBin = tx_bin(SignedTX),
-                case next_nonce(NodeAeAccount) of
-                    {ok, NodeNonce} ->
-                        case
-                            build_paying_for_tx(
-                                NodeAeAccount, NodeNonce, InnerTxBin, GasPrice
-                            )
-                        of
-                            {ok, #{
-                                tx := PayingForTxFinal,
-                                fee := PayFee,
-                                fee_gas := PayFeeGas
-                            }} ->
-                                ?LOG_INFO(
-                                    "PayingFor wrapper fee_gas=~p fee=~p gas_price=~p",
-                                    [PayFeeGas, PayFee, GasPrice]
-                                ),
-                                PayingSignature = make_transaction_signature_base58(
-                                    NodePrivateKey, PayingForTxFinal
-                                ),
-                                PayingSignedTX = attach_signature_base58(
-                                    PayingForTxFinal, PayingSignature
-                                ),
-                                post_tx_detailed(PayingSignedTX);
-                            Error ->
-                                ?LOG_ERROR(
-                                    "contract_call_payfor_user paying_for build failed ~p",
-                                    [Error]
-                                ),
-                                Error
-                        end;
-                    Error ->
-                        {error, {next_nonce_failed, NodeAeAccount, Error}}
-                end;
+                ContractCall;
             Error ->
-                ?LOG_ERROR("contract_call_payfor_user inner build failed ~p", [Error]),
                 Error
         end
-    end)
+    end).
+payfor_tx(SignedTx) ->
+    contract_call_payfor_tx(SignedTx).
+contract_call_payfor_tx(
+    SignedTX
+) ->
+    with_ae_session(fun() ->
+        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+        GasPrice = gas_price(),
+        InnerTxBin = tx_bin(SignedTX),
+        with_account_nonce_locks_and_wait([NodeAeAccount], false, fun() ->
+            case next_nonce(NodeAeAccount) of
+                {ok, NodeNonce} ->
+                    case build_paying_for_tx(NodeAeAccount, NodeNonce, InnerTxBin, GasPrice) of
+                        {ok, #{tx := PayingForTxFinal, fee := Fee, fee_gas := FeeGas}} ->
+                            ?LOG_INFO("PayingFor fee_gas=~p fee=~p gas_price=~p", [
+                                FeeGas, Fee, GasPrice
+                            ]),
+                            PayingSignature = make_transaction_signature_base58(
+                                NodePrivateKey, PayingForTxFinal
+                            ),
+                            PayingSignedTX = attach_signature_base58(
+                                PayingForTxFinal, PayingSignature
+                            ),
+                            post_tx_detailed(PayingSignedTX);
+                        Error ->
+                            Error
+                    end;
+                Error ->
+                    {error, {next_nonce_failed, NodeAeAccount, Error}}
+            end
+        end)
+    end).
+
+contract_call_payfor_user(
+    #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
+) when is_binary(PrivateKey), byte_size(PrivateKey) =:= 64 ->
+    with_ae_session(fun() ->
+        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+        Amount = 0,
+        GasPrice = gas_price(),
+        {ok, AACI} = vanillae:prepare_contract(ContractSource),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_call(
+                AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+            )
+        end,
+        with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_call_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_call_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractCall,
+                    fee := InnerFee,
+                    fee_gas := InnerFeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Inner contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, InnerFeeGas, InnerFee, GasPrice]
+                    ),
+                    Signature = make_transaction_signature_base58(
+                        PrivateKey, {inner, ContractCall}
+                    ),
+                    SignedTX = attach_signature_base58(ContractCall, Signature),
+                    InnerTxBin = tx_bin(SignedTX),
+                    case next_nonce(NodeAeAccount) of
+                        {ok, NodeNonce} ->
+                            case
+                                build_paying_for_tx(
+                                    NodeAeAccount, NodeNonce, InnerTxBin, GasPrice
+                                )
+                            of
+                                {ok, #{
+                                    tx := PayingForTxFinal,
+                                    fee := PayFee,
+                                    fee_gas := PayFeeGas
+                                }} ->
+                                    ?LOG_INFO(
+                                        "PayingFor wrapper fee_gas=~p fee=~p gas_price=~p",
+                                        [PayFeeGas, PayFee, GasPrice]
+                                    ),
+                                    PayingSignature = make_transaction_signature_base58(
+                                        NodePrivateKey, PayingForTxFinal
+                                    ),
+                                    PayingSignedTX = attach_signature_base58(
+                                        PayingForTxFinal, PayingSignature
+                                    ),
+                                    post_tx_detailed(PayingSignedTX);
+                                Error ->
+                                    ?LOG_ERROR(
+                                        "contract_call_payfor_user paying_for build failed ~p",
+                                        [Error]
+                                    ),
+                                    Error
+                            end;
+                        Error ->
+                            {error, {next_nonce_failed, NodeAeAccount, Error}}
+                    end;
+                Error ->
+                    ?LOG_ERROR("contract_call_payfor_user inner build failed ~p", [Error]),
+                    Error
+            end
+        end)
     end);
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey},
@@ -2768,42 +2864,42 @@ contract_call(
     Args
 ) ->
     with_ae_session(fun() ->
-    ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
+        ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
 
-    GasPrice = gas_price(),
-    {ok, AACI} = vanillae:prepare_contract(Contract),
-    BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
-        vanillae:contract_call(
-            AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
-        )
-    end,
-    with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
-        case
-            build_account_contract_tx(
-                contract_call_tx,
-                AeAccount,
-                BuildNonceFun,
-                contract_call_gas_limit(),
-                GasPrice
+        GasPrice = gas_price(),
+        {ok, AACI} = vanillae:prepare_contract(Contract),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_call(
+                AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
             )
-        of
-            {ok, #{
-                tx := ContractCall,
-                fee := Fee,
-                fee_gas := FeeGas,
-                gas_limit := GasLimit
-            }} ->
-                ?LOG_INFO(
-                    "Contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
-                    [GasLimit, FeeGas, Fee, GasPrice]
-                ),
-                Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
-                SignedTX = attach_signature_base58(ContractCall, Signature),
-                post_tx_detailed(SignedTX);
-            Error ->
-                Error
-        end
-    end)
+        end,
+        with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_call_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_call_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractCall,
+                    fee := Fee,
+                    fee_gas := FeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, FeeGas, Fee, GasPrice]
+                    ),
+                    Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
+                    SignedTX = attach_signature_base58(ContractCall, Signature),
+                    post_tx_detailed(SignedTX);
+                Error ->
+                    Error
+            end
+        end)
     end).
 
 %% Read-only contract call.  Prefer protected dry-run/static execution when
@@ -3076,39 +3172,39 @@ contract_deploy(Contract, Args) ->
     contract_deploy(Keypair, Contract, Args).
 contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
     with_ae_session(fun() ->
-    Amount = 0,
-    GasPrice = gas_price(),
-    BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
-        vanillae:contract_create(
-            AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
-        )
-    end,
-    with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
-        case
-            build_account_contract_tx(
-                contract_create_tx,
-                AeAccount,
-                BuildNonceFun,
-                contract_create_gas_limit(),
-                GasPrice
+        Amount = 0,
+        GasPrice = gas_price(),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_create(
+                AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
             )
-        of
-            {ok, #{
-                tx := ContractData,
-                fee := Fee,
-                fee_gas := FeeGas,
-                gas_limit := GasLimit
-            }} ->
-                ?LOG_INFO(
-                    "Contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
-                    [GasLimit, FeeGas, Fee, GasPrice]
-                ),
-                SignedContract = sign_transaction_base58(PrivateKey, ContractData),
-                post_tx_detailed(SignedContract);
-            Error ->
-                Error
-        end
-    end)
+        end,
+        with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_create_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_create_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractData,
+                    fee := Fee,
+                    fee_gas := FeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, FeeGas, Fee, GasPrice]
+                    ),
+                    SignedContract = sign_transaction_base58(PrivateKey, ContractData),
+                    post_tx_detailed(SignedContract);
+                Error ->
+                    Error
+            end
+        end)
     end).
 
 contract_deploy_for(
@@ -3117,71 +3213,71 @@ contract_deploy_for(
     Args
 ) ->
     with_ae_session(fun() ->
-    Amount = 0,
-    GasPrice = gas_price(),
-    #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
-    BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
-        vanillae:contract_create(
-            AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
-        )
-    end,
-    with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
-        case
-            build_account_contract_tx(
-                contract_create_tx,
-                AeAccount,
-                BuildNonceFun,
-                contract_create_gas_limit(),
-                GasPrice
+        Amount = 0,
+        GasPrice = gas_price(),
+        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_create(
+                AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
             )
-        of
-            {ok, #{
-                tx := ContractData,
-                fee := InnerFee,
-                fee_gas := InnerFeeGas,
-                gas_limit := GasLimit
-            }} ->
-                ?LOG_INFO(
-                    "Inner contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
-                    [GasLimit, InnerFeeGas, InnerFee, GasPrice]
-                ),
-                SignedContract = sign_transaction_base58(
-                    PrivateKey, {inner, ContractData}
-                ),
-                InnerTxBin = tx_bin(SignedContract),
-                case next_nonce(NodeAeAccount) of
-                    {ok, NodeNonce} ->
-                        case
-                            build_paying_for_tx(
-                                NodeAeAccount, NodeNonce, InnerTxBin, GasPrice
-                            )
-                        of
-                            {ok, #{
-                                tx := PayingForTxFinal,
-                                fee := PayFee,
-                                fee_gas := PayFeeGas
-                            }} ->
-                                ?LOG_INFO(
-                                    "PayingFor deploy wrapper fee_gas=~p fee=~p gas_price=~p",
-                                    [PayFeeGas, PayFee, GasPrice]
-                                ),
-                                PayingSignature = make_transaction_signature_base58(
-                                    NodePrivateKey, PayingForTxFinal
-                                ),
-                                PayingSignedTX = attach_signature_base58(
-                                    PayingForTxFinal, PayingSignature
-                                ),
-                                post_tx_detailed(PayingSignedTX);
-                            Error ->
-                                Error
-                        end;
-                    Error ->
-                        {error, {next_nonce_failed, NodeAeAccount, Error}}
-                end;
-            Error ->
-                Error
-        end
-    end)
+        end,
+        with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_create_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_create_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractData,
+                    fee := InnerFee,
+                    fee_gas := InnerFeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Inner contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, InnerFeeGas, InnerFee, GasPrice]
+                    ),
+                    SignedContract = sign_transaction_base58(
+                        PrivateKey, {inner, ContractData}
+                    ),
+                    InnerTxBin = tx_bin(SignedContract),
+                    case next_nonce(NodeAeAccount) of
+                        {ok, NodeNonce} ->
+                            case
+                                build_paying_for_tx(
+                                    NodeAeAccount, NodeNonce, InnerTxBin, GasPrice
+                                )
+                            of
+                                {ok, #{
+                                    tx := PayingForTxFinal,
+                                    fee := PayFee,
+                                    fee_gas := PayFeeGas
+                                }} ->
+                                    ?LOG_INFO(
+                                        "PayingFor deploy wrapper fee_gas=~p fee=~p gas_price=~p",
+                                        [PayFeeGas, PayFee, GasPrice]
+                                    ),
+                                    PayingSignature = make_transaction_signature_base58(
+                                        NodePrivateKey, PayingForTxFinal
+                                    ),
+                                    PayingSignedTX = attach_signature_base58(
+                                        PayingForTxFinal, PayingSignature
+                                    ),
+                                    post_tx_detailed(PayingSignedTX);
+                                Error ->
+                                    Error
+                            end;
+                        Error ->
+                            {error, {next_nonce_failed, NodeAeAccount, Error}}
+                    end;
+                Error ->
+                    Error
+            end
+        end)
     end).
 
 contract_balance(Account) ->
