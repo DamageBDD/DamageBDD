@@ -2,7 +2,30 @@
 -module(damage_ipfs_config).
 -export([load/0, normalize/1, call/3, text/1, cid/1, now_ms/0]).
 
-load() -> normalize(application:get_env(damage, ipfs, [])).
+%% Keep Kubo's historical damage.ipfs configuration available to its existing
+%% consumers. Runtime settings have their own key; the previous atom-keyed
+%% runtime layout remains supported for a staged migration.
+load() ->
+    case application:get_env(damage, ipfs_runtime) of
+        {ok, Opts} -> normalize(Opts);
+        undefined -> load_previous(application:get_env(damage, ipfs, []))
+    end.
+
+load_previous(Opts) when is_map(Opts) -> normalize(Opts);
+load_previous(Opts) when is_list(Opts) ->
+    %% String/binary keys belong to Kubo and are neither applied nor rewritten
+    %% here. Mixed old configurations can retain their atom-keyed options.
+    Runtime = lists:filtermap(
+        fun
+            ({K, _} = Entry) when is_atom(K) -> {true, Entry};
+            ({K, _}) when is_list(K); is_binary(K) -> false;
+            (_) -> error({invalid_ipfs_config, expected_key_value_tuples})
+        end,
+        Opts
+    ),
+    normalize(Runtime);
+load_previous(_) ->
+    error({invalid_ipfs_config, expected_key_value_tuples}).
 
 %% Public configuration is a list of {Key, Value} tuples. Normalize once at
 %% the boundary; maps below are private runtime configuration/state.
