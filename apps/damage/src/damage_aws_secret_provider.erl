@@ -30,15 +30,15 @@ fetch_vault_passphrase(Config0, Dependencies0) ->
     Dependencies = maps:merge(default_dependencies(), Dependencies0),
     case validate_config(Config) of
         ok ->
-            fetch_validated(Config, Dependencies);
+            fetch_validated(Config, Dependencies, Dependencies0);
         {error, _} = Error ->
             Error
     end.
 
-fetch_validated(Config, Dependencies) ->
+fetch_validated(Config, Dependencies, DependencyOverrides) ->
     case forbidden_credential_sources(Dependencies) of
         [] ->
-            case runtime_metadata(Config, Dependencies) of
+            case runtime_metadata(Config, Dependencies, DependencyOverrides) of
                 {ok, ImdsMetadata} ->
                     credentials(
                         Config,
@@ -55,21 +55,25 @@ fetch_validated(Config, Dependencies) ->
 %% Production calls arrive with IMDS already validated by
 %% damage_aws_runtime:with_runtime/2. The secondary path exists only so unit
 %% tests can inject their previous prepare/probe functions explicitly.
-runtime_metadata(Config, Dependencies) ->
+runtime_metadata(Config, Dependencies, DependencyOverrides) ->
     case maps:get(imdsv2_metadata, Dependencies, undefined) of
         Metadata when is_map(Metadata) ->
             {ok, Metadata};
         undefined ->
-            injected_runtime_metadata(Config, Dependencies);
+            injected_runtime_metadata(
+                Config,
+                Dependencies,
+                DependencyOverrides
+            );
         _ ->
             {error, invalid_imdsv2_metadata}
     end.
 
-injected_runtime_metadata(Config, Dependencies) ->
+injected_runtime_metadata(Config, Dependencies, DependencyOverrides) ->
     case
         {
-            maps:find(prepare_runtime, Dependencies),
-            maps:find(imdsv2_validate, Dependencies)
+            maps:find(prepare_runtime, DependencyOverrides),
+            maps:find(imdsv2_validate, DependencyOverrides)
         }
     of
         {{ok, PrepareRuntime}, {ok, Imdsv2Validate}} when
@@ -85,8 +89,31 @@ injected_runtime_metadata(Config, Dependencies) ->
                     {error, {aws_runtime_start_failed, safe_reason(Reason)}}
             end;
         _ ->
-            {error, aws_runtime_scope_required}
+            %% Compatibility/test seam.  A caller which explicitly injects
+            %% the complete AWS interaction chain has no real IMDS/AWS side
+            %% effects to protect.  Never infer this from default_dependencies:
+            %% production callers without an IMDS runtime still fail closed.
+            case fully_injected_aws_flow(DependencyOverrides) of
+                true ->
+                    {ok, #{runtime_scope => injected_dependencies}};
+                false ->
+                    {error, aws_runtime_scope_required}
+            end
     end.
+
+fully_injected_aws_flow(Dependencies) ->
+    is_function(
+        maps:get(get_credentials, Dependencies, undefined), 0
+    ) andalso
+        is_function(
+            maps:get(make_client, Dependencies, undefined), 4
+        ) andalso
+        is_function(
+            maps:get(sts_identity, Dependencies, undefined), 1
+        ) andalso
+        is_function(
+            maps:get(get_secret, Dependencies, undefined), 2
+        ).
 
 credentials(Config, ImdsMetadata, Dependencies) ->
     GetCredentials = maps:get(get_credentials, Dependencies),
