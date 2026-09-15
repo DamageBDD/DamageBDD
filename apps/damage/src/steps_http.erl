@@ -19,6 +19,8 @@
 -define(DEFAULT_WAIT_SECONDS, 3).
 -define(DEFAULT_NUM_ATTEMPTS, 3).
 -define(DEFAULT_HTTP_TIMEOUT, 60000).
+-define(DEFAULT_HTTP_BODY_TIMEOUT, 600000).
+-define(MAX_HTTP_TIMEOUT, 1800000).
 -define(DEFAULT_HTTP_PORT, 80).
 -define(DEFAULT_HEADERS, [
     {<<"accept">>, "application/json,text/html"},
@@ -974,17 +976,104 @@ ensure_public_ip({A, B, _, _, _, _, _, _}) ->
 host_to_list(H) when is_list(H) -> H;
 host_to_list(H) when is_binary(H) -> binary_to_list(H).
 
+%% Header wait and body wait are intentionally separate. A nested paid
+%% /execute_feature/ request may send streaming response headers immediately
+%% and then spend substantially longer completing its dry run, real run, IPFS
+%% publication and settlement before the response body is finished.
+%%
+%% Per-run overrides may be supplied as any of:
+%%   http_timeout_ms / <<"http_timeout_ms">> / "http_timeout_ms"
+%%   http_body_timeout_ms / <<"http_body_timeout_ms">> / "http_body_timeout_ms"
+%% Values are capped so an untrusted feature cannot pin a worker indefinitely.
+http_response_timeout(Context) ->
+    context_timeout_ms(Context, http_timeout_ms, ?DEFAULT_HTTP_TIMEOUT).
+
+http_body_timeout(Context) ->
+    case context_timeout_value(Context, http_body_timeout_ms) of
+        undefined ->
+            case context_timeout_value(Context, http_timeout_ms) of
+                undefined -> ?DEFAULT_HTTP_BODY_TIMEOUT;
+                GeneralTimeout ->
+                    normalize_timeout_ms(GeneralTimeout, ?DEFAULT_HTTP_BODY_TIMEOUT)
+            end;
+        BodyTimeout ->
+            normalize_timeout_ms(BodyTimeout, ?DEFAULT_HTTP_BODY_TIMEOUT)
+    end.
+
+context_timeout_ms(Context, Key, Default) ->
+    case context_timeout_value(Context, Key) of
+        undefined -> Default;
+        Value -> normalize_timeout_ms(Value, Default)
+    end.
+
+context_timeout_value(Context, Key) when is_atom(Key) ->
+    BinKey = atom_to_binary(Key, utf8),
+    ListKey = atom_to_list(Key),
+    case maps:find(Key, Context) of
+        {ok, AtomValue} -> AtomValue;
+        error ->
+            case maps:find(BinKey, Context) of
+                {ok, BinaryValue} -> BinaryValue;
+                error -> maps:get(ListKey, Context, undefined)
+            end
+    end.
+
+normalize_timeout_ms(Value, Default) when is_integer(Value) ->
+    clamp_timeout_ms(Value, Default);
+normalize_timeout_ms(Value, Default) when is_binary(Value) ->
+    normalize_timeout_ms(binary_to_list(Value), Default);
+normalize_timeout_ms(Value, Default) when is_list(Value) ->
+    case string:to_integer(string:trim(Value)) of
+        {Int, []} -> clamp_timeout_ms(Int, Default);
+        _ -> Default
+    end;
+normalize_timeout_ms(_Value, Default) ->
+    Default.
+
+clamp_timeout_ms(Value, _Default) when Value > 0, Value =< ?MAX_HTTP_TIMEOUT ->
+    Value;
+clamp_timeout_ms(Value, _Default) when Value > ?MAX_HTTP_TIMEOUT ->
+    ?MAX_HTTP_TIMEOUT;
+clamp_timeout_ms(_Value, Default) ->
+    Default.
+
 gun_await(ConnPid, StreamRef, Context) ->
-    case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
+    ResponseTimeout = http_response_timeout(Context),
+    BodyTimeout = http_body_timeout(Context),
+    case gun:await(ConnPid, StreamRef, ResponseTimeout) of
         {response, fin, Status, Headers} ->
             maps:put(response, response_to_list({Status, Headers, <<"">>}), Context);
         {response, nofin, Status, Headers} ->
-            {ok, Body} = gun:await_body(ConnPid, StreamRef),
-            maps:put(response, response_to_list({Status, Headers, Body}), Context);
-        Default ->
+            case gun:await_body(ConnPid, StreamRef, BodyTimeout) of
+                {ok, Body} ->
+                    maps:put(
+                        response,
+                        response_to_list({Status, Headers, Body}),
+                        Context
+                    );
+                {error, Reason} ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "HTTP response body failed after ~p ms: ~p",
+                            [BodyTimeout, Reason]
+                        ),
+                        Context
+                    )
+            end;
+        {error, Reason} ->
             maps:put(
                 fail,
-                damage_utils:strf("Gun request failed: ~p", [Default]),
+                damage_utils:strf(
+                    "HTTP response failed after ~p ms: ~p",
+                    [ResponseTimeout, Reason]
+                ),
+                Context
+            );
+        Other ->
+            maps:put(
+                fail,
+                damage_utils:strf("Gun request failed: ~p", [Other]),
                 Context
             )
     end.
@@ -1054,31 +1143,54 @@ gun_delete(Config, Context, Path, Headers) ->
     end.
 
 retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt) ->
-    {ok, ConnPid} = get_gun_connection(Config, Context),
-    try
-        StreamRef = gun:get(ConnPid, Path, Headers),
-        case gun:await(ConnPid, StreamRef, ?DEFAULT_HTTP_TIMEOUT) of
-            {response, nofin, Status, Headers} ->
-                {ok, Body} = gun:await_body(ConnPid, StreamRef),
-                {ok, {Status, Headers, Body}};
-            Default ->
-                case Attempt < N of
-                    true ->
-                        % Wait in milliseconds
-                        timer:sleep(WaitSecs * 1000),
-                        retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt + 1);
-                    false ->
-                        {
-                            fail,
-                            damage_utils:strf(
-                                "Maximum attempts reached. Exiting. ~p",
-                                [Default]
-                            )
-                        }
+    case retry_get_once(Config, Context, Path, Headers) of
+        {ok, _} = Ok ->
+            Ok;
+        {error, Reason} ->
+            case Attempt < N of
+                true ->
+                    timer:sleep(WaitSecs * 1000),
+                    retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt + 1);
+                false ->
+                    {
+                        fail,
+                        damage_utils:strf(
+                            "Maximum attempts reached. Exiting. ~p",
+                            [Reason]
+                        )
+                    }
+            end
+    end.
+
+retry_get_once(Config, Context, Path, Headers) ->
+    case get_gun_connection(Config, Context) of
+        {ok, ConnPid} ->
+            try
+                StreamRef = gun:get(ConnPid, Path, Headers),
+                ResponseTimeout = http_response_timeout(Context),
+                BodyTimeout = http_body_timeout(Context),
+                case gun:await(ConnPid, StreamRef, ResponseTimeout) of
+                    {response, fin, Status, RespHeaders} ->
+                        {ok, {Status, RespHeaders, <<"">>}};
+                    {response, nofin, Status, RespHeaders} ->
+                        case gun:await_body(ConnPid, StreamRef, BodyTimeout) of
+                            {ok, Body} ->
+                                {ok, {Status, RespHeaders, Body}};
+                            {error, Reason} ->
+                                {error, {await_body_failed, BodyTimeout, Reason}}
+                        end;
+                    {error, Reason} ->
+                        {error, {await_response_failed, ResponseTimeout, Reason}};
+                    Other ->
+                        {error, {unexpected_response, Other}}
                 end
-        end
-    after
-        catch gun:close(ConnPid)
+            after
+                catch gun:close(ConnPid)
+            end;
+        {error, Reason} ->
+            {error, {connection_failed, Reason}};
+        Other ->
+            {error, {connection_failed, Other}}
     end.
 
 retry_get_ejsonmatch(
