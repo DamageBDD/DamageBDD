@@ -329,21 +329,124 @@ content_types_accepted(Req, State) ->
 
 allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>, <<"PUT">>], Req, State}.
 
-stream_mode(Req, Concurrency0) ->
-    Concurrency =
-        case Concurrency0 of
+%% Streaming is an explicit transport choice. Concurrency controls runner
+%% parallelism only; it must never implicitly switch the HTTP response into
+%% streaming mode.
+%%
+%% text/plain / form requests opt in with:
+%%   X-Damage-Stream: true
+%%
+%% Streaming currently requires concurrency=1 because formatter output is
+%% written through a single Cowboy request stream.
+stream_mode(Req, Concurrency) ->
+    Requested =
+        case cowboy_req:header(<<"x-damage-stream">>, Req, undefined) of
+            <<"true">> ->
+                true;
+            <<"1">> ->
+                true;
+            <<"false">> ->
+                false;
+            <<"0">> ->
+                false;
+            <<"auto">> ->
+                cli_streaming_client(Req);
             undefined ->
-                %% allow override from header too
-                binary_to_integer(
-                    cowboy_req:header(<<"x-damage-concurrency">>, Req, <<"1">>)
-                );
-            C ->
-                C
+                cli_streaming_client(Req);
+            _ ->
+                false
         end,
-    case Concurrency of
-        1 -> maybe_stream;
-        _ -> nostream
+
+    case {Requested, Concurrency} of
+        {true, 1} ->
+            maybe_stream;
+        {true, _} ->
+            %% Current formatter streaming is a single-response stream.
+            %% Concurrent execution remains buffered.
+            nostream;
+        _ ->
+            nostream
     end.
+cli_streaming_client(Req) ->
+    UserAgent =
+        lowercase_binary(
+            cowboy_req:header(<<"user-agent">>, Req, <<>>)
+        ),
+
+    cli_user_agent(UserAgent).
+
+cli_user_agent(<<"curl/", _/binary>>) ->
+    true;
+cli_user_agent(<<"wget/", _/binary>>) ->
+    true;
+cli_user_agent(<<"httpie/", _/binary>>) ->
+    true;
+cli_user_agent(<<"xh/", _/binary>>) ->
+    true;
+cli_user_agent(_) ->
+    false.
+
+lowercase_binary(Bin) when is_binary(Bin) ->
+    list_to_binary(
+        string:lowercase(binary_to_list(Bin))
+    ).
+
+json_stream_mode(Context) ->
+    Concurrency = normalize_concurrency(
+        maps:get(concurrency, Context, maps:get(<<"concurrency">>, Context, 1))
+    ),
+    Stream0 = maps:get(stream, Context, maps:get(<<"stream">>, Context, false)),
+    case parse_stream_flag(Stream0) of
+        {ok, false} ->
+            nostream;
+        {ok, true} when Concurrency =:= 1 ->
+            maybe_stream;
+        {ok, true} ->
+            {error, <<"streaming requires concurrency=1">>};
+        {error, _} = Error ->
+            Error
+    end.
+
+parse_stream_flag(undefined) -> {ok, false};
+parse_stream_flag(false) -> {ok, false};
+parse_stream_flag(true) -> {ok, true};
+parse_stream_flag(0) -> {ok, false};
+parse_stream_flag(1) -> {ok, true};
+parse_stream_flag(Value) when is_list(Value) ->
+    parse_stream_flag(unicode:characters_to_binary(Value));
+parse_stream_flag(Value) when is_binary(Value) ->
+    Normalized = list_to_binary(string:lowercase(string:trim(binary_to_list(Value)))),
+    case Normalized of
+        <<>> -> {ok, false};
+        <<"false">> -> {ok, false};
+        <<"0">> -> {ok, false};
+        <<"no">> -> {ok, false};
+        <<"off">> -> {ok, false};
+        <<"true">> -> {ok, true};
+        <<"1">> -> {ok, true};
+        <<"yes">> -> {ok, true};
+        <<"on">> -> {ok, true};
+        _ -> {error, <<"invalid stream flag; expected true or false">>}
+    end;
+parse_stream_flag(_) ->
+    {error, <<"invalid stream flag; expected true or false">>}.
+
+normalize_concurrency(Value) when is_integer(Value), Value > 0 -> Value;
+normalize_concurrency(Value) when is_binary(Value) ->
+    try binary_to_integer(Value) of
+        I when I > 0 -> I;
+        _ -> 1
+    catch
+        _:_ -> 1
+    end;
+normalize_concurrency(Value) when is_list(Value) ->
+    try list_to_integer(Value) of
+        I when I > 0 -> I;
+        _ -> 1
+    catch
+        _:_ -> 1
+    end;
+normalize_concurrency(_) -> 1.
 get_stream_config(Config, Context, Req) ->
     %% stream logs via text formatter to cowboy stream
     %Req = cowboy_req:stream_reply(
@@ -370,7 +473,9 @@ get_stream_config(Config, Context, Req) ->
     Config0.
 get_config(Config, Context, Req0) ->
     Concurrency = maps:get(concurrency, Context, 1),
-    StreamFlag = maps:get(stream, Context, true),
+    %% No implicit streaming. The request handler must opt in and open the
+    %% Cowboy stream before a streaming formatter is installed.
+    StreamFlag = maps:get(stream, Context, nostream),
     ContinueOnFail =
         maps:get(
             continue_on_fail,
@@ -1464,7 +1569,7 @@ do_action_tx(
             feature => FeatureData,
             color_formatter => maps:get(color_formatter, Json, false),
             concurrency => Concurrency,
-            stream => maps:get(stream, Json, maybe_stream)
+            stream => maps:get(stream, Json, nostream)
         }
     ),
     case
@@ -1725,24 +1830,13 @@ from_json(Req0, State) ->
                 end,
 
             case normalize_execution_json_context(Json) of
-                {ok, ExecutionJson} ->
-                    Stream = maps:get(stream, ExecutionJson, false),
-                    case execute_bdd(ExecutionJson, State, Req1) of
-                        {_Status, _Response} when Stream == true ->
-                            {stop, Req1, State};
-                        {Status, Response} ->
-                            %% normal JSON reply
-                            JsonBin = jsx:encode(Response),
-                            Req2 = cowboy_req:reply(
-                                Status,
-                                #{
-                                    <<"content-type">> => <<"application/json">>,
-                                    <<"cache-control">> => <<"no-cache">>
-                                },
-                                JsonBin,
-                                Req1
-                            ),
-                            {stop, Req2, State}
+                {ok, ExecutionJson0} ->
+                    case json_stream_mode(ExecutionJson0) of
+                        {error, Reason} ->
+                            stream_mode_error_reply(Req1, State, Reason);
+                        StreamMode ->
+                            ExecutionJson = maps:put(stream, StreamMode, ExecutionJson0),
+                            execute_feature_http(ExecutionJson, State, Req1, StreamMode)
                     end;
                 {error, Reason} ->
                     runtime_context_error_reply(Req1, State, Reason)
@@ -1752,9 +1846,9 @@ from_json(Req0, State) ->
 from_html(Req0, State) ->
     try
         {ok, Body, Req1} = cowboy_req:read_body(Req0),
-        _UserAgent = cowboy_req:header(<<"user-agent">>, Req1, ""),
-        Concurrency =
-            binary_to_integer(cowboy_req:header(<<"x-damage-concurrency">>, Req1, <<"1">>)),
+        Concurrency = normalize_concurrency(
+            cowboy_req:header(<<"x-damage-concurrency">>, Req1, <<"1">>)
+        ),
         ColorFormatter =
             case cowboy_req:match_qs([{color, [], <<"true">>}], Req1) of
                 #{color := <<"true">>} -> true;
@@ -1766,116 +1860,121 @@ from_html(Req0, State) ->
                 <<"1">> -> true;
                 _ -> false
             end,
-        Stream = stream_mode(Req1, Concurrency),
-        RuntimeContext =
-            case runtime_context_from_headers(Req1) of
-                {ok, HeaderContext} -> HeaderContext;
-                {error, ContextReason} -> throw({invalid_runtime_context, ContextReason})
-            end,
-
-        %% Own the stream lifecycle here (DON'T guess using resp_headers).
-        {ReqRun, Context} =
-            case Stream of
-                maybe_stream ->
-                    ReqS =
-                        cowboy_req:stream_reply(
-                            200,
-                            #{<<"content-type">> => <<"text/plain">>},
-                            Req1
-                        ),
-                    BaseContext = #{
-                        feature => Body,
-                        concurrency => Concurrency,
-                        stream => maybe_stream,
-                        continue_on_fail => ContinueOnFail,
-                        color_formatter => ColorFormatter
-                    },
-                    {ReqS, maps:merge(RuntimeContext, BaseContext)};
-                _ ->
-                    BaseContext = #{
-                        feature => Body,
-                        concurrency => Concurrency,
-                        stream => Stream,
-                        continue_on_fail => ContinueOnFail,
-                        color_formatter => ColorFormatter
-                    },
-                    {Req1, maps:merge(RuntimeContext, BaseContext)}
-            end,
-
-        case execute_bdd(Context, State, ReqRun) of
-            {Status, Resp} when Stream =:= maybe_stream ->
-                Req2 = cowboy_req:stream_body(stream_final_body(Status, Resp), fin, ReqRun),
-                {stop, Req2, State};
-            %% Non-stream OK (JSON)
-            {200, Response} ->
-                Req2 =
-                    cowboy_req:reply(
-                        200,
-                        #{<<"content-type">> => <<"application/json">>},
-                        jsx:encode(Response),
-                        Req1
-                    ),
-                {stop, Req2, State};
-            %% Non-stream error (JSON + real status)
-            {Status, Response} ->
-                Req2 =
-                    cowboy_req:reply(
-                        Status,
-                        #{<<"content-type">> => <<"application/json">>},
-                        jsx:encode(Response),
-                        Req1
-                    ),
-                {stop, Req2, State}
+        case stream_mode(Req1, Concurrency) of
+            {error, StreamReason} ->
+                stream_mode_error_reply(Req1, State, StreamReason);
+            StreamMode ->
+                case runtime_context_from_headers(Req1) of
+                    {error, ContextReason} ->
+                        runtime_context_error_reply(Req1, State, ContextReason);
+                    {ok, RuntimeContext} ->
+                        BaseContext = #{
+                            feature => Body,
+                            concurrency => Concurrency,
+                            stream => StreamMode,
+                            continue_on_fail => ContinueOnFail,
+                            color_formatter => ColorFormatter
+                        },
+                        Context = maps:merge(RuntimeContext, BaseContext),
+                        execute_feature_http(Context, State, Req1, StreamMode)
+                end
         end
     catch
-        throw:{invalid_runtime_context, ContextReason0} ->
-            runtime_context_error_reply(Req0, State, ContextReason0);
         Class:Reason:Stack ->
-            ?LOG_ERROR("from_html crashed ~p:~p ~p", [Class, Reason, Stack]),
-            %% Best effort: stream a 500 if we were streaming, else JSON 500
-            Concurrency0 =
-                try
-                    binary_to_integer(
-                        cowboy_req:header(<<"x-damage-concurrency">>, Req0, <<"1">>)
-                    )
-                catch
-                    _:_ -> 1
-                end,
-            Stream0 = stream_mode(Req0, Concurrency0),
-            case Stream0 of
-                maybe_stream ->
-                    ReqS0 =
-                        cowboy_req:stream_reply(
-                            500,
-                            #{<<"content-type">> => <<"text/plain">>},
-                            Req0
-                        ),
-                    Footer0 =
-                        iolist_to_binary([
-                            "\n---\n",
-                            "ERROR: 500 ",
-                            io_lib:format("~p:~p", [Class, Reason]),
-                            "\n"
-                        ]),
-                    Req3 = cowboy_req:stream_body(Footer0, fin, ReqS0),
-                    {stop, Req3, State};
-                _ ->
-                    BodyBin =
-                        jsx:encode(#{
-                            error => <<"internal_error">>,
-                            class => to_bin(Class),
-                            reason => to_bin(Reason)
-                        }),
-                    Req4 =
-                        cowboy_req:reply(
-                            500,
-                            #{<<"content-type">> => <<"application/json">>},
-                            BodyBin,
-                            Req0
-                        ),
-                    {stop, Req4, State}
-            end
+            ?LOG_ERROR("from_html request preparation crashed ~p:~p ~p", [
+                Class, Reason, Stack
+            ]),
+            reply_execution_crash(Req0, State, Class, Reason)
     end.
+
+%% Own the complete streaming lifecycle in one place. A caller must never pass
+%% a normal Cowboy request to get_stream_config/3 and expect the formatter to
+%% create the stream on its behalf.
+execute_feature_http(Context0, State, Req0, nostream) ->
+    Context = maps:put(stream, nostream, Context0),
+    try execute_bdd(Context, State, Req0) of
+        {Status, Response} ->
+            Req = cowboy_req:reply(
+                Status,
+                #{
+                    <<"content-type">> => <<"application/json">>,
+                    <<"cache-control">> => <<"no-cache">>
+                },
+                jsx:encode(Response),
+                Req0
+            ),
+            {stop, Req, State}
+    catch
+        Class:Reason:Stack ->
+            ?LOG_ERROR("non-stream execution crashed ~p:~p ~p", [Class, Reason, Stack]),
+            reply_execution_crash(Req0, State, Class, Reason)
+    end;
+execute_feature_http(Context0, State, Req0, maybe_stream) ->
+    Context = maps:put(stream, maybe_stream, Context0),
+    %% Once these headers are sent, the transport status is necessarily 200.
+    %% Any later execution error is represented by stream_final_body/2, whose
+    %% footer carries the real execution status.
+    ReqStream = cowboy_req:stream_reply(
+        200,
+        #{
+            <<"content-type">> => <<"text/plain; charset=utf-8">>,
+            <<"cache-control">> => <<"no-cache">>,
+            <<"x-damage-stream">> => <<"true">>,
+            <<"x-accel-buffering">> => <<"no">>
+
+        },
+        Req0
+    ),
+    try execute_bdd(Context, State, ReqStream) of
+        {Status, Response} ->
+            FinalBody = stream_final_body(Status, Response),
+            Req = cowboy_req:stream_body(FinalBody, fin, ReqStream),
+            {stop, Req, State}
+    catch
+        Class:Reason:Stack ->
+            ?LOG_ERROR("stream execution crashed ~p:~p ~p", [Class, Reason, Stack]),
+            Footer = stream_crash_footer(Class, Reason),
+            Req = cowboy_req:stream_body(Footer, fin, ReqStream),
+            {stop, Req, State}
+    end.
+
+stream_mode_error_reply(Req0, State, Reason) ->
+    Req = cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(#{
+            status => <<"notok">>,
+            error => <<"INVALID_STREAM_MODE">>,
+            message => Reason
+        }),
+        Req0
+    ),
+    {stop, Req, State}.
+
+reply_execution_crash(Req0, State, Class, Reason) ->
+    Req = cowboy_req:reply(
+        500,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(#{
+            status => <<"notok">>,
+            error => <<"internal_error">>,
+            class => to_bin(Class),
+            reason => to_bin(Reason)
+        }),
+        Req0
+    ),
+    {stop, Req, State}.
+
+stream_crash_footer(Class, Reason) ->
+    iolist_to_binary([
+        "\n---\n",
+        "status: notok\n",
+        "http_status: 500\n",
+        "error: internal_error\n",
+        "class: ", printable_stream_value(Class), "\n",
+        "reason: ", printable_stream_value(Reason), "\n\n"
+    ]).
+
 to_html(Req, #{action := version} = State) ->
     to_json(Req, State);
 to_html(Req, #{action := node_balances} = State) ->
