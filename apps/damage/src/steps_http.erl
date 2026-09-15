@@ -76,6 +76,7 @@
 -define(STEP_STORE_COOKIES,       ["I store cookies"]).
 -define(STEP_SET_HEADER,          ["I set", Header, "header to", Value]).
 -define(STEP_CLEAR_HEADER,          ["I clear header", Header]).
+-define(STEP_USE_CURRENT_DAMAGE_AUTH, ["I use the current DamageBDD authorization"]).
 -define(STEP_NO_VERIFY_SSL,       ["I do not want to verify server certificate"]).
 -define(STEP_GIVEN_BASIC_AUTH,    ["I set BasicAuth username to ", User, "and password to", Password]).
 -define(STEP_GIVEN_OAUTH_QUERY,   ["I use query OAuth with key=", Key, "and secret=", Secret]).
@@ -492,17 +493,34 @@ step(Config, Context, _, N, ?STEP_RESPONSE_PRINT_RESP, _) ->
 %% (Given/And/Then): Set/override a request header in context
 %%------------------------------------------------------------------------------
 step(_Config, Context, _Keyword, _N, ?STEP_SET_HEADER, _) ->
-    Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
-    Headers = maps:to_list(
-        maps:put(list_to_binary(string:to_lower(Header)), Value, Headers0)
-    ),
-    maps:put(headers, Headers, Context);
+    HeaderName = normalize_header_name(Header),
+    Context1 = store_request_header(Context, HeaderName, Value),
+    case HeaderName of
+        %% An explicit Authorization header always wins over the privileged
+        %% current-session mode. This is required for switching from Bearer
+        %% bootstrap auth to L402 auth in the same feature.
+        <<"authorization">> -> maps:remove(damagebdd_current_authorization, Context1);
+        _ -> Context1
+    end;
 step(_Config, Context, _Keyword, _N, ?STEP_CLEAR_HEADER, _) ->
-    Headers0 = maps:from_list(get_headers(Context, ?DEFAULT_HEADERS)),
-    Headers = maps:to_list(
-        maps:remove(list_to_binary(string:to_lower(Header)), Headers0)
-    ),
-    maps:put(headers, Headers, Context);
+    HeaderName = normalize_header_name(Header),
+    Context1 = clear_request_header(Context, HeaderName),
+    case HeaderName of
+        %% Clearing Authorization must also disable ephemeral current-session
+        %% auth; otherwise the next request would silently regain the Bearer.
+        <<"authorization">> -> maps:remove(damagebdd_current_authorization, Context1);
+        _ -> Context1
+    end;
+%%------------------------------------------------------------------------------
+%% Privileged auth bridge. The access token remains unavailable to Gherkin
+%% templates; this step only enables ephemeral Bearer injection for requests to
+%% the configured DamageBDD API origin. No credential is copied into Context
+%% headers, so reports/formatters do not gain another token-bearing field.
+%%------------------------------------------------------------------------------
+step(_Config, _Context, documentation, _N, ?STEP_USE_CURRENT_DAMAGE_AUTH, _) ->
+    "Use the authenticated DamageBDD session for same-origin HTTP requests only";
+step(_Config, Context, _Keyword, _N, ?STEP_USE_CURRENT_DAMAGE_AUTH, _) ->
+    enable_current_damagebdd_authorization(Context);
 %%------------------------------------------------------------------------------
 %% GIVEN: Store cookies from response (extract 'set-cookie' headers)
 %%------------------------------------------------------------------------------
@@ -844,12 +862,188 @@ step(
     end.
 
 get_headers(Context, DefaultHeaders) ->
-    maps:to_list(
-        maps:merge(
-            maps:from_list(DefaultHeaders),
-            maps:from_list(maps:get(headers, Context, []))
-        )
+    Headers0 = merged_request_headers(Context, DefaultHeaders),
+    maps:to_list(maybe_add_current_damagebdd_authorization(Context, Headers0)).
+
+merged_request_headers(Context, DefaultHeaders) ->
+    maps:merge(
+        headers_to_map(DefaultHeaders),
+        headers_to_map(maps:get(headers, Context, []))
     ).
+
+headers_to_map(Headers) when is_map(Headers) ->
+    maps:fold(
+        fun(Key, Value, Acc) -> maps:put(normalize_header_name(Key), Value, Acc) end,
+        #{},
+        Headers
+    );
+headers_to_map(Headers) when is_list(Headers) ->
+    lists:foldl(
+        fun
+            ({Key, Value}, Acc) -> maps:put(normalize_header_name(Key), Value, Acc);
+            (_Other, Acc) -> Acc
+        end,
+        #{},
+        Headers
+    );
+headers_to_map(_) ->
+    #{}.
+
+store_request_header(Context, HeaderName, Value) ->
+    Headers0 = merged_request_headers(Context, ?DEFAULT_HEADERS),
+    Headers = maps:to_list(maps:put(normalize_header_name(HeaderName), Value, Headers0)),
+    maps:put(headers, Headers, Context).
+
+clear_request_header(Context, HeaderName) ->
+    Headers0 = merged_request_headers(Context, ?DEFAULT_HEADERS),
+    Headers = maps:to_list(maps:remove(normalize_header_name(HeaderName), Headers0)),
+    maps:put(headers, Headers, Context).
+
+normalize_header_name(Name) when is_binary(Name) ->
+    list_to_binary(string:lowercase(binary_to_list(Name)));
+normalize_header_name(Name) when is_list(Name) ->
+    list_to_binary(string:lowercase(Name));
+normalize_header_name(Name) when is_atom(Name) ->
+    normalize_header_name(atom_to_binary(Name, utf8));
+normalize_header_name(Name) ->
+    normalize_header_name(iolist_to_binary(io_lib:format("~p", [Name]))).
+
+enable_current_damagebdd_authorization(Context) ->
+    case current_access_token(Context) of
+        {ok, _Token} ->
+            case {configured_damage_api_origin(), current_target_origin(Context)} of
+                {{ok, Origin}, {ok, Origin}} ->
+                    %% Replace any previously stored Authorization value, but
+                    %% keep the actual session token out of the headers map.
+                    Context1 = clear_request_header(Context, <<"authorization">>),
+                    %% Store only a non-secret capability marker. The actual
+                    %% token is injected by get_headers/2 at request time.
+                    maps:put(damagebdd_current_authorization, Origin, Context1);
+                {{ok, Expected}, {ok, Actual}} ->
+                    steps_utils:set_fail(
+                        Context,
+                        "Refusing current DamageBDD authorization for non-DamageBDD origin ~p (expected ~p)",
+                        [Actual, Expected]
+                    );
+                {{error, Reason}, _} ->
+                    steps_utils:set_fail(
+                        Context,
+                        "Cannot use current DamageBDD authorization: ~p",
+                        [Reason]
+                    );
+                {_, {error, Reason}} ->
+                    steps_utils:set_fail(
+                        Context,
+                        "Cannot use current DamageBDD authorization for current server: ~p",
+                        [Reason]
+                    )
+            end;
+        {error, Reason} ->
+            steps_utils:set_fail(
+                Context,
+                "Current DamageBDD authorization is unavailable: ~p",
+                [Reason]
+            )
+    end.
+
+maybe_add_current_damagebdd_authorization(Context, Headers) ->
+    %% Explicit auth (for example L402) takes precedence over the privileged
+    %% Bearer bridge. This also prevents a stale marker from overwriting a
+    %% caller-selected Authorization scheme.
+    case maps:is_key(<<"authorization">>, Headers) of
+        true ->
+            Headers;
+        false ->
+            maybe_add_current_damagebdd_authorization0(Context, Headers)
+    end.
+
+maybe_add_current_damagebdd_authorization0(Context, Headers) ->
+    case maps:get(damagebdd_current_authorization, Context, undefined) of
+        undefined ->
+            Headers;
+        EnabledOrigin ->
+            case {configured_damage_api_origin(), current_target_origin(Context)} of
+                {{ok, EnabledOrigin}, {ok, EnabledOrigin}} ->
+                    case current_access_token(Context) of
+                        {ok, Token} ->
+                            maps:put(
+                                <<"authorization">>,
+                                <<"Bearer ", Token/binary>>,
+                                Headers
+                            );
+                        {error, Reason} ->
+                            ?LOG_WARNING(
+                                "Current DamageBDD authorization unavailable at request time: ~p",
+                                [Reason]
+                            ),
+                            Headers
+                    end;
+                {{ok, Expected}, {ok, Actual}} ->
+                    %% Fail closed with respect to credential disclosure. The
+                    %% request may continue unauthenticated, but the Bearer is
+                    %% never sent after the target origin changes.
+                    ?LOG_WARNING(
+                        "Withholding current DamageBDD authorization from origin ~p expected=~p",
+                        [Actual, Expected]
+                    ),
+                    Headers;
+                _ ->
+                    Headers
+            end
+    end.
+
+current_access_token(Context) ->
+    Token0 = maps:get(access_token, Context, maps:get(<<"access_token">>, Context, undefined)),
+    case Token0 of
+        undefined -> {error, missing_access_token};
+        null -> {error, missing_access_token};
+        <<>> -> {error, missing_access_token};
+        "" -> {error, missing_access_token};
+        Token when is_binary(Token) -> {ok, Token};
+        Token when is_list(Token) -> {ok, unicode:characters_to_binary(Token)};
+        _ -> {error, invalid_access_token}
+    end.
+
+configured_damage_api_origin() ->
+    case application:get_env(damage, api_url) of
+        {ok, Url} -> normalize_http_origin(Url);
+        undefined -> {error, api_url_not_configured};
+        Other -> {error, {invalid_api_url_config, Other}}
+    end.
+
+current_target_origin(Context) ->
+    case maps:get(base_url, Context, undefined) of
+        undefined -> {error, base_url_not_set};
+        Url -> normalize_http_origin(Url)
+    end.
+
+normalize_http_origin(Url0) when is_binary(Url0) ->
+    normalize_http_origin(binary_to_list(Url0));
+normalize_http_origin(Url0) when is_list(Url0) ->
+    case uri_string:parse(Url0) of
+        #{scheme := Scheme0, host := Host0} = Parsed ->
+            Scheme = list_to_binary(string:lowercase(host_to_list(Scheme0))),
+            Host1 = string:lowercase(host_to_list(Host0)),
+            Host = list_to_binary(string:trim(Host1, trailing, ".")),
+            case default_origin_port(Scheme) of
+                {ok, DefaultPort} ->
+                    Port = maps:get(port, Parsed, DefaultPort),
+                    case is_integer(Port) andalso Port > 0 andalso Port =< 65535 of
+                        true -> {ok, {Scheme, Host, Port}};
+                        false -> {error, {invalid_origin_port, Port}}
+                    end;
+                {error, _} = Error ->
+                    Error
+            end;
+        _ ->
+            {error, {invalid_http_url, Url0}}
+    end;
+normalize_http_origin(Url0) ->
+    {error, {invalid_http_url, Url0}}.
+
+default_origin_port(<<"https">>) -> {ok, 443};
+default_origin_port(<<"http">>) -> {ok, 80};
+default_origin_port(Scheme) -> {error, {unsupported_origin_scheme, Scheme}}.
 
 response_to_list({StatusCode, Headers, Body}) ->
     [{status_code, StatusCode}, {headers, Headers}, {body, Body}].
