@@ -1,38 +1,95 @@
-Feature: Build damagebdd package for mint
+# Example based on the supplied build feature. Configure the shared NFT/index
+# before running, and serialize mint/oracle/publication for this NFT contract.
+Feature: Publish an installable Mint 22 / Ubuntu Noble amd64 release
   Scenario: Build package for mint
-    When I build an image from Dockerfile at "QmXsQVyTPVPgzHxinfiaj7Vzf9SrWVkkGNAHNfdm8RtJXS" as tag "damagebdd/mint22-builder:latest"
+    When I build an image from Dockerfile at "Qmae3bWqpfZ7ShivY3AChBrhobb6mwGmpNhQSRhkqVYXA7" as tag "damagebdd/mint22-builder:latest"
     Then I run docker image tagged "damagebdd/mint22-builder:latest"
     """
-    set -e
+    set -eu
+    cd /opt/workspace
 
-    git reset --hard
+    # Hold one lock across validation, clean, release, package and staging.
+    # The lock must be outside _build and must never be unlinked by cleanup.
+    command -v flock >/dev/null 2>&1 || {
+        echo "Builder requires flock (util-linux)" >&2
+        exit 1
+    }
+    LOCK_FILE=$(git rev-parse --git-path damage-build.lock)
+    exec 9>>"$LOCK_FILE"
+    flock -n 9 || {
+        echo "Another build holds the workspace lock; refusing to clean _build" >&2
+        exit 1
+    }
+    sh bin/check-beam-sources.sh
 
-    rm -f rebar.lock
+    # Preserve the dependency set committed with this checkout.
+    test -f rebar.lock
+    git diff --exit-code HEAD -- rebar.lock
+    GIT_SHA=$(git rev-parse HEAD)
     rm -rf _build
-
-    DEBUG=1
+    export DEBUG=1
 
     rebar3 as prod release
-    rebar3 pkg gen -t deb
+    git diff --exit-code HEAD -- rebar.lock
+    rebar3 as prod pkg gen -t deb
 
-    # copy debs to host
-    rm -f /out/*.deb
-    cp -a _build/pkg/deb/*.deb /out/
+    # Match the working Arch build: stage in the container-owned workspace.
+    # Do not write to the runner's /out bind mount.
+    NFT_DIR="$PWD/_build/pkg/deb/damage/nft"
+    mkdir -p "$NFT_DIR"
+    set -- _build/pkg/deb/*.deb
+    [ "$#" -eq 1 ] && [ -f "$1" ] || {
+        echo "Expected exactly one production DEB" >&2
+        exit 1
+    }
+    test "$(dpkg-deb -f "$1" Package)" = damage
+    test "$(dpkg-deb -f "$1" Architecture)" = amd64
+
+    # List/check the archive before publishing; never extract or execute it here.
+    LISTING=$(dpkg-deb --contents "$1")
+    printf '%s\n' "$LISTING" | awk '
+        $NF ~ /(^|\/)erts-[^/]+\/bin\/beam\.smp$/ {found=1}
+        END {exit !found}
+    ' || {
+        echo "Production DEB does not contain bundled ERTS" >&2
+        exit 1
+    }
+
+    install -m 0644 "$1" "$NFT_DIR/damage.deb"
+    printf '%s\n' "$GIT_SHA" > "$NFT_DIR/GIT_COMMIT"
+    git describe --tags --always --dirty > "$NFT_DIR/GIT_DESCRIBE"
+    (
+        cd "$NFT_DIR"
+        sha256sum damage.deb > SHA256SUMS
+        DIGEST=$(awk '{print $1}' SHA256SUMS)
+        cat > installation.json <<JSON
+    {
+      "schema_version": 1,
+      "platform": "ubuntu-noble-amd64",
+      "package_format": "deb",
+      "architecture": "amd64",
+      "asset_path": "damage.deb",
+      "sha256": "$DIGEST",
+      "git_sha": "$GIT_SHA"
+    }
+    JSON
+    )
+    find "$NFT_DIR" -maxdepth 1 -type f -printf '%f\n' | sort
     """
-    When I add the path "docker/out/" to IPFS and store the hash in "asset_hash"
+    Then I copy file "/opt/workspace/_build/pkg/deb/damage/nft/" from the container to ipfs and store the hash in "asset_hash"
 
-    When I set the JSON variable "meta" to:
+    When I set the JSON variable "meta" to
     """
     {
         "name": "DamageBDD Mint 22 Software Package",
-        "description": "This NFT represents a reproducible, CI-built DamageBDD package (Mint 22). The artifact was built from a clean Docker environment, packaged via rebar3, and cryptographically anchored to IPFS. This token serves as a verifiable supply-chain receipt proving exactly what was built, how it was built, and when it was minted.",
+        "description": "DamageBDD production package built by the configured Mint 22 pipeline. The NFT records the output and metadata CIDs. The publication index separately records the package path and SHA-256.",
         "project": "DamageBDD",
+        "platform": "ubuntu-noble-amd64",
+        "package_path": "damage.deb",
         "artifact_type": "debian_package",
         "build_system": "docker + rebar3",
         "build_profile": "prod",
         "ci_intent": "release",
-        "reproducible": true,
-        "verifiable": true,
         "network": "aeternity",
         "license": "Apache-2.0",
         "tags": [
@@ -52,5 +109,6 @@ Feature: Build damagebdd package for mint
     When I write JSON variable "meta" to file "meta.json"
     When I add the path "meta.json" to IPFS and store the hash in "meta_hash"
 
-    When I mint an NFT with metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
+    When I mint a build release NFT for platform "ubuntu-noble-amd64" with metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
+    When I publish the minted build release for installation using package file "docker/out/damage.deb" and IPFS path "damage.deb"
     And I store the mint result in "mint"

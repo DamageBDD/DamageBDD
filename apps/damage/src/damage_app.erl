@@ -46,6 +46,7 @@ get_trails() ->
             damage_webhooks,
             damage_static,
             damage_http,
+            damage_releases_http,
             damage_install_http,
             damage_http_unlock,
             damage_market,
@@ -79,9 +80,10 @@ get_trails() ->
             {"/.well-known/security.txt.asc", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt.asc"}},
             {"/token_tos", cowboy_static, {priv_file, damage, "static/token_tos.html"}},
-            %% Canonical cross-platform installer entry point. The implementation
-            %% lives in priv/scripts so there is one installer file to maintain.
-            {"/install", cowboy_static, {priv_file, damage, "scripts/install.sh"}},
+            {"/install", cowboy_static,
+                {priv_file, damage, "scripts/install.sh", [
+                    {mimetypes, {<<"text">>, <<"plain">>, []}}
+                ]}},
             {"/static/[...]", cowboy_static, {priv_dir, damage, "static/"}},
             {"/scripts/[...]", cowboy_static, {priv_dir, damage, "scripts/"}},
             {"/docs/[...]", cowboy_static, {priv_dir, damage, "docs/"}},

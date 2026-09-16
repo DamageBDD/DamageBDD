@@ -10,29 +10,17 @@ ARG OTP_VERSION=28.1
 WORKDIR /opt/workspace
 
 # --- System deps (Mint/Ubuntu repos) ---
-# Erlang and rebar3 from apt so we don't bring non-Mint bases.
+# Native build dependencies; OTP and rebar3 are installed separately below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 \
       libncurses-dev libssl-dev xsltproc fop unixodbc-dev \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
+      libgtk-4-dev libx11-dev \
       ruby ruby-dev rubygems \
-      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync wget\
-      pkg-config \
-      libgtk-4-dev \
-      libcairo2-dev \
-      libpango1.0-dev \
-      libglib2.0-dev \
-      libgdk-pixbuf-2.0-dev \
-      libharfbuzz-dev \
-      libgraphene-1.0-dev \
-    && gem install --no-document fpm 
-&& wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
-&& dpkg -i cuda-keyring_1.1-1_all.deb \
-apt update \
-apt-get install -y --no-install-recommends cuda-toolkit-12-4
-
-    #&& rm -rf /var/lib/apt/lists/*
+      rpm dpkg-dev gnupg libwxgtk3.2-dev rsync nvidia-cuda-toolkit \
+    && pkg-config --print-errors --exists gtk4 x11 \
+    && gem install --no-document fpm
 
 # --- kerl + OTP
 RUN curl -fsSL https://raw.githubusercontent.com/kerl/kerl/master/kerl -o /usr/local/bin/kerl \
@@ -113,6 +101,32 @@ RUN set -eu \
 #RUN mkdir -p /opt/app
 #COPY --chown=root:root /opt/workspace/_build/prod/rel/* /opt/app/
 
-EXPOSE 8080
-CMD ["/opt/damage/bin/damage", "foreground"]
+# --- Builder runtime identity ---
+# A host service user is not automatically present in a container. This
+# image must also work when the Docker runner explicitly uses --user damage.
+USER root
+RUN set -eu; \
+    if ! getent group damage >/dev/null 2>&1; then \
+        groupadd --system damage; \
+    fi; \
+    if ! getent passwd damage >/dev/null 2>&1; then \
+        useradd --system --no-log-init --gid damage \
+            --create-home --home-dir /home/damage --shell /bin/bash damage; \
+    fi; \
+    test "$(id -u damage)" -ne 0; \
+    install -d -o damage -g damage -m 0755 \
+        /home/damage /home/damage/.cache/rebar3 \
+        /home/damage/.kerl/archives /home/damage/.kerl/builds /out; \
+    chown -R damage:damage /home/damage /opt/workspace /out
 
+ENV HOME="/home/damage" \
+    XDG_CACHE_HOME="/home/damage/.cache" \
+    KERL_DOWNLOAD_DIR="/home/damage/.kerl/archives" \
+    KERL_BUILD_DIR="/home/damage/.kerl/builds"
+
+# /out ownership above applies only to the image directory. A host bind
+# mount replaces it; the runner must arrange permissions on that mount.
+WORKDIR /opt/workspace
+USER damage:damage
+# Builder image, not the installed Damage production service.
+CMD ["/bin/bash"]
