@@ -63,7 +63,6 @@ Environment (set on bash/sudo, NOT just on curl):
   DAMAGEBDD_IPFS_GATEWAY      HTTPS gateway base ending /ipfs
   DAMAGEBDD_RELEASE_NETWORK   Default: ae_mainnet
   DAMAGEBDD_RELEASE_CONTRACT  Optional expected NFT contract
-  DAMAGEBDD_RELEASE_INDEX     Optional expected index contract
   DAMAGEBDD_PACKAGE_URL, DAMAGEBDD_PACKAGE_SHA256
   DAMAGEBDD_TOR_SOURCE, DAMAGEBDD_HEALTH_URL (empty disables health probe)
 Legacy URL/digest pairs are also accepted: DAMAGEBDD_{DEB,ARCH,RPM,APK,TERMUX}_{URL,SHA256}.
@@ -371,7 +370,7 @@ verify_sha256() {
     log "Package SHA-256 verified."
 }
 
-# Exact, non-executable twelve-line manifest. No jq, eval, source, or repeated
+# Exact, non-executable eleven-line NFT-only v2 manifest. No jq, eval, source, or repeated
 # latest lookups (which could otherwise mix two different releases).
 parse_install_manifest() {
     local file="$1" line
@@ -380,30 +379,30 @@ parse_install_manifest() {
         die "Release manifest contains control characters."
     local -a fields=()
     while IFS= read -r line || [ -n "$line" ]; do fields+=("$line"); done < "$file"
-    [ "${#fields[@]}" -eq 12 ] || die "Invalid release manifest field count."
-    [ "${fields[0]}" = damagebdd-install-v1 ] || die "Unsupported release manifest schema."
+    [ "${#fields[@]}" -eq 11 ] || die "Invalid release manifest field count (expected NFT-only v2)."
+    [ "${fields[0]}" = damagebdd-install-v2 ] || die "Unsupported release manifest schema."
     [ "${fields[1]}" = "$EXPECTED_NETWORK" ] || die "Release network does not match."
-    valid_ct "${fields[2]}" && valid_ct "${fields[3]}" || die "Invalid release contract ID."
-    [[ "${fields[4]}" =~ ^(0|[1-9][0-9]{0,38})$ ]] || die "Invalid release token."
-    valid_version "${fields[5]}" && [ "${fields[5]}" != latest ] || die "Invalid release name."
-    [ "${fields[6]}" = "$RELEASE_PLATFORM" ] || die "Release platform does not match this host."
-    [[ -z "${fields[7]}" || "${fields[7]}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || die "Invalid Git SHA."
-    valid_cid "${fields[8]}" && valid_cid "${fields[9]}" || die "Invalid release CID syntax."
-    valid_asset_path "${fields[10]}" || die "Unsafe package path in release manifest."
-    [[ "${fields[11]}" =~ ^[0-9a-f]{64}$ ]] || die "Release has no valid package SHA-256."
+    valid_ct "${fields[2]}" || die "Invalid release contract ID."
+    [[ "${fields[3]}" =~ ^[1-9][0-9]{0,38}$ ]] || die "Invalid release token."
+    valid_version "${fields[4]}" && [ "${fields[4]}" != latest ] || die "Invalid release name."
+    [ "${fields[5]}" = "$RELEASE_PLATFORM" ] || die "Release platform does not match this host."
+    [[ -z "${fields[6]}" || "${fields[6]}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || die "Invalid Git SHA."
+    valid_cid "${fields[7]}" && valid_cid "${fields[8]}" || die "Invalid release CID syntax."
+    valid_asset_path "${fields[9]}" || die "Unsafe package path in release manifest."
+    [[ "${fields[10]}" =~ ^[0-9a-f]{64}$ ]] || die "Release has no valid package SHA-256."
     if [ "$RELEASE_VERSION" != latest ]; then
-        [ "${fields[5]}" = "$RELEASE_VERSION" ] || die "Server returned the wrong release version."
+        [ "${fields[4]}" = "$RELEASE_VERSION" ] || die "Server returned the wrong release version."
     fi
     if [ -n "${DAMAGEBDD_RELEASE_CONTRACT:-}" ]; then
-        [ "${fields[3]}" = "$DAMAGEBDD_RELEASE_CONTRACT" ] || die "NFT contract pin mismatch."
+        [ "${fields[2]}" = "$DAMAGEBDD_RELEASE_CONTRACT" ] || die "NFT contract pin mismatch."
     fi
-    if [ -n "${DAMAGEBDD_RELEASE_INDEX:-}" ]; then
-        [ "${fields[2]}" = "$DAMAGEBDD_RELEASE_INDEX" ] || die "Release index pin mismatch."
-    fi
-    ARTIFACT_SHA256="${fields[11]}"
-    ARTIFACT_URL="${IPFS_GATEWAY%/}/${fields[9]}"
-    [ -z "${fields[10]}" ] || ARTIFACT_URL="$ARTIFACT_URL/${fields[10]}"
-    log "Resolved release=${fields[5]} token=${fields[4]} nft=${fields[3]}"
+    [ -z "${DAMAGEBDD_RELEASE_INDEX:-}" ] ||
+        die "DAMAGEBDD_RELEASE_INDEX is obsolete; pin the NFT with DAMAGEBDD_RELEASE_CONTRACT."
+    ARTIFACT_SHA256="${fields[10]}"
+    ARTIFACT_URL="${IPFS_GATEWAY%/}/${fields[8]}"
+    [ -z "${fields[9]}" ] || ARTIFACT_URL="$ARTIFACT_URL/${fields[9]}"
+    log "Resolved release=${fields[4]} token=${fields[3]} nft=${fields[2]}"
+
 }
 
 

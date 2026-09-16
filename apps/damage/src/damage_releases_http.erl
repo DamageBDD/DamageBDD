@@ -23,9 +23,7 @@ init(Req0, Opts) ->
     Method = cowboy_req:method(Req0),
     {Status, Headers, Body} =
         case Method of
-            <<"GET">> ->
-                serve(Req0, Opts);
-            <<"HEAD">> ->
+            Allowed when Allowed =:= <<"GET">>; Allowed =:= <<"HEAD">> ->
                 serve(Req0, Opts);
             _ ->
                 {405, (json_headers())#{<<"allow">> => <<"GET, HEAD">>},
@@ -42,11 +40,8 @@ serve(Req, Opts) ->
                     latest ->
                         damage_release_nft:latest(Platform);
                     versioned ->
-                        Version = cowboy_req:binding(release, Req),
-                        case damage_release_nft:valid_release(Version) of
-                            true -> damage_release_nft:release(Version, Platform);
-                            false -> {error, invalid_release}
-                        end
+                        %% Domain validation is owned by damage_release_nft.
+                        damage_release_nft:release(cowboy_req:binding(release, Req), Platform)
                 end,
             response(Result, Format);
         {error, _} ->
@@ -90,6 +85,8 @@ response({ok, Release}, install) ->
         damage_release_nft:install_manifest(Release)};
 response({ok, Release}, json) ->
     {200, json_headers(), jsx:encode(Release#{ok => true})};
+response({error, installation_manifest_missing}, _) ->
+    error_response(422, <<"installation_manifest_missing">>);
 response({error, not_found}, _) ->
     error_response(404, <<"release_not_found">>);
 response({error, Invalid}, _) when

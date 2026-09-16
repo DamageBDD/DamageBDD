@@ -3,10 +3,10 @@
 %%%
 %%% Flow used by the existing build features:
 %%%   1. artifact -> IPFS CID
-%%%   2. metadata JSON -> IPFS CID
-%%%   3. mint one AEX-141 release NFT
-%%%   4. create a zero-fee native oracle query for "latest"
-%%%   5. answer that query from the contract-owned oracle
+%%%   2. prepare/check installation metadata, then metadata JSON -> IPFS CID
+%%%   3. mint one AEX-141 release NFT (the production publication point)
+%%%   4. optionally announce a platform snapshot through the native oracle
+%%%      (disabled by default; announcement failure never undoes a mint)
 %%%
 %%% The permanent release record lives in the NFT contract. Native aeternity
 %%% oracles are query/response, so each release creates a new immutable oracle
@@ -22,8 +22,11 @@
 -export([step/6, step_dry/6]).
 -export([test_oracle_query/2, test_oracle_query/3]).
 
--define(CONTRACT_FILE, "contracts/build_release_nft.aes").
--define(DEFAULT_ORACLE_TTL, 500000).
+-import(damage_release_nft, [contract_source/0, call_return/1,
+    option_value/1, release_answer/6]).
+-ifdef(TEST).
+-export([existing_release_matches/2, oracle_announcement_result/2, checked_mint_inputs/6]).
+-endif.
 -define(DEFAULT_QUERY_TTL, 100).
 -define(DEFAULT_RESPONSE_TTL, 50000).
 
@@ -59,11 +62,19 @@
     "and asset hash in",
     AssetVar
 ]).
+%% Recognize the retired syntax only to reject it in dry-run BEFORE a mint.
+%% Never guess a host path, hash different bytes, or silently mark it published.
 -define(STEP_PUBLISH_INSTALL, [
     "I publish the minted build release for installation using package file",
     PackageFile,
     "and IPFS path",
     AssetPath
+]).
+-define(STEP_PREPARE_INSTALL, [
+    "I prepare installation metadata in", MetaVar,
+    "for platform", Platform,
+    "from IPFS asset hash in", AssetVar,
+    "with manifest path", ManifestPath
 ]).
 -define(STEP_STORE_MINT, [
     "I store the mint result in", Variable
@@ -89,6 +100,9 @@ step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_MINT_EXPLICIT, _Body) ->
     Context;
 step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_PUBLISH_INSTALL, _Body) ->
     _ = {PackageFile, AssetPath},
+    obsolete_install_publication(Context);
+step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_PREPARE_INSTALL, _Body) ->
+    _ = {MetaVar, Platform, AssetVar, ManifestPath},
     Context;
 step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_STORE_MINT, _Body) ->
     _ = Variable,
@@ -134,76 +148,35 @@ step(_Config, Context, _Keyword, _LineNo, ?STEP_DEPLOY_CONTRACT, _Body) ->
 %% Platform and git SHA can be supplied in context/config; otherwise platform
 %% is "generic" and git SHA is empty.
 %% ------------------------------------------------------------------
-step(_Config, Context0, <<"When">>, _LineNo, ?STEP_MINT_LEGACY, _Body) ->
-    case release_inputs(Context0, MetaVar, AssetVar) of
-        {ok, MetaCid, AssetCid} ->
-            Platform = infer_platform(Context0),
-            ReleaseName = infer_release_name(Context0, AssetCid),
-            GitSha = infer_git_sha(Context0),
-            mint_release_and_pin(Context0, ReleaseName, Platform, GitSha, MetaCid, AssetCid);
-        {error, Why} ->
-            fail(Context0, Why)
-    end;
-%% Preferred concise step for build features. The asset CID remains the unique
-%% release id unless release_name/git_sha were already placed in Context.
-step(_Config, Context0, <<"When">>, _LineNo, ?STEP_MINT_PLATFORM, _Body) ->
-    case release_inputs(Context0, MetaVar, AssetVar) of
-        {ok, MetaCid, AssetCid} ->
-            ReleaseName = infer_release_name(Context0, AssetCid),
-            GitSha = infer_git_sha(Context0),
-            mint_release_and_pin(
-                Context0, ReleaseName, to_bin(Platform), GitSha, MetaCid, AssetCid
-            );
-        {error, Why} ->
-            fail(Context0, Why)
-    end;
-%% Explicit release/version + platform + commit form for release pipelines that
-%% already have those values in Gherkin/template context.
-step(_Config, Context0, <<"When">>, _LineNo, ?STEP_MINT_EXPLICIT, _Body) ->
-    case release_inputs(Context0, MetaVar, AssetVar) of
-        {ok, MetaCid, AssetCid} ->
-            mint_release_and_pin(
-                Context0,
-                to_bin(ReleaseName),
-                to_bin(Platform),
-                to_bin(GitSha),
-                MetaCid,
-                AssetCid
-            );
-        {error, Why} ->
-            fail(Context0, Why)
-    end;
-%% Separate promotion from minting: only a verified release with a known
-%% package byte checksum becomes installable. No build is promoted on a GET.
-step(Config, Context, <<"When">>, _LineNo, ?STEP_PUBLISH_INSTALL, _Body) ->
-    case
-        {
-            maps:get(build_release_mint_result, Context, undefined),
-            proplists:get_value(run_dir, Config)
-        }
-    of
-        {Mint, RunDir} when is_map(Mint), RunDir =/= undefined ->
-            case damage_release_nft:package_sha256(RunDir, PackageFile) of
-                {ok, Digest} ->
-                    case release_keypair(Context) of
-                        {ok, KeyPair} ->
-                            case damage_release_nft:publish(KeyPair, Mint, AssetPath, Digest) of
-                                {ok, Published} ->
-                                    Context#{
-                                        build_release_install_result => Published,
-                                        build_release_mint_result => maps:merge(Mint, Published)
-                                    };
-                                {error, Why} ->
-                                    fail(Context, {release_publication_failed, Why})
-                            end;
-                        {error, Why} ->
-                            fail(Context, Why)
+step(_Config, Context, <<"When">>, _LineNo, ?STEP_MINT_LEGACY, _Body) ->
+    mint_from_context(Context, MetaVar, AssetVar, #{});
+step(_Config, Context, <<"When">>, _LineNo, ?STEP_MINT_PLATFORM, _Body) ->
+    mint_from_context(Context, MetaVar, AssetVar, #{platform => to_bin(Platform)});
+step(_Config, Context, <<"When">>, _LineNo, ?STEP_MINT_EXPLICIT, _Body) ->
+    mint_from_context(Context, MetaVar, AssetVar,
+        #{release => to_bin(ReleaseName), platform => to_bin(Platform), git_sha => to_bin(GitSha)});
+%% Also reject the old operation if invoked without a preceding dry-run.
+step(_Config, Context, _Keyword, _LineNo, ?STEP_PUBLISH_INSTALL, _Body) ->
+    _ = {PackageFile, AssetPath},
+    obsolete_install_publication(Context);
+%% The package checksum/path must enter NFT-linked metadata BEFORE minting.
+%% The manifest and package are both read from the same verified IPFS artifact.
+step(_Config, Context, <<"When">>, _LineNo, ?STEP_PREPARE_INSTALL, _Body) ->
+    case {context_var(Context, MetaVar), context_var(Context, AssetVar)} of
+        {{ok, Meta}, {ok, Asset}} when is_map(Meta) ->
+            case damage_release_nft:prepare_metadata(Meta, Platform, Asset, ManifestPath) of
+                {ok, Prepared} ->
+                    case damage_release_nft:prepared_installation(Prepared) of
+                        {ok, Expected} ->
+                            Updated = put_context_var(Context, MetaVar, Prepared),
+                            Updated#{build_release_installation_expected => Expected,
+                                build_release_platform => maps:get(platform, Expected),
+                                git_sha => maps:get(git_sha, Expected)};
+                        {error, Why} -> fail(Context, {installation_metadata_failed, Why})
                     end;
-                {error, Why} ->
-                    fail(Context, {package_hash_failed, Why})
+                {error, Why} -> fail(Context, {installation_metadata_failed, Why})
             end;
-        _ ->
-            fail(Context, release_publication_requires_mint_and_run_dir)
+        _ -> fail(Context, installation_metadata_requires_metadata_and_asset)
     end;
 %% Preserve the exact existing build-feature idiom:
 %%   When I mint ...
@@ -216,9 +189,36 @@ step(_Config, Context, _Keyword, _LineNo, ?STEP_STORE_MINT, _Body) ->
             maps:put(Variable, MintResult, Context)
     end.
 
+%% Deterministic, dependency-free error: no filesystem, IPFS, key or chain access.
+obsolete_install_publication(Context) ->
+    Context#{fail =>
+        <<"Build release NFT failed: obsolete_install_publication_step. "
+          "Prepare installation metadata from the artifact CID BEFORE uploading "
+          "meta.json and minting. Remove the post-mint package-file publication "
+          "step; container-to-IPFS export does not populate run_dir/docker/out. "
+          "A previously successful mint is not rolled back.">>}.
+
 %% ------------------------------------------------------------------
 %% Release + oracle transaction flow.
 %% ------------------------------------------------------------------
+mint_from_context(Context, MetaVar, AssetVar, Overrides) ->
+    case release_inputs(Context, MetaVar, AssetVar) of
+        {ok, MetaCid, AssetCid} ->
+            %% Explicit fields must not evaluate an irrelevant fallback (for
+            %% example malformed legacy metadata when platform is explicit).
+            Release = mint_field(release, Overrides, fun() -> infer_release_name(Context, AssetCid) end),
+            Platform = mint_field(platform, Overrides, fun() -> infer_platform(Context) end),
+            GitSha = mint_field(git_sha, Overrides, fun() -> infer_git_sha(Context) end),
+            mint_release_and_pin(Context, Release, Platform, GitSha, MetaCid, AssetCid);
+        {error, Why} -> fail(Context, Why)
+    end.
+
+mint_field(Key, Fields, Fallback) ->
+    case maps:find(Key, Fields) of
+        {ok, Value} -> Value;
+        error -> Fallback()
+    end.
+
 mint_release_and_pin(Context0, ReleaseName0, Platform0, GitSha0, MetaCid0, AssetCid0) ->
     ReleaseName = to_bin(ReleaseName0),
     Platform = to_bin(Platform0),
@@ -226,7 +226,7 @@ mint_release_and_pin(Context0, ReleaseName0, Platform0, GitSha0, MetaCid0, Asset
     MetaCid = strip_ipfs_prefix(to_bin(MetaCid0)),
     AssetCid = strip_ipfs_prefix(to_bin(AssetCid0)),
 
-    case validate_release_fields(ReleaseName, Platform, MetaCid, AssetCid) of
+    case checked_mint_inputs(Context0, ReleaseName, Platform, GitSha, MetaCid, AssetCid) of
         ok ->
             case resolve_contract(Context0) of
                 {ok, ContractId} ->
@@ -249,7 +249,7 @@ mint_release_and_pin(Context0, ReleaseName0, Platform0, GitSha0, MetaCid0, Asset
                                 )
                             of
                                 {ok, TokenId, MintCall} ->
-                                    pin_global_latest(
+                                    finish_release(
                                         Context0,
                                         KeyPair,
                                         ContractId,
@@ -303,7 +303,16 @@ ensure_release_token(
                                 "Build release already minted contract=~p token_id=~p release=~p platform=~p; reusing",
                                 [ContractId, TokenId, ReleaseName, Platform]
                             ),
-                            {ok, TokenId, #{reused => true}};
+                            case damage_release_nft:token_release(KeyPair, ContractId, TokenId) of
+                                {ok, Existing} ->
+                                    Expected = #{release => ReleaseName, platform => Platform,
+                                        git_sha => GitSha, metadata_cid => MetaCid, asset_cid => AssetCid},
+                                    case existing_release_matches(Existing, Expected) of
+                                        true -> {ok, TokenId, #{reused => true}};
+                                        false -> {error, {existing_release_content_mismatch, TokenId}}
+                                    end;
+                                {error, Why} -> {error, {existing_release_read_failed, Why}}
+                            end;
                         none ->
                             mint_new_release(
                                 KeyPair,
@@ -369,7 +378,35 @@ mint_new_release(
             {error, {build_release_mint_failed, Error}}
     end.
 
-pin_global_latest(
+%% Minting already committed the latest NFT pointer. Discovery never depends
+%% on a mutable "latest" oracle question. Announcements are opt-in snapshots.
+finish_release(Context, KeyPair, Contract, Token, Release, Platform, GitSha, Meta, Asset, MintCall) ->
+    Mint = #{contract_id => Contract, token_id => Token, release => Release,
+        platform => Platform, git_sha => GitSha, metadata_cid => Meta, asset_cid => Asset,
+        mint_status => mint_status(MintCall), mint_tx_hash => tx_hash(MintCall),
+        oracle_status => disabled},
+    Base = Context#{build_release_mint_result => Mint},
+    case application:get_env(damage, build_release_announce_oracle, false) of
+        false -> Base;
+        true ->
+            Outcome = try pin_platform_latest(Base, KeyPair, Contract, Token, Release,
+                Platform, GitSha, Meta, Asset)
+            catch _:_ -> #{fail => oracle_announcement_failed} end,
+            oracle_announcement_result(Base, Outcome)
+    end.
+
+oracle_announcement_result(Base, #{fail := _}) ->
+    ?LOG_WARNING("Release NFT minted; optional oracle announcement failed. Do not remint."),
+    Mint = maps:get(build_release_mint_result, Base),
+    Base#{build_release_mint_result := Mint#{oracle_status => failed,
+        oracle_error => oracle_announcement_failed}};
+oracle_announcement_result(_Base, #{build_release_mint_result := Mint} = Result) ->
+    Result#{build_release_mint_result := Mint#{oracle_status => announced}}.
+
+existing_release_matches(Existing, Expected) ->
+    maps:with([release, platform, git_sha, metadata_cid, asset_cid], Existing) =:= Expected.
+
+pin_platform_latest(
     Context0,
     KeyPair,
     ContractId,
@@ -378,13 +415,14 @@ pin_global_latest(
     Platform,
     GitSha,
     MetaCid,
-    AssetCid,
-    MintCall
+    AssetCid
 ) ->
     QueryTtl = env_pos_int(build_release_oracle_query_ttl, ?DEFAULT_QUERY_TTL),
     ResponseTtl = env_pos_int(build_release_oracle_response_ttl, ?DEFAULT_RESPONSE_TTL),
-    %% Empty platform asks the contract to create the canonical "latest" query.
-    QueryArgs = ["", integer_to_list(QueryTtl), integer_to_list(ResponseTtl)],
+    %% Platform snapshots avoid cross-platform interference. The current
+    %% contract still resolves the token at response time; same-platform races
+    %% can therefore produce a failed OPTIONAL announcement, never a failed mint.
+    QueryArgs = [to_list(Platform), integer_to_list(QueryTtl), integer_to_list(ResponseTtl)],
     case
         damage_ae:contract_call_payfor_user(
             KeyPair, ContractId, contract_source(), "create_latest_query", QueryArgs
@@ -410,7 +448,6 @@ pin_global_latest(
                                         GitSha,
                                         MetaCid,
                                         AssetCid,
-                                        MintCall,
                                         QueryCall
                                     );
                                 {error, Why} ->
@@ -473,7 +510,6 @@ respond_latest_and_verify(
     GitSha,
     MetaCid,
     AssetCid,
-    MintCall,
     QueryCall
 ) ->
     case oracle_query_arg(QueryId) of
@@ -515,19 +551,9 @@ respond_latest_and_verify(
                                                     ),
                                                     case Answer =:= Expected of
                                                         true ->
-                                                            Result = #{
-                                                                contract_id => ContractId,
-                                                                token_id => TokenId,
-                                                                release => ReleaseName,
-                                                                platform => Platform,
-                                                                git_sha => GitSha,
-                                                                metadata_cid => MetaCid,
-                                                                asset_cid => AssetCid,
-                                                                mint_status => mint_status(
-                                                                    MintCall
-                                                                ),
-                                                                mint_tx_hash => tx_hash(MintCall),
-                                                                oracle_question => <<"latest">>,
+                                                            Mint = maps:get(build_release_mint_result, Context0),
+                                                            Result = Mint#{
+                                                                oracle_question => <<"latest:", Platform/binary>>,
                                                                 oracle_query_id => QueryId,
                                                                 oracle_query_tx_hash => tx_hash(
                                                                     QueryCall
@@ -692,20 +718,6 @@ oracle_query_arg(QueryId) ->
 %% ------------------------------------------------------------------
 %% Contract result decoding helpers.
 %% ------------------------------------------------------------------
-call_return(Map) when is_map(Map) ->
-    ReturnType = map_get_any(["return_type", <<"return_type">>, return_type], Map, undefined),
-    ReturnValue = map_get_any(["return_value", <<"return_value">>, return_value], Map, undefined),
-    case ReturnType of
-        "ok" -> {ok, ReturnValue};
-        <<"ok">> -> {ok, ReturnValue};
-        ok -> {ok, ReturnValue};
-        "revert" -> {error, {revert, ReturnValue}};
-        <<"revert">> -> {error, {revert, ReturnValue}};
-        revert -> {error, {revert, ReturnValue}};
-        undefined -> {error, {missing_return_type, Map}};
-        Other -> {error, {unexpected_return_type, Other, ReturnValue}}
-    end.
-
 normalize_query_id(<<"oq_", _/binary>> = Q) ->
     {ok, Q};
 normalize_query_id(Q) when is_list(Q) ->
@@ -736,38 +748,9 @@ encode_oracle_query_id(Bin) ->
         Class:Reason -> {error, {oracle_query_id_encode_failed, Class, Reason}}
     end.
 
-option_value({variant, [0, 1], 0, {}}) -> none;
-option_value({variant, [0, 1], 1, {Value}}) -> {ok, Value};
-option_value({variant, _Arities, 0, {}}) -> none;
-option_value({variant, _Arities, 1, {Value}}) -> {ok, Value};
-option_value({some, Value}) -> {ok, Value};
-option_value({Some, Value}) when Some =:= 'Some' -> {ok, Value};
-option_value(none) -> none;
-option_value('None') -> none;
-option_value(Value) when is_binary(Value); is_list(Value) -> {ok, Value};
-option_value(Other) -> {error, {unsupported_option_value, Other}}.
-
-release_answer(TokenId, ReleaseName, Platform, GitSha, MetaCid, AssetCid) ->
-    iolist_to_binary([
-        integer_to_binary(TokenId),
-        <<"|">>,
-        ReleaseName,
-        <<"|">>,
-        Platform,
-        <<"|">>,
-        GitSha,
-        <<"|ipfs://">>,
-        MetaCid,
-        <<"|ipfs://">>,
-        AssetCid
-    ]).
-
 %% ------------------------------------------------------------------
 %% Input/config helpers.
 %% ------------------------------------------------------------------
-contract_source() ->
-    damage_ae:contract_path(damage, ?CONTRACT_FILE).
-
 resolve_contract(Context) ->
     case
         map_get_any(
@@ -781,13 +764,13 @@ resolve_contract(Context) ->
         )
     of
         undefined ->
-            case context_account(Context) of
-                {ok, Account} ->
-                    %% Registry-first lazy resolution. This reuses the account's
-                    %% existing contract and deploys/registers only when absent.
-                    damage_contract_bootstrap:ensure_build_release_nft(Account);
-                {error, _} = Error ->
-                    Error
+            case application:get_env(damage, build_release_nft_contract) of
+                {ok, Configured} -> validate_contract_id(Configured);
+                undefined ->
+                    case context_account(Context) of
+                        {ok, Account} -> damage_contract_bootstrap:ensure_build_release_nft(Account);
+                        {error, _} = Error -> Error
+                    end
             end;
         Ct0 ->
             %% Explicit BDD override remains available for migration/recovery.
@@ -948,16 +931,44 @@ infer_git_sha(Context) ->
         Sha -> to_bin(Sha)
     end.
 
-validate_release_fields(<<>>, _Platform, _MetaCid, _AssetCid) ->
-    {error, release_name_required};
-validate_release_fields(_ReleaseName, <<>>, _MetaCid, _AssetCid) ->
-    {error, release_platform_required};
-validate_release_fields(_ReleaseName, _Platform, <<>>, _AssetCid) ->
-    {error, metadata_cid_required};
-validate_release_fields(_ReleaseName, _Platform, _MetaCid, <<>>) ->
-    {error, asset_cid_required};
-validate_release_fields(_ReleaseName, _Platform, _MetaCid, _AssetCid) ->
-    ok.
+checked_mint_inputs(Context, Release, Platform, GitSha, MetaCid, AssetCid) ->
+    %% This also rejects ':' release-key collisions and '|' wire delimiters.
+    case damage_release_nft:parse_release(release_answer(1, Release, Platform, GitSha, MetaCid, AssetCid)) of
+        {ok, Identity} ->
+            case is_boolean(application:get_env(damage, build_release_announce_oracle, false)) of
+                false -> {error, invalid_build_release_announce_oracle};
+                true -> verify_prepared_metadata(Context, Identity)
+            end;
+        {error, Why} -> {error, {invalid_release_fields, Why}}
+    end.
+
+verify_prepared_metadata(Context, Identity) ->
+    case maps:find(build_release_installation_expected, Context) of
+        error ->
+            case application:get_env(damage, build_release_require_installation, false) of
+                true -> {error, installation_metadata_not_prepared};
+                false -> ok;
+                _ -> {error, invalid_build_release_require_installation}
+            end;
+        {ok, Expected} when is_map(Expected) ->
+            %% Re-read the FINAL metadata CID. Uploading an older/different meta
+            %% variable after preparation must not silently publish a bad build.
+            case damage_release_nft:installation(Identity) of
+                {ok, Actual} ->
+                    case damage_release_nft:installation_identity(Actual) =:= Expected of
+                        true -> ok;
+                        false -> {error, prepared_installation_metadata_mismatch}
+                    end;
+                {error, Why} -> {error, {prepared_installation_metadata_invalid, Why}}
+            end;
+        _ -> {error, invalid_prepared_installation_metadata}
+    end.
+
+put_context_var(Context, Key, Value) ->
+    Bin = to_bin(Key),
+    Keys0 = [Key, Bin, to_list(Bin)],
+    Keys = case existing_atom(Bin) of {ok, Atom} -> [Atom | Keys0]; error -> Keys0 end,
+    lists:foldl(fun(K, Acc) -> maps:put(K, Value, Acc) end, Context, Keys).
 
 strip_ipfs_prefix(<<"ipfs://", Rest/binary>>) -> Rest;
 strip_ipfs_prefix(Bin) -> Bin.

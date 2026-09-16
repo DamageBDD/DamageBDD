@@ -20,6 +20,15 @@ Feature: Publish an installable Mint 22 / Ubuntu Noble amd64 release
         echo "Another build holds the workspace lock; refusing to clean _build" >&2
         exit 1
     }
+    if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+        git fetch --unshallow --tags
+    else
+        git fetch --tags
+    fi
+
+    git pull --ff-only
+    git describe --tags --always --dirty
+
     sh bin/check-beam-sources.sh
 
     # Preserve the dependency set committed with this checkout.
@@ -78,7 +87,7 @@ Feature: Publish an installable Mint 22 / Ubuntu Noble amd64 release
     """
     Then I copy file "/opt/workspace/_build/pkg/deb/damage/nft/" from the container to ipfs and store the hash in "asset_hash"
 
-    When I set the JSON variable "meta" to
+    When I set the JSON variable "meta"
     """
     {
         "name": "DamageBDD Mint 22 Software Package",
@@ -106,9 +115,10 @@ Feature: Publish an installable Mint 22 / Ubuntu Noble amd64 release
     """
 
     When I set JSON key "file_ipfs" to "{{asset_hash}}" in variable "meta"
+    When I prepare installation metadata in "meta" for platform "ubuntu-noble-amd64" from IPFS asset hash in "asset_hash" with manifest path "installation.json"
     When I write JSON variable "meta" to file "meta.json"
     When I add the path "meta.json" to IPFS and store the hash in "meta_hash"
-
-    When I mint a build release NFT for platform "ubuntu-noble-amd64" with metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
-    When I publish the minted build release for installation using package file "docker/out/damage.deb" and IPFS path "damage.deb"
+    # Use a NEW deterministic release key for the corrected metadata.
+    # The previous successful mint may already own the asset-CID default key.
+    When I mint build release "install-{{meta_hash}}" for platform "ubuntu-noble-amd64" with git SHA "{{git_sha}}" metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
     And I store the mint result in "mint"

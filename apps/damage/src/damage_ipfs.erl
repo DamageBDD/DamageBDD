@@ -18,6 +18,14 @@
     get/1, get/2,
     cat/1,
     cat_binary/1,
+    %% Bounded, local-daemon reads for integrity-sensitive artifacts.
+    cat_binary/2,
+    cat_json/2,
+    cat_fold/4,
+    sha256/2,
+    decode_json/2,
+    valid_cid/1,
+    valid_relative_path/1,
     ls/1,
     fetch_to/2,
     ensure_ipfs_asset/2,
@@ -28,6 +36,10 @@
     pin_status/1,
     status/0
 ]).
+
+-ifdef(TEST).
+-export([cat_fold_config/5, local_endpoint/1, cid_path/1]).
+-endif.
 
 %% Legacy poolboy worker entry retained for a staged migration. It no longer
 %% checks network availability in init. Remove that pool when installing sup.
@@ -195,3 +207,238 @@ hydrate_feature_from_ipfs(Json) when is_map(Json) ->
     end;
 hydrate_feature_from_ipfs(_) ->
     {error, invalid_feature_context}.
+
+
+%% ------------------------------------------------------------------
+%% Bounded reads from the configured validating Kubo daemon.
+%%
+%% These APIs are additive: cat/1, cat_binary/1, get/1,2 and the legacy
+%% client/fetcher/pool messages above keep their existing behaviour.
+%%
+%% One streaming implementation is shared by bounded binary reads, JSON
+%% reads and SHA-256 hashing. Do not implement sha256 via cat_binary/1:
+%% release packages can be gigabytes. Only the accumulator is retained.
+%%
+%% Options are a proplist:
+%%   {max_bytes, N}  (default 1 MiB; request N+1 to detect truncation)
+%%   {timeout, Ms}   (default shared request_timeout_ms, finite deadline)
+%%
+%% Read ipfs_api from damage_ipfs_config:load(), not a second release-only
+%% endpoint. The trusted reader deliberately requires numeric loopback,
+%% HTTP and the standard RPC path. Never use a public gateway, proxy or
+%% redirect here. Fail closed when the shared endpoint is not local.
+%% These bounded calls own their Gun stream; they do not add unsupported
+%% streaming messages to the existing client/fetcher implementations.
+%% ------------------------------------------------------------------
+-spec cat_binary(binary() | string(), proplists:proplist()) ->
+    {ok, binary()} | {error, term()}.
+cat_binary(Path, Options) ->
+    case cat_fold(Path, fun(Data, Acc) -> [Data | Acc] end, [], Options) of
+        {ok, Chunks} -> {ok, iolist_to_binary(lists:reverse(Chunks))};
+        Error -> Error
+    end.
+
+-spec cat_json(binary() | string(), proplists:proplist()) ->
+    {ok, term()} | {error, term()}.
+cat_json(Path, Options) ->
+    case cat_binary(Path, Options) of
+        {ok, Data} -> decode_json(Data, Options);
+        Error -> Error
+    end.
+
+%% Preserve binary JSON keys. Callers decide which JSON types/schema they
+%% accept; the IPFS layer must not know release-specific metadata fields.
+-spec decode_json(binary(), proplists:proplist()) ->
+    {ok, term()} | {error, term()}.
+decode_json(Data, Options) ->
+    ipfs_guard(fun() ->
+        Limit = read_limit(Options),
+        ipfs_require(is_binary(Data), invalid_ipfs_json),
+        ipfs_require(byte_size(Data) =< Limit, ipfs_object_too_large),
+        %% Reuse the backend's shared decoder selection (OTP json,
+        %% JSX, then Jiffy). Keep this facade's limits and error vocabulary;
+        %% no release-specific JSON rules belong in either IPFS module.
+        case damage_ipfs_backend:decode_json(Data) of
+            {ok, Json} -> {ok, Json};
+            {error, invalid_json} -> {error, invalid_ipfs_json};
+            {error, json_decoder_unavailable} = Error -> Error
+        end
+    end).
+
+-spec sha256(binary() | string(), proplists:proplist()) ->
+    {ok, binary()} | {error, term()}.
+sha256(Path, Options) ->
+    case cat_fold(Path, fun(Data, State) -> crypto:hash_update(State, Data) end, crypto:hash_init(sha256), Options) of
+        {ok, State} -> {ok, string:lowercase(binary:encode_hex(crypto:hash_final(State)))};
+        Error -> Error
+    end.
+
+-spec cat_fold(binary() | string(), fun((binary(), term()) -> term()), term(),
+    proplists:proplist()) -> {ok, term()} | {error, term()}.
+cat_fold(Path, Fold, Initial, Options) ->
+    ipfs_guard(fun() ->
+        Config = damage_ipfs_config:load(),
+        cat_fold_config(Path, Fold, Initial, Options, Config)
+    end).
+
+%% Explicit Config stays private in production. Tests use it with an ephemeral
+%% loopback HTTP server; no test-only endpoint override is exposed to requests.
+cat_fold_config(Path0, Fold, Initial, Options, Config) ->
+    ipfs_guard(fun() ->
+        ipfs_require(is_function(Fold, 2), invalid_ipfs_fold),
+        Limit = read_limit(Options),
+        Timeout = proplists:get_value(timeout, Options,
+            maps:get(request_timeout_ms, Config, 30000)),
+        ipfs_require(is_integer(Timeout) andalso Timeout > 0, invalid_ipfs_timeout),
+        Path = cid_path(Path0),
+        {Host, Port} = local_endpoint(Config),
+        Deadline = erlang:monotonic_time(millisecond) + Timeout,
+        Query = uri_string:compose_query([
+            {<<"arg">>, <<"/ipfs/", Path/binary>>},
+            {<<"length">>, integer_to_binary(Limit + 1)}
+        ]),
+        case gun:open(Host, Port, #{transport => tcp, protocols => [http],
+                connect_timeout => erlang:min(5000, Timeout), retry => 0}) of
+            {ok, Conn} ->
+                try
+                    case gun:await_up(Conn, remaining(Deadline)) of
+                        {ok, http} ->
+                            Ref = gun:post(Conn, <<"/api/v0/cat?", Query/binary>>,
+                                [{<<"accept">>, <<"application/octet-stream">>}],
+                                <<>>, #{flow => 1}),
+                            cat_response(Conn, Ref, Limit, Fold, Initial, Deadline);
+                        {error, timeout} -> {error, ipfs_timeout};
+                        _ -> {error, ipfs_unavailable}
+                    end
+                after
+                    close_stream(Conn)
+                end;
+            _ -> {error, ipfs_unavailable}
+        end
+    end).
+
+cat_response(Conn, Ref, Limit, Fold, Initial, Deadline) ->
+    case gun:await(Conn, Ref, remaining(Deadline)) of
+        {inform, _, _} -> cat_response(Conn, Ref, Limit, Fold, Initial, Deadline);
+        {response, nofin, 200, _} ->
+            cat_body(Conn, Ref, Limit, 0, Fold, Initial, Deadline);
+        {response, fin, 200, _} -> {ok, Initial};
+        {error, timeout} -> {error, ipfs_timeout};
+        _ -> {error, ipfs_read_failed}
+    end.
+
+cat_body(Conn, Ref, Limit, Size, Fold, Acc, Deadline) ->
+    case gun:await(Conn, Ref, remaining(Deadline)) of
+        {data, Fin, Data} when Size + byte_size(Data) =< Limit ->
+            Next = Fold(Data, Acc),
+            case Fin of
+                fin -> {ok, Next};
+                nofin ->
+                    gun:update_flow(Conn, Ref, 1),
+                    cat_body(Conn, Ref, Limit, Size + byte_size(Data), Fold, Next, Deadline)
+            end;
+        {data, _, _} -> {error, ipfs_object_too_large};
+        {trailers, []} -> {ok, Acc};
+        {error, timeout} -> {error, ipfs_timeout};
+        %% A streaming Kubo error can arrive after HTTP 200. Never turn a
+        %% partial body + error trailer into a successful JSON/hash result.
+        _ -> {error, ipfs_read_failed}
+    end.
+
+close_stream(Conn) ->
+    %% Wait for termination before flushing so late Gun messages cannot leak
+    %% into the caller's mailbox. This cleanup also runs on callback errors.
+    Monitor = erlang:monitor(process, Conn),
+    try gun:close(Conn) catch _:_ -> ok end,
+    receive
+        {'DOWN', Monitor, process, Conn, _} -> ok
+    after 1000 ->
+        erlang:demonitor(Monitor, [flush])
+    end,
+    gun:flush(Conn).
+
+remaining(Deadline) ->
+    case Deadline - erlang:monotonic_time(millisecond) of
+        Left when Left > 0 -> Left;
+        _ -> throw({ipfs_error, ipfs_timeout})
+    end.
+
+read_limit(Options) when is_list(Options) ->
+    %% Reject typos/duplicates instead of silently weakening a requested cap.
+    Keys = [Key || {Key, _} <- Options],
+    ipfs_require(length(Keys) =:= length(Options) andalso
+        length(lists:usort(Keys)) =:= length(Keys) andalso
+        lists:all(fun(K) -> K =:= max_bytes orelse K =:= timeout end, Keys),
+        invalid_ipfs_read_options),
+    Limit = proplists:get_value(max_bytes, Options, 1048576),
+    ipfs_require(is_integer(Limit) andalso Limit >= 0 andalso Limit < 16#7fffffffffffffff,
+        invalid_ipfs_limit),
+    Limit;
+read_limit(_) -> throw({ipfs_error, invalid_ipfs_read_options}).
+
+local_endpoint(Config) ->
+    URL = ipfs_text(maps:get(ipfs_api, Config)),
+    case uri_string:parse(URL) of
+        #{scheme := <<"http">>, host := Host} = Parsed ->
+            ipfs_require(not maps:is_key(userinfo, Parsed) andalso
+                not maps:is_key(query, Parsed) andalso not maps:is_key(fragment, Parsed),
+                invalid_ipfs_api),
+            ipfs_require(lists:member(maps:get(path, Parsed, <<>>),
+                [<<>>, <<"/">>, <<"/api/v0">>, <<"/api/v0/">>]), invalid_ipfs_api),
+            Address = case Host of
+                <<"127.0.0.1">> -> {127, 0, 0, 1};
+                <<"::1">> -> {0, 0, 0, 0, 0, 0, 0, 1};
+                _ -> throw({ipfs_error, ipfs_api_must_be_loopback})
+            end,
+            Port = maps:get(port, Parsed, 80),
+            ipfs_require(is_integer(Port) andalso Port > 0 andalso Port =< 65535,
+                invalid_ipfs_api_port),
+            {Address, Port};
+        _ -> throw({ipfs_error, invalid_ipfs_api})
+    end.
+
+%% Same immutable CID/path grammar used by release publication and discovery.
+%% Validation is syntactic; the configured Kubo daemon validates IPFS blocks.
+valid_cid(Value) when is_binary(Value) ->
+    re:run(Value, <<"\\A(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,127})\\z">>,
+        [{capture, none}]) =:= match;
+valid_cid(_) -> false.
+
+valid_relative_path(<<>>) -> true;
+valid_relative_path(Path) when is_binary(Path), byte_size(Path) =< 512 ->
+    lists:all(fun(Part) ->
+        Part =/= <<".">> andalso Part =/= <<"..">> andalso
+            re:run(Part, <<"\\A[A-Za-z0-9._+-]+\\z">>, [{capture, none}]) =:= match
+    end, binary:split(Path, <<"/">>, [global]));
+valid_relative_path(_) -> false.
+
+cid_path(Path0) ->
+    Path = case ipfs_text(Path0) of
+        <<"ipfs://", Rest/binary>> -> Rest;
+        <<"/ipfs/", Rest/binary>> -> Rest;
+        Other -> Other
+    end,
+    case binary:split(Path, <<"/">>) of
+        [Cid] -> ipfs_require(valid_cid(Cid), invalid_ipfs_path);
+        [Cid, Relative] ->
+            ipfs_require(valid_cid(Cid) andalso Relative =/= <<>> andalso
+                valid_relative_path(Relative), invalid_ipfs_path)
+    end,
+    Path.
+
+ipfs_text(Bin) when is_binary(Bin) -> Bin;
+ipfs_text(List) when is_list(List) ->
+    case unicode:characters_to_binary(List) of
+        Bin when is_binary(Bin) -> Bin;
+        _ -> throw({ipfs_error, invalid_ipfs_text})
+    end;
+ipfs_text(_) -> throw({ipfs_error, invalid_ipfs_text}).
+
+ipfs_require(true, _) -> ok;
+ipfs_require(false, Reason) -> throw({ipfs_error, Reason}).
+
+ipfs_guard(Fun) ->
+    try Fun() catch
+        throw:{ipfs_error, Reason} -> {error, Reason};
+        _:_ -> {error, ipfs_read_failed}
+    end.
