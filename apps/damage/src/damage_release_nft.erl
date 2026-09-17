@@ -236,12 +236,15 @@ prepare_metadata(Meta0, Platform0, Asset0, ManifestPath0) ->
         require(ManifestPath =/= <<>> andalso valid_asset_path(ManifestPath), invalid_asset_path),
         Timeout = configured_timeout(build_release_publish_timeout, 300000, 3600000),
         bounded(fun() ->
-            {ok, Manifest} = must(ipfs_json(<<Asset/binary, "/", ManifestPath/binary>>, Timeout)),
+            ManifestTarget = <<Asset/binary, "/", ManifestPath/binary>>,
+            {ok, Manifest} = must(preparation_ipfs_result(read_installation_manifest,
+                ManifestTarget, ipfs_json(ManifestTarget, Timeout))),
             {ok, Fields} = must(check_installation(Manifest, Platform)),
             Path = maps:get(asset_path, Fields),
             Target = case Path of <<>> -> Asset; _ -> <<Asset/binary, "/", Path/binary>> end,
-            {ok, Digest} = must(ipfs_result(damage_ipfs:sha256(Target,
-                [{max_bytes, ?MAX_PACKAGE_BYTES}, {timeout, Timeout}]))),
+            {ok, Digest} = must(preparation_ipfs_result(hash_installation_package,
+                Target, ipfs_result(damage_ipfs:sha256(Target,
+                    [{max_bytes, ?MAX_PACKAGE_BYTES}, {timeout, Timeout}])))),
             require(Digest =:= maps:get(sha256, Fields), release_package_hash_mismatch),
             GitSha = maps:get(<<"git_sha">>, Manifest, <<>>),
             require(is_binary(GitSha) andalso (GitSha =:= <<>> orelse
@@ -293,7 +296,26 @@ ipfs_result({error, invalid_ipfs_json}) -> {error, invalid_installation_metadata
 ipfs_result({error, ipfs_api_must_be_loopback}) -> {error, release_ipfs_api_must_be_loopback};
 ipfs_result({error, invalid_ipfs_api_port}) -> {error, invalid_ipfs_api_port};
 ipfs_result({error, ipfs_unavailable}) -> {error, release_ipfs_unavailable};
+ipfs_result({error, ipfs_timeout}) -> {error, release_ipfs_timeout};
+ipfs_result({error, ipfs_stream_error}) -> {error, release_ipfs_stream_error};
+ipfs_result({error, invalid_ipfs_api}) -> {error, invalid_ipfs_api};
+ipfs_result({error, {ipfs_http_status, Status}}) when
+    is_integer(Status), Status >= 100, Status =< 599
+-> {error, {release_ipfs_http_status, Status}};
+ipfs_result({error, {ipfs_exception, Class, Tag}}) when
+    (Class =:= error orelse Class =:= exit orelse Class =:= throw),
+    (Tag =:= undef orelse Tag =:= badarg orelse Tag =:= badmatch orelse
+     Tag =:= function_clause orelse Tag =:= case_clause orelse Tag =:= badmap orelse
+     Tag =:= system_limit orelse Tag =:= nif_not_loaded orelse Tag =:= noproc orelse
+     Tag =:= unexpected)
+-> {error, {release_ipfs_exception, Class, Tag}};
 ipfs_result({error, _}) -> {error, release_ipfs_read_failed}.
+
+%% Build reports get the failing stage and the already-validated public CID
+%% path. Discovery HTTP responses keep their existing generic error schema.
+preparation_ipfs_result(_Stage, _Path, {ok, _} = Result) -> Result;
+preparation_ipfs_result(Stage, Path, {error, Reason}) ->
+    {error, {installation_ipfs_failed, Stage, Path, Reason}}.
 
 hex_digest(Bytes) -> string:lowercase(binary:encode_hex(Bytes)).
 

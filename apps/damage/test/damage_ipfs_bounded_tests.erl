@@ -159,7 +159,7 @@ public_error_trailer_test() ->
             "X-Stream-Error: failed\r\n\r\n">>)
     end, fun(Config, _, _) ->
         with_runtime_config(Config, fun() ->
-            ?assertEqual({error, ipfs_read_failed}, damage_ipfs:sha256(
+            ?assertEqual({error, ipfs_stream_error}, damage_ipfs:sha256(
                 cid(), [{max_bytes, 4}, {timeout, 1000}]))
         end)
     end).
@@ -191,7 +191,8 @@ bounded_read_test() ->
         ?assertEqual(<<"test">>, iolist_to_binary(lists:reverse(Chunks))),
         receive {Tag, request, Peer, Req} ->
             ?assertNotEqual(nomatch, binary:match(Req, <<"POST /api/v0/cat?">>)),
-            ?assertNotEqual(nomatch, binary:match(Req, <<"length=5">>))
+            ?assertNotEqual(nomatch, binary:match(Req, <<"length=5">>)),
+            ?assertNotEqual(nomatch, binary:match(string:lowercase(Req), <<"te: trailers">>))
         after 1000 -> error(missing_request) end
     end).
 
@@ -228,7 +229,7 @@ error_trailer_test() ->
             "Trailer: X-Stream-Error\r\n\r\n4\r\ntest\r\n0\r\n",
             "X-Stream-Error: failed\r\n\r\n">>)
     end, fun(Config, _, _) ->
-        ?assertEqual({error, ipfs_read_failed}, damage_ipfs:cat_fold_config(
+        ?assertEqual({error, ipfs_stream_error}, damage_ipfs:cat_fold_config(
             cid(), fun collect/2, [], [{max_bytes, 4}], Config))
     end).
 
@@ -245,7 +246,7 @@ redirect_is_not_followed_test() ->
         gen_tcp:send(Sock, <<"HTTP/1.1 302 Found\r\nContent-Length: 0\r\n",
             "Location: https://example.invalid/\r\n\r\n">>)
     end, fun(Config, _, _) ->
-        ?assertEqual({error, ipfs_read_failed}, damage_ipfs:cat_fold_config(
+        ?assertEqual({error, {ipfs_http_status, 302}}, damage_ipfs:cat_fold_config(
             cid(), fun collect/2, [], [], Config))
     end).
 
@@ -344,7 +345,7 @@ callback_error_test() ->
     with_peer(fun(Sock) ->
         gen_tcp:send(Sock, <<"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx">>)
     end, fun(Config, _, _) ->
-        ?assertEqual({error, ipfs_read_failed}, damage_ipfs:cat_fold_config(
+        ?assertEqual({error, {ipfs_exception, error, unexpected}}, damage_ipfs:cat_fold_config(
             cid(), fun(_, _) -> error(callback_failed) end, [], [], Config))
     end).
 
@@ -443,3 +444,28 @@ request_headers(Sock, Acc) ->
             end;
         _ -> {ok, Acc}
     end.
+
+%% Keep error bodies out of callers/report contexts, even when they contain
+%% secrets or have invalid JSON. HTTP 500 is not assumed to mean missing CID.
+http_error_status_test_() ->
+    [{integer_to_list(Status), fun() ->
+        with_peer(fun(Sock) ->
+            Body = <<"PRIVATE-BACKEND-DIAGNOSTIC">>,
+            gen_tcp:send(Sock, [<<"HTTP/1.1 ">>, integer_to_binary(Status),
+                <<" Error\r\nContent-Length: ">>, integer_to_binary(byte_size(Body)),
+                <<"\r\n\r\n">>, Body])
+        end, fun(Config, _, _) ->
+            ?assertEqual({error, {ipfs_http_status, Status}},
+                damage_ipfs:cat_fold_config(cid(), fun collect/2, [], [], Config))
+        end)
+    end} || Status <- [400, 403, 404, 500]].
+
+exception_arguments_are_not_returned_test() ->
+    with_peer(fun(Sock) ->
+        gen_tcp:send(Sock, <<"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx">>)
+    end, fun(Config, _, _) ->
+        ?assertEqual({error, {ipfs_exception, error, badarg}},
+            damage_ipfs:cat_fold_config(cid(),
+                fun(_, _) -> error({badarg, <<"PRIVATE-CALLBACK-STATE">>}) end,
+                [], [], Config))
+    end).

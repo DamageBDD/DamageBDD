@@ -322,7 +322,8 @@ cat_stream(Path, Host, Port, Limit, Timeout, Fold, Initial, Deadline, Guard, Tag
                 case gun:await_up(Conn, remaining(Deadline)) of
                     {ok, http} ->
                         Ref = gun:post(Conn, <<"/api/v0/cat?", Query/binary>>,
-                            [{<<"accept">>, <<"application/octet-stream">>}],
+                            [{<<"accept">>, <<"application/octet-stream">>},
+                             {<<"te">>, <<"trailers">>}],
                             <<>>, #{flow => 1}),
                         cat_response(Conn, Ref, Limit, Fold, Initial, Deadline);
                     {error, timeout} -> {error, ipfs_timeout};
@@ -409,6 +410,10 @@ cat_response(Conn, Ref, Limit, Fold, Initial, Deadline) ->
         {response, nofin, 200, _} ->
             cat_body(Conn, Ref, Limit, 0, Fold, Initial, Deadline);
         {response, fin, 200, _} -> {ok, Initial};
+        %% Kubo uses 500 for RPC errors, including unresolved object paths.
+        %% Keep the HTTP status, but never return a raw error body/header.
+        {response, _, Status, _} when is_integer(Status), Status >= 100, Status =< 599 ->
+            {error, {ipfs_http_status, Status}};
         {error, timeout} -> {error, ipfs_timeout};
         _ -> {error, ipfs_read_failed}
     end.
@@ -426,6 +431,9 @@ cat_body(Conn, Ref, Limit, Size, Fold, Acc, Deadline) ->
             end;
         {data, _, _} -> {error, ipfs_object_too_large};
         {trailers, []} -> {ok, Acc};
+        %% Preserve the existing fail-closed policy for nonempty trailers.
+        %% Do not include their values (potentially sensitive) in reports.
+        {trailers, _} -> {error, ipfs_stream_error};
         {error, timeout} -> {error, ipfs_timeout};
         %% A streaming Kubo error can arrive after HTTP 200. Never turn a
         %% partial body + error trailer into a successful JSON/hash result.
@@ -527,5 +535,15 @@ ipfs_require(false, Reason) -> throw({ipfs_error, Reason}).
 ipfs_guard(Fun) ->
     try Fun() catch
         throw:{ipfs_error, Reason} -> {error, Reason};
-        _:_ -> {error, ipfs_read_failed}
+        Class:Reason -> {error, {ipfs_exception, Class, ipfs_exception_tag(Reason)}}
     end.
+
+%% Exception terms may contain request data, configuration or callback state.
+%% Preserve only a fixed classification, never arguments or a stacktrace.
+ipfs_exception_tag({Tag, _}) -> ipfs_exception_tag(Tag);
+ipfs_exception_tag(Tag) when
+    Tag =:= undef; Tag =:= badarg; Tag =:= badmatch;
+    Tag =:= function_clause; Tag =:= case_clause; Tag =:= badmap;
+    Tag =:= system_limit; Tag =:= nif_not_loaded; Tag =:= noproc
+-> Tag;
+ipfs_exception_tag(_) -> unexpected.

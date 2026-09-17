@@ -14,6 +14,10 @@
 
 -export([step/6]).
 
+-ifdef(TEST).
+-export([ipfs_add_path_and_get_hash/2, pick_ipfs_root_hash/2]).
+-endif.
+
 %% erlfmt:ignore-begin
 
 %% ===== Phrase Macros =========================================================
@@ -1084,13 +1088,17 @@ copy_file_from_container_to_ipfs(Config, Context0, Path0, Variable0) ->
     %% variable-producing steps store the captured variable name directly.
     Variable = Variable0,
 
-    DockerDir = docker_workdir(Config),
+    %% run_docker/3 executes in DockerDir. An absolute destination prevents a
+    %% relative run_dir from being interpreted a second time by `docker cp`.
+    DockerDir = filename:absname(docker_workdir(Config)),
     StageRoot = filename:join(DockerDir, "ipfs_stage"),
     ok = ensure_dir(StageRoot),
 
-    %% Leave the destination itself absent. `docker cp` will create this exact
-    %% path for either a source file or source directory, avoiding an extra
-    %% random wrapper directory around the artifact.
+    %% Leave the destination itself absent. `docker cp` creates this exact
+    %% path for a file or directory; directory contents are directly beneath
+    %% StageDir, without the container's parent directories. Do not precreate
+    %% StageDir: that would nest a directory source beneath its basename.
+    %% The IPFS result must select StageDir itself, not any imported ancestors.
     StageDir = filename:join(
         StageRoot,
         binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(12)))
@@ -1165,60 +1173,102 @@ maybe_remove_stage_path(StagePath) ->
     end.
 
 ipfs_add_path_and_get_hash(Path0) ->
-    Path = normalize_filename(Path0),
-    assert_upload_target(Path),
+    ipfs_add_path_and_get_hash(Path0, fun damage_ipfs:add/1).
 
+%% The injected add function keeps root-selection regression tests offline;
+%% production always reuses damage_ipfs:add/1 and its configured backend.
+ipfs_add_path_and_get_hash(Path0, Add) when is_function(Add, 1) ->
+    Path = filename:absname(normalize_filename(Path0)),
     AddResult =
-        case filelib:is_dir(binary_to_list(Path)) of
-            true ->
-                damage_ipfs:add({directory, Path});
-            false ->
-                damage_ipfs:add({file, Path})
+        case assert_upload_target(Path) of
+            directory ->
+                Add({directory, Path});
+            regular ->
+                Add({file, Path})
         end,
 
     case AddResult of
         {ok, HashList} ->
-            RootName = filename:basename(binary_to_list(Path)),
-            pick_ipfs_root_hash(HashList, RootName);
+            %% Directory multipart names can retain the absolute staging path.
+            %% Select its entry, not the final synthetic ancestor/wrapper root.
+            Hash = pick_ipfs_root_hash(HashList, Path),
+            ?LOG_INFO("Docker artifact IPFS root path=~p cid=~p", [Path, Hash]),
+            Hash;
         Error ->
             erlang:error({ipfs_add_failed, Path, Error})
     end.
 
-pick_ipfs_root_hash(HashList, RootName0) ->
-    RootName =
-        case RootName0 of
-            B when is_binary(B) -> B;
-            L when is_list(L) -> list_to_binary(L)
-        end,
-
-    case
-        [
-            Cid
-         || #{<<"Name">> := Name, <<"Hash">> := Cid} <- HashList,
-            to_binary(Name) =:= RootName
-        ]
-    of
-        [Cid0 | _] ->
-            Cid0;
+pick_ipfs_root_hash(HashList, Path0) when is_list(HashList) ->
+    Path = filename:absname(normalize_filename(Path0)),
+    FullName = ipfs_add_name(Path),
+    case FullName of
+        invalid -> erlang:error({invalid_ipfs_upload_path, Path});
+        _ -> ok
+    end,
+    %% The legacy directory importer may return /var/lib/.../stage or
+    %% var/lib/.../stage. Other importers return only stage. These are exact
+    %% identities, not suffix matches: child/stage is NOT the requested root.
+    RootNames = [
+        N
+     || N <- lists:usort([FullName, ipfs_add_name(filename:basename(Path))]),
+        N =/= invalid
+    ],
+    Matches = lists:usort([
+        Cid
+     || #{<<"Name">> := Name, <<"Hash">> := Cid} <- HashList,
+        is_binary(Cid),
+        Cid =/= <<>>,
+        lists:member(ipfs_add_name(Name), RootNames)
+    ]),
+    case Matches of
+        [Cid] ->
+            Cid;
         [] ->
-            %% fallback: for file adds or some directory adds, root CID is last
-            case lists:reverse(HashList) of
-                [#{<<"Hash">> := Cid0} | _] ->
-                    Cid0;
-                _ ->
-                    erlang:error({ipfs_add_no_hash_returned, HashList})
-            end
-    end.
+            %% Never guess the last hash: it may describe /, /var, /var/lib,
+            %% a wrapper, or a child, leaving installation.json unreachable.
+            erlang:error({ipfs_add_root_not_found, Path});
+        _ ->
+            erlang:error({ipfs_add_ambiguous_root, Path})
+    end;
+pick_ipfs_root_hash(_Other, Path0) ->
+    erlang:error({invalid_ipfs_add_result, normalize_filename(Path0)}).
+
+%% Compare POSIX multipart names without changing the VM-wide working
+%% directory. Ignore only separators and harmless '.' components; do not
+%% resolve '..', URI-decode names, or strip arbitrary parent components.
+ipfs_add_name(Name0) when is_list(Name0) ->
+    try unicode:characters_to_binary(Name0) of
+        Name when is_binary(Name) -> ipfs_add_name(Name);
+        _ -> invalid
+    catch
+        error:badarg -> invalid
+    end;
+ipfs_add_name(Name) when is_binary(Name) ->
+    Parts = [P || P <- binary:split(Name, <<"/">>, [global]), P =/= <<>>, P =/= <<".">>],
+    case
+        Parts =:= [] orelse
+            lists:member(<<"..">>, Parts) orelse
+            binary:match(Name, <<0>>) =/= nomatch
+    of
+        true -> invalid;
+        false -> Parts
+    end;
+ipfs_add_name(_) ->
+    invalid.
 
 assert_upload_target(Path0) ->
     Path = normalize_filename(Path0),
-    case file:read_file_info(Path) of
-        {ok, Info} ->
+    %% A copied symlink is not an artifact root. Do not follow it into the
+    %% host filesystem when deciding what to upload.
+    case file:read_link_info(Path) of
+        {ok, #file_info{type = Type} = Info} when Type =:= directory; Type =:= regular ->
             ?LOG_INFO(
                 "IPFS upload target path=~p type=~p size=~p",
                 [Path, Info#file_info.type, Info#file_info.size]
             ),
-            ok;
+            Type;
+        {ok, #file_info{type = Type}} ->
+            erlang:error({invalid_ipfs_upload_target_type, Path, Type});
         Error ->
             ?LOG_ERROR("IPFS upload target missing path=~p error=~p", [Path, Error]),
             erlang:error({ipfs_upload_target_missing, Path, Error})
