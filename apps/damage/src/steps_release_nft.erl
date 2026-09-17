@@ -79,6 +79,14 @@
 -define(STEP_STORE_MINT, [
     "I store the mint result in", Variable
 ]).
+-define(STEP_POST_NOSTR, [
+    "I post the minted build release NFT to nostr"
+]).
+-define(STEP_POST_NOSTR_SALE, [
+    "I post the minted build release NFT to nostr for",
+    PriceDamage,
+    "DAMAGE with Lightning purchase"
+]).
 
 %% ------------------------------------------------------------------
 %% Dry-run clauses: advertise only the steps implemented by this module.
@@ -106,6 +114,11 @@ step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_PREPARE_INSTALL, _Body) ->
     Context;
 step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_STORE_MINT, _Body) ->
     _ = Variable,
+    Context;
+step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR, _Body) ->
+    Context;
+step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR_SALE, _Body) ->
+    _ = PriceDamage,
     Context.
 
 %% ------------------------------------------------------------------
@@ -187,7 +200,501 @@ step(_Config, Context, _Keyword, _LineNo, ?STEP_STORE_MINT, _Body) ->
             fail(Context, build_release_mint_not_available);
         MintResult ->
             maps:put(Variable, MintResult, Context)
+    end;
+step(Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR, Body) ->
+    post_minted_release_nft(Config, Context, Body, none);
+step(Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR_SALE, Body) ->
+    case parse_pos_number(PriceDamage) of
+        {ok, DamageAmount} ->
+            post_minted_release_nft(
+                Config,
+                Context,
+                Body,
+                #{damage_amount => DamageAmount, damage_text => to_bin(PriceDamage)}
+            );
+        {error, Why} ->
+            fail(Context, {invalid_build_release_nft_price, PriceDamage, Why})
     end.
+
+%% ------------------------------------------------------------------
+%% Nostr release card + optional Lightning sale offer.
+%%
+%% The mint is already final before this step runs. Publication is deliberately
+%% post-mint so an IPFS/Nostr/Lightning outage can never make the build release
+%% appear unminted or cause a retry to mint a second token.
+%% ------------------------------------------------------------------
+post_minted_release_nft(Config, Context0, Body, Sale0) ->
+    case maps:get(build_release_mint_result, Context0, undefined) of
+        Mint when is_map(Mint) ->
+            Opts = normalize_post_options(Body),
+            case build_sale_quote(Sale0, Opts) of
+                {ok, Quote} ->
+                    case generate_release_card(Config, Mint, Quote, Opts) of
+                        {ok, Image} ->
+                            case maybe_create_sale_invoice(Mint, Quote, Opts) of
+                                {ok, Purchase} ->
+                                    Listing = #{
+                                        mint => Mint,
+                                        image => Image,
+                                        quote => Quote,
+                                        purchase => Purchase
+                                    },
+                                    Context1 = Context0#{build_release_nft_listing => Listing},
+                                    publish_release_listing(Context1, Mint, Image, Quote, Purchase, Opts);
+                                {error, Why} ->
+                                    fail(Context0, {lightning_purchase_offer_failed, Why})
+                            end;
+                        {error, Why} ->
+                            fail(Context0, {release_nft_image_failed, Why})
+                    end;
+                {error, Why} ->
+                    fail(Context0, {release_nft_spot_quote_failed, Why})
+            end;
+        _ ->
+            fail(Context0, build_release_mint_not_available)
+    end.
+
+build_sale_quote(none, _Opts) ->
+    {ok, none};
+build_sale_quote(#{damage_amount := DamageAmount, damage_text := DamageText}, Opts) ->
+    MaxAgeMs = option_pos_int(
+        Opts,
+        [<<"price_max_age_ms">>, price_max_age_ms, "price_max_age_ms"],
+        env_pos_int(build_release_nft_price_max_age_ms, 20 * 60 * 1000)
+    ),
+    try price_feed:damage_to_sats_quote(DamageAmount, MaxAgeMs) of
+        {ok, Quote} when is_map(Quote) ->
+            {ok, Quote#{damage_text => DamageText}};
+        {error, _} = Error ->
+            Error;
+        Other ->
+            {error, {unexpected_price_quote_response, Other}}
+    catch
+        exit:Reason -> {error, {price_feed_unavailable, Reason}};
+        Class:Reason -> {error, {price_feed_failed, Class, Reason}}
+    end.
+
+maybe_create_sale_invoice(_Mint, none, _Opts) ->
+    {ok, none};
+maybe_create_sale_invoice(Mint, Quote, Opts) ->
+    Expiry = option_pos_int(
+        Opts,
+        [<<"invoice_expiry_seconds">>, invoice_expiry_seconds, "invoice_expiry_seconds"],
+        env_pos_int(build_release_nft_invoice_expiry_seconds, 15 * 60)
+    ),
+    Token = maps:get(token_id, Mint),
+    TokenBin = to_bin(Token),
+    Release = maps:get(release, Mint, <<>>),
+    Platform = maps:get(platform, Mint, <<>>),
+    Sats = maps:get(sats, Quote),
+    Nonce = binary:encode_hex(crypto:strong_rand_bytes(6)),
+    Label = <<"build_nft:", TokenBin/binary, ":", Nonce/binary>>,
+    Description = iolist_to_binary([
+        <<"DamageBDD build release NFT #">>, TokenBin,
+        <<" ">>, short_text(Release, 48), <<" / ">>, short_text(Platform, 32)
+    ]),
+    try damage_cln:create_invoice(Sats * 1000, Description, Expiry, Label) of
+        Invoice when is_map(Invoice) ->
+            case map_get_any([bolt11, <<"bolt11">>, "bolt11"], Invoice, undefined) of
+                undefined ->
+                    {error, {invoice_missing_bolt11, compact_map(Invoice)}};
+                Bolt110 ->
+                    Bolt11 = to_bin(Bolt110),
+                    {ok, #{
+                        bolt11 => Bolt11,
+                        lightning_uri => <<"lightning:", Bolt11/binary>>,
+                        payment_hash => map_get_any(
+                            [payment_hash, <<"payment_hash">>, "payment_hash"],
+                            Invoice,
+                            undefined
+                        ),
+                        expires_at => map_get_any(
+                            [expires_at, <<"expires_at">>, "expires_at"],
+                            Invoice,
+                            undefined
+                        ),
+                        expiry_seconds => Expiry,
+                        label => Label,
+                        sats => Sats
+                    }}
+            end;
+        Other ->
+            {error, {unexpected_invoice_response, Other}}
+    catch
+        exit:Reason -> {error, {invoice_service_unavailable, Reason}};
+        Class:Reason -> {error, {invoice_create_failed, Class, Reason}}
+    end.
+
+generate_release_card(Config, Mint, Quote, Opts) ->
+    case lists:keyfind(run_dir, 1, Config) of
+        {run_dir, RunDir0} ->
+            RunDir = to_list(RunDir0),
+            Token = maps:get(token_id, Mint),
+            Name = lists:flatten(io_lib:format("build-release-nft-~B.svg", [Token])),
+            Path = filename:join([RunDir, "nft", Name]),
+            Svg = build_release_card_svg(Mint, Quote),
+            case filelib:ensure_dir(Path) of
+                ok ->
+                    case file:write_file(Path, Svg, [binary]) of
+                        ok ->
+                            case safe_ipfs_add_file(Path) of
+                                {ok, AddResult} ->
+                                    case ipfs_file_cid(AddResult, Name) of
+                                        {ok, Cid} ->
+                                            Gateway = image_gateway(Opts),
+                                            Url = append_gateway_cid(Gateway, Cid),
+                                            {ok, #{
+                                                cid => Cid,
+                                                uri => <<"ipfs://", Cid/binary>>,
+                                                url => Url,
+                                                mime => <<"image/svg+xml">>,
+                                                dimensions => <<"1200x630">>,
+                                                sha256 => lower_hex(crypto:hash(sha256, Svg)),
+                                                file => to_bin(Path)
+                                            }};
+                                        {error, _} = Error ->
+                                            Error
+                                    end;
+                                {error, _} = Error ->
+                                    Error
+                            end;
+                        {error, Why} ->
+                            {error, {write_release_card_failed, Path, Why}}
+                    end;
+                {error, Why} ->
+                    {error, {release_card_directory_failed, Path, Why}}
+            end;
+        false ->
+            {error, missing_run_dir}
+    end.
+
+safe_ipfs_add_file(Path) ->
+    try damage_ipfs:add({file, to_bin(Path)}) of
+        {ok, AddResult} -> {ok, AddResult};
+        {error, _} = Error -> Error;
+        Other -> {error, {unexpected_ipfs_add_response, Other}}
+    catch
+        exit:Reason -> {error, {ipfs_unavailable, Reason}};
+        Class:Reason -> {error, {ipfs_add_failed, Class, Reason}}
+    end.
+
+ipfs_file_cid(HashList, Name0) when is_list(HashList) ->
+    case HashList of
+        [First | _] when is_map(First) ->
+            Name = to_bin(Name0),
+            Named = [
+                to_bin(Hash)
+             || Item <- HashList,
+                Hash <- [map_get_any([<<"Hash">>, "Hash", hash, <<"hash">>], Item, undefined)],
+                ItemName <- [map_get_any([<<"Name">>, "Name", name, <<"name">>], Item, undefined)],
+                Hash =/= undefined,
+                ItemName =/= undefined,
+                to_bin(filename:basename(to_list(ItemName))) =:= Name
+            ],
+            case Named of
+                [Cid | _] -> {ok, Cid};
+                [] ->
+                    Cids = [
+                        to_bin(Hash)
+                     || Item <- HashList,
+                        Hash <- [map_get_any([<<"Hash">>, "Hash", hash, <<"hash">>], Item, undefined)],
+                        Hash =/= undefined
+                    ],
+                    case lists:reverse(Cids) of
+                        [Cid | _] -> {ok, Cid};
+                        [] -> {error, {ipfs_hash_not_found, HashList}}
+                    end
+            end;
+        _ ->
+            %% Some legacy IPFS clients return a CID string directly.
+            case is_charlist(HashList) of
+                true -> {ok, to_bin(HashList)};
+                false -> {error, {invalid_ipfs_add_result, HashList}}
+            end
+    end;
+ipfs_file_cid(Cid, _Name) when is_binary(Cid) ->
+    {ok, Cid};
+ipfs_file_cid(Other, _Name) ->
+    {error, {invalid_ipfs_add_result, Other}}.
+
+publish_release_listing(Context0, Mint, Image, Quote, Purchase, Opts) ->
+    {Content, Tags} = release_nostr_payload(Mint, Image, Quote, Purchase),
+    Relays = listing_relays(Context0, Opts),
+    TimeoutMs = option_pos_int(
+        Opts,
+        [<<"publish_timeout_ms">>, publish_timeout_ms, "publish_timeout_ms"],
+        50000
+    ),
+    try damage_nostr:create_signed_event(1, Content, Tags) of
+        {ok, Event} when is_map(Event) ->
+            case nostr_pool:ensure_started(Relays) of
+                ok ->
+                    case nostr_pool:publish_sync(Event, Relays, TimeoutMs) of
+                        ok ->
+                            PostResult = #{
+                                event_id => maps:get(<<"id">>, Event, undefined),
+                                pubkey => maps:get(<<"pubkey">>, Event, undefined),
+                                relays => Relays,
+                                image_cid => maps:get(cid, Image),
+                                image_url => maps:get(url, Image),
+                                quote => Quote,
+                                purchase => Purchase
+                            },
+                            Context0#{
+                                build_release_nft_nostr_event => Event,
+                                build_release_nft_post_result => PostResult
+                            };
+                        {error, Why} ->
+                            fail(Context0, {nostr_publish_failed, Why})
+                    end;
+                {error, Why} ->
+                    fail(Context0, {nostr_pool_start_failed, Why})
+            end;
+        Other ->
+            fail(Context0, {nostr_event_sign_failed, Other})
+    catch
+        exit:Reason -> fail(Context0, {nostr_publish_exit, Reason});
+        Class:Reason -> fail(Context0, {nostr_publish_crashed, Class, Reason})
+    end.
+
+release_nostr_payload(Mint, Image, Quote, Purchase) ->
+    Token = to_bin(maps:get(token_id, Mint)),
+    Contract = to_bin(maps:get(contract_id, Mint)),
+    Release = to_bin(maps:get(release, Mint, <<>>)),
+    Platform = to_bin(maps:get(platform, Mint, <<>>)),
+    GitSha = to_bin(maps:get(git_sha, Mint, <<>>)),
+    Meta = strip_ipfs_prefix(to_bin(maps:get(metadata_cid, Mint, <<>>))),
+    Asset = strip_ipfs_prefix(to_bin(maps:get(asset_cid, Mint, <<>>))),
+    ImageUrl = maps:get(url, Image),
+    Base = [
+        <<"⚡ DamageBDD Build Release NFT\n\n">>,
+        <<"Release: ">>, Release, <<"\n">>,
+        <<"Platform: ">>, Platform, <<"\n">>,
+        <<"Token: #">>, Token, <<"\n">>,
+        <<"Contract: ">>, Contract, <<"\n">>,
+        <<"Git: ">>, GitSha, <<"\n\n">>,
+        <<"Metadata: ipfs://">>, Meta, <<"\n">>,
+        <<"Artifact: ipfs://">>, Asset, <<"\n">>,
+        <<"Image: ">>, ImageUrl, <<"\n">>
+    ],
+    Sale = sale_note_lines(Quote, Purchase),
+    Content = iolist_to_binary([
+        Base,
+        Sale,
+        <<"\n#DamageBDD #BuildNFT #aeternity #nostr">>
+    ]),
+    Alt = iolist_to_binary([
+        <<"DamageBDD build release NFT #">>, Token,
+        <<" for ">>, Release, <<" on ">>, Platform
+    ]),
+    Imeta = [
+        <<"imeta">>,
+        <<"url ", ImageUrl/binary>>,
+        <<"m image/svg+xml">>,
+        <<"dim 1200x630">>,
+        <<"alt ", Alt/binary>>,
+        <<"x ", (maps:get(sha256, Image))/binary>>
+    ],
+    Tags0 = [
+        [<<"t">>, <<"DamageBDD">>],
+        [<<"t">>, <<"BuildNFT">>],
+        [<<"t">>, Platform],
+        [<<"r">>, <<"ipfs://", Meta/binary>>],
+        [<<"r">>, <<"ipfs://", Asset/binary>>],
+        Imeta
+    ],
+    Tags = sale_note_tags(Quote, Purchase, Tags0),
+    {Content, Tags}.
+
+sale_note_lines(none, none) ->
+    <<>>;
+sale_note_lines(Quote, Purchase) ->
+    DamageText = maps:get(damage_text, Quote),
+    Sats = integer_to_binary(maps:get(sats, Quote)),
+    BTC = price_text(maps:get(btc_usdt, Quote)),
+    DamageUSDT = price_text(maps:get(damage_usdt, Quote)),
+    Bolt11 = maps:get(bolt11, Purchase),
+    Expiry = integer_to_binary(maps:get(expiry_seconds, Purchase)),
+    [
+        <<"\nFor sale: ">>, DamageText, <<" DAMAGE ≈ ">>, Sats, <<" sats\n">>,
+        <<"Spot: DAMAGE/USDT ">>, DamageUSDT, <<" • BTC/USDT ">>, BTC, <<"\n">>,
+        <<"⚡ Lightning invoice (spot quote, expires in ">>, Expiry, <<"s):\n">>,
+        <<"lightning:">>, Bolt11, <<"\n">>
+    ].
+
+sale_note_tags(none, none, Tags) ->
+    Tags;
+sale_note_tags(Quote, Purchase, Tags) ->
+    Tags ++ [
+        [<<"price">>, maps:get(damage_text, Quote), <<"DAMAGE">>],
+        [<<"price">>, integer_to_binary(maps:get(sats, Quote)), <<"SAT">>],
+        [<<"lightning">>, maps:get(bolt11, Purchase)]
+    ].
+
+build_release_card_svg(Mint, Quote) ->
+    Token = to_bin(maps:get(token_id, Mint)),
+    Contract = to_bin(maps:get(contract_id, Mint)),
+    Release = xml_escape(short_text(maps:get(release, Mint, <<>>), 44)),
+    Platform = xml_escape(short_text(maps:get(platform, Mint, <<>>), 32)),
+    GitSha = xml_escape(short_text(maps:get(git_sha, Mint, <<>>), 18)),
+    Asset = xml_escape(short_text(strip_ipfs_prefix(to_bin(maps:get(asset_cid, Mint, <<>>))), 52)),
+    ContractShort = xml_escape(short_text(Contract, 48)),
+    Seed = crypto:hash(sha256, <<Contract/binary, ":", Token/binary>>),
+    <<A, B, C, D, E, F, _/binary>> = Seed,
+    Color1 = color_hex(24 + (A rem 80), 35 + (B rem 75), 80 + (C rem 100)),
+    Color2 = color_hex(60 + (D rem 130), 25 + (E rem 85), 90 + (F rem 120)),
+    SaleBadge = release_card_sale_badge(Quote),
+    iolist_to_binary([
+        <<"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"630\" viewBox=\"0 0 1200 630\">">>,
+        <<"<defs><linearGradient id=\"bg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\">">>,
+        <<"<stop offset=\"0%\" stop-color=\"">>, Color1, <<"\"/><stop offset=\"100%\" stop-color=\"">>, Color2, <<"\"/></linearGradient>">>,
+        <<"<linearGradient id=\"shine\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"><stop offset=\"0%\" stop-color=\"#ffffff\" stop-opacity=\"0.08\"/><stop offset=\"100%\" stop-color=\"#ffffff\" stop-opacity=\"0.01\"/></linearGradient></defs>">>,
+        <<"<rect width=\"1200\" height=\"630\" rx=\"36\" fill=\"url(#bg)\"/>">>,
+        <<"<circle cx=\"1080\" cy=\"90\" r=\"230\" fill=\"#ffffff\" opacity=\"0.055\"/><circle cx=\"1050\" cy=\"580\" r=\"300\" fill=\"#000000\" opacity=\"0.08\"/>">>,
+        <<"<rect x=\"48\" y=\"42\" width=\"1104\" height=\"546\" rx=\"28\" fill=\"url(#shine)\" stroke=\"#ffffff\" stroke-opacity=\"0.18\"/>">>,
+        <<"<text x=\"82\" y=\"105\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"34\" font-weight=\"800\">DamageBDD</text>">>,
+        <<"<text x=\"82\" y=\"143\" fill=\"#ffffff\" opacity=\"0.70\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"18\" letter-spacing=\"4\">BUILD RELEASE NFT</text>">>,
+        <<"<text x=\"82\" y=\"236\" fill=\"#ffffff\" opacity=\"0.68\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"19\">RELEASE</text>">>,
+        <<"<text x=\"82\" y=\"281\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"42\" font-weight=\"750\">">>, Release, <<"</text>">>,
+        <<"<text x=\"82\" y=\"333\" fill=\"#ffffff\" opacity=\"0.82\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"24\">">>, Platform, <<"</text>">>,
+        <<"<rect x=\"820\" y=\"82\" width=\"270\" height=\"92\" rx=\"22\" fill=\"#000000\" opacity=\"0.20\"/>">>,
+        <<"<text x=\"845\" y=\"117\" fill=\"#ffffff\" opacity=\"0.68\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"16\">TOKEN</text>">>,
+        <<"<text x=\"845\" y=\"153\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"30\" font-weight=\"800\">#">>, xml_escape(Token), <<"</text>">>,
+        <<"<text x=\"82\" y=\"405\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">contract  ">>, ContractShort, <<"</text>">>,
+        <<"<text x=\"82\" y=\"438\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">git       ">>, GitSha, <<"</text>">>,
+        <<"<text x=\"82\" y=\"471\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">artifact  ">>, Asset, <<"</text>">>,
+        SaleBadge,
+        <<"<text x=\"82\" y=\"555\" fill=\"#ffffff\" opacity=\"0.68\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\">Content-addressed build artifact • AEX-141 release record</text>">>,
+        <<"</svg>">>
+    ]).
+
+release_card_sale_badge(none) ->
+    <<>>;
+release_card_sale_badge(Quote) ->
+    DamageText = xml_escape(maps:get(damage_text, Quote)),
+    Sats = integer_to_binary(maps:get(sats, Quote)),
+    [
+        <<"<rect x=\"82\" y=\"495\" width=\"650\" height=\"40\" rx=\"20\" fill=\"#000000\" opacity=\"0.18\"/>">>,
+        <<"<text x=\"102\" y=\"521\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\" font-weight=\"700\">FOR SALE • ">>,
+        DamageText, <<" DAMAGE • ≈ ">>, Sats, <<" sats • Lightning</text>">>
+    ].
+
+listing_relays(Context, Opts) ->
+    case map_get_any([<<"relays">>, relays, "relays"], Opts, undefined) of
+        Rs when is_list(Rs), Rs =/= [] ->
+            [to_bin(R) || R <- Rs];
+        _ ->
+            nostr_pool:default_relays(Context)
+    end.
+
+normalize_post_options(M) when is_map(M) ->
+    M;
+normalize_post_options(<<>>) ->
+    #{};
+normalize_post_options(Bin) when is_binary(Bin) ->
+    try jsx:decode(Bin, [return_maps]) of
+        M when is_map(M) -> M;
+        _ -> #{}
+    catch
+        _:_ -> #{}
+    end;
+normalize_post_options(List) when is_list(List) ->
+    normalize_post_options(to_bin(List));
+normalize_post_options(_) ->
+    #{}.
+
+option_pos_int(Opts, Keys, Default) ->
+    case map_get_any(Keys, Opts, Default) of
+        Value ->
+            case parse_pos_int(Value) of
+                {ok, I} -> I;
+                _ -> Default
+            end
+    end.
+
+image_gateway(Opts) ->
+    case map_get_any(
+        [<<"image_gateway">>, image_gateway, "image_gateway"], Opts, undefined
+    ) of
+        undefined ->
+            case application:get_env(damage, build_release_nft_image_gateway) of
+                {ok, Value} -> to_bin(Value);
+                undefined -> <<"https://damagebdd.com/ipfs">>
+            end;
+        Value ->
+            to_bin(Value)
+    end.
+
+append_gateway_cid(Gateway0, Cid) ->
+    Gateway = trim_trailing_slash(to_bin(Gateway0)),
+    <<Gateway/binary, "/", Cid/binary>>.
+
+trim_trailing_slash(<<>>) -> <<>>;
+trim_trailing_slash(Bin) ->
+    case binary:last(Bin) of
+        $/ -> trim_trailing_slash(binary:part(Bin, 0, byte_size(Bin) - 1));
+        _ -> Bin
+    end.
+
+parse_pos_number(V) when is_integer(V), V > 0 ->
+    {ok, float(V)};
+parse_pos_number(V) when is_float(V), V > 0 ->
+    {ok, V};
+parse_pos_number(V) when is_binary(V) ->
+    parse_pos_number(binary_to_list(V));
+parse_pos_number(V) when is_list(V) ->
+    S = string:trim(V),
+    case string:to_float(S) of
+        {F, []} when F > 0 -> {ok, F};
+        {error, no_float} ->
+            case string:to_integer(S) of
+                {I, []} when I > 0 -> {ok, float(I)};
+                _ -> {error, not_positive_number}
+            end;
+        _ -> {error, not_positive_number}
+    end;
+parse_pos_number(_) ->
+    {error, not_positive_number}.
+
+price_text(V) when is_float(V) ->
+    to_bin(io_lib:format("~.8g", [V]));
+price_text(V) ->
+    to_bin(V).
+
+short_text(Value, MaxChars) ->
+    Bin = to_bin(Value),
+    try unicode:characters_to_list(Bin) of
+        Chars ->
+            case length(Chars) =< MaxChars of
+                true -> Bin;
+                false -> unicode:characters_to_binary(lists:sublist(Chars, MaxChars - 1) ++ [16#2026])
+            end
+    catch
+        _:_ -> Bin
+    end.
+
+xml_escape(Value) ->
+    B0 = to_bin(Value),
+    B1 = binary:replace(B0, <<"&">>, <<"&amp;">>, [global]),
+    B2 = binary:replace(B1, <<"<">>, <<"&lt;">>, [global]),
+    B3 = binary:replace(B2, <<">">>, <<"&gt;">>, [global]),
+    B4 = binary:replace(B3, <<"\"">>, <<"&quot;">>, [global]),
+    binary:replace(B4, <<"'">>, <<"&apos;">>, [global]).
+
+color_hex(R, G, B) ->
+    iolist_to_binary(io_lib:format("#~2.16.0B~2.16.0B~2.16.0B", [R, G, B])).
+
+lower_hex(Bin) when is_binary(Bin) ->
+    list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Bin)))).
+
+is_charlist([]) -> true;
+is_charlist([C | Rest]) when is_integer(C), C >= 0, C =< 255 -> is_charlist(Rest);
+is_charlist(_) -> false.
+
+compact_map(Map) when is_map(Map) ->
+    #{keys => maps:keys(Map), size => map_size(Map)};
+compact_map(Other) ->
+    Other.
 
 %% Deterministic, dependency-free error: no filesystem, IPFS, key or chain access.
 obsolete_install_publication(Context) ->

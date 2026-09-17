@@ -23,37 +23,41 @@ Feature: Build damagebdd package for Arch
     makepkg
     
     # Only expose files that belong to the NFT artifact.
-    rm -rf /out/nft
-    mkdir -p /out/nft
+    NFT_DIR="$PWD/nft"
+    rm -rf "$NFT_DIR"
+    mkdir -p "$NFT_DIR"
+
     
     # Package(s)
     find . -maxdepth 1 -type f \
         -name '*.pkg.tar.zst' \
-        -exec cp -- '{}' /out/nft/ \;
+        -exec cp -- '{}' "$NFT_DIR/" \;
+
     
     # Fail if makepkg produced no package.
-    test -n "$(find /out/nft -maxdepth 1 -type f \
+    test -n "$(find "$NFT_DIR" -maxdepth 1 -type f \
         -name '*.pkg.tar.zst' -print -quit)"
     
     # Reproducibility/provenance.
-    cp PKGBUILD /out/nft/PKGBUILD
-    makepkg --printsrcinfo > /out/nft/.SRCINFO
-    
-    git -C /app rev-parse HEAD > /out/nft/GIT_COMMIT
-    git -C /app describe --tags --always --dirty > /out/nft/GIT_DESCRIBE
+    cp PKGBUILD "$NFT_DIR/PKGBUILD"
+    makepkg --printsrcinfo > "$NFT_DIR/.SRCINFO"
+
+    git -C /app rev-parse HEAD > "$NFT_DIR/GIT_COMMIT"
+    git -C /app describe --tags --always --dirty > "$NFT_DIR/GIT_DESCRIBE"
+
     
     (
-        cd /out/nft
+        cd "$NFT_DIR"
         sha256sum *.pkg.tar.zst > SHA256SUMS
     )
     
     echo "NFT artifact:"
-    find /out/nft -maxdepth 1 -type f -printf '%f\n'
+    find "$NFT_DIR" -maxdepth 1 -type f -printf '%f\n' | sort
 
     """
-    Then I copy file "/app/_build/pkg/arch/damage/" from the container to ipfs and store the hash in "asset_hash"
+    Then I copy file "/app/_build/pkg/arch/damage/nft/" from the container to ipfs and store the hash in "asset_hash"
     And I print "asset_hash"
-    When I set the JSON variable "meta" to
+    When I set the JSON variable "meta"
     """
     {
         "name": "DamageBDD Arch Linux Software Package",
@@ -89,5 +93,5 @@ Feature: Build damagebdd package for Arch
     When I write JSON variable "meta" to file "meta.json"
     When I add the path "meta.json" to IPFS and store the hash in "meta_hash"
 
-    When I mint an NFT with metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
+    When I mint a build release NFT for platform "archlinux" with metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
     And I store the mint result in "mint"

@@ -5,6 +5,7 @@
 -export([start_link/0, get_prices/0]).
 
 -export([sats_to_damage/1]).
+-export([damage_to_sats_quote/2]).
 -export([fetch_coinstore_prices/0]).
 
 %% gen_server callbacks
@@ -33,6 +34,44 @@ start_link() ->
 
 get_prices() ->
     gen_server:call(?MODULE, get_prices).
+
+%% Strict spot quote for value-sensitive operations such as NFT sales.
+%% Unlike damage_to_sats/1 this never falls back to hard-coded prices.
+-spec damage_to_sats_quote(number(), pos_integer()) ->
+    {ok, map()} | {error, term()}.
+damage_to_sats_quote(Damage, MaxAgeMs) when
+    is_number(Damage), Damage > 0,
+    is_integer(MaxAgeMs), MaxAgeMs > 0
+->
+    case get_prices() of
+        {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT, updated_ms := UpdatedMs}}
+            when is_number(BTCUSDT), BTCUSDT > 0,
+                 is_number(DamageUSDT), DamageUSDT > 0,
+                 is_integer(UpdatedMs), UpdatedMs > 0 ->
+            NowMs = erlang:system_time(millisecond),
+            AgeMs = max(0, NowMs - UpdatedMs),
+            case AgeMs =< MaxAgeMs of
+                true ->
+                    Sats0 = Damage * DamageUSDT / BTCUSDT * 1.0e8,
+                    {ok, #{
+                        damage_amount => Damage,
+                        sats => max(1, erlang:ceil(Sats0)),
+                        btc_usdt => BTCUSDT,
+                        damage_usdt => DamageUSDT,
+                        price_updated_ms => UpdatedMs,
+                        quoted_at_ms => NowMs,
+                        price_age_ms => AgeMs
+                    }};
+                false ->
+                    {error, {stale_price_feed, #{age_ms => AgeMs, max_age_ms => MaxAgeMs}}}
+            end;
+        {ok, Prices} ->
+            {error, {invalid_price_feed, Prices}};
+        {error, _} = Error ->
+            Error
+    end;
+damage_to_sats_quote(_Damage, _MaxAgeMs) ->
+    {error, invalid_quote_arguments}.
 
 damage_to_sats(Damage0) ->
     Damage =

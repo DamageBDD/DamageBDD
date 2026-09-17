@@ -122,3 +122,4 @@ Feature: Publish an installable Mint 22 / Ubuntu Noble amd64 release
     # The previous successful mint may already own the asset-CID default key.
     When I mint build release "install-{{meta_hash}}" for platform "ubuntu-noble-amd64" with git SHA "{{git_sha}}" metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
     And I store the mint result in "mint"
+    And I post the minted build release NFT to nostr
