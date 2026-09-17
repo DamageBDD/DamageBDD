@@ -245,7 +245,16 @@ prepare_metadata(Meta0, Platform0, Asset0, ManifestPath0) ->
             {ok, Digest} = must(preparation_ipfs_result(hash_installation_package,
                 Target, ipfs_result(damage_ipfs:sha256(Target,
                     [{max_bytes, ?MAX_PACKAGE_BYTES}, {timeout, Timeout}])))),
-            require(Digest =:= maps:get(sha256, Fields), release_package_hash_mismatch),
+            ExpectedDigest = maps:get(sha256, Fields),
+            %% The identity checks stay strict. These are validated public
+            %% artifact paths/digests; never include the full metadata/context.
+            require(Digest =:= ExpectedDigest,
+                {release_package_hash_mismatch, #{
+                    manifest_path => ManifestTarget,
+                    package_path => Target,
+                    expected_sha256 => ExpectedDigest,
+                    actual_sha256 => Digest
+                }}),
             GitSha = maps:get(<<"git_sha">>, Manifest, <<>>),
             require(is_binary(GitSha) andalso (GitSha =:= <<>> orelse
                 matches(GitSha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>)), invalid_git_sha),
@@ -474,8 +483,8 @@ bounded(Fun, Timeout) ->
 %% One decoder for discovery and build steps. Discovery sanitizes these errors
 %% in query_option/1; build steps retain the contract failure classification.
 call_return(Call) when is_map(Call) ->
-    Type = map_value(return_type, Call, undefined),
-    Value = map_value(return_value, Call, undefined),
+    Type = call_return_field(return_type, Call),
+    Value = call_return_field(return_value, Call),
     case Type of
         ok -> {ok, Value};
         "ok" -> {ok, Value};
@@ -487,6 +496,17 @@ call_return(Call) when is_map(Call) ->
         _ -> {error, {unexpected_return_type, Type, Value}}
     end;
 call_return(_) -> {error, contract_call_failed}.
+
+%% The contract wrapper retains raw node fields under binary keys and adds
+%% decoded FATE fields under string keys. Prefer those decoded fields before
+%% atom/binary aliases, otherwise option_value/1 receives a cb_ bytearray.
+%% Use find/2 so an explicitly supplied malformed value is not hidden by a
+%% fallback. Keep the general map_value/3 precedence unchanged.
+call_return_field(Key, Call) ->
+    case maps:find(atom_to_list(Key), Call) of
+        {ok, Value} -> Value;
+        error -> map_value(Key, Call, undefined)
+    end.
 
 contract_source() -> damage_ae:contract_path(damage, ?NFT_SOURCE).
 
