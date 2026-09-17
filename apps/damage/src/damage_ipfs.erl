@@ -221,7 +221,13 @@ hydrate_feature_from_ipfs(_) ->
 %%
 %% Options are a proplist:
 %%   {max_bytes, N}  (default 1 MiB; request N+1 to detect truncation)
-%%   {timeout, Ms}   (default shared request_timeout_ms, finite deadline)
+%%   {timeout, Ms}   (default shared request_timeout_ms, total fold deadline)
+%%
+%% Fold runs in a short-lived worker, not the caller. Pass all state through
+%% Initial/the accumulator: process dictionary entries and self() are local to
+%% that worker. Callbacks must not spawn unmanaged work or rely on side effects
+%% being rolled back. A timeout cancels the worker and its linked Gun process;
+%% it cannot undo completed external effects or preempt a blocking native NIF.
 %%
 %% Read ipfs_api from damage_ipfs_config:load(), not a second release-only
 %% endpoint. The trusted reader deliberately requires numeric loopback,
@@ -293,29 +299,109 @@ cat_fold_config(Path0, Fold, Initial, Options, Config) ->
         Path = cid_path(Path0),
         {Host, Port} = local_endpoint(Config),
         Deadline = erlang:monotonic_time(millisecond) + Timeout,
-        Query = uri_string:compose_query([
-            {<<"arg">>, <<"/ipfs/", Path/binary>>},
-            {<<"length">>, integer_to_binary(Limit + 1)}
-        ]),
-        case gun:open(Host, Port, #{transport => tcp, protocols => [http],
-                connect_timeout => erlang:min(5000, Timeout), retry => 0}) of
-            {ok, Conn} ->
-                try
-                    case gun:await_up(Conn, remaining(Deadline)) of
-                        {ok, http} ->
-                            Ref = gun:post(Conn, <<"/api/v0/cat?", Query/binary>>,
-                                [{<<"accept">>, <<"application/octet-stream">>}],
-                                <<>>, #{flow => 1}),
-                            cat_response(Conn, Ref, Limit, Fold, Initial, Deadline);
-                        {error, timeout} -> {error, ipfs_timeout};
-                        _ -> {error, ipfs_unavailable}
-                    end
-                after
-                    close_stream(Conn)
-                end;
-            _ -> {error, ipfs_unavailable}
-        end
+        fold_with_deadline(fun(Guard, Tag) ->
+            cat_stream(Path, Host, Port, Limit, Timeout, Fold, Initial, Deadline, Guard, Tag)
+        end, Deadline)
     end).
+
+cat_stream(Path, Host, Port, Limit, Timeout, Fold, Initial, Deadline, Guard, Tag) ->
+    Query = uri_string:compose_query([
+        {<<"arg">>, <<"/ipfs/", Path/binary>>},
+        {<<"length">>, integer_to_binary(Limit + 1)}
+    ]),
+    case gun:open(Host, Port, #{transport => tcp, protocols => [http],
+            %% Link at creation so cancellation cannot orphan a connection
+            %% before the guard learns its PID. The handshake below moves
+            %% that link to the guard before any callback is executed.
+            supervise => false,
+            connect_timeout => erlang:min(5000, Timeout), retry => 0}) of
+        {ok, Conn} ->
+            Guard ! {Tag, self(), connection, Conn},
+            receive {Tag, Guard, connected} -> unlink(Conn) end,
+            try
+                case gun:await_up(Conn, remaining(Deadline)) of
+                    {ok, http} ->
+                        Ref = gun:post(Conn, <<"/api/v0/cat?", Query/binary>>,
+                            [{<<"accept">>, <<"application/octet-stream">>}],
+                            <<>>, #{flow => 1}),
+                        cat_response(Conn, Ref, Limit, Fold, Initial, Deadline);
+                    {error, timeout} -> {error, ipfs_timeout};
+                    _ -> {error, ipfs_unavailable}
+                end
+            after
+                close_stream(Conn)
+            end;
+        _ -> {error, ipfs_unavailable}
+    end.
+
+%% The guard never runs user callbacks. Its receive deadline covers connection
+%% setup, reads, Fold/2 and normal connection cleanup. It also monitors the
+%% caller: an outer release timeout must not orphan this inner operation.
+fold_with_deadline(Fun, Deadline) ->
+    Caller = self(),
+    Tag = make_ref(),
+    {Guard, Monitor} = spawn_monitor(fun() -> fold_guard(Caller, Tag, Fun, Deadline) end),
+    receive
+        {Tag, Guard, Result} ->
+            erlang:demonitor(Monitor, [flush]),
+            Result;
+        {'DOWN', Monitor, process, Guard, _} ->
+            {error, ipfs_read_failed}
+    end.
+
+fold_guard(Caller, Tag, Fun, Deadline) ->
+    process_flag(trap_exit, true),
+    CallerMonitor = erlang:monitor(process, Caller),
+    Guard = self(),
+    {Worker, WorkerMonitor} = spawn_opt(fun() ->
+        Guard ! {Tag, self(), ipfs_guard(fun() -> Fun(Guard, Tag) end)}
+    end, [link, monitor]),
+    Reply =
+        try
+            fold_wait(Caller, CallerMonitor, Tag, Worker, WorkerMonitor, Deadline)
+        after
+            %% Use a fresh monitor: fold_wait may already have consumed DOWN.
+            %% Joining before returning prevents late worker replies leaking
+            %% into the caller. All worker/Gun messages stay in short-lived VM
+            %% processes; no forced loading or caller process flags are used.
+            stop_fold_process(Worker),
+            erlang:demonitor(WorkerMonitor, [flush]),
+            erlang:demonitor(CallerMonitor, [flush])
+        end,
+    case Reply of
+        caller_down -> ok;
+        {reply, Result} ->
+            Final = case erlang:monotonic_time(millisecond) < Deadline of
+                true -> Result;
+                false -> {error, ipfs_timeout}
+            end,
+            Caller ! {Tag, self(), Final}
+    end.
+
+fold_wait(Caller, CallerMonitor, Tag, Worker, WorkerMonitor, Deadline) ->
+    Left = erlang:max(0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {Tag, Worker, connection, Conn} when is_pid(Conn) ->
+            %% Only the guard traps exits. It owns cancellation of both PIDs;
+            %% callback errors, caller death and timeout all close the socket.
+            link(Conn),
+            try
+                Worker ! {Tag, self(), connected},
+                fold_wait(Caller, CallerMonitor, Tag, Worker, WorkerMonitor, Deadline)
+            after
+                stop_fold_process(Conn)
+            end;
+        {Tag, Worker, Result} -> {reply, Result};
+        {'DOWN', CallerMonitor, process, Caller, _} -> caller_down;
+        {'DOWN', WorkerMonitor, process, Worker, _} -> {reply, {error, ipfs_read_failed}}
+    after Left ->
+        {reply, {error, ipfs_timeout}}
+    end.
+
+stop_fold_process(Worker) ->
+    Monitor = erlang:monitor(process, Worker),
+    exit(Worker, kill),
+    receive {'DOWN', Monitor, process, Worker, _} -> ok end.
 
 cat_response(Conn, Ref, Limit, Fold, Initial, Deadline) ->
     case gun:await(Conn, Ref, remaining(Deadline)) of
@@ -331,6 +417,7 @@ cat_body(Conn, Ref, Limit, Size, Fold, Acc, Deadline) ->
     case gun:await(Conn, Ref, remaining(Deadline)) of
         {data, Fin, Data} when Size + byte_size(Data) =< Limit ->
             Next = Fold(Data, Acc),
+            _ = remaining(Deadline),
             case Fin of
                 fin -> {ok, Next};
                 nofin ->

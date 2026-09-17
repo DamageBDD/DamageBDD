@@ -296,6 +296,12 @@ config(Dir) ->
         {retry_max_ms, 60000}
     ]).
 with_services(F) ->
+    with_services(F, fun damage_ipfs_store:start_link/1,
+        fun damage_ipfs_client:start_link/1).
+
+%% Start functions are injectable only in this test fixture. They let tests
+%% exercise acquisition failures without replacing registered production code.
+with_services(F, StartStore, StartClient) ->
     %% Run this suite in an isolated VM, not against a running DamageBDD node.
     Dir = filename:join(
         "/tmp",
@@ -303,22 +309,80 @@ with_services(F) ->
             integer_to_list(erlang:unique_integer([positive, monotonic]))
     ),
     ok = file:make_dir(Dir),
-    C = config(Dir),
-    {ok, Backend} = damage_ipfs_review_backend:start_link(),
-    unlink(Backend),
-    {ok, Store} = damage_ipfs_store:start_link(C),
-    unlink(Store),
-    {ok, Client} = damage_ipfs_client:start_link(C),
-    unlink(Client),
     try
-        F(C)
+        C = config(Dir),
+        with_started(fun damage_ipfs_review_backend:start_link/0, fun(_Backend) ->
+            with_started(fun() -> StartStore(C) end, fun(_Store) ->
+                with_started(fun() -> StartClient(C) end, fun(_Client) ->
+                    F(C)
+                end)
+            end)
+        end)
     after
-        stop(Client),
-        stop(Store),
-        stop(Backend),
         _ = file:delete(filename:join(Dir, "pin_intents.dets")),
         _ = file:del_dir(Dir)
     end.
+
+with_started(Start, Use) ->
+    {ok, Pid} = Start(),
+    try
+        unlink(Pid),
+        Use(Pid)
+    after
+        stop(Pid)
+    end.
+
+store_start_failure_cleans_backend_test() ->
+    Ref = make_ref(), Parent = self(),
+    StartStore = fun(C) ->
+        Parent ! {Ref, maps:get(data_dir, C), [whereis(damage_ipfs_review_backend)]},
+        {error, forced_store_start_failure}
+    end,
+    ?assertError({badmatch, {error, forced_store_start_failure}},
+        with_services(fun(_) -> error(unexpected_use) end, StartStore,
+            fun damage_ipfs_client:start_link/1)),
+    assert_failed_setup_clean(Ref).
+
+client_start_failure_cleans_store_and_backend_test() ->
+    Ref = make_ref(), Parent = self(),
+    StartClient = fun(C) ->
+        Parent ! {Ref, maps:get(data_dir, C),
+            [whereis(damage_ipfs_review_backend), whereis(damage_ipfs_store)]},
+        {error, forced_client_start_failure}
+    end,
+    ?assertError({badmatch, {error, forced_client_start_failure}},
+        with_services(fun(_) -> error(unexpected_use) end,
+            fun damage_ipfs_store:start_link/1, StartClient)),
+    assert_failed_setup_clean(Ref).
+
+client_start_exception_cleans_store_and_backend_test() ->
+    Ref = make_ref(), Parent = self(),
+    StartClient = fun(C) ->
+        Parent ! {Ref, maps:get(data_dir, C),
+            [whereis(damage_ipfs_review_backend), whereis(damage_ipfs_store)]},
+        error(forced_client_start_exception)
+    end,
+    ?assertError(forced_client_start_exception,
+        with_services(fun(_) -> error(unexpected_use) end,
+            fun damage_ipfs_store:start_link/1, StartClient)),
+    assert_failed_setup_clean(Ref).
+
+assert_failed_setup_clean(Ref) ->
+    receive
+        {Ref, Dir, Pids} ->
+            lists:foreach(fun(Pid) ->
+                ?assert(is_pid(Pid)),
+                ?assertNot(is_process_alive(Pid))
+            end, Pids),
+            ?assertNot(filelib:is_dir(Dir)),
+            ?assertEqual(undefined, whereis(damage_ipfs_review_backend)),
+            ?assertEqual(undefined, whereis(damage_ipfs_store)),
+            ?assertEqual(undefined, whereis(damage_ipfs_client))
+    after 1000 -> error(missing_setup_witness)
+    end,
+    %% The next fixture must be able to acquire the same registered services.
+    with_services(fun(_) -> ok end).
+
 seed(Cid) ->
     {ok, #{revision := Rev}} = damage_ipfs_store:desire(Cid, pinned),
     ok = damage_ipfs_store:complete(Cid, Rev, {ok, seeded}),

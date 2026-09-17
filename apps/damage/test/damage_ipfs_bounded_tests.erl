@@ -256,6 +256,90 @@ finite_deadline_test() ->
             cid(), fun collect/2, [], [{timeout, 30}], Config))
     end).
 
+%% Deadline regression: receiving the complete response does not give Fold/2
+%% unlimited time. A final-chunk callback and an indefinitely blocked callback
+%% must both be cancelled, with the socket closed and no callback surviving.
+slow_final_callback_test_() ->
+    {timeout, 10, fun() -> assert_callback_timeout(slow) end}.
+
+blocked_callback_test_() ->
+    {timeout, 10, fun() -> assert_callback_timeout(blocked) end}.
+
+assert_callback_timeout(Mode) ->
+    Parent = self(), Probe = make_ref(),
+    FlagsBefore = process_info(self(), trap_exit),
+    with_peer(fun(Sock) ->
+        ok = gen_tcp:send(Sock,
+            <<"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx">>),
+        Parent ! {Probe, socket_closed, gen_tcp:recv(Sock, 0, 3000)}
+    end, fun(Config, _, _) ->
+        Fold = fun(Data, Acc) ->
+            Parent ! {Probe, callback, self()},
+            case Mode of
+                slow -> timer:sleep(5000);
+                blocked -> receive never_resume -> ok end
+            end,
+            Parent ! {Probe, callback_survived},
+            [Data | Acc]
+        end,
+        Started = erlang:monotonic_time(millisecond),
+        ?assertEqual({error, ipfs_timeout}, damage_ipfs:cat_fold_config(
+            cid(), Fold, [], [{timeout, 500}], Config)),
+        ?assert(erlang:monotonic_time(millisecond) - Started < 2500),
+        receive {Probe, callback, Worker} ->
+            ?assertNotEqual(self(), Worker),
+            ?assertNot(is_process_alive(Worker))
+        after 1000 -> error(callback_not_started)
+        end,
+        receive {Probe, socket_closed, Closed} ->
+            ?assertEqual({error, closed}, Closed)
+        after 3500 -> error(socket_not_closed_after_timeout)
+        end,
+        receive {Probe, callback_survived} -> error(callback_not_cancelled)
+        after 0 -> ok
+        end,
+        ?assertEqual(FlagsBefore, process_info(self(), trap_exit))
+    end).
+
+caller_exit_cancels_callback_test_() ->
+    {timeout, 10, fun() ->
+        Parent = self(), Probe = make_ref(),
+        with_peer(fun(Sock) ->
+            ok = gen_tcp:send(Sock,
+                <<"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx">>),
+            Parent ! {Probe, socket_closed, gen_tcp:recv(Sock, 0, 3000)}
+        end, fun(Config, _, _) ->
+            {Caller, CallerMon} = spawn_monitor(fun() ->
+                damage_ipfs:cat_fold_config(cid(), fun(_, _) ->
+                    Parent ! {Probe, callback, self()},
+                    receive never_resume -> ok end
+                end, [], [{timeout, 5000}], Config)
+            end),
+            try
+                receive {Probe, callback, Worker} ->
+                    WorkerMon = erlang:monitor(process, Worker),
+                    exit(Caller, kill),
+                    receive {'DOWN', CallerMon, process, Caller, _} -> ok
+                    after 1000 -> error(caller_not_stopped)
+                    end,
+                    receive {'DOWN', WorkerMon, process, Worker, _} -> ok
+                    after 1500 ->
+                        erlang:demonitor(WorkerMon, [flush]),
+                        error(callback_orphaned)
+                    end
+                after 2000 -> error(callback_not_started)
+                end,
+                receive {Probe, socket_closed, Closed} ->
+                    ?assertEqual({error, closed}, Closed)
+                after 3500 -> error(socket_not_closed_after_caller_exit)
+                end
+            after
+                exit(Caller, kill),
+                erlang:demonitor(CallerMon, [flush])
+            end
+        end)
+    end}.
+
 callback_error_test() ->
     with_peer(fun(Sock) ->
         gen_tcp:send(Sock, <<"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx">>)
