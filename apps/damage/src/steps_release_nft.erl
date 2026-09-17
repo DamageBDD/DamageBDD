@@ -332,8 +332,9 @@ create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key) -
         ok ->
             CheckoutId = checkout_id(Opts),
             Label = checkout_label(Key, CheckoutId),
+            ReservationFields = checkout_reservation_fields(Context, Quote),
             case damage_release_nft_checkout_store:reserve(
-                Key, Buyer, CheckoutId, Label, #{quote => Quote}
+                Key, Buyer, CheckoutId, Label, ReservationFields
             ) of
                 {ok, new, _Record} ->
                     create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
@@ -345,6 +346,35 @@ create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key) -
         {error, _} = Error ->
             Error
     end.
+
+checkout_reservation_fields(Context, Quote) ->
+    Base = #{quote => Quote},
+    case checkout_listing_snapshot(Context) of
+        undefined -> Base;
+        Listing -> Base#{listing => Listing}
+    end.
+
+checkout_listing_snapshot(Context) ->
+    case maps:get(build_release_nft_listing, Context, undefined) of
+        Listing when is_map(Listing) ->
+            case maps:get(build_release_nft_nostr_event, Context, undefined) of
+                Event when is_map(Event) ->
+                    case nostr_event_created_at(Event) of
+                        CreatedAt when is_integer(CreatedAt), CreatedAt > 0 ->
+                            Listing#{nostr_created_at => CreatedAt};
+                        _ -> Listing
+                    end;
+                _ ->
+                    Listing
+            end;
+        _ ->
+            undefined
+    end.
+
+nostr_event_created_at(Event) when is_map(Event) ->
+    map_get_any([created_at, <<"created_at">>, "created_at"], Event, 0);
+nostr_event_created_at(_) ->
+    0.
 
 ensure_release_owned_by_seller(Context, Mint, Buyer) ->
     case release_keypair(Context) of
@@ -642,7 +672,7 @@ settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key, Stored) ->
                     case maps:get(status, Stored, pending) of
                         settling ->
                             reconcile_settling_checkout(
-                                Context0, Checkout, Mint, Buyer, Invoice, Key
+                                Context0, Checkout, Mint, Buyer, Invoice, Key, Stored
                             );
                         _ ->
                             case damage_release_nft_checkout_store:mark_status(Key, paid) of
@@ -675,22 +705,20 @@ transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
                         Context0, Checkout, Mint, Buyer, Invoice, Key, already_owned_by_buyer
                     );
                 {ok, Seller} ->
-                    case damage_release_nft_checkout_store:mark_status(Key, settling) of
+                    case damage_release_nft_checkout_store:put_fields(Key, #{
+                        status => settling,
+                        transfer_started_at => erlang:system_time(second)
+                    }) of
                         {ok, _} ->
                             Args = [to_list(Buyer), integer_to_list(Token), "None"],
-                            TransferResult =
-                                try damage_ae:contract_call_payfor_user(
-                                    KeyPair,
-                                    Contract,
-                                    contract_source(),
-                                    "transfer",
-                                    Args
-                                ) of
-                                    Result -> Result
-                                catch
-                                    Class:Reason -> {error, {Class, Reason}}
-                                end,
-                            settle_transfer_result(
+                            TransferResult = damage_ae:contract_call_payfor_user_safe(
+                                KeyPair,
+                                Contract,
+                                contract_source(),
+                                "transfer",
+                                Args
+                            ),
+                            settle_safe_transfer_result(
                                 Context0,
                                 Checkout,
                                 Mint,
@@ -712,27 +740,48 @@ transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
             fail(Context0, Why)
     end.
 
-settle_transfer_result(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, TransferCall)
-    when is_map(TransferCall)
-->
+settle_safe_transfer_result(
+    Context0, Checkout, Mint, Buyer, Invoice, Key, _KeyPair,
+    {confirmed, TxHash, TransferCall}
+) when is_map(TransferCall) ->
+    _ = damage_release_nft_checkout_store:put_fields(Key, #{
+        transfer_tx_hash => to_bin(TxHash),
+        transfer_confirmed_at => erlang:system_time(second)
+    }),
     case call_return(TransferCall) of
         {ok, _} ->
             finalize_checkout_settlement(
-                Context0, Checkout, Mint, Buyer, Invoice, Key, TransferCall
-            );
-        {error, Why} ->
-            reconcile_transfer_outcome(
                 Context0,
                 Checkout,
                 Mint,
                 Buyer,
                 Invoice,
                 Key,
-                KeyPair,
-                {build_release_nft_transfer_failed, Why, TransferCall}
+                #{tx_hash => to_bin(TxHash), result => TransferCall}
+            );
+        {error, Why} ->
+            %% The transaction is confirmed and the contract call failed, so
+            %% ownership did not move. Return to paid: a retry is safe.
+            restore_paid_checkout_after_definite_failure(
+                Context0,
+                Key,
+                {build_release_nft_transfer_rejected, to_bin(TxHash), Why, TransferCall}
             )
     end;
-settle_transfer_result(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, Error) ->
+settle_safe_transfer_result(
+    Context0, _Checkout, _Mint, _Buyer, _Invoice, Key, _KeyPair,
+    {not_submitted, Reason}
+) ->
+    %% No transaction reached post_tx/1. Re-open settlement from the paid state
+    %% instead of leaving the checkout permanently stuck in settling.
+    restore_paid_checkout_after_definite_failure(
+        Context0, Key, {build_release_nft_transfer_not_submitted, Reason}
+    );
+settle_safe_transfer_result(
+    Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair,
+    {uncertain, TxHash, Reason}
+) ->
+    _ = persist_uncertain_transfer(Key, TxHash, Reason),
     reconcile_transfer_outcome(
         Context0,
         Checkout,
@@ -741,8 +790,49 @@ settle_transfer_result(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, E
         Invoice,
         Key,
         KeyPair,
-        {build_release_nft_transfer_failed, Error}
+        {build_release_nft_transfer_uncertain, TxHash, Reason}
+    );
+settle_safe_transfer_result(
+    Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, Unexpected
+) ->
+    _ = persist_uncertain_transfer(Key, undefined, {unexpected_safe_transfer_result, Unexpected}),
+    reconcile_transfer_outcome(
+        Context0,
+        Checkout,
+        Mint,
+        Buyer,
+        Invoice,
+        Key,
+        KeyPair,
+        {build_release_nft_transfer_uncertain, Unexpected}
     ).
+
+restore_paid_checkout_after_definite_failure(Context0, Key, Failure) ->
+    case damage_release_nft_checkout_store:put_fields(Key, #{
+        status => paid,
+        transfer_error => compact_transfer_error(Failure),
+        transfer_failed_at => erlang:system_time(second)
+    }) of
+        {ok, _} -> fail(Context0, Failure);
+        {error, Why} -> fail(Context0, {checkout_store_paid_restore_failed, Failure, Why})
+    end.
+
+persist_uncertain_transfer(Key, TxHash, Reason) ->
+    Fields0 = #{
+        status => settling,
+        transfer_error => compact_transfer_error(Reason),
+        transfer_uncertain_at => erlang:system_time(second)
+    },
+    Fields =
+        case TxHash of
+            undefined -> Fields0;
+            _ -> Fields0#{transfer_tx_hash => to_bin(TxHash)}
+        end,
+    damage_release_nft_checkout_store:put_fields(Key, Fields).
+
+compact_transfer_error(Term) ->
+    %% Keep DETS records bounded and avoid persisting large stacktraces/maps.
+    to_bin(io_lib:format("~P", [Term, 12])).
 
 reconcile_transfer_outcome(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, Failure) ->
     Seller = to_bin(maps:get(public_key, KeyPair)),
@@ -761,7 +851,7 @@ reconcile_transfer_outcome(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPai
             fail(Context0, {build_release_nft_transfer_outcome_unknown, Failure, Why})
     end.
 
-reconcile_settling_checkout(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
+reconcile_settling_checkout(Context0, Checkout, Mint, Buyer, Invoice, Key, Stored) ->
     case release_keypair(Context0) of
         {ok, KeyPair} ->
             Seller = to_bin(maps:get(public_key, KeyPair)),
@@ -771,7 +861,10 @@ reconcile_settling_checkout(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
                         Context0, Checkout, Mint, Buyer, Invoice, Key, reconciled_settlement
                     );
                 {ok, Seller} ->
-                    fail(Context0, build_release_nft_transfer_still_uncertain);
+                    fail(Context0, {
+                        build_release_nft_transfer_still_uncertain,
+                        maps:get(transfer_tx_hash, Stored, undefined)
+                    });
                 {ok, Owner} ->
                     fail(Context0, {build_release_nft_transfer_owner_changed, Owner});
                 {error, Why} ->
@@ -782,7 +875,11 @@ reconcile_settling_checkout(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
     end.
 
 finalize_checkout_settlement(Context0, Checkout, Mint, Buyer, Invoice, Key, TransferResult) ->
-    case damage_release_nft_checkout_store:mark_status(Key, settled) of
+    case damage_release_nft_checkout_store:put_fields(Key, #{
+        status => settled,
+        settled_at => erlang:system_time(second),
+        transfer_result => compact_transfer_error(TransferResult)
+    }) of
         {ok, _} ->
             Checkout1 = Checkout#{status => settled},
             Checkout2 =
@@ -800,21 +897,181 @@ finalize_checkout_settlement(Context0, Checkout, Mint, Buyer, Invoice, Key, Tran
     end.
 
 best_effort_publish_sold_listing(Context0, Mint, Buyer) ->
-    case maps:get(build_release_nft_listing, Context0, undefined) of
-        #{image := Image, sale := Sale} = Listing when is_map(Sale) ->
+    Contract = to_bin(maps:get(contract_id, Mint)),
+    Token = maps:get(token_id, Mint),
+    Key = {Contract, Token},
+    case checkout_listing_for_sold_publish(Context0, Mint) of
+        {ok, #{image := Image, sale := Sale} = Listing} when is_map(Sale) ->
             Opts = maps:get(opts, Listing, #{}),
             SoldSale = Sale#{status => sold, buyer => Buyer},
-            Context1 = Context0#{build_release_nft_listing := Listing#{sale := SoldSale}},
-            Published = publish_release_listing(Context1, Mint, Image, SoldSale, Opts),
-            case maps:take(fail, Published) of
-                {Reason, Clean} ->
-                    Clean#{build_release_nft_sold_publish_error => Reason};
-                error ->
+            case generate_sold_release_card(Mint, SoldSale, Image, Opts) of
+                {ok, SoldImage} ->
+                    PreviousCreatedAt = maps:get(nostr_created_at, Listing, 0),
+                    wait_for_nostr_replacement_slot(PreviousCreatedAt),
+                    SoldListing = Listing#{image => SoldImage, sale => SoldSale},
+                    Context1 = Context0#{build_release_nft_listing => SoldListing},
+                    Published0 = publish_release_listing(
+                        Context1, Mint, SoldImage, SoldSale, Opts
+                    ),
+                    Published = normalize_sold_publish_result(Published0, PreviousCreatedAt),
+                    persist_sold_listing_publish(Key, SoldListing, Published);
+                {error, Why} ->
+                    Context0#{build_release_nft_sold_publish_error => {sold_card_failed, Why}}
+            end;
+        {error, Why} ->
+            Context0#{build_release_nft_sold_publish_error => Why}
+    end.
+
+checkout_listing_for_sold_publish(Context, Mint) ->
+    Contract = to_bin(maps:get(contract_id, Mint)),
+    Token = maps:get(token_id, Mint),
+    Key = {Contract, Token},
+    StoredListing =
+        case damage_release_nft_checkout_store:get(Key) of
+            {ok, #{listing := Listing}} when is_map(Listing) -> Listing;
+            _ -> undefined
+        end,
+    case maps:get(build_release_nft_listing, Context, undefined) of
+        Listing0 when is_map(Listing0) ->
+            {ok, merge_listing_metadata(Listing0, StoredListing)};
+        _ when is_map(StoredListing) ->
+            {ok, StoredListing};
+        _ ->
+            {error, sold_listing_metadata_not_persisted}
+    end.
+
+merge_listing_metadata(Listing, Stored) when is_map(Stored) ->
+    case maps:get(nostr_created_at, Listing, undefined) of
+        undefined ->
+            case maps:get(nostr_created_at, Stored, undefined) of
+                undefined -> Listing;
+                CreatedAt -> Listing#{nostr_created_at => CreatedAt}
+            end;
+        _ -> Listing
+    end;
+merge_listing_metadata(Listing, _) ->
+    Listing.
+
+generate_sold_release_card(Mint, SoldSale, ActiveImage, Opts) ->
+    Path = sold_release_card_path(Mint, ActiveImage),
+    Svg = build_release_card_svg(Mint, SoldSale),
+    case filelib:ensure_dir(Path) of
+        ok ->
+            case file:write_file(Path, Svg, [binary]) of
+                ok ->
+                    case safe_ipfs_add_file(Path) of
+                        {ok, AddResult} ->
+                            Name = filename:basename(Path),
+                            case ipfs_file_cid(AddResult, Name) of
+                                {ok, Cid} ->
+                                    Gateway = image_gateway(Opts),
+                                    {ok, #{
+                                        cid => Cid,
+                                        uri => <<"ipfs://", Cid/binary>>,
+                                        url => append_gateway_cid(Gateway, Cid),
+                                        mime => <<"image/svg+xml">>,
+                                        dimensions => <<"1200x630">>,
+                                        sha256 => lower_hex(crypto:hash(sha256, Svg)),
+                                        file => to_bin(Path)
+                                    }};
+                                {error, _} = Error -> Error
+                            end;
+                        {error, _} = Error -> Error
+                    end;
+                {error, Why} -> {error, {write_sold_release_card_failed, Path, Why}}
+            end;
+        {error, Why} ->
+            {error, {sold_release_card_directory_failed, Path, Why}}
+    end.
+
+sold_release_card_path(Mint, ActiveImage) ->
+    Token = maps:get(token_id, Mint),
+    case maps:get(file, ActiveImage, undefined) of
+        File when is_binary(File); is_list(File) ->
+            Existing = to_list(File),
+            Root = filename:rootname(Existing),
+            Root ++ "-sold.svg";
+        _ ->
+            TmpDir =
+                case os:getenv("TMPDIR") of
+                    false -> "/tmp";
+                    Dir -> Dir
+                end,
+            filename:join(
+                TmpDir,
+                lists:flatten(io_lib:format("damage-build-release-nft-~B-sold.svg", [Token]))
+            )
+    end.
+
+wait_for_nostr_replacement_slot(PreviousCreatedAt)
+    when is_integer(PreviousCreatedAt), PreviousCreatedAt > 0 ->
+    Now = erlang:system_time(second),
+    DelayMs = replacement_delay_ms(PreviousCreatedAt, Now),
+    case DelayMs > 0 of
+        true -> timer:sleep(DelayMs);
+        false -> ok
+    end;
+wait_for_nostr_replacement_slot(_) ->
+    ok.
+
+replacement_delay_ms(PreviousCreatedAt, Now) when Now =< PreviousCreatedAt ->
+    (PreviousCreatedAt + 1 - Now) * 1000;
+replacement_delay_ms(_PreviousCreatedAt, _Now) ->
+    0.
+
+normalize_sold_publish_result(Published, PreviousCreatedAt) ->
+    case maps:take(fail, Published) of
+        {Reason, Clean} ->
+            Clean#{build_release_nft_sold_publish_error => Reason};
+        error ->
+            Event = maps:get(build_release_nft_nostr_event, Published, #{}),
+            CreatedAt = nostr_event_created_at(Event),
+            case PreviousCreatedAt > 0 andalso CreatedAt =< PreviousCreatedAt of
+                true ->
+                    Published#{
+                        build_release_nft_sold_publish_error => {
+                            replacement_timestamp_not_newer,
+                            PreviousCreatedAt,
+                            CreatedAt
+                        }
+                    };
+                false ->
                     Published
+            end
+    end.
+
+persist_sold_listing_publish(Key, SoldListing, Published) ->
+    case maps:get(build_release_nft_sold_publish_error, Published, undefined) of
+        undefined ->
+            case maps:get(build_release_nft_nostr_event, Published, undefined) of
+                Event when is_map(Event) ->
+                    CreatedAt = nostr_event_created_at(Event),
+                    EventId = map_get_any([id, <<"id">>, "id"], Event, undefined),
+                    PersistedListing =
+                        case CreatedAt of
+                            Ts when is_integer(Ts), Ts > 0 -> SoldListing#{nostr_created_at => Ts};
+                            _ -> SoldListing
+                        end,
+                    Fields0 = #{listing => PersistedListing},
+                    Fields =
+                        case EventId of
+                            undefined -> Fields0;
+                            _ -> Fields0#{sold_nostr_event_id => to_bin(EventId)}
+                        end,
+                    case damage_release_nft_checkout_store:put_fields(Key, Fields) of
+                        {ok, _} -> Published;
+                        {error, Why} ->
+                            Published#{build_release_nft_sold_publish_error => {
+                                sold_listing_persist_failed, Why
+                            }}
+                    end;
+                _ ->
+                    Published#{build_release_nft_sold_publish_error => sold_event_missing}
             end;
         _ ->
-            Context0
+            Published
     end.
+
 
 invoice_status(Invoice) ->
     case map_get_any([status, <<"status">>, "status"], Invoice, unknown) of
@@ -1088,6 +1345,13 @@ build_release_card_svg(Mint, Sale) ->
 
 release_card_sale_badge(none) ->
     <<>>;
+release_card_sale_badge(#{status := sold, damage_text := DamageText0}) ->
+    DamageText = xml_escape(DamageText0),
+    [
+        <<"<rect x=\"82\" y=\"495\" width=\"650\" height=\"40\" rx=\"20\" fill=\"#000000\" opacity=\"0.18\"/>">>,
+        <<"<text x=\"102\" y=\"521\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\" font-weight=\"700\">SOLD • ">>,
+        DamageText, <<" DAMAGE</text>">>
+    ];
 release_card_sale_badge(#{damage_text := DamageText0}) ->
     DamageText = xml_escape(DamageText0),
     [
@@ -1219,6 +1483,16 @@ invoice_sats_test() ->
     ?assertEqual({ok, 123}, invoice_sats(#{amount_msat => 123000})),
     ?assertEqual({ok, 123}, invoice_sats(#{<<"amount_msat">> => <<"123000msat">>})),
     ?assertEqual({ok, 123}, invoice_sats(#{amount_msat => #{msat => 123000}})).
+
+replacement_delay_ms_test() ->
+    ?assertEqual(1000, replacement_delay_ms(100, 100)),
+    ?assertEqual(2000, replacement_delay_ms(100, 99)),
+    ?assertEqual(0, replacement_delay_ms(100, 101)).
+
+sold_badge_test() ->
+    Badge = iolist_to_binary(release_card_sale_badge(#{status => sold, damage_text => <<"100">>})),
+    ?assertMatch({_, _}, binary:match(Badge, <<"SOLD">>)),
+    ?assertEqual(nomatch, binary:match(Badge, <<"ASK">>)).
 
 sale_listing_is_replaceable_test() ->
     Mint = #{

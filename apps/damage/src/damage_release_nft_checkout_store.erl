@@ -7,7 +7,7 @@
 %%%-------------------------------------------------------------------
 -module(damage_release_nft_checkout_store).
 
--export([get/1, reserve/4, reserve/5, attach_invoice/2, mark_status/2]).
+-export([get/1, reserve/4, reserve/5, attach_invoice/2, mark_status/2, put_fields/2]).
 
 -define(TABLE, damage_release_nft_checkouts).
 
@@ -33,8 +33,11 @@ reserve(Key, Buyer, CheckoutId, Label, Fields) when is_map(Fields) ->
                     ok -> {ok, new, Record};
                     {error, _} = Error -> Error
                 end;
-            {ok, #{status := Status} = _Existing} when Status =:= expired; Status =:= cancelled ->
-                Record = maps:merge(Fields, #{
+            {ok, #{status := Status} = Existing} when Status =:= expired; Status =:= cancelled ->
+                %% Preserve durable publication metadata across invoice expiry so
+                %% settlement can still replace the Nostr listing after restart.
+                Carry = maps:with([listing], Existing),
+                Record = maps:merge(maps:merge(Carry, Fields), #{
                     key => Key,
                     buyer => Buyer,
                     checkout_id => CheckoutId,
@@ -58,6 +61,11 @@ attach_invoice(Key, InvoiceFields) when is_map(InvoiceFields) ->
 
 mark_status(Key, Status) ->
     update(Key, fun(Record) -> Record#{status => Status, updated_at => erlang:system_time(second)} end).
+
+put_fields(Key, Fields) when is_map(Fields) ->
+    update(Key, fun(Record) ->
+        maps:merge(Record, Fields#{updated_at => erlang:system_time(second)})
+    end).
 
 update(Key, Fun) ->
     with_lock(Key, fun() ->

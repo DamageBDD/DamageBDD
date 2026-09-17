@@ -86,6 +86,7 @@
     contract_balance_chain/1,
     contract_deploy_for/3,
     contract_call_payfor_user/5,
+    contract_call_payfor_user_safe/5,
     contract_call_payfor_tx/1,
     make_transaction_signature_base58/2,
     make_transaction_signature/2,
@@ -2695,6 +2696,103 @@ contract_call_payfor_tx(
             end
         end)
     end).
+
+%% @doc Staged paying-for contract call for operations where the caller must
+%% distinguish a transaction that definitely was never submitted from one whose
+%% broadcast/confirmation result is ambiguous.
+%%
+%% Returns:
+%%   {not_submitted, Reason}
+%%       Transaction construction/signing failed before vanillae:post_tx/1.
+%%       It is safe for the caller to retry the operation.
+%%   {confirmed, TxHash, Result}
+%%       The transaction was accepted and wait_tx/1 returned a chain result.
+%%   {uncertain, TxHash | undefined, Reason}
+%%       Submission may have occurred, or a submitted transaction could not be
+%%       confirmed. The caller must reconcile chain state before retrying.
+contract_call_payfor_user_safe(
+    #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
+) ->
+    case prepare_payfor_user_signed_tx(
+        AeAccount, PrivateKey, ContractId, ContractSource, Func, Args
+    ) of
+        {ok, PayingSignedTX} ->
+            submit_payfor_user_tx(PayingSignedTX);
+        {error, Reason} ->
+            {not_submitted, Reason}
+    end;
+contract_call_payfor_user_safe(AeAccount, _Contract, _ContractSource, _Func, _Args) ->
+    {not_submitted, {keypair_required, AeAccount}}.
+
+prepare_payfor_user_signed_tx(AeAccount, PrivateKey, ContractId, ContractSource, Func, Args) ->
+    try
+        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+        {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
+        Fee = vanillae:min_fee(),
+        Gas = vanillae:min_gas(),
+        Amount = 0,
+        GasPrice = vanillae:min_gas_price(),
+        {ok, AACI} = vanillae:prepare_contract(ContractSource),
+        {ok, ContractCall} = vanillae:contract_call(
+            AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount,
+            AACI, ContractId, Func, Args
+        ),
+
+        Signature = make_transaction_signature_base58(PrivateKey, {inner, ContractCall}),
+        SignedTX = attach_signature_base58(ContractCall, Signature),
+        {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
+
+        {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
+        {ok, PayingForTx} = paying_for(
+            list_to_binary(NodeAeAccount), NodeNonce, Fee, InnerTxBin
+        ),
+        {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
+
+        CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
+        CorrectFee = CorrectGas * GasPrice,
+        {ok, ContractCall0} = vanillae:contract_call(
+            AeAccount, AeAccountNonce, CorrectGas, GasPrice, Fee, Amount,
+            AACI, ContractId, Func, Args
+        ),
+
+        Signature0 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall0}),
+        SignedTX0 = attach_signature_base58(ContractCall0, Signature0),
+        {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedTX0),
+
+        {ok, PayingForTxFinal} = paying_for(
+            list_to_binary(NodeAeAccount), NodeNonce, CorrectFee, InnerTxBin0
+        ),
+        PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
+        {ok, attach_signature_base58(PayingForTxFinal, PayingSignature)}
+    catch
+        Class:Reason:Stacktrace ->
+            {error, {prepare_payfor_user_tx_failed, Class, Reason, Stacktrace}}
+    end.
+
+submit_payfor_user_tx(PayingSignedTX) ->
+    try vanillae:post_tx(PayingSignedTX) of
+        {ok, #{"tx_hash" := TxHash}} ->
+            confirm_payfor_user_tx(TxHash);
+        {ok, #{<<"tx_hash">> := TxHash}} ->
+            confirm_payfor_user_tx(TxHash);
+        {error, Reason} ->
+            %% A transport/backend error at post time cannot prove whether the
+            %% node accepted the transaction. Treat it as ambiguous.
+            {uncertain, undefined, {post_tx_failed, Reason}};
+        Other ->
+            {uncertain, undefined, {unexpected_post_tx_response, Other}}
+    catch
+        Class:Reason:Stacktrace ->
+            {uncertain, undefined, {post_tx_crashed, Class, Reason, Stacktrace}}
+    end.
+
+confirm_payfor_user_tx(TxHash) ->
+    try wait_tx(TxHash) of
+        Result -> {confirmed, TxHash, Result}
+    catch
+        Class:Reason:Stacktrace ->
+            {uncertain, TxHash, {wait_tx_failed, Class, Reason, Stacktrace}}
+    end.
 
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
