@@ -25,6 +25,7 @@
 -import(damage_release_nft, [contract_source/0, call_return/1,
     option_value/1, release_answer/6]).
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 -export([existing_release_matches/2, oracle_announcement_result/2, checked_mint_inputs/6]).
 -endif.
 -define(DEFAULT_QUERY_TTL, 100).
@@ -85,7 +86,13 @@
 -define(STEP_POST_NOSTR_SALE, [
     "I post the minted build release NFT to nostr for",
     PriceDamage,
-    "DAMAGE with Lightning purchase"
+    "DAMAGE with Lightning checkout"
+]).
+-define(STEP_CREATE_CHECKOUT, [
+    "I create a Lightning checkout invoice for buyer", Buyer
+]).
+-define(STEP_SETTLE_CHECKOUT, [
+    "I settle the Lightning checkout and transfer the build release NFT"
 ]).
 
 %% ------------------------------------------------------------------
@@ -119,6 +126,11 @@ step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR, _Body) ->
     Context;
 step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR_SALE, _Body) ->
     _ = PriceDamage,
+    Context;
+step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_CREATE_CHECKOUT, _Body) ->
+    _ = Buyer,
+    Context;
+step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_SETTLE_CHECKOUT, _Body) ->
     Context.
 
 %% ------------------------------------------------------------------
@@ -214,7 +226,11 @@ step(Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR_SALE, Body) ->
             );
         {error, Why} ->
             fail(Context, {invalid_build_release_nft_price, PriceDamage, Why})
-    end.
+    end;
+step(_Config, Context, _Keyword, _LineNo, ?STEP_CREATE_CHECKOUT, Body) ->
+    create_build_release_checkout(Context, Buyer, Body);
+step(_Config, Context, _Keyword, _LineNo, ?STEP_SETTLE_CHECKOUT, _Body) ->
+    settle_build_release_checkout(Context).
 
 %% ------------------------------------------------------------------
 %% Nostr release card + optional Lightning sale offer.
@@ -223,84 +239,195 @@ step(Config, Context, _Keyword, _LineNo, ?STEP_POST_NOSTR_SALE, Body) ->
 %% post-mint so an IPFS/Nostr/Lightning outage can never make the build release
 %% appear unminted or cause a retry to mint a second token.
 %% ------------------------------------------------------------------
-post_minted_release_nft(Config, Context0, Body, Sale0) ->
+post_minted_release_nft(Config, Context0, Body, Sale) ->
     case maps:get(build_release_mint_result, Context0, undefined) of
         Mint when is_map(Mint) ->
             Opts = normalize_post_options(Body),
-            case build_sale_quote(Sale0, Opts) of
-                {ok, Quote} ->
-                    case generate_release_card(Config, Mint, Quote, Opts) of
-                        {ok, Image} ->
-                            case maybe_create_sale_invoice(Mint, Quote, Opts) of
-                                {ok, Purchase} ->
-                                    Listing = #{
-                                        mint => Mint,
-                                        image => Image,
-                                        quote => Quote,
-                                        purchase => Purchase
-                                    },
-                                    Context1 = Context0#{build_release_nft_listing => Listing},
-                                    publish_release_listing(Context1, Mint, Image, Quote, Purchase, Opts);
-                                {error, Why} ->
-                                    fail(Context0, {lightning_purchase_offer_failed, Why})
-                            end;
-                        {error, Why} ->
-                            fail(Context0, {release_nft_image_failed, Why})
-                    end;
+            case generate_release_card(Config, Mint, Sale, Opts) of
+                {ok, Image} ->
+                    Listing = #{
+                        mint => Mint,
+                        image => Image,
+                        sale => Sale
+                    },
+                    Context1 = Context0#{build_release_nft_listing => Listing},
+                    publish_release_listing(Context1, Mint, Image, Sale, Opts);
                 {error, Why} ->
-                    fail(Context0, {release_nft_spot_quote_failed, Why})
+                    fail(Context0, {release_nft_image_failed, Why})
             end;
         _ ->
             fail(Context0, build_release_mint_not_available)
     end.
 
-build_sale_quote(none, _Opts) ->
-    {ok, none};
+create_build_release_checkout(Context0, Buyer0, Body) ->
+    Buyer = to_bin(Buyer0),
+    Opts = normalize_post_options(Body),
+    case {Buyer, maps:get(build_release_nft_listing, Context0, undefined)} of
+        {<<"ak_", _/binary>>, #{mint := Mint, sale := Sale}} when is_map(Sale) ->
+            case build_sale_quote(Sale, Opts) of
+                {ok, Quote} ->
+                    case create_checkout_invoice(Mint, Buyer, Quote, Opts) of
+                        {ok, Checkout} ->
+                            Context0#{build_release_nft_checkout => Checkout};
+                        {error, Why} ->
+                            fail(Context0, {lightning_checkout_failed, Why})
+                    end;
+                {error, Why} ->
+                    fail(Context0, {release_nft_spot_quote_failed, Why})
+            end;
+        {<<"ak_", _/binary>>, #{sale := none}} ->
+            fail(Context0, build_release_nft_not_listed_for_sale);
+        {<<"ak_", _/binary>>, _} ->
+            fail(Context0, build_release_nft_listing_not_available);
+        _ ->
+            fail(Context0, {invalid_build_release_nft_buyer, Buyer})
+    end.
+
 build_sale_quote(#{damage_amount := DamageAmount, damage_text := DamageText}, Opts) ->
     MaxAgeMs = option_pos_int(
         Opts,
         [<<"price_max_age_ms">>, price_max_age_ms, "price_max_age_ms"],
-        env_pos_int(build_release_nft_price_max_age_ms, 20 * 60 * 1000)
+        env_pos_int(build_release_nft_price_max_age_ms, 2 * 60 * 1000)
     ),
-    try price_feed:damage_to_sats_quote(DamageAmount, MaxAgeMs) of
+    case price_feed:damage_to_sats_quote(DamageAmount, MaxAgeMs) of
         {ok, Quote} when is_map(Quote) ->
             {ok, Quote#{damage_text => DamageText}};
         {error, _} = Error ->
             Error;
         Other ->
             {error, {unexpected_price_quote_response, Other}}
-    catch
-        exit:Reason -> {error, {price_feed_unavailable, Reason}};
-        Class:Reason -> {error, {price_feed_failed, Class, Reason}}
     end.
 
-maybe_create_sale_invoice(_Mint, none, _Opts) ->
-    {ok, none};
-maybe_create_sale_invoice(Mint, Quote, Opts) ->
+create_checkout_invoice(Mint, Buyer, Quote, Opts) ->
     Expiry = option_pos_int(
         Opts,
         [<<"invoice_expiry_seconds">>, invoice_expiry_seconds, "invoice_expiry_seconds"],
-        env_pos_int(build_release_nft_invoice_expiry_seconds, 15 * 60)
+        env_pos_int(build_release_nft_invoice_expiry_seconds, 5 * 60)
     ),
+    Contract = to_bin(maps:get(contract_id, Mint)),
     Token = maps:get(token_id, Mint),
     TokenBin = to_bin(Token),
-    Release = maps:get(release, Mint, <<>>),
-    Platform = maps:get(platform, Mint, <<>>),
-    Sats = maps:get(sats, Quote),
-    Nonce = binary:encode_hex(crypto:strong_rand_bytes(6)),
-    Label = <<"build_nft:", TokenBin/binary, ":", Nonce/binary>>,
+    Key = {Contract, Token},
+    CheckoutId = checkout_id(Opts),
+    Label = <<"build_nft:", TokenBin/binary, ":", CheckoutId/binary>>,
+    case damage_release_nft_checkout_store:reserve(Key, Buyer, CheckoutId, Label) of
+        {ok, new, _Record} ->
+            create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
+        {ok, existing, Existing} ->
+            reconcile_existing_checkout(Key, Mint, Buyer, Quote, Expiry, Existing, Opts);
+        {error, _} = Error ->
+            Error
+    end.
+
+checkout_id(Opts) ->
+    case map_get_any([<<"checkout_id">>, checkout_id, "checkout_id"], Opts, undefined) of
+        undefined -> lower_hex(crypto:strong_rand_bytes(12));
+        Value -> to_bin(Value)
+    end.
+
+create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry) ->
+    TokenBin = to_bin(maps:get(token_id, Mint)),
     Description = iolist_to_binary([
         <<"DamageBDD build release NFT #">>, TokenBin,
-        <<" ">>, short_text(Release, 48), <<" / ">>, short_text(Platform, 32)
+        <<" for ">>, Buyer
     ]),
+    Sats = maps:get(sats, Quote),
     try damage_cln:create_invoice(Sats * 1000, Description, Expiry, Label) of
         Invoice when is_map(Invoice) ->
-            case map_get_any([bolt11, <<"bolt11">>, "bolt11"], Invoice, undefined) of
-                undefined ->
-                    {error, {invoice_missing_bolt11, compact_map(Invoice)}};
-                Bolt110 ->
+            case checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice) of
+                {ok, Checkout} ->
+                    StoreFields = maps:with(
+                        [buyer, label, payment_hash, expires_at, sats],
+                        Checkout
+                    ),
+                    case damage_release_nft_checkout_store:attach_invoice(Key, StoreFields) of
+                        {ok, _} -> {ok, Checkout};
+                        {error, Why} -> {error, {checkout_store_update_failed, Why}}
+                    end;
+                {error, _} = Error ->
+                    _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
+                    Error
+            end;
+        Other ->
+            _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
+            {error, {unexpected_invoice_response, Other}}
+    catch
+        exit:Reason ->
+            _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
+            {error, {invoice_service_unavailable, Reason}};
+        Class:Reason ->
+            _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
+            {error, {invoice_create_failed, Class, Reason}}
+    end.
+
+reconcile_existing_checkout(Key, Mint, Buyer, Quote, Expiry, Existing, Opts) ->
+    ExistingBuyer = maps:get(buyer, Existing, undefined),
+    Label = maps:get(label, Existing, undefined),
+    case {ExistingBuyer =:= Buyer, Label} of
+        {_, undefined} ->
+            {error, {invalid_checkout_store_record, Existing}};
+        {SameBuyer, _} ->
+            case lookup_checkout_invoice(Label) of
+                {ok, Invoice} ->
+                    case invoice_status(Invoice) of
+                        expired ->
+                            _ = damage_release_nft_checkout_store:mark_status(Key, expired),
+                            retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts);
+                        paid ->
+                            _ = damage_release_nft_checkout_store:mark_status(Key, paid),
+                            {error, {checkout_paid_pending_settlement, ExistingBuyer, Label}};
+                        _ when SameBuyer ->
+                            checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice);
+                        Status ->
+                            {error, {checkout_in_progress, ExistingBuyer, Status}}
+                    end;
+                not_found ->
+                    _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
+                    retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts);
+                {error, _} = Error ->
+                    Error
+            end
+    end.
+
+retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts) ->
+    BaseId = checkout_id(Opts),
+    CheckoutId = <<BaseId/binary, "-", (lower_hex(crypto:strong_rand_bytes(4)))/binary>>,
+    TokenBin = to_bin(maps:get(token_id, Mint)),
+    Label = <<"build_nft:", TokenBin/binary, ":", CheckoutId/binary>>,
+    case damage_release_nft_checkout_store:reserve(Key, Buyer, CheckoutId, Label) of
+        {ok, new, _} -> create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
+        {ok, existing, Record} -> {error, {checkout_in_progress, Record}};
+        {error, _} = Error -> Error
+    end.
+
+lookup_checkout_invoice(Label) ->
+    try cln:list_invoices_by_label(Label) of
+        #{invoices := []} -> not_found;
+        #{invoices := [Invoice | _]} when is_map(Invoice) -> {ok, Invoice};
+        #{<<"invoices">> := []} -> not_found;
+        #{<<"invoices">> := [Invoice | _]} when is_map(Invoice) -> {ok, Invoice};
+        {error, _} = Error -> Error;
+        Other -> {error, {unexpected_invoice_lookup_response, Other}}
+    catch
+        exit:Reason -> {error, {invoice_lookup_unavailable, Reason}};
+        Class:Reason -> {error, {invoice_lookup_failed, Class, Reason}}
+    end.
+
+checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice) ->
+    case map_get_any([bolt11, <<"bolt11">>, "bolt11"], Invoice, undefined) of
+        undefined ->
+            {error, {invoice_missing_bolt11, compact_map(Invoice)}};
+        Bolt110 ->
+            Status = invoice_status(Invoice),
+            case Status of
+                expired ->
+                    {error, {checkout_invoice_expired, Label}};
+                _ ->
                     Bolt11 = to_bin(Bolt110),
                     {ok, #{
+                        mint => Mint,
+                        buyer => Buyer,
+                        quote => Quote,
                         bolt11 => Bolt11,
                         lightning_uri => <<"lightning:", Bolt11/binary>>,
                         payment_hash => map_get_any(
@@ -315,24 +442,113 @@ maybe_create_sale_invoice(Mint, Quote, Opts) ->
                         ),
                         expiry_seconds => Expiry,
                         label => Label,
-                        sats => Sats
+                        status => Status,
+                        sats => maps:get(sats, Quote)
                     }}
-            end;
-        Other ->
-            {error, {unexpected_invoice_response, Other}}
-    catch
-        exit:Reason -> {error, {invoice_service_unavailable, Reason}};
-        Class:Reason -> {error, {invoice_create_failed, Class, Reason}}
+            end
     end.
 
-generate_release_card(Config, Mint, Quote, Opts) ->
+settle_build_release_checkout(Context0) ->
+    case maps:get(build_release_nft_checkout, Context0, undefined) of
+        #{label := Label, buyer := Buyer, mint := Mint} = Checkout ->
+            Contract = to_bin(maps:get(contract_id, Mint)),
+            Token = maps:get(token_id, Mint),
+            Key = {Contract, Token},
+            case damage_release_nft_checkout_store:get(Key) of
+                {ok, #{buyer := Buyer, label := Label, status := settled}} ->
+                    fail(Context0, build_release_nft_already_sold);
+                {ok, #{buyer := Buyer, label := Label}} ->
+                    settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key);
+                {ok, Existing} ->
+                    fail(Context0, {checkout_binding_mismatch, Existing});
+                not_found ->
+                    fail(Context0, build_release_nft_checkout_not_persisted);
+                {error, Why} ->
+                    fail(Context0, {checkout_store_failed, Why})
+            end;
+        _ ->
+            fail(Context0, build_release_nft_checkout_not_available)
+    end.
+
+settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key) ->
+    case lookup_checkout_invoice(Label) of
+        {ok, Invoice} ->
+            case invoice_status(Invoice) of
+                paid ->
+                    _ = damage_release_nft_checkout_store:mark_status(Key, paid),
+                    transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key);
+                Status ->
+                    fail(Context0, {lightning_checkout_not_paid, Status})
+            end;
+        not_found ->
+            fail(Context0, {lightning_checkout_invoice_not_found, Label});
+        {error, Why} ->
+            fail(Context0, {lightning_checkout_lookup_failed, Why})
+    end.
+
+transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
+    Contract = maps:get(contract_id, Mint),
+    Token = maps:get(token_id, Mint),
+    case release_keypair(Context0) of
+        {ok, KeyPair} ->
+            Args = [to_list(Buyer), integer_to_list(Token), "None"],
+            case damage_ae:contract_call_payfor_user(
+                KeyPair,
+                Contract,
+                contract_source(),
+                "transfer",
+                Args
+            ) of
+                TransferCall when is_map(TransferCall) ->
+                    case call_return(TransferCall) of
+                        {ok, _} ->
+                            case damage_release_nft_checkout_store:mark_status(Key, settled) of
+                                {ok, _} ->
+                                    Context0#{
+                                        build_release_nft_checkout := Checkout#{
+                                            status => settled,
+                                            paid_invoice => Invoice
+                                        },
+                                        build_release_nft_transfer => TransferCall
+                                    };
+                                {error, Why} ->
+                                    fail(Context0, {checkout_store_settlement_failed, Why})
+                            end;
+                        {error, Why} ->
+                            fail(Context0, {build_release_nft_transfer_failed, Why, TransferCall})
+                    end;
+                Error ->
+                    fail(Context0, {build_release_nft_transfer_failed, Error})
+            end;
+        {error, Why} ->
+            fail(Context0, Why)
+    end.
+
+invoice_status(Invoice) ->
+    case map_get_any([status, <<"status">>, "status"], Invoice, unknown) of
+        paid -> paid;
+        <<"paid">> -> paid;
+        "paid" -> paid;
+        complete -> paid;
+        <<"complete">> -> paid;
+        "complete" -> paid;
+        unpaid -> unpaid;
+        <<"unpaid">> -> unpaid;
+        "unpaid" -> unpaid;
+        expired -> expired;
+        <<"expired">> -> expired;
+        "expired" -> expired;
+        Other -> Other
+    end.
+
+generate_release_card(Config, Mint, Sale, Opts) ->
     case lists:keyfind(run_dir, 1, Config) of
         {run_dir, RunDir0} ->
             RunDir = to_list(RunDir0),
             Token = maps:get(token_id, Mint),
             Name = lists:flatten(io_lib:format("build-release-nft-~B.svg", [Token])),
             Path = filename:join([RunDir, "nft", Name]),
-            Svg = build_release_card_svg(Mint, Quote),
+            Svg = build_release_card_svg(Mint, Sale),
             case filelib:ensure_dir(Path) of
                 ok ->
                     case file:write_file(Path, Svg, [binary]) of
@@ -417,15 +633,15 @@ ipfs_file_cid(Cid, _Name) when is_binary(Cid) ->
 ipfs_file_cid(Other, _Name) ->
     {error, {invalid_ipfs_add_result, Other}}.
 
-publish_release_listing(Context0, Mint, Image, Quote, Purchase, Opts) ->
-    {Content, Tags} = release_nostr_payload(Mint, Image, Quote, Purchase),
+publish_release_listing(Context0, Mint, Image, Sale, Opts) ->
+    {Kind, Content, Tags} = release_nostr_payload(Mint, Image, Sale),
     Relays = listing_relays(Context0, Opts),
     TimeoutMs = option_pos_int(
         Opts,
         [<<"publish_timeout_ms">>, publish_timeout_ms, "publish_timeout_ms"],
         50000
     ),
-    try damage_nostr:create_signed_event(1, Content, Tags) of
+    try damage_nostr:create_signed_event(Kind, Content, Tags) of
         {ok, Event} when is_map(Event) ->
             case nostr_pool:ensure_started(Relays) of
                 ok ->
@@ -443,8 +659,7 @@ publish_release_listing(Context0, Mint, Image, Quote, Purchase, Opts) ->
                                 publish_ack => PublishAck,
                                 image_cid => maps:get(cid, Image),
                                 image_url => maps:get(url, Image),
-                                quote => Quote,
-                                purchase => Purchase
+                                sale => Sale
                             },
                             Context0#{
                                 build_release_nft_nostr_event => Event,
@@ -463,7 +678,7 @@ publish_release_listing(Context0, Mint, Image, Quote, Purchase, Opts) ->
         Class:Reason -> fail(Context0, {nostr_publish_crashed, Class, Reason})
     end.
 
-release_nostr_payload(Mint, Image, Quote, Purchase) ->
+release_nostr_payload(Mint, Image, Sale) ->
     Token = to_bin(maps:get(token_id, Mint)),
     Contract = to_bin(maps:get(contract_id, Mint)),
     Release = to_bin(maps:get(release, Mint, <<>>)),
@@ -483,10 +698,9 @@ release_nostr_payload(Mint, Image, Quote, Purchase) ->
         <<"Artifact: ipfs://">>, Asset, <<"\n">>,
         <<"Image: ">>, ImageUrl, <<"\n">>
     ],
-    Sale = sale_note_lines(Quote, Purchase),
     Content = iolist_to_binary([
         Base,
-        Sale,
+        sale_note_lines(Sale),
         <<"\n#DamageBDD #BuildNFT #aeternity #nostr">>
     ]),
     Alt = iolist_to_binary([
@@ -509,35 +723,29 @@ release_nostr_payload(Mint, Image, Quote, Purchase) ->
         [<<"r">>, <<"ipfs://", Asset/binary>>],
         Imeta
     ],
-    Tags = sale_note_tags(Quote, Purchase, Tags0),
-    {Content, Tags}.
+    case Sale of
+        none ->
+            {1, Content, Tags0};
+        #{damage_text := DamageText} ->
+            %% NIP-33 parameterized replaceable event: retries replace the same
+            %% token listing instead of creating duplicate sale announcements.
+            DTag = <<"build-release-nft:", Contract/binary, ":", Token/binary>>,
+            {30078, Content, Tags0 ++ [
+                [<<"d">>, DTag],
+                [<<"price">>, DamageText, <<"DAMAGE">>],
+                [<<"payment">>, <<"lightning">>]
+            ]}
+    end.
 
-sale_note_lines(none, none) ->
+sale_note_lines(none) ->
     <<>>;
-sale_note_lines(Quote, Purchase) ->
-    DamageText = maps:get(damage_text, Quote),
-    Sats = integer_to_binary(maps:get(sats, Quote)),
-    BTC = price_text(maps:get(btc_usdt, Quote)),
-    DamageUSDT = price_text(maps:get(damage_usdt, Quote)),
-    Bolt11 = maps:get(bolt11, Purchase),
-    Expiry = integer_to_binary(maps:get(expiry_seconds, Purchase)),
+sale_note_lines(#{damage_text := DamageText}) ->
     [
-        <<"\nFor sale: ">>, DamageText, <<" DAMAGE ≈ ">>, Sats, <<" sats\n">>,
-        <<"Spot: DAMAGE/USDT ">>, DamageUSDT, <<" • BTC/USDT ">>, BTC, <<"\n">>,
-        <<"⚡ Lightning invoice (spot quote, expires in ">>, Expiry, <<"s):\n">>,
-        <<"lightning:">>, Bolt11, <<"\n">>
+        <<"\n💎 For sale: ">>, DamageText, <<" DAMAGE\n">>,
+        <<"⚡ Lightning checkout available. A fresh spot-priced invoice is generated for each buyer.\n">>
     ].
 
-sale_note_tags(none, none, Tags) ->
-    Tags;
-sale_note_tags(Quote, Purchase, Tags) ->
-    Tags ++ [
-        [<<"price">>, maps:get(damage_text, Quote), <<"DAMAGE">>],
-        [<<"price">>, integer_to_binary(maps:get(sats, Quote)), <<"SAT">>],
-        [<<"lightning">>, maps:get(bolt11, Purchase)]
-    ].
-
-build_release_card_svg(Mint, Quote) ->
+build_release_card_svg(Mint, Sale) ->
     Token = to_bin(maps:get(token_id, Mint)),
     Contract = to_bin(maps:get(contract_id, Mint)),
     Release = xml_escape(short_text(maps:get(release, Mint, <<>>), 44)),
@@ -549,7 +757,7 @@ build_release_card_svg(Mint, Quote) ->
     <<A, B, C, D, E, F, _/binary>> = Seed,
     Color1 = color_hex(24 + (A rem 80), 35 + (B rem 75), 80 + (C rem 100)),
     Color2 = color_hex(60 + (D rem 130), 25 + (E rem 85), 90 + (F rem 120)),
-    SaleBadge = release_card_sale_badge(Quote),
+    SaleBadge = release_card_sale_badge(Sale),
     iolist_to_binary([
         <<"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"630\" viewBox=\"0 0 1200 630\">">>,
         <<"<defs><linearGradient id=\"bg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\">">>,
@@ -576,13 +784,12 @@ build_release_card_svg(Mint, Quote) ->
 
 release_card_sale_badge(none) ->
     <<>>;
-release_card_sale_badge(Quote) ->
-    DamageText = xml_escape(maps:get(damage_text, Quote)),
-    Sats = integer_to_binary(maps:get(sats, Quote)),
+release_card_sale_badge(#{damage_text := DamageText0}) ->
+    DamageText = xml_escape(DamageText0),
     [
         <<"<rect x=\"82\" y=\"495\" width=\"650\" height=\"40\" rx=\"20\" fill=\"#000000\" opacity=\"0.18\"/>">>,
         <<"<text x=\"102\" y=\"521\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\" font-weight=\"700\">FOR SALE • ">>,
-        DamageText, <<" DAMAGE • ≈ ">>, Sats, <<" sats • Lightning</text>">>
+        DamageText, <<" DAMAGE • Lightning checkout</text>">>
     ].
 
 listing_relays(Context, Opts) ->
@@ -701,6 +908,34 @@ compact_map(Map) when is_map(Map) ->
     #{keys => maps:keys(Map), size => map_size(Map)};
 compact_map(Other) ->
     Other.
+
+-ifdef(TEST).
+invoice_status_test() ->
+    ?assertEqual(paid, invoice_status(#{status => paid})),
+    ?assertEqual(paid, invoice_status(#{<<"status">> => <<"complete">>})),
+    ?assertEqual(unpaid, invoice_status(#{status => unpaid})),
+    ?assertEqual(expired, invoice_status(#{status => <<"expired">>})).
+
+sale_listing_is_replaceable_test() ->
+    Mint = #{
+        token_id => 42,
+        contract_id => <<"ct_test">>,
+        release => <<"v1.2.3">>,
+        platform => <<"archlinux">>,
+        git_sha => <<"deadbeef">>,
+        metadata_cid => <<"QmMeta">>,
+        asset_cid => <<"QmAsset">>
+    },
+    Image = #{
+        url => <<"https://example.test/ipfs/QmImage">>,
+        sha256 => <<"0123456789abcdef">>
+    },
+    Sale = #{damage_amount => 100.0, damage_text => <<"100">>},
+    {30078, Content, Tags} = release_nostr_payload(Mint, Image, Sale),
+    ?assertMatch({_, _}, binary:match(Content, <<"fresh spot-priced invoice">>)),
+    ?assert(lists:member([<<"d">>, <<"build-release-nft:ct_test:42">>], Tags)),
+    ?assertNot(lists:any(fun([<<"lightning">> | _]) -> true; (_) -> false end, Tags)).
+-endif.
 
 %% Deterministic, dependency-free error: no filesystem, IPFS, key or chain access.
 obsolete_install_publication(Context) ->

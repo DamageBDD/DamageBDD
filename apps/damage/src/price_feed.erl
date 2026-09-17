@@ -43,7 +43,7 @@ damage_to_sats_quote(Damage, MaxAgeMs) when
     is_number(Damage), Damage > 0,
     is_integer(MaxAgeMs), MaxAgeMs > 0
 ->
-    case get_prices() of
+    try get_prices() of
         {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT, updated_ms := UpdatedMs}}
             when is_number(BTCUSDT), BTCUSDT > 0,
                  is_number(DamageUSDT), DamageUSDT > 0,
@@ -68,7 +68,12 @@ damage_to_sats_quote(Damage, MaxAgeMs) when
         {ok, Prices} ->
             {error, {invalid_price_feed, Prices}};
         {error, _} = Error ->
-            Error
+            Error;
+        Other ->
+            {error, {unexpected_price_feed_response, Other}}
+    catch
+        exit:Reason -> {error, {price_feed_unavailable, Reason}};
+        Class:Reason -> {error, {price_feed_failed, Class, Reason}}
     end;
 damage_to_sats_quote(_Damage, _MaxAgeMs) ->
     {error, invalid_quote_arguments}.
@@ -245,7 +250,7 @@ find_price(Symbol, Items) ->
             {error, {not_found, Symbol}}
     end.
 sats_to_damage(Sats) ->
-    case get_prices() of
+    try get_prices() of
         {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT}} ->
             BTC = Sats / 1.0e8,
             USDT = BTC * BTCUSDT,
@@ -259,4 +264,7 @@ sats_to_damage(Sats) ->
             USDT = BTC * BTCUSDT,
             Damage = USDT / DamageUSDT,
             round(Damage)
+    catch
+        exit:Reason -> {error, {price_feed_unavailable, Reason}};
+        Class:Reason -> {error, {price_feed_failed, Class, Reason}}
     end.
