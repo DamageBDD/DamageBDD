@@ -7,7 +7,7 @@
 %%%-------------------------------------------------------------------
 -module(damage_release_nft_checkout_store).
 
--export([get/1, reserve/4, attach_invoice/2, mark_status/2]).
+-export([get/1, reserve/4, reserve/5, attach_invoice/2, mark_status/2]).
 
 -define(TABLE, damage_release_nft_checkouts).
 
@@ -15,30 +15,37 @@ get(Key) ->
     with_lock(Key, fun() -> lookup(Key) end).
 
 reserve(Key, Buyer, CheckoutId, Label) ->
+    reserve(Key, Buyer, CheckoutId, Label, #{}).
+
+reserve(Key, Buyer, CheckoutId, Label, Fields) when is_map(Fields) ->
     with_lock(Key, fun() ->
         case lookup(Key) of
             not_found ->
-                Record = #{
+                Record = maps:merge(Fields, #{
                     key => Key,
                     buyer => Buyer,
                     checkout_id => CheckoutId,
                     label => Label,
                     status => reserved,
                     created_at => erlang:system_time(second)
-                },
-                ok = dets:insert(?TABLE, {Key, Record}),
-                {ok, new, Record};
+                }),
+                case persist_record(Key, Record) of
+                    ok -> {ok, new, Record};
+                    {error, _} = Error -> Error
+                end;
             {ok, #{status := Status} = _Existing} when Status =:= expired; Status =:= cancelled ->
-                Record = #{
+                Record = maps:merge(Fields, #{
                     key => Key,
                     buyer => Buyer,
                     checkout_id => CheckoutId,
                     label => Label,
                     status => reserved,
                     created_at => erlang:system_time(second)
-                },
-                ok = dets:insert(?TABLE, {Key, Record}),
-                {ok, new, Record};
+                }),
+                case persist_record(Key, Record) of
+                    ok -> {ok, new, Record};
+                    {error, _} = Error -> Error
+                end;
             {ok, Existing} ->
                 {ok, existing, Existing};
             {error, _} = Error ->
@@ -57,8 +64,10 @@ update(Key, Fun) ->
         case lookup(Key) of
             {ok, Record} ->
                 Updated = Fun(Record),
-                ok = dets:insert(?TABLE, {Key, Updated}),
-                {ok, Updated};
+                case persist_record(Key, Updated) of
+                    ok -> {ok, Updated};
+                    {error, _} = Error -> Error
+                end;
             not_found ->
                 {error, checkout_not_found};
             {error, _} = Error ->
@@ -74,14 +83,29 @@ lookup(Key) ->
     end.
 
 with_lock(Key, Fun) ->
-    case global:trans({?MODULE, Key}, fun() ->
+    %% global:trans/2 expects {ResourceId, LockRequesterId}. Keep the token
+    %% key in the resource id and the calling process in the requester id so
+    %% unrelated NFTs do not serialize on one global lock.
+    LockId = {{?MODULE, Key}, self()},
+    case global:trans(LockId, fun() ->
         case ensure_open() of
             ok -> Fun();
             {error, _} = Error -> Error
         end
     end) of
+        aborted -> {error, checkout_store_lock_aborted};
         {aborted, Reason} -> {error, {checkout_store_lock_failed, Reason}};
         Result -> Result
+    end.
+
+persist_record(Key, Record) ->
+    case dets:insert(?TABLE, {Key, Record}) of
+        ok ->
+            %% Checkout state protects real payments. Force the update to disk
+            %% before returning success instead of relying on DETS close/flush.
+            dets:sync(?TABLE);
+        {error, _} = Error ->
+            Error
     end.
 
 ensure_open() ->

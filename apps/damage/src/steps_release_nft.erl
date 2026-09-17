@@ -248,7 +248,8 @@ post_minted_release_nft(Config, Context0, Body, Sale) ->
                     Listing = #{
                         mint => Mint,
                         image => Image,
-                        sale => Sale
+                        sale => Sale,
+                        opts => Opts
                     },
                     Context1 = Context0#{build_release_nft_listing => Listing},
                     publish_release_listing(Context1, Mint, Image, Sale, Opts);
@@ -262,11 +263,12 @@ post_minted_release_nft(Config, Context0, Body, Sale) ->
 create_build_release_checkout(Context0, Buyer0, Body) ->
     Buyer = to_bin(Buyer0),
     Opts = normalize_post_options(Body),
-    case {Buyer, maps:get(build_release_nft_listing, Context0, undefined)} of
-        {<<"ak_", _/binary>>, #{mint := Mint, sale := Sale}} when is_map(Sale) ->
+    Listing = maps:get(build_release_nft_listing, Context0, undefined),
+    case {validate_checkout_buyer(Buyer), Listing} of
+        {ok, #{mint := Mint, sale := Sale}} when is_map(Sale) ->
             case build_sale_quote(Sale, Opts) of
                 {ok, Quote} ->
-                    case create_checkout_invoice(Mint, Buyer, Quote, Opts) of
+                    case create_checkout_invoice(Context0, Mint, Buyer, Quote, Opts) of
                         {ok, Checkout} ->
                             Context0#{build_release_nft_checkout => Checkout};
                         {error, Why} ->
@@ -275,12 +277,20 @@ create_build_release_checkout(Context0, Buyer0, Body) ->
                 {error, Why} ->
                     fail(Context0, {release_nft_spot_quote_failed, Why})
             end;
-        {<<"ak_", _/binary>>, #{sale := none}} ->
+        {ok, #{sale := none}} ->
             fail(Context0, build_release_nft_not_listed_for_sale);
-        {<<"ak_", _/binary>>, _} ->
+        {ok, _} ->
             fail(Context0, build_release_nft_listing_not_available);
-        _ ->
-            fail(Context0, {invalid_build_release_nft_buyer, Buyer})
+        {{error, Why}, _} ->
+            fail(Context0, {invalid_build_release_nft_buyer, Buyer, Why})
+    end.
+
+validate_checkout_buyer(Buyer) ->
+    try aeser_api_encoder:decode(Buyer) of
+        {account_pubkey, PubKey} when is_binary(PubKey), byte_size(PubKey) =:= 32 -> ok;
+        Other -> {error, {unexpected_account_encoding, Other}}
+    catch
+        Class:Reason -> {error, {account_decode_failed, Class, Reason}}
     end.
 
 build_sale_quote(#{damage_amount := DamageAmount, damage_text := DamageText}, Opts) ->
@@ -298,7 +308,7 @@ build_sale_quote(#{damage_amount := DamageAmount, damage_text := DamageText}, Op
             {error, {unexpected_price_quote_response, Other}}
     end.
 
-create_checkout_invoice(Mint, Buyer, Quote, Opts) ->
+create_checkout_invoice(Context, Mint, Buyer, Quote, Opts) ->
     Expiry = option_pos_int(
         Opts,
         [<<"invoice_expiry_seconds">>, invoice_expiry_seconds, "invoice_expiry_seconds"],
@@ -306,17 +316,77 @@ create_checkout_invoice(Mint, Buyer, Quote, Opts) ->
     ),
     Contract = to_bin(maps:get(contract_id, Mint)),
     Token = maps:get(token_id, Mint),
-    TokenBin = to_bin(Token),
     Key = {Contract, Token},
-    CheckoutId = checkout_id(Opts),
-    Label = <<"build_nft:", TokenBin/binary, ":", CheckoutId/binary>>,
-    case damage_release_nft_checkout_store:reserve(Key, Buyer, CheckoutId, Label) of
-        {ok, new, _Record} ->
-            create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
-        {ok, existing, Existing} ->
-            reconcile_existing_checkout(Key, Mint, Buyer, Quote, Expiry, Existing, Opts);
+    LockId = {{?MODULE, {checkout_create, Key}}, self()},
+    case global:trans(
+        LockId,
+        fun() -> create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key) end
+    ) of
+        aborted -> {error, checkout_creation_lock_aborted};
+        {aborted, Reason} -> {error, {checkout_creation_lock_failed, Reason}};
+        Result -> Result
+    end.
+
+create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key) ->
+    case ensure_release_owned_by_seller(Context, Mint, Buyer) of
+        ok ->
+            CheckoutId = checkout_id(Opts),
+            Label = checkout_label(Key, CheckoutId),
+            case damage_release_nft_checkout_store:reserve(
+                Key, Buyer, CheckoutId, Label, #{quote => Quote}
+            ) of
+                {ok, new, _Record} ->
+                    create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
+                {ok, existing, Existing} ->
+                    reconcile_existing_checkout(Key, Mint, Buyer, Quote, Expiry, Existing, Opts);
+                {error, _} = Error ->
+                    Error
+            end;
         {error, _} = Error ->
             Error
+    end.
+
+ensure_release_owned_by_seller(Context, Mint, Buyer) ->
+    case release_keypair(Context) of
+        {ok, KeyPair} ->
+            Seller = to_bin(maps:get(public_key, KeyPair)),
+            case Seller =:= Buyer of
+                true ->
+                    {error, buyer_is_current_owner};
+                false ->
+                    case release_token_owner(KeyPair, Mint) of
+                        {ok, Seller} -> ok;
+                        {ok, Owner} -> {error, {build_release_nft_not_owned_by_seller, Owner}};
+                        {error, _} = Error -> Error
+                    end
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+release_token_owner(KeyPair, Mint) ->
+    Contract = maps:get(contract_id, Mint),
+    Token = maps:get(token_id, Mint),
+    case damage_ae:contract_query(
+        KeyPair,
+        Contract,
+        contract_source(),
+        "owner",
+        [integer_to_list(Token)]
+    ) of
+        OwnerCall when is_map(OwnerCall) ->
+            case call_return(OwnerCall) of
+                {ok, EncodedOption} ->
+                    case option_value(EncodedOption) of
+                        {ok, Owner} -> {ok, to_bin(Owner)};
+                        none -> {error, {build_release_nft_token_not_found, Token}};
+                        {error, Why} -> {error, {build_release_nft_owner_decode_failed, Why}}
+                    end;
+                {error, Why} ->
+                    {error, {build_release_nft_owner_query_failed, Why}}
+            end;
+        Error ->
+            {error, {build_release_nft_owner_query_failed, Error}}
     end.
 
 checkout_id(Opts) ->
@@ -324,6 +394,10 @@ checkout_id(Opts) ->
         undefined -> lower_hex(crypto:strong_rand_bytes(12));
         Value -> to_bin(Value)
     end.
+
+checkout_label({Contract, Token}, CheckoutId) ->
+    TokenBin = to_bin(Token),
+    <<"build_nft:", Contract/binary, ":", TokenBin/binary, ":", CheckoutId/binary>>.
 
 create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry) ->
     TokenBin = to_bin(maps:get(token_id, Mint)),
@@ -334,30 +408,60 @@ create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry) ->
     Sats = maps:get(sats, Quote),
     try damage_cln:create_invoice(Sats * 1000, Description, Expiry, Label) of
         Invoice when is_map(Invoice) ->
-            case checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice) of
-                {ok, Checkout} ->
-                    StoreFields = maps:with(
-                        [buyer, label, payment_hash, expires_at, sats],
-                        Checkout
-                    ),
-                    case damage_release_nft_checkout_store:attach_invoice(Key, StoreFields) of
-                        {ok, _} -> {ok, Checkout};
-                        {error, Why} -> {error, {checkout_store_update_failed, Why}}
-                    end;
-                {error, _} = Error ->
-                    _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
-                    Error
-            end;
+            persist_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry, Invoice);
+        {error, _} = Error ->
+            recover_created_invoice(Key, Mint, Buyer, Quote, Label, Expiry, Error);
         Other ->
-            _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
-            {error, {unexpected_invoice_response, Other}}
+            recover_created_invoice(
+                Key,
+                Mint,
+                Buyer,
+                Quote,
+                Label,
+                Expiry,
+                {unexpected_invoice_response, Other}
+            )
     catch
         exit:Reason ->
-            _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
-            {error, {invoice_service_unavailable, Reason}};
+            recover_created_invoice(
+                Key, Mint, Buyer, Quote, Label, Expiry, {invoice_service_unavailable, Reason}
+            );
         Class:Reason ->
-            _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
-            {error, {invoice_create_failed, Class, Reason}}
+            recover_created_invoice(
+                Key, Mint, Buyer, Quote, Label, Expiry, {invoice_create_failed, Class, Reason}
+            )
+    end.
+
+persist_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry, Invoice) ->
+    case checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice) of
+        {ok, Checkout} ->
+            StoreFields = maps:with(
+                [buyer, label, payment_hash, expires_at, sats, quote],
+                Checkout
+            ),
+            case damage_release_nft_checkout_store:attach_invoice(Key, StoreFields) of
+                {ok, _} -> {ok, Checkout};
+                {error, Why} -> {error, {checkout_store_update_failed, Why}}
+            end;
+        {error, _} = Error ->
+            %% An invoice exists and may still be payable. Never release the
+            %% token reservation merely because its response was malformed.
+            Error
+    end.
+
+recover_created_invoice(Key, Mint, Buyer, Quote, Label, Expiry, CreateFailure) ->
+    case lookup_checkout_invoice(Label) of
+        {ok, Invoice} ->
+            persist_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry, Invoice);
+        not_found ->
+            %% A transport failure can race CLN committing the invoice. Keep
+            %% the reservation and exact label; a retry reuses the same label,
+            %% whose CLN uniqueness prevents a second payable invoice.
+            {error, {invoice_create_uncertain, Label, CreateFailure, not_found}};
+        {error, LookupFailure} ->
+            %% Creation is ambiguous. Keep the reservation so a later retry
+            %% reconciles this exact label instead of opening a second invoice.
+            {error, {invoice_create_uncertain, Label, CreateFailure, LookupFailure}}
     end.
 
 reconcile_existing_checkout(Key, Mint, Buyer, Quote, Expiry, Existing, Opts) ->
@@ -369,51 +473,67 @@ reconcile_existing_checkout(Key, Mint, Buyer, Quote, Expiry, Existing, Opts) ->
         {SameBuyer, _} ->
             case lookup_checkout_invoice(Label) of
                 {ok, Invoice} ->
+                    ExistingQuote = existing_checkout_quote(Existing, Invoice, Quote),
                     case invoice_status(Invoice) of
                         expired ->
                             _ = damage_release_nft_checkout_store:mark_status(Key, expired),
                             retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts);
-                        paid ->
+                        paid when SameBuyer ->
                             _ = damage_release_nft_checkout_store:mark_status(Key, paid),
+                            checkout_from_invoice(Mint, Buyer, ExistingQuote, Label, Expiry, Invoice);
+                        paid ->
                             {error, {checkout_paid_pending_settlement, ExistingBuyer, Label}};
                         _ when SameBuyer ->
-                            checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice);
+                            checkout_from_invoice(Mint, Buyer, ExistingQuote, Label, Expiry, Invoice);
                         Status ->
                             {error, {checkout_in_progress, ExistingBuyer, Status}}
                     end;
                 not_found ->
-                    _ = damage_release_nft_checkout_store:mark_status(Key, cancelled),
-                    retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts);
+                    case {SameBuyer, maps:get(status, Existing, reserved)} of
+                        {true, reserved} ->
+                            ReservedQuote = maps:get(quote, Existing, Quote),
+                            create_reserved_checkout_invoice(
+                                Key, Mint, Buyer, ReservedQuote, Label, Expiry
+                            );
+                        {_, expired} ->
+                            retry_checkout_after_expiry(
+                                Key, Mint, Buyer, Quote, Expiry, Opts
+                            );
+                        {_, Status} ->
+                            {error, {persisted_checkout_invoice_missing, Label, Status}}
+                    end;
                 {error, _} = Error ->
                     Error
             end
     end.
 
+existing_checkout_quote(Existing, Invoice, FallbackQuote) ->
+    StoredQuote = maps:get(quote, Existing, FallbackQuote),
+    quote_with_invoice_amount(StoredQuote, Invoice).
+
 retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts) ->
     BaseId = checkout_id(Opts),
     CheckoutId = <<BaseId/binary, "-", (lower_hex(crypto:strong_rand_bytes(4)))/binary>>,
-    TokenBin = to_bin(maps:get(token_id, Mint)),
-    Label = <<"build_nft:", TokenBin/binary, ":", CheckoutId/binary>>,
-    case damage_release_nft_checkout_store:reserve(Key, Buyer, CheckoutId, Label) of
+    Label = checkout_label(Key, CheckoutId),
+    case damage_release_nft_checkout_store:reserve(
+        Key, Buyer, CheckoutId, Label, #{quote => Quote}
+    ) of
         {ok, new, _} -> create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
         {ok, existing, Record} -> {error, {checkout_in_progress, Record}};
         {error, _} = Error -> Error
     end.
 
 lookup_checkout_invoice(Label) ->
-    try cln:list_invoices_by_label(Label) of
+    case damage_cln:list_invoices_by_label(Label) of
         #{invoices := []} -> not_found;
         #{invoices := [Invoice | _]} when is_map(Invoice) -> {ok, Invoice};
         #{<<"invoices">> := []} -> not_found;
         #{<<"invoices">> := [Invoice | _]} when is_map(Invoice) -> {ok, Invoice};
         {error, _} = Error -> Error;
         Other -> {error, {unexpected_invoice_lookup_response, Other}}
-    catch
-        exit:Reason -> {error, {invoice_lookup_unavailable, Reason}};
-        Class:Reason -> {error, {invoice_lookup_failed, Class, Reason}}
     end.
 
-checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice) ->
+checkout_from_invoice(Mint, Buyer, Quote0, Label, Expiry, Invoice) ->
     case map_get_any([bolt11, <<"bolt11">>, "bolt11"], Invoice, undefined) of
         undefined ->
             {error, {invoice_missing_bolt11, compact_map(Invoice)}};
@@ -423,6 +543,7 @@ checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice) ->
                 expired ->
                     {error, {checkout_invoice_expired, Label}};
                 _ ->
+                    Quote = quote_with_invoice_amount(Quote0, Invoice),
                     Bolt11 = to_bin(Bolt110),
                     {ok, #{
                         mint => Mint,
@@ -448,6 +569,32 @@ checkout_from_invoice(Mint, Buyer, Quote, Label, Expiry, Invoice) ->
             end
     end.
 
+quote_with_invoice_amount(Quote, Invoice) when is_map(Quote) ->
+    case invoice_sats(Invoice) of
+        {ok, Sats} -> Quote#{sats => Sats};
+        error -> Quote
+    end.
+
+invoice_sats(Invoice) ->
+    Amount = map_get_any([amount_msat, <<"amount_msat">>, "amount_msat"], Invoice, undefined),
+    case msat_value(Amount) of
+        Msat when is_integer(Msat), Msat > 0 -> {ok, (Msat + 999) div 1000};
+        _ -> error
+    end.
+
+msat_value(V) when is_integer(V) -> V;
+msat_value(#{msat := V}) -> msat_value(V);
+msat_value(#{<<"msat">> := V}) -> msat_value(V);
+msat_value(V) when is_list(V) -> msat_value(to_bin(V));
+msat_value(V) when is_binary(V) ->
+    Numeric =
+        case binary:split(V, <<"msat">>) of
+            [N, <<>>] -> N;
+            _ -> V
+        end,
+    try binary_to_integer(Numeric) catch _:_ -> undefined end;
+msat_value(_) -> undefined.
+
 settle_build_release_checkout(Context0) ->
     case maps:get(build_release_nft_checkout, Context0, undefined) of
         #{label := Label, buyer := Buyer, mint := Mint} = Checkout ->
@@ -456,9 +603,9 @@ settle_build_release_checkout(Context0) ->
             Key = {Contract, Token},
             case damage_release_nft_checkout_store:get(Key) of
                 {ok, #{buyer := Buyer, label := Label, status := settled}} ->
-                    fail(Context0, build_release_nft_already_sold);
-                {ok, #{buyer := Buyer, label := Label}} ->
-                    settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key);
+                    reconcile_already_settled_checkout(Context0, Checkout, Mint, Buyer, Key);
+                {ok, #{buyer := Buyer, label := Label} = Stored} ->
+                    settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key, Stored);
                 {ok, Existing} ->
                     fail(Context0, {checkout_binding_mismatch, Existing});
                 not_found ->
@@ -470,13 +617,43 @@ settle_build_release_checkout(Context0) ->
             fail(Context0, build_release_nft_checkout_not_available)
     end.
 
-settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key) ->
+reconcile_already_settled_checkout(Context0, Checkout, Mint, Buyer, Key) ->
+    case release_keypair(Context0) of
+        {ok, KeyPair} ->
+            case release_token_owner(KeyPair, Mint) of
+                {ok, Buyer} ->
+                    finalize_checkout_settlement(
+                        Context0, Checkout, Mint, Buyer, undefined, Key, already_settled
+                    );
+                {ok, Owner} ->
+                    fail(Context0, {settled_checkout_owner_mismatch, Buyer, Owner});
+                {error, Why} ->
+                    fail(Context0, {settled_checkout_owner_check_failed, Why})
+            end;
+        {error, Why} ->
+            fail(Context0, Why)
+    end.
+
+settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key, Stored) ->
     case lookup_checkout_invoice(Label) of
         {ok, Invoice} ->
             case invoice_status(Invoice) of
                 paid ->
-                    _ = damage_release_nft_checkout_store:mark_status(Key, paid),
-                    transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key);
+                    case maps:get(status, Stored, pending) of
+                        settling ->
+                            reconcile_settling_checkout(
+                                Context0, Checkout, Mint, Buyer, Invoice, Key
+                            );
+                        _ ->
+                            case damage_release_nft_checkout_store:mark_status(Key, paid) of
+                                {ok, _} ->
+                                    transfer_paid_build_release(
+                                        Context0, Checkout, Mint, Buyer, Invoice, Key
+                                    );
+                                {error, Why} ->
+                                    fail(Context0, {checkout_store_paid_failed, Why})
+                            end
+                    end;
                 Status ->
                     fail(Context0, {lightning_checkout_not_paid, Status})
             end;
@@ -491,37 +668,152 @@ transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
     Token = maps:get(token_id, Mint),
     case release_keypair(Context0) of
         {ok, KeyPair} ->
-            Args = [to_list(Buyer), integer_to_list(Token), "None"],
-            case damage_ae:contract_call_payfor_user(
-                KeyPair,
-                Contract,
-                contract_source(),
-                "transfer",
-                Args
-            ) of
-                TransferCall when is_map(TransferCall) ->
-                    case call_return(TransferCall) of
+            Seller = to_bin(maps:get(public_key, KeyPair)),
+            case release_token_owner(KeyPair, Mint) of
+                {ok, Buyer} ->
+                    finalize_checkout_settlement(
+                        Context0, Checkout, Mint, Buyer, Invoice, Key, already_owned_by_buyer
+                    );
+                {ok, Seller} ->
+                    case damage_release_nft_checkout_store:mark_status(Key, settling) of
                         {ok, _} ->
-                            case damage_release_nft_checkout_store:mark_status(Key, settled) of
-                                {ok, _} ->
-                                    Context0#{
-                                        build_release_nft_checkout := Checkout#{
-                                            status => settled,
-                                            paid_invoice => Invoice
-                                        },
-                                        build_release_nft_transfer => TransferCall
-                                    };
-                                {error, Why} ->
-                                    fail(Context0, {checkout_store_settlement_failed, Why})
-                            end;
+                            Args = [to_list(Buyer), integer_to_list(Token), "None"],
+                            TransferResult =
+                                try damage_ae:contract_call_payfor_user(
+                                    KeyPair,
+                                    Contract,
+                                    contract_source(),
+                                    "transfer",
+                                    Args
+                                ) of
+                                    Result -> Result
+                                catch
+                                    Class:Reason -> {error, {Class, Reason}}
+                                end,
+                            settle_transfer_result(
+                                Context0,
+                                Checkout,
+                                Mint,
+                                Buyer,
+                                Invoice,
+                                Key,
+                                KeyPair,
+                                TransferResult
+                            );
                         {error, Why} ->
-                            fail(Context0, {build_release_nft_transfer_failed, Why, TransferCall})
+                            fail(Context0, {checkout_store_settling_failed, Why})
                     end;
-                Error ->
-                    fail(Context0, {build_release_nft_transfer_failed, Error})
+                {ok, Owner} ->
+                    fail(Context0, {build_release_nft_no_longer_owned_by_seller, Owner});
+                {error, Why} ->
+                    fail(Context0, {build_release_nft_owner_check_failed, Why})
             end;
         {error, Why} ->
             fail(Context0, Why)
+    end.
+
+settle_transfer_result(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, TransferCall)
+    when is_map(TransferCall)
+->
+    case call_return(TransferCall) of
+        {ok, _} ->
+            finalize_checkout_settlement(
+                Context0, Checkout, Mint, Buyer, Invoice, Key, TransferCall
+            );
+        {error, Why} ->
+            reconcile_transfer_outcome(
+                Context0,
+                Checkout,
+                Mint,
+                Buyer,
+                Invoice,
+                Key,
+                KeyPair,
+                {build_release_nft_transfer_failed, Why, TransferCall}
+            )
+    end;
+settle_transfer_result(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, Error) ->
+    reconcile_transfer_outcome(
+        Context0,
+        Checkout,
+        Mint,
+        Buyer,
+        Invoice,
+        Key,
+        KeyPair,
+        {build_release_nft_transfer_failed, Error}
+    ).
+
+reconcile_transfer_outcome(Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair, Failure) ->
+    Seller = to_bin(maps:get(public_key, KeyPair)),
+    case release_token_owner(KeyPair, Mint) of
+        {ok, Buyer} ->
+            finalize_checkout_settlement(
+                Context0, Checkout, Mint, Buyer, Invoice, Key, reconciled_after_transfer
+            );
+        {ok, Seller} ->
+            %% Keep status=settling. A retry must reconcile ownership rather
+            %% than submit another transfer while the original result is unknown.
+            fail(Context0, {build_release_nft_transfer_uncertain, Failure});
+        {ok, Owner} ->
+            fail(Context0, {build_release_nft_transfer_owner_changed, Owner, Failure});
+        {error, Why} ->
+            fail(Context0, {build_release_nft_transfer_outcome_unknown, Failure, Why})
+    end.
+
+reconcile_settling_checkout(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
+    case release_keypair(Context0) of
+        {ok, KeyPair} ->
+            Seller = to_bin(maps:get(public_key, KeyPair)),
+            case release_token_owner(KeyPair, Mint) of
+                {ok, Buyer} ->
+                    finalize_checkout_settlement(
+                        Context0, Checkout, Mint, Buyer, Invoice, Key, reconciled_settlement
+                    );
+                {ok, Seller} ->
+                    fail(Context0, build_release_nft_transfer_still_uncertain);
+                {ok, Owner} ->
+                    fail(Context0, {build_release_nft_transfer_owner_changed, Owner});
+                {error, Why} ->
+                    fail(Context0, {build_release_nft_transfer_owner_check_failed, Why})
+             end;
+         {error, Why} ->
+             fail(Context0, Why)
+    end.
+
+finalize_checkout_settlement(Context0, Checkout, Mint, Buyer, Invoice, Key, TransferResult) ->
+    case damage_release_nft_checkout_store:mark_status(Key, settled) of
+        {ok, _} ->
+            Checkout1 = Checkout#{status => settled},
+            Checkout2 =
+                case Invoice of
+                    undefined -> Checkout1;
+                    _ -> Checkout1#{paid_invoice => Invoice}
+                end,
+            Context1 = Context0#{
+                build_release_nft_checkout := Checkout2,
+                build_release_nft_transfer => TransferResult
+            },
+            best_effort_publish_sold_listing(Context1, Mint, Buyer);
+        {error, Why} ->
+            fail(Context0, {checkout_store_settlement_failed, Why})
+    end.
+
+best_effort_publish_sold_listing(Context0, Mint, Buyer) ->
+    case maps:get(build_release_nft_listing, Context0, undefined) of
+        #{image := Image, sale := Sale} = Listing when is_map(Sale) ->
+            Opts = maps:get(opts, Listing, #{}),
+            SoldSale = Sale#{status => sold, buyer => Buyer},
+            Context1 = Context0#{build_release_nft_listing := Listing#{sale := SoldSale}},
+            Published = publish_release_listing(Context1, Mint, Image, SoldSale, Opts),
+            case maps:take(fail, Published) of
+                {Reason, Clean} ->
+                    Clean#{build_release_nft_sold_publish_error => Reason};
+                error ->
+                    Published
+            end;
+        _ ->
+            Context0
     end.
 
 invoice_status(Invoice) ->
@@ -726,6 +1018,13 @@ release_nostr_payload(Mint, Image, Sale) ->
     case Sale of
         none ->
             {1, Content, Tags0};
+        #{status := sold, damage_text := DamageText} ->
+            DTag = <<"build-release-nft:", Contract/binary, ":", Token/binary>>,
+            {30078, Content, Tags0 ++ [
+                [<<"d">>, DTag],
+                [<<"price">>, DamageText, <<"DAMAGE">>],
+                [<<"status">>, <<"sold">>]
+            ]};
         #{damage_text := DamageText} ->
             %% NIP-33 parameterized replaceable event: retries replace the same
             %% token listing instead of creating duplicate sale announcements.
@@ -739,6 +1038,11 @@ release_nostr_payload(Mint, Image, Sale) ->
 
 sale_note_lines(none) ->
     <<>>;
+sale_note_lines(#{status := sold, damage_text := DamageText}) ->
+    [
+        <<"\n✅ Sold • ">>, DamageText, <<" DAMAGE\n">>,
+        <<"The Lightning checkout for this NFT is closed.\n">>
+    ];
 sale_note_lines(#{damage_text := DamageText}) ->
     [
         <<"\n💎 For sale: ">>, DamageText, <<" DAMAGE\n">>,
@@ -788,8 +1092,8 @@ release_card_sale_badge(#{damage_text := DamageText0}) ->
     DamageText = xml_escape(DamageText0),
     [
         <<"<rect x=\"82\" y=\"495\" width=\"650\" height=\"40\" rx=\"20\" fill=\"#000000\" opacity=\"0.18\"/>">>,
-        <<"<text x=\"102\" y=\"521\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\" font-weight=\"700\">FOR SALE • ">>,
-        DamageText, <<" DAMAGE • Lightning checkout</text>">>
+        <<"<text x=\"102\" y=\"521\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\" font-weight=\"700\">ASK • ">>,
+        DamageText, <<" DAMAGE • Lightning</text>">>
     ].
 
 listing_relays(Context, Opts) ->
@@ -869,11 +1173,6 @@ parse_pos_number(V) when is_list(V) ->
 parse_pos_number(_) ->
     {error, not_positive_number}.
 
-price_text(V) when is_float(V) ->
-    to_bin(io_lib:format("~.8g", [V]));
-price_text(V) ->
-    to_bin(V).
-
 short_text(Value, MaxChars) ->
     Bin = to_bin(Value),
     try unicode:characters_to_list(Bin) of
@@ -916,6 +1215,11 @@ invoice_status_test() ->
     ?assertEqual(unpaid, invoice_status(#{status => unpaid})),
     ?assertEqual(expired, invoice_status(#{status => <<"expired">>})).
 
+invoice_sats_test() ->
+    ?assertEqual({ok, 123}, invoice_sats(#{amount_msat => 123000})),
+    ?assertEqual({ok, 123}, invoice_sats(#{<<"amount_msat">> => <<"123000msat">>})),
+    ?assertEqual({ok, 123}, invoice_sats(#{amount_msat => #{msat => 123000}})).
+
 sale_listing_is_replaceable_test() ->
     Mint = #{
         token_id => 42,
@@ -934,7 +1238,12 @@ sale_listing_is_replaceable_test() ->
     {30078, Content, Tags} = release_nostr_payload(Mint, Image, Sale),
     ?assertMatch({_, _}, binary:match(Content, <<"fresh spot-priced invoice">>)),
     ?assert(lists:member([<<"d">>, <<"build-release-nft:ct_test:42">>], Tags)),
-    ?assertNot(lists:any(fun([<<"lightning">> | _]) -> true; (_) -> false end, Tags)).
+    ?assertNot(lists:any(fun([<<"lightning">> | _]) -> true; (_) -> false end, Tags)),
+    Sold = Sale#{status => sold},
+    {30078, SoldContent, SoldTags} = release_nostr_payload(Mint, Image, Sold),
+    ?assertMatch({_, _}, binary:match(SoldContent, <<"Sold">>)),
+    ?assert(lists:member([<<"status">>, <<"sold">>], SoldTags)),
+    ?assertNot(lists:member([<<"payment">>, <<"lightning">>], SoldTags)).
 -endif.
 
 %% Deterministic, dependency-free error: no filesystem, IPFS, key or chain access.
