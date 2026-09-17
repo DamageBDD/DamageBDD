@@ -429,12 +429,18 @@ publish_release_listing(Context0, Mint, Image, Quote, Purchase, Opts) ->
         {ok, Event} when is_map(Event) ->
             case nostr_pool:ensure_started(Relays) of
                 ok ->
-                    case nostr_pool:publish_sync(Event, Relays, TimeoutMs) of
-                        ok ->
+                    EventId = maps:get(<<"id">>, Event, undefined),
+                    ?LOG_INFO(
+                        "Publishing build release NFT Nostr event event_id=~p relays=~p",
+                        [EventId, Relays]
+                    ),
+                    case nostr_pool:publish_sync_detailed(Event, Relays, TimeoutMs) of
+                        {ok, PublishAck} ->
                             PostResult = #{
-                                event_id => maps:get(<<"id">>, Event, undefined),
+                                event_id => EventId,
                                 pubkey => maps:get(<<"pubkey">>, Event, undefined),
                                 relays => Relays,
+                                publish_ack => PublishAck,
                                 image_cid => maps:get(cid, Image),
                                 image_url => maps:get(url, Image),
                                 quote => Quote,

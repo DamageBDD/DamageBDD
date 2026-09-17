@@ -14,6 +14,7 @@
     publish/3,
     publish/2,
     publish_sync/3,
+    publish_sync_detailed/3,
     default_relays/1,
     req_one/4,
     req_one/3
@@ -121,15 +122,27 @@ req_one(Filter, Relays, TimeoutMs, FanoutLimit) ->
     {ok, map()} | {error, term()}.
 req_one(Filter, TimeoutMs, FanoutLimit) ->
     gen_server:call(?SERVER, {req_one_default, Filter, TimeoutMs, FanoutLimit}, TimeoutMs + 2000).
--spec publish_sync(Event :: map(), Relays :: [binary()], TimeoutMs :: pos_integer()) ->
+-spec publish_sync(Event :: map(), Relays :: list(), TimeoutMs :: pos_integer()) ->
     ok | {error, term()}.
 publish_sync(Event, Relays, TimeoutMs) ->
-    ensure_started(Relays),
-    gen_server:call(
-        ?SERVER,
-        {publish_sync, Event, damage_nostr:normalize_relays(Relays), TimeoutMs},
-        TimeoutMs + 2000
-    ).
+    case publish_sync_detailed(Event, Relays, TimeoutMs) of
+        {ok, _Ack} -> ok;
+        {error, _} = Error -> Error
+    end.
+
+-spec publish_sync_detailed(Event :: map(), Relays :: list(), TimeoutMs :: pos_integer()) ->
+    {ok, map()} | {error, term()}.
+publish_sync_detailed(Event, Relays, TimeoutMs) ->
+    case ensure_started(Relays) of
+        ok ->
+            gen_server:call(
+                ?SERVER,
+                {publish_sync, Event, damage_nostr:normalize_relays(Relays), TimeoutMs},
+                TimeoutMs + 2000
+            );
+        {error, _} = Error ->
+            Error
+    end.
 -spec kill_worker(binary()) -> ok.
 kill_worker(Relay) ->
     gen_server:call(?SERVER, {kill_worker, Relay}).
@@ -181,24 +194,7 @@ handle_call({kill_worker, Relay}, _From, S = #state{workers = Workers}) ->
     end;
 handle_call({publish_sync, Event, Relays, TimeoutMs}, _From, S0) ->
     S = ensure_workers(Relays, S0),
-    Results =
-        [
-            case get_worker(R, S) of
-                {ok, Pid} ->
-                    {R, catch nostr_relay_worker:publish_sync(Pid, Event, TimeoutMs)};
-                Error ->
-                    {R, Error}
-            end
-         || R <- Relays
-        ],
-    Reply =
-        case [ok || {_R, ok} <- Results] of
-            [_ | _] ->
-                ok;
-            [] ->
-                {error, {all_failed, Results}}
-        end,
-    {reply, Reply, S};
+    {reply, do_publish_sync(Event, Relays, TimeoutMs, S), S};
 handle_call({req_one_default, Filter, TimeoutMs, FanoutLimit}, _From, S = #state{relays = Relays}) ->
     {reply, do_req_one(Filter, Relays, TimeoutMs, FanoutLimit, S), S};
 handle_call({req_one, Filter, Relays, TimeoutMs, FanoutLimit}, _From, S) ->
@@ -259,6 +255,97 @@ terminate(_Reason, _S) ->
 %% ---------------------------
 %% Internal
 %% ---------------------------
+
+%% Fan out publishes concurrently. Each worker blocks until its relay returns
+%% the NIP-01 OK acknowledgement. The first accepted relay satisfies the public
+%% success contract; if none accepts, return the per-relay failures.
+do_publish_sync(Event, Relays0, TimeoutMs, S) ->
+    Relays = damage_nostr:normalize_relays(Relays0),
+    case Relays of
+        [] ->
+            {error, no_relays};
+        _ ->
+            Parent = self(),
+            Ref = make_ref(),
+            Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+            EventId = event_id(Event),
+            Helpers =
+                [
+                    begin
+                        Relay = relay_key(R),
+                        Pid = spawn(fun() ->
+                            Result =
+                                case get_worker(R, S) of
+                                    {ok, WorkerPid} ->
+                                        catch nostr_relay_worker:publish_sync(
+                                            WorkerPid, Event, TimeoutMs
+                                        );
+                                    Error ->
+                                        Error
+                                end,
+                            Parent ! {
+                                nostr_publish_result,
+                                Ref,
+                                self(),
+                                Relay,
+                                normalize_publish_result(Result)
+                            }
+                        end),
+                        {Pid, Relay}
+                    end
+                 || R <- Relays
+                ],
+            collect_publish_ack(Ref, Helpers, Deadline, [], EventId)
+    end.
+
+collect_publish_ack(_Ref, [], _Deadline, Errors, _EventId) ->
+    {error, {all_failed, lists:reverse(Errors)}};
+collect_publish_ack(Ref, Helpers, Deadline, Errors, EventId) ->
+    Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {nostr_publish_result, Ref, HelperPid, Relay, ok} ->
+            kill_publish_helpers(lists:keydelete(HelperPid, 1, Helpers)),
+            ?LOG_INFO(
+                "Nostr publish confirmed event_id=~p relay=~p",
+                [EventId, Relay]
+            ),
+            {ok, #{event_id => EventId, relay => Relay}};
+        {nostr_publish_result, Ref, HelperPid, Relay, Error} ->
+            collect_publish_ack(
+                Ref,
+                lists:keydelete(HelperPid, 1, Helpers),
+                Deadline,
+                [{Relay, Error} | Errors],
+                EventId
+            )
+    after Remaining ->
+        PendingRelays = [Relay || {_Pid, Relay} <- Helpers],
+        kill_publish_helpers(Helpers),
+        {error,
+            {publish_timeout, #{
+                event_id => EventId,
+                errors => lists:reverse(Errors),
+                pending_relays => PendingRelays
+            }}}
+    end.
+
+kill_publish_helpers(Helpers) ->
+    lists:foreach(
+        fun({Pid, _Relay}) ->
+            catch exit(Pid, kill)
+        end,
+        Helpers
+    ).
+
+normalize_publish_result(ok) -> ok;
+normalize_publish_result({error, _} = Error) -> Error;
+normalize_publish_result({'EXIT', Reason}) -> {error, {worker_call_failed, Reason}};
+normalize_publish_result(Other) -> {error, {unexpected_publish_result, Other}}.
+
+event_id(Event) when is_map(Event) ->
+    maps:get(<<"id">>, Event, maps:get(id, Event, undefined));
+event_id(_) ->
+    undefined.
 
 do_req_one(Filter, Relays0, TimeoutMs, FanoutLimit, S0) ->
     Relays = take_first(FanoutLimit, damage_nostr:normalize_relays(Relays0)),
