@@ -5,7 +5,7 @@
 -module(damage_release_overrides).
 
 -export([record/1, remove/1, get/1, list/0, clear/0,
-         with_lock/1, snapshot/0, runtime_code_hash/1]).
+         with_lock/1, snapshot/0, runtime_code_hash/1, current_generation/2]).
 
 -define(KEY, {?MODULE, overrides}).
 -define(LOCK_MARKER, {?MODULE, lock_held}).
@@ -124,18 +124,68 @@ write(Revision, Overrides) ->
     ok.
 
 restored(Module, Meta) ->
-    Base = maps:get(base_module_md5, Meta, <<>>),
-    Base =/= <<>> andalso current_md5(Module) =:= Base andalso
-        code:is_loaded(Module) =:= {file, maps:get(base_filename, Meta, undefined)} andalso
-        not erlang:check_old_code(Module).
+    case current_generation(Module, Meta) of
+        {ok, #{filename := Filename, beam_sha256 := Sha}} ->
+            Filename =:= maps:get(base_filename, Meta, undefined) andalso
+                Sha =:= maps:get(base_beam_sha256, Meta, undefined) andalso
+                not erlang:check_old_code(Module);
+        {error, _} -> false
+    end.
 
 consistent(Module, Meta) ->
     State = maps:get(state, Meta, legacy),
     OldSha = maps:get(old_beam_sha256, Meta, <<>>),
-    OldKnown = not erlang:check_old_code(Module) orelse
-        (is_binary(OldSha) andalso byte_size(OldSha) =:= 64),
+    OldKnown = not erlang:check_old_code(Module) orelse valid_sha256(OldSha),
     (State =:= active orelse State =:= rollback_pending) andalso OldKnown andalso
-        current_md5(Module) =:= maps:get(loaded_module_md5, Meta, undefined).
+        case current_generation(Module, Meta) of
+            {ok, #{filename := Filename, module_md5 := Md5, beam_sha256 := Sha}} ->
+                Filename =:= maps:get(loaded_filename, Meta, undefined) andalso
+                    Md5 =:= maps:get(loaded_module_md5, Meta, undefined) andalso
+                    Sha =:= maps:get(loaded_beam_sha256, Meta, undefined);
+            {error, _} -> false
+        end.
+
+%% Resolve a journaled generation using the VM's loaded filename and code MD5.
+%% beam_lib:md5/1 excludes compilation metadata, so two different BEAM binaries
+%% can have the same MD5. Our content-addressed cache filenames distinguish them.
+%% The caller must hold with_lock/1 across resolution and any managed code change.
+%% Filenames are private journal fields: they are not exposed or hashed publicly.
+%% This cannot attest arbitrary code loaded outside this cooperative interface.
+-spec current_generation(module(), map()) -> {ok, map()} | {error, term()}.
+current_generation(Module, Meta) ->
+    case code:is_loaded(Module) of
+        {file, Filename} when is_list(Filename), Filename =/= [] ->
+            Md5 = current_md5(Module),
+            case is_binary(Md5) andalso byte_size(Md5) =:= 32 of
+                true -> resolve_generation(Module, Meta, Filename, Md5);
+                false -> {error, {untracked_current_code, Module}}
+            end;
+        _ -> {error, {untracked_current_code, Module}}
+    end.
+
+resolve_generation(Module, Meta, Filename, Md5) ->
+    Keys = [{base_filename, base_module_md5, base_beam_sha256},
+            {loaded_filename, loaded_module_md5, loaded_beam_sha256},
+            {candidate_filename, candidate_module_md5, beam_sha256}],
+    Digests = lists:usort([
+        maps:get(ShaKey, Meta, undefined)
+     || {PathKey, Md5Key, ShaKey} <- Keys,
+        maps:get(PathKey, Meta, undefined) =:= Filename,
+        maps:get(Md5Key, Meta, undefined) =:= Md5
+    ]),
+    case Digests of
+        [Sha] ->
+            case valid_sha256(Sha) of
+                true -> {ok, #{filename => Filename, module_md5 => Md5, beam_sha256 => Sha}};
+                false -> {error, {ambiguous_current_generation, Module}}
+            end;
+        [] -> {error, {untracked_current_code, Module}};
+        _ -> {error, {ambiguous_current_generation, Module}}
+    end.
+
+valid_sha256(Sha) when is_binary(Sha), byte_size(Sha) =:= 64 ->
+    re:run(Sha, <<"\\A[0-9a-f]{64}\\z">>, [{capture, none}]) =:= match;
+valid_sha256(_) -> false.
 
 current_md5(Module) ->
     case code:is_loaded(Module) of

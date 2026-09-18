@@ -95,8 +95,11 @@ load_override(Module, Filename, Beam, SourceSha, Warnings) ->
         {ok, Existing} ->
             require(maps:get(state, Existing, legacy) =:= active,
                     {override_requires_rollback, Module}),
-            require(current_md5(Module) =:= maps:get(loaded_module_md5, Existing),
-                    {untracked_current_code, Module}),
+            %% Module MD5 alone cannot distinguish different BEAM metadata.
+            {ok, Current} = must(damage_release_overrides:current_generation(Module, Existing)),
+            require(maps:get(filename, Current) =:= maps:get(loaded_filename, Existing, undefined)
+                andalso maps:get(beam_sha256, Current) =:= maps:get(loaded_beam_sha256, Existing),
+                {untracked_current_code, Module}),
             Existing
     end,
     {ok, NewMd5} = must(beam_md5(Module, Beam)),
@@ -104,7 +107,7 @@ load_override(Module, Filename, Beam, SourceSha, Warnings) ->
     OldSha = maps:get(loaded_beam_sha256, Entry),
     Pending = Entry#{module => Module, state => loading,
         source_sha256 => SourceSha, beam_sha256 => sha256(Beam),
-        candidate_module_md5 => NewMd5,
+        candidate_module_md5 => NewMd5, candidate_filename => Filename,
         loaded_at => erlang:system_time(second)},
     %% Write-ahead marker survives caller death even after the code changes.
     %% Snapshot readers share this lock; an interrupted transition is uncertain.
@@ -114,10 +117,15 @@ load_override(Module, Filename, Beam, SourceSha, Warnings) ->
     %% inspection via code:which/1 in the runner's strict step checker.
     case code:atomic_load([{Module, Filename, Beam}]) of
         ok ->
-            require(current_md5(Module) =:= NewMd5, {untracked_current_code, Module}),
+            {ok, Loaded} = must(damage_release_overrides:current_generation(Module, Pending)),
+            require(maps:get(filename, Loaded) =:= Filename
+                andalso maps:get(beam_sha256, Loaded) =:= sha256(Beam),
+                {untracked_current_code, Module}),
             Old = case code:soft_purge(Module) of true -> <<>>; false -> OldSha end,
-            Active = Pending#{state => active, loaded_module_md5 => NewMd5,
-                loaded_beam_sha256 => sha256(Beam), old_beam_sha256 => Old},
+            Active = maps:without([candidate_filename, candidate_module_md5],
+                Pending#{state => active, loaded_module_md5 => NewMd5,
+                    loaded_filename => Filename, loaded_beam_sha256 => sha256(Beam),
+                    old_beam_sha256 => Old}),
             ok = damage_release_overrides:record(Active),
             ?LOG_NOTICE("Loaded operator override module=~p beam_sha256=~s", [Module, sha256(Beam)]),
             {ok, (public_entry(Module))#{warnings => Warnings}};
@@ -141,7 +149,8 @@ capture_base(Module) ->
     must_ok(check_plain_beam(Module, Beam)),
     #{module => Module, base_beam => Beam, base_filename => Path,
       base_beam_sha256 => sha256(Beam), base_module_md5 => Md5,
-      loaded_module_md5 => Md5, loaded_beam_sha256 => sha256(Beam)}.
+      loaded_module_md5 => Md5, loaded_filename => Path,
+      loaded_beam_sha256 => sha256(Beam)}.
 
 rollback_locked(Module) ->
     Entry = case damage_release_overrides:get(Module) of
@@ -152,28 +161,28 @@ rollback_locked(Module) ->
     require(is_binary(BaseBeam), {base_beam_unavailable, Module}),
     require(sha256(BaseBeam) =:= maps:get(base_beam_sha256, Entry), base_beam_hash_mismatch),
     BaseMd5 = maps:get(base_module_md5, Entry),
-    Current = current_md5(Module),
-    require(lists:member(Current, [BaseMd5, maps:get(loaded_module_md5, Entry, none),
-                                  maps:get(candidate_module_md5, Entry, none)]),
-            {untracked_current_code, Module}),
-    IsBase = Current =:= BaseMd5 andalso
-        code:is_loaded(Module) =:= {file, maps:get(base_filename, Entry)},
-    CurrentSha = case Current =:= maps:get(candidate_module_md5, Entry, none) of
-        true -> maps:get(beam_sha256, Entry);
-        false -> maps:get(loaded_beam_sha256, Entry)
-    end,
+    %% A loading marker does not prove atomic_load ran. Resolve the actual
+    %% managed filename AND module MD5 before selecting a full-BEAM digest.
+    %% Missing or conflicting identities must not be guessed from MD5 alone.
+    {ok, Current} = must(damage_release_overrides:current_generation(Module, Entry)),
+    CurrentSha = maps:get(beam_sha256, Current),
+    IsBase = maps:get(filename, Current) =:= maps:get(base_filename, Entry) andalso
+        CurrentSha =:= maps:get(base_beam_sha256, Entry),
     case IsBase of
         true -> finish_rollback(Module, Entry);
         false ->
             require(code:soft_purge(Module), old_code_still_in_use),
-            Pending = Entry#{state => rolling_back, loaded_module_md5 => Current,
-                             loaded_beam_sha256 => CurrentSha},
+            Pending = Entry#{state => rolling_back,
+                loaded_module_md5 => maps:get(module_md5, Current),
+                loaded_filename => maps:get(filename, Current),
+                loaded_beam_sha256 => CurrentSha},
             ok = damage_release_overrides:record(Pending),
             case code:atomic_load([{Module, maps:get(base_filename, Entry), BaseBeam}]) of
                 ok ->
                     %% Keep the former override hash while it is old code.
                     Restored = Pending#{state => rollback_pending,
                         loaded_module_md5 => BaseMd5,
+                        loaded_filename => maps:get(base_filename, Entry),
                         loaded_beam_sha256 => maps:get(base_beam_sha256, Entry),
                         old_beam_sha256 => CurrentSha},
                     ok = damage_release_overrides:record(Restored),
@@ -194,6 +203,7 @@ finish_rollback(Module, Entry) ->
         false ->
             ok = damage_release_overrides:record(Entry#{state => rollback_pending,
                 loaded_module_md5 => maps:get(base_module_md5, Entry),
+                loaded_filename => maps:get(base_filename, Entry),
                 loaded_beam_sha256 => maps:get(base_beam_sha256, Entry),
                 old_beam_sha256 => rollback_old_sha(Entry)}),
             {error, rollback_loaded_but_override_still_in_use}

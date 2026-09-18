@@ -461,7 +461,8 @@
                 ]
             },
             {operator_hotcode, [
-                {enabled, true},
+                %% Disabled by default; enable explicitly for operator maintenance.
+                {enabled, false},
                 {allowed_modules, [steps_http, text_formatter, html_formatter]}
             ]},
             {operator_source_dir, "/var/lib/damage/overrides/src"}
