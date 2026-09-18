@@ -317,7 +317,7 @@ create_checkout_invoice(Context, Mint, Buyer, Quote, Opts) ->
     Contract = to_bin(maps:get(contract_id, Mint)),
     Token = maps:get(token_id, Mint),
     Key = {Contract, Token},
-    LockId = {{?MODULE, {checkout_create, Key}}, self()},
+    LockId = checkout_operation_lock_id(Key),
     case global:trans(
         LockId,
         fun() -> create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key) end
@@ -631,20 +631,41 @@ settle_build_release_checkout(Context0) ->
             Contract = to_bin(maps:get(contract_id, Mint)),
             Token = maps:get(token_id, Mint),
             Key = {Contract, Token},
-            case damage_release_nft_checkout_store:get(Key) of
-                {ok, #{buyer := Buyer, label := Label, status := settled}} ->
-                    reconcile_already_settled_checkout(Context0, Checkout, Mint, Buyer, Key);
-                {ok, #{buyer := Buyer, label := Label} = Stored} ->
-                    settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key, Stored);
-                {ok, Existing} ->
-                    fail(Context0, {checkout_binding_mismatch, Existing});
-                not_found ->
-                    fail(Context0, build_release_nft_checkout_not_persisted);
-                {error, Why} ->
-                    fail(Context0, {checkout_store_failed, Why})
+            LockId = checkout_operation_lock_id(Key),
+            case global:trans(
+                LockId,
+                fun() ->
+                    settle_build_release_checkout_locked(
+                        Context0, Checkout, Mint, Buyer, Label, Key
+                    )
+                end
+            ) of
+                aborted ->
+                    fail(Context0, checkout_settlement_lock_aborted);
+                {aborted, Reason} ->
+                    fail(Context0, {checkout_settlement_lock_failed, Reason});
+                Result ->
+                    Result
             end;
         _ ->
             fail(Context0, build_release_nft_checkout_not_available)
+    end.
+
+checkout_operation_lock_id(Key) ->
+    {{?MODULE, {checkout_operation, Key}}, self()}.
+
+settle_build_release_checkout_locked(Context0, Checkout, Mint, Buyer, Label, Key) ->
+    case damage_release_nft_checkout_store:get(Key) of
+        {ok, #{buyer := Buyer, label := Label, status := settled}} ->
+            reconcile_already_settled_checkout(Context0, Checkout, Mint, Buyer, Key);
+        {ok, #{buyer := Buyer, label := Label} = Stored} ->
+            settle_bound_checkout(Context0, Checkout, Mint, Buyer, Label, Key, Stored);
+        {ok, Existing} ->
+            fail(Context0, {checkout_binding_mismatch, Existing});
+        not_found ->
+            fail(Context0, build_release_nft_checkout_not_persisted);
+        {error, Why} ->
+            fail(Context0, {checkout_store_failed, Why})
     end.
 
 reconcile_already_settled_checkout(Context0, Checkout, Mint, Buyer, Key) ->
@@ -1488,6 +1509,16 @@ replacement_delay_ms_test() ->
     ?assertEqual(1000, replacement_delay_ms(100, 100)),
     ?assertEqual(2000, replacement_delay_ms(100, 99)),
     ?assertEqual(0, replacement_delay_ms(100, 101)).
+
+checkout_operation_lock_id_test() ->
+    KeyA = {<<"ct_a">>, 1},
+    KeyB = {<<"ct_a">>, 2},
+    {{?MODULE, {checkout_operation, KeyA}}, Requester} = checkout_operation_lock_id(KeyA),
+    ?assertEqual(self(), Requester),
+    ?assertNotEqual(
+        element(1, checkout_operation_lock_id(KeyA)),
+        element(1, checkout_operation_lock_id(KeyB))
+    ).
 
 sold_badge_test() ->
     Badge = iolist_to_binary(release_card_sale_badge(#{status => sold, damage_text => <<"100">>})),

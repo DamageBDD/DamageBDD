@@ -2601,19 +2601,6 @@ dry_run_return_type(CallObj) ->
         _ -> unknown
     end.
 
-dry_run_revert_reason(CallObj) ->
-    ReturnType = map_value(
-        [return_type, "return_type", <<"return_type">>, returnType, <<"returnType">>],
-        CallObj,
-        undefined
-    ),
-    case ReturnType of
-        revert -> {true, decode_dry_run_return_value(CallObj)};
-        "revert" -> {true, decode_dry_run_return_value(CallObj)};
-        <<"revert">> -> {true, decode_dry_run_return_value(CallObj)};
-        _ -> false
-    end.
-
 decode_dry_run_return_value(CallObj) ->
     Encoded = map_value(
         [return_value, "return_value", <<"return_value">>, returnValue, <<"returnValue">>],
@@ -2713,20 +2700,70 @@ contract_call_payfor_tx(
 contract_call_payfor_user_safe(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
 ) ->
-    case prepare_payfor_user_signed_tx(
-        AeAccount, PrivateKey, ContractId, ContractSource, Func, Args
-    ) of
-        {ok, PayingSignedTX} ->
-            submit_payfor_user_tx(PayingSignedTX);
+    case safe_node_keypair() of
+        {ok, #{public_key := NodeAeAccount} = NodeKeyPair} ->
+            LockId = payfor_submission_lock_id(NodeAeAccount),
+            Submission = global:trans(
+                LockId,
+                fun() ->
+                    case prepare_payfor_user_signed_tx(
+                        AeAccount,
+                        PrivateKey,
+                        ContractId,
+                        ContractSource,
+                        Func,
+                        Args,
+                        NodeKeyPair
+                    ) of
+                        {ok, PayingSignedTX} -> post_payfor_user_tx(PayingSignedTX);
+                        {error, Reason} -> {not_submitted, Reason}
+                    end
+                end
+            ),
+            finish_payfor_submission(Submission);
         {error, Reason} ->
             {not_submitted, Reason}
     end;
 contract_call_payfor_user_safe(AeAccount, _Contract, _ContractSource, _Func, _Args) ->
     {not_submitted, {keypair_required, AeAccount}}.
 
-prepare_payfor_user_signed_tx(AeAccount, PrivateKey, ContractId, ContractSource, Func, Args) ->
+safe_node_keypair() ->
+    try secrets:node_keypair() of
+        #{public_key := _NodeAeAccount, private_key := _NodePrivateKey} = KeyPair ->
+            {ok, KeyPair};
+        Other ->
+            {error, {invalid_node_keypair, compact_payfor_error(Other)}}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Failed to load node keypair for paying-for submission class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {error, {node_keypair_failed, Class, compact_payfor_error(Reason)}}
+    end.
+
+payfor_submission_lock_id(NodeAeAccount) ->
+    {{?MODULE, {payfor_submit, NodeAeAccount}}, self()}.
+
+finish_payfor_submission({submitted, TxHash}) ->
+    confirm_payfor_user_tx(TxHash);
+finish_payfor_submission(aborted) ->
+    {not_submitted, payfor_submission_lock_aborted};
+finish_payfor_submission({aborted, Reason}) ->
+    {not_submitted, {payfor_submission_lock_failed, compact_payfor_error(Reason)}};
+finish_payfor_submission(Result) ->
+    Result.
+
+prepare_payfor_user_signed_tx(
+    AeAccount,
+    PrivateKey,
+    ContractId,
+    ContractSource,
+    Func,
+    Args,
+    #{public_key := NodeAeAccount, private_key := NodePrivateKey}
+) ->
     try
-        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
         {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
         Fee = vanillae:min_fee(),
         Gas = vanillae:min_gas(),
@@ -2766,24 +2803,43 @@ prepare_payfor_user_signed_tx(AeAccount, PrivateKey, ContractId, ContractSource,
         {ok, attach_signature_base58(PayingForTxFinal, PayingSignature)}
     catch
         Class:Reason:Stacktrace ->
-            {error, {prepare_payfor_user_tx_failed, Class, Reason, Stacktrace}}
+            ?LOG_ERROR(
+                "Preparing paying-for transaction failed class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {error, {
+                prepare_payfor_user_tx_failed,
+                Class,
+                compact_payfor_error(Reason)
+            }}
     end.
 
-submit_payfor_user_tx(PayingSignedTX) ->
+post_payfor_user_tx(PayingSignedTX) ->
     try vanillae:post_tx(PayingSignedTX) of
         {ok, #{"tx_hash" := TxHash}} ->
-            confirm_payfor_user_tx(TxHash);
+            {submitted, TxHash};
         {ok, #{<<"tx_hash">> := TxHash}} ->
-            confirm_payfor_user_tx(TxHash);
+            {submitted, TxHash};
         {error, Reason} ->
             %% A transport/backend error at post time cannot prove whether the
             %% node accepted the transaction. Treat it as ambiguous.
-            {uncertain, undefined, {post_tx_failed, Reason}};
+            {uncertain, undefined, {post_tx_failed, compact_payfor_error(Reason)}};
         Other ->
-            {uncertain, undefined, {unexpected_post_tx_response, Other}}
+            {uncertain, undefined, {
+                unexpected_post_tx_response,
+                compact_payfor_error(Other)
+            }}
     catch
         Class:Reason:Stacktrace ->
-            {uncertain, undefined, {post_tx_crashed, Class, Reason, Stacktrace}}
+            ?LOG_ERROR(
+                "Posting paying-for transaction failed class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {uncertain, undefined, {
+                post_tx_crashed,
+                Class,
+                compact_payfor_error(Reason)
+            }}
     end.
 
 confirm_payfor_user_tx(TxHash) ->
@@ -2791,8 +2847,19 @@ confirm_payfor_user_tx(TxHash) ->
         Result -> {confirmed, TxHash, Result}
     catch
         Class:Reason:Stacktrace ->
-            {uncertain, TxHash, {wait_tx_failed, Class, Reason, Stacktrace}}
+            ?LOG_ERROR(
+                "Confirming paying-for transaction failed tx=~p class=~p reason=~p stack=~p",
+                [TxHash, Class, Reason, Stacktrace]
+            ),
+            {uncertain, TxHash, {
+                wait_tx_failed,
+                Class,
+                compact_payfor_error(Reason)
+            }}
     end.
+
+compact_payfor_error(Term) ->
+    iolist_to_binary(io_lib:format("~P", [Term, 12])).
 
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
