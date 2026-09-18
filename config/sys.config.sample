@@ -459,7 +459,12 @@
                     {system_dir, "/var/lib/damage/ssh/tunnel/system"},
                     {user_dir, "/var/lib/damage/ssh/tunnel/user"}
                 ]
-            }
+            },
+            {operator_hotcode, [
+                {enabled, true},
+                {allowed_modules, [steps_http, text_formatter, html_formatter]}
+            ]},
+            {operator_source_dir, "/var/lib/damage/overrides/src"}
         ]
     },
 

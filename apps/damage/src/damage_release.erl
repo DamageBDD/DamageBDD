@@ -4,6 +4,10 @@
 %%%-------------------------------------------------------------------
 -module(damage_release).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([
     info/0,
     provenance_path/0,
@@ -24,7 +28,7 @@
 -spec info() -> map().
 info() ->
     {Name, Vsn} = rel_name_vsn(),
-    Overrides = safe_overrides(),
+    Snapshot = safe_override_snapshot(),
     Base0 = #{
         application => Name,
         version => Vsn,
@@ -39,11 +43,9 @@ info() ->
         release_origin => package,
         provenance_status => absent,
         provenance_matches_build => false,
-        nft => null,
-        runtime_modified => Overrides =/= [],
-        overrides => Overrides
+        nft => null
     },
-    Base1 = apply_install_provenance(Base0),
+    Base1 = apply_install_provenance(maps:merge(Base0, Snapshot)),
     Base1#{runtime_code_hash => runtime_code_hash(Base1)}.
 
 -spec provenance_path() -> file:filename_all().
@@ -86,7 +88,8 @@ install_provenance(Manifest0) ->
 %% Falls back to {<<"damage">>, VsnFromApp} if release_handler is unavailable.
 -spec rel_name_vsn() -> {binary(), binary()}.
 rel_name_vsn() ->
-    case catch release_handler:which_releases() of
+    Releases = try release_handler:which_releases() catch _:_ -> unavailable end,
+    case Releases of
         List when is_list(List) ->
             case lists:dropwhile(fun({_, _, _, S}) -> S =/= current end, List) of
                 [{Name, Vsn, _Desc, current} | _] ->
@@ -150,7 +153,7 @@ apply_install_provenance(Base) ->
                         provenance_status => unverified,
                         provenance_matches_build => false,
                         nft => Nft
-                     }
+                    }
             end;
         not_found ->
             Base;
@@ -204,12 +207,15 @@ nft_info(Provenance) ->
         package_sha256 => maps:get(sha256, Provenance)
     }.
 
-safe_overrides() ->
-    try damage_release_overrides:list() of
-        Overrides when is_list(Overrides) -> Overrides;
-        _ -> []
+%% Never convert a broken registry into a false "pristine" claim.
+safe_override_snapshot() ->
+    try damage_release_overrides:snapshot() of
+        #{overrides := _, runtime_modified := _, runtime_integrity_status := _} = Snapshot ->
+            Snapshot
     catch
-        _:_ -> []
+        _:_ ->
+            #{overrides => [], override_revision => null,
+              runtime_modified => null, runtime_integrity_status => unavailable}
     end.
 
 runtime_code_hash(ReleaseInfo) ->
@@ -285,3 +291,17 @@ to_bin(V) when is_atom(V) -> atom_to_binary(V, utf8);
 to_bin(V) when is_integer(V) -> integer_to_binary(V);
 to_bin(V) when is_list(V) -> unicode:characters_to_binary(V);
 to_bin(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+-ifdef(TEST).
+provenance_build_status_test_() ->
+    Sha = binary:copy(<<"a">>, 40),
+    P = #{git_sha => Sha, release => <<"1.2.3">>},
+    B = #{git_sha => Sha, release_version => <<"1.2.3">>},
+    [?_assertEqual(valid, provenance_build_status(P, B)),
+     ?_assertEqual(build_mismatch, provenance_build_status(P, B#{release_version := <<"1.2.4">>})),
+     ?_assertEqual(build_mismatch, provenance_build_status(P, B#{git_sha := binary:copy(<<"b">>, 40)})),
+     ?_assertEqual(unverified, provenance_build_status(P, B#{git_sha := <<"unknown">>})),
+     ?_assertEqual(unverified, provenance_build_status(P#{git_sha := <<>>}, B)),
+     ?_assertEqual(build_mismatch, provenance_build_status(P#{git_sha := <<>>},
+                         B#{release_version := <<"1.2.4">>}))].
+-endif.

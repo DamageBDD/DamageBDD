@@ -9,6 +9,7 @@
 -export([step/6, step_dry/6]).
 
 step_dry(Config, Context, Keyword, LineNo, Body, Args) ->
+    steps_utils:ensure_admin(Context),
     steps_utils:step_dry(Config, Context, Keyword, LineNo, Body, Args).
 
 step(
@@ -79,6 +80,8 @@ step(
     end).
 
 with_module(Context, Module0, Fun) ->
+    %% Check again for direct calls; the runner attribute is only an early filter.
+    steps_utils:ensure_admin(Context),
     case existing_module(Module0) of
         {ok, Module} -> Fun(Module);
         {error, Why} -> fail(Context, Why)
