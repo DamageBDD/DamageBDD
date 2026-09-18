@@ -131,20 +131,26 @@ apply_install_provenance(Base) ->
     case read_install_provenance() of
         {ok, Provenance} ->
             Nft = nft_info(Provenance),
-            case provenance_matches_build(Provenance, Base) of
-                true ->
+            case provenance_build_status(Provenance, Base) of
+                valid ->
                     Base#{
                         release_origin => nft,
                         provenance_status => valid,
                         provenance_matches_build => true,
                         nft => Nft
                     };
-                false ->
+                build_mismatch ->
                     Base#{
                         provenance_status => build_mismatch,
                         provenance_matches_build => false,
                         nft => Nft
-                    }
+                    };
+                unverified ->
+                    Base#{
+                        provenance_status => unverified,
+                        provenance_matches_build => false,
+                        nft => Nft
+                     }
             end;
         not_found ->
             Base;
@@ -152,15 +158,33 @@ apply_install_provenance(Base) ->
             Base#{provenance_status => invalid, provenance_error => to_bin(Why)}
     end.
 
-provenance_matches_build(Provenance, Build) ->
+provenance_build_status(Provenance, Build) ->
     ProvenanceSha = maps:get(git_sha, Provenance, <<>>),
     BuildSha = maps:get(git_sha, Build, <<>>),
+    ProvenanceRelease = maps:get(release, Provenance, <<>>),
+    BuildRelease = maps:get(release_version, Build, <<>>),
     case {known_sha(ProvenanceSha), known_sha(BuildSha)} of
         {true, true} ->
-            ProvenanceSha =:= BuildSha;
+            case ProvenanceSha =:= BuildSha andalso ProvenanceRelease =:= BuildRelease of
+                true -> valid;
+                false -> build_mismatch
+            end;
         _ ->
-            maps:get(release, Provenance, <<>>) =:= maps:get(release_version, Build, <<>>)
+            %% A differing known release version is still a definite mismatch.
+            %% Matching versions alone are not enough to prove artifact identity.
+            case known_release(ProvenanceRelease) andalso
+                known_release(BuildRelease) andalso
+                ProvenanceRelease =/= BuildRelease
+            of
+                true -> build_mismatch;
+                false -> unverified
+            end
     end.
+
+known_release(<<>>) -> false;
+known_release(<<"unknown">>) -> false;
+known_release(Bin) when is_binary(Bin) -> true;
+known_release(_) -> false.
 
 known_sha(<<>>) -> false;
 known_sha(<<"unknown">>) -> false;

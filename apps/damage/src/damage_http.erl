@@ -628,8 +628,8 @@ release_http_fields(Release) when is_map(Release) ->
         runtime_modified => maps:get(runtime_modified, Release, false),
         runtime_code_hash => maps:get(runtime_code_hash, Release, <<"unknown">>)
     },
-    case maps:get(nft, Release, null) of
-        Nft when is_map(Nft) ->
+    case {maps:get(release_origin, Release, package), maps:get(nft, Release, null)} of
+        {nft, Nft} when is_map(Nft) ->
             Base#{
                 release_nft_contract => maps:get(contract_id, Nft, <<>>),
                 release_nft_token_id => maps:get(token_id, Nft, 0),
