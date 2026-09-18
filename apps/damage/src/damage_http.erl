@@ -42,7 +42,7 @@ trails() ->
                     #{
                         tags => ?TRAILS_TAG,
                         description =>
-                            "Return DamageBDD application, build, Git and Erlang runtime version information.",
+                            "Return DamageBDD release provenance including build, Git, NFT origin, runtime overrides and Erlang runtime information.",
                         produces => ["application/json"]
                     }
             }
@@ -56,7 +56,7 @@ trails() ->
                     #{
                         tags => ?TRAILS_TAG,
                         description =>
-                            "Return DamageBDD application, build, Git and Erlang runtime version information.",
+                            "Return DamageBDD release provenance including build, Git, NFT origin, runtime overrides and Erlang runtime information.",
                         produces => ["application/json"]
                     }
             }
@@ -506,7 +506,8 @@ get_config(Config, Context, Req0) ->
 -spec execute_bdd_once(proplists:proplist(), map(), binary()) ->
     {200 | 400 | 500 | 503, map()}.
 execute_bdd_once(Config, Context, FeatureData) ->
-    case damage:execute_data(Config, Context, FeatureData) of
+    Response =
+        case damage:execute_data(Config, Context, FeatureData) of
         %% Failing step (runner-level assertion failure)
         [
             #{
@@ -599,6 +600,68 @@ execute_bdd_once(Config, Context, FeatureData) ->
                     <<"Make sure POST data is binary, e.g.: ",
                         "curl --data-binary @features/test.feature ...">>
             }}
+        end,
+    with_release_info(Response).
+
+%% Keep every execution response self-describing. Run records produced by
+%% damage:execute_data/3 already contain the exact release snapshot captured
+%% before report publication; parser/infrastructure failures do not, so add the
+%% current release identity without overwriting fields already returned by the
+%% runner.
+with_release_info({Status, Response}) when is_map(Response) ->
+    Release =
+        case maps:get(release, Response, undefined) of
+            Existing when is_map(Existing) -> Existing;
+            _ -> safe_release_info()
+        end,
+    {Status, maps:merge(release_http_fields(Release), Response)};
+with_release_info(Other) ->
+    Other.
+
+release_http_fields(Release) when is_map(Release) ->
+    Base = #{
+        release => Release,
+        release_version =>
+            maps:get(release_version, Release, maps:get(version, Release, <<"unknown">>)),
+        release_git_sha => maps:get(git_sha, Release, <<"unknown">>),
+        release_origin => maps:get(release_origin, Release, package),
+        runtime_modified => maps:get(runtime_modified, Release, false),
+        runtime_code_hash => maps:get(runtime_code_hash, Release, <<"unknown">>)
+    },
+    case maps:get(nft, Release, null) of
+        Nft when is_map(Nft) ->
+            Base#{
+                release_nft_contract => maps:get(contract_id, Nft, <<>>),
+                release_nft_token_id => maps:get(token_id, Nft, 0),
+                release_asset_cid => maps:get(asset_cid, Nft, <<>>),
+                release_metadata_cid => maps:get(metadata_cid, Nft, <<>>),
+                release_package_sha256 => maps:get(package_sha256, Nft, <<>>)
+            };
+        _ ->
+            Base
+    end.
+
+safe_release_info() ->
+    try damage_release:info() of
+        Release when is_map(Release) ->
+            Release
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "Release provenance lookup failed error=~p:~p stack=~p",
+                [Class, Reason, Stack]
+            ),
+            #{
+                application => <<"damage">>,
+                version => <<"unknown">>,
+                release_version => <<"unknown">>,
+                git_sha => <<"unknown">>,
+                release_origin => package,
+                provenance_status => unavailable,
+                runtime_modified => false,
+                runtime_code_hash => <<"unknown">>,
+                nft => null
+            }
     end.
 
 %%--------------------------------------------------------------------
@@ -619,7 +682,8 @@ execute_bdd(Context, State, Req0) ->
 -spec execute_bdd(map(), map(), cowboy_req:req(), proplists:proplist()) ->
     {integer(), map()} | {error, map()}.
 execute_bdd(Context0, State, Req0, ConfigOverrides) ->
-    try
+    Response =
+        try
         %% Build and freeze effective context once for both dry and paid runs.
         ContextIn = effective_context(Context0, State),
         FeatureData = maps:get(feature, Context0),
@@ -815,7 +879,8 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                 scope => to_bin(io_lib:format("~p", [Scope])),
                 reason => to_bin(io_lib:format("~p", [Reason0]))
             }}
-    end.
+        end,
+    with_release_info(Response).
 
 %% Build one immutable scoped execution context after authentication. Internal
 %% preparation/proof fields are never accepted from the request body.
@@ -1298,9 +1363,11 @@ json_decode_failed(Req, State, Prefix, {Class, Reason, Stack}) ->
 %% so do not append the result map or another summary-like footer.
 %%
 %% Structured results are still returned by the non-streaming JSON response
-%% path. Pending/error streamed executions retain a compact diagnostic footer.
+%% path. Successful streams append only release provenance (the formatter has
+%% already printed the human-readable execution summary); pending/error streams
+%% include the same provenance in their compact diagnostic footer.
 stream_final_body(200, Resp) when is_map(Resp) ->
-    <<>>;
+    stream_release_footer(Resp);
 stream_final_body(Status, Resp) when is_map(Resp) ->
     stream_map_footer(Status, Resp);
 stream_final_body(Status, Resp) when is_binary(Resp) ->
@@ -1354,7 +1421,64 @@ stream_map_footer(Status, Resp) ->
         stream_line("required_sats: ", stream_map_get([required_sats, <<"required_sats">>], Resp)),
         stream_line("spend: ", stream_map_get([spend, <<"spend">>], Resp)),
         stream_line("response: ", stream_map_get([response, <<"response">>], Resp)),
+        stream_release_lines(Resp),
         "\n"
+    ]).
+
+stream_release_footer(Resp) ->
+    case stream_release_lines(Resp) of
+        [] ->
+            <<>>;
+        Lines ->
+            iolist_to_binary([
+                "\n--- release ---\n",
+                Lines,
+                "\n"
+            ])
+    end.
+
+stream_release_lines(Resp) ->
+    lists:append([
+        stream_line(
+            "release_version: ",
+            stream_map_get([release_version, <<"release_version">>], Resp)
+        ),
+        stream_line(
+            "release_git_sha: ",
+            stream_map_get([release_git_sha, <<"release_git_sha">>], Resp)
+        ),
+        stream_line(
+            "release_origin: ",
+            stream_map_get([release_origin, <<"release_origin">>], Resp)
+        ),
+        stream_line(
+            "runtime_modified: ",
+            stream_map_get([runtime_modified, <<"runtime_modified">>], Resp)
+        ),
+        stream_line(
+            "runtime_code_hash: ",
+            stream_map_get([runtime_code_hash, <<"runtime_code_hash">>], Resp)
+        ),
+        stream_line(
+            "release_nft_contract: ",
+            stream_map_get([release_nft_contract, <<"release_nft_contract">>], Resp)
+        ),
+        stream_line(
+            "release_nft_token_id: ",
+            stream_map_get([release_nft_token_id, <<"release_nft_token_id">>], Resp)
+        ),
+        stream_line(
+            "release_asset_cid: ",
+            stream_map_get([release_asset_cid, <<"release_asset_cid">>], Resp)
+        ),
+        stream_line(
+            "release_metadata_cid: ",
+            stream_map_get([release_metadata_cid, <<"release_metadata_cid">>], Resp)
+        ),
+        stream_line(
+            "release_package_sha256: ",
+            stream_map_get([release_package_sha256, <<"release_package_sha256">>], Resp)
+        )
     ]).
 
 stream_status_value(Status, Resp) ->
@@ -1952,27 +2076,35 @@ stream_mode_error_reply(Req0, State, Reason) ->
     {stop, Req, State}.
 
 reply_execution_crash(Req0, State, Class, Reason) ->
-    Req = cowboy_req:reply(
-        500,
-        #{<<"content-type">> => <<"application/json">>},
-        jsx:encode(#{
+    ReleaseFields = release_http_fields(safe_release_info()),
+    Body = maps:merge(
+        ReleaseFields,
+        #{
             status => <<"notok">>,
             error => <<"internal_error">>,
             class => to_bin(Class),
             reason => to_bin(Reason)
-        }),
+        }
+    ),
+    Req = cowboy_req:reply(
+        500,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(Body),
         Req0
     ),
     {stop, Req, State}.
 
 stream_crash_footer(Class, Reason) ->
+    ReleaseFields = release_http_fields(safe_release_info()),
     iolist_to_binary([
         "\n---\n",
         "status: notok\n",
         "http_status: 500\n",
         "error: internal_error\n",
         "class: ", printable_stream_value(Class), "\n",
-        "reason: ", printable_stream_value(Reason), "\n\n"
+        "reason: ", printable_stream_value(Reason), "\n",
+        stream_release_lines(ReleaseFields),
+        "\n"
     ]).
 
 to_html(Req, #{action := version} = State) ->
@@ -2008,7 +2140,7 @@ to_json(Req, #{action := version} = State) ->
     {
         jsx:encode(#{
             ok => true,
-            version => damage:version(),
+            version => safe_release_info(),
             onion => onion_version_info()
         }),
         Req,
@@ -2048,4 +2180,8 @@ to_json(Req0, State) ->
     %  cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
     {Body, Req0, State}.
 
-to_text(Req, State) -> {<<"REST Hello World as text!">>, Req, State}.
+
+to_text(Req, #{action := version} = State) ->
+    to_json(Req, State);
+to_text(Req, State) ->
+    {<<"REST Hello World as text!">>, Req, State}.

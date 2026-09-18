@@ -48,23 +48,7 @@
 
 -spec version() -> map().
 version() ->
-    AppVersion =
-        case application:get_key(damage, vsn) of
-            {ok, Vsn} ->
-                to_bin(Vsn);
-            undefined ->
-                <<"unknown">>
-        end,
-    #{
-        application => <<"damage">>,
-        version => AppVersion,
-        git_sha => damage_build_info:git_sha(),
-        git_sha_short => damage_build_info:git_sha_short(),
-        build_time => damage_build_info:build_time(),
-        build_env => damage_build_info:build_env(),
-        otp_release => to_bin(erlang:system_info(otp_release)),
-        erts_version => to_bin(erlang:system_info(version))
-    }.
+    damage_release:info().
 
 start_link(_Args) -> gen_server:start_link(?MODULE, [], []).
 
@@ -305,18 +289,20 @@ execute_file_prepared(Config, Context, Filename) ->
             ContextIpfsUri = maps:get(uri, ContextIpfs),
             ContextIpfsUrl = maps:get(url, ContextIpfs),
             ContextUrl = maps:get(context_url, ContextIpfs, ContextIpfsUrl),
+            ReleaseInfo = damage_release:info(),
 
             %% Write meta BEFORE IPFS add so it is included in ReportHash.
             ok = write_run_meta(
                 RunDir,
                 #{
-                    v => 1,
+                    v => 2,
                     run_id => list_to_binary(RunId),
                     completed_at => CompletedAtSec,
                     start_time_hires => StartTimestamp,
                     end_time_hires => EndTimestamp,
                     execution_time_hires => (EndTimestamp - StartTimestamp),
                     result => Result,
+                    release => ReleaseInfo,
                     context_ipfs_hash => ContextIpfsHash,
                     context_ipfs_uri => ContextIpfsUri,
                     context_ipfs_url => ContextUrl
@@ -358,6 +344,7 @@ execute_file_prepared(Config, Context, Filename) ->
                             run_id => RunId,
                             public_key => maps:get(public_key, Context, <<"">>),
                             feature_hash => FeatureHash,
+                            release => ReleaseInfo,
                             context_ipfs_uri => ContextIpfsUri,
                             context_ipfs_url => ContextUrl
                         }
@@ -371,6 +358,7 @@ execute_file_prepared(Config, Context, Filename) ->
                         run_id => list_to_binary(RunId),
                         feature_hash => FeatureHash,
                         report_hash => ReportHash,
+                        release => ReleaseInfo,
                         context_ipfs_hash => ContextIpfsHash,
                         context_ipfs_uri => ContextIpfsUri,
                         context_ipfs_url => ContextUrl,
@@ -401,7 +389,7 @@ execute_file_prepared(Config, Context, Filename) ->
                     true -> maps:get(cost, FinalContext, 0);
                     false -> safe_get_spend(PublicKey, maps:get(cost, FinalContext, 0))
                 end,
-            RunRecord =
+            RunRecord0 =
                 #{
                     run_id => list_to_binary(RunId),
                     feature_hash => FeatureHash,
@@ -428,6 +416,7 @@ execute_file_prepared(Config, Context, Filename) ->
                     cost => RunCost,
                     spend => maps:get(step_spend, FinalContext, 0)
                 },
+            RunRecord = maps:merge(RunRecord0, release_record_fields(ReleaseInfo)),
             damage_webhooks:trigger_webhooks(RunRecord),
             %?LOG_DEBUG("RunRecord ~p", [RunRecord]),
             RunRecord;
@@ -1636,6 +1625,29 @@ clear_step_control(Context) ->
             maps:remove(fail, Context)
         )
     ).
+
+release_record_fields(ReleaseInfo) ->
+    Base = #{
+        release => ReleaseInfo,
+        release_version => maps:get(release_version, ReleaseInfo, <<"unknown">>),
+        release_git_sha => maps:get(git_sha, ReleaseInfo, <<"unknown">>),
+        release_origin => maps:get(release_origin, ReleaseInfo, package),
+        runtime_modified => maps:get(runtime_modified, ReleaseInfo, false),
+        runtime_code_hash => maps:get(runtime_code_hash, ReleaseInfo, <<"unknown">>)
+    },
+    case {maps:get(release_origin, ReleaseInfo, package), maps:get(nft, ReleaseInfo, null)} of
+        {nft, Nft} when is_map(Nft) ->
+            Base#{
+                release_nft_contract => maps:get(contract_id, Nft, <<>>),
+                release_nft_token_id => maps:get(token_id, Nft, 0),
+                release_asset_cid => maps:get(asset_cid, Nft, <<>>),
+                release_metadata_cid => maps:get(metadata_cid, Nft, <<>>),
+                release_package_sha256 => maps:get(package_sha256, Nft, <<>>)
+            };
+        _ ->
+            Base
+    end.
+
 check_setup() ->
     ok =
         case secrets:retrieve_decrypt(nostr_nsec) of

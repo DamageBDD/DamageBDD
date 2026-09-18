@@ -1,4 +1,5 @@
-%%% NFT-only release discovery. All GET paths are read-only and public-key-only.
+%%% NFT release discovery plus explicit operator-only state changes.
+%%% Discovery/GET paths remain read-only and public-key-only.
 %%% The NFT binds the metadata CID; a trusted LOCAL validating Kubo daemon reads
 %%% that metadata. A gateway URL alone is not proof of the returned bytes.
 -module(damage_release_nft).
@@ -7,7 +8,8 @@
 -include_lib("kernel/include/file.hrl").
 -include_lib("kernel/include/logger.hrl").
 -export([latest/0, latest/1, release/2, token_release/3,
-         parse_release/1, parse_manifest/1, install_manifest/1,
+         operator_transfer/2, operator_transfer/3,
+         parse_release/1, parse_manifest/1, install_manifest/1, parse_install_manifest/1,
          valid_platform/1, valid_release/1, package_sha256/2,
          prepare_metadata/4, installation/1,
          prepared_installation/1, installation_identity/1,
@@ -104,6 +106,54 @@ token_release(#{public_key := Public}, Contract0, Token) ->
         token_from_query(Token, fun(F, A) -> chain_query(Caller, Contract, F, A) end)
     end).
 
+%% Transfer a release NFT using the node keypair as the AEX-141 operator.
+%% The contract remains authoritative: the call succeeds only when this account
+%% owns the token or is approved to transfer it on behalf of the owner.
+-spec operator_transfer(pos_integer(), binary() | string()) ->
+    {ok, map()} | {error, term()}.
+operator_transfer(Token, To) ->
+    operator_transfer(secrets:node_keypair(), Token, To).
+
+%% Explicit-keypair form for a dedicated operator account and for tests.
+%% AEX-141 transfer/3 takes (to, token_id, data); release transfers do not
+%% attach receiver data, so the option(string) argument is Sophia None.
+-spec operator_transfer(map(), pos_integer(), binary() | string()) ->
+    {ok, map()} | {error, term()}.
+operator_transfer(KeyPair0, Token, To0) ->
+    guarded(fun() ->
+        require(is_integer(Token) andalso Token > 0, invalid_release_token),
+        KeyPair = operator_keypair(KeyPair0),
+        Contract = configured_nft_contract(),
+        To = encoded_id(account_pubkey, To0),
+        Call = damage_ae:contract_call(
+            KeyPair,
+            Contract,
+            contract_source(),
+            "transfer",
+            [binary_to_list(To), Token, "None"]
+        ),
+        transfer_call_result(Call)
+    end).
+
+transfer_call_result(Call) when is_map(Call) ->
+    case call_return(Call) of
+        {ok, _} -> {ok, Call};
+        {error, Reason} -> {error, {release_transfer_failed, Reason}}
+    end;
+transfer_call_result({error, Reason}) ->
+    {error, {release_transfer_failed, Reason}};
+transfer_call_result(_) ->
+    {error, release_transfer_failed}.
+
+operator_keypair(#{public_key := Public0, private_key := Private})
+        when is_binary(Private), byte_size(Private) > 0 ->
+    #{public_key => encoded_id(account_pubkey, Public0), private_key => Private};
+operator_keypair(_) ->
+    throw({release_error, invalid_release_operator_keypair}).
+
+configured_nft_contract() ->
+    encoded_id(contract_pubkey, required_env(build_release_nft_contract)).
+
 token_from_query(Token, Query) ->
     case query_option(Query("metadata", [Token])) of
         {ok, Metadata} -> token_metadata(Token, Metadata);
@@ -141,7 +191,7 @@ normalize_selector({release, Value}) ->
 read_config() ->
     Network = text(required_env(ae_network_id)),
     require(matches(Network, <<"\\A[a-z0-9_-]{1,64}\\z">>), invalid_release_network),
-    #{nft => encoded_id(contract_pubkey, required_env(build_release_nft_contract)),
+    #{nft => configured_nft_contract(),
       reader => encoded_id(account_pubkey, required_env(build_release_reader_account)),
       network => Network,
       gateway => gateway(application:get_env(damage, build_release_ipfs_gateway, "https://ipfs.io/ipfs")),
@@ -377,6 +427,45 @@ install_manifest(Release) ->
         maps:get(metadata_cid, Release), maps:get(asset_cid, Release),
         maps:get(asset_path, Release), maps:get(sha256, Release)],
     iolist_to_binary([[Value, <<"\n">>] || Value <- Values]).
+
+%% Parse the exact install sidecar emitted by install_manifest/1. This gives the
+%% running node one canonical decoder for NFT provenance rather than duplicating
+%% field order/validation in HTTP, installers and verification reports.
+-spec parse_install_manifest(binary() | string()) -> {ok, map()} | {error, term()}.
+parse_install_manifest(Manifest0) ->
+    guarded(fun() ->
+        Manifest = text(Manifest0),
+        require(byte_size(Manifest) =< ?MAX_MANIFEST_BYTES, invalid_release_manifest),
+        Lines0 = binary:split(Manifest, <<"\n">>, [global]),
+        Lines = drop_one_trailing_empty(Lines0),
+        case Lines of
+            [<<"damagebdd-install-v2">>, Network, Contract, Token, Version, Platform, Sha,
+             Meta, Asset, Path, Digest] ->
+                require(matches(Network, <<"\\A[a-z0-9_-]{1,64}\\z">>), invalid_release_network),
+                _ = encoded_id(contract_pubkey, Contract),
+                require(matches(Token, <<"\\A[1-9][0-9]{0,38}\\z">>), invalid_release_token),
+                require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_release),
+                require(valid_platform(Platform), invalid_platform),
+                require(Sha =:= <<>> orelse matches(Sha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>),
+                    invalid_git_sha),
+                require(safe_cid(Meta) andalso safe_cid(Asset), invalid_release_cid),
+                require(Path =:= <<>> orelse valid_asset_path(Path), invalid_asset_path),
+                require(matches(Digest, <<"\\A[0-9a-f]{64}\\z">>), invalid_package_sha256),
+                {ok, #{schema_version => 2, network_id => Network, contract_id => Contract,
+                    token_id => binary_to_integer(Token), release => Version, platform => Platform,
+                    git_sha => Sha, metadata_cid => Meta, asset_cid => Asset,
+                    asset_path => Path, sha256 => Digest}};
+            _ ->
+                {error, invalid_release_manifest}
+        end
+    end).
+
+drop_one_trailing_empty([]) -> [];
+drop_one_trailing_empty(Lines) ->
+    case lists:reverse(Lines) of
+        [<<>> | Rest] -> lists:reverse(Rest);
+        _ -> Lines
+    end.
 
 valid_platform(Value) when is_binary(Value) ->
     matches(Value, <<"\\A[a-z0-9][a-z0-9_-]{0,95}\\z">>);

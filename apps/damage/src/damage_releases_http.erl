@@ -14,7 +14,15 @@ trails() ->
             produces => ["application/json", "text/plain"]
         }
     },
+    CurrentMeta = #{
+        get => #{
+            tags => ["Build releases"],
+            description => "Read provenance for the release running on this node.",
+            produces => ["application/json"]
+        }
+    },
     [
+        trails:trail("/api/releases/current", ?MODULE, #{action => current}, CurrentMeta),
         trails:trail("/api/releases/latest", ?MODULE, #{action => latest}, Meta),
         trails:trail("/api/releases/:release", ?MODULE, #{action => versioned}, Meta)
     ].
@@ -32,6 +40,8 @@ init(Req0, Opts) ->
     Req = cowboy_req:reply(Status, Headers, Body, Req0),
     {ok, Req, Opts}.
 
+serve(_Req, #{action := current}) ->
+    {200, json_headers(), jsx:encode((damage_release:info())#{ok => true})};
 serve(Req, Opts) ->
     try query_params(cowboy_req:parse_qs(Req)) of
         {ok, Platform, Format} ->
