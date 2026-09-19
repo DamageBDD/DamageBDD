@@ -182,9 +182,9 @@ parse_file(Filename) ->
                 {ok, AST} ->
                     {ok, AST};
                 {failed, Line, Message} ->
-                    %% Build a pretty, humanized error (iolist) and log it.
-                    Pretty = egherkin_pretty:format_failure(Filename, SourceBin, Line, Message),
-                    %% Return the original failure plus a pretty blob for UIs/CLIs.
+                    %% Pretty formatting is optional. Parsing errors must still
+                    %% be returned even when egherkin_pretty is not installed.
+                    Pretty = format_parse_failure(Filename, SourceBin, Line, Message),
                     {failed, Line, Message, Pretty};
                 Else ->
                     Else
@@ -193,6 +193,29 @@ parse_file(Filename) ->
             ?LOG_ERROR("Could not read ~s: ~p", [Filename, Reason]),
             {error, {file_read_failed, Reason}}
     end.
+
+format_parse_failure(Filename, SourceBin, Line, Message) ->
+    try egherkin_pretty:format_failure(Filename, SourceBin, Line, Message) of
+        Pretty ->
+            Pretty
+    catch
+        error:undef ->
+            fallback_parse_failure(Filename, Line, Message);
+        Class:Reason ->
+            ?LOG_WARNING(
+                "Unable to pretty-format Gherkin parse failure class=~p reason=~p",
+                [Class, Reason]
+            ),
+            fallback_parse_failure(Filename, Line, Message)
+    end.
+
+fallback_parse_failure(Filename, Line, Message) ->
+    iolist_to_binary(
+        io_lib:format(
+            "~ts:~p: Gherkin parse error: ~tp",
+            [Filename, Line, Message]
+        )
+    ).
 
 execute_data(Config, Context, FeatureData) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
