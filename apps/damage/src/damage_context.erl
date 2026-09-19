@@ -2003,9 +2003,15 @@ get_global_template_context(Context) ->
             {ok, Value} -> Value;
             _ -> <<>>
         end,
+    EcaiApi =
+        case application:get_env(ecai, api_url) of
+            {ok, Value0} -> Value0;
+            _ -> <<>>
+        end,
     Context0 = maps:merge(
         #{
             api_url => DamageApi,
+            ecai_api_url => EcaiApi,
             formatter_state => #damage_state{},
             headers => [],
             token_contract => list_to_binary(?DAMAGE_TOKEN_CONTRACT),
