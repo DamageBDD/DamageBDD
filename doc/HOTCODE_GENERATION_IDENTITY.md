@@ -77,10 +77,23 @@ EUnit invocation does not activate the synthetic-application fixture. Even
 when enabled, the fixture refuses to run when the Damage application is already
 loaded. Use the isolated script rather than a live node console.
 
-The older `damage_hotcode_tests.erl` fixture, when installed from the earlier
-bundle, must also populate `loaded_filename` in synthetic entries and
-`candidate_filename` in its simulated pending load. The separate optional
-fixture patch does that; the new suite does not depend on that older file.
+The companion `damage_hotcode_tests.erl` suite now populates `loaded_filename`
+in synthetic entries and `candidate_filename` in its simulated pending load.
+It uses the same explicit isolated-runner opt-in and refuses an already-loaded
+Damage application. Run it separately:
+
+```sh
+sh apps/damage/scripts/test-hotcode-hardening.sh
+```
+
+Both scripts must be tracked under `apps/damage/scripts/`. Each compiles its
+selected files with `TEST` and warnings-as-errors into a temporary directory,
+then starts a separate, non-distributed Erlang VM. The runners clear ambient
+Erlang startup/compiler/library flags, use a clean boot, and check that the
+selected generator is disabled before opt-in and nonempty afterward. They
+return a nonzero exit status on compilation, setup, or EUnit failure. Do not
+interpret an ordinary project EUnit run that skips these generators as evidence
+that the isolated regressions ran.
 
 OTP reference documentation:
 

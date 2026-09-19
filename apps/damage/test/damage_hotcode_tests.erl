@@ -7,8 +7,18 @@
 -define(B, steps_hotcode_fixture_b).
 -define(JOURNAL, {damage_release_overrides, overrides}).
 
+%% These fixtures replace node-global code/application state. Ordinary project
+%% EUnit must not activate them; the standalone runner enables a fresh VM only.
 hardening_test_() ->
-    [{Name, {timeout, 60, fun() -> with_fixture(Test) end}} || {Name, Test} <- [
+    case application:get_env(?MODULE, isolated_node, false) of
+        true -> hardening_cases();
+        _ -> []
+    end.
+
+hardening_cases() ->
+    {inorder, [{Name, {timeout, 60, fun() -> with_fixture(Test) end}} || {Name, Test} <- [
+        {"generator and fixture require isolated runner opt-in", fun isolation_opt_in/1},
+        {"fixture refuses an already-loaded Damage application", fun loaded_app_refused/1},
         {"explicit allowlist and protected core", fun policy/1},
         {"prepare never replaces operator edits", fun prepare_preserves_edit/1},
         {"concurrent writers keep all entries", fun concurrent_writers/1},
@@ -24,7 +34,39 @@ hardening_test_() ->
         {"on_load is refused without executing it", fun reject_on_load/1},
         {"module name mismatch leaves code unchanged", fun name_mismatch/1},
         {"legacy entries cannot silently disappear", fun legacy_entry/1}
-    ]].
+    ]]}.
+
+isolation_opt_in(_F) ->
+    Saved = application:get_env(?MODULE, isolated_node),
+    try
+        ok = application:unset_env(?MODULE, isolated_node),
+        Before = fixture_state(),
+        ?assertEqual([], hardening_test_()),
+        ?assertError(hotcode_tests_require_isolated_node,
+                     with_fixture(fun(_) -> error(fixture_should_not_run) end)),
+        ?assertEqual(Before, fixture_state())
+    after
+        case Saved of
+            undefined -> application:unset_env(?MODULE, isolated_node);
+            {ok, Value} -> application:set_env(?MODULE, isolated_node, Value)
+        end
+    end.
+
+loaded_app_refused(_F) ->
+    %% The outer fixture owns a loaded-but-not-started synthetic application.
+    %% Nested entry must refuse it BEFORE unloading or changing any of its state.
+    Before = fixture_state(),
+    ?assertMatch({ok, _}, application:get_all_key(damage)),
+    ?assertNot(lists:keymember(damage, 1, application:which_applications())),
+    ?assertError(hotcode_tests_require_unloaded_damage_application,
+                 with_fixture(fun(_) -> error(fixture_should_not_run) end)),
+    ?assertEqual(Before, fixture_state()).
+
+fixture_state() ->
+    {application:get_all_key(damage), application:get_all_env(damage),
+     code:get_path(), persistent_term:get(?JOURNAL, #{}),
+     [{M, code:is_loaded(M), erlang:check_old_code(M)} || M <- [?A, ?B]],
+     erlang:get(hotcode_test_workers)}.
 
 policy(_F) ->
     application:unset_env(damage, operator_hotcode),
@@ -147,9 +189,10 @@ interrupted_after_load(F) ->
     Beam = compile_source(?A, source(?A, interrupted), maps:get(root, F)),
     {ok, {?A, RawMd5}} = beam_lib:md5(Beam),
     CandidateMd5 = string:lowercase(binary:encode_hex(RawMd5)),
-    Entry = (meta(F, ?A))#{state => loading, beam_sha256 => sha256(Beam),
-                          candidate_module_md5 => CandidateMd5},
     Path = filename:join(maps:get(root, F), "candidate.beam"),
+    Entry = (meta(F, ?A))#{state => loading, beam_sha256 => sha256(Beam),
+                          candidate_module_md5 => CandidateMd5,
+                          candidate_filename => Path},
     ok = file:write_file(Path, Beam),
     Parent = self(),
     Writer = spawn_worker(fun() ->
@@ -257,11 +300,24 @@ legacy_entry(_F) ->
     %% Test-only teardown: this fixture never loaded an override in this test.
     persistent_term:erase(?JOURNAL).
 
-%% Run on an isolated test node: never stop an actual running Damage application.
-with_fixture(Fun) ->
-    ?assertNot(lists:keymember(damage, 1, application:which_applications())),
+%% Check before changing workers, filesystem, application metadata, or code paths.
+%% Refuse even a loaded-but-not-started application; never unload somebody else's.
+assert_isolated_node() ->
+    case application:get_env(?MODULE, isolated_node, false) of
+        true -> ok;
+        _ -> error(hotcode_tests_require_isolated_node)
+    end,
+    case application:get_all_key(damage) of
+        undefined -> ok;
+        {ok, _} -> error(hotcode_tests_require_unloaded_damage_application)
+    end,
+    ?assertEqual(undefined, whereis(damage_sup)),
+    [?assertEqual(false, code:is_loaded(M)) || M <- [?A, ?B]],
     ?assertEqual([], damage_release_overrides:list()),
-    SavedApp = application:get_all_key(damage),
+    ok.
+
+with_fixture(Fun) ->
+    ok = assert_isolated_node(),
     SavedPath = code:get_path(),
     SavedJournal = persistent_term:get(?JOURNAL, #{}),
     SavedWorkers = erlang:put(hotcode_test_workers, []),
@@ -275,7 +331,6 @@ with_fixture(Fun) ->
     Keys = [operator_hotcode, operator_source_dir, release_provenance_file],
     SavedEnv = [{K, application:get_env(damage, K)} || K <- Keys],
     [ok = filelib:ensure_dir(filename:join(D, "unused")) || D <- [Ebin, SrcDir, Operator]],
-    case SavedApp of {ok, _} -> ok = application:unload(damage); _ -> ok end,
     try
         true = code:replace_path(damage, Ebin),
         Core = [damage, damage_auth, damage_context, damage_build_info, damage_hotcode,
@@ -299,9 +354,9 @@ with_fixture(Fun) ->
         %% Test-owned modules only; clean both generations before restoring state.
         [begin code:soft_purge(M), code:delete(M), code:soft_purge(M) end || M <- [?A, ?B]],
         persistent_term:put(?JOURNAL, SavedJournal),
+        %% Only this fixture's synthetic application was allowed to be loaded.
         application:unload(damage),
         true = code:set_path(SavedPath),
-        case SavedApp of {ok, Props} -> application:load({application, damage, Props}); _ -> ok end,
         [restore_env(K, V) || {K, V} <- SavedEnv],
         erlang:put(hotcode_test_workers, SavedWorkers),
         file:del_dir_r(Root)
@@ -331,7 +386,8 @@ meta(F, M) ->
     Md5 = string:lowercase(binary:encode_hex(M:module_info(md5))),
     #{module => M, state => active, base_beam => Beam,
       base_filename => maps:get(M, maps:get(paths, F)), base_module_md5 => Md5,
-      loaded_module_md5 => Md5, base_beam_sha256 => sha256(Beam),
+      loaded_module_md5 => Md5, loaded_filename => maps:get(M, maps:get(paths, F)),
+      base_beam_sha256 => sha256(Beam),
       loaded_beam_sha256 => sha256(Beam), beam_sha256 => sha256(Beam),
       source_sha256 => sha256(source(M, base)), loaded_at => 1}.
 

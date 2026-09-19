@@ -132,9 +132,21 @@ sh apps/damage/scripts/test-hotcode-hardening.sh
 It compiles the changed Erlang modules with `TEST` and warnings-as-errors, then
 runs EUnit using real compiled fixture modules and a synthetic damage application.
 It does not start the full application or contact IPFS/chain/payment services.
-It refuses to run its fixture against an already-started damage application.
+The generator is disabled unless the standalone runner sets
+`application:set_env(damage_hotcode_tests, isolated_node, true)` in its fresh VM.
+An ordinary project EUnit run intentionally does not execute this suite. The
+runner checks that the enabled generator returns a nonempty case group so a
+missing opt-in cannot be reported as a successful run with no tests.
 
-Coverage includes concurrent writers, snapshot locking, pure snapshot hashes,
+Fixtures run in order and recheck opt-in before each case. They refuse an
+already-loaded Damage application, including one that has not been started,
+and refuse preloaded fixture modules or a registered `damage_sup`. They never
+unload or restore a pre-existing application's specification. Guard regressions
+check that refusal leaves application, environment, code-path, journal and
+fixture-module state unchanged. Do not set the opt-in on a live node.
+
+Coverage includes opt-in and loaded-application refusal, concurrent writers,
+snapshot locking, pure snapshot hashes,
 registry failure, caller death before/after a code load, policy restrictions,
 unchanged-code rollback, changed disk/code-path rollback, lingering generations,
 on_load rejection, module-name mismatch, safe prepare, non-erasing clear and
