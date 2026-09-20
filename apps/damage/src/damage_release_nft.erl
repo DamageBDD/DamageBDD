@@ -8,6 +8,7 @@
 -include_lib("kernel/include/file.hrl").
 -include_lib("kernel/include/logger.hrl").
 -export([latest/0, latest/1, release/2, token_release/3,
+         transfer/3, prepare_transfer/3,
          operator_transfer/2, operator_transfer/3,
          parse_release/1, parse_manifest/1, install_manifest/1, parse_install_manifest/1,
          valid_platform/1, valid_release/1, package_sha256/2,
@@ -106,23 +107,16 @@ token_release(#{public_key := Public}, Contract0, Token) ->
         token_from_query(Token, fun(F, A) -> chain_query(Caller, Contract, F, A) end)
     end).
 
-%% Transfer a release NFT using the node keypair as the AEX-141 operator.
-%% The contract remains authoritative: the call succeeds only when this account
-%% owns the token or is approved to transfer it on behalf of the owner.
--spec operator_transfer(pos_integer(), binary() | string()) ->
+%% Transfer a release NFT with an explicit signing keypair.
+%% The contract remains authoritative: the caller must own the token or be an
+%% approved AEX-141 operator for it. This is used by authenticated custodial
+%% users as well as by the node/operator wrappers below.
+-spec transfer(map(), pos_integer(), binary() | string()) ->
     {ok, map()} | {error, term()}.
-operator_transfer(Token, To) ->
-    operator_transfer(secrets:node_keypair(), Token, To).
-
-%% Explicit-keypair form for a dedicated operator account and for tests.
-%% AEX-141 transfer/3 takes (to, token_id, data); release transfers do not
-%% attach receiver data, so the option(string) argument is Sophia None.
--spec operator_transfer(map(), pos_integer(), binary() | string()) ->
-    {ok, map()} | {error, term()}.
-operator_transfer(KeyPair0, Token, To0) ->
+transfer(KeyPair0, Token, To0) ->
     guarded(fun() ->
         require(is_integer(Token) andalso Token > 0, invalid_release_token),
-        KeyPair = operator_keypair(KeyPair0),
+        KeyPair = signing_keypair(KeyPair0),
         Contract = configured_nft_contract(),
         To = encoded_id(account_pubkey, To0),
         Call = damage_ae:contract_call(
@@ -130,10 +124,65 @@ operator_transfer(KeyPair0, Token, To0) ->
             Contract,
             contract_source(),
             "transfer",
-            [binary_to_list(To), Token, "None"]
+            transfer_args(To, Token)
         ),
         transfer_call_result(Call)
     end).
+
+%% Prepare the exact unsigned transfer transaction for an authenticated wallet.
+%% A dry-run is performed first using only the caller public key so ownership /
+%% operator authorization and token existence fail before a signing request is
+%% returned to the client. The server never receives the wallet private key.
+-spec prepare_transfer(binary() | string(), pos_integer(), binary() | string()) ->
+    {ok, map()} | {error, term()}.
+prepare_transfer(From0, Token, To0) ->
+    guarded(fun() ->
+        require(is_integer(Token) andalso Token > 0, invalid_release_token),
+        From = encoded_id(account_pubkey, From0),
+        To = encoded_id(account_pubkey, To0),
+        Contract = configured_nft_contract(),
+        Args = transfer_args(To, Token),
+        DryCaller = #{public_key => From, private_key => undefined},
+        case call_return(damage_ae:contract_call_dry(
+                DryCaller, Contract, contract_source(), "transfer", Args)) of
+            {ok, _} ->
+                Tx = damage_ae:contract_call_prepare_tx(
+                    #{public_key => From}, Contract, contract_source(), "transfer", Args
+                ),
+                {ok, #{
+                    token_id => Token,
+                    from => From,
+                    to => To,
+                    contract_id => Contract,
+                    tx => Tx
+                }};
+            {error, Reason} ->
+                {error, {release_transfer_failed, Reason}}
+        end
+    end).
+
+%% Transfer a release NFT using the node keypair as the AEX-141 operator.
+-spec operator_transfer(pos_integer(), binary() | string()) ->
+    {ok, map()} | {error, term()}.
+operator_transfer(Token, To) ->
+    operator_transfer(secrets:node_keypair(), Token, To).
+
+%% Explicit-keypair form for a dedicated operator account and for tests. Keep
+%% the historical invalid_release_operator_keypair error stable for callers.
+-spec operator_transfer(map(), pos_integer(), binary() | string()) ->
+    {ok, map()} | {error, term()}.
+operator_transfer(KeyPair, Token, To) ->
+    case transfer(KeyPair, Token, To) of
+        {error, invalid_release_signing_keypair} ->
+            {error, invalid_release_operator_keypair};
+        Result ->
+            Result
+    end.
+
+transfer_args(To, Token) ->
+    %% AEX-141 transfer/3 is (to, token_id, data). Release transfers attach no
+    %% receiver data, so option(string) is Sophia None.
+    [binary_to_list(To), Token, "None"].
 
 transfer_call_result(Call) when is_map(Call) ->
     case call_return(Call) of
@@ -145,11 +194,11 @@ transfer_call_result({error, Reason}) ->
 transfer_call_result(_) ->
     {error, release_transfer_failed}.
 
-operator_keypair(#{public_key := Public0, private_key := Private})
+signing_keypair(#{public_key := Public0, private_key := Private})
         when is_binary(Private), byte_size(Private) > 0 ->
     #{public_key => encoded_id(account_pubkey, Public0), private_key => Private};
-operator_keypair(_) ->
-    throw({release_error, invalid_release_operator_keypair}).
+signing_keypair(_) ->
+    throw({release_error, invalid_release_signing_keypair}).
 
 configured_nft_contract() ->
     encoded_id(contract_pubkey, required_env(build_release_nft_contract)).
