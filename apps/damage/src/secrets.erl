@@ -16,21 +16,27 @@
         handle_cast/2,
         handle_info/2,
         terminate/2,
-        code_change/3
+        code_change/3,
+        format_status/1
     ]
 ).
 -export([
     init_db/0,
     store_secret/2,
     retrieve_secret/1,
+    delete_secret/1,
+    delete_secret/2,
     encrypt_secret/2,
     decrypt_secret/2,
     encrypt_store/2,
+    encrypt_store/3,
     retrieve_decrypt/1,
+    retrieve_decrypt/2,
     import/0,
     node_keypair/0,
     make_keypair/0,
     keypair_from_mnemonic/1,
+    export_node_wallet_seedphrase/0,
     salted_hash/1,
     salted_hash/2,
     test/0,
@@ -40,10 +46,17 @@
     get_node_password/0,
     interpolate_template/1
 ]).
--export([encrypt/1, encrypt/2, decrypt/1, decrypt/2, change_password/3]).
+-export([
+    encrypt/1, encrypt/2, decrypt/1, decrypt/2, encrypt_bound/2, decrypt_bound/2, change_password/3
+]).
 -export([encrypt/3, decrypt/3]).
 -export([has_node_password/0, set_node_password/1, has_node_keypair/0]).
 -import(damage_utils, [to_bin/1]).
+
+-ifdef(TEST).
+%% Explicit-path helpers for isolated keystore tests; not production exports.
+-export([keypair/2, read_keypair/2, ensure_keypair_valid/1, create_keypair/2]).
+-endif.
 
 -define(ASKPASS_TIMEOUT, 60000).
 -define(DETS_FILE, "/var/lib/damage/damage.dets").
@@ -56,13 +69,6 @@ init_db() ->
 -define(SALT_SIZE, 16).
 -define(KEY_SIZE, 32).
 -define(IV_SIZE, 12).
-
-%% AEX-10 default aeternity account path used by wallet implementations.
-%% All components are hardened for Ed25519/SLIP-0010.
--define(AEX10_DERIVATION_PATH, [44, 457, 0, 0, 0]).
--define(AEX10_DERIVATION_PATH_STRING, <<"m/44'/457'/0'/0'/0'">>).
--define(SLIP10_HARDENED_OFFSET, 16#80000000).
--define(NODE_MNEMONIC_BITS, 128).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 
@@ -154,20 +160,21 @@ handle_call({set_node_password, Pw0}, _From, State) ->
         {error, _} = Error ->
             {reply, Error, State};
         {ok, Pw} ->
-            case has_node_keypair() of
-                false ->
-                    {reply, ok, cache_node_password(Pw, State)};
-                true ->
-                    case ensure_keypair_valid(Pw) of
-                        ok ->
-                            {reply, ok, cache_node_password(Pw, State)};
-                        {error, _} = Error ->
-                            {reply, Error, State}
-                    end
+            %% A supplied node password is sufficient to initialise a
+            %% first-run node.  Existing keypairs are validated; a genuinely
+            %% missing keypair is generated and persisted before the password
+            %% is accepted.
+            case ensure_keypair_valid(Pw) of
+                ok ->
+                    {reply, ok, cache_node_password(Pw, #{})};
+                {error, _} = Error ->
+                    {reply, Error, State}
             end
     end;
-handle_call(clear_cache, _From, State) ->
-    {reply, ok, maps:remove(node_password, State)};
+handle_call(clear_cache, _From, _State) ->
+    %% Drop stale signing keys, recovery metadata and any old plaintext cache.
+    %% An environment password can still unlock again on a later request.
+    {reply, ok, #{}};
 handle_call(get_node_password, _From, State0) ->
     case get_node_password_cached(State0) of
         {error, _} = Error ->
@@ -175,45 +182,49 @@ handle_call(get_node_password, _From, State0) ->
         {NodePassword, State} ->
             {reply, NodePassword, State}
     end;
-handle_call({encrypt, Key, Data}, _From, State0) ->
+handle_call({encrypt, _Key, Data}, _From, State0) ->
+    %% Do not cache plaintext in the gen_server state.  The state also carries
+    %% the node keypair/password after unlock, so keeping arbitrary plaintext
+    %% here unnecessarily widens the blast radius of a process-state leak.
     case get_node_password_cached(State0) of
         {error, _} = Error ->
             {reply, Error, State0};
         {NodePassword, State} ->
-            case maps:get(Key, State, undefined) of
-                undefined ->
-                    EncData = secrets:encrypt(
-                        list_to_binary(NodePassword), term_to_binary(Data)
-                    ),
-                    {reply, {ok, term_to_binary(EncData)}, maps:put(Key, Data, State)};
-                Password ->
-                    Password
-            end
+            EncData = secrets:encrypt(list_to_binary(NodePassword), term_to_binary(Data)),
+            {reply, {ok, term_to_binary(EncData)}, State}
     end;
-handle_call({decrypt, Key, EncData}, _From, State0) ->
+handle_call({decrypt, _Key, EncData}, _From, State0) ->
     case get_node_password_cached(State0) of
         {error, _} = Error ->
             {reply, Error, State0};
         {NodePassword, State} ->
-            case maps:get(Key, State, undefined) of
-                undefined ->
-                    case secrets:decrypt(list_to_binary(NodePassword), binary_to_term(EncData)) of
-                        Data when is_binary(Data) ->
-                            DecryptedData = binary_to_term(Data),
-                            {reply, DecryptedData, maps:put(Key, DecryptedData, State)};
-                        _ ->
-                            {reply, error, State}
-                    end;
-                Pass ->
-                    Pass
-            end
+            Reply = decrypt_cached_payload(list_to_binary(NodePassword), EncData),
+            {reply, Reply, State}
+    end;
+handle_call({encrypt, _Key, Password0, Data}, _From, State) ->
+    %% Compatibility for encrypt/3.  The previous implementation sent this
+    %% request shape but had no matching handle_call clause, causing plaintext
+    %% to fall into the catch-all logger.
+    case normalize_node_password(Password0) of
+        {ok, Password} ->
+            EncData = secrets:encrypt(Password, term_to_binary(Data)),
+            {reply, {ok, term_to_binary(EncData)}, State};
+        {error, _} = Error ->
+            {reply, Error, State}
+    end;
+handle_call({decrypt, _Key, Password0, EncData}, _From, State) ->
+    case normalize_node_password(Password0) of
+        {ok, Password} ->
+            {reply, decrypt_cached_payload(Password, EncData), State};
+        {error, _} = Error ->
+            {reply, Error, State}
     end;
 handle_call(
     node_keypair,
     _From,
     #{public_key := AeAccount, private_key := PrivateKey} = State
 ) when is_binary(PrivateKey) ->
-    {reply, node_keypair_reply(State#{public_key => to_bin(AeAccount)}), State};
+    {reply, #{public_key => to_bin(AeAccount), private_key => PrivateKey}, State};
 handle_call(node_keypair, _From, State) ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case get_node_password_cached(State) of
@@ -221,174 +232,216 @@ handle_call(node_keypair, _From, State) ->
             {reply, {error, Other}, State};
         {NodePassword, State} ->
             case keypair(Path, NodePassword) of
-                #{public_key := AeAccount, private_key := PrivateKey} = KeyPair
-                    when is_binary(PrivateKey) ->
-                    KeyPair0 = KeyPair#{public_key => to_bin(AeAccount)},
-                    {reply, node_keypair_reply(KeyPair0), maps:merge(KeyPair0, State)};
+                #{public_key := AeAccount, private_key := PrivateKey} ->
+                    %% The root mnemonic stays on disk, not in ordinary replies
+                    %% or the long-lived signing cache.
+                    SigningKey = #{public_key => to_bin(AeAccount), private_key => PrivateKey},
+                    {reply, SigningKey, maps:merge(State, SigningKey)};
                 {error, _} = Error ->
                     {reply, Error, State}
             end
     end;
-handle_call(Request, From, State) ->
-    ?LOG_ERROR(
-        "got unknown on gun websocket Call ~p, From ~p, State ~p",
-        [Request, From, State]
-    ),
-    {reply, err, State}.
+%% Trusted operator API only; deliberately not a BDD step or HTTP route.
+%% Read an existing encrypted keystore on every export. Export never creates a
+%% replacement identity, and a swapped keystore must match any active cache.
+handle_call(export_node_wallet_seedphrase, _From, State) ->
+    Reply = case get_node_password_cached(State) of
+        {error, _} = Error -> Error;
+        {Password, _} ->
+            Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+            case read_keypair(Path, Password) of
+                #{public_key := Pub, private_key := Priv} = KeyPair ->
+                    case cached_identity_matches(State, Pub, Priv) of
+                        true -> damage_ae_wallet:export_seedphrase(KeyPair);
+                        false -> {error, keystore_identity_mismatch}
+                    end;
+                {error, _} = Error -> Error
+            end
+    end,
+    {reply, Reply, State};
+handle_call(Request, _From, State) ->
+    %% Never log request payloads or State here: State may contain node_password
+    %% and private_key, while malformed requests may themselves contain secrets.
+    ?LOG_ERROR("secrets received unsupported call tag=~p", [request_tag(Request)]),
+    {reply, {error, unsupported_call}, State}.
 handle_cast(Msg, State) ->
-    ?LOG_DEBUG("got unknown on gun websocket cast ~p,  State ~p", [Msg, State]),
+    ?LOG_DEBUG("secrets received unsupported cast tag=~p", [request_tag(Msg)]),
     {noreply, State}.
 handle_info(Info, State) ->
-    ?LOG_DEBUG("got unknown on gun websocket Info ~p, State ~p", [Info, State]),
+    ?LOG_DEBUG("secrets received unsupported info tag=~p", [request_tag(Info)]),
     {noreply, State}.
 
 terminate(Reason, _State) ->
-    ?LOG_ERROR("Terminating secrets ~p", [Reason]),
+    ?LOG_ERROR("Terminating secrets reason_type=~p", [request_tag(Reason)]),
     ok.
 
-code_change(_OldVsn, State, _Extra) -> {ok, State}.
+code_change(_OldVsn, State, _Extra) when is_map(State) ->
+    %% Also remove mnemonic/plaintext fields left by the reviewed implementation.
+    {ok, maps:with([node_password, public_key, private_key], State)};
+code_change(_OldVsn, _State, _Extra) -> {ok, #{}}.
 
-%% @doc Generate a new node wallet from a BIP-39 recovery phrase and derive
-%% the first aeternity account according to AEX-10:
-%%     m/44'/457'/0'/0'/0'
-%%
-%% The mnemonic is stored only inside the encrypted node keystore. Existing
-%% legacy keystores are not rewritten and keep their current address.
-make_keypair() ->
-    ensure_ebip39(),
-    Mnemonic = normalize_mnemonic(ebip39:generate_mnemonic(?NODE_MNEMONIC_BITS)),
-    keypair_from_mnemonic(Mnemonic).
+%% Preserve the OTP status-map keys, but expose no sensitive values. This also
+%% covers exception arguments, last messages and debug log entries.
+format_status(Status) ->
+    maps:map(fun(log, _) -> []; (_, _) -> redacted end, Status).
 
-%% @doc Deterministically restore the same node wallet from a BIP-39 phrase.
-%% An empty BIP-39 passphrase is intentional: this matches the normal
-%% aeternity/Superhero recovery-phrase flow.
-keypair_from_mnemonic(Mnemonic0) ->
-    ensure_ebip39(),
-    Mnemonic = normalize_mnemonic(Mnemonic0),
-    Seed = ebip39:mnemonic_to_seed(binary_to_list(Mnemonic), ""),
-    true = is_binary(Seed) andalso byte_size(Seed) =:= 64,
-    SigningSeed = aex10_ed25519_seed(Seed, ?AEX10_DERIVATION_PATH),
-    #{public := Pub, secret := Priv} = enacl:sign_seed_keypair(SigningSeed),
-    PubBin = aeser_api_encoder:encode(account_pubkey, Pub),
-    #{
-        public_key => unicode:characters_to_list(PubBin),
-        private_key => Priv,
-        mnemonic => Mnemonic,
-        derivation_path => ?AEX10_DERIVATION_PATH_STRING,
-        wallet_scheme => aex10_bip39,
-        account_index => 0,
-        address_index => 0
-    }.
+cached_identity_matches(#{public_key := CachedPub, private_key := CachedPriv}, Pub, Priv) ->
+    to_bin(CachedPub) =:= to_bin(Pub) andalso CachedPriv =:= Priv;
+cached_identity_matches(State, _Pub, _Priv) ->
+    not maps:is_key(public_key, State) andalso not maps:is_key(private_key, State).
 
-%% Return only wallet-related fields, never the cached node password or other
-%% gen_server state. `node_keypair/0` already exposes the private signing key,
-%% so returning mnemonic provenance here does not broaden caller authority and
-%% lets damage_ae export the recovery phrase for mnemonic-backed nodes.
-node_keypair_reply(KeyPair) ->
-    maps:with(
-        [
-            public_key,
-            private_key,
-            mnemonic,
-            derivation_path,
-            wallet_scheme,
-            account_index,
-            address_index
-        ],
-        KeyPair
-    ).
+request_tag(Term) when is_tuple(Term) ->
+    %% Return structure only, never a caller-supplied tuple element. The first
+    %% element may itself contain a credential or other sensitive value.
+    {tuple, tuple_size(Term)};
+request_tag(Term) when is_atom(Term) ->
+    atom;
+request_tag(Term) when is_binary(Term) ->
+    binary;
+request_tag(Term) when is_list(Term) ->
+    list;
+request_tag(Term) when is_map(Term) ->
+    map;
+request_tag(_Term) ->
+    other.
 
-ensure_ebip39() ->
-    case code:ensure_loaded(ebip39) of
-        {module, ebip39} -> ok;
-        {error, Reason} -> error({missing_dependency, ebip39, Reason})
-    end.
-
-normalize_mnemonic(Mnemonic) when is_binary(Mnemonic) ->
-    Words = string:lexemes(binary_to_list(Mnemonic), " \t\r\n"),
-    case Words of
-        [] -> error(empty_mnemonic);
-        _ -> unicode:characters_to_binary(string:join(Words, " "))
-    end;
-normalize_mnemonic(Mnemonic) when is_list(Mnemonic) ->
-    case io_lib:printable_unicode_list(Mnemonic) of
-        true ->
-            normalize_mnemonic(unicode:characters_to_binary(Mnemonic));
-        false ->
-            Words = [to_bin(W) || W <- Mnemonic],
-            normalize_mnemonic(iolist_to_binary(lists:join(<<" ">>, Words)))
-    end;
-normalize_mnemonic(_) ->
-    error(invalid_mnemonic).
-
-%% AEX-10 uses SLIP-0010 Ed25519 derivation. Since Ed25519 only supports
-%% hardened private derivation, every component of the AEX-10 AE path is
-%% hardened here. The result is the 32-byte seed consumed by libsodium/enacl.
-aex10_ed25519_seed(Seed, Path) when is_binary(Seed), is_list(Path) ->
-    {MasterKey, MasterChainCode} = slip10_master_ed25519(Seed),
-    {ChildKey, _ChildChainCode} = lists:foldl(
-        fun slip10_hardened_child/2,
-        {MasterKey, MasterChainCode},
-        Path
-    ),
-    ChildKey.
-
-slip10_master_ed25519(Seed) ->
-    split_slip10_hmac(crypto:mac(hmac, sha512, <<"ed25519 seed">>, Seed)).
-
-slip10_hardened_child(Index, {ParentKey, ParentChainCode})
-    when is_integer(Index), Index >= 0, Index < ?SLIP10_HARDENED_OFFSET ->
-    ChildNumber = Index bor ?SLIP10_HARDENED_OFFSET,
-    Data = <<0, ParentKey/binary, ChildNumber:32/unsigned-big>>,
-    split_slip10_hmac(crypto:mac(hmac, sha512, ParentChainCode, Data)).
-
-split_slip10_hmac(<<Key:32/binary, ChainCode:32/binary>>) ->
-    {Key, ChainCode}.
-keypair(Path, NodePassword) ->
-    case file:read_file(Path) of
-        {error, enoent} ->
-            ?LOG_INFO(Path ++ " not found ... creating.", []),
-            Data = make_keypair(),
-            EncData = secrets:encrypt(
-                NodePassword,
-                term_to_binary(Data)
-            ),
-            ok = file:write_file(Path, term_to_binary(EncData)),
-            Data;
-        {ok, EncDataBin} ->
-            try
-                secrets:decrypt(
-                    NodePassword,
-                    binary_to_term(EncDataBin)
-                )
-            of
-                error ->
-                    ?LOG_WARNING("Failed to unlock keypair ~p", [Path]),
-                    {error, decrypt_keypair};
+decrypt_cached_payload(Password, EncData) ->
+    try binary_to_term(EncData, [safe]) of
+        CipherTuple ->
+            case secrets:decrypt(Password, CipherTuple) of
                 Data when is_binary(Data) ->
-                    try binary_to_term(Data) of
-                        #{public_key := _, private_key := _} = KeyPair ->
-                            KeyPair;
-                        _ ->
-                            {error, corrupt_keypair}
+                    try binary_to_term(Data, [safe]) of
+                        Decoded -> Decoded
                     catch
-                        _Class:_Reason:_Stack ->
-                            {error, corrupt_keypair}
+                        _:_ -> error
                     end;
                 _ ->
-                    {error, decrypt_keypair}
-            catch
-                Class:Reason:Stack ->
-                    ?LOG_WARNING(
-                        "Invalid keypair data ~p: ~p",
-                        [Path, {Class, Reason, Stack}]
-                    ),
-                    {error, corrupt_keypair}
+                    error
             end
+    catch
+        _:_ -> error
     end.
+
+%% BIP-39/AEX-10 applies to NEW wallets only. Import reconstructs a map;
+%% it does not replace a running node's identity or write a keystore.
+-spec make_keypair() -> map() | {error, atom()}.
+make_keypair() -> damage_ae_wallet:generate().
+
+-spec keypair_from_mnemonic(binary() | list()) -> map() | {error, atom()}.
+keypair_from_mnemonic(Mnemonic) -> damage_ae_wallet:from_mnemonic(Mnemonic).
+
+keypair(Path, NodePassword) ->
+    case read_keypair(Path, NodePassword) of
+        {error, missing_keypair} -> create_keypair(Path, NodePassword);
+        Result -> Result
+    end.
+
+read_keypair(Path, NodePassword) ->
+    case file:read_file(Path) of
+        {ok, Encoded} -> decode_node_keypair(Encoded, NodePassword);
+        {error, enoent} -> {error, missing_keypair};
+        {error, Reason} -> {error, {keypair_read_failed, Reason}}
+    end.
+
+decode_node_keypair(Encoded, NodePassword) ->
+    try
+        %% Load schema atoms before safe ETF decoding on a cold VM.
+        {module, damage_ae_wallet} = code:ensure_loaded(damage_ae_wallet),
+        case binary_to_term(Encoded, [safe]) of
+            {Salt, IV, Tag, CipherText} = Envelope when
+                is_binary(Salt), byte_size(Salt) =:= ?SALT_SIZE,
+                is_binary(IV), byte_size(IV) =:= ?IV_SIZE,
+                is_binary(Tag), byte_size(Tag) =:= 16, is_binary(CipherText) ->
+                case secrets:decrypt(NodePassword, Envelope) of
+                    Plain when is_binary(Plain) ->
+                        validate_stored_keypair(binary_to_term(Plain, [safe]));
+                    _ -> {error, decrypt_keypair}
+                end;
+            _ -> {error, corrupt_keypair}
+        end
+    catch
+        _:_ -> {error, corrupt_keypair}
+    end.
+
+validate_stored_keypair(KeyPair) ->
+    case damage_ae_wallet:validate_keypair(KeyPair) of
+        ok ->
+            case lists:any(fun(K) -> maps:is_key(K, KeyPair) end,
+                           [mnemonic, seed_phrase, wallet_scheme]) of
+                false -> KeyPair;  %% Existing random-key wallets remain valid.
+                true ->
+                    case damage_ae_wallet:export_seedphrase(KeyPair) of
+                        {ok, _} -> KeyPair;
+                        {error, Why} -> {error, {invalid_wallet_backup, Why}}
+                    end
+            end;
+        {error, _} -> {error, corrupt_keypair}
+    end.
+
+create_keypair(Path, NodePassword) ->
+    case filelib:ensure_dir(Path) of
+        ok ->
+            case make_keypair() of
+                #{public_key := _, private_key := _} = Data ->
+                    try secrets:encrypt(NodePassword, term_to_binary(Data)) of
+                        EncData -> write_new_keypair(Path, term_to_binary(EncData), Data)
+                    catch
+                        _:_ -> {error, keypair_encrypt_failed}
+                    end;
+                {error, _} = Error -> Error
+            end;
+        {error, Reason} -> {error, {keypair_directory_failed, Reason}}
+    end.
+
+%% O_EXCL: never truncate a wallet created by another initializer. Set 0600
+%% before any content is written, and report success only after sync + close.
+%% The parent directory must be controlled by the node operator.
+write_new_keypair(Path, Encoded, Data) ->
+    case file:open(Path, [write, binary, raw, exclusive]) of
+        {ok, Io} ->
+            WriteResult = try write_keypair_contents(Path, Io, Encoded)
+                          catch _:_ -> {error, keypair_write_failed} end,
+            CloseResult = file:close(Io),
+            case {WriteResult, CloseResult} of
+                {ok, ok} -> Data;
+                {{error, _} = Error, _} ->
+                    _ = file:delete(Path), Error;
+                {ok, {error, Reason}} ->
+                    _ = file:delete(Path), {error, {keypair_close_failed, Reason}}
+            end;
+        {error, eexist} -> {error, keypair_already_exists};
+        {error, Reason} -> {error, {keypair_write_failed, Reason}}
+    end.
+
+write_keypair_contents(Path, Io, Encoded) ->
+    case file:change_mode(Path, 8#600) of
+        ok ->
+            case file:write(Io, Encoded) of
+                ok ->
+                    case file:sync(Io) of
+                        ok -> ok;
+                        {error, Reason} -> {error, {keypair_sync_failed, Reason}}
+                    end;
+                {error, Reason} -> {error, {keypair_write_failed, Reason}}
+            end;
+        {error, Reason} -> {error, {keypair_chmod_failed, Reason}}
+    end.
+
+%% This function returns root recovery material. Only trusted operator tooling
+%% may call it; arbitrary BEAM code is already inside the node trust boundary.
+-spec export_node_wallet_seedphrase() -> {ok, map()} | {error, term()}.
+export_node_wallet_seedphrase() ->
+    try
+        Pid = gproc:lookup_local_name({?MODULE, secrets}),
+        gen_server:call(Pid, export_node_wallet_seedphrase, ?ASKPASS_TIMEOUT)
+    catch
+        _:_ -> {error, node_wallet_export_unavailable}
+    end.
+
 node_keypair() ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, node_keypair, ?ASKPASS_TIMEOUT).
+
 has_node_keypair() ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
     case file:read_file(Path) of
@@ -397,32 +450,38 @@ has_node_keypair() ->
         {ok, _EncDataBin} ->
             true
     end.
+
 ensure_keypair_valid(NodePassword) ->
     Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
-    case file:read_file(Path) of
-        {ok, Enc} ->
-            try secrets:decrypt(NodePassword, binary_to_term(Enc)) of
-                error ->
-                    {error, invalid_password};
-                _ ->
-                    ok
-            catch
-                _Class:_Reason:_Stack ->
-                    {error, corrupt_keypair}
-            end;
-        _ ->
-            {error, missing_keypair}
+    case keypair(Path, NodePassword) of
+        #{public_key := _, private_key := _} -> ok;
+        {error, decrypt_keypair} -> {error, invalid_password};
+        {error, _} = Error -> Error
     end.
 %% Generates a random salt
 random_bytes(N) -> crypto:strong_rand_bytes(N).
 
-%% Derives a key from a password and salt using PBKDF2
+%% Preserve the existing keystore HKDF envelope for backwards compatibility.
+%% BIP-39 PBKDF2 seed derivation is separate, in damage_ae_wallet.
 derive_key(Password, Salt) ->
     hkdf(Salt, Password, <<"AES-KEY">>, 32).
 
 encrypt(PlainText) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
     base64:encode(term_to_binary(encrypt_secret(PlainText, PrivateKey))).
+
+%% Encrypt externally persisted application data while cryptographically
+%% binding it to its owner/purpose. This is distinct from scoped DETS storage:
+%% callers keep the returned base64 envelope in their own store/contract.
+encrypt_bound(Context, PlainText0) ->
+    PlainText = bound_plaintext(PlainText0),
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    AAD = bound_secret_aad(Context),
+    Key = derive_bound_aes_key(PrivateKey, AAD),
+    IV = crypto:strong_rand_bytes(?IV_SIZE),
+    {CipherText, Tag} =
+        crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, PlainText, AAD, true),
+    base64:encode(term_to_binary({bound_v1, IV, CipherText, Tag}, [deterministic])).
 encrypt(Key, Password, PlainText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {encrypt, Key, Password, PlainText}, ?ASKPASS_TIMEOUT).
@@ -444,16 +503,64 @@ decrypt(null) ->
 decrypt(Base64EncodedCipherTuple) ->
     decrypt(secrets:node_keypair(), Base64EncodedCipherTuple).
 
+decrypt_bound(_Context, null) ->
+    error;
+decrypt_bound(Context, Base64Envelope0) ->
+    try
+        Base64Envelope = bound_plaintext(Base64Envelope0),
+        EncodedTerm = base64:decode(Base64Envelope),
+        case binary_to_term(EncodedTerm, [safe]) of
+            {bound_v1, IV, CipherText, Tag} when
+                is_binary(IV),
+                byte_size(IV) =:= ?IV_SIZE,
+                is_binary(CipherText),
+                is_binary(Tag),
+                byte_size(Tag) =:= 16
+            ->
+                #{private_key := PrivateKey} = secrets:node_keypair(),
+                AAD = bound_secret_aad(Context),
+                Key = derive_bound_aes_key(PrivateKey, AAD),
+                case
+                    crypto:crypto_one_time_aead(
+                        aes_256_gcm, Key, IV, CipherText, AAD, Tag, false
+                    )
+                of
+                    PlainText when is_binary(PlainText) -> PlainText;
+                    _ -> error
+                end;
+            _ ->
+                error
+        end
+    catch
+        _:_ -> error
+    end.
+
 decrypt(Key, Password, CipherText) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {decrypt, Key, Password, CipherText}, ?ASKPASS_TIMEOUT).
 %% Decrypts data with a password
 decrypt(#{public_key := _AeAccount, private_key := PrivateKey}, Base64EncodedCipherTuple) ->
-    case base64:decode(Base64EncodedCipherTuple) of
+    %% Account/reset tokens are externally supplied. Treat both base64 and ETF
+    %% decoding as untrusted input and accept only the expected legacy envelope
+    %% shape before attempting AES-GCM decryption.
+    try base64:decode(Base64EncodedCipherTuple) of
         Term when is_binary(Term) ->
-            decrypt_secret(binary_to_term(Term), PrivateKey);
+            case binary_to_term(Term, [safe]) of
+                {IV, CipherText, Tag} = Envelope when
+                    is_binary(IV),
+                    byte_size(IV) =:= 16,
+                    is_binary(CipherText),
+                    is_binary(Tag),
+                    byte_size(Tag) =:= 16
+                ->
+                    decrypt_secret(Envelope, PrivateKey);
+                _ ->
+                    error
+            end;
         _ ->
             error
+    catch
+        _:_ -> error
     end;
 decrypt(Password, {Salt, IV, Tag, CipherText}) ->
     Key = derive_key(Password, Salt),
@@ -526,20 +633,44 @@ decrypt_secret({IV, CipherText, Tag}, PrivateKey) ->
         Tag,
         false
     ).
-%% Store encrypted secret in dets
-store_secret(Name, {IV, CipherText, Tag}) ->
+%% Store encrypted secret in dets.  Keep the storage primitive generic so
+%% legacy v1 envelopes and scoped v2 envelopes can coexist during migration.
+store_secret(Name, Encrypted) ->
     {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
-    dets:insert(?DETS_FILE, {Name, {IV, CipherText, Tag}}).
+    dets:insert(?DETS_FILE, {Name, Encrypted}).
 
 %% Retrieve encrypted secret from dets
 retrieve_secret(Name) ->
     dets:open_file(?DETS_FILE, ?DETS_ARGS),
     dets:lookup(?DETS_FILE, Name).
+
+%% Delete encrypted secret from dets by key
+delete_secret(Name) ->
+    {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
+    case dets:delete(?DETS_FILE, Name) of
+        ok -> dets:sync(?DETS_FILE);
+        {error, _} = Error -> Error
+    end.
+
+%% Scoped deletion.  BDD/account-facing code should use this form.
+delete_secret(Scope, Name) ->
+    delete_secret(scoped_storage_key(Scope, Name)).
+
 encrypt_store({Name, Secret}) ->
     encrypt_store(Name, Secret).
+
+%% Legacy node-global storage.  Retained for trusted node integrations only.
 encrypt_store(Name, Secret) ->
     #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
     store_secret(Name, encrypt_secret(Secret, PrivateKey)).
+
+%% Account/scope isolated storage.  New user-derived secrets must use this API.
+encrypt_store(Scope, Name, Secret) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    StorageKey = scoped_storage_key(Scope, Name),
+    AAD = scoped_secret_aad(StorageKey),
+    store_secret(StorageKey, encrypt_scoped_secret(Secret, PrivateKey, AAD)).
+
 retrieve_decrypt(Name) ->
     try secrets:node_keypair() of
         #{public_key := _AeAccount, private_key := PrivateKey} ->
@@ -558,6 +689,93 @@ retrieve_decrypt(Name) ->
         _Class:_Reason:_Stack ->
             error
     end.
+
+%% Scope + name are authenticated as AES-GCM AAD and also feed the derived key.
+%% Moving a DETS record to a different account/name therefore fails decryption.
+retrieve_decrypt(Scope, Name) ->
+    try secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := PrivateKey} ->
+            StorageKey = scoped_storage_key(Scope, Name),
+            AAD = scoped_secret_aad(StorageKey),
+            case retrieve_secret(StorageKey) of
+                [{StorageKey, {v2, IV, CipherText, Tag}}] ->
+                    case decrypt_scoped_secret({v2, IV, CipherText, Tag}, PrivateKey, AAD) of
+                        error -> error;
+                        Value -> {ok, Value}
+                    end;
+                _ ->
+                    error
+            end;
+        _ ->
+            error
+    catch
+        _Class:_Reason:_Stack ->
+            error
+    end.
+
+scoped_storage_key(Scope0, Name0) ->
+    {Kind, Owner, Id} = normalize_secret_scope(Scope0),
+    Name = normalize_secret_name(Name0),
+    {damage_secret, 2, Kind, Owner, Id, Name}.
+
+normalize_secret_scope(node) ->
+    {node, <<"node">>, <<"default">>};
+normalize_secret_scope({account, Owner}) ->
+    {account, to_bin(Owner), <<"default">>};
+normalize_secret_scope({wallet, Owner, Id}) ->
+    {wallet, to_bin(Owner), to_bin(Id)};
+normalize_secret_scope({agent, Owner, Id}) ->
+    {agent, to_bin(Owner), to_bin(Id)};
+normalize_secret_scope(#{kind := Kind, owner := Owner} = Scope) when
+    Kind =:= account; Kind =:= wallet; Kind =:= agent
+->
+    {Kind, to_bin(Owner), to_bin(maps:get(id, Scope, <<"default">>))};
+normalize_secret_scope(Other) ->
+    error({invalid_secret_scope, Other}).
+
+normalize_secret_name(Name) when is_binary(Name) -> Name;
+normalize_secret_name(Name) when is_list(Name) -> unicode:characters_to_binary(Name);
+normalize_secret_name(Name) when is_atom(Name) -> atom_to_binary(Name, utf8);
+normalize_secret_name(Name) -> to_bin(Name).
+
+scoped_secret_aad(StorageKey) ->
+    term_to_binary({damagebdd_secret_scope_v2, StorageKey}).
+
+encrypt_scoped_secret(Secret, PrivateKey, AAD) ->
+    AESKey = derive_scoped_aes_key(PrivateKey, AAD),
+    IV = crypto:strong_rand_bytes(?IV_SIZE),
+    PlainText = term_to_binary(Secret),
+    {CipherText, Tag} =
+        crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, PlainText, AAD, true),
+    {v2, IV, CipherText, Tag}.
+
+decrypt_scoped_secret({v2, IV, CipherText, Tag}, PrivateKey, AAD) ->
+    AESKey = derive_scoped_aes_key(PrivateKey, AAD),
+    case crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, CipherText, AAD, Tag, false) of
+        error ->
+            error;
+        PlainText when is_binary(PlainText) ->
+            try binary_to_term(PlainText, [safe]) of
+                Secret -> Secret
+            catch
+                _:_ -> error
+            end
+    end.
+
+derive_scoped_aes_key(PrivateKey, AAD) ->
+    ScopeSalt = crypto:hash(sha256, AAD),
+    hkdf(ScopeSalt, PrivateKey, <<"damagebdd:scoped-secret:v2">>, 32).
+
+bound_secret_aad(Context) ->
+    term_to_binary({damagebdd_bound_secret, 1, Context}, [deterministic]).
+
+derive_bound_aes_key(PrivateKey, AAD) ->
+    Salt = crypto:hash(sha256, AAD),
+    hkdf(Salt, PrivateKey, <<"damagebdd:bound-secret:v1">>, 32).
+
+bound_plaintext(Value) when is_binary(Value) -> Value;
+bound_plaintext(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+bound_plaintext(Value) -> to_bin(Value).
 
 salted_hash(BinaryData) when is_binary(BinaryData) ->
     case secrets:node_keypair() of
@@ -592,20 +810,14 @@ import_secret_key(PublicKey, PrivateKeyHex) ->
             ok = file:write_file(Path, term_to_binary(EncData)),
             Keypair
     catch
-        _ExceptionClass:{ask_password_failed, Class, Reason}:_Stack ->
-            ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
-            error;
-        Class:Reason:Stack ->
-            ?LOG_WARNING(
-                "Failed to get node_password ~p, Reason ~p",
-                [Class, {Reason, Stack}]
-            ),
+        _:_ ->
+            ?LOG_WARNING("Node key operation failed", []),
             error
     end.
 
 test() ->
     #{public_key := AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
-    ?LOG_DEBUG("public_key ~p, private_key ~p", [AeAccount, PrivateKey]),
+    ?LOG_DEBUG("secrets test using public_key ~p", [AeAccount]),
     Secret = "Secret something something",
     {IV, CipherText, Tag} =
         encrypt_secret(Secret, PrivateKey),
@@ -628,14 +840,8 @@ migrate() ->
             ok = file:write_file(Path, term_to_binary(EncData)),
             Keypair
     catch
-        _ExceptionClass:{ask_password_failed, Class, Reason}:_Stack ->
-            ?LOG_WARNING("Failed to get node_password ~p, Reason ~p", [Class, Reason]),
-            error;
-        Class:Reason:Stack ->
-            ?LOG_WARNING(
-                "Failed to get node_password ~p, Reason ~p",
-                [Class, {Reason, Stack}]
-            ),
+        _:_ ->
+            ?LOG_WARNING("Node key operation failed", []),
             error
     end.
 
@@ -660,7 +866,7 @@ interpolate_template(Template) when is_list(Template) ->
                 lists:foldl(
                     fun([Key], Acc) ->
                         Replacement =
-                            case retrieve_decrypt(list_to_atom(Key)) of
+                            case retrieve_legacy_template_secret(Key) of
                                 {ok, Value} when is_binary(Value) -> binary_to_list(Value);
                                 {ok, Value} -> io_lib:format("~p", [Value]);
                                 error -> "<<missing:" ++ Key ++ ">>"
@@ -673,4 +879,19 @@ interpolate_template(Template) when is_list(Template) ->
             );
         nomatch ->
             Template
+    end.
+
+retrieve_legacy_template_secret(Key0) ->
+    KeyBin = unicode:characters_to_binary(Key0),
+    case retrieve_decrypt(KeyBin) of
+        {ok, _} = Ok ->
+            Ok;
+        error ->
+            %% Compatibility for old DETS rows keyed by existing atoms only.
+            %% Never create atoms from template-controlled strings.
+            try binary_to_existing_atom(KeyBin, utf8) of
+                KeyAtom -> retrieve_decrypt(KeyAtom)
+            catch
+                _:_ -> error
+            end
     end.

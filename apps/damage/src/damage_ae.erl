@@ -1380,96 +1380,21 @@ set_private_key(AeAccount0, PrivateKey) ->
     DamageAEPid = get_wallet_proc(AeAccount),
     gen_server:call(DamageAEPid, {set_private_key, AeAccount, PrivateKey}, ?AE_TIMEOUT).
 
-%% @doc Export the existing node wallet in a form that can be imported as a
-%% private-key account by Superhero Wallet.  This preserves the current AE
-%% address.  The secret is deliberately returned only to the caller and is
-%% never logged.
-%%
-%% DamageBDD's legacy node keypair is generated directly with
-%% enacl:sign_keypair/0, so it is not recoverable as a Superhero/AEX-10
-%% mnemonic.  See export_node_wallet_seedphrase/0 for the explicit distinction.
--spec export_node_wallet_for_superhero() ->
-    {ok, map()} | {error, term()}.
+%% Trusted operator APIs only. Never expose these via ordinary BDD or HTTP.
+-spec export_node_wallet_for_superhero() -> {ok, map()} | {error, term()}.
 export_node_wallet_for_superhero() ->
-    case secrets:node_keypair() of
-        #{public_key := AeAccount0, private_key := PrivateKey} ->
-            AeAccount = normalize_ae_account(AeAccount0),
-            case validate_account_signing_key(AeAccount, PrivateKey) of
-                ok ->
-                    <<Seed:32/binary, _PublicKey:32/binary>> = PrivateKey,
-                    {ok, #{
-                        address => AeAccount,
-                        format => superhero_private_key,
-                        %% Current aepp-sdk/Superhero account secret-key format.
-                        private_key => aeser_api_encoder:encode(account_seckey, Seed),
-                        %% Retain the legacy 64-byte NaCl representation for
-                        %% older tooling and manual recovery.
-                        legacy_private_key_hex => lower_hex(PrivateKey)
-                    }};
-                {error, Reason} ->
-                    {error, {invalid_node_keypair, Reason}}
-            end;
-        {error, _} = Error ->
-            Error;
-        Other ->
-            {error, {unexpected_node_keypair, identity_result_type(Other)}}
+    try secrets:node_keypair() of
+        #{public_key := _, private_key := _} = KeyPair ->
+            damage_ae_wallet:export_private_key(KeyPair);
+        _ -> {error, node_wallet_unavailable}
+    catch
+        _:_ -> {error, node_wallet_unavailable}
     end.
 
-%% @doc Return the node wallet recovery phrase only when the keypair explicitly
-%% carries mnemonic provenance.  Never manufacture BIP-39 words from the first
-%% 32 bytes of an existing Ed25519 secret key: Superhero derives AE accounts
-%% from the mnemonic using its deterministic wallet derivation, so doing that
-%% would restore a different address.
-%%
-%% This function is forward-compatible with a future secrets implementation
-%% that creates the node wallet from a mnemonic and stores it in the encrypted
-%% keystore under either `mnemonic` or `seed_phrase`.
--spec export_node_wallet_seedphrase() ->
-    {ok, map()} | {error, term()}.
+%% Mnemonics are deliberately excluded from secrets:node_keypair/0 replies.
+-spec export_node_wallet_seedphrase() -> {ok, map()} | {error, term()}.
 export_node_wallet_seedphrase() ->
-    case secrets:node_keypair() of
-        #{public_key := AeAccount0, private_key := PrivateKey, mnemonic := Mnemonic0} ->
-            export_node_wallet_seedphrase(AeAccount0, PrivateKey, Mnemonic0);
-        #{public_key := AeAccount0, private_key := PrivateKey, seed_phrase := Mnemonic0} ->
-            export_node_wallet_seedphrase(AeAccount0, PrivateKey, Mnemonic0);
-        #{public_key := _AeAccount, private_key := _PrivateKey} ->
-            {error, {node_wallet_not_mnemonic_backed, use_private_key_export}};
-        {error, _} = Error ->
-            Error;
-        Other ->
-            {error, {unexpected_node_keypair, identity_result_type(Other)}}
-    end.
-
-export_node_wallet_seedphrase(AeAccount0, PrivateKey, Mnemonic0) ->
-    AeAccount = normalize_ae_account(AeAccount0),
-    case validate_account_signing_key(AeAccount, PrivateKey) of
-        ok ->
-            case normalize_seedphrase(Mnemonic0) of
-                {ok, Mnemonic} ->
-                    {ok, #{
-                        address => AeAccount,
-                        format => superhero_seed_phrase,
-                        seed_phrase => Mnemonic
-                    }};
-                {error, _} = Error ->
-                    Error
-            end;
-        {error, Reason} ->
-            {error, {invalid_node_keypair, Reason}}
-    end.
-
-normalize_seedphrase(Mnemonic) when is_binary(Mnemonic) ->
-    case string:trim(Mnemonic) of
-        <<>> -> {error, empty_seed_phrase};
-        SeedPhrase -> {ok, SeedPhrase}
-    end;
-normalize_seedphrase(Mnemonic) when is_list(Mnemonic) ->
-    normalize_seedphrase(unicode:characters_to_binary(Mnemonic));
-normalize_seedphrase(_) ->
-    {error, invalid_seed_phrase}.
-
-lower_hex(Bin) when is_binary(Bin) ->
-    list_to_binary(string:lowercase(binary_to_list(binary:encode_hex(Bin)))).
+    secrets:export_node_wallet_seedphrase().
 
 normalize_ae_account(AeAccount) when is_binary(AeAccount) ->
     AeAccount;
@@ -2694,19 +2619,6 @@ dry_run_return_type(CallObj) ->
         _ -> unknown
     end.
 
-dry_run_revert_reason(CallObj) ->
-    ReturnType = map_value(
-        [return_type, "return_type", <<"return_type">>, returnType, <<"returnType">>],
-        CallObj,
-        undefined
-    ),
-    case ReturnType of
-        revert -> {true, decode_dry_run_return_value(CallObj)};
-        "revert" -> {true, decode_dry_run_return_value(CallObj)};
-        <<"revert">> -> {true, decode_dry_run_return_value(CallObj)};
-        _ -> false
-    end.
-
 decode_dry_run_return_value(CallObj) ->
     Encoded = map_value(
         [return_value, "return_value", <<"return_value">>, returnValue, <<"returnValue">>],
@@ -2806,20 +2718,70 @@ contract_call_payfor_tx(
 contract_call_payfor_user_safe(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
 ) ->
-    case prepare_payfor_user_signed_tx(
-        AeAccount, PrivateKey, ContractId, ContractSource, Func, Args
-    ) of
-        {ok, PayingSignedTX} ->
-            submit_payfor_user_tx(PayingSignedTX);
+    case safe_node_keypair() of
+        {ok, #{public_key := NodeAeAccount} = NodeKeyPair} ->
+            LockId = payfor_submission_lock_id(NodeAeAccount),
+            Submission = global:trans(
+                LockId,
+                fun() ->
+                    case prepare_payfor_user_signed_tx(
+                        AeAccount,
+                        PrivateKey,
+                        ContractId,
+                        ContractSource,
+                        Func,
+                        Args,
+                        NodeKeyPair
+                    ) of
+                        {ok, PayingSignedTX} -> post_payfor_user_tx(PayingSignedTX);
+                        {error, Reason} -> {not_submitted, Reason}
+                    end
+                end
+            ),
+            finish_payfor_submission(Submission);
         {error, Reason} ->
             {not_submitted, Reason}
     end;
 contract_call_payfor_user_safe(AeAccount, _Contract, _ContractSource, _Func, _Args) ->
     {not_submitted, {keypair_required, AeAccount}}.
 
-prepare_payfor_user_signed_tx(AeAccount, PrivateKey, ContractId, ContractSource, Func, Args) ->
+safe_node_keypair() ->
+    try secrets:node_keypair() of
+        #{public_key := _NodeAeAccount, private_key := _NodePrivateKey} = KeyPair ->
+            {ok, KeyPair};
+        Other ->
+            {error, {invalid_node_keypair, compact_payfor_error(Other)}}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Failed to load node keypair for paying-for submission class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {error, {node_keypair_failed, Class, compact_payfor_error(Reason)}}
+    end.
+
+payfor_submission_lock_id(NodeAeAccount) ->
+    {{?MODULE, {payfor_submit, NodeAeAccount}}, self()}.
+
+finish_payfor_submission({submitted, TxHash}) ->
+    confirm_payfor_user_tx(TxHash);
+finish_payfor_submission(aborted) ->
+    {not_submitted, payfor_submission_lock_aborted};
+finish_payfor_submission({aborted, Reason}) ->
+    {not_submitted, {payfor_submission_lock_failed, compact_payfor_error(Reason)}};
+finish_payfor_submission(Result) ->
+    Result.
+
+prepare_payfor_user_signed_tx(
+    AeAccount,
+    PrivateKey,
+    ContractId,
+    ContractSource,
+    Func,
+    Args,
+    #{public_key := NodeAeAccount, private_key := NodePrivateKey}
+) ->
     try
-        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
         {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
         Fee = vanillae:min_fee(),
         Gas = vanillae:min_gas(),
@@ -2859,24 +2821,43 @@ prepare_payfor_user_signed_tx(AeAccount, PrivateKey, ContractId, ContractSource,
         {ok, attach_signature_base58(PayingForTxFinal, PayingSignature)}
     catch
         Class:Reason:Stacktrace ->
-            {error, {prepare_payfor_user_tx_failed, Class, Reason, Stacktrace}}
+            ?LOG_ERROR(
+                "Preparing paying-for transaction failed class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {error, {
+                prepare_payfor_user_tx_failed,
+                Class,
+                compact_payfor_error(Reason)
+            }}
     end.
 
-submit_payfor_user_tx(PayingSignedTX) ->
+post_payfor_user_tx(PayingSignedTX) ->
     try vanillae:post_tx(PayingSignedTX) of
         {ok, #{"tx_hash" := TxHash}} ->
-            confirm_payfor_user_tx(TxHash);
+            {submitted, TxHash};
         {ok, #{<<"tx_hash">> := TxHash}} ->
-            confirm_payfor_user_tx(TxHash);
+            {submitted, TxHash};
         {error, Reason} ->
             %% A transport/backend error at post time cannot prove whether the
             %% node accepted the transaction. Treat it as ambiguous.
-            {uncertain, undefined, {post_tx_failed, Reason}};
+            {uncertain, undefined, {post_tx_failed, compact_payfor_error(Reason)}};
         Other ->
-            {uncertain, undefined, {unexpected_post_tx_response, Other}}
+            {uncertain, undefined, {
+                unexpected_post_tx_response,
+                compact_payfor_error(Other)
+            }}
     catch
         Class:Reason:Stacktrace ->
-            {uncertain, undefined, {post_tx_crashed, Class, Reason, Stacktrace}}
+            ?LOG_ERROR(
+                "Posting paying-for transaction failed class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {uncertain, undefined, {
+                post_tx_crashed,
+                Class,
+                compact_payfor_error(Reason)
+            }}
     end.
 
 confirm_payfor_user_tx(TxHash) ->
@@ -2884,8 +2865,19 @@ confirm_payfor_user_tx(TxHash) ->
         Result -> {confirmed, TxHash, Result}
     catch
         Class:Reason:Stacktrace ->
-            {uncertain, TxHash, {wait_tx_failed, Class, Reason, Stacktrace}}
+            ?LOG_ERROR(
+                "Confirming paying-for transaction failed tx=~p class=~p reason=~p stack=~p",
+                [TxHash, Class, Reason, Stacktrace]
+            ),
+            {uncertain, TxHash, {
+                wait_tx_failed,
+                Class,
+                compact_payfor_error(Reason)
+            }}
     end.
+
+compact_payfor_error(Term) ->
+    iolist_to_binary(io_lib:format("~P", [Term, 12])).
 
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args

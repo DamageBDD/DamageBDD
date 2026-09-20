@@ -1,0 +1,34 @@
+[
+  {
+    "entropy_hex": "00000000000000000000000000000000",
+    "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "bip39_seed_hex": "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
+    "signing_seed_hex": "04fe1c705457b4607474d1d8f5354536c00d2a924542daf63653d0f15e141d0d",
+    "public_key_hex": "84ae8c0fb5fc9df3af67a9348e254cd602b84ccc670faa247600abaec01b5294",
+    "address": "ak_21SBPc3yHP7bpQDvD1KMKzZZEgLtSXpDsK97LTjVwjiskra6Ka"
+  },
+  {
+    "entropy_hex": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+    "mnemonic": "legal winner thank year wave sausage worth useful legal winner thank yellow",
+    "bip39_seed_hex": "878386efb78845b3355bd15ea4d39ef97d179cb712b77d5c12b6be415fffeffe5f377ba02bf3f8544ab800b955e51fbff09828f682052a20faa6addbbddfb096",
+    "signing_seed_hex": "7efb7ca3ac5365d779bb2c881158054bf4f6152356de31bab157dbe0942a5ed6",
+    "public_key_hex": "4c5cc6d1fc281ab55c6ded822b031511accc3ef9ed2149ab1def716e11babbcb",
+    "address": "ak_adaN7iK8L5nanM5tmNdGTYy9aqcn84ZwJNpK8A8w4zPrt7Uya"
+  },
+  {
+    "entropy_hex": "80808080808080808080808080808080",
+    "mnemonic": "letter advice cage absurd amount doctor acoustic avoid letter advice cage above",
+    "bip39_seed_hex": "77d6be9708c8218738934f84bbbb78a2e048ca007746cb764f0673e4b1812d176bbb173e1a291f31cf633f1d0bad7d3cf071c30e98cd0688b5bcce65ecaceb36",
+    "signing_seed_hex": "fb39003728705b2a3f0e2afda34a4f1a6434e618fac1963e57012910864a606b",
+    "public_key_hex": "0f18467f65333fdcfd6619159611f8942c256b8862f8e73a532af30c90de496b",
+    "address": "ak_7eaUEyqG5zNYFF18z7LhujE1uak4Y1eoMaJWot4GGujwDotay"
+  },
+  {
+    "entropy_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "bip39_seed_hex": "408b285c123836004f4b8842c89324c1f01382450c0d439af345ba7fc49acf705489c6fc77dbd4e3dc1dd8cc6bc9f043db8ada1e243c4a0eafb290d399480840",
+    "signing_seed_hex": "19955e6edc625067971ea71ff4f6d136ee89200542ef46c5cdc162648362d3a2",
+    "public_key_hex": "099a79d1ee66ff8666fda73cf6da3ffa0f79f3f16446511318b504ae69004384",
+    "address": "ak_5EJn6Wer8qD4o2wdsRY4mrJojdvD8GbBgTE8iLd1PP1YW3FJ3"
+  }
+]
