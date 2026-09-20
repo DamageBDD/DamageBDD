@@ -368,16 +368,9 @@ authorized_for_job(Job, State) ->
     end.
 
 authenticated_owner(State) ->
-    case maps:get(ae_account, State, maps:get(owner, State, undefined)) of
-        AuthBin when is_binary(AuthBin), byte_size(AuthBin) > 0 -> AuthBin;
-        List when is_list(List), List =/= [] ->
-            try unicode:characters_to_binary(List) of
-                Converted when is_binary(Converted), byte_size(Converted) > 0 -> Converted
-            catch
-                _Class:_Reason -> undefined
-            end;
-        _ ->
-            undefined
+    case damage_auth:authenticated_account(State) of
+        {ok, Owner} -> Owner;
+        {error, unauthenticated} -> undefined
     end.
 
 required_idempotency_key(Req) ->

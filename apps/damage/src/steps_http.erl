@@ -59,7 +59,7 @@
 -define(STEP_RESPONSE_STATUS_ONEOF,   ["the response status must be one of", Statuses]).
 -define(STEP_RESPONSE_YAML_MUST,      ["the yaml at path", Path, "must be", Expected0]).
 -define(STEP_RESPONSE_JSON_MUST,      ["the json at path", Path, "must be", Expected0]).
--define(STEP_RESPONSE_JSON_SHOULD,    ["the JSON at path", JsonPath, "should be"]).
+-define(STEP_RESPONSE_JSON_SHOULD,    ["the JSON at path", JsonPath, "should be", Expected0]).
 -define(STEP_RESPONSE_HEADER_IS,      ["the", Var, "header should be", Value]).
 -define(STEP_RESPONSE_PRINT_JSON_PATH,["I print the json at path", Path]).
 -define(STEP_RESPONSE_PRINT_BODY,     ["I print the response body"]).
@@ -77,6 +77,7 @@
 -define(STEP_SET_HEADER,          ["I set", Header, "header to", Value]).
 -define(STEP_CLEAR_HEADER,          ["I clear header", Header]).
 -define(STEP_USE_CURRENT_DAMAGE_AUTH, ["I use the current DamageBDD authorization"]).
+-define(STEP_USE_CURRENT_ECAI_AUTH,   ["I use the current ECAI authorization"]).
 -define(STEP_NO_VERIFY_SSL,       ["I do not want to verify server certificate"]).
 -define(STEP_GIVEN_BASIC_AUTH,    ["I set BasicAuth username to ", User, "and password to", Password]).
 -define(STEP_GIVEN_OAUTH_QUERY,   ["I use query OAuth with key=", Key, "and secret=", Secret]).
@@ -499,7 +500,7 @@ step(_Config, Context, _Keyword, _N, ?STEP_SET_HEADER, _) ->
         %% An explicit Authorization header always wins over the privileged
         %% current-session mode. This is required for switching from Bearer
         %% bootstrap auth to L402 auth in the same feature.
-        <<"authorization">> -> maps:remove(damagebdd_current_authorization, Context1);
+        <<"authorization">> -> clear_current_authorization_markers(Context1);
         _ -> Context1
     end;
 step(_Config, Context, _Keyword, _N, ?STEP_CLEAR_HEADER, _) ->
@@ -508,7 +509,7 @@ step(_Config, Context, _Keyword, _N, ?STEP_CLEAR_HEADER, _) ->
     case HeaderName of
         %% Clearing Authorization must also disable ephemeral current-session
         %% auth; otherwise the next request would silently regain the Bearer.
-        <<"authorization">> -> maps:remove(damagebdd_current_authorization, Context1);
+        <<"authorization">> -> clear_current_authorization_markers(Context1);
         _ -> Context1
     end;
 %%------------------------------------------------------------------------------
@@ -521,6 +522,10 @@ step(_Config, _Context, documentation, _N, ?STEP_USE_CURRENT_DAMAGE_AUTH, _) ->
     "Use the authenticated DamageBDD session for same-origin HTTP requests only";
 step(_Config, Context, _Keyword, _N, ?STEP_USE_CURRENT_DAMAGE_AUTH, _) ->
     enable_current_damagebdd_authorization(Context);
+step(_Config, _Context, documentation, _N, ?STEP_USE_CURRENT_ECAI_AUTH, _) ->
+    "Use the authenticated DamageBDD session for requests to the configured ECAI API origin only";
+step(_Config, Context, _Keyword, _N, ?STEP_USE_CURRENT_ECAI_AUTH, _) ->
+    enable_current_ecai_authorization(Context);
 %%------------------------------------------------------------------------------
 %% GIVEN: Store cookies from response (extract 'set-cookie' headers)
 %%------------------------------------------------------------------------------
@@ -736,8 +741,8 @@ step(
         Context,
         KeyWord,
         LineNo,
-        ["the json at path", JsonPath, "must be", Args],
-        <<>>
+        ["the json at path", JsonPath, "must be", Expected0],
+        Args
     );
 %% Then the JSON at path "Keys.<cid>.Type" must be one of "recursive,direct,indirect"
 step(
@@ -863,7 +868,9 @@ step(
 
 get_headers(Context, DefaultHeaders) ->
     Headers0 = merged_request_headers(Context, DefaultHeaders),
-    maps:to_list(maybe_add_current_damagebdd_authorization(Context, Headers0)).
+    Headers1 = maybe_add_current_damagebdd_authorization(Context, Headers0),
+    Headers2 = maybe_add_current_ecai_authorization(Context, Headers1),
+    maps:to_list(Headers2).
 
 merged_request_headers(Context, DefaultHeaders) ->
     maps:merge(
@@ -909,86 +916,120 @@ normalize_header_name(Name) ->
     normalize_header_name(iolist_to_binary(io_lib:format("~p", [Name]))).
 
 enable_current_damagebdd_authorization(Context) ->
+    enable_current_scoped_authorization(
+        Context,
+        damagebdd_current_authorization,
+        fun configured_damage_api_origin/0,
+        "DamageBDD"
+    ).
+
+enable_current_ecai_authorization(Context) ->
+    enable_current_scoped_authorization(
+        Context,
+        ecai_current_authorization,
+        fun configured_ecai_api_origin/0,
+        "ECAI"
+    ).
+
+enable_current_scoped_authorization(Context, Marker, OriginFun, Label) ->
     case current_access_token(Context) of
         {ok, _Token} ->
-            case {configured_damage_api_origin(), current_target_origin(Context)} of
+            case {OriginFun(), current_target_origin(Context)} of
                 {{ok, Origin}, {ok, Origin}} ->
-                    %% Replace any previously stored Authorization value, but
-                    %% keep the actual session token out of the headers map.
+                    %% Remove any explicit Authorization value and any previous
+                    %% service marker. Only the non-secret origin capability is
+                    %% stored in Context. The Bearer is injected at request time.
                     Context1 = clear_request_header(Context, <<"authorization">>),
-                    %% Store only a non-secret capability marker. The actual
-                    %% token is injected by get_headers/2 at request time.
-                    maps:put(damagebdd_current_authorization, Origin, Context1);
+                    Context2 = clear_current_authorization_markers(Context1),
+                    maps:put(Marker, Origin, Context2);
                 {{ok, Expected}, {ok, Actual}} ->
                     steps_utils:set_fail(
                         Context,
-                        "Refusing current DamageBDD authorization for non-DamageBDD origin ~p (expected ~p)",
-                        [Actual, Expected]
+                        "Refusing current ~s authorization for origin ~p (expected ~p)",
+                        [Label, Actual, Expected]
                     );
                 {{error, Reason}, _} ->
                     steps_utils:set_fail(
                         Context,
-                        "Cannot use current DamageBDD authorization: ~p",
-                        [Reason]
+                        "Cannot use current ~s authorization: ~p",
+                        [Label, Reason]
                     );
                 {_, {error, Reason}} ->
                     steps_utils:set_fail(
                         Context,
-                        "Cannot use current DamageBDD authorization for current server: ~p",
-                        [Reason]
+                        "Cannot use current ~s authorization for current server: ~p",
+                        [Label, Reason]
                     )
             end;
         {error, Reason} ->
             steps_utils:set_fail(
                 Context,
-                "Current DamageBDD authorization is unavailable: ~p",
-                [Reason]
+                "Current ~s authorization is unavailable: ~p",
+                [Label, Reason]
             )
     end.
 
+clear_current_authorization_markers(Context) ->
+    maps:remove(
+        ecai_current_authorization,
+        maps:remove(damagebdd_current_authorization, Context)
+    ).
+
 maybe_add_current_damagebdd_authorization(Context, Headers) ->
-    %% Explicit auth (for example L402) takes precedence over the privileged
-    %% Bearer bridge. This also prevents a stale marker from overwriting a
-    %% caller-selected Authorization scheme.
+    maybe_add_current_scoped_authorization(
+        Context,
+        Headers,
+        damagebdd_current_authorization,
+        fun configured_damage_api_origin/0,
+        "DamageBDD"
+    ).
+
+maybe_add_current_ecai_authorization(Context, Headers) ->
+    maybe_add_current_scoped_authorization(
+        Context,
+        Headers,
+        ecai_current_authorization,
+        fun configured_ecai_api_origin/0,
+        "ECAI"
+    ).
+
+maybe_add_current_scoped_authorization(Context, Headers, Marker, OriginFun, Label) ->
+    %% Explicit auth (for example L402) always wins. A service-scoped marker
+    %% can inject the current Bearer only when the request still targets the
+    %% exact configured origin that was approved by the Gherkin step.
     case maps:is_key(<<"authorization">>, Headers) of
         true ->
             Headers;
         false ->
-            maybe_add_current_damagebdd_authorization0(Context, Headers)
-    end.
-
-maybe_add_current_damagebdd_authorization0(Context, Headers) ->
-    case maps:get(damagebdd_current_authorization, Context, undefined) of
-        undefined ->
-            Headers;
-        EnabledOrigin ->
-            case {configured_damage_api_origin(), current_target_origin(Context)} of
-                {{ok, EnabledOrigin}, {ok, EnabledOrigin}} ->
-                    case current_access_token(Context) of
-                        {ok, Token} ->
-                            maps:put(
-                                <<"authorization">>,
-                                <<"Bearer ", Token/binary>>,
-                                Headers
-                            );
-                        {error, Reason} ->
-                            ?LOG_WARNING(
-                                "Current DamageBDD authorization unavailable at request time: ~p",
-                                [Reason]
-                            ),
-                            Headers
-                    end;
-                {{ok, Expected}, {ok, Actual}} ->
-                    %% Fail closed with respect to credential disclosure. The
-                    %% request may continue unauthenticated, but the Bearer is
-                    %% never sent after the target origin changes.
-                    ?LOG_WARNING(
-                        "Withholding current DamageBDD authorization from origin ~p expected=~p",
-                        [Actual, Expected]
-                    ),
+            case maps:get(Marker, Context, undefined) of
+                undefined ->
                     Headers;
-                _ ->
-                    Headers
+                EnabledOrigin ->
+                    case {OriginFun(), current_target_origin(Context)} of
+                        {{ok, EnabledOrigin}, {ok, EnabledOrigin}} ->
+                            case current_access_token(Context) of
+                                {ok, Token} ->
+                                    maps:put(
+                                        <<"authorization">>,
+                                        <<"Bearer ", Token/binary>>,
+                                        Headers
+                                    );
+                                {error, Reason} ->
+                                    ?LOG_WARNING(
+                                        "Current ~s authorization unavailable at request time: ~p",
+                                        [Label, Reason]
+                                    ),
+                                    Headers
+                            end;
+                        {{ok, Expected}, {ok, Actual}} ->
+                            ?LOG_WARNING(
+                                "Withholding current ~s authorization from origin ~p expected=~p",
+                                [Label, Actual, Expected]
+                            ),
+                            Headers;
+                        _ ->
+                            Headers
+                    end
             end
     end.
 
@@ -1009,6 +1050,13 @@ configured_damage_api_origin() ->
         {ok, Url} -> normalize_http_origin(Url);
         undefined -> {error, api_url_not_configured};
         Other -> {error, {invalid_api_url_config, Other}}
+    end.
+
+configured_ecai_api_origin() ->
+    case application:get_env(ecai, api_url) of
+        {ok, Url} -> normalize_http_origin(Url);
+        undefined -> {error, ecai_api_url_not_configured};
+        Other -> {error, {invalid_ecai_api_url_config, Other}}
     end.
 
 current_target_origin(Context) ->

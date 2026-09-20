@@ -5,11 +5,10 @@ Feature: Pending Wikimedia API hardening contracts
   and path policy is implemented.
 
   Background:
-    Given I am using server "{{ECAI_BASE_URL}}"
+    Given I am using server "{{ecai_api_url}}"
     And I set "Accept" header to "application/json"
     And I set "Content-Type" header to "application/json"
-    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
-
+    And I use the current ECAI authorization
   Scenario: Duplicate pageview months are rejected instead of double-counted
     Given I store an uuid in "RunId"
     When I make a POST request to "/ecai/index-jobs"

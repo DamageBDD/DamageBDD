@@ -4,11 +4,10 @@ Feature: Wikimedia source discovery API
   separately from the deterministic contract suite.
 
   Background:
-    Given I am using server "{{ECAI_BASE_URL}}"
+    Given I am using server "{{ecai_api_url}}"
     And I set "Accept" header to "application/json"
     And I set "Content-Type" header to "application/json"
-    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
-
+    And I use the current ECAI authorization
   Scenario: List available Wikimedia source releases
     When I make a GET request to "/ecai/wikimedia/sources?project=enwiki&pageview_project=en.wikipedia&months={{WIKIMEDIA_MONTH}}"
     Then the response status must be "200"

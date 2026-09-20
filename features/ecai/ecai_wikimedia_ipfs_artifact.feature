@@ -4,8 +4,8 @@ Feature: Wikimedia index artifact is published to IPFS and becomes NFT-ready
   immutable manifest CID and the metadata needed by the later minting step.
 
   Background:
-    Given I am using server "{{ECAI_BASE_URL}}"
-    And I set "Authorization" header to "Bearer {{ECAI_ACCESS_TOKEN}}"
+    Given I am using server "{{ecai_api_url}}"
+    And I use the current ECAI authorization
     And I set "Accept" header to "application/json"
     And I set "Content-Type" header to "application/json"
 

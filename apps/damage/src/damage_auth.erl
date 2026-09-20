@@ -15,7 +15,8 @@
     resolve_l402/3,
     authenticate/2,
     maybe_authenticate/2,
-    require_auth/4
+    require_auth/4,
+    authenticated_account/1
 ]).
 -import(damage_utils, [to_bin/1]).
 
@@ -177,6 +178,46 @@ authenticate(Req, State0) ->
         {error, Reason} ->
             {error, Reason, BaseState}
     end.
+
+%% ------------------------------------------------------------------
+%% Authenticated identity accessor
+%% ------------------------------------------------------------------
+
+-spec authenticated_account(map()) -> {ok, binary()} | {error, unauthenticated}.
+authenticated_account(State) when is_map(State) ->
+    case first_identity_value(State, [
+        public_key, <<"public_key">>,
+        ae_account, <<"ae_account">>,
+        owner, <<"owner">>
+    ]) of
+        undefined -> {error, unauthenticated};
+        Value -> normalize_authenticated_account(Value)
+    end;
+authenticated_account(_) ->
+    {error, unauthenticated}.
+
+first_identity_value(_State, []) ->
+    undefined;
+first_identity_value(State, [Key | Rest]) ->
+    case maps:get(Key, State, undefined) of
+        undefined -> first_identity_value(State, Rest);
+        null -> first_identity_value(State, Rest);
+        <<>> -> first_identity_value(State, Rest);
+        "" -> first_identity_value(State, Rest);
+        Value -> Value
+    end.
+
+normalize_authenticated_account(Value) when is_binary(Value), byte_size(Value) > 0 ->
+    {ok, Value};
+normalize_authenticated_account(Value) when is_list(Value), Value =/= [] ->
+    try unicode:characters_to_binary(Value) of
+        Bin when is_binary(Bin), byte_size(Bin) > 0 -> {ok, Bin};
+        _ -> {error, unauthenticated}
+    catch
+        _:_ -> {error, unauthenticated}
+    end;
+normalize_authenticated_account(_) ->
+    {error, unauthenticated}.
 
 %% ------------------------------------------------------------------
 %% Cowboy adapters
