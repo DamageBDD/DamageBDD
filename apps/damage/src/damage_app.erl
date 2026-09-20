@@ -15,6 +15,7 @@
 
 -export([start/2, stop/1]).
 -export([start_phase/3]).
+-export([resume_after_unlock/0]).
 -export([
     get_trails/0
 ]).
@@ -181,7 +182,7 @@ start_phase(start_trails_http, _StartType, []) ->
     damage_metrics:init(),
     ?LOG_INFO("Started cowboy.");
 start_phase(damage, _StartType, []) ->
-    damage_schedule:load_all_schedules(),
+    _ = maybe_load_schedules(),
     ?LOG_INFO("Started Damage.");
 start_phase(register_node, _StartType, []) ->
     ?LOG_INFO("registering node."),
@@ -208,35 +209,12 @@ start_phase(start_sync, _StartType, []) ->
     ?LOG_INFO("Sync Ready."),
     ok;
 start_phase(init_chain, _StartType, []) ->
-    ?LOG_INFO("Scheduling async node registry bootstrap."),
-    spawn(fun() ->
-        ?LOG_INFO("Initializing node registry only."),
-        case damage_contract_bootstrap:bootstrap_node_only() of
-            {ok, Info} ->
-                ?LOG_INFO("Node bootstrap initialized: ~p", [Info]);
-            {error, Reason} ->
-                ?LOG_ERROR("Node bootstrap failed: ~p", [Reason])
-        end
-    end),
+    _ = maybe_bootstrap_node_registry(),
     ok;
 %% --- Essentials setup phase (parity with setup.sh) --------------------------
 start_phase(setup_essentials, _StartType, []) ->
     ?LOG_INFO("setup_essentials: scheduling async setup."),
-    spawn(fun() ->
-        DataDir =
-            case application:get_env(damage, app_dir) of
-                undefined ->
-                    {ok, Cwd} = file:get_cwd(),
-                    Cwd;
-                {ok, Cwd} ->
-                    Cwd
-            end,
-        _ = damage_ipfs:ensure_ipfs_asset(
-            "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
-            filename:join([DataDir, "bin", "lightpanda-x86_64-linux"])
-        ),
-        ?LOG_INFO("setup_essentials: done.")
-    end),
+    spawn(fun ensure_lightpanda_asset/0),
     ok.
 
 stop(_State) ->
@@ -245,6 +223,130 @@ stop(_State) ->
     ok.
 
 %% internal functions
+
+%% Secret-dependent services are allowed to boot while the node is locked.
+%% Once /secrets/unlock or the first-run password flow succeeds, this entrypoint
+%% replays the work that was intentionally deferred during application startup.
+resume_after_unlock() ->
+    spawn(fun() ->
+        _ = run_node_bootstrap(),
+        _ = maybe_load_schedules(),
+        ok
+    end),
+    ok.
+
+maybe_bootstrap_node_registry() ->
+    case node_unlocked() of
+        true ->
+            ?LOG_INFO("Scheduling async node registry bootstrap."),
+            spawn(fun run_node_bootstrap/0),
+            ok;
+        false ->
+            ?LOG_INFO("Node registry bootstrap deferred until secrets are unlocked.", []),
+            deferred
+    end.
+
+run_node_bootstrap() ->
+    %% Compatibility bridge for older damage_contract_bootstrap revisions that
+    %% call dets:lookup/2 directly using the secrets DETS table name.  Opening
+    %% the store through the public secrets API prevents a raw DETS badarg.  The
+    %% bootstrap module should still be migrated to secrets:* APIs directly.
+    _ = ensure_secret_store_open(),
+    ?LOG_INFO("Initializing node registry only.", []),
+    try damage_contract_bootstrap:bootstrap_node_only() of
+        {ok, Info} ->
+            ?LOG_INFO("Node bootstrap initialized: ~p", [Info]),
+            ok;
+        {error, node_locked} ->
+            ?LOG_INFO("Node bootstrap deferred: secrets are locked.", []),
+            deferred;
+        {error, Reason} ->
+            ?LOG_ERROR("Node bootstrap failed: ~p", [Reason]),
+            {error, Reason};
+        Other ->
+            ?LOG_ERROR("Node bootstrap returned unexpected result: ~p", [Other]),
+            {error, {unexpected_bootstrap_result, Other}}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Node bootstrap crashed class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {error, {bootstrap_crashed, Class, Reason}}
+    end.
+
+ensure_secret_store_open() ->
+    try secrets:retrieve_secret(node_registry_ct) of
+        _ -> ok
+    catch
+        Class:Reason ->
+            ?LOG_WARNING(
+                "Could not pre-open secrets store before node bootstrap class=~p reason=~p",
+                [Class, Reason]
+            ),
+            {error, {Class, Reason}}
+    end.
+
+maybe_load_schedules() ->
+    case node_unlocked() of
+        false ->
+            ?LOG_INFO("Schedule loading deferred until secrets are unlocked.", []),
+            deferred;
+        true ->
+            try damage_schedule:load_all_schedules() of
+                Result -> Result
+            catch
+                Class:Reason:Stacktrace ->
+                    ?LOG_ERROR(
+                        "Schedule loading failed class=~p reason=~p stack=~p",
+                        [Class, Reason, Stacktrace]
+                    ),
+                    {error, {schedule_load_failed, Class, Reason}}
+            end
+    end.
+
+node_unlocked() ->
+    try secrets:has_node_password() of
+        true -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+ensure_lightpanda_asset() ->
+    RuntimeDir = application:get_env(damage, runtime_data_dir, "/var/lib/damage"),
+    DefaultPath = filename:join([RuntimeDir, "bin", "lightpanda-x86_64-linux"]),
+    Path = application:get_env(damage, lightpanda_path, DefaultPath),
+    Result = damage_ipfs:ensure_ipfs_asset(
+        "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
+        Path
+    ),
+    case Result of
+        ok ->
+            case file:change_mode(Path, 8#755) of
+                ok ->
+                    ?LOG_INFO("setup_essentials: Lightpanda ready at ~p", [Path]),
+                    ok;
+                {error, Reason} ->
+                    ?LOG_WARNING(
+                        "setup_essentials: Lightpanda chmod failed path=~p reason=~p",
+                        [Path, Reason]
+                    ),
+                    {error, {chmod_failed, Reason}}
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "setup_essentials: Lightpanda unavailable path=~p reason=~p",
+                [Path, Reason]
+            ),
+            {error, Reason};
+        Other ->
+            ?LOG_WARNING(
+                "setup_essentials: unexpected Lightpanda setup result path=~p result=~p",
+                [Path, Other]
+            ),
+            {error, {unexpected_result, Other}}
+    end.
 
 ensure_distribution() ->
     case node() of

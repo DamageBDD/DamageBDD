@@ -139,6 +139,7 @@ unlock_node(Password) ->
                 ok ->
                     case secrets:node_keypair() of
                         #{public_key := _PubKey, private_key := _NodePrivateKey} ->
+                            ok = resume_damage_after_unlock(),
                             #{status => <<"ok">>, message => <<"node unlocked">>};
                         {error, _} ->
                             #{status => <<"failed">>, message => <<"decrypt node wallet failed">>}
@@ -176,6 +177,7 @@ set_password(PasswordBin, ConfirmBin) ->
                                     ok = secrets:set_node_password(PasswordBin),
                                     case secrets:node_keypair() of
                                         #{public_key := _PubKey, private_key := _NodePrivateKey} ->
+                                            ok = resume_damage_after_unlock(),
                                             #{
                                                 status => <<"ok">>,
                                                 message => <<"node password set">>
@@ -251,6 +253,20 @@ from_json(Req0, #{action := unlock} = State) ->
     catch
         _Class:_Reason:_Stack ->
             json_decode_error(Req, State)
+    end.
+
+resume_damage_after_unlock() ->
+    %% Unlock must succeed even if a deferred subsystem has its own transient
+    %% failure. damage_app performs the resumed work asynchronously.
+    try damage_app:resume_after_unlock() of
+        _ -> ok
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "Could not resume deferred Damage startup after unlock class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            ok
     end.
 
 json_decode_error(Req, State) ->
