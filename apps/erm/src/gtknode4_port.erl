@@ -63,6 +63,7 @@ status() ->
 init(Opts) ->
     init_logging(),
     process_flag(trap_exit, true),
+    _ = maybe_subscribe_display(Opts),
     case node() of
         nonode@nohost ->
             {stop, {erlang_distribution_not_started, "start the VM with -sname or -name"}};
@@ -153,6 +154,22 @@ handle_info({Port, {exit_status, Status}}, State = #state{port = Port}) ->
     native_exit_result({cnode_exit_status, Status}, State);
 handle_info({'EXIT', Port, Reason}, State = #state{port = Port}) ->
     native_exit_result({cnode_port_exit, Reason}, State);
+handle_info({erm_display, available, Session}, State = #state{port = undefined}) ->
+    logger:notice("graphical session became available for gtknode4: ~p", [Session]),
+    {noreply, restart_native_now({display_available, Session}, State)};
+handle_info({erm_display, available, _Session}, State) ->
+    {noreply, State};
+handle_info({erm_display, changed, Old, New}, State = #state{ever_ready = true}) ->
+    %% Native widget IDs belong to one GTK session.  Force the one_for_all
+    %% gtknode4 stack to restart rather than retaining gtkgs objects from the
+    %% old display.
+    {stop, {display_session_changed, Old, New}, State};
+handle_info({erm_display, changed, Old, New}, State) ->
+    {noreply, restart_native_now({display_session_changed, Old, New}, State)};
+handle_info({erm_display, unavailable, Reason}, State = #state{ever_ready = true}) ->
+    {stop, {display_session_unavailable, Reason}, State};
+handle_info({erm_display, unavailable, Reason}, State) ->
+    {noreply, restart_native_now({display_session_unavailable, Reason}, State)};
 handle_info(restart_native, State = #state{port = undefined}) ->
     State0 = State#state{retry_timer = undefined},
     case attempt_start(State0#state.opts) of
@@ -178,6 +195,7 @@ terminate(_Reason, #state{
 }) ->
     cancel_timer(HandshakeTimer),
     cancel_timer(RetryTimer),
+    best_effort(fun() -> erm_display:unsubscribe(self()) end),
     best_effort(fun() -> gtknode4:unsubscribe(self()) end),
     best_effort(fun() -> gtknode4:cast(shutdown) end),
     safe_port_close(Port).
@@ -280,7 +298,11 @@ merge_retry_state(Started, Previous) ->
     Started#state{
         opts = Previous#state.opts,
         retry_timer = undefined,
-        retry_delay = retry_initial(Previous#state.opts),
+
+        %% Do NOT reset the backoff merely because exec(2) succeeded.
+        %% Reset it only after the native C-node completes its handshake.
+        retry_delay = Previous#state.retry_delay,
+
         retry_max = Previous#state.retry_max,
         restart_count = Previous#state.restart_count,
         ever_ready = Previous#state.ever_ready,
@@ -379,8 +401,68 @@ test_mode_args(Opts) ->
 
 build_env(Opts, CookieEnv) ->
     ExtraEnv = maps:get(env, Opts, []),
+    NormalizedExtra = normalize_env(ExtraEnv),
+    DisplayEnv = display_env(Opts, NormalizedExtra),
+    Env0 = merge_env(DisplayEnv, NormalizedExtra),
     Cookie = atom_to_list(erlang:get_cookie()),
-    lists:keystore(CookieEnv, 1, normalize_env(ExtraEnv), {CookieEnv, Cookie}).
+    lists:keystore(CookieEnv, 1, Env0, {CookieEnv, Cookie}).
+
+display_env(Opts, ExtraEnv) ->
+    case maps:get(use_erm_display, Opts, true) of
+        false ->
+            [];
+        true ->
+            case lists:keymember("DISPLAY", 1, ExtraEnv) of
+                true ->
+                    %% Explicit port configuration wins over auto-detection.
+                    [];
+                false ->
+                    case erm_display:child_env() of
+                        {ok, Env} ->
+                            Env;
+                        {error, disabled} ->
+                            [];
+                        {error, Reason} ->
+                            %% Never inherit a stale DISPLAY from the BEAM when
+                            %% erm owns display discovery.  An empty value makes
+                            %% GTK fail deterministically while the port retry
+                            %% loop waits for erm_display to find a live session.
+                            logger:debug("gtknode4 waiting for graphical session: ~p", [Reason]),
+                            [{"DISPLAY", ""}, {"XAUTHORITY", ""}]
+                    end
+            end
+    end.
+
+merge_env(Base, Overrides) ->
+    lists:foldl(
+        fun({Name, Value}, Acc) ->
+            lists:keystore(Name, 1, Acc, {Name, Value})
+        end,
+        Base,
+        Overrides
+    ).
+
+maybe_subscribe_display(Opts) ->
+    case maps:get(use_erm_display, Opts, true) of
+        true -> best_effort(fun() -> erm_display:subscribe(self()) end);
+        false -> ok
+    end.
+
+restart_native_now(Reason, State = #state{port = Port}) ->
+    _ = safe_transport_down(Reason),
+    cancel_timer(State#state.handshake_timer),
+    cancel_timer(State#state.retry_timer),
+    safe_port_close(Port),
+    self() ! restart_native,
+    State#state{
+        port = undefined,
+        os_pid = undefined,
+        handshake_timer = undefined,
+        handshake_failures = 0,
+        retry_timer = undefined,
+        retry_delay = retry_initial(State#state.opts),
+        last_error = Reason
+    }.
 
 normalize_env(Env) when is_map(Env) ->
     normalize_env(maps:to_list(Env));
