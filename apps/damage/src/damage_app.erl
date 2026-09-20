@@ -318,7 +318,7 @@ ensure_lightpanda_asset() ->
     DefaultPath = filename:join([RuntimeDir, "bin", "lightpanda-x86_64-linux"]),
     Path = application:get_env(damage, lightpanda_path, DefaultPath),
     Result = damage_ipfs:ensure_ipfs_asset(
-        "Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC",
+        <<"Qmehdmv1CT7qXbmSHp31at6GhkyPhAnj2ePYCfvXzPDkZC">>,
         Path
     ),
     case Result of
