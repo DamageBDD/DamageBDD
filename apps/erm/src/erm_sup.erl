@@ -81,16 +81,22 @@ enabled() ->
 gtknode4_specs() ->
     Config0 = application:get_env(erm, gtknode4, #{}),
     Config = options_map(Config0),
-    case maps:get(enabled, Config, false) of
-        true ->
+    case gtknode4_run_decision(Config) of
+        run ->
             SessionConfig = maps:remove(enabled, Config),
             ?LOG_INFO(
                 "Enabling supervised gtknode4 session in ~p mode",
                 [maps:get(mode, SessionConfig, local_cnode)]
             ),
             [gtknode4_child_spec(SessionConfig)];
-        false ->
+        disabled ->
             ?LOG_INFO("gtknode4 session is disabled by ERM configuration", []),
+            [];
+        headless ->
+            ?LOG_INFO(
+                "gtknode4 session deferred because no graphical display is available",
+                []
+            ),
             []
     end.
 
@@ -100,16 +106,18 @@ gtknode4_specs() ->
 %% on an already-running ERM supervision tree.
 sync_gtknode4() ->
     Config = options_map(application:get_env(erm, gtknode4, #{})),
-    case maps:get(enabled, Config, false) of
-        true -> start_gtknode4(maps:remove(enabled, Config));
-        false -> stop_gtknode4()
+    case gtknode4_run_decision(Config) of
+        run -> start_gtknode4(maps:remove(enabled, Config));
+        disabled -> stop_gtknode4();
+        headless -> stop_gtknode4()
     end.
 
 start_gtknode4() ->
     Config = options_map(application:get_env(erm, gtknode4, #{})),
-    case maps:get(enabled, Config, false) of
-        true -> start_gtknode4(maps:remove(enabled, Config));
-        false -> {error, disabled}
+    case gtknode4_run_decision(Config) of
+        run -> start_gtknode4(maps:remove(enabled, Config));
+        disabled -> {error, disabled};
+        headless -> {error, display_unavailable}
     end.
 
 start_gtknode4(SessionConfig) ->
@@ -223,7 +231,12 @@ lens_specs() ->
         true ->
             LensConfig = maps:remove(enabled, Config),
             ?LOG_INFO("Enabling supervised ERM Lens subsystem", []),
-            [erm_lens:child_spec(LensConfig)];
+            case lens_child_spec(LensConfig) of
+                {ok, Spec} -> [Spec];
+                {error, Reason} ->
+                    ?LOG_WARNING("ERM Lens child spec unavailable: ~p", [Reason]),
+                    []
+            end;
         false ->
             ?LOG_INFO("ERM Lens is disabled by ERM configuration", []),
             []
@@ -251,9 +264,12 @@ start_lens(LensConfig) when is_map(LensConfig) ->
             {error, erm_sup_not_running};
         stopped ->
             ?LOG_INFO("Starting ERM Lens under erm_sup", []),
-            normalize_start_result(
-                supervisor:start_child(?SERVER, erm_lens:child_spec(LensConfig))
-            );
+            case lens_child_spec(LensConfig) of
+                {ok, Spec} ->
+                    normalize_start_result(supervisor:start_child(?SERVER, Spec));
+                {error, _} = Error ->
+                    Error
+            end;
         restarting ->
             ?LOG_INFO("Restarting ERM Lens under erm_sup", []),
             normalize_start_result(supervisor:restart_child(?SERVER, erm_lens_sup))
@@ -304,6 +320,68 @@ lens_config() ->
         Invalid ->
             ?LOG_WARNING("Ignoring invalid ERM Lens configuration: ~p", [Invalid]),
             #{enabled => false}
+    end.
+
+lens_child_spec(LensConfig) ->
+    case code:ensure_loaded(erm_lens) of
+        {module, erm_lens} ->
+            case erlang:function_exported(erm_lens, child_spec, 1) of
+                true ->
+                    try erm_lens:child_spec(LensConfig) of
+                        Spec when is_map(Spec) -> {ok, Spec};
+                        Other -> {error, {invalid_lens_child_spec, Other}}
+                    catch
+                        Class:Reason:Stacktrace ->
+                            {error, {lens_child_spec_failed, Class, Reason, Stacktrace}}
+                    end;
+                false ->
+                    fallback_lens_child_spec(LensConfig)
+            end;
+        {error, Reason} ->
+            {error, {erm_lens_not_loadable, Reason}}
+    end.
+
+fallback_lens_child_spec(LensConfig) ->
+    %% A release containing a newer erm_sup.beam and an older erm_lens.beam
+    %% previously crashed here with undef. Older Lens modules commonly still
+    %% export start_link/1, so construct the OTP child spec locally and keep the
+    %% optional subsystem recoverable until the release is rebuilt cleanly.
+    case erlang:function_exported(erm_lens, start_link, 1) of
+        true ->
+            ?LOG_WARNING(
+                "Loaded erm_lens lacks child_spec/1 (~p); using compatibility child spec",
+                [code:which(erm_lens)]
+            ),
+            {ok, #{
+                id => erm_lens_sup,
+                start => {erm_lens, start_link, [LensConfig]},
+                restart => temporary,
+                shutdown => 10000,
+                type => supervisor,
+                modules => [erm_lens_sup]
+            }};
+        false ->
+            {error, {incompatible_erm_lens, code:which(erm_lens), missing_start_link_1}}
+    end.
+
+gtknode4_run_decision(Config) ->
+    case maps:get(enabled, Config, false) of
+        false -> disabled;
+        true ->
+            case maps:get(allow_headless, Config, false) orelse graphical_session_available() of
+                true -> run;
+                false -> headless
+            end
+    end.
+
+graphical_session_available() ->
+    env_present("DISPLAY") orelse env_present("WAYLAND_DISPLAY") orelse env_present("MIR_SOCKET").
+
+env_present(Name) ->
+    case os:getenv(Name) of
+        false -> false;
+        "" -> false;
+        _ -> true
     end.
 
 %%%===================================================================
@@ -360,6 +438,14 @@ wait_unregistered(Name, Attempts) ->
 %%%===================================================================
 
 media_specs() ->
+    case media_enabled() of
+        true -> media_child_specs();
+        false ->
+            ?LOG_INFO("ERM media workers are disabled for this runtime", []),
+            []
+    end.
+
+media_child_specs() ->
     [
         #{
             id => playlist,
@@ -386,6 +472,20 @@ media_specs() ->
             modules => [erm_mpv]
         }
     ].
+
+media_enabled() ->
+    case application:get_env(erm, media_enabled) of
+        {ok, true} -> true;
+        {ok, false} -> false;
+        {ok, auto} -> graphical_session_available();
+        undefined -> graphical_session_available();
+        {ok, Invalid} ->
+            ?LOG_WARNING(
+                "Ignoring invalid erm.media_enabled value: ~p; using automatic detection",
+                [Invalid]
+            ),
+            graphical_session_available()
+    end.
 
 %%%===================================================================
 %%% Existing wx-dependent ERM workers
