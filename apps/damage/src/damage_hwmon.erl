@@ -373,12 +373,27 @@ cmd_kv(_Command, _TimeoutMs, false) ->
 cmd_kv(Command0, TimeoutMs, true) ->
     Command = command_to_list(Command0),
     Timeout = positive_int(TimeoutMs, ?DEFAULT_TIMEOUT_MS),
+    case shell_argv(Command) of
+        {error, Reason} ->
+            logger:warning(
+                "damage_hwmon shell unavailable command=~p reason=~p",
+                [Command, Reason]
+            ),
+            "";
+        {ok, ExecCommand} ->
+            run_exec_command(ExecCommand, Command, Timeout)
+    end.
+
+run_exec_command(ExecCommand, DisplayCommand, Timeout) ->
     try
+        %% Pass an absolute shell executable and argv to erlexec. Passing the
+        %% pipeline as a plain string makes erlexec resolve a bare `sh`, which
+        %% can fail under a restricted systemd PATH even when /bin/sh exists.
         %% A private process group plus kill_group ensures that timing out the
-        %% shell also cleans up children created by pipes (awk/grep/head/etc.).
+        %% shell also cleans up awk/grep/head children created by pipelines.
         case
             exec:run(
-                Command,
+                ExecCommand,
                 [
                     stdout,
                     stderr,
@@ -395,13 +410,13 @@ cmd_kv(Command0, TimeoutMs, true) ->
             {error, Reason} ->
                 logger:warning(
                     "damage_hwmon command start failed command=~p reason=~p",
-                    [Command, Reason]
+                    [DisplayCommand, Reason]
                 ),
                 "";
             Other ->
                 logger:warning(
                     "damage_hwmon unexpected erlexec start result command=~p result=~p",
-                    [Command, Other]
+                    [DisplayCommand, Other]
                 ),
                 ""
         end
@@ -409,10 +424,32 @@ cmd_kv(Command0, TimeoutMs, true) ->
         Class:Reason0:Stacktrace ->
             logger:warning(
                 "damage_hwmon command failed command=~p class=~p reason=~p stack=~p",
-                [Command, Class, Reason0, Stacktrace]
+                [DisplayCommand, Class, Reason0, Stacktrace]
             ),
             ""
     end.
+
+shell_argv(Command) ->
+    case find_shell() of
+        {ok, Shell} -> {ok, [Shell, "-c", Command]};
+        {error, _} = Error -> Error
+    end.
+
+find_shell() ->
+    case os:find_executable("sh") of
+        Shell when is_list(Shell) ->
+            {ok, Shell};
+        false ->
+            find_shell(["/bin/sh", "/usr/bin/sh"])
+    end.
+
+find_shell([Candidate | Rest]) ->
+    case filelib:is_regular(Candidate) of
+        true -> {ok, Candidate};
+        false -> find_shell(Rest)
+    end;
+find_shell([]) ->
+    {error, sh_not_found}.
 
 collect_exec(ExecPid, OsPid, Deadline, Stdout0, Stderr0) ->
     Remaining = Deadline - erlang:monotonic_time(millisecond),
