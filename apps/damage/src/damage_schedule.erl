@@ -253,6 +253,8 @@ execute_bdd(
 schedule_job(#{error := Reason} = Schedule) ->
     ?LOG_ERROR("Ignoring schedule with error ~p ~p", [Reason, Schedule]),
     ok;
+schedule_job(#{cron := [once | _], execution_counter := Count}) when is_integer(Count), Count > 0 ->
+    ok;
 schedule_job(#{public_key := Account, id := Id} = Schedule) ->
     damage_schedule_index:upsert_schedule(Account, Id, Schedule).
 
@@ -307,6 +309,8 @@ load_all_schedules() ->
 
 is_valid_schedule(#{error := Reason} = S) ->
     ?LOG_ERROR("Skipping invalid schedule ~p reason ~p", [S, Reason]),
+    false;
+is_valid_schedule(#{cron := [once | _], execution_counter := Count}) when is_integer(Count), Count > 0 ->
     false;
 is_valid_schedule(#{cron := Cron}) when is_list(Cron) ->
     true;
@@ -423,10 +427,19 @@ delete_schedule(AeAccount, ScheduleId) ->
     ),
     {ok, Deleted}.
 
-add_schedule(AeAccount, Name, Cron, FeatureHash, Concurrency) when is_binary(AeAccount) ->
-    %% Bind encrypted fields to the stable identifier that is persisted by the
-    %% schedules contract. The plaintext Name is not guaranteed to be returned
-    %% by contract reads, while IdHash is.
+add_schedule(AeAccount, Name, Cron0, FeatureHash, Concurrency) when is_binary(AeAccount) ->
+    case normalize_cron_spec(Cron0) of
+        {ok, Cron} ->
+            add_schedule_canonical(AeAccount, Name, Cron, FeatureHash, Concurrency);
+        {error, Reason} ->
+            {error, {invalid_cron_spec, Reason}}
+    end.
+
+add_schedule_canonical(AeAccount, Name, Cron, FeatureHash, Concurrency) ->
+    %% Bind encrypted fields to the textual stable id passed to the contract.
+    %% The contract indexes that value by a derived 32-byte map key, so the map
+    %% key itself is not the encryption context. New writes always persist the
+    %% canonical cron shape.
     IdHash = secrets:salted_hash(Name),
     Result =
         contract_call(
@@ -630,11 +643,13 @@ parse_schedule_entry(
         ExecutionCounter} = Entry
 ) ->
     ?LOG_DEBUG("parse_schedule_entry account=~p id_hash=~p", [Account, IdHash]),
-    CronRaw = decrypt_schedule_field(Account, IdHash, IdPlain, cron, CronEnc),
-    FeatureHash = decrypt_schedule_field(Account, IdHash, IdPlain, feature_hash, FeatureHashEnc),
+    {CronRaw, CronCryptoFormat} =
+        decrypt_schedule_field(Account, IdHash, IdPlain, cron, CronEnc),
+    {FeatureHash, FeatureCryptoFormat} =
+        decrypt_schedule_field(Account, IdHash, IdPlain, feature_hash, FeatureHashEnc),
     case decode_cron_spec(CronRaw) of
         {ok, CronSpec} ->
-            #{
+            Schedule = #{
                 id =>
                     case IdPlain of
                         undefined -> IdHash;
@@ -649,7 +664,21 @@ parse_schedule_entry(
                 last_execution_timestamp => decode_optional_int(LastExecutionTs),
                 execution_counter => ExecutionCounter,
                 contract_address => get_schedules_contract()
-            };
+            },
+            maybe_queue_schedule_migration(
+                Account,
+                IdHash,
+                IdPlain,
+                CronRaw,
+                CronSpec,
+                FeatureHash,
+                Concurrency,
+                Created,
+                LastExecutionTs,
+                ExecutionCounter,
+                {CronCryptoFormat, FeatureCryptoFormat}
+            ),
+            Schedule;
         {error, Reason} ->
             ?LOG_ERROR("invalid cron for account ~p schedule ~p reason ~p", [
                 Account, Entry, Reason
@@ -675,56 +704,169 @@ schedule_crypto_context(Account0, ScheduleId0, Field) ->
     {schedule, to_bin(Account0), to_bin(ScheduleId0), Field}.
 
 decrypt_schedule_field(Account, IdHash, IdPlain, Field, CipherText) ->
-    StableContext = schedule_crypto_context(Account, IdHash, Field),
+    %% Current writes bind to the textual stable schedule id supplied to the
+    %% contract. The contract may additionally return a derived 32-byte map key
+    %% as IdHash; that key is used for mark/delete operations, not for AAD.
+    StableId = schedule_bind_id(IdHash, IdPlain),
+    StableContext = schedule_crypto_context(Account, StableId, Field),
     case secrets:decrypt_bound(StableContext, CipherText) of
         error ->
-            %% Compatibility for the short-lived format that bound ciphertext
-            %% to the plaintext schedule name. Try it only when the contract
-            %% returned a distinct plaintext id, then fall back to the original
-            %% unbound format used before bound envelopes existed.
-            decrypt_schedule_field_compat(Account, IdHash, IdPlain, Field, CipherText);
+            %% Compatibility for the short-lived map-key-bound format, then the
+            %% original unbound format used before bound envelopes existed.
+            decrypt_schedule_field_compat(Account, IdHash, StableId, Field, CipherText);
         Value ->
-            Value
+            {Value, current}
     end.
 
-decrypt_schedule_field_compat(Account, IdHash, IdPlain, Field, CipherText) ->
-    case legacy_schedule_bind_id(IdHash, IdPlain) of
-        undefined ->
+schedule_bind_id(IdHash, IdPlain) ->
+    case usable_schedule_id(IdPlain) of
+        {ok, StableId} -> StableId;
+        error -> to_bin(IdHash)
+    end.
+
+usable_schedule_id(undefined) -> error;
+usable_schedule_id(none) -> error;
+usable_schedule_id(null) -> error;
+usable_schedule_id(<<>>) -> error;
+usable_schedule_id(Id) when is_binary(Id) -> {ok, Id};
+usable_schedule_id(Id) when is_list(Id) -> {ok, to_bin(Id)};
+usable_schedule_id(_) -> error.
+
+decrypt_schedule_field_compat(Account, IdHash, StableId, Field, CipherText) ->
+    IdHashBin = to_bin(IdHash),
+    case IdHashBin =:= StableId of
+        true ->
             decrypt_legacy_schedule_field(Account, IdHash, Field, CipherText);
-        LegacyId ->
-            LegacyContext = schedule_crypto_context(Account, LegacyId, Field),
-            case secrets:decrypt_bound(LegacyContext, CipherText) of
+        false ->
+            MapKeyContext = schedule_crypto_context(Account, IdHashBin, Field),
+            case secrets:decrypt_bound(MapKeyContext, CipherText) of
                 error ->
                     decrypt_legacy_schedule_field(Account, IdHash, Field, CipherText);
                 Value ->
                     ?LOG_WARNING(
-                        "Using transitional name-bound schedule ciphertext account=~p id_hash=~p field=~p; recreate this schedule",
-                        [to_bin(Account), to_bin(IdHash), Field]
+                        "Using transitional map-key-bound schedule ciphertext account=~p id_hash=~p field=~p; queued for migration",
+                        [to_bin(Account), IdHashBin, Field]
                     ),
-                    Value
+                    {Value, transitional}
             end
     end.
 
-legacy_schedule_bind_id(_IdHash, undefined) ->
-    undefined;
-legacy_schedule_bind_id(_IdHash, none) ->
-    undefined;
-legacy_schedule_bind_id(_IdHash, null) ->
-    undefined;
-legacy_schedule_bind_id(IdHash, IdPlain) ->
-    IdHashBin = to_bin(IdHash),
-    IdPlainBin = to_bin(IdPlain),
-    case IdPlainBin =:= IdHashBin of
-        true -> undefined;
-        false -> IdPlainBin
-    end.
 
 decrypt_legacy_schedule_field(Account, IdHash, Field, CipherText) ->
     ?LOG_WARNING(
-        "Using legacy unbound schedule ciphertext account=~p id_hash=~p field=~p; recreate this schedule",
+        "Using legacy unbound schedule ciphertext account=~p id_hash=~p field=~p; queued for migration",
         [to_bin(Account), to_bin(IdHash), Field]
     ),
-    secrets:decrypt(CipherText).
+    {secrets:decrypt(CipherText), legacy}.
+
+maybe_queue_schedule_migration(
+    Account,
+    IdHash,
+    IdPlain,
+    CronRaw,
+    CronSpec,
+    FeatureHash,
+    Concurrency,
+    Created,
+    LastExecutionTs,
+    ExecutionCounter,
+    CryptoFormats
+) ->
+    AutoMigrate = application:get_env(damage, schedule_auto_migrate, true),
+    NeedsMigration =
+        CryptoFormats =/= {current, current} orelse cron_storage_needs_migration(CronRaw, CronSpec),
+    SafeToRewrite = legacy_metadata_shape(Created, LastExecutionTs, ExecutionCounter),
+    case {AutoMigrate, NeedsMigration, SafeToRewrite, migration_schedule_id(IdHash, IdPlain)} of
+        {true, true, true, {ok, StableId}} ->
+            gen_server:cast(
+                ?MODULE,
+                {migrate_schedule, #{
+                    account => to_bin(Account),
+                    stable_id => StableId,
+                    crypto_id => migration_crypto_id(IdHash, StableId),
+                    cron => CronSpec,
+                    feature_hash => to_bin(FeatureHash),
+                    concurrency => normalize_concurrency(Concurrency),
+                    crypto_formats => CryptoFormats
+                }}
+            ),
+            ok;
+        _ ->
+            ok
+    end.
+
+legacy_metadata_shape(Created, LastExecutionTs, ExecutionCounter) ->
+    decode_optional_int(Created) =:= undefined andalso
+        decode_optional_int(LastExecutionTs) =:= undefined andalso
+        (ExecutionCounter =:= 0 orelse ExecutionCounter =:= undefined).
+
+cron_storage_needs_migration(CronRaw, CronSpec) when is_binary(CronRaw) ->
+    CronRaw =/= iolist_to_binary(jsx:encode(CronSpec));
+cron_storage_needs_migration(_CronRaw, _CronSpec) ->
+    true.
+
+migration_schedule_id(_IdHash, IdPlain) ->
+    %% Never invent a textual id from the contract's derived 32-byte map key:
+    %% those are different identifiers. Legacy rows that can be safely rewritten
+    %% carry the original textual id alongside the map key.
+    usable_schedule_id(IdPlain).
+
+migration_crypto_id(_IdHash, StableId) ->
+    StableId.
+
+normalize_concurrency(I) when is_integer(I), I > 0 -> I;
+normalize_concurrency(B) when is_binary(B) ->
+    try binary_to_integer(B) of
+        I when I > 0 -> I;
+        _ -> 1
+    catch
+        _:_ -> 1
+    end;
+normalize_concurrency(L) when is_list(L) ->
+    try list_to_integer(L) of
+        I when I > 0 -> I;
+        _ -> 1
+    catch
+        _:_ -> 1
+    end;
+normalize_concurrency(_) -> 1.
+
+migrate_schedule_record(#{
+    account := Account,
+    stable_id := StableId,
+    crypto_id := CryptoId,
+    cron := Cron,
+    feature_hash := FeatureHash,
+    concurrency := Concurrency
+}) ->
+    CronEnc = secrets:encrypt_bound(
+        schedule_crypto_context(Account, CryptoId, cron),
+        iolist_to_binary(jsx:encode(Cron))
+    ),
+    FeatureHashEnc = secrets:encrypt_bound(
+        schedule_crypto_context(Account, CryptoId, feature_hash),
+        FeatureHash
+    ),
+    Result = contract_call(
+        Account,
+        "add_schedule",
+        [
+            binary_to_list(StableId),
+            binary_to_list(CronEnc),
+            binary_to_list(FeatureHashEnc),
+            Concurrency
+        ]
+    ),
+    migration_write_result(Result).
+
+migration_write_result(#{"return_type" := "ok"}) -> ok;
+migration_write_result(#{<<"return_type">> := <<"ok">>}) -> ok;
+migration_write_result(#{"return_type" := "revert", "return_value" := Reason}) ->
+    {error, Reason};
+migration_write_result(#{<<"return_type">> := <<"revert">>, <<"return_value">> := Reason}) ->
+    {error, Reason};
+migration_write_result({error, Reason}) -> {error, Reason};
+migration_write_result(Other) -> {error, {unexpected_contract_response, Other}}.
 
 decode_optional_int({variant, [0, 1], 0, {}}) -> undefined;
 decode_optional_int({variant, [0, 1], 1, {V}}) -> V;
@@ -738,28 +880,22 @@ decode_cron_spec({bytes, Bin}) when is_binary(Bin) ->
 decode_cron_spec(Bin) when is_binary(Bin) ->
     case try_decode_json(Bin) of
         {ok, JsonTerms} ->
-            try
-                {ok, binary_spec_to_term_spec(JsonTerms, [])}
-            catch
-                Class:Reason:Stacktrace ->
-                    ?LOG_ERROR(
-                        "failed to decode json cron ~p class=~p reason=~p stack=~p",
-                        [Bin, Class, Reason, Stacktrace]
-                    ),
+            case normalize_cron_spec(JsonTerms) of
+                {ok, CronSpec} ->
+                    {ok, CronSpec};
+                {error, Reason} ->
+                    ?LOG_ERROR("failed to decode json cron ~p reason=~p", [Bin, Reason]),
                     {error, {invalid_json_cron, Bin, Reason}}
             end;
         error ->
             parse_plain_cron(Bin)
     end;
 decode_cron_spec(List) when is_list(List) ->
-    try
-        {ok, binary_spec_to_term_spec(List, [])}
-    catch
-        Class:Reason:Stacktrace ->
-            ?LOG_ERROR(
-                "failed to decode list cron ~p class=~p reason=~p stack=~p",
-                [List, Class, Reason, Stacktrace]
-            ),
+    case normalize_cron_spec(List) of
+        {ok, CronSpec} ->
+            {ok, CronSpec};
+        {error, Reason} ->
+            ?LOG_ERROR("failed to decode list cron ~p reason=~p", [List, Reason]),
             {error, {invalid_list_cron, List, Reason}}
     end;
 decode_cron_spec(Other) ->
@@ -773,18 +909,105 @@ try_decode_json(Bin) ->
     end.
 
 parse_plain_cron(Bin) when is_binary(Bin) ->
+    Tokens0 = binary:split(Bin, <<" ">>, [global, trim_all]),
+    Tokens = [T || T <- Tokens0, T =/= <<>>],
+    case normalize_cron_spec(Tokens) of
+        {ok, CronSpec} ->
+            {ok, CronSpec};
+        {error, Reason} ->
+            ?LOG_ERROR("failed to parse plain cron ~p reason=~p", [Bin, Reason]),
+            {error, {invalid_plain_cron, Bin, Reason}}
+    end.
+
+%% Normalize every accepted historical representation into the small canonical
+%% representation consumed by damage_schedule_index. This is the migration
+%% boundary: old persisted JSON/plain forms continue to load, while all new
+%% writes are encoded from the canonical form.
+-spec normalize_cron_spec(term()) -> {ok, list()} | {error, term()}.
+normalize_cron_spec(Spec0) when is_list(Spec0) ->
     try
-        Tokens0 = binary:split(Bin, <<" ">>, [global, trim_all]),
-        Tokens = [cron_token(T) || T <- Tokens0, T =/= <<>>],
-        {ok, binary_spec_to_term_spec(Tokens, [])}
+        Terms = binary_spec_to_term_spec(Spec0, []),
+        Canonical = canonical_cron_spec(Terms),
+        case Canonical =:= Terms of
+            true -> ok;
+            false -> ?LOG_INFO("Migrated legacy cron spec ~p -> ~p", [Terms, Canonical])
+        end,
+        {ok, Canonical}
     catch
         Class:Reason:Stacktrace ->
             ?LOG_ERROR(
-                "failed to parse plain cron ~p class=~p reason=~p stack=~p",
-                [Bin, Class, Reason, Stacktrace]
+                "invalid cron spec ~p class=~p reason=~p stack=~p",
+                [Spec0, Class, Reason, Stacktrace]
             ),
-            {error, {invalid_plain_cron, Bin, Reason}}
-    end.
+            {error, Reason}
+    end;
+normalize_cron_spec(Other) ->
+    {error, {invalid_cron_spec, Other}}.
+
+canonical_cron_spec([once, Delay, Unit]) when is_integer(Delay), Delay >= 0 ->
+    case canonical_unit(Unit) of
+        sec -> [once, Delay];
+        minute -> [once, Delay * 60];
+        hour -> [once, Delay * 60 * 60];
+        day -> [once, Delay * 24 * 60 * 60];
+        week -> [once, Delay * 7 * 24 * 60 * 60];
+        CanonicalUnit -> [once, Delay, CanonicalUnit]
+    end;
+canonical_cron_spec([daily, every, Amount, Unit]) when is_integer(Amount), Amount > 0 ->
+    [daily, every, Amount, canonical_unit(Unit)];
+canonical_cron_spec([daily, every, Hour, Minute, AMPM]) when
+    is_integer(Hour), is_integer(Minute), (AMPM =:= am orelse AMPM =:= pm)
+->
+    validate_clock(Hour, Minute, AMPM),
+    [daily, every, Hour, Minute, AMPM];
+canonical_cron_spec([daily, at, Hour, Minute, AMPM]) when
+    is_integer(Hour), is_integer(Minute), (AMPM =:= am orelse AMPM =:= pm)
+->
+    validate_clock(Hour, Minute, AMPM),
+    [daily, every, Hour, Minute, AMPM];
+canonical_cron_spec([once, Hour, Minute, Second]) when
+    is_integer(Hour), is_integer(Minute), is_integer(Second)
+->
+    validate_hms(Hour, Minute, Second),
+    [once, Hour, Minute, Second];
+canonical_cron_spec(Spec) ->
+    Spec.
+
+canonical_unit(sec) -> sec;
+canonical_unit(second) -> sec;
+canonical_unit(seconds) -> sec;
+canonical_unit(secs) -> sec;
+canonical_unit(min) -> minute;
+canonical_unit(mins) -> minute;
+canonical_unit(minute) -> minute;
+canonical_unit(minutes) -> minute;
+canonical_unit(hr) -> hour;
+canonical_unit(hrs) -> hour;
+canonical_unit(hour) -> hour;
+canonical_unit(hours) -> hour;
+canonical_unit(day) -> day;
+canonical_unit(days) -> day;
+canonical_unit(week) -> week;
+canonical_unit(weeks) -> week;
+canonical_unit(month) -> month;
+canonical_unit(months) -> month;
+canonical_unit(year) -> year;
+canonical_unit(years) -> year;
+canonical_unit(Unit) -> Unit.
+
+validate_clock(Hour, Minute, AMPM) when
+    Hour >= 1, Hour =< 12, Minute >= 0, Minute =< 59, (AMPM =:= am orelse AMPM =:= pm)
+->
+    ok;
+validate_clock(Hour, Minute, AMPM) ->
+    error({invalid_clock_time, Hour, Minute, AMPM}).
+
+validate_hms(Hour, Minute, Second) when
+    Hour >= 0, Hour =< 23, Minute >= 0, Minute =< 59, Second >= 0, Second =< 59
+->
+    ok;
+validate_hms(Hour, Minute, Second) ->
+    error({invalid_time, Hour, Minute, Second}).
 
 cron_token(I) when is_integer(I) ->
     I;
@@ -815,17 +1038,25 @@ cron_keyword(Bin0) ->
         <<"every">> -> {ok, every};
         <<"at">> -> {ok, at};
         <<"on">> -> {ok, on};
+        <<"once">> -> {ok, once};
         <<"daily">> -> {ok, daily};
         <<"weekly">> -> {ok, weekly};
         <<"monthly">> -> {ok, monthly};
         <<"yearly">> -> {ok, yearly};
+        <<"am">> -> {ok, am};
+        <<"pm">> -> {ok, pm};
         <<"sec">> -> {ok, sec};
+        <<"secs">> -> {ok, secs};
         <<"second">> -> {ok, second};
         <<"seconds">> -> {ok, seconds};
         <<"minute">> -> {ok, minute};
         <<"minutes">> -> {ok, minutes};
+        <<"min">> -> {ok, min};
+        <<"mins">> -> {ok, mins};
         <<"hour">> -> {ok, hour};
         <<"hours">> -> {ok, hours};
+        <<"hr">> -> {ok, hr};
+        <<"hrs">> -> {ok, hrs};
         <<"day">> -> {ok, day};
         <<"days">> -> {ok, days};
         <<"week">> -> {ok, week};
@@ -843,6 +1074,26 @@ cron_keyword(Bin0) ->
         <<"sunday">> -> {ok, sunday};
         _ -> error
     end.
+
+%% Parser/migration regression tests.
+legacy_pm_cron_migration_test() ->
+    ?assertEqual(
+        {ok, [daily, every, 3, 0, pm]},
+        decode_cron_spec(<<"[\"daily\",\"every\",3,0,\"pm\"]">>)
+    ).
+
+legacy_once_secs_migration_test() ->
+    ?assertEqual(
+        {ok, [once, 60]},
+        decode_cron_spec(<<"[\"once\",60,\"secs\"]">>)
+    ),
+    ?assertEqual({ok, [once, 60]}, decode_cron_spec(<<"once 60 secs">>)).
+
+legacy_seconds_unit_migration_test() ->
+    ?assertEqual(
+        {ok, [daily, every, 60, sec]},
+        decode_cron_spec(<<"[\"daily\",\"every\",60,\"seconds\"]">>)
+    ).
 
 %% ------------------------------------------------------------------
 %% Cache helpers
@@ -961,6 +1212,47 @@ handle_call(list_all_schedules, _From, State) ->
             {reply, Schedules, State}
     end.
 
+handle_cast({migrate_schedule, Migration}, State = #state{ets_table = Tab}) ->
+    Account = maps:get(account, Migration),
+    StableId = maps:get(stable_id, Migration),
+    MigrationKey = {schedule_migration, Account, StableId},
+    case ets:lookup(Tab, MigrationKey) of
+        [] ->
+            ets:insert(Tab, {MigrationKey, in_progress}),
+            Parent = self(),
+            spawn(fun() ->
+                Result =
+                    try migrate_schedule_record(Migration) of
+                        R -> R
+                    catch
+                        Class:Reason:Stack -> {error, {Class, Reason, Stack}}
+                    end,
+                gen_server:cast(Parent, {schedule_migration_result, MigrationKey, Migration, Result})
+            end),
+            {noreply, State};
+        _ ->
+            {noreply, State}
+    end;
+handle_cast({schedule_migration_result, MigrationKey, Migration, ok}, State = #state{ets_table = Tab}) ->
+    Account = maps:get(account, Migration),
+    StableId = maps:get(stable_id, Migration),
+    ?LOG_INFO(
+        "Migrated schedule storage account=~p id=~p crypto=~p cron=~p",
+        [Account, StableId, maps:get(crypto_formats, Migration, undefined), maps:get(cron, Migration)]
+    ),
+    ets:insert(Tab, {MigrationKey, done}),
+    invalidate_schedule_keys(State, Account, StableId),
+    {noreply, State};
+handle_cast(
+    {schedule_migration_result, MigrationKey, Migration, {error, Reason}},
+    State = #state{ets_table = Tab}
+) ->
+    ?LOG_WARNING(
+        "Schedule migration failed account=~p id=~p reason=~p; legacy row remains usable",
+        [maps:get(account, Migration), maps:get(stable_id, Migration), Reason]
+    ),
+    ets:insert(Tab, {MigrationKey, {failed, Reason}}),
+    {noreply, State};
 handle_cast({invalidate_cache_keys, Keys}, State) ->
     ok = cache_invalidate(Keys, State),
     {noreply, State};
@@ -1042,9 +1334,12 @@ contract_call_for_user(State, AeAccount, Func, Args) ->
         Args
     ).
 invalidate_schedule_keys(State, AeAccount, _ScheduleHash) ->
-    ets:delete(State#state.ets_table, {get_schedules_for, AeAccount}),
-    ets:delete(State#state.ets_table, {list_schedules_for, AeAccount}),
-    ets:delete(State#state.ets_table, list_all_schedules),
+    Tab = State#state.ets_table,
+    ets:delete(Tab, ?CK_GET_SCHEDULES(AeAccount)),
+    ets:delete(Tab, ?CK_LIST_SCHEDULES(AeAccount)),
+    ets:delete(Tab, {get_schedules_for, AeAccount}),
+    ets:delete(Tab, {list_schedules_for, AeAccount}),
+    ets:delete(Tab, ?CK_LIST_ALL_SCHEDULES),
     ok.
 
 test_schedule() ->

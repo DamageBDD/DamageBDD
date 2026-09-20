@@ -105,36 +105,77 @@ maybe_run(Account, Id, Schedule) ->
         damage_schedule:execute_bdd(Schedule)
     end),
     Cron = maps:get(cron, Schedule),
-    reschedule(Account, Id, Cron).
+    case Cron of
+        [once | _] ->
+            %% One-shot schedules must not be reinserted into the due index.
+            ets:delete(?NEXT_DUE, {Account, Id}),
+            ets:delete(?SCHED_BY_ID, {Account, Id}),
+            ok;
+        _ ->
+            reschedule(Account, Id, Cron)
+    end.
 %%--------------------------------------------------------------------
 %% Internal logic
 %%--------------------------------------------------------------------
 
+upsert_internal(_Account, _Id, #{cron := [once | _], execution_counter := Count}, _CronSpec, _NowMin) when
+    is_integer(Count), Count > 0
+->
+    ok;
 upsert_internal(Account, Id, ScheduleMap, CronSpec, NowMin) ->
-    NextMin = cron_next(CronSpec, NowMin),
-    ets:insert(?SCHED_BY_ID, {{Account, Id}, ScheduleMap}),
-    ets:insert(?NEXT_DUE, {{Account, Id}, NextMin}),
-    ets:insert(?DUE_BUCKET, {NextMin, {Account, Id}}).
+    case safe_cron_next(CronSpec, NowMin) of
+        {ok, NextMin} ->
+            ets:insert(?SCHED_BY_ID, {{Account, Id}, ScheduleMap}),
+            ets:insert(?NEXT_DUE, {{Account, Id}, NextMin}),
+            ets:insert(?DUE_BUCKET, {NextMin, {Account, Id}}),
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "Skipping unsupported schedule account=~p id=~p cron=~p reason=~p",
+                [Account, Id, CronSpec, Reason]
+            ),
+            ok
+    end.
 
 run_tick() ->
     NowMin = epoch_minute(),
-    DueKeys = due_keys(NowMin, NowMin + ?DUE_WINDOW_MIN),
+    %% Look backwards to pick up briefly missed buckets; never scan future
+    %% buckets, otherwise a schedule can execute before its due minute.
+    FromMin = erlang:max(0, NowMin - ?DUE_WINDOW_MIN),
+    DueKeys = due_keys(FromMin, NowMin),
     Eligible = filter_active_accounts(DueKeys),
-    lists:foreach(fun execute/1, Eligible).
+    lists:foreach(fun(Key) -> execute(Key, NowMin) end, Eligible).
 
-execute({Account, Id}) ->
-    case ets:lookup(?SCHED_BY_ID, {Account, Id}) of
-        [{{_, _}, Schedule}] ->
-            maybe_run(Account, Id, Schedule);
-        [] ->
+execute({Account, Id}, NowMin) ->
+    %% NEXT_DUE is authoritative. DUE_BUCKET is only an index and contains lazy
+    %% stale entries, so verify and claim the due minute before running.
+    case ets:lookup(?NEXT_DUE, {Account, Id}) of
+        [{{_, _}, DueMin}] when DueMin =< NowMin ->
+            ets:delete(?NEXT_DUE, {Account, Id}),
+            ets:delete_object(?DUE_BUCKET, {DueMin, {Account, Id}}),
+            case ets:lookup(?SCHED_BY_ID, {Account, Id}) of
+                [{{_, _}, Schedule}] -> maybe_run(Account, Id, Schedule);
+                [] -> ok
+            end;
+        _ ->
             ok
     end.
 
 reschedule(Account, Id, Cron) ->
     NowMin = epoch_minute(),
-    NextMin = cron_next(Cron, NowMin + 1),
-    ets:insert(?NEXT_DUE, {{Account, Id}, NextMin}),
-    ets:insert(?DUE_BUCKET, {NextMin, {Account, Id}}).
+    case safe_cron_next(Cron, NowMin) of
+        {ok, NextMin} ->
+            ets:insert(?NEXT_DUE, {{Account, Id}, NextMin}),
+            ets:insert(?DUE_BUCKET, {NextMin, {Account, Id}}),
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "Could not reschedule account=~p id=~p cron=~p reason=~p",
+                [Account, Id, Cron, Reason]
+            ),
+            ets:delete(?NEXT_DUE, {Account, Id}),
+            ok
+    end.
 
 %%--------------------------------------------------------------------
 %% Filtering
@@ -188,11 +229,32 @@ is_active(Account) ->
 epoch_minute() ->
     os:system_time(second) div 60.
 
+safe_cron_next(CronSpec0, FromMin) ->
+    CronSpec =
+        case damage_schedule:normalize_cron_spec(CronSpec0) of
+            {ok, C} -> C;
+            {error, _} -> CronSpec0
+        end,
+    try cron_next(CronSpec, FromMin) of
+        NextMin when is_integer(NextMin) -> {ok, NextMin}
+    catch
+        Class:Reason -> {error, {Class, Reason}}
+    end.
+
 cron_next([daily, every, Second, sec], FromMin) when is_integer(Second), Second > 0 ->
-    %% minute-resolution index: run on the next minute boundary
-    FromMin + 1;
+    %% The index is minute-resolution. Any sub-minute/seconds cadence is
+    %% therefore represented by the next minute boundary.
+    FromMin + max(1, (Second + 59) div 60);
+cron_next([daily, every, Minutes, minute], FromMin) when is_integer(Minutes), Minutes > 0 ->
+    FromMin + Minutes;
+cron_next([daily, every, Hours, hour], FromMin) when is_integer(Hours), Hours > 0 ->
+    FromMin + (Hours * 60);
+cron_next([daily, every, Days, day], FromMin) when is_integer(Days), Days > 0 ->
+    FromMin + (Days * 24 * 60);
+cron_next([daily, every, Weeks, week], FromMin) when is_integer(Weeks), Weeks > 0 ->
+    FromMin + (Weeks * 7 * 24 * 60);
 cron_next([daily, every, Hour, Minute, AMPM], FromMin) when
-    is_integer(Hour), is_integer(Minute), is_atom(AMPM)
+    is_integer(Hour), is_integer(Minute), (AMPM =:= am orelse AMPM =:= pm)
 ->
     {Date, _Time} = calendar:gregorian_seconds_to_datetime(FromMin * 60),
     TargetHour24 = to_24h(Hour, AMPM),
@@ -208,10 +270,10 @@ cron_next([daily, every, Hour, Minute, AMPM], FromMin) when
             calendar:datetime_to_gregorian_seconds({TomorrowDate, {TargetHour24, Minute, 0}}) div 60
     end;
 cron_next([once, Seconds], FromMin) when is_integer(Seconds), Seconds >= 0 ->
-    FromMin + max(1, Seconds div 60);
+    FromMin + max(1, (Seconds + 59) div 60);
 cron_next([once, _Hour, _Minute, _Second], FromMin) ->
-    %% one-shot absolute times need proper wall clock conversion;
-    %% for now, schedule the next minute as a placeholder
+    %% Preserve the existing behavior for absolute one-shot tuples until the
+    %% persisted schema carries a date/timezone.
     FromMin + 1;
 cron_next(CronSpec, FromMin) ->
     error({unsupported_cron_spec, CronSpec, FromMin}).
