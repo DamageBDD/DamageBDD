@@ -47,6 +47,7 @@
 -define(CMD_TIMEOUT_MS, 3000).
 -define(IPC_REPLY_TIMEOUT_MS, 1000).
 -define(IPC_REPLY_MAX_BYTES, 1048576).
+-define(DETACHED_START_WAIT_MS, 5000).
 -define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_MPV_PROC).
 -define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
@@ -54,6 +55,8 @@
     path = ipc_path(),
     pid = undefined,
     os_pid = undefined,
+    detached = false,
+    survive_beam = mpv_survive_beam(),
     last_error = undefined
 }).
 
@@ -159,7 +162,11 @@ handle_call(status, _From, S) ->
         managed_alive => ManagedAlive,
         socket_alive => SocketAlive,
         available => SocketAlive,
-        owned => S#st.os_pid =/= undefined,
+        owned => S#st.os_pid =/= undefined orelse S#st.detached,
+        detached => S#st.detached,
+        survive_beam => S#st.survive_beam,
+        pid_file => mpv_pid_file(S#st.path),
+        pid_file_os_pid => pidfile_status(S#st.path),
         hidden_gui => true,
         video => disabled,
         healthy => (ManagedAlive andalso SocketAlive) orelse
@@ -186,6 +193,7 @@ handle_info(
     {noreply, S#st{
         pid = undefined,
         os_pid = undefined,
+        detached = false,
         last_error = {managed_mpv_down, Reason}
     }};
 handle_info({'EXIT', Pid, Reason}, S = #st{pid = Pid, path = Path}) ->
@@ -194,6 +202,7 @@ handle_info({'EXIT', Pid, Reason}, S = #st{pid = Pid, path = Path}) ->
     {noreply, S#st{
         pid = undefined,
         os_pid = undefined,
+        detached = false,
         last_error = {managed_mpv_exit, Reason}
     }};
 handle_info({restart_mpv, Reason}, S0) ->
@@ -208,8 +217,8 @@ handle_info(Msg, S) ->
     ?LOG_DEBUG("Unhandled erm_mpv_proc message: ~p", [Msg], ?LOG_META),
     {noreply, S}.
 
-terminate(_Reason, S) ->
-    _ = stop_mpv(S),
+terminate(Reason, S) ->
+    _ = terminate_mpv(Reason, S),
     ok.
 
 code_change(_OldVsn, S, _Extra) ->
@@ -284,8 +293,8 @@ ensure_mpv(Path, S) ->
             end;
         %% Something already owns the socket. Do not delete it.
         {false, true} ->
-            ?LOG_INFO("MPV IPC socket already alive at ~s; using existing MPV", [Path], ?LOG_META),
-            {ok, S#st{pid = undefined, os_pid = undefined, last_error = undefined}};
+            ?LOG_INFO("MPV IPC socket already alive at ~s; adopting existing MPV", [Path], ?LOG_META),
+            {ok, adopt_external_mpv(Path, S)};
         {false, false} ->
             start_managed_mpv(Path, S)
     end.
@@ -296,42 +305,81 @@ start_managed_mpv(Path, S) ->
             {error, mpv_not_found, S#st{last_error = mpv_not_found}};
         Mpv ->
             safe_delete_socket(Path),
-
             Cmd = hidden_mpv_command(Mpv, Path),
-
-            LogFun =
-                fun(Stream, OsPid0, Data) ->
-                    ?LOG_DEBUG("mpv(~p) ~p: ~ts", [OsPid0, Stream, safe_text(Data)], ?LOG_META)
-                end,
-
-            Opts = [
-                monitor,
-                {stdin, null},
-                {stdout, LogFun},
-                {stderr, LogFun},
-                {group, 0},
-                kill_group,
-                {kill_timeout, 3}
-            ],
-
-            case safe_exec_run(Cmd, Opts) of
-                {ok, Pid, OsPid} ->
-                    ?LOG_INFO(
-                        "Started managed MPV os_pid=~p pid=~p ipc=~s", [OsPid, Pid, Path], ?LOG_META
-                    ),
-                    S1 = S#st{path = Path, pid = Pid, os_pid = OsPid, last_error = undefined},
-                    case wait_for_socket(Path, ?SOCKET_WAIT_MS) of
-                        ok ->
-                            {ok, S1};
-                        {error, Reason} ->
-                            {_StopReply, S2} = stop_mpv(S1),
-                            {error, {mpv_ipc_socket_not_ready, Path, Reason}, S2}
-                    end;
-                {error, Reason} ->
-                    {error, {mpv_start_failed, Reason}, S#st{last_error = Reason}};
-                Other ->
-                    {error, {unexpected_exec_run_reply, Other}, S#st{last_error = Other}}
+            case S#st.survive_beam of
+                true ->
+                    start_detached_mpv(Path, Cmd, S);
+                false ->
+                    start_erlexec_mpv(Path, Cmd, S)
             end
+    end.
+
+start_erlexec_mpv(Path, Cmd, S) ->
+    LogFun =
+        fun(Stream, OsPid0, Data) ->
+            ?LOG_DEBUG("mpv(~p) ~p: ~ts", [OsPid0, Stream, safe_text(Data)], ?LOG_META)
+        end,
+
+    Opts = [
+        monitor,
+        {stdin, null},
+        {stdout, LogFun},
+        {stderr, LogFun},
+        {group, 0},
+        kill_group,
+        {kill_timeout, 3}
+    ],
+
+    case safe_exec_run(Cmd, Opts) of
+        {ok, Pid, OsPid} ->
+            ?LOG_INFO(
+                "Started managed MPV os_pid=~p pid=~p ipc=~s", [OsPid, Pid, Path], ?LOG_META
+            ),
+            S1 = S#st{
+                path = Path,
+                pid = Pid,
+                os_pid = OsPid,
+                detached = false,
+                last_error = undefined
+            },
+            case wait_for_socket(Path, ?SOCKET_WAIT_MS) of
+                ok ->
+                    {ok, S1};
+                {error, Reason} ->
+                    {_StopReply, S2} = stop_mpv(S1),
+                    {error, {mpv_ipc_socket_not_ready, Path, Reason}, S2}
+            end;
+        {error, Reason} ->
+            {error, {mpv_start_failed, Reason}, S#st{last_error = Reason}};
+        Other ->
+            {error, {unexpected_exec_run_reply, Other}, S#st{last_error = Other}}
+    end.
+
+start_detached_mpv(Path, Cmd, S) ->
+    PidFile = mpv_pid_file(Path),
+    LogFile = mpv_log_file(Path),
+    _ = filelib:ensure_dir(PidFile),
+    _ = filelib:ensure_dir(LogFile),
+    safe_delete_file(PidFile),
+    ShellCommand = detached_shell_command(Cmd, PidFile, LogFile),
+    _ = os:cmd(ShellCommand),
+    case wait_for_socket(Path, ?DETACHED_START_WAIT_MS) of
+        ok ->
+            OsPid = pidfile_status(Path),
+            ?LOG_INFO(
+                "Started detached MPV os_pid=~p ipc=~s pid_file=~s log_file=~s; survives BEAM restarts",
+                [OsPid, Path, PidFile, LogFile],
+                ?LOG_META
+            ),
+            {ok, S#st{
+                path = Path,
+                pid = undefined,
+                os_pid = normalize_pid_status(OsPid),
+                detached = true,
+                last_error = undefined
+            }};
+        {error, Reason} ->
+            {error, {mpv_detached_socket_not_ready, Path, Reason}, S#st{last_error = Reason}}
     end.
 
 hidden_mpv_command(Mpv, Path) ->
@@ -378,13 +426,15 @@ restart_mpv(Reason, S0) ->
     {_Reply, S1} = stop_mpv(S0),
     start_managed_mpv(S1#st.path, S1#st{last_error = Reason}).
 
+stop_mpv(S = #st{detached = true}) ->
+    stop_detached_mpv(S);
 stop_mpv(S = #st{os_pid = undefined, path = Path}) ->
     %% If no owned OS process exists, do not delete a live external socket.
     case socket_alive(Path) of
         true -> ok;
         false -> safe_delete_socket(Path)
     end,
-    {ok, S#st{pid = undefined, os_pid = undefined}};
+    {ok, S#st{pid = undefined, os_pid = undefined, detached = false}};
 stop_mpv(S = #st{os_pid = OsPid, pid = Pid, path = Path}) ->
     %% Ask MPV to quit through IPC first so normal player shutdown can flush
     %% state before erlexec escalates to process termination.
@@ -403,7 +453,8 @@ stop_mpv(S = #st{os_pid = OsPid, pid = Pid, path = Path}) ->
                 Other
         end,
     safe_delete_socket(Path),
-    S1 = S#st{pid = undefined, os_pid = undefined},
+    safe_delete_file(mpv_pid_file(Path)),
+    S1 = S#st{pid = undefined, os_pid = undefined, detached = false},
     case {StopReply, DownReply} of
         {{error, Reason}, timeout} ->
             {{error, {mpv_stop_failed, Reason}}, S1#st{last_error = Reason}};
@@ -411,6 +462,52 @@ stop_mpv(S = #st{os_pid = OsPid, pid = Pid, path = Path}) ->
             {{error, {mpv_stop_timeout, OsPid}}, S1#st{last_error = {mpv_stop_timeout, OsPid}}};
         _ ->
             {ok, S1#st{last_error = undefined}}
+    end.
+
+terminate_mpv(_Reason, S = #st{survive_beam = true, path = Path}) ->
+    ?LOG_NOTICE(
+        "Leaving MPV backend alive across BEAM termination path=~s os_pid=~p detached=~p",
+        [Path, S#st.os_pid, S#st.detached],
+        ?LOG_META
+    ),
+    ok;
+terminate_mpv(_Reason, S) ->
+    _ = stop_mpv(S),
+    ok.
+
+stop_detached_mpv(S = #st{path = Path, os_pid = OsPid}) ->
+    _ = best_effort(fun() -> send_mpv_command(Path, [<<"quit">>]) end),
+    StopReply =
+        case wait_for_socket_gone(Path, ?STOP_WAIT_MS) of
+            ok ->
+                ok;
+            {error, timeout} ->
+                force_detached_mpv_stop(OsPid, Path)
+        end,
+    safe_delete_socket(Path),
+    safe_delete_file(mpv_pid_file(Path)),
+    S1 = S#st{pid = undefined, os_pid = undefined, detached = false},
+    case StopReply of
+        ok -> {ok, S1#st{last_error = undefined}};
+        {error, Reason} -> {{error, Reason}, S1#st{last_error = Reason}}
+    end.
+
+force_detached_mpv_stop(undefined, Path) ->
+    case socket_alive(Path) of
+        true -> {error, {mpv_detached_stop_timeout, unknown_pid, Path}};
+        false -> ok
+    end;
+force_detached_mpv_stop(OsPid, Path) when is_integer(OsPid) ->
+    _ = signal_os_pid(OsPid, term),
+    case wait_for_os_pid_gone(OsPid, ?KILL_WAIT_MS) of
+        ok -> ok;
+        {error, timeout} ->
+            ?LOG_WARNING("Detached MPV os_pid=~p did not stop after SIGTERM; forcing SIGKILL", [OsPid], ?LOG_META),
+            _ = signal_os_pid(OsPid, kill),
+            case wait_for_os_pid_gone(OsPid, ?KILL_WAIT_MS) of
+                ok -> ok;
+                {error, timeout} -> {error, {mpv_detached_stop_timeout, OsPid, Path}}
+            end
     end.
 
 bounded_mpv_call(Function, Args, infinity, Path) ->
@@ -632,6 +729,167 @@ fallback_mpv_ipc_call(Function, Args) ->
             {error, {mpv_ipc_load_failed, Class, CatchReason, Stacktrace}}
     end.
 
+
+adopt_external_mpv(Path, S) ->
+    case pidfile_status(Path) of
+        OsPid when is_integer(OsPid) ->
+            ?LOG_INFO(
+                "Adopted detached MPV os_pid=~p from pid file ~s",
+                [OsPid, mpv_pid_file(Path)],
+                ?LOG_META
+            ),
+            S#st{
+                path = Path,
+                pid = undefined,
+                os_pid = OsPid,
+                detached = true,
+                last_error = undefined
+            };
+        _ ->
+            S#st{path = Path, pid = undefined, os_pid = undefined, detached = false, last_error = undefined}
+    end.
+
+detached_shell_command(Cmd, PidFile, LogFile) ->
+    Command = string:join([shell_quote(Arg) || Arg <- Cmd], " "),
+    Script = lists:flatten([
+        "umask 077; ",
+        "setsid ", Command,
+        " </dev/null >>", shell_quote(LogFile), " 2>&1 & ",
+        "echo $! > ", shell_quote(PidFile)
+    ]),
+    "sh -c " ++ shell_quote(Script).
+
+mpv_survive_beam() ->
+    ConfigDefault =
+        case application:get_env(erm, mpv_survive_beam, true) of
+            true -> true;
+            false -> false;
+            Invalid ->
+                ?LOG_WARNING(
+                    "Ignoring invalid erm.mpv_survive_beam value ~p; defaulting to true",
+                    [Invalid],
+                    ?LOG_META
+                ),
+                true
+        end,
+    env_bool("ERM_MPV_SURVIVE_BEAM", ConfigDefault).
+
+mpv_pid_file(Path) ->
+    case application:get_env(erm, mpv_pid_file) of
+        {ok, Value} -> normalize_path(Value);
+        undefined -> getenv_default("MPV_PIDFILE", Path ++ ".pid")
+    end.
+
+mpv_log_file(Path) ->
+    case application:get_env(erm, mpv_log_file) of
+        {ok, Value} -> normalize_path(Value);
+        undefined -> getenv_default("MPV_LOG_FILE", Path ++ ".log")
+    end.
+
+pidfile_status(Path) ->
+    case read_pidfile(mpv_pid_file(Path)) of
+        {ok, OsPid} ->
+            case os_pid_alive(OsPid) of
+                true -> OsPid;
+                false -> stale
+            end;
+        {error, enoent} -> undefined;
+        {error, _Reason} -> unreadable
+    end.
+
+normalize_pid_status(OsPid) when is_integer(OsPid) -> OsPid;
+normalize_pid_status(_Other) -> undefined.
+
+read_pidfile(PidFile) ->
+    case file:read_file(PidFile) of
+        {ok, Bin} ->
+            Text = string:trim(unicode:characters_to_list(Bin)),
+            try list_to_integer(Text) of
+                OsPid -> {ok, OsPid}
+            catch
+                _:_ -> {error, {bad_pidfile, PidFile, Text}}
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+os_pid_alive(undefined) ->
+    false;
+os_pid_alive(OsPid) when is_integer(OsPid), OsPid > 0 ->
+    Result = string:trim(os:cmd("kill -0 " ++ integer_to_list(OsPid) ++ " 2>/dev/null && echo alive || echo dead")),
+    Result =:= "alive";
+os_pid_alive(_Other) ->
+    false.
+
+wait_for_os_pid_gone(undefined, _LeftMs) ->
+    ok;
+wait_for_os_pid_gone(OsPid, LeftMs) when LeftMs =< 0 ->
+    case os_pid_alive(OsPid) of
+        true -> {error, timeout};
+        false -> ok
+    end;
+wait_for_os_pid_gone(OsPid, LeftMs) ->
+    case os_pid_alive(OsPid) of
+        false -> ok;
+        true ->
+            timer:sleep(?SOCKET_POLL_MS),
+            wait_for_os_pid_gone(OsPid, LeftMs - ?SOCKET_POLL_MS)
+    end.
+
+signal_os_pid(undefined, _Signal) ->
+    ok;
+signal_os_pid(OsPid, Signal) when is_integer(OsPid) ->
+    SignalText =
+        case Signal of
+            term -> "TERM";
+            kill -> "KILL";
+            _ -> "TERM"
+        end,
+    _ = os:cmd("kill -" ++ SignalText ++ " " ++ integer_to_list(OsPid) ++ " 2>/dev/null || true"),
+    ok.
+
+safe_delete_file(Path) ->
+    case file:delete(Path) of
+        ok -> ok;
+        {error, enoent} -> ok;
+        {error, Reason} ->
+            ?LOG_DEBUG("Could not delete file ~s: ~p", [Path, Reason], ?LOG_META),
+            ok
+    end.
+
+env_bool(Name, Default) ->
+    case os:getenv(Name) of
+        false -> Default;
+        "" -> Default;
+        Value ->
+            case string:lowercase(Value) of
+                "1" -> true;
+                "true" -> true;
+                "yes" -> true;
+                "on" -> true;
+                "0" -> false;
+                "false" -> false;
+                "no" -> false;
+                "off" -> false;
+                _ -> Default
+            end
+    end.
+
+shell_quote(Value) ->
+    [$' | shell_quote_chars(shell_text(Value))] ++ [$'].
+
+shell_quote_chars([]) ->
+    [];
+shell_quote_chars([$' | Rest]) ->
+    [$', $\\, $', $' | shell_quote_chars(Rest)];
+shell_quote_chars([Ch | Rest]) ->
+    [Ch | shell_quote_chars(Rest)].
+
+shell_text(Bin) when is_binary(Bin) -> unicode:characters_to_list(Bin);
+shell_text(Atom) when is_atom(Atom) -> atom_to_list(Atom);
+shell_text(Int) when is_integer(Int) -> integer_to_list(Int);
+shell_text(List) when is_list(List) -> lists:flatten(List).
+
 safe_exec_run(Cmd, Opts) ->
     try exec:run(Cmd, Opts) of
         Reply ->
@@ -671,6 +929,10 @@ wait_for_down(OsPid, Pid, Timeout) ->
         timeout
     end.
 
+managed_alive(#st{detached = true, os_pid = OsPid}) when is_integer(OsPid) ->
+    os_pid_alive(OsPid);
+managed_alive(#st{detached = true, path = Path}) ->
+    socket_alive(Path);
 managed_alive(#st{pid = Pid}) when is_pid(Pid) ->
     is_process_alive(Pid);
 managed_alive(_) ->
