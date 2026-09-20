@@ -31,6 +31,8 @@
 -define(DEFAULT_QUERY_TTL, 100).
 -define(DEFAULT_RESPONSE_TTL, 50000).
 
+-define(STEP_DISCOVERY_CONFIGURED, ["the build release discovery is configured"]).
+-define(STEP_VERIFY_DISCOVERY, ["the latest installable build release must match the minted NFT"]).
 -define(STEP_USE_CONTRACT, [
     "I am using build release NFT contract", ContractId
 ]).
@@ -98,6 +100,10 @@
 %% ------------------------------------------------------------------
 %% Dry-run clauses: advertise only the steps implemented by this module.
 %% ------------------------------------------------------------------
+step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_DISCOVERY_CONFIGURED, _Body) ->
+    Context;
+step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_VERIFY_DISCOVERY, _Body) ->
+    Context;
 step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_USE_CONTRACT, _Body) ->
     _ = ContractId,
     Context;
@@ -136,6 +142,15 @@ step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_SETTLE_CHECKOUT, _Body) ->
 %% ------------------------------------------------------------------
 %% Configuration/deployment.
 %% ------------------------------------------------------------------
+step(_Config, Context, _Keyword, _LineNo, ?STEP_DISCOVERY_CONFIGURED, _Body) ->
+    case installation_discovery_config(Context) of
+        {ok, Config} ->
+            Context#{build_release_nft_contract => maps:get(nft, Config),
+                build_release_discovery_config => Config};
+        {error, Why} -> fail(Context, {release_discovery_configuration_failed, Why})
+    end;
+step(_Config, Context, _Keyword, _LineNo, ?STEP_VERIFY_DISCOVERY, _Body) ->
+    verify_installable_mint(Context);
 step(_Config, Context, _Keyword, _LineNo, ?STEP_USE_CONTRACT, _Body) ->
     Ct = to_bin(ContractId),
     case Ct of
@@ -194,9 +209,13 @@ step(_Config, Context, <<"When">>, _LineNo, ?STEP_PREPARE_INSTALL, _Body) ->
                     case damage_release_nft:prepared_installation(Prepared) of
                         {ok, Expected} ->
                             Updated = put_context_var(Context, MetaVar, Prepared),
-                            Updated#{build_release_installation_expected => Expected,
-                                build_release_platform => maps:get(platform, Expected),
-                                git_sha => maps:get(git_sha, Expected)};
+                            PreparedContext = put_context_var(Updated, "git_sha", maps:get(git_sha, Expected)),
+                            ReleaseContext = case maps:find(<<"release">>, Prepared) of
+                                {ok, Version} -> put_context_var(PreparedContext, "build_release", Version);
+                                error -> PreparedContext
+                            end,
+                            ReleaseContext#{build_release_installation_expected => Expected,
+                                build_release_platform => maps:get(platform, Expected)};
                         {error, Why} -> fail(Context, {installation_metadata_failed, Why})
                     end;
                 {error, Why} -> fail(Context, {installation_metadata_failed, Why})
@@ -2113,6 +2132,13 @@ encode_oracle_query_id(Bin) ->
 %% ------------------------------------------------------------------
 %% Input/config helpers.
 %% ------------------------------------------------------------------
+resolve_contract(#{build_release_installation_expected := _} = Context) ->
+    %% Installation builds must never disappear into an automatically deployed
+    %% per-account NFT. Only the public reader's configured contract is valid.
+    case installation_discovery_config(Context) of
+        {ok, Config} -> {ok, maps:get(nft, Config)};
+        {error, _} = Error -> Error
+    end;
 resolve_contract(Context) ->
     case
         map_get_any(
@@ -2137,6 +2163,47 @@ resolve_contract(Context) ->
         Ct0 ->
             %% Explicit BDD override remains available for migration/recovery.
             validate_contract_id(Ct0)
+    end.
+
+installation_discovery_config(Context) ->
+    case damage_release_nft:discovery_config() of
+        {ok, Config} ->
+            Contract = maps:get(nft, Config),
+            Override = map_get_any([build_release_nft_contract, <<"build_release_nft_contract">>,
+                "build_release_nft_contract"], Context, Contract),
+            case to_bin(Override) =:= Contract of
+                true -> {ok, Config};
+                false -> {error, build_release_discovery_contract_mismatch}
+            end;
+        {error, _} = Error -> Error
+    end.
+
+%% This reads the exact same resolver as /api/releases/latest?platform=... .
+%% Failure never rolls back a successful mint and must never trigger reminting
+%% into another registry. The read/assertion can safely be retried by itself.
+verify_installable_mint(Context0) ->
+    Context = maps:without([build_release_install_result, build_release_install_manifest], Context0),
+    case {maps:find(build_release_mint_result, Context),
+          maps:find(build_release_installation_expected, Context)} of
+        {{ok, Mint}, {ok, Expected}} when is_map(Mint), is_map(Expected) ->
+            case installation_discovery_config(Context) of
+                {ok, Config} ->
+                    Network = maps:get(network, Config),
+                    case damage_release_nft:latest(maps:get(platform, Mint)) of
+                        {ok, Discovered} ->
+                            case damage_release_nft:verify_publication(
+                                Mint#{network_id => Network}, Expected, Discovered) of
+                                ok ->
+                                    Context#{build_release_install_result => Discovered,
+                                        build_release_install_manifest =>
+                                            damage_release_nft:install_manifest(Discovered)};
+                                {error, Why} -> fail(Context, Why)
+                            end;
+                        {error, Why} -> fail(Context, {release_discovery_verification_failed, Why})
+                    end;
+                {error, Why} -> fail(Context, {release_discovery_configuration_failed, Why})
+            end;
+        _ -> fail(Context, prepared_installation_and_mint_required)
     end.
 
 context_account(Context) ->

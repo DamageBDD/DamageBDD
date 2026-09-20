@@ -198,3 +198,33 @@ package_hash_mismatch_preserved_by_step_test() ->
         ?assertNot(maps:is_key(build_release_installation_expected, Result)),
         ?assertEqual(maps:get("meta", Context), maps:get("meta", Result))
     end).
+
+packaged_release_version_flows_into_context_test() ->
+    with_kubo(fun(Fixture) ->
+        Version = <<"1.4.2">>,
+        seed(Fixture, (manifest())#{<<"release">> => Version}),
+        Parts = ["I prepare installation metadata in", "meta", "for platform",
+            "ubuntu-noble-amd64", "from IPFS asset hash in", "asset_hash",
+            "with manifest path", "installation.json"],
+        Context = #{"meta" => #{name => <<"fixture">>}, "asset_hash" => asset()},
+        Result = steps_release_nft:step([], Context, <<"When">>, 1, Parts, <<>>),
+        ?assertNot(maps:is_key(fail, Result)),
+        ?assertEqual(Version, maps:get("build_release", Result)),
+        ?assertEqual(Version, maps:get(<<"build_release">>, Result)),
+        ?assertEqual(git_sha(), maps:get("git_sha", Result)),
+        Prepared = maps:get("meta", Result),
+        ?assertEqual(Version, maps:get(<<"release">>, Prepared)),
+        ok = kubo_put(Fixture, meta_cid(), jsx:encode(Prepared)),
+        ?assertEqual(ok, steps_release_nft:checked_mint_inputs(Result,
+            Version, platform(), git_sha(), meta_cid(), asset())),
+        ?assertEqual({error, {prepared_installation_metadata_invalid, release_version_mismatch}},
+            steps_release_nft:checked_mint_inputs(Result, <<"install-opaque-cid">>,
+                platform(), git_sha(), meta_cid(), asset()))
+    end).
+
+manifest_release_conflict_rejected_test() ->
+    with_kubo(fun(Fixture) ->
+        seed(Fixture, (manifest())#{<<"release">> => <<"1.4.2">>}),
+        ?assertEqual({error, release_version_mismatch}, damage_release_nft:prepare_metadata(
+            #{<<"release">> => <<"different">>}, platform(), asset(), <<"installation.json">>))
+    end).

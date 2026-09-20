@@ -54,3 +54,21 @@ missing_preparation_fails_before_mint_test() ->
             ({K, {ok, V}}) -> application:set_env(damage, K, V)
         end, Saved)
     end.
+
+discovery_steps_are_side_effect_free_in_dry_run_test_() ->
+    [?_assertEqual(#{keep => unchanged}, steps_release_nft:step_dry([], #{keep => unchanged},
+        <<"Then">>, 1, Parts, <<>>)) || Parts <- [
+        ["the build release discovery is configured"],
+        ["the latest installable build release must match the minted NFT"]
+    ]].
+
+missing_discovery_identity_preserves_successful_mint_test() ->
+    Mint = #{token_id => 42, mint_status => minted},
+    Context = #{build_release_mint_result => Mint,
+        build_release_install_result => stale_result,
+        build_release_install_manifest => <<"stale">>},
+    Result = steps_release_nft:step([], Context, <<"Then">>, 1,
+        ["the latest installable build release must match the minted NFT"], <<>>),
+    ?assert(maps:is_key(fail, Result)),
+    ?assertEqual(Mint, maps:get(build_release_mint_result, Result)),
+    ?assertNot(maps:is_key(build_release_install_result, Result)).

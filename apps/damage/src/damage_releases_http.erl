@@ -1,9 +1,10 @@
 %%% Public release discovery plus authenticated NFT transfer preparation/execution.
 -module(damage_releases_http).
 -license("Apache-2.0").
+-include_lib("kernel/include/logger.hrl").
 -export([trails/0, init/2]).
 -ifdef(TEST).
--export([query_params/1, response/2, parse_token/1, transfer_body/1]).
+-export([query_params/1, response/2, parse_token/1, transfer_body/1, discovery_response/4]).
 -endif.
 
 -define(MAX_TRANSFER_BODY_BYTES, 4096).
@@ -72,21 +73,39 @@ method_not_allowed(Allow, Req) ->
 serve(_Req, #{action := current}) ->
     {200, json_headers(), jsx:encode((damage_release:info())#{ok => true})};
 serve(Req, Opts) ->
-    try query_params(cowboy_req:parse_qs(Req)) of
+    %% Only malformed query parsing is a client error. Exceptions in discovery
+    %% or rendering are backend failures, never an "invalid request" response.
+    Parsed = try {ok, cowboy_req:parse_qs(Req)} catch _:_ -> error end,
+    case Parsed of
+        {ok, Pairs} ->
+            Lookup = fun
+                (latest, Platform) -> damage_release_nft:latest(Platform);
+                ({release, Version}, Platform) -> damage_release_nft:release(Version, Platform)
+            end,
+            Action = maps:get(action, Opts),
+            Version = case Action of
+                versioned -> cowboy_req:binding(release, Req);
+                latest -> undefined
+            end,
+            discovery_response(Action, Version, Pairs, Lookup);
+        error -> response({error, invalid_request}, json)
+    end.
+
+discovery_response(Action, Version, Pairs, Lookup) ->
+    case query_params(Pairs) of
         {ok, Platform, Format} ->
-            Result =
-                case maps:get(action, Opts) of
-                    latest ->
-                        damage_release_nft:latest(Platform);
-                    versioned ->
-                        %% Domain validation is owned by damage_release_nft.
-                        damage_release_nft:release(cowboy_req:binding(release, Req), Platform)
+            try
+                Selector = case Action of
+                    latest -> latest;
+                    versioned -> {release, Version}
                 end,
-            response(Result, Format);
-        {error, _} ->
-            response({error, invalid_request}, json)
-    catch
-        _:_ -> response({error, invalid_request}, json)
+                response(Lookup(Selector, Platform), Format)
+            catch
+                Class:_ ->
+                    ?LOG_WARNING("Release HTTP discovery failed class=~p", [Class]),
+                    response({error, release_backend_failed}, Format)
+            end;
+        {error, _} -> response({error, invalid_request}, json)
     end.
 
 %% Auth is deliberately delegated to the same Bearer/cookie authentication path
