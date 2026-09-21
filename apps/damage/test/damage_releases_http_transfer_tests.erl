@@ -30,12 +30,15 @@ malformed_headers_do_not_fall_back_test() ->
 
 bearer_uses_fresh_transfer_auth_state_test() ->
     Req = req(#{<<"authorization">> => <<"Bearer token+/==">>}),
-    Auth = fun(R, State) ->
-        ?assertEqual(#{action => transfer}, State),
-        {true, R#{authenticated => true}, #{public_key => <<"ak_real">>}}
-    end,
-    ?assertEqual({ok, Req#{authenticated => true}, #{public_key => <<"ak_real">>}},
-        ?H:authorize_transfer(Req, #{action => tx, public_key => <<"ak_forged">>}, Auth)).
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        Auth = fun(R, State) ->
+            Record({authenticate, R, State}),
+            {true, R#{authenticated => true}, #{public_key => <<"ak_real">>}}
+        end,
+        ?H:authorize_transfer(Req, #{action => tx, public_key => <<"ak_forged">>}, Auth)
+    end),
+    ?assertEqual({ok, Req#{authenticated => true}, #{public_key => <<"ak_real">>}}, Result),
+    ?assertEqual([{authenticate, Req, #{action => transfer}}], Calls).
 
 auth_exception_is_sanitized_test() ->
     Req = req(#{<<"authorization">> => <<"Bearer token">>}),
@@ -54,10 +57,9 @@ application_json_only_test() ->
 reader(Parts) ->
     fun(Req, Opts) ->
         Index = maps:get(part, Req, 0) + 1,
-        ?assert(maps:get(timeout, Opts) > maps:get(period, Opts)),
-        ?assert(maps:get(length, Opts) > 0),
         {Tag, Bytes} = lists:nth(Index, Parts),
-        {Tag, Bytes, Req#{part => Index, read_opts => Opts}}
+        {Tag, Bytes, Req#{part => Index, read_opts => Opts,
+            read_history => [Opts | maps:get(read_history, Req, [])]}}
     end.
 
 fragmented_body_is_not_too_large_test() ->
@@ -65,7 +67,8 @@ fragmented_body_is_not_too_large_test() ->
         reader([{more, <<"{\"to\":" >>}, {more, <<"\"ak_destination\"">>}, {ok, <<"}">>}]),
         fun() -> 0 end),
     ?assertEqual(#{<<"to">> => <<"ak_destination">>}, Json),
-    ?assertEqual(3, maps:get(part, Req)).
+    ?assertEqual(3, maps:get(part, Req)),
+    assert_read_options(Req).
 
 oversized_final_chunk_test() ->
     ?assertMatch({error, payload_too_large, #{part := 1}},
@@ -86,7 +89,8 @@ exact_limit_and_empty_final_chunk_test() ->
     Full = <<Json/binary, (binary:copy(<<" ">>, 4096-byte_size(Json)))/binary>>,
     {ok, _, Req} = ?H:read_transfer_body(#{},
         reader([{more, Full}, {ok, <<>>}]), fun() -> 0 end),
-    ?assertEqual(1, maps:get(length, maps:get(read_opts, Req))).
+    ?assertEqual(1, maps:get(length, maps:get(read_opts, Req))),
+    assert_read_options(Req).
 
 read_exception_preserves_latest_request_test() ->
     Read = fun
@@ -127,20 +131,32 @@ canonical_token_id_test() ->
           binary:copy(<<"1">>, 40)]).
 
 custodial_account_mismatch_never_signs_test() ->
-    Lookup = fun(_) -> {<<"ak_other">>, ignored, binary:copy(<<1>>, 64)} end,
-    Transfer = fun(_, _, _) -> error(must_not_sign) end,
-    ?assertEqual({error, transfer_signing_unavailable},
-        ?H:custodial_transfer(<<"ak_owner">>, <<"user">>, {42, <<"ak_to">>}, Lookup, Transfer)).
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        Lookup = fun(Username) ->
+            Record({lookup, Username}),
+            {<<"ak_other">>, ignored, binary:copy(<<1>>, 64)}
+        end,
+        Transfer = fun(KP, Token, To) -> Record({transfer, KP, Token, To}), unexpected end,
+        ?H:custodial_transfer(<<"ak_owner">>, <<"user">>, {42, <<"ak_to">>}, Lookup, Transfer)
+    end),
+    ?assertEqual({error, transfer_signing_unavailable}, Result),
+    ?assertEqual([{lookup, <<"user">>}], Calls).
 
 custodial_transfer_uses_authenticated_key_only_test() ->
-    Lookup = fun(<<"user">>) -> {<<"ak_owner">>, ignored, binary:copy(<<1>>, 64)} end,
-    Transfer = fun(KP, Token, To) ->
-        ?assertEqual(#{public_key => <<"ak_owner">>, private_key => binary:copy(<<1>>, 64)}, KP),
-        ?assertEqual({42, <<"ak_to">>}, {Token, To}),
-        {ok, #{status => submitted, tx_hash => <<"th_known">>}}
-    end,
-    ?assertMatch({ok, #{status := submitted}},
-        ?H:custodial_transfer(<<"ak_owner">>, <<"user">>, {42, <<"ak_to">>}, Lookup, Transfer)).
+    Private = binary:copy(<<1>>, 64),
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        Lookup = fun(Username) ->
+            Record({lookup, Username}), {<<"ak_owner">>, ignored, Private}
+        end,
+        Transfer = fun(KP, Token, To) ->
+            Record({transfer, KP, Token, To}),
+            {ok, #{status => submitted, tx_hash => <<"th_known">>}}
+        end,
+        ?H:custodial_transfer(<<"ak_owner">>, <<"user">>, {42, <<"ak_to">>}, Lookup, Transfer)
+    end),
+    ?assertEqual({ok, #{status => submitted, tx_hash => <<"th_known">>}}, Result),
+    ?assertEqual([{lookup, <<"user">>},
+        {transfer, #{public_key => <<"ak_owner">>, private_key => Private}, 42, <<"ak_to">>}], Calls).
 
 write_exception_is_not_signing_unavailable_test() ->
     Lookup = fun(_) -> {<<"ak_owner">>, ignored, binary:copy(<<1>>, 64)} end,
@@ -244,3 +260,21 @@ malformed_submission_diagnostic_is_omitted_test_() ->
     end) || D <- [<<"SECRET">>, #{}, #{stage => private_key, status => node_rejected},
                    #{stage => submission, status => <<"PRIVATE">>}]].
 
+
+
+capture_callback_calls(Fun) ->
+    Ref = make_ref(),
+    put(Ref, []),
+    Record = fun(Call) -> put(Ref, [Call | get(Ref)]), ok end,
+    try
+        Result = Fun(Record),
+        {Result, lists:reverse(get(Ref))}
+    after erase(Ref) end.
+
+assert_read_options(Req) ->
+    History = maps:get(read_history, Req),
+    ?assertEqual(maps:get(part, Req), length(History)),
+    lists:foreach(fun(Opts) ->
+        ?assert(maps:get(timeout, Opts) > maps:get(period, Opts)),
+        ?assert(maps:get(length, Opts) > 0)
+    end, History).

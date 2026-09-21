@@ -3,20 +3,37 @@
 -define(AE, damage_ae).
 
 same_final_bytes_are_simulated_and_returned_test() ->
-    Ref = make_ref(),
-    put(Ref, 0),
     Final = <<"tx_exact-final-transaction">>,
-    Prepare = fun() -> put(Ref, get(Ref) + 1), Final end,
-    DryRun = fun(Tx) -> ?assertEqual(Final, Tx), ok end,
-    try
-        ?assertEqual({ok, Final}, ?AE:checked_contract_tx(Prepare, DryRun)),
-        ?assertEqual(1, get(Ref))
-    after erase(Ref) end.
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        ?AE:checked_contract_tx(
+            fun() -> Record(prepare), Final end,
+            fun(Tx) -> Record({dry_run, Tx}), ok end)
+    end),
+    ?assertEqual({ok, Final}, Result),
+    ?assertEqual([prepare, {dry_run, Final}], Calls).
 
 charlist_tx_normalized_before_dry_run_test() ->
-    ?assertEqual({ok, <<"tx_final">>},
-        ?AE:checked_contract_tx(fun() -> "tx_final" end,
-                               fun(Tx) -> ?assertEqual(<<"tx_final">>, Tx), ok end)).
+    %% Observe the callback argument without asserting inside the
+    %% production try/catch or another assertion macro.
+    Ref = make_ref(),
+    put(Ref, []),
+    DryRun = fun(Tx) ->
+        put(Ref, [Tx | get(Ref)]),
+        ok
+    end,
+    try
+        Result = ?AE:checked_contract_tx(
+            fun() -> "tx_final" end,
+            DryRun
+        ),
+        Observed = get(Ref),
+
+        %% Check the callback argument and invocation count first.
+        ?assertEqual([<<"tx_final">>], Observed),
+        ?assertEqual({ok, <<"tx_final">>}, Result)
+    after
+        erase(Ref)
+    end.
 
 failed_preflight_does_not_return_signable_tx_test() ->
     Rejection = {error, #{status => rejected, stage => preflight, reason => contract_reverted}},
@@ -56,10 +73,13 @@ reject_multiple_dry_results_test() ->
 
 confirmation_timeout_retains_hash_test() ->
     Hash = <<"th_known">>,
-    ?assertEqual({ok, #{status => submitted, tx_hash => Hash}},
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
         ?AE:tracked_submit(<<"tx_signed">>, Hash,
-            fun(_) -> {ok, #{"tx_hash" => Hash}} end,
-            fun(H) -> ?assertEqual(Hash, H), {error, read_timeout} end)).
+            fun(Tx) -> Record({post, Tx}), {ok, #{"tx_hash" => Hash}} end,
+            fun(H) -> Record({wait, H}), {error, read_timeout} end)
+    end),
+    ?assertEqual({ok, #{status => submitted, tx_hash => Hash}}, Result),
+    ?assertEqual([{post, <<"tx_signed">>}, {wait, Hash}], Calls).
 
 confirmation_crash_retains_hash_test() ->
     Hash = <<"th_known">>,
@@ -86,10 +106,16 @@ lost_ack_but_mined_receipt_is_confirmed_test() ->
 
 unexpected_ack_hash_never_changes_polled_hash_test() ->
     Hash = <<"th_local">>,
-    ?assertMatch({ok, #{status := submission_unknown, tx_hash := Hash}},
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
         ?AE:tracked_submit(<<"tx_signed">>, Hash,
-            fun(_) -> {ok, #{<<"tx_hash">> => <<"th_someone_else">>}} end,
-            fun(H) -> ?assertEqual(Hash, H), {error, read_timeout} end)).
+            fun(Tx) ->
+                Record({post, Tx}),
+                {ok, #{<<"tx_hash">> => <<"th_someone_else">>}}
+            end,
+            fun(H) -> Record({wait, H}), {error, read_timeout} end)
+    end),
+    ?assertMatch({ok, #{status := submission_unknown, tx_hash := Hash}}, Result),
+    ?assertEqual([{post, <<"tx_signed">>}, {wait, Hash}], Calls).
 
 mined_revert_is_rejected_not_submitted_test() ->
     Hash = <<"th_local">>,
@@ -234,21 +260,23 @@ signed_envelope_hash_vector_test() ->
 
 %% Remaining review regressions: submission evidence and legacy safe path.
 explicit_nonce_rejection_uses_one_probe_test() ->
-    Hash = <<"th_local">>, Ref = make_ref(), put(Ref, 0),
-    Post = fun(_) ->
-        put(Ref, get(Ref) + 1),
-        {error, {tx_rejected, #{http_status => 400, error_code => <<"nonce_too_high">>,
-                               reason => <<"SECRET">>, headers => [secret]}}}
-    end,
-    try
-        ?assertEqual({ok, #{status => submission_unknown, tx_hash => Hash,
-            submission => #{stage => submission, status => node_rejected,
-                            error_code => <<"nonce_too_high">>, http_status => 400}}},
-            ?AE:tracked_submit(<<"tx_signed">>, Hash, Post,
-                #{once => fun(H) -> ?assertEqual(Hash, H), {error, not_found} end,
-                  wait => fun(_) -> error(full_wait_must_not_run) end})),
-        ?assertEqual(1, get(Ref))
-    after erase(Ref) end.
+    Hash = <<"th_local">>,
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        ?AE:tracked_submit(<<"tx_signed">>, Hash,
+            fun(Tx) ->
+                Record({post, Tx}),
+                {error, {tx_rejected, #{http_status => 400, error_code => <<"nonce_too_high">>,
+                                       reason => <<"SECRET">>, headers => [secret]}}}
+            end,
+            #{once => fun(H) -> Record({once, H}), {error, not_found} end,
+              wait => fun(H) -> Record({wait, H}), {error, not_found} end})
+    end),
+    ?assertEqual({ok, #{status => submission_unknown, tx_hash => Hash,
+        submission => #{stage => submission, status => node_rejected,
+                        error_code => <<"nonce_too_high">>, http_status => 400}}}, Result),
+    %% A wrong observer/hash, skipped observer or second POST cannot be hidden
+    %% by tracked_post_observe/4's intentionally conservative exception handler.
+    ?assertEqual([{post, <<"tx_signed">>}, {once, Hash}], Calls).
 
 %% Use counters, not exceptions alone, to detect an unexpected observer call:
 %% production intentionally catches observer failures and preserves uncertainty.
@@ -279,12 +307,18 @@ assert_observer_mode(Status, Code, Expected) ->
 
 mined_receipt_overrides_local_node_rejection_test() ->
     Hash = <<"th_local">>,
-    {ok, Outcome} = ?AE:tracked_submit(<<"tx_signed">>, Hash,
-        fun(_) -> {error, {tx_rejected, #{http_status => 400, error_code => <<"nonce_too_low">>}}} end,
-        #{once => fun(H) -> ?assertEqual(Hash, H), {ok, confirmed} end}),
-    ?assertEqual(confirmed, maps:get(status, Outcome)),
-    ?assertEqual(Hash, maps:get(tx_hash, Outcome)),
-    ?assertEqual(node_rejected, maps:get(status, maps:get(submission, Outcome))).
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        ?AE:tracked_submit(<<"tx_signed">>, Hash,
+            fun(Tx) ->
+                Record({post, Tx}),
+                {error, {tx_rejected, #{http_status => 400, error_code => <<"nonce_too_low">>}}}
+            end,
+            #{once => fun(H) -> Record({once, H}), {ok, confirmed} end,
+              wait => fun(H) -> Record({wait, H}), {ok, confirmed} end})
+    end),
+    ?assertMatch({ok, #{status := confirmed, tx_hash := Hash,
+                       submission := #{status := node_rejected}}}, Result),
+    ?assertEqual([{post, <<"tx_signed">>}, {once, Hash}], Calls).
 
 mined_revert_retains_submission_evidence_test() ->
     {error, Outcome} = ?AE:tracked_submit(<<"tx_signed">>, <<"th_local">>,
@@ -438,3 +472,37 @@ safe_account_only_error_compatibility_test() ->
     ?assertEqual({not_submitted, keypair_required},
         ?AE:contract_call_payfor_user_safe(#{private_key => <<"SECRET">>},
                                          ignored, ignored, ignored, [])).
+
+
+%% Argument/call-order evidence must be checked outside production catches.
+%% Keep fixtures process-local and clean them even when an assertion fails.
+capture_callback_calls(Fun) ->
+    Ref = make_ref(),
+    put(Ref, []),
+    Record = fun(Call) -> put(Ref, [Call | get(Ref)]), ok end,
+    try
+        Result = Fun(Record),
+        {Result, lists:reverse(get(Ref))}
+    after erase(Ref) end.
+
+invalid_prepared_tx_never_reaches_dry_run_test_() ->
+    [?_test(assert_invalid_prepared_tx(Tx)) || Tx <-
+        [<<>>, [], <<"tx_">>, "tx_", <<"not_a_transaction">>, "not_a_transaction",
+         [256], [tx_final], #{tx => <<"tx_final">>}, {error, unavailable}]].
+
+assert_invalid_prepared_tx(Tx) ->
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        ?AE:checked_contract_tx(fun() -> Record(prepare), Tx end,
+            fun(Unexpected) -> Record({dry_run, Unexpected}), ok end)
+    end),
+    ?assertEqual({error, transaction_prepare_failed}, Result),
+    ?assertEqual([prepare], Calls).
+
+charlist_preflight_rejection_is_preserved_test() ->
+    Rejected = {error, #{status => rejected, stage => preflight, reason => contract_reverted}},
+    {Result, Calls} = capture_callback_calls(fun(Record) ->
+        ?AE:checked_contract_tx(fun() -> "tx_final" end,
+            fun(Tx) -> Record({dry_run, Tx}), Rejected end)
+    end),
+    ?assertEqual(Rejected, Result),
+    ?assertEqual([{dry_run, <<"tx_final">>}], Calls).

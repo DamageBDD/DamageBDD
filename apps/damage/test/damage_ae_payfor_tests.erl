@@ -1,200 +1,179 @@
-%% Staged submission orchestration only: external operations use process-local
-%% TEST-only fakes. No AE node, signing service or production secrets is touched.
-%% Wallet cryptography itself is exercised by damage_ae_wallet_tests.
+%% Staged PayingFor orchestration against the current TEST-only callback seams.
+%% No live node, signing operation, secrets lookup or process-dictionary backend
+%% injection is used. Actual builder/cryptography integration needs separate tests.
 -module(damage_ae_payfor_tests).
 -include_lib("eunit/include/eunit.hrl").
--export([log/2]).
-
--define(PAYER, <<"ak_21SBPc3yHP7bpQDvD1KMKzZZEgLtSXpDsK97LTjVwjiskra6Ka">>).
--define(USER, <<"ak_adaN7iK8L5nanM5tmNdGTYy9aqcn84ZwJNpK8A8w4zPrt7Uya">>).
--define(TX_HASH, <<"th_public_disposable_test_fixture">>).
+-define(AE, damage_ae).
+-define(HASH, <<"th_public_disposable_test_fixture">>).
+-define(SIGNED, <<"tx_signed_fixture">>).
 -define(SECRET, <<"PAYFOR-SECRET-SENTINEL-NEVER-LOG-OR-RETURN">>).
 
-payfor_test_() ->
-    {setup, fun() -> {module, damage_ae} = code:ensure_loaded(damage_ae), ok end,
-     fun(_) -> ok end,
-     {inorder, [fun binary_and_charlist_payers_reach_both_builds/0,
-      fun payer_spellings_share_a_lock/0,
-      fun keypair_loading_normalizes_and_scrubs/0,
-      fun preparation_failures_do_not_submit_or_leak/0,
-      fun post_failures_remain_uncertain_and_redacted/0,
-      fun confirmation_failures_remain_uncertain_and_redacted/0,
-      fun fixed_codes_do_not_serialize_arbitrary_terms/0,
-      fun successful_staged_call_preserves_result/0,
-      fun malformed_keypairs_are_not_echoed/0]}}.
+signing_keypair_normalizes_and_strips_fields_test() ->
+    PublicBytes = <<1:256>>,
+    Public = aeser_api_encoder:encode(account_pubkey, PublicBytes),
+    %% Shape fixture only; never used for cryptographic signing.
+    Private = <<0:256, PublicBytes/binary>>,
+    lists:foreach(fun(Address) ->
+        Result = ?AE:tracked_keypair(#{public_key => Address, private_key => Private,
+                                      mnemonic => ?SECRET}),
+        ?assertEqual({ok, #{public_key => Public, private_key => Private}}, Result),
+        assert_no_secret(Result)
+    end, [Public, binary_to_list(Public)]).
 
-binary_and_charlist_payers_reach_both_builds() ->
-    lists:foreach(fun(Payer) ->
-        with_backend(fun fake/2, fun() ->
-            ?assertEqual({ok, <<"tx_signed_fixture">>}, prepare(Payer)),
-            Calls = calls(),
-            PayerBuilds = [Args || {paying_for, Args} <- Calls],
-            ?assertEqual(2, length(PayerBuilds)),
-            [[InitialAddress, 7, 1000, _], [FinalAddress, 7, 52000, _]] = PayerBuilds,
-            ?assertEqual(?PAYER, InitialAddress),
-            ?assertEqual(?PAYER, FinalAddress),
-            ?assertEqual([[?USER], [?PAYER]], [A || {next_nonce, A} <- Calls]),
-            ?assertEqual([], [C || {post_tx, _} = C <- Calls])
-        end)
-    end, [?PAYER, binary_to_list(?PAYER)]).
+preparation_exceptions_never_submit_or_leak_test_() ->
+    [?_test(assert_preparation_exception(Class)) || Class <- [error, throw, exit]].
 
-payer_spellings_share_a_lock() ->
-    ?assertEqual(damage_ae:payfor_submission_lock_id(?PAYER),
-                 damage_ae:payfor_submission_lock_id(binary_to_list(?PAYER))).
-
-keypair_loading_normalizes_and_scrubs() ->
-    with_backend(fun
-        (node_keypair, []) ->
-            (keypair())#{public_key => binary_to_list(?PAYER), mnemonic => ?SECRET};
-        (Name, Args) -> fake(Name, Args)
-    end, fun() ->
-        {ok, KP} = damage_ae:safe_node_keypair(),
-        ?assertEqual(keypair(), KP),
-        assert_no_secret(KP)
+assert_preparation_exception(Class) ->
+    {Result, Calls} = capture_calls(fun(Record) ->
+        ?AE:safe_payfor_attempt(
+            fun() -> Record(prepare), raise_fixture(Class) end,
+            fun(S, H) -> Record({submit, S, H}), unexpected end)
     end),
-    {Result, Events} = captured(fun() ->
-        with_backend(fun(node_keypair, []) -> erlang:error({badmatch, ?SECRET}) end,
-            fun damage_ae:safe_node_keypair/0)
+    ?assertEqual({not_submitted, payfor_prepare_failed}, Result),
+    ?assertEqual([prepare], Calls),
+    assert_no_secret(Result).
+
+malformed_preparation_results_never_submit_test_() ->
+    [?_test(begin
+        {Result, Calls} = capture_calls(fun(Record) ->
+            ?AE:safe_payfor_attempt(fun() -> Prepared end,
+                fun(S, H) -> Record({submit, S, H}), unexpected end)
+        end),
+        ?assertEqual({not_submitted, payfor_prepare_failed}, Result),
+        ?assertEqual([], Calls),
+        assert_no_secret(Result)
+    end) || Prepared <- [{error, #{private_key => ?SECRET}}, {unexpected, ?SECRET},
+                         {ok, ?SIGNED, undefined}, {ok, not_binary, ?HASH}]].
+
+submission_callback_exceptions_retain_hash_test_() ->
+    [?_test(begin
+        {Result, Calls} = capture_calls(fun(Record) ->
+            ?AE:safe_payfor_attempt(fun() -> {ok, ?SIGNED, ?HASH} end,
+                fun(S, H) -> Record({submit, S, H}), raise_fixture(Class) end)
+        end),
+        ?assertEqual({uncertain, ?HASH, payfor_submission_outcome_unknown}, Result),
+        ?assertEqual([{submit, ?SIGNED, ?HASH}], Calls),
+        assert_no_secret(Result)
+    end) || Class <- [error, throw, exit]].
+
+post_exceptions_are_observed_without_retry_test_() ->
+    [?_test(assert_post_exception(Class)) || Class <- [error, throw, exit]].
+
+assert_post_exception(Class) ->
+    {Result, Calls} = capture_calls(fun(Record) ->
+        ?AE:safe_payfor_submit(?SIGNED, ?HASH,
+            fun(S) -> Record({post, S}), raise_fixture(Class) end,
+            fun(H) -> Record({wait, H}), {error, #{private_key => ?SECRET}} end)
     end),
-    ?assertEqual({error, {node_keypair_failed, error, <<"badmatch">>}}, Result),
-    assert_no_secret({Result, Events}).
+    ?assertMatch({uncertain, ?HASH, #{status := submission_unknown,
+        submission := #{status := unavailable, error_code := <<"post_exception">>}}}, Result),
+    ?assertEqual([{post, ?SIGNED}, {wait, ?HASH}], Calls),
+    assert_no_secret(Result).
 
-preparation_failures_do_not_submit_or_leak() ->
-    lists:foreach(fun(Class) ->
-        {Result, Events} = captured(fun() ->
-            with_backend(fun
-                (prepare_contract, _) -> raise_fixture(Class);
-                (Name, Args) -> fake(Name, Args)
-            end, fun() ->
-                Reply = safe_call(),
-                ?assertMatch({not_submitted, {prepare_payfor_user_tx_failed, Class, _}}, Reply),
-                ?assertEqual([], [C || {post_tx, _} = C <- calls()]),
-                Reply
-            end)
+returned_post_failures_do_not_leak_test_() ->
+    [?_test(begin
+        {Result, Calls} = capture_calls(fun(Record) ->
+            ?AE:safe_payfor_submit(?SIGNED, ?HASH,
+                fun(S) -> Record({post, S}), PostReply end,
+                fun(H) -> Record({wait, H}), {error, not_found} end)
         end),
-        assert_no_secret({Result, Events})
-    end, [error, throw, exit]).
+        ?assertMatch({uncertain, ?HASH, #{status := submission_unknown}}, Result),
+        ?assertEqual([{post, ?SIGNED}, {wait, ?HASH}], Calls),
+        assert_no_secret(Result)
+    end) || PostReply <- [{error, #{private_key => ?SECRET}}, {unexpected, ?SECRET},
+                         {ok, #{tx_hash => ?SECRET}}]].
 
-post_failures_remain_uncertain_and_redacted() ->
-    lists:foreach(fun(Class) ->
-        {Result, Events} = captured(fun() ->
-            with_backend(fun(post_tx, _) -> raise_fixture(Class) end,
-                fun() -> damage_ae:post_payfor_user_tx(<<"tx_fixture">>) end)
+receipt_exceptions_remain_uncertain_test_() ->
+    [?_test(begin
+        {Result, Calls} = capture_calls(fun(Record) ->
+            ?AE:safe_payfor_submit(?SIGNED, ?HASH,
+                fun(S) -> Record({post, S}), {ok, #{tx_hash => ?HASH}} end,
+                fun(H) -> Record({wait, H}), raise_fixture(Class) end)
         end),
-        ?assertMatch({uncertain, undefined, {post_tx_crashed, Class, _}}, Result),
-        assert_no_secret({Result, Events})
-    end, [error, throw, exit]),
-    %% Returned backend failures are just as sensitive as thrown exceptions.
-    lists:foreach(fun(BackendReply) ->
-        with_backend(fun(post_tx, _) -> BackendReply end, fun() ->
-            Reply = damage_ae:post_payfor_user_tx(<<"tx_fixture">>),
-            ?assertMatch({uncertain, undefined, _}, Reply),
-            assert_no_secret(Reply)
-        end)
-    end, [{error, #{private_key => ?SECRET}}, {unexpected, ?SECRET}]).
+        ?assertMatch({uncertain, ?HASH, #{status := submitted,
+                                        reason := transaction_confirmation_unavailable}}, Result),
+        ?assertEqual([{post, ?SIGNED}, {wait, ?HASH}], Calls),
+        assert_no_secret(Result)
+    end) || Class <- [error, throw, exit]].
 
-confirmation_failures_remain_uncertain_and_redacted() ->
-    lists:foreach(fun(Class) ->
-        {Result, Events} = captured(fun() ->
-            with_backend(fun(wait_tx, _) -> raise_fixture(Class) end,
-                fun() -> damage_ae:confirm_payfor_user_tx(?TX_HASH) end)
+returned_poll_error_is_not_a_confirmation_test() ->
+    Result = ?AE:safe_payfor_submit(?SIGNED, ?HASH,
+        fun(_) -> {ok, #{tx_hash => ?HASH}} end,
+        fun(_) -> {error, {tx_poll_timeout, #{private_key => ?SECRET}}} end),
+    ?assertMatch({uncertain, ?HASH, #{status := submitted}}, Result),
+    assert_no_secret(Result).
+
+terminal_receipt_preserves_staged_tuple_test_() ->
+    %% 'confirmed' here means a mined receipt, including revert/VM error.
+    [?_test(begin
+        Call = #{height => 1, return_type => Type},
+        {Result, Calls} = capture_calls(fun(Record) ->
+            ?AE:safe_payfor_attempt(fun() -> Record(prepare), {ok, ?SIGNED, ?HASH} end,
+                fun(S, H) ->
+                    ?AE:safe_payfor_submit(S, H,
+                        fun(Tx) -> Record({post, Tx}), {ok, #{tx_hash => H}} end,
+                        fun(Hash) -> Record({wait, Hash}), Call end)
+                end)
         end),
-        ?assertMatch({uncertain, ?TX_HASH, {wait_tx_failed, Class, _}}, Result),
-        assert_no_secret({Result, Events})
-    end, [error, throw, exit]).
+        ?assertEqual({confirmed, ?HASH, Call}, Result),
+        ?assertEqual([prepare, {post, ?SIGNED}, {wait, ?HASH}], Calls)
+    end) || Type <- [ok, revert, error]].
 
-fixed_codes_do_not_serialize_arbitrary_terms() ->
-    %% Includes an atom and charlist, not just a binary secret. A formatter or
-    %% "redact known map keys" implementation would miss these shapes.
-    SecretAtom = 'PAYFOR-SECRET-SENTINEL-NEVER-LOG-OR-RETURN',
-    Inputs = [?SECRET, binary_to_list(?SECRET), SecretAtom,
-              #{unrecognized_field => ?SECRET}, {error, ?SECRET}],
-    lists:foreach(fun(Input) ->
-        ?assertEqual(<<"redacted">>, damage_ae:compact_payfor_error(Input)),
-        assert_no_secret(damage_ae:finish_payfor_submission({aborted, Input})),
-        assert_no_secret(damage_ae:finish_payfor_submission({unexpected, Input}))
-    end, Inputs),
-    ?assertEqual(<<"badmatch">>, damage_ae:compact_payfor_error({badmatch, ?SECRET})),
-    ?assertEqual(<<"timeout">>, damage_ae:compact_payfor_error({timeout, ?SECRET})).
+malformed_keypairs_are_not_echoed_test() ->
+    Result = ?AE:contract_call_payfor_user_safe(
+        #{private_key => ?SECRET}, ignored, ignored, ignored, []),
+    ?assertEqual({not_submitted, keypair_required}, Result),
+    assert_no_secret(Result).
 
-successful_staged_call_preserves_result() ->
-    with_backend(fun fake/2, fun() ->
-        ?assertEqual({confirmed, ?TX_HASH, #{return_type => ok}}, safe_call()),
-        ?assertEqual(1, length([C || {post_tx, _} = C <- calls()])),
-        ?assertEqual(1, length([C || {wait_tx, _} = C <- calls()]))
-    end).
+payer_spellings_use_shared_nonce_locks_test_() ->
+    {timeout, 10, fun payer_spellings_use_shared_nonce_locks/0}.
 
-malformed_keypairs_are_not_echoed() ->
-    Bad = #{private_key => ?SECRET},
-    Reply = damage_ae:contract_call_payfor_user_safe(Bad, ignored, ignored, ignored, []),
-    ?assertEqual({not_submitted, {keypair_required, <<"redacted">>}}, Reply),
-    assert_no_secret(Reply).
+payer_spellings_use_shared_nonce_locks() ->
+    Parent = self(), Ref = make_ref(),
+    Caller = <<"ak_payfor_caller_fixture">>, Payer = <<"ak_payfor_payer_fixture">>,
+    {Pid, Monitor} = spawn_monitor(fun() ->
+        %% Only the lock/session orchestration is exercised; no node is needed.
+        put({damage_ae, tx_session}, #{node_id => test_node, conn_pid => self()}),
+        Result = ?AE:safe_payfor_locked([binary_to_list(Payer), Caller, Payer], fun() ->
+            Parent ! {Ref, locked},
+            receive {Ref, release} -> ok after 5000 -> error(release_timeout) end
+        end),
+        Parent ! {Ref, result, Result}
+    end),
+    try
+        receive {Ref, locked} -> ok after 2000 -> error(lock_timeout) end,
+        ?assertEqual(false, probe_lock(Caller)),
+        ?assertEqual(false, probe_lock(Payer)),
+        Pid ! {Ref, release},
+        receive {Ref, result, Result} -> ?assertEqual(ok, Result)
+        after 2000 -> error(result_timeout) end,
+        ?assertEqual(true, probe_lock(Caller)),
+        ?assertEqual(true, probe_lock(Payer))
+    after
+        exit(Pid, kill),
+        erlang:demonitor(Monitor, [flush])
+    end.
 
-prepare(Payer) ->
-    damage_ae:prepare_payfor_user_signed_tx(
-        ?USER, <<1:512>>, <<"ct_fixture">>, "fixture.aes", "call", [],
-        (keypair())#{public_key => Payer}).
-safe_call() ->
-    damage_ae:contract_call_payfor_user_safe(
-        #{public_key => ?USER, private_key => <<1:512>>},
-        <<"ct_fixture">>, "fixture.aes", "call", []).
-keypair() -> #{public_key => ?PAYER, private_key => <<0:512>>}.
-
-fake(node_keypair, []) -> keypair();
-fake(next_nonce, [Address]) when is_binary(Address) -> {ok, 7};
-fake(min_fee, []) -> 1000;
-fake(min_gas, []) -> 50000;
-fake(min_gas_price, []) -> 2;
-fake(prepare_contract, [_]) -> {ok, fixture_aci};
-fake(contract_call, [Address, _, _, _, _, _, _, _, _, _]) when is_binary(Address) ->
-    {ok, <<"tx_inner_fixture">>};
-fake(sign, [Private, _]) when byte_size(Private) =:= 64 -> <<"sg_fixture">>;
-fake(attach_signature, [_, _]) -> <<"tx_signed_fixture">>;
-fake(decode, [<<"tx_paying_fixture">>]) -> {transaction, <<0:800>>};
-fake(decode, [_]) -> {transaction, <<0:80>>};
-fake(paying_for, [Address, _, _, _]) when is_binary(Address) -> {ok, <<"tx_paying_fixture">>};
-fake(paying_for_gas, [_, _]) -> 26000;
-fake(post_tx, [_]) -> {ok, #{"tx_hash" => ?TX_HASH}};
-fake(wait_tx, [_]) -> #{return_type => ok}.
+probe_lock(Account) ->
+    Id = {{damage_ae, tx_nonce, Account}, self()},
+    case global:set_lock(Id, [node()], 0) of
+        true -> global:del_lock(Id, [node()]), true;
+        false -> false
+    end.
 
 raise_fixture(error) -> erlang:error({badmatch, ?SECRET});
 raise_fixture(throw) -> throw({secret_payload, ?SECRET});
 raise_fixture(exit) -> exit({secret_payload, ?SECRET}).
 
-with_backend(Backend, Fun) ->
-    OldCalls = put({?MODULE, calls}, []),
-    Old = put({damage_ae, test_payfor_backend}, fun(Name, Args) ->
-        put({?MODULE, calls}, [{Name, Args} | get({?MODULE, calls})]),
-        Backend(Name, Args)
-    end),
-    try Fun()
-    after
-        restore({damage_ae, test_payfor_backend}, Old),
-        restore({?MODULE, calls}, OldCalls)
-    end.
-calls() -> lists:reverse(get({?MODULE, calls})).
-restore(Key, undefined) -> erase(Key), ok;
-restore(Key, Value) -> put(Key, Value), ok.
-
-captured(Fun) ->
+capture_calls(Fun) ->
     Ref = make_ref(),
-    Handler = damage_payfor_test_capture,
-    ok = logger:add_handler(Handler, ?MODULE,
-        #{level => all, config => #{owner => self(), reference => Ref}}),
+    put(Ref, []),
+    Record = fun(Call) -> put(Ref, [Call | get(Ref)]), ok end,
     try
-        Result = Fun(),
-        Events = receive
-            {Ref, First} -> collect(Ref, [First])
-        after 1000 -> error(missing_payfor_error_log)
-        end,
-        {Result, Events}
-    after logger:remove_handler(Handler) end.
-collect(Ref, Acc) ->
-    receive {Ref, Event} -> collect(Ref, [Event | Acc])
-    after 0 -> lists:reverse(Acc)
-    end.
-log(Event, #{config := #{owner := Owner, reference := Ref}}) ->
-    Owner ! {Ref, Event}, ok.
+        Result = Fun(Record),
+        {Result, lists:reverse(get(Ref))}
+    after erase(Ref) end.
+
 assert_no_secret(Term) ->
     ?assertEqual(nomatch, binary:match(term_to_binary(Term), ?SECRET)),
     ?assertEqual(nomatch, binary:match(iolist_to_binary(io_lib:format("~tp", [Term])), ?SECRET)).

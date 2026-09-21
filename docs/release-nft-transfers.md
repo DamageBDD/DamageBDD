@@ -159,14 +159,15 @@ journal, or exactly-once execution. After a timeout the existing account lock is
 released; it is not a durable reservation for unresolved transactions.
 
 Coordination applies only to code using the same nonce-lock namespace. External
-wallets, disconnected nodes and legacy helpers using other locks are not covered.
-In particular, the supplied `contract_call_payfor_user_safe/5` helper has its own
-older submission path; this transfer-focused patch does not rewrite it.
+wallets, disconnected nodes and helpers using other locks are not covered.
+`contract_call_payfor_user_safe/5` now uses the same caller/payer `tx_nonce` locks,
+centralized transaction builders and tracked submission diagnostics. See the staged
+PayingFor section below for its receipt-oriented tuple API.
 
 ## Tests
 
 ```bash
-rebar3 eunit --module=damage_ae_transfer_tests,damage_release_nft_transfer_tests,damage_releases_http_transfer_tests
+rebar3 eunit --module=damage_ae_transfer_tests,damage_ae_payfor_tests,damage_release_nft_transfer_tests,damage_releases_http_transfer_tests
 ```
 
 The regression tests cover the public request gate, bounded fragmented body
@@ -318,7 +319,7 @@ Run from the repository root:
 
 ```bash
 rebar3 eunit \
-  --module=damage_ae_transfer_tests,damage_release_nft_transfer_tests,damage_releases_http_transfer_tests
+  --module=damage_ae_transfer_tests,damage_ae_payfor_tests,damage_release_nft_transfer_tests,damage_releases_http_transfer_tests
 ```
 
 These are unit/callback tests, not a live-chain test of signing, submission or
@@ -333,3 +334,18 @@ wallets. An unresolved result, process loss or lost HTTP response must be
 reconciled before retrying. This patch adds no durable idempotency store or
 exactly-once guarantee, and successful wallet preparation reserves neither
 ownership nor a nonce.
+
+## Callback assertion discipline
+
+Record callback arguments and call order, then assert them after the production
+helper returns. Do not put an assertion inside another assertion's callback
+expression: assertion macro bindings can capture one another. Assertions raised
+inside production exception handlers can also be sanitized into normal error
+results, allowing negative-path tests to pass without checking the intended
+argument or proving that a forbidden callback was not invoked.
+
+The staged PayingFor tests target the current `safe_payfor_*` callback seams.
+They do not require the removed `payfor_submission_lock_id/1`, standalone POST/
+confirmation helpers, compact error formatter, old prepare arity, or a
+`test_payfor_backend` process-dictionary hook. Node-key loading, actual builders,
+cryptographic signing and live-chain execution require separate integration tests.
