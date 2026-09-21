@@ -47,15 +47,13 @@ handle_info(Any, State) ->
     ?LOG_DEBUG("ECAI Search server got cast message: ~s~n", [Any]),
     {noreply, State}.
 handle_continue(load_ctx, Ctx0) ->
-    SnapShotPath = application:get_env(
-        ecai, index_snapshot_path, "/var/lib/damage/ecai/state/ecai_index.snap"
-    ),
+    SnapShotPath = ecai_paths:index_snapshot_path(),
     CtxPath =
         case filelib:is_file(SnapShotPath) of
             true ->
                 SnapShotPath;
             false ->
-                application:get_env(ecai, search_context_file, "/var/lib/damage/ecai/default.ctx")
+                ecai_paths:search_context_file()
         end,
     ?LOG_INFO("ECAI context loading from ~p", [CtxPath]),
     NewCtx =

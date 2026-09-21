@@ -273,7 +273,7 @@ normalize_target(Kind, Target) ->
         namespace,
         field(namespace, Target, ?DEFAULT_NAMESPACE)
     ),
-    BaseDir = optional_path(base_dir, field(base_dir, Target, default_base_dir())),
+    BaseDir = normalize_base_dir(field(base_dir, Target, default_base_dir())),
     Mode = normalize_index_mode(Kind, field(mode, Target, default_mode(Kind))),
     PreviousManifestCid = optional_reference(
         previous_manifest_cid,
@@ -460,10 +460,7 @@ default_mode(ipfs_cid) -> searchable_disk;
 default_mode(ipfs_manifest) -> searchable_disk.
 
 default_base_dir() ->
-    case application:get_env(ecai, ipfs_index_dir) of
-        {ok, Value} -> Value;
-        undefined -> <<"/var/lib/damage/ecai/ipfs-index">>
-    end.
+    unicode:characters_to_binary(ecai_paths:ipfs_index_dir()).
 
 normalize_limit(infinity) -> infinity;
 normalize_limit(<<"infinity">>) -> infinity;
@@ -504,6 +501,14 @@ optional_path(Name, Value) ->
         0 -> validation_error({empty_field, Name});
         Size when Size =< ?MAX_PATH_BYTES -> Bin;
         Size -> validation_error({field_too_large, Name, Size})
+    end.
+
+normalize_base_dir(Value) ->
+    Bin = optional_path(base_dir, Value),
+    try
+        unicode:characters_to_binary(ecai_paths:normalize(Bin))
+    catch
+        _:_ -> validation_error({invalid_field, base_dir})
     end.
 
 normalize_path(#{path := Path}) -> normalize_path(Path);

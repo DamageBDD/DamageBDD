@@ -10,14 +10,31 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("damage.hrl").
 
--export([get_default_config/1]).
+-export([get_default_config/1, state_dir/0, runs_dir/0, normalize_path/1, ensure_directory/1]).
 
 -spec get_default_config(proplists:proplist() | map()) -> proplists:proplist().
 get_default_config(ConfigIn0) ->
     C0 = normalize(ConfigIn0),
 
     %% --- load defaults from app env --------------------------------------
-    DataDir0 = maps:get(data_dir, C0, application:get_env(damage, data_dir, "/var/lib/damage/")),
+    %% Execution output is runtime state.  Keep it beneath the shared Damage
+    %% state root instead of writing account/run directories directly under
+    %% /var/lib/damage or the repository working directory.
+    %%
+    %% Precedence:
+    %%   request/config data_dir        (per-run/internal compatibility override)
+    %%   request/config runs_dir
+    %%   damage.runs_dir
+    %%   damage.state_dir/runtime/runs
+    %%   damage.secrets_state_dir/runtime/runs (compatibility)
+    %%   $XDG_STATE_HOME/damage/runtime/runs
+    %%   $HOME/.local/state/damage/runtime/runs
+    %%   /var/lib/damage/runtime/runs
+    %%
+    %% The old global damage.data_dir setting is intentionally not used as the
+    %% runner root anymore.  It was too broad and commonly pointed at
+    %% /var/lib/damage.  Use damage.runs_dir for an explicit execution override.
+    DataDir0 = maps:get(data_dir, C0, maps:get(runs_dir, C0, runs_dir())),
     ChromeDrv0 = maps:get(
         chromedriver, C0, application:get_env(damage, chromedriver, "chromedriver")
     ),
@@ -26,18 +43,26 @@ get_default_config(ConfigIn0) ->
     AeAccount0 = must_get(public_key, C0),
 
     %% --- normalize types for filename:join --------------------------------
-    DataDir = to_str(DataDir0),
+    DataDir = normalize_path(DataDir0),
     AeAccount = to_str(AeAccount0),
     ChromeDrv = to_str(ChromeDrv0),
 
     %% --- run id & dirs ----------------------------------------------------
-    RunId = maps:get(run_id, C0, gen_run_id()),
+    RunId = to_str(maps:get(run_id, C0, gen_run_id())),
     AccountDir = filename:join(DataDir, AeAccount),
-    RunDir = maps:get(run_dir, C0, filename:join(AccountDir, RunId)),
-    ReportDir = filename:join([RunDir, <<"reports">>]),
-    ArtifactsDir = filename:join([RunDir, <<"artifacts">>]),
-    ok = damage_utils:ensure_dir(ReportDir),
-    ok = damage_utils:ensure_dir(ArtifactsDir),
+    RunDir0 = maps:get(run_dir, C0, filename:join(AccountDir, RunId)),
+    RunDir = normalize_path(RunDir0),
+    ReportDir = filename:join(RunDir, "reports"),
+    ArtifactsDir = filename:join(RunDir, "artifacts"),
+
+    %% Create every level explicitly. filelib:ensure_dir/1 is recursive, but
+    %% keeping the layout steps explicit makes failures identify the exact
+    %% server-owned directory that could not be prepared.
+    ok = ensure_directory(DataDir),
+    ok = ensure_directory(AccountDir),
+    ok = ensure_directory(RunDir),
+    ok = ensure_directory(ReportDir),
+    ok = ensure_directory(ArtifactsDir),
 
     %% --- built-in reports (durable on-disk) -------------------------------
     TextReport = filename:join([ReportDir, <<"{{process_id}}.plain.txt">>]),
@@ -62,6 +87,8 @@ get_default_config(ConfigIn0) ->
         formatters => FinalFormatters,
         chromedriver => ChromeDrv,
         concurrency => Concurrency,
+        data_dir => DataDir,
+        runs_dir => DataDir,
         run_id => RunId,
         run_dir => RunDir,
         reports_dir => ReportDir,
@@ -78,6 +105,8 @@ get_default_config(ConfigIn0) ->
             feature_dirs,
             chromedriver,
             concurrency,
+            data_dir,
+            runs_dir,
             run_id,
             run_dir,
             reports_dir,
@@ -103,6 +132,76 @@ must_get(Key, Map) ->
 gen_run_id() ->
     {ok, B} = datestring:format(<<"YmdHMS">>, erlang:localtime()),
     to_str(B).
+
+runs_dir() ->
+    case application:get_env(damage, runs_dir) of
+        {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+            normalize_path(Dir);
+        _ ->
+            filename:join([state_dir(), "runtime", "runs"])
+    end.
+
+state_dir() ->
+    case application:get_env(damage, state_dir) of
+        {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+            normalize_path(Dir);
+        _ ->
+            case application:get_env(damage, secrets_state_dir) of
+                {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+                    normalize_path(Dir);
+                _ ->
+                    default_state_dir()
+            end
+    end.
+
+default_state_dir() ->
+    case os:getenv("XDG_STATE_HOME") of
+        Xdg when is_list(Xdg), Xdg =/= "" ->
+            case filename:pathtype(Xdg) of
+                absolute ->
+                    filename:join(Xdg, "damage");
+                _ ->
+                    home_state_dir()
+            end;
+        _ ->
+            home_state_dir()
+    end.
+
+home_state_dir() ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" ->
+            filename:join([Home, ".local", "state", "damage"]);
+        _ ->
+            "/var/lib/damage"
+    end.
+
+normalize_path(Path0) ->
+    Path1 = to_str(Path0),
+    Path2 = expand_home_path(Path1),
+    filename:absname(Path2).
+
+expand_home_path("~") ->
+    require_home("~");
+expand_home_path([$~, $/ | Rest] = Path) ->
+    filename:join(require_home(Path), Rest);
+expand_home_path(Path) ->
+    Path.
+
+require_home(Path) ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" ->
+            Home;
+        _ ->
+            erlang:error({home_directory_unavailable, Path})
+    end.
+
+ensure_directory(Dir) ->
+    case filelib:ensure_dir(filename:join(Dir, ".keep")) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            erlang:error({run_directory_failed, Dir, Reason})
+    end.
 
 to_str(B) when is_binary(B) -> binary_to_list(B);
 to_str(A) when is_atom(A) -> atom_to_list(A);

@@ -40,32 +40,43 @@
 %%% ---------- Public
 
 start_link() ->
-    case app_env(enabled, true) of
-        {ok, false} ->
+    case subsystem_enabled(git, false) of
+        false ->
             ?LOG_INFO("damage_ssh_git_listener disabled by config", []),
             ignore;
-        _ ->
-            gen_server:start_link({local, ?MODULE}, ?MODULE, [], [])
+        true ->
+            %% SSH is an optional subsystem. A bad host-key directory, missing
+            %% host key or occupied port must not prevent the damage app booting.
+            case gen_server:start_link({local, ?MODULE}, ?MODULE, [], []) of
+                {ok, _Pid} = Ok ->
+                    Ok;
+                {error, Reason} ->
+                    ?LOG_ERROR("Git SSH subsystem unavailable; continuing without it reason=~p", [
+                        Reason
+                    ]),
+                    ignore
+            end
     end.
 
 child_spec() ->
-    #{id => ?MODULE, start => {?MODULE, start_link, []}, restart => permanent, type => worker}.
+    #{id => ?MODULE, start => {?MODULE, start_link, []}, restart => temporary, type => worker}.
 
 %%% ---------- gen_server
 
 init([]) ->
-    %% App env (provide sane defaults)
+    %% App env (provide sane XDG-state defaults).
+    StateDir = damage_state_dir(),
     {ok, ListenAddr} = app_env(listen_addr, {127, 0, 0, 1}),
     {ok, Port} = app_env(port, 2222),
-    {ok, SystemDir0} = app_env(system_dir, "/var/lib/damage/ssh/git/system"),
-    {ok, UserDir0} = app_env(user_dir, "/var/lib/damage/ssh/git/user"),
-    {ok, Repos0} = app_env(repos_root, "/var/lib/damage/git"),
+    {ok, SystemDir0} = app_env(system_dir, filename:join([StateDir, "ssh", "git", "system"])),
+    {ok, UserDir0} = app_env(user_dir, filename:join([StateDir, "ssh", "git", "user"])),
+    {ok, Repos0} = app_env(repos_root, filename:join(StateDir, "git")),
     {ok, AllowPush} = app_env(allow_push, #{}),
 
     SystemDir = normalize_path(SystemDir0),
     UserDir = normalize_path(UserDir0),
     Repos = normalize_path(Repos0),
-    ensure_dirs([SystemDir, UserDir, Repos]),
+    ok = ensure_dirs([SystemDir, UserDir, Repos]),
     ensure_host_key_hint(SystemDir),
 
     Opts = [
@@ -211,26 +222,88 @@ app_env(Key, Default) ->
             {ok, Default}
     end.
 
-ensure_dirs(Dirs) ->
-    lists:foreach(fun ensure_dir/1, Dirs).
+subsystem_enabled(Name, Default) ->
+    case application:get_env(damage, ssh_subsystems) of
+        {ok, Subsystems} when is_list(Subsystems) ->
+            lists:any(fun(Value) -> subsystem_name(Value) =:= Name end, Subsystems);
+        _ ->
+            {ok, Enabled} = app_env(enabled, Default),
+            config_bool(Enabled, Default)
+    end.
+
+subsystem_name(Value) when is_atom(Value) -> Value;
+subsystem_name(Value) when is_binary(Value) -> subsystem_name(binary_to_list(Value));
+subsystem_name(Value) when is_list(Value) ->
+    try list_to_existing_atom(string:lowercase(Value)) of
+        Name -> Name
+    catch
+        _:_ -> undefined
+    end;
+subsystem_name(_) -> undefined.
+
+config_bool(true, _Default) -> true;
+config_bool(false, _Default) -> false;
+config_bool(<<"true">>, _Default) -> true;
+config_bool(<<"false">>, _Default) -> false;
+config_bool("true", _Default) -> true;
+config_bool("false", _Default) -> false;
+config_bool(_, Default) -> Default.
+
+ensure_dirs([Dir | Rest]) ->
+    case ensure_dir(Dir) of
+        ok -> ensure_dirs(Rest);
+        {error, _} = Error -> Error
+    end;
+ensure_dirs([]) ->
+    ok.
 
 normalize_path(Path) when is_binary(Path) ->
-    binary_to_list(Path);
+    normalize_path(binary_to_list(Path));
+normalize_path("~") ->
+    home_dir();
+normalize_path("~/" ++ Rest) ->
+    filename:join(home_dir(), Rest);
 normalize_path(Path) when is_list(Path) ->
     Path.
 
+home_dir() ->
+    case os:getenv("HOME") of
+        false -> "/var/lib/damage";
+        "" -> "/var/lib/damage";
+        Home -> Home
+    end.
+
+damage_state_dir() ->
+    case application:get_env(damage, state_dir) of
+        {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+            normalize_path(Dir);
+        _ ->
+            default_damage_state_dir()
+    end.
+
+default_damage_state_dir() ->
+    case os:getenv("XDG_STATE_HOME") of
+        Xdg when is_list(Xdg), Xdg =/= "" ->
+            case filename:pathtype(normalize_path(Xdg)) of
+                absolute -> filename:join(normalize_path(Xdg), "damage");
+                _ -> filename:join([home_dir(), ".local", "state", "damage"])
+            end;
+        _ ->
+            filename:join([home_dir(), ".local", "state", "damage"])
+    end.
+
 ensure_dir(D0) ->
     D = normalize_path(D0),
-    %% ensure_dir expects a *file* path; we append "x" to create the directory tree for D
-    case filelib:ensure_dir(filename:join(D, "x")) of
+    %% ensure_dir expects a *file* path; append a sentinel filename.
+    case filelib:ensure_dir(filename:join(D, ".keep")) of
         ok ->
             ok;
         {error, Reason} ->
             ?LOG_ERROR(
-                "Cannot create directory ~s (~p). Set damage ssh_git system_dir/user_dir/repos_root to writable paths or pre-create them.",
+                "Cannot create Git SSH directory ~s (~p). Configure damage state_dir or ssh_git paths to writable locations.",
                 [D, Reason]
             ),
-            ok
+            {error, {ssh_directory_unavailable, D, Reason}}
     end.
 
 host_key_files(SystemDir) ->

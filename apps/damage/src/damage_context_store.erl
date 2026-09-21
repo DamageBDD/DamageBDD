@@ -900,18 +900,92 @@ ensure_redaction_table() ->
             ?REDACTION_TABLE
     end.
 
+%% Resolve the context store outside the source tree by default.
+%%
+%% Precedence:
+%%   1. context_store_file  - exact file override
+%%   2. context_data_dir    - context-specific directory override
+%%   3. state_dir           - application-wide state root
+%%   4. secrets_state_dir   - compatibility alias for existing deployments
+%%   5. XDG_STATE_HOME/damage
+%%   6. $HOME/.local/state/damage
+%%
+%% Every configured/environment path passes through expand_user_path/1 so
+%% values such as "~/.local/state/damage" work consistently.
 context_store_file() ->
-    case application:get_env(damage, context_store_file) of
-        {ok, File} when is_binary(File) -> binary_to_list(File);
-        {ok, File} when is_list(File) -> File;
+    case configured_path(context_store_file) of
+        {ok, File} ->
+            File;
+        undefined ->
+            filename:join(context_data_dir(), "damage_context_v2.dets")
+    end.
+
+context_data_dir() ->
+    case configured_path(context_data_dir) of
+        {ok, Dir} ->
+            Dir;
+        undefined ->
+            filename:join([state_dir(), "runtime", "data"])
+    end.
+
+state_dir() ->
+    case configured_path(state_dir) of
+        {ok, Dir} ->
+            Dir;
+        undefined ->
+            %% Keep the previously introduced secrets_state_dir usable as a
+            %% state-root alias while deployments migrate to state_dir.
+            case configured_path(secrets_state_dir) of
+                {ok, Dir} -> Dir;
+                undefined -> default_state_dir()
+            end
+    end.
+
+default_state_dir() ->
+    filename:join(xdg_state_home(), "damage").
+
+xdg_state_home() ->
+    case os:getenv("XDG_STATE_HOME") of
+        false ->
+            default_xdg_state_home();
+        "" ->
+            default_xdg_state_home();
+        Value ->
+            Expanded = expand_user_path(Value),
+            %% XDG_STATE_HOME is required by the XDG Base Directory
+            %% specification to be absolute. Ignore an invalid relative value
+            %% rather than writing state relative to the node working directory.
+            case filename:pathtype(Expanded) of
+                absolute -> Expanded;
+                _ -> default_xdg_state_home()
+            end
+    end.
+
+default_xdg_state_home() ->
+    filename:join([home_dir(), ".local", "state"]).
+
+configured_path(Key) ->
+    case application:get_env(damage, Key) of
+        {ok, Value} when is_binary(Value); is_list(Value) ->
+            {ok, expand_user_path(Value)};
         _ ->
-            DataDir =
-                case application:get_env(damage, context_data_dir) of
-                    {ok, Dir} when is_binary(Dir) -> binary_to_list(Dir);
-                    {ok, Dir} when is_list(Dir) -> Dir;
-                    _ -> "data"
-                end,
-            filename:join(DataDir, "damage_context_v2.dets")
+            undefined
+    end.
+
+expand_user_path(Value) when is_binary(Value) ->
+    expand_user_path(binary_to_list(Value));
+expand_user_path("~") ->
+    home_dir();
+expand_user_path("~/" ++ Rest) ->
+    filename:join(home_dir(), Rest);
+expand_user_path(Value) when is_list(Value) ->
+    Value.
+
+home_dir() ->
+    case os:getenv("HOME") of
+        false -> error(home_directory_unavailable);
+        "" -> error(home_directory_unavailable);
+        Home -> Home
     end.
 
 maybe_sync_store() ->

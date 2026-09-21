@@ -114,10 +114,14 @@ ensure_trailing_newline(Bin) when is_binary(Bin) ->
     end.
 
 authorized_keys_path() ->
-    Home = os:getenv("HOME", "/var/lib/damage/"),
-    UserDir = normalize_path(app_env(user_dir, filename:join(Home, "ssh/tunnel/user"))),
-    ensure_dir(UserDir),
-    filename:join(UserDir, "authorized_keys").
+    StateDir = damage_state_dir(),
+    UserDir = normalize_path(
+        app_env(user_dir, filename:join([StateDir, "ssh", "tunnel", "user"]))
+    ),
+    case ensure_dir(UserDir) of
+        ok -> filename:join(UserDir, "authorized_keys");
+        {error, Reason} -> error(Reason)
+    end.
 
 write_ssh_public_key(Data) ->
     Key = normalize_key(key_from_data(Data)),
@@ -228,26 +232,87 @@ app_env(Key, Default) ->
             legacy_app_env(Key, Default)
     end.
 
-ensure_dirs(Dirs) ->
-    lists:foreach(fun ensure_dir/1, Dirs).
+subsystem_enabled(Name, Default) ->
+    case application:get_env(damage, ssh_subsystems) of
+        {ok, Subsystems} when is_list(Subsystems) ->
+            lists:any(fun(Value) -> subsystem_name(Value) =:= Name end, Subsystems);
+        _ ->
+            config_bool(app_env(enabled, Default), Default)
+    end.
+
+subsystem_name(Value) when is_atom(Value) -> Value;
+subsystem_name(Value) when is_binary(Value) -> subsystem_name(binary_to_list(Value));
+subsystem_name(Value) when is_list(Value) ->
+    try list_to_existing_atom(string:lowercase(Value)) of
+        Name -> Name
+    catch
+        _:_ -> undefined
+    end;
+subsystem_name(_) -> undefined.
+
+config_bool(true, _Default) -> true;
+config_bool(false, _Default) -> false;
+config_bool(<<"true">>, _Default) -> true;
+config_bool(<<"false">>, _Default) -> false;
+config_bool("true", _Default) -> true;
+config_bool("false", _Default) -> false;
+config_bool(_, Default) -> Default.
+
+ensure_dirs([Dir | Rest]) ->
+    case ensure_dir(Dir) of
+        ok -> ensure_dirs(Rest);
+        {error, _} = Error -> Error
+    end;
+ensure_dirs([]) ->
+    ok.
 
 normalize_path(Path) when is_binary(Path) ->
-    binary_to_list(Path);
+    normalize_path(binary_to_list(Path));
+normalize_path("~") ->
+    home_dir();
+normalize_path("~/" ++ Rest) ->
+    filename:join(home_dir(), Rest);
 normalize_path(Path) when is_list(Path) ->
     Path.
 
+home_dir() ->
+    case os:getenv("HOME") of
+        false -> "/var/lib/damage";
+        "" -> "/var/lib/damage";
+        Home -> Home
+    end.
+
+damage_state_dir() ->
+    case application:get_env(damage, state_dir) of
+        {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+            normalize_path(Dir);
+        _ ->
+            default_damage_state_dir()
+    end.
+
+default_damage_state_dir() ->
+    case os:getenv("XDG_STATE_HOME") of
+        Xdg when is_list(Xdg), Xdg =/= "" ->
+            case filename:pathtype(normalize_path(Xdg)) of
+                absolute -> filename:join(normalize_path(Xdg), "damage");
+                _ -> filename:join([home_dir(), ".local", "state", "damage"])
+            end;
+        _ ->
+            filename:join([home_dir(), ".local", "state", "damage"])
+    end.
+
 ensure_dir(D0) ->
     D = normalize_path(D0),
-    %% ensure_dir expects a *file* path; we append "x" to create the directory tree for D
-    case filelib:ensure_dir(filename:join(D, "x")) of
+    %% ensure_dir expects a *file* path; append a sentinel filename.
+    case filelib:ensure_dir(filename:join(D, ".keep")) of
         ok ->
             ok;
         {error, Reason} ->
             ?LOG_ERROR(
-                "Cannot create directory ~s (~p). Set damage ssh_tunnel system_dir/user_dir to writable paths or pre-create them.",
+                "Cannot create SSH tunnel directory ~s (~p). Configure damage state_dir or ssh_tunnel paths to writable locations.",
                 [D, Reason]
             ),
-            ok
+            {error, {ssh_directory_unavailable, D, Reason}}
     end.
 
 normalize_port({ok, Port}) ->
@@ -310,6 +375,7 @@ ssh_daemon_options(SystemDir, UserDir) ->
     [
         {system_dir, SystemDir},
         {user_dir, UserDir},
+        {auth_methods, "publickey"},
         {subsystems, [{"damage_ssh_tunnel", {damage_ssh_tunnel_listener, [0]}}]},
         {shell, disabled},
         {tcpip_tunnel_out, true},
@@ -324,35 +390,61 @@ ssh_daemon_options(SystemDir, UserDir) ->
     ].
 
 start_link() ->
-    case app_env(enabled, true) of
+    case subsystem_enabled(tunnel, false) of
         false ->
             ?LOG_INFO("damage_ssh_tunnel_listener disabled by config", []),
             ignore;
-        _ ->
-            start_ssh_daemon()
+        true ->
+            %% The tunnel endpoint is optional infrastructure. Failure to create
+            %% its state directories, load host keys or bind must not abort boot.
+            try start_ssh_daemon() of
+                {ok, _Pid} = Ok ->
+                    Ok;
+                {error, Reason} ->
+                    ?LOG_ERROR(
+                        "SSH tunnel subsystem unavailable; continuing without it reason=~p",
+                        [Reason]
+                    ),
+                    ignore
+            catch
+                Class:Reason:Stacktrace ->
+                    ?LOG_ERROR(
+                        "SSH tunnel subsystem crashed during startup; continuing without it class=~p reason=~p stack=~p",
+                        [Class, Reason, Stacktrace]
+                    ),
+                    ignore
+            end
     end.
 
 start_ssh_daemon() ->
-    Home = os:getenv("HOME", "/var/lib/damage/"),
-    SystemDir = normalize_path(app_env(system_dir, filename:join(Home, "ssh/tunnel/system"))),
-    UserDir = normalize_path(app_env(user_dir, filename:join(Home, "ssh/tunnel/user"))),
+    StateDir = damage_state_dir(),
+    SystemDir = normalize_path(
+        app_env(system_dir, filename:join([StateDir, "ssh", "tunnel", "system"]))
+    ),
+    UserDir = normalize_path(
+        app_env(user_dir, filename:join([StateDir, "ssh", "tunnel", "user"]))
+    ),
     Port = normalize_port(app_env(port, 2223)),
     Ip = normalize_ip(app_env(ip, {127, 0, 0, 1})),
-    ensure_dirs([SystemDir, UserDir]),
-    ensure_host_key_hint(SystemDir),
-
-    case ssh:daemon(Ip, Port, ssh_daemon_options(SystemDir, UserDir)) of
-        {ok, SSHPid} ->
-            DaemonInfo = ssh:daemon_info(SSHPid),
-            ?LOG_INFO("damage_ssh_tunnel_listener daemon started ip=~p port=~p info=~p", [
-                Ip, Port, DaemonInfo
-            ]),
-            {ok, SSHPid};
-        {error, Reason} = Error ->
-            ?LOG_ERROR(
-                "Failed to start damage_ssh_tunnel_listener daemon ip=~p port=~p system_dir=~s user_dir=~s reason=~p",
-                [Ip, Port, SystemDir, UserDir, Reason]
-            ),
+    case ensure_dirs([SystemDir, UserDir]) of
+        ok ->
+            ensure_host_key_hint(SystemDir),
+            case ssh:daemon(Ip, Port, ssh_daemon_options(SystemDir, UserDir)) of
+                {ok, SSHPid} ->
+                    DaemonInfo = ssh:daemon_info(SSHPid),
+                    ?LOG_INFO(
+                        "damage_ssh_tunnel_listener daemon started ip=~p port=~p info=~p",
+                        [Ip, Port, DaemonInfo]
+                    ),
+                    {ok, SSHPid};
+                {error, Reason} = Error ->
+                    ?LOG_ERROR(
+                        "Failed to start damage_ssh_tunnel_listener daemon ip=~p port=~p system_dir=~s user_dir=~s reason=~p",
+                        [Ip, Port, SystemDir, UserDir, Reason]
+                    ),
+                    Error
+            end;
+        {error, _} = Error ->
             Error
     end.
 

@@ -51,7 +51,7 @@ normalize(Opts) when is_map(Opts) ->
         {ipfs_peers, application:get_env(damage, ipfs_peers, [])},
         {peer_interval_ms, application:get_env(damage, ipfs_peer_retry_interval, 30000)},
         {backend, damage_ipfs_backend},
-        {data_dir, "data/damage_ipfs"},
+        {data_dir, default_data_dir()},
         {request_timeout_ms, 50000},
         {connect_timeout_ms, 5000},
         {http_timeout_ms, 15000},
@@ -126,7 +126,9 @@ normalize(Opts) when is_map(Opts) ->
     false = maps:is_key(fragment, Parsed),
     false = maps:is_key(userinfo, Parsed),
     true = is_atom(maps:get(backend, C)),
-    C#{ipfs_api => Api, data_dir => text(maps:get(data_dir, C))};
+    DataDir = damage_config:normalize_path(maps:get(data_dir, C)),
+    ok = damage_config:ensure_directory(DataDir),
+    C#{ipfs_api => Api, data_dir => DataDir};
 normalize(_) ->
     error({invalid_ipfs_config, expected_key_value_tuples}).
 
@@ -140,6 +142,9 @@ call(Name, Request, Timeout) ->
         exit:{shutdown, _} -> {error, unavailable};
         exit:Reason -> {error, {service_exit, Reason}}
     end.
+
+default_data_dir() ->
+    filename:join([damage_config:state_dir(), "runtime", "ipfs"]).
 
 text(B) when is_binary(B) -> binary_to_list(B);
 text(L) when is_list(L) -> L.

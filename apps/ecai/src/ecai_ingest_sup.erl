@@ -15,14 +15,8 @@
 
 -export([init/1]).
 
--define(DEFAULT_BASE_DIR, "/var/lib/damage/ecai/ipfs-index").
-
 start_link() ->
-    BaseDir = application:get_env(
-        ecai,
-        ipfs_index_dir,
-        ?DEFAULT_BASE_DIR
-    ),
+    BaseDir = ecai_paths:ipfs_index_dir(),
     MaxBatchEvents = application:get_env(
         ecai,
         ingest_wal_max_batch_events,

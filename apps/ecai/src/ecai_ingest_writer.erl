@@ -39,7 +39,6 @@
 ]).
 
 -define(DEFAULT_NAME, ?MODULE).
--define(DEFAULT_BASE_DIR, "/var/lib/damage/ecai/ipfs-index").
 -define(DEFAULT_MAX_BATCH_EVENTS, 4096).
 -define(DEFAULT_MAX_BATCH_BYTES, 67108864).
 -define(DEFAULT_LIST_LIMIT, 1000).
@@ -60,11 +59,7 @@
 }).
 
 start_link() ->
-    BaseDir = application:get_env(
-        ecai,
-        ipfs_index_dir,
-        ?DEFAULT_BASE_DIR
-    ),
+    BaseDir = ecai_paths:ipfs_index_dir(),
     MaxBatchEvents = application:get_env(
         ecai,
         ingest_wal_max_batch_events,
@@ -173,8 +168,10 @@ init_canonical_base_dir(BaseDir, Opts) ->
         max_batch_events => MaxBatchEvents,
         max_batch_bytes => MaxBatchBytes
     },
-    case ecai_wal:open(BaseDir, WalOpts) of
-        {ok, Wal, Recovery} ->
+    case ensure_storage_dirs(BaseDir) of
+        ok ->
+            case ecai_wal:open(BaseDir, WalOpts) of
+                {ok, Wal, Recovery} ->
             EventTab = ets:new(ecai_ingest_event_ids, [set, private]),
             RecordsTab = ets:new(ecai_ingest_records, [ordered_set, private]),
             Records = maps:get(records, Recovery),
@@ -188,21 +185,29 @@ init_canonical_base_dir(BaseDir, Opts) ->
             ),
             RepairedBytes = maps:get(repaired_bytes, Recovery),
             log_recovery(BaseDir, Recovery, Unique, Duplicates),
-            {ok, #st{
-                base_dir = BaseDir,
-                wal = Wal,
-                event_tab = EventTab,
-                records_tab = RecordsTab,
-                next_doc_id = NextDocId,
-                recovered_unique = Unique,
-                recovered_duplicates = Duplicates,
-                repaired_bytes = RepairedBytes,
-                max_batch_events = MaxBatchEvents,
-                max_batch_bytes = MaxBatchBytes,
-                opts = Opts
-            }};
+                    {ok, #st{
+                        base_dir = BaseDir,
+                        wal = Wal,
+                        event_tab = EventTab,
+                        records_tab = RecordsTab,
+                        next_doc_id = NextDocId,
+                        recovered_unique = Unique,
+                        recovered_duplicates = Duplicates,
+                        repaired_bytes = RepairedBytes,
+                        max_batch_events = MaxBatchEvents,
+                        max_batch_bytes = MaxBatchBytes,
+                        opts = Opts
+                    }};
+                {error, Reason} ->
+                    ?LOG_ERROR("ECAI ingest WAL failed to open base_dir=~ts reason=~p", [
+                        BaseDir, Reason
+                    ]),
+                    {stop, Reason}
+            end;
         {error, Reason} ->
-            ?LOG_ERROR("ECAI ingest WAL failed to open: ~p", [Reason]),
+            ?LOG_ERROR("ECAI ingest state directory unavailable base_dir=~ts reason=~p", [
+                BaseDir, Reason
+            ]),
             {stop, Reason}
     end.
 
@@ -499,23 +504,19 @@ status_map(State) ->
         index_searchable => false
     }.
 
-normalize_base_dir(BaseDir) when is_binary(BaseDir), byte_size(BaseDir) > 0 ->
-    try unicode:characters_to_list(BaseDir) of
-        List when is_list(List), List =/= [] ->
-            {ok, filename:absname(List)};
-        _ ->
-            {error, invalid_base_dir}
-    catch
-        _:_ -> {error, invalid_base_dir}
-    end;
-normalize_base_dir(BaseDir) when is_list(BaseDir), BaseDir =/= [] ->
+normalize_base_dir(BaseDir) when is_binary(BaseDir); is_list(BaseDir) ->
     try
-        {ok, filename:absname(BaseDir)}
+        {ok, ecai_paths:normalize(BaseDir)}
     catch
         _:_ -> {error, invalid_base_dir}
     end;
 normalize_base_dir(_Invalid) ->
     {error, invalid_base_dir}.
+
+ensure_storage_dirs(BaseDir) ->
+    %% ecai_wal stores the durable ingest log beneath BaseDir/wal.
+    %% Ensure the full tree exists before ecai_wal:open/2 on first boot.
+    ecai_paths:ensure_dir(filename:join(BaseDir, "wal")).
 
 log_recovery(BaseDir, Recovery, Unique, Duplicates) ->
     RepairedBytes = maps:get(repaired_bytes, Recovery),

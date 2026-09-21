@@ -220,11 +220,13 @@ fallback_parse_failure(Filename, Line, Message) ->
 execute_data(Config, Context, FeatureData) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
     {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+    ok = ensure_run_directories(Config, RunDir),
     BddFileName =
         case lists:keyfind(feature_filename, 1, Config) of
             {feature_filename, FeatureFile} -> FeatureFile;
             _ -> filename:join(RunDir, string:join([RunId, ".feature"], ""))
         end,
+    ok = ensure_parent_directory(BddFileName),
     ok = file:write_file(BddFileName, FeatureData),
     execute_file(Config, Context, BddFileName).
 
@@ -249,6 +251,8 @@ execute_file(Config, Context0, Filename) when is_map(Context0) ->
 
 execute_file_prepared(Config, Context, Filename) ->
     {run_id, RunId} = lists:keyfind(run_id, 1, Config),
+    {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
+    ok = ensure_run_directories(Config, RunDir),
     Concurrency = proplists:get_value(concurrency, Config, 1),
     StartTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
     Parsed =
@@ -294,7 +298,6 @@ execute_file_prepared(Config, Context, Filename) ->
                         )
                 end,
             EndTimestamp = date_util:now_to_seconds_hires(os:timestamp()),
-            {run_dir, RunDir} = lists:keyfind(run_dir, 1, Config),
 
             %% Decide Result early. Keep it JSON-safe because it is later
             %% included in run metadata and HTTP response maps.
@@ -1760,8 +1763,31 @@ require_context_ipfs(RunDir, Context) ->
 
 write_run_meta(RunDir, MetaMap) ->
     %% Keep it stable + easy to parse.
+    ok = damage_config:ensure_directory(RunDir),
+    Path = filename:join(RunDir, "run.meta"),
+    ok = ensure_parent_directory(Path),
     Bin = jsx:encode(MetaMap),
-    file:write_file(filename:join(RunDir, "run.meta"), Bin).
+    file:write_file(Path, Bin).
+
+ensure_run_directories(Config, RunDir) ->
+    ReportsDir = proplists:get_value(
+        reports_dir, Config, filename:join(RunDir, "reports")
+    ),
+    ArtifactsDir = proplists:get_value(
+        artifacts_dir, Config, filename:join(RunDir, "artifacts")
+    ),
+    ok = damage_config:ensure_directory(RunDir),
+    ok = damage_config:ensure_directory(ReportsDir),
+    ok = damage_config:ensure_directory(ArtifactsDir),
+    ok.
+
+ensure_parent_directory(Path) ->
+    case filelib:ensure_dir(Path) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            erlang:error({run_parent_directory_failed, filename:dirname(Path), Reason})
+    end.
 
 result_value(_Context, none) ->
     <<"success">>;
