@@ -4,10 +4,13 @@
 -include_lib("kernel/include/logger.hrl").
 -export([trails/0, init/2]).
 -ifdef(TEST).
--export([query_params/1, response/2, parse_token/1, transfer_body/1, discovery_response/4]).
+-export([query_params/1, response/2, parse_token/1, transfer_body/1, discovery_response/4,
+         authorize_transfer/3, transfer_content_type/1, read_transfer_body/3,
+         custodial_transfer/5, executed_transfer_response/5]).
 -endif.
 
 -define(MAX_TRANSFER_BODY_BYTES, 4096).
+-define(TRANSFER_BODY_TIMEOUT_MS, 5000).
 
 trails() ->
     Meta = #{
@@ -28,7 +31,8 @@ trails() ->
         post => #{
             tags => ["Build releases"],
             description =>
-                "Transfer a release NFT as the authenticated account. Custodial accounts execute immediately; wallet accounts receive an unsigned transaction to sign.",
+                "Transfer a release NFT with Bearer header authentication. Custodial transfers return a tracked outcome; wallet accounts receive a preflight-checked unsigned transaction.",
+            consumes => ["application/json"],
             produces => ["application/json"],
             parameters => [
                 #{
@@ -108,76 +112,125 @@ discovery_response(Action, Version, Pairs, Lookup) ->
         {error, _} -> response({error, invalid_request}, json)
     end.
 
-%% Auth is deliberately delegated to the same Bearer/cookie authentication path
-%% used by the rest of DamageBDD. The transfer handler never accepts a caller
-%% address in the request body: the sender always comes from authenticated state.
+%% This mutation accepts an explicit Bearer header only. Never allow the
+%% shared authenticator's cookie/query-token fallback to authorize a transfer.
+%% GET/HEAD discovery continues through serve/2 without authentication.
 serve_transfer(Req0, Opts) ->
-    case damage_http:is_authorized(Req0, Opts) of
-        {true, Req1, #{public_key := From} = AuthState} ->
-            case read_transfer_body(Req1) of
-                {ok, Json, Req2} ->
-                    case {parse_token(cowboy_req:binding(token, Req2)), transfer_body(Json)} of
-                        {{ok, Token}, {ok, To}} ->
-                            transfer_for_authenticated_user(AuthState, From, Token, To, Req2);
-                        _ ->
-                            transfer_error(400, <<"invalid_transfer_request">>, Req2)
-                    end;
-                {error, payload_too_large, Req2} ->
-                    transfer_error(413, <<"transfer_request_too_large">>, Req2);
-                {error, _, Req2} ->
-                    transfer_error(400, <<"invalid_transfer_request">>, Req2)
+    case authorize_transfer(Req0, Opts, fun damage_http:is_authorized/2) of
+        {ok, Req1, #{public_key := From} = AuthState} ->
+            case transfer_content_type(Req1) of
+                ok -> serve_transfer_body(Req1, AuthState, From);
+                {error, _} ->
+                    transfer_error(415, <<"application_json_required">>, Req1)
             end;
-        {_AuthFailure, Req1, _State} ->
-            transfer_error(401, <<"unauthorized">>, Req1);
-        _ ->
-            transfer_error(401, <<"unauthorized">>, Req0)
+        {error, unauthorized, Req1} ->
+            {Status, Headers, Body, Req2} = transfer_error(401, <<"unauthorized">>, Req1),
+            {Status, Headers#{<<"www-authenticate">> => <<"Bearer">>}, Body, Req2};
+        {error, invalid_request, Req1} ->
+            transfer_error(400, <<"invalid_transfer_request">>, Req1);
+        {error, auth_unavailable, Req1} ->
+            transfer_error(503, <<"authentication_unavailable">>, Req1)
     end.
 
-transfer_for_authenticated_user(AuthState, From, Token, To, Req) ->
-    case maps:find(username, AuthState) of
-        {ok, Username} ->
-            %% Password/custodial login. Re-read the keypair instead of trusting
-            %% any key material from the request or HTTP state.
-            case identity_server:get_account_by_email(Username) of
-                {From, _Password, PrivateKey} when is_binary(PrivateKey), byte_size(PrivateKey) > 0 ->
-                    Result = damage_release_nft:transfer(
-                        #{public_key => From, private_key => PrivateKey}, Token, To
-                    ),
-                    executed_transfer_response(Result, From, Token, To, Req);
+authorize_transfer(Req0, _Opts, Authenticate) ->
+    case bearer_header(cowboy_req:header(<<"authorization">>, Req0)) of
+        false ->
+            {error, unauthorized, Req0};
+        true ->
+            %% This route has no query parameters. In particular, credentials
+            %% must not be accepted in URLs, even alongside a Bearer header.
+            case cowboy_req:qs(Req0) of
+                <<>> ->
+                    try Authenticate(Req0, #{action => transfer}) of
+                        {true, Req1, #{public_key := From} = State}
+                                when is_binary(From) ->
+                            {ok, Req1, State};
+                        {_Failure, Req1, _State} ->
+                            {error, unauthorized, Req1};
+                        _ ->
+                            {error, unauthorized, Req0}
+                    catch
+                        %% Never log auth state, credentials or exception terms.
+                        _:_ -> {error, auth_unavailable, Req0}
+                    end;
                 _ ->
-                    transfer_error(403, <<"transfer_signing_unavailable">>, Req)
-            end;
-        error ->
-            %% Wallet login: never ask for or reconstruct the private key. Return
-            %% only the exact AEX-141 transaction after a dry-run authorization
-            %% check. The wallet signs it client-side.
-            case damage_release_nft:prepare_transfer(From, Token, To) of
-                {ok, Intent} ->
-                    Body = Intent#{
-                        ok => true,
-                        status => <<"signature_required">>,
-                        signing => <<"wallet">>
-                    },
-                    {202, json_headers(), jsx:encode(Body), Req};
-                Error ->
-                    transfer_result_error(Error, Req)
+                    {error, invalid_request, Req0}
             end
     end.
 
-executed_transfer_response({ok, Call}, From, Token, To, Req) ->
-    Base = #{
-        ok => true,
-        status => <<"transferred">>,
-        token_id => Token,
-        from => From,
-        to => To
-    },
-    Body =
-        case transfer_tx_hash(Call) of
-            undefined -> Base;
-            TxHash -> Base#{tx_hash => TxHash}
-        end,
-    {200, json_headers(), jsx:encode(Body), Req};
+bearer_header(<<"Bearer ", Token/binary>>) when
+        byte_size(Token) > 0, byte_size(Token) =< 8192, Token =/= <<"null">> ->
+    %% Match the scheme understood by damage_http, and reject whitespace and
+    %% combined Authorization values instead of falling back to another source.
+    re:run(Token, <<"\\A[A-Za-z0-9._~+/-]+=*\\z">>, [{capture, none}]) =:= match;
+bearer_header(_) ->
+    false.
+
+transfer_content_type(Req) ->
+    try {cowboy_req:parse_header(<<"content-type">>, Req),
+         cowboy_req:header(<<"content-encoding">>, Req)} of
+        {{<<"application">>, <<"json">>, _Params}, Encoding}
+                when Encoding =:= undefined; Encoding =:= <<"identity">> ->
+            ok;
+        _ -> {error, unsupported_media_type}
+    catch
+        _:_ -> {error, unsupported_media_type}
+    end.
+
+serve_transfer_body(Req0, AuthState, From) ->
+    case read_transfer_body(Req0) of
+        {ok, Json, Req1} ->
+            case {parse_token(cowboy_req:binding(token, Req1)), transfer_body(Json)} of
+                {{ok, Token}, {ok, To}} ->
+                    transfer_for_authenticated_user(AuthState, From, Token, To, Req1);
+                _ -> transfer_error(400, <<"invalid_transfer_request">>, Req1)
+            end;
+        {error, payload_too_large, Req1} ->
+            transfer_error(413, <<"transfer_request_too_large">>, Req1);
+        {error, body_timeout, Req1} ->
+            transfer_error(408, <<"transfer_request_timeout">>, Req1);
+        {error, _, Req1} ->
+            transfer_error(400, <<"invalid_transfer_request">>, Req1)
+    end.
+
+transfer_for_authenticated_user(AuthState, From, Token, To, Req) ->
+    case maps:get(username, AuthState, <<"wallet">>) of
+        <<"wallet">> ->
+            %% Preparation has no signing key and never broadcasts. The exact
+            %% returned bytes, not a separately built transaction, pass preflight.
+            case damage_release_nft:prepare_transfer(From, Token, To) of
+                {ok, Intent} ->
+                    Body = Intent#{ok => true, status => <<"signature_required">>,
+                                   signing => <<"wallet">>},
+                    {202, json_headers(), jsx:encode(Body), Req};
+                Error -> transfer_result_error(Error, Req)
+            end;
+        Username ->
+            Result = custodial_transfer(From, Username, {Token, To},
+                fun identity_server:get_account_by_email/1,
+                fun damage_release_nft:transfer/3),
+            executed_transfer_response(Result, From, Token, To, Req)
+    end.
+
+custodial_transfer(From, Username, {Token, To}, Lookup, Transfer) ->
+    %% Catch only the key lookup here. Do not turn an exception AFTER a write
+    %% into a false claim that signing was unavailable.
+    Account = try Lookup(Username) catch _:_ -> unavailable end,
+    case Account of
+        {From, _Password, Private} when is_binary(Private), byte_size(Private) =:= 64 ->
+            try Transfer(#{public_key => From, private_key => Private}, Token, To)
+            catch _:_ -> {error, transfer_outcome_unknown}
+            end;
+        _ -> {error, transfer_signing_unavailable}
+    end.
+
+executed_transfer_response({ok, #{status := State, tx_hash := Hash}}, From, Token, To, Req)
+        when is_binary(Hash),
+             (State =:= confirmed orelse State =:= submitted orelse State =:= submission_unknown) ->
+    Status = case State of confirmed -> 200; _ -> 202 end,
+    Body = #{ok => true, status => atom_to_binary(State, utf8),
+             token_id => Token, from => From, to => To, tx_hash => Hash},
+    {Status, json_headers(), jsx:encode(Body), Req};
 executed_transfer_response(Error, _From, _Token, _To, Req) ->
     transfer_result_error(Error, Req).
 
@@ -186,60 +239,111 @@ transfer_result_error({error, Invalid}, Req) when
     Invalid =:= invalid_release_identifier
 ->
     transfer_error(400, <<"invalid_transfer_request">>, Req);
-transfer_result_error({error, {release_transfer_failed, {revert, _Reason}}}, Req) ->
-    %% The NFT contract remains authoritative for owner/operator permission and
-    %% token existence. Keep the public response stable instead of leaking raw
-    %% VM/contract payloads.
+transfer_result_error({error, {release_transfer_rejected, Rejection}}, Req) ->
+    %% Include only safe, explicitly selected fields. Never return raw VM data.
+    Body0 = #{ok => false, status => <<"rejected">>, error => <<"transfer_rejected">>},
+    Body = case maps:find(tx_hash, Rejection) of
+        {ok, Hash} when is_binary(Hash) -> Body0#{tx_hash => Hash};
+        _ -> Body0
+    end,
+    {409, json_headers(), jsx:encode(Body), Req};
+transfer_result_error({error, {release_transfer_failed, {revert, _}}}, Req) ->
     transfer_error(409, <<"transfer_rejected">>, Req);
-transfer_result_error({error, {release_transfer_failed, _Reason}}, Req) ->
-    transfer_error(502, <<"transfer_failed">>, Req);
+transfer_result_error({error, {release_transfer_failed, transfer_outcome_unknown}}, Req) ->
+    transfer_result_error({error, transfer_outcome_unknown}, Req);
+transfer_result_error({error, transfer_outcome_unknown}, Req) ->
+    %% A process failure can lose the reply, even after submission. This
+    %% is deliberately NOT 'rejected' or 'not submitted'; reconcile before retry.
+    {503, json_headers(), jsx:encode(#{ok => false, status => <<"outcome_unknown">>,
+                                     error => <<"transfer_outcome_unknown">>}), Req};
+transfer_result_error({error, transfer_signing_unavailable}, Req) ->
+    transfer_error(403, <<"transfer_signing_unavailable">>, Req);
 transfer_result_error({error, invalid_release_signing_keypair}, Req) ->
     transfer_error(503, <<"transfer_signing_unavailable">>, Req);
-transfer_result_error({error, _}, Req) ->
+transfer_result_error({error, {release_transfer_failed, _}}, Req) ->
+    transfer_error(503, <<"transfer_unavailable">>, Req);
+transfer_result_error(_, Req) ->
     transfer_error(503, <<"transfer_unavailable">>, Req).
 
 transfer_error(Status, Code, Req) ->
     {Status, json_headers(), jsx:encode(#{ok => false, error => Code}), Req}.
 
-read_transfer_body(Req0) ->
-    case cowboy_req:read_body(Req0, #{length => ?MAX_TRANSFER_BODY_BYTES, period => 5000}) of
-        {ok, Body, Req1} when byte_size(Body) =< ?MAX_TRANSFER_BODY_BYTES ->
-            try jsx:decode(Body, [return_maps]) of
-                Json when is_map(Json) -> {ok, Json, Req1};
-                _ -> {error, invalid_json, Req1}
-            catch
-                _:_ -> {error, invalid_json, Req1}
-            end;
-        {more, _Chunk, Req1} ->
-            {error, payload_too_large, Req1};
-        {error, _Reason} ->
-            {error, body_read_failed, Req0}
+read_transfer_body(Req) ->
+    read_transfer_body(Req, fun cowboy_req:read_body/2,
+                       fun() -> erlang:monotonic_time(millisecond) end).
+
+%% Callbacks are private implementation seams, exported only for unit tests.
+%% The request, context and application configuration cannot override them.
+read_transfer_body(Req, Read, Now) ->
+    Deadline = Now() + ?TRANSFER_BODY_TIMEOUT_MS,
+    read_transfer_chunks(Req, Read, Now, Deadline, 0, []).
+
+read_transfer_chunks(Req0, Read, Now, Deadline, Size, Acc) ->
+    Remaining = Deadline - Now(),
+    case Remaining > 0 of
+        false -> {error, body_timeout, Req0};
+        true ->
+            %% Cowboy's length is a chunk request, NOT a hard body-size limit.
+            %% Request one extra byte so an exactly-full body can be distinguished
+            %% from a too-large body. Keep timeout > period and within our budget.
+            Opts = #{length => ?MAX_TRANSFER_BODY_BYTES - Size + 1,
+                     period => erlang:min(1000, Remaining div 2),
+                     timeout => Remaining},
+            ReadResult = try Read(Req0, Opts)
+                         catch
+                             exit:timeout -> {error, body_timeout};
+                             exit:{timeout, _} -> {error, body_timeout};
+                             exit:{request_error, timeout, _} -> {error, body_timeout};
+                             exit:{request_error, {timeout, _}, _} -> {error, body_timeout};
+                             error:timeout -> {error, body_timeout};
+                             _:_ -> {error, body_read_failed}
+                         end,
+            case ReadResult of
+                {Tag, Chunk, Req1} when
+                        (Tag =:= ok orelse Tag =:= more), is_binary(Chunk) ->
+                    NextSize = Size + byte_size(Chunk),
+                    case {NextSize > ?MAX_TRANSFER_BODY_BYTES, Now() >= Deadline} of
+                        {true, _} -> {error, payload_too_large, Req1};
+                        {false, true} -> {error, body_timeout, Req1};
+                        {false, false} when Tag =:= ok ->
+                            decode_transfer_body(iolist_to_binary(lists:reverse([Chunk | Acc])), Req1);
+                        {false, false} ->
+                            read_transfer_chunks(Req1, Read, Now, Deadline,
+                                                 NextSize, body_chunk(Chunk, Acc))
+                    end;
+                {error, body_timeout} -> {error, body_timeout, Req0};
+                _ -> {error, body_read_failed, Req0}
+            end
+    end.
+
+%% Empty partial reads must not grow the accumulator.
+body_chunk(<<>>, Acc) -> Acc;
+body_chunk(Chunk, Acc) -> [Chunk | Acc].
+
+decode_transfer_body(Body, Req) ->
+    try jsx:decode(Body, [return_maps]) of
+        Json when is_map(Json) -> {ok, Json, Req};
+        _ -> {error, invalid_json, Req}
+    catch
+        _:_ -> {error, invalid_json, Req}
     end.
 
 transfer_body(Json) when is_map(Json), map_size(Json) =:= 1 ->
     case maps:find(<<"to">>, Json) of
-        {ok, To} when is_binary(To), byte_size(To) > 0 -> {ok, To};
+        {ok, To} when is_binary(To), byte_size(To) > 0, byte_size(To) =< 64 -> {ok, To};
         _ -> {error, invalid_transfer_body}
     end;
 transfer_body(_) ->
     {error, invalid_transfer_body}.
 
 parse_token(Token) when is_binary(Token), byte_size(Token) > 0, byte_size(Token) =< 39 ->
-    try binary_to_integer(Token) of
-        I when I > 0 -> {ok, I};
-        _ -> {error, invalid_release_token}
-    catch
-        _:_ -> {error, invalid_release_token}
+    %% Keep the canonical positive-decimal form used by the release parser.
+    case re:run(Token, <<"\\A[1-9][0-9]{0,38}\\z">>, [{capture, none}]) of
+        match -> {ok, binary_to_integer(Token)};
+        nomatch -> {error, invalid_release_token}
     end;
 parse_token(_) ->
     {error, invalid_release_token}.
-
-transfer_tx_hash(Call) when is_map(Call) ->
-    maps:get("tx_hash", Call,
-        maps:get(<<"tx_hash">>, Call,
-            maps:get(tx_hash, Call, undefined)));
-transfer_tx_hash(_) ->
-    undefined.
 
 query_params(Pairs) when is_list(Pairs) ->
     try

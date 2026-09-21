@@ -214,6 +214,8 @@ packaged_release_version_flows_into_context_test() ->
         ?assertEqual(git_sha(), maps:get("git_sha", Result)),
         Prepared = maps:get("meta", Result),
         ?assertEqual(Version, maps:get(<<"release">>, Prepared)),
+        Expected = maps:get(build_release_installation_expected, Result),
+        ?assertEqual(Version, maps:get(packaged_release, Expected)),
         ok = kubo_put(Fixture, meta_cid(), jsx:encode(Prepared)),
         ?assertEqual(ok, steps_release_nft:checked_mint_inputs(Result,
             Version, platform(), git_sha(), meta_cid(), asset())),
@@ -227,4 +229,64 @@ manifest_release_conflict_rejected_test() ->
         seed(Fixture, (manifest())#{<<"release">> => <<"1.4.2">>}),
         ?assertEqual({error, release_version_mismatch}, damage_release_nft:prepare_metadata(
             #{<<"release">> => <<"different">>}, platform(), asset(), <<"installation.json">>))
+    end).
+
+%% The immutable asset manifest declares 1.4.2. A DIFFERENT metadata CID must
+%% not relabel those same bytes, even when its NFT input is changed to match.
+packaged_version_cannot_be_relabelled_after_preparation_test_() ->
+    [
+        {"change both metadata versions and the mint version", fun() ->
+            changed_prepared_version(fun(M) ->
+                (edit_install(M, <<"release">>, <<"1.4.3">>))#{<<"release">> := <<"1.4.3">>}
+            end, <<"1.4.3">>)
+        end},
+        {"remove both version fields after preparation", fun() ->
+            changed_prepared_version(fun(M) ->
+                I = maps:get(<<"installation">>, M),
+                (maps:remove(<<"release">>, M))#{
+                    <<"installation">> := maps:remove(<<"release">>, I)}
+            end, <<"1.4.2">>)
+        end},
+        {"remove installation version but retain the metadata label", fun() ->
+            changed_prepared_version(fun(M) ->
+                M#{<<"installation">> := maps:remove(<<"release">>,
+                    maps:get(<<"installation">>, M))}
+            end, <<"1.4.2">>)
+        end}
+    ].
+
+changed_prepared_version(Change, MintVersion) ->
+    with_kubo(fun(Fixture) ->
+        seed(Fixture, (manifest())#{<<"release">> => <<"1.4.2">>}),
+        {ok, Prepared} = damage_release_nft:prepare_metadata(#{}, platform(),
+            asset(), <<"installation.json">>),
+        {ok, Expected} = damage_release_nft:prepared_installation(Prepared),
+        ?assertEqual(<<"1.4.2">>, maps:get(packaged_release, Expected)),
+        ok = kubo_put(Fixture, meta_cid(), jsx:encode(Change(Prepared))),
+        %% This is the actual pre-mint validation entry point: no transaction
+        %% is submitted, and the final CID is re-read before rejecting it.
+        ?assertEqual({error, prepared_installation_metadata_mismatch},
+            steps_release_nft:checked_mint_inputs(
+                #{build_release_installation_expected => Expected}, MintVersion,
+                platform(), git_sha(), meta_cid(), asset())),
+        ?assertEqual(3, length(kubo_requests(Fixture))),
+        ?assertEqual({<<"/ipfs/", (meta_cid())/binary>>, 1048577},
+            lists:last(kubo_requests(Fixture)))
+    end).
+
+legacy_preparation_does_not_invent_a_packaged_version_test() ->
+    with_kubo(fun(Fixture) ->
+        {ok, Prepared} = prepare(Fixture),
+        {ok, Expected} = damage_release_nft:prepared_installation(Prepared),
+        ?assertNot(maps:is_key(packaged_release, Expected)),
+        ok = kubo_put(Fixture, meta_cid(), jsx:encode(Prepared)),
+        ?assertEqual(ok, check_final(#{build_release_installation_expected => Expected}, meta_cid()))
+    end).
+
+invalid_manifest_version_fails_before_package_hash_test() ->
+    with_kubo(fun(Fixture) ->
+        seed(Fixture, (manifest())#{<<"release">> => <<"bad/version">>}),
+        ?assertEqual({error, invalid_installation_release},
+            damage_release_nft:prepare_metadata(#{}, platform(), asset(), <<"installation.json">>)),
+        ?assertEqual([{<<"/ipfs/", (manifest_path())/binary>>, 1048577}], kubo_requests(Fixture))
     end).

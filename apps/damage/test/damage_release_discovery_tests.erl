@@ -190,3 +190,84 @@ arch_target_uses_its_own_package_test() ->
     {ok, Installed} = damage_release_nft:parse_install_manifest(Body),
     ?assertEqual(Platform, maps:get(platform, Installed)),
     ?assertEqual(<<"damage.pkg.tar.zst">>, maps:get(asset_path, Installed)).
+
+prepared_version_remains_authoritative_at_discovery_test() ->
+    {ok, Expected} = damage_release_nft:prepared_installation(metadata()),
+    ?assertEqual(version(), maps:get(packaged_release, Expected)),
+    NewVersion = <<"1.4.3">>,
+    ChangedRecord = (record())#{release := NewVersion},
+    Meta = metadata(),
+    ChangedMeta = Meta#{<<"release">> := NewVersion,
+        <<"installation">> := (maps:get(<<"installation">>, Meta))#{<<"release">> := NewVersion}},
+    %% NFT, final metadata, package CID and digest all agree with each other.
+    %% Only the saved preparation proves they relabel the original package.
+    {ok, Actual} = damage_release_nft:installation_fields(ChangedRecord, ChangedMeta),
+    Mint = ChangedRecord#{contract_id => maps:get(nft, config())},
+    Found = Actual#{contract_id => maps:get(nft, config())},
+    ?assertEqual({error, prepared_release_version_mismatch},
+        damage_release_nft:verify_publication(Mint, Expected, Found)).
+
+missing_discovered_packaged_version_cannot_downgrade_binding_test() ->
+    Lookup = lookup(),
+    {ok, Found} = Lookup(latest, platform()),
+    {ok, Expected} = damage_release_nft:prepared_installation(metadata()),
+    Mint = (record())#{contract_id => maps:get(nft, config())},
+    ?assertEqual(ok, damage_release_nft:verify_publication(Mint, Expected, Found)),
+    ?assertEqual({error, {release_discovery_mismatch, [packaged_release]}},
+        damage_release_nft:verify_publication(Mint, Expected,
+            maps:remove(packaged_release, Found))),
+    ?assertEqual({error, {release_discovery_mismatch, [packaged_release]}},
+        damage_release_nft:verify_publication(Mint, Expected,
+            Found#{packaged_release := <<"1.4.3">>})).
+
+legacy_metadata_does_not_inherit_packaged_version_from_nft_test() ->
+    LegacyMeta = damage_release_test_support:metadata(),
+    LegacyRecord = damage_release_test_support:release_record(),
+    {ok, Expected} = damage_release_nft:prepared_installation(LegacyMeta),
+    {ok, Actual} = damage_release_nft:installation_fields(
+        LegacyRecord#{packaged_release => maps:get(release, LegacyRecord)}, LegacyMeta),
+    ?assertNot(maps:is_key(packaged_release, Expected)),
+    ?assertNot(maps:is_key(packaged_release, Actual)),
+    Mint = LegacyRecord#{contract_id => maps:get(nft, config())},
+    Found = Actual#{contract_id => maps:get(nft, config())},
+    ?assertEqual(ok, damage_release_nft:verify_publication(Mint, Expected, Found)).
+
+invalid_installation_version_is_503_test_() ->
+    [{lists:flatten(io_lib:format("invalid metadata release ~p (~p)", [BadVersion, Format])),
+      fun() -> assert_invalid_installation_version_response(BadVersion, Format) end}
+     || BadVersion <- [<<"bad/version">>, <<"latest">>, <<>>, 142,
+                       binary:copy(<<"v">>, 161)],
+        Format <- [<<"json">>, <<"install">>]].
+
+assert_invalid_installation_version_response(BadVersion, Format) ->
+    Meta = metadata(),
+    I = maps:get(<<"installation">>, Meta),
+    BadMeta = Meta#{<<"installation">> := I#{<<"release">> := BadVersion}},
+    ?assertEqual({error, invalid_installation_release},
+        damage_release_nft:installation_fields(record(), BadMeta)),
+    Read = fun(R) -> damage_release_nft:installation_fields(R, BadMeta) end,
+    Lookup = fun(latest, P) ->
+        damage_release_nft:discover(latest, P, config(), query(), Read)
+    end,
+    {503, Headers, Body} = damage_releases_http:discovery_response(latest, undefined,
+        [{<<"platform">>, platform()}, {<<"format">>, Format}], Lookup),
+    ?assertEqual(<<"30">>, maps:get(<<"retry-after">>, Headers)),
+    ?assertEqual(<<"application/json">>, maps:get(<<"content-type">>, Headers)),
+    ?assertEqual(#{<<"ok">> => false, <<"error">> => <<"release_unavailable">>},
+        jsx:decode(Body, [return_maps])).
+
+invalid_requested_version_is_still_400_test_() ->
+    [?_test(begin
+        %% The real selector validation runs before any configuration, chain
+        %% query or IPFS read. No backend fixture or signing key is required.
+        Lookup = fun({release, V}, P) -> damage_release_nft:release(V, P) end,
+        {400, Headers, Body} = damage_releases_http:discovery_response(versioned, Version,
+            [{<<"platform">>, platform()}, {<<"format">>, <<"install">>}], Lookup),
+        ?assertNot(maps:is_key(<<"retry-after">>, Headers)),
+        ?assertEqual(#{<<"ok">> => false, <<"error">> => <<"invalid_release_request">>},
+            jsx:decode(Body, [return_maps]))
+    end) || Version <- [<<"bad/version">>, <<>>, <<"latest">>, binary:copy(<<"v">>, 161)]].
+
+invalid_prepared_metadata_version_has_domain_error_test() ->
+    ?assertEqual({error, invalid_installation_release},
+        damage_release_nft:prepared_installation((metadata())#{<<"release">> := <<"bad/version">>})).

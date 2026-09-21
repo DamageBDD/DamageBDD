@@ -2382,6 +2382,9 @@ verify_prepared_metadata(Context, Identity) ->
         {ok, Expected} when is_map(Expected) ->
             %% Re-read the FINAL metadata CID. Uploading an older/different meta
             %% variable after preparation must not silently publish a bad build.
+            %% Compare the full prepared identity, including packaged_release
+            %% when the artifact declared one. Do not drop missing fields or
+            %% substitute the mint's release name for the prepared version.
             case damage_release_nft:installation(Identity) of
                 {ok, Actual} ->
                     case damage_release_nft:installation_identity(Actual) =:= Expected of

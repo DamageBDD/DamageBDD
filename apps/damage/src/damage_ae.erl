@@ -94,6 +94,8 @@
     min_fee/0,
     payfor_tx/1,
     contract_call_prepare_tx/5,
+    contract_call_prepare_checked/5,
+    contract_call_tracked/5,
     deploy_account_registry/1,
     deploy_node_registry/0,
     balance/1,
@@ -117,6 +119,12 @@
 ]).
 
 -export([gas_price/0, fee_multiplier/0, validate_ae_config/0]).
+
+-ifdef(TEST).
+-export([checked_contract_tx/2, tracked_dry_reply/1, tracked_submit/4,
+         tracked_mined_reply/1, tracked_tx_hash/1, tracked_keypair/1,
+         tracked_locked/2, with_account_nonce_locks/2]).
+-endif.
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
@@ -2637,6 +2645,234 @@ decode_dry_run_return_value(CallObj) ->
                 _:_ -> Encoded
             end
     end.
+
+%% ------------------------------------------------------------------
+%% Opt-in tracked calls for NFT transfers. Keep the legacy contract_call
+%% APIs unchanged. Reuse their nonce locks, node sessions, gas/fee builder,
+%% dry-run funding policy, signed-envelope hashing and receipt observer.
+%% ------------------------------------------------------------------
+
+-spec contract_call_tracked(map(), term(), term(), term(), list()) ->
+    {ok, map()} | {error, term()}.
+contract_call_tracked(KeyPair0, Contract, Source, Func, Args) ->
+    case tracked_keypair(KeyPair0) of
+        {ok, #{public_key := Public} = KeyPair} ->
+            try tracked_locked(Public, fun() ->
+                tracked_contract_call(KeyPair, Contract, Source, Func, Args)
+            end)
+            catch
+                %% Never leak a keypair/exception or claim that a write definitely
+                %% failed if its result was lost outside the submission boundary.
+                _:_ -> {error, transfer_outcome_unknown}
+            end;
+        {error, _} = Error -> Error
+    end.
+
+tracked_keypair(#{public_key := Public0, private_key := Private}) ->
+    try
+        Public = normalize_ae_account(Public0),
+        case validate_account_signing_key(Public, Private) of
+            ok -> {ok, #{public_key => Public, private_key => Private}};
+            _ -> {error, invalid_signing_keypair}
+        end
+    catch _:_ -> {error, invalid_signing_keypair}
+    end;
+tracked_keypair(_) ->
+    {error, invalid_signing_keypair}.
+
+tracked_locked(Public, Execute) ->
+    %% Use the SAME lock as direct contract calls, deployments and the current
+    %% PayingFor path. A second wallet queue would not serialize those callers.
+    %% Acquire the node session inside the lock, after any lock contention.
+    %% Deliberately do not use wait_posted_tx_with_nonce_retry: this API never
+    %% rebuilds/rebroadcasts a transfer automatically after attempting the POST.
+    with_account_nonce_locks([Public], fun() -> with_ae_session(Execute) end).
+
+tracked_contract_call(KeyPair, Contract, Source, Func, Args) ->
+    Prepared = try
+        case contract_call_prepare_checked(maps:with([public_key], KeyPair),
+                                           Contract, Source, Func, Args) of
+            {ok, Tx} ->
+                Signed = sign_transaction_base58(maps:get(private_key, KeyPair), Tx),
+                Hash = tracked_tx_hash(Signed),
+                {ok, Signed, Hash};
+            {error, _} = Error -> Error
+        end
+    catch _:_ -> {error, transaction_prepare_failed}
+    end,
+    case Prepared of
+        {ok, SignedTx, TxHash} ->
+            %% All preparation/signing/hash failures occurred BEFORE this boundary.
+            %% POST and observation stay in this process and the pinned session.
+            tracked_submit(SignedTx, TxHash, fun post_tx_detailed/1,
+                           fun tracked_wait_tx/1);
+        {error, _} = PrepareError -> PrepareError
+    end.
+
+%% The normal builder still estimates gas and converges the size-aware fee.
+%% After it has produced the final bytes, require a successful simulation of
+%% THOSE bytes. Never use contract_query/5: its on-chain fallback is unsuitable
+%% for a transfer preflight. No key is required or loaded by this API.
+-spec contract_call_prepare_checked(map(), term(), term(), term(), list()) ->
+    {ok, binary()} | {error, term()}.
+contract_call_prepare_checked(#{public_key := Public0}, Contract, Source, Func, Args) ->
+    try
+        Public = normalize_ae_account(Public0),
+        {account_pubkey, PublicBytes} = aeser_api_encoder:decode(Public),
+        true = byte_size(PublicBytes) =:= 32,
+        with_ae_session(fun() ->
+            checked_contract_tx(
+                fun() -> contract_call_prepare_tx(#{public_key => Public},
+                                                  Contract, Source, Func, Args) end,
+                fun(Tx) -> tracked_preflight(Public, Tx) end)
+        end)
+    catch _:_ -> {error, transaction_prepare_failed}
+    end;
+contract_call_prepare_checked(_, _, _, _, _) ->
+    {error, transaction_prepare_failed}.
+
+tracked_preflight(Public, Tx) ->
+    case current_ae_session() of
+        {ok, Session} ->
+            %% Do not reuse the short-lived top-header cache here: estimation or
+            %% a preceding transfer may have advanced the nonce since that top.
+            %% The final nonce is NOT rewritten to match this snapshot.
+            Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+            case damage_ae_node_pool:get_json(Session, "v3/headers/top", Timeout) of
+                {ok, #{status := Status, json := Top}} when
+                        Status >= 200, Status < 300, is_map(Top) ->
+                    case tracked_field(hash, Top) of
+                        undefined -> {error, transaction_preflight_unavailable};
+                        TopHash ->
+                            tracked_dry_reply(dry_run_call(
+                                Session, Tx, dry_run_accounts(Public), TopHash))
+                    end;
+                _ -> {error, transaction_preflight_unavailable}
+            end;
+        _ -> {error, transaction_preflight_unavailable}
+    end.
+
+%% Private callback seam for deterministic tests; no callbacks are accepted
+%% from a request, signing context or application configuration.
+checked_contract_tx(Prepare, DryRun) ->
+    Prepared = try tracked_prepared_tx(Prepare())
+               catch _:_ -> {error, transaction_prepare_failed}
+               end,
+    case Prepared of
+        {ok, Tx} ->
+            try DryRun(Tx) of
+                ok -> {ok, Tx};
+                {error, _} = Error -> Error;
+                _ -> {error, transaction_preflight_unavailable}
+            catch _:_ -> {error, transaction_preflight_unavailable}
+            end;
+        {error, _} = PrepareError -> PrepareError
+    end.
+
+tracked_prepared_tx(<<"tx_", Rest/binary>> = Tx) when byte_size(Rest) > 0 -> {ok, Tx};
+tracked_prepared_tx(Tx) when is_list(Tx) -> tracked_prepared_tx(list_to_binary(Tx));
+tracked_prepared_tx({error, {contract_gas_estimation_rejected, _, {dry_run_revert, _}}}) ->
+    tracked_rejection(preflight, contract_reverted);
+tracked_prepared_tx(_) -> {error, transaction_prepare_failed}.
+
+tracked_dry_reply({ok, Envelope}) when is_map(Envelope) ->
+    case tracked_field(results, Envelope) of
+        [Result] when is_map(Result) ->
+            case tracked_type(tracked_field(result, Result)) of
+                error -> tracked_rejection(preflight, transaction_rejected);
+                ok -> tracked_dry_call(tracked_field(call_obj, Result));
+                undefined -> tracked_dry_call(tracked_field(call_obj, Result));
+                _ -> {error, transaction_preflight_unavailable}
+            end;
+        _ -> {error, transaction_preflight_unavailable}
+    end;
+tracked_dry_reply(_) -> {error, transaction_preflight_unavailable}.
+
+tracked_dry_call(Call) when is_map(Call) ->
+    case tracked_type(tracked_field(return_type, Call)) of
+        ok -> ok;
+        revert -> tracked_rejection(preflight, contract_reverted);
+        error -> tracked_rejection(preflight, contract_error);
+        _ -> {error, transaction_preflight_unavailable}
+    end;
+tracked_dry_call(_) -> {error, transaction_preflight_unavailable}.
+
+tracked_rejection(Stage, Reason) ->
+    {error, #{status => rejected, stage => Stage, reason => Reason}}.
+
+tracked_tx_hash(SignedTx) ->
+    %% Reuse the current aec_hash/enacl compatibility path and hash the signed
+    %% serialized envelope, not the unsigned transaction or the tx_ text.
+    {ok, Hash} = signed_tx_hash(SignedTx),
+    normalize_encoded_tx(Hash).
+
+tracked_submit(SignedTx, Hash, Post, Wait) ->
+    %% Never retry the write or run it in a kill-on-timeout worker. After this
+    %% boundary an unsuccessful acknowledgement alone is not a terminal receipt.
+    PostReply = try Post(SignedTx) catch _:_ -> unknown end,
+    Submission = case PostReply of
+        {ok, Ack} when is_map(Ack) ->
+            case tracked_hash_equal(Hash, tracked_field(tx_hash, Ack)) of
+                true -> submitted;
+                false -> submission_unknown
+            end;
+        _ -> submission_unknown
+    end,
+    %% Observe ONLY the locally computed hash, including after a lost or invalid
+    %% acknowledgement. The existing post helper also handles already_known.
+    Observation = try Wait(Hash) catch _:_ -> unknown end,
+    case Observation of
+        {ok, confirmed} -> {ok, #{status => confirmed, tx_hash => Hash}};
+        {ok, {rejected, Reason}} when Reason =:= contract_reverted; Reason =:= contract_error ->
+            {error, #{status => rejected, stage => execution, reason => Reason, tx_hash => Hash}};
+        _ -> {ok, #{status => Submission, tx_hash => Hash}}
+    end.
+
+tracked_hash_equal(Hash, Hash) -> true;
+tracked_hash_equal(Hash, Value) when is_list(Value) ->
+    try list_to_binary(Value) =:= Hash catch _:_ -> false end;
+tracked_hash_equal(_, _) -> false.
+
+tracked_wait_tx(Hash) ->
+    %% Reuse configured polling/timeout and READ-ONLY observer failover. The
+    %% submission session is not changed and this path never resubmits a write.
+    case wait_tx(Hash) of
+        Call when is_map(Call) ->
+            {ok, tracked_mined_reply({ok, #{call_info => Call}})};
+        _ -> {error, transaction_confirmation_unavailable}
+    end.
+
+tracked_mined_reply({ok, Envelope}) when is_map(Envelope) ->
+    case tracked_field(call_info, Envelope) of
+        Call when is_map(Call) ->
+            Height = tracked_field(height, Call),
+            case is_integer(Height) andalso Height > 0 of
+                true ->
+                    case tracked_type(tracked_field(return_type, Call)) of
+                        ok -> confirmed;
+                        revert -> {rejected, contract_reverted};
+                        error -> {rejected, contract_error};
+                        _ -> not_ready
+                    end;
+                false -> not_ready
+            end;
+        _ -> not_ready
+    end;
+tracked_mined_reply(_) -> not_ready.
+
+%% Prefer the decoded string-key view, matching the existing contract wrapper.
+tracked_field(Key, Map) ->
+    case maps:find(atom_to_list(Key), Map) of
+        {ok, Value} -> Value;
+        error -> maps:get(Key, Map, maps:get(atom_to_binary(Key, utf8), Map, undefined))
+    end.
+tracked_type("ok") -> ok;
+tracked_type(<<"ok">>) -> ok;
+tracked_type("revert") -> revert;
+tracked_type(<<"revert">>) -> revert;
+tracked_type("error") -> error;
+tracked_type(<<"error">>) -> error;
+tracked_type(Value) -> Value.
 
 contract_call_prepare_tx(
     #{public_key := AeAccount}, ContractId, ContractSource, Func, Args

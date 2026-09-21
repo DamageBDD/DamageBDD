@@ -64,7 +64,10 @@ Feature: Publish an installable Ubuntu 24.04 LTS release
         [A-Za-z0-9]*) ;;
         *) echo "Invalid OTP release version prefix" >&2; exit 1 ;;
     esac
-    [ "${#RELEASE_VSN}" -le 160 ] && [ "$RELEASE_VSN" != latest ]
+    if [ "${#RELEASE_VSN}" -gt 160 ] || [ "$RELEASE_VSN" = latest ]; then
+        echo "Invalid or reserved OTP release version" >&2
+        exit 1
+    fi
 
     rebar3 as prod pkg gen -t deb
     git diff --exit-code HEAD -- rebar.lock

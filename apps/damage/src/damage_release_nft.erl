@@ -1,4 +1,4 @@
-%%% NFT release discovery plus explicit operator-only state changes.
+%%% NFT release discovery plus explicit account-signed state changes.
 %%% Discovery/GET paths remain read-only and public-key-only.
 %%% The NFT binds the metadata CID; a trusted LOCAL validating Kubo daemon reads
 %%% that metadata. A gateway URL alone is not proof of the returned bytes.
@@ -18,7 +18,8 @@
          discovery_config/0, verify_publication/3]).
 -ifdef(TEST).
 -export([select_release/3, token_metadata/2, bounded/2,
-         valid_asset_path/1, installation_fields/2, checked_json/1, discover/5]).
+         valid_asset_path/1, installation_fields/2, checked_json/1, discover/5,
+         transfer_call_result/1]).
 -endif.
 -define(NFT_SOURCE, "contracts/build_release_nft.aes").
 -define(MAX_MANIFEST_BYTES, 4096).
@@ -97,9 +98,24 @@ verify_publication(Mint, ExpectedInstallation, Discovered) ->
             incomplete_publication_identity),
         require(lists:all(fun(K) -> maps:get(K, Mint) =:= maps:get(K, ExpectedInstallation) end,
             [platform, asset_cid, git_sha]), inconsistent_publication_identity),
-        Keys = lists:usort(MintKeys ++ InstallKeys ++
-            case maps:is_key(network_id, Mint) of true -> [network_id]; false -> [] end),
-        Expected = maps:merge(maps:with(Keys, Mint), maps:with(InstallKeys, ExpectedInstallation)),
+        %% The NFT and final metadata can agree with each other while both
+        %% have been relabeled since preparation. Keep the artifact's verified
+        %% version authoritative; never derive this expectation from the NFT.
+        case maps:find(packaged_release, ExpectedInstallation) of
+            {ok, PackagedRelease} ->
+                require(valid_release(PackagedRelease) andalso PackagedRelease =/= <<"latest">>,
+                    invalid_publication_identity),
+                require(maps:get(release, Mint) =:= PackagedRelease,
+                    prepared_release_version_mismatch);
+            error -> ok
+        end,
+        NetworkKeys = case maps:is_key(network_id, Mint) of true -> [network_id]; false -> [] end,
+        %% Compare presence as well as value: a prepared version cannot later
+        %% disappear from the selected metadata and pass as a legacy release.
+        BoundInstallKeys = InstallKeys ++ [packaged_release],
+        Keys = lists:usort(MintKeys ++ BoundInstallKeys ++ NetworkKeys),
+        Expected = maps:merge(maps:with(MintKeys ++ NetworkKeys, Mint),
+            maps:with(BoundInstallKeys, ExpectedInstallation)),
         Mismatches = [K || K <- Keys,
             maps:find(K, Discovered) =/= maps:find(K, Expected)],
         require(Mismatches =:= [], {release_discovery_mismatch, Mismatches}),
@@ -170,8 +186,9 @@ token_release(#{public_key := Public}, Contract0, Token) ->
 
 %% Transfer a release NFT with an explicit signing keypair.
 %% The contract remains authoritative: the caller must own the token or be an
-%% approved AEX-141 operator for it. This is used by authenticated custodial
-%% users as well as by the node/operator wrappers below.
+%% approved AEX-141 operator for it. Both authenticated custodial transfers and
+%% operator transfers use damage_ae's shared per-account nonce locks.
+%% The result explicitly distinguishes confirmed, submitted and unknown writes.
 -spec transfer(map(), pos_integer(), binary() | string()) ->
     {ok, map()} | {error, term()}.
 transfer(KeyPair0, Token, To0) ->
@@ -180,7 +197,7 @@ transfer(KeyPair0, Token, To0) ->
         KeyPair = signing_keypair(KeyPair0),
         Contract = configured_nft_contract(),
         To = encoded_id(account_pubkey, To0),
-        Call = damage_ae:contract_call(
+        Call = damage_ae:contract_call_tracked(
             KeyPair,
             Contract,
             contract_source(),
@@ -190,10 +207,9 @@ transfer(KeyPair0, Token, To0) ->
         transfer_call_result(Call)
     end).
 
-%% Prepare the exact unsigned transfer transaction for an authenticated wallet.
-%% A dry-run is performed first using only the caller public key so ownership /
-%% operator authorization and token existence fail before a signing request is
-%% returned to the client. The server never receives the wallet private key.
+%% Prepare once, then simulate the exact transaction returned to the wallet.
+%% No signing key is retrieved, no transaction is broadcast, and no nonce or
+%% ownership reservation is implied by a successful preflight.
 -spec prepare_transfer(binary() | string(), pos_integer(), binary() | string()) ->
     {ok, map()} | {error, term()}.
 prepare_transfer(From0, Token, To0) ->
@@ -202,21 +218,14 @@ prepare_transfer(From0, Token, To0) ->
         From = encoded_id(account_pubkey, From0),
         To = encoded_id(account_pubkey, To0),
         Contract = configured_nft_contract(),
-        Args = transfer_args(To, Token),
-        DryCaller = #{public_key => From, private_key => undefined},
-        case call_return(damage_ae:contract_call_dry(
-                DryCaller, Contract, contract_source(), "transfer", Args)) of
-            {ok, _} ->
-                Tx = damage_ae:contract_call_prepare_tx(
-                    #{public_key => From}, Contract, contract_source(), "transfer", Args
-                ),
-                {ok, #{
-                    token_id => Token,
-                    from => From,
-                    to => To,
-                    contract_id => Contract,
-                    tx => Tx
-                }};
+        case damage_ae:contract_call_prepare_checked(
+                #{public_key => From}, Contract, contract_source(),
+                "transfer", transfer_args(To, Token)) of
+            {ok, Tx} ->
+                {ok, #{token_id => Token, from => From, to => To,
+                       contract_id => Contract, tx => Tx}};
+            {error, #{status := rejected} = Rejection} ->
+                {error, {release_transfer_rejected, Rejection}};
             {error, Reason} ->
                 {error, {release_transfer_failed, Reason}}
         end
@@ -245,18 +254,25 @@ transfer_args(To, Token) ->
     %% receiver data, so option(string) is Sophia None.
     [binary_to_list(To), Token, "None"].
 
+transfer_call_result({ok, #{status := Status, tx_hash := _} = Outcome}) when
+        Status =:= confirmed; Status =:= submitted; Status =:= submission_unknown ->
+    {ok, Outcome};
+transfer_call_result({error, #{status := rejected} = Rejection}) ->
+    {error, {release_transfer_rejected, Rejection}};
 transfer_call_result(Call) when is_map(Call) ->
     case call_return(Call) of
         {ok, _} -> {ok, Call};
         {error, Reason} -> {error, {release_transfer_failed, Reason}}
     end;
+transfer_call_result({error, invalid_signing_keypair}) ->
+    {error, invalid_release_signing_keypair};
 transfer_call_result({error, Reason}) ->
     {error, {release_transfer_failed, Reason}};
 transfer_call_result(_) ->
     {error, release_transfer_failed}.
 
 signing_keypair(#{public_key := Public0, private_key := Private})
-        when is_binary(Private), byte_size(Private) > 0 ->
+        when is_binary(Private), byte_size(Private) =:= 64 ->
     #{public_key => encoded_id(account_pubkey, Public0), private_key => Private};
 signing_keypair(_) ->
     throw({release_error, invalid_release_signing_keypair}).
@@ -350,7 +366,9 @@ installation_fields(Record, Meta) when is_map(Meta) ->
         require(maps:get(<<"platform">>, Meta, Platform) =:= Platform, release_platform_mismatch),
         require(maps:get(<<"git_sha">>, Meta, maps:get(git_sha, Record)) =:= maps:get(git_sha, Record),
                 release_git_sha_mismatch),
-        {ok, maps:merge(Record, Checked)}
+        %% Only the installation document may supply packaged_release. The
+        %% NFT's release name is not evidence that its package declared it.
+        {ok, maps:merge(maps:remove(packaged_release, Record), Checked)}
     end);
 installation_fields(_, _) -> {error, invalid_installation_metadata}.
 
@@ -364,7 +382,7 @@ prepared_installation(Meta) ->
             git_sha => maps:get(<<"git_sha">>, Meta)},
         Record = case maps:find(<<"release">>, Meta) of
             {ok, Version} ->
-                require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_release),
+                require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_installation_release),
                 Record0#{release => Version};
             error -> Record0
         end,
@@ -373,9 +391,14 @@ prepared_installation(Meta) ->
     end).
 
 installation_identity(Record) ->
+    %% The optional packaged_release comes from the validated installation
+    %% manifest, not Record.release. Legacy unversioned manifests keep their
+    %% seven-field identity; versioned preparations retain the extra binding.
     maps:with([platform, asset_cid, git_sha, asset_path, sha256,
-        package_format, architecture], Record).
+        package_format, architecture, packaged_release], Record).
 
+%% An invalid version in IPFS metadata is a publication/backend failure, not
+%% an invalid client selector. Keep it distinct from normalize_selector/1.
 check_installation(I, Platform) ->
     guarded(fun() ->
         require(maps:get(<<"schema_version">>, I, undefined) =:= 1, invalid_installation_schema),
@@ -392,12 +415,13 @@ check_installation(I, Platform) ->
         require(lists:suffix(binary_to_list(<<"-", Arch/binary>>), binary_to_list(Platform)),
                 release_architecture_mismatch),
         require(platform_package_format(Platform, Format), release_package_format_mismatch),
+        Fields = #{asset_path => Path, sha256 => Digest, package_format => Format, architecture => Arch},
         case maps:find(<<"release">>, I) of
             {ok, Version} ->
-                require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_release);
-            error -> ok
-        end,
-        {ok, #{asset_path => Path, sha256 => Digest, package_format => Format, architecture => Arch}}
+                require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_installation_release),
+                {ok, Fields#{packaged_release => Version}};
+            error -> {ok, Fields}
+        end
     end).
 
 %% Known installer targets cannot accept a package from another package manager.
@@ -458,7 +482,7 @@ prepare_metadata(Meta0, Platform0, Asset0, ManifestPath0) ->
 manifest_release(Meta, Manifest) ->
     case maps:find(<<"release">>, Manifest) of
         {ok, Version} ->
-            require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_release),
+            require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_installation_release),
             require(maps:get(<<"release">>, Meta, Version) =:= Version, release_version_mismatch),
             Meta#{<<"release">> => Version};
         error -> Meta
