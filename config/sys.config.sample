@@ -202,6 +202,11 @@
             {logo_image, "/static/img/logo.png"},
             {run_user, "damage"},
 
+            {secrets_state_dir, "~/.local/state/damage"},
+            %% Or exact overrides:
+            %% {keystore, "~/.local/state/damage/keys/damage.key"},
+            %% {secrets_dets_file, "~/.local/state/damage/dets/damage.dets"}
+
             %% Public origin used for report links, account emails and browser
             %% flows. Set this to the externally reachable HTTPS origin in
             %% production, for example "https://bdd.example.com".

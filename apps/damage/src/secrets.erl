@@ -59,8 +59,175 @@
 -endif.
 
 -define(ASKPASS_TIMEOUT, 60000).
--define(DETS_FILE, "/var/lib/damage/damage.dets").
+-define(LEGACY_KEYSTORE_FILE, "/var/lib/damage/damage.key").
+-define(LEGACY_DETS_FILE, "/var/lib/damage/damage.dets").
+-define(LOCAL_KEYSTORE_FILE, "damage.key").
+-define(LOCAL_DETS_FILE, "damage.dets").
 -define(DETS_ARGS, [{auto_save, 5000}]).
+
+%% Storage path resolution order:
+%%   1. Exact sys.config file override (`keystore` / `secrets_dets_file`).
+%%   2. Explicit `secrets_state_dir` root from sys.config.
+%%   3. XDG state root: $XDG_STATE_HOME/damage, or
+%%      $HOME/.local/state/damage.
+%%   4. Existing legacy deployment/repository-local files.
+%%
+%% An explicit sys.config path is authoritative.  Without an explicit override,
+%% existing legacy files are reused rather than silently creating a new node
+%% identity or a second DETS database.  If no known file exists, new state is
+%% created in the XDG state tree.
+keystore_path() ->
+    case configured_path(keystore) of
+        {ok, Path} ->
+            Path;
+        undefined ->
+            state_file_path(
+                filename:join("keys", "damage.key"),
+                [?LEGACY_KEYSTORE_FILE, ?LOCAL_KEYSTORE_FILE]
+            )
+    end.
+
+secrets_dets_path() ->
+    case configured_path(secrets_dets_file) of
+        {ok, Path} ->
+            Path;
+        undefined ->
+            state_file_path(
+                filename:join("dets", "damage.dets"),
+                [?LEGACY_DETS_FILE, ?LOCAL_DETS_FILE]
+            )
+    end.
+
+state_file_path(RelativePath, LegacyPaths) ->
+    case configured_path(secrets_state_dir) of
+        {ok, StateDir} ->
+            filename:join(StateDir, RelativePath);
+        undefined ->
+            StateCandidates = [
+                filename:join(StateDir, RelativePath)
+             || StateDir <- default_secrets_state_dirs()
+            ],
+            case StateCandidates of
+                [Preferred | _] ->
+                    first_known_path(StateCandidates ++ LegacyPaths, Preferred);
+                [] ->
+                    [LegacyDefault | _] = LegacyPaths,
+                    first_known_path(LegacyPaths, LegacyDefault)
+            end
+    end.
+
+default_secrets_state_dirs() ->
+    HomeState = home_state_dir(),
+    Dirs0 =
+        case os:getenv("XDG_STATE_HOME") of
+            false -> [HomeState];
+            "" -> [HomeState];
+            XdgStateHome -> [filename:join(expand_user_path(XdgStateHome), "damage"), HomeState]
+        end,
+    unique_paths([Dir || Dir <- Dirs0, Dir =/= undefined]).
+
+home_state_dir() ->
+    case os:getenv("HOME") of
+        false -> undefined;
+        "" -> undefined;
+        Home -> filename:join([Home, ".local", "state", "damage"])
+    end.
+
+unique_paths(Paths) ->
+    lists:reverse(
+        lists:foldl(
+            fun(Path, Acc) ->
+                case lists:member(Path, Acc) of
+                    true -> Acc;
+                    false -> [Path | Acc]
+                end
+            end,
+            [],
+            Paths
+        )
+    ).
+
+configured_path(Key) ->
+    case application:get_env(damage, Key) of
+        {ok, Path} when is_binary(Path) ->
+            {ok, expand_user_path(binary_to_list(Path))};
+        {ok, Path} when is_list(Path), Path =/= [] ->
+            {ok, expand_user_path(Path)};
+        _ ->
+            undefined
+    end.
+
+%% Expand shell-style home paths from sys.config/environment before any
+%% filesystem operation.  Erlang does not expand "~/" automatically.
+%% Fail closed if HOME is unavailable rather than creating a literal "~"
+%% directory relative to the node's working directory.
+expand_user_path("~") ->
+    home_dir_or_error("~");
+expand_user_path([$~, $/ | Rest] = Path) ->
+    filename:join(home_dir_or_error(Path), Rest);
+expand_user_path(Path) ->
+    Path.
+
+home_dir_or_error(Path) ->
+    case os:getenv("HOME") of
+        false -> erlang:error({home_directory_unavailable, Path});
+        "" -> erlang:error({home_directory_unavailable, Path});
+        Home -> Home
+    end.
+
+first_known_path([Path | Rest], Default) ->
+    case path_definitely_missing(Path) of
+        true -> first_known_path(Rest, Default);
+        false -> Path
+    end;
+first_known_path([], Default) ->
+    Default.
+
+%% Permission and other I/O failures are deliberately treated as "known":
+%% use that path and surface the real error rather than falling through and
+%% accidentally creating a second node identity/database somewhere else.
+path_definitely_missing(Path) ->
+    case file:read_file_info(Path) of
+        {error, enoent} -> true;
+        {error, enotdir} -> true;
+        _ -> false
+    end.
+
+legacy_state_file(Name) ->
+    case configured_path(secrets_state_dir) of
+        {ok, StateDir} ->
+            Preferred = filename:join([StateDir, "keys", Name]),
+            first_known_path(
+                [Preferred, filename:join("/var/lib/damage", Name), Name],
+                Preferred
+            );
+        undefined ->
+            StateCandidates = [
+                filename:join([StateDir, "keys", Name])
+             || StateDir <- default_secrets_state_dirs()
+            ],
+            LegacyCandidates = [filename:join("/var/lib/damage", Name), Name],
+            case StateCandidates of
+                [Preferred | _] ->
+                    first_known_path(StateCandidates ++ LegacyCandidates, Preferred);
+                [] ->
+                    [LegacyDefault | _] = LegacyCandidates,
+                    first_known_path(LegacyCandidates, LegacyDefault)
+            end
+    end.
+
+open_secrets_dets() ->
+    Path = secrets_dets_path(),
+    case filelib:ensure_dir(Path) of
+        ok ->
+            case dets:open_file(Path, ?DETS_ARGS) of
+                {ok, _} = Ok -> Ok;
+                {error, _} = Error -> Error
+            end;
+        {error, Reason} ->
+            {error, {dets_directory_failed, Reason}}
+    end.
+
 %% Initialize dets database
 init_db() ->
     ok.
@@ -226,7 +393,7 @@ handle_call(
 ) when is_binary(PrivateKey) ->
     {reply, #{public_key => to_bin(AeAccount), private_key => PrivateKey}, State};
 handle_call(node_keypair, _From, State) ->
-    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+    Path = keystore_path(),
     case get_node_password_cached(State) of
         {error, Other} ->
             {reply, {error, Other}, State};
@@ -248,7 +415,7 @@ handle_call(export_node_wallet_seedphrase, _From, State) ->
     Reply = case get_node_password_cached(State) of
         {error, _} = Error -> Error;
         {Password, _} ->
-            Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+            Path = keystore_path(),
             case read_keypair(Path, Password) of
                 #{public_key := Pub, private_key := Priv} = KeyPair ->
                     case cached_identity_matches(State, Pub, Priv) of
@@ -443,7 +610,7 @@ node_keypair() ->
     gen_server:call(Pid, node_keypair, ?ASKPASS_TIMEOUT).
 
 has_node_keypair() ->
-    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+    Path = keystore_path(),
     case file:read_file(Path) of
         {error, enoent} ->
             false;
@@ -452,7 +619,7 @@ has_node_keypair() ->
     end.
 
 ensure_keypair_valid(NodePassword) ->
-    Path = application:get_env(damage, keystore, "/var/lib/damage/damage.key"),
+    Path = keystore_path(),
     case keypair(Path, NodePassword) of
         #{public_key := _, private_key := _} -> ok;
         {error, decrypt_keypair} -> {error, invalid_password};
@@ -636,20 +803,32 @@ decrypt_secret({IV, CipherText, Tag}, PrivateKey) ->
 %% Store encrypted secret in dets.  Keep the storage primitive generic so
 %% legacy v1 envelopes and scoped v2 envelopes can coexist during migration.
 store_secret(Name, Encrypted) ->
-    {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
-    dets:insert(?DETS_FILE, {Name, Encrypted}).
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            dets:insert(DetsFile, {Name, Encrypted});
+        {error, _} = Error ->
+            Error
+    end.
 
 %% Retrieve encrypted secret from dets
 retrieve_secret(Name) ->
-    dets:open_file(?DETS_FILE, ?DETS_ARGS),
-    dets:lookup(?DETS_FILE, Name).
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            dets:lookup(DetsFile, Name);
+        {error, _} = Error ->
+            Error
+    end.
 
 %% Delete encrypted secret from dets by key
 delete_secret(Name) ->
-    {ok, ?DETS_FILE} = dets:open_file(?DETS_FILE, ?DETS_ARGS),
-    case dets:delete(?DETS_FILE, Name) of
-        ok -> dets:sync(?DETS_FILE);
-        {error, _} = Error -> Error
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            case dets:delete(DetsFile, Name) of
+                ok -> dets:sync(DetsFile);
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error ->
+            Error
     end.
 
 %% Scoped deletion.  BDD/account-facing code should use this form.
@@ -797,7 +976,7 @@ import() ->
             ?LOG_ERROR("no damage.plain found ~p", [Error])
     end.
 import_secret_key(PublicKey, PrivateKeyHex) ->
-    Path = "damage.key.imported",
+    Path = filename:join(filename:dirname(keystore_path()), "damage.key.imported"),
     PrivateKey = binary:decode_hex(PrivateKeyHex),
     Keypair = #{private_key => PrivateKey, public_key => PublicKey},
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
@@ -807,6 +986,7 @@ import_secret_key(PublicKey, PrivateKeyHex) ->
                 Password,
                 term_to_binary(Keypair)
             ),
+            ok = filelib:ensure_dir(Path),
             ok = file:write_file(Path, term_to_binary(EncData)),
             Keypair
     catch
@@ -827,8 +1007,8 @@ test() ->
     {ok, StoredSecret} = retrieve_decrypt(test).
 
 migrate() ->
-    {ok, Data} = file:read_file("damage.prod.key"),
-    Path = application:get_env(damage, keystore, "damage.key"),
+    {ok, Data} = file:read_file(legacy_state_file("damage.prod.key")),
+    Path = keystore_path(),
     Keypair = binary_to_term(Data),
     Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
     try erm_askpass:ask_password(Prompt) of
@@ -837,6 +1017,7 @@ migrate() ->
                 Password,
                 term_to_binary(Keypair)
             ),
+            ok = filelib:ensure_dir(Path),
             ok = file:write_file(Path, term_to_binary(EncData)),
             Keypair
     catch
@@ -846,10 +1027,10 @@ migrate() ->
     end.
 
 list_secrets() ->
-    case dets:open_file(?DETS_FILE, ?DETS_ARGS) of
-        {ok, _} ->
-            Keys = dets:foldl(fun({Key, _}, Acc) -> [Key | Acc] end, [], ?DETS_FILE),
-            dets:close(?DETS_FILE),
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            Keys = dets:foldl(fun({Key, _}, Acc) -> [Key | Acc] end, [], DetsFile),
+            dets:close(DetsFile),
             lists:reverse(Keys);
         {error, Reason} ->
             ?LOG_ERROR("Failed to open secrets DETS: ~p", [Reason]),
