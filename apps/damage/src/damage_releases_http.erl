@@ -224,12 +224,13 @@ custodial_transfer(From, Username, {Token, To}, Lookup, Transfer) ->
         _ -> {error, transfer_signing_unavailable}
     end.
 
-executed_transfer_response({ok, #{status := State, tx_hash := Hash}}, From, Token, To, Req)
+executed_transfer_response({ok, #{status := State, tx_hash := Hash} = Outcome}, From, Token, To, Req)
         when is_binary(Hash),
              (State =:= confirmed orelse State =:= submitted orelse State =:= submission_unknown) ->
     Status = case State of confirmed -> 200; _ -> 202 end,
-    Body = #{ok => true, status => atom_to_binary(State, utf8),
-             token_id => Token, from => From, to => To, tx_hash => Hash},
+    Body0 = #{ok => true, status => atom_to_binary(State, utf8),
+              token_id => Token, from => From, to => To, tx_hash => Hash},
+    Body = maps:merge(Body0, transfer_submission_fields(Outcome)),
     {Status, json_headers(), jsx:encode(Body), Req};
 executed_transfer_response(Error, _From, _Token, _To, Req) ->
     transfer_result_error(Error, Req).
@@ -246,7 +247,8 @@ transfer_result_error({error, {release_transfer_rejected, Rejection}}, Req) ->
         {ok, Hash} when is_binary(Hash) -> Body0#{tx_hash => Hash};
         _ -> Body0
     end,
-    {409, json_headers(), jsx:encode(Body), Req};
+    WithSubmission = maps:merge(Body, transfer_submission_fields(Rejection)),
+    {409, json_headers(), jsx:encode(WithSubmission), Req};
 transfer_result_error({error, {release_transfer_failed, {revert, _}}}, Req) ->
     transfer_error(409, <<"transfer_rejected">>, Req);
 transfer_result_error({error, {release_transfer_failed, transfer_outcome_unknown}}, Req) ->
@@ -264,6 +266,31 @@ transfer_result_error({error, {release_transfer_failed, _}}, Req) ->
     transfer_error(503, <<"transfer_unavailable">>, Req);
 transfer_result_error(_, Req) ->
     transfer_error(503, <<"transfer_unavailable">>, Req).
+
+%% An optional diagnostic is evidence about submission, NOT a chain receipt.
+%% Re-allowlist at the HTTP boundary; never encode the raw backend map.
+transfer_submission_fields(#{submission := #{stage := submission, status := Status} = D}) ->
+    case lists:member(Status, [node_rejected, http_error, invalid_ack, unavailable, unknown]) of
+        true ->
+            Base = #{stage => <<"submission">>, status => atom_to_binary(Status, utf8)},
+            Code = maps:get(error_code, D, undefined),
+            Coded = case lists:member(Code, [
+                <<"nonce_too_high">>, <<"nonce_too_low">>, <<"nonce_already_used">>,
+                <<"account_nonce_too_high">>, <<"account_nonce_too_low">>,
+                <<"missing_hash">>, <<"hash_mismatch">>, <<"transport_unavailable">>,
+                <<"session_unavailable">>, <<"post_exception">>,
+                <<"unexpected_response">>, <<"unknown_error">>]) of
+                true -> Base#{error_code => Code};
+                false -> Base#{error_code => <<"unknown_error">>}
+            end,
+            Public = case maps:get(http_status, D, undefined) of
+                N when is_integer(N), N >= 100, N =< 599 -> Coded#{http_status => N};
+                _ -> Coded
+            end,
+            #{submission => Public};
+        false -> #{}
+    end;
+transfer_submission_fields(_) -> #{}.
 
 transfer_error(Status, Code, Req) ->
     {Status, json_headers(), jsx:encode(#{ok => false, error => Code}), Req}.

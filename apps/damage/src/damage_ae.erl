@@ -123,7 +123,9 @@
 -ifdef(TEST).
 -export([checked_contract_tx/2, tracked_dry_reply/1, tracked_submit/4,
          tracked_mined_reply/1, tracked_tx_hash/1, tracked_keypair/1,
-         tracked_locked/2, with_account_nonce_locks/2]).
+         tracked_locked/2, with_account_nonce_locks/2,
+         safe_payfor_locked/2, safe_payfor_attempt/2, safe_payfor_submit/4,
+         safe_payfor_receipt/1, tracked_submission/2]).
 -endif.
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
@@ -2705,7 +2707,7 @@ tracked_contract_call(KeyPair, Contract, Source, Func, Args) ->
             %% All preparation/signing/hash failures occurred BEFORE this boundary.
             %% POST and observation stay in this process and the pinned session.
             tracked_submit(SignedTx, TxHash, fun post_tx_detailed/1,
-                           fun tracked_wait_tx/1);
+                #{wait => fun tracked_wait_tx/1, once => fun tracked_probe_tx/1});
         {error, _} = PrepareError -> PrepareError
     end.
 
@@ -2806,26 +2808,105 @@ tracked_tx_hash(SignedTx) ->
     {ok, Hash} = signed_tx_hash(SignedTx),
     normalize_encoded_tx(Hash).
 
-tracked_submit(SignedTx, Hash, Post, Wait) ->
-    %% Never retry the write or run it in a kill-on-timeout worker. After this
-    %% boundary an unsuccessful acknowledgement alone is not a terminal receipt.
-    PostReply = try Post(SignedTx) catch _:_ -> unknown end,
-    Submission = case PostReply of
-        {ok, Ack} when is_map(Ack) ->
-            case tracked_hash_equal(Hash, tracked_field(tx_hash, Ack)) of
-                true -> submitted;
-                false -> submission_unknown
-            end;
-        _ -> submission_unknown
-    end,
-    %% Observe ONLY the locally computed hash, including after a lost or invalid
-    %% acknowledgement. The existing post helper also handles already_known.
-    Observation = try Wait(Hash) catch _:_ -> unknown end,
+%% Submission diagnostics describe the submitting node, not global chain
+%% finality. A local validation rejection NEVER becomes 'not_submitted'.
+tracked_submit(SignedTx, Hash, Post, Observers) ->
+    {Outcome, Observation} = tracked_post_observe(SignedTx, Hash, Post, Observers),
     case Observation of
-        {ok, confirmed} -> {ok, #{status => confirmed, tx_hash => Hash}};
+        {ok, confirmed} -> {ok, Outcome#{status := confirmed}};
         {ok, {rejected, Reason}} when Reason =:= contract_reverted; Reason =:= contract_error ->
-            {error, #{status => rejected, stage => execution, reason => Reason, tx_hash => Hash}};
-        _ -> {ok, #{status => Submission, tx_hash => Hash}}
+            {error, Outcome#{status := rejected, stage => execution, reason => Reason}};
+        _ -> {ok, Outcome}
+    end.
+
+tracked_post_observe(SignedTx, Hash, Post, Observers) ->
+    %% Exactly one POST. Neither an error nor a missing receipt rebuilds a tx.
+    PostReply = try Post(SignedTx) catch _:_ -> post_exception end,
+    {Outcome, Mode} = tracked_submission(Hash, PostReply),
+    Observation = try
+        Observer = case Observers of
+            F when is_function(F, 1) -> F;
+            M when is_map(M) -> maps:get(Mode, M)
+        end,
+        Observer(Hash)
+    catch _:_ -> unknown
+    end,
+    {Outcome, Observation}.
+
+tracked_submission(Hash, {ok, Ack}) when is_map(Ack) ->
+    case tracked_field(tx_hash, Ack) of
+        undefined -> tracked_submission_unknown(Hash, invalid_ack, <<"missing_hash">>, undefined, wait);
+        AckHash ->
+            case tracked_hash_equal(Hash, AckHash) of
+                true -> {#{status => submitted, tx_hash => Hash}, wait};
+                false -> tracked_submission_unknown(Hash, invalid_ack, <<"hash_mismatch">>, undefined, wait)
+            end
+    end;
+tracked_submission(Hash, {error, {tx_rejected, Meta}}) when is_map(Meta) ->
+    Status = tracked_field(http_status, Meta),
+    Code = tracked_submission_code(tracked_field(error_code, Meta)),
+    case Status =:= 400 andalso is_nonce_error_code(Code) of
+        true ->
+            %% An explicit nonce validation response warrants a single receipt
+            %% lookup, not the full mining wait while holding both account locks.
+            %% A receipt can still override it (e.g. a previous identical POST).
+            tracked_submission_unknown(Hash, node_rejected, Code, Status, once);
+        false ->
+            %% Proxies and public nodes also use tx_rejected for 401/403/429/5xx.
+            %% Unknown codes/statuses are not evidence of a terminal rejection.
+            tracked_submission_unknown(Hash, http_error, Code, Status, wait)
+    end;
+tracked_submission(Hash, {error, {tx_post_missing_hash, Meta}}) when is_map(Meta) ->
+    tracked_submission_unknown(Hash, invalid_ack, <<"missing_hash">>,
+        tracked_field(http_status, Meta), wait);
+tracked_submission(Hash, {error, {tx_post_node_unavailable, _}}) ->
+    tracked_submission_unknown(Hash, unavailable, <<"transport_unavailable">>, undefined, wait);
+tracked_submission(Hash, {error, {tx_post_session_unavailable, _}}) ->
+    tracked_submission_unknown(Hash, unavailable, <<"session_unavailable">>, undefined, wait);
+tracked_submission(Hash, post_exception) ->
+    tracked_submission_unknown(Hash, unavailable, <<"post_exception">>, undefined, wait);
+tracked_submission(Hash, _) ->
+    tracked_submission_unknown(Hash, unknown, <<"unexpected_response">>, undefined, wait).
+
+tracked_submission_unknown(Hash, Status, Code, HttpStatus, Mode) ->
+    Details0 = #{stage => submission, status => Status, error_code => Code},
+    Details = case HttpStatus of
+        N when is_integer(N), N >= 100, N =< 599 -> Details0#{http_status => N};
+        _ -> Details0
+    end,
+    {#{status => submission_unknown, tx_hash => Hash, submission => Details}, Mode}.
+
+tracked_submission_code(Code) when is_atom(Code) ->
+    tracked_submission_code(atom_to_binary(Code, utf8));
+tracked_submission_code(Code) when is_list(Code), length(Code) =< 64 ->
+    try tracked_submission_code(list_to_binary(Code))
+    catch _:_ -> <<"unknown_error">>
+    end;
+tracked_submission_code(Code) when is_binary(Code) ->
+    %% Only machine codes already recognized by the shared nonce classifier.
+    %% Never echo free-text reason/response/headers, even for a 400 response.
+    case is_nonce_error_code(Code) of
+        true -> Code;
+        false -> <<"unknown_error">>
+    end;
+tracked_submission_code(_) -> <<"unknown_error">>.
+
+%% One read-only probe after an explicit submitting-node nonce rejection.
+%% No sleep, rebroadcast, gas rebuild, or nonce retry is performed here.
+tracked_probe_tx(Hash) ->
+    case safe_payfor_receipt(tracked_probe_call(Hash)) of
+        {ok, Call} -> {ok, tracked_mined_reply({ok, #{call_info => Call}})};
+        _ -> {error, transaction_confirmation_unavailable}
+    end.
+
+tracked_probe_call(Hash) ->
+    case current_ae_session() of
+        {ok, Session} ->
+            case tx_info(Session, Hash) of
+                {ok, Envelope} -> tx_info_convert_result(Envelope);
+                Error -> Error
+            end;
+        Error -> Error
     end.
 
 tracked_hash_equal(Hash, Hash) -> true;
@@ -2938,182 +3019,117 @@ contract_call_payfor_tx(
         end)
     end).
 
-%% @doc Staged paying-for contract call for operations where the caller must
-%% distinguish a transaction that definitely was never submitted from one whose
-%% broadcast/confirmation result is ambiguous.
-%%
-%% Returns:
-%%   {not_submitted, Reason}
-%%       Transaction construction/signing failed before vanillae:post_tx/1.
-%%       It is safe for the caller to retry the operation.
-%%   {confirmed, TxHash, Result}
-%%       The transaction was accepted and wait_tx/1 returned a chain result.
-%%   {uncertain, TxHash | undefined, Reason}
-%%       Submission may have occurred, or a submitted transaction could not be
-%%       confirmed. The caller must reconcile chain state before retrying.
+%% @doc Staged PayingFor contract call. Retains the legacy tuple API:
+%%   {not_submitted, Reason} -- failure before the submission boundary;
+%%   {confirmed, TxHash, Call} -- a mined terminal receipt, INCLUDING reverts;
+%%   {uncertain, TxHash | undefined, Reason} -- reconcile before retrying.
+%% 'confirmed' means receipt observed, not that the contract returned 'ok'.
+%% No automatic submission/nonce retry is performed by this API.
 contract_call_payfor_user_safe(
-    #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
+    #{public_key := _, private_key := _} = KeyPair0, ContractId, ContractSource, Func, Args
 ) ->
-    case safe_node_keypair() of
-        {ok, #{public_key := NodeAeAccount} = NodeKeyPair} ->
-            LockId = payfor_submission_lock_id(NodeAeAccount),
-            Submission = global:trans(
-                LockId,
-                fun() ->
-                    case prepare_payfor_user_signed_tx(
-                        AeAccount,
-                        PrivateKey,
-                        ContractId,
-                        ContractSource,
-                        Func,
-                        Args,
-                        NodeKeyPair
-                    ) of
-                        {ok, PayingSignedTX} -> post_payfor_user_tx(PayingSignedTX);
-                        {error, Reason} -> {not_submitted, Reason}
-                    end
-                end
-            ),
-            finish_payfor_submission(Submission);
-        {error, Reason} ->
-            {not_submitted, Reason}
+    case tracked_keypair(KeyPair0) of
+        {ok, #{public_key := Caller} = KeyPair} ->
+            case safe_node_keypair() of
+                {ok, #{public_key := Payer} = NodeKeyPair} when Caller =/= Payer ->
+                    safe_payfor_locked([Caller, Payer], fun() ->
+                        safe_payfor_attempt(
+                            fun() ->
+                                {ok, Signed} = prepare_payfor_user_signed_tx(
+                                    KeyPair, ContractId, ContractSource, Func, Args, NodeKeyPair),
+                                {ok, Signed, tracked_tx_hash(Signed)}
+                            end,
+                            fun(Signed, Hash) ->
+                                safe_payfor_submit(Signed, Hash, fun post_tx_detailed/1,
+                                    #{wait => fun wait_tx/1, once => fun tracked_probe_call/1})
+                            end)
+                    end);
+                {ok, _} ->
+                    %% Two independent nonces are required by this wrapper. Use
+                    %% a direct account call when signer and payer are identical.
+                    {not_submitted, payfor_signer_is_payer};
+                {error, Reason} -> {not_submitted, Reason}
+            end;
+        {error, _} -> {not_submitted, invalid_signing_keypair}
     end;
-contract_call_payfor_user_safe(AeAccount, _Contract, _ContractSource, _Func, _Args) ->
-    {not_submitted, {keypair_required, AeAccount}}.
+contract_call_payfor_user_safe(Account, _Contract, _Source, _Func, _Args)
+        when is_binary(Account); is_list(Account) ->
+    {not_submitted, {keypair_required, Account}};
+contract_call_payfor_user_safe(_Account, _Contract, _Source, _Func, _Args) ->
+    %% Do not echo an arbitrary malformed map that may contain private material.
+    {not_submitted, keypair_required}.
 
 safe_node_keypair() ->
-    try secrets:node_keypair() of
-        #{public_key := _NodeAeAccount, private_key := _NodePrivateKey} = KeyPair ->
-            {ok, KeyPair};
-        Other ->
-            {error, {invalid_node_keypair, compact_payfor_error(Other)}}
-    catch
-        Class:Reason:Stacktrace ->
-            ?LOG_ERROR(
-                "Failed to load node keypair for paying-for submission class=~p reason=~p stack=~p",
-                [Class, Reason, Stacktrace]
-            ),
-            {error, {node_keypair_failed, Class, compact_payfor_error(Reason)}}
+    try tracked_keypair(secrets:node_keypair()) of
+        {ok, _} = Ok -> Ok;
+        _ -> {error, invalid_node_keypair}
+    catch _:_ -> {error, node_keypair_unavailable}
     end.
 
-payfor_submission_lock_id(NodeAeAccount) ->
-    {{?MODULE, {payfor_submit, NodeAeAccount}}, self()}.
+safe_payfor_locked(Accounts, Execute) ->
+    %% Same sorted/deduplicated signer AND payer locks as the normal path.
+    %% Check out a node only after acquiring the locks; keep the session and
+    %% both locks through preparation, POST, and receipt observation.
+    try with_account_nonce_locks(Accounts, fun() ->
+        with_ae_session(fun() -> {payfor_operation_result, Execute()} end)
+    end) of
+        {payfor_operation_result, Result} -> Result;
+        {error, {nonce_lock_aborted, _}} -> {not_submitted, payfor_nonce_lock_aborted};
+        {error, _} -> {not_submitted, payfor_session_unavailable};
+        _ -> {uncertain, undefined, payfor_scope_failed}
+    catch
+        %% An exception outside the known prepare/submit boundaries may have
+        %% lost a result AFTER a write. Never invite a blind retry in this case.
+        _:_ -> {uncertain, undefined, payfor_scope_failed}
+    end.
 
-finish_payfor_submission({submitted, TxHash}) ->
-    confirm_payfor_user_tx(TxHash);
-finish_payfor_submission(aborted) ->
-    {not_submitted, payfor_submission_lock_aborted};
-finish_payfor_submission({aborted, Reason}) ->
-    {not_submitted, {payfor_submission_lock_failed, compact_payfor_error(Reason)}};
-finish_payfor_submission(Result) ->
-    Result.
+%% Private callback seam, exported only under TEST. It separates failures
+%% provably before the write from failures after the local hash is known.
+safe_payfor_attempt(Prepare, Submit) ->
+    Prepared = try Prepare() catch _:_ -> {error, payfor_prepare_failed} end,
+    case Prepared of
+        {ok, Signed, Hash} when is_binary(Signed), is_binary(Hash) ->
+            try Submit(Signed, Hash)
+            catch _:_ -> {uncertain, Hash, payfor_submission_outcome_unknown}
+            end;
+        _ -> {not_submitted, payfor_prepare_failed}
+    end.
 
 prepare_payfor_user_signed_tx(
-    AeAccount,
-    PrivateKey,
-    ContractId,
-    ContractSource,
-    Func,
-    Args,
-    #{public_key := NodeAeAccount, private_key := NodePrivateKey}
+    #{public_key := Caller, private_key := Private}, ContractId, Source, Func, Args,
+    #{public_key := Payer, private_key := PayerPrivate}
 ) ->
-    try
-        {ok, AeAccountNonce} = vanillae:next_nonce(AeAccount),
-        Fee = vanillae:min_fee(),
-        Gas = vanillae:min_gas(),
-        Amount = 0,
-        GasPrice = vanillae:min_gas_price(),
-        {ok, AACI} = vanillae:prepare_contract(ContractSource),
-        {ok, ContractCall} = vanillae:contract_call(
-            AeAccount, AeAccountNonce, Gas, GasPrice, Fee, Amount,
-            AACI, ContractId, Func, Args
-        ),
+    GasPrice = gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(Source),
+    BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+        vanillae:contract_call(Caller, Nonce, GasLimit, GasPrice, Fee, 0,
+                              AACI, ContractId, Func, Args)
+    end,
+    %% Centralized allocator and current gas/fee builder for the inner signer.
+    {ok, #{tx := Inner}} = build_account_contract_tx(
+        contract_call_tx, Caller, BuildNonceFun, contract_call_gas_limit(), GasPrice),
+    SignedInner = sign_transaction_base58(Private, {inner, Inner}),
+    {ok, PayerNonce} = next_nonce(Payer),
+    {ok, #{tx := Outer}} = build_paying_for_tx(Payer, PayerNonce, tx_bin(SignedInner), GasPrice),
+    {ok, sign_transaction_base58(PayerPrivate, Outer)}.
 
-        Signature = make_transaction_signature_base58(PrivateKey, {inner, ContractCall}),
-        SignedTX = attach_signature_base58(ContractCall, Signature),
-        {transaction, InnerTxBin} = aeser_api_encoder:decode(SignedTX),
+safe_payfor_submit(Signed, Hash, Post, Observers) ->
+    {Outcome, Observation} = tracked_post_observe(Signed, Hash, Post, Observers),
+    case safe_payfor_receipt(Observation) of
+        {ok, Call} -> {confirmed, Hash, Call};
+        error ->
+            {uncertain, Hash, Outcome#{reason => transaction_confirmation_unavailable}}
+     end.
 
-        {ok, NodeNonce} = vanillae:next_nonce(NodeAeAccount),
-        {ok, PayingForTx} = paying_for(
-            list_to_binary(NodeAeAccount), NodeNonce, Fee, InnerTxBin
-        ),
-        {transaction, PayingForTxBin} = aeser_api_encoder:decode(PayingForTx),
-
-        CorrectGas = calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
-        CorrectFee = CorrectGas * GasPrice,
-        {ok, ContractCall0} = vanillae:contract_call(
-            AeAccount, AeAccountNonce, CorrectGas, GasPrice, Fee, Amount,
-            AACI, ContractId, Func, Args
-        ),
-
-        Signature0 = make_transaction_signature_base58(PrivateKey, {inner, ContractCall0}),
-        SignedTX0 = attach_signature_base58(ContractCall0, Signature0),
-        {transaction, InnerTxBin0} = aeser_api_encoder:decode(SignedTX0),
-
-        {ok, PayingForTxFinal} = paying_for(
-            list_to_binary(NodeAeAccount), NodeNonce, CorrectFee, InnerTxBin0
-        ),
-        PayingSignature = make_transaction_signature_base58(NodePrivateKey, PayingForTxFinal),
-        {ok, attach_signature_base58(PayingForTxFinal, PayingSignature)}
-    catch
-        Class:Reason:Stacktrace ->
-            ?LOG_ERROR(
-                "Preparing paying-for transaction failed class=~p reason=~p stack=~p",
-                [Class, Reason, Stacktrace]
-            ),
-            {error, {
-                prepare_payfor_user_tx_failed,
-                Class,
-                compact_payfor_error(Reason)
-            }}
-    end.
-
-post_payfor_user_tx(PayingSignedTX) ->
-    try vanillae:post_tx(PayingSignedTX) of
-        {ok, #{"tx_hash" := TxHash}} ->
-            {submitted, TxHash};
-        {ok, #{<<"tx_hash">> := TxHash}} ->
-            {submitted, TxHash};
-        {error, Reason} ->
-            %% A transport/backend error at post time cannot prove whether the
-            %% node accepted the transaction. Treat it as ambiguous.
-            {uncertain, undefined, {post_tx_failed, compact_payfor_error(Reason)}};
-        Other ->
-            {uncertain, undefined, {
-                unexpected_post_tx_response,
-                compact_payfor_error(Other)
-            }}
-    catch
-        Class:Reason:Stacktrace ->
-            ?LOG_ERROR(
-                "Posting paying-for transaction failed class=~p reason=~p stack=~p",
-                [Class, Reason, Stacktrace]
-            ),
-            {uncertain, undefined, {
-                post_tx_crashed,
-                Class,
-                compact_payfor_error(Reason)
-            }}
-    end.
-
-confirm_payfor_user_tx(TxHash) ->
-    try wait_tx(TxHash) of
-        Result -> {confirmed, TxHash, Result}
-    catch
-        Class:Reason:Stacktrace ->
-            ?LOG_ERROR(
-                "Confirming paying-for transaction failed tx=~p class=~p reason=~p stack=~p",
-                [TxHash, Class, Reason, Stacktrace]
-            ),
-            {uncertain, TxHash, {
-                wait_tx_failed,
-                Class,
-                compact_payfor_error(Reason)
-            }}
-    end.
-
-compact_payfor_error(Term) ->
-    iolist_to_binary(io_lib:format("~P", [Term, 12])).
+safe_payfor_receipt(Call) when is_map(Call) ->
+    %% wait_tx/1 can RETURN an error tuple; absence of an exception is not
+    %% confirmation. Require a positive mined height and terminal return type.
+    case tracked_mined_reply({ok, #{call_info => Call}}) of
+        confirmed -> {ok, Call};
+        {rejected, _} -> {ok, Call};
+        _ -> error
+    end;
+safe_payfor_receipt(_) -> error.
 
 contract_call_payfor_user(
     #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
