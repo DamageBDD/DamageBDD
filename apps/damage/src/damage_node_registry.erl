@@ -317,54 +317,39 @@ handle_call({clear_cache, Key}, _From, State) ->
 %% -------------------------
 
 handle_call({register_account, Account0, Registry0, Tier0}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     Account = to_bin(Account0),
     Registry = to_bin(Registry0),
     Tier = to_bin(Tier0),
 
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "register_account",
-        [Account, Registry, Tier]
-    ),
-
-    invalidate_account(State, Account),
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(
+        State, "register_account", [Account, Registry, Tier]
+    ) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_account(State, Account),
+            {reply, Resp, State}
+    end;
 handle_call({update_tier, Account0, Tier0}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     Account = to_bin(Account0),
     Tier = to_bin(Tier0),
-
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "update_tier",
-        [Account, Tier]
-    ),
-
-    invalidate_account(State, Account),
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(State, "update_tier", [Account, Tier]) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_account(State, Account),
+            {reply, Resp, State}
+    end;
 handle_call({update_registry, Account0, Registry0}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     Account = to_bin(Account0),
     Registry = to_bin(Registry0),
-
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "update_registry",
-        [Account, Registry]
-    ),
-
-    invalidate_account(State, Account),
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(State, "update_registry", [Account, Registry]) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_account(State, Account),
+            {reply, Resp, State}
+    end;
 %% -------------------------
 %% Account-level reads
 %% -------------------------
@@ -384,63 +369,46 @@ handle_call({get_registry, Account0}, _From, State) ->
 %% -------------------------
 
 handle_call({register_node, Owner0, NodeId0, MetaMap0, CfgMap0}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     Owner = to_bin(Owner0),
     NodeId = to_bin(NodeId0),
     MetaRec = meta_map_to_record(MetaMap0),
     CfgRec = cfg_map_to_record(CfgMap0),
-
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "register_node",
-        [Owner, NodeId, MetaRec, CfgRec]
-    ),
-
-    invalidate_node(State, NodeId),
-    invalidate_account(State, Owner),
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(
+        State, "register_node", [Owner, NodeId, MetaRec, CfgRec]
+    ) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_node(State, NodeId),
+            invalidate_account(State, Owner),
+            {reply, Resp, State}
+    end;
 handle_call({update_node_meta, NodeId0, MetaMap0}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     NodeId = to_bin(NodeId0),
     MetaRec = meta_map_to_record(MetaMap0),
-
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "update_node_meta",
-        [NodeId, MetaRec]
-    ),
-
-    invalidate_node(State, NodeId),
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(State, "update_node_meta", [NodeId, MetaRec]) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_node(State, NodeId),
+            {reply, Resp, State}
+    end;
 handle_call({update_node_cfg, NodeId0, CfgMap0}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     NodeId = to_bin(NodeId0),
     CfgRec = cfg_map_to_record(CfgMap0),
-
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "update_node_cfg",
-        [NodeId, CfgRec]
-    ),
-
-    invalidate_node(State, NodeId),
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(State, "update_node_cfg", [NodeId, CfgRec]) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_node(State, NodeId),
+            {reply, Resp, State}
+    end;
 handle_call({reassign_node, NodeId0, NewOwner0}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     NodeId = to_bin(NodeId0),
     NewOwner = to_bin(NewOwner0),
 
-    %% fetch old owner before mutation so we can invalidate both sides
+    %% Fetch the old owner only for cache invalidation. A transient read error
+    %% must not prevent the mutation itself from returning its real result.
     OldOwnerResp = cached_contract_call(State, {node_owner, NodeId}, "get_node_owner", [NodeId]),
     OldOwner =
         case OldOwnerResp of
@@ -450,36 +418,27 @@ handle_call({reassign_node, NodeId0, NewOwner0}, _From, State) ->
                 undefined
         end,
 
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "reassign_node",
-        [NodeId, NewOwner]
-    ),
-
-    invalidate_node(State, NodeId),
-    invalidate_account(State, NewOwner),
-    case OldOwner of
-        undefined -> ok;
-        _ -> invalidate_account(State, OldOwner)
-    end,
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(State, "reassign_node", [NodeId, NewOwner]) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_node(State, NodeId),
+            invalidate_account(State, NewOwner),
+            case OldOwner of
+                undefined -> ok;
+                _ -> invalidate_account(State, OldOwner)
+            end,
+            {reply, Resp, State}
+    end;
 handle_call({set_node_enabled, NodeId0, Enabled}, _From, State) ->
-    ContractId = require_contract(State),
-    KeyPair = secrets:node_keypair(),
     NodeId = to_bin(NodeId0),
-
-    Resp = damage_ae:contract_call(
-        KeyPair,
-        ContractId,
-        damage_ae:contract_path(State#state.contract_path),
-        "set_node_enabled",
-        [NodeId, Enabled]
-    ),
-
-    invalidate_node(State, NodeId),
-    {reply, Resp, State};
+    case contract_call_with_node_keypair(State, "set_node_enabled", [NodeId, Enabled]) of
+        {error, _} = Error ->
+            {reply, Error, State};
+        Resp ->
+            invalidate_node(State, NodeId),
+            {reply, Resp, State}
+    end;
 %% -------------------------
 %% Node-level reads
 %% -------------------------
@@ -560,7 +519,7 @@ cached_contract_call(State, CacheKey, Func, Args) ->
             case node_keypair() of
                 {ok, KeyPair} ->
                     ContractId = require_contract(State),
-                    Resp = damage_ae:contract_call(
+                    Resp = damage_ae:contract_call_dry(
                         KeyPair,
                         ContractId,
                         damage_ae:contract_path(State#state.contract_path),
@@ -587,6 +546,20 @@ node_keypair() ->
     catch
         Class:Reason ->
             {error, {node_keypair_lookup_failed, Class, Reason}}
+    end.
+
+contract_call_with_node_keypair(State, Func, Args) ->
+    case node_keypair() of
+        {ok, KeyPair} ->
+            damage_ae:contract_call(
+                KeyPair,
+                require_contract(State),
+                damage_ae:contract_path(State#state.contract_path),
+                Func,
+                Args
+            );
+        {error, _} = Error ->
+            Error
     end.
 
 maybe_cache_put(State, Key, Resp) ->
@@ -675,35 +648,24 @@ cfg_map_to_record(M) when is_map(M) ->
 %% -------------------------------------------------------------------
 
 %% Deploy using the node (service) keypair (server-owned deployment)
--spec deploy_node_registry() -> binary().
+-spec deploy_node_registry() -> binary() | {error, term()}.
 deploy_node_registry() ->
-    DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
-    KeyPair = secrets:node_keypair(),
-    case damage_ae:contract_deploy(KeyPair, DeployPath, []) of
-        #{"contract_id" := ContractId} ->
-            %% Optional: remember + hot-set for this runtime
-            erlang:put(node_registry_contract_id, ContractId),
-            SetContractResult =
-                try gen_server:call(?MODULE, {set_contract, ContractId}) of
-                    Result ->
-                        {ok, Result}
-                catch
-                    Class:Reason:Stack ->
-                        ?LOG_DEBUG(
-                            "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
-                            [ContractId, Class, Reason, Stack]
-                        ),
-                        {error, {Class, Reason, Stack}}
-                end,
-            ?LOG_DEBUG(
-                "set_contract result contract_id=~p result=~p",
-                [ContractId, SetContractResult]
-            ),
-            ContractId;
-        #{"return_type" := "revert"} = Info ->
-            error({node_registry_deploy_revert, Info});
-        Other ->
-            error({node_registry_deploy_failed, Other})
+    case node_keypair() of
+        {ok, KeyPair} ->
+            DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
+            case damage_ae:contract_deploy(KeyPair, DeployPath, []) of
+                #{"contract_id" := ContractId} ->
+                    %% Optional: remember + hot-set for this runtime
+                    erlang:put(node_registry_contract_id, ContractId),
+                    catch gen_server:call(?MODULE, {set_contract, ContractId}),
+                    ContractId;
+                #{"return_type" := "revert"} = Info ->
+                    {error, {node_registry_deploy_revert, Info}};
+                Other ->
+                    {error, {node_registry_deploy_failed, Other}}
+            end;
+        {error, _} = Error ->
+            Error
     end.
 
 %% Deploy using a provided keypair (account-owned deployment)

@@ -27,106 +27,47 @@ start(_StartType, _StartArgs) ->
     end.
 
 start_index_jobs_resilient(SupPid) ->
-    try maybe_start_index_jobs(SupPid) of
+    case ecai_index_jobs_bootstrap:start_index_jobs(SupPid) of
         ok ->
-            ok
-    catch
-        error:{index_jobs_start_failed, Reason} ->
+            ok;
+        {error, {invalid_configuration, index_jobs_enabled, _} = Reason} ->
+            erlang:error(Reason);
+        {error, Reason} ->
             ?LOG_WARNING(
                 "ECAI index-jobs subsystem unavailable at boot; ECAI will continue "
-                "and retry in the background reason=~p",
+                "and retry under ecai_sup reason=~p",
                 [Reason]
             ),
-            start_index_jobs_retry(SupPid),
+            ensure_index_jobs_retry_worker(SupPid)
+    end.
+
+ensure_index_jobs_retry_worker(SupPid) ->
+    ChildSpec = ecai_index_jobs_bootstrap:child_spec(SupPid),
+    case supervisor:start_child(SupPid, ChildSpec) of
+        {ok, _Pid} ->
             ok;
-        error:{index_jobs_restart_failed, Reason} ->
-            ?LOG_WARNING(
-                "ECAI index-jobs subsystem restart failed at boot; ECAI will continue "
-                "and retry in the background reason=~p",
-                [Reason]
-            ),
-            start_index_jobs_retry(SupPid),
-            ok
-    end.
-
-start_index_jobs_retry(SupPid) ->
-    _ = spawn(fun() -> index_jobs_retry_loop(SupPid, 1000) end),
-    ok.
-
-index_jobs_retry_loop(SupPid, DelayMs) ->
-    Ref = erlang:monitor(process, SupPid),
-    receive
-        {'DOWN', Ref, process, SupPid, _Reason} ->
-            ok
-    after DelayMs ->
-        erlang:demonitor(Ref, [flush]),
-        case try_start_index_jobs(SupPid) of
-            ok ->
-                ?LOG_INFO("ECAI index-jobs subsystem started after retry", []),
-                ok;
-            {retry, Reason} ->
-                NextDelay = erlang:min(30000, DelayMs * 2),
-                ?LOG_DEBUG(
-                    "ECAI index-jobs subsystem still unavailable; retrying in ~p ms reason=~p",
-                    [NextDelay, Reason]
-                ),
-                index_jobs_retry_loop(SupPid, NextDelay);
-            {fatal, Reason} ->
-                ?LOG_ERROR(
-                    "ECAI index-jobs retry stopped due to configuration error reason=~p",
-                    [Reason]
-                ),
-                ok
-        end
-    end.
-
-try_start_index_jobs(SupPid) ->
-    try maybe_start_index_jobs(SupPid) of
-        ok ->
-            ok
-    catch
-        error:{index_jobs_start_failed, Reason} ->
-            {retry, Reason};
-        error:{index_jobs_restart_failed, Reason} ->
-            {retry, Reason};
-        error:{invalid_configuration, index_jobs_enabled, _} = Reason ->
-            {fatal, Reason};
-        Class:Reason ->
-            {retry, {Class, Reason}}
-    end.
-
-maybe_start_index_jobs(SupPid) ->
-    case application:get_env(ecai, index_jobs_enabled, false) of
-        true ->
-            ChildSpec = #{
-                id => ecai_index_jobs_sup,
-                start => {ecai_index_jobs_sup, start_link, []},
-                restart => permanent,
-                shutdown => infinity,
-                type => supervisor,
-                modules => [ecai_index_jobs_sup]
-            },
-            case supervisor:start_child(SupPid, ChildSpec) of
-                {ok, _Pid} ->
-                    ok;
-                {ok, _Pid, _Info} ->
-                    ok;
-                {error, {already_started, _Pid}} ->
-                    ok;
-                {error, already_present} ->
-                    case supervisor:restart_child(SupPid, ecai_index_jobs_sup) of
-                        {ok, _Pid} -> ok;
-                        {ok, _Pid, _Info} -> ok;
-                        {error, running} -> ok;
-                        {error, Reason} -> error({index_jobs_restart_failed, Reason})
-                    end;
+        {ok, _Pid, _Info} ->
+            ok;
+        {error, {already_started, _Pid}} ->
+            ok;
+        {error, already_present} ->
+            case supervisor:restart_child(SupPid, ecai_index_jobs_bootstrap) of
+                {ok, _Pid} -> ok;
+                {ok, _Pid, _Info} -> ok;
+                {error, running} -> ok;
                 {error, Reason} ->
-                    error({index_jobs_start_failed, Reason})
+                    ?LOG_ERROR(
+                        "ECAI index-jobs retry worker could not restart reason=~p",
+                        [Reason]
+                    ),
+                    ok
             end;
-        false ->
-            ok;
-        Invalid ->
-            error({invalid_configuration, index_jobs_enabled, Invalid})
+        {error, Reason} ->
+            ?LOG_ERROR(
+                "ECAI index-jobs retry worker could not start reason=~p",
+                [Reason]
+            ),
+            ok
     end.
 
 maybe_start_wikimedia_fixture_server(SupPid) ->
