@@ -243,6 +243,29 @@ function isNodeSecretsLocked(status, payload) {
         )
     );
 }
+async function waitForNodeReady({ attempts = 20, delayMs = 250 } = {}) {
+    let lastStatus = null;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+            const status = await loadNodeStatus();
+            lastStatus = status;
+            if (status?.ok === true) return status;
+
+            const error = String(status?.error_code || status?.error || status?.reason || "").toLowerCase();
+            if (error !== "node_locked" && error !== "node_secrets_locked" && error !== "secrets_not_ready") {
+                throw nodeStatusError(status?.message || "Node did not become ready after unlock", 503, status);
+            }
+        } catch (err) {
+            if (!isNodeSecretsLocked(err?.status || 0, err?.payload)) throw err;
+            lastStatus = err?.payload;
+        }
+        await new Promise(resolve => window.setTimeout(resolve, delayMs));
+    }
+
+    throw nodeStatusError("Unlock was accepted but the node did not become ready in time.", 503, lastStatus);
+}
+
 
 function showNodeUnlockModal() {
     try {
@@ -1094,6 +1117,7 @@ function restoreFeatureDraftFromShareLink() {
 
 	async function nodeUnlock(){
 		const passwordInput = document.getElementById("node-unlock-password");
+		const submitBtn = document.getElementById("node-unlock-password-submit-btn");
 		if (!passwordInput) return;
 		const password = passwordInput.value;
 
@@ -1102,35 +1126,43 @@ function restoreFeatureDraftFromShareLink() {
 			return;
 		}
 
+		if (submitBtn) {
+			submitBtn.disabled = true;
+			submitBtn.textContent = "Unlocking…";
+		}
+
 		try {
 			const resp = await fetch("/secrets/unlock", {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					password: password
-				})
+				method: "POST",
+				credentials: "include",
+				headers: { "Content-Type": "application/json", "Accept": "application/json" },
+				cache: "no-store",
+				body: JSON.stringify({ password })
 			});
 
-			const data = await resp.json();
-
-			if (data.status === "ok") {
-				alert("Node unlocked successfully!");
-				if (window.MicroModal) {
-					MicroModal.close("node-unlock-modal");
-				}
-				passwordInput.value = "";
-				window.location.reload();
-				return;
-			} else {
-				alert(`Unlock failed: ${data.message || "Unknown error"}`);
+			const data = await safeJsonResponse(resp);
+			if (!resp.ok || data.status !== "ok") {
+				throw nodeStatusError(data.message || data.error || `Unlock failed (HTTP ${resp.status})`, resp.status, data);
 			}
+
+			const status = await waitForNodeReady();
+			passwordInput.value = "";
+			if (window.MicroModal) MicroModal.close("node-unlock-modal");
+			renderNodeFooter(status);
+			if (typeof renderNodeWalletModal === "function") renderNodeWalletModal(status);
+			document.dispatchEvent(new CustomEvent("node:unlocked", { detail: status }));
+			document.dispatchEvent(new Event("auth:changed"));
 		} catch (err) {
 			console.error("Unlock error:", err);
-			alert("Error unlocking node. Check console for details.");
+			alert(err?.message || "Error unlocking node. Check console for details.");
+		} finally {
+			if (submitBtn) {
+				submitBtn.disabled = false;
+				submitBtn.textContent = "Unlock Node";
+			}
 		}
 	}
+
 	function showLoginButton(){
 		const background = document.getElementById("background");
 

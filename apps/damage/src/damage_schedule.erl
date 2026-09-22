@@ -54,9 +54,9 @@
     list_schedules_for/1,
     list_all_schedules/0,
     mark_schedule_executed/3,
-    load_all_schedules/0
-
-    %% deployment / boot
+    load_all_schedules/0,
+    %% shared canonicalization boundary used by damage_schedule_index
+    normalize_cron_spec/1
 ]).
 -import(damage_utils, [to_bin/1]).
 
@@ -1514,11 +1514,14 @@ maybe_cache_schedule_result(_Key, _Value, _State) ->
     ok.
 
 node_secrets_ready() ->
-    try secrets:has_node_password() of
-        true -> true;
-        _ -> false
+    try secrets:node_keypair() of
+        #{public_key := _Pub, private_key := PrivateKey} when is_binary(PrivateKey) ->
+            true;
+        _ ->
+            false
     catch
-        _:_ -> false
+        _:_ ->
+            false
     end.
 
 node_keypair() ->

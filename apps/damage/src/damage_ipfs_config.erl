@@ -46,8 +46,28 @@ normalize(Opts) when is_list(Opts) ->
             error({invalid_ipfs_config, expected_key_value_tuples})
     end;
 normalize(Opts) when is_map(Opts) ->
+    ManagedKubo = maps:get(
+        managed_kubo,
+        Opts,
+        application:get_env(damage, ipfs_managed, false)
+    ),
+    KuboApiPort = maps:get(
+        kubo_api_port,
+        Opts,
+        application:get_env(damage, ipfs_kubo_api_port, 5002)
+    ),
+    DefaultApi = default_ipfs_api(ManagedKubo, KuboApiPort),
     Defaults = [
-        {ipfs_api, application:get_env(damage, ipfs_api, "http://127.0.0.1:5001")},
+        {managed_kubo, ManagedKubo},
+        {kubo_repo, filename:join(default_data_dir(), "kubo")},
+        {kubo_api_port, KuboApiPort},
+        {kubo_gateway_port, application:get_env(damage, ipfs_kubo_gateway_port, 8081)},
+        {kubo_swarm_port, application:get_env(damage, ipfs_kubo_swarm_port, 4002)},
+        {kubo_start_timeout_ms, 15000},
+        {kubo_retry_ms, 5000},
+        {kubo_gc, true},
+        {kubo_binary, application:get_env(damage, ipfs_kubo_binary, "ipfs")},
+        {ipfs_api, DefaultApi},
         {ipfs_peers, application:get_env(damage, ipfs_peers, [])},
         {peer_interval_ms, application:get_env(damage, ipfs_peer_retry_interval, 30000)},
         {backend, damage_ipfs_backend},
@@ -98,7 +118,12 @@ normalize(Opts) when is_map(Opts) ->
             reconcile_batch,
             max_peers,
             loop_timeout_ms,
-            peer_interval_ms
+            peer_interval_ms,
+            kubo_api_port,
+            kubo_gateway_port,
+            kubo_swarm_port,
+            kubo_start_timeout_ms,
+            kubo_retry_ms
         ]
     ),
     lists:foreach(
@@ -126,9 +151,27 @@ normalize(Opts) when is_map(Opts) ->
     false = maps:is_key(fragment, Parsed),
     false = maps:is_key(userinfo, Parsed),
     true = is_atom(maps:get(backend, C)),
+    true = is_boolean(maps:get(managed_kubo, C)),
+    true = is_boolean(maps:get(kubo_gc, C)),
+    true = maps:get(kubo_api_port, C) =< 65535,
+    true = maps:get(kubo_gateway_port, C) =< 65535,
+    true = maps:get(kubo_swarm_port, C) =< 65535,
     DataDir = damage_config:normalize_path(maps:get(data_dir, C)),
     ok = damage_config:ensure_directory(DataDir),
-    C#{ipfs_api => Api, data_dir => DataDir};
+    KuboRepo = damage_config:normalize_path(maps:get(kubo_repo, C)),
+    case maps:get(managed_kubo, C) of
+        true ->
+            ok = damage_config:ensure_directory(KuboRepo),
+            ok = validate_managed_api(Parsed, maps:get(kubo_api_port, C));
+        false ->
+            ok
+    end,
+    C#{
+        ipfs_api => Api,
+        data_dir => DataDir,
+        kubo_repo => KuboRepo,
+        kubo_binary => text(maps:get(kubo_binary, C))
+    };
 normalize(_) ->
     error({invalid_ipfs_config, expected_key_value_tuples}).
 
@@ -145,6 +188,27 @@ call(Name, Request, Timeout) ->
 
 default_data_dir() ->
     filename:join([damage_config:state_dir(), "runtime", "ipfs"]).
+
+default_ipfs_api(true, KuboApiPort) ->
+    case application:get_env(damage, ipfs_api) of
+        {ok, Value} -> Value;
+        undefined -> "http://127.0.0.1:" ++ integer_to_list(KuboApiPort)
+    end;
+default_ipfs_api(false, _KuboApiPort) ->
+    application:get_env(damage, ipfs_api, "http://127.0.0.1:5001").
+
+validate_managed_api(Parsed, KuboApiPort) ->
+    Host = maps:get(host, Parsed, undefined),
+    Port = maps:get(port, Parsed, 80),
+    Scheme = maps:get(scheme, Parsed, undefined),
+    Loopback =
+        Host =:= "127.0.0.1" orelse Host =:= <<"127.0.0.1">> orelse
+        Host =:= "localhost" orelse Host =:= <<"localhost">>,
+    case Scheme =:= "http" andalso Loopback andalso Port =:= KuboApiPort of
+        true -> ok;
+        false ->
+            error({invalid_ipfs_config, managed_kubo_requires_loopback_api, KuboApiPort})
+    end.
 
 text(B) when is_binary(B) -> binary_to_list(B);
 text(L) when is_list(L) -> L.

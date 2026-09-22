@@ -306,6 +306,16 @@ set_node_password(Pw0) ->
     Pid = gproc:lookup_local_name({?MODULE, secrets}),
     gen_server:call(Pid, {set_node_password, Pw0}, ?ASKPASS_TIMEOUT).
 
+%% Readiness means the operational node signing identity is actually usable,
+%% not merely that a password happened to be cached.
+ready() ->
+    try node_keypair() of
+        #{public_key := _Pub, private_key := Priv} when is_binary(Priv) -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
 normalize_node_password(undefined) ->
     {error, password_required};
 normalize_node_password(<<>>) ->
@@ -322,22 +332,23 @@ normalize_node_password(_) ->
 handle_call(has_node_password, _From, State) ->
     Has = maps:get(node_password, State, undefined) =/= undefined,
     {reply, Has, State};
-handle_call({set_node_password, Pw0}, _From, State) ->
+handle_call({set_node_password, Pw0}, _From, State0) ->
     case normalize_node_password(Pw0) of
         {error, _} = Error ->
-            {reply, Error, State};
+            {reply, Error, State0};
         {ok, Pw} ->
-            %% A supplied node password is sufficient to initialise a
-            %% first-run node.  Existing keypairs are validated; a genuinely
-            %% missing keypair is generated and persisted before the password
-            %% is accepted.
-            case ensure_keypair_valid(Pw) of
-                ok ->
-                    {reply, ok, cache_node_password(Pw, #{})};
+            %% Unlock is atomic: do not return success until the keystore has
+            %% been decrypted (or created on first install) and the usable
+            %% signing keypair is cached in this process.
+            case unlock_state(Pw, State0) of
+                {ok, State} ->
+                    notify_unlock_dependents(),
+                    {reply, ok, State};
                 {error, _} = Error ->
-                    {reply, Error, State}
+                    {reply, Error, State0}
             end
     end;
+
 handle_call(clear_cache, _From, _State) ->
     %% Drop stale signing keys, recovery metadata and any old plaintext cache.
     %% An environment password can still unlock again on a later request.
@@ -447,6 +458,33 @@ code_change(_OldVsn, State, _Extra) when is_map(State) ->
     {ok, maps:with([node_password, public_key, private_key], State)};
 code_change(_OldVsn, _State, _Extra) -> {ok, #{}}.
 
+unlock_state(Pw, State0) ->
+    Path = keystore_path(),
+    case keypair(Path, Pw) of
+        #{public_key := AeAccount, private_key := PrivateKey} when is_binary(PrivateKey) ->
+            %% Never retain mnemonic/recovery material in long-lived process state.
+            SigningKey = #{public_key => to_bin(AeAccount), private_key => PrivateKey},
+            State1 = maps:without([public_key, private_key], State0),
+            State2 = cache_node_password(Pw, State1),
+            {ok, maps:merge(State2, SigningKey)};
+        {error, decrypt_keypair} ->
+            {error, invalid_password};
+        {error, _} = Error ->
+            Error;
+        Other ->
+            {error, {invalid_keypair_result, Other}}
+    end.
+
+notify_unlock_dependents() ->
+    %% Backoff-driven workers should wake immediately after a successful unlock.
+    notify_process(damage_nsecbunker, {secrets, unlocked}),
+    ok.
+
+notify_process(Name, Message) ->
+    case whereis(Name) of
+        Pid when is_pid(Pid) -> Pid ! Message, ok;
+        _ -> ok
+    end.
 %% Preserve the OTP status-map keys, but expose no sensitive values. This also
 %% covers exception arguments, last messages and debug log entries.
 format_status(Status) ->

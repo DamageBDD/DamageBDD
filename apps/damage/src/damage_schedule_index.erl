@@ -69,21 +69,53 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({refresh_account, Account}, State) ->
-    %% Pull per-account schedules ONLY
-    Schedules = damage_schedule:get_schedules(Account),
-    NowMin = epoch_minute(),
-    lists:foreach(
-        fun(S) ->
-            Id = maps:get(id, S),
-            Cron = maps:get(cron, S),
-            upsert_internal(Account, Id, S, Cron, NowMin)
-        end,
-        Schedules
-    ),
+    %% Pull per-account schedules ONLY. A locked node, contract outage, or
+    %% temporarily restarting schedule server is a transient condition.
+    case safe_get_schedules(Account) of
+        Schedules when is_list(Schedules) ->
+            NowMin = epoch_minute(),
+            lists:foreach(
+                fun(Schedule) ->
+                    case schedule_identity_and_cron(Schedule) of
+                        {ok, Id, Cron} ->
+                            upsert_internal(Account, Id, Schedule, Cron, NowMin);
+                        {error, Reason} ->
+                            ?LOG_WARNING(
+                                "Skipping malformed schedule during refresh account=~p reason=~p schedule=~p",
+                                [Account, Reason, Schedule]
+                            )
+                    end
+                end,
+                Schedules
+            );
+        {error, Reason} ->
+            ?LOG_DEBUG(
+                "Schedule refresh deferred account=~p reason=~p",
+                [Account, Reason]
+            );
+        Other ->
+            ?LOG_WARNING(
+                "Unexpected schedule refresh result account=~p result=~p",
+                [Account, Other]
+            )
+    end,
     {noreply, State};
-handle_cast({upsert, Account, Id, ScheduleMap}, State) ->
-    Cron = maps:get(cron, ScheduleMap),
-    upsert_internal(Account, Id, ScheduleMap, Cron, epoch_minute()),
+handle_cast({upsert, Account, Id, ScheduleMap}, State) when is_map(ScheduleMap) ->
+    case maps:find(cron, ScheduleMap) of
+        {ok, Cron} ->
+            upsert_internal(Account, Id, ScheduleMap, Cron, epoch_minute());
+        error ->
+            ?LOG_WARNING(
+                "Ignoring schedule upsert without cron account=~p id=~p schedule=~p",
+                [Account, Id, ScheduleMap]
+            )
+    end,
+    {noreply, State};
+handle_cast({upsert, Account, Id, Other}, State) ->
+    ?LOG_WARNING(
+        "Ignoring malformed schedule upsert account=~p id=~p schedule=~p",
+        [Account, Id, Other]
+    ),
     {noreply, State};
 handle_cast({delete, Account, Id}, State) ->
     ets:delete(?SCHED_BY_ID, {Account, Id}),
@@ -230,16 +262,44 @@ epoch_minute() ->
     os:system_time(second) div 60.
 
 safe_cron_next(CronSpec0, FromMin) ->
-    CronSpec =
-        case damage_schedule:normalize_cron_spec(CronSpec0) of
-            {ok, C} -> C;
-            {error, _} -> CronSpec0
-        end,
-    try cron_next(CronSpec, FromMin) of
-        NextMin when is_integer(NextMin) -> {ok, NextMin}
+    %% Keep the complete normalization + cron calculation inside the protected
+    %% boundary. This matters during rolling/hot upgrades where an old
+    %% damage_schedule module may briefly be loaded without the exported helper.
+    try
+        CronSpec =
+            case damage_schedule:normalize_cron_spec(CronSpec0) of
+                {ok, C} -> C;
+                {error, _} -> CronSpec0
+            end,
+        case cron_next(CronSpec, FromMin) of
+            NextMin when is_integer(NextMin) -> {ok, NextMin};
+            Other -> {error, {invalid_cron_next_result, Other}}
+        end
     catch
-        Class:Reason -> {error, {Class, Reason}}
+        error:undef ->
+            %% A version skew must skip this row, not consume supervisor restart
+            %% intensity. The next refresh after the code upgrade will reindex it.
+            {error, {normalizer_unavailable, CronSpec0}};
+        Class:Reason ->
+            {error, {Class, Reason}}
     end.
+
+safe_get_schedules(Account) ->
+    try damage_schedule:get_schedules(Account) of
+        Result -> Result
+    catch
+        Class:Reason ->
+            {error, {schedule_lookup_failed, Class, Reason}}
+    end.
+
+schedule_identity_and_cron(#{id := Id, cron := Cron}) ->
+    {ok, Id, Cron};
+schedule_identity_and_cron(#{id_hash := Id, cron := Cron}) ->
+    {ok, Id, Cron};
+schedule_identity_and_cron(Schedule) when is_map(Schedule) ->
+    {error, {missing_schedule_identity_or_cron, maps:keys(Schedule)}};
+schedule_identity_and_cron(Other) ->
+    {error, {invalid_schedule_row, Other}}.
 
 cron_next([daily, every, Second, sec], FromMin) when is_integer(Second), Second > 0 ->
     %% The index is minute-resolution. Any sub-minute/seconds cadence is

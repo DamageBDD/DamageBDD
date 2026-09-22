@@ -17,8 +17,20 @@ child_spec() ->
 
 init(Opts) ->
     C = damage_ipfs_config:normalize(Opts),
-    %% All init functions perform local work only. An offline daemon is a
-    %% degraded service, not a reason to bring down the DamageBDD application.
+    KuboChildren =
+        case maps:get(managed_kubo, C, false) of
+            true ->
+                [#{
+                    id => damage_ipfs_kubo,
+                    start => {damage_ipfs_kubo, start_link, [C]},
+                    restart => permanent,
+                    shutdown => 15000,
+                    type => worker,
+                    modules => [damage_ipfs_kubo]
+                }];
+            false ->
+                []
+        end,
     Modules = [
         damage_ipfs_store,
         damage_ipfs_client,
@@ -28,7 +40,7 @@ init(Opts) ->
         damage_ipfs_health,
         damage_ipfs_peers
     ],
-    Children = [
+    ServiceChildren = [
         #{
             id => M,
             start => {M, start_link, [C]},
@@ -39,7 +51,10 @@ init(Opts) ->
         }
      || M <- Modules
     ],
-    {ok, {#{strategy => rest_for_one, intensity => 5, period => 30}, Children}}.
+    {ok, {
+        #{strategy => rest_for_one, intensity => 5, period => 30},
+        KuboChildren ++ ServiceChildren
+    }}.
 
 callbacks(damage_ipfs_client) -> [damage_ipfs_queue];
 callbacks(damage_ipfs_fetcher) -> [damage_ipfs_queue];

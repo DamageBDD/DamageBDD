@@ -343,11 +343,18 @@ node_secrets_unavailable_reply(Req0, State, Reason) ->
     {stop, Req, State}.
 
 node_secrets_ready() ->
-    try secrets:has_node_password() of
+    try secrets:ready() of
         true -> true;
         _ -> false
     catch
-        _:_ -> false
+        _:_ ->
+            %% Hot-upgrade compatibility with an older secrets module.
+            try secrets:node_keypair() of
+                #{public_key := _Pub, private_key := Priv} when is_binary(Priv) -> true;
+                _ -> false
+            catch
+                _:_ -> false
+            end
     end.
 
 secrets_unavailable_reason(node_locked) -> true;
@@ -2342,9 +2349,11 @@ to_json(Req, #{action := version} = State) ->
 to_json(Req, #{action := node_balances} = State) ->
     case secrets:node_keypair() of
         #{public_key := PubKey, private_key := _NodePrivateKey} ->
-            NodeDamageBalance = damage_ae:node_damage_balance(),
-            NodeAeBalance = damage_ae:node_ae_balance(),
-            NodeBtcBalance = damage_cln:get_node_balance(),
+            %% A usable keypair is the readiness signal. Individual balance
+            %% providers can be degraded without making the node "locked".
+            NodeDamageBalance = safe_json_call(fun damage_ae:node_damage_balance/0),
+            NodeAeBalance = safe_json_call(fun damage_ae:node_ae_balance/0),
+            NodeBtcBalance = safe_json_call(fun damage_cln:get_node_balance/0),
             {
                 jsx:encode(#{
                     ok => true,
@@ -2392,3 +2401,30 @@ to_text(Req, #{action := version} = State) ->
     to_json(Req, State);
 to_text(Req, State) ->
     {<<"REST Hello World as text!">>, Req, State}.
+
+safe_json_call(Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        Value -> json_safe_runtime_value(Value)
+    catch
+        Class:Reason ->
+            #{available => false, error => to_bin(io_lib:format("~p:~p", [Class, Reason]))}
+    end.
+
+json_safe_runtime_value({error, Reason}) ->
+    #{available => false, error => to_bin(io_lib:format("~p", [Reason]))};
+json_safe_runtime_value({ok, Value}) -> json_safe_runtime_value(Value);
+json_safe_runtime_value(Map) when is_map(Map) ->
+    maps:from_list([{json_safe_runtime_key(K), json_safe_runtime_value(V)} || {K,V} <- maps:to_list(Map)]);
+json_safe_runtime_value(Tuple) when is_tuple(Tuple) ->
+    [json_safe_runtime_value(V) || V <- tuple_to_list(Tuple)];
+json_safe_runtime_value(List) when is_list(List) ->
+    [json_safe_runtime_value(V) || V <- List];
+json_safe_runtime_value(true) -> true;
+json_safe_runtime_value(false) -> false;
+json_safe_runtime_value(null) -> null;
+json_safe_runtime_value(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+json_safe_runtime_value(Value) -> Value.
+
+json_safe_runtime_key(Key) when is_atom(Key); is_binary(Key) -> Key;
+json_safe_runtime_key(Key) when is_list(Key) -> unicode:characters_to_binary(Key);
+json_safe_runtime_key(Key) -> to_bin(io_lib:format("~p", [Key])).
