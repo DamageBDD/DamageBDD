@@ -32,33 +32,40 @@
 -define(TABLE, ecai_index_job_store_dets).
 -define(NEXT_SEQUENCE_KEY, {meta, next_sequence}).
 
--spec open(file:filename_all()) -> {ok, #store{}} | {error, term()}.
+-spec open(file:filename_all() | undefined) -> {ok, #store{}} | {error, term()}.
 open(BaseDir0) ->
-    try
-        BaseDir = path_list(BaseDir0),
-        ok = filelib:ensure_dir(filename:join(BaseDir, "x")),
-        Path = filename:join(BaseDir, "index-jobs.dets"),
-        case
-            dets:open_file(?TABLE, [
-                {file, Path},
-                {type, set},
-                {repair, false},
-                {auto_save, 5000}
-            ])
-        of
-            {ok, Tab} ->
-                case ensure_meta(Tab) of
-                    ok ->
-                        {ok, #store{tab = Tab, path = Path}};
-                    {error, _Reason} = Error ->
-                        _ = dets:close(Tab),
-                        Error
-                end;
-            {error, _Reason} = Error ->
-                Error
-        end
-    catch
-        error:badarg -> {error, invalid_store_path}
+    case normalize_base_dir(BaseDir0) of
+        {ok, BaseDir} ->
+            case ensure_store_dir(BaseDir) of
+                ok ->
+                    open_dets(BaseDir);
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+open_dets(BaseDir) ->
+    Path = filename:join(BaseDir, "index-jobs.dets"),
+    case
+        dets:open_file(?TABLE, [
+            {file, Path},
+            {type, set},
+            {repair, false},
+            {auto_save, 5000}
+        ])
+    of
+        {ok, Tab} ->
+            case ensure_meta(Tab) of
+                ok ->
+                    {ok, #store{tab = Tab, path = Path}};
+                {error, _Reason} = Error ->
+                    _ = dets:close(Tab),
+                    Error
+            end;
+        {error, Reason} ->
+            {error, {store_open_failed, Path, Reason}}
     end.
 
 -spec close(#store{}) -> ok | {error, term()}.
@@ -255,12 +262,98 @@ ensure_meta(Tab) ->
         Other -> {error, {invalid_store_meta, Other}}
     end.
 
+normalize_base_dir(undefined) ->
+    default_base_dir();
+normalize_base_dir(<<>>) ->
+    default_base_dir();
+normalize_base_dir([]) ->
+    default_base_dir();
+normalize_base_dir(BaseDir0) ->
+    case legacy_default_base_dir(BaseDir0) of
+        true ->
+            default_base_dir();
+        false ->
+            normalize_explicit_base_dir(BaseDir0)
+    end.
+
+normalize_explicit_base_dir(BaseDir0) ->
+    try
+        BaseDir1 = path_list(BaseDir0),
+        BaseDir2 = expand_home_path(BaseDir1),
+        {ok, filename:absname(BaseDir2)}
+    catch
+        error:home_directory_unavailable ->
+            {error, home_directory_unavailable};
+        error:badarg ->
+            {error, invalid_store_path};
+        Class:Reason ->
+            {error, {store_path_normalization_failed, Class, Reason}}
+    end.
+
+default_base_dir() ->
+    try
+        {ok, filename:join(ecai_paths:runtime_dir(), "index-jobs")}
+    catch
+        Class:Reason ->
+            {error, {default_store_path_failed, Class, Reason}}
+    end.
+
+legacy_default_base_dir(BaseDir0) ->
+    case path_list_or_undefined(BaseDir0) of
+        "/var/lib/damage/ecai/index-jobs" -> true;
+        "/var/lib/damage/ecai/index-jobs/" -> true;
+        _ -> false
+    end.
+
+path_list_or_undefined(Bin) when is_binary(Bin) ->
+    try unicode:characters_to_list(Bin) of
+        List when is_list(List) -> List;
+        _ -> undefined
+    catch
+        _:_ -> undefined
+    end;
+path_list_or_undefined(List) when is_list(List) ->
+    List;
+path_list_or_undefined(_) ->
+    undefined.
+
+ensure_store_dir(BaseDir) ->
+    %% filelib:ensure_dir/1 treats its argument as a file path, so append a
+    %% sentinel filename. This recursively creates the complete directory tree.
+    Sentinel = filename:join(BaseDir, ".ecai-index-jobs"),
+    case filelib:ensure_dir(Sentinel) of
+        ok ->
+            case filelib:is_dir(BaseDir) of
+                true ->
+                    ok;
+                false ->
+                    {error, {store_directory_not_created, BaseDir}}
+            end;
+        {error, Reason} ->
+            {error, {store_directory_failed, BaseDir, Reason}}
+    end.
+
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     case unicode:characters_to_list(Bin) of
-        List when is_list(List) -> List;
+        List when is_list(List), List =/= [] -> List;
         _Invalid -> erlang:error(badarg)
     end;
 path_list(List) when is_list(List), List =/= [] ->
     List;
 path_list(_Other) ->
     erlang:error(badarg).
+
+expand_home_path("~") ->
+    home_dir();
+expand_home_path([$~, $/ | Rest]) ->
+    filename:join(home_dir(), Rest);
+expand_home_path(Path) ->
+    Path.
+
+home_dir() ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" ->
+            Home;
+        _ ->
+            erlang:error(home_directory_unavailable)
+    end.

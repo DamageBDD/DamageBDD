@@ -216,13 +216,21 @@ generate_l402_invoice(Req0, State) ->
             {{false, ?AUTH_HEADER}, Req0, State};
         node_anchor ->
             {{false, ?AUTH_HEADER}, Req0, State};
-        execute_feature ->
-            maybe_dynamic_price(Req0, State, Scope);
-        execute_feature_from_ipfs ->
-            maybe_dynamic_price(Req0, State, Scope);
-        _ ->
-            static_l402(Req0, State, Scope)
+         _ ->
+            case node_secrets_ready() of
+                true ->
+                    generate_l402_invoice_ready(Action, Req0, State, Scope);
+                false ->
+                    node_secrets_unavailable_reply(Req0, State, node_locked)
+            end
     end.
+
+generate_l402_invoice_ready(execute_feature, Req, State, Scope) ->
+    maybe_dynamic_price(Req, State, Scope);
+generate_l402_invoice_ready(execute_feature_from_ipfs, Req, State, Scope) ->
+    maybe_dynamic_price(Req, State, Scope);
+generate_l402_invoice_ready(_Action, Req, State, Scope) ->
+    static_l402(Req, State, Scope).
 
 maybe_dynamic_price(Req0, State, Scope) ->
     case cowboy_req:has_body(Req0) of
@@ -236,9 +244,15 @@ maybe_dynamic_price(Req0, State, Scope) ->
                         amount_msat => AmountMsat,
                         dry_run => DryRec
                     }),
-                    {Req2, _} =
-                        damage_l402:challenge_with_body(Req1, Scope, AmountMsat, Body),
-                    {stop, Req2, State};
+                    handle_l402_challenge(
+                        Req1,
+                        State,
+                        fun() ->
+                            damage_l402:challenge_with_body(
+                                Req1, Scope, AmountMsat, Body
+                            )
+                        end
+                    );
                 {error, _Why} ->
                     static_l402(Req1, State, Scope)
             end;
@@ -248,8 +262,116 @@ maybe_dynamic_price(Req0, State, Scope) ->
 
 static_l402(Req, State, Scope) ->
     PriceMsat = application:get_env(damage, l402_price_msat, 1000),
-    {Req1, _} = damage_l402:challenge(Req, Scope, PriceMsat),
-    {stop, Req1, State}.
+    handle_l402_challenge(
+        Req,
+        State,
+        fun() -> damage_l402:challenge(Req, Scope, PriceMsat) end
+    ).
+
+handle_l402_challenge(Req0, State, Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        {Req1, _Meta} when is_map(Req1) ->
+            {stop, Req1, State};
+        {error, Reason} ->
+            l402_unavailable_reply(Req0, State, Reason);
+        Other ->
+            l402_unavailable_reply(
+                Req0, State, {unexpected_l402_challenge_result, Other}
+            )
+    catch
+        error:{badmap, {error, secrets_not_ready}} ->
+            node_secrets_unavailable_reply(Req0, State, secrets_not_ready);
+        error:{badmap, {error, node_locked}} ->
+            node_secrets_unavailable_reply(Req0, State, node_locked);
+        Class:Reason:Stacktrace ->
+            case secrets_unavailable_reason(Reason) of
+                true ->
+                    node_secrets_unavailable_reply(Req0, State, Reason);
+                false ->
+                    ?LOG_ERROR(
+                        "L402 challenge failed class=~p reason=~p stack=~p",
+                        [Class, Reason, Stacktrace]
+                    ),
+                    l402_unavailable_reply(Req0, State, {Class, Reason})
+            end
+    end.
+
+l402_unavailable_reply(Req0, State, Reason) ->
+    case secrets_unavailable_reason(Reason) of
+        true ->
+            node_secrets_unavailable_reply(Req0, State, Reason);
+        false ->
+            Body = jsx:encode(#{
+                status => <<"notok">>,
+                error => <<"L402_UNAVAILABLE">>,
+                message =>
+                    <<"Payment challenge service is temporarily unavailable.">>,
+                retryable => true
+            }),
+            Req = cowboy_req:reply(
+                503,
+                #{
+                    <<"content-type">> => <<"application/json">>,
+                    <<"cache-control">> => <<"no-store">>,
+                    <<"retry-after">> => <<"5">>
+                },
+                Body,
+                Req0
+            ),
+            {stop, Req, State}
+    end.
+
+node_secrets_unavailable_reply(Req0, State, Reason) ->
+    Body = jsx:encode(#{
+        status => <<"notok">>,
+        error => <<"NODE_SECRETS_LOCKED">>,
+        message =>
+            <<"Node secrets are locked. Unlock the node and retry the request.">>,
+        reason => secret_reason_bin(Reason),
+        retryable => true
+    }),
+    Req = cowboy_req:reply(
+        503,
+        #{
+            <<"content-type">> => <<"application/json">>,
+            <<"cache-control">> => <<"no-store">>,
+            <<"retry-after">> => <<"5">>
+        },
+        Body,
+        Req0
+    ),
+    {stop, Req, State}.
+
+node_secrets_ready() ->
+    try secrets:has_node_password() of
+        true -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+secrets_unavailable_reason(node_locked) -> true;
+secrets_unavailable_reason(secrets_not_ready) -> true;
+secrets_unavailable_reason({error, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason({master_key_unavailable, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason({context_master_key_failed, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason({context_scope_unavailable, _Scope, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason(Tuple) when is_tuple(Tuple) ->
+    lists:any(fun secrets_unavailable_reason/1, tuple_to_list(Tuple));
+secrets_unavailable_reason(List) when is_list(List) ->
+    lists:any(fun secrets_unavailable_reason/1, List);
+secrets_unavailable_reason(_) ->
+    false.
+
+secret_reason_bin(Reason) ->
+    case secrets_unavailable_reason(Reason) of
+        true -> <<"node_locked">>;
+        false -> to_bin(io_lib:format("~p", [Reason]))
+    end.
 
 dry_run_cost_msat(FeatureBin, State, Req) ->
     case l402_execution_account() of
@@ -568,13 +690,18 @@ execute_bdd_once(Config, Context, FeatureData) ->
         #{report_hash := _} = Result ->
             {200, maps:merge(Result, #{status => <<"ok">>})};
         {error, {context_scope_unavailable, Scope, Reason}} ->
-            {503, #{
-                status => <<"notok">>,
-                error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
-                message => <<"Required context scope is unavailable.">>,
-                scope => to_bin(io_lib:format("~p", [Scope])),
-                reason => to_bin(io_lib:format("~p", [Reason]))
-            }};
+            case secrets_unavailable_reason(Reason) of
+                true ->
+                    node_secrets_unavailable_response(Reason);
+                false ->
+                    {503, #{
+                        status => <<"notok">>,
+                        error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
+                        message => <<"Required context scope is unavailable.">>,
+                        scope => to_bin(io_lib:format("~p", [Scope])),
+                        reason => to_bin(io_lib:format("~p", [Reason]))
+                    }}
+            end;
         {error, {context_ipfs_publish_failed, Reason}} ->
             {500, #{
                 status => <<"notok">>,
@@ -872,15 +999,30 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                 "Context preparation failed scope=~p reason=~p stack=~p",
                 [Scope, Reason0, Stacktrace]
             ),
-            {503, #{
-                status => <<"notok">>,
-                error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
-                message => <<"Required context scope is unavailable.">>,
-                scope => to_bin(io_lib:format("~p", [Scope])),
-                reason => to_bin(io_lib:format("~p", [Reason0]))
-            }}
+            case secrets_unavailable_reason(Reason0) of
+                true ->
+                    node_secrets_unavailable_response(Reason0);
+                false ->
+                    {503, #{
+                        status => <<"notok">>,
+                        error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
+                        message => <<"Required context scope is unavailable.">>,
+                        scope => to_bin(io_lib:format("~p", [Scope])),
+                        reason => to_bin(io_lib:format("~p", [Reason0]))
+                    }}
+            end
         end,
     with_release_info(Response).
+
+node_secrets_unavailable_response(Reason) ->
+    {503, #{
+        status => <<"notok">>,
+        error => <<"NODE_SECRETS_LOCKED">>,
+        message =>
+            <<"Node secrets are locked. Unlock the node and retry the request.">>,
+        reason => secret_reason_bin(Reason),
+        retryable => true
+    }}.
 
 %% Build one immutable scoped execution context after authentication. Internal
 %% preparation/proof fields are never accepted from the request body.
@@ -2031,7 +2173,19 @@ from_html(Req0, State) ->
 %% Own the complete streaming lifecycle in one place. A caller must never pass
 %% a normal Cowboy request to get_stream_config/3 and expect the formatter to
 %% create the stream on its behalf.
-execute_feature_http(Context0, State, Req0, nostream) ->
+%%
+%% Check the node lock before opening a Cowboy stream. Once stream_reply/3 has
+%% emitted status 200 the HTTP status cannot be changed, so lock state belongs
+%% at this transport boundary rather than in a later formatter footer.
+execute_feature_http(Context0, State, Req0, StreamMode) ->
+    case node_secrets_ready() of
+        true ->
+            execute_feature_http_ready(Context0, State, Req0, StreamMode);
+        false ->
+            node_secrets_unavailable_reply(Req0, State, node_locked)
+    end.
+
+execute_feature_http_ready(Context0, State, Req0, nostream) ->
     Context = maps:put(stream, nostream, Context0),
     try execute_bdd(Context, State, Req0) of
         {Status, Response} ->
@@ -2050,7 +2204,7 @@ execute_feature_http(Context0, State, Req0, nostream) ->
             ?LOG_ERROR("non-stream execution crashed ~p:~p ~p", [Class, Reason, Stack]),
             reply_execution_crash(Req0, State, Class, Reason)
     end;
-execute_feature_http(Context0, State, Req0, maybe_stream) ->
+execute_feature_http_ready(Context0, State, Req0, maybe_stream) ->
     Context = maps:put(stream, maybe_stream, Context0),
     %% Once these headers are sent, the transport status is necessarily 200.
     %% Any later execution error is represented by stream_final_body/2, whose
@@ -2094,32 +2248,54 @@ stream_mode_error_reply(Req0, State, Reason) ->
 
 reply_execution_crash(Req0, State, Class, Reason) ->
     ReleaseFields = release_http_fields(safe_release_info()),
+    {Status, ErrorCode, Message} =
+        case secrets_unavailable_reason(Reason) of
+            true ->
+                {
+                    503,
+                    <<"NODE_SECRETS_LOCKED">>,
+                    <<"Node secrets are locked. Unlock the node and retry the request.">>
+                };
+            false ->
+                {500, <<"internal_error">>, <<"Internal execution error.">>}
+        end,
     Body = maps:merge(
         ReleaseFields,
         #{
             status => <<"notok">>,
-            error => <<"internal_error">>,
+            error => ErrorCode,
+            message => Message,
             class => to_bin(Class),
-            reason => to_bin(Reason)
+            reason => secret_reason_bin(Reason),
+            retryable => Status =:= 503
         }
     ),
-    Req = cowboy_req:reply(
-        500,
-        #{<<"content-type">> => <<"application/json">>},
-        jsx:encode(Body),
-        Req0
-    ),
+    Headers0 = #{
+        <<"content-type">> => <<"application/json">>,
+        <<"cache-control">> => <<"no-store">>
+    },
+    Headers =
+        case Status of
+            503 -> maps:put(<<"retry-after">>, <<"5">>, Headers0);
+            _ -> Headers0
+        end,
+    Req = cowboy_req:reply(Status, Headers, jsx:encode(Body), Req0),
     {stop, Req, State}.
 
 stream_crash_footer(Class, Reason) ->
     ReleaseFields = release_http_fields(safe_release_info()),
+    {HttpStatus, ErrorCode} =
+        case secrets_unavailable_reason(Reason) of
+            true -> {503, <<"NODE_SECRETS_LOCKED">>};
+            false -> {500, <<"internal_error">>}
+        end,
     iolist_to_binary([
         "\n---\n",
         "status: notok\n",
-        "http_status: 500\n",
-        "error: internal_error\n",
+        "http_status: ", integer_to_binary(HttpStatus), "\n",
+        "error: ", ErrorCode, "\n",
         "class: ", printable_stream_value(Class), "\n",
-        "reason: ", printable_stream_value(Reason), "\n",
+        "reason: ", secret_reason_bin(Reason), "\n",
         stream_release_lines(ReleaseFields),
         "\n"
     ]).
@@ -2181,14 +2357,28 @@ to_json(Req, #{action := node_balances} = State) ->
                 State
             };
         {error, Error} ->
-            {
-                jsx:encode(#{
-                    ok => false,
-                    error => to_bin(Error)
-                }),
-                Req,
-                State
-            }
+            Body = jsx:encode(#{
+                ok => false,
+                status => <<"notok">>,
+                error =>
+                    case secrets_unavailable_reason(Error) of
+                        true -> <<"NODE_SECRETS_LOCKED">>;
+                        false -> <<"NODE_KEYPAIR_UNAVAILABLE">>
+                    end,
+                reason => secret_reason_bin(Error),
+                retryable => true
+            }),
+            Req1 = cowboy_req:reply(
+                503,
+                #{
+                    <<"content-type">> => <<"application/json">>,
+                    <<"cache-control">> => <<"no-store">>,
+                    <<"retry-after">> => <<"5">>
+                },
+                Body,
+                Req
+            ),
+            {stop, Req1, State}
     end;
 to_json(Req0, State) ->
     Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,

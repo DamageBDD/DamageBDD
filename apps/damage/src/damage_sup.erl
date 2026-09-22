@@ -134,9 +134,9 @@ init([]) ->
             #{
                 id => damage_ssh_tunnel_listener,
                 start => {damage_ssh_tunnel_listener, start_link, []},
-                %% Optional subsystem: startup errors return ignore and a later
-                %% listener crash must not consume the top-level restart budget.
-                restart => temporary,
+                %% Optional startup failures return ignore; once started,
+                %% supervise the listener normally and restart runtime crashes.
+                restart => permanent,
                 shutdown => 5000,
                 type => worker,
                 modules => [damage_ssh_tunnel_listener]
@@ -144,8 +144,9 @@ init([]) ->
             #{
                 id => damage_ssh_git_listener,
                 start => {damage_ssh_git_listener, start_link, []},
-                %% Optional subsystem; see damage_ssh_git_listener:start_link/0.
-                restart => temporary,
+                %% Optional startup failures return ignore; once started,
+                %% supervise the listener normally and restart runtime crashes.
+                restart => permanent,
                 shutdown => 5000,
                 type => worker,
                 modules => [damage_ssh_git_listener]

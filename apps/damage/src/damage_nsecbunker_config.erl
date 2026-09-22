@@ -24,7 +24,11 @@
     aws_requested/1,
     secure_aws/1,
     provider_change/2,
-    validate_production/1
+    validate_production/1,
+    state_dir/0,
+    default_vault_path/0,
+    default_audit_log/0,
+    vault_mode/1
 ]).
 
 -type secret_provider() :: local | aws_secrets_manager | term().
@@ -36,7 +40,7 @@ load() ->
             {ok, Value} -> Value;
             undefined -> #{}
         end,
-    normalize(Raw).
+    apply_defaults(normalize(Raw)).
 
 -spec normalize(term()) -> map().
 normalize(Config) when is_map(Config) ->
@@ -139,7 +143,7 @@ provider_change(CurrentConfig, CandidateConfig) ->
 %% behavior. AWS is explicit, production-only, and fail-closed.
 -spec validate_production(term()) -> ok | {error, term()}.
 validate_production(Config0) ->
-    Config = normalize(Config0),
+    Config = apply_defaults(normalize(Config0)),
     case validate_provider_selection(Config) of
         ok ->
             case production(Config) of
@@ -204,15 +208,24 @@ validate_provider_selection(Config) ->
     end.
 
 validate_vault_mode(Config) ->
-    case maps:get(vault_mode, Config, open_existing) of
+    case vault_mode(Config) of
         open_existing -> ok;
         create_if_missing -> ok;
-        <<"open_existing">> -> ok;
-        <<"create_if_missing">> -> ok;
-        "open_existing" -> ok;
-        "create_if_missing" -> ok;
         Other -> {error, {invalid_vault_mode, Other}}
     end.
+
+-spec vault_mode(term()) -> open_existing | create_if_missing | term().
+vault_mode(Config0) ->
+    Config = normalize(Config0),
+    normalize_vault_mode(maps:get(vault_mode, Config, open_existing)).
+
+normalize_vault_mode(open_existing) -> open_existing;
+normalize_vault_mode(create_if_missing) -> create_if_missing;
+normalize_vault_mode(<<"open_existing">>) -> open_existing;
+normalize_vault_mode(<<"create_if_missing">>) -> create_if_missing;
+normalize_vault_mode("open_existing") -> open_existing;
+normalize_vault_mode("create_if_missing") -> create_if_missing;
+normalize_vault_mode(Other) -> Other.
 
 normalize_secret_provider(local) -> local;
 normalize_secret_provider(local_secret) -> local;
@@ -230,6 +243,164 @@ normalize_secret_provider(<<"aws_secrets_manager">>) -> aws_secrets_manager;
 normalize_secret_provider("aws") -> aws_secrets_manager;
 normalize_secret_provider("aws_secrets_manager") -> aws_secrets_manager;
 normalize_secret_provider(Value) -> Value.
+
+%% -------------------------------------------------------------------
+%% State/path defaults
+%% -------------------------------------------------------------------
+
+-spec state_dir() -> file:filename().
+state_dir() ->
+    Raw =
+        case application:get_env(damage, nsecbunker) of
+            {ok, Value} -> normalize(Value);
+            undefined -> #{}
+        end,
+    state_dir(Raw).
+
+-spec default_vault_path() -> file:filename().
+default_vault_path() ->
+    filename:join([state_dir(), "keys", "nsecbunker", "node.vault"]).
+
+-spec default_audit_log() -> file:filename().
+default_audit_log() ->
+    filename:join([state_dir(), "logs", "nsecbunker_audit.log"]).
+
+apply_defaults(Config0) ->
+    Root = state_dir(Config0),
+    VaultDefault = filename:join([Root, "keys", "nsecbunker", "node.vault"]),
+    AuditDefault = filename:join([Root, "logs", "nsecbunker_audit.log"]),
+    VaultPath = resolve_vault_path(Config0, VaultDefault),
+    AuditLog = normalize_path(maps:get(audit_log, Config0, AuditDefault)),
+    Config1 = maybe_expand_home_path(crypto_backend_cmd, Config0),
+    Mode0 =
+        case maps:find(vault_mode, Config1) of
+            {ok, ExplicitMode} ->
+                normalize_vault_mode(ExplicitMode);
+            error ->
+                default_vault_mode(Config1, VaultPath)
+        end,
+    Config1#{
+        vault_path => VaultPath,
+        audit_log => AuditLog,
+        vault_mode => Mode0
+    }.
+
+resolve_vault_path(Config, VaultDefault) ->
+    case maps:find(vault_path, Config) of
+        {ok, ExplicitPath} ->
+            normalize_path(ExplicitPath);
+        error ->
+            case filelib:is_regular(VaultDefault) of
+                true ->
+                    normalize_path(VaultDefault);
+                false ->
+                    case existing_legacy_vault() of
+                        {ok, LegacyPath} -> LegacyPath;
+                        not_found -> normalize_path(VaultDefault)
+                    end
+            end
+    end.
+
+existing_legacy_vault() ->
+    first_existing_file([
+        "/var/lib/damage/nsecbunker/damagebdd_node_production.vault",
+        "/var/lib/damage/nsecbunker/node.vault",
+        "/var/lib/damage/nsecbunker/genesis.vault"
+    ]).
+
+first_existing_file([Path | Rest]) ->
+    case filelib:is_regular(Path) of
+        true -> {ok, Path};
+        false -> first_existing_file(Rest)
+    end;
+first_existing_file([]) ->
+    not_found.
+
+default_vault_mode(Config, VaultPath) ->
+    case secret_provider(Config) of
+        local ->
+            case filelib:is_regular(VaultPath) of
+                true -> open_existing;
+                false -> create_if_missing
+            end;
+        %% Managed production custody remains ceremony-driven unless explicitly
+        %% configured otherwise.
+        aws_secrets_manager ->
+            open_existing;
+        _ ->
+            open_existing
+    end.
+
+state_dir(Config) ->
+    case maps:get(state_dir, Config, undefined) of
+        Dir when is_binary(Dir); is_list(Dir) ->
+            normalize_path(Dir);
+        _ ->
+            damage_state_dir()
+    end.
+
+damage_state_dir() ->
+    case application:get_env(damage, state_dir) of
+        {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+            normalize_path(Dir);
+        _ ->
+            case application:get_env(damage, secrets_state_dir) of
+                {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+                    normalize_path(Dir);
+                _ ->
+                    default_damage_state_dir()
+            end
+    end.
+
+default_damage_state_dir() ->
+    case os:getenv("XDG_STATE_HOME") of
+        Xdg when is_list(Xdg), Xdg =/= "" ->
+            Expanded = expand_home(Xdg),
+            case filename:pathtype(Expanded) of
+                absolute -> filename:join(Expanded, "damage");
+                _ -> home_state_dir()
+            end;
+        _ ->
+            home_state_dir()
+    end.
+
+home_state_dir() ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" ->
+            filename:join([Home, ".local", "state", "damage"]);
+        _ ->
+            "/var/lib/damage"
+    end.
+
+maybe_expand_home_path(Key, Config) ->
+    case maps:get(Key, Config, undefined) of
+        Value when is_binary(Value) ->
+            Config#{Key => unicode:characters_to_binary(expand_home(binary_to_list(Value)))};
+        Value when is_list(Value) ->
+            Config#{Key => expand_home(Value)};
+        _ ->
+            Config
+    end.
+
+normalize_path(Value) when is_binary(Value) ->
+    normalize_path(binary_to_list(Value));
+normalize_path(Value) when is_list(Value), Value =/= [] ->
+    filename:absname(expand_home(Value));
+normalize_path(Value) ->
+    erlang:error({invalid_nsecbunker_path, Value}).
+
+expand_home("~") ->
+    require_home("~");
+expand_home([$~, $/ | Rest] = Path) ->
+    filename:join(require_home(Path), Rest);
+expand_home(Path) ->
+    Path.
+
+require_home(Path) ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" -> Home;
+        _ -> erlang:error({home_directory_unavailable, Path})
+    end.
 
 missing(Key, Config) ->
     case maps:get(Key, Config, undefined) of

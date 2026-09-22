@@ -13,6 +13,7 @@
     init/2,
     status/1,
     guard_state/1,
+    ensure_identity/1,
     generate_identity/1,
     export_identity/3,
     public_key/1,
@@ -30,7 +31,7 @@ init(Config0, Policy) ->
         maps:get(
             vault_path,
             Config,
-            "/var/lib/damage/nsecbunker/genesis.vault"
+            damage_nsecbunker_config:default_vault_path()
         )
     ),
     #vault{
@@ -62,21 +63,65 @@ guard_state(Vault = #vault{policy = Policy, backend = secure_owner}) ->
                     sealed(Reason, Expected)
             end
     end;
-guard_state(#vault{
+guard_state(Vault = #vault{
     config = Config,
     policy = Policy,
     backend = {legacy, {ok, _Cmd}}
 }) ->
     Expected = maps:get(bunker_pubkey_hex, Policy, undefined),
-    case {valid_pubkey(Expected), local_vault_passphrase(Config)} of
-        {false, _} -> sealed(missing_bunker_pubkey, <<>>);
-        {true, {ok, _}} -> #{sealed => false, integrity => ok, pubkey_hex => Expected};
-        {true, error} -> sealed(missing_vault_passphrase, Expected)
+    case {local_vault_passphrase(Config), public_key(Vault)} of
+        {{ok, _}, {ok, Actual}} ->
+            #{sealed => false, integrity => ok, pubkey_hex => Actual};
+        {error, _} ->
+            sealed(missing_vault_passphrase, expected_pubkey(Expected));
+        {_, {error, Reason}} ->
+            sealed(Reason, expected_pubkey(Expected))
     end;
 guard_state(#vault{backend = {legacy, {error, Reason}}, policy = Policy}) ->
     sealed(Reason, maps:get(bunker_pubkey_hex, Policy, <<>>));
 guard_state(#vault{backend = {error, Reason}, policy = Policy}) ->
     sealed(Reason, maps:get(bunker_pubkey_hex, Policy, <<>>)).
+
+ensure_identity(Vault = #vault{backend = secure_owner, config = Config}) ->
+    case public_key(Vault) of
+        {ok, Pubkey} ->
+            {ok, Pubkey};
+        {error, _} = ExistingError ->
+            case damage_nsecbunker_config:vault_mode(Config) of
+                create_if_missing ->
+                    case generate_identity(Vault) of
+                        {ok, _} -> public_key(Vault);
+                        {error, _} = Error -> Error
+                    end;
+                open_existing ->
+                    ExistingError;
+                Other ->
+                    {error, {invalid_vault_mode, Other}}
+            end
+    end;
+ensure_identity(Vault = #vault{path = Path, config = Config}) ->
+    PathList = path_list(Path),
+    case filelib:is_regular(PathList) of
+        true ->
+            public_key(Vault);
+        false ->
+            case damage_nsecbunker_config:vault_mode(Config) of
+                create_if_missing ->
+                    case filelib:ensure_dir(PathList) of
+                        ok ->
+                            case generate_identity(Vault) of
+                                {ok, _} -> public_key(Vault);
+                                {error, _} = Error -> Error
+                            end;
+                        {error, Reason} ->
+                            {error, {vault_directory_failed, filename:dirname(PathList), Reason}}
+                    end;
+                open_existing ->
+                    {error, {vault_missing, Path}};
+                Other ->
+                    {error, {invalid_vault_mode, Other}}
+            end
+    end.
 
 generate_identity(Vault = #vault{backend = secure_owner}) ->
     owner_result(damage_nsecbunker_secret_owner:generate_identity(timeout(Vault)));
@@ -124,13 +169,18 @@ public_key(Vault = #vault{policy = Policy, backend = secure_owner}) ->
     end;
 public_key(#vault{policy = Policy, path = Path} = Vault) ->
     Expected = maps:get(bunker_pubkey_hex, Policy, undefined),
-    case valid_pubkey(Expected) of
-        true ->
-            {ok, Expected};
-        false ->
-            local_call_field(
-                Vault, #{op => <<"get_public_key">>, vault_path => Path}, pubkey_hex
-            )
+    case
+        local_call_field(
+            Vault, #{op => <<"get_public_key">>, vault_path => Path}, pubkey_hex
+        )
+    of
+        {ok, Actual} ->
+            case valid_pubkey(Expected) andalso Actual =/= Expected of
+                true -> {error, vault_pubkey_mismatch};
+                false -> {ok, Actual}
+            end;
+        {error, _} = Error ->
+            Error
     end.
 
 bunker_uri_pattern(Vault, Config) ->
@@ -362,6 +412,18 @@ get_field(Field, Map) ->
     end.
 
 sealed(Reason, Pubkey) -> #{sealed => true, integrity => Reason, pubkey_hex => Pubkey}.
+
+expected_pubkey(Expected) ->
+    case valid_pubkey(Expected) of
+        true -> Expected;
+        false -> <<>>
+    end.
+
+path_list(Path) when is_binary(Path) ->
+    unicode:characters_to_list(Path);
+path_list(Path) when is_list(Path) ->
+    Path.
+
 timeout(#vault{config = Config}) ->
     case maps:get(crypto_timeout_ms, Config, 10000) of
         Value when is_integer(Value), Value > 0 -> Value;

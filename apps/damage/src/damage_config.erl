@@ -138,7 +138,28 @@ runs_dir() ->
         {ok, Dir} when is_binary(Dir); is_list(Dir) ->
             normalize_path(Dir);
         _ ->
+            maybe_warn_legacy_data_dir(),
             filename:join([state_dir(), "runtime", "runs"])
+    end.
+
+maybe_warn_legacy_data_dir() ->
+    case application:get_env(damage, data_dir) of
+        {ok, LegacyDir} ->
+            WarnKey = {?MODULE, legacy_data_dir_warning},
+            case persistent_term:get(WarnKey, false) of
+                false ->
+                    ?LOG_WARNING(
+                        "damage.data_dir=~p no longer controls execution run/report storage; "
+                        "use damage.runs_dir instead. Defaulting runs to ~s",
+                        [LegacyDir, filename:join([state_dir(), "runtime", "runs"])]
+                    ),
+                    persistent_term:put(WarnKey, true),
+                    ok;
+                true ->
+                    ok
+            end;
+        undefined ->
+            ok
     end.
 
 state_dir() ->

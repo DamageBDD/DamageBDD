@@ -148,20 +148,51 @@ allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 delete_resource(Req, #{public_key := AeAccount} = State) ->
-    Deleted =
-        lists:foldl(
-            fun(DeleteId, Acc) ->
-                ?LOG_DEBUG("deleted ~p ~p", [maps:get(path_info, Req), DeleteId]),
-                ok = delete_schedule(AeAccount, DeleteId),
-                Acc + 1
-            end,
-            0,
-            maps:get(path_info, Req)
-        ),
-    ?LOG_INFO("deleted ~p schedules", [Deleted]),
-    {true, Req, State}.
+    case node_secrets_ready() of
+        false ->
+            schedule_service_unavailable_reply(Req, State, node_locked);
+        true ->
+            delete_resource_ready(Req, State, AeAccount)
+    end.
+
+delete_resource_ready(Req, State, AeAccount) ->
+    case delete_schedule_ids(AeAccount, maps:get(path_info, Req)) of
+        {ok, Deleted} ->
+            ?LOG_INFO("deleted ~p schedules", [Deleted]),
+            {true, Req, State};
+        {error, Reason} ->
+            schedule_service_unavailable_reply(Req, State, Reason)
+    end.
+
+delete_schedule_ids(AeAccount, DeleteIds) ->
+    lists:foldl(
+        fun
+            (_DeleteId, {error, _} = Error) ->
+                Error;
+            (DeleteId, {ok, Acc}) ->
+                ?LOG_DEBUG("deleting schedule path=~p id=~p", [
+                    DeleteIds, DeleteId
+                ]),
+                case delete_schedule(AeAccount, DeleteId) of
+                    ok -> {ok, Acc + 1};
+                    {ok, _} -> {ok, Acc + 1};
+                    {error, _} = Error -> Error;
+                    Other -> {error, {unexpected_delete_result, Other}}
+                end
+        end,
+        {ok, 0},
+        DeleteIds
+    ).
 
 from_text(Req, #{public_key := AeAccount} = State) ->
+    case node_secrets_ready() of
+        false ->
+            schedule_service_unavailable_reply(Req, State, node_locked);
+        true ->
+            from_text_ready(Req, State, AeAccount)
+    end.
+
+from_text_ready(Req, State, AeAccount) ->
     ?LOG_DEBUG("From text ~p", [Req]),
     {ok, Body, _} = cowboy_req:read_body(Req),
     ok = validate(Body),
@@ -186,32 +217,66 @@ from_text(Req, #{public_key := AeAccount} = State) ->
             Resp = cowboy_req:set_resp_body(jsx:encode(#{status => <<"ok">>}), Req),
             {stop, cowboy_req:reply(201, Resp), State};
         {error, Reason} ->
-            Body = jsx:encode(#{
-                status => <<"error">>,
-                reason => iolist_to_binary(io_lib:format("~p", [Reason]))
-            }),
-            Req2 = cowboy_req:reply(
-                500, #{<<"content-type">> => <<"application/json">>}, Body, Req
-            ),
-            {stop, Req2, State}
+            case lock_related_reason(Reason) of
+                true ->
+                    schedule_service_unavailable_reply(Req, State, Reason);
+                false ->
+                    Body = jsx:encode(#{
+                        status => <<"error">>,
+                        error => <<"SCHEDULE_WRITE_FAILED">>,
+                        reason => iolist_to_binary(io_lib:format("~p", [Reason]))
+                    }),
+                    Req2 = cowboy_req:reply(
+                        500,
+                        #{
+                            <<"content-type">> => <<"application/json">>,
+                            <<"cache-control">> => <<"no-store">>
+                        },
+                        Body,
+                        Req
+                    ),
+                    {stop, Req2, State}
+            end
     end.
 
 from_json(Req, State) -> from_text(Req, State).
 from_html(Req, State) -> from_text(Req, State).
 
 to_json(Req, #{public_key := AeAccount} = State) ->
-    Schedules = list_schedules(AeAccount),
-    Body =
-        jsx:encode(
-            #{status => <<"ok">>, results => Schedules, length => length(Schedules)}
-        ),
-    ?LOG_INFO("Loading scheduled for  ~p", [Body]),
-    {Body, Req, State}.
+    case list_schedules(AeAccount) of
+        Schedules when is_list(Schedules) ->
+            Body =
+                jsx:encode(
+                    #{status => <<"ok">>, results => Schedules, length => length(Schedules)}
+                ),
+            ?LOG_INFO("Loading schedules for account=~p count=~p", [
+                AeAccount, length(Schedules)
+            ]),
+            {Body, Req, State};
+        {error, Reason} ->
+            schedule_service_unavailable_reply(Req, State, Reason);
+        Other ->
+            schedule_service_unavailable_reply(
+                Req, State, {unexpected_schedule_result, Other}
+            )
+    end.
 
 execute_bdd(
     #{public_key := AeAccount, feature_hash := Hash, concurrency := Concurrency, id_hash := IdHash} =
         Schedule
 ) ->
+    case node_secrets_ready() of
+        false ->
+            ?LOG_WARNING(
+                "Deferring scheduled execution while node secrets are locked account=~p id_hash=~p",
+                [AeAccount, IdHash]
+            ),
+            [];
+        true ->
+            execute_bdd_ready(Schedule, AeAccount, Hash, Concurrency, IdHash)
+    end.
+
+execute_bdd_ready(Schedule, AeAccount, Hash, Concurrency, IdHash) ->
     MinBalance = Concurrency * math:pow(10, ?DAMAGE_DECIMALS),
     case damage_ae:balance(AeAccount) of
         Balance when Balance >= MinBalance ->
@@ -237,6 +302,13 @@ execute_bdd(
                 Error ->
                     error({mark_schedule_executed_failed, AeAccount, IdHash, Error})
             end;
+        {error, Reason} when Reason =:= node_locked; Reason =:= secrets_not_ready ->
+            ?LOG_WARNING(
+                "Deferring scheduled execution because node secrets became unavailable "
+                "account=~p reason=~p",
+                [AeAccount, Reason]
+            ),
+            [];
         Other ->
             Msg =
                 lists:flatten(
@@ -289,23 +361,29 @@ list_schedules(AeAccount) ->
 
 load_all_schedules() ->
     ?LOG_INFO("Loading all schedules into index ..."),
-    lists:foreach(
-        fun(AccountSchedules) ->
+    case list_all_schedules() of
+        AccountScheduleLists when is_list(AccountScheduleLists) ->
             lists:foreach(
-                fun(S) ->
-                    case is_valid_schedule(S) of
-                        true ->
-                            #{public_key := Account, id := Id} = S,
-                            damage_schedule_index:upsert_schedule(Account, Id, S);
-                        false ->
-                            ok
-                    end
+                fun(AccountSchedules) ->
+                    lists:foreach(
+                        fun(S) ->
+                            case is_valid_schedule(S) of
+                                true ->
+                                    #{public_key := Account, id := Id} = S,
+                                    damage_schedule_index:upsert_schedule(Account, Id, S);
+                                false ->
+                                    ok
+                            end
+                        end,
+                        AccountSchedules
+                    )
                 end,
-                AccountSchedules
-            )
-        end,
-        list_all_schedules()
-    ).
+                AccountScheduleLists
+            );
+        {error, Reason} ->
+            ?LOG_WARNING("Schedule index load deferred reason=~p", [Reason]),
+            {error, Reason}
+    end.
 
 is_valid_schedule(#{error := Reason} = S) ->
     ?LOG_ERROR("Skipping invalid schedule ~p reason ~p", [S, Reason]),
@@ -336,29 +414,39 @@ list_schedules_uncached(AeAccount) ->
         #{"return_value" := Results} ->
             ?LOG_INFO("loaded schedules raw ~p", [Results]),
             load_account_schedules(AeAccount, Results);
+        {error, _} = Error ->
+            ?LOG_WARNING("Schedules unavailable account=~p reason=~p", [AeAccount, Error]),
+            Error;
         Error ->
             ?LOG_ERROR("Failed to load schedules ~p ~p", [AeAccount, Error]),
-            []
+            {error, {unexpected_contract_result, Error}}
     end.
 
 list_all_schedules_uncached() ->
-    case
-        damage_ae:contract_call(
-            get_schedules_contract(),
-            damage_ae:contract_path(damage, "contracts/schedules.aes"),
-            "get_all_schedules",
-            []
-        )
-    of
-        #{decoded_result := Results} ->
-            decrypt_schedules(Results);
-        #{<<"return_value">> := Results} ->
-            decrypt_schedules(Results);
-        #{"return_value" := Results} ->
-            decrypt_schedules(Results);
-        Error ->
-            ?LOG_ERROR("schedules loading failed ~p", [Error]),
-            []
+    case node_secrets_ready() of
+        false ->
+            {error, node_locked};
+        true ->
+            case
+                damage_ae:contract_call(
+                    get_schedules_contract(),
+                    damage_ae:contract_path(damage, "contracts/schedules.aes"),
+                    "get_all_schedules",
+                    []
+                )
+            of
+                #{decoded_result := Results} ->
+                    decrypt_schedules(Results);
+                #{<<"return_value">> := Results} ->
+                    decrypt_schedules(Results);
+                #{"return_value" := Results} ->
+                    decrypt_schedules(Results);
+                {error, _} = Error ->
+                    Error;
+                Error ->
+                    ?LOG_ERROR("schedules loading failed ~p", [Error]),
+                    {error, {unexpected_contract_result, Error}}
+            end
     end.
 
 %%--------------------------------------------------------------------
@@ -407,32 +495,44 @@ account_key_to_ak(Other) ->
     Other.
 
 delete_schedule(AeAccount, ScheduleId) ->
-    #{
-        "gas_price" := GasPrice,
-        "gas_used" := GasUsed,
-        "height" := Height,
-        "return_type" := "ok",
-        "return_value" := Deleted
-    } =
+    case
         contract_call(
             AeAccount,
             "delete_schedule",
             [binary_to_list(ScheduleId)]
-        ),
-    damage_schedule_index:delete_schedule(AeAccount, ScheduleId),
-    invalidate_schedule_cache(AeAccount),
-    ?LOG_DEBUG(
-        "call AE contract ~p deleted ~p gasprice ~p gasused ~p, height ~p",
-        [AeAccount, Deleted, GasPrice, GasUsed, Height]
-    ),
-    {ok, Deleted}.
+        )
+    of
+        #{
+            "gas_price" := GasPrice,
+            "gas_used" := GasUsed,
+            "height" := Height,
+            "return_type" := "ok",
+            "return_value" := Deleted
+        } ->
+            damage_schedule_index:delete_schedule(AeAccount, ScheduleId),
+            invalidate_schedule_cache(AeAccount),
+            ?LOG_DEBUG(
+                "call AE contract ~p deleted ~p gasprice ~p gasused ~p, height ~p",
+                [AeAccount, Deleted, GasPrice, GasUsed, Height]
+            ),
+            {ok, Deleted};
+        {error, _} = Error ->
+            Error;
+        Other ->
+            {error, {unexpected_contract_result, Other}}
+    end.
 
 add_schedule(AeAccount, Name, Cron0, FeatureHash, Concurrency) when is_binary(AeAccount) ->
-    case normalize_cron_spec(Cron0) of
-        {ok, Cron} ->
-            add_schedule_canonical(AeAccount, Name, Cron, FeatureHash, Concurrency);
-        {error, Reason} ->
-            {error, {invalid_cron_spec, Reason}}
+    case node_secrets_ready() of
+        false ->
+            {error, node_locked};
+        true ->
+            case normalize_cron_spec(Cron0) of
+                {ok, Cron} ->
+                    add_schedule_canonical(AeAccount, Name, Cron, FeatureHash, Concurrency);
+                {error, Reason} ->
+                    {error, {invalid_cron_spec, Reason}}
+            end
     end.
 
 add_schedule_canonical(AeAccount, Name, Cron, FeatureHash, Concurrency) ->
@@ -1141,7 +1241,7 @@ handle_call({get_schedules, AeAccount}, _From, State) ->
             {reply, Schedules, State};
         miss ->
             Schedules = list_schedules_uncached(AeAccount),
-            ok = cache_put(Key, Schedules, State),
+            ok = maybe_cache_schedule_result(Key, Schedules, State),
             {reply, Schedules, State}
     end;
 handle_call({set_contract, ContractId0}, _From, State) ->
@@ -1163,7 +1263,7 @@ handle_call({get_schedules_for, AeAccount}, _From, State) ->
             {reply, Val, State};
         miss ->
             Resp = contract_call_admin(State, "get_schedules_for", [AeAccount]),
-            ok = cache_put(Key, Resp, State),
+            ok = maybe_cache_schedule_result(Key, Resp, State),
             {reply, Resp, State}
     end;
 handle_call({list_schedules_for, AeAccount}, _From, State) ->
@@ -1173,9 +1273,14 @@ handle_call({list_schedules_for, AeAccount}, _From, State) ->
             {reply, Val, State};
         miss ->
             Raw = contract_call_admin(State, "get_schedules_for", [AeAccount]),
-            Schedules = load_account_schedules(AeAccount, decode_result_map(Raw)),
-            ok = cache_put(Key, Schedules, State),
-            {reply, Schedules, State}
+            case Raw of
+                {error, _} = Error ->
+                    {reply, Error, State};
+                _ ->
+                    Schedules = load_account_schedules(AeAccount, decode_result_map(Raw)),
+                    ok = maybe_cache_schedule_result(Key, Schedules, State),
+                    {reply, Schedules, State}
+            end
     end;
 handle_call({delete_schedule_by_hash, AeAccount, ScheduleHash}, _From, State) ->
     Resp = contract_call_for_user(State, AeAccount, "delete_schedule_by_hash", [ScheduleHash]),
@@ -1198,7 +1303,7 @@ handle_call({list_schedules, AeAccount}, _From, State) ->
             {reply, Schedules, State};
         miss ->
             Schedules = list_schedules_uncached(AeAccount),
-            ok = cache_put(Key, Schedules, State),
+            ok = maybe_cache_schedule_result(Key, Schedules, State),
             {reply, Schedules, State}
     end;
 handle_call(list_all_schedules, _From, State) ->
@@ -1208,7 +1313,7 @@ handle_call(list_all_schedules, _From, State) ->
             {reply, Schedules, State};
         miss ->
             Schedules = list_all_schedules_uncached(),
-            ok = cache_put(Key, Schedules, State),
+            ok = maybe_cache_schedule_result(Key, Schedules, State),
             {reply, Schedules, State}
     end.
 
@@ -1312,27 +1417,35 @@ mark_schedule_executed(AeAccount, ScheduleHash, Timestamp) ->
         ?AE_TIMEOUT
     ).
 contract_call_admin(State, Func, Args) ->
-    ContractId = require_contract(State),
-    damage_ae:contract_call(
-        secrets:node_keypair(),
-        ContractId,
-        damage_ae:contract_path(damage, State#state.contract_path),
-        Func,
-        Args
-    ).
+    case node_keypair() of
+        {ok, KeyPair} ->
+            ContractId = require_contract(State),
+            damage_ae:contract_call(
+                KeyPair,
+                ContractId,
+                damage_ae:contract_path(damage, State#state.contract_path),
+                Func,
+                Args
+            );
+        {error, _} = Error ->
+            Error
+    end.
 
 contract_call_for_user(State, AeAccount, Func, Args) ->
-    ContractId = require_contract(State),
-    #{public_key := _Pub, private_key := PrivateKey, password := _} =
-        identity_server:get_account(AeAccount),
-    damage_ae:set_private_key(AeAccount, PrivateKey),
-    damage_ae:contract_call_payfor_user(
-        AeAccount,
-        ContractId,
-        damage_ae:contract_path(damage, State#state.contract_path),
-        Func,
-        Args
-    ).
+    case account_private_key(AeAccount) of
+        {ok, PrivateKey} ->
+            ContractId = require_contract(State),
+            damage_ae:set_private_key(AeAccount, PrivateKey),
+            damage_ae:contract_call_payfor_user(
+                AeAccount,
+                ContractId,
+                damage_ae:contract_path(damage, State#state.contract_path),
+                Func,
+                Args
+            );
+        {error, _} = Error ->
+            Error
+    end.
 invalidate_schedule_keys(State, AeAccount, _ScheduleHash) ->
     Tab = State#state.ets_table,
     ets:delete(Tab, ?CK_GET_SCHEDULES(AeAccount)),
@@ -1381,16 +1494,112 @@ get_schedules_contract() ->
     application:get_env(damage, schedules_ct, ?SCHEDULES_CONTRACT).
 
 contract_call(AeAccount, Func, Args) when is_binary(AeAccount) ->
-    #{public_key := _PubKey, private_key := PrivateKey, password := _} =
-        identity_server:get_account(AeAccount),
-    damage_ae:set_private_key(AeAccount, PrivateKey),
-    damage_ae:contract_call_payfor_user(
-        AeAccount,
-        get_schedules_contract(),
-        damage_ae:contract_path(damage, "contracts/schedules.aes"),
-        Func,
-        Args
-    ).
+    case account_private_key(AeAccount) of
+        {ok, PrivateKey} ->
+            damage_ae:set_private_key(AeAccount, PrivateKey),
+            damage_ae:contract_call_payfor_user(
+                AeAccount,
+                get_schedules_contract(),
+                damage_ae:contract_path(damage, "contracts/schedules.aes"),
+                Func,
+                Args
+            );
+        {error, _} = Error ->
+            Error
+    end.
+
+maybe_cache_schedule_result(Key, Value, State) when is_list(Value); is_map(Value) ->
+    cache_put(Key, Value, State);
+maybe_cache_schedule_result(_Key, _Value, _State) ->
+    ok.
+
+node_secrets_ready() ->
+    try secrets:has_node_password() of
+        true -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+node_keypair() ->
+    case node_secrets_ready() of
+        false ->
+            {error, node_locked};
+        true ->
+            try secrets:node_keypair() of
+                #{public_key := _Pub, private_key := _Priv} = KeyPair ->
+                    {ok, KeyPair};
+                {error, _} = Error ->
+                    Error;
+                Other ->
+                    {error, {invalid_node_keypair_result, Other}}
+            catch
+                Class:Reason ->
+                    {error, {node_keypair_lookup_failed, Class, Reason}}
+            end
+    end.
+
+account_private_key(AeAccount) ->
+    case node_secrets_ready() of
+        false ->
+            {error, node_locked};
+        true ->
+            try identity_server:get_account(AeAccount) of
+                #{public_key := _Pub, private_key := PrivateKey} ->
+                    {ok, PrivateKey};
+                notfound ->
+                    {error, account_not_found};
+                {error, _} = Error ->
+                    Error;
+                Other ->
+                    {error, {unexpected_identity_result, Other}}
+            catch
+                Class:Reason ->
+                    {error, {identity_lookup_failed, Class, Reason}}
+            end
+    end.
+
+lock_related_reason(node_locked) -> true;
+lock_related_reason(secrets_not_ready) -> true;
+lock_related_reason({error, Reason}) -> lock_related_reason(Reason);
+lock_related_reason(Tuple) when is_tuple(Tuple) ->
+    lists:any(fun lock_related_reason/1, tuple_to_list(Tuple));
+lock_related_reason(List) when is_list(List) ->
+    lists:any(fun lock_related_reason/1, List);
+lock_related_reason(_) -> false.
+
+schedule_service_unavailable_reply(Req0, State, Reason) ->
+    {ErrorCode, Message} =
+        case lock_related_reason(Reason) of
+            true ->
+                {
+                    <<"NODE_SECRETS_LOCKED">>,
+                    <<"Node secrets are locked. Unlock the node and retry the request.">>
+                };
+            false ->
+                {
+                    <<"SCHEDULE_SERVICE_UNAVAILABLE">>,
+                    <<"Schedule service is temporarily unavailable.">>
+                }
+        end,
+    Body = jsx:encode(#{
+        status => <<"notok">>,
+        error => ErrorCode,
+        message => Message,
+        reason => to_bin(io_lib:format("~p", [Reason])),
+        retryable => true
+    }),
+    Req = cowboy_req:reply(
+        503,
+        #{
+            <<"content-type">> => <<"application/json">>,
+            <<"cache-control">> => <<"no-store">>,
+            <<"retry-after">> => <<"5">>
+        },
+        Body,
+        Req0
+    ),
+    {stop, Req, State}.
 
 require_contract(#state{contract_id = undefined}) ->
     to_bin(get_schedules_contract());

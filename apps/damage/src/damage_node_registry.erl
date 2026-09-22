@@ -557,17 +557,36 @@ cached_contract_call(State, CacheKey, Func, Args) ->
         {ok, Val} ->
             Val;
         miss ->
-            ContractId = require_contract(State),
-            KeyPair = secrets:node_keypair(),
-            Resp = damage_ae:contract_call_dry(
-                KeyPair,
-                ContractId,
-                damage_ae:contract_path(State#state.contract_path),
-                Func,
-                Args
-            ),
-            maybe_cache_put(State, CacheKey, Resp),
-            Resp
+            case node_keypair() of
+                {ok, KeyPair} ->
+                    ContractId = require_contract(State),
+                    Resp = damage_ae:contract_call(
+                        KeyPair,
+                        ContractId,
+                        damage_ae:contract_path(State#state.contract_path),
+                        Func,
+                        Args
+                    ),
+                    maybe_cache_put(State, CacheKey, Resp),
+                    Resp;
+                {error, _} = Error ->
+                    Error
+            end
+    end.
+
+node_keypair() ->
+    try secrets:node_keypair() of
+        #{public_key := _PublicKey, private_key := _PrivateKey} = KeyPair ->
+            {ok, KeyPair};
+        {error, node_locked} ->
+            {error, node_locked};
+        {error, Reason} ->
+            {error, {node_keypair_unavailable, Reason}};
+        Other ->
+            {error, {invalid_node_keypair_result, Other}}
+    catch
+        Class:Reason ->
+            {error, {node_keypair_lookup_failed, Class, Reason}}
     end.
 
 maybe_cache_put(State, Key, Resp) ->

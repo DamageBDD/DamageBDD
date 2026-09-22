@@ -142,47 +142,166 @@ async function refreshDashboardBalances() {
 window.refreshDashboardBalances = refreshDashboardBalances;
 
 async function loadNodeStatus() {
-    const [versionResponse, balancesResult] = await Promise.all([
+    const [versionResponse, balancesResponse] = await Promise.all([
         fetch("/api/version", {
             method: "GET",
             credentials: "include",
             headers: { accept: "application/json" },
             cache: "no-store"
         }),
-        window.fetchNodeBalances({
-            credentials: "include"
+        fetch("/api/node/balances", {
+            method: "GET",
+            credentials: "include",
+            headers: { accept: "application/json" },
+            cache: "no-store"
         })
     ]);
 
     if (!versionResponse.ok) {
-        throw new Error(
-            `/api/version returned ${versionResponse.status}`
+        throw nodeStatusError(
+            `/api/version returned ${versionResponse.status}`,
+            versionResponse.status
         );
     }
 
-    const versionData = await versionResponse.json();
+    const versionData = await safeJsonResponse(versionResponse);
 
     if (versionData?.ok !== true) {
-        throw new Error(
-            versionData?.error || "Unable to load node version"
+        throw nodeStatusError(
+            versionData?.error || "Unable to load node version",
+            versionResponse.status,
+            versionData
         );
     }
 
-    if (!balancesResult?.ok) {
-        throw new Error(
-            balancesResult?.error?.message ||
-            "Unable to load node balances"
+    const balances = await safeJsonResponse(balancesResponse);
+
+    if (isNodeSecretsLocked(balancesResponse.status, balances)) {
+        return {
+            ok: false,
+            error: "node_locked",
+            error_code: "NODE_SECRETS_LOCKED",
+            message:
+                balances?.message ||
+                "Node secrets are locked. Unlock the node to continue.",
+            version: versionData.version || {}
+        };
+    }
+
+    if (!balancesResponse.ok) {
+        throw nodeStatusError(
+            balances?.message ||
+                balances?.error ||
+                `Unable to load node balances (HTTP ${balancesResponse.status})`,
+            balancesResponse.status,
+            balances
         );
     }
 
-    const balances = balancesResult.value || {};
-
-    // Preserve the old combined /version response shape so the
-    // existing render functions do not need to know about two APIs.
     return {
         ...balances,
         version: versionData.version || {}
     };
+}
+
+async function safeJsonResponse(response) {
+    const text = await response.text();
+    if (!text) return {};
+
+    try {
+        return JSON.parse(text);
+    } catch (_err) {
+        return { message: text };
+    }
+}
+
+function nodeStatusError(message, status = 0, payload = null) {
+    const err = new Error(String(message || "Node status request failed"));
+    err.status = status;
+    err.payload = payload;
+    return err;
+}
+
+function isNodeSecretsLocked(status, payload) {
+    if (!payload || typeof payload !== "object") return false;
+
+    const values = [
+        payload.error,
+        payload.error_code,
+        payload.reason,
+        payload.code
+    ]
+        .filter(value => value != null)
+        .map(value => String(value).toLowerCase());
+
+    return (
+        status === 503 &&
+        values.some(value =>
+            value === "node_locked" ||
+            value === "node_secrets_locked" ||
+            value === "secrets_not_ready"
+        )
+    );
+}
+
+function showNodeUnlockModal() {
+    try {
+        MicroModal.close("login-modal");
+    } catch (_err) {}
+
+    const modal = document.getElementById("node-unlock-modal");
+    if (!modal) {
+        console.error("node-unlock-modal is missing from the page");
+        return false;
+    }
+
+    MicroModal.show("node-unlock-modal");
+
+    window.setTimeout(() => {
+        document.getElementById("node-unlock-password")?.focus();
+    }, 0);
+
+    return true;
+}
+
+function handleNodeUnavailableStatus(data) {
+    if (!data || typeof data !== "object") return false;
+
+    const errors = [
+        data.error_code,
+        data.error,
+        data.reason,
+        data.code
+    ]
+        .filter(value => value != null)
+        .map(value => String(value).toLowerCase());
+
+    if (
+        errors.some(error =>
+            error === "node_locked" ||
+            error === "node_secrets_locked" ||
+            error === "secrets_not_ready"
+        )
+    ) {
+        showNodeUnlockModal();
+        return true;
+    }
+
+    if (
+        errors.some(error =>
+            error === "keypair_not_initialized" ||
+            error === "node_keypair_not_initialized" ||
+            error === "node_keypair_unavailable"
+        )
+    ) {
+        try {
+            MicroModal.close("login-modal");
+        } catch (_err) {}
+        MicroModal.show("node-set-password-modal");
+        return true;
+    }
+
+    return false;
 }
 
 window.loadNodeStatus = loadNodeStatus;
@@ -241,9 +360,14 @@ function restoreFeatureDraftFromShareLink() {
 				if (typeof renderNodeWalletModal === "function") {
 					renderNodeWalletModal(data);
 				}
+			} else if (handleNodeUnavailableStatus(data)) {
+				return;
 			}
 		} catch (err) {
-            console.warn("auth-changed node status refresh failed:", err);
+			if (handleNodeUnavailableStatus(err?.payload)) {
+				return;
+			}
+			console.warn("auth-changed node status refresh failed:", err);
 		}
 
 		try {
@@ -450,19 +574,19 @@ function restoreFeatureDraftFromShareLink() {
 			.then(data => {
 				if (data.ok === true) {
 					renderNodeFooter(data);
-                } else {
-					//versionDom.innerText = 'node not initialized: ' + versionData.error;
-					MicroModal.close("login-modal");
-					if(data.error === "node_locked"){
-						MicroModal.show("node-unlock-modal");
-					}else if (data.error === "keypair_not_initialized"){
-						MicroModal.show("node-set-password-modal");
-					}
-                }
-            })
-            .catch(err => {
-                console.warn("initial node status fetch failed:", err);
-            });
+					return;
+				}
+
+				if (!handleNodeUnavailableStatus(data)) {
+					console.warn("Node status unavailable:", data);
+				}
+			})
+			.catch(err => {
+				if (handleNodeUnavailableStatus(err?.payload)) {
+					return;
+				}
+				console.warn("initial node status fetch failed:", err);
+			});
 
 
         const addScheduleBtn = document.getElementById("addScheduleBtn");
@@ -2016,11 +2140,15 @@ function restoreFeatureDraftFromShareLink() {
 			if (data && data.ok === true) {
 				renderNodeFooter(data);
 				renderNodeWalletModal(data);
+				await refreshDashboardBalances();
+				return;
 			}
-			
-			await refreshDashboardBalances();
+
+			handleNodeUnavailableStatus(data);
 		} catch (err) {
-        console.warn("node status refresh failed:", err);
+			if (!handleNodeUnavailableStatus(err?.payload)) {
+				console.warn("node status refresh failed:", err);
+			}
 		}
 	}
 
@@ -2618,8 +2746,13 @@ function restoreFeatureDraftFromShareLink() {
 	}
 	async function refreshNodeWalletModal() {
 		const resp = await loadNodeStatus();
+		if (!resp || resp.ok !== true) {
+			handleNodeUnavailableStatus(resp);
+			return false;
+		}
 		renderNodeFooter(resp);
 		renderNodeWalletModal(resp);
+		return true;
 	}
 
 
@@ -2630,7 +2763,8 @@ function restoreFeatureDraftFromShareLink() {
 		try {
 			btn?.classList.add("is-loading");
 
-			await refreshNodeWalletModal();
+			const ready = await refreshNodeWalletModal();
+			if (!ready) return;
 			//await loadNodeLiquidityAddress();
 
 			if (window.MicroModal) {

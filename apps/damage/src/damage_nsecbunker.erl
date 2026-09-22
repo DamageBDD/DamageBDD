@@ -11,6 +11,11 @@
 
 -behaviour(gen_server).
 
+-include_lib("kernel/include/logger.hrl").
+
+-define(BOOTSTRAP_RETRY_MIN_MS, 1000).
+-define(BOOTSTRAP_RETRY_MAX_MS, 30000).
+
 -export([
     start_link/0,
     stop/0,
@@ -32,8 +37,11 @@
 -record(state, {
     config = #{},
     policy = #{},
-    vault = #{},
-    started_at = 0
+    vault = undefined,
+    started_at = 0,
+    ready = false,
+    retry_ms = ?BOOTSTRAP_RETRY_MIN_MS,
+    last_error = undefined
 }).
 
 %%====================================================================
@@ -148,17 +156,32 @@ call(Request, Timeout) ->
 
 init([]) ->
     Config = config(),
-    case validate_runtime_config(Config) of
-        ok ->
-            Policy = policy(Config),
-            Vault = damage_nsecbunker_vault:init(Config, Policy),
-            ok = ensure_audit_path(Config),
+    StartedAt = erlang:system_time(second),
+    RetryMs = bootstrap_retry_min_ms(Config),
+    case bootstrap_attempt(Config) of
+        {ok, RuntimeConfig, Policy, Vault} ->
             {ok, #state{
-                config = Config,
+                config = RuntimeConfig,
                 policy = Policy,
                 vault = Vault,
-                started_at = erlang:system_time(second)
+                started_at = StartedAt,
+                ready = true,
+                retry_ms = RetryMs
             }};
+        {wait, Reason} ->
+            ?LOG_WARNING(
+                "nsecbunker waiting for node secrets; Damage will continue booting "
+                "and bunker initialization will retry in ~p ms reason=~p",
+                [RetryMs, Reason]
+            ),
+            State0 = #state{
+                config = Config,
+                started_at = StartedAt,
+                ready = false,
+                retry_ms = RetryMs,
+                last_error = Reason
+            },
+            {ok, schedule_bootstrap_retry(State0)};
         {error, Reason} ->
             {stop, Reason}
     end.
@@ -166,11 +189,49 @@ init([]) ->
 handle_call(
     status,
     _From,
-    State = #state{config = Config, policy = Policy, vault = Vault, started_at = StartedAt}
+    State = #state{
+        config = Config,
+        started_at = StartedAt,
+        ready = false,
+        retry_ms = RetryMs,
+        last_error = LastError
+    }
 ) ->
     Reply = #{
         enabled => true,
         running => true,
+        ready => false,
+        state => waiting_for_secrets,
+        started_at => StartedAt,
+        mode => maps:get(mode, Config, undefined),
+        secret_provider => damage_nsecbunker_config:secret_provider(Config),
+        retry_in_ms => RetryMs,
+        last_error => LastError,
+        vault => #{ready => false, guard_state => #{
+            sealed => true,
+            integrity => waiting_for_secrets,
+            pubkey_hex => <<>>
+        }},
+        secure_owner => secure_owner_status(Config),
+        relay_client_enabled => maps:get(relay_client_enabled, Config, false)
+    },
+    {reply, Reply, State};
+handle_call(
+    status,
+    _From,
+    State = #state{
+        config = Config,
+        policy = Policy,
+        vault = Vault,
+        started_at = StartedAt,
+        ready = true
+    }
+) ->
+    Reply = #{
+        enabled => true,
+        running => true,
+        ready => true,
+        state => ready,
         started_at => StartedAt,
         mode => maps:get(mode, Config, undefined),
         secret_provider => damage_nsecbunker_config:secret_provider(Config),
@@ -180,43 +241,71 @@ handle_call(
         relay_client_enabled => maps:get(relay_client_enabled, Config, false)
     },
     {reply, Reply, State};
-handle_call(reload, _From, State = #state{config = CurrentConfig}) ->
+handle_call(
+    reload,
+    _From,
+    State = #state{ready = false, last_error = LastError}
+) ->
+    {reply, {error, {nsecbunker_not_ready, LastError}}, State};
+handle_call(reload, _From, State = #state{config = CurrentConfig, ready = true}) ->
     CandidateConfig = config(),
     case validate_candidate_config(CandidateConfig) of
         ok ->
             case reload_secret_provider(CurrentConfig, CandidateConfig) of
                 ok ->
-                    CandidatePolicy = policy(CandidateConfig),
-                    CandidateVault = damage_nsecbunker_vault:init(
-                        CandidateConfig, CandidatePolicy
-                    ),
-                    {reply, ok, State#state{
-                        config = CandidateConfig,
-                        policy = CandidatePolicy,
-                        vault = CandidateVault
-                    }};
+                    case prepare_runtime(CandidateConfig) of
+                        {ok, RuntimeConfig, CandidatePolicy, CandidateVault} ->
+                            {reply, ok, State#state{
+                                config = RuntimeConfig,
+                                policy = CandidatePolicy,
+                                vault = CandidateVault,
+                                ready = true,
+                                last_error = undefined,
+                                retry_ms = bootstrap_retry_min_ms(RuntimeConfig)
+                            }};
+                        {error, _} = Error ->
+                            {reply, Error, State}
+                    end;
                 {error, _} = Error ->
                     {reply, Error, State}
             end;
         {error, _} = Error ->
             {reply, Error, State}
     end;
-handle_call(generate_identity, _From, State = #state{vault = Vault}) ->
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
+handle_call(
+    _Request,
+    _From,
+    State = #state{ready = false, last_error = LastError}
+) ->
+    {reply, {error, {nsecbunker_not_ready, LastError}}, State};
+handle_call(generate_identity, _From, State = #state{vault = Vault, ready = true}) ->
     Reply = damage_nsecbunker_vault:generate_identity(Vault),
     {reply, Reply, State};
 handle_call(
-    export_identity, _From, State = #state{vault = Vault, config = Config, policy = Policy}
+    export_identity,
+    _From,
+    State = #state{vault = Vault, config = Config, policy = Policy, ready = true}
 ) ->
     Reply = damage_nsecbunker_vault:export_identity(Vault, Config, Policy),
     {reply, Reply, State};
-handle_call(bunker_uri_pattern, _From, State = #state{vault = Vault, config = Config}) ->
+handle_call(
+    bunker_uri_pattern,
+    _From,
+    State = #state{vault = Vault, config = Config, ready = true}
+) ->
     Reply = damage_nsecbunker_vault:bunker_uri_pattern(Vault, Config),
     {reply, Reply, State};
-handle_call({plain_request, Request0}, _From, State) ->
+handle_call({plain_request, Request0}, _From, State = #state{ready = true}) ->
     Request = damage_nip46:normalize_request(Request0),
     Reply = route_plain_request(Request, State),
     {reply, Reply, State};
-handle_call({nip46_event, Event}, _From, State = #state{vault = Vault}) ->
+handle_call(
+    {nip46_event, Event},
+    _From,
+    State = #state{vault = Vault, ready = true}
+) ->
     Reply =
         case
             damage_nip46:decode_event(Event, fun(ClientPubkey, Ciphertext) ->
@@ -229,14 +318,54 @@ handle_call({nip46_event, Event}, _From, State = #state{vault = Vault}) ->
                 {error, Reason}
         end,
     {reply, Reply, State};
-handle_call(stop, _From, State) ->
-    {stop, normal, ok, State};
 handle_call(Other, _From, State) ->
     {reply, {error, {unknown_call, Other}}, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+handle_info(
+    bootstrap_retry,
+    State = #state{ready = false, retry_ms = CurrentRetry}
+) ->
+    Config = config(),
+    case bootstrap_attempt(Config) of
+        {ok, RuntimeConfig, Policy, Vault} ->
+            ?LOG_INFO(
+                "nsecbunker initialization completed after node secrets became available "
+                "vault_path=~p",
+                [maps:get(vault_path, RuntimeConfig, undefined)]
+            ),
+            {noreply, State#state{
+                config = RuntimeConfig,
+                policy = Policy,
+                vault = Vault,
+                ready = true,
+                retry_ms = bootstrap_retry_min_ms(RuntimeConfig),
+                last_error = undefined
+            }};
+        {wait, Reason} ->
+            NextRetry = next_bootstrap_retry_ms(Config, CurrentRetry),
+            ?LOG_DEBUG(
+                "nsecbunker still waiting for node secrets; retrying in ~p ms reason=~p",
+                [NextRetry, Reason]
+            ),
+            State1 = State#state{
+                config = Config,
+                retry_ms = NextRetry,
+                last_error = Reason
+            },
+            {noreply, schedule_bootstrap_retry(State1)};
+        {error, Reason} ->
+            ?LOG_ERROR(
+                "nsecbunker bootstrap failed after secrets became available reason=~p",
+                [Reason]
+            ),
+            {stop, {nsecbunker_bootstrap_failed, Reason}, State}
+    end;
+handle_info(bootstrap_retry, State = #state{ready = true}) ->
+    %% A retry timer can race with an unlock/bootstrap success.
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -456,6 +585,156 @@ bin(V) when is_list(V) -> unicode:characters_to_binary(V);
 bin(V) when is_integer(V) -> integer_to_binary(V);
 bin(V) -> unicode:characters_to_binary(io_lib:format("~p", [V])).
 
+bootstrap_attempt(Config) ->
+    case local_node_secrets_required(Config) of
+        true ->
+            case node_secrets_ready() of
+                true -> normalize_bootstrap_result(prepare_runtime(Config));
+                false -> {wait, node_secrets_locked}
+            end;
+        false ->
+            normalize_bootstrap_result(prepare_runtime(Config))
+    end.
+
+normalize_bootstrap_result({ok, _, _, _} = Ok) ->
+    Ok;
+normalize_bootstrap_result({error, node_locked}) ->
+    {wait, node_secrets_locked};
+normalize_bootstrap_result({error, {local_vault_passphrase_unavailable, node_locked}}) ->
+    {wait, node_secrets_locked};
+normalize_bootstrap_result({error, _} = Error) ->
+    Error.
+
+local_node_secrets_required(Config) ->
+    damage_nsecbunker_config:secret_provider(Config) =:= local.
+
+node_secrets_ready() ->
+    try secrets:has_node_password() of
+        true -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+schedule_bootstrap_retry(State = #state{retry_ms = RetryMs}) ->
+    _ = erlang:send_after(RetryMs, self(), bootstrap_retry),
+    State.
+
+bootstrap_retry_min_ms(Config) ->
+    positive_retry_ms(
+        maps:get(bootstrap_retry_min_ms, Config, ?BOOTSTRAP_RETRY_MIN_MS),
+        ?BOOTSTRAP_RETRY_MIN_MS
+    ).
+
+bootstrap_retry_max_ms(Config) ->
+    Max0 = positive_retry_ms(
+        maps:get(bootstrap_retry_max_ms, Config, ?BOOTSTRAP_RETRY_MAX_MS),
+        ?BOOTSTRAP_RETRY_MAX_MS
+    ),
+    erlang:max(bootstrap_retry_min_ms(Config), Max0).
+
+next_bootstrap_retry_ms(Config, Current) ->
+    erlang:min(bootstrap_retry_max_ms(Config), erlang:max(1, Current) * 2).
+
+positive_retry_ms(Value, _Default) when is_integer(Value), Value > 0 ->
+    Value;
+positive_retry_ms(_Value, Default) ->
+    Default.
+
+prepare_runtime(Config0) ->
+    case validate_runtime_config(Config0) of
+        ok ->
+            case ensure_runtime_paths(Config0) of
+                ok ->
+                    case ensure_local_bootstrap_secret(Config0) of
+                        ok ->
+                            Policy0 = policy(Config0),
+                            Vault0 = damage_nsecbunker_vault:init(Config0, Policy0),
+                            case damage_nsecbunker_vault:ensure_identity(Vault0) of
+                                {ok, Pubkey} ->
+                                    Config = runtime_identity_config(Config0, Pubkey),
+                                    Policy = policy(Config),
+                                    Vault = damage_nsecbunker_vault:init(Config, Policy),
+                                    {ok, Config, Policy, Vault};
+                                {error, _} = Error ->
+                                    Error
+                            end;
+                        {error, _} = Error ->
+                            Error
+                    end;
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+runtime_identity_config(Config, Pubkey) ->
+    case maps:get(bunker_pubkey_hex, Config, undefined) of
+        Existing when is_binary(Existing), byte_size(Existing) =:= 64,
+                      Existing =/= <<"BUNKER_PUBKEY_HEX">> ->
+            Config;
+        _ ->
+            Config#{bunker_pubkey_hex => Pubkey}
+    end.
+
+ensure_runtime_paths(Config) ->
+    VaultPath = maps:get(vault_path, Config),
+    AuditPath = maps:get(audit_log, Config),
+    case ensure_parent(VaultPath) of
+        ok -> ensure_parent(AuditPath);
+        {error, _} = Error -> Error
+    end.
+
+ensure_parent(Path0) ->
+    Path = path_list(Path0),
+    case filelib:ensure_dir(Path) of
+        ok -> ok;
+        {error, Reason} -> {error, {nsecbunker_directory_failed, filename:dirname(Path), Reason}}
+    end.
+
+ensure_local_bootstrap_secret(Config) ->
+    case {
+        damage_nsecbunker_config:secret_provider(Config),
+        damage_nsecbunker_config:vault_mode(Config),
+        filelib:is_regular(path_list(maps:get(vault_path, Config)))
+    } of
+        {local, create_if_missing, false} ->
+            ensure_local_vault_passphrase(Config);
+        _ ->
+            ok
+    end.
+
+ensure_local_vault_passphrase(Config) ->
+    SecretRef = maps:get(vault_passphrase, Config, nsecbunker_vault_passphrase),
+    case secrets:retrieve_secret(SecretRef) of
+        [] ->
+            %% Fresh install only. Store a printable high-entropy passphrase in
+            %% the already-encrypted Damage secret store; never expose it in logs.
+            Passphrase = base64:encode(crypto:strong_rand_bytes(32)),
+            case secrets:encrypt_store(SecretRef, Passphrase) of
+                ok -> ok;
+                {error, _} = Error -> Error;
+                Other -> {error, {nsecbunker_passphrase_store_failed, Other}}
+            end;
+        [{SecretRef, _Encrypted}] ->
+            case secrets:retrieve_decrypt(SecretRef) of
+                {ok, Value} when Value =/= <<>>, Value =/= [] ->
+                    ok;
+                _ ->
+                    {error, existing_nsecbunker_passphrase_unreadable}
+            end;
+        {error, Reason} ->
+            {error, {nsecbunker_passphrase_lookup_failed, Reason}};
+        Other ->
+            {error, {invalid_nsecbunker_passphrase_record, Other}}
+    end.
+
+path_list(Path) when is_binary(Path) ->
+    unicode:characters_to_list(Path);
+path_list(Path) when is_list(Path) ->
+    Path.
+
 validate_runtime_config(Config) ->
     case damage_nsecbunker_config:validate_production(Config) of
         ok ->
@@ -505,14 +784,14 @@ secure_owner_status(Config) ->
     end.
 
 ensure_audit_path(Config) ->
-    Path = maps:get(audit_log, Config, "/var/log/damage/nsecbunker_audit.log"),
-    filelib:ensure_dir(Path).
+    Path = maps:get(audit_log, Config, damage_nsecbunker_config:default_audit_log()),
+    filelib:ensure_dir(path_list(Path)).
 
 write_audit(Config, #{audit_line := AuditLine}) ->
     write_audit(Config, AuditLine);
 write_audit(Config, AuditLine) when is_binary(AuditLine) ->
-    Path = maps:get(audit_log, Config, "/var/log/damage/nsecbunker_audit.log"),
-    _ = file:write_file(Path, AuditLine, [append]),
+    Path = maps:get(audit_log, Config, damage_nsecbunker_config:default_audit_log()),
+    _ = file:write_file(path_list(Path), AuditLine, [append]),
     ok;
 write_audit(_Config, _Other) ->
     ok.

@@ -59,7 +59,7 @@ start_link() ->
     end.
 
 child_spec() ->
-    #{id => ?MODULE, start => {?MODULE, start_link, []}, restart => temporary, type => worker}.
+    #{id => ?MODULE, start => {?MODULE, start_link, []}, restart => permanent, type => worker}.
 
 %%% ---------- gen_server
 
@@ -268,9 +268,10 @@ normalize_path(Path) when is_list(Path) ->
 
 home_dir() ->
     case os:getenv("HOME") of
-        false -> "/var/lib/damage";
-        "" -> "/var/lib/damage";
-        Home -> Home
+        Home when is_list(Home), Home =/= "" ->
+            Home;
+        _ ->
+            erlang:error(home_directory_unavailable)
     end.
 
 damage_state_dir() ->
@@ -284,12 +285,26 @@ damage_state_dir() ->
 default_damage_state_dir() ->
     case os:getenv("XDG_STATE_HOME") of
         Xdg when is_list(Xdg), Xdg =/= "" ->
-            case filename:pathtype(normalize_path(Xdg)) of
-                absolute -> filename:join(normalize_path(Xdg), "damage");
-                _ -> filename:join([home_dir(), ".local", "state", "damage"])
+            try normalize_path(Xdg) of
+                Expanded ->
+                    case filename:pathtype(Expanded) of
+                        absolute -> filename:join(Expanded, "damage");
+                        _ -> default_home_state_dir()
+                    end
+            catch
+                error:home_directory_unavailable ->
+                    default_home_state_dir()
             end;
         _ ->
-            filename:join([home_dir(), ".local", "state", "damage"])
+            default_home_state_dir()
+    end.
+
+default_home_state_dir() ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" ->
+            filename:join([Home, ".local", "state", "damage"]);
+        _ ->
+            "/var/lib/damage"
     end.
 
 ensure_dir(D0) ->
