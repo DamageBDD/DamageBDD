@@ -90,9 +90,38 @@ if command -v systemctl >/dev/null 2>&1; then
     fi
 
     systemctl enable "$TOR_UNIT" >/dev/null 2>&1 || true
-    if ! systemctl restart "$TOR_UNIT"; then
+
+    # The Tor package may have started the default instance already.
+    # Wait for that startup to settle before forcing a restart.
+    i=0
+    while systemctl is-active "$TOR_UNIT" 2>/dev/null | grep -q '^activating$' &&
+          [ "$i" -lt 300 ]; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    # Apply our configuration.
+    if systemctl is-active --quiet "$TOR_UNIT"; then
+        systemctl restart "$TOR_UNIT" >/dev/null 2>&1 || true
+    else
+        systemctl start "$TOR_UNIT" >/dev/null 2>&1 || true
+    fi
+
+    # systemd may perform an automatic restart after a failed attempt.
+    i=0
+    while [ "$i" -lt 300 ]; do
+        if systemctl is-active --quiet "$TOR_UNIT"; then
+            break
+        fi
+
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    if ! systemctl is-active --quiet "$TOR_UNIT"; then
         systemctl --no-pager --full status "$TOR_UNIT" >&2 || true
-        fail "failed to restart $TOR_UNIT"
+        journalctl -u "$TOR_UNIT" -n 100 --no-pager >&2 || true
+        fail "failed to start $TOR_UNIT"
     fi
 else
     # The generated Debian package currently installs a systemd unit for
