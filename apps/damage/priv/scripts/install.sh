@@ -6,13 +6,14 @@ set -Eeuo pipefail
 export LC_ALL=C
 
 RELEASE_VERSION="${DAMAGEBDD_VERSION:-latest}"
-RELEASE_API="${DAMAGEBDD_RELEASE_API:-https://run.damagebdd.com/api/releases}"
-IPFS_GATEWAY="${DAMAGEBDD_IPFS_GATEWAY:-https://ipfs.io/ipfs}"
+RELEASE_API="${DAMAGEBDD_RELEASE_API:-https://run.dev.damagebdd.com/api/releases}"
+IPFS_GATEWAY="${DAMAGEBDD_IPFS_GATEWAY:-https://run.dev.damagebdd.com/ipfs/}"
 EXPECTED_NETWORK="${DAMAGEBDD_RELEASE_NETWORK:-ae_mainnet}"
 HEALTH_URL="${DAMAGEBDD_HEALTH_URL-http://127.0.0.1:4888/api/version}"
 TOR_POLICY="${DAMAGEBDD_TOR_SOURCE:-auto}"
 ASSUME_YES=0; CHECK_ONLY=0; PRINT_PLATFORM=0; START_SERVICE=0
 WORKDIR=""; LOG_DIR=""; LOG_FILE=""; LOCK_HELD=0; ROLLING_UPGRADED=0
+APT_REFRESH_ATTEMPTED=0; APT_REFRESH_INCOMPLETE=0
 PACKAGE_KIND=""; PACKAGE_MANAGER=""; PACKAGE_ARCH=""; PACKAGE_VERSION=""
 RELEASE_PLATFORM=""; BASE_SUITE=""; OS_ID=""; ANDROID_API=""
 TOR_KEY_FPR=A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89
@@ -67,6 +68,9 @@ Environment (set on bash/sudo, NOT just on curl):
   DAMAGEBDD_TOR_SOURCE, DAMAGEBDD_HEALTH_URL (empty disables health probe)
 Legacy URL/digest pairs are also accepted: DAMAGEBDD_{DEB,ARCH,RPM,APK,TERMUX}_{URL,SHA256}.
 --check requires the download and package-inspection tools to already be installed.
+On Debian-family hosts, a failed index refresh is reported but installation may
+continue using available indexes. Required package installs and verification must
+still succeed. Newly added Tor sources must pass a separate strict refresh.
 HELP
 }
 
@@ -314,14 +318,64 @@ rolling_upgrade() {
     esac
     ROLLING_UPGRADED=1
 }
+# Refresh once per run, not before every prerequisite. APT uses exit 100 for
+# many errors, including a broken unrelated repository. It does NOT identify
+# a harmless status by itself: the actual required install below remains the
+# authoritative availability/dependency/authentication check. Never parse or
+# silence APT's output, edit admin sources, or enable insecure repositories.
+apt_refresh_indexes() {
+    [ "$APT_REFRESH_ATTEMPTED" -eq 0 ] || return 0
+    local status
+    if DEBIAN_FRONTEND=noninteractive apt-get \
+        -o APT::Update::Error-Mode=any update </dev/null; then
+        APT_REFRESH_ATTEMPTED=1
+        return 0
+    else
+        status=$?
+    fi
+    # Interruptions, missing executables and unexpected process failures are
+    # not index errors. Exit explicitly, including when called inside an if.
+    if [ "$status" -ne 100 ]; then
+        log "APT index refresh terminated with exit $status; stopping installation."
+        exit "$status"
+    fi
+    APT_REFRESH_ATTEMPTED=1
+    APT_REFRESH_INCOMPLETE=1
+    warn "APT could not refresh every source (exit 100); trying the required packages using available indexes, which may be older."
+    warn "Repository errors remain above. Required package installation must still succeed; authentication and checksum checks are unchanged."
+}
+apt_install_required() {
+    apt_refresh_indexes
+    local status
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" </dev/null; then
+        return 0
+    else
+        status=$?
+    fi
+    log "Required APT installation failed (exit $status): $*"
+    log "Fix the reported package, repository or dpkg error before retrying; installation did not complete."
+    # Do not rely only on set -e: an outer conditional can disable it.
+    exit "$status"
+}
+apt_refresh_source() {
+    # Validate a newly introduced source independently of broken admin PPAs.
+    # Disable list cleanup ONLY for this scoped refresh so other repositories'
+    # cached indexes remain available for dependency resolution. Source and
+    # signature settings are invocation-local; install still sees all sources.
+    local source="$1"
+    DEBIAN_FRONTEND=noninteractive apt-get \
+        -o "Dir::Etc::sourcelist=$source" \
+        -o Dir::Etc::sourceparts=- \
+        -o APT::Get::List-Cleanup=0 \
+        -o APT::Update::Error-Mode=any update </dev/null
+}
 install_tools() {
     case "$PACKAGE_MANAGER" in
         apt-get)
             if [ "$PACKAGE_KIND" = termux ]; then
                 rolling_upgrade; "$PREFIX/bin/pkg" install -y "$@" </dev/null
             else
-                DEBIAN_FRONTEND=noninteractive apt-get update </dev/null
-                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" </dev/null
+                apt_install_required "$@"
             fi ;;
         pacman) rolling_upgrade; pacman -S --needed --noconfirm "$@" </dev/null ;;
         dnf|dnf5|yum) "$PACKAGE_MANAGER" install -y "$@" </dev/null ;;
@@ -490,20 +544,28 @@ Architectures: $PACKAGE_ARCH
 Signed-By: $TOR_KEYRING
 TOR
     install -o root -g root -m 0644 "$WORKDIR/tor.sources.new" "$TOR_SOURCE" || die "Cannot write Tor source."
-    if DEBIAN_FRONTEND=noninteractive apt-get update </dev/null &&
+    # An unrelated PPA must not cause us to discard a valid Tor source, but
+    # a failed signature/index refresh for this NEW source is not advisory.
+    local status
+    if apt_refresh_source "$TOR_SOURCE" &&
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tor deb.torproject.org-keyring </dev/null; then
         use_packaged_tor_keyring
         log "Tor installed with the Tor Project repository configured."
         return 0
+    else
+        status=$?
     fi
-    warn "Tor Project installation failed; removing only the files created by this run."
+    warn "Tor Project refresh/install failed (exit $status); removing only the files created by this run."
     rm -f "$TOR_SOURCE" "$TOR_KEYRING"
+    # Cancellation or an unavailable APT executable must not become fallback.
+    if [ "$status" -ne 100 ]; then exit "$status"; fi
     return 1
 }
 ensure_tor_debian() {
     if tor_deb_installed || command -v tor >/dev/null 2>&1; then
         log "Existing Tor installation preserved (package dependencies still apply)."; return
     fi
+    apt_refresh_indexes
     if [[ "$TOR_POLICY" = auto || "$TOR_POLICY" = official ]] && [ -n "$BASE_SUITE" ]; then
         if ! command -v gpg >/dev/null 2>&1; then install_tools gnupg; fi
         if try_torproject_debian; then return; fi
@@ -632,7 +694,7 @@ install_native_package() {
             if [ "$PACKAGE_KIND" = termux ]; then
                 DEBIAN_FRONTEND=noninteractive "$PREFIX/bin/apt-get" install -y --no-install-recommends "$1" </dev/null
             else
-                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$1" </dev/null
+                apt_install_required "$1"
             fi ;;
         pacman) pacman -U --needed --noconfirm "$1" </dev/null ;;
         dnf|dnf5|yum) "$PACKAGE_MANAGER" install -y "$1" </dev/null ;;
@@ -720,6 +782,9 @@ post_install() {
             "$HEALTH_URL" >/dev/null; then log "Local version endpoint responded."
         else warn "Package installed; version endpoint is not responding yet. Check configuration/unlock and service logs."
         fi
+    fi
+    if [ "$APT_REFRESH_INCOMPLETE" -eq 1 ]; then
+        warn "Installation succeeded using available APT indexes, but some sources did not refresh. Repair the reported sources to restore normal updates."
     fi
     log "Install log: $LOG_FILE"
 }
