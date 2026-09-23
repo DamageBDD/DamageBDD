@@ -849,8 +849,8 @@ docker_error_details({error, Parts}) when is_list(Parts) ->
 
     Stdout =
         case lists:keyfind(stdout, 1, Parts) of
-            {stdout, Chunks} ->
-                iolist_to_binary(Chunks);
+            {stdout, Chunks0} ->
+                iolist_to_binary(Chunks0);
             false ->
                 <<>>
         end,
