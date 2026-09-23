@@ -2220,25 +2220,92 @@ execute_feature_http_ready(Context0, State, Req0, maybe_stream) ->
         200,
         #{
             <<"content-type">> => <<"text/plain; charset=utf-8">>,
-            <<"cache-control">> => <<"no-cache">>,
+            <<"cache-control">> => <<"no-cache, no-transform">>,
             <<"x-damage-stream">> => <<"true">>,
             <<"x-accel-buffering">> => <<"no">>
-
         },
         Req0
     ),
-    try execute_bdd(Context, State, ReqStream) of
-        {Status, Response} ->
+    %% Do not leave a long-running execution completely silent. The execution
+    %% worker produces the normal formatter/progress output while this handler
+    %% process owns the transport and emits a small heartbeat. This keeps curl,
+    %% reverse proxies and TLS intermediaries from treating a quiet build/test
+    %% as a dead connection.
+    HeartbeatMs = stream_heartbeat_interval(),
+    cowboy_req:stream_body(
+        <<"[damagebdd] execution started; streaming progress follows\n">>,
+        nofin,
+        ReqStream
+    ),
+    Parent = self(),
+    Worker = spawn_monitor(fun() ->
+        Result =
+            try execute_bdd(Context, State, ReqStream) of
+                Value -> {ok, Value}
+            catch
+                Class:Reason:Stack ->
+                    {crash, Class, Reason, Stack}
+            end,
+        Parent ! {damage_stream_execution, self(), Result}
+    end),
+    stream_execution_loop(
+        ReqStream,
+        Worker,
+        State,
+        erlang:monotonic_time(millisecond),
+        HeartbeatMs
+    ).
+
+stream_heartbeat_interval() ->
+    case application:get_env(damage, http_stream_heartbeat_ms, 10000) of
+        Value when is_integer(Value), Value >= 1000 -> Value;
+        _ -> 10000
+    end.
+
+stream_execution_loop(
+    ReqStream,
+    {Worker, _MonitorRef} = Monitor,
+    State,
+    StartedMs,
+    HeartbeatMs
+) ->
+    receive
+        {damage_stream_execution, Worker, {ok, {Status, Response}}} ->
             FinalBody = stream_final_body(Status, Response),
             Req = cowboy_req:stream_body(FinalBody, fin, ReqStream),
-            {stop, Req, State}
-    catch
-        Class:Reason:Stack ->
+            {stop, Req, State};
+        {damage_stream_execution, Worker, {crash, Class, Reason, Stack}} ->
             ?LOG_ERROR("stream execution crashed ~p:~p ~p", [Class, Reason, Stack]),
             Footer = stream_crash_footer(Class, Reason),
             Req = cowboy_req:stream_body(Footer, fin, ReqStream),
+            {stop, Req, State};
+        {'DOWN', _MonitorRef, process, Worker, Reason} ->
+            %% A worker can die before delivering its result. Never leave the
+            %% HTTP connection hanging forever in that case.
+            ?LOG_ERROR("stream execution worker died reason=~p", [Reason]),
+            Footer = stream_crash_footer(error, Reason),
+            Req = cowboy_req:stream_body(Footer, fin, ReqStream),
             {stop, Req, State}
+    after HeartbeatMs ->
+        NowMs = erlang:monotonic_time(millisecond),
+        Elapsed = max(0, NowMs - StartedMs),
+        Heartbeat = stream_heartbeat_body(Elapsed),
+        cowboy_req:stream_body(Heartbeat, nofin, ReqStream),
+        stream_execution_loop(
+            ReqStream,
+            Monitor,
+            State,
+            StartedMs,
+            HeartbeatMs
+        )
     end.
+
+stream_heartbeat_body(ElapsedMs) ->
+    iolist_to_binary([
+        "\n[damagebdd] heartbeat: execution still running elapsed_ms=",
+        integer_to_binary(ElapsedMs),
+        "\n"
+    ]).
 
 stream_mode_error_reply(Req0, State, Reason) ->
     Req = cowboy_req:reply(
