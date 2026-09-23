@@ -39,7 +39,7 @@ RUN pacman -Syu --noconfirm
 # Build dependencies (this layer changes often)
 ############################################
 RUN pacman -S --noconfirm --needed \
-    base-devel git fakeroot which curl wget \
+    base-devel git fakeroot which curl wget util-linux \
     tar gzip unzip xz zstd patch pkgconf \
     cmake ninja make gcc \
     erlang rebar3 jq pacman-contrib \
@@ -78,16 +78,16 @@ FROM fetch AS runtime
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 RUN pacman -Syu --noconfirm
 #
-WORKDIR /app
-COPY --from=fetch /src /app
+WORKDIR /opt/workspace
+COPY --from=fetch /src /opt/workspace
 
 # Default to a shell so you can explore artifacts or run your binary/script.
 
 # Create non-root user and group for running Damage/Build tools
 RUN groupadd -r damage && \
     useradd -r -g damage -d /home/damage -m -s /bin/bash damage
-RUN mkdir /out
-RUN chown -R damage:damage /app /out
+RUN mkdir -p /out
+RUN chown -R damage:damage /opt/workspace /out
 USER damage
 
 CMD ["bash"]

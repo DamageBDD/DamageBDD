@@ -615,10 +615,17 @@ normalize_exec_arg(I) when is_integer(I) ->
     integer_to_list(I).
 
 %% ===== Helpers ===============================================================
+-define(DOCKER_RESULT_TIMEOUT, 5000).
+
 run_exec(Config, ExecSpec, Context) ->
     steps_utils:ensure_admin(Context),
     DockerDir = docker_workdir(Config),
-    ?LOG_DEBUG("steps_docker exec in ~s: ~p", [DockerDir, redact_exec_spec(ExecSpec)]),
+    RedactedSpec = redact_exec_spec(ExecSpec),
+
+    ?LOG_INFO(
+        "Docker execution starting cwd=~s command=~p",
+        [DockerDir, RedactedSpec]
+    ),
 
     LogDir0 = filename:join(DockerDir, "logs"),
     ok = ensure_dir(LogDir0),
@@ -633,50 +640,149 @@ run_exec(Config, ExecSpec, Context) ->
         try
             exec:run(
                 ExecSpec,
-                [{stdout, Watcher}, {stderr, Watcher}, monitor, {cd, DockerDir}, sync]
+                [
+                    {stdout, Watcher},
+                    {stderr, Watcher},
+                    monitor,
+                    {cd, DockerDir},
+                    sync
+                ]
             )
         catch
             ExecClass:ExecReason:ExecStack ->
                 ?LOG_ERROR(
-                    "steps_docker command runner crashed class=~p reason=~p stack=~p",
-                    [ExecClass, ExecReason, ExecStack]
+                    "Docker command runner crashed "
+                    "class=~p reason=~p stack=~p command=~p cwd=~s",
+                    [
+                        ExecClass,
+                        ExecReason,
+                        ExecStack,
+                        RedactedSpec,
+                        DockerDir
+                    ]
                 ),
                 {error, {exec_exception, ExecClass, ExecReason}}
         end,
 
     case ExecResult of
-        {ok, _ExecInfo} ->
-            Ctx1 =
-                receive
-                    {docker_done, Result} ->
-                        docker_result_context(Result, Context)
-                after 1000 ->
-                    maps:put(cmd_result, ok, Context)
-                end,
-            Ctx1;
+        {ok, ExecInfo} ->
+            case receive_docker_result() of
+                {ok, Result} ->
+                    ?LOG_INFO(
+                        "Docker execution completed successfully "
+                        "cwd=~s command=~p result=~p",
+                        [DockerDir, RedactedSpec, Result]
+                    ),
+                    docker_result_context(
+                        Result,
+                        Context,
+                        DockerDir,
+                        RedactedSpec
+                    );
+                timeout ->
+                    ?LOG_ERROR(
+                        "Docker execution completed but no watcher result "
+                        "arrived within ~p ms cwd=~s command=~p exec_result=~p",
+                        [
+                            ?DOCKER_RESULT_TIMEOUT,
+                            DockerDir,
+                            RedactedSpec,
+                            ExecInfo
+                        ]
+                    ),
+                    stop_docker_watcher(Watcher),
+                    maps:put(cmd_result, {ok, ExecInfo}, Context)
+            end;
+
         {error, Reason} ->
-            ?LOG_ERROR("steps_docker command exited with error spec=~p reason=~p", [
-                redact_exec_spec(ExecSpec), Reason
-            ]),
+            ?LOG_ERROR(
+                "Docker command runner reported failure "
+                "cwd=~s command=~p runner_reason=~p",
+                [DockerDir, RedactedSpec, Reason]
+            ),
+
+            %% exec:run/2 can return before the monitor DOWN message and
+            %% final stdout/stderr chunks have reached docker_loop/3.
+            %% Wait for the watcher so Docker's actual stderr is preserved.
             Details =
-                receive
-                    {docker_done, WatchResult} -> docker_error_details(WatchResult)
-                after 100 ->
-                    docker_error_details(Reason)
+                case receive_docker_result() of
+                    {ok, WatchResult} ->
+                        ?LOG_ERROR(
+                            "Docker failure diagnostics collected "
+                            "cwd=~s command=~p result=~p",
+                            [DockerDir, RedactedSpec, WatchResult]
+                        ),
+                        docker_error_details(WatchResult);
+                    timeout ->
+                        ?LOG_ERROR(
+                            "Docker failure watcher produced no final result "
+                            "within ~p ms cwd=~s command=~p runner_reason=~p",
+                            [
+                                ?DOCKER_RESULT_TIMEOUT,
+                                DockerDir,
+                                RedactedSpec,
+                                Reason
+                            ]
+                        ),
+                        docker_error_details(Reason)
                 end,
+
             stop_docker_watcher(Watcher),
-            ErrorBin = docker_error_message(Details),
-            Result = {error, [{stderr, [Details]}]},
-            Ctx1 = maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context)),
-            Ctx1;
+
+            ErrorBin = docker_error_message(
+                DockerDir,
+                RedactedSpec,
+                Reason,
+                Details
+            ),
+
+            ?LOG_ERROR("Docker final failure: ~s", [ErrorBin]),
+
+            Result =
+                {error, [
+                    {stderr, [Details]},
+                    {exit_status, Reason}
+                ]},
+
+            maps:put(
+                fail,
+                ErrorBin,
+                maps:put(cmd_result, Result, Context)
+            );
+
         Other ->
-            ?LOG_ERROR("steps_docker command returned unexpected result ~p", [Other]),
+            ?LOG_ERROR(
+                "Docker command runner returned unexpected result "
+                "cwd=~s command=~p result=~p",
+                [DockerDir, RedactedSpec, Other]
+            ),
+
             stop_docker_watcher(Watcher),
+
             Details = docker_error_details(Other),
-            ErrorBin = docker_error_message(Details),
+            ErrorBin =
+                docker_error_message(
+                    DockerDir,
+                    RedactedSpec,
+                    Other,
+                    Details
+                ),
+
             Result = {error, [{stderr, [Details]}]},
-            Ctx1 = maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context)),
-            Ctx1
+
+            maps:put(
+                fail,
+                ErrorBin,
+                maps:put(cmd_result, Result, Context)
+            )
+    end.
+
+receive_docker_result() ->
+    receive
+        {docker_done, Result} ->
+            {ok, Result}
+    after ?DOCKER_RESULT_TIMEOUT ->
+        timeout
     end.
 
 stop_docker_watcher(Watcher) when is_pid(Watcher) ->
@@ -712,33 +818,86 @@ redact_assignment(Value0) ->
         _ -> "REDACTED"
     end.
 
-docker_result_context({ok, _} = Result, Context) ->
+docker_result_context({ok, _} = Result, Context, _DockerDir, _RedactedSpec) ->
     maps:put(cmd_result, Result, Context);
-docker_result_context({error, _} = Result, Context) ->
+docker_result_context(
+    {error, _} = Result,
+    Context,
+    DockerDir,
+    RedactedSpec
+) ->
     Details = docker_error_details(Result),
-    ErrorBin = docker_error_message(Details),
+    ErrorBin =
+        docker_error_message(
+            DockerDir,
+            RedactedSpec,
+            Result,
+            Details
+        ),
     maps:put(fail, ErrorBin, maps:put(cmd_result, Result, Context));
-docker_result_context(Result, Context) ->
+docker_result_context(Result, Context, _DockerDir, _RedactedSpec) ->
     maps:put(cmd_result, Result, Context).
 
 docker_error_details({error, Parts}) when is_list(Parts) ->
-    case lists:keyfind(stderr, 1, Parts) of
-        {stderr, Chunks} ->
-            iolist_to_binary(Chunks);
-        false ->
-            case lists:keyfind(stdout, 1, Parts) of
-                {stdout, Chunks} -> iolist_to_binary(Chunks);
-                false -> iolist_to_binary(io_lib:format("~p", [{error, Parts}]))
-            end
-    end;
+    Stderr =
+        case lists:keyfind(stderr, 1, Parts) of
+            {stderr, Chunks} ->
+                iolist_to_binary(Chunks);
+            false ->
+                <<>>
+        end,
+
+    Stdout =
+        case lists:keyfind(stdout, 1, Parts) of
+            {stdout, Chunks} ->
+                iolist_to_binary(Chunks);
+            false ->
+                <<>>
+        end,
+
+    ExitStatus =
+        case lists:keyfind(exit_status, 1, Parts) of
+            {exit_status, Status} ->
+                iolist_to_binary(io_lib:format("~p", [Status]));
+            false ->
+                <<"unknown">>
+        end,
+
+    iolist_to_binary([
+        "exit_status=",
+        ExitStatus,
+        "\n--- stderr ---\n",
+        Stderr,
+        "\n--- stdout ---\n",
+        Stdout
+    ]);
 docker_error_details(Reason) ->
     iolist_to_binary(io_lib:format("~p", [Reason])).
 
-docker_error_message(Details0) ->
-    Details = truncate_error(Details0, 3000),
+docker_error_message(DockerDir, ExecSpec, RunnerReason, Details0) ->
+    Details = truncate_error(Details0, 8000),
     Lower = list_to_binary(string:lowercase(binary_to_list(Details))),
     Hint = docker_error_hint(Lower),
-    <<"Docker command failed. ", Hint/binary, " Docker reported: ", Details/binary>>.
+
+    SpecText =
+        iolist_to_binary(
+            io_lib:format("~p", [ExecSpec])
+        ),
+
+    RunnerText =
+        iolist_to_binary(
+            io_lib:format("~p", [RunnerReason])
+        ),
+
+    <<
+        "Docker command failed. ",
+        Hint/binary,
+        " cwd=", (list_to_binary(DockerDir))/binary,
+        " runner_status=", RunnerText/binary,
+        " command=", SpecText/binary,
+        " Docker output:\n",
+        Details/binary
+    >>.
 
 docker_error_hint(Lower) ->
     first_docker_error_hint(
@@ -849,6 +1008,19 @@ docker_error_hint(Lower) ->
                 <<"The Docker network operation timed out. Check registry/network reachability and proxy settings.">>},
             {<<"exec format error">>,
                 <<"The container executable is incompatible with the image/host architecture or has an invalid format.">>},
+            {<<"cd: /app">>, <<
+                "The container script tried to enter `/app`, but that path is unavailable. "
+                "Check the builder image contents and Docker bind mounts; this run step starts "
+                "the container with working directory `/opt/workspace`."
+            >>},
+            {<<"/app: no such file or directory">>, <<
+                "The container script expects `/app`, but `/app` does not exist in the container. "
+                "Check the builder image or mount the workspace at `/app`."
+            >>},
+            {<<"no such file or directory">>, <<
+                "Docker or the container could not find a required path or executable. "
+                "Inspect the stderr above for the exact missing path."
+            >>},
             {<<"executable file not found">>, <<
                 "The requested command is not installed in the container or is not on PATH. "
                 "Check the image contents and command name."

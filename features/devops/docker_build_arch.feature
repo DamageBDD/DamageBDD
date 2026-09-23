@@ -3,13 +3,13 @@
 Feature: Publish an installable Arch Linux release
   Scenario: Build and verify the archlinux-x86_64 installation release
     Given the build release discovery is configured
-    When I build an image from Dockerfile at "QmatJahHtWEUKwwwak2wK2DTXuzQ6MGSi3MyDmTrUFR6KQ" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
+    When I build an image from Dockerfile at "REPLACE_WITH_NEW_DOCKERFILE_IPFS_CID" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
     Then I run docker image tagged "damagebdd/arch-builder:latest"
     """
     set -eu
     export CUDA_LIB64=/opt/cuda/lib64/
     export PATH="$PATH:/opt/cuda/bin/"
-    cd /app
+    cd /opt/workspace
 
     # Serialize the workspace before fetching, cleaning, building or staging.
     # The lock lives outside _build and is never removed by cleanup.
@@ -91,6 +91,8 @@ Feature: Publish an installable Arch Linux release
         END {exit !found}
     ' || { echo "Production package does not contain bundled ERTS" >&2; exit 1; }
 
+    # Keep the release NFT payload under the package output, matching the
+    # canonical DEB/Mint release layout: _build/pkg/<format>/damage/nft/.
     NFT_DIR="$PWD/nft"
     mkdir -p "$NFT_DIR"
     install -m 0644 "$PACKAGE" "$NFT_DIR/damage.pkg.tar.zst"
@@ -99,7 +101,7 @@ Feature: Publish an installable Arch Linux release
 
     printf '%s\n' "$GIT_SHA" > "$NFT_DIR/GIT_COMMIT"
     printf '%s\n' "$RELEASE_VSN" > "$NFT_DIR/RELEASE_VERSION"
-    git -C /app describe --tags --always --dirty > "$NFT_DIR/GIT_DESCRIBE"
+    git -C /opt/workspace describe --tags --always --dirty > "$NFT_DIR/GIT_DESCRIBE"
     (
         cd "$NFT_DIR"
         sha256sum damage.pkg.tar.zst > SHA256SUMS
@@ -119,7 +121,7 @@ Feature: Publish an installable Arch Linux release
     )
     find "$NFT_DIR" -maxdepth 1 -type f -printf '%f\n' | sort
     """
-    Then I copy file "/app/_build/pkg/arch/damage/nft/" from the container to ipfs and store the hash in "asset_hash"
+    Then I copy file "/opt/workspace/_build/pkg/arch/damage/nft/" from the container to ipfs and store the hash in "asset_hash"
 
     When I set the JSON variable "meta"
     """
