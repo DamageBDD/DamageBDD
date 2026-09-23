@@ -3,10 +3,10 @@
 Feature: Publish an installable Arch Linux release
   Scenario: Build and verify the archlinux-x86_64 installation release
     Given the build release discovery is configured
-    When I build an image from Dockerfile at "REPLACE_WITH_NEW_DOCKERFILE_IPFS_CID" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
+    When I build an image from Dockerfile at "Qmf7VT78ku7beFFwAVib5zk71iPJ4VH7NAxa7rWbwXrWkT" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
     Then I run docker image tagged "damagebdd/arch-builder:latest"
     """
-    set -eu
+    set -eux
     export CUDA_LIB64=/opt/cuda/lib64/
     export PATH="$PATH:/opt/cuda/bin/"
     cd /opt/workspace

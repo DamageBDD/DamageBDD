@@ -1093,16 +1093,25 @@ docker_loop(Config, Parent, Acc) ->
             Result =
                 case ExitStatus of
                     normal ->
-                        {ok, [{stdout, [StdoutBin]}]};
+                        {ok, [
+                            {stdout, [StdoutBin]},
+                            {stderr, [StderrBin]}
+                        ]};
                     {exit_status, 0} ->
-                        {ok, [{stdout, [StdoutBin]}]};
+                        {ok, [
+                            {stdout, [StdoutBin]},
+                            {stderr, [StderrBin]}
+                        ]};
                     Other ->
-                        ErrBin =
-                            case StderrBin of
-                                <<>> -> StdoutBin;
-                                _ -> StderrBin
-                            end,
-                        {error, [{stderr, [ErrBin]}, {exit_status, Other}]}
+                        %% Preserve stdout and stderr independently. Docker commands
+                        %% can emit useful diagnostics on either stream; collapsing
+                        %% stdout into stderr loses information needed to diagnose
+                        %% failures such as a non-zero `docker run` exit.
+                        {error, [
+                            {stderr, [StderrBin]},
+                            {stdout, [StdoutBin]},
+                            {exit_status, Other}
+                        ]}
                 end,
 
             Parent ! {docker_done, Result};
@@ -1206,11 +1215,16 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
 %% Extract stdout in the same way as before so existing steps keep working.
 cmd_stdout(Context) ->
     case maps:get(cmd_result, Context, undefined) of
-        {ok, [{stdout, [Bin]}]} ->
-            Bin;
-        {error, List} ->
-            case lists:keyfind(stderr, 1, List) of
-                {stderr, [Bin]} -> Bin;
+        {ok, List} when is_list(List) ->
+            case lists:keyfind(stdout, 1, List) of
+                {stdout, [Bin]} -> Bin;
+                _ -> <<>>
+            end;
+        {error, List} when is_list(List) ->
+            %% A failed Docker command now retains stdout and stderr separately.
+            %% This helper is specifically for callers that need stdout.
+            case lists:keyfind(stdout, 1, List) of
+                {stdout, [Bin]} -> Bin;
                 _ -> <<>>
             end;
         _Other ->
