@@ -34,7 +34,7 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
-    {ok, Pools} = application:get_env(bop, pools,[
+    Pools = application:get_env(bop, pools,[
                     {bop, [{size, 1}, {max_overflow, 10}], []}
                 ]),
     ?LOG_DEBUG("Starting BoP workers ~p~n", [Pools]),

@@ -31,22 +31,40 @@ RUN pacman -S --noconfirm --needed reflector ca-certificates \
       --save /etc/pacman.d/mirrorlist
 
 ############################################
-# System update
+# System update + build dependencies
+#
+# Arch is a rolling distribution. Do not cache a
+# standalone system-upgrade layer: its package database
+# can become stale while the package files move on the
+# mirrors. Refresh the sync databases and resolve the
+# complete transaction together.
+#
+# Retry the complete transaction after refreshing the
+# databases if a mirror was caught during repository
+# rotation.
 ############################################
-RUN pacman -Syu --noconfirm
-
-############################################
-# Build dependencies (this layer changes often)
-############################################
-RUN pacman -S --noconfirm --needed \
-    base-devel git fakeroot which curl wget util-linux \
-    tar gzip unzip xz zstd patch pkgconf \
-    cmake ninja make gcc \
-    erlang rebar3 jq pacman-contrib \
-    libsodium kubo pass cuda vim gtk4 \
-    ccache \
- && mkdir -p "$CCACHE_DIR" /root/.cache \
- && pacman -Scc --noconfirm
+RUN set -eux; \
+    pacman -Syyu --noconfirm; \
+    pacman -S --noconfirm --needed \
+        base-devel git fakeroot which curl wget util-linux \
+        tar gzip unzip xz zstd patch pkgconf \
+        cmake ninja make gcc \
+        erlang rebar3 jq pacman-contrib \
+        libsodium kubo pass cuda vim gtk4 \
+        ccache \
+    || { \
+        pacman -Syy; \
+        pacman -Syu --noconfirm; \
+        pacman -S --noconfirm --needed \
+            base-devel git fakeroot which curl wget util-linux \
+            tar gzip unzip xz zstd patch pkgconf \
+            cmake ninja make gcc \
+            erlang rebar3 jq pacman-contrib \
+            libsodium kubo pass cuda vim gtk4 \
+            ccache; \
+    }; \
+    mkdir -p "$CCACHE_DIR" /root/.cache; \
+    pacman -Scc --noconfirm
 WORKDIR /src
 
 ############################################
@@ -76,7 +94,6 @@ WORKDIR /src
 #############################################
 FROM fetch AS runtime
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-RUN pacman -Syu --noconfirm
 #
 WORKDIR /opt/workspace
 COPY --from=fetch /src /opt/workspace
