@@ -44,9 +44,13 @@
 
 -define(THEN_COPY_FILE_FROM_CONTAINER_TO_IPFS_STORE_HASH,
         ["I copy file", PathGlob, "from the container to ipfs and store the hash in", Var]).
+-define(THEN_STORE_FILE_FROM_CONTAINER,
+        ["I store file", Path, "from the container in", Var]).
 
 -define(RUN_DOCKER_IMAGE_TAGGED,
     ["I run docker image tagged", Tag]).
+-define(RUN_DOCKER_IMAGE_TAGGED_AS_USER,
+    ["I run docker image tagged", Tag, "as user", RunUser]).
 -define(DOCKER_LOOP_TIMEOUT, infinity).
 %% erlfmt:ignore-end
 
@@ -157,12 +161,20 @@ step(Config, Context, Kw, _N, ?THEN_COPY_FILE_FROM_CONTAINER_TO_IPFS_STORE_HASH,
 ->
     steps_utils:ensure_admin(Context),
     copy_file_from_container_to_ipfs(Config, Context, PathGlob, Var);
+step(Config, Context, Kw, _N, ?THEN_STORE_FILE_FROM_CONTAINER, _Raw) when
+    Kw =:= <<"Then">>; Kw =:= <<"And">>; Kw =:= <<"But">>
+->
+    steps_utils:ensure_admin(Context),
+    store_file_from_container(Config, Context, Path, Var);
 step(Config, Context, <<"Then">>, _N, ?RUN_DOCKER_IMAGE_TAGGED, ScriptBin) ->
-    run_docker_tagged(Config, Tag, ScriptBin, Context).
+    run_docker_tagged(Config, Tag, <<"damage">>, ScriptBin, Context);
+step(Config, Context, <<"Then">>, _N, ?RUN_DOCKER_IMAGE_TAGGED_AS_USER, ScriptBin) ->
+    run_docker_tagged(Config, Tag, RunUser, ScriptBin, Context).
 
-run_docker_tagged(Config, Tag0, ScriptBin0, Ctx0) ->
+run_docker_tagged(Config, Tag0, RunUser0, ScriptBin0, Ctx0) ->
     steps_utils:ensure_admin(Ctx0),
     Tag = require_docker_ref(Tag0),
+    RunUser = require_container_user(RunUser0),
     ScriptBin = to_binary(ScriptBin0),
 
     WorkDir = filename:absname(docker_workdir(Config)),
@@ -198,7 +210,7 @@ run_docker_tagged(Config, Tag0, ScriptBin0, Ctx0) ->
         "--name",
         binary_to_list(ContainerName),
         "--user",
-        "damage",
+        binary_to_list(RunUser),
         "--security-opt",
         "no-new-privileges:true",
         "--cap-drop",
@@ -215,8 +227,8 @@ run_docker_tagged(Config, Tag0, ScriptBin0, Ctx0) ->
     ],
 
     ?LOG_DEBUG(
-        "Docker run image=~p container=~p script_path=~p",
-        [Tag, ContainerName, ScriptPath]
+        "Docker run image=~p container=~p user=~p script_path=~p",
+        [Tag, ContainerName, RunUser, ScriptPath]
     ),
     Ctx1 =
         try
@@ -375,6 +387,30 @@ require_docker_ref(Ref0) ->
             Ref;
         nomatch ->
             throw(damage_utils:strf("Invalid Docker image reference: ~p", [Ref]))
+    end.
+
+require_container_user(User0) ->
+    User = to_binary(User0),
+    %% The run step is privileged, but the workload inside the container must not
+    %% be. Allow a normal username/UID with an optional group, and reject root.
+    case
+        re:run(
+            User,
+            <<"^(?:[A-Za-z_][A-Za-z0-9_.-]{0,63}|[0-9]{1,10})(?::(?:[A-Za-z_][A-Za-z0-9_.-]{0,63}|[0-9]{1,10}))?$">>,
+            [{capture, none}]
+        )
+    of
+        match ->
+            case binary:split(User, <<":">>) of
+                [<<"root">> | _] ->
+                    throw(<<"Docker run user must be non-root">>);
+                [<<"0">> | _] ->
+                    throw(<<"Docker run UID must be non-zero">>);
+                _ ->
+                    User
+            end;
+        nomatch ->
+            throw(damage_utils:strf("Invalid Docker container user: ~p", [User]))
     end.
 
 safe_build_context(WorkDir0, ContextRel0) ->
@@ -615,8 +651,6 @@ normalize_exec_arg(I) when is_integer(I) ->
     integer_to_list(I).
 
 %% ===== Helpers ===============================================================
--define(DOCKER_RESULT_TIMEOUT, 5000).
-
 run_exec(Config, ExecSpec, Context) ->
     steps_utils:ensure_admin(Context),
     DockerDir = docker_workdir(Config),
@@ -627,23 +661,27 @@ run_exec(Config, ExecSpec, Context) ->
         [DockerDir, RedactedSpec]
     ),
 
-    LogDir0 = filename:join(DockerDir, "logs"),
-    ok = ensure_dir(LogDir0),
+    LogDir = filename:join(DockerDir, "logs"),
+    ok = ensure_dir(LogDir),
+    LogId = integer_to_list(erlang:unique_integer([positive, monotonic])),
+    StdoutLog = filename:join(LogDir, "docker-" ++ LogId ++ ".stdout.log"),
+    StderrLog = filename:join(LogDir, "docker-" ++ LogId ++ ".stderr.log"),
+    ok = file:write_file(StdoutLog, <<>>),
+    ok = file:write_file(StderrLog, <<>>),
 
-    Parent = self(),
-    Watcher =
-        spawn_link(fun() ->
-            docker_loop(Config, Parent, [])
-        end),
+    %% erlexec's sync mode already waits for process termination.  Use output
+    %% callbacks for live formatter output and persist every chunk to files so
+    %% diagnostics do not depend on a separate process receiving a monitor DOWN.
+    StdoutSink = docker_output_sink(Config, stdout, StdoutLog),
+    StderrSink = docker_output_sink(Config, stderr, StderrLog),
 
     ExecResult =
         try
             exec:run(
                 ExecSpec,
                 [
-                    {stdout, Watcher},
-                    {stderr, Watcher},
-                    monitor,
+                    {stdout, StdoutSink},
+                    {stderr, StderrSink},
                     {cd, DockerDir},
                     sync
                 ]
@@ -666,68 +704,22 @@ run_exec(Config, ExecSpec, Context) ->
 
     case ExecResult of
         {ok, ExecInfo} ->
-            case receive_docker_result() of
-                {ok, Result} ->
-                    ?LOG_INFO(
-                        "Docker execution completed successfully "
-                        "cwd=~s command=~p result=~p",
-                        [DockerDir, RedactedSpec, Result]
-                    ),
-                    docker_result_context(
-                        Result,
-                        Context,
-                        DockerDir,
-                        RedactedSpec
-                    );
-                timeout ->
-                    ?LOG_ERROR(
-                        "Docker execution completed but no watcher result "
-                        "arrived within ~p ms cwd=~s command=~p exec_result=~p",
-                        [
-                            ?DOCKER_RESULT_TIMEOUT,
-                            DockerDir,
-                            RedactedSpec,
-                            ExecInfo
-                        ]
-                    ),
-                    stop_docker_watcher(Watcher),
-                    maps:put(cmd_result, {ok, ExecInfo}, Context)
-            end;
+            Result = docker_logged_result(ok, ExecInfo, StdoutLog, StderrLog),
+            ?LOG_INFO(
+                "Docker execution completed successfully "
+                "cwd=~s command=~p result=~p",
+                [DockerDir, RedactedSpec, ExecInfo]
+            ),
+            docker_result_context(Result, Context, DockerDir, RedactedSpec);
 
         {error, Reason} ->
+            Result = docker_logged_result(error, Reason, StdoutLog, StderrLog),
+            Details = docker_error_details(Result),
             ?LOG_ERROR(
                 "Docker command runner reported failure "
-                "cwd=~s command=~p runner_reason=~p",
-                [DockerDir, RedactedSpec, Reason]
+                "cwd=~s command=~p runner_reason=~p logs=~p",
+                [DockerDir, RedactedSpec, Reason, {StdoutLog, StderrLog}]
             ),
-
-            %% exec:run/2 can return before the monitor DOWN message and
-            %% final stdout/stderr chunks have reached docker_loop/3.
-            %% Wait for the watcher so Docker's actual stderr is preserved.
-            Details =
-                case receive_docker_result() of
-                    {ok, WatchResult} ->
-                        ?LOG_ERROR(
-                            "Docker failure diagnostics collected "
-                            "cwd=~s command=~p result=~p",
-                            [DockerDir, RedactedSpec, WatchResult]
-                        ),
-                        docker_error_details(WatchResult);
-                    timeout ->
-                        ?LOG_ERROR(
-                            "Docker failure watcher produced no final result "
-                            "within ~p ms cwd=~s command=~p runner_reason=~p",
-                            [
-                                ?DOCKER_RESULT_TIMEOUT,
-                                DockerDir,
-                                RedactedSpec,
-                                Reason
-                            ]
-                        ),
-                        docker_error_details(Reason)
-                end,
-
-            stop_docker_watcher(Watcher),
 
             ErrorBin = docker_error_message(
                 DockerDir,
@@ -738,12 +730,6 @@ run_exec(Config, ExecSpec, Context) ->
 
             ?LOG_ERROR("Docker final failure: ~s", [ErrorBin]),
 
-            Result =
-                {error, [
-                    {stderr, [Details]},
-                    {exit_status, Reason}
-                ]},
-
             maps:put(
                 fail,
                 ErrorBin,
@@ -751,24 +737,20 @@ run_exec(Config, ExecSpec, Context) ->
             );
 
         Other ->
+            Result = docker_logged_result(error, Other, StdoutLog, StderrLog),
+            Details = docker_error_details(Result),
             ?LOG_ERROR(
                 "Docker command runner returned unexpected result "
-                "cwd=~s command=~p result=~p",
-                [DockerDir, RedactedSpec, Other]
+                "cwd=~s command=~p result=~p logs=~p",
+                [DockerDir, RedactedSpec, Other, {StdoutLog, StderrLog}]
             ),
 
-            stop_docker_watcher(Watcher),
-
-            Details = docker_error_details(Other),
-            ErrorBin =
-                docker_error_message(
-                    DockerDir,
-                    RedactedSpec,
-                    Other,
-                    Details
-                ),
-
-            Result = {error, [{stderr, [Details]}]},
+            ErrorBin = docker_error_message(
+                DockerDir,
+                RedactedSpec,
+                Other,
+                Details
+            ),
 
             maps:put(
                 fail,
@@ -777,22 +759,65 @@ run_exec(Config, ExecSpec, Context) ->
             )
     end.
 
-receive_docker_result() ->
-    receive
-        {docker_done, Result} ->
-            {ok, Result}
-    after ?DOCKER_RESULT_TIMEOUT ->
-        timeout
+docker_output_sink(Config, Stream, LogPath) ->
+    fun(_ReportedStream, _OsPid, Data) ->
+        case file:write_file(LogPath, Data, [append]) of
+            ok ->
+                ok;
+            {error, WriteReason} ->
+                ?LOG_WARNING(
+                    "Unable to append Docker ~p output to ~s reason=~p",
+                    [Stream, LogPath, WriteReason]
+                )
+        end,
+        try
+            formatter:format(Config, Stream, Data)
+        catch
+            Class:FormatReason:Stack ->
+                ?LOG_WARNING(
+                    "Docker ~p formatter failed class=~p reason=~p stack=~p",
+                    [Stream, Class, FormatReason, Stack]
+                )
+        end,
+        ok
     end.
 
-stop_docker_watcher(Watcher) when is_pid(Watcher) ->
-    unlink(Watcher),
-    try
-        exit(Watcher, kill)
-    catch
-        _:_ -> ok
-    end,
-    ok.
+docker_logged_result(Outcome, Reason, StdoutLog, StderrLog) ->
+    Stdout = read_docker_log(StdoutLog),
+    Stderr = read_docker_log(StderrLog),
+    Base = [
+        {stdout, [Stdout]},
+        {stderr, [Stderr]}
+    ],
+    Exit = docker_exit_status_parts(Reason),
+    case Outcome of
+        ok ->
+            {ok, Base};
+        error ->
+            {error, Exit ++ Base}
+    end.
+
+read_docker_log(Path) ->
+    case file:read_file(Path) of
+        {ok, Bin} ->
+            Bin;
+        {error, Reason} ->
+            damage_utils:strf(
+                "Unable to read Docker output log ~s: ~p",
+                [Path, Reason]
+            )
+    end.
+
+docker_exit_status_parts(Parts) when is_list(Parts) ->
+    case lists:keyfind(exit_status, 1, Parts) of
+        false -> [];
+        ExitStatus -> [ExitStatus]
+    end;
+docker_exit_status_parts({exit_status, _} = ExitStatus) ->
+    [ExitStatus];
+docker_exit_status_parts(_) ->
+    [].
+
 
 redact_exec_spec([Executable | Args]) ->
     [Executable | redact_exec_args(Args)];
@@ -961,11 +986,11 @@ docker_error_hint(Lower) ->
                 "succeeded and that the scenario retained the correct container name/id."
             >>},
             {<<"no matching entries in passwd file">>, <<
-                "The image does not contain the requested container user. This step runs as user "
-                "`damage`; add that user to the image or use an image that provides it."
+                "The image does not contain the requested container user. Add the user named by "
+                "the Docker run step to the image, or choose an image that provides it."
             >>},
-            {<<"unable to find user damage">>,
-                <<"The image does not contain the `damage` user required by this Docker run step.">>},
+            {<<"unable to find user">>,
+                <<"The image does not contain the requested non-root Docker run user.">>},
             {<<"dockerfile parse error">>,
                 <<"Docker could not parse the Dockerfile. Check the reported Dockerfile line and syntax.">>},
             {<<"failed to compute cache key">>, <<
@@ -1059,77 +1084,11 @@ first_docker_error_hint(_Bin, [], Default) ->
 truncate_error(Bin, Max) when is_binary(Bin), byte_size(Bin) =< Max ->
     Bin;
 truncate_error(Bin, Max) when is_binary(Bin) ->
-    <<Prefix:Max/binary, _/binary>> = Bin,
-    <<Prefix/binary, "...">>.
+    Size = byte_size(Bin),
+    Skip = Size - Max,
+    <<_:Skip/binary, Tail:Max/binary>> = Bin,
+    <<"...<earlier Docker output truncated>...\n", Tail/binary>>.
 
-docker_loop(Config, Parent, Acc) ->
-    receive
-        %% stdout from OS process
-        {stdout, _OsPid, Data} ->
-            ?LOG_DEBUG("docker stdout: ~s", [Data]),
-            formatter:format(
-                Config,
-                stdout,
-                Data
-            ),
-            docker_loop(Config, Parent, [{stdout, Data} | Acc]);
-        %% stderr from OS process
-        {stderr, _OsPid, Data} ->
-            ?LOG_WARNING("docker stderr: ~s", [Data]),
-            formatter:format(
-                Config,
-                stderr,
-                Data
-            ),
-            docker_loop(Config, Parent, [{stderr, Data} | Acc]);
-        {'DOWN', _OsPid, process, _ExecPid, ExitStatus} ->
-            ?LOG_WARNING("docker down: ~p", [ExitStatus]),
-            Rev = lists:reverse(Acc),
-            Stdouts = [D || {stdout, D} <- Rev],
-            Stderrs = [D || {stderr, D} <- Rev],
-            StdoutBin = iolist_to_binary(Stdouts),
-            StderrBin = iolist_to_binary(Stderrs),
-
-            Result =
-                case ExitStatus of
-                    normal ->
-                        {ok, [
-                            {stdout, [StdoutBin]},
-                            {stderr, [StderrBin]}
-                        ]};
-                    {exit_status, 0} ->
-                        {ok, [
-                            {stdout, [StdoutBin]},
-                            {stderr, [StderrBin]}
-                        ]};
-                    Other ->
-                        %% Preserve stdout and stderr independently. Docker commands
-                        %% can emit useful diagnostics on either stream; collapsing
-                        %% stdout into stderr loses information needed to diagnose
-                        %% failures such as a non-zero `docker run` exit.
-                        {error, [
-                            {stderr, [StderrBin]},
-                            {stdout, [StdoutBin]},
-                            {exit_status, Other}
-                        ]}
-                end,
-
-            Parent ! {docker_done, Result};
-        Other ->
-            ?LOG_DEBUG("docker_loop got unexpected message: ~p", [Other]),
-            docker_loop(Config, Parent, Acc)
-    after ?DOCKER_LOOP_TIMEOUT ->
-        Timeout = damage_utils:strf("docker command timed out in watcher after ~p", [
-            ?DOCKER_LOOP_TIMEOUT
-        ]),
-        ?LOG_ERROR("docker_loop timeout"),
-        formatter:format(
-            Config,
-            error,
-            {-1, Timeout}
-        ),
-        Parent ! {docker_done, {error, [{stderr, [Timeout]}]}}
-    end.
 
 %% -------------------------------------------------------
 %% Helpers
@@ -1155,7 +1114,10 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
     steps_utils:ensure_admin(Context),
     %% Raw is iodata() from the feature body
     BodyBin = iolist_to_binary(Raw),
-    Trimmed = binary:trim(BodyBin, both, " \t\r\n"),
+    BodyBin = iolist_to_binary(Raw),
+    Trimmed = unicode:characters_to_binary(
+                string:trim(binary_to_list(BodyBin), both, " \t\r\n")
+               ),
 
     case Trimmed of
         <<>> ->
@@ -1265,6 +1227,87 @@ seconds_for_unit("months", N) -> date_util:days_to_seconds(N * 30);
 seconds_for_unit("year", N) -> date_util:days_to_seconds(N * 365);
 seconds_for_unit("years", N) -> date_util:days_to_seconds(N * 365);
 seconds_for_unit(Unit, _) -> erlang:error({unknown_unit, Unit}).
+
+store_file_from_container(Config, Context0, Path0, Variable0) ->
+    steps_utils:ensure_admin(Context0),
+    Container = docker_container_id(Context0),
+    Path = to_binary(Path0),
+    DockerDir = filename:absname(docker_workdir(Config)),
+    StageRoot = filename:join(DockerDir, "value_stage"),
+    ok = ensure_dir(StageRoot),
+    StagePath = filename:join(StageRoot, unique_stage_id()),
+    Source = <<Container/binary, ":", Path/binary>>,
+    Context1 = run_docker(Config, ["cp", Source, StagePath], Context0),
+    case maps:is_key(fail, Context1) of
+        true ->
+            maybe_remove_stage_path(StagePath),
+            Context1;
+        false ->
+            try
+                case file:read_file_info(StagePath) of
+                    {ok, #file_info{type = regular, size = Size}} when Size =< 8192 ->
+                        {ok, Value0} = file:read_file(StagePath),
+                        Value = list_to_binary(string:trim(binary_to_list(Value0))),
+                        case Value of
+                            <<>> ->
+                                maps:put(
+                                    fail,
+                                    damage_utils:strf(
+                                        "Container file ~p is empty; cannot store it in ~p",
+                                        [Path, Variable0]
+                                    ),
+                                    Context1
+                                );
+                            _ ->
+                                maps:put(Variable0, Value, Context1)
+                        end;
+                    {ok, #file_info{type = regular, size = Size}} ->
+                        maps:put(
+                            fail,
+                            damage_utils:strf(
+                                "Container file ~p is too large to store as a variable (~p bytes, max 8192)",
+                                [Path, Size]
+                            ),
+                            Context1
+                        );
+                    {ok, #file_info{type = Type}} ->
+                        maps:put(
+                            fail,
+                            damage_utils:strf(
+                                "Container path ~p is not a regular file (type ~p)",
+                                [Path, Type]
+                            ),
+                            Context1
+                        );
+                    {error, Why} ->
+                        maps:put(
+                            fail,
+                            damage_utils:strf(
+                                "Unable to inspect copied container file ~p: ~p",
+                                [Path, Why]
+                            ),
+                            Context1
+                        )
+                end
+            catch
+                Class:Reason:Stack ->
+                    ?LOG_ERROR(
+                        "Docker container value staging failed class=~p reason=~p stack=~p",
+                        [Class, Reason, Stack]
+                    ),
+                    maps:put(
+                        fail,
+                        damage_utils:strf(
+                            "Failed to store container file ~p in variable ~p: ~p",
+                            [Path, Variable0, Reason]
+                        ),
+                        Context1
+                    )
+            after
+                maybe_remove_stage_path(StagePath)
+            end
+    end.
+
 copy_file_from_container_to_ipfs(Config, Context0, Path0, Variable0) ->
     steps_utils:ensure_admin(Context0),
 

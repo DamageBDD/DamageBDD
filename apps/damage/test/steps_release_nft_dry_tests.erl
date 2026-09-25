@@ -46,3 +46,25 @@ optional_announcement_failure_test() ->
     ?assertEqual(failed, maps:get(oracle_status, Updated)),
     ?assertEqual(retained, maps:get(future_field, Updated)),
     ?assertEqual(<<"th_fixture">>, maps:get(mint_tx_hash, Updated)).
+
+generic_platform_validation_test_() ->
+    Valid = [
+        <<"ubuntu-22.04-amd64">>,
+        <<"ubuntu-24.04-amd64">>,
+        <<"ubuntu-26.04-amd64">>,
+        <<"fedora-40-amd64">>,
+        <<"archlinux-x86_64">>,
+        <<"macOS-15-arm64">>,
+        <<"linux-amd64+musl">>
+    ],
+    Invalid = [
+        <<>>,
+        <<".ubuntu-amd64">>,
+        <<"ubuntu/22.04/amd64">>,
+        <<"ubuntu 22.04 amd64">>,
+        <<"ubuntu|22.04|amd64">>,
+        <<"ubuntu:22.04:amd64">>,
+        binary:copy(<<"a">>, 97)
+    ],
+    [?_assert(damage_release_nft:valid_platform(Platform)) || Platform <- Valid] ++
+        [?_assertNot(damage_release_nft:valid_platform(Platform)) || Platform <- Invalid].

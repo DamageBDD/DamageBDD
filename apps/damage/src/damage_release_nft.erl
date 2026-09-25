@@ -636,8 +636,13 @@ drop_one_trailing_empty(Lines) ->
         _ -> Lines
     end.
 
+%% Platform is an opaque release identity, not a fixed DamageBDD distro enum.
+%% Keep it bounded and delimiter/path safe, while accepting normal platform
+%% identifiers such as ubuntu-22.04-amd64, fedora-40-amd64, macos-15-arm64
+%% and future build targets. Installation-specific compatibility is validated
+%% separately by check_installation/2 and platform_package_format/2.
 valid_platform(Value) when is_binary(Value) ->
-    matches(Value, <<"\\A[a-z0-9][a-z0-9_-]{0,95}\\z">>);
+    matches(Value, <<"\\A[A-Za-z0-9][A-Za-z0-9._+-]{0,95}\\z">>);
 valid_platform(_) ->
     false.
 valid_release(Value) when is_binary(Value) ->

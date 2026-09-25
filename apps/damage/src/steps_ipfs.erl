@@ -372,7 +372,7 @@ step(
 step(
     Config,
     Context0,
-    <<"When">>,
+    _,
     _N,
     ?STEP_ADD_PATH_TO_IPFS_AND_STORE_HASH,
     _Body
