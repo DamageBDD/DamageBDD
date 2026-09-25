@@ -45,7 +45,7 @@ cat > "$TOR_FRAGMENT" <<'TORCONF'
 # The private onion-service identity remains owned exclusively by Tor.
 HiddenServiceDir /var/lib/tor/damagebdd/
 HiddenServiceVersion 3
-HiddenServicePort 80 127.0.0.1:8080
+HiddenServicePort 80 127.0.0.1:4888
 
 SocksPort 127.0.0.1:9050
 ControlPort 127.0.0.1:9051
