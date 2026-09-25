@@ -461,8 +461,17 @@ step(
     _Args
 ) ->
     case maps:is_key(last_nip46_reply_event, live(Context)) of
-        true -> Context;
-        false -> fail(Context, {live_nip46_reply_not_received, compact(live(Context))})
+    true ->
+        Resp = require_live(last_nip46_response, Context),
+        assert_equal(
+            Context,
+            response_id(Resp),
+            require_live(last_request_id, Context),
+            live_nip46_reply_request_id_mismatch
+        );
+    false ->
+        fail(Context, {live_nip46_reply_not_received,
+            maps:get(last_nip46_reply_error, live(Context), undefined)})
     end;
 step(
     _Config,
@@ -832,7 +841,16 @@ publish_black_box_canary(Context) ->
     Event = damage_nostr:finalize_event(Event0, ClientPriv),
     publish_black_box_event_and_wait_for_ingress(Context, Event, undefined, undefined, undefined).
 
-publish_black_box_live_nip46(Context, Method, Opts) ->
+publish_black_box_live_nip46(Context0, Method, Opts) ->
+    Context = maps:put(
+        ?NS,
+        maps:without([
+            last_nip46_reply_event,
+            last_nip46_response,
+            last_nip46_reply_error
+        ], live(Context0)),
+        Context0
+    ),
     RequestId = make_request_id(Context, <<"blackbox-nip46">>, Method),
     {Payload, MaybeUnsignedEvent} = nip46_payload(Context, RequestId, Method, Opts),
     Since = max(0, erlang:system_time(second) - 5),
