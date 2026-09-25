@@ -24,6 +24,12 @@ Feature: Live damage nsecbunker operations using the node damage_nostr identity
     And the live NIP-46 subscription filter MUST be p-tagged to the bunker pubkey
     And no live test context MUST contain secret material
 
+  Scenario: AWS-only custody and post-rotation handoff
+    Then the live bunker MUST use AWS with no local DETS vault passphrase
+    And the live bunker public key MUST be "e55bc4b82dbd981262dc8d351e4e01e586e2c45189c26881f23f2d4176ed4535"
+    And the live bunker MUST authorise client "4b81f637343f30a30ca1da52d13b5a78ef4d1c0e44375823c019981bb460830f"
+    And no live test context MUST contain secret material
+
   Scenario: Live relay adapter receives a black-box ingress canary
     When I publish a black-box live NIP-46 canary event from a separate relay connection
     Then the black-box NIP-46 request MUST be accepted by at least one relay

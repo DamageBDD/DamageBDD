@@ -206,6 +206,59 @@ step(
 %% Identity / filter assertions
 %% ====================================================================
 
+step(_Config, Context, _Keyword, _Line,
+    ["the live bunker MUST use AWS with no local DETS vault passphrase"], _Args) ->
+    %% Fail closed; never decrypt, retain, or report a secret-store record.
+    try
+        Status = damage_nsecbunker:status(),
+        case {maps:get(ready, Status, false), maps:get(secret_provider, Status, undefined)} of
+            {true, aws_secrets_manager} ->
+                case secrets:retrieve_secret(nsecbunker_vault_passphrase) of
+                    [] -> put_live(Context, #{local_vault_entry_absent => true,
+                        custody_provider => aws_secrets_manager,
+                        bunker_started_at => maps:get(started_at, Status, undefined)});
+                    [_ | _] -> fail(Context, local_vault_entry_present);
+                    _ -> fail(Context, local_vault_lookup_failed)
+                end;
+            _ -> fail(Context, live_bunker_not_ready_with_aws)
+        end
+    catch
+        _:_ -> fail(Context, aws_custody_check_failed)
+    end;
+step(_Config, Context, _Keyword, _Line,
+    ["the live bunker public key MUST be", Expected0], _Args) ->
+    Expected = lower_hex_bin(strip(Expected0)),
+    Status = damage_nsecbunker:status(),
+    %% status/0 reports the active server policy, whereas policy/0 reloads config.
+    Policy = maps:get(policy, Status, #{}),
+    Guard = maps:get(guard_state, maps:get(vault, Status, #{}), #{}),
+    Actual = lower_hex_bin(maps:get(bunker_pubkey_hex, Policy, <<>>)),
+    GuardPub = lower_hex_bin(maps:get(pubkey_hex, Guard, <<>>)),
+    case is_lower_hex_64(Expected) andalso maps:get(ready, Status, false) =:= true
+        andalso Actual =:= Expected andalso GuardPub =:= Expected of
+        true -> put_live(Context, #{verified_bunker_pubkey_hex => Expected});
+        false -> fail(Context, {live_bunker_identity_mismatch, Expected, Actual, GuardPub})
+    end;
+step(_Config, Context, _Keyword, _Line,
+    ["the live bunker MUST authorise client", Client0], _Args) ->
+    Client = lower_hex_bin(strip(Client0)),
+    case is_lower_hex_64(Client) of
+        false -> fail(Context, invalid_handoff_client_pubkey);
+        true ->
+            %% Probe the running policy gate using its existing local API.
+            %% This proves authorization, not external possession of the client key.
+            RequestId = make_run_id(),
+            Request = #{requester_pubkey => Client, request_id => RequestId,
+                method => <<"ping">>, created_at => erlang:system_time(second),
+                skip_rate_limit => true},
+            Reply = plain_response_map(damage_nsecbunker:handle_plain_request(Request)),
+            case not response_rejected(Reply) andalso response_id(Reply) =:= RequestId
+                andalso response_result_bin(Reply) =:= <<"pong">> of
+                true -> put_live(Context, #{verified_authorised_client_pubkey_hex => Client,
+                    authorisation_probe_id => RequestId});
+                false -> fail(Context, {live_client_authorisation_probe_failed, Client})
+            end
+    end;
 step(
     _Config,
     Context,
