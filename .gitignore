@@ -181,3 +181,66 @@ zomp.meta
 # Existing project-specific rule
 # --------------------------------------------------------------------
 Q*
+
+# ----------------------------------------------------------------------
+# Local build/runtime state
+# ----------------------------------------------------------------------
+_build/
+_checkouts/
+_checkouts.bak*/
+ct_log_cache/
+logs/
+artifacts/
+Mnesia.*/
+variables-*/
+data/
+ecai_index/
+
+# Erlang build products
+*.beam
+*.so
+erl_crash.dump
+rebar3.crashdump
+
+# Runtime databases/state
+*.dets
+*.ctx
+*.tmp
+
+# Logs/reports
+*.log
+nohup.out
+all_runs.html
+suite.log.latest.html
+recompile.log
+
+# Local secrets / credentials
+*.key
+*.private
+privkey.pem
+key.pem
+tls.pem
+*.onion/
+wallets/
+
+# Python / JS generated dependencies
+__pycache__/
+*.py[cod]
+node_modules/
+
+# Editor backups
+*~
+*.swp
+*.swo
+*.bak
+*.bak[0-9]*
+*.orig
+*.rej
+
+# Generated package output
+packaging/arch/zst/
+packaging/mint/*/deb/
+packaging/mint/*/logs/
+packaging/slackware/out/
+packaging/ubuntu/*/deb/
+config/
