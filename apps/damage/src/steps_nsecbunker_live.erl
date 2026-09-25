@@ -856,26 +856,33 @@ publish_black_box_live_nip46(Context0, Method, Opts) ->
     Since = max(0, erlang:system_time(second) - 5),
     case build_signed_nip46_request(Context, Payload) of
         {ok, Event} ->
-            Context1 = publish_black_box_event_and_wait_for_ingress(
-                Context, Event, RequestId, Since, MaybeUnsignedEvent
-            ),
-            case maps:is_key(fail, Context1) of
-                true ->
-                    Context1;
-                false ->
-                    case
-                        wait_for_matching_nip46_reply(
-                            Context1, RequestId, Since, ?DEFAULT_TIMEOUT_MS
-                        )
-                    of
-                        {ok, ReplyEvent, Response} ->
-                            put_live(Context1, #{
-                                last_nip46_reply_event => ReplyEvent,
-                                last_nip46_response => Response
-                            });
-                        {error, Reason} ->
-                            put_live(Context1, #{last_nip46_reply_error => Reason})
-                    end
+            Ref = make_ref(),
+            Parent = self(),
+            Workers = [spawn(fun() ->
+                nip46_reply_listener(Parent, Ref, Relay, Context, RequestId, Since)
+            end) || Relay <- require_live(relays, Context)],
+            try
+                Deadline = erlang:monotonic_time(millisecond) + ?DEFAULT_TIMEOUT_MS,
+                case await_nip46_listeners(Ref, Workers, Deadline, [], []) of
+                    {ok, Ready} ->
+                        Context1 = publish_black_box_event_and_wait_for_ingress(
+                            Context, Event, RequestId, Since, MaybeUnsignedEvent
+                        ),
+                        ReplyDeadline = erlang:monotonic_time(millisecond) + ?DEFAULT_TIMEOUT_MS,
+                        case await_nip46_reply(Ref, Ready, ReplyDeadline, []) of
+                            {ok, ReplyEvent, Response} ->
+                                put_live(Context1, #{
+                                    last_nip46_reply_event => ReplyEvent,
+                                    last_nip46_response => Response
+                                });
+                            {error, Reason} ->
+                                put_live(Context1, #{last_nip46_reply_error => Reason})
+                        end;
+                    {error, Reason} ->
+                        fail(Context, {live_nip46_reply_subscription_failed, Reason})
+                end
+            after
+                [Pid ! {Ref, stop} || Pid <- Workers]
             end;
         {error, Reason} ->
             fail(Context, Reason)
@@ -994,36 +1001,103 @@ build_signed_nip46_request(Context, Payload) ->
         C:R:S -> {error, {build_live_nip46_request_failed, C, R, stack_top(S)}}
     end.
 
-wait_for_matching_nip46_reply(Context, RequestId, Since, TimeoutMs) ->
-    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
-    wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, []).
+%% Keep subscriptions alive before publication: kind 24133 replies are ephemeral.
+%% Listener processes buffer matching replies while publication/ingress checks run.
+nip46_reply_listener(Parent, Ref, Relay, Context, RequestId, Since) ->
+    Monitor = erlang:monitor(process, Parent),
+    try
+        case damage_nostr:open_relay_ws(Relay, #{connect_timeout => 15000}) of
+            {ok, ConnPid, StreamRef} ->
+                try
+                    SubId = <<"nip46-reply">>,
+                    Filter = (nip46_reply_filter(Context, Since))#{<<"limit">> => 0},
+                    ok = safe_ws_send(ConnPid, StreamRef, jsx:encode([<<"REQ">>, SubId, Filter])),
+                    Deadline = erlang:monotonic_time(millisecond) + ?DEFAULT_TIMEOUT_MS,
+                    nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
+                        SubId, Context, RequestId, Deadline, false)
+                after
+                    safe_close_gun(ConnPid)
+                end;
+            {error, Reason} ->
+                Parent ! {Ref, self(), {error, {relay_url(Relay), Reason}}}
+        end
+    catch
+        C:R -> Parent ! {Ref, self(), {error, {relay_url(Relay), C, R}}}
+    after
+        erlang:demonitor(Monitor, [flush])
+    end.
 
-wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, SeenErrors) ->
-    Now = erlang:monotonic_time(millisecond),
-    case Deadline =< Now of
-        true ->
-            {error, {timeout_waiting_for_reply, lists:reverse(SeenErrors)}};
-        false ->
-            Remaining = max(1000, min(5000, Deadline - Now)),
-            Filter = nip46_reply_filter(Context, Since),
-            Relays = require_live(relays, Context),
-            case fetch_reply_events(Filter, Relays, Remaining) of
-                {ok, Events} ->
-                    case find_matching_decrypted_reply(Events, RequestId, Context) of
-                        {ok, Event, Resp} ->
-                            {ok, Event, Resp};
-                        {error, Why} ->
-                            timer:sleep(500),
-                            wait_for_matching_nip46_reply_loop(
-                                Context, RequestId, Since, Deadline, [Why | SeenErrors]
-                            )
+nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
+    SubId, Context, RequestId, Deadline, Ready) ->
+    Wait = case Ready of
+        true -> infinity;
+        false -> max(0, Deadline - erlang:monotonic_time(millisecond))
+    end,
+    receive
+        {Ref, stop} -> ok;
+        {'DOWN', Monitor, process, Parent, _} -> ok;
+        {gun_ws, ConnPid, StreamRef, {text, Msg}} ->
+            case safe_decode(Msg) of
+                [<<"EOSE">>, SubId] when Ready =:= false ->
+                    Parent ! {Ref, self(), ready},
+                    nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
+                        SubId, Context, RequestId, Deadline, true);
+                [<<"EVENT">>, SubId, Event] when Ready =:= true ->
+                    case find_matching_decrypted_reply([Event], RequestId, Context) of
+                        {ok, _, _} = Reply -> Parent ! {Ref, self(), Reply};
+                        {error, _} ->
+                            nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
+                                SubId, Context, RequestId, Deadline, Ready)
                     end;
-                {error, Why} ->
-                    timer:sleep(500),
-                    wait_for_matching_nip46_reply_loop(Context, RequestId, Since, Deadline, [
-                        Why | SeenErrors
-                    ])
-            end
+                [<<"CLOSED">>, SubId, Reason] ->
+                    Parent ! {Ref, self(), {error, {subscription_closed, Reason}}};
+                _ ->
+                    nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
+                        SubId, Context, RequestId, Deadline, Ready)
+            end;
+        {gun_error, ConnPid, StreamRef, Reason} ->
+            Parent ! {Ref, self(), {error, Reason}};
+        {gun_error, ConnPid, Reason} ->
+            Parent ! {Ref, self(), {error, Reason}};
+        {gun_down, ConnPid, _, Reason, _} ->
+            Parent ! {Ref, self(), {error, Reason}};
+        {gun_down, ConnPid, _, Reason, _, _} ->
+            Parent ! {Ref, self(), {error, Reason}};
+        {gun_ws, ConnPid, StreamRef, close} ->
+            Parent ! {Ref, self(), {error, websocket_closed}};
+        {gun_ws, ConnPid, StreamRef, {close, _, _}} ->
+            Parent ! {Ref, self(), {error, websocket_closed}}
+    after Wait ->
+        Parent ! {Ref, self(), {error, subscription_ready_timeout}}
+    end.
+
+await_nip46_listeners(_Ref, [], _Deadline, [], Errors) ->
+    {error, lists:reverse(Errors)};
+await_nip46_listeners(_Ref, [], _Deadline, Ready, _Errors) ->
+    {ok, Ready};
+await_nip46_listeners(Ref, Pending, Deadline, Ready, Errors) ->
+    Wait = max(0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {Ref, Pid, ready} ->
+            await_nip46_listeners(Ref, lists:delete(Pid, Pending), Deadline, [Pid | Ready], Errors);
+        {Ref, Pid, {error, Reason}} ->
+            await_nip46_listeners(Ref, lists:delete(Pid, Pending), Deadline,
+                lists:delete(Pid, Ready), [Reason | Errors])
+    after Wait ->
+        [Pid ! {Ref, stop} || Pid <- Pending],
+        await_nip46_listeners(Ref, [], Deadline, Ready, [subscription_ready_timeout | Errors])
+    end.
+
+await_nip46_reply(_Ref, [], _Deadline, Errors) ->
+    {error, {reply_listeners_closed, lists:reverse(Errors)}};
+await_nip46_reply(Ref, Pending, Deadline, Errors) ->
+    Wait = max(0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {Ref, _Pid, {ok, _, _} = Reply} -> Reply;
+        {Ref, Pid, {error, Reason}} ->
+            await_nip46_reply(Ref, lists:delete(Pid, Pending), Deadline, [Reason | Errors])
+    after Wait ->
+        {error, {timeout_waiting_for_reply, lists:reverse(Errors)}}
     end.
 
 nip46_reply_filter(Context, Since) ->
