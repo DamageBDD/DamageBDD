@@ -318,6 +318,22 @@ handle_call(
                 {error, Reason}
         end,
     {reply, Reply, State};
+handle_call(handoff_status, _From, State = #state{
+    config = Config,
+    policy = Policy,
+    started_at = StartedAt,
+    ready = Ready
+}) ->
+    {reply, #{
+        ready => Ready,
+        started_at => StartedAt,
+        secret_provider =>
+            damage_nsecbunker_config:secret_provider(Config),
+        bunker_pubkey_hex =>
+            maps:get(bunker_pubkey_hex, Policy, <<>>),
+        authorized_clients =>
+            maps:get(authorized_clients, Policy, [])
+    }, State};
 handle_call(Other, _From, State) ->
     {reply, {error, {unknown_call, Other}}, State}.
 
