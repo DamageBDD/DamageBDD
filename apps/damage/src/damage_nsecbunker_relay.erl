@@ -52,6 +52,8 @@
     filter = undefined :: undefined | map(),
     %% ConnPid => #{relay := map(), relay_url := binary(), stream_ref := term(), sub_id := binary()}
     conns = #{} :: map(),
+    %% Connection workers remain alive as Gun owners and forward socket events.
+    connectors = #{} :: map(),
     seen_ids = #{} :: map(),
     %% newest first; public event ids only, no content or secrets
     recent_inbound_event_ids = [] :: [binary()],
@@ -65,6 +67,7 @@
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
 
 child_spec() ->
     #{
@@ -110,6 +113,7 @@ call(Request) ->
 %%====================================================================
 
 init([]) ->
+    process_flag(trap_exit, true),
     {ok, #st{relays = configured_relays(), stats = empty_stats()}}.
 
 handle_call(
@@ -132,6 +136,7 @@ handle_call(
         #{
             running => true,
             subscribed => subscribed_count(Conns) > 0,
+            connection_workers => map_size(St#st.connectors),
             relays => [relay_url(R) || R <- Relays],
             filter => Filter,
             connections => connection_status(Conns),
@@ -148,15 +153,20 @@ handle_call({subscribe, Filter0, Relays0}, _From, St0) ->
     %% gen_server waiting for websocket upgrades.  Earlier versions waited
     %% inside this call; while waiting, status/0 could not be served and the
     %% live BDD timed out with damage_nsecbunker_relay:status/0.
-    close_all(St0#st.conns),
-    St1 = St0#st{relays = Relays, filter = Filter, conns = #{}},
+    St1 = case {Filter, Relays} =:= {St0#st.filter, St0#st.relays} of
+        true -> St0;
+        false ->
+            close_all(St0#st.conns),
+            stop_connectors(St0#st.connectors),
+            St0#st{relays = Relays, filter = Filter, conns = #{}, connectors = #{}}
+    end,
 
     {Results, St2} = subscribe_all(Relays, Filter, St1),
-    Opened = length([ok || {_, ok} <- Results]),
+    Scheduled = length([ok || {_, ok} <- Results]),
     Reply =
-        case Opened > 0 of
+        case Scheduled > 0 of
             true ->
-                {ok, #{opened => Opened, subscribing => true, relays => Results, filter => Filter}};
+                {ok, #{scheduled => Scheduled, subscribing => true, relays => Results, filter => Filter}};
             false ->
                 {error, #{error => all_relays_failed, relays => Results, filter => Filter}}
         end,
@@ -174,6 +184,39 @@ handle_call(_Other, _From, St) ->
 handle_cast(_Msg, St) ->
     {noreply, St}.
 
+handle_info({relay_opened, Worker, Relay, Filter, {ok, ConnPid, StreamRef}}, St0) ->
+    case maps:is_key(Worker, St0#st.connectors) andalso Filter =:= St0#st.filter of
+        true ->
+            Conn = #{relay => Relay, relay_url => relay_url(Relay),
+                stream_ref => StreamRef, sub_id => make_sub_id(), filter => Filter,
+                owner => Worker, subscribed => false, subscribe_attempts => 0,
+                opened_at => erlang:system_time(second)},
+            St1 = St0#st{conns = (St0#st.conns)#{ConnPid => Conn}},
+            schedule_subscription_attempt(ConnPid, 0),
+            {noreply, St1};
+        false ->
+            safe_close_gun(ConnPid),
+            kill_worker(Worker),
+            {noreply, St0}
+    end;
+handle_info({'DOWN', Ref, process, Worker, Reason}, St0) ->
+    case maps:find(Worker, St0#st.connectors) of
+        {ok, #{monitor := Ref, relay_url := RelayUrl}} ->
+            Conns = maps:filter(fun(Pid, Conn) ->
+                case maps:get(owner, Conn, undefined) =:= Worker of
+                    true -> safe_close_gun(Pid), false;
+                    false -> true
+                end
+            end, St0#st.conns),
+            ?LOG_WARNING("nsecbunker relay worker down relay=~p reason=~p", [RelayUrl, Reason]),
+            St1 = St0#st{conns = Conns, connectors = maps:remove(Worker, St0#st.connectors)},
+            schedule_reconnect(RelayUrl, St1),
+            {noreply, St1};
+        _ -> {noreply, St0}
+    end;
+handle_info({'EXIT', _Worker, _Reason}, St) ->
+    %% Monitors handle worker cleanup; links terminate workers with the adapter.
+    {noreply, St};
 handle_info({gun_up, ConnPid, Protocol}, St0) ->
     %% gun:open/3 reports TCP/TLS readiness before the WebSocket upgrade.
     %% Do not treat this as a subscription. The REQ frame is sent only after
@@ -258,6 +301,7 @@ handle_info(Other, St) ->
 
 terminate(_Reason, St) ->
     close_all(St#st.conns),
+    stop_connectors(St#st.connectors),
     ok.
 
 code_change(_OldVsn, St, _Extra) ->
@@ -285,32 +329,47 @@ subscribe_all(Relays, Filter, St0) ->
 
 connect_and_subscribe(Relay, Filter, St0) ->
     RelayUrl = relay_url(Relay),
-    case damage_nostr:open_relay_ws(Relay, #{connect_timeout => connect_timeout_ms()}) of
-        {ok, ConnPid, StreamRef} ->
-            SubId = make_sub_id(),
-            Conn = #{
-                relay => Relay,
-                relay_url => RelayUrl,
-                stream_ref => StreamRef,
-                sub_id => SubId,
-                filter => Filter,
-                subscribed => false,
-                subscribe_attempts => 0,
-                opened_at => erlang:system_time(second)
-            },
-            Conns0 = St0#st.conns,
-            %% Return immediately after the websocket upgrade request has been
-            %% initiated. The actual REQ subscription is normally sent from
-            %% handle_ws_upgrade/3. Some damage_gun/open_ws paths consume the
-            %% upgrade confirmation internally before returning, so also schedule
-            %% an async subscription attempt.  The connection is marked
-            %% subscribed only after the REQ ws_send succeeds.
-            St1 = St0#st{conns = Conns0#{ConnPid => Conn}},
-            schedule_subscription_attempt(ConnPid, 0),
-            {ok, St1};
-        {error, Reason} ->
-            {{error, {open_relay_failed, RelayUrl, Reason}}, St0}
+    Existing = lists:any(fun(#{relay_url := Url}) -> Url =:= RelayUrl end,
+                         maps:values(St0#st.connectors)),
+    case Existing of
+        true -> {ok, St0};
+        false ->
+            Parent = self(),
+            Timeout = connect_timeout_ms(),
+            {Worker, Ref} = spawn_opt(fun() ->
+                connection_worker(Parent, Relay, Filter, Timeout)
+            end, [link, monitor]),
+            Workers = (St0#st.connectors)#{Worker => #{monitor => Ref, relay_url => RelayUrl}},
+            {ok, St0#st{connectors = Workers}}
     end.
+
+connection_worker(Parent, Relay, Filter, Timeout) ->
+    %% Keep Gun ownership here: a short-lived opener would close the socket
+    %% on exit or leave subsequent gun_ws messages in the wrong mailbox.
+    case damage_nostr:open_relay_ws(Relay, #{connect_timeout => Timeout}) of
+        {ok, ConnPid, StreamRef} ->
+            Monitor = erlang:monitor(process, ConnPid),
+            Parent ! {relay_opened, self(), Relay, Filter, {ok, ConnPid, StreamRef}},
+            forward_connection(Parent, ConnPid, Monitor);
+        {error, Reason} -> exit({connect_failed, compact_error(Reason)})
+    end.
+
+forward_connection(Parent, ConnPid, Monitor) ->
+    receive
+        {'DOWN', Monitor, process, ConnPid, Reason} ->
+            exit({connection_down, Reason});
+        Message when is_tuple(Message), tuple_size(Message) >= 2,
+                     element(2, Message) =:= ConnPid ->
+            Parent ! Message,
+            forward_connection(Parent, ConnPid, Monitor);
+        _Other -> forward_connection(Parent, ConnPid, Monitor)
+    end.
+
+stop_connectors(Workers) ->
+    maps:foreach(fun(Worker, #{monitor := Ref}) ->
+        erlang:demonitor(Ref, [flush]),
+        kill_worker(Worker)
+    end, Workers).
 
 await_ws_upgrade(ConnPid, StreamRef, RelayUrl, TimeoutMs) ->
     receive
@@ -395,10 +454,10 @@ maybe_retry_subscription(ConnPid, Reason, St0) ->
                 [RelayUrl, maps:get(subscribe_attempts, Conn, 0), compact_error(Reason)]
             ),
             safe_close_gun(ConnPid),
+            kill_worker(maps:get(owner, Conn, undefined)),
             Conns1 = maps:remove(ConnPid, St0#st.conns),
-            St1 = inc_stat(connection_downs, St0#st{conns = Conns1}),
-            schedule_reconnect(RelayUrl, St1),
-            St1;
+            %% The owner's DOWN notification schedules the reconnect.
+            inc_stat(connection_downs, St0#st{conns = Conns1});
         _ ->
             St0
     end.
@@ -443,10 +502,12 @@ handle_relay_frame(_ConnPid, _Conn, SubId, RelayUrl, Msg, St0) ->
 
 handle_conn_down(ConnPid, Reason, St0) ->
     case maps:take(ConnPid, St0#st.conns) of
-        {#{relay_url := RelayUrl}, Conns1} ->
+        {#{relay_url := RelayUrl} = Conn, Conns1} ->
             ?LOG_WARNING("nsecbunker relay connection down relay=~p reason=~p", [RelayUrl, Reason]),
+            safe_close_gun(ConnPid),
+            kill_worker(maps:get(owner, Conn, undefined)),
+            %% The owner's DOWN notification schedules the reconnect.
             St1 = inc_stat(connection_downs, St0#st{conns = Conns1}),
-            schedule_reconnect(RelayUrl, St1),
             {noreply, St1};
         error ->
             {noreply, St0}
@@ -799,7 +860,7 @@ connection_status(Conns) ->
     maps:fold(
         fun(_ConnPid, Conn, Acc) ->
             RelayUrl = maps:get(relay_url, Conn, <<>>),
-            Acc#{RelayUrl => maps:without([relay, stream_ref], Conn)}
+            Acc#{RelayUrl => maps:without([relay, stream_ref, owner], Conn)}
         end,
         #{},
         Conns

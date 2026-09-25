@@ -1301,8 +1301,8 @@ wait_for_relay_bridge_subscribed(Context, TimeoutMs) ->
     %% Fire subscribe once. Use a bounded caller process so a stuck relay
     %% implementation cannot hang the BDD step for the relay adapter's full
     %% gen_server call timeout.
-    _ = safe_eval_timeout(fun() -> damage_nostr_relay_client:subscribe() end, 5000),
     Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    _ = safe_eval_timeout(fun() -> damage_nostr_relay_client:subscribe() end, min(5000, TimeoutMs)),
     wait_for_relay_bridge_subscribed_loop(Context, Deadline, undefined, undefined).
 
 wait_for_relay_bridge_subscribed_loop(Context, Deadline, LastRelayClient, LastRelayAdapter) ->
@@ -1312,10 +1312,12 @@ wait_for_relay_bridge_subscribed_loop(Context, Deadline, LastRelayClient, LastRe
             {error, LastRelayClient, LastRelayAdapter};
         false ->
             RelayClientStatus = safe_eval_timeout(
-                fun() -> damage_nostr_relay_client:status() end, 3000
+                fun() -> damage_nostr_relay_client:status() end,
+                max(1, min(3000, Deadline - erlang:monotonic_time(millisecond)))
             ),
             RelayAdapterStatus = safe_eval_timeout(
-                fun() -> damage_nsecbunker_relay:status() end, 3000
+                fun() -> damage_nsecbunker_relay:status() end,
+                max(1, min(3000, Deadline - erlang:monotonic_time(millisecond)))
             ),
             case
                 {
@@ -1327,12 +1329,9 @@ wait_for_relay_bridge_subscribed_loop(Context, Deadline, LastRelayClient, LastRe
                 {true, true, true} ->
                     {ok, RelayClientStatus, RelayAdapterStatus};
                 _ ->
-                    %% If the adapter is still not live, retrigger subscribe.
-                    %% This is safe because the adapter replaces the subscription
-                    %% set cleanly and the bridge/adapter are both idempotent for
-                    %% this BDD setup phase.
-                    _ = safe_eval_timeout(fun() -> damage_nostr_relay_client:subscribe() end, 3000),
-                    timer:sleep(500),
+                    %% The adapter owns retries. Re-subscribing here can reset
+                    %% healthy connections and queue work behind an in-flight open.
+                    timer:sleep(min(500, max(0, Deadline - erlang:monotonic_time(millisecond)))),
                     wait_for_relay_bridge_subscribed_loop(
                         Context, Deadline, RelayClientStatus, RelayAdapterStatus
                     )

@@ -1,9 +1,11 @@
 # Installation builds and the serving API must share ae_network_id and
 # build_release_nft_contract. See docs/release-discovery.md.
+# Set ubuntu_builder_dockerfile_cid to the IPFS CID of the updated Ubuntu 24 Dockerfile.
+# Mint 22 shares this release/platform pair; use one canonical publisher.
 Feature: Publish an installable Ubuntu 24.04 LTS release
   Scenario: Build and verify the ubuntu-noble-amd64 installation release
     Given the build release discovery is configured
-    When I build an image from Dockerfile at "QmZyvxdcQHk6RRANZvMgASRsPhUzsYMWhdYvVvw2cmD2r2" as tag "damagebdd/ubuntu24-builder:latest"
+    When I build an image from Dockerfile at "QmedASiMU1b2TSyzBE9KCViDnmBVeAfuMYqnxcnwDHjhSD" as tag "damagebdd/ubuntu24-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
     Then I run docker image tagged "damagebdd/ubuntu24-builder:latest"
     """
     set -eu
@@ -41,7 +43,7 @@ Feature: Publish an installable Ubuntu 24.04 LTS release
     }
 
     # Preserve the dependency set committed with this checkout.
-    test -f rebar.lock
+    test -s rebar.lock
     git diff --exit-code HEAD -- rebar.lock
     GIT_SHA=$(git rev-parse HEAD)
     rm -rf _build
@@ -152,3 +154,4 @@ Feature: Publish an installable Ubuntu 24.04 LTS release
     When I mint build release "{{build_release}}" for platform "ubuntu-noble-amd64" with git SHA "{{git_sha}}" metadata IPFS hash in "meta_hash" and asset hash in "asset_hash"
     And I store the mint result in "mint"
     Then the latest installable build release must match the minted NFT
+    And I post the minted build release NFT to nostr
