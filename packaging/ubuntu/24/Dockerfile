@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
-# Linux Mint 22 (Wilma) base — stays Mint-only per your requirement
+# Ubuntu 24.04 (Noble) NFT release builder
 FROM ubuntu:noble
-#FROM ubuntu:22.04
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -27,13 +26,14 @@ RUN set -eux; \
       rpm dpkg-dev gnupg rsync \
     nvidia-cuda-toolkit \
       pkg-config \
-      libgtk-4-dev \
+      libgtk-4-dev libx11-dev \
       libcairo2-dev \
       libpango1.0-dev \
       libglib2.0-dev \
       libgdk-pixbuf-2.0-dev \
       libharfbuzz-dev \
       libgraphene-1.0-dev \
+    && pkg-config --print-errors --exists gtk4 x11 \
     && gem install --no-document fpm \
  && rm -rf /var/lib/apt/lists/*
 
@@ -88,8 +88,8 @@ RUN set -e \
     ; fi \
  && rm -rf /opt/deps
 
-# Fetch git deps. This step is cached unless the copied configs changed.
-RUN rebar3 update && rebar3 get-deps
+# Resolve dependencies using the committed lockfile; never delete it.
+RUN test -s rebar.lock && rebar3 update && rebar3 get-deps
 
 # ====== SOURCE LAYER ======
 # Now bring in the full repository (single shallow clone).
@@ -108,19 +108,32 @@ RUN set -eu \
  && rm -rf /opt/workspace/fullsrc
 
 
-# Build
-#RUN rebar3 as prod compile && rebar3 as prod release
-#
-## --- Runtime (still Mint; if you prefer smaller, switch to a minimal base) ---
-## Keeping Mint-only per your request.
-#WORKDIR /opt/app
-#RUN mkdir -p /opt/app
-#COPY --chown=root:root /opt/workspace/_build/prod/rel/* /opt/app/
-RUN groupadd -r damage && \
-    useradd -r -g damage -d /home/damage -m -s /bin/bash damage
-RUN mkdir /out
-RUN chown -R damage:damage /opt/workspace
-USER damage
-EXPOSE 8080
-CMD ["/opt/damage/bin/damage", "foreground"]
+# --- Builder runtime identity ---
+# A host service user is not automatically present in a container. This
+# image must also work when the Docker runner explicitly uses --user damage.
+USER root
+RUN set -eu; \
+    if ! getent group damage >/dev/null 2>&1; then \
+        groupadd --system damage; \
+    fi; \
+    if ! getent passwd damage >/dev/null 2>&1; then \
+        useradd --system --no-log-init --gid damage \
+            --create-home --home-dir /home/damage --shell /bin/bash damage; \
+    fi; \
+    test "$(id -u damage)" -ne 0; \
+    install -d -o damage -g damage -m 0755 \
+        /home/damage /home/damage/.cache/rebar3 \
+        /home/damage/.kerl/archives /home/damage/.kerl/builds /out; \
+    chown -R damage:damage /home/damage /opt/workspace /out
 
+ENV HOME="/home/damage" \
+    XDG_CACHE_HOME="/home/damage/.cache" \
+    KERL_DOWNLOAD_DIR="/home/damage/.kerl/archives" \
+    KERL_BUILD_DIR="/home/damage/.kerl/builds"
+
+# /out ownership above applies only to the image directory. A host bind
+# mount replaces it; the runner must arrange permissions on that mount.
+WORKDIR /opt/workspace
+USER damage:damage
+# Builder image, not the installed Damage production service.
+CMD ["/bin/bash"]
