@@ -2,7 +2,7 @@
 
 -export([build/0, build/1, write/0, write/1, path/0]).
 
--define(SCHEMA, 1).
+-define(SCHEMA, 2).
 
 build() -> build(#{}).
 
@@ -10,13 +10,13 @@ build(Opts) ->
     Data = ecai_learning_store:snapshot_data(),
     RepoRoot = repo_root(Opts),
     Git = git_info(RepoRoot),
-    Ollama = ecai_ollama_client:defaults(),
+    PoolIdentity = safe_pool_identity(),
     Core = #{
         schema_version => ?SCHEMA,
         git => Git,
-        model => #{
-            name => maps:get(model, Ollama),
-            prompt_family => <<"ecai-code-learning-v1">>
+        inference => #{
+            prompt_family => <<"ecai-code-learning-v1">>,
+            pool_identity => PoolIdentity
         },
         applications => [damage, ecai, erm],
         learning => normalize_lists(Data)
@@ -25,7 +25,7 @@ build(Opts) ->
     Core#{
         snapshot_id => SnapshotId,
         created_at => now_iso8601(),
-        ollama_pool => safe_pool_status()
+        inference_pool => safe_pool_status()
     }.
 
 write() -> write(#{}).
@@ -59,6 +59,19 @@ safe_pool_status() ->
         Status -> Status
     catch
         Class:Reason -> #{available => false, error => to_binary(io_lib:format("~p:~p", [Class, Reason]))}
+    end.
+
+safe_pool_identity() ->
+    case safe_pool_status() of
+        #{nodes := Nodes} when is_list(Nodes) ->
+            lists:sort([
+                maps:with([
+                    id, provider, default_model, configured_models,
+                    configured_digests, discovered_models
+                ], Node)
+             || Node <- Nodes
+            ]);
+        _ -> []
     end.
 
 normalize_lists(Data) ->

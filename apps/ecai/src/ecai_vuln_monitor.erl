@@ -42,7 +42,6 @@
 
 -define(DEFAULT_OLLAMA_HOST, "localhost").
 -define(DEFAULT_OLLAMA_PORT, 11434).
--define(DEFAULT_OLLAMA_MODEL, "qwen3-coder:30b").
 -define(DEFAULT_INTERVAL_MS, 60000).
 -define(DEFAULT_REQUEST_TIMEOUT_MS, 120000).
 -define(DEFAULT_CONNECT_TIMEOUT_MS, 5000).
@@ -63,7 +62,7 @@
     report_file,
     ollama_host = ?DEFAULT_OLLAMA_HOST,
     ollama_port = ?DEFAULT_OLLAMA_PORT,
-    ollama_model = ?DEFAULT_OLLAMA_MODEL,
+    ollama_model = undefined,
     request_timeout_ms = ?DEFAULT_REQUEST_TIMEOUT_MS,
     connect_timeout_ms = ?DEFAULT_CONNECT_TIMEOUT_MS,
     rescan_unchanged = false,
@@ -167,11 +166,9 @@ init_allowed_app(App, Opts) ->
                         report_file = ReportFile,
                         ollama_host = opt(ollama_host, Opts, ?DEFAULT_OLLAMA_HOST),
                         ollama_port = opt(ollama_port, Opts, ?DEFAULT_OLLAMA_PORT),
-                        ollama_model = opt(
-                            ollama_model,
-                            Opts,
-                            application:get_env(ecai, code_ollama_model, ?DEFAULT_OLLAMA_MODEL)
-                        ),
+                        %% Optional legacy per-monitor model pin. When omitted,
+                        %% the inference pool chooses the role-appropriate node/model.
+                        ollama_model = opt(ollama_model, Opts, undefined),
                         request_timeout_ms = opt(
                             request_timeout_ms,
                             Opts,
@@ -512,12 +509,14 @@ number_lines(SourceBin) ->
 %%====================================================================
 
 ollama_audit(Prompt, State) ->
-    Opts = #{
-        model => to_binary(State#state.ollama_model),
+    Opts0 = #{
         timeout => State#state.request_timeout_ms,
-        connect_timeout => State#state.connect_timeout_ms,
-        temperature => 0
+        connect_timeout => State#state.connect_timeout_ms
     },
+    Opts = case State#state.ollama_model of
+        undefined -> Opts0;
+        Model -> Opts0#{model => to_binary(Model)}
+    end,
     ecai_ollama_pool:generate_json(audit, Prompt, Opts).
 
 %%====================================================================

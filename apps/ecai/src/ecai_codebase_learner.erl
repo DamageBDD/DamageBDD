@@ -411,41 +411,46 @@ learn_analysis(App, Analysis, Opts) ->
 
 module_card_current(App, Module, Analysis, Opts) ->
     Hash = maps:get(source_sha256, Analysis, undefined),
-    RequestedModel = to_binary(maps:get(
-        model,
-        ollama_opts(Opts),
-        application:get_env(ecai, code_ollama_model, "qwen3-coder:30b")
-    )),
+    RequestOpts = ollama_opts(Opts),
+    RequestedModel = optional_binary(maps:get(model, RequestOpts, undefined)),
+    RequestedProvider = requested_provider(maps:get(provider, RequestOpts, any)),
     case ecai_learning_store:get_module_knowledge(App, Module) of
         not_found ->
             false;
         {ok, Card} ->
             Inference = mget(<<"inference">>, Card, #{}),
-            CardModel = mget(<<"model">>, Inference, mget(<<"model">>, Card, undefined)),
-            CardDigest = mget(<<"model_digest">>, Inference, <<>>),
-            mget(<<"source_sha256">>, Card, undefined) =:= Hash andalso
-                to_binary(CardModel) =:= RequestedModel andalso
-                model_digest_current(RequestedModel, CardDigest)
+            CardProvider = inference_provider(mget(<<"provider">>, Inference, <<"ollama">>)),
+            CardModel = to_binary(mget(<<"model">>, Inference, mget(<<"model">>, Card, undefined))),
+            CardDigest = to_binary(mget(<<"model_digest">>, Inference, <<>>)),
+            SourceCurrent = mget(<<"source_sha256">>, Card, undefined) =:= Hash,
+            ProviderCurrent = RequestedProvider =:= any orelse RequestedProvider =:= CardProvider,
+            ModelCurrent = RequestedModel =:= undefined orelse RequestedModel =:= CardModel,
+            SourceCurrent andalso ProviderCurrent andalso ModelCurrent andalso
+                inference_identity_current(CardProvider, CardModel, CardDigest)
     end.
 
-model_digest_current(Model, CardDigest0) ->
-    CardDigest = to_binary(CardDigest0),
-    case catch ecai_ollama_pool:status() of
-        #{nodes := Nodes} when is_list(Nodes) ->
-            Digests = lists:usort([
-                to_binary(maps:get(digest, ModelInfo, <<>>))
-             || Node <- Nodes,
-                maps:get(health, Node, unknown) =/= down,
-                ModelInfo <- [maps:get(Model, maps:get(discovered_models, Node, #{}), #{})],
-                maps:get(digest, ModelInfo, <<>>) =/= <<>>
-            ]),
-            case Digests of
-                [] -> true;
-                _ -> CardDigest =/= <<>> andalso lists:member(CardDigest, Digests)
-            end;
-        _ ->
-            true
+inference_identity_current(Provider, Model, Digest) ->
+    case catch ecai_ollama_pool:inference_available(learning, Provider, Model, Digest) of
+        true -> true;
+        false -> false;
+        _ -> true
     end.
+
+requested_provider(any) -> any;
+requested_provider(undefined) -> any;
+requested_provider(Value) -> inference_provider(Value).
+
+inference_provider(openai) -> openai;
+inference_provider(ollama) -> ollama;
+inference_provider(<<"openai">>) -> openai;
+inference_provider(<<"ollama">>) -> ollama;
+inference_provider("openai") -> openai;
+inference_provider("ollama") -> ollama;
+inference_provider(_) -> ollama.
+
+optional_binary(undefined) -> undefined;
+optional_binary(<<>>) -> undefined;
+optional_binary(Value) -> to_binary(Value).
 
 mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
     case maps:find(Key, Map) of
