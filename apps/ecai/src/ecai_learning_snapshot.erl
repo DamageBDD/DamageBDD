@@ -16,7 +16,6 @@ build(Opts) ->
         git => Git,
         model => #{
             name => maps:get(model, Ollama),
-            host => maps:get(host, Ollama),
             prompt_family => <<"ecai-code-learning-v1">>
         },
         applications => [damage, ecai, erm],
@@ -25,7 +24,8 @@ build(Opts) ->
     SnapshotId = sha256_hex(term_to_binary(Core, [deterministic])),
     Core#{
         snapshot_id => SnapshotId,
-        created_at => now_iso8601()
+        created_at => now_iso8601(),
+        ollama_pool => safe_pool_status()
     }.
 
 write() -> write(#{}).
@@ -52,6 +52,13 @@ path() ->
     case ecai_code_paths:state_root() of
         {ok, Root} -> {ok, ecai_code_paths:log_file(Root, "codebase_learning.json")};
         {error, _} = Error -> Error
+    end.
+
+safe_pool_status() ->
+    try ecai_ollama_pool:status() of
+        Status -> Status
+    catch
+        Class:Reason -> #{available => false, error => to_binary(io_lib:format("~p:~p", [Class, Reason]))}
     end.
 
 normalize_lists(Data) ->

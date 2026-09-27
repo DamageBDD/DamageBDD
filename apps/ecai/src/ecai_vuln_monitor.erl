@@ -167,9 +167,25 @@ init_allowed_app(App, Opts) ->
                         report_file = ReportFile,
                         ollama_host = opt(ollama_host, Opts, ?DEFAULT_OLLAMA_HOST),
                         ollama_port = opt(ollama_port, Opts, ?DEFAULT_OLLAMA_PORT),
-                        ollama_model = opt(ollama_model, Opts, ?DEFAULT_OLLAMA_MODEL),
-                        request_timeout_ms = opt(request_timeout_ms, Opts, ?DEFAULT_REQUEST_TIMEOUT_MS),
-                        connect_timeout_ms = opt(connect_timeout_ms, Opts, ?DEFAULT_CONNECT_TIMEOUT_MS),
+                        ollama_model = opt(
+                            ollama_model,
+                            Opts,
+                            application:get_env(ecai, code_ollama_model, ?DEFAULT_OLLAMA_MODEL)
+                        ),
+                        request_timeout_ms = opt(
+                            request_timeout_ms,
+                            Opts,
+                            application:get_env(
+                                ecai, code_ollama_timeout_ms, ?DEFAULT_REQUEST_TIMEOUT_MS
+                            )
+                        ),
+                        connect_timeout_ms = opt(
+                            connect_timeout_ms,
+                            Opts,
+                            application:get_env(
+                                ecai, code_ollama_connect_timeout_ms, ?DEFAULT_CONNECT_TIMEOUT_MS
+                            )
+                        ),
                         rescan_unchanged = opt(rescan_unchanged, Opts, false)
                     },
                     self() ! start_cycle,
@@ -319,7 +335,7 @@ scan_module(Module, State) ->
                         Previous
                     ),
                     case ollama_audit(Prompt, State) of
-                        {ok, Audit} ->
+                        {ok, Audit, Inference} ->
                             Result = reconcile_report(
                                 State#state.app,
                                 Module,
@@ -327,6 +343,7 @@ scan_module(Module, State) ->
                                 SourceName,
                                 Hash,
                                 Audit,
+                                Inference,
                                 Previous
                             ),
                             ok = store_module_report(State#state.dets_tab, Module, Result),
@@ -495,74 +512,19 @@ number_lines(SourceBin) ->
 %%====================================================================
 
 ollama_audit(Prompt, State) ->
-    Body = jsx:encode(#{
-        <<"model">> => to_binary(State#state.ollama_model),
-        <<"prompt">> => Prompt,
-        <<"stream">> => false,
-        <<"format">> => <<"json">>,
-        <<"options">> => #{
-            <<"temperature">> => 0
-        }
-    }),
-
-    case damage_gun:post(
-        State#state.ollama_host,
-        State#state.ollama_port,
-        "/api/generate",
-        [{<<"content-type">>, <<"application/json">>}],
-        Body,
-        #{
-            timeout => State#state.request_timeout_ms,
-            connect_timeout => State#state.connect_timeout_ms,
-            decode => json,
-            proxy => direct,
-            transport => tcp
-        }
-    ) of
-        {ok, #{status := Status, json := Json, body := RawBody}}
-          when Status >= 200, Status < 300 ->
-            decode_ollama_audit(Json, RawBody);
-        {ok, #{status := Status, json := Json, body := RawBody}} ->
-            {error, {ollama_http_status, Status, ollama_error(Json, RawBody)}};
-        {ok, #{status := Status, body := RawBody}} ->
-            {error, {ollama_http_status, Status, RawBody}};
-        {error, Reason} ->
-            {error, {ollama_request_failed, Reason}}
-    end.
-
-decode_ollama_audit(Json, RawBody) when is_map(Json) ->
-    case mget(<<"response">>, Json, undefined) of
-        Response when is_binary(Response) ->
-            decode_audit_json(Response);
-        undefined ->
-            {error, {missing_ollama_response, Json, RawBody}};
-        Other ->
-            {error, {bad_ollama_response, Other, Json}}
-    end;
-decode_ollama_audit(Json, RawBody) ->
-    {error, {bad_ollama_generate_json, Json, RawBody}}.
-
-decode_audit_json(Response) ->
-    try jsx:decode(Response, [return_maps]) of
-        Audit when is_map(Audit) ->
-            {ok, Audit};
-        Other ->
-            {error, {audit_not_json_object, Other}}
-    catch
-        Class:Reason ->
-            {error, {invalid_audit_json, Class, Reason, Response}}
-    end.
-
-ollama_error(Json, RawBody) when is_map(Json) ->
-    mget(<<"error">>, Json, RawBody);
-ollama_error(_Json, RawBody) ->
-    RawBody.
+    Opts = #{
+        model => to_binary(State#state.ollama_model),
+        timeout => State#state.request_timeout_ms,
+        connect_timeout => State#state.connect_timeout_ms,
+        temperature => 0
+    },
+    ecai_ollama_pool:generate_json(audit, Prompt, Opts).
 
 %%====================================================================
 %% Reconciliation and persistence
 %%====================================================================
 
-reconcile_report(App, Module, SourceKind, SourceName, Hash, Audit, Previous) ->
+reconcile_report(App, Module, SourceKind, SourceName, Hash, Audit, Inference, Previous) ->
     Now = now_iso8601(),
     CurrentRaw = ensure_list(mget(<<"vulnerabilities">>, Audit, [])),
     PrevFindings = ensure_list(mget(<<"findings">>, Previous, [])),
@@ -600,6 +562,7 @@ reconcile_report(App, Module, SourceKind, SourceName, Hash, Audit, Previous) ->
         <<"scan_change">> => ScanChange,
         <<"summary">> => mget(<<"summary">>, Audit, <<>>),
         <<"notes">> => ensure_list(mget(<<"notes">>, Audit, [])),
+        <<"inference">> => json_safe(Inference),
         <<"open_count">> => OpenCount,
         <<"resolved_count">> => ResolvedCount,
         <<"findings">> => Findings
@@ -875,6 +838,24 @@ now_iso8601() ->
             [{unit, second}, {offset, "Z"}]
         )
     ).
+
+json_safe(Map) when is_map(Map) ->
+    maps:from_list([{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map)]);
+json_safe(List) when is_list(List) -> [json_safe(V) || V <- List];
+json_safe(Tuple) when is_tuple(Tuple) -> [json_safe(V) || V <- tuple_to_list(Tuple)];
+json_safe(true) -> true;
+json_safe(false) -> false;
+json_safe(null) -> null;
+json_safe(undefined) -> null;
+json_safe(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
+json_safe(Bin) when is_binary(Bin) -> Bin;
+json_safe(Number) when is_number(Number) -> Number;
+json_safe(Other) -> to_binary(Other).
+
+json_key(K) when is_binary(K) -> K;
+json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
+json_key(K) when is_list(K) -> unicode:characters_to_binary(K);
+json_key(K) -> to_binary(K).
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);

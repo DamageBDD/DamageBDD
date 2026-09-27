@@ -22,6 +22,7 @@ status() ->
         learner => safe_call(fun ecai_codebase_learner:status/0),
         store => safe_call(fun ecai_learning_store:status/0),
         patch_manager => safe_call(fun ecai_patch_manager:status/0),
+        ollama_pool => safe_call(fun ecai_ollama_pool:status/0),
         snapshot_path => snapshot_path()
     }.
 

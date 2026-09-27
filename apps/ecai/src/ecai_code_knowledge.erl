@@ -33,8 +33,8 @@ learn_module(App, Analysis, Opts) when is_map(Analysis), is_map(Opts) ->
         <<"STRUCTURAL_METADATA_JSON:\n">>, jsx:encode(json_safe(Structural)), <<"\n\n">>,
         <<"SOURCE:\n">>, Source, <<"\n">>
     ]),
-    case ecai_ollama_client:generate_json(Prompt, Opts) of
-        {ok, Card0} ->
+    case ecai_ollama_pool:generate_json(learning, Prompt, Opts) of
+        {ok, Card0, Inference} ->
             Card = Card0#{
                 <<"schema_version">> => 1,
                 <<"prompt_version">> => ?PROMPT_VERSION,
@@ -42,7 +42,8 @@ learn_module(App, Analysis, Opts) when is_map(Analysis), is_map(Opts) ->
                 <<"module">> => atom_to_binary(Module, utf8),
                 <<"source_sha256">> => maps:get(source_sha256, Analysis),
                 <<"analysis_sha256">> => maps:get(analysis_sha256, Analysis),
-                <<"learned_at">> => now_iso8601()
+                <<"learned_at">> => now_iso8601(),
+                <<"inference">> => json_safe(Inference)
             },
             {ok, Card};
         {error, _} = Error -> Error
@@ -63,14 +64,15 @@ synthesize_application(App, Cards, GraphSummary, Opts) ->
         <<"MODULE_CARDS_JSON:\n">>, jsx:encode(json_safe(ThinCards)), <<"\n">>,
         <<"CALL_GRAPH_JSON:\n">>, jsx:encode(json_safe(GraphSummary)), <<"\n">>
     ]),
-    case ecai_ollama_client:generate_json(Prompt, Opts) of
-        {ok, Card0} ->
+    case ecai_ollama_pool:generate_json(synthesis, Prompt, Opts) of
+        {ok, Card0, Inference} ->
             {ok, Card0#{
                 <<"schema_version">> => 1,
                 <<"prompt_version">> => ?PROMPT_VERSION,
                 <<"application">> => atom_to_binary(App, utf8),
                 <<"module_count">> => length(Cards),
-                <<"learned_at">> => now_iso8601()
+                <<"learned_at">> => now_iso8601(),
+                <<"inference">> => json_safe(Inference)
             }};
         {error, _} = Error -> Error
     end.
@@ -86,12 +88,13 @@ synthesize_global(AppCards, Opts) when is_map(AppCards) ->
         <<"failure_propagation, repair_constraints, notes.\n\n">>,
         <<"APPLICATION_CARDS_JSON:\n">>, jsx:encode(json_safe(AppCards)), <<"\n">>
     ]),
-    case ecai_ollama_client:generate_json(Prompt, Opts) of
-        {ok, Card0} ->
+    case ecai_ollama_pool:generate_json(synthesis, Prompt, Opts) of
+        {ok, Card0, Inference} ->
             {ok, Card0#{
                 <<"schema_version">> => 1,
                 <<"prompt_version">> => ?PROMPT_VERSION,
-                <<"learned_at">> => now_iso8601()
+                <<"learned_at">> => now_iso8601(),
+                <<"inference">> => json_safe(Inference)
             }};
         {error, _} = Error -> Error
     end.

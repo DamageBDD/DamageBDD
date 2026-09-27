@@ -42,11 +42,12 @@ code_change(_Old, State, _Extra) -> {ok, State}.
 generate_attempt(Attempt, MaxAttempts, Fingerprint, Version, Context, Diagnostic, Opts) ->
     Prompt = patch_prompt(Context, Diagnostic, Attempt),
     OllamaOpts = maps:get(ollama, Opts, #{}),
-    case ecai_ollama_client:generate_json(Prompt, OllamaOpts) of
+    case ecai_ollama_pool:generate_json(patch, Prompt, OllamaOpts) of
         {error, Reason} ->
             final_failure(Fingerprint, Version, Context, Attempt,
                           {ollama_failed, Reason}, Opts);
-        {ok, Proposal} ->
+        {ok, Proposal0, Inference} ->
+            Proposal = Proposal0#{<<"inference">> => json_safe(Inference)},
             Patch = mget(<<"patch">>, Proposal, <<>>),
             case ecai_patch_verifier:validate_patch(Patch) of
                 {error, Reason} when Attempt < MaxAttempts ->
@@ -136,6 +137,7 @@ repair_record(Status, Fingerprint, Version, Context, Proposal, Patch,
         summary => mget(<<"summary">>, Proposal, <<>>),
         security_property => mget(<<"security_property">>, Proposal, <<>>),
         tests_requested => mget(<<"tests">>, Proposal, []),
+        inference => mget(<<"inference">>, Proposal, #{}),
         patch => Patch,
         patch_sha256 => sha256_hex(Patch),
         patch_file => to_binary(PatchFile),

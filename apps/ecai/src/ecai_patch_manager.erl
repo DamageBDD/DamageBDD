@@ -79,7 +79,17 @@ learning_ready(Opts) ->
         application:get_env(ecai, code_patch_require_global_learning, true)),
     case Require of
         false -> true;
-        true -> ecai_learning_store:get_global_knowledge() =/= not_found
+        true ->
+            LearnerReady = case ecai_codebase_learner:status() of
+                #{phase := idle, ready := true, last_completed_at := Completed}
+                  when Completed =/= undefined -> true;
+                _ -> false
+            end,
+            AppsReady = lists:all(fun(App) ->
+                ecai_learning_store:get_app_knowledge(App) =/= not_found
+            end, ?APPS),
+            LearnerReady andalso AppsReady andalso
+                ecai_learning_store:get_global_knowledge() =/= not_found
     end.
 
 process_reports(App, Reports, Opts) ->

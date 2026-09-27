@@ -5,7 +5,8 @@ This subsystem builds a persistent, inspectable code model for the `damage`, `ec
 ## Modules
 
 - `ecai_code_paths` — shared `/var/lib/damage` -> XDG state-root resolution.
-- `ecai_ollama_client` — deterministic Ollama JSON/text generation over `damage_gun`.
+- `ecai_ollama_client` — endpoint-aware Ollama HTTP client over `damage_gun`.
+- `ecai_ollama_pool` — LAN worker discovery, health/model-digest tracking, leasing, failover, and role-aware scheduling.
 - `ecai_code_analyser` — deterministic Erlang/BEAM/source analysis.
 - `ecai_code_graph` — module call graph and neighborhoods.
 - `ecai_learning_store` — DETS-backed analyses, knowledge cards, graphs, and repair history.
@@ -64,7 +65,7 @@ apps/erm/{src,test,tests}
 
 If repository source is unavailable, it falls back to the modules declared by the loaded OTP applications and reads source/abstract code from their BEAMs.
 
-Only changed source hashes regenerate module knowledge cards. Application/global cards are regenerated after relevant module-card changes.
+Only changed source hashes or a changed configured model regenerate module knowledge cards. Module-card inference records include the selected LAN node, model, discovered digest, and timing metadata. Application/global cards are regenerated after relevant module-card changes. Module learning can run concurrently across the configured Ollama capacity while DETS remains the single authoritative store.
 
 ## Suggested sys.config entries
 
@@ -81,10 +82,44 @@ Merge these keys into the existing `ecai` application config:
 {code_patch_max_attempts, 3},
 {code_patch_keep_worktree, false},
 {code_patch_command_timeout_ms, 300000},
-{code_ollama_host, "localhost"},
-{code_ollama_port, 11434},
 {code_ollama_model, "qwen3-coder:30b"},
-{code_ollama_timeout_ms, 180000}
+{code_ollama_timeout_ms, 180000},
+{code_ollama_connect_timeout_ms, 5000},
+{code_ollama_health_interval_ms, 30000},
+{code_ollama_health_timeout_ms, 5000},
+{code_ollama_failure_threshold, 2},
+{code_ollama_cluster_attempts, 3},
+{code_ollama_queue_timeout_ms, 300000},
+{code_learning_parallelism, auto},
+{code_ollama_nodes, [
+    #{
+        id => threadripper,
+        host => "127.0.0.1",
+        port => 11434,
+        roles => [learning, synthesis, audit, patch],
+        models => ["qwen3-coder:30b"],
+        max_inflight => 1,
+        weight => 2
+    },
+    #{
+        id => gpu1,
+        host => "192.168.1.31",
+        port => 11434,
+        roles => [learning, audit, patch],
+        models => ["qwen3-coder:30b"],
+        max_inflight => 1,
+        weight => 4
+    },
+    #{
+        id => gpu2,
+        host => "192.168.1.32",
+        port => 11434,
+        roles => [learning, audit, patch],
+        models => ["qwen3-coder:30b"],
+        max_inflight => 1,
+        weight => 4
+    }
+]}
 ```
 
 The existing vulnerability monitor settings remain independent:
@@ -92,6 +127,40 @@ The existing vulnerability monitor settings remain independent:
 ```erlang
 {vulnerability_scan_interval_ms, 60000},
 {vulnerability_rescan_unchanged, false}
+```
+
+
+## LAN Ollama worker pool
+
+Each Ollama worker must be reachable from the ECAI node. Keep port `11434` restricted to a trusted LAN/VLAN or authenticated reverse proxy; Ollama's native LAN endpoint should not be exposed directly to the public Internet.
+
+`ecai_ollama_pool` probes `/api/tags` and records the models and digests actually present on each worker. A node may optionally pin expected digests:
+
+```erlang
+#{
+    id => gpu1,
+    host => "192.168.1.31",
+    port => 11434,
+    roles => [learning, audit, patch],
+    models => ["qwen3-coder:30b"],
+    model_digests => #{
+        "qwen3-coder:30b" => "<digest from /api/tags>"
+    },
+    max_inflight => 1,
+    weight => 4
+}
+```
+
+If the configured digest does not match the worker's `/api/tags` result, that node is marked down. Requests are leased to healthy/unknown workers that advertise the requested role and model. Failed requests are retried on another eligible node up to `code_ollama_cluster_attempts`.
+
+Roles are intentionally separate: `learning` handles module cards, `synthesis` handles application/global cards, `audit` handles vulnerability scans, and `patch` handles repair generation. The first learning pass uses `code_learning_parallelism`; `auto` resolves to the currently configured learning capacity.
+
+Operator visibility:
+
+```erlang
+ecai_ollama_pool:status().
+ecai_ollama_pool:refresh().
+ecai_ollama_pool:capacity(learning).
 ```
 
 ## Operator API
