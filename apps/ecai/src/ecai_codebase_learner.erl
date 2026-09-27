@@ -41,6 +41,8 @@
     refresh_requested = false,
     ready = false,
     timer_ref = undefined,
+    next_run_at_ms = undefined,
+    resume_count = 0,
     opts = #{}
 }).
 
@@ -51,6 +53,7 @@ module_changed(App, Module) -> gen_server:cast(?SERVER, {module_changed, App, Mo
 status() -> status_snapshot().
 
 init(Opts) ->
+    process_flag(trap_exit, true),
     Interval = maps:get(
         interval_ms,
         Opts,
@@ -58,14 +61,25 @@ init(Opts) ->
     ),
     MaxParallel = resolve_parallelism(Opts),
     ok = init_status_table(),
-    State = #state{
+    Base = #state{
         interval_ms = Interval,
         max_parallel = MaxParallel,
         opts = Opts
     },
-    ok = publish_status(State),
-    self() ! start_cycle,
-    {ok, State}.
+    {State0, Action} = restore_checkpoint(Base),
+    State1 = restore_schedule(State0, Action),
+    case Action of
+        fresh -> ok;
+        _ -> ok = checkpoint_state(State1)
+    end,
+    ok = publish_status(State1),
+    case Action of
+        fresh -> self() ! start_cycle;
+        resume -> self() ! resume_cycle;
+        finalize -> self() ! finalize_cycle;
+        idle -> ok
+    end,
+    {ok, State1}.
 
 handle_call(status, _From, State) ->
     {reply, status_map(State), State};
@@ -75,11 +89,11 @@ handle_call(_Request, _From, State) ->
 handle_cast(learn_now, State0 = #state{phase = idle}) ->
     State1 = (cancel_cycle_timer(State0))#state{refresh_requested = false, ready = false},
     self() ! start_cycle,
-    ok = publish_status(State1),
+    ok = checkpoint_and_publish(State1),
     {noreply, State1};
 handle_cast(learn_now, State0) ->
     State1 = State0#state{refresh_requested = true},
-    ok = publish_status(State1),
+    ok = checkpoint_and_publish(State1),
     {noreply, State1};
 handle_cast({module_changed, App, Module}, State0) ->
     case lists:member(App, State0#state.apps) andalso is_atom(Module) of
@@ -90,6 +104,13 @@ handle_cast({module_changed, App, Module}, State0) ->
     end;
 handle_cast(_Msg, State) ->
     {noreply, State}.
+
+handle_info(resume_cycle, State0) ->
+    State1 = State0#state{phase = queued, inflight = #{}},
+    ok = checkpoint_and_publish(State1),
+    State2 = dispatch(State1),
+    ok = checkpoint_and_publish(State2),
+    {noreply, maybe_finalize(State2)};
 
 handle_info(start_cycle, State0 = #state{phase = idle}) ->
     StateA = cancel_cycle_timer(State0),
@@ -107,12 +128,13 @@ handle_info(start_cycle, State0 = #state{phase = idle}) ->
         refresh_requested = false,
         ready = false
     },
+    ok = checkpoint_and_publish(State1),
     State2 = dispatch(State1),
-    ok = publish_status(State2),
+    ok = checkpoint_and_publish(State2),
     {noreply, maybe_finalize(State2)};
 handle_info(start_cycle, State0) ->
     State1 = State0#state{refresh_requested = true},
-    ok = publish_status(State1),
+    ok = checkpoint_and_publish(State1),
     {noreply, State1};
 
 handle_info({learn_result, TaskRef, Result}, State0) ->
@@ -124,8 +146,9 @@ handle_info({learn_result, TaskRef, Result}, State0) ->
             Entry = maps:get(entry, Task),
             State1 = apply_learning_result(Entry, Result, State0#state{inflight = Inflight1}),
             State2 = State1#state{completed = min(State1#state.completed + 1, State1#state.total)},
+            ok = checkpoint_and_publish(State2),
             State3 = dispatch(State2),
-            ok = publish_status(State3),
+            ok = checkpoint_and_publish(State3),
             {noreply, maybe_finalize(State3)}
     end;
 
@@ -136,22 +159,23 @@ handle_info({'DOWN', MRef, process, _Pid, Reason}, State0) ->
         {ok, TaskRef, Task, Inflight1} ->
             Entry = maps:get(entry, Task),
             Error = {learning_worker_down, Reason},
-            logger:error("ECAI code learning worker failed entry=~p reason=~p", [Entry, Reason]),
+            logger:error("ECAI code learning worker failed entry=~p reason=~p; requeueing", [Entry, Reason]),
             State1 = State0#state{
                 inflight = Inflight1,
-                completed = min(State0#state.completed + 1, State0#state.total),
+                queue = [Entry | State0#state.queue],
                 last_error = {Entry, Error}
             },
             _ = TaskRef,
+            ok = checkpoint_and_publish(State1),
             State2 = dispatch(State1),
-            ok = publish_status(State2),
+            ok = checkpoint_and_publish(State2),
             {noreply, maybe_finalize(State2)}
     end;
 
 handle_info(finalize_cycle, State0 = #state{queue = [], inflight = Inflight})
   when map_size(Inflight) =:= 0 ->
     Finalizing = State0#state{phase = finalizing},
-    ok = publish_status(Finalizing),
+    ok = checkpoint_and_publish(Finalizing),
     State1 = finish_cycle(Finalizing),
     State2 = State1#state{phase = idle},
     State3 =
@@ -162,15 +186,23 @@ handle_info(finalize_cycle, State0 = #state{queue = [], inflight = Inflight})
             false ->
                 schedule_next_cycle(State2)
         end,
-    ok = publish_status(State3),
+    ok = checkpoint_and_publish(State3),
+    _ = ecai_learning_snapshot:write(State3#state.opts),
     {noreply, State3};
 handle_info(finalize_cycle, State) ->
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, State) ->
-    _ = cancel_cycle_timer(State),
+terminate(_Reason, State0) ->
+    State1 = cancel_timer_preserve_deadline(State0),
+    _ = checkpoint_state(State1),
+    maps:foreach(fun(_Ref, Task) ->
+        case maps:get(pid, Task, undefined) of
+            Pid when is_pid(Pid) -> catch exit(Pid, shutdown);
+            _ -> ok
+        end
+    end, State1#state.inflight),
     ok.
 
 code_change(_Old, State, _Extra) -> {ok, State}.
@@ -191,8 +223,9 @@ enqueue_module_change(App, Module, State0 = #state{phase = idle}) ->
         refresh_requested = false,
         ready = false
     },
+    ok = checkpoint_and_publish(State1),
     State2 = dispatch(State1),
-    ok = publish_status(State2),
+    ok = checkpoint_and_publish(State2),
     {noreply, maybe_finalize(State2)};
 enqueue_module_change(App, Module, State0 = #state{phase = Phase})
   when Phase =:= learning; Phase =:= queued ->
@@ -205,13 +238,14 @@ enqueue_module_change(App, Module, State0 = #state{phase = Phase})
                 queue = State0#state.queue ++ [Entry],
                 total = State0#state.total + 1
             },
+            ok = checkpoint_and_publish(State1),
             State2 = dispatch(State1),
-            ok = publish_status(State2),
+            ok = checkpoint_and_publish(State2),
             {noreply, State2}
     end;
 enqueue_module_change(_App, _Module, State0 = #state{phase = finalizing}) ->
     State1 = State0#state{refresh_requested = true},
-    ok = publish_status(State1),
+    ok = checkpoint_and_publish(State1),
     {noreply, State1}.
 
 entry_pending(Entry, State) ->
@@ -230,10 +264,10 @@ dispatch(State0) ->
             TaskRef = make_ref(),
             Parent = self(),
             Opts = State0#state.opts,
-            {Pid, MRef} = spawn_monitor(fun() ->
+            {Pid, MRef} = spawn_opt(fun() ->
                 Result = safe_learn_entry(Entry, Opts),
                 Parent ! {learn_result, TaskRef, Result}
-            end),
+            end, [link, monitor]),
             Task = #{entry => Entry, pid => Pid, mref => MRef},
             Inflight = (State0#state.inflight)#{TaskRef => Task},
             dispatch(State0#state{queue = Rest, inflight = Inflight, phase = learning})
@@ -339,6 +373,8 @@ status_map(State) ->
         changed_apps => maps:keys(State#state.changed_apps),
         refresh_requested => State#state.refresh_requested,
         ready => State#state.ready,
+        resume_count => State#state.resume_count,
+        next_run_at_ms => State#state.next_run_at_ms,
         last_started_at => State#state.last_started_at,
         last_completed_at => State#state.last_completed_at,
         last_error => State#state.last_error
@@ -476,7 +512,6 @@ finish_cycle(State0) ->
         [] -> refresh_global(State0);
         _ -> {error, {application_synthesis_failed, AppErrors}}
     end,
-    _ = ecai_learning_snapshot:write(State0#state.opts),
     case GlobalResult of
         ok ->
             State0#state{ready = true, last_completed_at = now_iso8601()};
@@ -583,13 +618,117 @@ ollama_opts(Opts) ->
     maps:get(ollama, Opts, #{}).
 
 schedule_next_cycle(State0) ->
+    Now = erlang:system_time(millisecond),
+    Next = Now + State0#state.interval_ms,
     TRef = erlang:send_after(State0#state.interval_ms, self(), start_cycle),
-    State0#state{timer_ref = TRef}.
+    State0#state{timer_ref = TRef, next_run_at_ms = Next}.
 
-cancel_cycle_timer(State = #state{timer_ref = undefined}) -> State;
-cancel_cycle_timer(State = #state{timer_ref = TRef}) ->
+cancel_timer_preserve_deadline(State = #state{timer_ref = undefined}) -> State;
+cancel_timer_preserve_deadline(State = #state{timer_ref = TRef}) ->
     _ = erlang:cancel_timer(TRef),
     State#state{timer_ref = undefined}.
+
+cancel_cycle_timer(State = #state{timer_ref = undefined}) ->
+    State#state{next_run_at_ms = undefined};
+cancel_cycle_timer(State = #state{timer_ref = TRef}) ->
+    _ = erlang:cancel_timer(TRef),
+    State#state{timer_ref = undefined, next_run_at_ms = undefined}.
+
+
+checkpoint_and_publish(State) ->
+    %% Fail closed: do not continue dispatching new inference work if its
+    %% recovery checkpoint cannot be durably committed.
+    ok = checkpoint_state(State),
+    publish_status(State).
+
+checkpoint_state(State) ->
+    Checkpoint = #{
+        schema_version => 1,
+        phase => State#state.phase,
+        apps => State#state.apps,
+        queue => State#state.queue,
+        inflight_entries => [
+            maps:get(entry, Task)
+         || Task <- maps:values(State#state.inflight)
+        ],
+        queued_count => length(State#state.queue),
+        inflight_count => map_size(State#state.inflight),
+        total => State#state.total,
+        completed => State#state.completed,
+        cycle => State#state.cycle,
+        changed_apps => State#state.changed_apps,
+        last_started_at => State#state.last_started_at,
+        last_completed_at => State#state.last_completed_at,
+        last_error => State#state.last_error,
+        refresh_requested => State#state.refresh_requested,
+        ready => State#state.ready,
+        next_run_at_ms => State#state.next_run_at_ms,
+        resume_count => State#state.resume_count
+    },
+    ecai_learning_store:put_checkpoint(codebase_learner, Checkpoint).
+
+restore_checkpoint(Base) ->
+    case ecai_learning_store:get_checkpoint(codebase_learner) of
+        {ok, #{schema_version := 1} = Cp} ->
+            restore_checkpoint_v1(Base, Cp);
+        {ok, _Unsupported} ->
+            {Base, fresh};
+        not_found ->
+            {Base, fresh}
+    end.
+
+restore_checkpoint_v1(Base, Cp) ->
+    Phase0 = maps:get(phase, Cp, idle),
+    Queue0 = maps:get(queue, Cp, []),
+    Inflight0 = maps:get(inflight_entries, Cp, []),
+    Pending = unique_entries(Inflight0 ++ Queue0),
+    State0 = Base#state{
+        apps = maps:get(apps, Cp, Base#state.apps),
+        queue = Pending,
+        inflight = #{},
+        total = maps:get(total, Cp, length(Pending)),
+        completed = maps:get(completed, Cp, 0),
+        cycle = maps:get(cycle, Cp, 0),
+        changed_apps = maps:get(changed_apps, Cp, #{}),
+        last_started_at = maps:get(last_started_at, Cp, undefined),
+        last_completed_at = maps:get(last_completed_at, Cp, undefined),
+        last_error = maps:get(last_error, Cp, undefined),
+        refresh_requested = maps:get(refresh_requested, Cp, false),
+        ready = maps:get(ready, Cp, false),
+        next_run_at_ms = maps:get(next_run_at_ms, Cp, undefined),
+        resume_count = maps:get(resume_count, Cp, 0) + 1
+    },
+    case Phase0 of
+        finalizing ->
+            {State0#state{phase = finalizing, queue = [], inflight = #{}}, finalize};
+        idle ->
+            {State0#state{phase = idle, queue = [], inflight = #{}}, idle};
+        _ when Pending =:= [] ->
+            {State0#state{phase = finalizing}, finalize};
+        _ ->
+            {State0#state{phase = queued, ready = false}, resume}
+    end.
+
+restore_schedule(State, idle) ->
+    schedule_at_checkpoint(State);
+restore_schedule(State, _Action) ->
+    State#state{timer_ref = undefined, next_run_at_ms = undefined}.
+
+schedule_at_checkpoint(State = #state{next_run_at_ms = undefined}) ->
+    schedule_next_cycle(State);
+schedule_at_checkpoint(State = #state{next_run_at_ms = Next}) ->
+    Now = erlang:system_time(millisecond),
+    Delay = max(0, Next - Now),
+    TRef = erlang:send_after(Delay, self(), start_cycle),
+    State#state{timer_ref = TRef}.
+
+unique_entries(Entries) ->
+    lists:reverse(lists:foldl(fun(Entry, Acc) ->
+        case lists:member(Entry, Acc) of
+            true -> Acc;
+            false -> [Entry | Acc]
+        end
+    end, [], Entries)).
 
 path_to_list(P) when is_list(P) -> P;
 path_to_list(P) when is_binary(P) -> binary_to_list(P).

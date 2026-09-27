@@ -66,6 +66,10 @@
     request_timeout_ms = ?DEFAULT_REQUEST_TIMEOUT_MS,
     connect_timeout_ms = ?DEFAULT_CONNECT_TIMEOUT_MS,
     rescan_unchanged = false,
+    phase = idle,
+    timer_ref = undefined,
+    next_run_at_ms = undefined,
+    resume_count = 0,
     last_error = undefined,
     last_completed_at = undefined
 }).
@@ -185,8 +189,18 @@ init_allowed_app(App, Opts) ->
                         ),
                         rescan_unchanged = opt(rescan_unchanged, Opts, false)
                     },
-                    self() ! start_cycle,
-                    {ok, State0};
+                    {State1, Action} = restore_scan_checkpoint(State0),
+                    State2 = restore_scan_schedule(State1, Action),
+                    case Action of
+                        fresh -> ok;
+                        _ -> ok = store_scan_checkpoint(State2)
+                    end,
+                    case Action of
+                        fresh -> self() ! start_cycle;
+                        resume -> self() ! scan_next;
+                        idle -> ok
+                    end,
+                    {ok, State2};
                 {error, Reason} ->
                     {stop, {cannot_open_findings_store, DetsFile, Reason}}
             end;
@@ -210,7 +224,10 @@ handle_call(status, _From, State) ->
         state_root => State#state.state_root,
         report_file => State#state.report_file,
         dets_file => State#state.dets_file,
-        rescan_unchanged => State#state.rescan_unchanged
+        rescan_unchanged => State#state.rescan_unchanged,
+        phase => State#state.phase,
+        resume_count => State#state.resume_count,
+        next_run_at_ms => State#state.next_run_at_ms
     },
     {reply, Reply, State};
 
@@ -223,44 +240,56 @@ handle_call({findings, Module}, _From, State) ->
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
-handle_cast(scan_now, State) ->
-    %% Restart the queue from the currently loaded application module list.
+handle_cast(scan_now, State0) ->
+    %% Restart from a fresh application-module list. The current module, if any,
+    %% has already completed before this cast can be handled.
+    State1 = cancel_scan_timer(State0#state{queue = [], current = undefined, phase = idle}),
+    _ = store_scan_checkpoint(State1),
     self() ! start_cycle,
-    {noreply, State#state{queue = [], current = undefined}};
+    {noreply, State1};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(start_cycle, State0) ->
-    case application_modules(State0#state.app) of
+    StateA = cancel_scan_timer(State0),
+    case application_modules(StateA#state.app) of
         {ok, Modules} ->
             Now = now_iso8601(),
-            State1 = State0#state{
+            State1 = StateA#state{
                 modules = Modules,
                 queue = Modules,
                 current = undefined,
-                cycle = State0#state.cycle + 1,
+                phase = scanning,
+                cycle = StateA#state.cycle + 1,
                 cycle_started_at = Now,
                 last_error = undefined
             },
+            ok = store_scan_checkpoint(State1),
             self() ! scan_next,
             {noreply, State1};
         {error, Reason} ->
-            State1 = State0#state{last_error = Reason},
-            schedule_next_cycle(State1#state.interval_ms),
+            State1 = schedule_next_cycle(StateA#state{phase = idle, last_error = Reason}),
+            _ = store_scan_checkpoint(State1),
             {noreply, State1}
     end;
 
 handle_info(scan_next, State = #state{queue = []}) ->
     CompletedAt = now_iso8601(),
-    State1 = State#state{current = undefined, last_completed_at = CompletedAt},
+    State1 = State#state{
+        current = undefined,
+        phase = idle,
+        last_completed_at = CompletedAt
+    },
     _ = write_aggregate_report(State1),
-    schedule_next_cycle(State1#state.interval_ms),
-    {noreply, State1};
+    State2 = schedule_next_cycle(State1),
+    _ = store_scan_checkpoint(State2),
+    {noreply, State2};
 
 handle_info(scan_next, State0 = #state{queue = [Module | Rest]}) ->
-    State1 = State0#state{current = Module, queue = Rest},
-    State2 =
+    State1 = State0#state{current = Module, queue = Rest, phase = scanning},
+    ok = store_scan_checkpoint(State1),
+    State2a =
         case scan_module(Module, State1) of
             {ok, Result} ->
                 logger:notice(
@@ -290,14 +319,18 @@ handle_info(scan_next, State0 = #state{queue = [Module | Rest]}) ->
                 store_scan_error(Module, Reason, State1),
                 State1#state{last_error = {Module, Reason}}
         end,
+    State2 = State2a#state{current = undefined},
     _ = write_aggregate_report(State2),
+    ok = store_scan_checkpoint(State2),
     self() ! scan_next,
     {noreply, State2};
 
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, State) ->
+terminate(_Reason, State0) ->
+    State = cancel_timer_preserve_deadline(State0),
+    _ = store_scan_checkpoint(State),
     case State#state.dets_tab of
         undefined -> ok;
         Tab -> dets:close(Tab)
@@ -779,10 +812,95 @@ resolve_state_root(Opts) ->
 %% Utilities
 %%====================================================================
 
-schedule_next_cycle(IntervalMs) ->
-    erlang:send_after(IntervalMs, self(), start_cycle),
-    ok.
+schedule_next_cycle(State0) ->
+    Next = erlang:system_time(millisecond) + State0#state.interval_ms,
+    TRef = erlang:send_after(State0#state.interval_ms, self(), start_cycle),
+    State0#state{timer_ref = TRef, next_run_at_ms = Next}.
 
+cancel_scan_timer(State = #state{timer_ref = undefined}) ->
+    State#state{next_run_at_ms = undefined};
+cancel_scan_timer(State = #state{timer_ref = TRef}) ->
+    _ = erlang:cancel_timer(TRef),
+    State#state{timer_ref = undefined, next_run_at_ms = undefined}.
+
+cancel_timer_preserve_deadline(State = #state{timer_ref = undefined}) -> State;
+cancel_timer_preserve_deadline(State = #state{timer_ref = TRef}) ->
+    _ = erlang:cancel_timer(TRef),
+    State#state{timer_ref = undefined}.
+
+
+
+store_scan_checkpoint(#state{dets_tab = undefined}) -> ok;
+store_scan_checkpoint(State) ->
+    Checkpoint = #{
+        schema_version => 1,
+        phase => State#state.phase,
+        app => State#state.app,
+        modules => State#state.modules,
+        queue => State#state.queue,
+        current => State#state.current,
+        cycle => State#state.cycle,
+        cycle_started_at => State#state.cycle_started_at,
+        last_completed_at => State#state.last_completed_at,
+        last_error => State#state.last_error,
+        next_run_at_ms => State#state.next_run_at_ms,
+        resume_count => State#state.resume_count,
+        persisted_at => now_iso8601()
+    },
+    case dets:insert(State#state.dets_tab, {scan_checkpoint, Checkpoint}) of
+        ok -> dets:sync(State#state.dets_tab);
+        Error -> Error
+    end.
+
+load_scan_checkpoint(Tab) ->
+    case dets:lookup(Tab, scan_checkpoint) of
+        [{scan_checkpoint, #{schema_version := 1} = Checkpoint}] -> {ok, Checkpoint};
+        _ -> not_found
+    end.
+
+restore_scan_checkpoint(State0) ->
+    case load_scan_checkpoint(State0#state.dets_tab) of
+        not_found ->
+            {State0, fresh};
+        {ok, Cp} ->
+            Phase = maps:get(phase, Cp, idle),
+            Current = maps:get(current, Cp, undefined),
+            Queue0 = maps:get(queue, Cp, []),
+            Queue = prepend_current(Current, Queue0),
+            State1 = State0#state{
+                modules = maps:get(modules, Cp, []),
+                queue = case Phase of scanning -> Queue; _ -> [] end,
+                current = undefined,
+                phase = Phase,
+                cycle = maps:get(cycle, Cp, 0),
+                cycle_started_at = maps:get(cycle_started_at, Cp, undefined),
+                last_completed_at = maps:get(last_completed_at, Cp, undefined),
+                last_error = maps:get(last_error, Cp, undefined),
+                next_run_at_ms = maps:get(next_run_at_ms, Cp, undefined),
+                resume_count = maps:get(resume_count, Cp, 0) + 1
+            },
+            case Phase of
+                scanning -> {State1, resume};
+                _ -> {State1#state{phase = idle}, idle}
+            end
+    end.
+
+restore_scan_schedule(State, fresh) -> State;
+restore_scan_schedule(State, resume) ->
+    State#state{timer_ref = undefined, next_run_at_ms = undefined};
+restore_scan_schedule(State = #state{next_run_at_ms = undefined}, idle) ->
+    schedule_next_cycle(State);
+restore_scan_schedule(State = #state{next_run_at_ms = Next}, idle) ->
+    Delay = max(0, Next - erlang:system_time(millisecond)),
+    TRef = erlang:send_after(Delay, self(), start_cycle),
+    State#state{timer_ref = TRef}.
+
+prepend_current(undefined, Queue) -> Queue;
+prepend_current(Current, Queue) ->
+    case Queue of
+        [Current | _] -> Queue;
+        _ -> [Current | Queue]
+    end.
 
 dets_tab_name(App) ->
     %% Bounded atom creation: App is already an OTP application atom.

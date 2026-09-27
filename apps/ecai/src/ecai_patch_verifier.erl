@@ -1,11 +1,40 @@
 -module(ecai_patch_verifier).
 
--export([verify/1, verify/2, validate_patch/1]).
+-export([verify/1, verify/2, validate_patch/1, cleanup_stale/0, cleanup_stale/1]).
 
 -define(ALLOWED_PREFIXES, ["apps/damage/", "apps/ecai/", "apps/erm/"]).
 -define(MAX_OUTPUT_BYTES, 200000).
 
 verify(PatchFile) -> verify(PatchFile, #{}).
+
+cleanup_stale() -> cleanup_stale(#{}).
+
+cleanup_stale(Opts) ->
+    Keep = maps:get(
+        keep_worktree,
+        Opts,
+        application:get_env(ecai, code_patch_keep_worktree, false)
+    ),
+    case Keep of
+        true -> {ok, #{skipped => keep_worktree_enabled}};
+        false -> cleanup_stale_enabled(Opts)
+    end.
+
+cleanup_stale_enabled(Opts) ->
+    RepoRoot = repo_root(Opts),
+    case repo_available(RepoRoot) of
+        false -> {error, {git_repository_not_found, RepoRoot}};
+        true ->
+            case ecai_code_paths:state_root(Opts) of
+                {error, _} = Error -> Error;
+                {ok, StateRoot} ->
+                    WorkRoot = ecai_code_paths:worktree_root(StateRoot),
+                    Results = cleanup_stale_dirs(RepoRoot, WorkRoot, Opts),
+                    Prune = run("git", ["-C", RepoRoot, "worktree", "prune"],
+                                RepoRoot, command_timeout(Opts)),
+                    {ok, #{worktrees => Results, prune => Prune}}
+            end
+    end.
 
 verify(PatchFile0, Opts) ->
     PatchFile = filename:absname(path_to_list(PatchFile0)),
@@ -37,7 +66,8 @@ verify_valid_patch(PatchFile, Opts) ->
                 {error, _} = Error -> Error;
                 {ok, StateRoot} ->
                     WorkRoot = ecai_code_paths:worktree_root(StateRoot),
-                    Id = integer_to_list(erlang:unique_integer([positive, monotonic])),
+                    Id = integer_to_list(erlang:system_time(microsecond)) ++ "-" ++
+                         integer_to_list(erlang:unique_integer([positive])),
                     Worktree = filename:join(WorkRoot, "repair-" ++ Id),
                     run_verification(RepoRoot, Worktree, PatchFile, Opts)
             end
@@ -98,6 +128,30 @@ cleanup_worktree(RepoRoot, Worktree, Opts) ->
     Result = run("git", ["-C", RepoRoot, "worktree", "remove", "--force", Worktree],
                  RepoRoot, command_timeout(Opts)),
     #{kept => false, result => Result}.
+
+
+cleanup_stale_dirs(RepoRoot, WorkRoot, Opts) ->
+    case file:list_dir(WorkRoot) of
+        {ok, Names} ->
+            [cleanup_stale_dir(RepoRoot, WorkRoot, Name, Opts)
+             || Name <- Names, lists:prefix("repair-", Name)];
+        {error, enoent} -> [];
+        {error, Reason} -> [#{ok => false, error => {cannot_list_worktree_root, Reason}}]
+    end.
+
+cleanup_stale_dir(RepoRoot, WorkRoot, Name, Opts) ->
+    Path = filename:join(WorkRoot, Name),
+    GitResult = run(
+        "git",
+        ["-C", RepoRoot, "worktree", "remove", "--force", Path],
+        RepoRoot,
+        command_timeout(Opts)
+    ),
+    #{
+        path => to_binary(Path),
+        git => GitResult,
+        still_present => filelib:is_dir(Path)
+    }.
 
 run(ExeName, Args, Cwd, Timeout) ->
     case os:find_executable(ExeName) of

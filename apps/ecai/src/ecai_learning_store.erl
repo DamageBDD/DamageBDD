@@ -22,6 +22,11 @@
     get_repair/2,
     repairs/0,
     repairs/1,
+    put_checkpoint/2,
+    get_checkpoint/1,
+    delete_checkpoint/1,
+    events/2,
+    events/3,
     snapshot_data/0
 ]).
 
@@ -30,8 +35,9 @@
 
 -define(SERVER, ?MODULE).
 -define(TABLE, ecai_code_learning_dets).
+-define(DEFAULT_EVENT_LIMIT, 100).
 
--record(state, {tab, state_root, file}).
+-record(state, {tab, state_root, file, event_seq = 0}).
 
 start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
@@ -63,13 +69,25 @@ put_global_knowledge(Card) -> gen_server:call(?SERVER, {put, global_knowledge, C
 get_global_knowledge() -> gen_server:call(?SERVER, {get, global_knowledge}).
 
 put_repair(Fingerprint, FindingVersion, Repair) ->
-    gen_server:call(?SERVER,
-        {put, {repair, to_binary(Fingerprint), to_binary(FindingVersion)}, Repair}, infinity).
+    Fp = to_binary(Fingerprint),
+    Version = to_binary(FindingVersion),
+    gen_server:call(?SERVER, {put_transition, {repair, Fp, Version}, repair, {Fp, Version}, Repair}, infinity).
 get_repair(Fingerprint, FindingVersion) ->
     gen_server:call(?SERVER,
         {get, {repair, to_binary(Fingerprint), to_binary(FindingVersion)}}).
 repairs() -> gen_server:call(?SERVER, repairs, infinity).
 repairs(Fingerprint) -> gen_server:call(?SERVER, {repairs, to_binary(Fingerprint)}, infinity).
+
+put_checkpoint(Name, Checkpoint) when is_atom(Name), is_map(Checkpoint) ->
+    gen_server:call(?SERVER, {put_checkpoint, Name, Checkpoint}, infinity).
+get_checkpoint(Name) when is_atom(Name) ->
+    gen_server:call(?SERVER, {get, {checkpoint, Name}}).
+delete_checkpoint(Name) when is_atom(Name) ->
+    gen_server:call(?SERVER, {delete, {checkpoint, Name}}, infinity).
+
+events(Type, Id) -> events(Type, Id, ?DEFAULT_EVENT_LIMIT).
+events(Type, Id, Limit) when is_atom(Type), is_integer(Limit), Limit > 0 ->
+    gen_server:call(?SERVER, {events, Type, Id, Limit}, infinity).
 
 snapshot_data() -> gen_server:call(?SERVER, snapshot_data, infinity).
 
@@ -79,7 +97,9 @@ init(Opts) ->
         {ok, Root} ->
             File = ecai_code_paths:dets_file(Root, "codebase_learning.dets"),
             case dets:open_file(?TABLE, [{file, File}, {type, set}, {auto_save, 10000}]) of
-                {ok, ?TABLE} -> {ok, #state{tab = ?TABLE, state_root = Root, file = File}};
+                {ok, ?TABLE} ->
+                    Seq = load_event_seq(?TABLE),
+                    {ok, #state{tab = ?TABLE, state_root = Root, file = File, event_seq = Seq}};
                 {error, Reason} -> {stop, {cannot_open_learning_store, File, Reason}}
             end;
         {error, Reason} -> {stop, {cannot_resolve_state_root, Reason}}
@@ -89,9 +109,19 @@ handle_call(stop, _From, State) -> {stop, normal, ok, State};
 handle_call(status, _From, State) ->
     Info = case dets:info(State#state.tab) of undefined -> []; I -> I end,
     {reply, #{state_root => State#state.state_root, file => State#state.file,
-              table_info => Info}, State};
+              event_seq => State#state.event_seq, table_info => Info}, State};
 handle_call({put, Key, Value}, _From, State) ->
-    Reply = case dets:insert(State#state.tab, {Key, Value}) of
+    Reply = persist_value(State#state.tab, Key, Value),
+    {reply, Reply, State};
+handle_call({put_transition, Key, Type, Id, Value0}, _From, State0) ->
+    {Reply, State1} = persist_transition(Key, Type, Id, Value0, State0),
+    {reply, Reply, State1};
+handle_call({put_checkpoint, Name, Checkpoint0}, _From, State) ->
+    Checkpoint = Checkpoint0#{persisted_at => now_iso8601()},
+    Reply = persist_value(State#state.tab, {checkpoint, Name}, Checkpoint),
+    {reply, Reply, State};
+handle_call({delete, Key}, _From, State) ->
+    Reply = case dets:delete(State#state.tab, Key) of
         ok -> dets:sync(State#state.tab);
         Error -> Error
     end,
@@ -115,6 +145,8 @@ handle_call(repairs, _From, State) ->
     {reply, collect_repairs(State#state.tab, all), State};
 handle_call({repairs, Fingerprint}, _From, State) ->
     {reply, collect_repairs(State#state.tab, Fingerprint), State};
+handle_call({events, Type, Id, Limit}, _From, State) ->
+    {reply, collect_events(State#state.tab, Type, Id, Limit), State};
 handle_call(snapshot_data, _From, State) ->
     {reply, build_snapshot_data(State#state.tab), State};
 handle_call(_Request, _From, State) -> {reply, {error, unsupported_call}, State}.
@@ -128,6 +160,72 @@ terminate(_Reason, State) ->
     ok.
 
 code_change(_Old, State, _Extra) -> {ok, State}.
+
+persist_value(Tab, Key, Value) ->
+    case dets:insert(Tab, {Key, Value}) of
+        ok -> dets:sync(Tab);
+        Error -> Error
+    end.
+
+persist_transition(Key, Type, Id, Value0, State0) ->
+    Seq = State0#state.event_seq + 1,
+    Now = now_iso8601(),
+    Value = enrich_persisted(Value0, Seq, Now),
+    Event = #{
+        seq => Seq,
+        type => Type,
+        id => Id,
+        at => Now,
+        state => event_summary(Type, Value)
+    },
+    Objects = [
+        {Key, Value},
+        {{event, Type, Id, Seq}, Event},
+        {{meta, event_seq}, Seq}
+    ],
+    case dets:insert(State0#state.tab, Objects) of
+        ok ->
+            case dets:sync(State0#state.tab) of
+                ok -> {ok, State0#state{event_seq = Seq}};
+                Error -> {Error, State0}
+            end;
+        Error -> {Error, State0}
+    end.
+
+enrich_persisted(Value, Seq, Now) when is_map(Value) ->
+    Value#{persist_seq => Seq, persisted_at => Now};
+enrich_persisted(Value, _Seq, _Now) -> Value.
+
+event_summary(checkpoint, Value) when is_map(Value) ->
+    maps:with([
+        schema_version, phase, cycle, completed, total, queued_count,
+        inflight_count, ready, last_error, next_run_at_ms, resume_count,
+        cycles, state, active_jobs, last_run_at
+    ], Value);
+event_summary(repair, Value) when is_map(Value) ->
+    maps:with([
+        status, stage, fingerprint, finding_version, application, module, attempt,
+        error, patch_sha256, patch_file, created_at, updated_at, completed_at,
+        persist_seq, persisted_at
+    ], Value);
+event_summary(_Type, Value) -> Value.
+
+load_event_seq(Tab) ->
+    case dets:lookup(Tab, {meta, event_seq}) of
+        [{{meta, event_seq}, Seq}] when is_integer(Seq), Seq >= 0 -> Seq;
+        _ -> 0
+    end.
+
+collect_events(Tab, Type, Id, Limit) ->
+    Events = dets:foldl(
+        fun
+            ({{event, Type0, Id0, Seq}, Event}, Acc) when Type0 =:= Type, Id0 =:= Id ->
+                [{Seq, Event} | Acc];
+            (_, Acc) -> Acc
+        end,
+        [], Tab),
+    Sorted = lists:reverse(lists:keysort(1, Events)),
+    [Event || {_Seq, Event} <- lists:sublist(Sorted, Limit)].
 
 collect_repairs(Tab, Filter) ->
     lists:reverse(dets:foldl(
@@ -161,13 +259,25 @@ build_snapshot_data(Tab) ->
                 Acc#{graphs => Graphs0#{App => ecai_code_graph:summary(Graph)}};
             ({{repair, Fingerprint, Version}, Repair}, Acc) ->
                 Repairs0 = maps:get(repairs, Acc, []),
-                Thin = maps:without([patch, verifier_output, context], Repair),
+                Thin = maps:without([patch, proposal, verifier_output, context], Repair),
                 Acc#{repairs => [Thin#{fingerprint => Fingerprint, finding_version => Version} | Repairs0]};
+            ({{checkpoint, Name}, Checkpoint}, Acc) ->
+                Runtime0 = maps:get(runtime_checkpoints, Acc, #{}),
+                Acc#{runtime_checkpoints => Runtime0#{Name => checkpoint_snapshot(Checkpoint)}};
             (_, Acc) -> Acc
         end,
         #{analyses => [], module_knowledge => [], app_knowledge => #{}, graphs => #{},
-          repairs => [], global_knowledge => #{}},
+          repairs => [], runtime_checkpoints => #{}, global_knowledge => #{}},
         Tab).
+
+checkpoint_snapshot(Checkpoint) when is_map(Checkpoint) ->
+    maps:without([queue, inflight_entries], Checkpoint);
+checkpoint_snapshot(Other) -> Other.
+
+now_iso8601() ->
+    unicode:characters_to_binary(calendar:system_time_to_rfc3339(
+        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+    )).
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);

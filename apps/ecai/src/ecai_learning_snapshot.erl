@@ -2,7 +2,7 @@
 
 -export([build/0, build/1, write/0, write/1, path/0]).
 
--define(SCHEMA, 2).
+-define(SCHEMA, 3).
 
 build() -> build(#{}).
 
