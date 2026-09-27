@@ -97,10 +97,42 @@ init([]) ->
                     modules => []
                 }
             ] ++
+            code_security_specs() ++
+            vulnerability_monitor_specs() ++
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
 
+
+code_security_specs() ->
+    case application:get_env(ecai, code_security_enabled, true) of
+        true ->
+            [#{
+                id => ecai_code_security_sup,
+                start => {ecai_code_security_sup, start_link, []},
+                restart => permanent,
+                shutdown => infinity,
+                type => supervisor,
+                modules => [ecai_code_security_sup]
+            }];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, code_security_enabled, Invalid})
+    end.
+
+
+vulnerability_monitor_specs() ->
+    Interval = application:get_env(ecai, vulnerability_scan_interval_ms, 60000),
+    RescanUnchanged = application:get_env(ecai, vulnerability_rescan_unchanged, false),
+    [
+        ecai_vuln_monitor:child_spec(#{
+            app => App,
+            interval_ms => Interval,
+            rescan_unchanged => RescanUnchanged
+        })
+     || App <- [damage, ecai, erm]
+    ].
 
 maybe_ingest_specs() ->
     case application:get_env(ecai, ingest_wal_enabled, false) of

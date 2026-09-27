@@ -8,7 +8,7 @@
 
 -define(OLLAMA_HOST, "localhost").
 -define(OLLAMA_PORT, 11434).
--define(OLLAMA_MODEL, "qwen2.5-coder:14b").
+-define(OLLAMA_MODEL, "qwen3-coder:30b").
 -define(EMBED_MODEL, <<"nomic-embed-text">>).
 
 -define(DEFAULT_CANDIDATE_POOL, 24).
