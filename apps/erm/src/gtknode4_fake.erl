@@ -13,7 +13,6 @@
 -record(state, {
     objects = #{},
     dialogs = #{},
-    stylesheets = #{},
     test_mode = true
 }).
 
@@ -23,22 +22,13 @@ init(Opts) ->
         backend => fake,
         protocol_version => 1,
         widgets => [
-            window,
-            box,
-            button,
-            label,
-            entry,
-            text_view,
-            list_view,
-            scale,
-            picture,
-            scrolled_box
+            window, box, button, label, entry, text_view, list_view, scale,
+            picture, scrolled_box
         ],
         object_commands => [create, config, read, destroy, inspect, sync],
         test_injection => TestMode,
         visual_capture => false,
-        css => true,
-        style_commands => [set_stylesheet, remove_stylesheet],
+        list_selection_index => true,
         dialogs => deterministic
     },
     {ok, #state{test_mode = TestMode}, Capabilities}.
@@ -105,16 +95,6 @@ handle_command({message_dialog, DialogId, ParentId, Message, Options0}, State0) 
             ],
             {reply, {ok, Response}, State0, Events}
     end;
-handle_command({set_stylesheet, Name, Css}, State0) when is_binary(Name), is_binary(Css) ->
-    Entry = #{name => Name, bytes => byte_size(Css)},
-    Stylesheets = maps:put(Name, Entry, State0#state.stylesheets),
-    {reply, ok, State0#state{stylesheets = Stylesheets}};
-handle_command({set_stylesheet, Name, Css}, State0) ->
-    {reply, {error, {bad_stylesheet, Name, Css}}, State0};
-handle_command({remove_stylesheet, Name}, State0) when is_binary(Name) ->
-    {reply, ok, State0#state{stylesheets = maps:remove(Name, State0#state.stylesheets)}};
-handle_command({remove_stylesheet, Name}, State0) ->
-    {reply, {error, {bad_stylesheet_name, Name}}, State0};
 handle_command({dismiss_dialog, DialogId}, State0) ->
     case maps:get(DialogId, State0#state.dialogs, undefined) of
         undefined ->
@@ -195,7 +175,8 @@ default_props(Type, Props0) ->
         label -> ensure_prop(label, <<>>, Props1);
         entry -> ensure_prop(text, <<>>, Props1);
         text_view -> ensure_prop(text, <<>>, Props1);
-        list_view -> ensure_prop(items, [], Props1);
+        list_view ->
+            ensure_prop(selected_index, -1, ensure_prop(items, [], Props1));
         _ -> Props1
     end.
 
@@ -223,7 +204,7 @@ clear_props(Props) ->
     case maps:get(type, Props, undefined) of
         entry -> maps:put(text, <<>>, Props);
         text_view -> maps:put(text, <<>>, Props);
-        list_view -> maps:put(items, [], Props);
+        list_view -> Props#{items => [], selected_index => -1};
         _ -> Props
     end.
 
@@ -271,7 +252,7 @@ apply_injected_state(change, Payload, Object0) ->
     maybe_set_text(Payload, Object0);
 apply_injected_state(select, Payload, Object0) ->
     Props0 = maps:get(props, Object0),
-    Props = maps:put(selection, maps:get(index, Payload, -1), Props0),
+    Props = maps:put(selected_index, maps:get(index, Payload, -1), Props0),
     Object0#{props := Props};
 apply_injected_state(_EventType, _Payload, Object) ->
     Object.

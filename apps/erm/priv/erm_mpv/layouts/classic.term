@@ -1,0 +1,11 @@
+[
+    {mpv_window, [{width, 1040}, {height, 620}]},
+    {top_strip, [{show, true}, {height, 30}]},
+    {now_playing_strip, [{show, true}, {height, 26}]},
+    {control_strip, [{show, true}, {height, 42}]},
+    {utility_row, [{show, true}, {height, 34}]},
+    {body_row, [{show, true}, {hexpand, true}, {vexpand, true}]},
+    {playlist_panel, [{show, true}, {hexpand, true}, {vexpand, true}]},
+    {side_panel, [{show, true}, {width, 260}, {vexpand, true}]},
+    {status_strip, [{show, true}, {height, 24}]}
+].

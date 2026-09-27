@@ -12,7 +12,7 @@
 -module(erm_mpv).
 -behaviour(gen_server).
 
--include_lib("erm.hrl").
+-include("erm_playlist.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include("erm_log.hrl").
 
@@ -198,15 +198,18 @@ handle_info(connect_mpv, State = #state{ipc = undefined}) ->
         {ok, Ipc} ->
             cancel_timer(State#state.mpv_timer),
             demonitor_ipc(State#state.ipc_monitor),
-            ?LOG_INFO("Connected to MPV IPC at ~ts", [ipc_path()]),
-            _ = ui_config(playback_detail, [{text, "Connected"}]),
-            {noreply, State#state{
+            ?LOG_INFO("Connected to existing MPV IPC at ~ts without touching playback", [ipc_path()]),
+            ConnectedState = State#state{
                 ipc = Ipc,
                 ipc_monitor = monitor_ipc(Ipc),
                 mpv_timer = undefined,
                 mpv_retry_ms = ?MPV_RETRY_MS,
                 mpv_errors = maps:remove(connect, State#state.mpv_errors)
-            }};
+            },
+            %% Reconstruct UI state from the already-running MPV process. Do
+            %% not load, seek, pause, or otherwise recover playback here: an
+            %% OTP application restart is only a controller/UI restart.
+            {noreply, refresh_mpv_status(ConnectedState)};
         {error, Reason} ->
             Delay = State#state.mpv_retry_ms,
             Timer = replace_timer(State#state.mpv_timer, Delay, connect_mpv),
@@ -219,8 +222,10 @@ handle_info(connect_mpv, State = #state{ipc = undefined}) ->
 handle_info(connect_mpv, State) ->
     {noreply, State#state{mpv_timer = undefined}};
 handle_info(refresh_playlist, State0) ->
-    _ = refresh_playlist(State0),
+    %% MPV is authoritative for automatic progression. Sync its path into the
+    %% logical playlist before moving the native GtkListBox highlight.
     State1 = refresh_mpv_status(State0),
+    _ = refresh_playlist(State1),
     Timer = replace_timer(State1#state.refresh_timer, ?REFRESH_MS, refresh_playlist),
     {noreply, State1#state{refresh_timer = Timer}};
 handle_info({mpv, status, Status}, State) when is_map(Status) ->
@@ -250,25 +255,23 @@ handle_info(
     }};
 %% Transport controls.
 handle_info({gtkgs, previous_button, click, _Data, _Args}, State) ->
-    {noreply, play_selected(safe_playlist(prev), State)};
+    %% Peek first and only advance playlist state after MPV confirms the load.
+    %% This keeps playlist progression aligned when a media load fails.
+    {noreply, play_selected(safe_playlist(peek_prev), State)};
 handle_info({gtkgs, play_button, click, _Data, _Args}, State) ->
     {noreply, play_or_recover(State)};
 handle_info({gtkgs, next_button, click, _Data, _Args}, State) ->
-    {noreply, play_selected(safe_playlist(next), State)};
+    %% Peek first and only advance playlist state after MPV confirms the load.
+    {noreply, play_selected(safe_playlist(peek_next), State)};
 %% Playlist and library actions.
 handle_info({gtkgs, playlist_list, select, _Data, [Index, _Text, true]}, State) when
     is_integer(Index), Index >= 0
 ->
-    case safe_playlist(get_by_index, [Index]) of
-        {ok, Track} ->
-            {noreply, play_track(Track, State)};
-        {error, Reason} ->
-            update_status(io_lib:format("Could not select track: ~p", [Reason])),
-            {noreply, State};
-        Other ->
-            update_status(io_lib:format("Unexpected playlist reply: ~p", [Other])),
-            {noreply, State}
-    end;
+    %% A listbox selection is a request to jump to that logical playlist
+    %% position. Do not load the selected file as a singleton: doing so replaces
+    %% MPV's queue, loses progression, and lets later playlist synchronisation
+    %% collapse the logical playlist to one item.
+    {noreply, play_playlist_index(Index, State)};
 handle_info({gtkgs, like_button, click, _Data, _Args}, State) ->
     case safe_playlist(toggle_like_current) of
         {error, Reason} ->
@@ -1229,12 +1232,55 @@ refresh_playlist(_State) ->
             Value when is_list(Value) -> Value;
             _ -> []
         end,
-    Items = [playlist_item(Index, Track) || {Index, Track} <- Tracks],
-    _ = ui_config(playlist_list, [{items, Items}]),
+    CurrentId = current_track_id(),
+    Items = [
+        unicode:characters_to_binary(playlist_item(Index, Track, Track#track.id =:= CurrentId))
+     || {Index, Track} <- Tracks
+    ],
+    SelectedIndex = current_track_index(Tracks, CurrentId),
+    %% Keep row contents and playback position separate. selected_index changes
+    %% the GtkListBox highlight under native event suppression, so automatic MPV
+    %% progression or a programmatic refresh cannot recurse into a select event.
+    _ = update_playlist_items(Items, SelectedIndex),
     update_current_labels(),
     ok.
 
-playlist_item(Index, Track) ->
+current_track_id() ->
+    case safe_playlist(current) of
+        {ok, #track{id = Id}} -> Id;
+        _ -> undefined
+    end.
+
+current_track_index(_Tracks, undefined) ->
+    -1;
+current_track_index(Tracks, CurrentId) ->
+    case [Index || {Index, #track{id = Id}} <- Tracks, Id =:= CurrentId] of
+        [Index | _] -> Index;
+        [] -> -1
+    end.
+
+update_playlist_items(Items, SelectedIndex) ->
+    case ui_read(playlist_list, items) of
+        Items ->
+            sync_playlist_selection(SelectedIndex);
+        _Other ->
+            %% One native config transaction rebuilds the rows and restores the
+            %% desired highlight while gtknode4 suppresses row-selected events.
+            ui_config(playlist_list, [
+                {items, Items},
+                {selected_index, SelectedIndex}
+            ])
+    end.
+
+sync_playlist_selection(SelectedIndex) ->
+    case ui_read(playlist_list, selected_index) of
+        SelectedIndex ->
+            ok;
+        _Other ->
+            ui_config(playlist_list, [{selected_index, SelectedIndex}])
+    end.
+
+playlist_item(Index, Track, _IsCurrent) ->
     Liked =
         case Track#track.liked of
             true -> "★";
@@ -1245,7 +1291,9 @@ playlist_item(Index, Track) ->
             undefined -> "local";
             Value -> short_cid(Value)
         end,
-    io_lib:format("~s  ~3B  ~ts   ·   ~ts", [Liked, Index + 1, display_title(Track), Cid]).
+    io_lib:format("~ts  ~3B  ~ts   ·   ~ts", [
+        Liked, Index + 1, display_title(Track), Cid
+    ]).
 
 update_current_labels() ->
     case safe_playlist(current) of
@@ -1273,35 +1321,132 @@ play_selected(Other, State) ->
     update_status(io_lib:format("Unexpected playlist reply: ~p", [Other])),
     State.
 
+play_playlist_index(Index, State) ->
+    case safe_playlist(get_by_index, [Index]) of
+        {ok, Track} when
+            Track#track.id =:= State#state.loaded_track_id
+        ->
+            ?LOG_DEBUG(
+                "Ignoring duplicate playlist selection index=~p id=~p",
+                [Index, Track#track.id]
+            ),
+            State;
+
+        {ok, Track} ->
+            ?LOG_DEBUG(
+                "Playlist selection index=~p id=~p path=~ts",
+                [Index, Track#track.id, Track#track.path]
+            ),
+            play_track(Track, State);
+
+        {error, Reason} ->
+            update_status(
+                io_lib:format(
+                    "Could not select track ~p: ~p",
+                    [Index, Reason]
+                )
+            ),
+            State;
+
+        Other ->
+            update_status(
+                io_lib:format(
+                    "Unexpected playlist reply for ~p: ~p",
+                    [Index, Other]
+                )
+            ),
+            State
+    end.
+
 play_track(Track, State) ->
     case normalize_mpv_path(Track#track.path) of
         {ok, Path} ->
-            case call_mpv(load_file, [Path], State) of
-                {error, _Reason, FailedState} ->
-                    FailedState;
-                {ok, _Reply, ReadyState} ->
-                    _ = ui_config(now_playing, [{text, display_title(Track)}]),
-                    case safe_playlist(set_current, [Track#track.id]) of
-                        {error, PlaylistReason} ->
-                            update_status(
-                                io_lib:format(
-                                    "Playing, but playlist state could not be updated: ~p",
-                                    [PlaylistReason]
-                                )
-                            );
-                        _ ->
-                            update_status("Playing")
-                    end,
-                    ReadyState#state{
-                        playback_state = playing,
-                        loaded_track_id = Track#track.id,
-                        loaded_track_path = Path
-                    }
+            %% Preserve queue semantics when the user jumps around. Build an
+            %% M3U beginning at the selected logical track and let MPV continue
+            %% through the remaining playlist naturally. load_file/replace made
+            %% the MPV playlist a singleton and was the cause of progression
+            %% being lost after a selection.
+            case playlist_tail_from_track(Track) of
+                {ok, TailTracks} ->
+                    play_track_progression(Track, Path, TailTracks, State);
+                {error, _Reason} ->
+                    %% A track supplied from outside playlist state can still be
+                    %% played, but normal UI playlist navigation should always
+                    %% use the progression-preserving path above.
+                    play_single_track(Track, Path, State)
             end;
         {error, Reason} ->
             update_status(io_lib:format("Cannot play track: ~p", [Reason])),
             State
     end.
+
+playlist_tail_from_track(#track{id = Id}) ->
+    case safe_playlist(all) of
+        Tracks when is_list(Tracks) ->
+            case lists:dropwhile(
+                fun({_Index, #track{id = TrackId}}) -> TrackId =/= Id end,
+                Tracks
+            ) of
+                [] -> {error, track_not_in_playlist};
+                Tail -> {ok, [Track || {_Index, Track} <- Tail]}
+            end;
+        Other ->
+            {error, {playlist_unavailable, Other}}
+    end.
+
+play_track_progression(Track, Path, TailTracks, State) ->
+    PlaylistFile = selection_playlist_file(),
+    case write_selection_playlist(PlaylistFile, TailTracks) of
+        ok ->
+            PlaylistBin = unicode:characters_to_binary(PlaylistFile),
+            case call_mpv(load_list, [PlaylistBin], State) of
+                {ok, _Reply, ReadyState} ->
+                    commit_playing_track(Track, Path, ReadyState);
+                {error, Reason, FailedState} ->
+                    update_status(io_lib:format("Could not load selected playlist position: ~p", [Reason])),
+                    FailedState
+            end;
+        {error, Reason} ->
+            update_status(io_lib:format("Could not build selected playlist progression: ~p", [Reason])),
+            State
+    end.
+
+play_single_track(Track, Path, State) ->
+    case call_mpv(load_file, [Path], State) of
+        {ok, _Reply, ReadyState} ->
+            commit_playing_track(Track, Path, ReadyState);
+        {error, _Reason, FailedState} ->
+            FailedState
+    end.
+
+commit_playing_track(Track, Path, ReadyState) ->
+    _ = ui_config(now_playing, [{text, display_title(Track)}]),
+    case safe_playlist(set_current, [Track#track.id]) of
+        {error, PlaylistReason} ->
+            update_status(
+                io_lib:format(
+                    "Playing, but playlist state could not be updated: ~p",
+                    [PlaylistReason]
+                )
+            );
+        _ ->
+            update_status("Playing")
+    end,
+    %% Refresh the marker without rebuilding rows unless their content changed.
+    _ = refresh_playlist(ReadyState),
+    ReadyState#state{
+        playback_state = playing,
+        loaded_track_id = Track#track.id,
+        loaded_track_path = Path
+    }.
+
+selection_playlist_file() ->
+    Tmp = getenv_default("TMPDIR", "/tmp"),
+    filename:join(Tmp, "erm-selected-progression.m3u8").
+
+write_selection_playlist(Path, Tracks) ->
+    Body = ["#EXTM3U\n" | [[Track#track.path, "\n"] || Track <- Tracks]],
+    file:write_file(Path, unicode:characters_to_binary(Body)).
 
 normalize_mpv_path(Path0) ->
     Path = to_text(Path0),
@@ -1415,15 +1560,38 @@ apply_playback_status(Status, State) when is_map(Status) ->
     Path0 = map_value(
         [path, "path", <<"path">>, filename, "filename", <<"filename">>],
         Status,
-        State#state.loaded_track_path
+        undefined
     ),
     Idle = map_value([idle_active, "idle-active", <<"idle-active">>], Status, undefined),
     Paused = map_value([pause, "pause", <<"pause">>], Status, undefined),
     PlaybackState = playback_state(Idle, Paused, Path0),
-    State#state{
+    LoadedPath = normalize_loaded_path(Path0, State#state.loaded_track_path),
+    State1 = State#state{
         playback_state = PlaybackState,
-        loaded_track_path = normalize_loaded_path(Path0, State#state.loaded_track_path)
-    }.
+        loaded_track_path = LoadedPath
+    },
+    %% MPV is authoritative for automatic end-of-track progression. Whenever
+    %% its path advances, mirror that into the persistent playlist manager.
+    %% This is metadata/state synchronisation only: it sends no playback
+    %% command and therefore cannot interrupt the surviving MPV session.
+    sync_playlist_position(Path0, State1).
+
+sync_playlist_position(Path0, State) ->
+    case has_loaded_path(Path0) of
+        false ->
+            State;
+        true ->
+            Path = normalize_loaded_path(Path0, State#state.loaded_track_path),
+            case safe_playlist(sync_current_path, [Path]) of
+                {ok, Track = #track{}} ->
+                    State#state{
+                        loaded_track_id = Track#track.id,
+                        loaded_track_path = Path
+                    };
+                _ ->
+                    State
+            end
+    end.
 
 status_has_loaded_media(Status) ->
     Path = map_value(
@@ -1454,11 +1622,14 @@ has_loaded_path(undefined) -> false;
 has_loaded_path(null) -> false;
 has_loaded_path(<<>>) -> false;
 has_loaded_path([]) -> false;
+has_loaded_path({error, _Reason}) -> false;
 has_loaded_path(_Path) -> true.
 
 normalize_loaded_path(Path, Previous) when
     Path =:= undefined; Path =:= null; Path =:= <<>>; Path =:= []
 ->
+    Previous;
+normalize_loaded_path({error, _Reason}, Previous) ->
     Previous;
 normalize_loaded_path(Path, _Previous) when is_binary(Path) ->
     unicode:characters_to_list(Path);
@@ -1595,10 +1766,7 @@ drop_mpv_connection(State) ->
     ensure_mpv_connect(State#state{
         ipc = undefined,
         ipc_monitor = undefined,
-        mpv_retry_ms = ?MPV_RETRY_MS,
-        playback_state = idle,
-        loaded_track_id = undefined,
-        loaded_track_path = undefined
+        mpv_retry_ms = ?MPV_RETRY_MS
     }).
 
 mark_mpv_disconnected(Reason, State) ->
@@ -1608,10 +1776,7 @@ mark_mpv_disconnected(Reason, State) ->
         ipc = undefined,
         ipc_monitor = undefined,
         mpv_timer = Timer,
-        mpv_retry_ms = ?MPV_RETRY_MS,
-        playback_state = idle,
-        loaded_track_id = undefined,
-        loaded_track_path = undefined
+        mpv_retry_ms = ?MPV_RETRY_MS
     },
     report_mpv_error(disconnected, Reason, DisconnectedState).
 

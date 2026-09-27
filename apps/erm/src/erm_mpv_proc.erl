@@ -5,8 +5,10 @@
 %%% commands after this process has ensured the IPC socket exists.
 %%%
 %%% All MPV JSON commands should cross this boundary via command/2,3 so a
-%%% blocked IPC call cannot wedge the media UI or autoplay worker. A command
-%%% timeout is treated as a poisoned MPV session and triggers a managed restart.
+%%% blocked IPC call cannot wedge the media UI or autoplay worker. In the
+%%% default survive_beam mode, command/IPC failures are recovered
+%%% non-destructively so an OTP application restart cannot reset live playback.
+%%% Explicit restart/0 remains the deliberate destructive recovery path.
 %%%
 %%% The managed MPV is launched as a hidden audio backend: no standalone MPV
 %%% window, no video output, no album-art video surface, and no terminal input.
@@ -48,6 +50,7 @@
 -define(IPC_REPLY_TIMEOUT_MS, 1000).
 -define(IPC_REPLY_MAX_BYTES, 1048576).
 -define(DETACHED_START_WAIT_MS, 5000).
+-define(PRESERVE_SOCKET_WAIT_MS, 5000).
 -define(LOG_DOMAIN, ?ERM_LOG_DOMAIN_MPV_PROC).
 -define(LOG_META, ?ERM_LOG_META(?LOG_DOMAIN)).
 
@@ -131,10 +134,13 @@ handle_call({command, Function, Args, Timeout}, _From, S0) ->
                 {ok, Reply} ->
                     {reply, Reply, S1#st{last_error = undefined}};
                 {error, Reason = {mpv_command_timeout, _Function, _Timeout}} ->
-                    %% Reply immediately so the caller/UI is not held hostage
-                    %% while MPV is being torn down and recreated. Recovery is
-                    %% owned by this process and happens asynchronously.
-                    self() ! {restart_mpv, Reason},
+                    %% A BEAM/application restart must never turn a transient
+                    %% IPC timeout into an audible playback restart. In
+                    %% survive_beam mode recovery is deliberately
+                    %% non-destructive: re-probe/adopt the existing backend and
+                    %% only start a new MPV after the old OS process is proven
+                    %% gone. Explicit restart/0 remains destructive by design.
+                    self() ! {recover_mpv, Reason},
                     {reply, {error, Reason}, S1#st{last_error = Reason}};
                 {error, Reason} ->
                     {reply, {error, Reason}, S1#st{last_error = Reason}}
@@ -165,6 +171,7 @@ handle_call(status, _From, S) ->
         owned => S#st.os_pid =/= undefined orelse S#st.detached,
         detached => S#st.detached,
         survive_beam => S#st.survive_beam,
+        preserve_live_playback => S#st.survive_beam,
         pid_file => mpv_pid_file(S#st.path),
         pid_file_os_pid => pidfile_status(S#st.path),
         hidden_gui => true,
@@ -205,6 +212,11 @@ handle_info({'EXIT', Pid, Reason}, S = #st{pid = Pid, path = Path}) ->
         detached = false,
         last_error = {managed_mpv_exit, Reason}
     }};
+handle_info({restart_mpv, Reason}, S0 = #st{survive_beam = true}) ->
+    %% Compatibility with any queued recovery message from an older code
+    %% version: never destructively restart a live survive_beam session.
+    self() ! {recover_mpv, Reason},
+    {noreply, S0};
 handle_info({restart_mpv, Reason}, S0) ->
     case restart_mpv(Reason, S0) of
         {ok, S1} ->
@@ -213,6 +225,25 @@ handle_info({restart_mpv, Reason}, S0) ->
             ?LOG_WARNING("MPV restart failed after ~p: ~p", [Reason, RestartReason], ?LOG_META),
             {noreply, S1#st{last_error = {Reason, RestartReason}}}
     end;
+handle_info({recover_mpv, Reason}, S0) ->
+    case ensure_mpv(S0#st.path, S0) of
+        {ok, S1} ->
+            ?LOG_INFO("MPV recovered without restarting playback after ~p", [Reason], ?LOG_META),
+            {noreply, S1#st{last_error = undefined}};
+        {error, RecoverReason, S1} ->
+            ?LOG_WARNING(
+                "MPV non-destructive recovery pending after ~p: ~p",
+                [Reason, RecoverReason],
+                ?LOG_META
+            ),
+            {noreply, S1#st{last_error = {Reason, RecoverReason}}}
+    end;
+handle_info({'EXIT', Pid, Reason}, State) ->
+    ?LOG_WARNING(
+        "Ignoring EXIT from unrelated process pid=~p reason=~p",
+        [Pid, Reason]
+    ),
+    {noreply, State};
 handle_info(Msg, S) ->
     ?LOG_DEBUG("Unhandled erm_mpv_proc message: ~p", [Msg], ?LOG_META),
     {noreply, S}.
@@ -282,22 +313,58 @@ ensure_mpv(Path, S) ->
         {true, true} ->
             {ok, S#st{last_error = undefined}};
         {true, false} ->
-            ?LOG_WARNING(
-                "Managed MPV pid=~p os_pid=~p is alive but IPC socket ~s is unavailable; restarting",
-                [S#st.pid, S#st.os_pid, Path],
-                ?LOG_META
-            ),
-            case restart_mpv({managed_mpv_socket_unavailable, Path}, S) of
-                {ok, S1} -> {ok, S1};
-                {error, Reason, S1} -> {error, Reason, S1}
-            end;
+            preserve_live_backend(Path, S);
         %% Something already owns the socket. Do not delete it.
         {false, true} ->
             ?LOG_INFO("MPV IPC socket already alive at ~s; adopting existing MPV", [Path], ?LOG_META),
             {ok, adopt_external_mpv(Path, S)};
         {false, false} ->
-            start_managed_mpv(Path, S)
+            adopt_surviving_or_start(Path, S)
     end.
+
+%% Preserve a live detached backend even if its IPC socket is briefly
+%% unavailable while the OTP application is being stopped/started. Restarting
+%% a still-running MPV here would reset the track/position and create exactly
+%% the playback interruption survive_beam is intended to avoid.
+preserve_live_backend(Path, S = #st{survive_beam = true}) ->
+    case wait_for_socket(Path, ?PRESERVE_SOCKET_WAIT_MS) of
+        ok ->
+            {ok, S#st{last_error = undefined}};
+        {error, timeout} ->
+            {error, {mpv_ipc_temporarily_unavailable, Path}, S}
+    end;
+preserve_live_backend(Path, S) ->
+    ?LOG_WARNING(
+        "Managed MPV pid=~p os_pid=~p is alive but IPC socket ~s is unavailable; restarting",
+        [S#st.pid, S#st.os_pid, Path],
+        ?LOG_META
+    ),
+    case restart_mpv({managed_mpv_socket_unavailable, Path}, S) of
+        {ok, S1} -> {ok, S1};
+        {error, Reason, S1} -> {error, Reason, S1}
+    end.
+
+adopt_surviving_or_start(Path, S = #st{survive_beam = true}) ->
+    case pidfile_status(Path) of
+        OsPid when is_integer(OsPid) ->
+            ?LOG_NOTICE(
+                "Found surviving MPV os_pid=~p with IPC temporarily unavailable; waiting instead of restarting playback",
+                [OsPid],
+                ?LOG_META
+            ),
+            case wait_for_socket(Path, ?PRESERVE_SOCKET_WAIT_MS) of
+                ok ->
+                    {ok, adopt_external_mpv(Path, S)};
+                {error, timeout} ->
+                    {error,
+                        {surviving_mpv_ipc_unavailable, OsPid, Path},
+                        S#st{os_pid = OsPid, detached = true}}
+            end;
+        _ ->
+            start_managed_mpv(Path, S)
+    end;
+adopt_surviving_or_start(Path, S) ->
+    start_managed_mpv(Path, S).
 
 start_managed_mpv(Path, S) ->
     case os:find_executable("mpv") of

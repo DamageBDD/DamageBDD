@@ -46,9 +46,8 @@ defaults() ->
         enabled => true,
         show_on_start => false,
         relays => [
-            <<"wss://relay.damus.io">>,
-            <<"wss://nos.lol">>,
-            <<"wss://relay.primal.net">>
+            <<"wss://bucket.coracle.social">>,
+            <<"wss://relay.nsec.app">>
         ],
         window_seconds => 172800,
         refresh_ms => 60000,

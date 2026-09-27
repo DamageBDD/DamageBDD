@@ -78,7 +78,6 @@ stop(_State) ->
     %% The application controller has already shut down erm_sup, including
     %% gtknode4_sup and the local native process, before this callback runs.
     best_effort(fun() -> cowboy:stop_listener(http_erm) end),
-    best_effort(fun() -> application:stop(gun) end),
     best_effort(fun() -> persistent_term:erase(erm_wx_env) end),
     best_effort(fun() -> wx:destroy() end),
     ok.

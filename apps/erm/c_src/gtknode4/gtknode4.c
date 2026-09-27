@@ -45,6 +45,8 @@ typedef struct {
   char **items;
   int item_count;
   gboolean has_items;
+  gboolean has_selected_index;
+  int selected_index;
   gboolean has_enabled;
   gboolean enabled;
   gboolean has_shown;
@@ -342,6 +344,7 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_NUMBER_OPTION("spacing", has_spacing, spacing)
     GN4_NUMBER_OPTION("margin", has_margin, margin)
     GN4_NUMBER_OPTION("width_chars", has_width_chars, width_chars)
+    GN4_NUMBER_OPTION("selected_index", has_selected_index, selected_index)
 
 #undef GN4_NUMBER_OPTION
 
@@ -414,6 +417,23 @@ static void gn4_send_reply_ok_binary(Gn4State *st, const erlang_ref *ref,
   ei_x_encode_tuple_header(&reply, 2);
   ei_x_encode_atom(&reply, "ok");
   ei_x_encode_binary(&reply, value ? value : "", (long)length);
+  ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, reply.buff,
+              reply.index);
+  ei_x_free(&reply);
+}
+
+
+static void gn4_send_reply_ok_long(Gn4State *st, const erlang_ref *ref,
+                                   long value) {
+  ei_x_buff reply;
+  ei_x_new_with_version(&reply);
+  ei_x_encode_tuple_header(&reply, 4);
+  ei_x_encode_atom(&reply, "gtknode4");
+  ei_x_encode_atom(&reply, "reply");
+  ei_x_encode_ref(&reply, (erlang_ref *)ref);
+  ei_x_encode_tuple_header(&reply, 2);
+  ei_x_encode_atom(&reply, "ok");
+  ei_x_encode_long(&reply, value);
   ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, reply.buff,
               reply.index);
   ei_x_free(&reply);
@@ -575,6 +595,79 @@ static void gn4_list_append(GtkListBox *list, const char *text) {
   gtk_widget_set_margin_top(label, 10);
   gtk_widget_set_margin_bottom(label, 10);
   gtk_list_box_append(list, label);
+}
+
+
+static int gn4_list_selected_index(GtkListBox *list) {
+  GtkListBoxRow *row;
+
+  if (!list)
+    return -1;
+
+  row = gtk_list_box_get_selected_row(list);
+  return row ? gtk_list_box_row_get_index(row) : -1;
+}
+
+static void gn4_list_select_index(GtkListBox *list, int index) {
+  GtkListBoxRow *row;
+
+  if (!list)
+    return;
+
+  if (index < 0) {
+    gtk_list_box_unselect_all(list);
+    return;
+  }
+
+  row = gtk_list_box_get_row_at_index(list, index);
+  if (row)
+    gtk_list_box_select_row(list, row);
+  else
+    gtk_list_box_unselect_all(list);
+}
+
+static const char *gn4_list_row_text(GtkWidget *widget) {
+  GtkWidget *child;
+
+  if (!GTK_IS_LIST_BOX_ROW(widget))
+    return "";
+
+  child = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(widget));
+  return GTK_IS_LABEL(child) ? gtk_label_get_text(GTK_LABEL(child)) : "";
+}
+
+static void gn4_send_reply_ok_list_items(Gn4State *st, const erlang_ref *ref,
+                                         GtkListBox *list) {
+  ei_x_buff reply;
+  GtkWidget *child;
+  int count = 0;
+
+  for (child = gtk_widget_get_first_child(GTK_WIDGET(list)); child;
+       child = gtk_widget_get_next_sibling(child))
+    count++;
+
+  ei_x_new_with_version(&reply);
+  ei_x_encode_tuple_header(&reply, 4);
+  ei_x_encode_atom(&reply, "gtknode4");
+  ei_x_encode_atom(&reply, "reply");
+  ei_x_encode_ref(&reply, (erlang_ref *)ref);
+  ei_x_encode_tuple_header(&reply, 2);
+  ei_x_encode_atom(&reply, "ok");
+  if (count == 0) {
+    ei_x_encode_empty_list(&reply);
+  } else {
+    ei_x_encode_list_header(&reply, count);
+    for (child = gtk_widget_get_first_child(GTK_WIDGET(list)); child;
+         child = gtk_widget_get_next_sibling(child)) {
+      const char *row_text = gn4_list_row_text(child);
+      ei_x_encode_binary(&reply, row_text, (long)strlen(row_text));
+    }
+    ei_x_encode_empty_list(&reply);
+  }
+
+  ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, reply.buff,
+              reply.index);
+  ei_x_free(&reply);
 }
 
 static void gn4_css_parse_error(GtkCssProvider *provider,
@@ -862,21 +955,39 @@ static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
   }
 
   if (GTK_IS_LIST_BOX(target)) {
+    GtkListBox *list = GTK_LIST_BOX(target);
+    int previous_selected = gn4_list_selected_index(list);
+
     if (opts->has_items) {
-      gn4_list_clear(GTK_LIST_BOX(target));
+      gn4_list_clear(list);
       for (i = 0; i < opts->item_count; i++)
-        gn4_list_append(GTK_LIST_BOX(target), opts->items[i]);
+        gn4_list_append(list, opts->items[i]);
     }
     if (opts->add)
-      gn4_list_append(GTK_LIST_BOX(target), opts->add);
+      gn4_list_append(list, opts->add);
     if (opts->selection) {
       GtkSelectionMode mode = GTK_SELECTION_SINGLE;
       if (strcmp(opts->selection, "none") == 0)
         mode = GTK_SELECTION_NONE;
       else if (strcmp(opts->selection, "multiple") == 0)
         mode = GTK_SELECTION_MULTIPLE;
-      gtk_list_box_set_selection_mode(GTK_LIST_BOX(target), mode);
+      gtk_list_box_set_selection_mode(list, mode);
     }
+
+    /*
+     * selected_index is playback/UI state, while selection configures the
+     * GtkSelectionMode. Keep these concepts separate. Programmatic selection
+     * happens while suppress_events is true, so moving the highlight cannot be
+     * mistaken for user intent.
+     *
+     * If the caller replaces items without specifying selected_index, preserve
+     * the previous native index where possible. Callers that know the logical
+     * current item should send both items and selected_index atomically.
+     */
+    if (opts->has_selected_index)
+      gn4_list_select_index(list, opts->selected_index);
+    else if (opts->has_items)
+      gn4_list_select_index(list, previous_selected);
   }
 
   if (opts->has_enabled)
@@ -1176,6 +1287,11 @@ static void gn4_handle_read(Gn4State *st, const erlang_ref *ref,
   } else if (strcmp(key, "title") == 0 && GTK_IS_WINDOW(widget)) {
     gn4_send_reply_ok_binary(st, ref,
                              gtk_window_get_title(GTK_WINDOW(widget)));
+  } else if (strcmp(key, "selected_index") == 0 && GTK_IS_LIST_BOX(target)) {
+    gn4_send_reply_ok_long(
+        st, ref, (long)gn4_list_selected_index(GTK_LIST_BOX(target)));
+  } else if (strcmp(key, "items") == 0 && GTK_IS_LIST_BOX(target)) {
+    gn4_send_reply_ok_list_items(st, ref, GTK_LIST_BOX(target));
   } else {
     gn4_send_reply_error(st, ref, "unsupported_property");
   }
@@ -1590,7 +1706,7 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_tuple_header(&hello, 2);
   ei_x_encode_atom(&hello, st->register_name);
   ei_x_encode_atom(&hello, st->node_name);
-  ei_x_encode_map_header(&hello, 5);
+  ei_x_encode_map_header(&hello, 6);
   ei_x_encode_atom(&hello, "protocol");
   ei_x_encode_long(&hello, GN4_PROTOCOL_VERSION);
   ei_x_encode_atom(&hello, "widgets");
@@ -1607,6 +1723,8 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_atom(&hello, "set_stylesheet");
   ei_x_encode_atom(&hello, "remove_stylesheet");
   ei_x_encode_empty_list(&hello);
+  ei_x_encode_atom(&hello, "list_selection_index");
+  ei_x_encode_atom(&hello, "true");
   if (ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, hello.buff,
                   hello.index) < 0) {
     ei_x_free(&hello);

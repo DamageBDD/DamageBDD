@@ -11,8 +11,12 @@ ensure_started() -> ok.
 
 scan_and_index(Root) ->
     Files = discover(Root),
-    [playlist:add_file(F) || F <- Files],
-    ok.
+    %% playlist:add_file/1 does not exist; submit the discovered batch through
+    %% the persistent playlist API so order/state is saved atomically.
+    case playlist:add_files(Files) of
+        {ok, _Count} -> ok;
+        Other -> Other
+    end.
 
 discover(Dir) ->
     case file:list_dir(Dir) of
