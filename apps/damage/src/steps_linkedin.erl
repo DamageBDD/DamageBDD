@@ -1,6 +1,93 @@
 %% -------------------------------------------------------------------
 %% steps_linkedin.erl - DamageBDD steps for LinkedIn API verification
 %% -------------------------------------------------------------------
+%% @doc
+%% Configure LinkedIn application credentials in the DamageBDD execution context.
+%%
+%% LinkedIn credentials should normally be stored in the authenticated account
+%% context using the following keys:
+%%
+%% <ul>
+%%   <li>
+%%     <code>linkedin_client_id</code> -
+%%     LinkedIn application Client ID.
+%%   </li>
+%%   <li>
+%%     <code>linkedin_client_secret</code> -
+%%     LinkedIn application Primary Client Secret.
+%%   </li>
+%% </ul>
+%%
+%% The client secret must be treated as sensitive. DamageBDD also automatically
+%% classifies keys containing <code>secret</code> as sensitive, so
+%% <code>linkedin_client_secret</code> is redacted from reports and defaults to
+%% <code>step_only</code> exposure rather than normal Gherkin template exposure.
+%%
+%% The authenticated account context can be populated through the
+%% <code>/context</code> HTTP endpoint:
+%%
+%% <pre>
+%% curl -X POST https://run.damagebdd.com/context 
+%%   -H "Authorization: Bearer $DAMAGE_ACCESS_TOKEN" 
+%%   -H "Content-Type: application/json" 
+%%   -d '{
+%%     "set": {
+%%       "linkedin_client_id": {
+%%         "value": "YOUR_LINKEDIN_CLIENT_ID"
+%%       },
+%%       "linkedin_client_secret": {
+%%         "value": "YOUR_LINKEDIN_PRIMARY_CLIENT_SECRET",
+%%         "sensitive": true
+%%       }
+%%     }
+%%   }'
+%% </pre>
+%%
+%% The account scope is derived from the authenticated DamageBDD session or
+%% access token; callers do not specify an arbitrary account owner in the
+%% request body.
+%%
+%% The same values may be configured directly from Erlang:
+%%
+%% <pre>
+%% Scope = damage_context:account_scope(AeAccount),
+%%
+%% {ok, _} = damage_context:put(
+%%     Scope,
+%%     &lt;&lt;"linkedin_client_id"&gt;&gt;,
+%%     &lt;&lt;"YOUR_LINKEDIN_CLIENT_ID"&gt;&gt;
+%% ),
+%%
+%% {ok, _} = damage_context:put(
+%%     Scope,
+%%     &lt;&lt;"linkedin_client_secret"&gt;&gt;,
+%%     &lt;&lt;"YOUR_LINKEDIN_PRIMARY_CLIENT_SECRET"&gt;&gt;,
+%%     #{sensitive =&gt; true}
+%% ).
+%% </pre>
+%%
+%% The current LinkedIn step implementation performs API requests using
+%% <code>linkedin_access_token</code>. The client ID and primary client secret
+%% are application credentials intended for OAuth token acquisition and are not
+%% currently exchanged for an access token by <code>steps_linkedin</code>.
+%%
+%% An existing OAuth access token may currently be supplied with:
+%%
+%% <pre>
+%% Given I set LinkedIn OAuth token to "{{linkedin_access_token}}"
+%% </pre>
+%%
+%% or loaded from the authenticated account's secret store:
+%%
+%% <pre>
+%% Given I set LinkedIn OAuth token from secret "linkedin_access_token"
+%% </pre>
+%%
+%% Keeping the application secret in account context or the account secret
+%% store avoids embedding the primary LinkedIn client secret directly in
+%% feature files.
+%%
+%% @end
 -module(steps_linkedin).
 
 -author("Steven Joseph <steven@stevenjoseph.in>").
